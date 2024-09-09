@@ -4,8 +4,17 @@
 #include <sstream>
 
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+
+#include <jxl/codestream_header.h>
+#include <jxl/decode.h>
+#include <jxl/decode_cxx.h>
+#include <jxl/resizable_parallel_runner.h>
+#include <jxl/resizable_parallel_runner_cxx.h>
+#include <jxl/types.h>
 
 #include "vc/core/io/TIFFIO.hpp"
+
 
 namespace fs = volcart::filesystem;
 namespace tio = volcart::tiffio;
@@ -111,10 +120,18 @@ auto Volume::isInBounds(const cv::Vec3d& v) const -> bool
 
 auto Volume::getSlicePath(int index) const -> fs::path
 {
-    std::stringstream ss;
-    ss << std::setw(numSliceCharacters_) << std::setfill('0') << index
-       << ".tif";
-    return path_ / ss.str();
+    if (metadata_.hasKey("img_ptn")) {
+        char buf[64];
+        snprintf(buf,64,metadata_.get<std::string>("img_ptn").c_str(), index);
+        
+        return path_ / buf;
+    }
+    else {
+        std::stringstream ss;
+        ss << std::setw(numSliceCharacters_) << std::setfill('0') << index
+        << ".tif";
+        return path_ / ss.str();
+    }
 }
 
 auto Volume::getSliceData(int index) const -> cv::Mat
@@ -222,6 +239,81 @@ auto Volume::reslice(
     return Reslice(m, origin, xnorm, ynorm);
 }
 
+cv::Mat read_jxl(const fs::path &path)
+{
+    //adapted from https://github.com/libjxl/libjxl/blob/main/examples/decode_oneshot.cc
+    
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    std::streamsize file_size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    
+    std::vector<char> data(file_size);
+    if (!file.read(data.data(), file_size))
+        throw std::runtime_error("read error");
+    
+    
+    size_t w, h;
+    cv::Mat_<uint8_t> img;
+    
+    // Multi-threaded parallel runner.
+    auto runner = JxlResizableParallelRunnerMake(nullptr);
+    auto dec = JxlDecoderMake(nullptr);
+    
+    if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec.get(), JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING | JXL_DEC_FULL_IMAGE))
+        throw std::runtime_error("JxlDecoderSubscribeEvents Error");
+        
+    if (JXL_DEC_SUCCESS != JxlDecoderSetParallelRunner(dec.get(), JxlResizableParallelRunner, runner.get()))
+        throw std::runtime_error("JxlDecoderSetParallelRunner failed");
+            
+    JxlBasicInfo info;
+    JxlPixelFormat format = {1, JXL_TYPE_UINT8, JXL_NATIVE_ENDIAN, 0};
+    //FIXME check format in the file and keep that?
+            
+    JxlDecoderSetInput(dec.get(), (uint8_t*)&data[0], file_size);
+    JxlDecoderCloseInput(dec.get());
+            
+    for (;;) {
+        JxlDecoderStatus status = JxlDecoderProcessInput(dec.get());
+        
+        if (status == JXL_DEC_ERROR)
+            throw std::runtime_error("Decoder error\n");
+        else if (status == JXL_DEC_NEED_MORE_INPUT)
+            throw std::runtime_error("Error, already provided all input");
+        else if (status == JXL_DEC_BASIC_INFO) {
+            if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec.get(), &info))
+                throw std::runtime_error("JxlDecoderGetBasicInfo failed");
+            w = info.xsize;
+            h = info.ysize;
+            JxlResizableParallelRunnerSetThreads(runner.get(), JxlResizableParallelRunnerSuggestThreads(info.xsize, info.ysize));
+        } else if (status == JXL_DEC_COLOR_ENCODING) {
+            std::cout << "Ignoring jxl ICC profile" << "\n";
+        } else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
+            size_t buffer_size;
+            if (JXL_DEC_SUCCESS != JxlDecoderImageOutBufferSize(dec.get(), &format, &buffer_size))
+                throw std::runtime_error("JxlDecoderImageOutBufferSize failed");
+            
+            if (buffer_size != w * h)
+                throw std::runtime_error("Invalid Buffer size");
+
+            img.create(h, w);
+            void* pixels_buffer = static_cast<void*>(img.ptr(0));
+            if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutBuffer(dec.get(), &format, pixels_buffer, buffer_size))
+                throw std::runtime_error("JxlDecoderSetImageOutBuffer failed\n");
+
+        } else if (status == JXL_DEC_FULL_IMAGE) {
+            // Nothing to do. Do not yet return. If the image is an animation, more
+            // full frames may be decoded. This example only keeps the last one.
+        } else if (status == JXL_DEC_SUCCESS) {
+            // All decoding successfully finished.
+            // It's not required to call JxlDecoderReleaseInput(dec.get()) here since
+            // the decoder will be destroyed.
+            return img;
+        } else {
+            std::runtime_error("Unknown decoder Error");
+        }
+    }
+}
+
 auto Volume::load_slice_(int index) const -> cv::Mat
 {
     {
@@ -230,10 +322,25 @@ auto Volume::load_slice_(int index) const -> cv::Mat
     }
     auto slicePath = getSlicePath(index);
     cv::Mat mat;
-    try {
-        mat = tio::ReadTIFF(slicePath.string());
-    } catch (std::runtime_error) {
+    if (slicePath.extension() == ".tif") {
+        try {
+            mat = tio::ReadTIFF(slicePath.string());
+        } catch (std::runtime_error) {
+        }
     }
+    else if (slicePath.extension() == ".jxl") {
+        mat = read_jxl(slicePath);
+        mat.convertTo(mat, CV_16UC1, 257);
+    }
+    else {
+        mat = cv::imread(slicePath, cv::IMREAD_UNCHANGED);
+    }
+    
+    if (!mat.empty() && (mat.size().width != sliceWidth() || mat.size().height != sliceHeight()))
+    {
+        cv::resize(mat, mat, cv::Size(sliceWidth(),sliceHeight()), 0,0, cv::INTER_CUBIC);
+    }
+    
     return mat;
 }
 

@@ -102,6 +102,8 @@ target_link_libraries(vc_core
         smgl::smgl
     PRIVATE
         TIFF::TIFF
+        JPEGXL::jxl
+        JPEGXL::jxl_threads
 )
 target_compile_features(vc_core PUBLIC cxx_std_17)
 

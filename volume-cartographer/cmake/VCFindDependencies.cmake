@@ -66,6 +66,9 @@ endif()
 ### libtiff ###
 find_package(TIFF 4.0 REQUIRED)
 
+### JPEG-XL ###
+find_package(JPEGXL REQUIRED)
+
 ### spdlog ###
 find_package(spdlog 1.4.2 CONFIG REQUIRED)
 
