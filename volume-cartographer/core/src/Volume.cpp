@@ -239,6 +239,11 @@ auto Volume::reslice(
     return Reslice(m, origin, xnorm, ynorm);
 }
 
+void throw_run_path(const fs::path &path, const std::string msg)
+{
+    throw std::runtime_error(msg + " for " + path.string());
+}
+
 cv::Mat read_jxl(const fs::path &path)
 {
     //adapted from https://github.com/libjxl/libjxl/blob/main/examples/decode_oneshot.cc
@@ -249,7 +254,7 @@ cv::Mat read_jxl(const fs::path &path)
     
     std::vector<char> data(file_size);
     if (!file.read(data.data(), file_size))
-        throw std::runtime_error("read error");
+        throw_run_path(path, "read error");
     
     
     size_t w, h;
@@ -260,10 +265,10 @@ cv::Mat read_jxl(const fs::path &path)
     auto dec = JxlDecoderMake(nullptr);
     
     if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec.get(), JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING | JXL_DEC_FULL_IMAGE))
-        throw std::runtime_error("JxlDecoderSubscribeEvents Error");
+        throw_run_path(path, "JxlDecoderSubscribeEvents Error");
         
     if (JXL_DEC_SUCCESS != JxlDecoderSetParallelRunner(dec.get(), JxlResizableParallelRunner, runner.get()))
-        throw std::runtime_error("JxlDecoderSetParallelRunner failed");
+        throw_run_path(path, "JxlDecoderSetParallelRunner failed");
             
     JxlBasicInfo info;
     JxlPixelFormat format = {1, JXL_TYPE_UINT8, JXL_NATIVE_ENDIAN, 0};
@@ -276,12 +281,12 @@ cv::Mat read_jxl(const fs::path &path)
         JxlDecoderStatus status = JxlDecoderProcessInput(dec.get());
         
         if (status == JXL_DEC_ERROR)
-            throw std::runtime_error("Decoder error\n");
+            throw_run_path(path, "Decoder error\n");
         else if (status == JXL_DEC_NEED_MORE_INPUT)
-            throw std::runtime_error("Error, already provided all input");
+            throw_run_path(path, "Error, already provided all input");
         else if (status == JXL_DEC_BASIC_INFO) {
             if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec.get(), &info))
-                throw std::runtime_error("JxlDecoderGetBasicInfo failed");
+                throw_run_path(path, "JxlDecoderGetBasicInfo failed");
             w = info.xsize;
             h = info.ysize;
             JxlResizableParallelRunnerSetThreads(runner.get(), JxlResizableParallelRunnerSuggestThreads(info.xsize, info.ysize));
@@ -290,15 +295,15 @@ cv::Mat read_jxl(const fs::path &path)
         } else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
             size_t buffer_size;
             if (JXL_DEC_SUCCESS != JxlDecoderImageOutBufferSize(dec.get(), &format, &buffer_size))
-                throw std::runtime_error("JxlDecoderImageOutBufferSize failed");
+                throw_run_path(path, "JxlDecoderImageOutBufferSize failed");
             
             if (buffer_size != w * h)
-                throw std::runtime_error("Invalid Buffer size");
+                throw_run_path(path, "Invalid Buffer size");
 
             img.create(h, w);
             void* pixels_buffer = static_cast<void*>(img.ptr(0));
             if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutBuffer(dec.get(), &format, pixels_buffer, buffer_size))
-                throw std::runtime_error("JxlDecoderSetImageOutBuffer failed\n");
+                throw_run_path(path, "JxlDecoderSetImageOutBuffer failed\n");
 
         } else if (status == JXL_DEC_FULL_IMAGE) {
             // Nothing to do. Do not yet return. If the image is an animation, more
