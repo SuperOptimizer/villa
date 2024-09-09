@@ -169,6 +169,8 @@ private:
 
     static void audio_callback(void *user_data, Uint8 *raw_buffer, int bytes);
     void playPing();
+    
+    void fillPreviewSelect();
 
 private slots:
     void Open(void);
@@ -287,6 +289,7 @@ private:
     QPushButton* fPenTool;  // REVISIT - change me to QToolButton
     QPushButton* fSegTool;
     QComboBox* volSelect;
+    QComboBox* previewSelect;
     QPushButton* assignVol;
 
     QSpinBox* fEdtWindowWidth;
@@ -344,6 +347,7 @@ private:
     QStatusBar* statusBar;
 
     bool can_change_volume_();
+    bool can_change_preview_();
 
     QThread worker_thread_;
     BlockingDialog worker_progress_;

@@ -406,6 +406,15 @@ auto VolumePkg::numberOfVolumes() const -> std::size_t
     return volumes_.size();
 }
 
+auto VolumePkg::numberOfPreviews(const Volume::Identifier &id) const -> std::size_t
+{
+    auto preview_map = previews_.find(id);
+    if (preview_map == previews_.end())
+        return 0;
+    
+    return preview_map->second.size();
+}
+
 auto VolumePkg::volumeIDs() const -> std::vector<Volume::Identifier>
 {
     std::vector<Volume::Identifier> ids;
@@ -419,6 +428,16 @@ auto VolumePkg::volumeNames() const -> std::vector<std::string>
 {
     std::vector<Volume::Identifier> names;
     for (const auto& v : volumes_) {
+        names.emplace_back(v.second->name());
+    }
+    return names;
+}
+
+auto VolumePkg::previewNames(const Volume::Identifier &id) const -> std::vector<std::string>
+{
+    std::vector<std::string> names;
+    auto vol_previes = previews_.find(id);
+    for (const auto& v : vol_previes->second) {
         names.emplace_back(v.second->name());
     }
     return names;
@@ -478,6 +497,11 @@ auto VolumePkg::volume(const Volume::Identifier& id) const
 auto VolumePkg::volume(const Volume::Identifier& id) -> Volume::Pointer
 {
     return volumes_.at(id);
+}
+
+auto VolumePkg::preview(const Volume::Identifier& vol_id, const Volume::Identifier& preview_name) -> Volume::Pointer
+{
+    return previews_.at(vol_id).at(preview_name);
 }
 
 // SEGMENTATION FUNCTIONS //

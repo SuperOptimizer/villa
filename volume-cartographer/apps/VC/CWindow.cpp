@@ -265,6 +265,40 @@ void CWindow::CreateWidgets(void)
             fVolumeViewerWidget->SetNumSlices(currentVolume->numSlices());
             ui.spinBackwardSlice->setMaximum(currentVolume->numSlices() - 1);
             ui.spinForwardSlice->setMaximum(currentVolume->numSlices() - 1);
+
+            fillPreviewSelect();
+        });
+
+    // TODO CHANGE VOLUME LOADING; FIRST CHECK FOR OTHER VOLUMES IN THE STRUCTS
+    previewSelect = this->findChild<QComboBox*>("previewSelect");
+    connect(
+        previewSelect, &QComboBox::currentIndexChanged, [this](const int& index) {
+            vc::Volume::Pointer newVolume;
+            if (index == 0) {
+                try {
+                    newVolume = fVpkg->volume(volSelect->currentData().toString().toStdString());
+                } catch (const std::out_of_range& e) {
+                    QMessageBox::warning(this, "Error", "Could not load volume.");
+                    return;
+                }
+            }
+            else {
+                try {
+                    newVolume = fVpkg->volume(volSelect->currentData().toString().toStdString());
+                    //first entry is no preview, use base volume
+                    if (index)
+                        newVolume = fVpkg->preview(newVolume->id(), previewSelect->currentData().toString().toStdString());
+                } catch (const std::out_of_range& e) {
+                    QMessageBox::warning(this, "Error", "Could not load volume.");
+                    return;
+                }
+            }
+            currentVolume = newVolume;
+            OnLoadAnySlice(0);
+            setDefaultWindowWidth(newVolume);
+            fVolumeViewerWidget->SetNumSlices(currentVolume->numSlices());
+            ui.spinBackwardSlice->setMaximum(currentVolume->numSlices() - 1);
+            ui.spinForwardSlice->setMaximum(currentVolume->numSlices() - 1);
         });
 
     assignVol = this->findChild<QPushButton*>("assignVol");
@@ -914,6 +948,7 @@ void CWindow::UpdateView(void)
     ui.btnEvenlySpacePoints->setEnabled(fSegTool->isChecked() && fSliceIndexToolStart == fPathOnSliceIndex);
 
     volSelect->setEnabled(can_change_volume_());
+    previewSelect->setEnabled(can_change_preview_());
     assignVol->setEnabled(can_change_volume_());
 
     // REVISIT - these two states should be mutually exclusive, we guarantee
@@ -1751,6 +1786,22 @@ void CWindow::SetPathPointCloud(void)
 
     fSegStructMap[fSegmentationId].fMinSegIndex = static_cast<int>(floor(fSegStructMap[fSegmentationId].fMasterCloud[0][2]));
     fSegStructMap[fSegmentationId].fMaxSegIndex = fSegStructMap[fSegmentationId].fMinSegIndex;
+}
+
+void CWindow::fillPreviewSelect()
+{
+    {
+        const QSignalBlocker blocker{previewSelect};
+        previewSelect->clear();
+    }
+    previewSelect->addItem(
+        "base",
+        QVariant(QString::fromStdString("base")));
+    for (const auto& name : fVpkg->previewNames(currentVolume->id())) {
+        previewSelect->addItem(
+            QString::fromStdString(name),
+            QVariant(QString::fromStdString(name)));
+    }
 }
 
 // Open volume package
@@ -2906,6 +2957,16 @@ auto CWindow::can_change_volume_() -> bool
             canChange = canChange && (segStruct.fSegmentation == nullptr || !segStruct.fSegmentation->hasPointSet() || !segStruct.fSegmentation->hasVolumeID());
     }
     return canChange;
+}
+
+auto CWindow::can_change_preview_() -> bool
+{    
+    if (!fVpkg)
+        return false;
+    if (!currentVolume)
+        return false;
+    
+    return fVpkg->numberOfPreviews(currentVolume->id());
 }
 
 void CWindow::onBackwardButtonGroupToggled(QAbstractButton* button, bool checked)

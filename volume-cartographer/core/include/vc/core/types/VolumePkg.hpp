@@ -151,12 +151,18 @@ public:
 
     /** @brief Get the number of Volumes */
     auto numberOfVolumes() const -> std::size_t;
+    
+    /** @brief Get the number of Previews for Volume id */
+    auto numberOfPreviews(const Volume::Identifier &id) const -> std::size_t;
 
     /** @brief Get the list of volume IDs */
     [[nodiscard]] auto volumeIDs() const -> std::vector<Volume::Identifier>;
 
     /** @brief Get the list of volumes names */
     [[nodiscard]] auto volumeNames() const -> std::vector<std::string>;
+    
+    /** @brief Get the list of preview names */
+    [[nodiscard]] auto previewNames(const Volume::Identifier &id) const -> std::vector<std::string>;
 
     /**
      * @brief Add a new Volume to the VolumePkg
@@ -178,6 +184,8 @@ public:
 
     /** @copydoc VolumePkg::volume(const Volume::Identifier&) const */
     auto volume(const Volume::Identifier& id) -> Volume::Pointer;
+    
+    auto preview(const Volume::Identifier& vol_id, const Volume::Identifier& preview_name) -> Volume::Pointer;
     /**@}*/
 
     /** @name Segmentation Data */

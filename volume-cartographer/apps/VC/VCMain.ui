@@ -280,6 +280,9 @@
            <widget class="QComboBox" name="volSelect"/>
           </item>
           <item>
+           <widget class="QComboBox" name="previewSelect"/>
+          </item>
+          <item>
            <widget class="QPushButton" name="assignVol">
             <property name="text">
              <string>Assign Segmentation to Volume</string>
