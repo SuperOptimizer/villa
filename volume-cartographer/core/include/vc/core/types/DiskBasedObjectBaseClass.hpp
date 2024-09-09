@@ -48,6 +48,8 @@ public:
 
     /** @brief Update metadata on disk */
     void saveMetadata() { metadata_.save(); }
+    
+    static bool checkDir(volcart::filesystem::path path);
 
 protected:
     /** Load the object from file */

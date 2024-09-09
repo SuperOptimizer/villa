@@ -23,3 +23,9 @@ DiskBasedObjectBaseClass::DiskBasedObjectBaseClass(
     metadata_.set("uuid", uuid);
     metadata_.set("name", name);
 }
+
+//return wether dir could be a volume
+bool DiskBasedObjectBaseClass::checkDir(volcart::filesystem::path path)
+{
+    return fs::is_directory(path) && fs::exists(path / METADATA_FILE);
+}

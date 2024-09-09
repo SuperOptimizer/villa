@@ -36,6 +36,11 @@ inline auto TfmDir(const fs::path& baseDir) -> fs::path
     return baseDir / "transforms";
 }
 
+inline auto PreviewDirs(const fs::path& baseDir) -> std::vector<filesystem::path>
+{
+    return { baseDir / "volumes_preview_half", baseDir / "volumes_masked", baseDir / "volumes_previews"};
+}
+
 inline auto ReqDirs(const fs::path& baseDir) -> std::vector<filesystem::path>
 {
     return {
@@ -328,6 +333,22 @@ VolumePkg::VolumePkg(const fs::path& fileLocation) : rootDir_{fileLocation}
                 continue;
             }
             transforms_.emplace(ep.stem(), tfm);
+        }
+    }
+    
+    // Load Previews into previews_
+    for (const auto& d : ::PreviewDirs(rootDir_)) {
+        if (!fs::is_directory(d))
+            continue;
+        
+        for (const auto& entry : fs::recursive_directory_iterator(d)) {
+            if (Volume::checkDir(entry)) {
+                auto v = Volume::New(entry);
+                if (previews_.find(v->id()) == previews_.end())
+                    previews_[v->id()] = {};
+                    
+                previews_[v->id()].emplace(v->name(), v);
+            }
         }
     }
 }

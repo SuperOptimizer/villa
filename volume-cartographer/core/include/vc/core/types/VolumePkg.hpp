@@ -315,6 +315,8 @@ private:
     std::map<Render::Identifier, Render::Pointer> renders_;
     /** The list of Transforms in the VolumePkg */
     std::map<Transform3D::Identifier, Transform3D::Pointer> transforms_;
+    /** The list of Previews/Scales in the VolumePkg vol-id -> preview name -> volume */
+    std::map<Volume::Identifier, std::map<std::string, Volume::Pointer>> previews_;
 
     /**
      * @brief Populates an empty VolumePkg::config from a volcart::Dictionary
