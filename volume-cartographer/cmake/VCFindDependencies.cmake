@@ -50,6 +50,9 @@ find_package(VTK 9 QUIET REQUIRED)
 ### ACVD ###
 include(BuildACVD)
 
+### Z5 ###
+include(BuildZ5)
+
 ### Eigen ###
 find_package(Eigen3 3.3 REQUIRED)
 if(CMAKE_GENERATOR MATCHES "Ninja|.*Makefiles.*" AND "${CMAKE_BUILD_TYPE}" MATCHES "^$|Debug")

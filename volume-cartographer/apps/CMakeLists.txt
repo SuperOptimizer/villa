@@ -157,6 +157,13 @@ target_link_libraries(vc_volpkg_explorer
     ${VC_FS_LIB}
 )
 
+## img2zarr ##
+add_executable(vc_imgtozarr src/ImgToZarr.cpp)
+target_link_libraries(vc_imgtozarr
+    nlohmann_json::nlohmann_json
+    z5
+)
+
 # Install targets
 if(VC_INSTALL_APPS)
 install(
