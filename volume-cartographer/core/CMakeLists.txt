@@ -84,6 +84,8 @@ target_include_directories(vc_core
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
+    PRIVATE
+        $<TARGET_PROPERTY:z5,INTERFACE_INCLUDE_DIRECTORIES>
 )
 target_link_libraries(vc_core
     PUBLIC

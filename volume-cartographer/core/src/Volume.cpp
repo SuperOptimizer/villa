@@ -15,6 +15,7 @@
 
 #include "vc/core/io/TIFFIO.hpp"
 
+#include "z5/attributes.hxx"
 
 namespace fs = volcart::filesystem;
 namespace tio = volcart::tiffio;
@@ -36,6 +37,8 @@ Volume::Volume(fs::path path) : DiskBasedObjectBaseClass(std::move(path))
     std::vector<std::mutex> init_mutexes(slices_);
 
     slice_mutexes_.swap(init_mutexes);
+    
+    zarrOpen();
 }
 
 // Setup a Volume from a folder of slices
@@ -50,7 +53,19 @@ Volume::Volume(fs::path path, std::string uuid, std::string name)
     metadata_.set("slices", slices_);
     metadata_.set("voxelsize", double{});
     metadata_.set("min", double{});
-    metadata_.set("max", double{});
+    metadata_.set("max", double{});    
+
+    zarrOpen();
+}
+
+void Volume::zarrOpen()
+{
+    if (metadata_.hasKey("format") && metadata_.get<std::string>("format") == "zarr") {
+        isZarr = true;
+        zarrFile_ = new z5::filesystem::handle::File(path_);
+        z5::filesystem::handle::Group group(path_, z5::FileMode::FileMode::r);
+        z5::readAttributes(group, zarrGroup_);
+    }
 }
 
 // Load a Volume from disk, return a pointer
@@ -163,6 +178,9 @@ auto Volume::getSliceDataRectCopy(int index, cv::Rect rect) const -> cv::Mat
 
 void Volume::setSliceData(int index, const cv::Mat& slice, bool compress)
 {
+    if (isZarr)
+        throw std::runtime_error("setSliceData() not supported for zarr volumes");
+    
     auto slicePath = getSlicePath(index);
     tio::WriteTIFF(
         slicePath.string(), slice,

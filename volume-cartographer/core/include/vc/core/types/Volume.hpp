@@ -13,6 +13,20 @@
 #include "vc/core/types/LRUCache.hpp"
 #include "vc/core/types/Reslice.hpp"
 
+// class z5::filesystem::handle::File;
+
+namespace z5
+{
+    namespace filesystem
+    {
+        namespace handle
+        {
+            class File;
+        }
+    }
+}
+
+
 namespace volcart
 {
 /**
@@ -64,6 +78,9 @@ public:
     static Pointer New(
         volcart::filesystem::path path, Identifier uuid, std::string name);
     /**@}*/
+    
+    /** is ZARR volume **/
+    bool isZarr{false};
 
     /**@{*/
     /** @brief Get the slice width */
@@ -223,6 +240,9 @@ protected:
     /** Slice file name padding */
     int numSliceCharacters_{0};
 
+    z5::filesystem::handle::File *zarrFile_ = nullptr;
+    nlohmann::json zarrGroup_;
+    
     /** Whether to use slice cache */
     bool cacheSlices_{true};
     /** Slice cache */
@@ -238,5 +258,6 @@ protected:
     /** Shared mutex for thread-safe access */
     mutable std::shared_mutex cache_mutex_;
     mutable std::shared_mutex print_mutex_;
+    void zarrOpen();
 };
 }  // namespace volcart
