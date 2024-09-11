@@ -82,6 +82,12 @@ void Volume::zarrOpen()
         // z5::filesystem::handle::Dataset ds_handle(fs::path(path_ / "1"), z5::FileMode::FileMode::r, "/");
         z5::filesystem::handle::Dataset ds_handle(group, "1", "/");
         zarrDs_ = z5::filesystem::openDataset(ds_handle);
+        
+        chunk_cache_ = ChunkCacheType::New(2048L);
+        
+        zarrDs_->enableCaching(true,
+            [&](z5::types::ShapeType chunkId, void* chunk, z5::types::ShapeType shape, std::size_t size) -> void { putCacheChunk(chunkId, chunk, shape, size); },
+            [&](z5::types::ShapeType chunkId, z5::types::ShapeType& shape, std::size_t& size) -> void* { return getCacheChunk(chunkId, shape, size); });
     }
 }
 
@@ -455,3 +461,22 @@ void Volume::cachePurge() const
     cache_->purge();
 }
 
+void Volume::putCacheChunk(z5::types::ShapeType chunkId, void* chunk, z5::types::ShapeType chunkShape, std::size_t chunkSize) const
+{
+    if (!chunk_cache_->contains(chunkId)) {
+        CacheEntry entry = {*static_cast<std::vector<std::uint8_t>*>(chunk), chunkShape, chunkSize};
+        chunk_cache_->put(chunkId, entry);
+    }
+}
+
+void* Volume::getCacheChunk(z5::types::ShapeType chunkId, z5::types::ShapeType& chunkShape, std::size_t& chunkSize) const
+{
+    if (chunk_cache_->contains(chunkId)) {
+        auto entry = chunk_cache_->getPointer(chunkId);
+        chunkShape = entry->shape;
+        chunkSize = entry->size;
+        return &entry->data;
+    } else {
+        return nullptr;
+    }
+}

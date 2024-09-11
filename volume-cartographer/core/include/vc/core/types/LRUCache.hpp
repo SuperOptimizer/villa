@@ -117,6 +117,19 @@ public:
             return lookupIter->second->second;
         }
     }
+    
+    /** @brief Get an item pointer from the cache by key */
+    auto getPointer(const TKey& k) -> TValue* override
+    {
+        std::unique_lock<std::shared_mutex> lock(cache_mutex_);
+        auto lookupIter = lookup_.find(k);
+        if (lookupIter == std::end(lookup_)) {
+            throw std::invalid_argument("Key not in cache");
+        } else {
+            items_.splice(std::begin(items_), items_, lookupIter->second);
+            return &lookupIter->second->second;
+        }
+    }
 
     /** @brief Put an item into the cache */
     void put(const TKey& k, const TValue& v) override

@@ -73,6 +73,7 @@ target_link_libraries(${target}
     OpenMP::OpenMP_CXX
     ${SDL2_LIBRARIES}
     ${GSL_LIBRARIES}
+    z5
 )
 
 if (${VC_INSTALL_APPS})
