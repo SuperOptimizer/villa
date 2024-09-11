@@ -212,8 +212,14 @@ void CWindow::CreateWidgets(void)
     // connect(fVolumeViewerWidget, &CVolumeViewerWithCurve::SendSignalStatusMessageAvailable, this, &CWindow::onShowStatusMessage);
     connect(this, &CWindow::sendLocChanged, fVolumeViewerWidget, &CVolumeViewer::OnLocChanged);
 
-    auto aWidgetLayout = new QVBoxLayout;
-    aWidgetLayout->addWidget(fVolumeViewerWidget);
+    auto aWidgetLayout = new QGridLayout;
+    aWidgetLayout->addWidget(fVolumeViewerWidget, 0, 0);
+    auto volview2 = new CVolumeViewer();
+    aWidgetLayout->addWidget(volview2, 0, 1);
+    volview2 = new CVolumeViewer();
+    aWidgetLayout->addWidget(volview2, 1, 0);
+    volview2 = new CVolumeViewer();
+    aWidgetLayout->addWidget(volview2, 1, 1);
 
     ui.tabSegment->setLayout(aWidgetLayout);
 
