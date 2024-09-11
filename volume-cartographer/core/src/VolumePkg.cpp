@@ -437,6 +437,8 @@ auto VolumePkg::previewNames(const Volume::Identifier &id) const -> std::vector<
 {
     std::vector<std::string> names;
     auto vol_previes = previews_.find(id);
+    if (vol_previes == previews_.end())
+        return names;
     for (const auto& v : vol_previes->second) {
         names.emplace_back(v.second->name());
     }

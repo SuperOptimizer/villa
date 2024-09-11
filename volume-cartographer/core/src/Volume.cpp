@@ -16,6 +16,18 @@
 #include "vc/core/io/TIFFIO.hpp"
 
 #include "z5/attributes.hxx"
+#include "z5/dataset.hxx"
+#include "z5/filesystem/handle.hxx"
+#include "z5/metadata.hxx"
+#include "z5/handle.hxx"
+#include "z5/types/types.hxx"
+#include "z5/util/util.hxx"
+#include "z5/util/blocking.hxx"
+#include "z5/util/format_data.hxx"
+#include "z5/factory.hxx"
+#include "z5/multiarray/xtensor_access.hxx"
+
+#include "xtensor/xarray.hpp"
 
 namespace fs = volcart::filesystem;
 namespace tio = volcart::tiffio;
@@ -61,10 +73,15 @@ Volume::Volume(fs::path path, std::string uuid, std::string name)
 void Volume::zarrOpen()
 {
     if (metadata_.hasKey("format") && metadata_.get<std::string>("format") == "zarr") {
+        std::cout << "zarropen" << "\n";
         isZarr = true;
         zarrFile_ = new z5::filesystem::handle::File(path_);
         z5::filesystem::handle::Group group(path_, z5::FileMode::FileMode::r);
         z5::readAttributes(group, zarrGroup_);
+        
+        // z5::filesystem::handle::Dataset ds_handle(fs::path(path_ / "1"), z5::FileMode::FileMode::r, "/");
+        z5::filesystem::handle::Dataset ds_handle(group, "1", "/");
+        zarrDs_ = z5::filesystem::openDataset(ds_handle);
     }
 }
 
@@ -337,12 +354,42 @@ cv::Mat read_jxl(const fs::path &path)
     }
 }
 
+std::ostream& operator<< (std::ostream& out, const xt::xarray<uint8_t>::shape_type &v) {
+    if ( !v.empty() ) {
+        out << '[';
+        for(auto &v : v)
+            out << v << ",";
+        out << "\b\b]"; // use two ANSI backspace characters '\b' to overwrite final ", "
+    }
+    return out;
+}
+
+
 auto Volume::load_slice_(int index) const -> cv::Mat
 {
     {
         std::unique_lock<std::shared_mutex> lock(print_mutex_);
         std::cout << "Requested to load slice " << index << std::endl;
     }
+    
+    if (isZarr) {
+        std::cout << "implement zarr data reading!" << "\n";
+        int threads = static_cast<int>(std::thread::hardware_concurrency());
+        
+        z5::types::ShapeType offset = {index, 0, 0};
+        xt::xarray<uint8_t>::shape_type shape = {1, height_/2, width_/2 };
+        xt::xarray<uint8_t> array(shape);
+        
+        z5::multiarray::readSubarray<uint8_t>(*zarrDs_, array, offset.begin(), threads);
+        
+        cv::Mat m = cv::Mat(height_/2, width_/2, CV_8U, array.data()).clone();
+        
+        return m;
+    }
+    
+    
+    std::cout << "regular load!" << path_ << "\n";    
+    
     auto slicePath = getSlicePath(index);
     cv::Mat mat;
     if (slicePath.extension() == ".tif") {

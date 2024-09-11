@@ -17,6 +17,8 @@
 
 namespace z5
 {
+    class Dataset;
+
     namespace filesystem
     {
         namespace handle
@@ -240,7 +242,8 @@ protected:
     /** Slice file name padding */
     int numSliceCharacters_{0};
 
-    z5::filesystem::handle::File *zarrFile_ = nullptr;
+    z5::filesystem::handle::File *zarrFile_;
+    std::unique_ptr<z5::Dataset> zarrDs_;
     nlohmann::json zarrGroup_;
     
     /** Whether to use slice cache */
