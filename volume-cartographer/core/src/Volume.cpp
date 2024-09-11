@@ -174,7 +174,7 @@ auto Volume::getSlicePath(int index) const -> fs::path
 
 auto Volume::getSliceData(int index) const -> cv::Mat
 {
-    if (cacheSlices_) {
+    if (cacheSlices_ && !isZarr) {
         return cache_slice_(index);
     }
     return load_slice_(index);
