@@ -133,7 +133,6 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     , fImgQImage(nullptr)
     , fBaseImageItem(nullptr)
     , fScaleFactor(1.0)
-    , fImageIndex(0)
     , fScanRange(1)
 {
     // buttons
@@ -142,13 +141,6 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     fResetBtn = new QPushButton(tr("Reset"), this);
     fNextBtn = new QPushButton(tr("Next Slice"), this);
     fPrevBtn = new QPushButton(tr("Previous Slice"), this);
-
-    // slice index edit
-    fImageIndexSpin = new QSpinBox(this);
-    fImageIndexSpin->setMinimum(0);
-    fImageIndexSpin->setEnabled(true);
-    fImageIndexSpin->setMinimumWidth(100);
-    connect(fImageIndexSpin, SIGNAL(editingFinished()), this, SLOT(OnImageIndexSpinChanged()));
 
     fImageRotationSpin = new QSpinBox(this);
     fImageRotationSpin->setMinimum(-360);
@@ -184,9 +176,6 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     fButtonsLayout->addWidget(fZoomInBtn);
     fButtonsLayout->addWidget(fZoomOutBtn);
     fButtonsLayout->addWidget(fResetBtn);
-    fButtonsLayout->addWidget(fPrevBtn);
-    fButtonsLayout->addWidget(fNextBtn);
-    fButtonsLayout->addWidget(fImageIndexSpin);
     fButtonsLayout->addWidget(fImageRotationSpin);
     fButtonsLayout->addWidget(fAxisCombo);
     // Add some space between the slice spin box and the curve tools (color, checkboxes, ...)
@@ -195,8 +184,6 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     connect(fZoomInBtn, SIGNAL(clicked()), this, SLOT(OnZoomInClicked()));
     connect(fZoomOutBtn, SIGNAL(clicked()), this, SLOT(OnZoomOutClicked()));
     connect(fResetBtn, SIGNAL(clicked()), this, SLOT(OnResetClicked()));
-    connect(fNextBtn, SIGNAL(clicked()), this, SLOT(OnNextClicked()));
-    connect(fPrevBtn, SIGNAL(clicked()), this, SLOT(OnPrevClicked()));
 
     QSettings settings("VC.ini", QSettings::IniFormat);
     fCenterOnZoomEnabled = settings.value("viewer/center_on_zoom", false).toInt() != 0;
@@ -221,9 +208,6 @@ CVolumeViewer::~CVolumeViewer(void)
     deleteNULL(fZoomInBtn);
     deleteNULL(fZoomOutBtn);
     deleteNULL(fResetBtn);
-    deleteNULL(fPrevBtn);
-    deleteNULL(fNextBtn);
-    deleteNULL(fImageIndexSpin);
     deleteNULL(fImageRotationSpin);
 }
 
@@ -231,9 +215,6 @@ void CVolumeViewer::SetButtonsEnabled(bool state)
 {
     fZoomOutBtn->setEnabled(state);
     fZoomInBtn->setEnabled(state);
-    fPrevBtn->setEnabled(state);
-    fNextBtn->setEnabled(state);
-    fImageIndexSpin->setEnabled(state);
     fImageRotationSpin->setEnabled(state);
 }
 
@@ -259,11 +240,6 @@ void CVolumeViewer::SetImage(const QImage& nSrc)
     update();
 }
 
-void CVolumeViewer::SetNumSlices(int num)
-{
-    fImageIndexSpin->setMaximum(num);
-}
-
 bool CVolumeViewer::eventFilter(QObject* watched, QEvent* event)
 {
     // Wheel events
@@ -271,20 +247,8 @@ bool CVolumeViewer::eventFilter(QObject* watched, QEvent* event)
 
         QWheelEvent* wheelEvent = static_cast<QWheelEvent*>(event);
 
-        // Range key pressed
-        if (fGraphicsView->isRangeKeyPressed()) {
-            int numDegrees = wheelEvent->angleDelta().y() / 8;
-
-            if (numDegrees > 0) {
-                SendSignalImpactRangeUp();
-            } else if (numDegrees < 0) {
-                SendSignalImpactRangeDown();
-            }
-
-            return true;
-        }
         // Ctrl = Zoom in/out
-        else if (QApplication::keyboardModifiers() == Qt::ControlModifier) {
+        if (QApplication::keyboardModifiers() == Qt::ControlModifier) {
             int numDegrees = wheelEvent->angleDelta().y() / 8;
 
             if (numDegrees > 0) {
@@ -304,11 +268,9 @@ bool CVolumeViewer::eventFilter(QObject* watched, QEvent* event)
             int numDegrees = wheelEvent->angleDelta().y() / 8;
 
             if (numDegrees > 0) {
-                SendSignalOnNextSliceShift(fScanRange);
-                fGraphicsView->showCurrentSliceIndex(fImageIndex, (GetViewState() == EViewState::ViewStateEdit && fImageIndex == sliceIndexToolStart));
+                SendSignalSliceShift(fScanRange, axis);
             } else if (numDegrees < 0) {
-                SendSignalOnPrevSliceShift(fScanRange);
-                fGraphicsView->showCurrentSliceIndex(fImageIndex, (GetViewState() == EViewState::ViewStateEdit && fImageIndex == sliceIndexToolStart));
+                SendSignalSliceShift(-fScanRange, axis);
             }
             return true;
         }
@@ -411,53 +373,17 @@ void CVolumeViewer::OnResetClicked(void)
     UpdateButtons();
 }
 
-// Handle next image click
-void CVolumeViewer::OnNextClicked(void)
-{
-    // send signal to controller (MVC) in order to update the content
-    if (fNextBtn->isEnabled()) {
-        // If the signal sender is the button, we check for Shift modifier for bigger jumps
-        if (sender() == fNextBtn)
-            SendSignalOnNextSliceShift(qga::keyboardModifiers() == Qt::ShiftModifier ? 10 : 1);
-        else
-            SendSignalOnNextSliceShift(1);
-    }
-}
-
-// Handle previous image click
-void CVolumeViewer::OnPrevClicked(void)
-{
-    // send signal to controller (MVC) in order to update the content
-    if (fPrevBtn->isEnabled()) {
-        // If the signal sender is the button, we check for Shift modifier for bigger jumps
-        if (sender() == fPrevBtn)
-            SendSignalOnPrevSliceShift(qga::keyboardModifiers() == Qt::ShiftModifier ? 10 : 1);
-        else
-            SendSignalOnPrevSliceShift(1);
-    }
-}
-
-// Handle image index change
-void CVolumeViewer::OnImageIndexSpinChanged(void)
-{
-    // send signal to controller in order to update the content
-    SendSignalOnLoadAnyImage(fImageIndexSpin->value());
-}
-
 // Handle image rotation change
 void CVolumeViewer::OnImageRotationSpinChanged(void)
 {
     SetRotation(fImageRotationSpin->value());
 }
 
-
 void CVolumeViewer::OnViewAxisChanged(void)
-{
-    std::cout << "view axis changed" << std::endl;
-    
+{    
     axis = fAxisCombo->currentData().toInt();
     
-    SetImageIndex(fImageIndex);
+    loadSlice();
 }
 
 void CVolumeViewer::OnLocChanged(int x_, int y_, int z_)
@@ -465,28 +391,19 @@ void CVolumeViewer::OnLocChanged(int x_, int y_, int z_)
     bool have_change = false;
     int slice_index = 0;
     
-    if (x != x_ && axis == 0) {
+    if (loc[0] != x_ && axis == 0)
         have_change = true;
-        slice_index = x_;
-    }
-    
-    if (y != y_ && axis == 1) {
+    if (loc[1] != y_ && axis == 1)
         have_change = true;
-        slice_index = y_;
-    }
-    
-    if (z != z_ && axis == 2) {
+    if (loc[2] != z_ && axis == 2)
         have_change = true;
-        slice_index = z_;
-    }
     
-    x = x_;
-    y = y_;
-    z = z_;
+    loc[0] = x_;
+    loc[1] = y_;
+    loc[2] = z_;
     
-    std::cout << "loc changed " << have_change <<  std::endl;
     if (have_change)
-        SetImageIndex(slice_index);
+        loadSlice();
 }
 
 // Update the status of the buttons
@@ -495,8 +412,6 @@ void CVolumeViewer::UpdateButtons(void)
     fZoomInBtn->setEnabled(fImgQImage != nullptr && fScaleFactor < 10.0);
     fZoomOutBtn->setEnabled(fImgQImage != nullptr && fScaleFactor > 0.05);
     fResetBtn->setEnabled(fImgQImage != nullptr && fabs(fScaleFactor - 1.0) > 1e-6);
-    fNextBtn->setEnabled(fImgQImage != nullptr);
-    fPrevBtn->setEnabled(fImgQImage != nullptr);
 }
 
 // Reset the viewer
@@ -513,19 +428,16 @@ void CVolumeViewer::Reset()
 void CVolumeViewer::setVolume(volcart::Volume::Pointer volume_)
 {
     volume = volume_;
+    loadSlice();
 }
 
-void CVolumeViewer::SetImageIndex(int nImageIndex)
+void CVolumeViewer::loadSlice()
 {
-    std::cout << "try set index to " << nImageIndex << "\n";
-    fImageIndex = nImageIndex;
-    fImageIndexSpin->setValue(nImageIndex);
-    
     QImage aImgQImage;
     cv::Mat aImgMat;
     
     if (volume) {
-        aImgMat = volume->getAxisSliceData(nImageIndex, axis);
+        aImgMat = volume->getAxisSliceData(loc[axis], axis);
 
         if (aImgMat.isContinuous() && aImgMat.type() == CV_16U) {
             // create QImage directly backed by cv::Mat buffer
@@ -539,5 +451,4 @@ void CVolumeViewer::SetImageIndex(int nImageIndex)
     }
     
     UpdateButtons();
-    
 }

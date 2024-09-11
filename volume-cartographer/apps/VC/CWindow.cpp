@@ -7,7 +7,7 @@
 #include <QSettings>
 #include <opencv2/imgproc.hpp>
 
-#include "CVolumeViewerWithCurve.hpp"
+#include "CVolumeViewer.hpp"
 #include "UDataManipulateUtils.hpp"
 #include "SettingsDialog.hpp"
 #include "UndoCommands.hpp"
@@ -177,13 +177,6 @@ CWindow::CWindow()
         restoreState(geometry.value("mainWin/state").toByteArray());
     }
 
-    // Set initial scan range based on settings
-    auto it = std::find(scanRangeSteps.begin(), scanRangeSteps.end(), settings.value("perf/initial_step_size", 1).toInt());
-    if (it != scanRangeSteps.end()) {
-        currentScanRangeIndex = std::distance(scanRangeSteps.begin(), it);
-        fVolumeViewerWidget->SetScanRange(scanRangeSteps[std::distance(scanRangeSteps.begin(), it)]);
-    }
-
     // If enabled, auto open the last used volpkg
     if (settings.value("volpkg/auto_open", false).toInt() != 0) {
 
@@ -214,10 +207,9 @@ void CWindow::CreateWidgets(void)
     QSettings settings("VC.ini", QSettings::IniFormat);
 
     // add volume viewer
-    fVolumeViewerWidget = new CVolumeViewerWithCurve(fSegStructMap);
-    connect(fVolumeViewerWidget, &CVolumeViewerWithCurve::SendSignalStatusMessageAvailable, this, &CWindow::onShowStatusMessage);
-    connect(fVolumeViewerWidget, &CVolumeViewerWithCurve::SendSignalImpactRangeUp, this, &CWindow::onImpactRangeUp);
-    connect(fVolumeViewerWidget, &CVolumeViewerWithCurve::SendSignalImpactRangeDown, this, &CWindow::onImpactRangeDown);
+    // fVolumeViewerWidget = new CVolumeViewerWithCurve(fSegStructMap);
+    fVolumeViewerWidget = new CVolumeViewer();
+    // connect(fVolumeViewerWidget, &CVolumeViewerWithCurve::SendSignalStatusMessageAvailable, this, &CWindow::onShowStatusMessage);
     connect(this, &CWindow::sendLocChanged, fVolumeViewerWidget, &CVolumeViewer::OnLocChanged);
 
     auto aWidgetLayout = new QVBoxLayout;
@@ -225,25 +217,15 @@ void CWindow::CreateWidgets(void)
 
     ui.tabSegment->setLayout(aWidgetLayout);
 
-    // pass the reference of the curve to the widget
-    fVolumeViewerWidget->SetSplineCurve(fSplineCurve);
-    fVolumeViewerWidget->SetIntersectionCurve(fSegStructMap[fSegmentationId].fIntersectionCurve);
-
     connect(
-        fVolumeViewerWidget, SIGNAL(SendSignalOnNextSliceShift(int)), this,
-        SLOT(OnLoadNextSliceShift(int)));
-    connect(
-        fVolumeViewerWidget, SIGNAL(SendSignalOnPrevSliceShift(int)), this,
-        SLOT(OnLoadPrevSliceShift(int)));
-    connect(
-        fVolumeViewerWidget, SIGNAL(SendSignalOnLoadAnyImage(int)), this,
-        SLOT(OnLoadAnySlice(int)));
-    connect(
-        fVolumeViewerWidget, SIGNAL(SendSignalPathChanged(std::string, PathChangePointVector, PathChangePointVector)), this,
-        SLOT(OnPathChanged(std::string, PathChangePointVector, PathChangePointVector)));
-    connect(
-        fVolumeViewerWidget, SIGNAL(SendSignalAnnotationChanged()), this,
-        SLOT(OnAnnotationChanged()));
+        fVolumeViewerWidget, SIGNAL(SendSignalSliceShift(int,int)), this,
+        SLOT(OnSliceShift(int,int)));
+    // connect(
+    //     fVolumeViewerWidget, SIGNAL(SendSignalPathChanged(std::string, PathChangePointVector, PathChangePointVector)), this,
+    //     SLOT(OnPathChanged(std::string, PathChangePointVector, PathChangePointVector)));
+    // connect(
+    //     fVolumeViewerWidget, SIGNAL(SendSignalAnnotationChanged()), this,
+    //     SLOT(OnAnnotationChanged()));
 
     // new and remove path buttons
     connect(ui.btnNewPath, SIGNAL(clicked()), this, SLOT(OnNewPathClicked()));
@@ -262,9 +244,8 @@ void CWindow::CreateWidgets(void)
             }
             currentVolume = newVolume;
             fVolumeViewerWidget->setVolume(currentVolume);
-            OnLoadAnySlice(0);
             setDefaultWindowWidth(newVolume);
-            fVolumeViewerWidget->SetNumSlices(currentVolume->numSlices());
+            // fVolumeViewerWidget->SetNumSlices(currentVolume->numSlices());
             ui.spinBackwardSlice->setMaximum(currentVolume->numSlices() - 1);
             ui.spinForwardSlice->setMaximum(currentVolume->numSlices() - 1);
 
@@ -297,9 +278,8 @@ void CWindow::CreateWidgets(void)
             }
             currentVolume = newVolume;
             fVolumeViewerWidget->setVolume(currentVolume);
-            OnLoadAnySlice(0);
             setDefaultWindowWidth(newVolume);
-            fVolumeViewerWidget->SetNumSlices(currentVolume->numSlices());
+            // fVolumeViewerWidget->SetNumSlices(currentVolume->numSlices());
             ui.spinBackwardSlice->setMaximum(currentVolume->numSlices() - 1);
             ui.spinForwardSlice->setMaximum(currentVolume->numSlices() - 1);
         });
@@ -316,8 +296,8 @@ void CWindow::CreateWidgets(void)
     // pen tool and edit tool
     fPenTool = this->findChild<QPushButton*>("btnPenTool");
     fSegTool = this->findChild<QPushButton*>("btnSegTool");
-    connect(fPenTool, SIGNAL(clicked()), this, SLOT(TogglePenTool()));
-    connect(fSegTool, SIGNAL(clicked()), this, SLOT(ToggleSegmentationTool()));
+    // connect(fPenTool, SIGNAL(clicked()), this, SLOT(TogglePenTool()));
+    // connect(fSegTool, SIGNAL(clicked()), this, SLOT(ToggleSegmentationTool()));
     fPenTool->setStyleSheet(QString("QPushButton:checked { background-color: rgb(%1, %2, %3); }")
         .arg(QGuiApplication::palette().color(QPalette::Highlight).red())
         .arg(QGuiApplication::palette().color(QPalette::Highlight).green())
@@ -429,7 +409,7 @@ void CWindow::CreateWidgets(void)
     ui.segParamsStack->addWidget(opticalFlowParamsContainer);
     // set the default segmentation method as Optical Flow Segmentation
     aSegMethodsComboBox->setCurrentIndex(1);
-    OnChangeSegAlgo(1);
+    // OnChangeSegAlgo(1);
 
     // LRPS segmentation parameters
     // all of these are contained in ui.lrpsParams
@@ -518,7 +498,7 @@ void CWindow::CreateWidgets(void)
     next100 = new QShortcut(QKeySequence(Qt::Key_0), this);
     prevSelectedId = new QShortcut(QKeySequence(Qt::Key_K), this);
     nextSelectedId = new QShortcut(QKeySequence(Qt::Key_J), this);
-    goToSlice = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_G), this);
+    // goToSlice = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_G), this);
     scanRangeUp = new QShortcut(QKeySequence(Qt::Key_E), this);
     scanRangeDown = new QShortcut(QKeySequence(Qt::Key_Q), this);
     returnToEditSlice = new QShortcut(QKeySequence(Qt::Key_F), this);
@@ -529,46 +509,34 @@ void CWindow::CreateWidgets(void)
     rotateCCW = new QShortcut(QKeySequence(Qt::Key_U), this);
 
     connect(
-        slicePrev, &QShortcut::activated, fVolumeViewerWidget,
-        &CVolumeViewerWithCurve::OnPrevClicked);
-    connect(
-        sliceNext, &QShortcut::activated, fVolumeViewerWidget,
-        &CVolumeViewerWithCurve::OnNextClicked);
-    connect(
         sliceZoomIn, &QShortcut::activated, fVolumeViewerWidget,
-        &CVolumeViewerWithCurve::OnZoomInClicked);
+        &CVolumeViewer::OnZoomInClicked);
     connect(
         sliceZoomOut, &QShortcut::activated, fVolumeViewerWidget,
-        &CVolumeViewerWithCurve::OnZoomOutClicked);
-    connect(
-        displayCurves, &QShortcut::activated, fVolumeViewerWidget,
-        &CVolumeViewerWithCurve::toggleShowCurveBox);
-    connect(
-        displayCurves_C, &QShortcut::activated, fVolumeViewerWidget,
-        &CVolumeViewerWithCurve::toggleShowCurveBox);
-    connect(impactUp, &QShortcut::activated, this, &CWindow::onImpactRangeUp);
-    connect(impactDwn, &QShortcut::activated, this, &CWindow::onImpactRangeDown);
-    connect(impactUp_old, &QShortcut::activated, this, &CWindow::onImpactRangeUp);
-    connect(impactDwn_old, &QShortcut::activated, this, &CWindow::onImpactRangeDown);
-    connect(segmentationToolShortcut, &QShortcut::activated, this, &CWindow::ActivateSegmentationTool);
-    connect(penToolShortcut, &QShortcut::activated, this, &CWindow::ActivatePenTool);
-    connect(next1, &QShortcut::activated, [this]() { OnLoadNextSliceShift(1); });
-    connect(prev1, &QShortcut::activated, [this]() { OnLoadPrevSliceShift(1); });
-    connect(next5, &QShortcut::activated, [this]() { OnLoadNextSliceShift(5); });
-    connect(prev5, &QShortcut::activated, [this]() { OnLoadPrevSliceShift(5); });
-    connect(next10, &QShortcut::activated, [this]() { OnLoadNextSliceShift(10); });
-    connect(prev10, &QShortcut::activated, [this]() { OnLoadPrevSliceShift(10); });
-    connect(next50, &QShortcut::activated, [this]() { OnLoadNextSliceShift(50); });
-    connect(prev50, &QShortcut::activated, [this]() { OnLoadPrevSliceShift(50); });
-    connect(next100, &QShortcut::activated, [this]() { OnLoadNextSliceShift(100); });
-    connect(prev100, &QShortcut::activated, [this]() { OnLoadPrevSliceShift(100); });
-    connect(prevSelectedId, &QShortcut::activated, this, &CWindow::PreviousSelectedId);
-    connect(nextSelectedId, &QShortcut::activated, this, &CWindow::NextSelectedId);
-    connect(goToSlice, &QShortcut::activated, this, &CWindow::ShowGoToSliceDlg);
-    connect(scanRangeUp, &QShortcut::activated, this, &CWindow::ScanRangeUp);
-    connect(scanRangeDown, &QShortcut::activated, this, &CWindow::ScanRangeDown);
-    connect(returnToEditSlice, &QShortcut::activated, this, &CWindow::ReturnToEditSlice);
-    connect(toggleAnchor, &QShortcut::activated, this, &CWindow::ToggleAnchor);
+        &CVolumeViewer::OnZoomOutClicked);
+    // connect(impactUp, &QShortcut::activated, this, &CWindow::onImpactRangeUp);
+    // connect(impactDwn, &QShortcut::activated, this, &CWindow::onImpactRangeDown);
+    // connect(impactUp_old, &QShortcut::activated, this, &CWindow::onImpactRangeUp);
+    // connect(impactDwn_old, &QShortcut::activated, this, &CWindow::onImpactRangeDown);
+    // connect(segmentationToolShortcut, &QShortcut::activated, this, &CWindow::ActivateSegmentationTool);
+    // connect(penToolShortcut, &QShortcut::activated, this, &CWindow::ActivatePenTool);
+    // connect(next1, &QShortcut::activated, [this]() { OnLoadNextSliceShift(1); });
+    // connect(prev1, &QShortcut::activated, [this]() { OnLoadPrevSliceShift(1); });
+    // connect(next5, &QShortcut::activated, [this]() { OnLoadNextSliceShift(5); });
+    // connect(prev5, &QShortcut::activated, [this]() { OnLoadPrevSliceShift(5); });
+    // connect(next10, &QShortcut::activated, [this]() { OnLoadNextSliceShift(10); });
+    // connect(prev10, &QShortcut::activated, [this]() { OnLoadPrevSliceShift(10); });
+    // connect(next50, &QShortcut::activated, [this]() { OnLoadNextSliceShift(50); });
+    // connect(prev50, &QShortcut::activated, [this]() { OnLoadPrevSliceShift(50); });
+    // connect(next100, &QShortcut::activated, [this]() { OnLoadNextSliceShift(100); });
+    // connect(prev100, &QShortcut::activated, [this]() { OnLoadPrevSliceShift(100); });
+    // connect(prevSelectedId, &QShortcut::activated, this, &CWindow::PreviousSelectedId);
+    // connect(nextSelectedId, &QShortcut::activated, this, &CWindow::NextSelectedId);
+    // connect(goToSlice, &QShortcut::activated, this, &CWindow::ShowGoToSliceDlg);
+    // connect(scanRangeUp, &QShortcut::activated, this, &CWindow::ScanRangeUp);
+    // connect(scanRangeDown, &QShortcut::activated, this, &CWindow::ScanRangeDown);
+    // connect(returnToEditSlice, &QShortcut::activated, this, &CWindow::ReturnToEditSlice);
+    // connect(toggleAnchor, &QShortcut::activated, this, &CWindow::ToggleAnchor);
     connect(resetRotation, &QShortcut::activated, fVolumeViewerWidget, &CVolumeViewer::ResetRotation);
     connect(resetRotationAlternative, &QShortcut::activated, fVolumeViewerWidget, &CVolumeViewer::ResetRotation);
     connect(rotateCW, &QShortcut::activated, fVolumeViewerWidget, [this]() { fVolumeViewerWidget->Rotate(5); });
@@ -965,26 +933,25 @@ void CWindow::UpdateView(void)
 
     // REVISIT - these two states should be mutually exclusive, we guarantee
     // this when we toggle the button, BUGGY!
-    if (fWindowState == EWindowState::WindowStateIdle) {
-        fVolumeViewerWidget->SetViewState(
-            CVolumeViewerWithCurve::EViewState::ViewStateIdle);
-        this->findChild<QGroupBox*>("grpVolManager")->setEnabled(true);
-        this->findChild<QGroupBox*>("grpSeg")->setEnabled(false);
-    } else if (fWindowState == EWindowState::WindowStateDrawPath) {
-        fVolumeViewerWidget->SetViewState(
-            CVolumeViewerWithCurve::EViewState::ViewStateDraw);
-        this->findChild<QGroupBox*>("grpVolManager")->setEnabled(false);
-        this->findChild<QGroupBox*>("grpSeg")->setEnabled(false);
-    } else if (fWindowState == EWindowState::WindowStateSegmentation) {
-        fVolumeViewerWidget->SetViewState(
-            CVolumeViewerWithCurve::EViewState::ViewStateEdit);
-        this->findChild<QGroupBox*>("grpVolManager")->setEnabled(false);
-        this->findChild<QGroupBox*>("grpSeg")->setEnabled(true);
-    } else {
-        // something else
-    }
+    // if (fWindowState == EWindowState::WindowStateIdle) {
+    //     fVolumeViewerWidget->SetViewState(
+    //         CVolumeViewerWithCurve::EViewState::ViewStateIdle);
+    //     this->findChild<QGroupBox*>("grpVolManager")->setEnabled(true);
+    //     this->findChild<QGroupBox*>("grpSeg")->setEnabled(false);
+    // } else if (fWindowState == EWindowState::WindowStateDrawPath) {
+    //     fVolumeViewerWidget->SetViewState(
+    //         CVolumeViewerWithCurve::EViewState::ViewStateDraw);
+    //     this->findChild<QGroupBox*>("grpVolManager")->setEnabled(false);
+    //     this->findChild<QGroupBox*>("grpSeg")->setEnabled(false);
+    // } else if (fWindowState == EWindowState::WindowStateSegmentation) {
+    //     fVolumeViewerWidget->SetViewState(
+    //         CVolumeViewerWithCurve::EViewState::ViewStateEdit);
+    //     this->findChild<QGroupBox*>("grpVolManager")->setEnabled(false);
+    //     this->findChild<QGroupBox*>("grpSeg")->setEnabled(true);
+    // } else {
+    //     // something else
+    // }
 
-    fVolumeViewerWidget->UpdateView();
     UpdateAnnotationList();
 
     update();
@@ -1704,7 +1671,7 @@ void CWindow::OpenSlice(void)
         aImgQImage = Mat2QImage(aImgMat);
 
     fVolumeViewerWidget->SetImage(aImgQImage);*/
-    fVolumeViewerWidget->SetImageIndex(fPathOnSliceIndex);
+    // fVolumeViewerWidget->/*SetImageIndex*/(fPathOnSliceIndex);
 }
 
 // Initialize path list
@@ -2402,156 +2369,142 @@ void CWindow::OnPathItemClicked(QTreeWidgetItem* item, int column)
 
 // Logic to switch the selected ID
 void CWindow::PreviousSelectedId() {
-    // seg that is currently highlighted
-    std::string currentId;
-    for (auto& seg : fSegStructMap) {
-        if (seg.second.highlighted) {
-            currentId = seg.first;
-        }
-        seg.second.highlighted = false;
-    }
-    fHighlightedSegmentationId = "";
-
-    // Find the previous seg that is active (compute or display)
-    std::string previousId;
-    for (auto& seg : fSegStructMap) {
-        if (seg.first == currentId) {
-            break;
-        }
-        if (seg.second.compute) {
-            previousId = seg.first;
-        }
-    }
-    // If no previous seg found, start from the end
-    if (previousId.empty()) {
-        for (auto& seg : fSegStructMap) {
-            if (seg.second.compute) {
-                previousId = seg.first;
-            }
-        }
-    }
-    // If still no previous seg found, return
-    if (previousId.empty()) {
-        return;
-    }
-
-    // Set the previous seg to highlighted
-    fSegStructMap[previousId].highlighted = true;
-    fHighlightedSegmentationId = previousId;
-    fPathListWidget->clearSelection();
-    fPathListWidget->findItems(QString::fromStdString(previousId), Qt::MatchExactly, 0).at(0)->setSelected(true);
-
-    UpdateView();
+    // // seg that is currently highlighted
+    // std::string currentId;
+    // for (auto& seg : fSegStructMap) {
+    //     if (seg.second.highlighted) {
+    //         currentId = seg.first;
+    //     }
+    //     seg.second.highlighted = false;
+    // }
+    // fHighlightedSegmentationId = "";
+    // 
+    // // Find the previous seg that is active (compute or display)
+    // std::string previousId;
+    // for (auto& seg : fSegStructMap) {
+    //     if (seg.first == currentId) {
+    //         break;
+    //     }
+    //     if (seg.second.compute) {
+    //         previousId = seg.first;
+    //     }
+    // }
+    // // If no previous seg found, start from the end
+    // if (previousId.empty()) {
+    //     for (auto& seg : fSegStructMap) {
+    //         if (seg.second.compute) {
+    //             previousId = seg.first;
+    //         }
+    //     }
+    // }
+    // // If still no previous seg found, return
+    // if (previousId.empty()) {
+    //     return;
+    // }
+    // 
+    // // Set the previous seg to highlighted
+    // fSegStructMap[previousId].highlighted = true;
+    // fHighlightedSegmentationId = previousId;
+    // fPathListWidget->clearSelection();
+    // fPathListWidget->findItems(QString::fromStdString(previousId), Qt::MatchExactly, 0).at(0)->setSelected(true);
+    // 
+    // UpdateView();
 }
 
 // Handle path item selection changed
 void CWindow::OnPathItemSelectionChanged()
 {
-    // First mark all as "not highlighted"
-    for (auto& seg : fSegStructMap) {
-        seg.second.highlighted = false;
-    }
-    fHighlightedSegmentationId = "";
-
-    auto items = fPathListWidget->selectedItems();
-    if (!items.empty()) {
-        OnPathItemClicked(items.at(0), 0);
-    }
-
-    ui.btnRemovePath->setEnabled(!items.empty());
+    // // First mark all as "not highlighted"
+    // for (auto& seg : fSegStructMap) {
+    //     seg.second.highlighted = false;
+    // }
+    // fHighlightedSegmentationId = "";
+    // 
+    // auto items = fPathListWidget->selectedItems();
+    // if (!items.empty()) {
+    //     OnPathItemClicked(items.at(0), 0);
+    // }
+    // 
+    // ui.btnRemovePath->setEnabled(!items.empty());
 }
 
 // Logic to switch the selected ID
 void CWindow::NextSelectedId() {
-    // seg that is currently highlighted
-    std::string currentId;
-    for (auto& seg : fSegStructMap) {
-        if (seg.second.highlighted) {
-            currentId = seg.first;
-        }
-        seg.second.highlighted = false;
-    }
-    fHighlightedSegmentationId = "";
-
-    // Find the next seg that is active (compute or display)
-    std::string nextId;
-    bool found = false;
-    for (auto& seg : fSegStructMap) {
-        if (found && seg.second.compute) {
-            nextId = seg.first;
-            break;
-        }
-        if (seg.first == currentId) {
-            found = true;
-        }
-    }
-    // If no next seg found, start from the beginning
-    if (nextId.empty()) {
-        for (auto& seg : fSegStructMap) {
-            if (seg.second.compute) {
-                nextId = seg.first;
-                break;
-            }
-        }
-    }
-    // If still no next seg found, return
-    if (nextId.empty()) {
-        return;
-    }
-
-    // Set the next seg to highlighted
-    fSegStructMap[nextId].highlighted = true;
-    fHighlightedSegmentationId = nextId;
-    fPathListWidget->clearSelection();
-    fPathListWidget->findItems(QString::fromStdString(nextId), Qt::MatchExactly, 0).at(0)->setSelected(true);
-
-    UpdateView();
+    // // seg that is currently highlighted
+    // std::string currentId;
+    // for (auto& seg : fSegStructMap) {
+    //     if (seg.second.highlighted) {
+    //         currentId = seg.first;
+    //     }
+    //     seg.second.highlighted = false;
+    // }
+    // fHighlightedSegmentationId = "";
+    // 
+    // // Find the next seg that is active (compute or display)
+    // std::string nextId;
+    // bool found = false;
+    // for (auto& seg : fSegStructMap) {
+    //     if (found && seg.second.compute) {
+    //         nextId = seg.first;
+    //         break;
+    //     }
+    //     if (seg.first == currentId) {
+    //         found = true;
+    //     }
+    // }
+    // // If no next seg found, start from the beginning
+    // if (nextId.empty()) {
+    //     for (auto& seg : fSegStructMap) {
+    //         if (seg.second.compute) {
+    //             nextId = seg.first;
+    //             break;
+    //         }
+    //     }
+    // }
+    // // If still no next seg found, return
+    // if (nextId.empty()) {
+    //     return;
+    // }
+    // 
+    // // Set the next seg to highlighted
+    // fSegStructMap[nextId].highlighted = true;
+    // fHighlightedSegmentationId = nextId;
+    // fPathListWidget->clearSelection();
+    // fPathListWidget->findItems(QString::fromStdString(nextId), Qt::MatchExactly, 0).at(0)->setSelected(true);
+    // 
+    // UpdateView();
 }
 
 void CWindow::annotationDoubleClicked(QTreeWidgetItem* item)
 {
     auto slice = item->text(0).toInt();
-    OnLoadAnySlice(slice);
+    // OnLoadAnySlice(slice);
 }
 
-// Show go to slice dialog and execute the jump
-void CWindow::ShowGoToSliceDlg() {
-    if (currentVolume == nullptr || !fVolumeViewerWidget->fNextBtn->isEnabled()) {
-        return;
-    }
-
-
-    bool status;
-    const int sliceIndex = QInputDialog::getInt(this, tr("Go to slice"), tr("Slice Index"), 0, 0, currentVolume->numSlices() - 1, 1, &status);
-
-    if (status) {
-        OnLoadAnySlice(sliceIndex);
-    }
-}
 
 void CWindow::ScanRangeUp() {
-    if (currentScanRangeIndex < std::size(scanRangeSteps) - 1) {
-        currentScanRangeIndex++;
-    }
-
-    // Always inform the UI/user, even if the value stayed the same
-    fVolumeViewerWidget->SetScanRange(scanRangeSteps[currentScanRangeIndex]);
+    // if (currentScanRangeIndex < std::size(scanRangeSteps) - 1) {
+    //     currentScanRangeIndex++;
+    // }
+    // 
+    // // Always inform the UI/user, even if the value stayed the same
+    // fVolumeViewerWidget->SetScanRange(scanRangeSteps[currentScanRangeIndex]);
 }
 
 void CWindow::ScanRangeDown() {
-    if (currentScanRangeIndex > 0) {
-        currentScanRangeIndex--;
-        fVolumeViewerWidget->SetScanRange(scanRangeSteps[currentScanRangeIndex]);
-    }
-
-    // Always inform the UI/user, even if the value stayed the same
-    fVolumeViewerWidget->SetScanRange(scanRangeSteps[currentScanRangeIndex]);
+    // if (currentScanRangeIndex > 0) {
+    //     currentScanRangeIndex--;
+    //     fVolumeViewerWidget->SetScanRange(scanRangeSteps[currentScanRangeIndex]);
+    // }
+    // 
+    // // Always inform the UI/user, even if the value stayed the same
+    // fVolumeViewerWidget->SetScanRange(scanRangeSteps[currentScanRangeIndex]);
 }
 
 void CWindow::ReturnToEditSlice() {
-    if (fSegTool->isChecked()) {
-        fVolumeViewerWidget->ReturnToSliceIndexToolStart();
-    }
+    // if (fSegTool->isChecked()) {
+    //     fVolumeViewerWidget->ReturnToSliceIndexToolStart();
+    // }
 }
 
 void CWindow::ToggleAnchor() {
@@ -2564,26 +2517,26 @@ void CWindow::ToggleAnchor() {
 
 // Logic to activate pen tool
 void CWindow::ActivatePenTool() {
-    // Pen tool available
-    if (fPenTool->isEnabled()) {
-        fPenTool->setChecked(!fPenTool->isChecked());
-        TogglePenTool();
-    }
+    // // Pen tool available
+    // if (fPenTool->isEnabled()) {
+    //     fPenTool->setChecked(!fPenTool->isChecked());
+    //     // TogglePenTool();
+    // }
 }
 
 // Logic to activate/deactivate segmentation tool
 void CWindow::ActivateSegmentationTool() {
-    // Segmentation tool available
-    if (fSegTool->isEnabled()) {
-        fSegTool->setChecked(!fSegTool->isChecked());
-        ToggleSegmentationTool();
-    }
+    // // Segmentation tool available
+    // if (fSegTool->isEnabled()) {
+    //     fSegTool->setChecked(!fSegTool->isChecked());
+    //     ToggleSegmentationTool();
+    // }
 }
 
 // Toggle the status of the pen tool
 void CWindow::TogglePenTool(void)
 {
-    if (fPenTool->isChecked()) {
+    /*if (fPenTool->isChecked()) {
         fWindowState = EWindowState::WindowStateDrawPath;
         fSliceIndexToolStart = fPathOnSliceIndex;
         fVolumeViewerWidget->SetSliceIndexToolStart(fSliceIndexToolStart);
@@ -2612,13 +2565,13 @@ void CWindow::TogglePenTool(void)
         fVolumeViewerWidget->SetSliceIndexToolStart(fSliceIndexToolStart);
     }
 
-    UpdateView();
+    UpdateView();*/
 }
 
 // Toggle the status of the segmentation tool
 void CWindow::ToggleSegmentationTool(void)
 {
-    if (fSegTool->isChecked()) {
+    /*if (fSegTool->isChecked()) {
         // If the prefetching worker is not yet running, start it
         if (!prefetchWorker.joinable()) {
             prefetchWorker = std::thread(&CWindow::prefetchSlices, this);
@@ -2690,7 +2643,7 @@ void CWindow::ToggleSegmentationTool(void)
         fVolumeViewerWidget->SetSliceIndexToolStart(fSliceIndexToolStart);
         ui.btnEvenlySpacePoints->setEnabled(false);
     }
-    UpdateView();
+    UpdateView();*/
 }
 
 void CWindow::OnChangeSegAlgo(int index)
@@ -2823,136 +2776,93 @@ void CWindow::OnBtnStartSegClicked(void) { DoSegmentation(); }
 // Handle changes to impact range
 void CWindow::OnEdtImpactRange(int nImpactRangeIndex)
 {
-    // Translate value from slider (treated as index into steps) to actual impact range value
-    auto impactRange = impactRangeSteps.at(nImpactRangeIndex);
-    fVolumeViewerWidget->SetImpactRange(impactRange);
-    ui.labImpactRange->setText(QString::number(impactRange));
+    // // Translate value from slider (treated as index into steps) to actual impact range value
+    // auto impactRange = impactRangeSteps.at(nImpactRangeIndex);
+    // fVolumeViewerWidget->SetImpactRange(impactRange);
+    // ui.labImpactRange->setText(QString::number(impactRange));
 }
 
 // Handle request to evenly space points
 void CWindow::OnEvenlySpacePoints()
 {
-    if (fSegTool->isChecked()) {
-        for (auto& seg : fSegStructMap) {
-            if (seg.second.compute) {
-
-                // Collect before snapshot
-                PathChangePointVector pathChangeBefore;
-                for (int i = 0; i < seg.second.fIntersectionCurve.GetPointsNum(); i++) {
-                    auto pathChangePoint = PathChangePoint();
-                    pathChangePoint.pointIndex = i;
-                    pathChangePoint.position = seg.second.fIntersectionCurve.GetPoint(i);
-                    pathChangeBefore.push_back(pathChangePoint);
-                }
-
-                // Actually move the points
-                seg.second.EvenlySpacePoints(fSliceIndexToolStart);
-
-                // Collect after snapshot
-                PathChangePointVector pathChangeAfter;
-                for (int i = 0; i < seg.second.fIntersectionCurve.GetPointsNum(); i++) {
-                    auto pathChangePoint = PathChangePoint();
-                    pathChangePoint.pointIndex = i;
-                    pathChangePoint.position = seg.second.fIntersectionCurve.GetPoint(i);
-                    pathChangeAfter.push_back(pathChangePoint);
-                }
-
-                // Add to undo stack
-                auto undo = new EvenlySpaceCurveCommand(fVolumeViewerWidget, &seg.second, pathChangeBefore, pathChangeAfter);
-                undo->setText(tr("Evenly Space Points"));
-                undoStack->push(undo);
-            }
-        }
-
-        UpdateView();
-    }
+    // if (fSegTool->isChecked()) {
+    //     for (auto& seg : fSegStructMap) {
+    //         if (seg.second.compute) {
+    // 
+    //             // Collect before snapshot
+    //             PathChangePointVector pathChangeBefore;
+    //             for (int i = 0; i < seg.second.fIntersectionCurve.GetPointsNum(); i++) {
+    //                 auto pathChangePoint = PathChangePoint();
+    //                 pathChangePoint.pointIndex = i;
+    //                 pathChangePoint.position = seg.second.fIntersectionCurve.GetPoint(i);
+    //                 pathChangeBefore.push_back(pathChangePoint);
+    //             }
+    // 
+    //             // Actually move the points
+    //             seg.second.EvenlySpacePoints(fSliceIndexToolStart);
+    // 
+    //             // Collect after snapshot
+    //             PathChangePointVector pathChangeAfter;
+    //             for (int i = 0; i < seg.second.fIntersectionCurve.GetPointsNum(); i++) {
+    //                 auto pathChangePoint = PathChangePoint();
+    //                 pathChangePoint.pointIndex = i;
+    //                 pathChangePoint.position = seg.second.fIntersectionCurve.GetPoint(i);
+    //                 pathChangeAfter.push_back(pathChangePoint);
+    //             }
+    // 
+    //             // Add to undo stack
+    //             auto undo = new EvenlySpaceCurveCommand(fVolumeViewerWidget, &seg.second, pathChangeBefore, pathChangeAfter);
+    //             undo->setText(tr("Evenly Space Points"));
+    //             undoStack->push(undo);
+    //         }
+    //     }
+    // 
+    //     UpdateView();
+    // }
 }
 
 // Handle request to step impact range up
 void CWindow::onImpactRangeUp(void)
 {
-    // Trigger an uptick in the slider
-    if (ui.sldImpactRange->isEnabled()) {
-        ui.sldImpactRange->triggerAction(QSlider::SliderAction::SliderSingleStepAdd);
-    }
+    // // Trigger an uptick in the slider
+    // if (ui.->isEnabled()) {
+    //     ui.sldImpactRange->triggerAction(QSlider::SliderAction::SliderSingleStepAdd);
+    // }
 }
 
 // Handle request to step impact range down
 void CWindow::onImpactRangeDown(void)
 {
-    // Trigger an uptick in the slider
-    if (ui.sldImpactRange->isEnabled()) {
-        ui.sldImpactRange->triggerAction(QSlider::SliderAction::SliderSingleStepSub);
-    }
+    // // Trigger an uptick in the slider
+    // if (ui.sldImpactRange->isEnabled()) {
+    //     ui.sldImpactRange->triggerAction(QSlider::SliderAction::SliderSingleStepSub);
+    // }
 }
 
-// Handle loading any slice
-void CWindow::OnLoadAnySlice(int slice)
-{
-    std::cout << "load any slice " << slice << "\n";
-    if (slice >= 0 && currentVolume && slice < currentVolume->numSlices()) {
-        fPathOnSliceIndex = slice;
-        OpenSlice();
-        SetCurrentCurve(fPathOnSliceIndex);
-        UpdateView();
-    } else
-        statusBar->showMessage(
-            tr("ERROR: Selected slice is out of range of the volume!"), 10000);
-}
-
-void CWindow::OnLoadNextSliceShift(int shift)
+void CWindow::OnSliceShift(int shift, int axis)
 {
     std::cout << "OnLoadNextSliceShift" << "\n";
-    if (fPathOnSliceIndex + shift >= currentVolume->numSlices()) {
-        shift = currentVolume->numSlices() - fPathOnSliceIndex - 1;
-    }
-
-    if (!fVolumeViewerWidget->fNextBtn->isEnabled()) {
-        statusBar->showMessage(
-            tr("Changing slices is deactivated in the Pen Tool!"), 10000);
-    } else if (shift != 0) {
-        fPathOnSliceIndex += shift;
-        OpenSlice();
-        SetCurrentCurve(fPathOnSliceIndex);
-        UpdateView();
-    } else {
-        statusBar->showMessage(tr("Already at the end of the volume!"), 10000);
-    }
-}
-
-void CWindow::OnLoadPrevSliceShift(int shift)
-{
-    if (fPathOnSliceIndex - shift < 0) {
-        shift = fPathOnSliceIndex;
-    }
-
-    if (!fVolumeViewerWidget->fPrevBtn->isEnabled()) {
-        statusBar->showMessage(
-            tr("Changing slices is deactivated in the Pen Tool!"), 10000);
-    } else if (shift != 0) {
-        fPathOnSliceIndex -= shift;
-        OpenSlice();
-        SetCurrentCurve(fPathOnSliceIndex);
-        UpdateView();
-    } else {
-        statusBar->showMessage(
-            tr("Already at the beginning of the volume!"), 10000);
-    }
+    
+    loc[axis] += shift;
+    
+    std::cout << "FIXME check bounds and change?" << "\n";
+    
+    onLocChanged();
 }
 
 // Handle path change event
 void CWindow::OnPathChanged(std::string segID, PathChangePointVector before, PathChangePointVector after)
 {
-    if (fWindowState == EWindowState::WindowStateSegmentation) {
-        for (auto& seg : fSegStructMap) {
-            // update current segStruct
-            seg.second.OnPathChanged();
-        }
-    }
-
-    auto undo = new PathChangeCommand(fVolumeViewerWidget, &fSegStructMap[segID], before, after);
-    undo->setText(tr("Curve Change"));
-    undoStack->push(undo);
+    // if (fWindowState == EWindowState::WindowStateSegmentation) {
+    //     for (auto& seg : fSegStructMap) {
+    //         // update current segStruct
+    //         seg.second.OnPathChanged();
+    //     }
+    // }
+    // 
+    // auto undo = new PathChangeCommand(fVolumeViewerWidget, &fSegStructMap[segID], before, after);
+    // undo->setText(tr("Curve Change"));
+    // undoStack->push(undo);
 }
 
 // Handle annotation change event

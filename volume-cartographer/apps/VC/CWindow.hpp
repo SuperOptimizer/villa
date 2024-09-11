@@ -41,7 +41,7 @@ static constexpr int VOLPKG_SLICE_MIN_INDEX = 0;
 namespace ChaoVis
 {
 
-class CVolumeViewerWithCurve;
+class CVolumeViewer;
 
 class AnnotationTreeWidgetItem : public QTreeWidgetItem {
   public:
@@ -191,7 +191,7 @@ private slots:
 
     void PreviousSelectedId();
     void NextSelectedId();
-    void ShowGoToSliceDlg();
+    // void ShowGoToSliceDlg();
     void ScanRangeUp();
     void ScanRangeDown();
     void ReturnToEditSlice();
@@ -218,9 +218,7 @@ private slots:
     void OnEdtImpactRange(int nImpactRange);
     void OnEvenlySpacePoints();
 
-    void OnLoadAnySlice(int slice);
-    void OnLoadNextSliceShift(int shift);
-    void OnLoadPrevSliceShift(int shift);
+    void OnSliceShift(int shift, int axis);
 
     void OnPathChanged(std::string segID, PathChangePointVector before, PathChangePointVector after);
     void OnAnnotationChanged(void);
@@ -245,6 +243,7 @@ private:
     std::string fSegmentationId;
     std::string fHighlightedSegmentationId;
     volcart::Volume::Pointer currentVolume;
+    int loc[3] = {0,0,0};
 
     static const int AMPLITUDE = 28000;
     static const int FREQUENCY = 44100;
@@ -283,7 +282,7 @@ private:
     QAction* fAboutAct;
     QAction* fPrintDebugInfo;
 
-    CVolumeViewerWithCurve* fVolumeViewerWidget;
+    CVolumeViewer* fVolumeViewerWidget;
     QCheckBox* fchkDisplayAll;
     QCheckBox* fchkComputeAll;
     QTreeWidget* fPathListWidget;

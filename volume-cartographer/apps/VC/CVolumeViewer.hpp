@@ -77,6 +77,7 @@ public:
     void Rotate(int delta);
     void ResetRotation();
     void setVolume(volcart::Volume::Pointer volume_);
+    void loadSlice();
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event);
@@ -85,20 +86,13 @@ public slots:
     void OnZoomInClicked(void);
     void OnZoomOutClicked(void);
     void OnResetClicked(void);
-    void OnNextClicked(void);
-    void OnPrevClicked(void);
-    void OnImageIndexSpinChanged(void);
     void OnImageRotationSpinChanged(void);
     void OnViewAxisChanged(void);
     void OnLocChanged(int x_, int y_, int z_);
 
 signals:
-    void SendSignalOnNextSliceShift(int shift);
-    void SendSignalOnPrevSliceShift(int shift);
-    void SendSignalOnLoadAnyImage(int nImageIndex);
+    void SendSignalSliceShift(int shift, int axis);
     void SendSignalStatusMessageAvailable(QString text, int timeout);
-    void SendSignalImpactRangeUp(void);
-    void SendSignalImpactRangeDown(void);
 
 protected:
     void ScaleImage(double nFactor);
@@ -115,7 +109,6 @@ protected:
     QPushButton* fZoomInBtn;
     QPushButton* fZoomOutBtn;
     QPushButton* fResetBtn;
-    QSpinBox* fImageIndexSpin;
     QSpinBox* fImageRotationSpin;
     QHBoxLayout* fButtonsLayout;
     QComboBox* fAxisCombo;
@@ -124,7 +117,6 @@ protected:
     EViewState fViewState;
     QImage* fImgQImage;
     double fScaleFactor;
-    int fImageIndex;
     int sliceIndexToolStart{-1};
     int fScanRange;  // how many slices a mouse wheel step will jump
     // Required to be able to reset the rotation without also resetting the scaling
@@ -139,9 +131,7 @@ protected:
     
     volcart::Volume::Pointer volume = nullptr;
     int axis = 0;
-    int x = 0;
-    int y = 0;
-    int z = 0;
+    int loc[3] = {0,0,0};
 };  // class CVolumeViewer
 
 }  // namespace ChaoVis

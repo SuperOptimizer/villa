@@ -13,36 +13,36 @@ PathChangeCommand::PathChangeCommand(CVolumeViewerWithCurve* viewer, Segmentatio
 
 void PathChangeCommand::undo()
 {
-    segStruct->UpdateChangedCurvePoints(segStruct->fPathOnSliceIndex, before);
-
-    // Check if we have annotation flags we need to adjust
-    std::set<int> noLongerManual;
-    for (int i = 0; i < after.size(); i++) {
-        if (after.at(i).manuallyChanged && before.at(i).manuallyChanged == false) {
-            noLongerManual.insert(after.at(i).pointIndex);
-        }
-    }
-
-    segStruct->RemovePointsFromManualBuffer(noLongerManual);
-    segStruct->SetCurrentCurve(segStruct->fPathOnSliceIndex);
-    viewer->UpdateView();
+    // segStruct->UpdateChangedCurvePoints(segStruct->fPathOnSliceIndex, before);
+    // 
+    // // Check if we have annotation flags we need to adjust
+    // std::set<int> noLongerManual;
+    // for (int i = 0; i < after.size(); i++) {
+    //     if (after.at(i).manuallyChanged && before.at(i).manuallyChanged == false) {
+    //         noLongerManual.insert(after.at(i).pointIndex);
+    //     }
+    // }
+    // 
+    // segStruct->RemovePointsFromManualBuffer(noLongerManual);
+    // segStruct->SetCurrentCurve(segStruct->fPathOnSliceIndex);
+    // viewer->UpdateView();
 }
 
 void PathChangeCommand::redo()
 {
-    segStruct->UpdateChangedCurvePoints(segStruct->fPathOnSliceIndex, after);
-
-    // Check if we have annotation flags we need to adjust
-    std::set<int> nowManual;
-    for (int i = 0; i < after.size(); i++) {
-        if (before.at(i).manuallyChanged == false && after.at(i).manuallyChanged) {
-            nowManual.insert(after.at(i).pointIndex);
-        }
-    }
-
-    segStruct->AddPointsToManualBuffer(nowManual);
-    segStruct->SetCurrentCurve(segStruct->fPathOnSliceIndex);
-    viewer->UpdateView();
+    // segStruct->UpdateChangedCurvePoints(segStruct->fPathOnSliceIndex, after);
+    // 
+    // // Check if we have annotation flags we need to adjust
+    // std::set<int> nowManual;
+    // for (int i = 0; i < after.size(); i++) {
+    //     if (before.at(i).manuallyChanged == false && after.at(i).manuallyChanged) {
+    //         nowManual.insert(after.at(i).pointIndex);
+    //     }
+    // }
+    // 
+    // segStruct->AddPointsToManualBuffer(nowManual);
+    // segStruct->SetCurrentCurve(segStruct->fPathOnSliceIndex);
+    // viewer->UpdateView();
 }
 
 EvenlySpaceCurveCommand::EvenlySpaceCurveCommand(CVolumeViewerWithCurve* viewer, SegmentationStruct* segStruct,
@@ -53,14 +53,14 @@ EvenlySpaceCurveCommand::EvenlySpaceCurveCommand(CVolumeViewerWithCurve* viewer,
 
 void EvenlySpaceCurveCommand::undo()
 {
-    segStruct->UpdateChangedCurvePoints(segStruct->fPathOnSliceIndex, before);
-    segStruct->SetCurrentCurve(segStruct->fPathOnSliceIndex);
-    viewer->UpdateView();
+    // segStruct->UpdateChangedCurvePoints(segStruct->fPathOnSliceIndex, before);
+    // segStruct->SetCurrentCurve(segStruct->fPathOnSliceIndex);
+    // viewer->UpdateView();
 }
 
 void EvenlySpaceCurveCommand::redo()
 {
-    segStruct->UpdateChangedCurvePoints(segStruct->fPathOnSliceIndex, after);
-    segStruct->SetCurrentCurve(segStruct->fPathOnSliceIndex);
-    viewer->UpdateView();
+    // segStruct->UpdateChangedCurvePoints(segStruct->fPathOnSliceIndex, after);
+    // segStruct->SetCurrentCurve(segStruct->fPathOnSliceIndex);
+    // viewer->UpdateView();
 }
