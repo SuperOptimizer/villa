@@ -83,7 +83,7 @@ void Volume::zarrOpen()
         z5::filesystem::handle::Dataset ds_handle(group, "1", "/");
         zarrDs_ = z5::filesystem::openDataset(ds_handle);
         
-        chunk_cache_ = ChunkCacheType::New(2048L);
+        chunk_cache_ = ChunkCacheType::New(4096L);
         
         zarrDs_->enableCaching(true,
             [&](z5::types::ShapeType chunkId, void* chunk, z5::types::ShapeType shape, std::size_t size) -> void { putCacheChunk(chunkId, chunk, shape, size); },
@@ -178,6 +178,14 @@ auto Volume::getSliceData(int index) const -> cv::Mat
         return cache_slice_(index);
     }
     return load_slice_(index);
+}
+
+auto Volume::getAxisSliceData(int index, int axis) const -> cv::Mat
+{
+    if (cacheSlices_ && !isZarr) {
+        return cache_slice_(index);
+    }
+    return load_axis_slice_(index, axis);
 }
 
 auto Volume::getSliceDataCopy(int index) const -> cv::Mat
@@ -389,6 +397,59 @@ auto Volume::load_slice_(int index) const -> cv::Mat
         z5::multiarray::readSubarray<uint8_t>(*zarrDs_, array, offset.begin(), threads);
         
         cv::Mat m = cv::Mat(height_/2, width_/2, CV_8U, array.data()).clone();
+        
+        return m;
+    }
+    
+    
+    std::cout << "regular load!" << path_ << "\n";    
+    
+    auto slicePath = getSlicePath(index);
+    cv::Mat mat;
+    if (slicePath.extension() == ".tif") {
+        try {
+            mat = tio::ReadTIFF(slicePath.string());
+        } catch (std::runtime_error) {
+        }
+    }
+    else if (slicePath.extension() == ".jxl") {
+        mat = read_jxl(slicePath);
+        mat.convertTo(mat, CV_16UC1, 257);
+    }
+    else {
+        mat = cv::imread(slicePath, cv::IMREAD_UNCHANGED);
+    }
+    
+    if (!mat.empty() && (mat.size().width != sliceWidth() || mat.size().height != sliceHeight()))
+    {
+        cv::resize(mat, mat, cv::Size(sliceWidth(),sliceHeight()), 0,0, cv::INTER_CUBIC);
+    }
+    
+    return mat;
+}
+
+auto Volume::load_axis_slice_(int index, int axis) const -> cv::Mat
+{
+    {
+        std::unique_lock<std::shared_mutex> lock(print_mutex_);
+        std::cout << "Requested to load slice " << index << std::endl;
+    }
+    
+    if (isZarr) {
+        std::cout << "implement zarr data reading!" << "\n";
+        int threads = static_cast<int>(std::thread::hardware_concurrency());
+        
+        z5::types::ShapeType offset = {0, 0, 0};
+        offset[axis] = index;
+        xt::xarray<uint8_t>::shape_type shape = {slices_/2, height_/2, width_/2};
+        shape[axis] = 1;
+        xt::xarray<uint8_t> array(shape);
+        
+        z5::multiarray::readSubarray<uint8_t>(*zarrDs_, array, offset.begin(), threads);
+        
+        array = xt::squeeze(array);
+        
+        cv::Mat m = cv::Mat(array.shape()[0], array.shape()[1], CV_8U, array.data()).clone();
         
         return m;
     }

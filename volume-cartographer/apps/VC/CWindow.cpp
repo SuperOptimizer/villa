@@ -260,6 +260,7 @@ void CWindow::CreateWidgets(void)
                 return;
             }
             currentVolume = newVolume;
+            fVolumeViewerWidget->setVolume(currentVolume);
             OnLoadAnySlice(0);
             setDefaultWindowWidth(newVolume);
             fVolumeViewerWidget->SetNumSlices(currentVolume->numSlices());
@@ -294,6 +295,7 @@ void CWindow::CreateWidgets(void)
                 }
             }
             currentVolume = newVolume;
+            fVolumeViewerWidget->setVolume(currentVolume);
             OnLoadAnySlice(0);
             setDefaultWindowWidth(newVolume);
             fVolumeViewerWidget->SetNumSlices(currentVolume->numSlices());
@@ -1600,7 +1602,8 @@ void CWindow::SetCurrentCurve(int nCurrentSliceIndex)
 }
 
 void CWindow::prefetchSlices(void) {
-  while (true) {
+  std::cout << "prefetching disabled " << "\n";
+ /*while (true) {
     std::unique_lock<std::mutex> lk(cv_m);
     cv.wait(lk, [this]{return prefetchSliceIndex != -1 || stopPrefetching.load();});
 
@@ -1642,19 +1645,20 @@ void CWindow::prefetchSlices(void) {
     }
 
     prefetchSliceIndex = -1;
-  }
+  }*/
 }
 
 // Function to start prefetching around a certain slice
 void CWindow::startPrefetching(int index) {
-  prefetchSliceIndex = index;
-  cv.notify_one();
+  std::cout << "disabled prefetching" << "\n";
+  // prefetchSliceIndex = index;
+  // cv.notify_one();
 }
 
 // Open slice
 void CWindow::OpenSlice(void)
 {
-    QImage aImgQImage;
+    /*QImage aImgQImage;
     cv::Mat aImgMat;
     if (fVpkg != nullptr) {
         // Stop prefetching
@@ -1689,7 +1693,7 @@ void CWindow::OpenSlice(void)
     } else
         aImgQImage = Mat2QImage(aImgMat);
 
-    fVolumeViewerWidget->SetImage(aImgQImage);
+    fVolumeViewerWidget->SetImage(aImgQImage);*/
     fVolumeViewerWidget->SetImageIndex(fPathOnSliceIndex);
 }
 
@@ -2875,6 +2879,7 @@ void CWindow::onImpactRangeDown(void)
 // Handle loading any slice
 void CWindow::OnLoadAnySlice(int slice)
 {
+    std::cout << "load any slice " << slice << "\n";
     if (slice >= 0 && currentVolume && slice < currentVolume->numSlices()) {
         fPathOnSliceIndex = slice;
         OpenSlice();
@@ -2887,6 +2892,7 @@ void CWindow::OnLoadAnySlice(int slice)
 
 void CWindow::OnLoadNextSliceShift(int shift)
 {
+    std::cout << "OnLoadNextSliceShift" << "\n";
     if (fPathOnSliceIndex + shift >= currentVolume->numSlices()) {
         shift = currentVolume->numSlices() - fPathOnSliceIndex - 1;
     }

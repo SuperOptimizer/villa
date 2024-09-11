@@ -11,6 +11,8 @@
 #include <QGraphicsScene>
 #include <QDebug>
 
+#include "vc/core/types/VolumePkg.hpp"
+
 namespace ChaoVis
 {
 
@@ -69,16 +71,12 @@ public:
     void Reset();
 
     virtual void SetImage(const QImage& nSrc);
-    void SetImageIndex(int nImageIndex)
-    {
-        fImageIndex = nImageIndex;
-        fImageIndexSpin->setValue(nImageIndex);
-        UpdateButtons();
-    }
+    void SetImageIndex(int nImageIndex);
     void SetNumSlices(int num);
     void SetRotation(int degress);
     void Rotate(int delta);
     void ResetRotation();
+    void setVolume(volcart::Volume::Pointer volume_);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event);
@@ -91,6 +89,7 @@ public slots:
     void OnPrevClicked(void);
     void OnImageIndexSpinChanged(void);
     void OnImageRotationSpinChanged(void);
+    void OnViewAxisChanged(void);
 
 signals:
     void SendSignalOnNextSliceShift(int shift);
@@ -118,6 +117,7 @@ protected:
     QSpinBox* fImageIndexSpin;
     QSpinBox* fImageRotationSpin;
     QHBoxLayout* fButtonsLayout;
+    QComboBox* fAxisCombo;
 
     // data
     EViewState fViewState;
@@ -135,6 +135,9 @@ protected:
     bool fSkipImageFormatConv;
 
     QGraphicsPixmapItem* fBaseImageItem;
+    
+    volcart::Volume::Pointer volume = nullptr;
+    int axis = 0;
 };  // class CVolumeViewer
 
 }  // namespace ChaoVis

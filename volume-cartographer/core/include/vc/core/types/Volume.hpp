@@ -156,6 +156,9 @@ public:
      * well. Use getSliceDataCopy() if the slice is to be modified.
      */
     cv::Mat getSliceData(int index) const;
+    
+    
+    cv::Mat getAxisSliceData(int index, int axis) const;
 
     /** @copydoc getSliceData(int) const */
     cv::Mat getSliceDataCopy(int index) const;
@@ -284,6 +287,7 @@ protected:
 
     /** Load slice from disk */
     cv::Mat load_slice_(int index) const;
+    cv::Mat load_axis_slice_(int index, int axis) const;
     /** Load slice from cache */
     cv::Mat cache_slice_(int index) const;
     /** Shared mutex for thread-safe access */

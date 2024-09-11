@@ -1,6 +1,7 @@
 // CVolumeViewer.cpp
 // Chao Du 2015 April
 #include "CVolumeViewer.hpp"
+#include "UDataManipulateUtils.hpp"
 #include "HBase.hpp"
 
 using namespace ChaoVis;
@@ -156,6 +157,13 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     fImageRotationSpin->setEnabled(true);
     connect(fImageRotationSpin, SIGNAL(editingFinished()), this, SLOT(OnImageRotationSpinChanged()));
 
+    fAxisCombo = new QComboBox(this);
+    //data is the missing axis (but in inverted order ZYX)
+    fAxisCombo->addItem(QString::fromStdString("XY"), QVariant(0));
+    fAxisCombo->addItem(QString::fromStdString("XZ"), QVariant(1));
+    fAxisCombo->addItem(QString::fromStdString("YZ"), QVariant(2));
+    connect(fAxisCombo, &QComboBox::currentIndexChanged, this, &CVolumeViewer::OnViewAxisChanged);
+
     fBaseImageItem = nullptr;
 
     // Create graphics view
@@ -180,6 +188,7 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     fButtonsLayout->addWidget(fNextBtn);
     fButtonsLayout->addWidget(fImageIndexSpin);
     fButtonsLayout->addWidget(fImageRotationSpin);
+    fButtonsLayout->addWidget(fAxisCombo);
     // Add some space between the slice spin box and the curve tools (color, checkboxes, ...)
     fButtonsLayout->addSpacerItem(new QSpacerItem(1, 0, QSizePolicy::Expanding, QSizePolicy::Fixed));
 
@@ -441,6 +450,16 @@ void CVolumeViewer::OnImageRotationSpinChanged(void)
     SetRotation(fImageRotationSpin->value());
 }
 
+
+void CVolumeViewer::OnViewAxisChanged(void)
+{
+    std::cout << "view axis changed" << std::endl;
+    
+    axis = fAxisCombo->currentData().toInt();
+    
+    SetImageIndex(fImageIndex);
+}
+
 // Update the status of the buttons
 void CVolumeViewer::UpdateButtons(void)
 {
@@ -460,4 +479,36 @@ void CVolumeViewer::Reset()
     }
 
     OnResetClicked(); // to reset zoom
+}
+
+void CVolumeViewer::setVolume(volcart::Volume::Pointer volume_)
+{
+    volume = volume_;
+}
+
+void CVolumeViewer::SetImageIndex(int nImageIndex)
+{
+    std::cout << "try set index to " << nImageIndex << "\n";
+    fImageIndex = nImageIndex;
+    fImageIndexSpin->setValue(nImageIndex);
+    
+    QImage aImgQImage;
+    cv::Mat aImgMat;
+    
+    if (volume) {
+        aImgMat = volume->getAxisSliceData(nImageIndex, axis);
+
+        if (aImgMat.isContinuous() && aImgMat.type() == CV_16U) {
+            // create QImage directly backed by cv::Mat buffer
+            aImgQImage = QImage(
+                aImgMat.ptr(), aImgMat.cols, aImgMat.rows, aImgMat.step,
+                QImage::Format_Grayscale16);
+        } else
+            aImgQImage = Mat2QImage(aImgMat);
+            
+        SetImage(aImgQImage);
+    }
+    
+    UpdateButtons();
+    
 }
