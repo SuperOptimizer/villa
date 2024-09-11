@@ -90,6 +90,7 @@ public slots:
     void OnImageIndexSpinChanged(void);
     void OnImageRotationSpinChanged(void);
     void OnViewAxisChanged(void);
+    void OnLocChanged(int x_, int y_, int z_);
 
 signals:
     void SendSignalOnNextSliceShift(int shift);
@@ -138,6 +139,9 @@ protected:
     
     volcart::Volume::Pointer volume = nullptr;
     int axis = 0;
+    int x = 0;
+    int y = 0;
+    int z = 0;
 };  // class CVolumeViewer
 
 }  // namespace ChaoVis

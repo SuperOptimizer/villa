@@ -20,7 +20,7 @@
    <string>Volume Cartographer</string>
   </property>
   <property name="dockOptions">
-   <set>QMainWindow::AllowNestedDocks|QMainWindow::AllowTabbedDocks|QMainWindow::AnimatedDocks</set>
+   <set>QMainWindow::DockOption::AllowNestedDocks|QMainWindow::DockOption::AllowTabbedDocks|QMainWindow::DockOption::AnimatedDocks</set>
   </property>
   <widget class="QWidget" name="horizontalLayoutWidget">
    <property name="sizePolicy">
@@ -62,8 +62,7 @@
             <string>Segmentation Tool</string>
            </property>
            <property name="icon">
-            <iconset theme="format-justify-fill">
-             <normaloff>.</normaloff>.</iconset>
+            <iconset theme="format-justify-fill"/>
            </property>
            <property name="checkable">
             <bool>true</bool>
@@ -82,8 +81,7 @@
             <string>Pen Tool</string>
            </property>
            <property name="icon">
-            <iconset theme="edit-find-replace">
-             <normaloff>.</normaloff>.</iconset>
+            <iconset theme="edit-find-replace"/>
            </property>
            <property name="checkable">
             <bool>true</bool>
@@ -107,8 +105,7 @@
              </sizepolicy>
             </property>
             <attribute name="icon">
-             <iconset theme="image-x-generic">
-              <normaloff>.</normaloff>.</iconset>
+             <iconset theme="image-x-generic"/>
             </attribute>
             <attribute name="title">
              <string>Segment</string>
@@ -128,17 +125,17 @@
    <property name="minimumSize">
     <size>
      <width>250</width>
-     <height>53</height>
+     <height>64</height>
     </size>
    </property>
    <property name="floating">
     <bool>false</bool>
    </property>
    <property name="features">
-    <set>QDockWidget::DockWidgetClosable|QDockWidget::DockWidgetFloatable|QDockWidget::DockWidgetMovable</set>
+    <set>QDockWidget::DockWidgetFeature::DockWidgetClosable|QDockWidget::DockWidgetFeature::DockWidgetFloatable|QDockWidget::DockWidgetFeature::DockWidgetMovable</set>
    </property>
    <property name="allowedAreas">
-    <set>Qt::LeftDockWidgetArea|Qt::RightDockWidgetArea</set>
+    <set>Qt::DockWidgetArea::LeftDockWidgetArea|Qt::DockWidgetArea::RightDockWidgetArea</set>
    </property>
    <property name="windowTitle">
     <string>Volume Package</string>
@@ -300,21 +297,21 @@
   <widget class="QDockWidget" name="dockWidgetAnnotations">
    <property name="minimumSize">
     <size>
-     <width>92</width>
-     <height>130</height>
+     <width>103</width>
+     <height>143</height>
     </size>
    </property>
    <property name="floating">
     <bool>false</bool>
    </property>
    <property name="features">
-    <set>QDockWidget::DockWidgetClosable|QDockWidget::DockWidgetFloatable|QDockWidget::DockWidgetMovable</set>
+    <set>QDockWidget::DockWidgetFeature::DockWidgetClosable|QDockWidget::DockWidgetFeature::DockWidgetFloatable|QDockWidget::DockWidgetFeature::DockWidgetMovable</set>
    </property>
    <property name="allowedAreas">
-    <set>Qt::LeftDockWidgetArea|Qt::RightDockWidgetArea</set>
+    <set>Qt::DockWidgetArea::LeftDockWidgetArea|Qt::DockWidgetArea::RightDockWidgetArea</set>
    </property>
    <property name="windowTitle">
-    <string>Annotations</string>
+    <string>A&amp;nnotations</string>
    </property>
    <attribute name="dockWidgetArea">
     <number>1</number>
@@ -359,7 +356,7 @@
              <bool>true</bool>
             </property>
             <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
+             <set>QAbstractItemView::EditTrigger::NoEditTriggers</set>
             </property>
             <property name="indentation">
              <number>0</number>
@@ -417,7 +414,7 @@
     </size>
    </property>
    <property name="allowedAreas">
-    <set>Qt::LeftDockWidgetArea|Qt::RightDockWidgetArea</set>
+    <set>Qt::DockWidgetArea::LeftDockWidgetArea|Qt::DockWidgetArea::RightDockWidgetArea</set>
    </property>
    <property name="windowTitle">
     <string>Segmentation</string>
@@ -473,10 +470,10 @@
            </sizepolicy>
           </property>
           <property name="frameShape">
-           <enum>QFrame::Panel</enum>
+           <enum>QFrame::Shape::Panel</enum>
           </property>
           <property name="frameShadow">
-           <enum>QFrame::Plain</enum>
+           <enum>QFrame::Shadow::Plain</enum>
           </property>
           <property name="lineWidth">
            <number>0</number>
@@ -489,15 +486,15 @@
             <rect>
              <x>0</x>
              <y>0</y>
-             <width>396</width>
-             <height>389</height>
+             <width>367</width>
+             <height>360</height>
             </rect>
            </property>
            <property name="layoutDirection">
-            <enum>Qt::LeftToRight</enum>
+            <enum>Qt::LayoutDirection::LeftToRight</enum>
            </property>
            <property name="autoFillBackground">
-            <bool>true</bool>
+            <bool>false</bool>
            </property>
            <layout class="QVBoxLayout" name="verticalLayout_12">
             <property name="spacing">
@@ -753,7 +750,7 @@
              <number>8</number>
             </property>
             <property name="orientation">
-             <enum>Qt::Horizontal</enum>
+             <enum>Qt::Orientation::Horizontal</enum>
             </property>
            </widget>
           </item>
@@ -775,6 +772,43 @@
         </item>
        </layout>
       </widget>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+  <widget class="QDockWidget" name="dockWidgetLocation">
+   <attribute name="dockWidgetArea">
+    <number>1</number>
+   </attribute>
+   <widget class="QWidget" name="dockWidgetLocationContents">
+    <property name="sizePolicy">
+     <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+      <horstretch>0</horstretch>
+      <verstretch>0</verstretch>
+     </sizepolicy>
+    </property>
+    <property name="maximumSize">
+     <size>
+      <width>280</width>
+      <height>82</height>
+     </size>
+    </property>
+    <layout class="QGridLayout" name="gridLayout">
+     <item row="0" column="0">
+      <layout class="QHBoxLayout" name="horizontalLayout_4">
+       <property name="spacing">
+        <number>6</number>
+       </property>
+       <item>
+        <widget class="QSpinBox" name="spinLocX"/>
+       </item>
+       <item>
+        <widget class="QSpinBox" name="spinLocY"/>
+       </item>
+       <item>
+        <widget class="QSpinBox" name="spinLocZ"/>
+       </item>
+      </layout>
      </item>
     </layout>
    </widget>

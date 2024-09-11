@@ -460,6 +460,35 @@ void CVolumeViewer::OnViewAxisChanged(void)
     SetImageIndex(fImageIndex);
 }
 
+void CVolumeViewer::OnLocChanged(int x_, int y_, int z_)
+{
+    bool have_change = false;
+    int slice_index = 0;
+    
+    if (x != x_ && axis == 0) {
+        have_change = true;
+        slice_index = x_;
+    }
+    
+    if (y != y_ && axis == 1) {
+        have_change = true;
+        slice_index = y_;
+    }
+    
+    if (z != z_ && axis == 2) {
+        have_change = true;
+        slice_index = z_;
+    }
+    
+    x = x_;
+    y = y_;
+    z = z_;
+    
+    std::cout << "loc changed " << have_change <<  std::endl;
+    if (have_change)
+        SetImageIndex(slice_index);
+}
+
 // Update the status of the buttons
 void CVolumeViewer::UpdateButtons(void)
 {

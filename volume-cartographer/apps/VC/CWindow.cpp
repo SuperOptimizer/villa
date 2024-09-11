@@ -218,6 +218,7 @@ void CWindow::CreateWidgets(void)
     connect(fVolumeViewerWidget, &CVolumeViewerWithCurve::SendSignalStatusMessageAvailable, this, &CWindow::onShowStatusMessage);
     connect(fVolumeViewerWidget, &CVolumeViewerWithCurve::SendSignalImpactRangeUp, this, &CWindow::onImpactRangeUp);
     connect(fVolumeViewerWidget, &CVolumeViewerWithCurve::SendSignalImpactRangeDown, this, &CWindow::onImpactRangeDown);
+    connect(this, &CWindow::sendLocChanged, fVolumeViewerWidget, &CVolumeViewer::OnLocChanged);
 
     auto aWidgetLayout = new QVBoxLayout;
     aWidgetLayout->addWidget(fVolumeViewerWidget);
@@ -572,6 +573,15 @@ void CWindow::CreateWidgets(void)
     connect(resetRotationAlternative, &QShortcut::activated, fVolumeViewerWidget, &CVolumeViewer::ResetRotation);
     connect(rotateCW, &QShortcut::activated, fVolumeViewerWidget, [this]() { fVolumeViewerWidget->Rotate(5); });
     connect(rotateCCW, &QShortcut::activated, fVolumeViewerWidget, [this]() { fVolumeViewerWidget->Rotate(-5); });
+    
+    //new location input
+    spinLocX = this->findChild<QSpinBox*>("spinLocX");
+    spinLocY = this->findChild<QSpinBox*>("spinLocY");
+    spinLocZ = this->findChild<QSpinBox*>("spinLocZ");
+    
+    connect(spinLocX, &QSpinBox::valueChanged, this, &CWindow::onLocChanged);
+    connect(spinLocY, &QSpinBox::valueChanged, this, &CWindow::onLocChanged);
+    connect(spinLocZ, &QSpinBox::valueChanged, this, &CWindow::onLocChanged);
 }
 
 // Create menus
@@ -2995,4 +3005,12 @@ void CWindow::onForwardButtonGroupToggled(QAbstractButton* button, bool checked)
     }
 
     ui.spinForwardSlice->setDisabled((button == ui.radioForwardAnchor || button == ui.radioForwardNoRun) && checked);
+}
+
+// Handle request to step impact range down
+void CWindow::onLocChanged(void)
+{
+    std::cout << "loc changed!" << "\n";
+    
+    sendLocChanged(spinLocX->value(),spinLocY->value(),spinLocZ->value());
 }

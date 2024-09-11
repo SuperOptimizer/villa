@@ -103,6 +103,7 @@ public:
 
 signals:
     void submitSegmentation(Segmenter::Pointer s);
+    void sendLocChanged(int x, int y, int z);
 
 public slots:
     void onSegmentationFinished(Segmenter::Pointer segmenter, Segmenter::PointSet ps);
@@ -110,6 +111,7 @@ public slots:
     void onShowStatusMessage(QString text, int timeout);
     void onImpactRangeUp(void);
     void onImpactRangeDown(void);
+    void onLocChanged(void);
 
 public:
     CWindow();
@@ -306,6 +308,10 @@ private:
     QSpinBox* edtInterpolationPercent;
 
     QSlider* fEdtImpactRange;
+    
+    QSpinBox* spinLocX;
+    QSpinBox* spinLocY;
+    QSpinBox* spinLocZ;
 
     // keyboard shortcuts
     QShortcut* slicePrev;
