@@ -164,6 +164,14 @@ target_link_libraries(vc_imgtozarr
     z5
 )
 
+## img2zarr ##
+add_executable(vc_zarrextract src/ZarrExtract.cpp)
+target_link_libraries(vc_zarrextract
+    nlohmann_json::nlohmann_json
+    z5
+    opencv_highgui
+)
+
 # Install targets
 if(VC_INSTALL_APPS)
 install(
