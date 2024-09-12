@@ -104,6 +104,7 @@ public:
 signals:
     void submitSegmentation(Segmenter::Pointer s);
     void sendLocChanged(int x, int y, int z);
+    void sendVolumeChanged(volcart::Volume::Pointer vol);
 
 public slots:
     void onSegmentationFinished(Segmenter::Pointer segmenter, Segmenter::PointSet ps);
@@ -127,6 +128,7 @@ private:
     void UpdateRecentVolpkgList(const QString& path);
     void RemoveEntryFromRecentVolpkg(const QString& path);
 
+    CVolumeViewer *newConnectedCVolumeViewer(void);
     void closeEvent(QCloseEvent* event);
 
     void setWidgetsEnabled(bool state);

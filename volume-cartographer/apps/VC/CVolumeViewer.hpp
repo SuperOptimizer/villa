@@ -89,6 +89,7 @@ public slots:
     void OnImageRotationSpinChanged(void);
     void OnViewAxisChanged(void);
     void OnLocChanged(int x_, int y_, int z_);
+    void OnVolumeChanged(volcart::Volume::Pointer vol);
 
 signals:
     void SendSignalSliceShift(int shift, int axis);

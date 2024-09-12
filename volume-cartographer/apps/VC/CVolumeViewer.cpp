@@ -425,7 +425,7 @@ void CVolumeViewer::Reset()
     OnResetClicked(); // to reset zoom
 }
 
-void CVolumeViewer::setVolume(volcart::Volume::Pointer volume_)
+void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
 {
     volume = volume_;
     loadSlice();

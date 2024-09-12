@@ -84,7 +84,7 @@ CWindow::CWindow()
     , fSegmentationId("")
     , fHighlightedSegmentationId("")
     , fPathOnSliceIndex(0)
-    , fVolumeViewerWidget(nullptr)
+    // , fVolumeViewerWidget(nullptr)
     , fPathListWidget(nullptr)
     , fAnnotationListWidget(nullptr)
     , fPenTool(nullptr)
@@ -201,31 +201,36 @@ CWindow::~CWindow(void)
     SDL_Quit();
 }
 
+CVolumeViewer *CWindow::newConnectedCVolumeViewer(void)
+{
+    auto volView = new CVolumeViewer();
+    // connect(fVolumeViewerWidget, &CVolumeViewerWithCurve::SendSignalStatusMessageAvailable, this, &CWindow::onShowStatusMessage);
+    connect(this, &CWindow::sendLocChanged, volView, &CVolumeViewer::OnLocChanged);
+    connect(volView, SIGNAL(SendSignalSliceShift(int,int)), this, SLOT(OnSliceShift(int,int)));
+    connect(volView, SIGNAL(SendSignalSliceShift(int,int)), this, SLOT(OnSliceShift(int,int)));
+    connect(this, &CWindow::sendVolumeChanged, volView, &CVolumeViewer::OnVolumeChanged);
+    
+    return volView;
+}
+
 // Create widgets
 void CWindow::CreateWidgets(void)
 {
     QSettings settings("VC.ini", QSettings::IniFormat);
 
     // add volume viewer
-    // fVolumeViewerWidget = new CVolumeViewerWithCurve(fSegStructMap);
-    fVolumeViewerWidget = new CVolumeViewer();
-    // connect(fVolumeViewerWidget, &CVolumeViewerWithCurve::SendSignalStatusMessageAvailable, this, &CWindow::onShowStatusMessage);
-    connect(this, &CWindow::sendLocChanged, fVolumeViewerWidget, &CVolumeViewer::OnLocChanged);
-
     auto aWidgetLayout = new QGridLayout;
-    aWidgetLayout->addWidget(fVolumeViewerWidget, 0, 0);
-    auto volview2 = new CVolumeViewer();
-    aWidgetLayout->addWidget(volview2, 0, 1);
-    volview2 = new CVolumeViewer();
-    aWidgetLayout->addWidget(volview2, 1, 0);
-    volview2 = new CVolumeViewer();
-    aWidgetLayout->addWidget(volview2, 1, 1);
+    auto volView = newConnectedCVolumeViewer();
+    aWidgetLayout->addWidget(volView, 0, 0);
+    volView = newConnectedCVolumeViewer();
+    aWidgetLayout->addWidget(volView, 0, 1);
+    volView = newConnectedCVolumeViewer();
+    aWidgetLayout->addWidget(volView, 1, 0);
+    volView = newConnectedCVolumeViewer();
+    aWidgetLayout->addWidget(volView, 1, 1);
 
     ui.tabSegment->setLayout(aWidgetLayout);
 
-    connect(
-        fVolumeViewerWidget, SIGNAL(SendSignalSliceShift(int,int)), this,
-        SLOT(OnSliceShift(int,int)));
     // connect(
     //     fVolumeViewerWidget, SIGNAL(SendSignalPathChanged(std::string, PathChangePointVector, PathChangePointVector)), this,
     //     SLOT(OnPathChanged(std::string, PathChangePointVector, PathChangePointVector)));
@@ -249,13 +254,13 @@ void CWindow::CreateWidgets(void)
                 return;
             }
             currentVolume = newVolume;
-            fVolumeViewerWidget->setVolume(currentVolume);
-            setDefaultWindowWidth(newVolume);
+            sendVolumeChanged(currentVolume);
+            // setDefaultWindowWidth(newVolume);
             // fVolumeViewerWidget->SetNumSlices(currentVolume->numSlices());
-            ui.spinBackwardSlice->setMaximum(currentVolume->numSlices() - 1);
-            ui.spinForwardSlice->setMaximum(currentVolume->numSlices() - 1);
+            // ui.spinBackwardSlice->setMaximum(currentVolume->numSlices() - 1);
+            // ui.spinForwardSlice->setMaximum(currentVolume->numSlices() - 1);
 
-            fillPreviewSelect();
+            // fillPreviewSelect();
         });
 
     // TODO CHANGE VOLUME LOADING; FIRST CHECK FOR OTHER VOLUMES IN THE STRUCTS
@@ -283,8 +288,8 @@ void CWindow::CreateWidgets(void)
                 }
             }
             currentVolume = newVolume;
-            fVolumeViewerWidget->setVolume(currentVolume);
-            setDefaultWindowWidth(newVolume);
+            sendVolumeChanged(currentVolume);
+            // setDefaultWindowWidth(newVolume);
             // fVolumeViewerWidget->SetNumSlices(currentVolume->numSlices());
             ui.spinBackwardSlice->setMaximum(currentVolume->numSlices() - 1);
             ui.spinForwardSlice->setMaximum(currentVolume->numSlices() - 1);
@@ -514,12 +519,12 @@ void CWindow::CreateWidgets(void)
     rotateCW = new QShortcut(QKeySequence(Qt::Key_O), this);
     rotateCCW = new QShortcut(QKeySequence(Qt::Key_U), this);
 
-    connect(
-        sliceZoomIn, &QShortcut::activated, fVolumeViewerWidget,
-        &CVolumeViewer::OnZoomInClicked);
-    connect(
-        sliceZoomOut, &QShortcut::activated, fVolumeViewerWidget,
-        &CVolumeViewer::OnZoomOutClicked);
+    // connect(
+    //     sliceZoomIn, &QShortcut::activated, fVolumeViewerWidget,
+    //     &CVolumeViewer::OnZoomInClicked);
+    // connect(
+    //     sliceZoomOut, &QShortcut::activated, fVolumeViewerWidget,
+    //     &CVolumeViewer::OnZoomOutClicked);
     // connect(impactUp, &QShortcut::activated, this, &CWindow::onImpactRangeUp);
     // connect(impactDwn, &QShortcut::activated, this, &CWindow::onImpactRangeDown);
     // connect(impactUp_old, &QShortcut::activated, this, &CWindow::onImpactRangeUp);
@@ -543,10 +548,10 @@ void CWindow::CreateWidgets(void)
     // connect(scanRangeDown, &QShortcut::activated, this, &CWindow::ScanRangeDown);
     // connect(returnToEditSlice, &QShortcut::activated, this, &CWindow::ReturnToEditSlice);
     // connect(toggleAnchor, &QShortcut::activated, this, &CWindow::ToggleAnchor);
-    connect(resetRotation, &QShortcut::activated, fVolumeViewerWidget, &CVolumeViewer::ResetRotation);
-    connect(resetRotationAlternative, &QShortcut::activated, fVolumeViewerWidget, &CVolumeViewer::ResetRotation);
-    connect(rotateCW, &QShortcut::activated, fVolumeViewerWidget, [this]() { fVolumeViewerWidget->Rotate(5); });
-    connect(rotateCCW, &QShortcut::activated, fVolumeViewerWidget, [this]() { fVolumeViewerWidget->Rotate(-5); });
+    // connect(resetRotation, &QShortcut::activated, fVolumeViewerWidget, &CVolumeViewer::ResetRotation);
+    // connect(resetRotationAlternative, &QShortcut::activated, fVolumeViewerWidget, &CVolumeViewer::ResetRotation);
+    // connect(rotateCW, &QShortcut::activated, fVolumeViewerWidget, [this]() { fVolumeViewerWidget->Rotate(5); });
+    // connect(rotateCCW, &QShortcut::activated, fVolumeViewerWidget, [this]() { fVolumeViewerWidget->Rotate(-5); });
     
     //new location input
     spinLocX = this->findChild<QSpinBox*>("spinLocX");
@@ -784,7 +789,7 @@ void CWindow::setWidgetsEnabled(bool state)
     this->findChild<QPushButton*>("btnSegTool")->setEnabled(state);
     this->findChild<QPushButton*>("btnPenTool")->setEnabled(state);
     this->findChild<QGroupBox*>("grpEditing")->setEnabled(state);
-    fVolumeViewerWidget->SetButtonsEnabled(state);
+    // fVolumeViewerWidget->SetButtonsEnabled(state);
 }
 
 auto CWindow::InitializeVolumePkg(const std::string& nVpkgPath) -> bool
@@ -1869,7 +1874,8 @@ void CWindow::CloseVolume(void)
     fSegTool->setChecked(false);                   // Reset Segmentation Tool Button
     ui.chkDisplayAll->setChecked(false);
     ui.chkComputeAll->setChecked(false);
-    fVolumeViewerWidget->Reset();
+    //FIXME use signal
+    // fVolumeViewerWidget->Reset();
     ResetPointCloud();
     OpenSlice();
     InitPathList();
