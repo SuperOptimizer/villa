@@ -26,15 +26,15 @@ std::ostream& operator<< (std::ostream& out, const std::vector<size_t> &v) {
     return out;
 }
 
-// std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v) {
-//     if ( !v.empty() ) {
-//         out << '[';
-//         for(auto &v : v)
-//             out << v << ",";
-//         out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
-//     }
-//     return out;
-// }
+std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v) {
+    if ( !v.empty() ) {
+        out << '[';
+        for(auto &v : v)
+            out << v << ",";
+        out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
+    }
+    return out;
+}
 
 
 shape chunkId(const std::unique_ptr<z5::Dataset> &ds, shape coord)
@@ -55,6 +55,7 @@ shape idCoord(const std::unique_ptr<z5::Dataset> &ds, shape id)
     return coord;
 }
 
+//NOTE depending on request this might load a lot (the whole array) into RAM
 void readInterpolated3D(xt::xarray<uint8_t> &out, std::unique_ptr<z5::Dataset> &ds, const xt::xarray<float> &coords)
 {
     // auto dims = xt::range(_,coords.shape().size()-2);
@@ -82,7 +83,10 @@ void readInterpolated3D(xt::xarray<uint8_t> &out, std::unique_ptr<z5::Dataset> &
     
     auto out_shape = coords.shape();
     out_shape.back() = 1;
-    out = xt::empty<uint8_t>(out_shape);
+    if (out.shape() != out_shape) {
+        std::cout << "allocating out as its wrong size!" << std::endl;
+        out = xt::empty<uint8_t>(out_shape);
+    }
     
     auto iter_coords = xt::axis_slice_begin(coords, 2);
     auto iter_out = xt::axis_slice_begin(out, 2);
@@ -96,6 +100,38 @@ void readInterpolated3D(xt::xarray<uint8_t> &out, std::unique_ptr<z5::Dataset> &
     }
     
     // std::cout << "read to buf" << std::endl;
+}
+
+//TODO make the chunking more intelligent and efficient - for now this is probably good enough ...
+//this method will chunk over the second and third last dim of coords (which should probably be x and y)
+void readInterpolated3DChunked(xt::xarray<uint8_t> &out, std::unique_ptr<z5::Dataset> &ds, const xt::xarray<float> &coords, size_t chunk_size)
+{
+    auto out_shape = coords.shape();
+    out_shape.back() = 1;
+    out = xt::zeros<uint8_t>(out_shape);
+    
+    std::cout << out_shape << " " << coords.shape() << "\n";
+    
+    //FIXME assert dims
+    
+    int xdim = coords.shape().size()-2;
+    int ydim = coords.shape().size()-3;
+    
+    std::cout << coords.shape(ydim) << " " << coords.shape(xdim) << "\n";
+
+    for(size_t y = 0;y<coords.shape(ydim);y+=chunk_size)
+        for(size_t x = 0;x<coords.shape(xdim);x+=chunk_size) {
+            xt::xarray<uint8_t> out_view = xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()});
+            const xt::xarray<float> coord_view = xt::strided_view(coords, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()});
+            
+            std::cout << out_view.shape() << " " << x << "x" << y << std::endl;
+            // return;
+            xt::xarray<uint8_t> tmp;
+            readInterpolated3D(tmp, ds, coord_view);
+            //FIXME figure out xtensor copy/reference dynamics ...
+            xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()}) = tmp;
+        }
+        
 }
 
 int main(int argc, char *argv[])
@@ -136,19 +172,27 @@ int main(int argc, char *argv[])
   xt::xarray<float> coords = xt::zeros<float>({500,500,3});
   xt::xarray<uint8_t> img;
   
+  cv::Vec3d slice_center = {0.5,0.5,0.5};
+  cv::Vec3d slice_normal = {0.5,0.5,0.5};
+  
   for(int y=0;y<500;y++)
       for(int x=0;x<500;x++) {
-          coords(y,x,0) = 0;
+          coords(y,x,0) = 500;
           coords(y,x,1) = y+2000;
           coords(y,x,2) = x+2000;
       }
 
   readInterpolated3D(img,ds,coords);
+  m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+  cv::imwrite("img.tif", m);
 
+
+  readInterpolated3DChunked(img,ds,coords,256);
+  
   
   m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
   
-  cv::imwrite("img.tif", m);
+  cv::imwrite("img2.tif", m);
   
   return 0;
 }
