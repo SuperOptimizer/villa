@@ -3,6 +3,7 @@
 #include <xtensor/xarray.hpp>
 #include <xtensor/xaxis_slice_iterator.hpp>
 #include <xtensor/xio.hpp>
+#include <xtensor/xbuilder.hpp>
 
 #include "z5/factory.hxx"
 #include "z5/filesystem/handle.hxx"
@@ -17,6 +18,17 @@ using shape = z5::types::ShapeType;
 using namespace xt::placeholders;
 
 std::ostream& operator<< (std::ostream& out, const std::vector<size_t> &v) {
+    if ( !v.empty() ) {
+        out << '[';
+        for(auto &v : v)
+            out << v << ",";
+        out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
+    }
+    return out;
+}
+
+template <size_t N>
+std::ostream& operator<< (std::ostream& out, const std::array<size_t,N> &v) {
     if ( !v.empty() ) {
         out << '[';
         for(auto &v : v)
@@ -134,6 +146,36 @@ void readInterpolated3DChunked(xt::xarray<uint8_t> &out, std::unique_ptr<z5::Dat
         
 }
 
+class CoordGenerator
+{
+public:
+    //given input volume shape, fill a coord slice
+    virtual void gen_coords(const xt::xarray<float> coords);
+};
+
+class PlaneCoords : CoordGenerator
+{
+public:
+    PlaneCoords(cv::Vec3d origin_, cv::Vec3d normal_) : origin(origin_), normal(normal_) {};
+    void gen_coords(xt::xarray<float> &coords, int w, int h)
+    {
+        auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
+
+        
+        auto res = xt::stack(xt::xtuple(std::get<0>(grid),std::get<1>(grid)), 2);
+        coords = res;
+        // auto sh = ;
+        std::cout << res.shape() << std::endl;
+        std::cout << res(0,0,0) << std::endl;
+        std::cout << res(0,100,0) << std::endl;
+        std::cout << res(100,0,0) << std::endl;
+        std::cout << res(100,100,0) << std::endl;
+    }
+private:
+    cv::Vec3d origin = {0,0,0};
+    cv::Vec3d normal = {1,1,1};
+};
+
 int main(int argc, char *argv[])
 {
   assert(argc == 2);
@@ -175,24 +217,29 @@ int main(int argc, char *argv[])
   cv::Vec3d slice_center = {0.5,0.5,0.5};
   cv::Vec3d slice_normal = {0.5,0.5,0.5};
   
-  for(int y=0;y<500;y++)
-      for(int x=0;x<500;x++) {
-          coords(y,x,0) = 500;
-          coords(y,x,1) = y+2000;
-          coords(y,x,2) = x+2000;
-      }
-
-  readInterpolated3D(img,ds,coords);
-  m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
-  cv::imwrite("img.tif", m);
-
-
-  readInterpolated3DChunked(img,ds,coords,256);
+//   for(int y=0;y<500;y++)
+//       for(int x=0;x<500;x++) {
+//           coords(y,x,0) = 500;
+//           coords(y,x,1) = y+2000;
+//           coords(y,x,2) = x+2000;
+//       }
+// 
+//   readInterpolated3D(img,ds,coords);
+//   m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+//   cv::imwrite("img.tif", m);
+// 
+// 
+//   readInterpolated3DChunked(img,ds,coords,256);
+//   
+//   
+//   m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+//   
+//   cv::imwrite("img2.tif", m);
+  
+  PlaneCoords gen_plane({0,0,0},{1,1,1});
   
   
-  m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
-  
-  cv::imwrite("img2.tif", m);
+  gen_plane.gen_coords(coords, 1024, 768);
   
   return 0;
 }

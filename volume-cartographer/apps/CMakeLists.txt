@@ -162,7 +162,11 @@ add_executable(vc_imgtozarr src/ImgToZarr.cpp)
 target_link_libraries(vc_imgtozarr
     nlohmann_json::nlohmann_json
     z5
+    opencv_highgui
+    JPEGXL::jxl
+    JPEGXL::jxl_threads
 )
+set_property(TARGET vc_imgtozarr PROPERTY CXX_STANDARD 20)
 
 ## img2zarr ##
 add_executable(vc_zarrextract src/ZarrExtract.cpp)

@@ -60,6 +60,7 @@ set(util_srcs
     src/ApplyLUT.cpp
     src/ColorMaps.cpp
     src/Debug.cpp
+    src/Zarr.cpp
 )
 
 set(logging_srcs
