@@ -192,6 +192,10 @@ public:
             cv::normalize(vy, vy, 1,0, cv::NORM_L2);
             vx = cv::Mat(normal).cross(cv::Mat(vy));
         }
+        if (vx[0] < 0)
+            vx *= -1;
+        if (vy[10] < 0)
+            vy *= -1;
         
         std::cout << "vecs" << normal << vx << vy << "\n";
         
@@ -288,7 +292,7 @@ int main(int argc, char *argv[])
 //   
 //   cv::imwrite("img2.tif", m);
   
-  PlaneCoords gen_plane({2000,2000,0},{0.0,0.0,1.0});
+  PlaneCoords gen_plane({2000,2000,0},{0.0,0.1,1.0});
   
   
   gen_plane.gen_coords(coords, 1024, 768);
