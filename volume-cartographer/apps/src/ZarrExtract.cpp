@@ -4,6 +4,7 @@
 #include <xtensor/xaxis_slice_iterator.hpp>
 #include <xtensor/xio.hpp>
 #include <xtensor/xbuilder.hpp>
+#include <xtensor/xview.hpp>
 
 #include "z5/factory.hxx"
 #include "z5/filesystem/handle.hxx"
@@ -150,26 +151,47 @@ class CoordGenerator
 {
 public:
     //given input volume shape, fill a coord slice
-    virtual void gen_coords(const xt::xarray<float> coords);
+    virtual void gen_coords(xt::xarray<float> &coords, int w, int h) = 0;
 };
 
-class PlaneCoords : CoordGenerator
+class PlaneCoords : public CoordGenerator
 {
 public:
-    PlaneCoords(cv::Vec3d origin_, cv::Vec3d normal_) : origin(origin_), normal(normal_) {};
-    void gen_coords(xt::xarray<float> &coords, int w, int h)
+    PlaneCoords(cv::Vec3d origin_, cv::Vec3d normal_) : origin(origin_)
     {
-        auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
+        cv::normalize(normal_, normal, 1,0, cv::NORM_L2);
+                                 
+    };
+    virtual void gen_coords(xt::xarray<float> &coords, int w, int h)
+    {
+        // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
 
+        cv::Vec3d vx = cv::Vec3f(1,0,origin[2]-normal[0]/normal[2]);
+        cv::normalize(vx, vx, 1,0, cv::NORM_L2);
+        cv::Vec3d vy = cv::Mat(normal).cross(cv::Mat(vx));
         
-        auto res = xt::stack(xt::xtuple(std::get<0>(grid),std::get<1>(grid)), 2);
-        coords = res;
-        // auto sh = ;
-        std::cout << res.shape() << std::endl;
-        std::cout << res(0,0,0) << std::endl;
-        std::cout << res(0,100,0) << std::endl;
-        std::cout << res(100,0,0) << std::endl;
-        std::cout << res(100,100,0) << std::endl;
+        std::cout << "vecs" << normal << vx << vy << "\n";
+        
+        xt::xarray<float> vx_t{{{vx[0],vx[1],vx[2]}}};
+        xt::xarray<float> vy_t{{{vy[0],vy[1],vy[2]}}};
+        
+        xt::xarray<float> xrange = xt::arange<float>(-w/2,w/2).reshape({1, -1, 1});
+        xt::xarray<float> yrange = xt::arange<float>(-h/2,h/2).reshape({-1, 1, 1});
+        
+        // xrange = xrange.reshape(-1, 1, 1);
+        
+        std::cout << xrange.shape() << vx_t.shape() <<  std::endl;
+        
+        coords = vx_t*xrange + vy_t*yrange;
+        
+        
+        // auto res = xt::stack(xt::xtuple(std::get<0>(grid),std::get<1>(grid)), 2);
+        // coords = res;
+        // // auto sh = ;
+        std::cout << coords.shape() << std::endl;
+        std::cout << xt::strided_view(coords,{h/2,w/2,xt::all()}) << std::endl;
+        std::cout << xt::strided_view(coords,{h/2,w/2+1,xt::all()}) << std::endl;
+        std::cout << xt::strided_view(coords,{h/2+1,w/2,xt::all()}) << std::endl;
     }
 private:
     cv::Vec3d origin = {0,0,0};
@@ -236,7 +258,7 @@ int main(int argc, char *argv[])
 //   
 //   cv::imwrite("img2.tif", m);
   
-  PlaneCoords gen_plane({0,0,0},{1,1,1});
+  PlaneCoords gen_plane({0,0,0},{0.0,0.2,0.9});
   
   
   gen_plane.gen_coords(coords, 1024, 768);
