@@ -79,16 +79,29 @@ void readInterpolated3D(xt::xarray<uint8_t> &out, std::unique_ptr<z5::Dataset> &
     xt::xarray<float> upper = xt::amax(coords, dims);
     xt::xarray<float> lower = xt::amin(coords, dims);
     
+    std::cout << "lwo/high" << lower << upper << std::endl;
+    upper(0) = std::min(upper(0),float(ds->shape(0)));
+    upper(1) = std::min(upper(1),float(ds->shape(1)));
+    upper(2) = std::min(upper(2),float(ds->shape(2)));
+    lower(0) = std::max(lower(0),0.0f);
+    lower(1) = std::max(lower(1),0.0f);
+    lower(2) = std::max(lower(2),0.0f);
+    // lower = xt::amax(lower, {0,0,0});
+    std::cout << "lwo/high" << lower << upper << std::endl;
+    
     // std::cout << "maxshape" << .shape() << std::endl;
     
     shape offset(3);
     shape size(3);
     for(int i=0;i<3;i++) {
         offset[i] = lower[i];
-        size[i] = ceil(upper[i]) - offset[i]+1;
+        size[i] = ceil(std::max(upper[i] - offset[i]+1,1.0f));
     }
     std::cout << "offset" << offset << std::endl;
     std::cout << "size" << size << std::endl;
+    
+    if (!size[0] || !size[1] || !size[2])
+        return;
     
     xt::xarray<uint8_t> buf(size);
     
@@ -166,14 +179,25 @@ public:
     {
         // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
 
-        cv::Vec3d vx = cv::Vec3f(1,0,origin[2]-normal[0]/normal[2]);
-        cv::normalize(vx, vx, 1,0, cv::NORM_L2);
-        cv::Vec3d vy = cv::Mat(normal).cross(cv::Mat(vx));
+        cv::Vec3d vx,vy;
+        //TODO will there be a jump around the midpoint?
+        //FIXME how to decide direction of cross vector?
+        if (abs(normal[0]) >= abs(normal[1])) {
+            vx = cv::Vec3f(1,0,origin[2]-normal[0]/normal[2]);
+            cv::normalize(vx, vx, 1,0, cv::NORM_L2);
+            vy = cv::Mat(normal).cross(cv::Mat(vx));
+        }
+        else {
+            vy = cv::Vec3f(0,1,origin[2]-normal[1]/normal[2]);
+            cv::normalize(vy, vy, 1,0, cv::NORM_L2);
+            vx = cv::Mat(normal).cross(cv::Mat(vy));
+        }
         
         std::cout << "vecs" << normal << vx << vy << "\n";
         
-        xt::xarray<float> vx_t{{{vx[0],vx[1],vx[2]}}};
-        xt::xarray<float> vy_t{{{vy[0],vy[1],vy[2]}}};
+        xt::xarray<float> vx_t{{{vx[2],vx[1],vx[0]}}};
+        xt::xarray<float> vy_t{{{vy[2],vy[1],vy[0]}}};
+        xt::xarray<float> origin_t{{{origin[2],origin[1],origin[0]}}};
         
         xt::xarray<float> xrange = xt::arange<float>(-w/2,w/2).reshape({1, -1, 1});
         xt::xarray<float> yrange = xt::arange<float>(-h/2,h/2).reshape({-1, 1, 1});
@@ -182,7 +206,7 @@ public:
         
         std::cout << xrange.shape() << vx_t.shape() <<  std::endl;
         
-        coords = vx_t*xrange + vy_t*yrange;
+        coords = vx_t*xrange + vy_t*yrange+origin_t;
         
         
         // auto res = xt::stack(xt::xtuple(std::get<0>(grid),std::get<1>(grid)), 2);
@@ -192,6 +216,12 @@ public:
         std::cout << xt::strided_view(coords,{h/2,w/2,xt::all()}) << std::endl;
         std::cout << xt::strided_view(coords,{h/2,w/2+1,xt::all()}) << std::endl;
         std::cout << xt::strided_view(coords,{h/2+1,w/2,xt::all()}) << std::endl;
+        
+        
+        std::cout << xt::strided_view(coords,{0,0,xt::all()}) << std::endl;
+        std::cout << xt::strided_view(coords,{0,w-1,xt::all()}) << std::endl;
+        std::cout << xt::strided_view(coords,{h-1,0,xt::all()}) << std::endl;
+        std::cout << xt::strided_view(coords,{h-1,w-1,xt::all()}) << std::endl;
     }
 private:
     cv::Vec3d origin = {0,0,0};
@@ -258,10 +288,14 @@ int main(int argc, char *argv[])
 //   
 //   cv::imwrite("img2.tif", m);
   
-  PlaneCoords gen_plane({0,0,0},{0.0,0.2,0.9});
+  PlaneCoords gen_plane({2000,2000,0},{0.0,0.0,1.0});
   
   
   gen_plane.gen_coords(coords, 1024, 768);
   
+  readInterpolated3DChunked(img,ds,coords,256);
+  m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+  cv::imwrite("plane.tif", m);
+    
   return 0;
 }
