@@ -192,10 +192,6 @@ PlaneCoords::PlaneCoords(cv::Vec3f origin_, cv::Vec3f normal_) : origin(origin_)
     
 };
 
-// zarrDs_->enableCaching(true,
-//                        [&](z5::types::ShapeType chunkId, void* chunk, z5::types::ShapeType shape, std::size_t size) -> void { putCacheChunk(chunkId, chunk, shape, size); },
-//                        [&](z5::types::ShapeType chunkId, z5::types::ShapeType& shape, std::size_t& size) -> void* { return getCacheChunk(chunkId, shape, size); });
-
 void PlaneCoords::gen_coords(xt::xarray<float> &coords, int w, int h)
 {
     // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));

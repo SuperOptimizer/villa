@@ -18,6 +18,8 @@
 
 #include "vc/core/util/Slicing.hpp"
 
+#include <unordered_map>
+
 using shape = z5::types::ShapeType;
 using namespace xt::placeholders;
 
@@ -81,6 +83,46 @@ shape idCoord(const std::unique_ptr<z5::Dataset> &ds, shape id)
     return coord;
 }
 
+class CacheEntry
+{
+public:
+    std::vector<std::uint8_t> data;
+    z5::types::ShapeType shape;
+    std::size_t size;
+};
+
+size_t cache_hits = 0;
+size_t cache_miss = 0;
+
+//lazy for now, for 3d chunk cache this should be good enough.
+std::unordered_map<uint64_t,CacheEntry> cache;
+
+
+void putCache(z5::types::ShapeType chunkId, void* chunk, z5::types::ShapeType chunkShape, std::size_t chunkSize)
+{
+    uint64_t key = (chunkId[0]<<24) ^ (chunkId[1]<<24) ^ (chunkId[2]<<24);
+    if (cache.find(key) != cache.end())
+        return;
+    
+    CacheEntry entry = {*static_cast<std::vector<std::uint8_t>*>(chunk), chunkShape, chunkSize};
+    cache[key] = entry;
+}
+
+void *pullCache(z5::types::ShapeType chunkId, z5::types::ShapeType& chunkShape, std::size_t& chunkSize)
+{
+    uint64_t key = (chunkId[0]<<24) ^ (chunkId[1]<<24) ^ (chunkId[2]<<24);
+    if (cache.find(key) == cache.end()) {
+        cache_miss++;
+        return nullptr;
+    }
+    
+    cache_hits++;
+    CacheEntry &entry = cache[key];
+    chunkShape = entry.shape;
+    chunkSize = entry.size;
+    return &entry.data;
+}
+
 int main(int argc, char *argv[])
 {
   assert(argc == 2);
@@ -93,6 +135,10 @@ int main(int argc, char *argv[])
   std::cout << "ds shape via chunk " << ds->chunking().shape() << std::endl;
   std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
 
+  ds->enableCaching(true, putCache, pullCache);
+  
+  
+  
   //read the chunk around pixel coord
   // shape coord = shape({0,2000,2000});
 
@@ -148,6 +194,8 @@ int main(int argc, char *argv[])
   readInterpolated3DChunked(img,ds.get(),coords,256);
   cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
   cv::imwrite("plane.tif", m);
+  
+  printf("cache hit/miss %d %d %.3f",cache_hits,cache_miss,float(cache_hits)/(cache_hits+cache_miss));
   
   // m = cv::Mat(coords.shape(0), coords.shape(1), CV_32FC3, coords.data());
   // std::vector<cv::Mat> chs;
