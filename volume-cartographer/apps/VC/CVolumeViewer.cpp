@@ -174,6 +174,7 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     fGraphicsView->setup();
 
     fGraphicsView->viewport()->installEventFilter(this);
+    fGraphicsView->setDragMode(QGraphicsView::ScrollHandDrag);
 
     fButtonsLayout = new QHBoxLayout;
     fButtonsLayout->addWidget(fZoomInBtn);
@@ -198,7 +199,7 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     aWidgetLayout->addLayout(fButtonsLayout);
 
     setLayout(aWidgetLayout);
-
+    
     UpdateButtons();
 }
 
@@ -477,7 +478,7 @@ cv::Mat CVolumeViewer::getCoordSlice()
     xt::xarray<float> coords;
     xt::xarray<uint8_t> img;
     
-    slice->gen_coords(coords, 1024, 768);
+    slice->gen_coords(coords, 4000, 4000);
     
     readInterpolated3DChunked(img, volume->zarrDataset() ,coords,256);
     // readInterpolated3D(img,ds,coords);
