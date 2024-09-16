@@ -20,6 +20,8 @@
 #include "vc/segmentation/LocalResliceParticleSim.hpp"
 #include "vc/segmentation/OpticalFlowSegmentation.hpp"
 
+#include "vc/core/util/Slicing.hpp"
+
 namespace vc = volcart;
 namespace vcs = volcart::segmentation;
 using namespace ChaoVis;
@@ -129,6 +131,8 @@ CWindow::CWindow()
     impactRangeSteps = SettingsDialog::expandSettingToIntRange(settings.value("viewer/impact_range_steps", "1-3, 5, 8, 11, 15, 20, 28, 40, 60, 100, 200").toString());
     scanRangeSteps = SettingsDialog::expandSettingToIntRange(settings.value("viewer/scan_range_steps", "1, 2, 5, 10, 20, 50, 100, 200, 500, 1000").toString());
 
+    slice = new PlaneCoords({2000,1800,0},{0.0,0.1,1.0});
+    
     // create UI widgets
     CreateWidgets();
 
@@ -209,6 +213,7 @@ CVolumeViewer *CWindow::newConnectedCVolumeViewer(void)
     connect(volView, SIGNAL(SendSignalSliceShift(int,int)), this, SLOT(OnSliceShift(int,int)));
     connect(volView, SIGNAL(SendSignalSliceShift(int,int)), this, SLOT(OnSliceShift(int,int)));
     connect(this, &CWindow::sendVolumeChanged, volView, &CVolumeViewer::OnVolumeChanged);
+    volView->setSlice(slice);
     
     return volView;
 }

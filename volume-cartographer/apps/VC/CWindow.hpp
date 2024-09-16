@@ -38,6 +38,8 @@
 static constexpr int VOLPKG_MIN_VERSION = 6;
 static constexpr int VOLPKG_SLICE_MIN_INDEX = 0;
 
+class PlaneCoords;
+
 namespace ChaoVis
 {
 
@@ -374,7 +376,10 @@ private:
     std::mutex cv_m;
     std::atomic<bool> stopPrefetching;
     std::atomic<int> prefetchSliceIndex;
+    
+    PlaneCoords *slice = nullptr;
 };  // class CWindow
+
 
 class VolPkgBackend : public QObject
 {

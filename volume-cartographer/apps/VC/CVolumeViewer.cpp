@@ -4,6 +4,8 @@
 #include "UDataManipulateUtils.hpp"
 #include "HBase.hpp"
 
+#include "vc/core/util/Slicing.hpp"
+
 using namespace ChaoVis;
 using qga = QGuiApplication;
 
@@ -154,6 +156,7 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     fAxisCombo->addItem(QString::fromStdString("XY"), QVariant(0));
     fAxisCombo->addItem(QString::fromStdString("XZ"), QVariant(1));
     fAxisCombo->addItem(QString::fromStdString("YZ"), QVariant(2));
+    fAxisCombo->addItem(QString::fromStdString("slice"), QVariant(3));
     connect(fAxisCombo, &QComboBox::currentIndexChanged, this, &CVolumeViewer::OnViewAxisChanged);
 
     fBaseImageItem = nullptr;
@@ -437,7 +440,10 @@ void CVolumeViewer::loadSlice()
     cv::Mat aImgMat;
     
     if (volume) {
-        aImgMat = volume->getAxisSliceData(loc[axis], axis);
+        if (axis <= 2)
+            aImgMat = volume->getAxisSliceData(loc[axis], axis);
+        else
+            aImgMat = getCoordSlice();
 
         if (aImgMat.isContinuous() && aImgMat.type() == CV_16U) {
             // create QImage directly backed by cv::Mat buffer
@@ -451,4 +457,31 @@ void CVolumeViewer::loadSlice()
     }
     
     UpdateButtons();
+}
+
+void CVolumeViewer::setSlice(CoordGenerator *slice_)
+{
+    slice = slice_;
+    OnSliceChanged();
+}
+
+void CVolumeViewer::OnSliceChanged()
+{
+    //TODO update slice if we are in slice view!
+    if (axis == 3)
+        loadSlice();
+}
+
+cv::Mat CVolumeViewer::getCoordSlice()
+{
+    xt::xarray<float> coords;
+    xt::xarray<uint8_t> img;
+    
+    slice->gen_coords(coords, 1024, 768);
+    
+    readInterpolated3DChunked(img, volume->zarrDataset() ,coords,256);
+    // readInterpolated3D(img,ds,coords);
+    cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+    
+    return m.clone();
 }

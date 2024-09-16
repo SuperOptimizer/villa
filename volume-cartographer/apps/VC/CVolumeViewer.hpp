@@ -13,6 +13,8 @@
 
 #include "vc/core/types/VolumePkg.hpp"
 
+class CoordGenerator;
+
 namespace ChaoVis
 {
 
@@ -78,6 +80,8 @@ public:
     void ResetRotation();
     void setVolume(volcart::Volume::Pointer volume_);
     void loadSlice();
+    void setSlice(CoordGenerator *slice);
+    cv::Mat getCoordSlice();
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event);
@@ -90,6 +94,7 @@ public slots:
     void OnViewAxisChanged(void);
     void OnLocChanged(int x_, int y_, int z_);
     void OnVolumeChanged(volcart::Volume::Pointer vol);
+    void OnSliceChanged();
 
 signals:
     void SendSignalSliceShift(int shift, int axis);
@@ -131,6 +136,7 @@ protected:
     QGraphicsPixmapItem* fBaseImageItem;
     
     volcart::Volume::Pointer volume = nullptr;
+    CoordGenerator *slice = nullptr;
     int axis = 0;
     int loc[3] = {0,0,0};
 };  // class CVolumeViewer

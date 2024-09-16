@@ -378,7 +378,6 @@ std::ostream& operator<< (std::ostream& out, const xt::xarray<uint8_t>::shape_ty
     return out;
 }
 
-
 auto Volume::load_slice_(int index) const -> cv::Mat
 {
     {
@@ -540,4 +539,10 @@ void* Volume::getCacheChunk(z5::types::ShapeType chunkId, z5::types::ShapeType& 
     } else {
         return nullptr;
     }
+}
+
+
+z5::Dataset *Volume::zarrDataset()
+{
+    return zarrDs_.get();
 }

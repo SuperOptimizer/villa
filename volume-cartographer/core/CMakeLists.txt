@@ -60,11 +60,31 @@ set(util_srcs
     src/ApplyLUT.cpp
     src/ColorMaps.cpp
     src/Debug.cpp
-    src/Zarr.cpp
 )
 
 set(logging_srcs
     src/Logging.cpp
+)
+
+set(slicing_srcs
+    src/Slicing.cpp
+)
+
+add_library(vc_slicing
+    ${slicing_srcs}
+)
+add_library(VC::slicing ALIAS vc_slicing)
+target_link_libraries(vc_slicing
+    PUBLIC
+        z5
+        opencv_highgui
+)
+target_include_directories(vc_slicing
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        $<TARGET_PROPERTY:z5,INTERFACE_INCLUDE_DIRECTORIES>
 )
 
 configure_file(src/Version.cpp.in Version.cpp)

@@ -262,6 +262,8 @@ public:
     void putCacheChunk(z5::types::ShapeType chunkId, void* chunk, z5::types::ShapeType chunkShape, std::size_t chunkSize) const;
     void* getCacheChunk(z5::types::ShapeType chunkId, z5::types::ShapeType& chunkShape, std::size_t& chunkSize) const;
     
+    z5::Dataset *zarrDataset();
+    
 protected:
     /** Slice width */
     int width_{0};
