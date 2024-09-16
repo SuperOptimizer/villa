@@ -14,11 +14,22 @@
 #include "z5/attributes.hxx"
 
 #include <opencv2/highgui.hpp>
+#include <opencv2/core.hpp>
 
 using shape = z5::types::ShapeType;
 using namespace xt::placeholders;
 
 std::ostream& operator<< (std::ostream& out, const std::vector<size_t> &v) {
+    if ( !v.empty() ) {
+        out << '[';
+        for(auto &v : v)
+            out << v << ",";
+        out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
+    }
+    return out;
+}
+
+std::ostream& operator<< (std::ostream& out, const std::vector<int> &v) {
     if ( !v.empty() ) {
         out << '[';
         for(auto &v : v)
@@ -87,7 +98,7 @@ void readInterpolated3D(xt::xarray<uint8_t> &out, std::unique_ptr<z5::Dataset> &
     lower(1) = std::max(lower(1),0.0f);
     lower(2) = std::max(lower(2),0.0f);
     // lower = xt::amax(lower, {0,0,0});
-    std::cout << "lwo/high" << lower << upper << std::endl;
+    // std::cout << "lwo/high" << lower << upper << std::endl;
     
     // std::cout << "maxshape" << .shape() << std::endl;
     
@@ -111,19 +122,31 @@ void readInterpolated3D(xt::xarray<uint8_t> &out, std::unique_ptr<z5::Dataset> &
     out_shape.back() = 1;
     if (out.shape() != out_shape) {
         std::cout << "allocating out as its wrong size!" << std::endl;
-        out = xt::empty<uint8_t>(out_shape);
+        out = xt::zeros<uint8_t>(out_shape);
     }
     
     auto iter_coords = xt::axis_slice_begin(coords, 2);
     auto iter_out = xt::axis_slice_begin(out, 2);
     auto end_coords = xt::axis_slice_end(coords, 2);
     auto end_out = xt::axis_slice_end(out, 2);
+    size_t inb_count = 0;
+    size_t total = 0;
     while(iter_coords != end_coords)
     {
-        *iter_out = buf((*iter_coords)(0)-offset[0],(*iter_coords)(1)-offset[1],(*iter_coords)(2)-offset[2]);
+        total++;
+        std::vector<int> idx = {(*iter_coords)(0)-offset[0],(*iter_coords)(1)-offset[1],(*iter_coords)(2)-offset[2]};
+        // if (total % 1000 == 0)
+            // std::cout << idx << *iter_coords << offset << buf.in_bounds(idx[0],idx[1],idx[2]) << buf.shape() << "\n";
+        if (buf.in_bounds(idx[0],idx[1],idx[2])) {
+            *iter_out = buf[idx];
+            inb_count++;
+        }
+        else
+            *iter_out = 0;
         iter_coords++;
         iter_out++;
     }
+    // printf("inb sum: %d %d %.f\n", inb_count, total, float(inb_count)/total);
     
     // std::cout << "read to buf" << std::endl;
 }
@@ -170,7 +193,7 @@ public:
 class PlaneCoords : public CoordGenerator
 {
 public:
-    PlaneCoords(cv::Vec3d origin_, cv::Vec3d normal_) : origin(origin_)
+    PlaneCoords(cv::Vec3f origin_, cv::Vec3f normal_) : origin(origin_)
     {
         cv::normalize(normal_, normal, 1,0, cv::NORM_L2);
                                  
@@ -179,7 +202,7 @@ public:
     {
         // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
 
-        cv::Vec3d vx,vy;
+        cv::Vec3f vx,vy;
         //TODO will there be a jump around the midpoint?
         //FIXME how to decide direction of cross vector?
         if (abs(normal[0]) >= abs(normal[1])) {
@@ -228,8 +251,8 @@ public:
         std::cout << xt::strided_view(coords,{h-1,w-1,xt::all()}) << std::endl;
     }
 private:
-    cv::Vec3d origin = {0,0,0};
-    cv::Vec3d normal = {1,1,1};
+    cv::Vec3f origin = {0,0,0};
+    cv::Vec3f normal = {1,1,1};
 };
 
 int main(int argc, char *argv[])
@@ -292,14 +315,22 @@ int main(int argc, char *argv[])
 //   
 //   cv::imwrite("img2.tif", m);
   
-  PlaneCoords gen_plane({2000,2000,0},{0.0,0.1,1.0});
+  PlaneCoords gen_plane({2000,1800,0},{0.0,0.1,1.0});
   
   
   gen_plane.gen_coords(coords, 1024, 768);
   
   readInterpolated3DChunked(img,ds,coords,256);
+  // readInterpolated3D(img,ds,coords);
   m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
   cv::imwrite("plane.tif", m);
+  
+  m = cv::Mat(coords.shape(0), coords.shape(1), CV_32FC3, coords.data());
+  std::vector<cv::Mat> chs;
+  cv::split(m, chs);
+  cv::imwrite("coords_x.tif", chs[2]);
+  cv::imwrite("coords_y.tif", chs[1]);
+  cv::imwrite("coords_z.tif", chs[0]);
     
   return 0;
 }
