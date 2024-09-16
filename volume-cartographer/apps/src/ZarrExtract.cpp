@@ -100,7 +100,7 @@ std::unordered_map<uint64_t,CacheEntry> cache;
 
 void putCache(z5::types::ShapeType chunkId, void* chunk, z5::types::ShapeType chunkShape, std::size_t chunkSize)
 {
-    uint64_t key = (chunkId[0]<<24) ^ (chunkId[1]<<24) ^ (chunkId[2]<<24);
+    uint64_t key = (chunkId[0]) ^ (chunkId[1]<<24) ^ (chunkId[2]<<48);
     if (cache.find(key) != cache.end())
         return;
     
@@ -110,7 +110,7 @@ void putCache(z5::types::ShapeType chunkId, void* chunk, z5::types::ShapeType ch
 
 void *pullCache(z5::types::ShapeType chunkId, z5::types::ShapeType& chunkShape, std::size_t& chunkSize)
 {
-    uint64_t key = (chunkId[0]<<24) ^ (chunkId[1]<<24) ^ (chunkId[2]<<24);
+    uint64_t key = (chunkId[0]) ^ (chunkId[1]<<24) ^ (chunkId[2]<<48);
     if (cache.find(key) == cache.end()) {
         cache_miss++;
         return nullptr;

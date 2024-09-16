@@ -82,6 +82,7 @@ using namespace xt::placeholders;
 // }
 
 //NOTE depending on request this might load a lot (the whole array) into RAM
+// template <typename T> void readInterpolated3D(T out, z5::Dataset *ds, const xt::xarray<float> &coords)
 void readInterpolated3D(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords)
 {
     // auto dims = xt::range(_,coords.shape().size()-2);
@@ -123,7 +124,7 @@ void readInterpolated3D(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xar
     auto out_shape = coords.shape();
     out_shape.back() = 1;
     if (out.shape() != out_shape) {
-        std::cout << "allocating out as its wrong size!" << std::endl;
+        std::cout << "wtf allocating out as its wrong size!" << std::endl;
         out = xt::zeros<uint8_t>(out_shape);
     }
     
@@ -181,6 +182,7 @@ void readInterpolated3DChunked(xt::xarray<uint8_t> &out, z5::Dataset *ds, const 
             readInterpolated3D(tmp, ds, coord_view);
             //FIXME figure out xtensor copy/reference dynamics ...
             xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()}) = tmp;
+            // readInterpolated3D(xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()}), ds, coord_view);
         }
         
 }
