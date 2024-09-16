@@ -200,12 +200,12 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int w, int h)
     //TODO will there be a jump around the midpoint?
     //FIXME how to decide direction of cross vector?
     if (abs(normal[0]) >= abs(normal[1])) {
-        vx = cv::Vec3f(1,0,origin[2]-normal[0]/normal[2]);
+        vx = cv::Vec3f(1,0,normal[2]-normal[0]/normal[2]);
         cv::normalize(vx, vx, 1,0, cv::NORM_L2);
         vy = cv::Mat(normal).cross(cv::Mat(vx));
     }
     else {
-        vy = cv::Vec3f(0,1,origin[2]-normal[1]/normal[2]);
+        vy = cv::Vec3f(0,1,normal[2]-normal[1]/normal[2]);
         cv::normalize(vy, vy, 1,0, cv::NORM_L2);
         vx = cv::Mat(normal).cross(cv::Mat(vy));
     }
