@@ -174,6 +174,7 @@ target_link_libraries(vc_zarrextract
     nlohmann_json::nlohmann_json
     z5
     opencv_highgui
+    VC::slicing
 )
 
 # Install targets
