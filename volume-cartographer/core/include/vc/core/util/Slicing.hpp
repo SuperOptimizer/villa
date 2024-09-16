@@ -20,7 +20,6 @@ class PlaneCoords : public CoordGenerator
 public:
     PlaneCoords(cv::Vec3f origin_, cv::Vec3f normal_);
     virtual void gen_coords(xt::xarray<float> &coords, int w, int h);
-private:
     cv::Vec3f origin = {0,0,0};
     cv::Vec3f normal = {1,1,1};
 };

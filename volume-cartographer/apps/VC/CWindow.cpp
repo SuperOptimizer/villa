@@ -213,9 +213,31 @@ CVolumeViewer *CWindow::newConnectedCVolumeViewer(void)
     connect(volView, SIGNAL(SendSignalSliceShift(int,int)), this, SLOT(OnSliceShift(int,int)));
     connect(volView, SIGNAL(SendSignalSliceShift(int,int)), this, SLOT(OnSliceShift(int,int)));
     connect(this, &CWindow::sendVolumeChanged, volView, &CVolumeViewer::OnVolumeChanged);
+    connect(this, &CWindow::sendSliceChanged, volView, &CVolumeViewer::OnSliceChanged);
     volView->setSlice(slice);
     
     return volView;
+}
+
+void CWindow::setVolume(volcart::Volume::Pointer newvol)
+{
+    currentVolume = newvol;
+    
+    int w = currentVolume->sliceWidth();
+    int h = currentVolume->sliceHeight();
+    int d = currentVolume->numSlices();
+    
+    spinLoc[0]->setRange(0, w);
+    spinLoc[1]->setRange(0, h);
+    spinLoc[2]->setRange(0, d);
+    
+    spCenter[0]->setRange(0, w);
+    spCenter[1]->setRange(0, h);
+    spCenter[2]->setRange(0, d);
+    
+    //FIXME this will refersh the old slice once?
+    onPlaneSliceChanged();
+    sendVolumeChanged(currentVolume);
 }
 
 // Create widgets
@@ -258,14 +280,7 @@ void CWindow::CreateWidgets(void)
                 QMessageBox::warning(this, "Error", "Could not load volume.");
                 return;
             }
-            currentVolume = newVolume;
-            sendVolumeChanged(currentVolume);
-            // setDefaultWindowWidth(newVolume);
-            // fVolumeViewerWidget->SetNumSlices(currentVolume->numSlices());
-            // ui.spinBackwardSlice->setMaximum(currentVolume->numSlices() - 1);
-            // ui.spinForwardSlice->setMaximum(currentVolume->numSlices() - 1);
-
-            // fillPreviewSelect();
+            setVolume(newVolume);
         });
 
     // TODO CHANGE VOLUME LOADING; FIRST CHECK FOR OTHER VOLUMES IN THE STRUCTS
@@ -292,12 +307,7 @@ void CWindow::CreateWidgets(void)
                     return;
                 }
             }
-            currentVolume = newVolume;
-            sendVolumeChanged(currentVolume);
-            // setDefaultWindowWidth(newVolume);
-            // fVolumeViewerWidget->SetNumSlices(currentVolume->numSlices());
-            ui.spinBackwardSlice->setMaximum(currentVolume->numSlices() - 1);
-            ui.spinForwardSlice->setMaximum(currentVolume->numSlices() - 1);
+            setVolume(newVolume);
         });
 
     assignVol = this->findChild<QPushButton*>("assignVol");
@@ -559,13 +569,31 @@ void CWindow::CreateWidgets(void)
     // connect(rotateCCW, &QShortcut::activated, fVolumeViewerWidget, [this]() { fVolumeViewerWidget->Rotate(-5); });
     
     //new location input
-    spinLocX = this->findChild<QSpinBox*>("spinLocX");
-    spinLocY = this->findChild<QSpinBox*>("spinLocY");
-    spinLocZ = this->findChild<QSpinBox*>("spinLocZ");
+    spinLoc[0] = this->findChild<QSpinBox*>("spinLocX");
+    spinLoc[1] = this->findChild<QSpinBox*>("spinLocY");
+    spinLoc[2] = this->findChild<QSpinBox*>("spinLocZ");
     
-    connect(spinLocX, &QSpinBox::valueChanged, this, &CWindow::onLocChanged);
-    connect(spinLocY, &QSpinBox::valueChanged, this, &CWindow::onLocChanged);
-    connect(spinLocZ, &QSpinBox::valueChanged, this, &CWindow::onLocChanged);
+    spCenter[0] = this->findChild<QSpinBox*>("spCX");
+    spCenter[1] = this->findChild<QSpinBox*>("spCY");
+    spCenter[2] = this->findChild<QSpinBox*>("spCZ");
+    
+    spNorm[0] = this->findChild<QDoubleSpinBox*>("dspNX");
+    spNorm[1] = this->findChild<QDoubleSpinBox*>("dspNY");
+    spNorm[2] = this->findChild<QDoubleSpinBox*>("dspNZ");
+    
+    for(int i=0;i<3;i++)
+        spNorm[i]->setRange(-10,10);
+    
+    connect(spinLoc[0], &QSpinBox::valueChanged, this, &CWindow::onLocChanged);
+    connect(spinLoc[1], &QSpinBox::valueChanged, this, &CWindow::onLocChanged);
+    connect(spinLoc[2], &QSpinBox::valueChanged, this, &CWindow::onLocChanged);
+    
+    connect(spCenter[0], &QSpinBox::valueChanged, this, &CWindow::onPlaneSliceChanged);
+    connect(spCenter[1], &QSpinBox::valueChanged, this, &CWindow::onPlaneSliceChanged);
+    connect(spCenter[2], &QSpinBox::valueChanged, this, &CWindow::onPlaneSliceChanged);
+    connect(spNorm[0], &QDoubleSpinBox::valueChanged, this, &CWindow::onPlaneSliceChanged);
+    connect(spNorm[1], &QDoubleSpinBox::valueChanged, this, &CWindow::onPlaneSliceChanged);
+    connect(spNorm[2], &QDoubleSpinBox::valueChanged, this, &CWindow::onPlaneSliceChanged);
 }
 
 // Create menus
@@ -2939,5 +2967,24 @@ void CWindow::onLocChanged(void)
 {
     std::cout << "loc changed!" << "\n";
     
-    sendLocChanged(spinLocX->value(),spinLocY->value(),spinLocZ->value());
+    sendLocChanged(spinLoc[0]->value(),spinLoc[1]->value(),spinLoc[2]->value());
+}
+
+// Handle request to step impact range down
+void CWindow::onPlaneSliceChanged(void)
+{
+    cv::Vec3f origin;
+    cv::Vec3f normal;
+    
+    for(int i=0;i<3;i++) {
+        origin[i] = spCenter[i]->value();
+        normal[i] = spNorm[i]->value();
+    }
+    
+    slice->origin = origin;
+    slice->normal = normal;
+    
+    std::cout << origin << normal << "\n";
+    
+    sendSliceChanged();
 }

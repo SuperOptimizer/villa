@@ -107,6 +107,7 @@ signals:
     void submitSegmentation(Segmenter::Pointer s);
     void sendLocChanged(int x, int y, int z);
     void sendVolumeChanged(volcart::Volume::Pointer vol);
+    void sendSliceChanged();
 
 public slots:
     void onSegmentationFinished(Segmenter::Pointer segmenter, Segmenter::PointSet ps);
@@ -115,6 +116,7 @@ public slots:
     void onImpactRangeUp(void);
     void onImpactRangeDown(void);
     void onLocChanged(void);
+    void onPlaneSliceChanged(void);
 
 public:
     CWindow();
@@ -177,6 +179,7 @@ private:
     void playPing();
     
     void fillPreviewSelect();
+    void setVolume(volcart::Volume::Pointer newvol);
 
 private slots:
     void Open(void);
@@ -312,9 +315,10 @@ private:
 
     QSlider* fEdtImpactRange;
     
-    QSpinBox* spinLocX;
-    QSpinBox* spinLocY;
-    QSpinBox* spinLocZ;
+    //TODO abstract these into separate QWidget class?
+    QSpinBox* spinLoc[3];
+    QSpinBox* spCenter[3];
+    QDoubleSpinBox* spNorm[3];
 
     // keyboard shortcuts
     QShortcut* slicePrev;

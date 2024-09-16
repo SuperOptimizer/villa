@@ -796,17 +796,8 @@
     <layout class="QGridLayout" name="gridLayout">
      <item row="1" column="1">
       <layout class="QGridLayout" name="gridLayout_2">
-       <item row="1" column="3">
-        <widget class="QDoubleSpinBox" name="dspCZ"/>
-       </item>
-       <item row="1" column="2">
-        <widget class="QDoubleSpinBox" name="dspCY"/>
-       </item>
        <item row="0" column="2">
         <widget class="QSpinBox" name="spinLocY"/>
-       </item>
-       <item row="1" column="1">
-        <widget class="QDoubleSpinBox" name="sdpCX"/>
        </item>
        <item row="0" column="3">
         <widget class="QSpinBox" name="spinLocZ"/>
@@ -842,7 +833,20 @@
         <widget class="QDoubleSpinBox" name="dspNY"/>
        </item>
        <item row="2" column="3">
-        <widget class="QDoubleSpinBox" name="dspNZ"/>
+        <widget class="QDoubleSpinBox" name="dspNZ">
+         <property name="value">
+          <double>1.000000000000000</double>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QSpinBox" name="spCX"/>
+       </item>
+       <item row="1" column="2">
+        <widget class="QSpinBox" name="spCY"/>
+       </item>
+       <item row="1" column="3">
+        <widget class="QSpinBox" name="spCZ"/>
        </item>
       </layout>
      </item>
