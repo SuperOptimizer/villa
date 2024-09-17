@@ -251,6 +251,10 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
     auto chunk_size = xt::adapt(ds->chunking().blockShape(),{1,1,3});
     chunk_ids = coords/chunk_size;
     
+    auto cw = ds->chunking().blockShape()[0];
+    auto ch = ds->chunking().blockShape()[1];
+    auto cd = ds->chunking().blockShape()[2];
+    
     //this is 0.35 of 0.75s (and not threaded!) - if processed here to a xtensor
     auto local_coords = xt::clip(coords - (chunk_ids*xt::xarray<float>(chunk_size)),-1,32767);
     
@@ -278,7 +282,7 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
             
             
             // uint64_t key = (id[0]) ^ (uint64_t(id[1])<<20) ^ (uint64_t(id[2])<<40);
-            uint64_t key = (ix) ^ (uint64_t(iy)<<20) ^ (uint64_t(iz)<<40);
+            uint64_t key = uint64_t(ix) ^ (uint64_t(iy)<<20) ^ (uint64_t(iz)<<40);
 
             //TODO compare keys
             if (key != last_key) {
@@ -289,10 +293,10 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
                 
                 
                 //TODO replace with precomputed valid value
-                if (local_coords(y,x,0) < 0 || local_coords(y,x,1) < 0 || local_coords(y,x,2) < 0) {
-                    chunk = nullptr;
-                    continue;
-                }
+                // if (local_coords(y,x,0) < 0 || local_coords(y,x,1) < 0 || local_coords(y,x,2) < 0) {
+                //     chunk = nullptr;
+                //     continue;
+                // }
                 
                 
                 mutex.lock_shared();
@@ -310,15 +314,19 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
                 mutex.unlock();
             }
             
+            //this is slow
+            //chunk->in_bounds(local_coords(y,x,0), local_coords(y,x,1), local_coords(y,x,2))
+            
             if (chunk) {
-                // if (local_coords(y,x,0) >= chunk_size(0,0,0) || local_coords(y,x,1) >= chunk_size(0,0,1) || local_coords(y,x,2) >= chunk_size(0,0,2)) {
-                //     std::cout << "coord error!" << local_coords(y,x,0) << "x" << local_coords(y,x,1)<< "x" <<local_coords(y,x,2) << ds->chunking().blockShape() << "\n";
-                //     continue;
-                // }
-                // if (local_coords(y,x,0) < 0 || local_coords(y,x,1) < 0 || local_coords(y,x,2) < 0) {
-                //     std::cout << "coord error!" << local_coords(y,x,0) << "x" << local_coords(y,x,1)<< "x" <<local_coords(y,x,2) << ds->chunking().blockShape() << "\n";
-                //     continue;
-                // }
+                //FIXME check upper bound!
+                if (local_coords(y,x,0) < 0 || local_coords(y,x,1) < 0 || local_coords(y,x,2) < 0) {
+                    // chunk = nullptr;
+                    continue;
+                }
+                if (local_coords(y,x,0) >= cw || local_coords(y,x,1) >= ch || local_coords(y,x,2) >= cd) {
+                    // chunk = nullptr;
+                    continue;
+                }
                 auto tmp = chunk->operator()(local_coords(y,x,0),local_coords(y,x,1),local_coords(y,x,2));
                 // std::cout << local_coords(y,x) << y << "x" << x << " : " << int(tmp) << std::endl;
                 out(y,x,0) = tmp;
