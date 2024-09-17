@@ -318,16 +318,13 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
             //chunk->in_bounds(local_coords(y,x,0), local_coords(y,x,1), local_coords(y,x,2))
             
             if (chunk) {
+                int lx = local_coords(y,x,0);
+                int ly = local_coords(y,x,1);
+                int lz = local_coords(y,x,2);
                 //FIXME check upper bound!
-                if (local_coords(y,x,0) < 0 || local_coords(y,x,1) < 0 || local_coords(y,x,2) < 0) {
-                    // chunk = nullptr;
+                if (lx < 0 || ly < 0 || lz < 0 || lx >= cw || ly >= ch || lz >= cd)
                     continue;
-                }
-                if (local_coords(y,x,0) >= cw || local_coords(y,x,1) >= ch || local_coords(y,x,2) >= cd) {
-                    // chunk = nullptr;
-                    continue;
-                }
-                auto tmp = chunk->operator()(local_coords(y,x,0),local_coords(y,x,1),local_coords(y,x,2));
+                auto tmp = chunk->operator()(lx,ly,lz);
                 // std::cout << local_coords(y,x) << y << "x" << x << " : " << int(tmp) << std::endl;
                 out(y,x,0) = tmp;
             }
