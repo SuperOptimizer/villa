@@ -203,7 +203,7 @@ int main(int argc, char *argv[])
   auto end = std::chrono::high_resolution_clock::now();
   std::cout << std::chrono::duration<double>(end-start).count() << "s cold" << std::endl;
   
-  for(int r=0;r<10;r++) {
+  for(int r=0;r<20;r++) {
     start = std::chrono::high_resolution_clock::now();
     readInterpolated3D_a2(img,ds.get(),coords);
     end = std::chrono::high_resolution_clock::now();

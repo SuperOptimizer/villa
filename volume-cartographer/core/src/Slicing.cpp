@@ -246,13 +246,13 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
     //10bit per dim would actually be fine until chunksize of 16 @ dim size of 16384
     //using 16 bits is pretty safe
 
-    //these three lines are 0.12s of 0.75s (and not threaded)
-    xt::xarray<uint16_t> chunk_ids = xt::empty<uint16_t>(coords.shape());
+    //these three lines are 0.12s of 0.75s (and not threaded) - if processed here to a xtensor
+    auto chunk_ids = xt::empty<uint16_t>(coords.shape());
     auto chunk_size = xt::adapt(ds->chunking().blockShape(),{1,1,3});
     chunk_ids = coords/chunk_size;
     
-    //this is 0.35 of 0.75s (and not threaded!)
-    xt::xarray<int16_t> local_coords = xt::clip(coords - (chunk_ids*xt::xarray<float>(chunk_size)),-1,32767);
+    //this is 0.35 of 0.75s (and not threaded!) - if processed here to a xtensor
+    auto local_coords = xt::clip(coords - (chunk_ids*xt::xarray<float>(chunk_size)),-1,32767);
     
     // xt::xarray<uint8_t> valid = xt::amin(local_coords, {2}) >= 0;
     
