@@ -78,6 +78,7 @@ target_link_libraries(vc_slicing
     PUBLIC
         z5
         opencv_highgui
+        OpenMP::OpenMP_CXX
 )
 target_include_directories(vc_slicing
     PUBLIC

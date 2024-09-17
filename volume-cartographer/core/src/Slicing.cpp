@@ -114,7 +114,8 @@ void readInterpolated3D(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xar
     
     xt::xarray<uint8_t> buf(size);
     
-    z5::multiarray::readSubarray<uint8_t>(*ds, buf, offset.begin(), std::thread::hardware_concurrency());
+    // z5::multiarray::readSubarray<uint8_t>(*ds, buf, offset.begin(), std::thread::hardware_concurrency());
+    z5::multiarray::readSubarray<uint8_t>(*ds, buf, offset.begin(), 1);
     
     auto out_shape = coords.shape();
     out_shape.back() = 1;
@@ -168,6 +169,7 @@ void readInterpolated3DChunked(xt::xarray<uint8_t> &out, z5::Dataset *ds, const 
     
     std::cout << coords.shape(ydim) << " " << coords.shape(xdim) << "\n";
     
+#pragma omp parallel for
     for(size_t y = 0;y<coords.shape(ydim);y+=chunk_size)
         for(size_t x = 0;x<coords.shape(xdim);x+=chunk_size) {
             // xt::xarray<uint8_t> out_view = xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()});

@@ -66,6 +66,8 @@ if(NOT OpenCV_FOUND)
     find_package(OpenCV 4 QUIET REQUIRED)
 endif()
 
+find_package(OpenMP REQUIRED)
+
 ### libtiff ###
 find_package(TIFF 4.0 REQUIRED)
 
