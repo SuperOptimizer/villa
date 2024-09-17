@@ -203,6 +203,10 @@ int main(int argc, char *argv[])
   auto end = std::chrono::high_resolution_clock::now();
   std::cout << std::chrono::duration<double>(end-start).count() << "s cold" << std::endl;
   
+  // readInterpolated3D(img,ds.get(),coords);
+  cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+  cv::imwrite("plane.tif", m);
+  
   for(int r=0;r<20;r++) {
     start = std::chrono::high_resolution_clock::now();
     readInterpolated3D_a2(img,ds.get(),coords);
@@ -211,7 +215,7 @@ int main(int argc, char *argv[])
   }
   
   // readInterpolated3D(img,ds.get(),coords);
-  cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+  m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
   cv::imwrite("plane.tif", m);
   
   printf("cache hit/miss %d %d %.3f",cache_hits,cache_miss,float(cache_hits)/(cache_hits+cache_miss));

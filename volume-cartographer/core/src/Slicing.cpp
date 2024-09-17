@@ -270,10 +270,15 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
         uint64_t last_key = -1;
         xt::xarray<uint8_t> *chunk = nullptr;
         for(size_t x = 0;x<coords.shape(xdim);x++) {
-            auto id = xt::strided_view(chunk_ids, {y, x, xt::all()});
+            // auto id = xt::strided_view(chunk_ids, {y, x, xt::all()});
+            
+            auto ix = chunk_ids(y,x,0);
+            auto iy = chunk_ids(y,x,1);
+            auto iz = chunk_ids(y,x,2);
             
             
-            uint64_t key = (id[0]) ^ (uint64_t(id[1])<<20) ^ (uint64_t(id[2])<<40);
+            // uint64_t key = (id[0]) ^ (uint64_t(id[1])<<20) ^ (uint64_t(id[2])<<40);
+            uint64_t key = (ix) ^ (uint64_t(iy)<<20) ^ (uint64_t(iz)<<40);
 
             //TODO compare keys
             if (key != last_key) {
@@ -295,9 +300,9 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
                 if (cache.count(key))
                     chunk = cache[key];
                 else {
-                    xt::xarray<size_t> id_t = id;
-                    std::vector<size_t> localid = std::vector<size_t>(id_t.begin(),id_t.end());
-                    chunk = z5::multiarray::readChunk<uint8_t>(*ds, localid);
+                    // xt::xarray<size_t> id_t = id;
+                    // std::vector<size_t> localid = std::vector<size_t>(id_t.begin(),id_t.end());
+                    chunk = z5::multiarray::readChunk<uint8_t>(*ds, {ix,iy,iz});
                     mutex.unlock();
                     mutex.lock();
                     cache[key] = chunk;
