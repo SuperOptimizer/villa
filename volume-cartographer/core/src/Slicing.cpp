@@ -53,6 +53,43 @@ static std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v
     return out;
 }
 
+namespace z5 {
+    namespace multiarray {
+
+        template<typename T>
+        inline xt::xarray<T> *readChunk(const Dataset & ds,
+                            types::ShapeType chunkId)
+        {
+            if (!ds.chunkExists(chunkId)) {
+                return nullptr;
+            }
+
+            assert(ds.isZarr());
+            
+            types::ShapeType chunkShape;
+            // size_t chunkSize;
+            ds.getChunkShape(chunkId, chunkShape);
+            // get the shape of the chunk (as stored it is stored)
+            //for ZARR also edge chunks are always full size!
+            const std::size_t maxChunkSize = ds.defaultChunkSize();
+            const auto & maxChunkShape = ds.defaultChunkShape();
+            
+            // chunkSize = std::accumulate(chunkShape.begin(), chunkShape.end(), 1, std::multiplies<std::size_t>());
+            
+            xt::xarray<T> *out = new xt::xarray<T>();
+            *out = xt::empty<T>(maxChunkShape);
+            
+            // read the data from storage
+            std::vector<char> dataBuffer;
+            ds.readRawChunk(chunkId, dataBuffer);
+            
+            // decompress the data
+            ds.decompress(dataBuffer, out->data(), maxChunkSize);
+            
+            return out;
+        }
+    }
+}
 
 // shape chunkId(const std::unique_ptr<z5::Dataset> &ds, shape coord)
 // {
@@ -115,6 +152,7 @@ void readInterpolated3D(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xar
     xt::xarray<uint8_t> buf(size);
     
     // z5::multiarray::readSubarray<uint8_t>(*ds, buf, offset.begin(), std::thread::hardware_concurrency());
+    // std::cout << buf.shape() << "\n";
     z5::multiarray::readSubarray<uint8_t>(*ds, buf, offset.begin(), 1);
     
     auto out_shape = coords.shape();
@@ -183,6 +221,95 @@ void readInterpolated3DChunked(xt::xarray<uint8_t> &out, z5::Dataset *ds, const 
             xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()}) = tmp;
             // readInterpolated3D(xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()}), ds, coord_view);
         }
+        
+}
+
+static std::unordered_map<uint64_t,xt::xarray<uint8_t>*> cache;
+
+//algorithm 2: do interpolation on basis of individual chunks
+void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords)
+{
+    auto out_shape = coords.shape();
+    out_shape.back() = 1;
+    out = xt::zeros<uint8_t>(out_shape);
+    
+    std::cout  << "out shape" << out_shape << " " << coords.shape() << "\n";
+    
+    //FIXME assert dims
+    
+    int xdim = coords.shape().size()-2;
+    int ydim = coords.shape().size()-3;
+    
+    std::cout << coords.shape(ydim) << " " << coords.shape(xdim) << std::endl;
+    
+    //10bit per dim would actually be fine until chunksize of 16 @ dim size of 16384
+    //using 16 bits is pretty safe
+
+    xt::xarray<uint16_t> chunk_ids = xt::empty<uint16_t>(coords.shape());
+    auto chunk_size = xt::adapt(ds->chunking().blockShape(),{1,1,3});
+    std::cout << coords.shape() << chunk_size.shape() << std::endl;
+    chunk_ids = coords/chunk_size;
+    
+    xt::xarray<int16_t> local_coords = xt::clip(coords - (chunk_ids*xt::xarray<float>(chunk_size)),-1,32767);
+    
+    std::cout << "local coords" << local_coords.shape() << "\n";
+    
+    std::shared_mutex mutex;
+    
+    //FIXME need to iterate all dims e.g. could have z or more ... (maybe just flatten ... so we only have z at most)
+#pragma omp parallel for
+    for(size_t y = 0;y<coords.shape(ydim);y++) {
+        xt::xarray<uint16_t> last_id;
+        xt::xarray<uint8_t> *chunk = nullptr;
+        for(size_t x = 0;x<coords.shape(xdim);x++) {
+            auto id = xt::strided_view(chunk_ids, {y, x, xt::all()});
+            
+            if (local_coords(y,x,0) < 0 || local_coords(y,x,1) < 0 || local_coords(y,x,2) < 0)
+                continue;
+
+            if (id != last_id) {
+                
+                last_id = id;
+                
+                uint64_t key = (id[0]) ^ (uint64_t(id[1])<<20) ^ (uint64_t(id[2])<<40);
+                
+                mutex.lock_shared();
+                
+                if (cache.count(key))
+                    chunk = cache[key];
+                else {
+                    xt::xarray<size_t> id_t = last_id;
+                    std::vector<size_t> localid = std::vector<size_t>(id_t.begin(),id_t.end());
+                    chunk = z5::multiarray::readChunk<uint8_t>(*ds, localid);
+                    mutex.unlock();
+                    mutex.lock();
+                    cache[key] = chunk;
+                }
+                mutex.unlock();
+            }
+            
+            if (chunk) {
+                // if (local_coords(y,x,0) >= chunk_size(0,0,0) || local_coords(y,x,1) >= chunk_size(0,0,1) || local_coords(y,x,2) >= chunk_size(0,0,2)) {
+                //     std::cout << "coord error!" << local_coords(y,x,0) << "x" << local_coords(y,x,1)<< "x" <<local_coords(y,x,2) << ds->chunking().blockShape() << "\n";
+                //     continue;
+                // }
+                // if (local_coords(y,x,0) < 0 || local_coords(y,x,1) < 0 || local_coords(y,x,2) < 0) {
+                //     std::cout << "coord error!" << local_coords(y,x,0) << "x" << local_coords(y,x,1)<< "x" <<local_coords(y,x,2) << ds->chunking().blockShape() << "\n";
+                //     continue;
+                // }
+                auto tmp = chunk->operator()(local_coords(y,x,0),local_coords(y,x,1),local_coords(y,x,2));
+                // std::cout << local_coords(y,x) << y << "x" << x << " : " << int(tmp) << std::endl;
+                out(y,x,0) = tmp;
+            }
+            
+            // return;
+            // xt::xarray<uint8_t> tmp;
+            // readInterpolated3D(tmp, ds, coord_view);
+            //FIXME figure out xtensor copy/reference dynamics ...
+            // xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()}) = tmp;
+            // readInterpolated3D(xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()}), ds, coord_view);
+        }
+    }
         
 }
 

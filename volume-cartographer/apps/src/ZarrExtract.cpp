@@ -187,19 +187,23 @@ int main(int argc, char *argv[])
 //   
 //   cv::imwrite("img2.tif", m);
   
-  // PlaneCoords gen_plane({2000,2000,2000},{0.5,0.5,0.5});
-  PlaneCoords gen_plane({2000,2000,2000},{0.0,0.0,1.0});
+  PlaneCoords gen_plane({2000,2000,2000},{0.5,0.5,0.5});
+  // PlaneCoords gen_plane({2000,2000,2000},{0.0,0.0,1.0});
   
-  gen_plane.gen_coords(coords, 1000, 1000);
-  // gen_plane.gen_coords(coords, 4000, 4000);
+  // gen_plane.gen_coords(coords, 1000, 1000);
+  gen_plane.gen_coords(coords, 4000, 4000);
   
-  // for(int i=0;i<64;i++)
+  // readInterpolated3D_a2(img,ds.get(),coords);
+  
+//   return 0;
+//   
+//   // for(int i=0;i<64;i++)
   auto start = std::chrono::high_resolution_clock::now();
-  readInterpolated3DChunked(img,ds.get(),coords,64);
+  readInterpolated3D_a2(img,ds.get(),coords);
   auto end = std::chrono::high_resolution_clock::now();
   std::cout << std::chrono::duration<double>(end-start).count() << "s cold" << std::endl;
   start = end;
-  readInterpolated3DChunked(img,ds.get(),coords,64);
+  readInterpolated3D_a2(img,ds.get(),coords);
   end = std::chrono::high_resolution_clock::now();
   std::cout << std::chrono::duration<double>(end-start).count() << "s cached" << std::endl;
   

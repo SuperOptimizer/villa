@@ -31,3 +31,6 @@ void readInterpolated3D(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xar
 //TODO make the chunking more intelligent and efficient - for now this is probably good enough ...
 //this method will chunk over the second and third last dim of coords (which should probably be x and y)
 void readInterpolated3DChunked(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords, size_t chunk_size);
+
+
+void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords);
