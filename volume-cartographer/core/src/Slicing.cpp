@@ -291,23 +291,13 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
                 // last_id = id;
                 last_key = key;
                 
-                
-                //TODO replace with precomputed valid value
-                // if (local_coords(y,x,0) < 0 || local_coords(y,x,1) < 0 || local_coords(y,x,2) < 0) {
-                //     chunk = nullptr;
-                //     continue;
-                // }
-                
-                
                 mutex.lock_shared();
                 
                 if (cache.count(key))
                     chunk = cache[key];
                 else {
-                    // xt::xarray<size_t> id_t = id;
-                    // std::vector<size_t> localid = std::vector<size_t>(id_t.begin(),id_t.end());
-                    chunk = z5::multiarray::readChunk<uint8_t>(*ds, {ix,iy,iz});
                     mutex.unlock();
+                    chunk = z5::multiarray::readChunk<uint8_t>(*ds, {ix,iy,iz});
                     mutex.lock();
                     cache[key] = chunk;
                 }
@@ -321,12 +311,9 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
                 int lx = local_coords(y,x,0);
                 int ly = local_coords(y,x,1);
                 int lz = local_coords(y,x,2);
-                //FIXME check upper bound!
                 if (lx < 0 || ly < 0 || lz < 0 || lx >= cw || ly >= ch || lz >= cd)
                     continue;
-                auto tmp = chunk->operator()(lx,ly,lz);
-                // std::cout << local_coords(y,x) << y << "x" << x << " : " << int(tmp) << std::endl;
-                out(y,x,0) = tmp;
+                out(y,x,0) = chunk->operator()(lx,ly,lz);
             }
             
             // return;
