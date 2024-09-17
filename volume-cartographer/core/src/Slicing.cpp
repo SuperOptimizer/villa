@@ -21,46 +21,37 @@
 using shape = z5::types::ShapeType;
 using namespace xt::placeholders;
 
-// std::ostream& operator<< (std::ostream& out, const std::vector<size_t> &v) {
-//     if ( !v.empty() ) {
-//         out << '[';
-//         for(auto &v : v)
-//             out << v << ",";
-//         out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
-//     }
-//     return out;
-// }
-// 
-// std::ostream& operator<< (std::ostream& out, const std::vector<int> &v) {
-//     if ( !v.empty() ) {
-//         out << '[';
-//         for(auto &v : v)
-//             out << v << ",";
-//         out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
-//     }
-//     return out;
-// }
-// 
-// template <size_t N>
-// std::ostream& operator<< (std::ostream& out, const std::array<size_t,N> &v) {
-//     if ( !v.empty() ) {
-//         out << '[';
-//         for(auto &v : v)
-//             out << v << ",";
-//         out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
-//     }
-//     return out;
-// }
-// 
-// std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v) {
-//     if ( !v.empty() ) {
-//         out << '[';
-//         for(auto &v : v)
-//             out << v << ",";
-//         out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
-//     }
-//     return out;
-// }
+
+static std::ostream& operator<< (std::ostream& out, const std::vector<int> &v) {
+    if ( !v.empty() ) {
+        out << '[';
+        for(auto &v : v)
+            out << v << ",";
+        out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
+    }
+    return out;
+}
+
+template <size_t N>
+static std::ostream& operator<< (std::ostream& out, const std::array<size_t,N> &v) {
+    if ( !v.empty() ) {
+        out << '[';
+        for(auto &v : v)
+            out << v << ",";
+        out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
+    }
+    return out;
+}
+
+static std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v) {
+    if ( !v.empty() ) {
+        out << '[';
+        for(auto &v : v)
+            out << v << ",";
+        out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
+    }
+    return out;
+}
 
 
 // shape chunkId(const std::unique_ptr<z5::Dataset> &ds, shape coord)
@@ -93,15 +84,19 @@ void readInterpolated3D(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xar
     xt::xarray<float> upper = xt::amax(coords, dims);
     xt::xarray<float> lower = xt::amin(coords, dims);
     
-    std::cout << "lwo/high" << lower << upper << std::endl;
-    upper(0) = std::min(upper(0),float(ds->shape(0)));
-    upper(1) = std::min(upper(1),float(ds->shape(1)));
-    upper(2) = std::min(upper(2),float(ds->shape(2)));
+    // std::cout << "lwo/high" << lower << upper << std::endl;
+    upper(0) = std::min(upper(0),float(ds->shape(0)-1));
+    upper(1) = std::min(upper(1),float(ds->shape(1)-1));
+    upper(2) = std::min(upper(2),float(ds->shape(2)-1));
     lower(0) = std::max(lower(0),0.0f);
     lower(1) = std::max(lower(1),0.0f);
     lower(2) = std::max(lower(2),0.0f);
     // lower = xt::amax(lower, {0,0,0});
     // std::cout << "lwo/high" << lower << upper << std::endl;
+    
+    for (int i=0;i<3;i++)
+        if (lower(i) > upper(i))
+            return;
     
     // std::cout << "maxshape" << .shape() << std::endl;
     
@@ -124,9 +119,11 @@ void readInterpolated3D(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xar
     auto out_shape = coords.shape();
     out_shape.back() = 1;
     if (out.shape() != out_shape) {
-        std::cout << "wtf allocating out as its wrong size!" << std::endl;
+        // std::cout << "wtf allocating out as its wrong size!" << std::endl;
         out = xt::zeros<uint8_t>(out_shape);
     }
+    
+    // std::cout << out_shape << std::endl;
     
     auto iter_coords = xt::axis_slice_begin(coords, 2);
     auto iter_out = xt::axis_slice_begin(out, 2);
@@ -173,8 +170,8 @@ void readInterpolated3DChunked(xt::xarray<uint8_t> &out, z5::Dataset *ds, const 
     
     for(size_t y = 0;y<coords.shape(ydim);y+=chunk_size)
         for(size_t x = 0;x<coords.shape(xdim);x+=chunk_size) {
-            xt::xarray<uint8_t> out_view = xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()});
-            const xt::xarray<float> coord_view = xt::strided_view(coords, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()});
+            // xt::xarray<uint8_t> out_view = xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()});
+            auto coord_view = xt::strided_view(coords, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()});
             
             // std::cout << out_view.shape() << " " << x << "x" << y << std::endl;
             // return;
@@ -202,12 +199,12 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int w, int h)
     //TODO will there be a jump around the midpoint?
     //FIXME how to decide direction of cross vector?
     if (abs(normal[0]) >= abs(normal[1])) {
-        vx = cv::Vec3f(1,0,normal[2]-normal[0]/normal[2]);
+        vx = cv::Vec3f(1,0,-normal[0]/normal[2]);
         cv::normalize(vx, vx, 1,0, cv::NORM_L2);
         vy = cv::Mat(normal).cross(cv::Mat(vx));
     }
     else {
-        vy = cv::Vec3f(0,1,normal[2]-normal[1]/normal[2]);
+        vy = cv::Vec3f(0,1,-normal[1]/normal[2]);
         cv::normalize(vy, vy, 1,0, cv::NORM_L2);
         vx = cv::Mat(normal).cross(cv::Mat(vy));
     }
