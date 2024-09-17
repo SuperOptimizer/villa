@@ -248,15 +248,15 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
 
     //these three lines are 0.12s of 0.75s (and not threaded) - if processed here to a xtensor
     // auto chunk_ids = xt::empty<uint16_t>(coords.shape());
-    auto chunk_size = xt::adapt(ds->chunking().blockShape(),{1,1,3});
-    auto chunk_ids = coords/chunk_size;
+    // auto chunk_size = xt::adapt(ds->chunking().blockShape(),{1,1,3});
+    // auto chunk_ids = coords/chunk_size;
     
     auto cw = ds->chunking().blockShape()[0];
     auto ch = ds->chunking().blockShape()[1];
     auto cd = ds->chunking().blockShape()[2];
     
     //this is 0.35 of 0.75s (and not threaded!) - if processed here to a xtensor
-    auto local_coords = xt::clip(coords - (xt::floor(chunk_ids)*xt::xarray<float>(chunk_size)),-1,32767);
+    // auto local_coords = xt::clip(coords - (xt::floor(chunk_ids)*xt::xarray<float>(chunk_size)),-1,32767);
     
     // xt::xarray<uint8_t> valid = xt::amin(local_coords, {2}) >= 0;
     
@@ -277,9 +277,9 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
         for(size_t x = 0;x<coords.shape(xdim);x++) {
             // auto id = xt::strided_view(chunk_ids, {y, x, xt::all()});
             
-            int ix = chunk_ids(y,x,0);
-            int iy = chunk_ids(y,x,1);
-            int iz = chunk_ids(y,x,2);
+            int ix = int(coords(y,x,0))/cw;
+            int iy = int(coords(y,x,1))/ch;
+            int iz = int(coords(y,x,2))/cd;
             
             
             // uint64_t key = (id[0]) ^ (uint64_t(id[1])<<20) ^ (uint64_t(id[2])<<40);
@@ -309,9 +309,9 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
             //chunk->in_bounds(local_coords(y,x,0), local_coords(y,x,1), local_coords(y,x,2))
             
             if (chunk) {
-                int lx = local_coords(y,x,0);
-                int ly = local_coords(y,x,1);
-                int lz = local_coords(y,x,2);
+                int lx = coords(y,x,0)-ix*cw;
+                int ly = coords(y,x,1)-iy*ch;
+                int lz = coords(y,x,2)-iz*cd;
                 if (lx < 0 || ly < 0 || lz < 0 || lx >= cw || ly >= ch || lz >= cd)
                     continue;
                 out(y,x,0) = chunk->operator()(lx,ly,lz);
