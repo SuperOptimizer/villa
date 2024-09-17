@@ -199,13 +199,16 @@ int main(int argc, char *argv[])
 //   
 //   // for(int i=0;i<64;i++)
   auto start = std::chrono::high_resolution_clock::now();
-  readInterpolated3D_a2(img,ds.get(),coords);
+    readInterpolated3D_a2(img,ds.get(),coords);
   auto end = std::chrono::high_resolution_clock::now();
   std::cout << std::chrono::duration<double>(end-start).count() << "s cold" << std::endl;
-  start = end;
-  readInterpolated3D_a2(img,ds.get(),coords);
-  end = std::chrono::high_resolution_clock::now();
-  std::cout << std::chrono::duration<double>(end-start).count() << "s cached" << std::endl;
+  
+  for(int r=0;r<10;r++) {
+    start = std::chrono::high_resolution_clock::now();
+    readInterpolated3D_a2(img,ds.get(),coords);
+    end = std::chrono::high_resolution_clock::now();
+    std::cout << std::chrono::duration<double>(end-start).count() << "s cached" << std::endl;
+  }
   
   // readInterpolated3D(img,ds.get(),coords);
   cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());

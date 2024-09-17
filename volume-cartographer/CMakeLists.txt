@@ -16,6 +16,8 @@ set(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin)
 set(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
+set(CMAKE_CXX_FLAGS "-ggdb -O3")
+
 # Use modern C++ for everything and generate compile_commands database.
 set(CMAKE_EXPORT_COMPILE_COMMANDS on)
 

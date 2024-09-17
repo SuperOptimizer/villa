@@ -66,6 +66,10 @@ if(NOT OpenCV_FOUND)
     find_package(OpenCV 4 QUIET REQUIRED)
 endif()
 
+set(XTENSOR_USE_XSIMD 1)
+set(XTENSOR_USE_OPENMP 1)
+find_package(xtensor REQUIRED)
+
 find_package(OpenMP REQUIRED)
 
 ### libtiff ###
