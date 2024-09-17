@@ -210,7 +210,7 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int w, int h)
     }
     if (vx[0] < 0)
         vx *= -1;
-    if (vy[10] < 0)
+    if (vy[1] < 0)
         vy *= -1;
     
     std::cout << "vecs" << normal << vx << vy << "\n";
