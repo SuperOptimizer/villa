@@ -246,11 +246,12 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
     //10bit per dim would actually be fine until chunksize of 16 @ dim size of 16384
     //using 16 bits is pretty safe
 
+    //these three lines are 0.12s of 0.75s (and not threaded)
     xt::xarray<uint16_t> chunk_ids = xt::empty<uint16_t>(coords.shape());
     auto chunk_size = xt::adapt(ds->chunking().blockShape(),{1,1,3});
-    // std::cout << coords.shape() << chunk_size.shape() << std::endl;
     chunk_ids = coords/chunk_size;
     
+    //this is 0.35 of 0.75s (and not threaded!)
     xt::xarray<int16_t> local_coords = xt::clip(coords - (chunk_ids*xt::xarray<float>(chunk_size)),-1,32767);
     
     // xt::xarray<uint8_t> valid = xt::amin(local_coords, {2}) >= 0;
@@ -259,7 +260,10 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
     
     std::shared_mutex mutex;
     
+    // return;
+    
     //FIXME need to iterate all dims e.g. could have z or more ... (maybe just flatten ... so we only have z at most)
+    //the whole loop is 0.29s of 0.75s (if threaded)
 #pragma omp parallel for
     for(size_t y = 0;y<coords.shape(ydim);y++) {
         // xt::xarray<uint16_t> last_id;
