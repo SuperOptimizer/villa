@@ -17,29 +17,37 @@ using qga = QGuiApplication;
 CVolumeViewerView::CVolumeViewerView(QWidget* parent)
 : QGraphicsView(parent)
 {
-    timerTextAboveCursor = new QTimer(this);
-    connect(timerTextAboveCursor, &QTimer::timeout, this, &CVolumeViewerView::hideTextAboveCursor);
-    timerTextAboveCursor->setSingleShot(true);
+    // timerTextAboveCursor = new QTimer(this);
+    // connect(timerTextAboveCursor, &QTimer::timeout, this, &CVolumeViewerView::hideTextAboveCursor);
+    // timerTextAboveCursor->setSingleShot(true);
+}
+
+
+void CVolumeViewerView::scrollContentsBy(int dx, int dy)
+{
+    printf("received scroll %d %d\n",dx, dy);
+ 
+    QGraphicsView::scrollContentsBy(dx,dy);
 }
 
 void CVolumeViewerView::setup()
 {
-    textAboveCursor = new QGraphicsTextItem("", 0);
-    textAboveCursor->setFlag(QGraphicsItem::ItemIgnoresTransformations);
-    textAboveCursor->setZValue(100);
-    textAboveCursor->setVisible(false);
-    textAboveCursor->setDefaultTextColor(DEFAULT_TEXT_COLOR);
-    scene()->addItem(textAboveCursor);
+    // textAboveCursor = new QGraphicsTextItem("", 0);
+    // textAboveCursor->setFlag(QGraphicsItem::ItemIgnoresTransformations);
+    // textAboveCursor->setZValue(100);
+    // textAboveCursor->setVisible(false);
+    // textAboveCursor->setDefaultTextColor(DEFAULT_TEXT_COLOR);
+    // scene()->addItem(textAboveCursor);
 
-    QFont f;
-    f.setPointSize(f.pointSize() + 2);
-    textAboveCursor->setFont(f);
-
-    backgroundBehindText = new QGraphicsRectItem();
-    backgroundBehindText->setFlag(QGraphicsItem::ItemIgnoresTransformations);
-    backgroundBehindText->setPen(Qt::NoPen);
-    backgroundBehindText->setZValue(99);
-    scene()->addItem(backgroundBehindText);
+    // QFont f;
+    // f.setPointSize(f.pointSize() + 2);
+    // textAboveCursor->setFont(f);
+    // 
+    // backgroundBehindText = new QGraphicsRectItem();
+    // backgroundBehindText->setFlag(QGraphicsItem::ItemIgnoresTransformations);
+    // backgroundBehindText->setPen(Qt::NoPen);
+    // backgroundBehindText->setZValue(99);
+    // scene()->addItem(backgroundBehindText);
 }
 
 void CVolumeViewerView::keyPressEvent(QKeyEvent* event)
@@ -72,52 +80,52 @@ void CVolumeViewerView::keyReleaseEvent(QKeyEvent* event)
 
 void CVolumeViewerView::showTextAboveCursor(const QString& value, const QString& label, const QColor& color)
 {
-    // Without this check, when you start VC with auto-load the initial slice will not be in the center of
-    // volume viewer, because during loading the initilization of the impact range slider and its callback slots
-    // will already move the position/scrollbars of the viewer and therefore the image is no longer centered.
-    if (!isVisible()) {
-        return;
-    }
-
-    timerTextAboveCursor->start(150);
-
-    QFontMetrics fm(textAboveCursor->font());
-    QPointF p = mapToScene(mapFromGlobal(QPoint(QCursor::pos().x() + 10, QCursor::pos().y())));
-
-    textAboveCursor->setVisible(true);
-    textAboveCursor->setHtml("<b>" + value + "</b><br>" + label);
-    textAboveCursor->setPos(p);
-    textAboveCursor->setDefaultTextColor(color);
-
-    backgroundBehindText->setVisible(true);
-    backgroundBehindText->setPos(p);
-    backgroundBehindText->setRect(0, 0, fm.horizontalAdvance((label.isEmpty() ? value : label)) + BGND_RECT_MARGIN, fm.height() * (label.isEmpty() ? 1 : 2) + BGND_RECT_MARGIN);
-    backgroundBehindText->setBrush(QBrush(QColor(
-        (2 * 125 + color.red())   / 3,
-        (2 * 125 + color.green()) / 3,
-        (2 * 125 + color.blue())  / 3,
-    200)));
+    // // Without this check, when you start VC with auto-load the initial slice will not be in the center of
+    // // volume viewer, because during loading the initilization of the impact range slider and its callback slots
+    // // will already move the position/scrollbars of the viewer and therefore the image is no longer centered.
+    // if (!isVisible()) {
+    //     return;
+    // }
+    // 
+    // timerTextAboveCursor->start(150);
+    // 
+    // QFontMetrics fm(textAboveCursor->font());
+    // QPointF p = mapToScene(mapFromGlobal(QPoint(QCursor::pos().x() + 10, QCursor::pos().y())));
+    // 
+    // textAboveCursor->setVisible(true);
+    // textAboveCursor->setHtml("<b>" + value + "</b><br>" + label);
+    // textAboveCursor->setPos(p);
+    // textAboveCursor->setDefaultTextColor(color);
+    // 
+    // backgroundBehindText->setVisible(true);
+    // backgroundBehindText->setPos(p);
+    // backgroundBehindText->setRect(0, 0, fm.horizontalAdvance((label.isEmpty() ? value : label)) + BGND_RECT_MARGIN, fm.height() * (label.isEmpty() ? 1 : 2) + BGND_RECT_MARGIN);
+    // backgroundBehindText->setBrush(QBrush(QColor(
+    //     (2 * 125 + color.red())   / 3,
+    //     (2 * 125 + color.green()) / 3,
+    //     (2 * 125 + color.blue())  / 3,
+    // 200)));
 }
 
 void CVolumeViewerView::hideTextAboveCursor()
 {
-    textAboveCursor->setVisible(false);
-    backgroundBehindText->setVisible(false);
+    // textAboveCursor->setVisible(false);
+    // backgroundBehindText->setVisible(false);
 }
 
 void CVolumeViewerView::showCurrentImpactRange(int range)
 {
-    showTextAboveCursor(QString::number(range), "", QColor(255, 120, 110)); // tr("Impact Range")
+    // showTextAboveCursor(QString::number(range), "", QColor(255, 120, 110)); // tr("Impact Range")
 }
 
 void CVolumeViewerView::showCurrentScanRange(int range)
 {
-    showTextAboveCursor(QString::number(range), "", QColor(160, 180, 255)); // tr("Scan Range")
+    // showTextAboveCursor(QString::number(range), "", QColor(160, 180, 255)); // tr("Scan Range")
 }
 
 void CVolumeViewerView::showCurrentSliceIndex(int slice, bool highlight)
 {
-    showTextAboveCursor(QString::number(slice), "", (highlight ? QColor(255, 50, 20) : QColor(255, 220, 30))); // tr("Slice")
+    // showTextAboveCursor(QString::number(slice), "", (highlight ? QColor(255, 50, 20) : QColor(255, 220, 30))); // tr("Slice")
 }
 
 // Constructor
@@ -144,12 +152,12 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     fNextBtn = new QPushButton(tr("Next Slice"), this);
     fPrevBtn = new QPushButton(tr("Previous Slice"), this);
 
-    fImageRotationSpin = new QSpinBox(this);
-    fImageRotationSpin->setMinimum(-360);
-    fImageRotationSpin->setMaximum(360);
-    fImageRotationSpin->setSuffix("°");
-    fImageRotationSpin->setEnabled(true);
-    connect(fImageRotationSpin, SIGNAL(editingFinished()), this, SLOT(OnImageRotationSpinChanged()));
+    // fImageRotationSpin = new QSpinBox(this);
+    // fImageRotationSpin->setMinimum(-360);
+    // fImageRotationSpin->setMaximum(360);
+    // fImageRotationSpin->setSuffix("°");
+    // fImageRotationSpin->setEnabled(true);
+    // connect(fImageRotationSpin, SIGNAL(editingFinished()), this, SLOT(OnImageRotationSpinChanged()));
 
     // fAxisCombo = new QComboBox(this);
     //data is the missing axis (but in inverted order ZYX)
@@ -167,38 +175,38 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     setFocusProxy(fGraphicsView);
 
     // Create graphics scene
-    fScene = new QGraphicsScene(this);
+    fScene = new QGraphicsScene({0,0,2000,2000}, this);
 
     // Set the scene
     fGraphicsView->setScene(fScene);
-    fGraphicsView->setup();
+    // fGraphicsView->setup();
 
     fGraphicsView->viewport()->installEventFilter(this);
     fGraphicsView->setDragMode(QGraphicsView::ScrollHandDrag);
 
-    fButtonsLayout = new QHBoxLayout;
-    fButtonsLayout->addWidget(fZoomInBtn);
-    fButtonsLayout->addWidget(fZoomOutBtn);
-    fButtonsLayout->addWidget(fResetBtn);
-    fButtonsLayout->addWidget(fImageRotationSpin);
-    // fButtonsLayout->addWidget(fAxisCombo);
-    // Add some space between the slice spin box and the curve tools (color, checkboxes, ...)
-    fButtonsLayout->addSpacerItem(new QSpacerItem(1, 0, QSizePolicy::Expanding, QSizePolicy::Fixed));
+    // fButtonsLayout = new QHBoxLayout;
+    // fButtonsLayout->addWidget(fZoomInBtn);
+    // fButtonsLayout->addWidget(fZoomOutBtn);
+    // fButtonsLayout->addWidget(fResetBtn);
+    // fButtonsLayout->addWidget(fImageRotationSpin);
+    // // fButtonsLayout->addWidget(fAxisCombo);
+    // // Add some space between the slice spin box and the curve tools (color, checkboxes, ...)
+    // fButtonsLayout->addSpacerItem(new QSpacerItem(1, 0, QSizePolicy::Expanding, QSizePolicy::Fixed));
 
-    connect(fZoomInBtn, SIGNAL(clicked()), this, SLOT(OnZoomInClicked()));
-    connect(fZoomOutBtn, SIGNAL(clicked()), this, SLOT(OnZoomOutClicked()));
-    connect(fResetBtn, SIGNAL(clicked()), this, SLOT(OnResetClicked()));
+    // connect(fZoomInBtn, SIGNAL(clicked()), this, SLOT(OnZoomInClicked()));
+    // connect(fZoomOutBtn, SIGNAL(clicked()), this, SLOT(OnZoomOutClicked()));
+    // connect(fResetBtn, SIGNAL(clicked()), this, SLOT(OnResetClicked()));
 
     QSettings settings("VC.ini", QSettings::IniFormat);
-    fCenterOnZoomEnabled = settings.value("viewer/center_on_zoom", false).toInt() != 0;
-    fScrollSpeed = settings.value("viewer/scroll_speed", false).toInt();
+    // fCenterOnZoomEnabled = settings.value("viewer/center_on_zoom", false).toInt() != 0;
+    // fScrollSpeed = settings.value("viewer/scroll_speed", false).toInt();
     fSkipImageFormatConv = settings.value("perf/chkSkipImageFormatConvExp", false).toBool();
 
-    QVBoxLayout* aWidgetLayout = new QVBoxLayout;
-    aWidgetLayout->addWidget(fGraphicsView);
-    aWidgetLayout->addLayout(fButtonsLayout);
+    // QVBoxLayout* aWidgetLayout = new QVBoxLayout;
+    // aWidgetLayout->addWidget(fGraphicsView);
+    // aWidgetLayout->addLayout(fButtonsLayout);
 
-    setLayout(aWidgetLayout);
+    // setLayout(aWidgetLayout);
     
     UpdateButtons();
 }
@@ -413,9 +421,9 @@ void CVolumeViewer::OnLocChanged(int x_, int y_, int z_)
 // Update the status of the buttons
 void CVolumeViewer::UpdateButtons(void)
 {
-    fZoomInBtn->setEnabled(fImgQImage != nullptr && fScaleFactor < 10.0);
-    fZoomOutBtn->setEnabled(fImgQImage != nullptr && fScaleFactor > 0.05);
-    fResetBtn->setEnabled(fImgQImage != nullptr && fabs(fScaleFactor - 1.0) > 1e-6);
+    // fZoomInBtn->setEnabled(fImgQImage != nullptr && fScaleFactor < 10.0);
+    // fZoomOutBtn->setEnabled(fImgQImage != nullptr && fScaleFactor > 0.05);
+    // fResetBtn->setEnabled(fImgQImage != nullptr && fabs(fScaleFactor - 1.0) > 1e-6);
 }
 
 // Reset the viewer
@@ -489,3 +497,4 @@ cv::Mat CVolumeViewer::getCoordSlice()
     
     return m.clone();
 }
+

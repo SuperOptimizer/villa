@@ -50,6 +50,8 @@ class CVolumeViewerView : public QGraphicsView
         QGraphicsTextItem* textAboveCursor;
         QGraphicsRectItem* backgroundBehindText;
         QTimer* timerTextAboveCursor;
+        
+        void scrollContentsBy(int dx, int dy);
 };
 
 class CVolumeViewer : public QWidget
