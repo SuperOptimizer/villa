@@ -131,7 +131,13 @@ CWindow::CWindow()
     impactRangeSteps = SettingsDialog::expandSettingToIntRange(settings.value("viewer/impact_range_steps", "1-3, 5, 8, 11, 15, 20, 28, 40, 60, 100, 200").toString());
     scanRangeSteps = SettingsDialog::expandSettingToIntRange(settings.value("viewer/scan_range_steps", "1, 2, 5, 10, 20, 50, 100, 200, 500, 1000").toString());
 
-    slice = new PlaneCoords({2000,1800,0},{0.0,0.1,1.0});
+    //TODO make configurable
+    chunk_cache = new ChunkCache(10e9);
+    
+    slice_plane = new PlaneCoords({2000,2000,2000},{1,1,1});
+    slice_xy = new PlaneCoords({2000,2000,2000},{0,0,1});
+    slice_xz = new PlaneCoords({2000,2000,2000},{0,1,0});
+    slice_yz = new PlaneCoords({2000,2000,2000},{1,0,0});
     
     // create UI widgets
     CreateWidgets();
@@ -205,9 +211,10 @@ CWindow::~CWindow(void)
     SDL_Quit();
 }
 
-CVolumeViewer *CWindow::newConnectedCVolumeViewer(void)
+CVolumeViewer *CWindow::newConnectedCVolumeViewer(CoordGenerator *slice)
 {
     auto volView = new CVolumeViewer();
+    volView->setCache(chunk_cache);
     // connect(fVolumeViewerWidget, &CVolumeViewerWithCurve::SendSignalStatusMessageAvailable, this, &CWindow::onShowStatusMessage);
     connect(this, &CWindow::sendLocChanged, volView, &CVolumeViewer::OnLocChanged);
     connect(volView, SIGNAL(SendSignalSliceShift(int,int)), this, SLOT(OnSliceShift(int,int)));
@@ -247,13 +254,13 @@ void CWindow::CreateWidgets(void)
 
     // add volume viewer
     auto aWidgetLayout = new QGridLayout;
-    auto volView = newConnectedCVolumeViewer();
+    auto volView = newConnectedCVolumeViewer(slice_xy);
     aWidgetLayout->addWidget(volView, 0, 0);
-    volView = newConnectedCVolumeViewer();
+    volView = newConnectedCVolumeViewer(slice_xz);
     aWidgetLayout->addWidget(volView, 0, 1);
-    volView = newConnectedCVolumeViewer();
+    volView = newConnectedCVolumeViewer(slice_yz);
     aWidgetLayout->addWidget(volView, 1, 0);
-    volView = newConnectedCVolumeViewer();
+    volView = newConnectedCVolumeViewer(slice_plane);
     aWidgetLayout->addWidget(volView, 1, 1);
 
     ui.tabSegment->setLayout(aWidgetLayout);
@@ -2981,8 +2988,8 @@ void CWindow::onPlaneSliceChanged(void)
         normal[i] = spNorm[i]->value();
     }
     
-    slice->origin = origin;
-    slice->normal = normal;
+    slice_plane->origin = origin;
+    slice_plane->normal = normal;
     
     std::cout << origin << normal << "\n";
     

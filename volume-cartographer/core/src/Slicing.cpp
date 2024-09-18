@@ -302,6 +302,13 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
     out_shape.back() = 1;
     out = xt::zeros<uint8_t>(out_shape);
     
+    ChunkCache local_cache(1e9);
+    
+    if (!cache) {
+        std::cout << "WARNING should use a shared chunk cache!" << std::endl;
+        cache = &local_cache;
+    }
+    
     // std::cout  << "out shape" << out_shape << " " << coords.shape() << "\n";
     
     //FIXME assert dims
@@ -337,7 +344,6 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
     // std::cout << "cache using z5 path" << ds->path() << std::endl;
     
     //FIXME based on key math we should check bounds here using volume and chunk size
-    //FIXME if cache == nullptr we should create a small local cache (few times tiles*threads?)
     
     // return;
     
@@ -371,24 +377,16 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
                 // last_id = id;
                 last_key = key;
                 
-                if (cache) {
-                    mutex.lock_shared();
-                    
-                    chunk = cache->get(key);
-                    
-                    if (!chunk) {
-                        mutex.unlock();
-                        chunk = z5::multiarray::readChunk<uint8_t>(*ds, {size_t(ix),size_t(iy),size_t(iz)});
-                        mutex.lock();
-                        cache->put(key, chunk);
-                    }
+                mutex.lock_shared();
+                chunk = cache->get(key);
+                
+                if (!chunk) {
                     mutex.unlock();
-                }
-                else {
-                    if (chunk)
-                        delete chunk;
                     chunk = z5::multiarray::readChunk<uint8_t>(*ds, {size_t(ix),size_t(iy),size_t(iz)});
+                    mutex.lock();
+                    cache->put(key, chunk);
                 }
+                mutex.unlock();
             }
             
             //this is slow
@@ -410,8 +408,6 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
             // xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()}) = tmp;
             // readInterpolated3D(xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()}), ds, coord_view);
         }
-        if (!cache && chunk)
-            delete chunk;
     }
 }
 

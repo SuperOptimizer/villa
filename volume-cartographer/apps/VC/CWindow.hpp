@@ -39,6 +39,8 @@ static constexpr int VOLPKG_MIN_VERSION = 6;
 static constexpr int VOLPKG_SLICE_MIN_INDEX = 0;
 
 class PlaneCoords;
+class ChunkCache;
+class CoordGenerator;
 
 namespace ChaoVis
 {
@@ -132,7 +134,7 @@ private:
     void UpdateRecentVolpkgList(const QString& path);
     void RemoveEntryFromRecentVolpkg(const QString& path);
 
-    CVolumeViewer *newConnectedCVolumeViewer(void);
+    CVolumeViewer *newConnectedCVolumeViewer(CoordGenerator *slice);
     void closeEvent(QCloseEvent* event);
 
     void setWidgetsEnabled(bool state);
@@ -381,7 +383,11 @@ private:
     std::atomic<bool> stopPrefetching;
     std::atomic<int> prefetchSliceIndex;
     
-    PlaneCoords *slice = nullptr;
+    PlaneCoords *slice_plane = nullptr;
+    PlaneCoords *slice_xy = nullptr;
+    PlaneCoords *slice_xz = nullptr;
+    PlaneCoords *slice_yz = nullptr;
+    ChunkCache *chunk_cache;
 };  // class CWindow
 
 

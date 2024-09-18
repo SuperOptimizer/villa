@@ -202,8 +202,9 @@ int main(int argc, char *argv[])
 //   
 //   cv::imwrite("img2.tif", m);
   
-  PlaneCoords gen_plane({2000,2000,2000},{0.5,0.5,0.5});
+  // PlaneCoords gen_plane({2000,2000,2000},{0.5,0.5,0.5});
   // PlaneCoords gen_plane({2000,2000,2000},{0.0,0.0,1.0});
+  PlaneCoords gen_plane({0,0,0},{0.0,0.0,1.0});
   
   PlaneCoords plane_x({2000,2000,2000},{1.0,0.0,0.0});
   PlaneCoords plane_y({2000,2000,2000},{0.0,1.0,0.0});

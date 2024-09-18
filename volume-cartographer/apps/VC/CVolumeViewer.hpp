@@ -14,6 +14,7 @@
 #include "vc/core/types/VolumePkg.hpp"
 
 class CoordGenerator;
+class ChunkCache;
 
 namespace ChaoVis
 {
@@ -78,7 +79,7 @@ public:
     void SetRotation(int degress);
     void Rotate(int delta);
     void ResetRotation();
-    void setVolume(volcart::Volume::Pointer volume_);
+    void setCache(ChunkCache *cache);
     void loadSlice();
     void setSlice(CoordGenerator *slice);
     cv::Mat getCoordSlice();
@@ -117,7 +118,7 @@ protected:
     QPushButton* fResetBtn;
     QSpinBox* fImageRotationSpin;
     QHBoxLayout* fButtonsLayout;
-    QComboBox* fAxisCombo;
+    // QComboBox* fAxisCombo;
 
     // data
     EViewState fViewState;
@@ -139,6 +140,8 @@ protected:
     CoordGenerator *slice = nullptr;
     int axis = 0;
     int loc[3] = {0,0,0};
+    
+    ChunkCache *cache = nullptr;
 };  // class CVolumeViewer
 
 }  // namespace ChaoVis

@@ -151,13 +151,13 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     fImageRotationSpin->setEnabled(true);
     connect(fImageRotationSpin, SIGNAL(editingFinished()), this, SLOT(OnImageRotationSpinChanged()));
 
-    fAxisCombo = new QComboBox(this);
+    // fAxisCombo = new QComboBox(this);
     //data is the missing axis (but in inverted order ZYX)
-    fAxisCombo->addItem(QString::fromStdString("XY"), QVariant(0));
-    fAxisCombo->addItem(QString::fromStdString("XZ"), QVariant(1));
-    fAxisCombo->addItem(QString::fromStdString("YZ"), QVariant(2));
-    fAxisCombo->addItem(QString::fromStdString("slice"), QVariant(3));
-    connect(fAxisCombo, &QComboBox::currentIndexChanged, this, &CVolumeViewer::OnViewAxisChanged);
+    // fAxisCombo->addItem(QString::fromStdString("XY"), QVariant(0));
+    // fAxisCombo->addItem(QString::fromStdString("XZ"), QVariant(1));
+    // fAxisCombo->addItem(QString::fromStdString("YZ"), QVariant(2));
+    // fAxisCombo->addItem(QString::fromStdString("slice"), QVariant(3));
+    // connect(fAxisCombo, &QComboBox::currentIndexChanged, this, &CVolumeViewer::OnViewAxisChanged);
 
     fBaseImageItem = nullptr;
 
@@ -181,7 +181,7 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     fButtonsLayout->addWidget(fZoomOutBtn);
     fButtonsLayout->addWidget(fResetBtn);
     fButtonsLayout->addWidget(fImageRotationSpin);
-    fButtonsLayout->addWidget(fAxisCombo);
+    // fButtonsLayout->addWidget(fAxisCombo);
     // Add some space between the slice spin box and the curve tools (color, checkboxes, ...)
     fButtonsLayout->addSpacerItem(new QSpacerItem(1, 0, QSizePolicy::Expanding, QSizePolicy::Fixed));
 
@@ -385,28 +385,28 @@ void CVolumeViewer::OnImageRotationSpinChanged(void)
 
 void CVolumeViewer::OnViewAxisChanged(void)
 {    
-    axis = fAxisCombo->currentData().toInt();
+    // axis = fAxisCombo->currentData().toInt();
     
-    loadSlice();
+    // loadSlice();
 }
 
 void CVolumeViewer::OnLocChanged(int x_, int y_, int z_)
 {
-    bool have_change = false;
-    int slice_index = 0;
-    
-    if (loc[0] != x_ && axis == 0)
-        have_change = true;
-    if (loc[1] != y_ && axis == 1)
-        have_change = true;
-    if (loc[2] != z_ && axis == 2)
-        have_change = true;
-    
-    loc[0] = x_;
-    loc[1] = y_;
-    loc[2] = z_;
-    
-    if (have_change)
+//     bool have_change = false;
+//     int slice_index = 0;
+//     
+//     if (loc[0] != x_ && axis == 0)
+//         have_change = true;
+//     if (loc[1] != y_ && axis == 1)
+//         have_change = true;
+//     if (loc[2] != z_ && axis == 2)
+//         have_change = true;
+//     
+//     loc[0] = x_;
+//     loc[1] = y_;
+//     loc[2] = z_;
+//     
+//     if (have_change)
         loadSlice();
 }
 
@@ -435,16 +435,18 @@ void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
     loadSlice();
 }
 
+void CVolumeViewer::setCache(ChunkCache *cache_)
+{
+    cache = cache_;
+}
+
 void CVolumeViewer::loadSlice()
 {
     QImage aImgQImage;
     cv::Mat aImgMat;
     
-    if (volume) {
-        if (axis <= 2)
-            aImgMat = volume->getAxisSliceData(loc[axis], axis);
-        else
-            aImgMat = getCoordSlice();
+    if (volume && volume->zarrDataset()) {
+        aImgMat = getCoordSlice();
 
         if (aImgMat.isContinuous() && aImgMat.type() == CV_16U) {
             // create QImage directly backed by cv::Mat buffer
@@ -478,9 +480,10 @@ cv::Mat CVolumeViewer::getCoordSlice()
     xt::xarray<float> coords;
     xt::xarray<uint8_t> img;
     
-    slice->gen_coords(coords, 4000, 4000);
-    
-    readInterpolated3DChunked(img, volume->zarrDataset() ,coords,256);
+    slice->gen_coords(coords, 1000, 1000);
+    std::cout << "start read" << cache << std::endl;
+    readInterpolated3D(img, volume->zarrDataset() ,coords, cache);
+    std::cout << "done read" << cache << std::endl;
     // readInterpolated3D(img,ds,coords);
     cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
     
