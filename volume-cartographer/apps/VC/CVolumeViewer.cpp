@@ -25,8 +25,7 @@ CVolumeViewerView::CVolumeViewerView(QWidget* parent)
 
 void CVolumeViewerView::scrollContentsBy(int dx, int dy)
 {
-    printf("received scroll %d %d\n",dx, dy);
- 
+    sendScrolled();
     QGraphicsView::scrollContentsBy(dx,dy);
 }
 
@@ -132,7 +131,7 @@ void CVolumeViewerView::showCurrentSliceIndex(int slice, bool highlight)
 CVolumeViewer::CVolumeViewer(QWidget* parent)
     : QWidget(parent)
     , fCanvas(nullptr)
-    , fScrollArea(nullptr)
+    // , fScrollArea(nullptr)
     , fGraphicsView(nullptr)
     , fZoomInBtn(nullptr)
     , fZoomOutBtn(nullptr)
@@ -146,11 +145,11 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     , fScanRange(1)
 {
     // buttons
-    fZoomInBtn = new QPushButton(tr("Zoom In"), this);
-    fZoomOutBtn = new QPushButton(tr("Zoom Out"), this);
-    fResetBtn = new QPushButton(tr("Reset"), this);
-    fNextBtn = new QPushButton(tr("Next Slice"), this);
-    fPrevBtn = new QPushButton(tr("Previous Slice"), this);
+    // fZoomInBtn = new QPushButton(tr("Zoom In"), this);
+    // fZoomOutBtn = new QPushButton(tr("Zoom Out"), this);
+    // fResetBtn = new QPushButton(tr("Reset"), this);
+    // fNextBtn = new QPushButton(tr("Next Slice"), this);
+    // fPrevBtn = new QPushButton(tr("Previous Slice"), this);
 
     // fImageRotationSpin = new QSpinBox(this);
     // fImageRotationSpin->setMinimum(-360);
@@ -173,9 +172,10 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     fGraphicsView = new CVolumeViewerView(this);
     fGraphicsView->setRenderHint(QPainter::Antialiasing);
     setFocusProxy(fGraphicsView);
+    connect(fGraphicsView, &CVolumeViewerView::sendScrolled, this, &CVolumeViewer::onScrolled);
 
     // Create graphics scene
-    fScene = new QGraphicsScene({0,0,2000,2000}, this);
+    fScene = new QGraphicsScene({-2500,-2500,5000,5000}, this);
 
     // Set the scene
     fGraphicsView->setScene(fScene);
@@ -216,18 +216,18 @@ CVolumeViewer::~CVolumeViewer(void)
 {
     deleteNULL(fGraphicsView);
     deleteNULL(fScene);
-    deleteNULL(fScrollArea);
-    deleteNULL(fZoomInBtn);
-    deleteNULL(fZoomOutBtn);
-    deleteNULL(fResetBtn);
-    deleteNULL(fImageRotationSpin);
+    // deleteNULL(fScrollArea);
+    // deleteNULL(fZoomInBtn);
+    // deleteNULL(fZoomOutBtn);
+    // deleteNULL(fResetBtn);
+    // deleteNULL(fImageRotationSpin);
 }
 
 void CVolumeViewer::SetButtonsEnabled(bool state)
 {
-    fZoomOutBtn->setEnabled(state);
-    fZoomInBtn->setEnabled(state);
-    fImageRotationSpin->setEnabled(state);
+    // fZoomOutBtn->setEnabled(state);
+    // fZoomInBtn->setEnabled(state);
+    // fImageRotationSpin->setEnabled(state);
 }
 
 void CVolumeViewer::SetImage(const QImage& nSrc)
@@ -248,7 +248,7 @@ void CVolumeViewer::SetImage(const QImage& nSrc)
         fBaseImageItem->setPixmap(pixmap);
     }
 
-    UpdateButtons();
+    // UpdateButtons();
     update();
 }
 
@@ -338,25 +338,25 @@ void CVolumeViewer::CenterOn(const QPointF& point)
 
 void CVolumeViewer::SetRotation(int degrees)
 {
-    if (currentRotation != degrees) {
-        auto delta = (currentRotation - degrees) * -1;
-        fGraphicsView->rotate(delta);
-        currentRotation += delta;
-        currentRotation = currentRotation % 360;
-        fImageRotationSpin->setValue(currentRotation);
-    }
+    // if (currentRotation != degrees) {
+    //     auto delta = (currentRotation - degrees) * -1;
+    //     fGraphicsView->rotate(delta);
+    //     currentRotation += delta;
+    //     currentRotation = currentRotation % 360;
+    //     fImageRotationSpin->setValue(currentRotation);
+    // }
 }
 
 void CVolumeViewer::Rotate(int delta)
 {
-    SetRotation(currentRotation + delta);
+    // SetRotation(currentRotation + delta);
 }
 
 void CVolumeViewer::ResetRotation()
 {
-    fGraphicsView->rotate(-currentRotation);
-    currentRotation = 0;
-    fImageRotationSpin->setValue(currentRotation);
+    // fGraphicsView->rotate(-currentRotation);
+    // currentRotation = 0;
+    // fImageRotationSpin->setValue(currentRotation);
 }
 
 // Handle zoom in click
@@ -388,7 +388,7 @@ void CVolumeViewer::OnResetClicked(void)
 // Handle image rotation change
 void CVolumeViewer::OnImageRotationSpinChanged(void)
 {
-    SetRotation(fImageRotationSpin->value());
+    // SetRotation(fImageRotationSpin->value());
 }
 
 void CVolumeViewer::OnViewAxisChanged(void)
@@ -441,6 +441,10 @@ void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
 {
     volume = volume_;
     loadSlice();
+    
+    // QRectF view = geometry();
+    
+    // std::cout << "cvolview " << view.left() << "x" << view.top()  << "x" << view.width()  << "x" << view.height() << std::endl;
 }
 
 void CVolumeViewer::setCache(ChunkCache *cache_)
@@ -483,12 +487,58 @@ void CVolumeViewer::OnSliceChanged()
         loadSlice();
 }
 
+
+cv::Mat render_plane_offset(volcart::Volume *vol, ChunkCache *cache, CoordGenerator *slice, int x, int y, int w, int h)
+{
+    xt::xarray<float> coords;
+    xt::xarray<uint8_t> img;
+    
+    slice->gen_coords(coords, x,y, w, h);
+    readInterpolated3D(img, vol->zarrDataset() ,coords, cache);
+    // readInterpolated3D(img,ds,coords);
+    cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+    
+    return m.clone();
+}
+
+void CVolumeViewer::onScrolled()
+{
+    if (!volume || !volume->zarrDataset())
+        return;
+        
+    QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->geometry()).boundingRect();
+    std::cout << "scene" << bbox.left() << "x" << bbox.top()  << "x" << bbox.width()  << "x" << bbox.height() << std::endl;
+    
+    //nothing to see her, move along
+    if (QRectF(curr_img_area).contains(bbox))
+        return;
+    
+    curr_img_area = {bbox.left()-128,bbox.top()-128, bbox.width()+256, bbox.height()+256};
+    
+    cv::Mat img = render_plane_offset(volume.get(), cache, slice, curr_img_area.left(), curr_img_area.top(), curr_img_area.width(), curr_img_area.height());
+
+    QImage qimg = Mat2QImage(img);
+
+    QPixmap pixmap = QPixmap::fromImage(qimg, fSkipImageFormatConv ? Qt::NoFormatConversion : Qt::AutoColor);
+//     
+    // Add the QPixmap to the scene as a QGraphicsPixmapItem
+    if (!fBaseImageItem)
+        fBaseImageItem = fScene->addPixmap(pixmap);
+    else
+        fBaseImageItem->setPixmap(pixmap);
+    
+    fBaseImageItem->setOffset(curr_img_area.topLeft());
+    
+    // UpdateButtons();
+    // update();
+}
+
 cv::Mat CVolumeViewer::getCoordSlice()
 {
     xt::xarray<float> coords;
     xt::xarray<uint8_t> img;
     
-    slice->gen_coords(coords, 1000, 1000);
+    slice->gen_coords(coords, -500, -500, 1000, 1000);
     std::cout << "start read" << cache << std::endl;
     readInterpolated3D(img, volume->zarrDataset() ,coords, cache);
     std::cout << "done read" << cache << std::endl;

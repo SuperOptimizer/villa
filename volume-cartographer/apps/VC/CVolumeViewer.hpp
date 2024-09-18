@@ -42,6 +42,9 @@ class CVolumeViewerView : public QGraphicsView
         void showCurrentScanRange(int range);
         void showCurrentSliceIndex(int slice, bool highlight);
 
+    signals:
+    void sendScrolled();
+    
     protected:
         bool rangeKeyPressed{false};
         bool curvePanKeyPressed{false};
@@ -98,6 +101,7 @@ public slots:
     void OnLocChanged(int x_, int y_, int z_);
     void OnVolumeChanged(volcart::Volume::Pointer vol);
     void OnSliceChanged();
+    void onScrolled();
 
 signals:
     void SendSignalSliceShift(int shift, int axis);
@@ -144,6 +148,7 @@ protected:
     int loc[3] = {0,0,0};
     
     ChunkCache *cache = nullptr;
+    QRect curr_img_area = {0,0,1000,1000};
 };  // class CVolumeViewer
 
 }  // namespace ChaoVis

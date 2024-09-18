@@ -12,14 +12,16 @@ class CoordGenerator
 {
 public:
     //given input volume shape, fill a coord slice
-    virtual void gen_coords(xt::xarray<float> &coords, int w, int h) const = 0;
+    void gen_coords(xt::xarray<float> &coords, int w, int h) const;
+    virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h) const = 0;
 };
 
 class PlaneCoords : public CoordGenerator
 {
 public:
     PlaneCoords(cv::Vec3f origin_, cv::Vec3f normal_);
-    virtual void gen_coords(xt::xarray<float> &coords, int w, int h) const;
+    virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h) const;
+    using CoordGenerator::gen_coords;  
     cv::Vec3f origin = {0,0,0};
     cv::Vec3f normal = {1,1,1};
 };

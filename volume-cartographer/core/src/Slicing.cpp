@@ -460,8 +460,14 @@ cv::Vec3f vy_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
     return {v[1],v[0],v[2]};
 }
 
+void CoordGenerator::gen_coords(xt::xarray<float> &coords, int w, int h) const
+{
+    int x = -w/2;
+    int y = -h/2;
+    return gen_coords(coords, x, y, w, h);
+}
 
-void PlaneCoords::gen_coords(xt::xarray<float> &coords, int w, int h) const
+void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h) const
 {
     // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
     
@@ -498,10 +504,10 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int w, int h) const
     coords = xt::empty<float>({h,w,3});
     
 #pragma omp parallel for
-    for(int y=0;y<h;y++)
-        for(int x=0;x<h;x++) {
-            coords(y,x,0) = vx[2]*(x-w/2) + vy[2]*(y-h/2) + origin[2];
-            coords(y,x,1) = vx[1]*(x-w/2) + vy[1]*(y-h/2) + origin[1];
-            coords(y,x,2) = vx[0]*(x-w/2) + vy[0]*(y-h/2) + origin[0];
+    for(int j=0;j<h;j++)
+        for(int i=0;i<w;i++) {
+            coords(j,i,0) = vx[2]*(i+x) + vy[2]*(j+y) + origin[2];
+            coords(j,i,1) = vx[1]*(i+x) + vy[1]*(j+y) + origin[1];
+            coords(j,i,2) = vx[0]*(i+x) + vy[0]*(j+y) + origin[0];
         }
 }
