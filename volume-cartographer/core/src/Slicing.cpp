@@ -277,9 +277,13 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
         for(size_t x = 0;x<coords.shape(xdim);x++) {
             // auto id = xt::strided_view(chunk_ids, {y, x, xt::all()});
             
-            int ix = int(coords(y,x,0))/cw;
-            int iy = int(coords(y,x,1))/ch;
-            int iz = int(coords(y,x,2))/cd;
+            float ox = coords(y,x,0);
+            float oy = coords(y,x,1);
+            float oz = coords(y,x,2);
+            
+            int ix = int(ox)/cw;
+            int iy = int(oy)/ch;
+            int iz = int(oz)/cd;
             
             
             // uint64_t key = (id[0]) ^ (uint64_t(id[1])<<20) ^ (uint64_t(id[2])<<40);
@@ -309,9 +313,9 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
             //chunk->in_bounds(local_coords(y,x,0), local_coords(y,x,1), local_coords(y,x,2))
             
             if (chunk) {
-                int lx = coords(y,x,0)-ix*cw;
-                int ly = coords(y,x,1)-iy*ch;
-                int lz = coords(y,x,2)-iz*cd;
+                int lx = ox-ix*cw;
+                int ly = oy-iy*ch;
+                int lz = oz-iz*cd;
                 if (lx < 0 || ly < 0 || lz < 0 || lx >= cw || ly >= ch || lz >= cd)
                     continue;
                 out(y,x,0) = chunk->operator()(lx,ly,lz);
