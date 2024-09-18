@@ -123,6 +123,21 @@ void *pullCache(z5::types::ShapeType chunkId, z5::types::ShapeType& chunkShape, 
     return &entry.data;
 }
 
+void timed_plane_slice(const PlaneCoords &plane, z5::Dataset *ds, size_t size, ChunkCache *cache, std::string msg)
+{
+    xt::xarray<float> coords;
+    xt::xarray<uint8_t> img;
+    
+    auto start = std::chrono::high_resolution_clock::now();
+    plane.gen_coords(coords, size, size);
+    auto end = std::chrono::high_resolution_clock::now();
+    // std::cout << std::chrono::duration<double>(end-start).count() << "s gen_coords() " << msg << std::endl;
+    start = std::chrono::high_resolution_clock::now();
+    readInterpolated3D(img, ds, coords, cache);
+    end = std::chrono::high_resolution_clock::now();
+    std::cout << std::chrono::duration<double>(end-start).count() << "s slicing " << msg << std::endl; 
+}
+
 int main(int argc, char *argv[])
 {
   assert(argc == 2);
@@ -190,8 +205,14 @@ int main(int argc, char *argv[])
   PlaneCoords gen_plane({2000,2000,2000},{0.5,0.5,0.5});
   // PlaneCoords gen_plane({2000,2000,2000},{0.0,0.0,1.0});
   
+  PlaneCoords plane_x({2000,2000,2000},{1.0,0.0,0.0});
+  PlaneCoords plane_y({2000,2000,2000},{0.0,1.0,0.0});
+  PlaneCoords plane_z({2000,2000,2000},{0.0,0.0,1.0});
+  
   // gen_plane.gen_coords(coords, 1000, 1000);
   gen_plane.gen_coords(coords, 4000, 4000);
+
+  ChunkCache chunk_cache(10e9);
   
   // readInterpolated3D_a2(img,ds.get(),coords);
   
@@ -199,7 +220,7 @@ int main(int argc, char *argv[])
 //   
 //   // for(int i=0;i<64;i++)
   auto start = std::chrono::high_resolution_clock::now();
-    readInterpolated3D_a2(img,ds.get(),coords);
+  readInterpolated3D(img,ds.get(),coords, &chunk_cache);
   auto end = std::chrono::high_resolution_clock::now();
   std::cout << std::chrono::duration<double>(end-start).count() << "s cold" << std::endl;
   
@@ -207,12 +228,25 @@ int main(int argc, char *argv[])
   cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
   cv::imwrite("plane.tif", m);
   
-  for(int r=0;r<20;r++) {
+  for(int r=0;r<10;r++) {
     start = std::chrono::high_resolution_clock::now();
-    readInterpolated3D_a2(img,ds.get(),coords);
+    readInterpolated3D(img,ds.get(),coords, &chunk_cache);
     end = std::chrono::high_resolution_clock::now();
     std::cout << std::chrono::duration<double>(end-start).count() << "s cached" << std::endl;
   }
+  
+  std::cout << "testing different slice directions / caching" << std::endl;
+  for(int r=0;r<3;r++) {
+      timed_plane_slice(plane_x, ds.get(), 4000, &chunk_cache, "yz cold");
+      timed_plane_slice(plane_x, ds.get(), 4000, &chunk_cache, "yz");
+      timed_plane_slice(plane_y, ds.get(), 4000, &chunk_cache, "xz cold");
+      timed_plane_slice(plane_y, ds.get(), 4000, &chunk_cache, "xz");
+      timed_plane_slice(plane_z, ds.get(), 4000, &chunk_cache, "xy cold");
+      timed_plane_slice(plane_z, ds.get(), 4000, &chunk_cache, "xy");
+      timed_plane_slice(gen_plane, ds.get(), 4000, &chunk_cache, "diag cold");
+      timed_plane_slice(gen_plane, ds.get(), 4000, &chunk_cache, "diag");
+  }
+  
   
   // readInterpolated3D(img,ds.get(),coords);
   m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());

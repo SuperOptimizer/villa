@@ -110,9 +110,77 @@ namespace z5 {
 //     return coord;
 // }
 
+
+
+uint64_t ChunkCache::groupKey(std::string name)
+{
+    if (!_group_store.count(name))
+        _group_store[name] = _group_store.size()+1;
+    
+     return _group_store[name] << 48;
+}
+    
+void ChunkCache::put(uint64_t key, xt::xarray<uint8_t> *ar)
+{
+    if (!ar)
+        return;
+    
+    _stored += ar->size();
+    
+    if (_stored >= _size) {
+        printf("cache reduce %f\n",float(_stored)/1024/1024);
+        //stores (key,generation)
+        using KP = std::pair<uint64_t, uint64_t>;
+        std::vector<KP> gen_list(_gen_store.begin(), _gen_store.end());
+        std::sort(gen_list.begin(), gen_list.end(), [](KP &a, KP &b){ return a.second < b.second; });
+        for(auto it : gen_list) {
+            xt::xarray<uint8_t> *ar = _store[it.first];
+            size_t size = ar->storage().size();
+            _store.erase(it.first);
+            _gen_store.erase(it.first);
+            delete ar;
+            _stored -= size;
+
+            //we delete 10% of cache content to amortize sorting costs
+            if (_stored < 0.9*_size)
+                break;
+        }
+        printf("cache reduce done %f\n",float(_stored)/1024/1024);
+    }
+    
+    _store[key] = ar;
+    _generation++;
+    _gen_store[key] = _generation;
+}
+
+
+ChunkCache::~ChunkCache()
+{
+    for(auto &it : _store)
+        delete it.second;
+}
+
+xt::xarray<uint8_t> *ChunkCache::get(uint64_t key)
+{
+    auto res = _store.find(key);
+    if (res == _store.end())
+        return nullptr;
+
+    _generation++;
+    _gen_store[key] = _generation;
+    
+    return res->second;
+}
+
+void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords, ChunkCache *cache);
+
 //NOTE depending on request this might load a lot (the whole array) into RAM
 // template <typename T> void readInterpolated3D(T out, z5::Dataset *ds, const xt::xarray<float> &coords)
-void readInterpolated3D(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords)
+void readInterpolated3D(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords, ChunkCache *cache) {
+    readInterpolated3D_a2(out, ds, coords, cache);
+}
+
+void readInterpolated3D_plain(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords)
 {
     // auto dims = xt::range(_,coords.shape().size()-2);
     // std::vector<long int> da = dims;
@@ -228,7 +296,7 @@ void readInterpolated3DChunked(xt::xarray<uint8_t> &out, z5::Dataset *ds, const 
 static std::unordered_map<uint64_t,xt::xarray<uint8_t>*> cache;
 
 //algorithm 2: do interpolation on basis of individual chunks
-void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords)
+void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords, ChunkCache *cache)
 {
     auto out_shape = coords.shape();
     out_shape.back() = 1;
@@ -264,6 +332,13 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
     
     std::shared_mutex mutex;
     
+    uint64_t key_base = cache->groupKey(ds->path());
+    
+    // std::cout << "cache using z5 path" << ds->path() << std::endl;
+    
+    //FIXME based on key math we should check bounds here using volume and chunk size
+    //FIXME if cache == nullptr we should create a small local cache (few times tiles*threads?)
+    
     // return;
     
     //FIXME need to iterate all dims e.g. could have z or more ... (maybe just flatten ... so we only have z at most)
@@ -287,7 +362,7 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
             
             
             // uint64_t key = (id[0]) ^ (uint64_t(id[1])<<20) ^ (uint64_t(id[2])<<40);
-            uint64_t key = uint64_t(ix) ^ (uint64_t(iy)<<20) ^ (uint64_t(iz)<<40);
+            uint64_t key = key_base ^ uint64_t(ix) ^ (uint64_t(iy)<<16) ^ (uint64_t(iz)<<32);
 
             //TODO compare keys
             if (key != last_key) {
@@ -296,17 +371,24 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
                 // last_id = id;
                 last_key = key;
                 
-                mutex.lock_shared();
-                
-                if (cache.count(key))
-                    chunk = cache[key];
-                else {
+                if (cache) {
+                    mutex.lock_shared();
+                    
+                    chunk = cache->get(key);
+                    
+                    if (!chunk) {
+                        mutex.unlock();
+                        chunk = z5::multiarray::readChunk<uint8_t>(*ds, {size_t(ix),size_t(iy),size_t(iz)});
+                        mutex.lock();
+                        cache->put(key, chunk);
+                    }
                     mutex.unlock();
-                    chunk = z5::multiarray::readChunk<uint8_t>(*ds, {ix,iy,iz});
-                    mutex.lock();
-                    cache[key] = chunk;
                 }
-                mutex.unlock();
+                else {
+                    if (chunk)
+                        delete chunk;
+                    chunk = z5::multiarray::readChunk<uint8_t>(*ds, {size_t(ix),size_t(iy),size_t(iz)});
+                }
             }
             
             //this is slow
@@ -328,8 +410,9 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
             // xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()}) = tmp;
             // readInterpolated3D(xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()}), ds, coord_view);
         }
+        if (!cache && chunk)
+            delete chunk;
     }
-        
 }
 
 
@@ -339,55 +422,90 @@ PlaneCoords::PlaneCoords(cv::Vec3f origin_, cv::Vec3f normal_) : origin(origin_)
     
 };
 
-void PlaneCoords::gen_coords(xt::xarray<float> &coords, int w, int h)
+//given origin and normal, return the normalized vector v which describes a point : origin + v which lies in the plane and maximizes v.x at the cost of v.y,v.z
+cv::Vec3f vx_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
+{
+    //impossible
+    if (n[1] == 0 && n[2] == 0)
+        return {0,0,0};
+    
+    //also trivial
+    if (n[0] == 0)
+        return {1,0,0};
+
+    cv::Vec3f v = {1,0,0};
+    
+    if (n[1] == 0) {
+        v[1] = 0;
+        //either n1 or n2 must be != 0, see first edge case
+        v[2] = -n[0]/n[2];
+        cv::normalize(v, v, 1,0, cv::NORM_L2);
+        return v;
+    }
+    
+    if (n[2] == 0) {
+        //either n1 or n2 must be != 0, see first edge case
+        v[1] = -n[0]/n[1];
+        v[2] = 0;
+        cv::normalize(v, v, 1,0, cv::NORM_L2);
+        return v;
+    }
+    
+    v[1] = -n[0]/(n[1]+n[2]);
+    v[2] = v[1];
+    cv::normalize(v, v, 1,0, cv::NORM_L2);
+    
+    return v;
+}
+
+cv::Vec3f vy_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
+{
+    cv::Vec3f v = vx_from_orig_norm({o[1],o[0],o[2]}, {n[1],n[0],n[2]});
+    return {v[1],v[0],v[2]};
+}
+
+
+void PlaneCoords::gen_coords(xt::xarray<float> &coords, int w, int h) const
 {
     // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
     
     cv::Vec3f vx,vy;
+    
+    cv::Vec3f n;
+    cv::normalize(normal, n, 1,0, cv::NORM_L2);
+    
+    vx = vx_from_orig_norm(origin, n);
+    vy = vy_from_orig_norm(origin, n);
+    
     //TODO will there be a jump around the midpoint?
-    //FIXME how to decide direction of cross vector?
-    if (abs(normal[0]) >= abs(normal[1])) {
-        vx = cv::Vec3f(1,0,-normal[0]/normal[2]);
-        cv::normalize(vx, vx, 1,0, cv::NORM_L2);
-        vy = cv::Mat(normal).cross(cv::Mat(vx));
-    }
-    else {
-        vy = cv::Vec3f(0,1,-normal[1]/normal[2]);
-        cv::normalize(vy, vy, 1,0, cv::NORM_L2);
-        vx = cv::Mat(normal).cross(cv::Mat(vy));
-    }
+    if (abs(vx[0]) >= abs(vy[1]))
+        vy = cv::Mat(n).cross(cv::Mat(vx));
+    else
+        vx = cv::Mat(n).cross(cv::Mat(vy));
+    
+    //FIXME probably not the right way to normalize the direction?
     if (vx[0] < 0)
         vx *= -1;
     if (vy[1] < 0)
         vy *= -1;
     
-    std::cout << "vecs" << normal << vx << vy << "\n";
-    
-    xt::xarray<float> vx_t{{{vx[2],vx[1],vx[0]}}};
-    xt::xarray<float> vy_t{{{vy[2],vy[1],vy[0]}}};
-    xt::xarray<float> origin_t{{{origin[2],origin[1],origin[0]}}};
-    
-    xt::xarray<float> xrange = xt::arange<float>(-w/2,w/2).reshape({1, -1, 1});
-    xt::xarray<float> yrange = xt::arange<float>(-h/2,h/2).reshape({-1, 1, 1});
-    
-    // xrange = xrange.reshape(-1, 1, 1);
-    
-    // std::cout << xrange.shape() << vx_t.shape() <<  std::endl;
-    
-    coords = vx_t*xrange + vy_t*yrange+origin_t;
-    
-    
-    // auto res = xt::stack(xt::xtuple(std::get<0>(grid),std::get<1>(grid)), 2);
-    // coords = res;
-    // // auto sh = ;
-    // std::cout << coords.shape() << std::endl;
-//     std::cout << xt::strided_view(coords,{h/2,w/2,xt::all()}) << std::endl;
-//     std::cout << xt::strided_view(coords,{h/2,w/2+1,xt::all()}) << std::endl;
-//     std::cout << xt::strided_view(coords,{h/2+1,w/2,xt::all()}) << std::endl;
+//why bother if xtensor is soo slow (around 10x of manual loop below even w/o threading)
+//     xt::xarray<float> vx_t{{{vx[2],vx[1],vx[0]}}};
+//     xt::xarray<float> vy_t{{{vy[2],vy[1],vy[0]}}};
+//     xt::xarray<float> origin_t{{{origin[2],origin[1],origin[0]}}};
 //     
+//     xt::xarray<float> xrange = xt::arange<float>(-w/2,w/2).reshape({1, -1, 1});
+//     xt::xarray<float> yrange = xt::arange<float>(-h/2,h/2).reshape({-1, 1, 1});
 //     
-//     std::cout << xt::strided_view(coords,{0,0,xt::all()}) << std::endl;
-//     std::cout << xt::strided_view(coords,{0,w-1,xt::all()}) << std::endl;
-//     std::cout << xt::strided_view(coords,{h-1,0,xt::all()}) << std::endl;
-//     std::cout << xt::strided_view(coords,{h-1,w-1,xt::all()}) << std::endl;
+//     coords = vx_t*xrange + vy_t*yrange+origin_t;
+    
+    coords = xt::empty<float>({h,w,3});
+    
+#pragma omp parallel for
+    for(int y=0;y<h;y++)
+        for(int x=0;x<h;x++) {
+            coords(y,x,0) = vx[2]*(x-w/2) + vy[2]*(y-h/2) + origin[2];
+            coords(y,x,1) = vx[1]*(x-w/2) + vy[1]*(y-h/2) + origin[1];
+            coords(y,x,2) = vx[0]*(x-w/2) + vy[0]*(y-h/2) + origin[0];
+        }
 }
