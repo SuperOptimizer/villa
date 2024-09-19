@@ -11,7 +11,6 @@
 #include "vc/core/types/Cache.hpp"
 #include "vc/core/types/DiskBasedObjectBaseClass.hpp"
 #include "vc/core/types/LRUCache.hpp"
-#include "vc/core/types/LRUCache2.hpp"
 #include "vc/core/types/Reslice.hpp"
 
 #include "z5/types/types.hxx"
@@ -63,12 +62,6 @@ namespace volcart
 class Volume : public DiskBasedObjectBaseClass,
                public std::enable_shared_from_this<Volume>
 {
-    using CacheEntry = struct {
-        std::vector<std::uint8_t> data;
-        z5::types::ShapeType shape;
-        std::size_t size;
-    };
-    
 public:
     /** Bounding Box type */
     using Bounds = BoundingBox<double, 3>;
@@ -77,12 +70,10 @@ public:
     using Pointer = std::shared_ptr<Volume>;
 
     /** Slice cache type */
-    using SliceCacheType = Cache<int, cv::Mat>;
-    
-    using ChunkCacheType = LRUCache2<z5::types::ShapeType, CacheEntry, KeyHasher>;
+    using SliceCache = Cache<int, cv::Mat>;
 
     /** Default slice cache type */
-    using DefaultSliceCacheType = LRUCache<int, cv::Mat>;
+    using DefaultCache = LRUCache<int, cv::Mat>;
 
     /** Default slice cache capacity */
     static constexpr std::size_t DEFAULT_CAPACITY = 200;
@@ -156,9 +147,6 @@ public:
      * well. Use getSliceDataCopy() if the slice is to be modified.
      */
     cv::Mat getSliceData(int index) const;
-    
-    
-    cv::Mat getAxisSliceData(int index, int axis) const;
 
     /** @copydoc getSliceData(int) const */
     cv::Mat getSliceDataCopy(int index) const;
@@ -234,7 +222,7 @@ public:
     void setCacheSlices(bool b) { cacheSlices_ = b; }
 
     /** @brief Set the slice cache */
-    void setCache(SliceCacheType::Pointer c) { cache_ = std::move(c); }
+    void setCache(SliceCache::Pointer c) { cache_ = std::move(c); }
 
     /** @brief Set the maximum number of cached slices */
     void setCacheCapacity(std::size_t newCacheCapacity)
@@ -259,9 +247,6 @@ public:
     void cachePurge() const;
     /**@}*/
 
-    void putCacheChunk(z5::types::ShapeType chunkId, void* chunk, z5::types::ShapeType chunkShape, std::size_t chunkSize) const;
-    void* getCacheChunk(z5::types::ShapeType chunkId, z5::types::ShapeType& chunkShape, std::size_t& chunkSize) const;
-    
     z5::Dataset *zarrDataset();
     
 protected:
@@ -277,19 +262,17 @@ protected:
     z5::filesystem::handle::File *zarrFile_;
     std::unique_ptr<z5::Dataset> zarrDs_;
     nlohmann::json zarrGroup_;
-    ChunkCacheType::Pointer chunk_cache_;
     
     /** Whether to use slice cache */
     bool cacheSlices_{true};
     /** Slice cache */
-    mutable SliceCacheType::Pointer cache_{DefaultSliceCacheType::New(DEFAULT_CAPACITY)};
+    mutable SliceCache::Pointer cache_{DefaultCache::New(DEFAULT_CAPACITY)};
     /** Cache mutex for thread-safe access */
     mutable std::mutex cacheMutex_;
     mutable std::vector<std::mutex> slice_mutexes_;
 
     /** Load slice from disk */
     cv::Mat load_slice_(int index) const;
-    cv::Mat load_axis_slice_(int index, int axis) const;
     /** Load slice from cache */
     cv::Mat cache_slice_(int index) const;
     /** Shared mutex for thread-safe access */
