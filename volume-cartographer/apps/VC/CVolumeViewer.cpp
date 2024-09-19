@@ -371,8 +371,8 @@ void CVolumeViewer::ResetRotation()
 
 void round_scale(float &scale)
 {
-    if (abs(scale-round(scale)) < 0.02)
-        scale = round(scale);
+    if (abs(scale-round(log2(scale))) < 0.02)
+        scale = pow(2,round(log2(scale)));
 }
 
 //get center of current visible area in scene coordinates
@@ -454,7 +454,7 @@ void CVolumeViewer::OnLocChanged(int x_, int y_, int z_)
 //     loc[2] = z_;
 //     
 //     if (have_change)
-        loadSlice();
+        // loadSlice();
 }
 
 // Update the status of the buttons
@@ -524,9 +524,8 @@ void CVolumeViewer::setSlice(CoordGenerator *slice_)
 
 void CVolumeViewer::OnSliceChanged()
 {
-    //TODO update slice if we are in slice view!
-    if (axis == 3)
-        loadSlice();
+    curr_img_area = {0,0,0,0};
+    renderVisible();
 }
 
 
@@ -553,6 +552,26 @@ cv::Mat render_plane_offset(volcart::Volume *vol, ChunkCache *cache, CoordGenera
     cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
     
     return m.clone();
+}
+
+
+cv::Vec3f loc3d_at_imgpos(volcart::Volume *vol, CoordGenerator *slice, QPointF loc, float scale)
+{
+    xt::xarray<float> coords;
+    
+    int sd_idx = 1;
+    
+    float round_scale = 0.5;
+    while (0.5*round_scale >= scale && sd_idx < vol->numScales()-1) {
+        sd_idx++;
+        round_scale *= 0.5;
+    }
+
+    slice->gen_coords(coords, loc.x()*round_scale/scale,loc.y()*round_scale/scale, 1, 1, scale/round_scale, round_scale);
+    
+    coords /= round_scale;
+    
+    return {coords(0,0,2),coords(0,0,1),coords(0,0,0)};
 }
 
 void CVolumeViewer::renderVisible(bool force)
@@ -613,5 +632,33 @@ cv::Mat CVolumeViewer::getCoordSlice()
 //     cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
 //     
 //     return m.clone();
+    return cv::Mat();
 }
 
+void CVolumeViewer::mouseReleaseEvent(QMouseEvent *event)
+{
+    // if (event->button() != Qt::RightButton)
+        // return;
+
+    QPointF global_loc = fGraphicsView->viewport()->mapFromGlobal(event->globalPosition());
+    QPointF scene_loc = fGraphicsView->mapToScene({global_loc.x(),global_loc.y()});
+    
+    cv::Vec3f vol_loc = loc3d_at_imgpos(volume.get(), slice, scene_loc, scale);
+    
+    printf("right release %f %f - %f %f %f\n", scene_loc.x(), scene_loc.y(), vol_loc[0], vol_loc[1], vol_loc[2]);
+}
+
+void CVolumeViewer::mousePressEvent(QMouseEvent *event)
+{
+    // if (event->button() != Qt::RightButton)
+    // return;
+    
+    QPointF global_loc = fGraphicsView->viewport()->mapFromGlobal(event->globalPosition());
+    QPointF scene_loc = fGraphicsView->mapToScene({global_loc.x(),global_loc.y()});
+    
+    cv::Vec3f vol_loc = loc3d_at_imgpos(volume.get(), slice, scene_loc, scale);
+    
+    printf("right pressed %f %f - %f %f %f\n", scene_loc.x(), scene_loc.y(), vol_loc[0], vol_loc[1], vol_loc[2]);
+    
+    sendVolumeClicked(scene_loc, vol_loc);
+}

@@ -89,6 +89,8 @@ public:
     void setSlice(CoordGenerator *slice);
     cv::Mat getCoordSlice();
     void renderVisible(bool force = false);
+    void mouseReleaseEvent(QMouseEvent *event);
+    void mousePressEvent(QMouseEvent *event);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event);
@@ -107,6 +109,7 @@ public slots:
 signals:
     void SendSignalSliceShift(int shift, int axis);
     void SendSignalStatusMessageAvailable(QString text, int timeout);
+    void sendVolumeClicked(QPointF scene_loc, cv::Vec3f vol_loc);
 
 protected:
     void ScaleImage(double nFactor);

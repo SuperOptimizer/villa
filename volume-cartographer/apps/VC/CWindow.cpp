@@ -221,6 +221,8 @@ CVolumeViewer *CWindow::newConnectedCVolumeViewer(CoordGenerator *slice, QWidget
     connect(volView, SIGNAL(SendSignalSliceShift(int,int)), this, SLOT(OnSliceShift(int,int)));
     connect(this, &CWindow::sendVolumeChanged, volView, &CVolumeViewer::OnVolumeChanged);
     connect(this, &CWindow::sendSliceChanged, volView, &CVolumeViewer::OnSliceChanged);
+    connect(volView, &CVolumeViewer::sendVolumeClicked, this, &CWindow::onVolumeClicked);
+    
     volView->setSlice(slice);
     
     return volView;
@@ -234,23 +236,8 @@ void CWindow::setVolume(volcart::Volume::Pointer newvol)
     int h = currentVolume->sliceHeight();
     int d = currentVolume->numSlices();
     
-    spinLoc[0]->setRange(0, w);
-    spinLoc[1]->setRange(0, h);
-    spinLoc[2]->setRange(0, d);
+    onVolumeClicked({0,0},{w/2,h/2,d/2});
     
-    spCenter[0]->setRange(0, w);
-    spCenter[1]->setRange(0, h);
-    spCenter[2]->setRange(0, d);
-    
-    slice_plane->origin = {w/2,h/2,d/2};
-    slice_xy->origin = {w/2,h/2,d/2};
-    slice_xz->origin = {w/2,h/2,d/2};
-    slice_yz->origin = {w/2,h/2,d/2};
-    // slice_xy = new PlaneCoords({2000,2000,2000},{0,0,1});
-    // slice_xz = new PlaneCoords({2000,2000,2000},{0,1,0});
-    // slice_yz = new PlaneCoords({2000,2000,2000},{1,0,0});
-    
-    //FIXME this will refersh the old slice once?
     onPlaneSliceChanged();
     sendVolumeChanged(currentVolume);
 }
@@ -584,13 +571,9 @@ void CWindow::CreateWidgets(void)
     // connect(rotateCCW, &QShortcut::activated, fVolumeViewerWidget, [this]() { fVolumeViewerWidget->Rotate(-5); });
     
     //new location input
-    spinLoc[0] = this->findChild<QSpinBox*>("spinLocX");
-    spinLoc[1] = this->findChild<QSpinBox*>("spinLocY");
-    spinLoc[2] = this->findChild<QSpinBox*>("spinLocZ");
-    
-    spCenter[0] = this->findChild<QSpinBox*>("spCX");
-    spCenter[1] = this->findChild<QSpinBox*>("spCY");
-    spCenter[2] = this->findChild<QSpinBox*>("spCZ");
+    lblLoc[0] = this->findChild<QLabel*>("sliceX");
+    lblLoc[1] = this->findChild<QLabel*>("sliceY");
+    lblLoc[2] = this->findChild<QLabel*>("sliceZ");
     
     spNorm[0] = this->findChild<QDoubleSpinBox*>("dspNX");
     spNorm[1] = this->findChild<QDoubleSpinBox*>("dspNY");
@@ -599,13 +582,6 @@ void CWindow::CreateWidgets(void)
     for(int i=0;i<3;i++)
         spNorm[i]->setRange(-10,10);
     
-    connect(spinLoc[0], &QSpinBox::valueChanged, this, &CWindow::onLocChanged);
-    connect(spinLoc[1], &QSpinBox::valueChanged, this, &CWindow::onLocChanged);
-    connect(spinLoc[2], &QSpinBox::valueChanged, this, &CWindow::onLocChanged);
-    
-    connect(spCenter[0], &QSpinBox::valueChanged, this, &CWindow::onPlaneSliceChanged);
-    connect(spCenter[1], &QSpinBox::valueChanged, this, &CWindow::onPlaneSliceChanged);
-    connect(spCenter[2], &QSpinBox::valueChanged, this, &CWindow::onPlaneSliceChanged);
     connect(spNorm[0], &QDoubleSpinBox::valueChanged, this, &CWindow::onPlaneSliceChanged);
     connect(spNorm[1], &QDoubleSpinBox::valueChanged, this, &CWindow::onPlaneSliceChanged);
     connect(spNorm[2], &QDoubleSpinBox::valueChanged, this, &CWindow::onPlaneSliceChanged);
@@ -2980,26 +2956,40 @@ void CWindow::onForwardButtonGroupToggled(QAbstractButton* button, bool checked)
 // Handle request to step impact range down
 void CWindow::onLocChanged(void)
 {
-    std::cout << "loc changed!" << "\n";
+    // std::cout << "loc changed!" << "\n";
     
-    sendLocChanged(spinLoc[0]->value(),spinLoc[1]->value(),spinLoc[2]->value());
+    // sendLocChanged(spinLoc[0]->value(),spinLoc[1]->value(),spinLoc[2]->value());
 }
+
+// Handle request to step impact range down
+void CWindow::onVolumeClicked(QPointF scene_loc, cv::Vec3f vol_loc)
+{
+    std::cout << "xy" << slice_xy->origin << "\n" << vol_loc << std::endl;
+    
+    slice_plane->origin = vol_loc;
+    slice_xy->origin = vol_loc;
+    slice_xz->origin = vol_loc;
+    slice_yz->origin = vol_loc;
+    
+    lblLoc[0]->setText(QString::number(vol_loc[2]));
+    lblLoc[1]->setText(QString::number(vol_loc[1]));
+    lblLoc[2]->setText(QString::number(vol_loc[0]));
+    
+    sendSliceChanged();
+}
+
 
 // Handle request to step impact range down
 void CWindow::onPlaneSliceChanged(void)
 {
-    cv::Vec3f origin;
     cv::Vec3f normal;
     
     for(int i=0;i<3;i++) {
-        origin[i] = spCenter[i]->value();
         normal[i] = spNorm[i]->value();
     }
     
-    slice_plane->origin = origin;
     slice_plane->normal = normal;
     
-    std::cout << origin << normal << "\n";
-    
+    //FIXME don't need to rerender all (then again if cached thats fast ...)'
     sendSliceChanged();
 }

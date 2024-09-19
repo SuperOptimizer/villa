@@ -119,6 +119,7 @@ public slots:
     void onImpactRangeDown(void);
     void onLocChanged(void);
     void onPlaneSliceChanged(void);
+    void onVolumeClicked(QPointF scene_loc, cv::Vec3f vol_loc);
 
 public:
     CWindow();
@@ -318,8 +319,7 @@ private:
     QSlider* fEdtImpactRange;
     
     //TODO abstract these into separate QWidget class?
-    QSpinBox* spinLoc[3];
-    QSpinBox* spCenter[3];
+    QLabel* lblLoc[3];
     QDoubleSpinBox* spNorm[3];
 
     // keyboard shortcuts
