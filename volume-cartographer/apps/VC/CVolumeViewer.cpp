@@ -11,7 +11,7 @@ using qga = QGuiApplication;
 
 #define BGND_RECT_MARGIN 8
 #define DEFAULT_TEXT_COLOR QColor(255, 255, 120)
-#define ZOOM_FACTOR 1.15
+#define ZOOM_FACTOR 1.148698354997035
 
 // Constructor
 CVolumeViewerView::CVolumeViewerView(QWidget* parent)
@@ -359,20 +359,28 @@ void CVolumeViewer::ResetRotation()
     // fImageRotationSpin->setValue(currentRotation);
 }
 
+void round_scale(float &scale)
+{
+    if (abs(scale-round(scale)) < 0.02)
+        scale = round(scale);
+}
+
 // Handle zoom in click
 void CVolumeViewer::OnZoomInClicked(void)
 {
-    if (fZoomInBtn->isEnabled()) {
-        ScaleImage(ZOOM_FACTOR);
-    }
+    scale *= ZOOM_FACTOR;
+    round_scale(scale);
+    
+    renderVisible(true);
 }
 
 // Handle zoom out click
 void CVolumeViewer::OnZoomOutClicked(void)
 {
-    if (fZoomOutBtn->isEnabled()) {
-        ScaleImage(1 / ZOOM_FACTOR);
-    }
+    scale /= ZOOM_FACTOR;
+    round_scale(scale);
+
+    renderVisible(true);
 }
 
 void CVolumeViewer::OnResetClicked(void)
@@ -440,11 +448,8 @@ void CVolumeViewer::Reset()
 void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
 {
     volume = volume_;
-    loadSlice();
-    
-    // QRectF view = geometry();
-    
-    // std::cout << "cvolview " << view.left() << "x" << view.top()  << "x" << view.width()  << "x" << view.height() << std::endl;
+
+    renderVisible(true);
 }
 
 void CVolumeViewer::setCache(ChunkCache *cache_)
@@ -488,39 +493,50 @@ void CVolumeViewer::OnSliceChanged()
 }
 
 
-cv::Mat render_plane_offset(volcart::Volume *vol, ChunkCache *cache, CoordGenerator *slice, int x, int y, int w, int h)
+cv::Mat render_plane_offset(volcart::Volume *vol, ChunkCache *cache, CoordGenerator *slice, QRectF area, float scale)
 {
     xt::xarray<float> coords;
     xt::xarray<uint8_t> img;
     
-    slice->gen_coords(coords, x,y, w, h);
-    readInterpolated3D(img, vol->zarrDataset() ,coords, cache);
-    // readInterpolated3D(img,ds,coords);
+    int sd_idx = 1;
+    
+    float round_scale = 0.5;
+    while (0.5*round_scale >= scale && sd_idx < vol->numScales()-1) {
+        printf("wtf %f %f\n", round_scale, scale);
+        sd_idx++;
+        round_scale *= 0.5;
+    }
+    
+    area = QRectF(area.left()*round_scale/scale, area.top()*round_scale/scale, area.width(), area.height());
+    
+    printf("rendering %f %f %f %f at %f %f %f %d\n", area.left(), area.top(), area.width(), area.height(), scale/round_scale, scale, round_scale, sd_idx);
+    
+    slice->gen_coords(coords, area.left(), area.top(), area.width(), area.height(), scale/round_scale, round_scale);
+    readInterpolated3D(img, vol->zarrDataset(sd_idx) ,coords, cache);
     cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
     
     return m.clone();
 }
 
-void CVolumeViewer::onScrolled()
+void CVolumeViewer::renderVisible(bool force)
 {
     if (!volume || !volume->zarrDataset())
         return;
-        
+    
     QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->geometry()).boundingRect();
-    std::cout << "scene" << bbox.left() << "x" << bbox.top()  << "x" << bbox.width()  << "x" << bbox.height() << std::endl;
     
     //nothing to see her, move along
-    if (QRectF(curr_img_area).contains(bbox))
+    if (!force && QRectF(curr_img_area).contains(bbox))
         return;
     
     curr_img_area = {bbox.left()-128,bbox.top()-128, bbox.width()+256, bbox.height()+256};
     
-    cv::Mat img = render_plane_offset(volume.get(), cache, slice, curr_img_area.left(), curr_img_area.top(), curr_img_area.width(), curr_img_area.height());
-
+    cv::Mat img = render_plane_offset(volume.get(), cache, slice, curr_img_area, scale);
+    
     QImage qimg = Mat2QImage(img);
-
+    
     QPixmap pixmap = QPixmap::fromImage(qimg, fSkipImageFormatConv ? Qt::NoFormatConversion : Qt::AutoColor);
-//     
+    //     
     // Add the QPixmap to the scene as a QGraphicsPixmapItem
     if (!fBaseImageItem)
         fBaseImageItem = fScene->addPixmap(pixmap);
@@ -528,9 +544,11 @@ void CVolumeViewer::onScrolled()
         fBaseImageItem->setPixmap(pixmap);
     
     fBaseImageItem->setOffset(curr_img_area.topLeft());
-    
-    // UpdateButtons();
-    // update();
+}
+
+void CVolumeViewer::onScrolled()
+{
+    renderVisible();
 }
 
 cv::Mat CVolumeViewer::getCoordSlice()

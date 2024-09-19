@@ -247,7 +247,8 @@ public:
     void cachePurge() const;
     /**@}*/
 
-    z5::Dataset *zarrDataset();
+    z5::Dataset *zarrDataset(int level = 1);
+    size_t numScales();
     
 protected:
     /** Slice width */
@@ -260,7 +261,7 @@ protected:
     int numSliceCharacters_{0};
 
     z5::filesystem::handle::File *zarrFile_;
-    std::unique_ptr<z5::Dataset> zarrDs_;
+    std::vector<std::unique_ptr<z5::Dataset>> zarrDs_;
     nlohmann::json zarrGroup_;
     
     /** Whether to use slice cache */

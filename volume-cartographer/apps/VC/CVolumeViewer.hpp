@@ -88,6 +88,7 @@ public:
     void loadSlice();
     void setSlice(CoordGenerator *slice);
     cv::Mat getCoordSlice();
+    void renderVisible(bool force = false);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event);
@@ -149,6 +150,7 @@ protected:
     
     ChunkCache *cache = nullptr;
     QRect curr_img_area = {0,0,1000,1000};
+    float scale = 0.5;
 };  // class CVolumeViewer
 
 }  // namespace ChaoVis

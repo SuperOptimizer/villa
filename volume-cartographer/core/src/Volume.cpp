@@ -72,16 +72,22 @@ Volume::Volume(fs::path path, std::string uuid, std::string name)
 
 void Volume::zarrOpen()
 {
-    if (metadata_.hasKey("format") && metadata_.get<std::string>("format") == "zarr") {
-        std::cout << "zarropen" << "\n";
-        isZarr = true;
-        zarrFile_ = new z5::filesystem::handle::File(path_);
-        z5::filesystem::handle::Group group(path_, z5::FileMode::FileMode::r);
-        z5::readAttributes(group, zarrGroup_);
-        
-        // z5::filesystem::handle::Dataset ds_handle(fs::path(path_ / "1"), z5::FileMode::FileMode::r, "/");
-        z5::filesystem::handle::Dataset ds_handle(group, "1", "/");
-        zarrDs_ = z5::filesystem::openDataset(ds_handle);
+    if (!metadata_.hasKey("format") || metadata_.get<std::string>("format") != "zarr")
+        return;
+
+    isZarr = true;
+    zarrFile_ = new z5::filesystem::handle::File(path_);
+    z5::filesystem::handle::Group group(path_, z5::FileMode::FileMode::r);
+    z5::readAttributes(group, zarrGroup_);
+    
+    std::vector<std::string> groups;
+    zarrFile_->keys(groups);
+    std::sort(groups.begin(), groups.end());
+    
+    //FIXME hardcoded assumption that groups correspond to power-2 scaledowns ...
+    for(auto name : groups) {
+        z5::filesystem::handle::Dataset ds_handle(group, name, "/");
+        zarrDs_.push_back(z5::filesystem::openDataset(ds_handle));
     }
 }
 
@@ -439,7 +445,15 @@ void Volume::cachePurge() const
     cache_->purge();
 }
 
-z5::Dataset *Volume::zarrDataset()
+z5::Dataset *Volume::zarrDataset(int level)
 {
-    return zarrDs_.get();
+    if (level >= zarrDs_.size())
+        return nullptr;
+
+    return zarrDs_[level].get();
+}
+
+size_t Volume::numScales()
+{
+    return zarrDs_.size();
 }
