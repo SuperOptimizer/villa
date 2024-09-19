@@ -6,16 +6,16 @@ CT scans of ancient, badly damaged manuscripts, but can be applied in many
 volumetric analysis applications.
 
 ## WIP 3D volume slicing
-- this branch implements (OME)-Zarr based volume viewing
-  - arbitrary plane slicing, currently used to show XY,YZ,XZ planes + 1 plane with free rotation
+- this branch implements (OME)-Zarr based volume viewing and arbitrary plane slicing, currently used to show XY,YZ,XZ planes + 1 plane with free rotation
 - along the way a lot of functionaltiy was disabled/broken - for now use it just to look at stuff, do not touch segmentation
-- to use it:
+- usage
   - you need a Zarr volume (e.g. https://dl.ash2txt.org/other/dev/scrolls/1/volumes/54keV_7.91um.zarr/) in the volumes directory of your volpkg
   - it needs a meta.json in the .zarr directory, which can be identical to the regular volume apart from:
     - adding "format":"zarr"
-    - chaning "name" so you can identify it in VC
+    - changing "name" so you can identify it in VC
   - by default VC will only load scale 1 or higher from the Zarr voluem, so you do not need to download the highest resolution scale 0
-- features description
+  - the default chunk cache is 10GB of RAM
+- features
   - yellow circle marks the slicing center
   - left click + drag to move around
   - right click to set slicing center to the selected location
