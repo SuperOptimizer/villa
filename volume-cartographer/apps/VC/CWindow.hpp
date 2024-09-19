@@ -40,7 +40,6 @@ static constexpr int VOLPKG_SLICE_MIN_INDEX = 0;
 
 class PlaneCoords;
 class ChunkCache;
-class CoordGenerator;
 
 namespace ChaoVis
 {
@@ -120,6 +119,7 @@ public slots:
     void onLocChanged(void);
     void onPlaneSliceChanged(void);
     void onVolumeClicked(QPointF scene_loc, cv::Vec3f vol_loc);
+    void onShiftNormal(cv::Vec3f step);
 
 public:
     CWindow();
@@ -135,7 +135,7 @@ private:
     void UpdateRecentVolpkgList(const QString& path);
     void RemoveEntryFromRecentVolpkg(const QString& path);
 
-    CVolumeViewer *newConnectedCVolumeViewer(CoordGenerator *slice, QWidget *parent);
+    CVolumeViewer *newConnectedCVolumeViewer(PlaneCoords *slice, QWidget *parent);
     void closeEvent(QCloseEvent* event);
 
     void setWidgetsEnabled(bool state);

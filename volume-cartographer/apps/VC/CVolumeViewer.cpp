@@ -278,56 +278,14 @@ bool CVolumeViewer::eventFilter(QObject* watched, QEvent* event)
             } else if (numDegrees < 0) {
                 OnZoomOutClicked();
             }
-
-            // if (fCenterOnZoomEnabled) {
-            //     CenterOn(fGraphicsView->mapToScene(wheelEvent->position().toPoint()));
-            // }
-
             return true;
         }
         // Shift = Scan through slices
         else if (QApplication::keyboardModifiers() == Qt::ShiftModifier) {
             int numDegrees = wheelEvent->angleDelta().y() / 8;
 
-            if (numDegrees > 0) {
-                SendSignalSliceShift(fScanRange, axis);
-            } else if (numDegrees < 0) {
-                SendSignalSliceShift(-fScanRange, axis);
-            }
+            sendShiftNormal(0.1*numDegrees*slice->normal);
             return true;
-        }
-        // Rotate key pressed
-        else if (fGraphicsView->isRotateKyPressed()) {
-            int delta = wheelEvent->angleDelta().y() / 22;
-            fGraphicsView->rotate(delta);
-            currentRotation += delta;
-            currentRotation = currentRotation % 360;
-            fImageRotationSpin->setValue(currentRotation);
-            return true;
-        } 
-        // View scrolling
-        else {
-            // If there is no valid scroll speed override value set, we rely
-            // on the default handling of Qt, so we pass on the event.
-            if (fScrollSpeed > 0) {
-                // We have to add the two values since when pressing AltGr as the modifier, 
-                // the X component seems to be set by Qt
-                int delta = wheelEvent->angleDelta().x() + wheelEvent->angleDelta().y();
-                if (delta == 0) {
-                    return true;
-                }
-
-                // Taken from QGraphicsView Qt source logic
-                const bool horizontal = qAbs(wheelEvent->angleDelta().x()) > qAbs(wheelEvent->angleDelta().y());
-                if (QApplication::keyboardModifiers() == Qt::AltModifier || horizontal) {
-                    fGraphicsView->horizontalScrollBar()->setValue(
-                        fGraphicsView->horizontalScrollBar()->value() + fScrollSpeed * ((delta < 0) ? 1 : -1));
-                } else {
-                    fGraphicsView->verticalScrollBar()->setValue(
-                        fGraphicsView->verticalScrollBar()->value() + fScrollSpeed * ((delta < 0) ? 1 : -1));
-                }
-                return true;
-            }
         }
     }
     return QWidget::eventFilter(watched, event);
@@ -516,7 +474,7 @@ void CVolumeViewer::loadSlice()
 //     UpdateButtons();
 }
 
-void CVolumeViewer::setSlice(CoordGenerator *slice_)
+void CVolumeViewer::setSlice(PlaneCoords *slice_)
 {
     slice = slice_;
     OnSliceChanged();
@@ -529,7 +487,7 @@ void CVolumeViewer::OnSliceChanged()
 }
 
 
-cv::Mat render_plane_offset(volcart::Volume *vol, ChunkCache *cache, CoordGenerator *slice, QRectF area, float scale)
+cv::Mat render_plane_offset(volcart::Volume *vol, ChunkCache *cache, PlaneCoords *slice, QRectF area, float scale)
 {
     xt::xarray<float> coords;
     xt::xarray<uint8_t> img;
@@ -555,7 +513,7 @@ cv::Mat render_plane_offset(volcart::Volume *vol, ChunkCache *cache, CoordGenera
 }
 
 
-cv::Vec3f loc3d_at_imgpos(volcart::Volume *vol, CoordGenerator *slice, QPointF loc, float scale)
+cv::Vec3f loc3d_at_imgpos(volcart::Volume *vol, PlaneCoords *slice, QPointF loc, float scale)
 {
     xt::xarray<float> coords;
     

@@ -211,7 +211,7 @@ CWindow::~CWindow(void)
     SDL_Quit();
 }
 
-CVolumeViewer *CWindow::newConnectedCVolumeViewer(CoordGenerator *slice, QWidget *parent)
+CVolumeViewer *CWindow::newConnectedCVolumeViewer(PlaneCoords *slice, QWidget *parent)
 {
     auto volView = new CVolumeViewer(parent);
     volView->setCache(chunk_cache);
@@ -222,6 +222,9 @@ CVolumeViewer *CWindow::newConnectedCVolumeViewer(CoordGenerator *slice, QWidget
     connect(this, &CWindow::sendVolumeChanged, volView, &CVolumeViewer::OnVolumeChanged);
     connect(this, &CWindow::sendSliceChanged, volView, &CVolumeViewer::OnSliceChanged);
     connect(volView, &CVolumeViewer::sendVolumeClicked, this, &CWindow::onVolumeClicked);
+    connect(volView, &CVolumeViewer::sendShiftNormal, this, &CWindow::onShiftNormal);
+    
+    
     
     volView->setSlice(slice);
     
@@ -2978,6 +2981,20 @@ void CWindow::onVolumeClicked(QPointF scene_loc, cv::Vec3f vol_loc)
     sendSliceChanged();
 }
 
+// Handle request to step impact range down
+void CWindow::onShiftNormal(cv::Vec3f shift)
+{    
+    slice_plane->origin += shift;
+    slice_xy->origin += shift;
+    slice_xz->origin += shift;
+    slice_yz->origin += shift;
+    
+    lblLoc[0]->setText(QString::number(slice_plane->origin[2]));
+    lblLoc[1]->setText(QString::number(slice_plane->origin[1]));
+    lblLoc[2]->setText(QString::number(slice_plane->origin[0]));
+    
+    sendSliceChanged();
+}
 
 // Handle request to step impact range down
 void CWindow::onPlaneSliceChanged(void)

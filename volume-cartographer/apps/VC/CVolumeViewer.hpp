@@ -13,7 +13,7 @@
 
 #include "vc/core/types/VolumePkg.hpp"
 
-class CoordGenerator;
+class PlaneCoords;
 class ChunkCache;
 
 namespace ChaoVis
@@ -86,7 +86,7 @@ public:
     void ResetRotation();
     void setCache(ChunkCache *cache);
     void loadSlice();
-    void setSlice(CoordGenerator *slice);
+    void setSlice(PlaneCoords *slice);
     cv::Mat getCoordSlice();
     void renderVisible(bool force = false);
     void mouseReleaseEvent(QMouseEvent *event);
@@ -110,6 +110,7 @@ signals:
     void SendSignalSliceShift(int shift, int axis);
     void SendSignalStatusMessageAvailable(QString text, int timeout);
     void sendVolumeClicked(QPointF scene_loc, cv::Vec3f vol_loc);
+    void sendShiftNormal(cv::Vec3f step);
 
 protected:
     void ScaleImage(double nFactor);
@@ -147,7 +148,7 @@ protected:
     QGraphicsPixmapItem* fBaseImageItem;
     
     volcart::Volume::Pointer volume = nullptr;
-    CoordGenerator *slice = nullptr;
+    PlaneCoords *slice = nullptr;
     int axis = 0;
     int loc[3] = {0,0,0};
     
