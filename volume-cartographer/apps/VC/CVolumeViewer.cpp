@@ -11,7 +11,8 @@ using qga = QGuiApplication;
 
 #define BGND_RECT_MARGIN 8
 #define DEFAULT_TEXT_COLOR QColor(255, 255, 120)
-#define ZOOM_FACTOR 1.148698354997035
+// #define ZOOM_FACTOR 1.148698354997035
+#define ZOOM_FACTOR 1.414213562373095
 
 // Constructor
 CVolumeViewerView::CVolumeViewerView(QWidget* parent)
@@ -170,6 +171,15 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
 
     // Create graphics view
     fGraphicsView = new CVolumeViewerView(this);
+    
+    
+    
+    
+    fGraphicsView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+    fGraphicsView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+    
+    fGraphicsView->setTransformationAnchor(QGraphicsView::NoAnchor);
+    
     fGraphicsView->setRenderHint(QPainter::Antialiasing);
     setFocusProxy(fGraphicsView);
     connect(fGraphicsView, &CVolumeViewerView::sendScrolled, this, &CVolumeViewer::onScrolled);
@@ -202,11 +212,11 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     // fScrollSpeed = settings.value("viewer/scroll_speed", false).toInt();
     fSkipImageFormatConv = settings.value("perf/chkSkipImageFormatConvExp", false).toBool();
 
-    // QVBoxLayout* aWidgetLayout = new QVBoxLayout;
-    // aWidgetLayout->addWidget(fGraphicsView);
+    QVBoxLayout* aWidgetLayout = new QVBoxLayout;
+    aWidgetLayout->addWidget(fGraphicsView);
     // aWidgetLayout->addLayout(fButtonsLayout);
 
-    // setLayout(aWidgetLayout);
+    setLayout(aWidgetLayout);
     
     UpdateButtons();
 }
@@ -269,9 +279,9 @@ bool CVolumeViewer::eventFilter(QObject* watched, QEvent* event)
                 OnZoomOutClicked();
             }
 
-            if (fCenterOnZoomEnabled) {
-                CenterOn(fGraphicsView->mapToScene(wheelEvent->position().toPoint()));
-            }
+            // if (fCenterOnZoomEnabled) {
+            //     CenterOn(fGraphicsView->mapToScene(wheelEvent->position().toPoint()));
+            // }
 
             return true;
         }
@@ -365,13 +375,27 @@ void round_scale(float &scale)
         scale = round(scale);
 }
 
+//get center of current visible area in scene coordinates
+QPointF visible_center(QGraphicsView *view)
+{
+    QRectF bbox = view->mapToScene(view->viewport()->geometry()).boundingRect();
+    return bbox.topLeft() + QPointF(bbox.width(),bbox.height())*0.5;
+}
+
 // Handle zoom in click
 void CVolumeViewer::OnZoomInClicked(void)
 {
     scale *= ZOOM_FACTOR;
     round_scale(scale);
     
-    renderVisible(true);
+    curr_img_area = {0,0,0,0};
+    QPointF center = visible_center(fGraphicsView) * ZOOM_FACTOR;
+    
+    int max_size = std::max(volume->sliceWidth(), std::max(volume->numSlices(), volume->sliceHeight()))*scale + 512;
+    fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
+    
+    fGraphicsView->centerOn(center);
+    renderVisible();
 }
 
 // Handle zoom out click
@@ -379,8 +403,15 @@ void CVolumeViewer::OnZoomOutClicked(void)
 {
     scale /= ZOOM_FACTOR;
     round_scale(scale);
-
-    renderVisible(true);
+    
+    curr_img_area = {0,0,0,0};
+    QPointF center = visible_center(fGraphicsView) / ZOOM_FACTOR;
+    
+    int max_size = std::max(volume->sliceWidth(), std::max(volume->numSlices(), volume->sliceHeight()))*scale + 512;
+    fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
+    
+    fGraphicsView->centerOn(center);
+    renderVisible();
 }
 
 void CVolumeViewer::OnResetClicked(void)
@@ -448,6 +479,12 @@ void CVolumeViewer::Reset()
 void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
 {
     volume = volume_;
+    
+    printf("sizes %d %d %d\n", volume_->sliceWidth(), volume_->sliceHeight(), volume_->numSlices());
+    
+    int max_size = std::max(volume_->sliceWidth(), std::max(volume_->numSlices(), volume_->sliceHeight()))*scale + 512;
+    printf("max size %d\n", max_size);
+    fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
 
     renderVisible(true);
 }
@@ -459,24 +496,24 @@ void CVolumeViewer::setCache(ChunkCache *cache_)
 
 void CVolumeViewer::loadSlice()
 {
-    QImage aImgQImage;
-    cv::Mat aImgMat;
-    
-    if (volume && volume->zarrDataset()) {
-        aImgMat = getCoordSlice();
-
-        if (aImgMat.isContinuous() && aImgMat.type() == CV_16U) {
-            // create QImage directly backed by cv::Mat buffer
-            aImgQImage = QImage(
-                aImgMat.ptr(), aImgMat.cols, aImgMat.rows, aImgMat.step,
-                QImage::Format_Grayscale16);
-        } else
-            aImgQImage = Mat2QImage(aImgMat);
-            
-        SetImage(aImgQImage);
-    }
-    
-    UpdateButtons();
+//     QImage aImgQImage;
+//     cv::Mat aImgMat;
+//     
+//     if (volume && volume->zarrDataset()) {
+//         aImgMat = getCoordSlice();
+// 
+//         if (aImgMat.isContinuous() && aImgMat.type() == CV_16U) {
+//             // create QImage directly backed by cv::Mat buffer
+//             aImgQImage = QImage(
+//                 aImgMat.ptr(), aImgMat.cols, aImgMat.rows, aImgMat.step,
+//                 QImage::Format_Grayscale16);
+//         } else
+//             aImgQImage = Mat2QImage(aImgMat);
+//             
+//         SetImage(aImgQImage);
+//     }
+//     
+//     UpdateButtons();
 }
 
 void CVolumeViewer::setSlice(CoordGenerator *slice_)
@@ -523,7 +560,7 @@ void CVolumeViewer::renderVisible(bool force)
     if (!volume || !volume->zarrDataset())
         return;
     
-    QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->geometry()).boundingRect();
+    QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->viewport()->geometry()).boundingRect();
     
     //nothing to see her, move along
     if (!force && QRectF(curr_img_area).contains(bbox))
@@ -543,26 +580,38 @@ void CVolumeViewer::renderVisible(bool force)
     else
         fBaseImageItem->setPixmap(pixmap);
     
+    if (!center_marker)
+        center_marker = fScene->addEllipse({-10,-10,20,20}, QPen(Qt::yellow, 3, Qt::DashDotLine, Qt::RoundCap, Qt::RoundJoin));
+
+    
+    // center_marker->stackBefore(fBaseImageItem);
+    center_marker->setParentItem(fBaseImageItem);
+    
     fBaseImageItem->setOffset(curr_img_area.topLeft());
+    // fBaseImageItem->setVisible(false);
 }
 
 void CVolumeViewer::onScrolled()
 {
+    QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->viewport()->geometry()).boundingRect();
+    QRect viewrect = fGraphicsView->viewport()->geometry();
+    printf("scrolled to scene pos %f x %f bbox %f %f %f %f from %d %d %d %d\n", visible_center(fGraphicsView).x(), visible_center(fGraphicsView).y(), bbox.left() , bbox.top() , bbox.width(), bbox.height(), viewrect.left(), viewrect.top(), viewrect.width(), viewrect.height());
+    
     renderVisible();
 }
 
 cv::Mat CVolumeViewer::getCoordSlice()
 {
-    xt::xarray<float> coords;
-    xt::xarray<uint8_t> img;
-    
-    slice->gen_coords(coords, -500, -500, 1000, 1000);
-    std::cout << "start read" << cache << std::endl;
-    readInterpolated3D(img, volume->zarrDataset() ,coords, cache);
-    std::cout << "done read" << cache << std::endl;
-    // readInterpolated3D(img,ds,coords);
-    cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
-    
-    return m.clone();
+//     xt::xarray<float> coords;
+//     xt::xarray<uint8_t> img;
+//     
+//     slice->gen_coords(coords, -500, -500, 1000, 1000);
+//     std::cout << "start read" << cache << std::endl;
+//     readInterpolated3D(img, volume->zarrDataset() ,coords, cache);
+//     std::cout << "done read" << cache << std::endl;
+//     // readInterpolated3D(img,ds,coords);
+//     cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+//     
+//     return m.clone();
 }
 

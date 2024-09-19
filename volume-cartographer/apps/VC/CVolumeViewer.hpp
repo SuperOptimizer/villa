@@ -151,6 +151,8 @@ protected:
     ChunkCache *cache = nullptr;
     QRect curr_img_area = {0,0,1000,1000};
     float scale = 0.5;
+    
+    QGraphicsEllipseItem *center_marker = nullptr;
 };  // class CVolumeViewer
 
 }  // namespace ChaoVis

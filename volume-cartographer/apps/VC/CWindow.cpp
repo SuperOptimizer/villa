@@ -211,9 +211,9 @@ CWindow::~CWindow(void)
     SDL_Quit();
 }
 
-CVolumeViewer *CWindow::newConnectedCVolumeViewer(CoordGenerator *slice)
+CVolumeViewer *CWindow::newConnectedCVolumeViewer(CoordGenerator *slice, QWidget *parent)
 {
-    auto volView = new CVolumeViewer();
+    auto volView = new CVolumeViewer(parent);
     volView->setCache(chunk_cache);
     // connect(fVolumeViewerWidget, &CVolumeViewerWithCurve::SendSignalStatusMessageAvailable, this, &CWindow::onShowStatusMessage);
     connect(this, &CWindow::sendLocChanged, volView, &CVolumeViewer::OnLocChanged);
@@ -242,6 +242,14 @@ void CWindow::setVolume(volcart::Volume::Pointer newvol)
     spCenter[1]->setRange(0, h);
     spCenter[2]->setRange(0, d);
     
+    slice_plane->origin = {w/2,h/2,d/2};
+    slice_xy->origin = {w/2,h/2,d/2};
+    slice_xz->origin = {w/2,h/2,d/2};
+    slice_yz->origin = {w/2,h/2,d/2};
+    // slice_xy = new PlaneCoords({2000,2000,2000},{0,0,1});
+    // slice_xz = new PlaneCoords({2000,2000,2000},{0,1,0});
+    // slice_yz = new PlaneCoords({2000,2000,2000},{1,0,0});
+    
     //FIXME this will refersh the old slice once?
     onPlaneSliceChanged();
     sendVolumeChanged(currentVolume);
@@ -254,13 +262,13 @@ void CWindow::CreateWidgets(void)
 
     // add volume viewer
     auto aWidgetLayout = new QGridLayout;
-    auto volView = newConnectedCVolumeViewer(slice_xy);
+    auto volView = newConnectedCVolumeViewer(slice_xy, ui.tabSegment);
     aWidgetLayout->addWidget(volView, 0, 0);
-    volView = newConnectedCVolumeViewer(slice_xz);
+    volView = newConnectedCVolumeViewer(slice_xz, ui.tabSegment);
     aWidgetLayout->addWidget(volView, 0, 1);
-    volView = newConnectedCVolumeViewer(slice_yz);
+    volView = newConnectedCVolumeViewer(slice_yz, ui.tabSegment);
     aWidgetLayout->addWidget(volView, 1, 0);
-    volView = newConnectedCVolumeViewer(slice_plane);
+    volView = newConnectedCVolumeViewer(slice_plane, ui.tabSegment);
     aWidgetLayout->addWidget(volView, 1, 1);
 
     ui.tabSegment->setLayout(aWidgetLayout);
