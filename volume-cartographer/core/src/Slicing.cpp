@@ -19,6 +19,9 @@
 #include <opencv2/core.hpp>
 #include <shared_mutex>
 
+#include <algorithm>
+#include <random>
+
 using shape = z5::types::ShapeType;
 using namespace xt::placeholders;
 
@@ -465,6 +468,11 @@ void CoordGenerator::gen_coords(xt::xarray<float> &coords, int w, int h) const
     return gen_coords(coords, -w/2, -h/2, w, h, 1.0, 1.0);
 }
 
+void CoordGenerator::gen_coords(xt::xarray<float> &coords, const cv::Rect &roi, float render_scale, float coord_scale) const
+{
+    return gen_coords(coords, roi.x, roi.y, roi.width, roi.height, render_scale, coord_scale);
+}
+
 void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale) const
 {
     // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
@@ -489,25 +497,99 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int
     if (vy[1] < 0)
         vy *= -1;
     
-//why bother if xtensor is soo slow (around 10x of manual loop below even w/o threading)
-//     xt::xarray<float> vx_t{{{vx[2],vx[1],vx[0]}}};
-//     xt::xarray<float> vy_t{{{vy[2],vy[1],vy[0]}}};
-//     xt::xarray<float> origin_t{{{origin[2],origin[1],origin[0]}}};
-//     
-//     xt::xarray<float> xrange = xt::arange<float>(-w/2,w/2).reshape({1, -1, 1});
-//     xt::xarray<float> yrange = xt::arange<float>(-h/2,h/2).reshape({-1, 1, 1});
-//     
-//     coords = vx_t*xrange + vy_t*yrange+origin_t;
+    //why bother if xtensor is soo slow (around 10x of manual loop below even w/o threading)
+    //     xt::xarray<float> vx_t{{{vx[2],vx[1],vx[0]}}};
+    //     xt::xarray<float> vy_t{{{vy[2],vy[1],vy[0]}}};
+    //     xt::xarray<float> origin_t{{{origin[2],origin[1],origin[0]}}};
+    //     
+    //     xt::xarray<float> xrange = xt::arange<float>(-w/2,w/2).reshape({1, -1, 1});
+    //     xt::xarray<float> yrange = xt::arange<float>(-h/2,h/2).reshape({-1, 1, 1});
+    //     
+    //     coords = vx_t*xrange + vy_t*yrange+origin_t;
     
     coords = xt::empty<float>({h,w,3});
     
     float m = 1/render_scale;
     
-#pragma omp parallel for
+    #pragma omp parallel for
     for(int j=0;j<h;j++)
         for(int i=0;i<w;i++) {
             coords(j,i,0) = vx[2]*(i*m+x) + vy[2]*(j*m+y) + origin[2]*coord_scale;
             coords(j,i,1) = vx[1]*(i*m+x) + vy[1]*(j*m+y) + origin[1]*coord_scale;
             coords(j,i,2) = vx[0]*(i*m+x) + vy[0]*(j*m+y) + origin[0]*coord_scale;
         }
+}
+
+/*cv::Point3f PlaneCoords::gen_coords(float i, float j, int x, int y, float render_scale, float coord_scale) const
+{    
+    float m = 1/render_scale;
+
+    float cz = vx[2]*(i*m+x) + vy[2]*(j*m+y) + origin[2]*coord_scale;
+    float cy = vx[1]*(i*m+x) + vy[1]*(j*m+y) + origin[1]*coord_scale;
+    float cx = vx[0]*(i*m+x) + vy[0]*(j*m+y) + origin[0]*coord_scale;
+    
+    return {cx,cy,cz};
+}*/
+
+// bool plane_side(const cv::Point3f &point, const cv::Point3f &normal, float plane_off)
+// {
+//     return point.dot(normal) >= plane_off;
+// }
+
+void find_intersect_segments(std::vector<std::vector<cv::Point2f>> segments, const PlaneCoords *target_plane, const CoordGenerator *roi_seg, const cv::Rect roi, float render_scale, float coord_scale)
+{
+    //generate a bunch of locations within the roi
+    //wort them by the side they are on of the target_plane
+    
+    xt::xarray<float> coords;
+    
+    //FIXME make generators more flexible so we can generate more sparse data
+    roi_seg->gen_coords(coords, roi, render_scale, coord_scale);
+    
+    std::vector<std::tuple<cv::Point,cv::Point3f,float>> upper;
+    std::vector<std::tuple<cv::Point,cv::Point3f,float>> lower;
+    std::vector<cv::Point2f> seg_points;
+    
+    float plane_off = target_plane->origin.dot(target_plane->normal);
+    
+    for(int c=0;c<1000;c++) {
+        int x = std::rand() % roi.width;
+        int y = std::rand() % roi.height;
+        
+        
+        cv::Point3f point = {coords(y,x,2),coords(y,x,1),coords(y,x,0)};
+        
+        float scalarp = point.dot(target_plane->normal) - plane_off;
+        if (scalarp > 0)
+            upper.push_back({{x,y},point,scalarp});
+        else if(scalarp < 0)
+            lower.push_back({{x,y},point,scalarp});
+    }
+    
+    auto rng = std::default_random_engine {};
+    std::shuffle(upper.begin(), upper.end(), rng);
+    std::shuffle(lower.begin(), lower.end(), rng);
+    
+    float plane_mul = 1.0/sqrt(target_plane->normal[0]*target_plane->normal[0]+target_plane->normal[1]*target_plane->normal[1]+target_plane->normal[2]*target_plane->normal[2]);
+    
+    std::vector<cv::Point2f> intersects;
+    
+    //brute force cause I'm lazy
+    //FIXME if we have very vew points in uppper/lower: regenerate more points around there or reuse points
+    for(int r=0;r<std::min<int>(100,std::min(upper.size(),lower.size()));r++) {
+        float d_up = sqrt(std::get<2>(upper[r])) * plane_mul;
+        float d_low = sqrt(std::get<2>(lower[r])) * plane_mul;
+        
+        cv::Point2f res = d_low/(d_up+d_low) * std::get<0>(upper[r]) + d_up/(d_up+d_low) * std::get<0>(lower[r]);
+        
+        intersects.push_back(res);
+    }
+    
+    //this will only work if we have straight line!
+    std::sort(intersects.begin(),
+              intersects.end(),
+              [](const cv::Point2f &a, const cv::Point2f &b){return (a.y < b.y)*2+(a.x<b.x);}
+        );
+    
+    segments.push_back(intersects);
 }
