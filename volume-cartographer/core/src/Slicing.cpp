@@ -548,6 +548,10 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
     std::vector<cv::Point2f> seg_points;
     
     float plane_off = other->origin.dot(other->normal);
+    float plane_mul = 1.0/sqrt(other->normal[0]*other->normal[0]+other->normal[1]*other->normal[1]+other->normal[2]*other->normal[2]);
+    
+    std::cout << "other" << other->origin << other->normal << other->origin.dot(other->normal) << "\n";
+    std::cout << "roi" << ((PlaneCoords*)roi_gen)->origin << ((PlaneCoords*)roi_gen)->normal <<  "\n";
     
     for(int c=0;c<1000;c++) {
         int x = std::rand() % roi.width;
@@ -555,27 +559,32 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
         
         
         cv::Point3f point = {coords(y,x,2),coords(y,x,1),coords(y,x,0)};
+        point /= coord_scale;
         
         float scalarp = point.dot(other->normal) - plane_off;
+        
+        std::cout << point << " distsqs " << scalarp+ plane_off << " bias " << scalarp  << " loc " <<  x << "x" << y << "\n";
+        
         if (scalarp > 0)
-            upper.push_back({{x,y},point,scalarp});
+            upper.push_back({{x,y},point,scalarp*plane_mul});
         else if(scalarp < 0)
-            lower.push_back({{x,y},point,scalarp});
+            lower.push_back({{x,y},point,-scalarp*plane_mul});
     }
     
     auto rng = std::default_random_engine {};
     std::shuffle(upper.begin(), upper.end(), rng);
     std::shuffle(lower.begin(), lower.end(), rng);
     
-    float plane_mul = 1.0/sqrt(other->normal[0]*other->normal[0]+other->normal[1]*other->normal[1]+other->normal[2]*other->normal[2]);
     
     std::vector<cv::Point2f> intersects;
     
     //brute force cause I'm lazy
     //FIXME if we have very vew points in uppper/lower: regenerate more points around there or reuse points
     for(int r=0;r<std::min<int>(100,std::min(upper.size(),lower.size()));r++) {
-        float d_up = sqrt(std::get<2>(upper[r])) * plane_mul;
-        float d_low = sqrt(std::get<2>(lower[r])) * plane_mul;
+        float d_up = std::get<2>(upper[r]);
+        float d_low = std::get<2>(lower[r]);
+        
+        std::cout << std::get<0>(upper[r]) << " vs " << std::get<0>(lower[r]) << " and " << d_up << " vs " << d_low << "\n";
         
         cv::Point2f res = d_low/(d_up+d_low) * std::get<0>(upper[r]) + d_up/(d_up+d_low) * std::get<0>(lower[r]);
         
@@ -585,7 +594,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
     //this will only work if we have straight line!
     std::sort(intersects.begin(),
               intersects.end(),
-              [](const cv::Point2f &a, const cv::Point2f &b){return (a.y < b.y)*2+(a.x<b.x);}
+              [](const cv::Point2f &a, const cv::Point2f &b){if (a.y != b.y) return a.y < b.y; return a.x < b.x; }
         );
     
     segments_roi.push_back(intersects);

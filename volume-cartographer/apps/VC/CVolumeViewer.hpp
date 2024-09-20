@@ -94,6 +94,7 @@ public:
     void currRoi(cv::Rect &roi, float &render_scale, float &coord_scale, int &sd_idx) const;
     cv::Mat render_area();
     
+    CVolumeViewerView* fGraphicsView;
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event);
@@ -122,7 +123,7 @@ protected:
 
 protected:
     // widget components
-    CVolumeViewerView* fGraphicsView;
+    // CVolumeViewerView* fGraphicsView;
     QGraphicsScene* fScene;
 
     QLabel* fCanvas;

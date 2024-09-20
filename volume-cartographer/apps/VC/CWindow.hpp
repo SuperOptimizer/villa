@@ -292,7 +292,6 @@ private:
     QAction* fAboutAct;
     QAction* fPrintDebugInfo;
 
-    CVolumeViewer* fVolumeViewerWidget;
     QCheckBox* fchkDisplayAll;
     QCheckBox* fchkComputeAll;
     QTreeWidget* fPathListWidget;
@@ -388,6 +387,11 @@ private:
     PlaneCoords *slice_xz = nullptr;
     PlaneCoords *slice_yz = nullptr;
     ChunkCache *chunk_cache;
+    
+    CVolumeViewer *view_xy = nullptr;
+    CVolumeViewer *view_xz = nullptr;
+    CVolumeViewer *view_yz = nullptr;
+    CVolumeViewer *view_plane = nullptr;
 };  // class CWindow
 
 
