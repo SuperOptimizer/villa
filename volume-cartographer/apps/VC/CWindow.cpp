@@ -3009,4 +3009,8 @@ void CWindow::onPlaneSliceChanged(void)
     
     //FIXME don't need to rerender all (then again if cached thats fast ...)'
     sendSliceChanged();
+    
+    //also add the intersect line(s)
+    // std::vector<std::vector<cv::Point2f>> segments_xy;
+    // void find_intersect_segments(segments_xy, slice_plane, slice_xy, ..., float render_scale, float coord_scale)();
 }

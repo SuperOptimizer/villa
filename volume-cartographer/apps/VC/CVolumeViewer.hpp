@@ -91,6 +91,9 @@ public:
     void renderVisible(bool force = false);
     void mouseReleaseEvent(QMouseEvent *event);
     void mousePressEvent(QMouseEvent *event);
+    void currRoi(cv::Rect &roi, float &render_scale, float &coord_scale, int &sd_idx) const;
+    cv::Mat render_area();
+    
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event);

@@ -536,21 +536,18 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int
 //     return point.dot(normal) >= plane_off;
 // }
 
-void find_intersect_segments(std::vector<std::vector<cv::Point2f>> segments, const PlaneCoords *target_plane, const CoordGenerator *roi_seg, const cv::Rect roi, float render_scale, float coord_scale)
-{
-    //generate a bunch of locations within the roi
-    //wort them by the side they are on of the target_plane
-    
+void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, const CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale)
+{    
     xt::xarray<float> coords;
     
     //FIXME make generators more flexible so we can generate more sparse data
-    roi_seg->gen_coords(coords, roi, render_scale, coord_scale);
+    roi_gen->gen_coords(coords, roi, render_scale, coord_scale);
     
     std::vector<std::tuple<cv::Point,cv::Point3f,float>> upper;
     std::vector<std::tuple<cv::Point,cv::Point3f,float>> lower;
     std::vector<cv::Point2f> seg_points;
     
-    float plane_off = target_plane->origin.dot(target_plane->normal);
+    float plane_off = other->origin.dot(other->normal);
     
     for(int c=0;c<1000;c++) {
         int x = std::rand() % roi.width;
@@ -559,7 +556,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> segments, con
         
         cv::Point3f point = {coords(y,x,2),coords(y,x,1),coords(y,x,0)};
         
-        float scalarp = point.dot(target_plane->normal) - plane_off;
+        float scalarp = point.dot(other->normal) - plane_off;
         if (scalarp > 0)
             upper.push_back({{x,y},point,scalarp});
         else if(scalarp < 0)
@@ -570,7 +567,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> segments, con
     std::shuffle(upper.begin(), upper.end(), rng);
     std::shuffle(lower.begin(), lower.end(), rng);
     
-    float plane_mul = 1.0/sqrt(target_plane->normal[0]*target_plane->normal[0]+target_plane->normal[1]*target_plane->normal[1]+target_plane->normal[2]*target_plane->normal[2]);
+    float plane_mul = 1.0/sqrt(other->normal[0]*other->normal[0]+other->normal[1]*other->normal[1]+other->normal[2]*other->normal[2]);
     
     std::vector<cv::Point2f> intersects;
     
@@ -591,5 +588,5 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> segments, con
               [](const cv::Point2f &a, const cv::Point2f &b){return (a.y < b.y)*2+(a.x<b.x);}
         );
     
-    segments.push_back(intersects);
+    segments_roi.push_back(intersects);
 }

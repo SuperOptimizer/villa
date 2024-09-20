@@ -487,29 +487,44 @@ void CVolumeViewer::OnSliceChanged()
 }
 
 
-cv::Mat render_plane_offset(volcart::Volume *vol, ChunkCache *cache, PlaneCoords *slice, QRectF area, float scale)
+void calc_scales(float scale, float &render_scale, float &coord_scale, int &sd_idx, int max_idx)
+{
+    sd_idx = 1;
+    
+    coord_scale = 0.5;
+    while (0.5*coord_scale >= scale && sd_idx < max_idx-1) {
+        sd_idx++;
+        coord_scale *= 0.5;
+    }
+    
+    render_scale = scale/coord_scale;
+}
+
+cv::Mat CVolumeViewer::render_area()
 {
     xt::xarray<float> coords;
     xt::xarray<uint8_t> img;
-    
-    int sd_idx = 1;
-    
-    float round_scale = 0.5;
-    while (0.5*round_scale >= scale && sd_idx < vol->numScales()-1) {
-        printf("wtf %f %f\n", round_scale, scale);
-        sd_idx++;
-        round_scale *= 0.5;
-    }
-    
-    area = QRectF(area.left()*round_scale/scale, area.top()*round_scale/scale, area.width(), area.height());
-    
-    printf("rendering %f %f %f %f at %f %f %f %d\n", area.left(), area.top(), area.width(), area.height(), scale/round_scale, scale, round_scale, sd_idx);
-    
-    slice->gen_coords(coords, area.left(), area.top(), area.width(), area.height(), scale/round_scale, round_scale);
-    readInterpolated3D(img, vol->zarrDataset(sd_idx) ,coords, cache);
+
+    int sd_idx;
+    float render_scale, coord_scale;
+    cv::Rect roi;
+
+    currRoi(roi, render_scale, coord_scale, sd_idx);
+
+    slice->gen_coords(coords, roi, render_scale, coord_scale);
+    readInterpolated3D(img, volume->zarrDataset(sd_idx), coords, cache);
     cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
     
     return m.clone();
+}
+
+void CVolumeViewer::currRoi(cv::Rect &roi, float &render_scale, float &coord_scale, int &sd_idx) const
+{  
+    calc_scales(scale, render_scale, coord_scale, sd_idx, volume->numScales()-1);
+    
+    float m = coord_scale/scale;
+    
+    roi = {curr_img_area.left()*m, curr_img_area.top()*m, curr_img_area.width(), curr_img_area.height()};
 }
 
 
@@ -545,7 +560,7 @@ void CVolumeViewer::renderVisible(bool force)
     
     curr_img_area = {bbox.left()-128,bbox.top()-128, bbox.width()+256, bbox.height()+256};
     
-    cv::Mat img = render_plane_offset(volume.get(), cache, slice, curr_img_area, scale);
+    cv::Mat img = render_area();
     
     QImage qimg = Mat2QImage(img);
     
@@ -579,17 +594,6 @@ void CVolumeViewer::onScrolled()
 
 cv::Mat CVolumeViewer::getCoordSlice()
 {
-//     xt::xarray<float> coords;
-//     xt::xarray<uint8_t> img;
-//     
-//     slice->gen_coords(coords, -500, -500, 1000, 1000);
-//     std::cout << "start read" << cache << std::endl;
-//     readInterpolated3D(img, volume->zarrDataset() ,coords, cache);
-//     std::cout << "done read" << cache << std::endl;
-//     // readInterpolated3D(img,ds,coords);
-//     cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
-//     
-//     return m.clone();
     return cv::Mat();
 }
 

@@ -29,7 +29,7 @@ public:
     cv::Vec3f normal = {1,1,1};
 };
 
-void find_intersect_segments(std::vector<std::vector<cv::Point2f>> segments, const PlaneCoords *target_plane, const CoordGenerator *segment_gen, const cv::Rect roi);
+void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, const CoordGenerator *roi_gen, const cv::Rect roi);
 
 
 //TODO generation overrun
