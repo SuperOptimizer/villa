@@ -253,14 +253,16 @@ void CWindow::CreateWidgets(void)
     // add volume viewer
     auto aWidgetLayout = new QGridLayout;
     view_xy = newConnectedCVolumeViewer(slice_xy, ui.tabSegment);
+    view_xy->addIntersectVisSlice(slice_plane);
     aWidgetLayout->addWidget(view_xy, 0, 0);
     view_xz = newConnectedCVolumeViewer(slice_xz, ui.tabSegment);
+    view_xz->addIntersectVisSlice(slice_plane);
     aWidgetLayout->addWidget(view_xz, 0, 1);
     view_yz = newConnectedCVolumeViewer(slice_yz, ui.tabSegment);
+    view_yz->addIntersectVisSlice(slice_plane);
     aWidgetLayout->addWidget(view_yz, 1, 0);
     view_plane = newConnectedCVolumeViewer(slice_plane, ui.tabSegment);
     aWidgetLayout->addWidget(view_plane, 1, 1);
-
     ui.tabSegment->setLayout(aWidgetLayout);
 
     // connect(
@@ -3016,26 +3018,26 @@ void CWindow::onPlaneSliceChanged(void)
     if (!slice_xy || !currentVolume->isZarr)
         return;
     
-    //FIXME we should probably move this into the volume-viewer e.g.  viewer also points to an "other" slice for vidsualization
-    int sd;
-    float render_scale, coord_scale;
-    cv::Rect roi;
-    std::vector<std::vector<cv::Point2f>> segments_xy;
-    
-    view_xy->currRoi(roi, render_scale, coord_scale, sd);
-    
-    if (!roi.width || !roi.height)
-        return;
-    
-    printf("get segments\n");
-    find_intersect_segments(segments_xy, slice_plane, slice_xy, roi, render_scale, coord_scale);
-    for (auto s : segments_xy)
-        std::cout << s << "\n";
-    std::cout << "within " << roi << std::endl;
-
-    for (auto seg : segments_xy)
-        for (auto p : seg)
-        {
-            view_xy->fGraphicsView->scene()->addEllipse({p.x-2+roi.x,p.y-2+roi.y,4,4}, QPen(Qt::yellow, 1));
-        }
+//     //FIXME we should probably move this into the volume-viewer e.g.  viewer also points to an "other" slice for vidsualization
+//     int sd;
+//     float render_scale, coord_scale;
+//     cv::Rect roi;
+//     std::vector<std::vector<cv::Point2f>> segments_xy;
+//     
+//     view_xy->currRoi(roi, render_scale, coord_scale, sd);
+//     
+//     if (!roi.width || !roi.height)
+//         return;
+//     
+//     printf("get segments\n");
+//     find_intersect_segments(segments_xy, slice_plane, slice_xy, roi, render_scale, coord_scale);
+//     for (auto s : segments_xy)
+//         std::cout << s << "\n";
+//     std::cout << "within " << roi << std::endl;
+// 
+//     for (auto seg : segments_xy)
+//         for (auto p : seg)
+//         {
+//             view_xy->fGraphicsView->scene()->addEllipse({p.x-2+roi.x,p.y-2+roi.y,4,4}, QPen(Qt::yellow, 1));
+//         }
 }

@@ -559,16 +559,16 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
         
         
         cv::Point3f point = {coords(y,x,2),coords(y,x,1),coords(y,x,0)};
-        point /= coord_scale;
+        point /= (render_scale*coord_scale);
         
         float scalarp = point.dot(other->normal) - plane_off;
         
         std::cout << point << " distsqs " << scalarp+ plane_off << " bias " << scalarp  << " loc " <<  x << "x" << y << "\n";
         
         if (scalarp > 0)
-            upper.push_back({{x,y},point,scalarp*plane_mul});
+            upper.push_back({{x+roi.x,y+roi.y},point,scalarp*plane_mul});
         else if(scalarp < 0)
-            lower.push_back({{x,y},point,-scalarp*plane_mul});
+            lower.push_back({{x+roi.x,y+roi.y},point,-scalarp*plane_mul});
     }
     
     auto rng = std::default_random_engine {};

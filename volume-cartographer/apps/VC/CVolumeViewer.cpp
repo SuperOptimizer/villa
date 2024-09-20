@@ -576,11 +576,41 @@ void CVolumeViewer::renderVisible(bool force)
         center_marker = fScene->addEllipse({-10,-10,20,20}, QPen(Qt::yellow, 3, Qt::DashDotLine, Qt::RoundCap, Qt::RoundJoin));
 
     
-    // center_marker->stackBefore(fBaseImageItem);
     center_marker->setParentItem(fBaseImageItem);
     
     fBaseImageItem->setOffset(curr_img_area.topLeft());
-    // fBaseImageItem->setVisible(false);
+    
+    for(auto &item : other_slice_items) {
+        fScene->removeItem(item);
+        delete item;
+    }
+    other_slice_items.resize(0);
+    
+    for(auto other_plane : other_slices) {
+        int sd;
+        float render_scale, coord_scale;
+        cv::Rect roi;
+        std::vector<std::vector<cv::Point2f>> segments_xy;
+        
+        currRoi(roi, render_scale, coord_scale, sd);
+        
+        if (!roi.width || !roi.height)
+            return;
+        
+        printf("get segments\n");
+        find_intersect_segments(segments_xy, other_plane, slice, roi, render_scale, coord_scale);
+        for (auto s : segments_xy)
+            std::cout << s << "\n";
+        std::cout << "within " << roi << std::endl;
+        
+        for (auto seg : segments_xy)
+            for (auto p : seg)
+            {
+                auto item = fGraphicsView->scene()->addEllipse({p.x-2,p.y-2,4,4}, QPen(Qt::yellow, 1));
+                other_slice_items.push_back(item);
+                item->setParentItem(fBaseImageItem);
+            }
+    }
 }
 
 void CVolumeViewer::onScrolled()
@@ -623,4 +653,12 @@ void CVolumeViewer::mousePressEvent(QMouseEvent *event)
     printf("right pressed %f %f - %f %f %f\n", scene_loc.x(), scene_loc.y(), vol_loc[0], vol_loc[1], vol_loc[2]);
     
     sendVolumeClicked(scene_loc, vol_loc);
+}
+
+
+void CVolumeViewer::addIntersectVisSlice(PlaneCoords *slice_)
+{
+    other_slices.push_back(slice_);
+    
+    OnSliceChanged();
 }

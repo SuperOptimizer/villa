@@ -93,6 +93,7 @@ public:
     void mousePressEvent(QMouseEvent *event);
     void currRoi(cv::Rect &roi, float &render_scale, float &coord_scale, int &sd_idx) const;
     cv::Mat render_area();
+    void addIntersectVisSlice(PlaneCoords *slice_);
     
     CVolumeViewerView* fGraphicsView;
 
@@ -161,6 +162,9 @@ protected:
     float scale = 0.5;
     
     QGraphicsEllipseItem *center_marker = nullptr;
+    std::vector<PlaneCoords*> other_slices;
+    
+    std::vector<QGraphicsItem*> other_slice_items; 
 };  // class CVolumeViewer
 
 }  // namespace ChaoVis
