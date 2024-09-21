@@ -38,8 +38,11 @@ public:
 class IDWHeightPlaneCoords : public PlaneCoords
 {
 public:
+    IDWHeightPlaneCoords(std::vector<cv::Vec3f> *control_points_) : control_points(control_points_) {};
     virtual float scalarp(cv::Vec3f point) const;
     virtual float height(cv::Vec3f point) const;
+    virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) const;
+    std::vector<cv::Vec3f> *control_points;
     // float pointDist(cv::Vec3f wp);
     // cv::Vec3f project(cv::Vec3f wp, const cv::Rect &roi, float render_scale = 1.0, float coord_scale = 1.0);
     // virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) const;

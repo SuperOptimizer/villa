@@ -497,6 +497,7 @@ void vxy_from_normal(cv::Vec3f orig, cv::Vec3f normal, cv::Vec3f &vx, cv::Vec3f 
 
 void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale) const
 {
+    printf("regular gen coords\n");
     // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
     cv::Vec3f vx, vy;
     vxy_from_normal(origin,normal,vx,vy);
@@ -524,6 +525,34 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int
         }
 }
 
+void IDWHeightPlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale) const
+{
+    printf("idw gen coords\n");
+    // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
+    cv::Vec3f vx, vy;
+    vxy_from_normal(origin,normal,vx,vy);
+    
+    cv::Vec3f n;
+    cv::normalize(normal, n);
+    
+    coords = xt::empty<float>({h,w,3});
+    
+    float m = 1/render_scale;
+    
+#pragma omp parallel for
+    for(int j=0;j<h;j++)
+        for(int i=0;i<w;i++) {
+            float px = vx[0]*(i*m+x) + vy[0]*(j*m+y) + origin[0]*coord_scale;
+            float py = vx[1]*(i*m+x) + vy[1]*(j*m+y) + origin[1]*coord_scale;
+            float pz = vx[2]*(i*m+x) + vy[2]*(j*m+y) + origin[2]*coord_scale;
+            cv::Vec3f p = {px,py,pz};
+            p += height({px,py,pz})*n;
+            coords(j,i,0) = p[2];
+            coords(j,i,1) = p[1];
+            coords(j,i,2) = p[0];
+        }
+}
+
 /*cv::Point3f PlaneCoords::gen_coords(float i, float j, int x, int y, float render_scale, float coord_scale) const
 {    
     float m = 1/render_scale;
@@ -547,16 +576,40 @@ float plane_mul(cv::Vec3f n)
 
 float PlaneCoords::scalarp(cv::Vec3f point) const
 {
-    return point.dot(normal) - origin.dot(normal);
+    cv::Vec3f n;
+    cv::normalize(normal, n);
+    return point.dot(n) - origin.dot(n);
 }
 
 float IDWHeightPlaneCoords::height(cv::Vec3f point) const
 {
-//     for(auto &support : control_points) {
-//         
-//     }
+    if (control_points->size() < 4)
+        return 0;
     
-    return 0;
+    cv::Vec3f n;
+    cv::normalize(normal, n);
+    float m = plane_mul(n);
+    cv::Point3f projected_ref = point - (point.dot(n) - origin.dot(n))*m*n;
+    
+    // std::cout << point << "\n";
+    
+    double sum = 0;
+    double weights = 0;
+    for(auto &control : *control_points) {
+        double h = (control.dot(n) - origin.dot(n))*m;
+        cv::Point3f projected_control = control - h*n;
+        // std::cout << control << projected_control << std::endl;
+        double dist = cv::norm(projected_control-projected_ref);
+        // printf("controlh %f dist %f\n", h, dist);
+        double w = 1/(dist*dist);
+        sum += w*h;
+        weights += w;
+        // printf(" %f  %f\n", sum, weights);
+    }
+    
+    // printf("height %f\n", sum/weights);
+    
+    return sum/weights;
 }
 
 
@@ -564,14 +617,14 @@ float IDWHeightPlaneCoords::scalarp(cv::Vec3f point) const
 {
     cv::Vec3f n;
     cv::normalize(normal, n);
-    cv::Point3f projected_point = point - (point.dot(n) - origin.dot(n))*plane_mul(n)*n;
-
-    printf("projected point height %f\n", (projected_point.dot(n) - origin.dot(n))*plane_mul(n));
-    printf("original point height %f\n", (point.dot(n) - origin.dot(n))*plane_mul(n));
-    printf("mult %f\n", (projected_point.dot(n) - origin.dot(n))*plane_mul(n)/((point.dot(n) - origin.dot(n))*plane_mul(n)));
-    printf("\n");
+    // cv::Point3f projected_point = point - (point.dot(n) - origin.dot(n))*plane_mul(n)*n;
+    // 
+    // printf("projected point height %f\n", (projected_point.dot(n) - origin.dot(n))*plane_mul(n));
+    // printf("original point height %f\n", (point.dot(n) - origin.dot(n))*plane_mul(n));
+    // printf("mult %f\n", (projected_point.dot(n) - origin.dot(n))*plane_mul(n)/((point.dot(n) - origin.dot(n))*plane_mul(n)));
+    // printf("\n");
     
-    return point.dot(n) - origin.dot(n) - height(projected_point);
+    return point.dot(n) - origin.dot(n) - height(point);
 }
 
 void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, const CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale)
@@ -579,6 +632,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
     xt::xarray<float> coords;
     
     //FIXME make generators more flexible so we can generate more sparse data
+    printf("gen coord from within intersect\n");
     roi_gen->gen_coords(coords, roi, render_scale, coord_scale);
     
     std::vector<std::tuple<cv::Point,cv::Point3f,float>> upper;
@@ -626,7 +680,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
         float d_up = std::get<2>(upper[r]);
         float d_low = std::get<2>(lower[r]);
         
-        std::cout << std::get<0>(upper[r]) << " vs " << std::get<0>(lower[r]) << " and " << d_up << " vs " << d_low << "\n";
+        // std::cout << std::get<0>(upper[r]) << " vs " << std::get<0>(lower[r]) << " and " << d_up << " vs " << d_low << "\n";
         
         cv::Point2f res = d_low/(d_up+d_low) * std::get<0>(upper[r]) + d_up/(d_up+d_low) * std::get<0>(lower[r]);
         
@@ -680,7 +734,7 @@ PlaneCoords *PlaneIDWSegmentator::generator() const
 
 PlaneIDWSegmentator::PlaneIDWSegmentator()
 {
-    _generator = new IDWHeightPlaneCoords();
+    _generator = new IDWHeightPlaneCoords(&control_points);
 }
 
 
