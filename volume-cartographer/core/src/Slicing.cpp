@@ -540,6 +540,16 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int
 //     return point.dot(normal) >= plane_off;
 // }
 
+float PlaneCoords::plane_mul() const
+{
+    return 1.0/sqrt(normal[0]*normal[0]+normal[1]*normal[1]+normal[2]*normal[2]);
+}
+
+float PlaneCoords::scalarp(cv::Vec3f point) const
+{
+    return point.dot(normal) - origin.dot(normal);
+}
+
 void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, const CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale)
 {    
     xt::xarray<float> coords;
@@ -551,11 +561,11 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
     std::vector<std::tuple<cv::Point,cv::Point3f,float>> lower;
     std::vector<cv::Point2f> seg_points;
     
-    float plane_off = other->origin.dot(other->normal);
-    float plane_mul = 1.0/sqrt(other->normal[0]*other->normal[0]+other->normal[1]*other->normal[1]+other->normal[2]*other->normal[2]);
+    // float plane_off = other->origin.dot(other->normal);
+    float plane_mul = other->plane_mul();
     
-    std::cout << "other" << other->origin << other->normal << other->origin.dot(other->normal) << "\n";
-    std::cout << "roi" << ((PlaneCoords*)roi_gen)->origin << ((PlaneCoords*)roi_gen)->normal <<  "\n";
+    // std::cout << "other" << other->origin << other->normal << other->origin.dot(other->normal) << "\n";
+    // std::cout << "roi" << ((PlaneCoords*)roi_gen)->origin << ((PlaneCoords*)roi_gen)->normal <<  "\n";
     
     for(int c=0;c<1000;c++) {
         int x = std::rand() % roi.width;
@@ -567,7 +577,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
         
         cv::Point2f img_point = {x/render_scale+roi.x,y/render_scale+roi.y};
         
-        float scalarp = point.dot(other->normal) - plane_off;
+        float scalarp = other->scalarp(point);
         
         // std::cout << point << " distsqs " << scalarp+ plane_off << " bias " << scalarp  << " loc " <<  x << "x" << y << "\n";
         

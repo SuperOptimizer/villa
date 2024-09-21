@@ -23,13 +23,25 @@ class PlaneCoords : public CoordGenerator
 public:
     PlaneCoords() {};
     PlaneCoords(cv::Vec3f origin_, cv::Vec3f normal_);
+    virtual float pointDist(cv::Vec3f wp);
+    virtual cv::Vec3f project(cv::Vec3f wp, const cv::Rect &roi, float render_scale = 1.0, float coord_scale = 1.0);
+    virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) const;
+    float plane_mul() const;
+    virtual float scalarp(cv::Vec3f point) const;
+    // virtual void gen_coords(float i, float j, int x, int y, float render_scale, float coord_scale) const = 0;
+    using CoordGenerator::gen_coords;
+    cv::Vec3f origin = {0,0,0};
+    cv::Vec3f normal = {1,1,1};
+};
+
+class IDWHeightPlaneCoords : public PlaneCoords
+{
+public:
     float pointDist(cv::Vec3f wp);
     cv::Vec3f project(cv::Vec3f wp, const cv::Rect &roi, float render_scale = 1.0, float coord_scale = 1.0);
     virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) const;
     // virtual void gen_coords(float i, float j, int x, int y, float render_scale, float coord_scale) const = 0;
-    using CoordGenerator::gen_coords;  
-    cv::Vec3f origin = {0,0,0};
-    cv::Vec3f normal = {1,1,1};
+    using CoordGenerator::gen_coords;
 };
 
 class PlaneIDWSegmentator
