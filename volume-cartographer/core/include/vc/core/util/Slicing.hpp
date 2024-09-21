@@ -26,8 +26,9 @@ public:
     virtual float pointDist(cv::Vec3f wp);
     virtual cv::Vec3f project(cv::Vec3f wp, const cv::Rect &roi, float render_scale = 1.0, float coord_scale = 1.0);
     virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) const;
-    float plane_mul() const;
+    // float plane_mul() const;
     virtual float scalarp(cv::Vec3f point) const;
+    virtual float height(cv::Vec3f point) const { return 0.0; };
     // virtual void gen_coords(float i, float j, int x, int y, float render_scale, float coord_scale) const = 0;
     using CoordGenerator::gen_coords;
     cv::Vec3f origin = {0,0,0};
@@ -37,11 +38,13 @@ public:
 class IDWHeightPlaneCoords : public PlaneCoords
 {
 public:
-    float pointDist(cv::Vec3f wp);
-    cv::Vec3f project(cv::Vec3f wp, const cv::Rect &roi, float render_scale = 1.0, float coord_scale = 1.0);
-    virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) const;
+    virtual float scalarp(cv::Vec3f point) const;
+    virtual float height(cv::Vec3f point) const;
+    // float pointDist(cv::Vec3f wp);
+    // cv::Vec3f project(cv::Vec3f wp, const cv::Rect &roi, float render_scale = 1.0, float coord_scale = 1.0);
+    // virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) const;
     // virtual void gen_coords(float i, float j, int x, int y, float render_scale, float coord_scale) const = 0;
-    using CoordGenerator::gen_coords;
+    // using CoordGenerator::gen_coords;
 };
 
 class PlaneIDWSegmentator
@@ -55,7 +58,7 @@ public:
     std::vector<cv::Vec3f> control_points;
 private:
     std::vector<std::pair<cv::Vec2f,cv::Vec3f>> _points;
-    PlaneCoords *_generator = nullptr;
+    IDWHeightPlaneCoords *_generator = nullptr;
 };
 
 void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, const CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale);

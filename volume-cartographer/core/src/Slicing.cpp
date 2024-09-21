@@ -540,14 +540,38 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int
 //     return point.dot(normal) >= plane_off;
 // }
 
-float PlaneCoords::plane_mul() const
+float plane_mul(cv::Vec3f n)
 {
-    return 1.0/sqrt(normal[0]*normal[0]+normal[1]*normal[1]+normal[2]*normal[2]);
+    return 1.0/sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
 }
 
 float PlaneCoords::scalarp(cv::Vec3f point) const
 {
     return point.dot(normal) - origin.dot(normal);
+}
+
+float IDWHeightPlaneCoords::height(cv::Vec3f point) const
+{
+//     for(auto &support : control_points) {
+//         
+//     }
+    
+    return 0;
+}
+
+
+float IDWHeightPlaneCoords::scalarp(cv::Vec3f point) const
+{
+    cv::Vec3f n;
+    cv::normalize(normal, n);
+    cv::Point3f projected_point = point - (point.dot(n) - origin.dot(n))*plane_mul(n)*n;
+
+    printf("projected point height %f\n", (projected_point.dot(n) - origin.dot(n))*plane_mul(n));
+    printf("original point height %f\n", (point.dot(n) - origin.dot(n))*plane_mul(n));
+    printf("mult %f\n", (projected_point.dot(n) - origin.dot(n))*plane_mul(n)/((point.dot(n) - origin.dot(n))*plane_mul(n)));
+    printf("\n");
+    
+    return point.dot(n) - origin.dot(n) - height(projected_point);
 }
 
 void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, const CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale)
@@ -562,7 +586,9 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
     std::vector<cv::Point2f> seg_points;
     
     // float plane_off = other->origin.dot(other->normal);
-    float plane_mul = other->plane_mul();
+    cv::Vec3f n;
+    cv::normalize(other->normal, n);
+    float pmul = plane_mul(n);
     
     // std::cout << "other" << other->origin << other->normal << other->origin.dot(other->normal) << "\n";
     // std::cout << "roi" << ((PlaneCoords*)roi_gen)->origin << ((PlaneCoords*)roi_gen)->normal <<  "\n";
@@ -582,9 +608,9 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
         // std::cout << point << " distsqs " << scalarp+ plane_off << " bias " << scalarp  << " loc " <<  x << "x" << y << "\n";
         
         if (scalarp > 0)
-            upper.push_back({img_point,point,scalarp*plane_mul});
+            upper.push_back({img_point,point,scalarp*pmul});
         else if(scalarp < 0)
-            lower.push_back({img_point,point,-scalarp*plane_mul});
+            lower.push_back({img_point,point,-scalarp*pmul});
     }
     
     auto rng = std::default_random_engine {};
@@ -654,7 +680,7 @@ PlaneCoords *PlaneIDWSegmentator::generator() const
 
 PlaneIDWSegmentator::PlaneIDWSegmentator()
 {
-    _generator = new PlaneCoords();
+    _generator = new IDWHeightPlaneCoords();
 }
 
 
