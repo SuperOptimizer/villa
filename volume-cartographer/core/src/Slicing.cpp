@@ -17,6 +17,7 @@
 
 #include <opencv2/highgui.hpp>
 #include <opencv2/core.hpp>
+#include <opencv2/calib3d.hpp>
 #include <shared_mutex>
 
 #include <algorithm>
@@ -473,17 +474,13 @@ void CoordGenerator::gen_coords(xt::xarray<float> &coords, const cv::Rect &roi, 
     return gen_coords(coords, roi.x, roi.y, roi.width, roi.height, render_scale, coord_scale);
 }
 
-void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale) const
+void vxy_from_normal(cv::Vec3f orig, cv::Vec3f normal, cv::Vec3f &vx, cv::Vec3f &vy)
 {
-    // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
-    
-    cv::Vec3f vx,vy;
-    
     cv::Vec3f n;
     cv::normalize(normal, n, 1,0, cv::NORM_L2);
     
-    vx = vx_from_orig_norm(origin, n);
-    vy = vy_from_orig_norm(origin, n);
+    vx = vx_from_orig_norm(orig, n);
+    vy = vy_from_orig_norm(orig, n);
     
     //TODO will there be a jump around the midpoint?
     if (abs(vx[0]) >= abs(vy[1]))
@@ -496,6 +493,13 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int
         vx *= -1;
     if (vy[1] < 0)
         vy *= -1;
+}
+
+void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale) const
+{
+    // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
+    cv::Vec3f vx, vy;
+    vxy_from_normal(origin,normal,vx,vy);
     
     //why bother if xtensor is soo slow (around 10x of manual loop below even w/o threading)
     //     xt::xarray<float> vx_t{{{vx[2],vx[1],vx[0]}}};
@@ -565,7 +569,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
         
         float scalarp = point.dot(other->normal) - plane_off;
         
-        std::cout << point << " distsqs " << scalarp+ plane_off << " bias " << scalarp  << " loc " <<  x << "x" << y << "\n";
+        // std::cout << point << " distsqs " << scalarp+ plane_off << " bias " << scalarp  << " loc " <<  x << "x" << y << "\n";
         
         if (scalarp > 0)
             upper.push_back({img_point,point,scalarp*plane_mul});
@@ -600,4 +604,83 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
         );
     
     segments_roi.push_back(intersects);
+}
+
+void PlaneIDWSegmentator::add(cv::Vec3f wp, cv::Vec3f normal)
+{
+    std::cout << "added point" << _points.size()+1 << wp << normal << std::endl;
+    if (_points.size() < 2) {
+        _points.push_back({{0,0},wp});
+        control_points.push_back(wp);
+        return;
+    }
+    
+    //FIXME check if points are on the same line!
+    if (_points.size() == 2) {
+        _points.push_back({{0,0},wp});
+        control_points.push_back(wp);
+        
+        //FIXME calc 2d pints
+        
+        _generator->origin = _points[0].second;
+        cv::Vec3f vx, vy;
+        cv::normalize(_points[1].second-_points[0].second, vx, 1,0, cv::NORM_L2);
+        cv::normalize(_points[2].second-_points[0].second, vy, 1,0, cv::NORM_L2);
+        _generator->normal = vx.cross(vy);
+        
+        std::cout << "updated plane to " << _generator->origin << _generator->normal << std::endl;
+        
+        return;
+    }
+
+    _points.push_back({{0,0},wp});
+    control_points.push_back(wp);
+}
+
+PlaneCoords *PlaneIDWSegmentator::generator() const
+{
+    return _generator;
+}
+
+PlaneIDWSegmentator::PlaneIDWSegmentator()
+{
+    _generator = new PlaneCoords();
+}
+
+
+float PlaneCoords::pointDist(cv::Vec3f wp)
+{
+    cv::Vec3f n;
+    cv::normalize(normal, n, 1,0, cv::NORM_L2);
+    float plane_off = origin.dot(n);
+    float plane_mul = 1.0/sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
+    float scalarp = wp.dot(n) - plane_off;
+        
+    return abs(scalarp)*plane_mul;
+}
+
+cv::Vec3f PlaneCoords::project(cv::Vec3f wp, const cv::Rect &roi, float render_scale, float coord_scale)
+{
+    cv::Vec3f vx, vy;
+    cv::Vec3f n;
+    cv::normalize(normal, n, 1,0, cv::NORM_L2);
+    
+    vxy_from_normal(origin,n,vx,vy);
+    
+    vx = vx/render_scale/coord_scale;
+    vy = vy/render_scale/coord_scale;
+    
+    std::vector <cv::Vec3f> src = {origin,origin+n,origin+vx,origin+vy};
+    std::vector <cv::Vec3f> tgt = {{0,0,0},{0,0,1},{1,0,0},{0,1,0}};
+    cv::Mat transf;
+    cv::Mat inliers;
+    
+    cv::estimateAffine3D(src, tgt, transf, inliers, 0.1, 0.99);
+    
+    cv::Mat M = transf({0,0,3,3});
+    cv::Mat T = transf({3,0,1,3});
+    
+    cv::Mat_<double> res = M*cv::Vec3d(wp)+T;
+    
+    return {res(0,0), res(0,1), res(0,2)};
 }

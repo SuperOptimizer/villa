@@ -134,10 +134,13 @@ CWindow::CWindow()
     //TODO make configurable
     chunk_cache = new ChunkCache(10e9);
     
+    seg_tool = new PlaneIDWSegmentator();
+    
     slice_plane = new PlaneCoords({2000,2000,2000},{1,1,1});
     slice_xy = new PlaneCoords({2000,2000,2000},{0,0,1});
     slice_xz = new PlaneCoords({2000,2000,2000},{0,1,0});
     slice_yz = new PlaneCoords({2000,2000,2000},{1,0,0});
+    slice_seg = seg_tool->generator();
     
     // create UI widgets
     CreateWidgets();
@@ -223,6 +226,7 @@ CVolumeViewer *CWindow::newConnectedCVolumeViewer(PlaneCoords *slice, QWidget *p
     connect(this, &CWindow::sendSliceChanged, volView, &CVolumeViewer::OnSliceChanged);
     connect(volView, &CVolumeViewer::sendVolumeClicked, this, &CWindow::onVolumeClicked);
     connect(volView, &CVolumeViewer::sendShiftNormal, this, &CWindow::onShiftNormal);
+    volView->setSegTool(seg_tool);
     
     
     
@@ -239,7 +243,7 @@ void CWindow::setVolume(volcart::Volume::Pointer newvol)
     int h = currentVolume->sliceHeight();
     int d = currentVolume->numSlices();
     
-    onVolumeClicked({0,0},{w/2,h/2,d/2});
+    // onVolumeClicked({0,0},{w/2,h/2,d/2});
     
     onPlaneSliceChanged();
     sendVolumeChanged(currentVolume);
@@ -253,16 +257,23 @@ void CWindow::CreateWidgets(void)
     // add volume viewer
     auto aWidgetLayout = new QGridLayout;
     view_xy = newConnectedCVolumeViewer(slice_xy, ui.tabSegment);
-    view_xy->addIntersectVisSlice(slice_plane);
+    // view_xy->addIntersectVisSlice(slice_plane);
+    view_xy->addIntersectVisSlice(slice_seg);
     aWidgetLayout->addWidget(view_xy, 0, 0);
     view_xz = newConnectedCVolumeViewer(slice_xz, ui.tabSegment);
-    view_xz->addIntersectVisSlice(slice_plane);
+    // view_xz->addIntersectVisSlice(slice_plane);
+    view_xz->addIntersectVisSlice(slice_seg);
     aWidgetLayout->addWidget(view_xz, 0, 1);
     view_yz = newConnectedCVolumeViewer(slice_yz, ui.tabSegment);
-    view_yz->addIntersectVisSlice(slice_plane);
+    // view_yz->addIntersectVisSlice(slice_plane);
+    view_yz->addIntersectVisSlice(slice_seg);
     aWidgetLayout->addWidget(view_yz, 1, 0);
     view_plane = newConnectedCVolumeViewer(slice_plane, ui.tabSegment);
     aWidgetLayout->addWidget(view_plane, 1, 1);
+    ui.tabSegment->setLayout(aWidgetLayout);
+    
+    view_seg = newConnectedCVolumeViewer(slice_seg, ui.tabSegment);
+    aWidgetLayout->addWidget(view_seg, 1, 2);
     ui.tabSegment->setLayout(aWidgetLayout);
 
     // connect(
@@ -2969,16 +2980,19 @@ void CWindow::onLocChanged(void)
 // Handle request to step impact range down
 void CWindow::onVolumeClicked(QPointF scene_loc, cv::Vec3f vol_loc)
 {
-    std::cout << "xy" << slice_xy->origin << "\n" << vol_loc << std::endl;
+//     std::cout << "xy" << slice_xy->origin << "\n" << vol_loc << std::endl;
+//     
+//     slice_plane->origin = vol_loc;
+//     slice_xy->origin = vol_loc;
+//     slice_xz->origin = vol_loc;
+//     slice_yz->origin = vol_loc;
+//     
+//     lblLoc[0]->setText(QString::number(vol_loc[2]));
+//     lblLoc[1]->setText(QString::number(vol_loc[1]));
+//     lblLoc[2]->setText(QString::number(vol_loc[0]));
     
-    slice_plane->origin = vol_loc;
-    slice_xy->origin = vol_loc;
-    slice_xz->origin = vol_loc;
-    slice_yz->origin = vol_loc;
-    
-    lblLoc[0]->setText(QString::number(vol_loc[2]));
-    lblLoc[1]->setText(QString::number(vol_loc[1]));
-    lblLoc[2]->setText(QString::number(vol_loc[0]));
+    //FIXME get normal from sender!
+    seg_tool->add(vol_loc, {0,0,0});
     
     sendSliceChanged();
 }

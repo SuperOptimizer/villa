@@ -15,6 +15,7 @@
 
 class PlaneCoords;
 class ChunkCache;
+class PlaneIDWSegmentator;
 
 namespace ChaoVis
 {
@@ -94,6 +95,7 @@ public:
     void currRoi(cv::Rect &roi, float &render_scale, float &coord_scale, int &sd_idx) const;
     cv::Mat render_area();
     void addIntersectVisSlice(PlaneCoords *slice_);
+    void setSegTool(PlaneIDWSegmentator *tool);
     
     CVolumeViewerView* fGraphicsView;
 
@@ -165,6 +167,7 @@ protected:
     std::vector<PlaneCoords*> other_slices;
     
     std::vector<QGraphicsItem*> other_slice_items; 
+    PlaneIDWSegmentator *seg_tool = nullptr;
 };  // class CVolumeViewer
 
 }  // namespace ChaoVis

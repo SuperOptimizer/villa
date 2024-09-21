@@ -586,22 +586,19 @@ void CVolumeViewer::renderVisible(bool force)
     }
     other_slice_items.resize(0);
     
+    cv::Rect roi;
+    int sd;
+    float render_scale, coord_scale;
+    currRoi(roi, render_scale, coord_scale, sd);
+
     for(auto other_plane : other_slices) {
-        int sd;
-        float render_scale, coord_scale;
-        cv::Rect roi;
         std::vector<std::vector<cv::Point2f>> segments_xy;
         
-        currRoi(roi, render_scale, coord_scale, sd);
         
         if (!roi.width || !roi.height)
             return;
-        
-        printf("get segments\n");
+
         find_intersect_segments(segments_xy, other_plane, slice, roi, render_scale, coord_scale);
-        for (auto s : segments_xy)
-            std::cout << s << "\n";
-        std::cout << "within " << roi << std::endl;
         
         for (auto seg : segments_xy)
             for (auto p : seg)
@@ -611,13 +608,25 @@ void CVolumeViewer::renderVisible(bool force)
                 item->setParentItem(fBaseImageItem);
             }
     }
+    
+    if (seg_tool) {
+        for (auto &wp : seg_tool->control_points) {
+            float dist = slice->pointDist(wp);
+            cv::Vec3f p = slice->project(wp, roi, render_scale, coord_scale);
+            
+            auto item = fGraphicsView->scene()->addEllipse({p[0]-1,p[1]-1,2,2}, QPen(Qt::green, 3));
+            //FIXME rename/clean
+            other_slice_items.push_back(item);
+            item->setParentItem(fBaseImageItem);
+        }
+    }
 }
 
 void CVolumeViewer::onScrolled()
 {
     QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->viewport()->geometry()).boundingRect();
     QRect viewrect = fGraphicsView->viewport()->geometry();
-    printf("scrolled to scene pos %f x %f bbox %f %f %f %f from %d %d %d %d\n", visible_center(fGraphicsView).x(), visible_center(fGraphicsView).y(), bbox.left() , bbox.top() , bbox.width(), bbox.height(), viewrect.left(), viewrect.top(), viewrect.width(), viewrect.height());
+    // printf("scrolled to scene pos %f x %f bbox %f %f %f %f from %d %d %d %d\n", visible_center(fGraphicsView).x(), visible_center(fGraphicsView).y(), bbox.left() , bbox.top() , bbox.width(), bbox.height(), viewrect.left(), viewrect.top(), viewrect.width(), viewrect.height());
     
     renderVisible();
 }
@@ -661,4 +670,10 @@ void CVolumeViewer::addIntersectVisSlice(PlaneCoords *slice_)
     other_slices.push_back(slice_);
     
     OnSliceChanged();
+}
+
+
+void CVolumeViewer::setSegTool(PlaneIDWSegmentator *tool)
+{
+    seg_tool = tool;
 }

@@ -40,6 +40,7 @@ static constexpr int VOLPKG_SLICE_MIN_INDEX = 0;
 
 class PlaneCoords;
 class ChunkCache;
+class PlaneIDWSegmentator;
 
 namespace ChaoVis
 {
@@ -386,12 +387,16 @@ private:
     PlaneCoords *slice_xy = nullptr;
     PlaneCoords *slice_xz = nullptr;
     PlaneCoords *slice_yz = nullptr;
+    PlaneCoords *slice_seg = nullptr;
     ChunkCache *chunk_cache;
     
     CVolumeViewer *view_xy = nullptr;
     CVolumeViewer *view_xz = nullptr;
     CVolumeViewer *view_yz = nullptr;
     CVolumeViewer *view_plane = nullptr;
+    CVolumeViewer *view_seg = nullptr;
+    
+    PlaneIDWSegmentator *seg_tool;
 };  // class CWindow
 
 

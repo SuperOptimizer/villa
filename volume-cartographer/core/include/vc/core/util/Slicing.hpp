@@ -21,12 +21,29 @@ public:
 class PlaneCoords : public CoordGenerator
 {
 public:
+    PlaneCoords() {};
     PlaneCoords(cv::Vec3f origin_, cv::Vec3f normal_);
+    float pointDist(cv::Vec3f wp);
+    cv::Vec3f project(cv::Vec3f wp, const cv::Rect &roi, float render_scale = 1.0, float coord_scale = 1.0);
     virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) const;
     // virtual void gen_coords(float i, float j, int x, int y, float render_scale, float coord_scale) const = 0;
     using CoordGenerator::gen_coords;  
     cv::Vec3f origin = {0,0,0};
     cv::Vec3f normal = {1,1,1};
+};
+
+class PlaneIDWSegmentator
+{
+public:
+    PlaneIDWSegmentator();
+    //add a new point to the model
+    void add(cv::Vec3f wp, cv::Vec3f normal);
+    //move void move(...) (this can be in 2d or 3d and in-plane or out-of-plane .. think about which variants are relevant...)
+    PlaneCoords *generator() const;
+    std::vector<cv::Vec3f> control_points;
+private:
+    std::vector<std::pair<cv::Vec2f,cv::Vec3f>> _points;
+    PlaneCoords *_generator = nullptr;
 };
 
 void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, const CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale);
