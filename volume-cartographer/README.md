@@ -16,12 +16,15 @@ volumetric analysis applications.
   - by default VC will only load scale 1 or higher from the Zarr voluem, so you do not need to download the highest resolution scale 0
   - the default chunk cache is 10GB of RAM
 - features
-  - yellow circle marks the slicing center
-  - left click + drag to move around
-  - right click to set slicing center to the selected location
-  - change free plane normal in the bottom left
-  - shift-scroll to move along the respective plane normal
-  - ctrl-scroll to zoom in/out
+  - big yellow circle marks the slicing center
+  - middle click + drag to move around
+  - ctrl click to set slicing center to the selected location
+  - free rotation plane slice:
+    - change free plane normal in the bottom left
+    - scroll to zoom in/out
+  - control point based height map slice with IDW for interpolation
+    - click anywhere to add a control point for the 3d slice/segment
+  - fourth panel (center-down) contains the free plane slice, rightmost panel the 3d slice
 
 ## Changes 2024
 - Merged in latest version from Educelab (state 2024-05-08)
