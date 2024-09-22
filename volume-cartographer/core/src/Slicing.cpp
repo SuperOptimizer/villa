@@ -766,7 +766,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
     xt::xarray<float> coords;
     
     //FIXME make generators more flexible so we can generate more sparse data
-    printf("gen coord from within intersect\n");
     roi_gen->gen_coords(coords, roi, render_scale, coord_scale);
     
     std::vector<std::tuple<cv::Point,cv::Point3f,float>> upper;
