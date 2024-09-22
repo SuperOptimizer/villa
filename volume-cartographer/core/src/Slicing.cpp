@@ -126,10 +126,11 @@ uint64_t ChunkCache::groupKey(std::string name)
     
 void ChunkCache::put(uint64_t key, xt::xarray<uint8_t> *ar)
 {
-    if (!ar)
-        return;
+    // if (!ar)
+    //     return;
     
-    _stored += ar->size();
+    if (ar)
+        _stored += ar->size();
     
     if (_stored >= _size) {
         printf("cache reduce %f\n",float(_stored)/1024/1024);
@@ -139,11 +140,15 @@ void ChunkCache::put(uint64_t key, xt::xarray<uint8_t> *ar)
         std::sort(gen_list.begin(), gen_list.end(), [](KP &a, KP &b){ return a.second < b.second; });
         for(auto it : gen_list) {
             xt::xarray<uint8_t> *ar = _store[it.first];
-            size_t size = ar->storage().size();
+            //TODO we could remove this with lower probability so we dont store infiniteyl empty blocks but also keep more of them as they are cheap
+            if (ar) {
+                size_t size = ar->storage().size();
+                delete ar;
+                _stored -= size;
+            }
+            
             _store.erase(it.first);
             _gen_store.erase(it.first);
-            delete ar;
-            _stored -= size;
 
             //we delete 10% of cache content to amortize sorting costs
             if (_stored < 0.9*_size)
@@ -174,6 +179,11 @@ xt::xarray<uint8_t> *ChunkCache::get(uint64_t key)
     _gen_store[key] = _generation;
     
     return res->second;
+}
+
+bool ChunkCache::has(uint64_t key)
+{
+    return _store.count(key);
 }
 
 void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords, ChunkCache *cache);
@@ -382,14 +392,15 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
                 last_key = key;
                 
                 mutex.lock_shared();
-                chunk = cache->get(key);
                 
-                if (!chunk) {
+                if (!cache->has(key)) {
                     mutex.unlock();
                     chunk = z5::multiarray::readChunk<uint8_t>(*ds, {size_t(ix),size_t(iy),size_t(iz)});
                     mutex.lock();
                     cache->put(key, chunk);
                 }
+                else
+                    chunk = cache->get(key);
                 mutex.unlock();
             }
             
@@ -497,7 +508,6 @@ void vxy_from_normal(cv::Vec3f orig, cv::Vec3f normal, cv::Vec3f &vx, cv::Vec3f 
 
 void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale) const
 {
-    printf("regular gen coords\n");
     // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
     cv::Vec3f vx, vy;
     vxy_from_normal(origin,normal,vx,vy);

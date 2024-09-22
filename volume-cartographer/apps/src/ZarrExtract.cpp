@@ -202,9 +202,10 @@ int main(int argc, char *argv[])
 //   
 //   cv::imwrite("img2.tif", m);
   
-  // PlaneCoords gen_plane({2000,2000,2000},{0.5,0.5,0.5});
+  PlaneCoords gen_plane({2000,2000,2000},{0.5,0.5,0.5});
   // PlaneCoords gen_plane({2000,2000,2000},{0.0,0.0,1.0});
-  PlaneCoords gen_plane({0,0,0},{0.0,0.0,1.0});
+  // PlaneCoords gen_plane({0,0,0},{0.0,0.0,1.0});
+  // PlaneCoords gen_plane({2000,2000,0},{0.0,0.0,1.0});
   
   PlaneCoords plane_x({2000,2000,2000},{1.0,0.0,0.0});
   PlaneCoords plane_y({2000,2000,2000},{0.0,1.0,0.0});
@@ -250,10 +251,9 @@ int main(int argc, char *argv[])
   
   
   // readInterpolated3D(img,ds.get(),coords);
-  m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
-  cv::imwrite("plane.tif", m);
+  // m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+  // cv::imwrite("plane.tif", m);
   
-  printf("cache hit/miss %d %d %.3f",cache_hits,cache_miss,float(cache_hits)/(cache_hits+cache_miss));
   
   // m = cv::Mat(coords.shape(0), coords.shape(1), CV_32FC3, coords.data());
   // std::vector<cv::Mat> chs;

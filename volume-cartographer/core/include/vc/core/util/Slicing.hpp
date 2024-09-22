@@ -82,6 +82,7 @@ public:
     //key should be unique for chunk and contain groupkey (groupkey sets highest 16bits of uint64_t)
     void put(uint64_t key, xt::xarray<uint8_t> *ar);
     xt::xarray<uint8_t> *get(uint64_t key);
+    bool has(uint64_t key);
 private:
     uint64_t _generation = 0;
     size_t _size = 0;
