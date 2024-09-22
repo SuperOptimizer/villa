@@ -502,10 +502,21 @@ void readInterpolated3D_a2_trilin(xt::xarray<uint8_t> &out, z5::Dataset *ds, con
                 
                 //FIXME implement single chunk get?
                 if (lx+1 >= cw || ly+1 >= ch || lz+1 >= cd) {
-                    c100 = retrieve_single_value_cached(ox+1,oy,oz);
-                    c010 = retrieve_single_value_cached(ox,oy+1,oz);
+                    if (lx+1>=cw)
+                        c100 = retrieve_single_value_cached(ox+1,oy,oz);
+                    else
+                        c100 = chunk->operator()(lx+1,ly,lz);
+                    
+                    if (ly+1 >= ch)
+                        c010 = retrieve_single_value_cached(ox,oy+1,oz);
+                    else
+                        c010 = chunk->operator()(lx,ly+1,lz);
+                    if (lz+1 >= cd)
+                        c001 = retrieve_single_value_cached(ox,oy,oz+1);
+                    else
+                        c001 = chunk->operator()(lx,ly,lz+1);
+                    
                     c110 = retrieve_single_value_cached(ox+1,oy+1,oz);
-                    c001 = retrieve_single_value_cached(ox,oy,oz+1);
                     c101 = retrieve_single_value_cached(ox+1,oy,oz+1);
                     c011 = retrieve_single_value_cached(ox,oy+1,oz+1);
                     c111 = retrieve_single_value_cached(ox+1,oy+1,oz+1);
