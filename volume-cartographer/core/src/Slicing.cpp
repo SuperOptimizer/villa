@@ -322,56 +322,29 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
         std::cout << "WARNING should use a shared chunk cache!" << std::endl;
         cache = &local_cache;
     }
-    
-    // std::cout  << "out shape" << out_shape << " " << coords.shape() << "\n";
-    
+
     //FIXME assert dims
+    //FIXME based on key math we should check bounds here using volume and chunk size
+    uint64_t key_base = cache->groupKey(ds->path());
     
     int xdim = coords.shape().size()-2;
     int ydim = coords.shape().size()-3;
-    
-    // std::cout << coords.shape(ydim) << " " << coords.shape(xdim) << std::endl;
-    
-    //10bit per dim would actually be fine until chunksize of 16 @ dim size of 16384
-    //using 16 bits is pretty safe
-
-    //these three lines are 0.12s of 0.75s (and not threaded) - if processed here to a xtensor
-    // auto chunk_ids = xt::empty<uint16_t>(coords.shape());
-    // auto chunk_size = xt::adapt(ds->chunking().blockShape(),{1,1,3});
-    // auto chunk_ids = coords/chunk_size;
     
     auto cw = ds->chunking().blockShape()[0];
     auto ch = ds->chunking().blockShape()[1];
     auto cd = ds->chunking().blockShape()[2];
     
-    //this is 0.35 of 0.75s (and not threaded!) - if processed here to a xtensor
-    // auto local_coords = xt::clip(coords - (xt::floor(chunk_ids)*xt::xarray<float>(chunk_size)),-1,32767);
-    
-    // xt::xarray<uint8_t> valid = xt::amin(local_coords, {2}) >= 0;
-    
-    // std::cout << "local coords" << local_coords.shape() << "\n";
-    
     std::shared_mutex mutex;
-    
-    uint64_t key_base = cache->groupKey(ds->path());
-    
-    // std::cout << "cache using z5 path" << ds->path() << std::endl;
-    
-    //FIXME based on key math we should check bounds here using volume and chunk size
-    
-    // return;
     
     //FIXME need to iterate all dims e.g. could have z or more ... (maybe just flatten ... so we only have z at most)
     //the whole loop is 0.29s of 0.75s (if threaded)
     // #pragma omp parallel for schedule(dynamic, 512) collapse(2)
-#pragma omp parallel for
+    #pragma omp parallel for
     for(size_t y = 0;y<coords.shape(ydim);y++) {
         // xt::xarray<uint16_t> last_id;
         uint64_t last_key = -1;
         xt::xarray<uint8_t> *chunk = nullptr;
-        for(size_t x = 0;x<coords.shape(xdim);x++) {
-            // auto id = xt::strided_view(chunk_ids, {y, x, xt::all()});
-            
+        for(size_t x = 0;x<coords.shape(xdim);x++) {            
             float ox = coords(y,x,0);
             float oy = coords(y,x,1);
             float oz = coords(y,x,2);
@@ -381,14 +354,10 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
             int iz = int(oz)/cd;
             
             
-            // uint64_t key = (id[0]) ^ (uint64_t(id[1])<<20) ^ (uint64_t(id[2])<<40);
             uint64_t key = key_base ^ uint64_t(ix) ^ (uint64_t(iy)<<16) ^ (uint64_t(iz)<<32);
-
-            //TODO compare keys
+            
             if (key != last_key) {
-            // if (id != last_id) {
-                
-                // last_id = id;
+
                 last_key = key;
                 
                 mutex.lock_shared();
@@ -404,9 +373,6 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
                 mutex.unlock();
             }
             
-            //this is slow
-            //chunk->in_bounds(local_coords(y,x,0), local_coords(y,x,1), local_coords(y,x,2))
-            
             if (chunk) {
                 int lx = ox-ix*cw;
                 int ly = oy-iy*ch;
@@ -415,17 +381,9 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
                     continue;
                 out(y,x,0) = chunk->operator()(lx,ly,lz);
             }
-            
-            // return;
-            // xt::xarray<uint8_t> tmp;
-            // readInterpolated3D(tmp, ds, coord_view);
-            //FIXME figure out xtensor copy/reference dynamics ...
-            // xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()}) = tmp;
-            // readInterpolated3D(xt::strided_view(out, {xt::ellipsis(), xt::range(y, y+chunk_size), xt::range(x, x+chunk_size), xt::all()}), ds, coord_view);
         }
     }
 }
-
 
 PlaneCoords::PlaneCoords(cv::Vec3f origin_, cv::Vec3f normal_) : origin(origin_)
 {
