@@ -187,11 +187,12 @@ bool ChunkCache::has(uint64_t key)
 }
 
 void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords, ChunkCache *cache);
+void readInterpolated3D_a2_trilin(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords, ChunkCache *cache);
 
 //NOTE depending on request this might load a lot (the whole array) into RAM
 // template <typename T> void readInterpolated3D(T out, z5::Dataset *ds, const xt::xarray<float> &coords)
 void readInterpolated3D(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords, ChunkCache *cache) {
-    readInterpolated3D_a2(out, ds, coords, cache);
+    readInterpolated3D_a2_trilin(out, ds, coords, cache);
 }
 
 void readInterpolated3D_plain(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords)
@@ -356,7 +357,6 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
             int iy = int(oy)/ch;
             int iz = int(oz)/cd;
             
-            
             uint64_t key = key_base ^ uint64_t(ix) ^ (uint64_t(iy)<<16) ^ (uint64_t(iz)<<32);
             
             if (key != last_key) {
@@ -434,7 +434,6 @@ void readInterpolated3D_a2_trilin(xt::xarray<uint8_t> &out, z5::Dataset *ds, con
             int iy = int(oy)/ch;
             int iz = int(oz)/cd;
             
-            
             uint64_t key = key_base ^ uint64_t(ix) ^ (uint64_t(iy)<<16) ^ (uint64_t(iz)<<32);
             
             if (key != last_key) {
@@ -458,7 +457,35 @@ void readInterpolated3D_a2_trilin(xt::xarray<uint8_t> &out, z5::Dataset *ds, con
                 int lx = ox-ix*cw;
                 int ly = oy-iy*ch;
                 int lz = oz-iz*cd;
-                out(y,x,0) = chunk->operator()(lx,ly,lz);
+                
+                //FIXME implement single chunk get?
+                if (lx+1 >= cw || ly+1 >= ch || lz+1 >= cd)
+                    continue;
+                
+                float fx = ox-int(ox);
+                float fy = oy-int(oy);
+                float fz = oz-int(oz);
+                
+                float c000 = chunk->operator()(lx,ly,lz);
+                float c100 = chunk->operator()(lx+1,ly,lz);
+                float c010 = chunk->operator()(lx,ly+1,lz);
+                float c110 = chunk->operator()(lx+1,ly+1,lz);
+                float c001 = chunk->operator()(lx,ly,lz+1);
+                float c101 = chunk->operator()(lx+1,ly,lz+1);
+                float c011 = chunk->operator()(lx,ly+1,lz+1);
+                float c111 = chunk->operator()(lx+1,ly+1,lz+1);
+                
+                float c00 = (1-fz)*c000 + fz*c001;
+                float c01 = (1-fz)*c010 + fz*c011;
+                float c10 = (1-fz)*c100 + fz*c101;
+                float c11 = (1-fz)*c110 + fz*c111;
+                
+                float c0 = (1-fy)*c00 + fy*c01;
+                float c1 = (1-fy)*c10 + fy*c11;
+                
+                float c = (1-fx)*c0 + fx*c1;
+
+                out(y,x,0) = c;
             }
         }
     }
