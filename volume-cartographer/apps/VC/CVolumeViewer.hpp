@@ -24,38 +24,19 @@ class CVolumeViewerView : public QGraphicsView
 {
     Q_OBJECT
 
-    public:
-        CVolumeViewerView(QWidget* parent = nullptr);
-
-        void setup();
-
-        void keyPressEvent(QKeyEvent* event) override;
-        void keyReleaseEvent(QKeyEvent* event) override;
-
-        bool isRangeKeyPressed() { return rangeKeyPressed; }
-        bool isCurvePanKeyPressed() { return curvePanKeyPressed; }
-        bool isRotateKyPressed() { return rotateKeyPressed; }
-
-        void showTextAboveCursor(const QString& value, const QString& label, const QColor& color);
-        void hideTextAboveCursor();
-
-        void showCurrentImpactRange(int range);
-        void showCurrentScanRange(int range);
-        void showCurrentSliceIndex(int slice, bool highlight);
-
-    signals:
-    void sendScrolled();
-    
-    protected:
-        bool rangeKeyPressed{false};
-        bool curvePanKeyPressed{false};
-        bool rotateKeyPressed{false};
-
-        QGraphicsTextItem* textAboveCursor;
-        QGraphicsRectItem* backgroundBehindText;
-        QTimer* timerTextAboveCursor;
-        
+public:
+        CVolumeViewerView(QWidget* parent = 0) : QGraphicsView(parent) {};
+        void mouseReleaseEvent(QMouseEvent *event);
+        void mousePressEvent(QMouseEvent *event);
+        void mouseMoveEvent(QMouseEvent *event);
         void scrollContentsBy(int dx, int dy);
+        
+signals:
+        void sendScrolled();
+        
+protected:
+        bool _regular_pan = false;
+        QPointF _last_pan_position;
 };
 
 class CVolumeViewer : public QWidget
@@ -90,8 +71,6 @@ public:
     void setSlice(PlaneCoords *slice);
     cv::Mat getCoordSlice();
     void renderVisible(bool force = false);
-    void mouseReleaseEvent(QMouseEvent *event);
-    void mousePressEvent(QMouseEvent *event);
     void currRoi(cv::Rect &roi, float &render_scale, float &coord_scale, int &sd_idx) const;
     cv::Mat render_area();
     void addIntersectVisSlice(PlaneCoords *slice_);
@@ -100,7 +79,7 @@ public:
     CVolumeViewerView* fGraphicsView;
 
 protected:
-    bool eventFilter(QObject* watched, QEvent* event);
+    // bool eventFilter(QObject* watched, QEvent* event);
 
 public slots:
     void OnZoomInClicked(void);

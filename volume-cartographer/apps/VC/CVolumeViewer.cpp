@@ -14,120 +14,11 @@ using qga = QGuiApplication;
 // #define ZOOM_FACTOR 1.148698354997035
 #define ZOOM_FACTOR 1.414213562373095
 
-// Constructor
-CVolumeViewerView::CVolumeViewerView(QWidget* parent)
-: QGraphicsView(parent)
-{
-    // timerTextAboveCursor = new QTimer(this);
-    // connect(timerTextAboveCursor, &QTimer::timeout, this, &CVolumeViewerView::hideTextAboveCursor);
-    // timerTextAboveCursor->setSingleShot(true);
-}
-
-
 void CVolumeViewerView::scrollContentsBy(int dx, int dy)
 {
     sendScrolled();
     QGraphicsView::scrollContentsBy(dx,dy);
 }
-
-void CVolumeViewerView::setup()
-{
-    // textAboveCursor = new QGraphicsTextItem("", 0);
-    // textAboveCursor->setFlag(QGraphicsItem::ItemIgnoresTransformations);
-    // textAboveCursor->setZValue(100);
-    // textAboveCursor->setVisible(false);
-    // textAboveCursor->setDefaultTextColor(DEFAULT_TEXT_COLOR);
-    // scene()->addItem(textAboveCursor);
-
-    // QFont f;
-    // f.setPointSize(f.pointSize() + 2);
-    // textAboveCursor->setFont(f);
-    // 
-    // backgroundBehindText = new QGraphicsRectItem();
-    // backgroundBehindText->setFlag(QGraphicsItem::ItemIgnoresTransformations);
-    // backgroundBehindText->setPen(Qt::NoPen);
-    // backgroundBehindText->setZValue(99);
-    // scene()->addItem(backgroundBehindText);
-}
-
-void CVolumeViewerView::keyPressEvent(QKeyEvent* event)
-{
-    if (event->key() == Qt::Key_W) {
-        rangeKeyPressed = true;
-        event->accept();
-    } else if (event->key() == Qt::Key_R) {
-        curvePanKeyPressed = true;
-        event->accept();
-    } else if (event->key() == Qt::Key_S) {
-        rotateKeyPressed = true;
-        event->accept();
-    }
-}
-
-void CVolumeViewerView::keyReleaseEvent(QKeyEvent* event)
-{
-    if (event->key() == Qt::Key_W)  {
-        rangeKeyPressed = false;
-        event->accept();
-    } else if (event->key() == Qt::Key_R) {
-        curvePanKeyPressed = false;
-        event->accept();
-    } else if (event->key() == Qt::Key_S) {
-        rotateKeyPressed = false;
-        event->accept();
-    }
-}
-
-void CVolumeViewerView::showTextAboveCursor(const QString& value, const QString& label, const QColor& color)
-{
-    // // Without this check, when you start VC with auto-load the initial slice will not be in the center of
-    // // volume viewer, because during loading the initilization of the impact range slider and its callback slots
-    // // will already move the position/scrollbars of the viewer and therefore the image is no longer centered.
-    // if (!isVisible()) {
-    //     return;
-    // }
-    // 
-    // timerTextAboveCursor->start(150);
-    // 
-    // QFontMetrics fm(textAboveCursor->font());
-    // QPointF p = mapToScene(mapFromGlobal(QPoint(QCursor::pos().x() + 10, QCursor::pos().y())));
-    // 
-    // textAboveCursor->setVisible(true);
-    // textAboveCursor->setHtml("<b>" + value + "</b><br>" + label);
-    // textAboveCursor->setPos(p);
-    // textAboveCursor->setDefaultTextColor(color);
-    // 
-    // backgroundBehindText->setVisible(true);
-    // backgroundBehindText->setPos(p);
-    // backgroundBehindText->setRect(0, 0, fm.horizontalAdvance((label.isEmpty() ? value : label)) + BGND_RECT_MARGIN, fm.height() * (label.isEmpty() ? 1 : 2) + BGND_RECT_MARGIN);
-    // backgroundBehindText->setBrush(QBrush(QColor(
-    //     (2 * 125 + color.red())   / 3,
-    //     (2 * 125 + color.green()) / 3,
-    //     (2 * 125 + color.blue())  / 3,
-    // 200)));
-}
-
-void CVolumeViewerView::hideTextAboveCursor()
-{
-    // textAboveCursor->setVisible(false);
-    // backgroundBehindText->setVisible(false);
-}
-
-void CVolumeViewerView::showCurrentImpactRange(int range)
-{
-    // showTextAboveCursor(QString::number(range), "", QColor(255, 120, 110)); // tr("Impact Range")
-}
-
-void CVolumeViewerView::showCurrentScanRange(int range)
-{
-    // showTextAboveCursor(QString::number(range), "", QColor(160, 180, 255)); // tr("Scan Range")
-}
-
-void CVolumeViewerView::showCurrentSliceIndex(int slice, bool highlight)
-{
-    // showTextAboveCursor(QString::number(slice), "", (highlight ? QColor(255, 50, 20) : QColor(255, 220, 30))); // tr("Slice")
-}
-
 // Constructor
 CVolumeViewer::CVolumeViewer(QWidget* parent)
     : QWidget(parent)
@@ -173,15 +64,13 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     fGraphicsView = new CVolumeViewerView(this);
     
     
-    
-    
     fGraphicsView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     fGraphicsView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     
     fGraphicsView->setTransformationAnchor(QGraphicsView::NoAnchor);
     
     fGraphicsView->setRenderHint(QPainter::Antialiasing);
-    setFocusProxy(fGraphicsView);
+    // setFocusProxy(fGraphicsView);
     connect(fGraphicsView, &CVolumeViewerView::sendScrolled, this, &CVolumeViewer::onScrolled);
 
     // Create graphics scene
@@ -191,8 +80,8 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     fGraphicsView->setScene(fScene);
     // fGraphicsView->setup();
 
-    fGraphicsView->viewport()->installEventFilter(this);
-    fGraphicsView->setDragMode(QGraphicsView::ScrollHandDrag);
+    // fGraphicsView->viewport()->installEventFilter(this);
+    // fGraphicsView->setDragMode(QGraphicsView::ScrollHandDrag);
 
     // fButtonsLayout = new QHBoxLayout;
     // fButtonsLayout->addWidget(fZoomInBtn);
@@ -262,7 +151,7 @@ void CVolumeViewer::SetImage(const QImage& nSrc)
     update();
 }
 
-bool CVolumeViewer::eventFilter(QObject* watched, QEvent* event)
+/*bool CVolumeViewer::eventFilter(QObject* watched, QEvent* event)
 {
     // Wheel events
     if (watched == fGraphicsView || (fGraphicsView && watched == fGraphicsView->viewport()) && event->type() == QEvent::Wheel) {
@@ -289,7 +178,7 @@ bool CVolumeViewer::eventFilter(QObject* watched, QEvent* event)
         }
     }
     return QWidget::eventFilter(watched, event);
-}
+}*/
 
 void CVolumeViewer::ScaleImage(double nFactor)
 {
@@ -636,32 +525,76 @@ cv::Mat CVolumeViewer::getCoordSlice()
     return cv::Mat();
 }
 
-void CVolumeViewer::mouseReleaseEvent(QMouseEvent *event)
+void CVolumeViewerView::mouseReleaseEvent(QMouseEvent *event)
 {
-    // if (event->button() != Qt::RightButton)
-        // return;
-
-    QPointF global_loc = fGraphicsView->viewport()->mapFromGlobal(event->globalPosition());
-    QPointF scene_loc = fGraphicsView->mapToScene({global_loc.x(),global_loc.y()});
+//     // if (event->button() != Qt::RightButton)
+//         // return;
+// 
+//     QPointF global_loc = fGraphicsView->viewport()->mapFromGlobal(event->globalPosition());
+//     QPointF scene_loc = fGraphicsView->mapToScene({global_loc.x(),global_loc.y()});
+//     
+//     cv::Vec3f vol_loc = loc3d_at_imgpos(volume.get(), slice, scene_loc, scale);
+//     
+//     printf("right release %f %f - %f %f %f\n", scene_loc.x(), scene_loc.y(), vol_loc[0], vol_loc[1], vol_loc[2]);
     
-    cv::Vec3f vol_loc = loc3d_at_imgpos(volume.get(), slice, scene_loc, scale);
+    printf("mouse release event!\n");
     
-    printf("right release %f %f - %f %f %f\n", scene_loc.x(), scene_loc.y(), vol_loc[0], vol_loc[1], vol_loc[2]);
+    if (event->button() == Qt::LeftButton)
+    {
+        _regular_pan = false;
+        setCursor(Qt::ArrowCursor);
+        event->accept();
+        return;
+    }
+    event->ignore();
 }
 
-void CVolumeViewer::mousePressEvent(QMouseEvent *event)
+void CVolumeViewerView::mousePressEvent(QMouseEvent *event)
 {
-    // if (event->button() != Qt::RightButton)
-    // return;
+//     // if (event->button() != Qt::RightButton)
+//     // return;
+//     
+//     QPointF global_loc = fGraphicsView->viewport()->mapFromGlobal(event->globalPosition());
+//     QPointF scene_loc = fGraphicsView->mapToScene({global_loc.x(),global_loc.y()});
+//     
+//     cv::Vec3f vol_loc = loc3d_at_imgpos(volume.get(), slice, scene_loc, scale);
+//     
+//     printf("right pressed %f %f - %f %f %f\n", scene_loc.x(), scene_loc.y(), vol_loc[0], vol_loc[1], vol_loc[2]);
+//     
+//     sendVolumeClicked(scene_loc, vol_loc);
     
-    QPointF global_loc = fGraphicsView->viewport()->mapFromGlobal(event->globalPosition());
-    QPointF scene_loc = fGraphicsView->mapToScene({global_loc.x(),global_loc.y()});
+    if (event->button() == Qt::LeftButton)
+    {
+        printf("pan start\n");
+        _regular_pan = true;
+        _last_pan_position = event->position();
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+        return;
+    }
+    event->ignore();
     
-    cv::Vec3f vol_loc = loc3d_at_imgpos(volume.get(), slice, scene_loc, scale);
-    
-    printf("right pressed %f %f - %f %f %f\n", scene_loc.x(), scene_loc.y(), vol_loc[0], vol_loc[1], vol_loc[2]);
-    
-    sendVolumeClicked(scene_loc, vol_loc);
+}
+
+void CVolumeViewerView::mouseMoveEvent(QMouseEvent *event)
+{
+    printf("mosemove!\n");
+    if (_regular_pan)
+    {
+        printf("pan move\n");
+        QPointF scroll = _last_pan_position - event->position();
+        // fGraphicsView->scrollContentsBy(scroll.y(), scroll.y());
+        
+        int x = horizontalScrollBar()->value() + scroll.x();
+        horizontalScrollBar()->setValue(x);
+        int y = verticalScrollBar()->value() + scroll.y();
+        verticalScrollBar()->setValue(y);
+        
+        _last_pan_position = event->position();
+        event->accept();
+        return;
+    }
+    event->ignore();
 }
 
 
