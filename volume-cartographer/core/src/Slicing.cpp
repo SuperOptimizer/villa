@@ -348,7 +348,10 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
             float ox = coords(y,x,0);
             float oy = coords(y,x,1);
             float oz = coords(y,x,2);
-            
+        
+            if (ox < 0 || oy < 0 || oz < 0)
+                continue;
+                
             int ix = int(ox)/cw;
             int iy = int(oy)/ch;
             int iz = int(oz)/cd;
@@ -377,8 +380,84 @@ void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::
                 int lx = ox-ix*cw;
                 int ly = oy-iy*ch;
                 int lz = oz-iz*cd;
-                if (lx < 0 || ly < 0 || lz < 0 || lx >= cw || ly >= ch || lz >= cd)
-                    continue;
+                out(y,x,0) = chunk->operator()(lx,ly,lz);
+            }
+        }
+    }
+}
+
+//algorithm 2: do interpolation on basis of individual chunks, with trilinear interpolation
+//NOTE on the edge of empty chunks we may falsely retrieve zeros in up to 1 voxel distance!
+void readInterpolated3D_a2_trilin(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords, ChunkCache *cache)
+{
+    auto out_shape = coords.shape();
+    out_shape.back() = 1;
+    out = xt::zeros<uint8_t>(out_shape);
+    
+    ChunkCache local_cache(1e9);
+    
+    if (!cache) {
+        std::cout << "WARNING should use a shared chunk cache!" << std::endl;
+        cache = &local_cache;
+    }
+    
+    //FIXME assert dims
+    //FIXME based on key math we should check bounds here using volume and chunk size
+    uint64_t key_base = cache->groupKey(ds->path());
+    
+    int xdim = coords.shape().size()-2;
+    int ydim = coords.shape().size()-3;
+    
+    auto cw = ds->chunking().blockShape()[0];
+    auto ch = ds->chunking().blockShape()[1];
+    auto cd = ds->chunking().blockShape()[2];
+    
+    std::shared_mutex mutex;
+    
+    //FIXME need to iterate all dims e.g. could have z or more ... (maybe just flatten ... so we only have z at most)
+    //the whole loop is 0.29s of 0.75s (if threaded)
+    // #pragma omp parallel for schedule(dynamic, 512) collapse(2)
+    #pragma omp parallel for
+    for(size_t y = 0;y<coords.shape(ydim);y++) {
+        // xt::xarray<uint16_t> last_id;
+        uint64_t last_key = -1;
+        xt::xarray<uint8_t> *chunk = nullptr;
+        for(size_t x = 0;x<coords.shape(xdim);x++) {            
+            float ox = coords(y,x,0);
+            float oy = coords(y,x,1);
+            float oz = coords(y,x,2);
+            
+            if (ox < 0 || oy < 0 || oz < 0)
+                continue;
+            
+            int ix = int(ox)/cw;
+            int iy = int(oy)/ch;
+            int iz = int(oz)/cd;
+            
+            
+            uint64_t key = key_base ^ uint64_t(ix) ^ (uint64_t(iy)<<16) ^ (uint64_t(iz)<<32);
+            
+            if (key != last_key) {
+                
+                last_key = key;
+                
+                mutex.lock_shared();
+                
+                if (!cache->has(key)) {
+                    mutex.unlock();
+                    chunk = z5::multiarray::readChunk<uint8_t>(*ds, {size_t(ix),size_t(iy),size_t(iz)});
+                    mutex.lock();
+                    cache->put(key, chunk);
+                }
+                else
+                    chunk = cache->get(key);
+                mutex.unlock();
+            }
+            
+            if (chunk) {
+                int lx = ox-ix*cw;
+                int ly = oy-iy*ch;
+                int lz = oz-iz*cd;
                 out(y,x,0) = chunk->operator()(lx,ly,lz);
             }
         }
