@@ -707,7 +707,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
         
         
         // cv::Point2f img_point = {x/render_scale+roi.x,y/render_scale+roi.y};
-        intersects.push_back({res.x/render_scale+roi.x,res.y/render_scale+roi.y});
+        intersects.push_back({res.x+roi.x*render_scale,res.y+roi.y*render_scale});
     }
     
     //this will only work if we have straight line!
