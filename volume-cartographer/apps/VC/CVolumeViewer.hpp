@@ -67,13 +67,14 @@ public slots:
     void OnViewAxisChanged(void);
     void OnLocChanged(int x_, int y_, int z_);
     void OnVolumeChanged(volcart::Volume::Pointer vol);
+    void onVolumeClicked(QPointF scene_loc,Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void OnSliceChanged();
     void onScrolled();
 
 signals:
     void SendSignalSliceShift(int shift, int axis);
     void SendSignalStatusMessageAvailable(QString text, int timeout);
-    void sendVolumeClicked(QPointF scene_loc, cv::Vec3f vol_loc);
+    void sendVolumeClicked(cv::Vec3f vol_loc,Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void sendShiftNormal(cv::Vec3f step);
 
 protected:

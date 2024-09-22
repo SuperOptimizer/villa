@@ -72,6 +72,7 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     fGraphicsView->setRenderHint(QPainter::Antialiasing);
     // setFocusProxy(fGraphicsView);
     connect(fGraphicsView, &CVolumeViewerView::sendScrolled, this, &CVolumeViewer::onScrolled);
+    connect(fGraphicsView, &CVolumeViewerView::sendVolumeClicked, this, &CVolumeViewer::onVolumeClicked);
 
     // Create graphics scene
     fScene = new QGraphicsScene({-2500,-2500,5000,5000}, this);
@@ -336,6 +337,32 @@ void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
     renderVisible(true);
 }
 
+cv::Vec3f loc3d_at_imgpos(volcart::Volume *vol, PlaneCoords *slice, QPointF loc, float scale)
+{
+    xt::xarray<float> coords;
+    
+    int sd_idx = 1;
+    
+    float round_scale = 0.5;
+    while (0.5*round_scale >= scale && sd_idx < vol->numScales()-1) {
+        sd_idx++;
+        round_scale *= 0.5;
+    }
+    
+    slice->gen_coords(coords, loc.x()*round_scale/scale,loc.y()*round_scale/scale, 1, 1, scale/round_scale, round_scale);
+    
+    coords /= round_scale;
+    
+    return {coords(0,0,2),coords(0,0,1),coords(0,0,0)};
+}
+
+void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
+{
+    cv::Vec3f vol_loc = loc3d_at_imgpos(volume.get(), slice, scene_loc, scale);
+
+    sendVolumeClicked(vol_loc, buttons, modifiers);
+}
+
 void CVolumeViewer::setCache(ChunkCache *cache_)
 {
     cache = cache_;
@@ -414,26 +441,6 @@ void CVolumeViewer::currRoi(cv::Rect &roi, float &render_scale, float &coord_sca
     float m = coord_scale/scale;
     
     roi = {curr_img_area.left()*m, curr_img_area.top()*m, curr_img_area.width(), curr_img_area.height()};
-}
-
-
-cv::Vec3f loc3d_at_imgpos(volcart::Volume *vol, PlaneCoords *slice, QPointF loc, float scale)
-{
-    xt::xarray<float> coords;
-    
-    int sd_idx = 1;
-    
-    float round_scale = 0.5;
-    while (0.5*round_scale >= scale && sd_idx < vol->numScales()-1) {
-        sd_idx++;
-        round_scale *= 0.5;
-    }
-
-    slice->gen_coords(coords, loc.x()*round_scale/scale,loc.y()*round_scale/scale, 1, 1, scale/round_scale, round_scale);
-    
-    coords /= round_scale;
-    
-    return {coords(0,0,2),coords(0,0,1),coords(0,0,0)};
 }
 
 void CVolumeViewer::renderVisible(bool force)

@@ -2978,21 +2978,21 @@ void CWindow::onLocChanged(void)
 }
 
 // Handle request to step impact range down
-void CWindow::onVolumeClicked(QPointF scene_loc, cv::Vec3f vol_loc)
+void CWindow::onVolumeClicked(cv::Vec3f vol_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
 {
-//     std::cout << "xy" << slice_xy->origin << "\n" << vol_loc << std::endl;
-//     
-//     slice_plane->origin = vol_loc;
-//     slice_xy->origin = vol_loc;
-//     slice_xz->origin = vol_loc;
-//     slice_yz->origin = vol_loc;
-//     
-//     lblLoc[0]->setText(QString::number(vol_loc[2]));
-//     lblLoc[1]->setText(QString::number(vol_loc[1]));
-//     lblLoc[2]->setText(QString::number(vol_loc[0]));
-    
-    //FIXME get normal from sender!
-    seg_tool->add(vol_loc, {0,0,0});
+    if (modifiers & Qt::ControlModifier) {
+        slice_plane->origin = vol_loc;
+        slice_xy->origin = vol_loc;
+        slice_xz->origin = vol_loc;
+        slice_yz->origin = vol_loc;
+        
+        lblLoc[0]->setText(QString::number(vol_loc[2]));
+        lblLoc[1]->setText(QString::number(vol_loc[1]));
+        lblLoc[2]->setText(QString::number(vol_loc[0]));
+    }
+    else {
+        seg_tool->add(vol_loc, {0,0,0});
+    }
     
     sendSliceChanged();
 }

@@ -119,7 +119,7 @@ public slots:
     void onImpactRangeDown(void);
     void onLocChanged(void);
     void onPlaneSliceChanged(void);
-    void onVolumeClicked(QPointF scene_loc, cv::Vec3f vol_loc);
+    void onVolumeClicked(cv::Vec3f vol_loc,Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void onShiftNormal(cv::Vec3f step);
 
 public:
