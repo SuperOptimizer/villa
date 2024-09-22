@@ -14,10 +14,12 @@ public:
     void mouseReleaseEvent(QMouseEvent *event);
     void mousePressEvent(QMouseEvent *event);
     void mouseMoveEvent(QMouseEvent *event);
+    void wheelEvent(QWheelEvent *event);
     void scrollContentsBy(int dx, int dy);
     
 signals:
     void sendScrolled();
+    void sendZoom(int steps);
     void sendVolumeClicked(QPointF, Qt::MouseButton, Qt::KeyboardModifiers);
     
 protected:

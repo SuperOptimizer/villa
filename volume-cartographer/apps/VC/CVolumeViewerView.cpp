@@ -14,6 +14,15 @@ void CVolumeViewerView::scrollContentsBy(int dx, int dy)
     QGraphicsView::scrollContentsBy(dx,dy);
 }
 
+void CVolumeViewerView::wheelEvent(QWheelEvent *event)
+{
+    int num_degrees = event->angleDelta().y() / 8;
+    
+    sendZoom(num_degrees/15);
+    
+    event->accept();
+}
+
 void CVolumeViewerView::mouseReleaseEvent(QMouseEvent *event)
 {
 //     // if (event->button() != Qt::RightButton)

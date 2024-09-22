@@ -60,16 +60,11 @@ protected:
     // bool eventFilter(QObject* watched, QEvent* event);
 
 public slots:
-    void OnZoomInClicked(void);
-    void OnZoomOutClicked(void);
-    void OnResetClicked(void);
-    void OnImageRotationSpinChanged(void);
-    void OnViewAxisChanged(void);
-    void OnLocChanged(int x_, int y_, int z_);
     void OnVolumeChanged(volcart::Volume::Pointer vol);
     void onVolumeClicked(QPointF scene_loc,Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void OnSliceChanged();
     void onScrolled();
+    void onZoom(int steps);
 
 signals:
     void SendSignalSliceShift(int shift, int axis);
@@ -80,7 +75,6 @@ signals:
 protected:
     void ScaleImage(double nFactor);
     void CenterOn(const QPointF& point);
-    virtual void UpdateButtons(void);
 
 protected:
     // widget components

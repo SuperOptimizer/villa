@@ -218,10 +218,6 @@ CVolumeViewer *CWindow::newConnectedCVolumeViewer(PlaneCoords *slice, QWidget *p
 {
     auto volView = new CVolumeViewer(parent);
     volView->setCache(chunk_cache);
-    // connect(fVolumeViewerWidget, &CVolumeViewerWithCurve::SendSignalStatusMessageAvailable, this, &CWindow::onShowStatusMessage);
-    connect(this, &CWindow::sendLocChanged, volView, &CVolumeViewer::OnLocChanged);
-    connect(volView, SIGNAL(SendSignalSliceShift(int,int)), this, SLOT(OnSliceShift(int,int)));
-    connect(volView, SIGNAL(SendSignalSliceShift(int,int)), this, SLOT(OnSliceShift(int,int)));
     connect(this, &CWindow::sendVolumeChanged, volView, &CVolumeViewer::OnVolumeChanged);
     connect(this, &CWindow::sendSliceChanged, volView, &CVolumeViewer::OnSliceChanged);
     connect(volView, &CVolumeViewer::sendVolumeClicked, this, &CWindow::onVolumeClicked);

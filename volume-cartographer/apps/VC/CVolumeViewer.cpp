@@ -73,6 +73,7 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     // setFocusProxy(fGraphicsView);
     connect(fGraphicsView, &CVolumeViewerView::sendScrolled, this, &CVolumeViewer::onScrolled);
     connect(fGraphicsView, &CVolumeViewerView::sendVolumeClicked, this, &CVolumeViewer::onVolumeClicked);
+    connect(fGraphicsView, &CVolumeViewerView::sendZoom, this, &CVolumeViewer::onZoom);
 
     // Create graphics scene
     fScene = new QGraphicsScene({-2500,-2500,5000,5000}, this);
@@ -107,8 +108,6 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     // aWidgetLayout->addLayout(fButtonsLayout);
 
     setLayout(aWidgetLayout);
-    
-    UpdateButtons();
 }
 
 // Destructor
@@ -181,42 +180,6 @@ void CVolumeViewer::SetImage(const QImage& nSrc)
     return QWidget::eventFilter(watched, event);
 }*/
 
-void CVolumeViewer::ScaleImage(double nFactor)
-{
-    fScaleFactor *= nFactor;
-    fGraphicsView->scale(nFactor, nFactor);
-
-    UpdateButtons();
-}
-
-void CVolumeViewer::CenterOn(const QPointF& point)
-{
-    fGraphicsView->centerOn(point);
-}
-
-void CVolumeViewer::SetRotation(int degrees)
-{
-    // if (currentRotation != degrees) {
-    //     auto delta = (currentRotation - degrees) * -1;
-    //     fGraphicsView->rotate(delta);
-    //     currentRotation += delta;
-    //     currentRotation = currentRotation % 360;
-    //     fImageRotationSpin->setValue(currentRotation);
-    // }
-}
-
-void CVolumeViewer::Rotate(int delta)
-{
-    // SetRotation(currentRotation + delta);
-}
-
-void CVolumeViewer::ResetRotation()
-{
-    // fGraphicsView->rotate(-currentRotation);
-    // currentRotation = 0;
-    // fImageRotationSpin->setValue(currentRotation);
-}
-
 void round_scale(float &scale)
 {
     if (abs(scale-round(log2(scale))) < 0.02)
@@ -230,98 +193,21 @@ QPointF visible_center(QGraphicsView *view)
     return bbox.topLeft() + QPointF(bbox.width(),bbox.height())*0.5;
 }
 
-// Handle zoom in click
-void CVolumeViewer::OnZoomInClicked(void)
+void CVolumeViewer::onZoom(int steps)
 {
-    scale *= ZOOM_FACTOR;
+    float zoom = pow(ZOOM_FACTOR, steps);
+    
+    scale *= zoom;
     round_scale(scale);
     
     curr_img_area = {0,0,0,0};
-    QPointF center = visible_center(fGraphicsView) * ZOOM_FACTOR;
+    QPointF center = visible_center(fGraphicsView) * zoom;
     
     int max_size = std::max(volume->sliceWidth(), std::max(volume->numSlices(), volume->sliceHeight()))*scale + 512;
     fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
     
     fGraphicsView->centerOn(center);
     renderVisible();
-}
-
-// Handle zoom out click
-void CVolumeViewer::OnZoomOutClicked(void)
-{
-    scale /= ZOOM_FACTOR;
-    round_scale(scale);
-    
-    curr_img_area = {0,0,0,0};
-    QPointF center = visible_center(fGraphicsView) / ZOOM_FACTOR;
-    
-    int max_size = std::max(volume->sliceWidth(), std::max(volume->numSlices(), volume->sliceHeight()))*scale + 512;
-    fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
-    
-    fGraphicsView->centerOn(center);
-    renderVisible();
-}
-
-void CVolumeViewer::OnResetClicked(void)
-{
-    fGraphicsView->resetTransform();
-    fScaleFactor = 1.0;
-    currentRotation = 0;
-    fImageRotationSpin->setValue(currentRotation);
-
-    UpdateButtons();
-}
-
-// Handle image rotation change
-void CVolumeViewer::OnImageRotationSpinChanged(void)
-{
-    // SetRotation(fImageRotationSpin->value());
-}
-
-void CVolumeViewer::OnViewAxisChanged(void)
-{    
-    // axis = fAxisCombo->currentData().toInt();
-    
-    // loadSlice();
-}
-
-void CVolumeViewer::OnLocChanged(int x_, int y_, int z_)
-{
-//     bool have_change = false;
-//     int slice_index = 0;
-//     
-//     if (loc[0] != x_ && axis == 0)
-//         have_change = true;
-//     if (loc[1] != y_ && axis == 1)
-//         have_change = true;
-//     if (loc[2] != z_ && axis == 2)
-//         have_change = true;
-//     
-//     loc[0] = x_;
-//     loc[1] = y_;
-//     loc[2] = z_;
-//     
-//     if (have_change)
-        // loadSlice();
-}
-
-// Update the status of the buttons
-void CVolumeViewer::UpdateButtons(void)
-{
-    // fZoomInBtn->setEnabled(fImgQImage != nullptr && fScaleFactor < 10.0);
-    // fZoomOutBtn->setEnabled(fImgQImage != nullptr && fScaleFactor > 0.05);
-    // fResetBtn->setEnabled(fImgQImage != nullptr && fabs(fScaleFactor - 1.0) > 1e-6);
-}
-
-// Reset the viewer
-void CVolumeViewer::Reset()
-{
-    if (fBaseImageItem) {
-        delete fBaseImageItem;
-        fBaseImageItem = nullptr;
-    }
-
-    OnResetClicked(); // to reset zoom
 }
 
 void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
