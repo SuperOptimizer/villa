@@ -546,7 +546,7 @@ void IDWHeightPlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, i
             float py = vx[1]*(i*m+x) + vy[1]*(j*m+y) + origin[1]*coord_scale;
             float pz = vx[2]*(i*m+x) + vy[2]*(j*m+y) + origin[2]*coord_scale;
             cv::Vec3f p = {px,py,pz};
-            p += height({px,py,pz})*n;
+            p += height({px/coord_scale,py/coord_scale,pz/coord_scale})*coord_scale*n;
             coords(j,i,0) = p[2];
             coords(j,i,1) = p[1];
             coords(j,i,2) = p[0];
@@ -655,7 +655,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
         cv::Point3f point = {coords(y,x,2),coords(y,x,1),coords(y,x,0)};
         point /= coord_scale;
         
-        cv::Point2f img_point = {x/render_scale+roi.x,y/render_scale+roi.y};
+        cv::Point2f img_point = {x,y};
         
         float scalarp = other->scalarp(point);
         
@@ -679,12 +679,35 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
     for(int r=0;r<std::min<int>(100,std::min(upper.size(),lower.size()));r++) {
         float d_up = std::get<2>(upper[r]);
         float d_low = std::get<2>(lower[r]);
+        cv::Point2f ip_up = std::get<0>(upper[r]);
+        cv::Point2f ip_low = std::get<0>(lower[r]);
         
-        // std::cout << std::get<0>(upper[r]) << " vs " << std::get<0>(lower[r]) << " and " << d_up << " vs " << d_low << "\n";
+        cv::Point2f res = d_low/(d_up+d_low) * ip_up + d_up/(d_up+d_low) * ip_low;
         
-        cv::Point2f res = d_low/(d_up+d_low) * std::get<0>(upper[r]) + d_up/(d_up+d_low) * std::get<0>(lower[r]);
+        for(int s=0;s<5;s++) {
+            assert(coords.in_bounds(round(res.y),round(res.x),2));
+            //FIXME interpolate point and use lower acceptance threshold
+            cv::Point3f point = {coords(round(res.y),round(res.x),2),coords(round(res.y),round(res.x),1),coords(round(res.y),round(res.x),0)};
+            point /= coord_scale;
+            float sdist = other->scalarp(point)*pmul;
+            if (abs(sdist) < 0.5/coord_scale)
+                break;
+
+            if (sdist > 0) {
+                d_up = sdist;
+                ip_up = res;
+            }
+            else if(sdist < 0) {
+                d_low = -sdist;
+                ip_low = res;
+            }
+            
+            res = d_low/(d_up+d_low) * ip_up + d_up/(d_up+d_low) * ip_low;
+        }
         
-        intersects.push_back(res);
+        
+        // cv::Point2f img_point = {x/render_scale+roi.x,y/render_scale+roi.y};
+        intersects.push_back({res.x/render_scale+roi.x,res.y/render_scale+roi.y});
     }
     
     //this will only work if we have straight line!
