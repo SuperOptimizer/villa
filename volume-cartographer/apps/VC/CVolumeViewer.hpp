@@ -4,40 +4,18 @@
 
 #include <QtWidgets>
 #include <opencv2/core/core.hpp>
-#include <opencv2/imgproc.hpp>
-#include <opencv2/opencv.hpp>
-
-#include <QGraphicsView>
-#include <QGraphicsScene>
-#include <QDebug>
 
 #include "vc/core/types/VolumePkg.hpp"
 
 class PlaneCoords;
 class ChunkCache;
 class PlaneIDWSegmentator;
+class QGraphicsScene;
 
 namespace ChaoVis
 {
 
-class CVolumeViewerView : public QGraphicsView
-{
-    Q_OBJECT
-
-public:
-        CVolumeViewerView(QWidget* parent = 0) : QGraphicsView(parent) {};
-        void mouseReleaseEvent(QMouseEvent *event);
-        void mousePressEvent(QMouseEvent *event);
-        void mouseMoveEvent(QMouseEvent *event);
-        void scrollContentsBy(int dx, int dy);
-        
-signals:
-        void sendScrolled();
-        
-protected:
-        bool _regular_pan = false;
-        QPointF _last_pan_position;
-};
+class CVolumeViewerView;
 
 class CVolumeViewer : public QWidget
 {

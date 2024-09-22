@@ -9,6 +9,7 @@ set(srcs
     CXCurve.cpp
     UDataManipulateUtils.cpp
     CVolumeViewer.cpp
+    CVolumeViewerView.cpp
     CBSpline.cpp
     CBezierCurve.cpp
     BlockingDialog.hpp
