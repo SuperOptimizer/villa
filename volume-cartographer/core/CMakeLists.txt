@@ -80,14 +80,11 @@ target_link_libraries(vc_slicing
         opencv_highgui
         opencv_calib3d
         OpenMP::OpenMP_CXX
-        xtensor
 )
 target_include_directories(vc_slicing
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
-    PRIVATE
-        $<TARGET_PROPERTY:z5,INTERFACE_INCLUDE_DIRECTORIES>
 )
 
 configure_file(src/Version.cpp.in Version.cpp)
@@ -108,8 +105,6 @@ target_include_directories(vc_core
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
-    PRIVATE
-        $<TARGET_PROPERTY:z5,INTERFACE_INCLUDE_DIRECTORIES>
 )
 target_link_libraries(vc_core
     PUBLIC
@@ -126,15 +121,12 @@ target_link_libraries(vc_core
         spdlog::spdlog
         nlohmann_json::nlohmann_json
         smgl::smgl
+        z5
     PRIVATE
         TIFF::TIFF
         JPEGXL::jxl
         JPEGXL::jxl_threads
-        Blosc::blosc
 )
-#FIXME we want to link z5!? but cmake is unhappy...
-target_compile_features(vc_core PUBLIC cxx_std_17)
-target_compile_definitions(vc_core PUBLIC WITH_BLOSC)
 
 set_target_properties(vc_core PROPERTIES
     VERSION ${PROJECT_VERSION}
