@@ -25,17 +25,6 @@ void CVolumeViewerView::wheelEvent(QWheelEvent *event)
 
 void CVolumeViewerView::mouseReleaseEvent(QMouseEvent *event)
 {
-//     // if (event->button() != Qt::RightButton)
-//         // return;
-// 
-//     QPointF global_loc = fGraphicsView->viewport()->mapFromGlobal(event->globalPosition());
-//     QPointF scene_loc = fGraphicsView->mapToScene({global_loc.x(),global_loc.y()});
-//     
-//     cv::Vec3f vol_loc = loc3d_at_imgpos(volume.get(), slice, scene_loc, scale);
-//     
-//     printf("right release %f %f - %f %f %f\n", scene_loc.x(), scene_loc.y(), vol_loc[0], vol_loc[1], vol_loc[2]);
-    
-    
     if (event->button() == Qt::MiddleButton)
     {
         _regular_pan = false;
@@ -58,18 +47,6 @@ void CVolumeViewerView::mouseReleaseEvent(QMouseEvent *event)
 
 void CVolumeViewerView::mousePressEvent(QMouseEvent *event)
 {
-//     // if (event->button() != Qt::RightButton)
-//     // return;
-//     
-//     QPointF global_loc = fGraphicsView->viewport()->mapFromGlobal(event->globalPosition());
-//     QPointF scene_loc = fGraphicsView->mapToScene({global_loc.x(),global_loc.y()});
-//     
-//     cv::Vec3f vol_loc = loc3d_at_imgpos(volume.get(), slice, scene_loc, scale);
-//     
-//     printf("right pressed %f %f - %f %f %f\n", scene_loc.x(), scene_loc.y(), vol_loc[0], vol_loc[1], vol_loc[2]);
-//     
-//     sendVolumeClicked(scene_loc, vol_loc);
-    
     if (event->button() == Qt::MiddleButton)
     {
         _regular_pan = true;
@@ -79,7 +56,6 @@ void CVolumeViewerView::mousePressEvent(QMouseEvent *event)
         return;
     }
     event->ignore();
-    
 }
 
 void CVolumeViewerView::mouseMoveEvent(QMouseEvent *event)
@@ -88,7 +64,6 @@ void CVolumeViewerView::mouseMoveEvent(QMouseEvent *event)
     if (_regular_pan)
     {
         QPointF scroll = _last_pan_position - event->position();
-        // fGraphicsView->scrollContentsBy(scroll.y(), scroll.y());
         
         int x = horizontalScrollBar()->value() + scroll.x();
         horizontalScrollBar()->setValue(x);
