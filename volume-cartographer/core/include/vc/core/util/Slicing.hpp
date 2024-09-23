@@ -36,6 +36,18 @@ public:
     cv::Vec3f normal = {1,1,1};
 };
 
+//FIXME make normal private and keep normalized
+class GridCoords : public CoordGenerator
+{
+public:
+    GridCoords() {};
+    GridCoords(cv::Mat_<cv::Vec3f> *points) : _points(points) {};
+    void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) const override;
+    using CoordGenerator::gen_coords;
+
+    cv::Mat_<cv::Vec3f> *_points = nullptr;
+};
+
 class IDWHeightPlaneCoords : public PlaneCoords
 {
 public:
@@ -65,8 +77,9 @@ class PointRectSegmentator : public ControlPointSegmentator
 public:
     void add(cv::Vec3f wp, cv::Vec3f normal) override { abort(); };
     void set(cv::Mat_<cv::Vec3f> &points);
-    PlaneCoords *generator() const { return nullptr; };
+    CoordGenerator *generator();
     cv::Mat_<cv::Vec3f> _points;
+    std::unique_ptr<GridCoords> _generator;
 };
 
 class PlaneIDWSegmentator : public ControlPointSegmentator

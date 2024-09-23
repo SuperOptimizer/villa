@@ -947,14 +947,35 @@ cv::Vec3f PlaneCoords::project(cv::Vec3f wp, const cv::Rect &roi, float render_s
     return {res(0,0), res(0,1), res(0,2)};
 }
 
+void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale) const
+{
+    printf("want %d %d %d %d\n",x,y,w,h);
+    coords = xt::empty<float>({_points->rows, _points->cols,3});
+    for(int j=0;j<h;j++) {
+        cv::Vec3f *row = _points->ptr<cv::Vec3f>(j);
+        for(int i=0;i<w;i++) {
+            cv::Vec3f point = row[i]*coord_scale;
+            coords(j,i,0) = point[2];
+            coords(j,i,1) = point[1];
+            coords(j,i,2) = point[0];
+        }
+    };
+}
 
 void PointRectSegmentator::set(cv::Mat_<cv::Vec3f> &points)
 {
     _points = points;
-
+    
     for(int j=0;j<_points.size().height;j++) {
         cv::Vec3f *row = _points.ptr<cv::Vec3f>(j);
         for(int i=0;i<_points.size().height;i++)
             control_points.push_back(row[i]);
     }
+    
+    _generator.reset(new GridCoords(&_points));
+}
+
+CoordGenerator *PointRectSegmentator::generator()
+{
+    return _generator.get();
 }

@@ -215,7 +215,7 @@ CWindow::~CWindow(void)
     SDL_Quit();
 }
 
-CVolumeViewer *CWindow::newConnectedCVolumeViewer(PlaneCoords *slice, QWidget *parent)
+CVolumeViewer *CWindow::newConnectedCVolumeViewer(CoordGenerator *slice, QWidget *parent)
 {
     auto volView = new CVolumeViewer(parent);
     volView->setCache(chunk_cache);
@@ -3071,4 +3071,13 @@ void CWindow::onSegSelected(SegmentationStruct *seg)
     src.convertTo(points, CV_32F);
     
     dynamic_cast<PointRectSegmentator*>(seg_tool)->set(points);
+    
+    //FIXME need to think about how we handle this typing ...
+    slice_seg = dynamic_cast<PointRectSegmentator*>(seg_tool)->generator();
+    
+    std::cout << "slice_seg " << slice_seg  << std::endl;
+    
+    //FIXME need to think about how we handle these references ...
+    view_seg->setSlice(slice_seg);
+    view_seg->renderVisible(true);
 }

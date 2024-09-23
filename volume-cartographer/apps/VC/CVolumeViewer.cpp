@@ -224,7 +224,7 @@ void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
     renderVisible(true);
 }
 
-cv::Vec3f loc3d_at_imgpos(volcart::Volume *vol, PlaneCoords *slice, QPointF loc, float scale)
+cv::Vec3f loc3d_at_imgpos(volcart::Volume *vol, CoordGenerator *slice, QPointF loc, float scale)
 {
     xt::xarray<float> coords;
     
@@ -277,7 +277,7 @@ void CVolumeViewer::loadSlice()
 //     UpdateButtons();
 }
 
-void CVolumeViewer::setSlice(PlaneCoords *slice_)
+void CVolumeViewer::setSlice(CoordGenerator *slice_)
 {
     slice = slice_;
     OnSliceChanged();
@@ -392,25 +392,25 @@ void CVolumeViewer::renderVisible(bool force)
             }
     }
     
-    if (seg_tool) {
-#pragma omp parallel for
-        for (auto &wp : seg_tool->control_points) {
-            float dist = slice->pointDist(wp);
-            
-            if (dist > 10)
-                continue;
-            
-            cv::Vec3f p = slice->project(wp, roi, render_scale, coord_scale);
-            
-#pragma omp critical
-            {
-                auto item = fGraphicsView->scene()->addEllipse({p[0]-1,p[1]-1,2,2}, QPen(Qt::green, 3));
-                //FIXME rename/clean
-                other_slice_items.push_back(item);
-                item->setParentItem(fBaseImageItem);
-            }
-        }
-    }
+//     if (seg_tool) {
+// #pragma omp parallel for
+//         for (auto &wp : seg_tool->control_points) {
+//             float dist = slice->pointDist(wp);
+//             
+//             if (dist > 10)
+//                 continue;
+//             
+//             cv::Vec3f p = slice->project(wp, roi, render_scale, coord_scale);
+//             
+// #pragma omp critical
+//             {
+//                 auto item = fGraphicsView->scene()->addEllipse({p[0]-1,p[1]-1,2,2}, QPen(Qt::green, 3));
+//                 //FIXME rename/clean
+//                 other_slice_items.push_back(item);
+//                 item->setParentItem(fBaseImageItem);
+//             }
+//         }
+//     }
 }
 
 void CVolumeViewer::onScrolled()

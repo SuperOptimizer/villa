@@ -8,6 +8,7 @@
 #include "vc/core/types/VolumePkg.hpp"
 
 class PlaneCoords;
+class CoordGenerator;
 class ChunkCache;
 class ControlPointSegmentator;
 class QGraphicsScene;
@@ -47,7 +48,7 @@ public:
     void ResetRotation();
     void setCache(ChunkCache *cache);
     void loadSlice();
-    void setSlice(PlaneCoords *slice);
+    void setSlice(CoordGenerator *slice);
     cv::Mat getCoordSlice();
     void renderVisible(bool force = false);
     void currRoi(cv::Rect &roi, float &render_scale, float &coord_scale, int &sd_idx) const;
@@ -108,7 +109,7 @@ protected:
     QGraphicsPixmapItem* fBaseImageItem;
     
     volcart::Volume::Pointer volume = nullptr;
-    PlaneCoords *slice = nullptr;
+    CoordGenerator *slice = nullptr;
     int axis = 0;
     int loc[3] = {0,0,0};
     

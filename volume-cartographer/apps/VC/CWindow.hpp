@@ -39,6 +39,7 @@ static constexpr int VOLPKG_MIN_VERSION = 6;
 static constexpr int VOLPKG_SLICE_MIN_INDEX = 0;
 
 class PlaneCoords;
+class CoordGenerator;
 class ChunkCache;
 class ControlPointSegmentator;
 
@@ -139,7 +140,7 @@ private:
     void UpdateRecentVolpkgList(const QString& path);
     void RemoveEntryFromRecentVolpkg(const QString& path);
 
-    CVolumeViewer *newConnectedCVolumeViewer(PlaneCoords *slice, QWidget *parent);
+    CVolumeViewer *newConnectedCVolumeViewer(CoordGenerator *slice, QWidget *parent);
     void closeEvent(QCloseEvent* event);
 
     void setWidgetsEnabled(bool state);
@@ -390,7 +391,7 @@ private:
     PlaneCoords *slice_xy = nullptr;
     PlaneCoords *slice_xz = nullptr;
     PlaneCoords *slice_yz = nullptr;
-    PlaneCoords *slice_seg = nullptr;
+    CoordGenerator *slice_seg = nullptr;
     ChunkCache *chunk_cache;
     
     CVolumeViewer *view_xy = nullptr;
