@@ -60,7 +60,6 @@ void CVolumeViewerView::mousePressEvent(QMouseEvent *event)
 
 void CVolumeViewerView::mouseMoveEvent(QMouseEvent *event)
 {
-    printf("mosemove!\n");
     if (_regular_pan)
     {
         QPointF scroll = _last_pan_position - event->position();

@@ -852,6 +852,11 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
     segments_roi.push_back(intersects);
 }
 
+void ControlPointSegmentator::add(cv::Vec3f wp, cv::Vec3f normal)
+{
+    control_points.push_back(wp);
+}
+
 void PlaneIDWSegmentator::add(cv::Vec3f wp, cv::Vec3f normal)
 {
     std::cout << "added point" << _points.size()+1 << wp << normal << std::endl;
@@ -904,6 +909,17 @@ float PlaneCoords::pointDist(cv::Vec3f wp)
         
     return abs(scalarp)*plane_mul;
 }
+
+// float PlaneCoords::pointDistNoNorm(cv::Vec3f wp)
+// {
+//     cv::Vec3f n;
+//     cv::normalize(normal, n, 1,0, cv::NORM_L2);
+//     float plane_off = origin.dot(n);
+//     float plane_mul = 1.0/sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
+//     float scalarp = wp.dot(n) - plane_off;
+//     
+//     return abs(scalarp)*plane_mul;
+// }
 
 cv::Vec3f PlaneCoords::project(cv::Vec3f wp, const cv::Rect &roi, float render_scale, float coord_scale)
 {

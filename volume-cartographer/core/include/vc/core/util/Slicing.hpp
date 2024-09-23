@@ -18,6 +18,7 @@ public:
     virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) const = 0;
 };
 
+//FIXME make normal private and keep normalized
 class PlaneCoords : public CoordGenerator
 {
 public:
@@ -50,15 +51,23 @@ public:
     // using CoordGenerator::gen_coords;
 };
 
-class PlaneIDWSegmentator
+
+class ControlPointSegmentator
+{
+public:
+    virtual void add(cv::Vec3f wp, cv::Vec3f normal);
+    std::vector<cv::Vec3f> control_points;
+    virtual PlaneCoords *generator() const { return nullptr; };
+};
+
+class PlaneIDWSegmentator : public ControlPointSegmentator
 {
 public:
     PlaneIDWSegmentator();
     //add a new point to the model
-    void add(cv::Vec3f wp, cv::Vec3f normal);
+    void add(cv::Vec3f wp, cv::Vec3f normal) override;
     //move void move(...) (this can be in 2d or 3d and in-plane or out-of-plane .. think about which variants are relevant...)
-    PlaneCoords *generator() const;
-    std::vector<cv::Vec3f> control_points;
+    PlaneCoords *generator() const override;
 private:
     std::vector<std::pair<cv::Vec2f,cv::Vec3f>> _points;
     IDWHeightPlaneCoords *_generator = nullptr;

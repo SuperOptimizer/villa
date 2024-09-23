@@ -8,6 +8,7 @@
 #include <QGraphicsScene>
 
 #include "CVolumeViewerView.hpp"
+#include "SegmentationStruct.hpp"
 
 #include "vc/core/util/Slicing.hpp"
 
@@ -303,7 +304,7 @@ void calc_scales(float scale, float &render_scale, float &coord_scale, int &sd_i
 }
 
 cv::Mat CVolumeViewer::render_area()
-{
+{   
     xt::xarray<float> coords;
     xt::xarray<uint8_t> img;
 
@@ -331,7 +332,7 @@ void CVolumeViewer::currRoi(cv::Rect &roi, float &render_scale, float &coord_sca
 
 void CVolumeViewer::renderVisible(bool force)
 {
-    if (!volume || !volume->zarrDataset())
+    if (!volume || !volume->zarrDataset() || !slice)
         return;
     
     QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->viewport()->geometry()).boundingRect();
@@ -392,14 +393,22 @@ void CVolumeViewer::renderVisible(bool force)
     }
     
     if (seg_tool) {
+#pragma omp parallel for
         for (auto &wp : seg_tool->control_points) {
             float dist = slice->pointDist(wp);
+            
+            if (dist > 10)
+                continue;
+            
             cv::Vec3f p = slice->project(wp, roi, render_scale, coord_scale);
             
-            auto item = fGraphicsView->scene()->addEllipse({p[0]-1,p[1]-1,2,2}, QPen(Qt::green, 3));
-            //FIXME rename/clean
-            other_slice_items.push_back(item);
-            item->setParentItem(fBaseImageItem);
+#pragma omp critical
+            {
+                auto item = fGraphicsView->scene()->addEllipse({p[0]-1,p[1]-1,2,2}, QPen(Qt::green, 3));
+                //FIXME rename/clean
+                other_slice_items.push_back(item);
+                item->setParentItem(fBaseImageItem);
+            }
         }
     }
 }
@@ -427,7 +436,7 @@ void CVolumeViewer::addIntersectVisSlice(PlaneCoords *slice_)
 }
 
 
-void CVolumeViewer::setSegTool(PlaneIDWSegmentator *tool)
+void CVolumeViewer::setSegTool(ControlPointSegmentator *tool)
 {
     seg_tool = tool;
 }

@@ -134,7 +134,7 @@ CWindow::CWindow()
     //TODO make configurable
     chunk_cache = new ChunkCache(10e9);
     
-    seg_tool = new PlaneIDWSegmentator();
+    seg_tool = new ControlPointSegmentator();
     
     slice_plane = new PlaneCoords({2000,2000,2000},{1,1,1});
     slice_xy = new PlaneCoords({2000,2000,2000},{0,0,1});
@@ -254,15 +254,16 @@ void CWindow::CreateWidgets(void)
     auto aWidgetLayout = new QGridLayout;
     view_xy = newConnectedCVolumeViewer(slice_xy, ui.tabSegment);
     // view_xy->addIntersectVisSlice(slice_plane);
-    view_xy->addIntersectVisSlice(slice_seg);
+    // view_xy->addIntersectVisSlice(slice_seg);
+    connect(this, &CWindow::sendSegSelected, this, &CWindow::onSegSelected);
     aWidgetLayout->addWidget(view_xy, 0, 0);
     view_xz = newConnectedCVolumeViewer(slice_xz, ui.tabSegment);
     // view_xz->addIntersectVisSlice(slice_plane);
-    view_xz->addIntersectVisSlice(slice_seg);
+    // view_xz->addIntersectVisSlice(slice_seg);
     aWidgetLayout->addWidget(view_xz, 0, 1);
     view_yz = newConnectedCVolumeViewer(slice_yz, ui.tabSegment);
     // view_yz->addIntersectVisSlice(slice_plane);
-    view_yz->addIntersectVisSlice(slice_seg);
+    // view_yz->addIntersectVisSlice(slice_seg);
     aWidgetLayout->addWidget(view_yz, 1, 0);
     view_plane = newConnectedCVolumeViewer(slice_plane, ui.tabSegment);
     aWidgetLayout->addWidget(view_plane, 1, 1);
@@ -1022,7 +1023,10 @@ void CWindow::ChangePathItem(std::string segID)
     // Load new Segment to fSegStructMap, but only if it is not present yet or empty (empty check required, since even
     // after both "Display" and "Compute" checkboxes are off, an empty shell appears in the map, probably due to access attempts).
     if (fSegStructMap.find(fSegmentationId) == fSegStructMap.end() || fSegStructMap[fSegmentationId].fMasterCloud.empty()) {
+        std::cout << "loading segmentationn\n" << std::endl;
         fSegStructMap[fSegmentationId] = SegmentationStruct(fVpkg, segID, fPathOnSliceIndex);
+        sendSegSelected(&fSegStructMap[fSegmentationId]);
+        std::cout << "done loading segmentationn\n" << std::endl;
     }
 
     if (fSegStructMap[fSegmentationId].currentVolume != nullptr && fSegStructMap[fSegmentationId].fSegmentation->hasVolumeID()) {
@@ -2358,7 +2362,7 @@ void CWindow::OnPathItemClicked(QTreeWidgetItem* item, int column)
                 }
                 // qDebug() << "Display " << aSegID.c_str();
                 ChangePathItem(aSegID);
-                // qDebug() << "Display " << aSegID.c_str() << " set display true.";
+                qDebug() << "Display " << aSegID.c_str() << " set display true.";
                 fSegStructMap[aSegID].display = true;
             }
             else
@@ -3050,4 +3054,21 @@ void CWindow::onPlaneSliceChanged(void)
 //         {
 //             view_xy->fGraphicsView->scene()->addEllipse({p.x-2+roi.x,p.y-2+roi.y,4,4}, QPen(Qt::yellow, 1));
 //         }
+}
+
+void CWindow::onSegSelected(SegmentationStruct *seg)
+{
+    //
+    std::cout << " FIXME load seg as control points?" << std::endl;
+    double max_slice = 0;
+    size_t count = 0;
+    
+    //fMasterCloud is ordered pointset of Vec3d
+    for(auto p : seg->fMasterCloud) {
+        max_slice = std::max<int>(max_slice, p[2]);
+        // std::cout << p << std::endl;
+        count++;
+        seg_tool->add(p,{0,0,0});
+    }
+    std::cout << " doneisch?" << max_slice << " " << count << std::endl;
 }

@@ -40,7 +40,7 @@ static constexpr int VOLPKG_SLICE_MIN_INDEX = 0;
 
 class PlaneCoords;
 class ChunkCache;
-class PlaneIDWSegmentator;
+class ControlPointSegmentator;
 
 namespace ChaoVis
 {
@@ -110,6 +110,8 @@ signals:
     void sendLocChanged(int x, int y, int z);
     void sendVolumeChanged(volcart::Volume::Pointer vol);
     void sendSliceChanged();
+    //FIXME will need to thing a lot about the interaction logic given the current, very "integrated" style
+    void sendSegSelected(SegmentationStruct *);
 
 public slots:
     void onSegmentationFinished(Segmenter::Pointer segmenter, Segmenter::PointSet ps);
@@ -121,6 +123,7 @@ public slots:
     void onPlaneSliceChanged(void);
     void onVolumeClicked(cv::Vec3f vol_loc,Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void onShiftNormal(cv::Vec3f step);
+    void onSegSelected(SegmentationStruct *seg);
 
 public:
     CWindow();
@@ -396,7 +399,7 @@ private:
     CVolumeViewer *view_plane = nullptr;
     CVolumeViewer *view_seg = nullptr;
     
-    PlaneIDWSegmentator *seg_tool;
+    ControlPointSegmentator *seg_tool;
 };  // class CWindow
 
 
