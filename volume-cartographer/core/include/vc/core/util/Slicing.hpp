@@ -51,13 +51,22 @@ public:
     // using CoordGenerator::gen_coords;
 };
 
-
 class ControlPointSegmentator
 {
 public:
     virtual void add(cv::Vec3f wp, cv::Vec3f normal);
+    //FIXME we probably want some iterator instead of a fixed array ...
     std::vector<cv::Vec3f> control_points;
     virtual PlaneCoords *generator() const { return nullptr; };
+};
+
+class PointRectSegmentator : public ControlPointSegmentator
+{
+public:
+    void add(cv::Vec3f wp, cv::Vec3f normal) override { abort(); };
+    void set(cv::Mat_<cv::Vec3f> &points);
+    PlaneCoords *generator() const { return nullptr; };
+    cv::Mat_<cv::Vec3f> _points;
 };
 
 class PlaneIDWSegmentator : public ControlPointSegmentator

@@ -134,7 +134,8 @@ CWindow::CWindow()
     //TODO make configurable
     chunk_cache = new ChunkCache(10e9);
     
-    seg_tool = new ControlPointSegmentator();
+    // seg_tool = new ControlPointSegmentator();
+    seg_tool = new PointRectSegmentator();
     
     slice_plane = new PlaneCoords({2000,2000,2000},{1,1,1});
     slice_xy = new PlaneCoords({2000,2000,2000},{0,0,1});
@@ -3060,15 +3061,14 @@ void CWindow::onSegSelected(SegmentationStruct *seg)
 {
     //
     std::cout << " FIXME load seg as control points?" << std::endl;
-    double max_slice = 0;
-    size_t count = 0;
+    // double max_slice = 0;
+    // size_t count = 0;
     
-    //fMasterCloud is ordered pointset of Vec3d
-    for(auto p : seg->fMasterCloud) {
-        max_slice = std::max<int>(max_slice, p[2]);
-        // std::cout << p << std::endl;
-        count++;
-        seg_tool->add(p,{0,0,0});
-    }
-    std::cout << " doneisch?" << max_slice << " " << count << std::endl;
+    //working around two limitations in cv and PointSet apis to do zero copy into a mat ...
+    cv::Mat src(seg->fMasterCloud.height(), seg->fMasterCloud.width(), CV_64FC3, (void*)const_cast<cv::Vec3d*>(&seg->fMasterCloud[0]));
+    
+    cv::Mat_<cv::Vec3f> points;
+    src.convertTo(points, CV_32F);
+    
+    dynamic_cast<PointRectSegmentator*>(seg_tool)->set(points);
 }

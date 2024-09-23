@@ -946,3 +946,15 @@ cv::Vec3f PlaneCoords::project(cv::Vec3f wp, const cv::Rect &roi, float render_s
     
     return {res(0,0), res(0,1), res(0,2)};
 }
+
+
+void PointRectSegmentator::set(cv::Mat_<cv::Vec3f> &points)
+{
+    _points = points;
+
+    for(int j=0;j<_points.size().height;j++) {
+        cv::Vec3f *row = _points.ptr<cv::Vec3f>(j);
+        for(int i=0;i<_points.size().height;i++)
+            control_points.push_back(row[i]);
+    }
+}
