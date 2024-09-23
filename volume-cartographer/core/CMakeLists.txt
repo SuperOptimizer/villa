@@ -127,9 +127,6 @@ target_link_libraries(vc_core
         JPEGXL::jxl
         JPEGXL::jxl_threads
 )
-#FIXME we want to link z5!? but cmake is unhappy...
-target_compile_features(vc_core PUBLIC cxx_std_17)
-target_compile_definitions(vc_core PUBLIC WITH_BLOSC)
 
 set_target_properties(vc_core PROPERTIES
     VERSION ${PROJECT_VERSION}
