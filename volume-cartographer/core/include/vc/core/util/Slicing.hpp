@@ -12,10 +12,10 @@ class CoordGenerator
 {
 public:
     //given input volume shape, fill a coord slice
-    void gen_coords(xt::xarray<float> &coords, int w, int h) const;
-    void gen_coords(xt::xarray<float> &coords, const cv::Rect &roi, float render_scale = 1.0, float coord_scale = 1.0) const;
+    void gen_coords(xt::xarray<float> &coords, int w, int h);
+    void gen_coords(xt::xarray<float> &coords, const cv::Rect &roi, float render_scale = 1.0, float coord_scale = 1.0);
     // virtual void gen_coords(float i, float j, int x, int y, float render_scale, float coord_scale) const = 0;
-    virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) const = 0;
+    virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) = 0;
 };
 
 //FIXME make normal private and keep normalized
@@ -26,7 +26,7 @@ public:
     PlaneCoords(cv::Vec3f origin_, cv::Vec3f normal_);
     virtual float pointDist(cv::Vec3f wp);
     virtual cv::Vec3f project(cv::Vec3f wp, const cv::Rect &roi, float render_scale = 1.0, float coord_scale = 1.0);
-    virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) const;
+    void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
     // float plane_mul() const;
     virtual float scalarp(cv::Vec3f point) const;
     virtual float height(cv::Vec3f point) const { return 0.0; };
@@ -42,10 +42,10 @@ class GridCoords : public CoordGenerator
 public:
     GridCoords() {};
     GridCoords(cv::Mat_<cv::Vec3f> *points) : _points(points) {};
-    void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) const override;
+    void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
     using CoordGenerator::gen_coords;
-
     cv::Mat_<cv::Vec3f> *_points = nullptr;
+    cv::Mat _scaled;
 };
 
 class IDWHeightPlaneCoords : public PlaneCoords
@@ -54,7 +54,7 @@ public:
     IDWHeightPlaneCoords(std::vector<cv::Vec3f> *control_points_) : control_points(control_points_) {};
     virtual float scalarp(cv::Vec3f point) const;
     virtual float height(cv::Vec3f point) const;
-    virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) const;
+    void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
     std::vector<cv::Vec3f> *control_points;
     // float pointDist(cv::Vec3f wp);
     // cv::Vec3f project(cv::Vec3f wp, const cv::Rect &roi, float render_scale = 1.0, float coord_scale = 1.0);
@@ -95,7 +95,7 @@ private:
     IDWHeightPlaneCoords *_generator = nullptr;
 };
 
-void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, const CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale);
+void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale);
 
 
 //TODO generation overrun

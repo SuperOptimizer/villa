@@ -83,7 +83,7 @@ shape idCoord(const std::unique_ptr<z5::Dataset> &ds, shape id)
     return coord;
 }
 
-void timed_plane_slice(const PlaneCoords &plane, z5::Dataset *ds, size_t size, ChunkCache *cache, std::string msg)
+void timed_plane_slice(PlaneCoords &plane, z5::Dataset *ds, size_t size, ChunkCache *cache, std::string msg)
 {
     xt::xarray<float> coords;
     xt::xarray<uint8_t> img;

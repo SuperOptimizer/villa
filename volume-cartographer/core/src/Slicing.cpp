@@ -600,12 +600,12 @@ cv::Vec3f vy_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
     return {v[1],v[0],v[2]};
 }
 
-void CoordGenerator::gen_coords(xt::xarray<float> &coords, int w, int h) const
+void CoordGenerator::gen_coords(xt::xarray<float> &coords, int w, int h)
 {
     return gen_coords(coords, -w/2, -h/2, w, h, 1.0, 1.0);
 }
 
-void CoordGenerator::gen_coords(xt::xarray<float> &coords, const cv::Rect &roi, float render_scale, float coord_scale) const
+void CoordGenerator::gen_coords(xt::xarray<float> &coords, const cv::Rect &roi, float render_scale, float coord_scale)
 {
     return gen_coords(coords, roi.x, roi.y, roi.width, roi.height, render_scale, coord_scale);
 }
@@ -631,7 +631,7 @@ void vxy_from_normal(cv::Vec3f orig, cv::Vec3f normal, cv::Vec3f &vx, cv::Vec3f 
         vy *= -1;
 }
 
-void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale) const
+void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
 {
     // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
     cv::Vec3f vx, vy;
@@ -660,7 +660,7 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int
         }
 }
 
-void IDWHeightPlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale) const
+void IDWHeightPlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
 {
     printf("idw gen coords\n");
     // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
@@ -762,7 +762,7 @@ float IDWHeightPlaneCoords::scalarp(cv::Vec3f point) const
     return point.dot(n) - origin.dot(n) - height(point);
 }
 
-void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, const CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale)
+void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale)
 {    
     xt::xarray<float> coords;
     
@@ -948,29 +948,44 @@ cv::Vec3f PlaneCoords::project(cv::Vec3f wp, const cv::Rect &roi, float render_s
     return {res(0,0), res(0,1), res(0,2)};
 }
 
-void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale) const
+void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
 {
-    // std::cout << (*_points)(0,0) << (*_points)(0,1) << (*_points)(1,0) << std::endl;
-    // printf("want %d %d %d %d\n",x,y,w,h);
-    cv::Mat scaled;
-    cv::resize(*_points, scaled, {0,0}, 5, 1);
+    if (_scaled.empty())
+        cv::resize(*_points, _scaled, {0,0}, 5, 1);
+        
+    coords = xt::zeros<float>({_scaled.rows, _scaled.cols,3});
     
-    coords = xt::empty<float>({scaled.rows, scaled.cols,3});
-    for(int j=0;j<h;j++) {
-        cv::Vec3f *row = scaled.ptr<cv::Vec3f>(j);
-        for(int i=0;i<w;i++) {
-            cv::Vec3f point = row[i]*coord_scale;
-            coords(j,i,0) = point[2];
-            coords(j,i,1) = point[1];
-            coords(j,i,2) = point[0];
+    //so basically we crop into _scaled to generate coords
+    cv::Rect tgt(x,y,w,h);
+    cv::Rect src(0,0,_scaled.cols, _scaled.rows);
+    
+    cv::Rect common = tgt & src;
+    
+    int oy = 0;
+    int ox = 0;
+    
+    if (common.x > x)
+        ox = common.x-x;
+
+    if (common.y > y)
+        oy = common.y-y;
+        
+#pragma omp parallel for
+    for(int j=0;j<common.height;j++) {
+        const cv::Vec3f *row = _scaled.ptr<cv::Vec3f>(common.x+j);
+        for(int i=0;i<common.width;i++) {
+            cv::Vec3f point = row[common.x+i]*coord_scale;
+            coords(oy+j,ox+i,0) = point[2];
+            coords(oy+j,ox+i,1) = point[1];
+            coords(oy+j,ox+i,2) = point[0];
         }
     };
 }
 
 void PointRectSegmentator::set(cv::Mat_<cv::Vec3f> &points)
 {
-    _points = points;
-    
+    _points = points.clone();
+        
     for(int j=0;j<_points.size().height;j++) {
         cv::Vec3f *row = _points.ptr<cv::Vec3f>(j);
         for(int i=0;i<_points.size().width;i++)
