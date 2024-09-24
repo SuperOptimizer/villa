@@ -957,7 +957,7 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
     
     //so basically we crop into _scaled to generate coords
     cv::Rect tgt(x,y,w,h);
-    cv::Rect src(0,0,_scaled.cols, _scaled.rows);
+    cv::Rect src(0,0,_scaled.cols*coord_scale, _scaled.rows*coord_scale);
     
     cv::Rect common = tgt & src;
     
@@ -965,21 +965,61 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
     int ox = 0;
     
     if (common.x > x)
-        ox = common.x-x;
-
+        ox = (common.x-x)*render_scale;
+    
     if (common.y > y)
-        oy = common.y-y;
+        oy = (common.y-y)*render_scale;
+    
+    printf("%d %d\n", ox, oy);
+    
+    // float m = 1/render_scale;
+    int step = 1/coord_scale;
+    
+    if (render_scale == 1.0) {
         
 #pragma omp parallel for
-    for(int j=0;j<common.height;j++) {
-        const cv::Vec3f *row = _scaled.ptr<cv::Vec3f>(common.x+j);
-        for(int i=0;i<common.width;i++) {
-            cv::Vec3f point = row[common.x+i]*coord_scale;
-            coords(oy+j,ox+i,0) = point[2];
-            coords(oy+j,ox+i,1) = point[1];
-            coords(oy+j,ox+i,2) = point[0];
-        }
-    };
+        for(int j=0;j<common.height;j ++) {
+            const cv::Vec3f *row = _scaled.ptr<cv::Vec3f>((common.y+j)*step);
+            for(int i=0;i<common.width;i ++) {
+                cv::Vec3f point = row[(common.x+i)*step]*coord_scale;
+                coords(oy+j,ox+i,0) = point[2];
+                coords(oy+j,ox+i,1) = point[1];
+                coords(oy+j,ox+i,2) = point[0];
+            }
+        };
+    }
+    else {
+        printf("uneven render sclae!\n");
+        //need to interpolate on grid
+        //FIXME exact cornder locations? rounding matters as render scale not even!
+        int wl = common.width/render_scale;
+        int hl = common.height/render_scale;
+        cv::Mat_<cv::Vec3f> large(hl, wl);
+        
+        //FIXME but render scale should matter?!
+        int cy = common.y;///render_scale;
+        int cx = common.x;///render_scale;
+#pragma omp parallel for
+        for(int j=0;j<hl;j ++) {
+            const cv::Vec3f *row = _scaled.ptr<cv::Vec3f>((cy+j)*step);
+            cv::Vec3f *row_tgt = large.ptr<cv::Vec3f>(j);
+            for(int i=0;i<wl;i++)
+                row_tgt[i] = row[(cx+i)*step];
+        };
+        
+        cv::resize(large, large, common.size());
+        
+#pragma omp parallel for
+        for(int j=0;j<common.height;j ++) {
+            const cv::Vec3f *row = large.ptr<cv::Vec3f>(j);
+            for(int i=0;i<common.width;i ++) {
+                cv::Vec3f point = row[i]*coord_scale;
+                coords(oy+j,ox+i,0) = point[2];
+                coords(oy+j,ox+i,1) = point[1];
+                coords(oy+j,ox+i,2) = point[0];
+            }
+        };
+    }
 }
 
 void PointRectSegmentator::set(cv::Mat_<cv::Vec3f> &points)
