@@ -954,6 +954,11 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
         cv::resize(*_points, _scaled, {0,0}, 5, 1);
         
     coords = xt::zeros<float>({h,w,3});
+
+    if (render_scale > 1.0 || render_scale < 0.5) {
+        std::cout << "FIXME: support wider render scale for GridCoords::gen_coords()" << std::endl;
+        return;
+    }
     
     //so basically we crop into _scaled to generate coords
     cv::Rect tgt(x,y,w,h);

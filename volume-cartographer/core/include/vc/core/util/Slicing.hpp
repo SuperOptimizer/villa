@@ -75,7 +75,7 @@ public:
 class PointRectSegmentator : public ControlPointSegmentator
 {
 public:
-    void add(cv::Vec3f wp, cv::Vec3f normal) override { abort(); };
+    void add(cv::Vec3f wp, cv::Vec3f normal) override { std::cout << "FIXME PointRectSegmentator() add" << std::endl; };
     void set(cv::Mat_<cv::Vec3f> &points);
     CoordGenerator *generator();
     cv::Mat_<cv::Vec3f> _points;
