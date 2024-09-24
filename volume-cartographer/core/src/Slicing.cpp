@@ -968,7 +968,7 @@ void PointRectSegmentator::set(cv::Mat_<cv::Vec3f> &points)
     
     for(int j=0;j<_points.size().height;j++) {
         cv::Vec3f *row = _points.ptr<cv::Vec3f>(j);
-        for(int i=0;i<_points.size().height;i++)
+        for(int i=0;i<_points.size().width;i++)
             control_points.push_back(row[i]);
     }
     
