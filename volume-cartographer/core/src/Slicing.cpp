@@ -953,7 +953,7 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
     if (_scaled.empty())
         cv::resize(*_points, _scaled, {0,0}, 5, 1);
         
-    coords = xt::zeros<float>({_scaled.rows, _scaled.cols,3});
+    coords = xt::zeros<float>({h,w,3});
     
     //so basically we crop into _scaled to generate coords
     cv::Rect tgt(x,y,w,h);
