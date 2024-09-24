@@ -126,6 +126,7 @@ target_link_libraries(vc_core
         TIFF::TIFF
         JPEGXL::jxl
         JPEGXL::jxl_threads
+        OpenMP::OpenMP_CXX
 )
 
 set_target_properties(vc_core PROPERTIES

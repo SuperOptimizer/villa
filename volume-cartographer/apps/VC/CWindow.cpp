@@ -1024,10 +1024,8 @@ void CWindow::ChangePathItem(std::string segID)
     // Load new Segment to fSegStructMap, but only if it is not present yet or empty (empty check required, since even
     // after both "Display" and "Compute" checkboxes are off, an empty shell appears in the map, probably due to access attempts).
     if (fSegStructMap.find(fSegmentationId) == fSegStructMap.end() || fSegStructMap[fSegmentationId].fMasterCloud.empty()) {
-        std::cout << "loading segmentationn\n" << std::endl;
-        fSegStructMap[fSegmentationId] = SegmentationStruct(fVpkg, segID, fPathOnSliceIndex);
+        fSegStructMap.try_emplace(fSegmentationId, fVpkg, segID, fPathOnSliceIndex);
         sendSegSelected(&fSegStructMap[fSegmentationId]);
-        std::cout << "done loading segmentationn\n" << std::endl;
     }
 
     if (fSegStructMap[fSegmentationId].currentVolume != nullptr && fSegStructMap[fSegmentationId].fSegmentation->hasVolumeID()) {

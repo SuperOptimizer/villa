@@ -269,8 +269,10 @@ struct SegmentationStruct {
         fMaxSegIndex = maxIndex;
 
         // assign rows of particles to the curves
+        fIntersections.resize(fMasterCloud.height());
+#pragma omp parallel for
         for (size_t i = 0; i < fMasterCloud.height(); ++i) {
-            CXCurve aCurve;
+            CXCurve &aCurve = fIntersections[i];
             for (size_t j = 0; j < fMasterCloud.width(); ++j) {
                 int pointIndex = j + (i * fMasterCloud.width());
                 aCurve.SetSliceIndex(
@@ -278,7 +280,6 @@ struct SegmentationStruct {
                 aCurve.InsertPoint(Vec2<double>(
                     fMasterCloud[pointIndex][0], fMasterCloud[pointIndex][1]));
             }
-            fIntersections.push_back(aCurve);
         }
     }
 
@@ -290,6 +291,7 @@ struct SegmentationStruct {
         }
 
         fAnnotations.clear();
+#pragma omp parallel for
         for (size_t i = 0; i < fAnnotationCloud.height(); ++i) {
             AnnotationStruct an;
             int pointIndex;
@@ -307,6 +309,7 @@ struct SegmentationStruct {
                     an.usedInRun = true;
             }
 
+#pragma omp critical
             fAnnotations[std::get<long>(fAnnotationCloud[pointIndex][ANO_EL_SLICE])] = an;
         }
     }

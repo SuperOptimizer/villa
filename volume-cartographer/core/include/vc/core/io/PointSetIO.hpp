@@ -451,14 +451,9 @@ private:
         }
 
         // Read data
-        T t;
-        std::size_t nbytes = header.width * header.dim * typeBytes;
-        std::vector<T> points(header.width, 0);
-        points.reserve(header.width);
-        for (std::size_t h = 0; h < header.height; ++h) {
-            infile.read(reinterpret_cast<char*>(points.data()), nbytes);
-            ps.pushRow(points);
-        }
+        std::size_t nelements = header.width*header.height;
+        ps.data_.resize(header.width*header.height);
+        infile.read(reinterpret_cast<char*>(ps.data_.data()), nelements*header.dim*typeBytes);
 
         return ps;
     }

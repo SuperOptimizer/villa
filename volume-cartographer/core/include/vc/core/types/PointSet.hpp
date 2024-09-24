@@ -98,6 +98,10 @@ public:
     /**@}*/
 
     /**@{*/
+    /** @brief Allocate PointSet to size */
+    void resize(size_t size) { data_.resize(size); }
+
+    /**@{*/
     /** @brief Add a Point to the PointSet */
     void push_back(const T& val) { data_.push_back(val); }
 
