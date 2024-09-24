@@ -392,25 +392,26 @@ void CVolumeViewer::renderVisible(bool force)
             }
     }
     
-//     if (seg_tool) {
-// #pragma omp parallel for
-//         for (auto &wp : seg_tool->control_points) {
-//             float dist = slice->pointDist(wp);
-//             
-//             if (dist > 10)
-//                 continue;
-//             
-//             cv::Vec3f p = slice->project(wp, roi, render_scale, coord_scale);
-//             
-// #pragma omp critical
-//             {
-//                 auto item = fGraphicsView->scene()->addEllipse({p[0]-1,p[1]-1,2,2}, QPen(Qt::green, 3));
-//                 //FIXME rename/clean
-//                 other_slice_items.push_back(item);
-//                 item->setParentItem(fBaseImageItem);
-//             }
-//         }
-//     }
+    PlaneCoords *slice_plane = dynamic_cast<PlaneCoords*>(slice);
+    if (seg_tool && slice_plane) {
+#pragma omp parallel for
+        for (auto &wp : seg_tool->control_points) {
+            float dist = slice_plane->pointDist(wp);
+            
+            if (dist > 2)
+                continue;
+            
+            cv::Vec3f p = slice_plane->project(wp, roi, render_scale, coord_scale);
+            
+#pragma omp critical
+            {
+                auto item = fGraphicsView->scene()->addEllipse({p[0]-1,p[1]-1,2,2}, QPen(Qt::green, 3));
+                //FIXME rename/clean
+                other_slice_items.push_back(item);
+                item->setParentItem(fBaseImageItem);
+            }
+        }
+    }
 }
 
 void CVolumeViewer::onScrolled()

@@ -552,9 +552,9 @@ void readInterpolated3D_a2_trilin(xt::xarray<uint8_t> &out, z5::Dataset *ds, con
     }
 }
 
-PlaneCoords::PlaneCoords(cv::Vec3f origin_, cv::Vec3f normal_) : origin(origin_)
+PlaneCoords::PlaneCoords(cv::Vec3f origin_, cv::Vec3f normal) : origin(origin_)
 {
-    cv::normalize(normal_, normal, 1,0, cv::NORM_L2);
+    cv::normalize(normal, _normal);
     
 };
 
@@ -612,17 +612,14 @@ void CoordGenerator::gen_coords(xt::xarray<float> &coords, const cv::Rect &roi, 
 
 void vxy_from_normal(cv::Vec3f orig, cv::Vec3f normal, cv::Vec3f &vx, cv::Vec3f &vy)
 {
-    cv::Vec3f n;
-    cv::normalize(normal, n, 1,0, cv::NORM_L2);
-    
-    vx = vx_from_orig_norm(orig, n);
-    vy = vy_from_orig_norm(orig, n);
+    vx = vx_from_orig_norm(orig, normal);
+    vy = vy_from_orig_norm(orig, normal);
     
     //TODO will there be a jump around the midpoint?
     if (abs(vx[0]) >= abs(vy[1]))
-        vy = cv::Mat(n).cross(cv::Mat(vx));
+        vy = cv::Mat(normal).cross(cv::Mat(vx));
     else
-        vx = cv::Mat(n).cross(cv::Mat(vy));
+        vx = cv::Mat(normal).cross(cv::Mat(vy));
     
     //FIXME probably not the right way to normalize the direction?
     if (vx[0] < 0)
@@ -635,7 +632,7 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int
 {
     // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
     cv::Vec3f vx, vy;
-    vxy_from_normal(origin,normal,vx,vy);
+    vxy_from_normal(origin,_normal,vx,vy);
     
     //why bother if xtensor is soo slow (around 10x of manual loop below even w/o threading)
     //     xt::xarray<float> vx_t{{{vx[2],vx[1],vx[0]}}};
@@ -662,13 +659,8 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int
 
 void IDWHeightPlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
 {
-    printf("idw gen coords\n");
-    // auto grid = xt::meshgrid(xt::arange<float>(0,h),xt::arange<float>(0,w));
     cv::Vec3f vx, vy;
-    vxy_from_normal(origin,normal,vx,vy);
-    
-    cv::Vec3f n;
-    cv::normalize(normal, n);
+    vxy_from_normal(origin,_normal,vx,vy);
     
     coords = xt::empty<float>({h,w,3});
     
@@ -681,7 +673,7 @@ void IDWHeightPlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, i
             float py = vx[1]*(i*m+x) + vy[1]*(j*m+y) + origin[1]*coord_scale;
             float pz = vx[2]*(i*m+x) + vy[2]*(j*m+y) + origin[2]*coord_scale;
             cv::Vec3f p = {px,py,pz};
-            p += height({px/coord_scale,py/coord_scale,pz/coord_scale})*coord_scale*n;
+            p += height({px/coord_scale,py/coord_scale,pz/coord_scale})*coord_scale*_normal;
             coords(j,i,0) = p[2];
             coords(j,i,1) = p[1];
             coords(j,i,2) = p[0];
@@ -711,9 +703,7 @@ float plane_mul(cv::Vec3f n)
 
 float PlaneCoords::scalarp(cv::Vec3f point) const
 {
-    cv::Vec3f n;
-    cv::normalize(normal, n);
-    return point.dot(n) - origin.dot(n);
+    return point.dot(_normal) - origin.dot(_normal);
 }
 
 float IDWHeightPlaneCoords::height(cv::Vec3f point) const
@@ -721,18 +711,16 @@ float IDWHeightPlaneCoords::height(cv::Vec3f point) const
     if (control_points->size() < 4)
         return 0;
     
-    cv::Vec3f n;
-    cv::normalize(normal, n);
-    float m = plane_mul(n);
-    cv::Point3f projected_ref = point - (point.dot(n) - origin.dot(n))*m*n;
+    float m = plane_mul(_normal);
+    cv::Point3f projected_ref = point - (point.dot(_normal) - origin.dot(_normal))*m*_normal;
     
     // std::cout << point << "\n";
     
     double sum = 0;
     double weights = 0;
     for(auto &control : *control_points) {
-        double h = (control.dot(n) - origin.dot(n))*m;
-        cv::Point3f projected_control = control - h*n;
+        double h = (control.dot(_normal) - origin.dot(_normal))*m;
+        cv::Point3f projected_control = control - h*_normal;
         // std::cout << control << projected_control << std::endl;
         double dist = cv::norm(projected_control-projected_ref);
         // printf("controlh %f dist %f\n", h, dist);
@@ -749,17 +737,8 @@ float IDWHeightPlaneCoords::height(cv::Vec3f point) const
 
 
 float IDWHeightPlaneCoords::scalarp(cv::Vec3f point) const
-{
-    cv::Vec3f n;
-    cv::normalize(normal, n);
-    // cv::Point3f projected_point = point - (point.dot(n) - origin.dot(n))*plane_mul(n)*n;
-    // 
-    // printf("projected point height %f\n", (projected_point.dot(n) - origin.dot(n))*plane_mul(n));
-    // printf("original point height %f\n", (point.dot(n) - origin.dot(n))*plane_mul(n));
-    // printf("mult %f\n", (projected_point.dot(n) - origin.dot(n))*plane_mul(n)/((point.dot(n) - origin.dot(n))*plane_mul(n)));
-    // printf("\n");
-    
-    return point.dot(n) - origin.dot(n) - height(point);
+{    
+    return point.dot(_normal) - origin.dot(_normal) - height(point);
 }
 
 void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale)
@@ -774,9 +753,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
     std::vector<cv::Point2f> seg_points;
     
     // float plane_off = other->origin.dot(other->normal);
-    cv::Vec3f n;
-    cv::normalize(other->normal, n);
-    float pmul = plane_mul(n);
+    float pmul = plane_mul(other->normal());
     
     // std::cout << "other" << other->origin << other->normal << other->origin.dot(other->normal) << "\n";
     // std::cout << "roi" << ((PlaneCoords*)roi_gen)->origin << ((PlaneCoords*)roi_gen)->normal <<  "\n";
@@ -878,9 +855,9 @@ void PlaneIDWSegmentator::add(cv::Vec3f wp, cv::Vec3f normal)
         cv::Vec3f vx, vy;
         cv::normalize(_points[1].second-_points[0].second, vx, 1,0, cv::NORM_L2);
         cv::normalize(_points[2].second-_points[0].second, vy, 1,0, cv::NORM_L2);
-        _generator->normal = vx.cross(vy);
+        _generator->setNormal(vx.cross(vy));
         
-        std::cout << "updated plane to " << _generator->origin << _generator->normal << std::endl;
+        // std::cout << "updated plane to " << _generator->origin << _generator->normal << std::endl;
         
         return;
     }
@@ -900,13 +877,17 @@ PlaneIDWSegmentator::PlaneIDWSegmentator()
 }
 
 
+
+void PlaneCoords::setNormal(cv::Vec3f normal)
+{
+    cv::normalize(normal, _normal);
+}
+
 float PlaneCoords::pointDist(cv::Vec3f wp)
 {
-    cv::Vec3f n;
-    cv::normalize(normal, n, 1,0, cv::NORM_L2);
-    float plane_off = origin.dot(n);
-    float plane_mul = 1.0/sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
-    float scalarp = wp.dot(n) - plane_off;
+    float plane_off = origin.dot(_normal);
+    float plane_mul = 1.0/sqrt(_normal[0]*_normal[0]+_normal[1]*_normal[1]+_normal[2]*_normal[2]);
+    float scalarp = wp.dot(_normal) - plane_off;
         
     return abs(scalarp)*plane_mul;
 }
@@ -925,15 +906,13 @@ float PlaneCoords::pointDist(cv::Vec3f wp)
 cv::Vec3f PlaneCoords::project(cv::Vec3f wp, const cv::Rect &roi, float render_scale, float coord_scale)
 {
     cv::Vec3f vx, vy;
-    cv::Vec3f n;
-    cv::normalize(normal, n, 1,0, cv::NORM_L2);
     
-    vxy_from_normal(origin,n,vx,vy);
+    vxy_from_normal(origin,_normal,vx,vy);
     
     vx = vx/render_scale/coord_scale;
     vy = vy/render_scale/coord_scale;
     
-    std::vector <cv::Vec3f> src = {origin,origin+n,origin+vx,origin+vy};
+    std::vector <cv::Vec3f> src = {origin,origin+_normal,origin+vx,origin+vy};
     std::vector <cv::Vec3f> tgt = {{0,0,0},{0,0,1},{1,0,0},{0,1,0}};
     cv::Mat transf;
     cv::Mat inliers;

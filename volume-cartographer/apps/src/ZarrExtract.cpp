@@ -113,6 +113,13 @@ int main(int argc, char *argv[])
   xt::xarray<float> coords = xt::zeros<float>({500,500,3});
   xt::xarray<uint8_t> img;
   
+  std::vector<cv::Mat> chs;
+  cv::imreadmulti("../grid_slice_coords.tif", chs, cv::IMREAD_UNCHANGED);
+  cv::Mat_<cv::Vec3f> points;
+  cv::merge(chs, points);
+  
+  GridCoords gen_grid(&points);
+  
   PlaneCoords gen_plane({2000,2000,2000},{0.5,0.5,0.5});
   // PlaneCoords gen_plane({2000,2000,2000},{0.0,0.0,1.0});
   // PlaneCoords gen_plane({0,0,0},{0.0,0.0,1.0});
@@ -123,7 +130,7 @@ int main(int argc, char *argv[])
   PlaneCoords plane_z({2000,2000,2000},{0.0,0.0,1.0});
   
   // gen_plane.gen_coords(coords, 1000, 1000);
-  gen_plane.gen_coords(coords, 4000, 4000);
+  gen_grid.gen_coords(coords, 0, 0, 1000, 1000, 1.0, 0.5);
 
   ChunkCache chunk_cache(10e9);
   

@@ -33,7 +33,10 @@ public:
     // virtual void gen_coords(float i, float j, int x, int y, float render_scale, float coord_scale) const = 0;
     using CoordGenerator::gen_coords;
     cv::Vec3f origin = {0,0,0};
-    cv::Vec3f normal = {1,1,1};
+    void setNormal(cv::Vec3f normal);
+    cv::Vec3f normal() const { return _normal; };
+protected:
+    cv::Vec3f _normal = {0,0,1};
 };
 
 //FIXME make normal private and keep normalized

@@ -3023,7 +3023,7 @@ void CWindow::onPlaneSliceChanged(void)
     if (!slice_plane)
         return;
  
-    slice_plane->normal = normal;
+    slice_plane->setNormal(normal);
     
     //FIXME don't need to rerender all (then again if cached thats fast ...)'
     sendSliceChanged();
