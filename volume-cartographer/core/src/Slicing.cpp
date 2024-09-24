@@ -711,15 +711,14 @@ float IDWHeightPlaneCoords::height(cv::Vec3f point) const
     if (control_points->size() < 4)
         return 0;
     
-    float m = plane_mul(_normal);
-    cv::Point3f projected_ref = point - (point.dot(_normal) - origin.dot(_normal))*m*_normal;
+    cv::Point3f projected_ref = point - (point.dot(_normal) - origin.dot(_normal))*_normal;
     
     // std::cout << point << "\n";
     
     double sum = 0;
     double weights = 0;
     for(auto &control : *control_points) {
-        double h = (control.dot(_normal) - origin.dot(_normal))*m;
+        double h = (control.dot(_normal) - origin.dot(_normal));
         cv::Point3f projected_control = control - h*_normal;
         // std::cout << control << projected_control << std::endl;
         double dist = cv::norm(projected_control-projected_ref);
@@ -752,12 +751,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
     std::vector<std::tuple<cv::Point,cv::Point3f,float>> lower;
     std::vector<cv::Point2f> seg_points;
     
-    // float plane_off = other->origin.dot(other->normal);
-    float pmul = plane_mul(other->normal());
-    
-    // std::cout << "other" << other->origin << other->normal << other->origin.dot(other->normal) << "\n";
-    // std::cout << "roi" << ((PlaneCoords*)roi_gen)->origin << ((PlaneCoords*)roi_gen)->normal <<  "\n";
-    
     for(int c=0;c<1000;c++) {
         int x = std::rand() % roi.width;
         int y = std::rand() % roi.height;
@@ -770,12 +763,10 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
         
         float scalarp = other->scalarp(point);
         
-        // std::cout << point << " distsqs " << scalarp+ plane_off << " bias " << scalarp  << " loc " <<  x << "x" << y << "\n";
-        
         if (scalarp > 0)
-            upper.push_back({img_point,point,scalarp*pmul});
+            upper.push_back({img_point,point,scalarp});
         else if(scalarp < 0)
-            lower.push_back({img_point,point,-scalarp*pmul});
+            lower.push_back({img_point,point,-scalarp});
     }
     
     auto rng = std::default_random_engine {};
@@ -800,7 +791,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
             //FIXME interpolate point and use lower acceptance threshold
             cv::Point3f point = {coords(round(res.y),round(res.x),2),coords(round(res.y),round(res.x),1),coords(round(res.y),round(res.x),0)};
             point /= coord_scale;
-            float sdist = other->scalarp(point)*pmul;
+            float sdist = other->scalarp(point);
             if (abs(sdist) < 0.5/coord_scale)
                 break;
 
@@ -886,10 +877,9 @@ void PlaneCoords::setNormal(cv::Vec3f normal)
 float PlaneCoords::pointDist(cv::Vec3f wp)
 {
     float plane_off = origin.dot(_normal);
-    float plane_mul = 1.0/sqrt(_normal[0]*_normal[0]+_normal[1]*_normal[1]+_normal[2]*_normal[2]);
     float scalarp = wp.dot(_normal) - plane_off;
         
-    return abs(scalarp)*plane_mul;
+    return abs(scalarp);
 }
 
 // float PlaneCoords::pointDistNoNorm(cv::Vec3f wp)
