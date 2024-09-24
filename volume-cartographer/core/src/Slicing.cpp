@@ -18,6 +18,7 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/calib3d.hpp>
+#include <opencv2/imgproc.hpp>
 #include <shared_mutex>
 
 #include <algorithm>
@@ -949,10 +950,14 @@ cv::Vec3f PlaneCoords::project(cv::Vec3f wp, const cv::Rect &roi, float render_s
 
 void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale) const
 {
-    printf("want %d %d %d %d\n",x,y,w,h);
-    coords = xt::empty<float>({_points->rows, _points->cols,3});
+    // std::cout << (*_points)(0,0) << (*_points)(0,1) << (*_points)(1,0) << std::endl;
+    // printf("want %d %d %d %d\n",x,y,w,h);
+    cv::Mat scaled;
+    cv::resize(*_points, scaled, {0,0}, 5, 1);
+    
+    coords = xt::empty<float>({scaled.rows, scaled.cols,3});
     for(int j=0;j<h;j++) {
-        cv::Vec3f *row = _points->ptr<cv::Vec3f>(j);
+        cv::Vec3f *row = scaled.ptr<cv::Vec3f>(j);
         for(int i=0;i<w;i++) {
             cv::Vec3f point = row[i]*coord_scale;
             coords(j,i,0) = point[2];
