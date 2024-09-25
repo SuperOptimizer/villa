@@ -66,7 +66,7 @@ public slots:
     void onVolumeClicked(QPointF scene_loc,Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void OnSliceChanged();
     void onScrolled();
-    void onZoom(int steps);
+    void onZoom(int steps, QPointF scene_point, Qt::KeyboardModifiers modifiers);
 
 signals:
     void SendSignalSliceShift(int shift, int axis);

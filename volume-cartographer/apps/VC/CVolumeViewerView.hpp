@@ -19,7 +19,7 @@ public:
     
 signals:
     void sendScrolled();
-    void sendZoom(int steps);
+    void sendZoom(int steps, QPointF scene_point, Qt::KeyboardModifiers);
     void sendVolumeClicked(QPointF, Qt::MouseButton, Qt::KeyboardModifiers);
     
 protected:

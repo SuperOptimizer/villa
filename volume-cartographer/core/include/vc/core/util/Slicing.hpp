@@ -16,6 +16,10 @@ public:
     void gen_coords(xt::xarray<float> &coords, const cv::Rect &roi, float render_scale = 1.0, float coord_scale = 1.0);
     // virtual void gen_coords(float i, float j, int x, int y, float render_scale, float coord_scale) const = 0;
     virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) = 0;
+    virtual void setOffsetZ(float off) { _z_off = off; };
+    virtual float offsetZ() { return _z_off; };
+protected:
+    float _z_off = 0;
 };
 
 //FIXME make normal private and keep normalized

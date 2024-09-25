@@ -648,12 +648,14 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int
     
     float m = 1/render_scale;
     
+    cv::Vec3f use_origin = origin + _normal*_z_off;
+    
     #pragma omp parallel for
     for(int j=0;j<h;j++)
         for(int i=0;i<w;i++) {
-            coords(j,i,0) = vx[2]*(i*m+x) + vy[2]*(j*m+y) + origin[2]*coord_scale;
-            coords(j,i,1) = vx[1]*(i*m+x) + vy[1]*(j*m+y) + origin[1]*coord_scale;
-            coords(j,i,2) = vx[0]*(i*m+x) + vy[0]*(j*m+y) + origin[0]*coord_scale;
+            coords(j,i,0) = vx[2]*(i*m+x) + vy[2]*(j*m+y) + use_origin[2]*coord_scale;
+            coords(j,i,1) = vx[1]*(i*m+x) + vy[1]*(j*m+y) + use_origin[1]*coord_scale;
+            coords(j,i,2) = vx[0]*(i*m+x) + vy[0]*(j*m+y) + use_origin[0]*coord_scale;
         }
 }
 
@@ -981,6 +983,22 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
                 row_tgt[i] = row[(cx+i)*step];
         };
         
+        
+        if (_z_off != 0.0) {
+            int n_step = 3;
+            cv::Mat_<cv::Vec3f> orig = large.clone();
+            for(int j=n_step;j<hl-n_step;j++)
+                for(int i=n_step;i<wl-n_step;i++) {
+                    cv::Vec3f xv = orig(j,i+n_step)-orig(j,i-n_step);
+                    cv::Vec3f yv = orig(j+n_step,i)-orig(j-n_step,i);
+                    
+                    cv::Vec3f n = yv.cross(xv);
+                    n = n/sqrt(n[0]*n[0]+n[1]*n[2]+n[2]*n[2]);
+                    
+                    large(j,i) += n*_z_off;
+                }
+        }
+
         cv::resize(large, large, common.size());
         
 #pragma omp parallel for

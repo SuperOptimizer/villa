@@ -194,21 +194,29 @@ QPointF visible_center(QGraphicsView *view)
     return bbox.topLeft() + QPointF(bbox.width(),bbox.height())*0.5;
 }
 
-void CVolumeViewer::onZoom(int steps)
+void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers modifiers)
 {
-    float zoom = pow(ZOOM_FACTOR, steps);
+    if (modifiers & Qt::ShiftModifier) {
+        slice->setOffsetZ(slice->offsetZ()+steps);
+        renderVisible(true);
+    }
     
-    scale *= zoom;
-    round_scale(scale);
-    
-    curr_img_area = {0,0,0,0};
-    QPointF center = visible_center(fGraphicsView) * zoom;
-    
-    int max_size = std::max(volume->sliceWidth(), std::max(volume->numSlices(), volume->sliceHeight()))*scale + 512;
-    fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
-    
-    fGraphicsView->centerOn(center);
-    renderVisible();
+    else {
+        float zoom = pow(ZOOM_FACTOR, steps);
+        
+        scale *= zoom;
+        round_scale(scale);
+        
+        curr_img_area = {0,0,0,0};
+        QPointF center = visible_center(fGraphicsView) * zoom;
+        
+        //FIXME get correct size for slice!
+        int max_size = std::max(volume->sliceWidth(), std::max(volume->numSlices(), volume->sliceHeight()))*scale + 512;
+        fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
+        
+        fGraphicsView->centerOn(center);
+        renderVisible();
+    }
 }
 
 void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
@@ -398,20 +406,22 @@ void CVolumeViewer::renderVisible(bool force)
         for (auto &wp : seg_tool->control_points) {
             float dist = slice_plane->pointDist(wp);
             
-            if (dist > 2)
+            if (dist > 0.5)
                 continue;
             
             cv::Vec3f p = slice_plane->project(wp, roi, render_scale, coord_scale);
             
 #pragma omp critical
             {
-                auto item = fGraphicsView->scene()->addEllipse({p[0]-1,p[1]-1,2,2}, QPen(Qt::green, 3));
+                auto item = fGraphicsView->scene()->addEllipse({p[0]-1,p[1]-1,2,2}, QPen(Qt::green, 1));
                 //FIXME rename/clean
                 other_slice_items.push_back(item);
                 item->setParentItem(fBaseImageItem);
             }
         }
     }
+    
+    update();
 }
 
 void CVolumeViewer::onScrolled()

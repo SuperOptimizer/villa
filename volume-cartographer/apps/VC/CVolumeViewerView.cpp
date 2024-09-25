@@ -18,7 +18,10 @@ void CVolumeViewerView::wheelEvent(QWheelEvent *event)
 {
     int num_degrees = event->angleDelta().y() / 8;
     
-    sendZoom(num_degrees/15);
+    QPointF global_loc = viewport()->mapFromGlobal(event->globalPosition());
+    QPointF scene_loc = mapToScene({int(global_loc.x()),int(global_loc.y())});
+
+    sendZoom(num_degrees/15, scene_loc, event->modifiers());
     
     event->accept();
 }
