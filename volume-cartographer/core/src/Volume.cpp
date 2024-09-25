@@ -88,6 +88,8 @@ void Volume::zarrOpen()
     for(auto name : groups) {
         z5::filesystem::handle::Dataset ds_handle(group, name, "/");
         zarrDs_.push_back(z5::filesystem::openDataset(ds_handle));
+        if (zarrDs_.back()->getDtype() != z5::types::Datatype::uint8)
+            throw std::runtime_error("only uint8 is currently supported for zarr datasets incompatible type found in "+path_.string()+" / " +name);
     }
 }
 
