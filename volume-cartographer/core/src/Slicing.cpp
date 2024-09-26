@@ -967,8 +967,9 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
     coords = xt::zeros<float>({h,w,3});
     cv::Mat_<cv::Vec3f> warped;
     
-    std::vector<cv::Vec2f> dst = {{0,0},{w,9},{0,h}};
-    std::vector<cv::Vec2f> src = {{x,y},{x+w,y},{x,y+h}};
+    float s = 1/coord_scale;
+    std::vector<cv::Vec2f> dst = {{0,0},{w,0},{0,h}};
+    std::vector<cv::Vec2f> src = {cv::Vec2f(x*_sx,y*_sy)*s,cv::Vec2f((x+w)*_sx,y*_sy)*s,cv::Vec2f(x*_sx,(y+h)*_sy)*s};
     
     cv::Mat affine = cv::getAffineTransform(src, dst);
     
@@ -1128,8 +1129,6 @@ static cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss(cv::Mat_<cv::Vec3f
 
 void PointRectSegmentator::set(cv::Mat_<cv::Vec3f> &points)
 {
-    // _points = points.clone();
-    
     _points = derive_regular_region_stupid_gauss(points);
     
     for(int j=0;j<_points.size().height;j++) {
@@ -1138,7 +1137,26 @@ void PointRectSegmentator::set(cv::Mat_<cv::Vec3f> &points)
             control_points.push_back(row[i]);
     }
     
-    _generator.reset(new GridCoords(&_points));
+    double sum_x = 0;
+    double sum_y = 0;
+    int count = 0;
+    for(int j=1;j<_points.size().height;j+=8) {
+        cv::Vec3f *row = _points.ptr<cv::Vec3f>(j);
+        for(int i=1;i<_points.size().width;i+=8) {
+            cv::Vec3f v = _points(j,i)-_points(j,i-1);
+            sum_x += sqrt(v.dot(v));
+            v = _points(j,i)-_points(j-1,i);
+            sum_y += sqrt(v.dot(v));
+            count++;
+        }
+    }
+
+    _sx = count/sum_x;
+    _sy = count/sum_y;
+    
+    printf("scles %f %f\n",_sx, _sy);
+    
+    _generator.reset(new GridCoords(&_points, _sx*5, _sy*5));
 }
 
 CoordGenerator *PointRectSegmentator::generator()

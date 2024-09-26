@@ -48,7 +48,7 @@ class GridCoords : public CoordGenerator
 {
 public:
     GridCoords() {};
-    GridCoords(cv::Mat_<cv::Vec3f> *points) : _points(points) {};
+    GridCoords(cv::Mat_<cv::Vec3f> *points, float sx = 1.0, float sy = 1.0) : _points(points), _sx(sx), _sy(sy) {};
     void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
     using CoordGenerator::gen_coords;
     cv::Mat_<cv::Vec3f> *_points = nullptr;
@@ -89,6 +89,8 @@ public:
     CoordGenerator *generator();
     cv::Mat_<cv::Vec3f> _points;
     std::unique_ptr<GridCoords> _generator;
+    float _sx = 1.0;
+    float _sy = 1.0;
 };
 
 class PlaneIDWSegmentator : public ControlPointSegmentator
