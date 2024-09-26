@@ -198,8 +198,10 @@ float tdist(const cv::Vec3f &a, const cv::Vec3f &b, float t_dist)
 float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds)
 {
     float sum = 0;
-    for(int i=0;i<tgts.size();i++)
-        sum += tdist(v, tgts[i], tds[i]);
+    for(int i=0;i<tgts.size();i++) {
+        float d = tdist(v, tgts[i], tds[i]);
+        sum += d*d;
+    }
     
     return sum;
 }
@@ -307,15 +309,16 @@ cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss_indirect(cv::Mat_<cv::Vec
     
     cv::GaussianBlur(points, blur, {1,255}, 0);
     
-    int dist = 1;
+    int dist = 20;
     
     #pragma omp parallel for
     for(int j=2*dist;j<points.rows-2*dist;j++)
         for(int i=2*dist;i<points.cols-2*dist;i++) {
-            std::vector<cv::Vec3f> tgts = {blur(j-dist,i),blur(j+dist,i),blur(j,i+dist),blur(j,i-dist)};
-            auto dists = {sqrt(sdist(tgts[0],blur(j,i))),sqrt(sdist(tgts[1],blur(j,i))),sqrt(sdist(tgts[2],blur(j,i))),sqrt(sdist(tgts[3],blur(j,i)))};
+            std::vector<cv::Vec3f> tgts = {blur(j-dist,i),blur(j+dist,i),blur(j,i+dist/5),blur(j,i-dist/5)};
+            std::vector<float> dists = {sqrt(sdist(tgts[0],blur(j,i))),sqrt(sdist(tgts[1],blur(j,i))),sqrt(sdist(tgts[2],blur(j,i))),sqrt(sdist(tgts[3],blur(j,i)))};
+            // printf("%f %f %f %f\n", dists[0], dists[1], dists[2], dists[3]);
             cv::Vec2f loc = {i,j};
-            min_loc(points, loc, out(j,i), tgts, dists);
+            min_loc(points, loc, out(j,i), tgts, dists, false);
         }
         
         return out;
