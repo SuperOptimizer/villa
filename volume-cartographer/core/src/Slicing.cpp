@@ -71,6 +71,7 @@ namespace z5 {
             }
 
             assert(ds.isZarr());
+            assert(ds.getDtype() == z5::types::Datatype::uint8);
             
             types::ShapeType chunkShape;
             // size_t chunkSize;

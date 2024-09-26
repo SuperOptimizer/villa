@@ -1884,7 +1884,7 @@ void CWindow::OpenVolume(const QString& path)
 
     fVpkgPath = aVpkgPath;
     fPathOnSliceIndex = 0;
-    currentVolume = fVpkg->volume();
+    setVolume(fVpkg->volume());
     // The cache should be at least as big as the number of preloaded slices, since otherwise,
     // many would immediately get purged again.
     // Note: This value might get overwritten by algorithm parameters.
