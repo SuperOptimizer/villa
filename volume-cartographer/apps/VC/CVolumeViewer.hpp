@@ -95,7 +95,6 @@ protected:
     // data
     EViewState fViewState;
     QImage* fImgQImage;
-    double fScaleFactor;
     int sliceIndexToolStart{-1};
     int fScanRange;  // how many slices a mouse wheel step will jump
     // Required to be able to reset the rotation without also resetting the scaling
@@ -115,7 +114,12 @@ protected:
     
     ChunkCache *cache = nullptr;
     QRect curr_img_area = {0,0,1000,1000};
-    float scale = 0.5;
+    float _scale = 0.5;
+    float _scene_scale = 1.0;
+    float _ds_scale = 0.5;
+    int _ds_sd_idx = 1;
+    float _max_scale = 1;
+    float _min_scale = 1;
     
     QGraphicsEllipseItem *center_marker = nullptr;
     std::vector<PlaneCoords*> other_slices;

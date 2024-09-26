@@ -34,7 +34,6 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     , fViewState(EViewState::ViewStateIdle)
     , fImgQImage(nullptr)
     , fBaseImageItem(nullptr)
-    , fScaleFactor(1.0)
     , fScanRange(1)
 {
     // buttons
@@ -204,14 +203,30 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
     else {
         float zoom = pow(ZOOM_FACTOR, steps);
         
-        scale *= zoom;
-        round_scale(scale);
+        _scale *= zoom;
+        round_scale(_scale);
+        
+        if (_scale >= _max_scale) {
+            _ds_scale = _max_scale;
+            _ds_sd_idx = -log2(_ds_scale);
+            _scene_scale = _scale/_ds_scale;
+        }
+        else if (_scale < _min_scale) {
+            _ds_scale = _min_scale;
+            _ds_sd_idx = -log2(_ds_scale);
+            _scene_scale = _scale/_ds_scale;
+        }
+        else {
+            _ds_sd_idx = -log2(_scale);
+            _ds_scale = pow(2,-_ds_sd_idx);
+            _scene_scale = _scale/_ds_scale;
+        }
         
         curr_img_area = {0,0,0,0};
         QPointF center = visible_center(fGraphicsView) * zoom;
         
         //FIXME get correct size for slice!
-        int max_size = std::max(volume->sliceWidth(), std::max(volume->numSlices(), volume->sliceHeight()))*scale + 512;
+        int max_size = std::max(volume->sliceWidth(), std::max(volume->numSlices(), volume->sliceHeight()))*_ds_scale + 512;
         fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
         
         fGraphicsView->centerOn(center);
@@ -225,9 +240,13 @@ void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
     
     printf("sizes %d %d %d\n", volume_->sliceWidth(), volume_->sliceHeight(), volume_->numSlices());
     
-    int max_size = std::max(volume_->sliceWidth(), std::max(volume_->numSlices(), volume_->sliceHeight()))*scale + 512;
+    int max_size = std::max(volume_->sliceWidth(), std::max(volume_->numSlices(), volume_->sliceHeight()))*_ds_scale + 512;
     printf("max size %d\n", max_size);
     fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
+    
+    //FIXME currently hardcoded
+    _max_scale = 0.5;
+    _min_scale = pow(2.0,1.0-volume->numScales());
 
     renderVisible(true);
 }
@@ -253,36 +272,15 @@ cv::Vec3f loc3d_at_imgpos(volcart::Volume *vol, CoordGenerator *slice, QPointF l
 
 void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
 {
-    cv::Vec3f vol_loc = loc3d_at_imgpos(volume.get(), slice, scene_loc, scale);
+    printf("FIXME fix onvoluemcliked scaling\n");
+    // cv::Vec3f vol_loc = loc3d_at_imgpos(volume.get(), slice, scene_loc, scale);
 
-    sendVolumeClicked(vol_loc, buttons, modifiers);
+    // sendVolumeClicked(vol_loc, buttons, modifiers);
 }
 
 void CVolumeViewer::setCache(ChunkCache *cache_)
 {
     cache = cache_;
-}
-
-void CVolumeViewer::loadSlice()
-{
-//     QImage aImgQImage;
-//     cv::Mat aImgMat;
-//     
-//     if (volume && volume->zarrDataset()) {
-//         aImgMat = getCoordSlice();
-// 
-//         if (aImgMat.isContinuous() && aImgMat.type() == CV_16U) {
-//             // create QImage directly backed by cv::Mat buffer
-//             aImgQImage = QImage(
-//                 aImgMat.ptr(), aImgMat.cols, aImgMat.rows, aImgMat.step,
-//                 QImage::Format_Grayscale16);
-//         } else
-//             aImgQImage = Mat2QImage(aImgMat);
-//             
-//         SetImage(aImgQImage);
-//     }
-//     
-//     UpdateButtons();
 }
 
 void CVolumeViewer::setSlice(CoordGenerator *slice_)
@@ -298,45 +296,46 @@ void CVolumeViewer::OnSliceChanged()
 }
 
 
-void calc_scales(float scale, float &render_scale, float &coord_scale, int &sd_idx, int max_idx)
-{
-    sd_idx = 1;
-    
-    coord_scale = 0.5;
-    while (0.5*coord_scale >= scale && sd_idx < max_idx-1) {
-        sd_idx++;
-        coord_scale *= 0.5;
-    }
-    
-    render_scale = scale/coord_scale;
-}
+// void calc_scales(float scale, float &render_scale, float &coord_scale, int &sd_idx, int max_idx)
+// {
+//     sd_idx = 1;
+//     
+//     while (0.5*coord_scale >= scale && sd_idx < max_idx-1) {
+//         sd_idx++;
+//         coord_scale *= 0.5;
+//     }
+//     
+//     render_scale = scale/coord_scale;
+// }
 
 cv::Mat CVolumeViewer::render_area()
 {   
     xt::xarray<float> coords;
     xt::xarray<uint8_t> img;
 
-    int sd_idx;
-    float render_scale, coord_scale;
-    cv::Rect roi;
+    // int sd_idx;
+    // float render_scale, coord_scale;
+    // cv::Rect roi;
 
-    currRoi(roi, render_scale, coord_scale, sd_idx);
+    // currRoi(roi, render_scale, coord_scale, sd_idx);
+    
+    cv::Rect roi = {curr_img_area.x(), curr_img_area.y(), curr_img_area.width(), curr_img_area.height()};
 
-    slice->gen_coords(coords, roi, render_scale, coord_scale);
-    readInterpolated3D(img, volume->zarrDataset(sd_idx), coords, cache);
+    slice->gen_coords(coords, roi, 1.0, _ds_scale);
+    readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords, cache);
     cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
     
     return m.clone();
 }
 
-void CVolumeViewer::currRoi(cv::Rect &roi, float &render_scale, float &coord_scale, int &sd_idx) const
-{  
-    calc_scales(scale, render_scale, coord_scale, sd_idx, volume->numScales()-1);
-    
-    float m = coord_scale/scale;
-    
-    roi = {curr_img_area.left()*m, curr_img_area.top()*m, curr_img_area.width(), curr_img_area.height()};
-}
+// void CVolumeViewer::currRoi(cv::Rect &roi, float &render_scale, float &coord_scale, int &sd_idx) const
+// {  
+//     calc_scales(scale, render_scale, coord_scale, sd_idx, volume->numScales()-1);
+//     
+//     float m = coord_scale/scale;
+//     
+//     roi = {curr_img_area.left()*m, curr_img_area.top()*m, curr_img_area.width(), curr_img_area.height()};
+// }
 
 void CVolumeViewer::renderVisible(bool force)
 {
@@ -344,6 +343,8 @@ void CVolumeViewer::renderVisible(bool force)
         return;
     
     QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->viewport()->geometry()).boundingRect();
+    
+    // printf("curr area %f %f \n", );
     
     //nothing to see her, move along
     if (!force && QRectF(curr_img_area).contains(bbox))
@@ -377,7 +378,7 @@ void CVolumeViewer::renderVisible(bool force)
     }
     other_slice_items.resize(0);
     
-    cv::Rect roi;
+    /*cv::Rect roi;
     int sd;
     float render_scale, coord_scale;
     currRoi(roi, render_scale, coord_scale, sd);
@@ -419,7 +420,7 @@ void CVolumeViewer::renderVisible(bool force)
                 item->setParentItem(fBaseImageItem);
             }
         }
-    }
+    }*/
     
     update();
 }
