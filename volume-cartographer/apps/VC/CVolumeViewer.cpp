@@ -18,7 +18,7 @@ using qga = QGuiApplication;
 #define BGND_RECT_MARGIN 8
 #define DEFAULT_TEXT_COLOR QColor(255, 255, 120)
 // #define ZOOM_FACTOR 1.148698354997035
-#define ZOOM_FACTOR 1.414213562373095
+#define ZOOM_FACTOR 2.0 //1.414213562373095
 
 // Constructor
 CVolumeViewer::CVolumeViewer(QWidget* parent)
