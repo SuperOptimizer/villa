@@ -394,6 +394,34 @@ cv::Mat_<cv::Vec3f> derive_regular_region(cv::Mat_<cv::Vec3f> points)
     return out;
 }
 
+cv::Mat_<cv::Vec3f> calc_normals(const cv::Mat_<cv::Vec3f> &points) {
+    int n_step = 1;
+    cv::Mat_<cv::Vec3f> blur;
+    cv::GaussianBlur(points, blur, {21,21}, 0);
+    cv::Mat_<cv::Vec3f> normals(points.size());
+#pragma omp parallel for
+    for(int j=n_step;j<points.rows-n_step;j++)
+        for(int i=n_step;i<points.cols-n_step;i++) {
+            cv::Vec3f xv = blur(j,i+n_step)-blur(j,i-n_step);
+            cv::Vec3f yv = blur(j+n_step,i)-blur(j-n_step,i);
+            
+            cv::normalize(xv,xv);
+            cv::normalize(yv,yv);
+            
+            cv::Vec3f n = yv.cross(xv);
+            n = n/sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
+            
+            normals(j,i) = n;
+        }
+    cv::GaussianBlur(normals, normals, {21,21}, 0);
+    for(int j=n_step;j<points.rows-n_step;j++)
+        for(int i=n_step;i<points.cols-n_step;i++) {
+            cv::normalize(normals(j,i), normals(j,i));
+        }
+        
+    return normals;
+}
+
 int main(int argc, char *argv[])
 {
   assert(argc == 2);
@@ -439,6 +467,13 @@ int main(int argc, char *argv[])
   points = points(roi);
   
   cv::Mat_<cv::Vec3f> points_reg = derive_regular_region_stupid_gauss(points);
+  
+  cv::Mat_<cv::Vec3f> normals = calc_normals(points_reg);
+  std::vector<cv::Mat> chs_normals(3);
+  cv::split(normals, chs_normals);
+  cv::imwrite("x_n.tif", chs_normals[0]);
+  cv::imwrite("y_n.tif", chs_normals[1]);
+  cv::imwrite("z_n.tif", chs_normals[2]);
   
   // std::cout << points(500,500) << points(500,501) << points(501,500) << std::endl;
   

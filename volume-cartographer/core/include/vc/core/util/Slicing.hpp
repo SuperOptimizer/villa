@@ -53,6 +53,7 @@ public:
     using CoordGenerator::gen_coords;
     cv::Mat_<cv::Vec3f> *_points = nullptr;
     cv::Mat _scaled;
+    cv::Mat _normals;
 };
 
 class IDWHeightPlaneCoords : public PlaneCoords

@@ -919,11 +919,42 @@ cv::Vec3f PlaneCoords::project(cv::Vec3f wp, const cv::Rect &roi, float render_s
     return {res(0,0), res(0,1), res(0,2)};
 }
 
+static cv::Mat_<cv::Vec3f> calc_normals(const cv::Mat_<cv::Vec3f> &points) {
+    int n_step = 1;
+    cv::Mat_<cv::Vec3f> blur;
+    cv::GaussianBlur(points, blur, {21,21}, 0);
+    cv::Mat_<cv::Vec3f> normals(points.size());
+#pragma omp parallel for
+    for(int j=n_step;j<points.rows-n_step;j++)
+        for(int i=n_step;i<points.cols-n_step;i++) {
+            cv::Vec3f xv = blur(j,i+n_step)-blur(j,i-n_step);
+            cv::Vec3f yv = blur(j+n_step,i)-blur(j-n_step,i);
+            
+            cv::normalize(xv,xv);
+            cv::normalize(yv,yv);
+            
+            cv::Vec3f n = yv.cross(xv);
+            n = n/sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
+            
+            normals(j,i) = n;
+        }
+        cv::GaussianBlur(normals, normals, {21,21}, 0);
+        for(int j=n_step;j<points.rows-n_step;j++)
+            for(int i=n_step;i<points.cols-n_step;i++) {
+                cv::normalize(normals(j,i), normals(j,i));
+            }
+            
+            return normals;
+}
+
 void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
 {
-    if (_scaled.empty())
-        // _scaled = *_points;
+    if (_scaled.empty()) {
+        //FIXME this is quite ugly, normalize in a different way?
+        _normals = calc_normals(*_points);
         cv::resize(*_points, _scaled, {0,0}, 5, 1);
+        cv::resize(_normals, _normals, {0,0}, 5, 1);
+    }
         
     coords = xt::zeros<float>({h,w,3});
 
@@ -954,14 +985,17 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
     
     if (render_scale == 1.0) {
         
+        //FIXME implement normal for even render scale
 #pragma omp parallel for
         for(int j=0;j<common.height;j ++) {
             const cv::Vec3f *row = _scaled.ptr<cv::Vec3f>((common.y+j)*step);
+            const cv::Vec3f *row_n = _normals.ptr<cv::Vec3f>((common.y+j)*step);
             for(int i=0;i<common.width;i ++) {
                 cv::Vec3f point = row[(common.x+i)*step]*coord_scale;
-                coords(oy+j,ox+i,0) = point[2];
-                coords(oy+j,ox+i,1) = point[1];
-                coords(oy+j,ox+i,2) = point[0];
+                cv::Vec3f n = row_n[(common.x+i)*step]*coord_scale;
+                coords(oy+j,ox+i,0) = point[2]+_z_off*n[2];
+                coords(oy+j,ox+i,1) = point[1]+_z_off*n[1];
+                coords(oy+j,ox+i,2) = point[0]+_z_off*n[0];
             }
         };
     }
@@ -979,26 +1013,29 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
 #pragma omp parallel for
         for(int j=0;j<hl;j ++) {
             const cv::Vec3f *row = _scaled.ptr<cv::Vec3f>((cy+j)*step);
+            const cv::Vec3f *row_n = _normals.ptr<cv::Vec3f>((common.y+j)*step);
             cv::Vec3f *row_tgt = large.ptr<cv::Vec3f>(j);
-            for(int i=0;i<wl;i++)
-                row_tgt[i] = row[(cx+i)*step];
+            for(int i=0;i<wl;i++) {
+                cv::Vec3f n = row_n[(common.x+i)*step]*coord_scale;
+                row_tgt[i] = row[(cx+i)*step]+n*_z_off;
+            }
         };
         
         
-        if (_z_off != 0.0) {
-            int n_step = 3;
-            cv::Mat_<cv::Vec3f> orig = large.clone();
-            for(int j=n_step;j<hl-n_step;j++)
-                for(int i=n_step;i<wl-n_step;i++) {
-                    cv::Vec3f xv = orig(j,i+n_step)-orig(j,i-n_step);
-                    cv::Vec3f yv = orig(j+n_step,i)-orig(j-n_step,i);
-                    
-                    cv::Vec3f n = yv.cross(xv);
-                    n = n/sqrt(n[0]*n[0]+n[1]*n[2]+n[2]*n[2]);
-                    
-                    large(j,i) += n*_z_off*0.5;
-                }
-        }
+//         if (_z_off != 0.0) {
+//             int n_step = 3;
+//             cv::Mat_<cv::Vec3f> orig = large.clone();
+//             for(int j=n_step;j<hl-n_step;j++)
+//                 for(int i=n_step;i<wl-n_step;i++) {
+//                     cv::Vec3f xv = orig(j,i+n_step)-orig(j,i-n_step);
+//                     cv::Vec3f yv = orig(j+n_step,i)-orig(j-n_step,i);
+//                     
+//                     cv::Vec3f n = yv.cross(xv);
+//                     n = n/sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
+//                     
+//                     large(j,i) += n*_z_off*0.5;
+//                 }
+//         }
 
         cv::resize(large, large, common.size());
         
