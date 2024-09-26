@@ -50,7 +50,7 @@ void CVolumeViewerView::mouseReleaseEvent(QMouseEvent *event)
 
 void CVolumeViewerView::mousePressEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::MiddleButton)
+    if (event->button() == Qt::MiddleButton || event->button() == Qt::RightButton)
     {
         _regular_pan = true;
         _last_pan_position = event->position();

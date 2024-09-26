@@ -20,7 +20,7 @@ volumetric analysis applications.
   - the default chunk cache is 10GB of RAM
 - features
   - big yellow circle marks the slicing center
-  - middle click + drag to move around
+  - right or middle click + drag to move around
   - ctrl click to set slicing center to the selected location
   - free rotation plane slice:
     - change free plane normal in the bottom left
