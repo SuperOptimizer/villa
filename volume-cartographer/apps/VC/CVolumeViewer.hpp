@@ -52,7 +52,7 @@ public:
     cv::Mat getCoordSlice();
     void renderVisible(bool force = false);
     void currRoi(cv::Rect &roi, float &render_scale, float &coord_scale, int &sd_idx) const;
-    cv::Mat render_area();
+    cv::Mat render_area(const cv::Rect &roi);
     void addIntersectVisSlice(PlaneCoords *slice_);
     void setSegTool(ControlPointSegmentator *tool);
     

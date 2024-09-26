@@ -246,7 +246,7 @@ void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
     
     //FIXME currently hardcoded
     _max_scale = 0.5;
-    _min_scale = pow(2.0,1.0-volume->numScales());
+    _min_scale = pow(2.0,1.-volume->numScales());
 
     renderVisible(true);
 }
@@ -272,10 +272,12 @@ cv::Vec3f loc3d_at_imgpos(volcart::Volume *vol, CoordGenerator *slice, QPointF l
 
 void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
 {
-    printf("FIXME fix onvoluemcliked scaling\n");
-    // cv::Vec3f vol_loc = loc3d_at_imgpos(volume.get(), slice, scene_loc, scale);
+    xt::xarray<float> coords;
+    slice->gen_coords(coords, {scene_loc.x(),scene_loc.y(),1,1}, 1.0, _ds_scale);
+    
+    coords /= _ds_scale;
 
-    // sendVolumeClicked(vol_loc, buttons, modifiers);
+    sendVolumeClicked({coords(0,0,2),coords(0,0,1),coords(0,0,0)}, buttons, modifiers);
 }
 
 void CVolumeViewer::setCache(ChunkCache *cache_)
@@ -308,18 +310,10 @@ void CVolumeViewer::OnSliceChanged()
 //     render_scale = scale/coord_scale;
 // }
 
-cv::Mat CVolumeViewer::render_area()
+cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 {   
     xt::xarray<float> coords;
     xt::xarray<uint8_t> img;
-
-    // int sd_idx;
-    // float render_scale, coord_scale;
-    // cv::Rect roi;
-
-    // currRoi(roi, render_scale, coord_scale, sd_idx);
-    
-    cv::Rect roi = {curr_img_area.x(), curr_img_area.y(), curr_img_area.width(), curr_img_area.height()};
 
     slice->gen_coords(coords, roi, 1.0, _ds_scale);
     readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords, cache);
@@ -352,7 +346,7 @@ void CVolumeViewer::renderVisible(bool force)
     
     curr_img_area = {bbox.left()-128,bbox.top()-128, bbox.width()+256, bbox.height()+256};
     
-    cv::Mat img = render_area();
+    cv::Mat img = render_area({curr_img_area.x(), curr_img_area.y(), curr_img_area.width(), curr_img_area.height()});
     
     QImage qimg = Mat2QImage(img);
     
