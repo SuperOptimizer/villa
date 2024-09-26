@@ -1039,27 +1039,28 @@ static float sdist(const cv::Vec3f &a, const cv::Vec3f &b)
     return d.dot(d);
 }
 
-static void min_loc(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f loc, cv::Vec3f &out, cv::Vec3f tgt)
+static void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt, bool z_search = true)
 {
     // std::cout << "start minlo" << loc << std::endl;
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
     if (!boundary.contains({loc[0],loc[1]})) {
         out = {-1,-1,-1};
-        // loc = {-1,-1};
-        // printf("init fail %d %d\n", loc[0], loc[1]);
+        loc = {-1,-1};
         return;
     }
     
     bool changed = true;
     cv::Vec3f val = at_int(points, loc);
-    // std::cout << "at" << loc << val << std::endl;
     out = val;
     float best = sdist(val, tgt);
-    // printf("init dist %f\n", best);
     float res;
     
-    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
-    std::vector<cv::Vec2f> search = {{1,0},{-1,0}};
+    std::vector<cv::Vec2f> search;
+    if (z_search)
+        search = {{0,-1},{0,1},{-1,0},{1,0}};
+    else
+        search = {{1,0},{-1,0}};
+    
     float step = 1.0;
     
     
@@ -1071,23 +1072,19 @@ static void min_loc(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f loc, cv::
             
             if (!boundary.contains({cand[0],cand[1]})) {
                 out = {-1,-1,-1};
-                // loc = {-1,-1};
+                loc = {-1,-1};
                 return;
             }
             
             
             val = at_int(points, cand);
-            // std::cout << "at" << cand << val << std::endl;
             res = sdist(val,tgt);
             if (res < best) {
-                // std::cout << res << tgt << val << step << "\n";
                 changed = true;
                 best = res;
-                // loc = cand;
+                loc = cand;
                 out = val;
             }
-            // else
-            // std::cout << "(" << res << tgt << val << step << "\n";
         }
         
         if (!changed && step > 0.125) {
@@ -1095,31 +1092,23 @@ static void min_loc(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f loc, cv::
             changed = true;
         }
     }
-    
-    // std::cout << "best" << best << tgt << out << "\n" <<  std::endl;
 }
 
-//given an input image 
-static cv::Mat_<cv::Vec3f> derive_regular_region(cv::Mat_<cv::Vec3f> points)
+//this works surprisingly well, though some artifacts where original there was a lot of skew
+static cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss(cv::Mat_<cv::Vec3f> points)
 {
     cv::Mat_<cv::Vec3f> out = points.clone();
+    cv::Mat_<cv::Vec3f> blur = points.clone();
+    cv::Mat_<cv::Vec2f> locs(points.size());
     
-    cv::GaussianBlur(out, out, {1,255}, 0);
+    cv::GaussianBlur(out, blur, {1,255}, 0);
     
-#pragma omp parallel for
-    for(int j=0;j<points.rows;j++)
-        for(int i=0;i<points.cols;i++) {
-            // min_loc(points, {i,j}, out(j,i), {out(j,i)[0],out(j,i)[1],out(j,i)[2]});
-            min_loc(points, {i,j}, out(j,i), out(j,i));
+    #pragma omp parallel for
+    for(int j=1;j<points.rows;j++)
+        for(int i=1;i<points.cols-1;i++) {
+            cv::Vec2f loc = {i,j};
+            min_loc(points, loc, out(j,i), blur(j,i), false);
         }
-        
-        // cv::Mat_<cv::Vec3f> global;
-        // cv::reduce(points, global, 0, cv::REDUCE_AVG);
-        //     for(int i=0;i<points.cols;i++) {
-        //         for(int j=0;j<points.rows;j++) {
-        //             min_loc(points, loc(j,i), out(j,i), {global(i)[0],global(i)[1],points(j,i)[2]});
-        //         }
-        //     }
         
         return out;
 }
@@ -1128,7 +1117,7 @@ void PointRectSegmentator::set(cv::Mat_<cv::Vec3f> &points)
 {
     // _points = points.clone();
     
-    _points = derive_regular_region(points);
+    _points = derive_regular_region_stupid_gauss(points);
     
         
     for(int j=0;j<_points.size().height;j++) {
