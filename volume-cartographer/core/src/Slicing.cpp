@@ -922,6 +922,7 @@ cv::Vec3f PlaneCoords::project(cv::Vec3f wp, const cv::Rect &roi, float render_s
 void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
 {
     if (_scaled.empty())
+        // _scaled = *_points;
         cv::resize(*_points, _scaled, {0,0}, 5, 1);
         
     coords = xt::zeros<float>({h,w,3});
@@ -995,7 +996,7 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
                     cv::Vec3f n = yv.cross(xv);
                     n = n/sqrt(n[0]*n[0]+n[1]*n[2]+n[2]*n[2]);
                     
-                    large(j,i) += n*_z_off;
+                    large(j,i) += n*_z_off*0.5;
                 }
         }
 
@@ -1014,9 +1015,121 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
     }
 }
 
+static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
+{
+    int x = p[0];
+    int y = p[1];
+    float fx = p[0]-x;
+    float fy = p[1]-y;
+    
+    cv::Vec3f p00 = points(y,x);
+    cv::Vec3f p01 = points(y,x+1);
+    cv::Vec3f p10 = points(y+1,x);
+    cv::Vec3f p11 = points(y+1,x+1);
+    
+    cv::Vec3f p0 = (1-fx)*p00 + fx*p01;
+    cv::Vec3f p1 = (1-fx)*p10 + fx*p11;
+    
+    return (1-fy)*p0 + fy*p1;
+}
+
+static float sdist(const cv::Vec3f &a, const cv::Vec3f &b)
+{
+    cv::Vec3f d = a-b;
+    return d.dot(d);
+}
+
+static void min_loc(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f loc, cv::Vec3f &out, cv::Vec3f tgt)
+{
+    // std::cout << "start minlo" << loc << std::endl;
+    cv::Rect boundary(1,1,points.cols-2,points.rows-2);
+    if (!boundary.contains({loc[0],loc[1]})) {
+        out = {-1,-1,-1};
+        // loc = {-1,-1};
+        // printf("init fail %d %d\n", loc[0], loc[1]);
+        return;
+    }
+    
+    bool changed = true;
+    cv::Vec3f val = at_int(points, loc);
+    // std::cout << "at" << loc << val << std::endl;
+    out = val;
+    float best = sdist(val, tgt);
+    // printf("init dist %f\n", best);
+    float res;
+    
+    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
+    std::vector<cv::Vec2f> search = {{1,0},{-1,0}};
+    float step = 1.0;
+    
+    
+    while (changed) {
+        changed = false;
+        
+        for(auto &off : search) {
+            cv::Vec2f cand = loc+off*step;
+            
+            if (!boundary.contains({cand[0],cand[1]})) {
+                out = {-1,-1,-1};
+                // loc = {-1,-1};
+                return;
+            }
+            
+            
+            val = at_int(points, cand);
+            // std::cout << "at" << cand << val << std::endl;
+            res = sdist(val,tgt);
+            if (res < best) {
+                // std::cout << res << tgt << val << step << "\n";
+                changed = true;
+                best = res;
+                // loc = cand;
+                out = val;
+            }
+            // else
+            // std::cout << "(" << res << tgt << val << step << "\n";
+        }
+        
+        if (!changed && step > 0.125) {
+            step *= 0.5;
+            changed = true;
+        }
+    }
+    
+    // std::cout << "best" << best << tgt << out << "\n" <<  std::endl;
+}
+
+//given an input image 
+static cv::Mat_<cv::Vec3f> derive_regular_region(cv::Mat_<cv::Vec3f> points)
+{
+    cv::Mat_<cv::Vec3f> out = points.clone();
+    
+    cv::GaussianBlur(out, out, {1,255}, 0);
+    
+#pragma omp parallel for
+    for(int j=0;j<points.rows;j++)
+        for(int i=0;i<points.cols;i++) {
+            // min_loc(points, {i,j}, out(j,i), {out(j,i)[0],out(j,i)[1],out(j,i)[2]});
+            min_loc(points, {i,j}, out(j,i), out(j,i));
+        }
+        
+        // cv::Mat_<cv::Vec3f> global;
+        // cv::reduce(points, global, 0, cv::REDUCE_AVG);
+        //     for(int i=0;i<points.cols;i++) {
+        //         for(int j=0;j<points.rows;j++) {
+        //             min_loc(points, loc(j,i), out(j,i), {global(i)[0],global(i)[1],points(j,i)[2]});
+        //         }
+        //     }
+        
+        return out;
+}
+
 void PointRectSegmentator::set(cv::Mat_<cv::Vec3f> &points)
 {
-    _points = points.clone();
+    // _points = points.clone();
+    
+    _points = derive_regular_region(points);
+    
         
     for(int j=0;j<_points.size().height;j++) {
         cv::Vec3f *row = _points.ptr<cv::Vec3f>(j);

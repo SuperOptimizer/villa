@@ -177,6 +177,15 @@ target_link_libraries(vc_zarrextract
     VC::slicing
 )
 
+## experiements for flattening ##
+add_executable(vc_zarrflatexps src/ZarrFlatteningExps.cpp)
+target_link_libraries(vc_zarrflatexps
+    nlohmann_json::nlohmann_json
+    z5
+    opencv_highgui
+    VC::slicing
+)
+
 # Install targets
 if(VC_INSTALL_APPS)
 install(
