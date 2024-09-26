@@ -13,6 +13,9 @@ volumetric analysis applications.
   - it needs a meta.json in the .zarr directory, which can be identical to the regular volume apart from:
     - adding "format":"zarr"
     - changing "name" so you can identify it in VC
+    - change the "UUID" (e.g. also add -zarr)
+  - currently only uint8 datatype is supported (but any compression thats compiled into z5)
+  - currently scale 0 (highest resolution) will be ignored and can be left out (which means ~90GB of data for the volume linked above)
   - by default VC will only load scale 1 or higher from the Zarr voluem, so you do not need to download the highest resolution scale 0
   - the default chunk cache is 10GB of RAM
 - features
