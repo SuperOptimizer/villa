@@ -422,6 +422,94 @@ cv::Mat_<cv::Vec3f> calc_normals(const cv::Mat_<cv::Vec3f> &points) {
     return normals;
 }
 
+xt::xarray<float> xt_from_mat(const cv::Mat_<cv::Vec3f> &m)
+{
+    xt::xarray<float> t = xt::empty<float>({m.rows, m.cols, 3});
+    
+    for(int j=0;j<m.rows;j++) 
+        for(int i=0;i<m.cols;i++) {
+            cv::Vec3f v = m(j,i);
+            t(j,i,0) = v[2];
+            t(j,i,1) = v[1];
+            t(j,i,2) = v[0];
+        }
+        
+        return t;
+}
+
+cv::Mat_<cv::Vec3f> surf_normal_search(z5::Dataset *ds, ChunkCache *chunk_cache, const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<cv::Vec3f> &normals)
+{
+    cv::Mat_<cv::Vec3f> res;
+    
+    // std::Vector<cv::Mat_<uint8_t>> slices;
+    cv::Mat_<uint8_t> found(points.size(), 1);
+    cv::Mat_<uint8_t> maximg(points.size(), 0);
+    cv::Mat_<float> height(points.size(), 0);
+    
+    for(int n=0;n<11;n++) {
+        xt::xarray<uint8_t> raw_extract;
+        // coords = points_reg*2.0;
+        float off = (n-5);
+        readInterpolated3D(raw_extract, ds, xt_from_mat((points+normals*off)*0.5), chunk_cache);
+        cv::Mat_<uint8_t> slice = cv::Mat(raw_extract.shape(0), raw_extract.shape(1), CV_8U, raw_extract.data());
+        
+        char buf[64];
+        sprintf(buf, "slice%02d.tif", n);
+        cv::imwrite(buf, slice);
+        
+        maximg = cv::max(slice, maximg);
+        
+        // slices.push_back(slice);
+        for(int j=0;j<points.rows;j++)
+            for(int i=0;i<points.cols;i++) {
+                //found == 0: still searching for first time < 50!
+                //found == 1: record < 50 start looking for >= 50 to stop
+                //found == 2: done, found border
+                if (slice(j,i) < 70 && found(j,i) <= 1) {
+                    height(j,i) = n+1;
+                    found(j,i) = 1;
+                }
+                else if (slice(j,i) >= 70 && found(j,i) == 1) {
+                    found(j,i) = 2;
+                }
+            }
+    }
+    
+    //never change opencv, never change ...
+    cv::Mat mul;
+    cv::cvtColor(height, mul, cv::COLOR_GRAY2BGR);
+    cv::imwrite("max.tif", maximg);
+    
+    cv::Mat_<cv::Vec3f> new_surf = points + normals.mul(mul);
+    
+    xt::xarray<uint8_t> img;
+    readInterpolated3D(img, ds, xt_from_mat(new_surf*0.5), chunk_cache);
+    cv::Mat_<uint8_t> slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+
+    cv::imwrite("surf.tif", slice);
+    cv::imwrite("off.tif", height/11);
+    
+    //now big question: how far away from average is the new surf!
+    
+    cv::Mat avg_surf;
+    cv::GaussianBlur(new_surf, avg_surf, {7,7}, 0);
+    
+    cv::Mat_<float> rel_height(points.size(), 0);
+    
+    cv::Mat_<cv::Vec3f> dist = avg_surf-new_surf;
+    
+#pragma omp parallel for
+    for(int j=0;j<points.rows;j++)
+        for(int i=0;i<points.cols;i++) {
+            rel_height(j,i) = cv::norm(dist(j,i));
+        }
+    
+    cv::imwrite("rel_height.tif", rel_height);
+    
+    return new_surf;
+}
+
+
 int main(int argc, char *argv[])
 {
   assert(argc == 2);
@@ -464,6 +552,8 @@ int main(int argc, char *argv[])
   // cv::imwrite("y_src.tif", chs_norm[1]);
   // cv::imwrite("z_src.tif", chs_norm[2]);
   
+  
+  roi = {0,0,800,4000};
   points = points(roi);
   
   cv::Mat_<cv::Vec3f> points_reg = derive_regular_region_stupid_gauss(points);
@@ -477,28 +567,58 @@ int main(int argc, char *argv[])
   
   // std::cout << points(500,500) << points(500,501) << points(501,500) << std::endl;
   
-  GridCoords gen_grid(&points_reg);
   // GridCoords gen_grid(&points);
   
   // gen_plane.gen_coords(coords, 1000, 1000);
-  gen_grid.gen_coords(coords, 0, 00, 1000, 1000, 1.0, 0.5);
-
+  // gen_grid.gen_coords(coords, 0, 0, 1000, 1000, 1.0, 0.5);
+  
+  // cv::Mat height = height_map_search(gen_rid);
+  cv::Mat m;
+  
   ChunkCache chunk_cache(10e9);
   
-  auto start = std::chrono::high_resolution_clock::now();
-  readInterpolated3D(img,ds.get(),coords, &chunk_cache);
-  auto end = std::chrono::high_resolution_clock::now();
-  std::cout << std::chrono::duration<double>(end-start).count() << "s cold" << std::endl;
-  
-  cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
-  cv::imwrite("plane.tif", m);
-  
-  
-  GridCoords gen_grid_ref(&points);
-  gen_grid_ref.gen_coords(coords, 0, 00, 1000, 1000, 1.0, 0.5);
+  GridCoords gen_grid(&points_reg);
+  gen_grid.gen_coords(coords, 0, 0, 2000, 2000, 1.0, 0.5);
   readInterpolated3D(img,ds.get(),coords, &chunk_cache);
   m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
-  cv::imwrite("ref_plane.tif", m);
+  cv::imwrite("plane.tif", m);
+    
+  xt::xarray<uint8_t> raw_extract;
+  // coords = points_reg*2.0;
+  readInterpolated3D(raw_extract, ds.get(), xt_from_mat(points_reg*0.5), &chunk_cache);
+  m = cv::Mat(raw_extract.shape(0), raw_extract.shape(1), CV_8U, raw_extract.data());
+  cv::imwrite("raw.tif", m);
+  
+  roi = {0,0,400,2000};
+  points_reg = points_reg(roi);
+  normals = normals(roi);
+  
+  cv::resize(points_reg, points_reg, {0,0}, 5, 1);
+  cv::resize(normals, normals, {0,0}, 5, 1);
+  
+  points_reg = surf_normal_search(ds.get(), &chunk_cache, points_reg, normals);
+  
+  // GridCoords gen_grid(&points_reg);
+  // gen_grid.gen_coords(coords, 0, 0, 1000, 1000, 1.0, 0.5);
+  // readInterpolated3D(img,ds.get(),coords, &chunk_cache);
+  // m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+  // cv::imwrite("surf.tif", m);
+
+//   
+//   auto start = std::chrono::high_resolution_clock::now();
+//   readInterpolated3D(img,ds.get(),coords, &chunk_cache);
+//   auto end = std::chrono::high_resolution_clock::now();
+//   std::cout << std::chrono::duration<double>(end-start).count() << "s cold" << std::endl;
+//   
+//   cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+//   cv::imwrite("plane.tif", m);
+//   
+//   
+//   GridCoords gen_grid_ref(&points);
+//   gen_grid_ref.gen_coords(coords, 0, 00, 1000, 1000, 1.0, 0.5);
+//   readInterpolated3D(img,ds.get(),coords, &chunk_cache);
+//   m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+//   cv::imwrite("ref_plane.tif", m);
   
   return 0;
 }

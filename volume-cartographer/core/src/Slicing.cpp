@@ -953,6 +953,7 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
     if (_scaled.empty()) {
         //FIXME this is quite ugly, normalize in a different way?
         _normals = calc_normals(*_points);
+        _scaled = *_points;
         cv::resize(*_points, _scaled, {0,0}, 5, 1);
         cv::resize(_normals, _normals, {0,0}, 5, 1);
     }
@@ -982,7 +983,7 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
     printf("%d %d\n", ox, oy);
     
     // float m = 1/render_scale;
-    int step = 1/coord_scale;
+    int step = 0.5/coord_scale;
     
     if (render_scale == 1.0) {
         
