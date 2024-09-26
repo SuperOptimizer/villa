@@ -954,23 +954,36 @@ static cv::Mat_<cv::Vec3f> calc_normals(const cv::Mat_<cv::Vec3f> &points) {
 
 void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
 {
-    if (_scaled.empty()) {
-        //FIXME calc normals on the fly
+    if (_normals.empty()) {
+        //TODO calc normals on the fly?
         _normals = calc_normals(*_points);
-        _scaled = *_points;
-        //FIXME this is quite ugly, normalize in a different way?
-        // cv::resize(*_points, _scaled, {0,0}, 5, 1);
-        // cv::resize(_normals, _normals, {0,0}, 5, 1);
     }
-        
-    coords = xt::zeros<float>({h,w,3});
 
     if (render_scale > 1.0 || render_scale < 0.5) {
         std::cout << "FIXME: support wider render scale for GridCoords::gen_coords()" << std::endl;
         return;
     }
+
+    coords = xt::zeros<float>({h,w,3});
+    cv::Mat_<cv::Vec3f> warped;
     
-    //so basically we crop into _scaled to generate coords
+    std::vector<cv::Vec2f> dst = {{0,0},{w,9},{0,h}};
+    std::vector<cv::Vec2f> src = {{x,y},{x+w,y},{x,y+h}};
+    
+    cv::Mat affine = cv::getAffineTransform(src, dst);
+    
+    cv::warpAffine(*_points, warped, affine, {w,h});
+    
+#pragma omp parallel for
+    for(int j=0;j<h;j++)
+        for(int i=0;i<w;i++) {
+            cv::Vec3f point = warped(j,i);
+            coords(j,i,0) = point[2]*coord_scale;
+            coords(j,i,1) = point[1]*coord_scale;
+            coords(j,i,2) = point[0]*coord_scale;
+        }
+            
+    /*//so basically we crop into _scaled to generate coords
     cv::Rect tgt(x,y,w,h);
     cv::Rect src(0,0,_scaled.cols*coord_scale, _scaled.rows*coord_scale);
     
@@ -1005,7 +1018,7 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
             coords(oy+j,ox+i,1) = point[1]+_z_off*n[1];
             coords(oy+j,ox+i,2) = point[0]+_z_off*n[0];
         }
-    };
+    };*/
 }
 
 static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)

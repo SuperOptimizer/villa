@@ -52,8 +52,9 @@ public:
     void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
     using CoordGenerator::gen_coords;
     cv::Mat_<cv::Vec3f> *_points = nullptr;
-    cv::Mat _scaled;
     cv::Mat _normals;
+    float _sx = 1.0;
+    float _sy = 1.0;
 };
 
 class IDWHeightPlaneCoords : public PlaneCoords
