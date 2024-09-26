@@ -442,14 +442,15 @@ cv::Mat_<cv::Vec3f> surf_normal_search(z5::Dataset *ds, ChunkCache *chunk_cache,
     cv::Mat_<cv::Vec3f> res;
     
     // std::Vector<cv::Mat_<uint8_t>> slices;
-    cv::Mat_<uint8_t> found(points.size(), 1);
+    cv::Mat_<uint8_t> found(points.size(), 0);
     cv::Mat_<uint8_t> maximg(points.size(), 0);
+    cv::Mat_<float> avgimg(points.size(), 0);
     cv::Mat_<float> height(points.size(), 0);
     
-    for(int n=0;n<11;n++) {
+    for(int n=0;n<21;n++) {
         xt::xarray<uint8_t> raw_extract;
         // coords = points_reg*2.0;
-        float off = (n-5);
+        float off = (n-10)*0.5;
         readInterpolated3D(raw_extract, ds, xt_from_mat((points+normals*off)*0.5), chunk_cache);
         cv::Mat_<uint8_t> slice = cv::Mat(raw_extract.shape(0), raw_extract.shape(1), CV_8U, raw_extract.data());
         
@@ -459,21 +460,36 @@ cv::Mat_<cv::Vec3f> surf_normal_search(z5::Dataset *ds, ChunkCache *chunk_cache,
         
         maximg = cv::max(slice, maximg);
         
+        sprintf(buf, "max%02d.tif", n);
+        maximg = cv::max(slice, maximg);
+        cv::imwrite(buf, maximg);
+        
+        sprintf(buf, "avg%02d.tif", n);
+        cv::Mat floatslice;
+        slice.convertTo(floatslice, CV_32F);
+        avgimg = avgimg + floatslice;
+        cv::imwrite(buf, avgimg/(n+1));
+        
         // slices.push_back(slice);
         for(int j=0;j<points.rows;j++)
             for(int i=0;i<points.cols;i++) {
                 //found == 0: still searching for first time < 50!
                 //found == 1: record < 50 start looking for >= 50 to stop
                 //found == 2: done, found border
-                if (slice(j,i) < 70 && found(j,i) <= 1) {
+                if (slice(j,i) < 40 && found(j,i) <= 1) {
                     height(j,i) = n+1;
                     found(j,i) = 1;
                 }
-                else if (slice(j,i) >= 70 && found(j,i) == 1) {
+                else if (slice(j,i) >= 40 && found(j,i) == 1) {
                     found(j,i) = 2;
                 }
             }
-    }
+    }        // slices.push_back(slice);
+    
+    for(int j=0;j<points.rows;j++)
+        for(int i=0;i<points.cols;i++)
+            if (found(j,i) == 1)
+                height(j,i) = 0;
     
     //never change opencv, never change ...
     cv::Mat mul;
@@ -487,12 +503,21 @@ cv::Mat_<cv::Vec3f> surf_normal_search(z5::Dataset *ds, ChunkCache *chunk_cache,
     cv::Mat_<uint8_t> slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
 
     cv::imwrite("surf.tif", slice);
-    cv::imwrite("off.tif", height/11);
+    
+    cv::Mat_<float> height_vis = height/21;
+    height_vis = cv::min(height_vis,1-height_vis)*2;
+    cv::imwrite("off.tif", height_vis);
     
     //now big question: how far away from average is the new surf!
     
     cv::Mat avg_surf;
     cv::GaussianBlur(new_surf, avg_surf, {7,7}, 0);
+    
+    readInterpolated3D(img, ds, xt_from_mat(avg_surf*0.5), chunk_cache);
+    slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+    
+    cv::imwrite("avg_surf.tif", slice);
+    
     
     cv::Mat_<float> rel_height(points.size(), 0);
     
@@ -578,7 +603,7 @@ int main(int argc, char *argv[])
   ChunkCache chunk_cache(10e9);
   
   GridCoords gen_grid(&points_reg);
-  gen_grid.gen_coords(coords, 0, 0, 2000, 2000, 1.0, 0.5);
+  gen_grid.gen_coords(coords, 0, 0, 4000, 4000, 1.0, 0.5);
   readInterpolated3D(img,ds.get(),coords, &chunk_cache);
   m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
   cv::imwrite("plane.tif", m);
@@ -589,7 +614,7 @@ int main(int argc, char *argv[])
   m = cv::Mat(raw_extract.shape(0), raw_extract.shape(1), CV_8U, raw_extract.data());
   cv::imwrite("raw.tif", m);
   
-  roi = {0,0,400,2000};
+  roi = {0,0,800,4000};
   points_reg = points_reg(roi);
   normals = normals(roi);
   
