@@ -123,7 +123,7 @@ float sdist(const cv::Vec3f &a, const cv::Vec3f &b)
     return d.dot(d);
 }
 
-void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt)
+void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt, bool z_search = true)
 {
     // std::cout << "start minlo" << loc << std::endl;
     cv::Rect boundary(1,1,points.cols-1,points.rows-1);
@@ -142,9 +142,12 @@ void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, 
     // printf("init dist %f\n", best);
     float res;
     
-    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
-    std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
-    // std::vector<cv::Vec2f> search = {{1,0},{-1,0}};
+    std::vector<cv::Vec2f> search;
+    if (z_search)
+        search = {{0,-1},{0,1},{-1,0},{1,0}};
+    else
+        search = {{1,0},{-1,0}};
+
     float step = 1.0;
     
     
@@ -273,6 +276,57 @@ cv::Vec3f pred(const cv::Mat_<cv::Vec3f> &points, int x, int y, int x1,int y1, i
     return from+dir;
 }
 
+//this works surprisingly well, though some artifacts where original there was a lot of skew
+cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss(cv::Mat_<cv::Vec3f> points)
+{
+    cv::Mat_<cv::Vec3f> out = points.clone();
+        cv::Mat_<cv::Vec3f> blur = points.clone();
+    cv::Mat_<cv::Vec2f> locs(points.size());
+    
+    cv::GaussianBlur(out, blur, {1,255}, 0);
+    
+#pragma omp parallel for
+    for(int j=1;j<points.rows;j++)
+        for(int i=1;i<points.cols-1;i++) {
+            // min_loc(points, {i,j}, out(j,i), {out(j,i)[0],out(j,i)[1],out(j,i)[2]});
+            cv::Vec2f loc = {i,j};
+            min_loc(points, loc, out(j,i), blur(j,i), false);
+        }
+        
+    return out;
+}
+
+//instead of optimizing the distance to a (blurred) location which might not exist on the plane,
+//optimize for a location which intersects neighoring spheres
+//(basically try to ignore surface normal without knowing what the normal actually is)
+cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss_indirect(cv::Mat_<cv::Vec3f> points)
+{
+    cv::Mat_<cv::Vec3f> out = points.clone();
+    cv::Mat_<cv::Vec3f> blur = points.clone();
+    cv::Mat_<cv::Vec2f> locs(points.size());
+    
+    cv::GaussianBlur(points, blur, {1,255}, 0);
+    
+    int dist = 1;
+    
+    #pragma omp parallel for
+    for(int j=2*dist;j<points.rows-2*dist;j++)
+        for(int i=2*dist;i<points.cols-2*dist;i++) {
+            std::vector<cv::Vec3f> tgts = {blur(j-dist,i),blur(j+dist,i),blur(j,i+dist),blur(j,i-dist)};
+            auto dists = {sqrt(sdist(tgts[0],blur(j,i))),sqrt(sdist(tgts[1],blur(j,i))),sqrt(sdist(tgts[2],blur(j,i))),sqrt(sdist(tgts[3],blur(j,i)))};
+            cv::Vec2f loc = {i,j};
+            min_loc(points, loc, out(j,i), tgts, dists);
+        }
+        
+        return out;
+}
+
+//try to ignore the local surface normal in error calculation
+cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss_normalcomp(cv::Mat_<cv::Vec3f> points)
+{
+    //TODO calc local normal, blurr it pass through to minimzation
+}
+
 //given an input image 
 cv::Mat_<cv::Vec3f> derive_regular_region(cv::Mat_<cv::Vec3f> points)
 {
@@ -381,7 +435,7 @@ int main(int argc, char *argv[])
   
   points = points(roi);
   
-  cv::Mat_<cv::Vec3f> points_reg = derive_regular_region(points);
+  cv::Mat_<cv::Vec3f> points_reg = derive_regular_region_stupid_gauss(points);
   
   // std::cout << points(500,500) << points(500,501) << points(501,500) << std::endl;
   
