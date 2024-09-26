@@ -896,7 +896,7 @@ float PlaneCoords::pointDist(cv::Vec3f wp)
 //     return abs(scalarp)*plane_mul;
 // }
 
-cv::Vec3f PlaneCoords::project(cv::Vec3f wp, const cv::Rect &roi, float render_scale, float coord_scale)
+cv::Vec3f PlaneCoords::project(cv::Vec3f wp, float render_scale, float coord_scale)
 {
     cv::Vec3f vx, vy;
     

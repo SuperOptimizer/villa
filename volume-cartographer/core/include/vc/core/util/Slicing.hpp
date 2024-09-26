@@ -29,7 +29,7 @@ public:
     PlaneCoords() {};
     PlaneCoords(cv::Vec3f origin_, cv::Vec3f normal_);
     virtual float pointDist(cv::Vec3f wp);
-    virtual cv::Vec3f project(cv::Vec3f wp, const cv::Rect &roi, float render_scale = 1.0, float coord_scale = 1.0);
+    virtual cv::Vec3f project(cv::Vec3f wp, float render_scale = 1.0, float coord_scale = 1.0);
     void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
     // float plane_mul() const;
     virtual float scalarp(cv::Vec3f point) const;

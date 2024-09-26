@@ -3057,11 +3057,6 @@ void CWindow::onPlaneSliceChanged(void)
 
 void CWindow::onSegSelected(SegmentationStruct *seg)
 {
-    //
-    std::cout << " FIXME load seg as control points?" << std::endl;
-    // double max_slice = 0;
-    // size_t count = 0;
-    
     //working around two limitations in cv and PointSet apis to do zero copy into a mat ...
     cv::Mat src(seg->fMasterCloud.height(), seg->fMasterCloud.width(), CV_64FC3, (void*)const_cast<cv::Vec3d*>(&seg->fMasterCloud[0]));
     
@@ -3070,12 +3065,13 @@ void CWindow::onSegSelected(SegmentationStruct *seg)
     
     dynamic_cast<PointRectSegmentator*>(seg_tool)->set(points);
     
-    //FIXME need to think about how we handle this typing ...
+    //FIXME need to think about how we handle this with btter typing ...
     slice_seg = dynamic_cast<PointRectSegmentator*>(seg_tool)->generator();
     
     std::cout << "slice_seg " << slice_seg  << std::endl;
     
     //FIXME need to think about how we handle these references ...
     view_seg->setSlice(slice_seg);
+    sendSliceChanged();
     view_seg->renderVisible(true);
 }

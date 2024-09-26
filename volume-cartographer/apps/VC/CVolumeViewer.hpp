@@ -55,6 +55,7 @@ public:
     cv::Mat render_area(const cv::Rect &roi);
     void addIntersectVisSlice(PlaneCoords *slice_);
     void setSegTool(ControlPointSegmentator *tool);
+    void invalidateVis();
     
     CVolumeViewerView* fGraphicsView;
 
@@ -124,7 +125,8 @@ protected:
     QGraphicsEllipseItem *center_marker = nullptr;
     std::vector<PlaneCoords*> other_slices;
     
-    std::vector<QGraphicsItem*> other_slice_items; 
+    bool _slice_vis_valid = false;
+    std::vector<QGraphicsItem*> slice_vis_items; 
     ControlPointSegmentator *seg_tool = nullptr;
 };  // class CVolumeViewer
 
