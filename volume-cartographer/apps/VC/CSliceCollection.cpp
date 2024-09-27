@@ -16,7 +16,7 @@ void CSliceCollection::setSegmentator(const std::string &name, ControlPointSegme
     sendSegmentatorChanged(name, seg);
 }
 
-void CSliceCollection::setPoi(const std::string &name, cv::Vec3f poi)
+void CSliceCollection::setPOI(const std::string &name, POI *poi)
 {
     _pois[name] = poi;
     sendPOIChanged(name, poi);
@@ -36,10 +36,10 @@ ControlPointSegmentator* CSliceCollection::getSegmentator(const std::string &nam
     return _segmentators[name];
 }
 
-cv::Vec3f CSliceCollection::getPoi(const std::string &name)
+POI *CSliceCollection::getPOI(const std::string &name)
 {
     if (!_pois.count(name))
-        return {std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::quiet_NaN()};
+        return nullptr;
     return _pois[name];
 }
 

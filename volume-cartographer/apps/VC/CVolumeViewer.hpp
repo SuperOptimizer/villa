@@ -19,6 +19,7 @@ namespace ChaoVis
 class CVolumeViewerView;
 class SegmentationStruct;
 class CSliceCollection;
+class POI;
 
 class CVolumeViewer : public QWidget
 {
@@ -52,8 +53,6 @@ public:
     cv::Mat getCoordSlice();
     void renderVisible(bool force = false);
     cv::Mat render_area(const cv::Rect &roi);
-    // void addIntersectVisSlice(PlaneCoords *slice_);
-    void setSegTool(ControlPointSegmentator *tool);
     void invalidateVis();
     
     CVolumeViewerView* fGraphicsView;
@@ -64,7 +63,9 @@ protected:
 public slots:
     void OnVolumeChanged(volcart::Volume::Pointer vol);
     void onVolumeClicked(QPointF scene_loc,Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
-    void OnSliceChanged(std::string name, CoordGenerator *slice);
+    void onSliceChanged(std::string name, CoordGenerator *slice);
+    void onPOIChanged(std::string name, POI *poi);
+    void onSegmentatorChanged(std::string name, ControlPointSegmentator *seg);
     void onScrolled();
     void onZoom(int steps, QPointF scene_point, Qt::KeyboardModifiers modifiers);
 
@@ -127,7 +128,7 @@ protected:
     
     bool _slice_vis_valid = false;
     std::vector<QGraphicsItem*> slice_vis_items; 
-    ControlPointSegmentator *seg_tool = nullptr;
+    ControlPointSegmentator *_seg_tool = nullptr;
     
     CSliceCollection *_slice_col = nullptr;
 };  // class CVolumeViewer

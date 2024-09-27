@@ -141,7 +141,7 @@ private:
     void UpdateRecentVolpkgList(const QString& path);
     void RemoveEntryFromRecentVolpkg(const QString& path);
 
-    CVolumeViewer *newConnectedCVolumeViewer(std::string show_slice, QWidget *parent);
+    CVolumeViewer *newConnectedCVolumeViewer(std::string show_slice, QMdiArea *mdiArea);
     void closeEvent(QCloseEvent* event);
 
     void setWidgetsEnabled(bool state);

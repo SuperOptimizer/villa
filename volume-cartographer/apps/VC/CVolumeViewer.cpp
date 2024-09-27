@@ -223,7 +223,7 @@ void CVolumeViewer::setSlice(const std::string &name)
 {
     _slice_name = name;
     _slice = nullptr;
-    OnSliceChanged(name, _slice_col->getSlice(name));
+    onSliceChanged(name, _slice_col->getSlice(name));
 }
 
 
@@ -237,7 +237,7 @@ void CVolumeViewer::invalidateVis()
     slice_vis_items.resize(0);
 }
 
-void CVolumeViewer::OnSliceChanged(std::string name, CoordGenerator *slice)
+void CVolumeViewer::onSliceChanged(std::string name, CoordGenerator *slice)
 {
     if (_slice_name != name)
         return;
@@ -251,6 +251,34 @@ void CVolumeViewer::OnSliceChanged(std::string name, CoordGenerator *slice)
     
     curr_img_area = {0,0,0,0};
     renderVisible();
+}
+
+//TODO make poi tracking optional and configurable
+void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
+{
+    if (!poi || name != "focus")
+        return;
+    
+    PlaneCoords *plane = dynamic_cast<PlaneCoords*>(_slice);
+    
+    if (!plane)
+        return;
+    
+    if (poi->p == plane->origin)
+        return;
+    
+    fGraphicsView->centerOn(0,0);
+    
+    plane->origin = poi->p;
+    _slice_col->setSlice(_slice_name, plane);
+}
+
+void CVolumeViewer::onSegmentatorChanged(std::string name, ControlPointSegmentator *seg)
+{
+    if (name != "default")
+        return;
+
+    _seg_tool = seg;
 }
 
 cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
@@ -312,9 +340,9 @@ void CVolumeViewer::renderVisible(bool force)
     }*/
     
     PlaneCoords *slice_plane = dynamic_cast<PlaneCoords*>(_slice);
-    if (!_slice_vis_valid && seg_tool && slice_plane) {
+    if (!_slice_vis_valid && _seg_tool && slice_plane) {
 #pragma omp parallel for
-        for (auto &wp : seg_tool->control_points) {
+        for (auto &wp : _seg_tool->control_points) {
             float dist = slice_plane->pointDist(wp);
             
             if (dist > 0.5)
@@ -331,7 +359,7 @@ void CVolumeViewer::renderVisible(bool force)
             }
         }
         
-        if (seg_tool->control_points.size())
+        if (_seg_tool->control_points.size())
             _slice_vis_valid = true;
     }
     
@@ -346,18 +374,4 @@ void CVolumeViewer::onScrolled()
 cv::Mat CVolumeViewer::getCoordSlice()
 {
     return cv::Mat();
-}
-
-
-// void CVolumeViewer::addIntersectVisSlice(PlaneCoords *slice_)
-// {
-//     other_slices.push_back(slice_);
-//     
-//     OnSliceChanged();
-// }
-
-
-void CVolumeViewer::setSegTool(ControlPointSegmentator *tool)
-{
-    seg_tool = tool;
 }

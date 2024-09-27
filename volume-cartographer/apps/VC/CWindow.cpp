@@ -5,6 +5,7 @@
 #include <QKeySequence>
 #include <QProgressBar>
 #include <QSettings>
+#include <QMdiArea>
 #include <opencv2/imgproc.hpp>
 
 #include "CVolumeViewer.hpp"
@@ -217,12 +218,16 @@ CWindow::~CWindow(void)
     SDL_Quit();
 }
 
-CVolumeViewer *CWindow::newConnectedCVolumeViewer(std::string show_slice, QWidget *parent)
+CVolumeViewer *CWindow::newConnectedCVolumeViewer(std::string show_slice, QMdiArea *mdiArea)
 {
-    auto volView = new CVolumeViewer(_slices, parent);
+    auto volView = new CVolumeViewer(_slices, mdiArea);
+    QMdiSubWindow *win = mdiArea->addSubWindow(volView);
+    win->setWindowTitle(show_slice.c_str());
     volView->setCache(chunk_cache);
     connect(this, &CWindow::sendVolumeChanged, volView, &CVolumeViewer::OnVolumeChanged);
-    connect(this, &CWindow::sendSliceChanged, volView, &CVolumeViewer::OnSliceChanged);
+    connect(_slices, &CSliceCollection::sendSliceChanged, volView, &CVolumeViewer::onSliceChanged);
+    connect(_slices, &CSliceCollection::sendPOIChanged, volView, &CVolumeViewer::onPOIChanged);
+    connect(_slices, &CSliceCollection::sendSegmentatorChanged, volView, &CVolumeViewer::onSegmentatorChanged);
     connect(volView, &CVolumeViewer::sendVolumeClicked, this, &CWindow::onVolumeClicked);
     connect(volView, &CVolumeViewer::sendShiftNormal, this, &CWindow::onShiftNormal);
     
@@ -253,21 +258,20 @@ void CWindow::CreateWidgets(void)
     QSettings settings("VC.ini", QSettings::IniFormat);
 
     // add volume viewer
-    auto aWidgetLayout = new QGridLayout;
-    
-    CVolumeViewer *view;
-    view = newConnectedCVolumeViewer("xy plane", ui.tabSegment);
-    aWidgetLayout->addWidget(view, 0, 0);
-    view = newConnectedCVolumeViewer("xz plane", ui.tabSegment);
-    aWidgetLayout->addWidget(view, 1, 0);
-    view = newConnectedCVolumeViewer("yz plane", ui.tabSegment);
-    aWidgetLayout->addWidget(view, 0, 1);
-    view = newConnectedCVolumeViewer("manual plane", ui.tabSegment);
-    aWidgetLayout->addWidget(view, 1, 1);
-    view = newConnectedCVolumeViewer("segmentation", ui.tabSegment);
-    aWidgetLayout->addWidget(view, 1, 2);
-    
+    auto aWidgetLayout = new QVBoxLayout;
     ui.tabSegment->setLayout(aWidgetLayout);
+    
+    QMdiArea *mdiArea = new QMdiArea(ui.tabSegment);
+    aWidgetLayout->addWidget(mdiArea);
+    
+    newConnectedCVolumeViewer("xy plane", mdiArea);
+    newConnectedCVolumeViewer("xz plane", mdiArea);
+    newConnectedCVolumeViewer("yz plane", mdiArea);
+    newConnectedCVolumeViewer("manual plane", mdiArea);
+    newConnectedCVolumeViewer("segmentation", mdiArea);
+    mdiArea->tileSubWindows();
+    
+    // QMdiArea(QWidget *parent = nullptr)
     
     connect(this, &CWindow::sendSegSelected, this, &CWindow::onSegSelected);
 
@@ -2969,21 +2973,29 @@ void CWindow::onLocChanged(void)
 // Handle request to step impact range down
 void CWindow::onVolumeClicked(cv::Vec3f vol_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
 {
-//     if (modifiers & Qt::ControlModifier) {
-//         slice_plane->origin = vol_loc;
-//         slice_xy->origin = vol_loc;
-//         slice_xz->origin = vol_loc;
-//         slice_yz->origin = vol_loc;
-//         
+    //current action: move default POI
+    if (modifiers & Qt::ControlModifier) {
+        printf("set poi!\n");
+        POI *poi = _slices->getPOI("focus");
+        
+        if (!poi)
+            poi = new POI;
+        
+        //FIXME onVolumeClicked should know the slice!
+        poi->src = nullptr;
+        poi->p = vol_loc;
+        
+        _slices->setPOI("focus", poi);
+        
+        
+//FIXME add generic display of POIs!
 //         lblLoc[0]->setText(QString::number(vol_loc[2]));
 //         lblLoc[1]->setText(QString::number(vol_loc[1]));
 //         lblLoc[2]->setText(QString::number(vol_loc[0]));
-//     }
-//     else {
-//         seg_tool->add(vol_loc, {0,0,0});
-//     }
-//     
-//     sendSliceChanged();
+    }
+    else {
+        std::cout << "FIXME do something with regular click" << std::endl;
+    }
 }
 
 // Handle request to step impact range down
@@ -3019,23 +3031,17 @@ void CWindow::onPlaneSliceChanged(void)
     _slices->setSlice("manual plane", plane);
 }
 
-void CWindow::onSegSelected(SegmentationStruct *seg)
+void CWindow::onSegSelected(SegmentationStruct *seg_struct)
 {
-    /*//working around two limitations in cv and PointSet apis to do zero copy into a mat ...
-    cv::Mat src(seg->fMasterCloud.height(), seg->fMasterCloud.width(), CV_64FC3, (void*)const_cast<cv::Vec3d*>(&seg->fMasterCloud[0]));
+    //working around two limitations in cv and PointSet apis to do zero copy into a mat ...
+    cv::Mat src(seg_struct->fMasterCloud.height(), seg_struct->fMasterCloud.width(), CV_64FC3, (void*)const_cast<cv::Vec3d*>(&seg_struct->fMasterCloud[0]));
     
     cv::Mat_<cv::Vec3f> points;
     src.convertTo(points, CV_32F);
     
-    dynamic_cast<PointRectSegmentator*>(seg_tool)->set(points);
+    PointRectSegmentator *seg = new PointRectSegmentator();
+    seg->set(points);
     
-    //FIXME need to think about how we handle this with btter typing ...
-    slice_seg = dynamic_cast<PointRectSegmentator*>(seg_tool)->generator();
-    
-    std::cout << "slice_seg " << slice_seg  << std::endl;
-    
-    //FIXME need to think about how we handle these references ...
-    view_seg->setSlice(slice_seg);
-    sendSliceChanged();
-    view_seg->renderVisible(true);*/
+    _slices->setSegmentator("default", seg);
+    _slices->setSlice("segmentation", seg->generator());
 }
