@@ -9,6 +9,7 @@
 
 #include "CVolumeViewerView.hpp"
 #include "SegmentationStruct.hpp"
+#include "CSliceCollection.hpp"
 
 #include "vc/core/util/Slicing.hpp"
 
@@ -21,7 +22,7 @@ using qga = QGuiApplication;
 #define ZOOM_FACTOR 2.0 //1.414213562373095
 
 // Constructor
-CVolumeViewer::CVolumeViewer(QWidget* parent)
+CVolumeViewer::CVolumeViewer(CSliceCollection *slices, QWidget* parent)
     : QWidget(parent)
     , fCanvas(nullptr)
     // , fScrollArea(nullptr)
@@ -35,29 +36,8 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     , fImgQImage(nullptr)
     , fBaseImageItem(nullptr)
     , fScanRange(1)
+    , _slice_col(slices)
 {
-    // buttons
-    // fZoomInBtn = new QPushButton(tr("Zoom In"), this);
-    // fZoomOutBtn = new QPushButton(tr("Zoom Out"), this);
-    // fResetBtn = new QPushButton(tr("Reset"), this);
-    // fNextBtn = new QPushButton(tr("Next Slice"), this);
-    // fPrevBtn = new QPushButton(tr("Previous Slice"), this);
-
-    // fImageRotationSpin = new QSpinBox(this);
-    // fImageRotationSpin->setMinimum(-360);
-    // fImageRotationSpin->setMaximum(360);
-    // fImageRotationSpin->setSuffix("°");
-    // fImageRotationSpin->setEnabled(true);
-    // connect(fImageRotationSpin, SIGNAL(editingFinished()), this, SLOT(OnImageRotationSpinChanged()));
-
-    // fAxisCombo = new QComboBox(this);
-    //data is the missing axis (but in inverted order ZYX)
-    // fAxisCombo->addItem(QString::fromStdString("XY"), QVariant(0));
-    // fAxisCombo->addItem(QString::fromStdString("XZ"), QVariant(1));
-    // fAxisCombo->addItem(QString::fromStdString("YZ"), QVariant(2));
-    // fAxisCombo->addItem(QString::fromStdString("slice"), QVariant(3));
-    // connect(fAxisCombo, &QComboBox::currentIndexChanged, this, &CVolumeViewer::OnViewAxisChanged);
-
     fBaseImageItem = nullptr;
 
     // Create graphics view
@@ -80,23 +60,6 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
 
     // Set the scene
     fGraphicsView->setScene(fScene);
-    // fGraphicsView->setup();
-
-    // fGraphicsView->viewport()->installEventFilter(this);
-    // fGraphicsView->setDragMode(QGraphicsView::ScrollHandDrag);
-
-    // fButtonsLayout = new QHBoxLayout;
-    // fButtonsLayout->addWidget(fZoomInBtn);
-    // fButtonsLayout->addWidget(fZoomOutBtn);
-    // fButtonsLayout->addWidget(fResetBtn);
-    // fButtonsLayout->addWidget(fImageRotationSpin);
-    // // fButtonsLayout->addWidget(fAxisCombo);
-    // // Add some space between the slice spin box and the curve tools (color, checkboxes, ...)
-    // fButtonsLayout->addSpacerItem(new QSpacerItem(1, 0, QSizePolicy::Expanding, QSizePolicy::Fixed));
-
-    // connect(fZoomInBtn, SIGNAL(clicked()), this, SLOT(OnZoomInClicked()));
-    // connect(fZoomOutBtn, SIGNAL(clicked()), this, SLOT(OnZoomOutClicked()));
-    // connect(fResetBtn, SIGNAL(clicked()), this, SLOT(OnResetClicked()));
 
     QSettings settings("VC.ini", QSettings::IniFormat);
     // fCenterOnZoomEnabled = settings.value("viewer/center_on_zoom", false).toInt() != 0;
@@ -105,7 +68,6 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
 
     QVBoxLayout* aWidgetLayout = new QVBoxLayout;
     aWidgetLayout->addWidget(fGraphicsView);
-    // aWidgetLayout->addLayout(fButtonsLayout);
 
     setLayout(aWidgetLayout);
 }
@@ -115,18 +77,6 @@ CVolumeViewer::~CVolumeViewer(void)
 {
     deleteNULL(fGraphicsView);
     deleteNULL(fScene);
-    // deleteNULL(fScrollArea);
-    // deleteNULL(fZoomInBtn);
-    // deleteNULL(fZoomOutBtn);
-    // deleteNULL(fResetBtn);
-    // deleteNULL(fImageRotationSpin);
-}
-
-void CVolumeViewer::SetButtonsEnabled(bool state)
-{
-    // fZoomOutBtn->setEnabled(state);
-    // fZoomInBtn->setEnabled(state);
-    // fImageRotationSpin->setEnabled(state);
 }
 
 void CVolumeViewer::SetImage(const QImage& nSrc)
@@ -167,8 +117,11 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
     //TODO don't invalidate if only _scene_scale chagned
     invalidateVis();
     
+    if (!_slice)
+        return;
+    
     if (modifiers & Qt::ShiftModifier) {
-        slice->setOffsetZ(slice->offsetZ()+steps);
+        _slice->setOffsetZ(_slice->offsetZ()+steps);
         renderVisible(true);
     }
     else {
@@ -250,8 +203,11 @@ cv::Vec3f loc3d_at_imgpos(volcart::Volume *vol, CoordGenerator *slice, QPointF l
 
 void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
 {
+    if (!_slice)
+        return;
+
     xt::xarray<float> coords;
-    slice->gen_coords(coords, {scene_loc.x(),scene_loc.y(),1,1}, 1.0, _ds_scale);
+    _slice->gen_coords(coords, {scene_loc.x(),scene_loc.y(),1,1}, 1.0, _ds_scale);
     
     coords /= _ds_scale;
 
@@ -263,10 +219,11 @@ void CVolumeViewer::setCache(ChunkCache *cache_)
     cache = cache_;
 }
 
-void CVolumeViewer::setSlice(CoordGenerator *slice_)
+void CVolumeViewer::setSlice(const std::string &name)
 {
-    slice = slice_;
-    OnSliceChanged();
+    _slice_name = name;
+    _slice = nullptr;
+    OnSliceChanged(name, _slice_col->getSlice(name));
 }
 
 
@@ -280,58 +237,41 @@ void CVolumeViewer::invalidateVis()
     slice_vis_items.resize(0);
 }
 
-void CVolumeViewer::OnSliceChanged()
+void CVolumeViewer::OnSliceChanged(std::string name, CoordGenerator *slice)
 {
+    if (_slice_name != name)
+        return;
+
+    _slice = slice;
+    
+    if (!_slice)
+        fScene->clear();
+
     invalidateVis();
     
     curr_img_area = {0,0,0,0};
     renderVisible();
 }
 
-
-// void calc_scales(float scale, float &render_scale, float &coord_scale, int &sd_idx, int max_idx)
-// {
-//     sd_idx = 1;
-//     
-//     while (0.5*coord_scale >= scale && sd_idx < max_idx-1) {
-//         sd_idx++;
-//         coord_scale *= 0.5;
-//     }
-//     
-//     render_scale = scale/coord_scale;
-// }
-
 cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 {
     xt::xarray<float> coords;
     xt::xarray<uint8_t> img;
 
-    slice->gen_coords(coords, roi, 1.0, _ds_scale);
+    _slice->gen_coords(coords, roi, 1.0, _ds_scale);
     readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords, cache);
     cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
     
     return m.clone();
 }
 
-// void CVolumeViewer::currRoi(cv::Rect &roi, float &render_scale, float &coord_scale, int &sd_idx) const
-// {  
-//     calc_scales(scale, render_scale, coord_scale, sd_idx, volume->numScales()-1);
-//     
-//     float m = coord_scale/scale;
-//     
-//     roi = {curr_img_area.left()*m, curr_img_area.top()*m, curr_img_area.width(), curr_img_area.height()};
-// }
-
 void CVolumeViewer::renderVisible(bool force)
 {
-    if (!volume || !volume->zarrDataset() || !slice)
+    if (!volume || !volume->zarrDataset() || !_slice)
         return;
     
     QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->viewport()->geometry()).boundingRect();
     
-    // printf("curr area %f %f \n", );
-    
-    //nothing to see her, move along
     if (!force && QRectF(curr_img_area).contains(bbox))
         return;
     
@@ -371,7 +311,7 @@ void CVolumeViewer::renderVisible(bool force)
             }
     }*/
     
-    PlaneCoords *slice_plane = dynamic_cast<PlaneCoords*>(slice);
+    PlaneCoords *slice_plane = dynamic_cast<PlaneCoords*>(_slice);
     if (!_slice_vis_valid && seg_tool && slice_plane) {
 #pragma omp parallel for
         for (auto &wp : seg_tool->control_points) {
@@ -409,12 +349,12 @@ cv::Mat CVolumeViewer::getCoordSlice()
 }
 
 
-void CVolumeViewer::addIntersectVisSlice(PlaneCoords *slice_)
-{
-    other_slices.push_back(slice_);
-    
-    OnSliceChanged();
-}
+// void CVolumeViewer::addIntersectVisSlice(PlaneCoords *slice_)
+// {
+//     other_slices.push_back(slice_);
+//     
+//     OnSliceChanged();
+// }
 
 
 void CVolumeViewer::setSegTool(ControlPointSegmentator *tool)

@@ -11,6 +11,7 @@
 #include "UDataManipulateUtils.hpp"
 #include "SettingsDialog.hpp"
 #include "UndoCommands.hpp"
+#include "CSliceCollection.hpp"
 
 #include "vc/core/types/Color.hpp"
 #include "vc/core/types/Exceptions.hpp"
@@ -101,6 +102,7 @@ CWindow::CWindow()
     // setAttribute(Qt::WA_DeleteOnClose);
     SDL_Init(SDL_INIT_AUDIO);
     fVpkgChanged = false;
+    
 
     // default parameters for segmentation method
     // REVISIT - refactor me
@@ -134,14 +136,14 @@ CWindow::CWindow()
     //TODO make configurable
     chunk_cache = new ChunkCache(10e9);
     
-    // seg_tool = new ControlPointSegmentator();
-    seg_tool = new PointRectSegmentator();
+    _slices = new CSliceCollection();
     
-    slice_plane = new PlaneCoords({2000,2000,2000},{1,1,1});
-    slice_xy = new PlaneCoords({2000,2000,2000},{0,0,1});
-    slice_xz = new PlaneCoords({2000,2000,2000},{0,1,0});
-    slice_yz = new PlaneCoords({2000,2000,2000},{1,0,0});
-    slice_seg = seg_tool->generator();
+    // seg_tool = new PointRectSegmentator();
+    
+    _slices->setSlice("manual plane", new PlaneCoords({2000,2000,2000},{1,1,1}));
+    _slices->setSlice("xy plane", new PlaneCoords({2000,2000,2000},{0,0,1}));
+    _slices->setSlice("xz plane", new PlaneCoords({2000,2000,2000},{0,1,0}));
+    _slices->setSlice("yz plane", new PlaneCoords({2000,2000,2000},{1,0,0}));
     
     // create UI widgets
     CreateWidgets();
@@ -215,19 +217,18 @@ CWindow::~CWindow(void)
     SDL_Quit();
 }
 
-CVolumeViewer *CWindow::newConnectedCVolumeViewer(CoordGenerator *slice, QWidget *parent)
+CVolumeViewer *CWindow::newConnectedCVolumeViewer(std::string show_slice, QWidget *parent)
 {
-    auto volView = new CVolumeViewer(parent);
+    auto volView = new CVolumeViewer(_slices, parent);
     volView->setCache(chunk_cache);
     connect(this, &CWindow::sendVolumeChanged, volView, &CVolumeViewer::OnVolumeChanged);
     connect(this, &CWindow::sendSliceChanged, volView, &CVolumeViewer::OnSliceChanged);
     connect(volView, &CVolumeViewer::sendVolumeClicked, this, &CWindow::onVolumeClicked);
     connect(volView, &CVolumeViewer::sendShiftNormal, this, &CWindow::onShiftNormal);
-    volView->setSegTool(seg_tool);
     
+    volView->setSlice(show_slice);
     
-    
-    volView->setSlice(slice);
+    _viewers.push_back(volView);
     
     return volView;
 }
@@ -253,33 +254,22 @@ void CWindow::CreateWidgets(void)
 
     // add volume viewer
     auto aWidgetLayout = new QGridLayout;
-    view_xy = newConnectedCVolumeViewer(slice_xy, ui.tabSegment);
-    // view_xy->addIntersectVisSlice(slice_plane);
-    // view_xy->addIntersectVisSlice(slice_seg);
-    connect(this, &CWindow::sendSegSelected, this, &CWindow::onSegSelected);
-    aWidgetLayout->addWidget(view_xy, 0, 0);
-    view_xz = newConnectedCVolumeViewer(slice_xz, ui.tabSegment);
-    // view_xz->addIntersectVisSlice(slice_plane);
-    // view_xz->addIntersectVisSlice(slice_seg);
-    aWidgetLayout->addWidget(view_xz, 0, 1);
-    view_yz = newConnectedCVolumeViewer(slice_yz, ui.tabSegment);
-    // view_yz->addIntersectVisSlice(slice_plane);
-    // view_yz->addIntersectVisSlice(slice_seg);
-    aWidgetLayout->addWidget(view_yz, 1, 0);
-    view_plane = newConnectedCVolumeViewer(slice_plane, ui.tabSegment);
-    aWidgetLayout->addWidget(view_plane, 1, 1);
+    
+    CVolumeViewer *view;
+    view = newConnectedCVolumeViewer("xy plane", ui.tabSegment);
+    aWidgetLayout->addWidget(view, 0, 0);
+    view = newConnectedCVolumeViewer("xz plane", ui.tabSegment);
+    aWidgetLayout->addWidget(view, 1, 0);
+    view = newConnectedCVolumeViewer("yz plane", ui.tabSegment);
+    aWidgetLayout->addWidget(view, 0, 1);
+    view = newConnectedCVolumeViewer("manual plane", ui.tabSegment);
+    aWidgetLayout->addWidget(view, 1, 1);
+    view = newConnectedCVolumeViewer("segmentation", ui.tabSegment);
+    aWidgetLayout->addWidget(view, 1, 2);
+    
     ui.tabSegment->setLayout(aWidgetLayout);
     
-    view_seg = newConnectedCVolumeViewer(slice_seg, ui.tabSegment);
-    aWidgetLayout->addWidget(view_seg, 1, 2);
-    ui.tabSegment->setLayout(aWidgetLayout);
-
-    // connect(
-    //     fVolumeViewerWidget, SIGNAL(SendSignalPathChanged(std::string, PathChangePointVector, PathChangePointVector)), this,
-    //     SLOT(OnPathChanged(std::string, PathChangePointVector, PathChangePointVector)));
-    // connect(
-    //     fVolumeViewerWidget, SIGNAL(SendSignalAnnotationChanged()), this,
-    //     SLOT(OnAnnotationChanged()));
+    connect(this, &CWindow::sendSegSelected, this, &CWindow::onSegSelected);
 
     // new and remove path buttons
     connect(ui.btnNewPath, SIGNAL(clicked()), this, SLOT(OnNewPathClicked()));
@@ -2979,36 +2969,36 @@ void CWindow::onLocChanged(void)
 // Handle request to step impact range down
 void CWindow::onVolumeClicked(cv::Vec3f vol_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
 {
-    if (modifiers & Qt::ControlModifier) {
-        slice_plane->origin = vol_loc;
-        slice_xy->origin = vol_loc;
-        slice_xz->origin = vol_loc;
-        slice_yz->origin = vol_loc;
-        
-        lblLoc[0]->setText(QString::number(vol_loc[2]));
-        lblLoc[1]->setText(QString::number(vol_loc[1]));
-        lblLoc[2]->setText(QString::number(vol_loc[0]));
-    }
-    else {
-        seg_tool->add(vol_loc, {0,0,0});
-    }
-    
-    sendSliceChanged();
+//     if (modifiers & Qt::ControlModifier) {
+//         slice_plane->origin = vol_loc;
+//         slice_xy->origin = vol_loc;
+//         slice_xz->origin = vol_loc;
+//         slice_yz->origin = vol_loc;
+//         
+//         lblLoc[0]->setText(QString::number(vol_loc[2]));
+//         lblLoc[1]->setText(QString::number(vol_loc[1]));
+//         lblLoc[2]->setText(QString::number(vol_loc[0]));
+//     }
+//     else {
+//         seg_tool->add(vol_loc, {0,0,0});
+//     }
+//     
+//     sendSliceChanged();
 }
 
 // Handle request to step impact range down
 void CWindow::onShiftNormal(cv::Vec3f shift)
 {    
-    slice_plane->origin += shift;
-    slice_xy->origin += shift;
-    slice_xz->origin += shift;
-    slice_yz->origin += shift;
-    
-    lblLoc[0]->setText(QString::number(slice_plane->origin[2]));
-    lblLoc[1]->setText(QString::number(slice_plane->origin[1]));
-    lblLoc[2]->setText(QString::number(slice_plane->origin[0]));
-    
-    sendSliceChanged();
+//     slice_plane->origin += shift;
+//     slice_xy->origin += shift;
+//     slice_xz->origin += shift;
+//     slice_yz->origin += shift;
+//     
+//     lblLoc[0]->setText(QString::number(slice_plane->origin[2]));
+//     lblLoc[1]->setText(QString::number(slice_plane->origin[1]));
+//     lblLoc[2]->setText(QString::number(slice_plane->origin[0]));
+//     
+//     sendSliceChanged();
 }
 
 // Handle request to step impact range down
@@ -3020,44 +3010,18 @@ void CWindow::onPlaneSliceChanged(void)
         normal[i] = spNorm[i]->value();
     }
  
-    if (!slice_plane)
+    PlaneCoords *plane = dynamic_cast<PlaneCoords*>(_slices->getSlice("manual plane"));
+ 
+    if (!plane)
         return;
  
-    slice_plane->setNormal(normal);
-    
-    //FIXME don't need to rerender all (then again if cached thats fast ...)'
-    sendSliceChanged();
-    
-    if (!slice_xy || !currentVolume->isZarr)
-        return;
-    
-//     //FIXME we should probably move this into the volume-viewer e.g.  viewer also points to an "other" slice for vidsualization
-//     int sd;
-//     float render_scale, coord_scale;
-//     cv::Rect roi;
-//     std::vector<std::vector<cv::Point2f>> segments_xy;
-//     
-//     view_xy->currRoi(roi, render_scale, coord_scale, sd);
-//     
-//     if (!roi.width || !roi.height)
-//         return;
-//     
-//     printf("get segments\n");
-//     find_intersect_segments(segments_xy, slice_plane, slice_xy, roi, render_scale, coord_scale);
-//     for (auto s : segments_xy)
-//         std::cout << s << "\n";
-//     std::cout << "within " << roi << std::endl;
-// 
-//     for (auto seg : segments_xy)
-//         for (auto p : seg)
-//         {
-//             view_xy->fGraphicsView->scene()->addEllipse({p.x-2+roi.x,p.y-2+roi.y,4,4}, QPen(Qt::yellow, 1));
-//         }
+    plane->setNormal(normal);
+    _slices->setSlice("manual plane", plane);
 }
 
 void CWindow::onSegSelected(SegmentationStruct *seg)
 {
-    //working around two limitations in cv and PointSet apis to do zero copy into a mat ...
+    /*//working around two limitations in cv and PointSet apis to do zero copy into a mat ...
     cv::Mat src(seg->fMasterCloud.height(), seg->fMasterCloud.width(), CV_64FC3, (void*)const_cast<cv::Vec3d*>(&seg->fMasterCloud[0]));
     
     cv::Mat_<cv::Vec3f> points;
@@ -3073,5 +3037,5 @@ void CWindow::onSegSelected(SegmentationStruct *seg)
     //FIXME need to think about how we handle these references ...
     view_seg->setSlice(slice_seg);
     sendSliceChanged();
-    view_seg->renderVisible(true);
+    view_seg->renderVisible(true);*/
 }

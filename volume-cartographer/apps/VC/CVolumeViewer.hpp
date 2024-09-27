@@ -18,6 +18,7 @@ namespace ChaoVis
 
 class CVolumeViewerView;
 class SegmentationStruct;
+class CSliceCollection;
 
 class CVolumeViewer : public QWidget
 {
@@ -32,9 +33,8 @@ public:
 
     QPushButton* fNextBtn;
     QPushButton* fPrevBtn;
-    CVolumeViewer(QWidget* parent = 0);
+    CVolumeViewer(CSliceCollection *col, QWidget* parent = 0);
     ~CVolumeViewer(void);
-    virtual void SetButtonsEnabled(bool state);
 
     void SetViewState(EViewState nViewState) { fViewState = nViewState; }
     EViewState GetViewState(void) { return fViewState; }
@@ -48,12 +48,11 @@ public:
     void ResetRotation();
     void setCache(ChunkCache *cache);
     void loadSlice();
-    void setSlice(CoordGenerator *slice);
+    void setSlice(const std::string &name);
     cv::Mat getCoordSlice();
     void renderVisible(bool force = false);
-    void currRoi(cv::Rect &roi, float &render_scale, float &coord_scale, int &sd_idx) const;
     cv::Mat render_area(const cv::Rect &roi);
-    void addIntersectVisSlice(PlaneCoords *slice_);
+    // void addIntersectVisSlice(PlaneCoords *slice_);
     void setSegTool(ControlPointSegmentator *tool);
     void invalidateVis();
     
@@ -65,7 +64,7 @@ protected:
 public slots:
     void OnVolumeChanged(volcart::Volume::Pointer vol);
     void onVolumeClicked(QPointF scene_loc,Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
-    void OnSliceChanged();
+    void OnSliceChanged(std::string name, CoordGenerator *slice);
     void onScrolled();
     void onZoom(int steps, QPointF scene_point, Qt::KeyboardModifiers modifiers);
 
@@ -109,7 +108,8 @@ protected:
     QGraphicsPixmapItem* fBaseImageItem;
     
     volcart::Volume::Pointer volume = nullptr;
-    CoordGenerator *slice = nullptr;
+    CoordGenerator *_slice = nullptr;
+    std::string _slice_name;
     int axis = 0;
     int loc[3] = {0,0,0};
     
@@ -123,11 +123,13 @@ protected:
     float _min_scale = 1;
     
     QGraphicsEllipseItem *center_marker = nullptr;
-    std::vector<PlaneCoords*> other_slices;
+    // std::vector<PlaneCoords*> other_slices;
     
     bool _slice_vis_valid = false;
     std::vector<QGraphicsItem*> slice_vis_items; 
     ControlPointSegmentator *seg_tool = nullptr;
+    
+    CSliceCollection *_slice_col = nullptr;
 };  // class CVolumeViewer
 
 }  // namespace ChaoVis

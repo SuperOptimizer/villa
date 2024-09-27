@@ -47,6 +47,7 @@ namespace ChaoVis
 {
 
 class CVolumeViewer;
+class CSliceCollection;
 
 class AnnotationTreeWidgetItem : public QTreeWidgetItem {
   public:
@@ -110,7 +111,7 @@ signals:
     void submitSegmentation(Segmenter::Pointer s);
     void sendLocChanged(int x, int y, int z);
     void sendVolumeChanged(volcart::Volume::Pointer vol);
-    void sendSliceChanged();
+    void sendSliceChanged(std::string,CoordGenerator*);
     //FIXME will need to thing a lot about the interaction logic given the current, very "integrated" style
     void sendSegSelected(SegmentationStruct *);
 
@@ -140,7 +141,7 @@ private:
     void UpdateRecentVolpkgList(const QString& path);
     void RemoveEntryFromRecentVolpkg(const QString& path);
 
-    CVolumeViewer *newConnectedCVolumeViewer(CoordGenerator *slice, QWidget *parent);
+    CVolumeViewer *newConnectedCVolumeViewer(std::string show_slice, QWidget *parent);
     void closeEvent(QCloseEvent* event);
 
     void setWidgetsEnabled(bool state);
@@ -387,20 +388,9 @@ private:
     std::atomic<bool> stopPrefetching;
     std::atomic<int> prefetchSliceIndex;
     
-    PlaneCoords *slice_plane = nullptr;
-    PlaneCoords *slice_xy = nullptr;
-    PlaneCoords *slice_xz = nullptr;
-    PlaneCoords *slice_yz = nullptr;
-    CoordGenerator *slice_seg = nullptr;
     ChunkCache *chunk_cache;
-    
-    CVolumeViewer *view_xy = nullptr;
-    CVolumeViewer *view_xz = nullptr;
-    CVolumeViewer *view_yz = nullptr;
-    CVolumeViewer *view_plane = nullptr;
-    CVolumeViewer *view_seg = nullptr;
-    
-    ControlPointSegmentator *seg_tool;
+    std::vector<CVolumeViewer*> _viewers;
+    CSliceCollection *_slices;
 };  // class CWindow
 
 
