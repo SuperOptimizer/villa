@@ -55,6 +55,8 @@ public:
     cv::Mat _normals;
     float _sx = 1.0;
     float _sy = 1.0;
+private:
+    cv::Mat &normals();
 };
 
 class IDWHeightPlaneCoords : public PlaneCoords

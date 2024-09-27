@@ -952,13 +952,17 @@ static cv::Mat_<cv::Vec3f> calc_normals(const cv::Mat_<cv::Vec3f> &points) {
     return normals;
 }
 
-void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
+//TODO only calc for area?
+cv::Mat &GridCoords::normals()
 {
-    if (_normals.empty()) {
-        //TODO calc normals on the fly?
+    if (_normals.empty()) 
         _normals = calc_normals(*_points);
-    }
 
+    return _normals;
+}
+
+void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
+{   
     if (render_scale > 1.0 || render_scale < 0.5) {
         std::cout << "FIXME: support wider render scale for GridCoords::gen_coords()" << std::endl;
         return;
@@ -975,6 +979,13 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
     
     cv::warpAffine(*_points, warped, affine, {w,h});
     
+    if (_z_off) {
+        cv::Mat warped_normals;
+        cv::warpAffine(normals(), warped_normals, affine, {w,h});
+        
+        warped += warped_normals*_z_off;
+    }
+    
 #pragma omp parallel for
     for(int j=0;j<h;j++)
         for(int i=0;i<w;i++) {
@@ -983,43 +994,6 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
             coords(j,i,1) = point[1]*coord_scale;
             coords(j,i,2) = point[0]*coord_scale;
         }
-            
-    /*//so basically we crop into _scaled to generate coords
-    cv::Rect tgt(x,y,w,h);
-    cv::Rect src(0,0,_scaled.cols*coord_scale, _scaled.rows*coord_scale);
-    
-    cv::Rect common = tgt & src;
-    
-    int oy = 0;
-    int ox = 0;
-    
-    if (common.x > x)
-        ox = (common.x-x)*render_scale;
-    
-    if (common.y > y)
-        oy = (common.y-y)*render_scale;
-    
-    printf("%d %d\n", ox, oy);
-    
-    // float m = 1/render_scale;
-    int step = 1/coord_scale;
-    
-    printf("scales %f %f\n", render_scale, coord_scale);
-    assert(render_scale == 1.0);
-        
-        //FIXME implement normal for even render scale
-#pragma omp parallel for
-    for(int j=0;j<common.height;j ++) {
-        const cv::Vec3f *row = _scaled.ptr<cv::Vec3f>((common.y+j)*step);
-        const cv::Vec3f *row_n = _normals.ptr<cv::Vec3f>((common.y+j)*step);
-        for(int i=0;i<common.width;i ++) {
-            cv::Vec3f point = row[(common.x+i)*step]*coord_scale;
-            cv::Vec3f n = row_n[(common.x+i)*step]*coord_scale;
-            coords(oy+j,ox+i,0) = point[2]+_z_off*n[2];
-            coords(oy+j,ox+i,1) = point[1]+_z_off*n[1];
-            coords(oy+j,ox+i,2) = point[0]+_z_off*n[0];
-        }
-    };*/
 }
 
 static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
@@ -1137,15 +1111,20 @@ void PointRectSegmentator::set(cv::Mat_<cv::Vec3f> &points)
             control_points.push_back(row[i]);
     }
     
-    double sum_x = 0;
-    double sum_y = 0;
-    int count = 0;
-    for(int j=1;j<_points.size().height;j+=8) {
-        cv::Vec3f *row = _points.ptr<cv::Vec3f>(j);
-        for(int i=1;i<_points.size().width;i+=8) {
-            cv::Vec3f v = _points(j,i)-_points(j,i-1);
+    //so we get something somewhat meaningful by default
+    double sum_x = 1;
+    double sum_y = 1;
+    int count = 1;
+    //NOTE leave out bordes as these contain lots of artifacst ... would need median or something ...
+    int jmin = points.size().height*0.1;
+    int jmax = points.size().height*0.9;
+#pragma omp parallel for
+    for(int j=jmin;j<jmax;j+=8) {
+        cv::Vec3f *row = points.ptr<cv::Vec3f>(j);
+        for(int i=points.size().width*0.1;i<points.size().width*0.9;i+=8) {
+            cv::Vec3f v = points(j,i)-points(j,i-1);
             sum_x += sqrt(v.dot(v));
-            v = _points(j,i)-_points(j-1,i);
+            v = points(j,i)-points(j-1,i);
             sum_y += sqrt(v.dot(v));
             count++;
         }
@@ -1154,9 +1133,7 @@ void PointRectSegmentator::set(cv::Mat_<cv::Vec3f> &points)
     _sx = count/sum_x;
     _sy = count/sum_y;
     
-    printf("scles %f %f\n",_sx, _sy);
-    
-    _generator.reset(new GridCoords(&_points, _sx*5, _sy*5));
+    _generator.reset(new GridCoords(&_points, _sx, _sy));
 }
 
 CoordGenerator *PointRectSegmentator::generator()
