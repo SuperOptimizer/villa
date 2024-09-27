@@ -2977,20 +2977,9 @@ void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, CoordGenerato
 {
     //current action: move default POI
     if (modifiers & Qt::ControlModifier) {
-        POI *poi = _slices->poi("focus");
-        
-        if (!poi)
-            poi = new POI;
-
-        poi->src = slice;
-        poi->p = vol_loc;
-        poi->n = normal;
-        
-        _slices->setPOI("focus", poi);
-        
-        GridCoords *grid_slice = dynamic_cast<GridCoords*>(slice);
-        
         //TODO make this configurable and cleaner?
+        //NOTE this comes before the focus poi, so focus is applied by views using these slices
+        GridCoords *grid_slice = dynamic_cast<GridCoords*>(slice);
         if (grid_slice) {
             PlaneCoords *segXZ = dynamic_cast<PlaneCoords*>(_slices->slice("seg xz"));
             PlaneCoords *segYZ = dynamic_cast<PlaneCoords*>(_slices->slice("seg yz"));
@@ -3000,7 +2989,7 @@ void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, CoordGenerato
                 segXZ = new PlaneCoords();
             if (!segYZ)
                 segYZ = new PlaneCoords();
-
+            
             p2 = grid_slice->coord({slice_loc[0]+1,slice_loc[1],0});
             
             segXZ->origin = vol_loc;
@@ -3011,9 +3000,20 @@ void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, CoordGenerato
             segYZ->origin = vol_loc;
             segYZ->setNormal(p2-vol_loc);
             
-            _slices->setSlice("seg xz", segYZ);
+            _slices->setSlice("seg xz", segXZ);
             _slices->setSlice("seg yz", segYZ);
         }
+        
+        POI *poi = _slices->poi("focus");
+        
+        if (!poi)
+            poi = new POI;
+
+        poi->src = slice;
+        poi->p = vol_loc;
+        poi->n = normal;
+        
+        _slices->setPOI("focus", poi);
         
         
 //FIXME add generic display of POIs!

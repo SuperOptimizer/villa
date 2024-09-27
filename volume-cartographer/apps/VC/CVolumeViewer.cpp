@@ -265,10 +265,10 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
     if (!plane)
         return;
     
+    fGraphicsView->centerOn(0,0);
+    
     if (poi->p == plane->origin)
         return;
-    
-    fGraphicsView->centerOn(0,0);
     
     plane->origin = poi->p;
     
