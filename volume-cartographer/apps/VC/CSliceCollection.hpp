@@ -28,9 +28,9 @@ public:
     void setSlice(const std::string &name, CoordGenerator*);
     void setSegmentator(const std::string &name, ControlPointSegmentator*);
     void setPOI(const std::string &name, POI *poi);
-    CoordGenerator* getSlice(const std::string &name);
-    ControlPointSegmentator* getSegmentator(const std::string &name);
-    POI *getPOI(const std::string &name);
+    CoordGenerator*slice(const std::string &name);
+    ControlPointSegmentator* segmentator(const std::string &name);
+    POI *poi(const std::string &name);
     std::vector<std::string> slices();
     std::vector<std::string> segmentators();
     std::vector<std::string> pois();

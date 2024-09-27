@@ -264,10 +264,12 @@ void CWindow::CreateWidgets(void)
     QMdiArea *mdiArea = new QMdiArea(ui.tabSegment);
     aWidgetLayout->addWidget(mdiArea);
     
+    newConnectedCVolumeViewer("manual plane", mdiArea);
+    newConnectedCVolumeViewer("seg xz", mdiArea);
+    newConnectedCVolumeViewer("seg yz", mdiArea);
     newConnectedCVolumeViewer("xy plane", mdiArea);
     newConnectedCVolumeViewer("xz plane", mdiArea);
     newConnectedCVolumeViewer("yz plane", mdiArea);
-    newConnectedCVolumeViewer("manual plane", mdiArea);
     newConnectedCVolumeViewer("segmentation", mdiArea);
     mdiArea->tileSubWindows();
     
@@ -2971,21 +2973,47 @@ void CWindow::onLocChanged(void)
 }
 
 // Handle request to step impact range down
-void CWindow::onVolumeClicked(cv::Vec3f vol_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
+void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, CoordGenerator *slice, cv::Vec3f slice_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
 {
     //current action: move default POI
     if (modifiers & Qt::ControlModifier) {
-        printf("set poi!\n");
-        POI *poi = _slices->getPOI("focus");
+        POI *poi = _slices->poi("focus");
         
         if (!poi)
             poi = new POI;
-        
-        //FIXME onVolumeClicked should know the slice!
-        poi->src = nullptr;
+
+        poi->src = slice;
         poi->p = vol_loc;
+        poi->n = normal;
         
         _slices->setPOI("focus", poi);
+        
+        GridCoords *grid_slice = dynamic_cast<GridCoords*>(slice);
+        
+        //TODO make this configurable and cleaner?
+        if (grid_slice) {
+            PlaneCoords *segXZ = dynamic_cast<PlaneCoords*>(_slices->slice("seg xz"));
+            PlaneCoords *segYZ = dynamic_cast<PlaneCoords*>(_slices->slice("seg yz"));
+            cv::Vec3f p2;
+            
+            if (!segXZ)
+                segXZ = new PlaneCoords();
+            if (!segYZ)
+                segYZ = new PlaneCoords();
+
+            p2 = grid_slice->coord({slice_loc[0]+1,slice_loc[1],0});
+            
+            segXZ->origin = vol_loc;
+            segXZ->setNormal(p2-vol_loc);
+            
+            p2 = grid_slice->coord({slice_loc[0],slice_loc[1]+1,0});
+            
+            segYZ->origin = vol_loc;
+            segYZ->setNormal(p2-vol_loc);
+            
+            _slices->setSlice("seg xz", segYZ);
+            _slices->setSlice("seg yz", segYZ);
+        }
         
         
 //FIXME add generic display of POIs!
@@ -3022,7 +3050,7 @@ void CWindow::onPlaneSliceChanged(void)
         normal[i] = spNorm[i]->value();
     }
  
-    PlaneCoords *plane = dynamic_cast<PlaneCoords*>(_slices->getSlice("manual plane"));
+    PlaneCoords *plane = dynamic_cast<PlaneCoords*>(_slices->slice("manual plane"));
  
     if (!plane)
         return;

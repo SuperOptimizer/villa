@@ -953,7 +953,7 @@ static cv::Mat_<cv::Vec3f> calc_normals(const cv::Mat_<cv::Vec3f> &points) {
 }
 
 //TODO only calc for area?
-cv::Mat &GridCoords::normals()
+cv::Mat_<cv::Vec3f> &GridCoords::normals()
 {
     if (_normals.empty()) 
         _normals = calc_normals(*_points);
@@ -961,8 +961,40 @@ cv::Mat &GridCoords::normals()
     return _normals;
 }
 
+static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
+{
+    int x = p[0];
+    int y = p[1];
+    float fx = p[0]-x;
+    float fy = p[1]-y;
+    
+    cv::Vec3f p00 = points(y,x);
+    cv::Vec3f p01 = points(y,x+1);
+    cv::Vec3f p10 = points(y+1,x);
+    cv::Vec3f p11 = points(y+1,x+1);
+    
+    cv::Vec3f p0 = (1-fx)*p00 + fx*p01;
+    cv::Vec3f p1 = (1-fx)*p10 + fx*p11;
+    
+    return (1-fy)*p0 + fy*p1;
+}
+
+cv::Vec3f CoordGenerator::coord(const cv::Vec3f &loc)
+{
+    xt::xarray<float> coords;
+    assert(loc.z == 0);
+    gen_coords(coords, {loc[0],loc[1],1,1}, 1.0, 1.0);
+
+    return {coords(0,0,2),coords(0,0,1),coords(0,0,0)};
+}
+
+cv::Vec3f GridCoords::normal(const cv::Vec3f &loc)
+{
+    return at_int(normals(), {loc[1]*_sy, loc[1]*_sx});
+}
+
 void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
-{   
+{
     if (render_scale > 1.0 || render_scale < 0.5) {
         std::cout << "FIXME: support wider render scale for GridCoords::gen_coords()" << std::endl;
         return;
@@ -994,24 +1026,6 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
             coords(j,i,1) = point[1]*coord_scale;
             coords(j,i,2) = point[0]*coord_scale;
         }
-}
-
-static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
-{
-    int x = p[0];
-    int y = p[1];
-    float fx = p[0]-x;
-    float fy = p[1]-y;
-    
-    cv::Vec3f p00 = points(y,x);
-    cv::Vec3f p01 = points(y,x+1);
-    cv::Vec3f p10 = points(y+1,x);
-    cv::Vec3f p11 = points(y+1,x+1);
-    
-    cv::Vec3f p0 = (1-fx)*p00 + fx*p01;
-    cv::Vec3f p1 = (1-fx)*p10 + fx*p11;
-    
-    return (1-fy)*p0 + fy*p1;
 }
 
 static float sdist(const cv::Vec3f &a, const cv::Vec3f &b)

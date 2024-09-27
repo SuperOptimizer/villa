@@ -123,7 +123,7 @@ public slots:
     void onImpactRangeDown(void);
     void onLocChanged(void);
     void onPlaneSliceChanged(void);
-    void onVolumeClicked(cv::Vec3f vol_loc,Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
+    void onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, CoordGenerator *slice, cv::Vec3f slice_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void onShiftNormal(cv::Vec3f step);
     void onSegSelected(SegmentationStruct *seg);
 

@@ -206,12 +206,13 @@ void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, 
     if (!_slice)
         return;
 
-    xt::xarray<float> coords;
-    _slice->gen_coords(coords, {scene_loc.x(),scene_loc.y(),1,1}, 1.0, _ds_scale);
+    cv::Vec3f slice_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
     
-    coords /= _ds_scale;
+    cv::Vec3f n = _slice->normal(slice_loc);
+    cv::Vec3f p = _slice->coord(slice_loc);
+    
 
-    sendVolumeClicked({coords(0,0,2),coords(0,0,1),coords(0,0,0)}, buttons, modifiers);
+    sendVolumeClicked(p, n, _slice, slice_loc, buttons, modifiers);
 }
 
 void CVolumeViewer::setCache(ChunkCache *cache_)
@@ -223,7 +224,7 @@ void CVolumeViewer::setSlice(const std::string &name)
 {
     _slice_name = name;
     _slice = nullptr;
-    onSliceChanged(name, _slice_col->getSlice(name));
+    onSliceChanged(name, _slice_col->slice(name));
 }
 
 
@@ -255,7 +256,7 @@ void CVolumeViewer::onSliceChanged(std::string name, CoordGenerator *slice)
 
 //TODO make poi tracking optional and configurable
 void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
-{
+{    
     if (!poi || name != "focus")
         return;
     
@@ -270,6 +271,7 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
     fGraphicsView->centerOn(0,0);
     
     plane->origin = poi->p;
+    
     _slice_col->setSlice(_slice_name, plane);
 }
 

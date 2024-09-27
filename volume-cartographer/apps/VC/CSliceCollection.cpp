@@ -22,21 +22,21 @@ void CSliceCollection::setPOI(const std::string &name, POI *poi)
     sendPOIChanged(name, poi);
 }
 
-CoordGenerator* CSliceCollection::getSlice(const std::string &name)
+CoordGenerator* CSliceCollection::slice(const std::string &name)
 {
     if (!_slices.count(name))
         return nullptr;
     return _slices[name];
 }
 
-ControlPointSegmentator* CSliceCollection::getSegmentator(const std::string &name)
+ControlPointSegmentator* CSliceCollection::segmentator(const std::string &name)
 {
     if (!_segmentators.count(name))
         return nullptr;
     return _segmentators[name];
 }
 
-POI *CSliceCollection::getPOI(const std::string &name)
+POI *CSliceCollection::poi(const std::string &name)
 {
     if (!_pois.count(name))
         return nullptr;

@@ -72,7 +72,7 @@ public slots:
 signals:
     void SendSignalSliceShift(int shift, int axis);
     void SendSignalStatusMessageAvailable(QString text, int timeout);
-    void sendVolumeClicked(cv::Vec3f vol_loc,Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
+    void sendVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, CoordGenerator *slice, cv::Vec3f slice_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void sendShiftNormal(cv::Vec3f step);
 
 protected:
