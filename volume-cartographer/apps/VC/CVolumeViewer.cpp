@@ -193,6 +193,13 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
             _scene_scale = _scale/_ds_scale;
         }
         
+        QTransform M = fGraphicsView->transform();
+        if (_scene_scale != M.m11()) {
+            double delta_scale = _scene_scale/M.m11();
+            M.scale(delta_scale,delta_scale);
+            fGraphicsView->setTransform(M);
+        }
+        
         curr_img_area = {0,0,0,0};
         QPointF center = visible_center(fGraphicsView) * zoom;
         
