@@ -8,6 +8,12 @@
 
 using namespace ChaoVis;
 
+
+CVolumeViewerView::CVolumeViewerView(QWidget* parent) : QGraphicsView(parent)
+{ 
+    setMouseTracking(true);
+};
+
 void CVolumeViewerView::scrollContentsBy(int dx, int dy)
 {
     sendScrolled();
@@ -75,6 +81,12 @@ void CVolumeViewerView::mouseMoveEvent(QMouseEvent *event)
         _last_pan_position = event->position();
         event->accept();
         return;
+    }
+    else {
+        QPointF global_loc = viewport()->mapFromGlobal(event->globalPosition());
+        QPointF scene_loc = mapToScene({int(global_loc.x()),int(global_loc.y())});
+        
+        sendCursorMove(scene_loc);
     }
     event->ignore();
 }

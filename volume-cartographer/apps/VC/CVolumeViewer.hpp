@@ -68,6 +68,7 @@ public slots:
     void onSegmentatorChanged(std::string name, ControlPointSegmentator *seg);
     void onScrolled();
     void onZoom(int steps, QPointF scene_point, Qt::KeyboardModifiers modifiers);
+    void onCursorMove(QPointF);
 
 signals:
     void SendSignalSliceShift(int shift, int axis);
@@ -123,7 +124,8 @@ protected:
     float _max_scale = 1;
     float _min_scale = 1;
     
-    QGraphicsEllipseItem *center_marker = nullptr;
+    QGraphicsItem *_center_marker = nullptr;
+    QGraphicsItem *_cursor = nullptr;
     // std::vector<PlaneCoords*> other_slices;
     
     bool _slice_vis_valid = false;

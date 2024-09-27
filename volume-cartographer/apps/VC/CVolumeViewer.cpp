@@ -54,6 +54,7 @@ CVolumeViewer::CVolumeViewer(CSliceCollection *slices, QWidget* parent)
     connect(fGraphicsView, &CVolumeViewerView::sendScrolled, this, &CVolumeViewer::onScrolled);
     connect(fGraphicsView, &CVolumeViewerView::sendVolumeClicked, this, &CVolumeViewer::onVolumeClicked);
     connect(fGraphicsView, &CVolumeViewerView::sendZoom, this, &CVolumeViewer::onZoom);
+    connect(fGraphicsView, &CVolumeViewerView::sendCursorMove, this, &CVolumeViewer::onCursorMove);
 
     // Create graphics scene
     fScene = new QGraphicsScene({-2500,-2500,5000,5000}, this);
@@ -110,6 +111,23 @@ QPointF visible_center(QGraphicsView *view)
 {
     QRectF bbox = view->mapToScene(view->viewport()->geometry()).boundingRect();
     return bbox.topLeft() + QPointF(bbox.width(),bbox.height())*0.5;
+}
+
+
+void CVolumeViewer::onCursorMove(QPointF scene_loc)
+{
+    if (!_slice)
+        return;
+    
+    cv::Vec3f slice_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
+
+    POI *cursor = _slice_col->poi("cursor");
+    if (!cursor)
+        cursor = new POI;
+    
+    cursor->p = _slice->coord(slice_loc);
+    
+    _slice_col->setPOI("cursor", cursor);
 }
 
 void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers modifiers)
@@ -254,25 +272,65 @@ void CVolumeViewer::onSliceChanged(std::string name, CoordGenerator *slice)
     renderVisible();
 }
 
+QGraphicsItem *cursorItem()
+{
+    QPen pen(QBrush(Qt::cyan), 3);
+    QGraphicsLineItem *parent = new QGraphicsLineItem(-10, 0, -5, 0);
+    parent->setZValue(10);
+    parent->setPen(pen);
+    QGraphicsLineItem *line = new QGraphicsLineItem(10, 0, 5, 0, parent);
+    line->setPen(pen);
+    line = new QGraphicsLineItem(0, -10, 0, -5, parent);
+    line->setPen(pen);
+    line = new QGraphicsLineItem(0, 10, 0, 5, parent);
+    line->setPen(pen);
+    
+    return parent;
+}
+
 //TODO make poi tracking optional and configurable
 void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
 {    
-    if (!poi || name != "focus")
+    if (!poi)
         return;
     
-    PlaneCoords *plane = dynamic_cast<PlaneCoords*>(_slice);
-    
-    if (!plane)
-        return;
-    
-    fGraphicsView->centerOn(0,0);
-    
-    if (poi->p == plane->origin)
-        return;
-    
-    plane->origin = poi->p;
-    
-    _slice_col->setSlice(_slice_name, plane);
+    if (name == "focus") {
+        PlaneCoords *plane = dynamic_cast<PlaneCoords*>(_slice);
+        
+        if (!plane)
+            return;
+        
+        fGraphicsView->centerOn(0,0);
+        
+        if (poi->p == plane->origin)
+            return;
+        
+        plane->origin = poi->p;
+        
+        _slice_col->setSlice(_slice_name, plane);
+    }
+    else if (name == "cursor") {
+        PlaneCoords *slice_plane = dynamic_cast<PlaneCoords*>(_slice);
+        
+        if (slice_plane) {
+            
+            if (!_cursor) {
+                _cursor = cursorItem();
+                fScene->addItem(_cursor);
+            }
+            
+            float dist = slice_plane->pointDist(poi->p);
+            
+            if (dist < 100.0/_ds_scale) {
+                cv::Vec3f sp = slice_plane->project(poi->p, 1.0, _ds_scale);
+                
+                _cursor->setPos(sp[0], sp[1]);
+                _cursor->setOpacity(1.0-dist*_ds_scale/100.0);
+            }
+            else
+                _cursor->setOpacity(0.0);
+        }
+    }
 }
 
 void CVolumeViewer::onSegmentatorChanged(std::string name, ControlPointSegmentator *seg)
@@ -319,11 +377,14 @@ void CVolumeViewer::renderVisible(bool force)
     else
         fBaseImageItem->setPixmap(pixmap);
     
-    if (!center_marker)
-        center_marker = fScene->addEllipse({-10,-10,20,20}, QPen(Qt::yellow, 3, Qt::DashDotLine, Qt::RoundCap, Qt::RoundJoin));
+    if (!_center_marker) {
+        _center_marker = fScene->addEllipse({-10,-10,20,20}, QPen(Qt::yellow, 3, Qt::DashDotLine, Qt::RoundCap, Qt::RoundJoin));
+        _center_marker->setZValue(11);
+        
+    }
 
     
-    center_marker->setParentItem(fBaseImageItem);
+    _center_marker->setParentItem(fBaseImageItem);
     
     fBaseImageItem->setOffset(curr_img_area.topLeft());
     

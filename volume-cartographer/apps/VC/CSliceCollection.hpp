@@ -11,9 +11,9 @@ namespace ChaoVis
     
 struct POI
 {
-    cv::Vec3f p;
-    CoordGenerator *src;
-    cv::Vec3f n;
+    cv::Vec3f p = {0,0,0};
+    CoordGenerator *src = nullptr;
+    cv::Vec3f n = {0,0,0};
 };
 
 //this class shall handle all the (gui) interactions for its stored objects but does not itself provide the gui
