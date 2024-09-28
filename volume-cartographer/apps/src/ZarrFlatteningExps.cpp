@@ -656,7 +656,7 @@ cv::Mat_<cv::Vec3f> surf_alpha_integ(z5::Dataset *ds, ChunkCache *chunk_cache, c
     cv::cvtColor(integ_z, mul, cv::COLOR_GRAY2BGR);
     cv::Mat_<cv::Vec3f> new_surf = points + normals.mul(mul);
     cv::Mat_<cv::Vec3f> new_surf_1 = new_surf + normals;
-    cv::Mat_<cv::Vec3f> new_surf_2 = new_surf + 2*normals;
+    cv::Mat_<cv::Vec3f> new_surf_n1 = new_surf - normals;
 //     
     xt::xarray<uint8_t> img;
     readInterpolated3D(img, ds, xt_from_mat(new_surf*0.5), chunk_cache);
@@ -669,9 +669,9 @@ cv::Mat_<cv::Vec3f> surf_alpha_integ(z5::Dataset *ds, ChunkCache *chunk_cache, c
     slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
     cv::imwrite("new_surf1.tif", slice);
     
-    readInterpolated3D(img, ds, xt_from_mat(new_surf_2*0.5), chunk_cache);
+    readInterpolated3D(img, ds, xt_from_mat(new_surf_n1*0.5), chunk_cache);
     slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
-    cv::imwrite("new_surf2.tif", slice);
+    cv::imwrite("new_surf-1.tif", slice);
     
     // cv::Mat_<float> height_vis = height/21;
     // height_vis = cv::min(height_vis,1-height_vis)*2;
