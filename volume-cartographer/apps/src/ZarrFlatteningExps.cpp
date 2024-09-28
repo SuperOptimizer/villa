@@ -527,6 +527,7 @@ cv::Mat_<cv::Vec3f> surf_normal_search(z5::Dataset *ds, ChunkCache *chunk_cache,
     readInterpolated3D(img, ds, xt_from_mat(new_surf*0.5), chunk_cache);
     cv::Mat_<uint8_t> slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
 
+    printf("writ slice!\n");
     cv::imwrite("surf.tif", slice);
     
     cv::Mat_<float> height_vis = height/21;
@@ -559,6 +560,148 @@ cv::Mat_<cv::Vec3f> surf_normal_search(z5::Dataset *ds, ChunkCache *chunk_cache,
     return new_surf;
 }
 
+cv::Mat_<cv::Vec3f> surf_alpha_integ(z5::Dataset *ds, ChunkCache *chunk_cache, const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<cv::Vec3f> &normals)
+{
+    cv::Mat_<cv::Vec3f> res;
+    
+    cv::Mat_<float> integ(points.size(), 0);
+    cv::Mat_<float> integ_blur(points.size(), 0);
+    cv::Mat_<float> transparent(points.size(), 1);
+    cv::Mat_<float> blur(points.size(), 0);
+    cv::Mat_<float> integ_z(points.size(), 0);
+    
+    for(int n=0;n<21;n++) {
+        xt::xarray<uint8_t> raw_extract;
+        // coords = points_reg*2.0;
+        float off = (n-10)*0.5;
+        readInterpolated3D(raw_extract, ds, xt_from_mat((points+normals*off)*0.5), chunk_cache);
+        cv::Mat_<uint8_t> slice = cv::Mat(raw_extract.shape(0), raw_extract.shape(1), CV_8U, raw_extract.data());
+        
+        // char buf[64];
+        // sprintf(buf, "slice%02d.tif", n);
+        // cv::imwrite(buf, slice);
+        
+        cv::Mat floatslice;
+        slice.convertTo(floatslice, CV_32F, 1/255.0);
+        
+        cv::GaussianBlur(floatslice, blur, {5,5}, 0);
+        cv::Mat opaq_slice = blur;
+        
+        float low = 0.0; //map to 0
+        float up = 1.0; //map to 1
+        opaq_slice = (opaq_slice-low)/(up-low);
+        opaq_slice = cv::min(opaq_slice,1);
+        opaq_slice = cv::max(opaq_slice,0);
+        
+        // sprintf(buf, "opaq%02d.tif", n);
+        // cv::imwrite(buf, opaq_slice);
+        
+        printf("vals %d i t o b v: %f %f %f %f\n", n, integ.at<float>(500,600), transparent.at<float>(500,600), opaq_slice.at<float>(500,600), blur.at<float>(500,600), floatslice.at<float>(500,600));
+        
+        cv::Mat joint = transparent.mul(opaq_slice);
+        integ += joint.mul(floatslice);
+        integ_blur += joint.mul(blur);
+        integ_z += joint * off;
+        transparent = transparent-joint;
+        
+        // sprintf(buf, "transp%02d.tif", n);
+        // cv::imwrite(buf, transparent);
+        // 
+        // sprintf(buf, "opaq2%02d.tif", n);
+        // cv::imwrite(buf, opaq_slice);
+        
+        printf("res %d i t: %f %f\n", n, integ.at<float>(500,600), transparent.at<float>(500,600));
+        
+        // avgimg = avgimg + floatslice;
+        // cv::imwrite(buf, avgimg/(n+1));
+        
+        // slices.push_back(slice);
+        // for(int j=0;j<points.rows;j++)
+        //     for(int i=0;i<points.cols;i++) {
+        //         //found == 0: still searching for first time < 50!
+        //         //found == 1: record < 50 start looking for >= 50 to stop
+        //         //found == 2: done, found border
+        //         if (slice(j,i) < 40 && found(j,i) <= 1) {
+        //             height(j,i) = n+1;
+        //             found(j,i) = 1;
+        //         }
+        //         else if (slice(j,i) >= 40 && found(j,i) == 1) {
+        //             found(j,i) = 2;
+        //         }
+        //     }
+    }        // slices.push_back(slice);
+    
+    integ /= (1-transparent);
+    integ_blur /= (1-transparent);
+    integ_z /= (1-transparent);
+    
+    cv::imwrite("blended.tif", integ);
+    cv::imwrite("blended_blur.tif", integ_blur);
+    cv::imwrite("blended_comp1.tif", integ/(integ_blur+0.5));
+    cv::imwrite("blended_comp3.tif", integ-integ_blur+0.5);
+    cv::imwrite("blended_comp2.tif", integ/(integ_blur+0.01));
+    cv::imwrite("tranparency.tif", transparent);
+    
+    // for(int j=0;j<points.rows;j++)
+    //     for(int i=0;i<points.cols;i++)
+    //         if (found(j,i) == 1)
+    //             height(j,i) = 0;
+    
+    //never change opencv, never change ...
+
+    // cv::cvtColor(height, mul, cv::COLOR_GRAY2BGR);
+    // cv::imwrite("max.tif", maximg);
+
+    cv::Mat mul;
+    cv::cvtColor(integ_z, mul, cv::COLOR_GRAY2BGR);
+    cv::Mat_<cv::Vec3f> new_surf = points + normals.mul(mul);
+    cv::Mat_<cv::Vec3f> new_surf_1 = new_surf + normals;
+    cv::Mat_<cv::Vec3f> new_surf_2 = new_surf + 2*normals;
+//     
+    xt::xarray<uint8_t> img;
+    readInterpolated3D(img, ds, xt_from_mat(new_surf*0.5), chunk_cache);
+    cv::Mat_<uint8_t> slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+//     
+    printf("writ slice!\n");
+    cv::imwrite("new_surf.tif", slice);
+    
+    readInterpolated3D(img, ds, xt_from_mat(new_surf_1*0.5), chunk_cache);
+    slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+    cv::imwrite("new_surf1.tif", slice);
+    
+    readInterpolated3D(img, ds, xt_from_mat(new_surf_2*0.5), chunk_cache);
+    slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+    cv::imwrite("new_surf2.tif", slice);
+    
+    // cv::Mat_<float> height_vis = height/21;
+    // height_vis = cv::min(height_vis,1-height_vis)*2;
+    // cv::imwrite("off.tif", height_vis);
+    
+    //now big question: how far away from average is the new surf!
+    
+//     cv::Mat avg_surf;
+//     cv::GaussianBlur(new_surf, avg_surf, {7,7}, 0);
+//     
+//     readInterpolated3D(img, ds, xt_from_mat(avg_surf*0.5), chunk_cache);
+//     slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+//     
+//     cv::imwrite("avg_surf.tif", slice);
+//     
+//     
+//     cv::Mat_<float> rel_height(points.size(), 0);
+//     
+//     cv::Mat_<cv::Vec3f> dist = avg_surf-new_surf;
+//     
+//     #pragma omp parallel for
+//     for(int j=0;j<points.rows;j++)
+//         for(int i=0;i<points.cols;i++) {
+//             rel_height(j,i) = cv::norm(dist(j,i));
+//         }
+//         
+//         cv::imwrite("rel_height.tif", rel_height);
+    
+    return res;
+}
 
 int main(int argc, char *argv[])
 {
@@ -612,8 +755,6 @@ int main(int argc, char *argv[])
   
   cv::Mat_<cv::Vec3f> normals = calc_normals(points_reg);
   
-  return 0;
-  
   std::vector<cv::Mat> chs_normals(3);
   cv::split(normals, chs_normals);
   cv::imwrite("x_n.tif", chs_normals[0]);
@@ -644,14 +785,14 @@ int main(int argc, char *argv[])
   m = cv::Mat(raw_extract.shape(0), raw_extract.shape(1), CV_8U, raw_extract.data());
   cv::imwrite("raw.tif", m);
   
-  roi = {0,0,800,4000};
+  roi = {200,1000,400,2000};
   points_reg = points_reg(roi);
   normals = normals(roi);
   
   cv::resize(points_reg, points_reg, {0,0}, 5, 1);
   cv::resize(normals, normals, {0,0}, 5, 1);
   
-  points_reg = surf_normal_search(ds.get(), &chunk_cache, points_reg, normals);
+  points_reg = surf_alpha_integ(ds.get(), &chunk_cache, points_reg, normals);
   
   // GridCoords gen_grid(&points_reg);
   // gen_grid.gen_coords(coords, 0, 0, 1000, 1000, 1.0, 0.5);
