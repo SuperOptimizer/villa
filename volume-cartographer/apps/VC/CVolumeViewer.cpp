@@ -9,6 +9,7 @@
 
 #include "CVolumeViewerView.hpp"
 #include "SegmentationStruct.hpp"
+#include "CSliceCollection.hpp"
 
 #include "vc/core/util/Slicing.hpp"
 
@@ -18,10 +19,10 @@ using qga = QGuiApplication;
 #define BGND_RECT_MARGIN 8
 #define DEFAULT_TEXT_COLOR QColor(255, 255, 120)
 // #define ZOOM_FACTOR 1.148698354997035
-#define ZOOM_FACTOR 1.414213562373095
+#define ZOOM_FACTOR 2.0 //1.414213562373095
 
 // Constructor
-CVolumeViewer::CVolumeViewer(QWidget* parent)
+CVolumeViewer::CVolumeViewer(CSliceCollection *slices, QWidget* parent)
     : QWidget(parent)
     , fCanvas(nullptr)
     // , fScrollArea(nullptr)
@@ -34,31 +35,9 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     , fViewState(EViewState::ViewStateIdle)
     , fImgQImage(nullptr)
     , fBaseImageItem(nullptr)
-    , fScaleFactor(1.0)
     , fScanRange(1)
+    , _slice_col(slices)
 {
-    // buttons
-    // fZoomInBtn = new QPushButton(tr("Zoom In"), this);
-    // fZoomOutBtn = new QPushButton(tr("Zoom Out"), this);
-    // fResetBtn = new QPushButton(tr("Reset"), this);
-    // fNextBtn = new QPushButton(tr("Next Slice"), this);
-    // fPrevBtn = new QPushButton(tr("Previous Slice"), this);
-
-    // fImageRotationSpin = new QSpinBox(this);
-    // fImageRotationSpin->setMinimum(-360);
-    // fImageRotationSpin->setMaximum(360);
-    // fImageRotationSpin->setSuffix("°");
-    // fImageRotationSpin->setEnabled(true);
-    // connect(fImageRotationSpin, SIGNAL(editingFinished()), this, SLOT(OnImageRotationSpinChanged()));
-
-    // fAxisCombo = new QComboBox(this);
-    //data is the missing axis (but in inverted order ZYX)
-    // fAxisCombo->addItem(QString::fromStdString("XY"), QVariant(0));
-    // fAxisCombo->addItem(QString::fromStdString("XZ"), QVariant(1));
-    // fAxisCombo->addItem(QString::fromStdString("YZ"), QVariant(2));
-    // fAxisCombo->addItem(QString::fromStdString("slice"), QVariant(3));
-    // connect(fAxisCombo, &QComboBox::currentIndexChanged, this, &CVolumeViewer::OnViewAxisChanged);
-
     fBaseImageItem = nullptr;
 
     // Create graphics view
@@ -75,29 +54,13 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
     connect(fGraphicsView, &CVolumeViewerView::sendScrolled, this, &CVolumeViewer::onScrolled);
     connect(fGraphicsView, &CVolumeViewerView::sendVolumeClicked, this, &CVolumeViewer::onVolumeClicked);
     connect(fGraphicsView, &CVolumeViewerView::sendZoom, this, &CVolumeViewer::onZoom);
+    connect(fGraphicsView, &CVolumeViewerView::sendCursorMove, this, &CVolumeViewer::onCursorMove);
 
     // Create graphics scene
     fScene = new QGraphicsScene({-2500,-2500,5000,5000}, this);
 
     // Set the scene
     fGraphicsView->setScene(fScene);
-    // fGraphicsView->setup();
-
-    // fGraphicsView->viewport()->installEventFilter(this);
-    // fGraphicsView->setDragMode(QGraphicsView::ScrollHandDrag);
-
-    // fButtonsLayout = new QHBoxLayout;
-    // fButtonsLayout->addWidget(fZoomInBtn);
-    // fButtonsLayout->addWidget(fZoomOutBtn);
-    // fButtonsLayout->addWidget(fResetBtn);
-    // fButtonsLayout->addWidget(fImageRotationSpin);
-    // // fButtonsLayout->addWidget(fAxisCombo);
-    // // Add some space between the slice spin box and the curve tools (color, checkboxes, ...)
-    // fButtonsLayout->addSpacerItem(new QSpacerItem(1, 0, QSizePolicy::Expanding, QSizePolicy::Fixed));
-
-    // connect(fZoomInBtn, SIGNAL(clicked()), this, SLOT(OnZoomInClicked()));
-    // connect(fZoomOutBtn, SIGNAL(clicked()), this, SLOT(OnZoomOutClicked()));
-    // connect(fResetBtn, SIGNAL(clicked()), this, SLOT(OnResetClicked()));
 
     QSettings settings("VC.ini", QSettings::IniFormat);
     // fCenterOnZoomEnabled = settings.value("viewer/center_on_zoom", false).toInt() != 0;
@@ -106,7 +69,6 @@ CVolumeViewer::CVolumeViewer(QWidget* parent)
 
     QVBoxLayout* aWidgetLayout = new QVBoxLayout;
     aWidgetLayout->addWidget(fGraphicsView);
-    // aWidgetLayout->addLayout(fButtonsLayout);
 
     setLayout(aWidgetLayout);
 }
@@ -116,18 +78,6 @@ CVolumeViewer::~CVolumeViewer(void)
 {
     deleteNULL(fGraphicsView);
     deleteNULL(fScene);
-    // deleteNULL(fScrollArea);
-    // deleteNULL(fZoomInBtn);
-    // deleteNULL(fZoomOutBtn);
-    // deleteNULL(fResetBtn);
-    // deleteNULL(fImageRotationSpin);
-}
-
-void CVolumeViewer::SetButtonsEnabled(bool state)
-{
-    // fZoomOutBtn->setEnabled(state);
-    // fZoomInBtn->setEnabled(state);
-    // fImageRotationSpin->setEnabled(state);
 }
 
 void CVolumeViewer::SetImage(const QImage& nSrc)
@@ -147,39 +97,8 @@ void CVolumeViewer::SetImage(const QImage& nSrc)
     } else {
         fBaseImageItem->setPixmap(pixmap);
     }
-
-    // UpdateButtons();
     update();
 }
-
-/*bool CVolumeViewer::eventFilter(QObject* watched, QEvent* event)
-{
-    // Wheel events
-    if (watched == fGraphicsView || (fGraphicsView && watched == fGraphicsView->viewport()) && event->type() == QEvent::Wheel) {
-
-        QWheelEvent* wheelEvent = static_cast<QWheelEvent*>(event);
-
-        // Ctrl = Zoom in/out
-        if (QApplication::keyboardModifiers() == Qt::ControlModifier) {
-            int numDegrees = wheelEvent->angleDelta().y() / 8;
-
-            if (numDegrees > 0) {
-                OnZoomInClicked();
-            } else if (numDegrees < 0) {
-                OnZoomOutClicked();
-            }
-            return true;
-        }
-        // Shift = Scan through slices
-        else if (QApplication::keyboardModifiers() == Qt::ShiftModifier) {
-            int numDegrees = wheelEvent->angleDelta().y() / 8;
-
-            sendShiftNormal(0.1*numDegrees*slice->normal);
-            return true;
-        }
-    }
-    return QWidget::eventFilter(watched, event);
-}*/
 
 void round_scale(float &scale)
 {
@@ -194,24 +113,69 @@ QPointF visible_center(QGraphicsView *view)
     return bbox.topLeft() + QPointF(bbox.width(),bbox.height())*0.5;
 }
 
+
+void CVolumeViewer::onCursorMove(QPointF scene_loc)
+{
+    if (!_slice)
+        return;
+    
+    cv::Vec3f slice_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
+
+    POI *cursor = _slice_col->poi("cursor");
+    if (!cursor)
+        cursor = new POI;
+    
+    cursor->p = _slice->coord(slice_loc);
+    
+    _slice_col->setPOI("cursor", cursor);
+}
+
 void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers modifiers)
 {
+    //TODO don't invalidate if only _scene_scale chagned
+    invalidateVis();
+    
+    if (!_slice)
+        return;
+    
     if (modifiers & Qt::ShiftModifier) {
-        slice->setOffsetZ(slice->offsetZ()+steps);
+        _slice->setOffsetZ(_slice->offsetZ()+steps);
         renderVisible(true);
     }
-    
     else {
         float zoom = pow(ZOOM_FACTOR, steps);
         
-        scale *= zoom;
-        round_scale(scale);
+        _scale *= zoom;
+        round_scale(_scale);
+        
+        if (_scale >= _max_scale) {
+            _ds_scale = _max_scale;
+            _ds_sd_idx = -log2(_ds_scale);
+            _scene_scale = _scale/_ds_scale;
+        }
+        else if (_scale < _min_scale) {
+            _ds_scale = _min_scale;
+            _ds_sd_idx = -log2(_ds_scale);
+            _scene_scale = _scale/_ds_scale;
+        }
+        else {
+            _ds_sd_idx = -log2(_scale);
+            _ds_scale = pow(2,-_ds_sd_idx);
+            _scene_scale = _scale/_ds_scale;
+        }
+        
+        QTransform M = fGraphicsView->transform();
+        if (_scene_scale != M.m11()) {
+            double delta_scale = _scene_scale/M.m11();
+            M.scale(delta_scale,delta_scale);
+            fGraphicsView->setTransform(M);
+        }
         
         curr_img_area = {0,0,0,0};
         QPointF center = visible_center(fGraphicsView) * zoom;
         
         //FIXME get correct size for slice!
-        int max_size = std::max(volume->sliceWidth(), std::max(volume->numSlices(), volume->sliceHeight()))*scale + 512;
+        int max_size = std::max(volume->sliceWidth(), std::max(volume->numSlices(), volume->sliceHeight()))*_ds_scale + 512;
         fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
         
         fGraphicsView->centerOn(center);
@@ -225,9 +189,13 @@ void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
     
     printf("sizes %d %d %d\n", volume_->sliceWidth(), volume_->sliceHeight(), volume_->numSlices());
     
-    int max_size = std::max(volume_->sliceWidth(), std::max(volume_->numSlices(), volume_->sliceHeight()))*scale + 512;
+    int max_size = std::max(volume_->sliceWidth(), std::max(volume_->numSlices(), volume_->sliceHeight()))*_ds_scale + 512;
     printf("max size %d\n", max_size);
     fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
+    
+    //FIXME currently hardcoded
+    _max_scale = 0.5;
+    _min_scale = pow(2.0,1.-volume->numScales());
 
     renderVisible(true);
 }
@@ -253,9 +221,16 @@ cv::Vec3f loc3d_at_imgpos(volcart::Volume *vol, CoordGenerator *slice, QPointF l
 
 void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
 {
-    cv::Vec3f vol_loc = loc3d_at_imgpos(volume.get(), slice, scene_loc, scale);
+    if (!_slice)
+        return;
 
-    sendVolumeClicked(vol_loc, buttons, modifiers);
+    cv::Vec3f slice_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
+    
+    cv::Vec3f n = _slice->normal(slice_loc);
+    cv::Vec3f p = _slice->coord(slice_loc);
+    
+
+    sendVolumeClicked(p, n, _slice, slice_loc, buttons, modifiers);
 }
 
 void CVolumeViewer::setCache(ChunkCache *cache_)
@@ -263,95 +238,134 @@ void CVolumeViewer::setCache(ChunkCache *cache_)
     cache = cache_;
 }
 
-void CVolumeViewer::loadSlice()
+void CVolumeViewer::setSlice(const std::string &name)
 {
-//     QImage aImgQImage;
-//     cv::Mat aImgMat;
-//     
-//     if (volume && volume->zarrDataset()) {
-//         aImgMat = getCoordSlice();
-// 
-//         if (aImgMat.isContinuous() && aImgMat.type() == CV_16U) {
-//             // create QImage directly backed by cv::Mat buffer
-//             aImgQImage = QImage(
-//                 aImgMat.ptr(), aImgMat.cols, aImgMat.rows, aImgMat.step,
-//                 QImage::Format_Grayscale16);
-//         } else
-//             aImgQImage = Mat2QImage(aImgMat);
-//             
-//         SetImage(aImgQImage);
-//     }
-//     
-//     UpdateButtons();
+    _slice_name = name;
+    _slice = nullptr;
+    onSliceChanged(name, _slice_col->slice(name));
 }
 
-void CVolumeViewer::setSlice(CoordGenerator *slice_)
+
+void CVolumeViewer::invalidateVis()
 {
-    slice = slice_;
-    OnSliceChanged();
+    _slice_vis_valid = false;    
+    for(auto &item : slice_vis_items) {
+        fScene->removeItem(item);
+        delete item;
+    }
+    slice_vis_items.resize(0);
 }
 
-void CVolumeViewer::OnSliceChanged()
+void CVolumeViewer::onSliceChanged(std::string name, CoordGenerator *slice)
 {
+    if (_slice_name != name)
+        return;
+
+    _slice = slice;
+    
+    if (!_slice)
+        fScene->clear();
+
+    invalidateVis();
+    
     curr_img_area = {0,0,0,0};
     renderVisible();
 }
 
-
-void calc_scales(float scale, float &render_scale, float &coord_scale, int &sd_idx, int max_idx)
+QGraphicsItem *cursorItem()
 {
-    sd_idx = 1;
+    QPen pen(QBrush(Qt::cyan), 3);
+    QGraphicsLineItem *parent = new QGraphicsLineItem(-10, 0, -5, 0);
+    parent->setZValue(10);
+    parent->setPen(pen);
+    QGraphicsLineItem *line = new QGraphicsLineItem(10, 0, 5, 0, parent);
+    line->setPen(pen);
+    line = new QGraphicsLineItem(0, -10, 0, -5, parent);
+    line->setPen(pen);
+    line = new QGraphicsLineItem(0, 10, 0, 5, parent);
+    line->setPen(pen);
     
-    coord_scale = 0.5;
-    while (0.5*coord_scale >= scale && sd_idx < max_idx-1) {
-        sd_idx++;
-        coord_scale *= 0.5;
-    }
-    
-    render_scale = scale/coord_scale;
+    return parent;
 }
 
-cv::Mat CVolumeViewer::render_area()
-{   
+//TODO make poi tracking optional and configurable
+void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
+{    
+    if (!poi)
+        return;
+    
+    if (name == "focus") {
+        PlaneCoords *plane = dynamic_cast<PlaneCoords*>(_slice);
+        
+        if (!plane)
+            return;
+        
+        fGraphicsView->centerOn(0,0);
+        
+        if (poi->p == plane->origin)
+            return;
+        
+        plane->origin = poi->p;
+        
+        _slice_col->setSlice(_slice_name, plane);
+    }
+    else if (name == "cursor") {
+        PlaneCoords *slice_plane = dynamic_cast<PlaneCoords*>(_slice);
+        
+        if (slice_plane) {
+            
+            if (!_cursor) {
+                _cursor = cursorItem();
+                fScene->addItem(_cursor);
+            }
+            
+            float dist = slice_plane->pointDist(poi->p);
+            
+            if (dist < 100.0/_ds_scale) {
+                cv::Vec3f sp = slice_plane->project(poi->p, 1.0, _ds_scale);
+                
+                _cursor->setPos(sp[0], sp[1]);
+                _cursor->setOpacity(1.0-dist*_ds_scale/100.0);
+            }
+            else
+                _cursor->setOpacity(0.0);
+        }
+    }
+}
+
+void CVolumeViewer::onSegmentatorChanged(std::string name, ControlPointSegmentator *seg)
+{
+    if (name != "default")
+        return;
+
+    _seg_tool = seg;
+}
+
+cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
+{
     xt::xarray<float> coords;
     xt::xarray<uint8_t> img;
 
-    int sd_idx;
-    float render_scale, coord_scale;
-    cv::Rect roi;
-
-    currRoi(roi, render_scale, coord_scale, sd_idx);
-
-    slice->gen_coords(coords, roi, render_scale, coord_scale);
-    readInterpolated3D(img, volume->zarrDataset(sd_idx), coords, cache);
+    _slice->gen_coords(coords, roi, 1.0, _ds_scale);
+    readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords, cache);
     cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
     
     return m.clone();
 }
 
-void CVolumeViewer::currRoi(cv::Rect &roi, float &render_scale, float &coord_scale, int &sd_idx) const
-{  
-    calc_scales(scale, render_scale, coord_scale, sd_idx, volume->numScales()-1);
-    
-    float m = coord_scale/scale;
-    
-    roi = {curr_img_area.left()*m, curr_img_area.top()*m, curr_img_area.width(), curr_img_area.height()};
-}
-
 void CVolumeViewer::renderVisible(bool force)
 {
-    if (!volume || !volume->zarrDataset() || !slice)
+    if (!volume || !volume->zarrDataset() || !_slice)
         return;
     
     QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->viewport()->geometry()).boundingRect();
     
-    //nothing to see her, move along
     if (!force && QRectF(curr_img_area).contains(bbox))
         return;
     
     curr_img_area = {bbox.left()-128,bbox.top()-128, bbox.width()+256, bbox.height()+256};
     
-    cv::Mat img = render_area();
+    cv::Mat img = render_area({curr_img_area.x(), curr_img_area.y(), curr_img_area.width(), curr_img_area.height()});
     
     QImage qimg = Mat2QImage(img);
     
@@ -363,62 +377,53 @@ void CVolumeViewer::renderVisible(bool force)
     else
         fBaseImageItem->setPixmap(pixmap);
     
-    if (!center_marker)
-        center_marker = fScene->addEllipse({-10,-10,20,20}, QPen(Qt::yellow, 3, Qt::DashDotLine, Qt::RoundCap, Qt::RoundJoin));
+    if (!_center_marker) {
+        _center_marker = fScene->addEllipse({-10,-10,20,20}, QPen(Qt::yellow, 3, Qt::DashDotLine, Qt::RoundCap, Qt::RoundJoin));
+        _center_marker->setZValue(11);
+        
+    }
 
     
-    center_marker->setParentItem(fBaseImageItem);
+    _center_marker->setParentItem(fBaseImageItem);
     
     fBaseImageItem->setOffset(curr_img_area.topLeft());
     
-    for(auto &item : other_slice_items) {
-        fScene->removeItem(item);
-        delete item;
-    }
-    other_slice_items.resize(0);
-    
-    cv::Rect roi;
-    int sd;
-    float render_scale, coord_scale;
-    currRoi(roi, render_scale, coord_scale, sd);
-
-    for(auto other_plane : other_slices) {
+    /*for(auto other_plane : other_slices) {
         std::vector<std::vector<cv::Point2f>> segments_xy;
         
-        
-        if (!roi.width || !roi.height)
-            return;
-
-        find_intersect_segments(segments_xy, other_plane, slice, roi, render_scale, coord_scale);
+        find_intersect_segments(segments_xy, other_plane, slice, curr_img_area, render_scale, coord_scale);
         
         for (auto seg : segments_xy)
             for (auto p : seg)
-            {
+            {f
                 auto item = fGraphicsView->scene()->addEllipse({p.x-2,p.y-2,4,4}, QPen(Qt::yellow, 1));
                 other_slice_items.push_back(item);
                 item->setParentItem(fBaseImageItem);
             }
-    }
+    }*/
     
-    PlaneCoords *slice_plane = dynamic_cast<PlaneCoords*>(slice);
-    if (seg_tool && slice_plane) {
+    PlaneCoords *slice_plane = dynamic_cast<PlaneCoords*>(_slice);
+    if (!_slice_vis_valid && _seg_tool && slice_plane) {
 #pragma omp parallel for
-        for (auto &wp : seg_tool->control_points) {
+        for (auto &wp : _seg_tool->control_points) {
             float dist = slice_plane->pointDist(wp);
             
             if (dist > 0.5)
                 continue;
             
-            cv::Vec3f p = slice_plane->project(wp, roi, render_scale, coord_scale);
+            cv::Vec3f p = slice_plane->project(wp, 1.0, _ds_scale);
             
 #pragma omp critical
             {
                 auto item = fGraphicsView->scene()->addEllipse({p[0]-1,p[1]-1,2,2}, QPen(Qt::green, 1));
                 //FIXME rename/clean
-                other_slice_items.push_back(item);
+                slice_vis_items.push_back(item);
                 item->setParentItem(fBaseImageItem);
             }
         }
+        
+        if (_seg_tool->control_points.size())
+            _slice_vis_valid = true;
     }
     
     update();
@@ -426,28 +431,10 @@ void CVolumeViewer::renderVisible(bool force)
 
 void CVolumeViewer::onScrolled()
 {
-    QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->viewport()->geometry()).boundingRect();
-    QRect viewrect = fGraphicsView->viewport()->geometry();
-    // printf("scrolled to scene pos %f x %f bbox %f %f %f %f from %d %d %d %d\n", visible_center(fGraphicsView).x(), visible_center(fGraphicsView).y(), bbox.left() , bbox.top() , bbox.width(), bbox.height(), viewrect.left(), viewrect.top(), viewrect.width(), viewrect.height());
-    
     renderVisible();
 }
 
 cv::Mat CVolumeViewer::getCoordSlice()
 {
     return cv::Mat();
-}
-
-
-void CVolumeViewer::addIntersectVisSlice(PlaneCoords *slice_)
-{
-    other_slices.push_back(slice_);
-    
-    OnSliceChanged();
-}
-
-
-void CVolumeViewer::setSegTool(ControlPointSegmentator *tool)
-{
-    seg_tool = tool;
 }

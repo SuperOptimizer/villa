@@ -896,7 +896,7 @@ float PlaneCoords::pointDist(cv::Vec3f wp)
 //     return abs(scalarp)*plane_mul;
 // }
 
-cv::Vec3f PlaneCoords::project(cv::Vec3f wp, const cv::Rect &roi, float render_scale, float coord_scale)
+cv::Vec3f PlaneCoords::project(cv::Vec3f wp, float render_scale, float coord_scale)
 {
     cv::Vec3f vx, vy;
     
@@ -920,6 +920,12 @@ cv::Vec3f PlaneCoords::project(cv::Vec3f wp, const cv::Rect &roi, float render_s
     return {res(0,0), res(0,1), res(0,2)};
 }
 
+//somehow opencvs functions are pretty slow 
+static inline cv::Vec3f normed(const cv::Vec3f v)
+{
+    return v/sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);
+}
+
 static cv::Mat_<cv::Vec3f> calc_normals(const cv::Mat_<cv::Vec3f> &points) {
     int n_step = 1;
     cv::Mat_<cv::Vec3f> blur;
@@ -928,11 +934,8 @@ static cv::Mat_<cv::Vec3f> calc_normals(const cv::Mat_<cv::Vec3f> &points) {
 #pragma omp parallel for
     for(int j=n_step;j<points.rows-n_step;j++)
         for(int i=n_step;i<points.cols-n_step;i++) {
-            cv::Vec3f xv = blur(j,i+n_step)-blur(j,i-n_step);
-            cv::Vec3f yv = blur(j+n_step,i)-blur(j-n_step,i);
-            
-            cv::normalize(xv,xv);
-            cv::normalize(yv,yv);
+            cv::Vec3f xv = normed(blur(j,i+n_step)-blur(j,i-n_step));
+            cv::Vec3f yv = normed(blur(j+n_step,i)-blur(j-n_step,i));
             
             cv::Vec3f n = yv.cross(xv);
             n = n/sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
@@ -940,118 +943,22 @@ static cv::Mat_<cv::Vec3f> calc_normals(const cv::Mat_<cv::Vec3f> &points) {
             normals(j,i) = n;
         }
         cv::GaussianBlur(normals, normals, {21,21}, 0);
-        for(int j=n_step;j<points.rows-n_step;j++)
-            for(int i=n_step;i<points.cols-n_step;i++) {
-                cv::normalize(normals(j,i), normals(j,i));
-            }
-            
-            return normals;
+    
+#pragma omp paralle for
+    for(int j=n_step;j<points.rows-n_step;j++)
+        for(int i=n_step;i<points.cols-n_step;i++)
+            normals(j,i) = normed(normals(j,i));
+    
+    return normals;
 }
 
-void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
+//TODO only calc for area?
+cv::Mat_<cv::Vec3f> &GridCoords::normals()
 {
-    if (_scaled.empty()) {
-        //FIXME this is quite ugly, normalize in a different way?
+    if (_normals.empty()) 
         _normals = calc_normals(*_points);
-        _scaled = *_points;
-        cv::resize(*_points, _scaled, {0,0}, 5, 1);
-        cv::resize(_normals, _normals, {0,0}, 5, 1);
-    }
-        
-    coords = xt::zeros<float>({h,w,3});
 
-    if (render_scale > 1.0 || render_scale < 0.5) {
-        std::cout << "FIXME: support wider render scale for GridCoords::gen_coords()" << std::endl;
-        return;
-    }
-    
-    //so basically we crop into _scaled to generate coords
-    cv::Rect tgt(x,y,w,h);
-    cv::Rect src(0,0,_scaled.cols*coord_scale, _scaled.rows*coord_scale);
-    
-    cv::Rect common = tgt & src;
-    
-    int oy = 0;
-    int ox = 0;
-    
-    if (common.x > x)
-        ox = (common.x-x)*render_scale;
-    
-    if (common.y > y)
-        oy = (common.y-y)*render_scale;
-    
-    printf("%d %d\n", ox, oy);
-    
-    // float m = 1/render_scale;
-    int step = 0.5/coord_scale;
-    
-    if (render_scale == 1.0) {
-        
-        //FIXME implement normal for even render scale
-#pragma omp parallel for
-        for(int j=0;j<common.height;j ++) {
-            const cv::Vec3f *row = _scaled.ptr<cv::Vec3f>((common.y+j)*step);
-            const cv::Vec3f *row_n = _normals.ptr<cv::Vec3f>((common.y+j)*step);
-            for(int i=0;i<common.width;i ++) {
-                cv::Vec3f point = row[(common.x+i)*step]*coord_scale;
-                cv::Vec3f n = row_n[(common.x+i)*step]*coord_scale;
-                coords(oy+j,ox+i,0) = point[2]+_z_off*n[2];
-                coords(oy+j,ox+i,1) = point[1]+_z_off*n[1];
-                coords(oy+j,ox+i,2) = point[0]+_z_off*n[0];
-            }
-        };
-    }
-    else {
-        printf("uneven render sclae!\n");
-        //need to interpolate on grid
-        //FIXME exact cornder locations? rounding matters as render scale not even!
-        int wl = common.width/render_scale;
-        int hl = common.height/render_scale;
-        cv::Mat_<cv::Vec3f> large(hl, wl);
-        
-        //FIXME but render scale should matter?!
-        int cy = common.y;///render_scale;
-        int cx = common.x;///render_scale;
-#pragma omp parallel for
-        for(int j=0;j<hl;j ++) {
-            const cv::Vec3f *row = _scaled.ptr<cv::Vec3f>((cy+j)*step);
-            const cv::Vec3f *row_n = _normals.ptr<cv::Vec3f>((common.y+j)*step);
-            cv::Vec3f *row_tgt = large.ptr<cv::Vec3f>(j);
-            for(int i=0;i<wl;i++) {
-                cv::Vec3f n = row_n[(common.x+i)*step]*coord_scale;
-                row_tgt[i] = row[(cx+i)*step]+n*_z_off;
-            }
-        };
-        
-        
-//         if (_z_off != 0.0) {
-//             int n_step = 3;
-//             cv::Mat_<cv::Vec3f> orig = large.clone();
-//             for(int j=n_step;j<hl-n_step;j++)
-//                 for(int i=n_step;i<wl-n_step;i++) {
-//                     cv::Vec3f xv = orig(j,i+n_step)-orig(j,i-n_step);
-//                     cv::Vec3f yv = orig(j+n_step,i)-orig(j-n_step,i);
-//                     
-//                     cv::Vec3f n = yv.cross(xv);
-//                     n = n/sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
-//                     
-//                     large(j,i) += n*_z_off*0.5;
-//                 }
-//         }
-
-        cv::resize(large, large, common.size());
-        
-#pragma omp parallel for
-        for(int j=0;j<common.height;j ++) {
-            const cv::Vec3f *row = large.ptr<cv::Vec3f>(j);
-            for(int i=0;i<common.width;i ++) {
-                cv::Vec3f point = row[i]*coord_scale;
-                coords(oy+j,ox+i,0) = point[2];
-                coords(oy+j,ox+i,1) = point[1];
-                coords(oy+j,ox+i,2) = point[0];
-            }
-        };
-    }
+    return _normals;
 }
 
 static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
@@ -1070,6 +977,55 @@ static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
     cv::Vec3f p1 = (1-fx)*p10 + fx*p11;
     
     return (1-fy)*p0 + fy*p1;
+}
+
+cv::Vec3f CoordGenerator::coord(const cv::Vec3f &loc)
+{
+    xt::xarray<float> coords;
+    assert(loc.z == 0);
+    gen_coords(coords, {loc[0],loc[1],1,1}, 1.0, 1.0);
+
+    return {coords(0,0,2),coords(0,0,1),coords(0,0,0)};
+}
+
+cv::Vec3f GridCoords::normal(const cv::Vec3f &loc)
+{
+    return at_int(normals(), {loc[1]*_sy, loc[1]*_sx});
+}
+
+void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
+{
+    if (render_scale > 1.0 || render_scale < 0.5) {
+        std::cout << "FIXME: support wider render scale for GridCoords::gen_coords()" << std::endl;
+        return;
+    }
+
+    coords = xt::zeros<float>({h,w,3});
+    cv::Mat_<cv::Vec3f> warped;
+    
+    float s = 1/coord_scale;
+    std::vector<cv::Vec2f> dst = {{0,0},{w,0},{0,h}};
+    std::vector<cv::Vec2f> src = {cv::Vec2f(x*_sx,y*_sy)*s,cv::Vec2f((x+w)*_sx,y*_sy)*s,cv::Vec2f(x*_sx,(y+h)*_sy)*s};
+    
+    cv::Mat affine = cv::getAffineTransform(src, dst);
+    
+    cv::warpAffine(*_points, warped, affine, {w,h});
+    
+    if (_z_off) {
+        cv::Mat warped_normals;
+        cv::warpAffine(normals(), warped_normals, affine, {w,h});
+        
+        warped += warped_normals*_z_off;
+    }
+    
+#pragma omp parallel for
+    for(int j=0;j<h;j++)
+        for(int i=0;i<w;i++) {
+            cv::Vec3f point = warped(j,i);
+            coords(j,i,0) = point[2]*coord_scale;
+            coords(j,i,1) = point[1]*coord_scale;
+            coords(j,i,2) = point[0]*coord_scale;
+        }
 }
 
 static float sdist(const cv::Vec3f &a, const cv::Vec3f &b)
@@ -1137,14 +1093,21 @@ static void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f
 static cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss(cv::Mat_<cv::Vec3f> points)
 {
     cv::Mat_<cv::Vec3f> out = points.clone();
-    cv::Mat_<cv::Vec3f> blur = points.clone();
+    cv::Mat_<cv::Vec3f> blur(points.cols, points.rows);
     cv::Mat_<cv::Vec2f> locs(points.size());
     
-    cv::GaussianBlur(out, blur, {1,255}, 0);
+    cv::Mat trans = out.t();
+    
+    #pragma omp parallel for
+    for(int j=0;j<trans.rows;j++) 
+        cv::GaussianBlur(trans({0,j,trans.cols,1}), blur({0,j,trans.cols,1}), {255,1}, 0);
+    
+    blur = blur.t();
     
     #pragma omp parallel for
     for(int j=1;j<points.rows;j++)
         for(int i=1;i<points.cols-1;i++) {
+            // min_loc(points, {i,j}, out(j,i), {out(j,i)[0],out(j,i)[1],out(j,i)[2]});
             cv::Vec2f loc = {i,j};
             min_loc(points, loc, out(j,i), blur(j,i), false);
         }
@@ -1154,18 +1117,37 @@ static cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss(cv::Mat_<cv::Vec3f
 
 void PointRectSegmentator::set(cv::Mat_<cv::Vec3f> &points)
 {
-    // _points = points.clone();
-    
     _points = derive_regular_region_stupid_gauss(points);
     
-        
     for(int j=0;j<_points.size().height;j++) {
         cv::Vec3f *row = _points.ptr<cv::Vec3f>(j);
         for(int i=0;i<_points.size().width;i++)
             control_points.push_back(row[i]);
     }
     
-    _generator.reset(new GridCoords(&_points));
+    //so we get something somewhat meaningful by default
+    double sum_x = 1;
+    double sum_y = 1;
+    int count = 1;
+    //NOTE leave out bordes as these contain lots of artifacst ... would need median or something ...
+    int jmin = points.size().height*0.1;
+    int jmax = points.size().height*0.9;
+#pragma omp parallel for
+    for(int j=jmin;j<jmax;j+=8) {
+        cv::Vec3f *row = points.ptr<cv::Vec3f>(j);
+        for(int i=points.size().width*0.1;i<points.size().width*0.9;i+=8) {
+            cv::Vec3f v = points(j,i)-points(j,i-1);
+            sum_x += sqrt(v.dot(v));
+            v = points(j,i)-points(j-1,i);
+            sum_y += sqrt(v.dot(v));
+            count++;
+        }
+    }
+
+    _sx = count/sum_x;
+    _sy = count/sum_y;
+    
+    _generator.reset(new GridCoords(&_points, _sx, _sy));
 }
 
 CoordGenerator *PointRectSegmentator::generator()

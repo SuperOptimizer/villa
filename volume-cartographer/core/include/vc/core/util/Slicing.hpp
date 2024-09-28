@@ -18,6 +18,8 @@ public:
     virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) = 0;
     virtual void setOffsetZ(float off) { _z_off = off; };
     virtual float offsetZ() { return _z_off; };
+    virtual cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) = 0;
+    virtual cv::Vec3f coord(const cv::Vec3f &loc = {0,0,0});
 protected:
     float _z_off = 0;
 };
@@ -29,7 +31,7 @@ public:
     PlaneCoords() {};
     PlaneCoords(cv::Vec3f origin_, cv::Vec3f normal_);
     virtual float pointDist(cv::Vec3f wp);
-    virtual cv::Vec3f project(cv::Vec3f wp, const cv::Rect &roi, float render_scale = 1.0, float coord_scale = 1.0);
+    virtual cv::Vec3f project(cv::Vec3f wp, float render_scale = 1.0, float coord_scale = 1.0);
     void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
     // float plane_mul() const;
     virtual float scalarp(cv::Vec3f point) const;
@@ -38,7 +40,7 @@ public:
     using CoordGenerator::gen_coords;
     cv::Vec3f origin = {0,0,0};
     void setNormal(cv::Vec3f normal);
-    cv::Vec3f normal() const { return _normal; };
+    cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) override { return _normal; };
 protected:
     cv::Vec3f _normal = {0,0,1};
 };
@@ -48,12 +50,16 @@ class GridCoords : public CoordGenerator
 {
 public:
     GridCoords() {};
-    GridCoords(cv::Mat_<cv::Vec3f> *points) : _points(points) {};
+    GridCoords(cv::Mat_<cv::Vec3f> *points, float sx = 1.0, float sy = 1.0) : _points(points), _sx(sx), _sy(sy) {};
     void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
+    cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) override;
     using CoordGenerator::gen_coords;
     cv::Mat_<cv::Vec3f> *_points = nullptr;
-    cv::Mat _scaled;
-    cv::Mat _normals;
+    cv::Mat_<cv::Vec3f> _normals;
+    float _sx = 1.0;
+    float _sy = 1.0;
+private:
+    cv::Mat_<cv::Vec3f> &normals();
 };
 
 class IDWHeightPlaneCoords : public PlaneCoords
@@ -88,6 +94,8 @@ public:
     CoordGenerator *generator();
     cv::Mat_<cv::Vec3f> _points;
     std::unique_ptr<GridCoords> _generator;
+    float _sx = 1.0;
+    float _sy = 1.0;
 };
 
 class PlaneIDWSegmentator : public ControlPointSegmentator

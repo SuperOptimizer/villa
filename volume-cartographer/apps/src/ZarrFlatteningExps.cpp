@@ -282,10 +282,16 @@ cv::Vec3f pred(const cv::Mat_<cv::Vec3f> &points, int x, int y, int x1,int y1, i
 cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss(cv::Mat_<cv::Vec3f> points)
 {
     cv::Mat_<cv::Vec3f> out = points.clone();
-        cv::Mat_<cv::Vec3f> blur = points.clone();
+    cv::Mat_<cv::Vec3f> blur(points.cols, points.rows);
     cv::Mat_<cv::Vec2f> locs(points.size());
     
-    cv::GaussianBlur(out, blur, {1,255}, 0);
+    cv::Mat trans = out.t();
+    
+#pragma omp parallel for
+    for(int j=0;j<trans.rows;j++) 
+        cv::GaussianBlur(trans({0,j,trans.cols,1}), blur({0,j,trans.cols,1}), {255,1}, 0);
+
+    blur = blur.t();
     
 #pragma omp parallel for
     for(int j=1;j<points.rows;j++)
@@ -394,6 +400,26 @@ cv::Mat_<cv::Vec3f> derive_regular_region(cv::Mat_<cv::Vec3f> points)
     return out;
 }
 
+// void parallel_equal_gauss_blur(cv::Mat src, cv::Mat tgt, int size)
+// {
+//     //for large sigmas a tranpose would be useful! this is actually slower than openmo snge thread, probobably need larger chunks
+//         
+//     cv::Mat tmp(src.size(), src.type());
+// 
+// #pragma omp parallel for
+//     for(int j=0;j<src.rows;j++) 
+//         cv::GaussianBlur(src({0,j,src.cols,1}), tmp({0,j,src.cols,1}), {size,1}, 0);
+// #pragma omp parallel for
+//     for(int i=0;i<src.cols;i++) 
+//         cv::GaussianBlur(tmp({i,0,1, src.rows}), tgt({i,0,1, src.rows}), {1,size}, 0);
+// }
+
+//somehow opencvs functions are pretty slow 
+static inline cv::Vec3f normed(const cv::Vec3f v)
+{
+    return v/sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);
+}
+
 cv::Mat_<cv::Vec3f> calc_normals(const cv::Mat_<cv::Vec3f> &points) {
     int n_step = 1;
     cv::Mat_<cv::Vec3f> blur;
@@ -402,22 +428,21 @@ cv::Mat_<cv::Vec3f> calc_normals(const cv::Mat_<cv::Vec3f> &points) {
 #pragma omp parallel for
     for(int j=n_step;j<points.rows-n_step;j++)
         for(int i=n_step;i<points.cols-n_step;i++) {
-            cv::Vec3f xv = blur(j,i+n_step)-blur(j,i-n_step);
-            cv::Vec3f yv = blur(j+n_step,i)-blur(j-n_step,i);
-            
-            cv::normalize(xv,xv);
-            cv::normalize(yv,yv);
+            cv::Vec3f xv = normed(blur(j,i+n_step)-blur(j,i-n_step));
+            cv::Vec3f yv = normed(blur(j+n_step,i)-blur(j-n_step,i));
             
             cv::Vec3f n = yv.cross(xv);
             n = n/sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
             
             normals(j,i) = n;
         }
+        
     cv::GaussianBlur(normals, normals, {21,21}, 0);
+
+#pragma omp parallel for
     for(int j=n_step;j<points.rows-n_step;j++)
-        for(int i=n_step;i<points.cols-n_step;i++) {
-            cv::normalize(normals(j,i), normals(j,i));
-        }
+        for(int i=n_step;i<points.cols-n_step;i++)
+            normals(j,i) = normed(normals(j,i));
         
     return normals;
 }
@@ -576,14 +601,19 @@ int main(int argc, char *argv[])
   // cv::imwrite("x_src.tif", chs_norm[0]);
   // cv::imwrite("y_src.tif", chs_norm[1]);
   // cv::imwrite("z_src.tif", chs_norm[2]);
-  
-  
+
   roi = {0,0,800,4000};
   points = points(roi);
+  // points = points(roi);
+  
+  std::cout << points.size() << std::endl;
   
   cv::Mat_<cv::Vec3f> points_reg = derive_regular_region_stupid_gauss(points);
   
   cv::Mat_<cv::Vec3f> normals = calc_normals(points_reg);
+  
+  return 0;
+  
   std::vector<cv::Mat> chs_normals(3);
   cv::split(normals, chs_normals);
   cv::imwrite("x_n.tif", chs_normals[0]);

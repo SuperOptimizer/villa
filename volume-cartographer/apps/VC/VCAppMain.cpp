@@ -7,12 +7,17 @@
 #include "CWindow.hpp"
 #include "vc/core/Version.hpp"
 
+#include <opencv2/core.hpp>
+#include <thread>
+
 using namespace ChaoVis;
 
 namespace vc = volcart;
 
 auto main(int argc, char* argv[]) -> int
 {
+    cv::setNumThreads(std::thread::hardware_concurrency());
+    
     QApplication app(argc, argv);
     QApplication::setOrganizationName("EduceLab");
     QApplication::setApplicationName("VC");

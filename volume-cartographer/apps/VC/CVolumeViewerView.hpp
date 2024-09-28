@@ -10,7 +10,7 @@ class CVolumeViewerView : public QGraphicsView
     Q_OBJECT
     
 public:
-    CVolumeViewerView(QWidget* parent = 0) : QGraphicsView(parent) {};
+    CVolumeViewerView(QWidget* parent = 0);
     void mouseReleaseEvent(QMouseEvent *event);
     void mousePressEvent(QMouseEvent *event);
     void mouseMoveEvent(QMouseEvent *event);
@@ -21,6 +21,7 @@ signals:
     void sendScrolled();
     void sendZoom(int steps, QPointF scene_point, Qt::KeyboardModifiers);
     void sendVolumeClicked(QPointF, Qt::MouseButton, Qt::KeyboardModifiers);
+    void sendCursorMove(QPointF);
     
 protected:
     bool _regular_pan = false;
