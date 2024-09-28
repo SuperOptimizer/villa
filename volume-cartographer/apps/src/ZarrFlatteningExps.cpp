@@ -573,7 +573,7 @@ cv::Mat_<cv::Vec3f> surf_alpha_integ(z5::Dataset *ds, ChunkCache *chunk_cache, c
     for(int n=0;n<21;n++) {
         xt::xarray<uint8_t> raw_extract;
         // coords = points_reg*2.0;
-        float off = (n-10)*0.5;
+        float off = (n-5)*0.5;
         readInterpolated3D(raw_extract, ds, xt_from_mat((points+normals*off)*0.5), chunk_cache);
         cv::Mat_<uint8_t> slice = cv::Mat(raw_extract.shape(0), raw_extract.shape(1), CV_8U, raw_extract.data());
         
@@ -584,7 +584,7 @@ cv::Mat_<cv::Vec3f> surf_alpha_integ(z5::Dataset *ds, ChunkCache *chunk_cache, c
         cv::Mat floatslice;
         slice.convertTo(floatslice, CV_32F, 1/255.0);
         
-        cv::GaussianBlur(floatslice, blur, {5,5}, 0);
+        cv::GaussianBlur(floatslice, blur, {7,7}, 0);
         cv::Mat opaq_slice = blur;
         
         float low = 0.0; //map to 0
@@ -700,7 +700,7 @@ cv::Mat_<cv::Vec3f> surf_alpha_integ(z5::Dataset *ds, ChunkCache *chunk_cache, c
 //         
 //         cv::imwrite("rel_height.tif", rel_height);
     
-    return res;
+    return new_surf;
 }
 
 int main(int argc, char *argv[])
@@ -792,6 +792,8 @@ int main(int argc, char *argv[])
   cv::resize(points_reg, points_reg, {0,0}, 5, 1);
   cv::resize(normals, normals, {0,0}, 5, 1);
   
+  points_reg = surf_alpha_integ(ds.get(), &chunk_cache, points_reg, normals);
+  points_reg = surf_alpha_integ(ds.get(), &chunk_cache, points_reg, normals);
   points_reg = surf_alpha_integ(ds.get(), &chunk_cache, points_reg, normals);
   
   // GridCoords gen_grid(&points_reg);
