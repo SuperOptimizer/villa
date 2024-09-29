@@ -651,7 +651,7 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int
     
     cv::Vec3f use_origin = origin + _normal*_z_off;
     
-    #pragma omp parallel for
+#pragma omp parallel for
     for(int j=0;j<h;j++)
         for(int i=0;i<w;i++) {
             coords(j,i,0) = vx[2]*(i*m+x) + vy[2]*(j*m+y) + use_origin[2]*coord_scale;
@@ -926,37 +926,11 @@ static inline cv::Vec3f normed(const cv::Vec3f v)
     return v/sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);
 }
 
-static cv::Mat_<cv::Vec3f> calc_normals(const cv::Mat_<cv::Vec3f> &points) {
-    int n_step = 1;
-    cv::Mat_<cv::Vec3f> blur;
-    cv::GaussianBlur(points, blur, {21,21}, 0);
-    cv::Mat_<cv::Vec3f> normals(points.size());
-#pragma omp parallel for
-    for(int j=n_step;j<points.rows-n_step;j++)
-        for(int i=n_step;i<points.cols-n_step;i++) {
-            cv::Vec3f xv = normed(blur(j,i+n_step)-blur(j,i-n_step));
-            cv::Vec3f yv = normed(blur(j+n_step,i)-blur(j-n_step,i));
-            
-            cv::Vec3f n = yv.cross(xv);
-            n = n/sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
-            
-            normals(j,i) = n;
-        }
-        cv::GaussianBlur(normals, normals, {21,21}, 0);
-    
-#pragma omp paralle for
-    for(int j=n_step;j<points.rows-n_step;j++)
-        for(int i=n_step;i<points.cols-n_step;i++)
-            normals(j,i) = normed(normals(j,i));
-    
-    return normals;
-}
-
 //TODO only calc for area?
 cv::Mat_<cv::Vec3f> &GridCoords::normals()
 {
     if (_normals.empty()) 
-        _normals = calc_normals(*_points);
+        _normals = vc_segmentation_calc_normals(*_points);
 
     return _normals;
 }
@@ -1090,7 +1064,7 @@ static void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f
 }
 
 //this works surprisingly well, though some artifacts where original there was a lot of skew
-static cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss(cv::Mat_<cv::Vec3f> points)
+cv::Mat_<cv::Vec3f> smooth_vc_segmentation(const cv::Mat_<cv::Vec3f> &points)
 {
     cv::Mat_<cv::Vec3f> out = points.clone();
     cv::Mat_<cv::Vec3f> blur(points.cols, points.rows);
@@ -1115,9 +1089,70 @@ static cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss(cv::Mat_<cv::Vec3f
         return out;
 }
 
+void vc_segmentation_scales(cv::Mat_<cv::Vec3f> points, double &sx, double &sy)
+{
+    //so we get something somewhat meaningful by default
+    double sum_x = 1;
+    double sum_y = 1;
+    int count = 1;
+    //NOTE leave out bordes as these contain lots of artifacst if coming from smooth_segmentation() ... would need median or something ...
+    int jmin = points.size().height*0.1;
+    int jmax = points.size().height*0.9;
+#pragma omp parallel for
+    for(int j=jmin;j<jmax;j+=8) {
+        double _sum_x = 1;
+        double _sum_y = 1;
+        int _count = 1;
+        cv::Vec3f *row = points.ptr<cv::Vec3f>(j);
+        for(int i=points.size().width*0.1;i<points.size().width*0.9;i+=8) {
+            cv::Vec3f v = points(j,i)-points(j,i-1);
+            _sum_x += sqrt(v.dot(v));
+            v = points(j,i)-points(j-1,i);
+            _sum_y += sqrt(v.dot(v));
+            _count++;
+        }
+#pragma omp critical
+        {
+            sum_x += _sum_x;
+            sum_y += _sum_y;
+            count += _count;
+        }
+    }
+
+    sx = count/sum_x;
+    sy = count/sum_y;
+}
+
+cv::Mat_<cv::Vec3f> vc_segmentation_calc_normals(const cv::Mat_<cv::Vec3f> &points) {
+    int n_step = 1;
+    cv::Mat_<cv::Vec3f> blur;
+    cv::GaussianBlur(points, blur, {21,21}, 0);
+    cv::Mat_<cv::Vec3f> normals(points.size());
+#pragma omp parallel for
+    for(int j=n_step;j<points.rows-n_step;j++)
+        for(int i=n_step;i<points.cols-n_step;i++) {
+            cv::Vec3f xv = normed(blur(j,i+n_step)-blur(j,i-n_step));
+            cv::Vec3f yv = normed(blur(j+n_step,i)-blur(j-n_step,i));
+            
+            cv::Vec3f n = yv.cross(xv);
+            n = n/sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
+            
+            normals(j,i) = n;
+        }
+        
+        cv::GaussianBlur(normals, normals, {21,21}, 0);
+        
+#pragma omp parallel for
+        for(int j=n_step;j<points.rows-n_step;j++)
+            for(int i=n_step;i<points.cols-n_step;i++)
+                normals(j,i) = normed(normals(j,i));
+    
+    return normals;
+}
+
 void PointRectSegmentator::set(cv::Mat_<cv::Vec3f> &points)
 {
-    _points = derive_regular_region_stupid_gauss(points);
+    _points = smooth_vc_segmentation(points);
     
     for(int j=0;j<_points.size().height;j++) {
         cv::Vec3f *row = _points.ptr<cv::Vec3f>(j);
@@ -1125,27 +1160,7 @@ void PointRectSegmentator::set(cv::Mat_<cv::Vec3f> &points)
             control_points.push_back(row[i]);
     }
     
-    //so we get something somewhat meaningful by default
-    double sum_x = 1;
-    double sum_y = 1;
-    int count = 1;
-    //NOTE leave out bordes as these contain lots of artifacst ... would need median or something ...
-    int jmin = points.size().height*0.1;
-    int jmax = points.size().height*0.9;
-#pragma omp parallel for
-    for(int j=jmin;j<jmax;j+=8) {
-        cv::Vec3f *row = points.ptr<cv::Vec3f>(j);
-        for(int i=points.size().width*0.1;i<points.size().width*0.9;i+=8) {
-            cv::Vec3f v = points(j,i)-points(j,i-1);
-            sum_x += sqrt(v.dot(v));
-            v = points(j,i)-points(j-1,i);
-            sum_y += sqrt(v.dot(v));
-            count++;
-        }
-    }
-
-    _sx = count/sum_x;
-    _sy = count/sum_y;
+   vc_segmentation_scales(_points, _sx, _sy);
     
     _generator.reset(new GridCoords(&_points, _sx, _sy));
 }

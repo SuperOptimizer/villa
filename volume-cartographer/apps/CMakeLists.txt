@@ -157,7 +157,7 @@ target_link_libraries(vc_volpkg_explorer
     ${VC_FS_LIB}
 )
 
-## img2zarr ##
+## vc_imgtozarr ##
 add_executable(vc_imgtozarr src/ImgToZarr.cpp)
 target_link_libraries(vc_imgtozarr
     nlohmann_json::nlohmann_json
@@ -168,9 +168,18 @@ target_link_libraries(vc_imgtozarr
 )
 set_property(TARGET vc_imgtozarr PROPERTY CXX_STANDARD 20)
 
-## img2zarr ##
+## zarrextract ##
 add_executable(vc_zarrextract src/ZarrExtract.cpp)
 target_link_libraries(vc_zarrextract
+    nlohmann_json::nlohmann_json
+    z5
+    opencv_highgui
+    VC::slicing
+)
+
+## vc_zarrrender ##
+add_executable(vc_zarrrender src/ZarrRender.cpp)
+target_link_libraries(vc_zarrrender
     nlohmann_json::nlohmann_json
     z5
     opencv_highgui

@@ -94,8 +94,8 @@ public:
     CoordGenerator *generator();
     cv::Mat_<cv::Vec3f> _points;
     std::unique_ptr<GridCoords> _generator;
-    float _sx = 1.0;
-    float _sy = 1.0;
+    double _sx = 1.0;
+    double _sy = 1.0;
 };
 
 class PlaneIDWSegmentator : public ControlPointSegmentator
@@ -143,3 +143,6 @@ private:
 
 //NOTE depending on request this might load a lot (the whole array) into RAM
 void readInterpolated3D(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords, ChunkCache *cache = nullptr);
+cv::Mat_<cv::Vec3f> smooth_vc_segmentation(const cv::Mat_<cv::Vec3f> &points);
+cv::Mat_<cv::Vec3f> vc_segmentation_calc_normals(const cv::Mat_<cv::Vec3f> &points);
+void vc_segmentation_scales(cv::Mat_<cv::Vec3f> points, double &sx, double &sy);
