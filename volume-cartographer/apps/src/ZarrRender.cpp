@@ -442,15 +442,32 @@ private:
 
 int main(int argc, char *argv[])
 {
-    assert(argc == 4);
+    assert(argc >= 4 && argc <= 5);
     
     const char *vol_path = argv[1];
     const char *segment_path = argv[2];
     const char *outdir_path = argv[3];
-  
+    
+    int min_slice = 0;
+    int max_slice = 65;
+    
     if (!fs::exists(outdir_path)) {
         fs::create_directory(outdir_path);
     }
+    else if (!fs::is_directory(outdir_path)) {
+        printf("ERROR: target path %s is not a directory\n", outdir_path);
+        return EXIT_FAILURE;
+    }
+
+    if (argc == 5) {
+        min_slice = atoi(argv[4]);
+        max_slice = min_slice;
+    }
+    else if (!fs::is_empty(outdir_path)) {
+        printf("ERROR: target path %s is not empty\n", outdir_path);
+        return EXIT_FAILURE;
+    }
+
     else if (!fs::is_directory(outdir_path) || !fs::is_empty(outdir_path)) {
         printf("ERROR: target path %s is not an empty directory\n", outdir_path);
         return EXIT_FAILURE;
@@ -490,7 +507,7 @@ int main(int argc, char *argv[])
     float output_scale = 0.5;
     
     timer = new MeasureLife("rendering ...\n");
-    for(int off=0;off<=65;off++) {
+    for(int off=min_slice;off<=max_slice;off++) {
         generator.setOffsetZ(off-32);
         MeasureLife time_slice("slice "+std::to_string(off)+" ... ");
         generator.gen_coords(coords, 0, 0, points.cols/sx*output_scale, points.rows/sy*output_scale, 1.0, output_scale);
