@@ -1,5 +1,5 @@
 # VC Main app
-set(target VC)
+set(target VC3D)
 set(CMAKE_AUTORCC ON)
 
 set(srcs

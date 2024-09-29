@@ -6,7 +6,7 @@ add_subdirectory(Canny)
 
 add_subdirectory(Projection)
 
-add_subdirectory(VC)
+add_subdirectory(VC3D)
 
 ## Volume Server ##
 add_executable(vc_volume_server
