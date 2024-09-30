@@ -218,10 +218,6 @@ cv::Mat_<cv::Vec3f> surf_alpha_integ(z5::Dataset *ds, ChunkCache *chunk_cache, c
         readInterpolated3D(raw_extract, ds, xt_from_mat((points+normals*off)*0.5), chunk_cache);
         cv::Mat_<uint8_t> slice = cv::Mat(raw_extract.shape(0), raw_extract.shape(1), CV_8U, raw_extract.data());
         
-        // char buf[64];
-        // sprintf(buf, "slice%02d.tif", n);
-        // cv::imwrite(buf, slice);
-        
         cv::Mat floatslice;
         slice.convertTo(floatslice, CV_32F, 1/255.0);
         
@@ -234,89 +230,18 @@ cv::Mat_<cv::Vec3f> surf_alpha_integ(z5::Dataset *ds, ChunkCache *chunk_cache, c
         opaq_slice = cv::min(opaq_slice,1);
         opaq_slice = cv::max(opaq_slice,0);
         
-        // sprintf(buf, "opaq%02d.tif", n);
-        // cv::imwrite(buf, opaq_slice);
-        
-        // printf("vals %d i t o b v: %f %f %f %f\n", n, integ.at<float>(500,600), transparent.at<float>(500,600), opaq_slice.at<float>(500,600), blur.at<float>(500,600), floatslice.at<float>(500,600));
-        
         cv::Mat joint = transparent.mul(opaq_slice);
         integ += joint.mul(floatslice);
         integ_blur += joint.mul(blur);
         integ_z += joint * off;
         transparent = transparent-joint;
-        
-        // sprintf(buf, "transp%02d.tif", n);
-        // cv::imwrite(buf, transparent);
-        // 
-        // sprintf(buf, "opaq2%02d.tif", n);
-        // cv::imwrite(buf, opaq_slice);
-        
-        // printf("res %d i t: %f %f\n", n, integ.at<float>(500,600), transparent.at<float>(500,600));
-        
-        // avgimg = avgimg + floatslice;
-        // cv::imwrite(buf, avgimg/(n+1));
-        
-        // slices.push_back(slice);
-        // for(int j=0;j<points.rows;j++)
-        //     for(int i=0;i<points.cols;i++) {
-        //         //found == 0: still searching for first time < 50!
-        //         //found == 1: record < 50 start looking for >= 50 to stop
-        //         //found == 2: done, found border
-        //         if (slice(j,i) < 40 && found(j,i) <= 1) {
-        //             height(j,i) = n+1;
-        //             found(j,i) = 1;
-        //         }
-        //         else if (slice(j,i) >= 40 && found(j,i) == 1) {
-        //             found(j,i) = 2;
-        //         }
-        //     }
-    }        // slices.push_back(slice);
-    
-//     integ /= (1-transparent);
-//     integ_blur /= (1-transparent);
-//     integ_z /= (1-transparent);
-//     
-//     cv::imwrite("blended.tif", integ);
-//     cv::imwrite("blended_blur.tif", integ_blur);
-//     cv::imwrite("blended_comp1.tif", integ/(integ_blur+0.5));
-//     cv::imwrite("blended_comp3.tif", integ-integ_blur+0.5);
-//     cv::imwrite("blended_comp2.tif", integ/(integ_blur+0.01));
-//     cv::imwrite("tranparency.tif", transparent);
-    
-    // for(int j=0;j<points.rows;j++)
-    //     for(int i=0;i<points.cols;i++)
-    //         if (found(j,i) == 1)
-    //             height(j,i) = 0;
-    
-    //never change opencv, never change ...
-    
-    // cv::cvtColor(height, mul, cv::COLOR_GRAY2BGR);
-    // cv::imwrite("max.tif", maximg);
+    }
     
     cv::Mat mul;
     cv::cvtColor(integ_z, mul, cv::COLOR_GRAY2BGR);
     cv::Mat_<cv::Vec3f> new_surf = points + normals.mul(mul);
     
     return new_surf;
-//     cv::Mat_<cv::Vec3f> new_surf_1 = new_surf + normals;
-//     cv::Mat_<cv::Vec3f> new_surf_n1 = new_surf - normals;
-//     //     
-//     xt::xarray<uint8_t> img;
-//     readInterpolated3D(img, ds, xt_from_mat(new_surf*0.5), chunk_cache);
-//     cv::Mat_<uint8_t> slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
-//     //     
-//     printf("writ slice!\n");
-//     cv::imwrite("new_surf.tif", slice);
-//     
-//     readInterpolated3D(img, ds, xt_from_mat(new_surf_1*0.5), chunk_cache);
-//     slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
-//     cv::imwrite("new_surf1.tif", slice);
-//     
-//     readInterpolated3D(img, ds, xt_from_mat(new_surf_n1*0.5), chunk_cache);
-//     slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
-//     cv::imwrite("new_surf-1.tif", slice);
-    
-    // return new_surf;
 }
 
 void writeArea(GridCoords &grid, int w, int h, z5::Dataset *ds, ChunkCache *cache, std::string path, float offset = 0.0)
