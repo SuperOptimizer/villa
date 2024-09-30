@@ -141,7 +141,7 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
     
     if (modifiers & Qt::ShiftModifier) {
         _slice->setOffsetZ(_slice->offsetZ()+steps);
-        renderVisible(true);
+        _slice_col->setSlice(_slice_name, _slice);
     }
     else {
         float zoom = pow(ZOOM_FACTOR, steps);
@@ -269,22 +269,23 @@ void CVolumeViewer::invalidateIntersect()
 
 void CVolumeViewer::onSliceChanged(std::string name, CoordGenerator *slice)
 {
+    //TODO distinguis different elements for rendering! (slice, intersect, control points) completely separately!
     if (_slice_name == "segmentation")
         invalidateIntersect();
     
-    //TODO distinguis different elements for rendering! (slice, intersect, control points) completely separately!
-    if (_slice_name != name)
-        return;
-
-    _slice = slice;
-
-    invalidateVis();
-
-    if (!_slice)
-        fScene->clear();
+    if (_slice_name == name) {
+        _slice = slice;
+        if (!_slice)
+            fScene->clear();
+        else
+            invalidateVis();
+    }
     
-    curr_img_area = {0,0,0,0};
-    renderVisible();
+    //FIXME do not re-render slice if only segmentation changed?
+    if (name == _slice_name || name == "segmentation") {
+        curr_img_area = {0,0,0,0};
+        renderVisible();
+    }
 }
 
 QGraphicsItem *cursorItem()
@@ -446,7 +447,7 @@ void CVolumeViewer::renderVisible(bool force)
                     path.lineTo(p[0],p[1]);
                 first = false;
             }
-            auto item = fGraphicsView->scene()->addPath(path, QPen(col, 2/_scene_scale));
+            auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 2/_scene_scale));
             item->setZValue(5);
             _intersect_items.push_back(item);
         }
