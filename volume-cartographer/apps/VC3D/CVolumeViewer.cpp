@@ -390,43 +390,53 @@ void CVolumeViewer::renderVisible(bool force)
     PlaneCoords *slice_plane = dynamic_cast<PlaneCoords*>(_slice);
     GridCoords *slice_segment = dynamic_cast<GridCoords*>(_slice_col->slice("segmentation"));
     
-    if (slice_plane && slice_segment) {
-        std::vector<std::vector<cv::Vec2f>> xy_seg_;
-        std::vector<std::vector<cv::Vec3f>> intersections;
-        
-        //TODO constrain to visible area? or add visiable area disaplay?
-        find_intersect_segments(intersections, xy_seg_, slice_segment, slice_plane);
-        
-        // for (auto seg : segments_xy)
-        //     for (auto p : seg)
-        //     {f
-        //         auto item = fGraphicsView->scene()->addEllipse({p.x-2,p.y-2,4,4}, QPen(Qt::yellow, 1));
-        //         other_slice_items.push_back(item);
-        //         item->setParentItem(fBaseImageItem);
-        //     }
-    }
-    
-    if (!_slice_vis_valid && _seg_tool && slice_plane) {
-#pragma omp parallel for
-        for (auto &wp : _seg_tool->control_points) {
-            float dist = slice_plane->pointDist(wp);
+    //FIXME add to different collection? ... or process jointly!
+    if (!_slice_vis_valid) {
+        if (slice_plane && slice_segment) {
+            std::vector<std::vector<cv::Vec2f>> xy_seg_;
+            std::vector<std::vector<cv::Vec3f>> intersections;
             
-            if (dist > 0.5)
-                continue;
+            std::cout << "running intersect code" << std::endl;
             
-            cv::Vec3f p = slice_plane->project(wp, 1.0, _ds_scale);
+            cv::Rect plane_roi = {curr_img_area.x()/_ds_scale, curr_img_area.y()/_ds_scale, curr_img_area.width()/_ds_scale, curr_img_area.height()/_ds_scale};
             
-#pragma omp critical
-            {
-                auto item = fGraphicsView->scene()->addEllipse({p[0]-1,p[1]-1,2,2}, QPen(Qt::green, 1));
-                //FIXME rename/clean
-                slice_vis_items.push_back(item);
-                item->setParentItem(fBaseImageItem);
+            //TODO constrain to visible area? or add visiable area disaplay?
+            find_intersect_segments(intersections, xy_seg_, slice_segment, slice_plane, plane_roi, 4/_ds_scale);
+            
+            for (auto seg : intersections) {
+                QColor col(128+rand()%127, 128+rand()%127, 128+rand()%127);
+                for (auto wp : seg)
+                {
+                    cv::Vec3f p = slice_plane->project(wp, 1.0, _ds_scale);
+                    auto item = fGraphicsView->scene()->addEllipse({p[0]-1,p[1]-1,2,2}, QPen(col, 1));
+                    slice_vis_items.push_back(item);
+                    item->setParentItem(fBaseImageItem);
+                }
             }
         }
         
-        if (_seg_tool->control_points.size())
-            _slice_vis_valid = true;
+        /*if (!_slice_vis_valid && _seg_tool && slice_plane) {
+    #pragma omp parallel for
+            for (auto &wp : _seg_tool->control_points) {
+                float dist = slice_plane->pointDist(wp);
+                
+                if (dist > 0.5)
+                    continue;
+                
+                cv::Vec3f p = slice_plane->project(wp, 1.0, _ds_scale);
+                
+    #pragma omp critical
+                {
+                    auto item = fGraphicsView->scene()->addEllipse({p[0]-1,p[1]-1,2,2}, QPen(Qt::yellow, 1));
+                    //FIXME rename/clean
+                    slice_vis_items.push_back(item);
+                    item->setParentItem(fBaseImageItem);
+                }
+            }
+            
+            if (_seg_tool->control_points.size())
+                _slice_vis_valid = true;
+        }*/
     }
     
     update();

@@ -743,11 +743,187 @@ float IDWHeightPlaneCoords::scalarp(cv::Vec3f point) const
     return point.dot(_normal) - origin.dot(_normal) - height(point);
 }
 
+static float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, float init_step = 16.0, float min_step = 0.125);
+static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p);
 
-void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, GridCoords *grid, PlaneCoords *plane)
+void set_block(cv::Mat_<uint8_t> &block, const cv::Vec3f &last_loc, const cv::Vec3f &loc, const cv::Rect &roi, float step)
+{
+    int x1 = (loc[0]-roi.x)/step;
+    int y1 = (loc[1]-roi.y)/step;
+    int x2 = (last_loc[0]-roi.x)/step;
+    int y2 = (last_loc[1]-roi.y)/step;
+    
+    if (x1 < 0 || y1 < 0 || x1 >= block.cols || y1 >= block.rows)
+        return;
+    if (x2 < 0 || y2 < 0 || x2 >= block.cols || y2 >= block.rows)
+        return;
+
+    if (x1 == x2 && y1 == y2)
+        block(y1, x1) = 1;
+    else
+        cv::line(block, {x1,y1},{x2,y2}, 1);
+}
+
+uint8_t get_block(const cv::Mat_<uint8_t> &block, const cv::Vec3f &loc, const cv::Rect &roi, float step)
+{
+    int x = (loc[0]-roi.x)/step;
+    int y = (loc[1]-roi.y)/step;
+    
+    if (x < 0 || y < 0 || x >= block.cols || y >= block.rows)
+        return 1;
+    
+    return block(y, x);
+}
+
+void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, GridCoords *grid, PlaneCoords *plane, const cv::Rect &plane_roi, float step)
 {
     //start with random points and search for a plane intersection
     
+    float block_step = 0.5*step;
+    
+    cv::Mat_<uint8_t> block(cv::Size(plane_roi.width/block_step, plane_roi.height/block_step), 0);
+    
+    cv::Rect grid_bounds(1,1,grid->_points->cols-2,grid->_points->rows-2);
+    
+    for(int r=0;r<100;r++) {
+        std::vector<cv::Vec3f> seg;
+        std::vector<cv::Vec2f> seg_loc;
+        cv::Vec2f loc;
+        cv::Vec2f loc2;
+        cv::Vec2f loc3;
+        cv::Vec3f point;
+        cv::Vec3f point2;
+        cv::Vec3f point3;
+        cv::Vec3f plane_loc;
+        cv::Vec3f last_plane_loc;
+        float dist = -1;
+        
+        
+        //initial points
+        for(int i=0;i<100;i++) {
+            loc = {std::rand() % (grid->_points->cols-1), std::rand() % (grid->_points->rows-1)};
+            point = at_int(*grid->_points, loc);
+            
+            plane_loc = plane->project(point);
+            if (!plane_roi.contains({plane_loc[0],plane_loc[1]}))
+                continue;
+    
+            dist = min_loc(*grid->_points, loc, point, {}, {}, plane);
+            
+            plane_loc = plane->project(point);
+            if (!plane_roi.contains({plane_loc[0],plane_loc[1]}))
+                dist = -1;
+                
+            if (get_block(block, plane_loc, plane_roi, block_step))
+                dist = -1;
+            
+            if (dist >= 0 && dist <= 1)
+                break;
+        }
+        
+        // std::cout << loc << " init at dist " << dist << std::endl;
+        
+        if (dist < 0 || dist > 1)
+            continue;
+
+        seg.push_back(point);
+        seg_loc.push_back(loc);
+        
+        //point2
+        loc2 = loc;
+        //search point at distance of 1 to init point
+        dist = min_loc(*grid->_points, loc2, point2, {point}, {1}, plane);
+        
+        if (dist < 0 || dist > 1)
+            continue;
+        
+        seg.push_back(point2);
+        seg_loc.push_back(loc2);
+        
+        last_plane_loc = plane->project(point);
+        plane_loc = plane->project(point2);
+        set_block(block, last_plane_loc, plane_loc, plane_roi, block_step);
+        last_plane_loc = plane_loc;
+        
+        //go one direction
+        for(int n=0;n<100;n++) {
+            //now search following points
+            cv::Vec2f loc3 = loc2+loc2-loc;
+            
+            if (!grid_bounds.contains({loc3[0],loc3[1]}))
+                break;
+            
+            point3 = at_int(*grid->_points, loc3);
+            
+            //search point close to prediction + dist 1 to last point
+            dist = min_loc(*grid->_points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5);
+            
+            //then refine
+            dist = min_loc(*grid->_points, loc3, point3, {point2}, {step}, plane, 0.5);
+            
+            if (dist < 0 || dist > 1)
+                break;
+            
+            seg.push_back(point3);
+            seg_loc.push_back(loc3);
+            point = point2;
+            point2 = point3;
+            loc = loc2;
+            loc2 = loc3;
+            
+            plane_loc = plane->project(point3);
+            if (get_block(block, plane_loc, plane_roi, block_step))
+                break;
+
+            set_block(block, last_plane_loc, plane_loc, plane_roi, block_step);
+            last_plane_loc = plane_loc;
+        }
+        
+        //now the other direction
+        loc2 = seg_loc[0];
+        loc = seg_loc[1];
+        point2 = seg[0];
+        point = seg[1];
+        
+        last_plane_loc = plane->project(point2);
+
+        //FIXME repeat by not copying code ...
+        for(int n=0;n<100;n++) {
+            //now search following points
+            cv::Vec2f loc3 = loc2+loc2-loc;
+            
+            if (!grid_bounds.contains({loc3[0],loc3[1]}))
+                break;
+                
+                point3 = at_int(*grid->_points, loc3);
+                
+                //search point close to prediction + dist 1 to last point
+                dist = min_loc(*grid->_points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5);
+                
+                //then refine
+                dist = min_loc(*grid->_points, loc3, point3, {point2}, {step}, plane, 0.5);
+                
+                if (dist < 0 || dist > 1)
+                    break;
+            
+            seg.push_back(point3);
+            seg_loc.push_back(loc3);
+            point = point2;
+            point2 = point3;
+            loc = loc2;
+            loc2 = loc3;
+            
+            plane_loc = plane->project(point3);
+            if (get_block(block, plane_loc, plane_roi, block_step))
+                break;
+            
+            set_block(block, last_plane_loc, plane_loc, plane_roi, block_step);
+            last_plane_loc = plane_loc;
+        }
+        
+        seg_vol.push_back(seg);
+        seg_grid.push_back(seg_loc);
+    }
 }
 
 void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale)
@@ -760,7 +936,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
     std::vector<std::tuple<cv::Point,cv::Point3f,float>> upper;
     std::vector<std::tuple<cv::Point,cv::Point3f,float>> lower;
     std::vector<cv::Point2f> seg_points;
-    
+
     for(int c=0;c<1000;c++) {
         int x = std::rand() % roi.width;
         int y = std::rand() % roi.height;
@@ -887,7 +1063,7 @@ void PlaneCoords::setNormal(cv::Vec3f normal)
 float PlaneCoords::pointDist(cv::Vec3f wp)
 {
     float plane_off = origin.dot(_normal);
-    float scalarp = wp.dot(_normal) - plane_off;
+    float scalarp = wp.dot(_normal) - plane_off - _z_off;
         
     return abs(scalarp);
 }
@@ -1068,6 +1244,96 @@ static void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f
             changed = true;
         }
     }
+}
+
+static float tdist(const cv::Vec3f &a, const cv::Vec3f &b, float t_dist)
+{
+    cv::Vec3f d = a-b;
+    float l = sqrt(d.dot(d));
+    
+    return abs(l-t_dist);
+}
+
+static float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds)
+{
+    float sum = 0;
+    for(int i=0;i<tgts.size();i++) {
+        float d = tdist(v, tgts[i], tds[i]);
+        sum += d*d;
+    }
+    
+    return sum;
+}
+
+//search location in points where we minimize error to multiple objectives using iterated local search
+//tgts,tds -> distance to some POIs
+//plane -> stay on plane
+static float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, float init_step, float min_step)
+{
+    // std::cout << "start minlo" << loc << std::endl;
+    cv::Rect boundary(1,1,points.cols-2,points.rows-2);
+    if (!boundary.contains({loc[0],loc[1]})) {
+        out = {-1,-1,-1};
+        return -1;
+    }
+    
+    bool changed = true;
+    cv::Vec3f val = at_int(points, loc);
+    out = val;
+    float best = tdist_sum(val, tgts, tds);
+    float d = plane->pointDist(val);
+    best += d*d;
+    float res;
+    
+    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
+    std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
+    float step = init_step;
+    
+    
+    // std::cout << "init " << best << tgts[0] << val << loc << "\n";
+    
+    
+    while (changed) {
+        changed = false;
+        
+        for(auto &off : search) {
+            cv::Vec2f cand = loc+off*step;
+            
+            if (!boundary.contains({cand[0],cand[1]})) {
+                out = {-1,-1,-1};
+                loc = {-1,-1};
+                return -1;
+            }
+            
+            
+            val = at_int(points, cand);
+            // std::cout << "at" << cand << val << std::endl;
+            res = tdist_sum(val, tgts, tds);
+            float d = plane->pointDist(val);
+            res += d*d;
+            if (res < best) {
+                // std::cout << res << val << step << cand << "\n";
+                changed = true;
+                best = res;
+                loc = cand;
+                out = val;
+            }
+            // else
+            // std::cout << "(" << res << val << step << cand << "\n";
+        }
+        
+        if (changed)
+            continue;
+        
+        step *= 0.5;
+        changed = true;
+        
+        if (step < min_step)
+            break;
+    }
+    
+    // std::cout << "best" << best << out << "\n" <<  std::endl;
+    return best;
 }
 
 //this works surprisingly well, though some artifacts where original there was a lot of skew
