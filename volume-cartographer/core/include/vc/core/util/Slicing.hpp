@@ -113,6 +113,9 @@ private:
 
 void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale);
 
+//TODO constrain to visible area? or add visiable area disaplay?
+void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, GridCoords *grid, PlaneCoords *plane);
+
 
 //TODO generation overrun
 //TODO groupkey overrun

@@ -743,8 +743,15 @@ float IDWHeightPlaneCoords::scalarp(cv::Vec3f point) const
     return point.dot(_normal) - origin.dot(_normal) - height(point);
 }
 
+
+void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, GridCoords *grid, PlaneCoords *plane)
+{
+    //start with random points and search for a plane intersection
+    
+}
+
 void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale)
-{    
+{
     xt::xarray<float> coords;
     
     //FIXME make generators more flexible so we can generate more sparse data
