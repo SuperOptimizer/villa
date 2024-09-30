@@ -201,7 +201,7 @@ private:
     std::chrono::time_point<std::chrono::high_resolution_clock> start;
 };
 
-cv::Mat_<cv::Vec3f> surf_alpha_integ(z5::Dataset *ds, ChunkCache *chunk_cache, const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<cv::Vec3f> &normals)
+cv::Mat_<cv::Vec3f> surf_alpha_integ(z5::Dataset *ds, ChunkCache *chunk_cache, const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<cv::Vec3f> &normals, cv::Mat *composed)
 {
     cv::Mat_<cv::Vec3f> res;
     
@@ -237,6 +237,13 @@ cv::Mat_<cv::Vec3f> surf_alpha_integ(z5::Dataset *ds, ChunkCache *chunk_cache, c
         transparent = transparent-joint;
     }
     
+    
+    if (composed) {
+        integ /= (1-transparent);
+        integ_blur /= (1-transparent);
+        *composed = integ/(integ_blur+0.5);
+    }    
+
     cv::Mat mul;
     cv::cvtColor(integ_z, mul, cv::COLOR_GRAY2BGR);
     cv::Mat_<cv::Vec3f> new_surf = points + normals.mul(mul);
@@ -322,12 +329,15 @@ int main(int argc, char *argv[])
     
     writeArea(points, w, h, ds.get(), &chunk_cache, "original.tif");
     
+    cv::Mat composed;
+    
     for(int i=0;i<3;i++) {
         LifeTime time("surface alpha integration");
         //FIXME use sx sy!
-        points = surf_alpha_integ(ds.get(), &chunk_cache, points, normals);
+        points = surf_alpha_integ(ds.get(), &chunk_cache, points, normals, &composed);
     }
     
+    cv::imwrite("alpha_composed.tif", composed);
     GridCoords gen_grid(&points);
     
     writeArea(gen_grid, w, h, ds.get(), &chunk_cache, "alpha_optimized.tif");
