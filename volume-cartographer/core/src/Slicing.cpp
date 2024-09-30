@@ -788,6 +788,8 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     for(int r=0;r<100;r++) {
         std::vector<cv::Vec3f> seg;
         std::vector<cv::Vec2f> seg_loc;
+        std::vector<cv::Vec3f> seg2;
+        std::vector<cv::Vec2f> seg_loc2;
         cv::Vec2f loc;
         cv::Vec2f loc2;
         cv::Vec2f loc3;
@@ -906,8 +908,8 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 if (dist < 0 || dist > 1)
                     break;
             
-            seg.push_back(point3);
-            seg_loc.push_back(loc3);
+            seg2.push_back(point3);
+            seg_loc2.push_back(loc3);
             point = point2;
             point2 = point3;
             loc = loc2;
@@ -921,8 +923,15 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             last_plane_loc = plane_loc;
         }
         
-        seg_vol.push_back(seg);
-        seg_grid.push_back(seg_loc);
+        std::reverse(seg2.begin(), seg2.end());
+        std::reverse(seg_loc2.begin(), seg_loc2.end());
+        
+        seg2.insert(seg2.end(), seg.begin(), seg.end());
+        seg_loc2.insert(seg_loc2.end(), seg_loc.begin(), seg_loc.end());
+        
+        
+        seg_vol.push_back(seg2);
+        seg_grid.push_back(seg_loc2);
     }
 }
 

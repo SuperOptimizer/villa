@@ -134,6 +134,7 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
 {
     //TODO don't invalidate if only _scene_scale chagned
     invalidateVis();
+    invalidateIntersect();
     
     if (!_slice)
         return;
@@ -256,17 +257,31 @@ void CVolumeViewer::invalidateVis()
     slice_vis_items.resize(0);
 }
 
+void CVolumeViewer::invalidateIntersect()
+{
+    _intersect_valid = false;    
+    for(auto &item : _intersect_items) {
+        fScene->removeItem(item);
+        delete item;
+    }
+    _intersect_items.resize(0);
+}
+
 void CVolumeViewer::onSliceChanged(std::string name, CoordGenerator *slice)
 {
+    if (_slice_name == "segmentation")
+        invalidateIntersect();
+    
+    //TODO distinguis different elements for rendering! (slice, intersect, control points) completely separately!
     if (_slice_name != name)
         return;
 
     _slice = slice;
-    
-    if (!_slice)
-        fScene->clear();
 
     invalidateVis();
+
+    if (!_slice)
+        fScene->clear();
     
     curr_img_area = {0,0,0,0};
     renderVisible();
@@ -353,6 +368,23 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
     return m.clone();
 }
 
+class LifeTime
+{
+public:
+    LifeTime(std::string msg)
+    {
+        std::cout << msg << std::flush;
+        start = std::chrono::high_resolution_clock::now();
+    }
+    ~LifeTime()
+    {
+        auto end = std::chrono::high_resolution_clock::now();
+        std::cout << " took " << std::chrono::duration<double>(end-start).count() << " s" << std::endl;
+    }
+private:
+    std::chrono::time_point<std::chrono::high_resolution_clock> start;
+};
+
 void CVolumeViewer::renderVisible(bool force)
 {
     if (!volume || !volume->zarrDataset() || !_slice)
@@ -364,6 +396,7 @@ void CVolumeViewer::renderVisible(bool force)
         return;
     
     curr_img_area = {bbox.left()-128,bbox.top()-128, bbox.width()+256, bbox.height()+256};
+    invalidateIntersect();
     
     cv::Mat img = render_area({curr_img_area.x(), curr_img_area.y(), curr_img_area.width(), curr_img_area.height()});
     
@@ -390,30 +423,34 @@ void CVolumeViewer::renderVisible(bool force)
     PlaneCoords *slice_plane = dynamic_cast<PlaneCoords*>(_slice);
     GridCoords *slice_segment = dynamic_cast<GridCoords*>(_slice_col->slice("segmentation"));
     
-    //FIXME add to different collection? ... or process jointly!
-    if (!_slice_vis_valid) {
-        if (slice_plane && slice_segment) {
-            std::vector<std::vector<cv::Vec2f>> xy_seg_;
-            std::vector<std::vector<cv::Vec3f>> intersections;
-            
-            std::cout << "running intersect code" << std::endl;
-            
-            cv::Rect plane_roi = {curr_img_area.x()/_ds_scale, curr_img_area.y()/_ds_scale, curr_img_area.width()/_ds_scale, curr_img_area.height()/_ds_scale};
-            
-            //TODO constrain to visible area? or add visiable area disaplay?
-            find_intersect_segments(intersections, xy_seg_, slice_segment, slice_plane, plane_roi, 4/_ds_scale);
-            
-            for (auto seg : intersections) {
-                QColor col(128+rand()%127, 128+rand()%127, 128+rand()%127);
-                for (auto wp : seg)
-                {
-                    cv::Vec3f p = slice_plane->project(wp, 1.0, _ds_scale);
-                    auto item = fGraphicsView->scene()->addEllipse({p[0]-1,p[1]-1,2,2}, QPen(col, 1));
-                    slice_vis_items.push_back(item);
-                    item->setParentItem(fBaseImageItem);
-                }
+    if (!_intersect_valid && slice_plane && slice_segment) {
+        std::vector<std::vector<cv::Vec2f>> xy_seg_;
+        std::vector<std::vector<cv::Vec3f>> intersections;
+        
+        cv::Rect plane_roi = {curr_img_area.x()/_ds_scale, curr_img_area.y()/_ds_scale, curr_img_area.width()/_ds_scale, curr_img_area.height()/_ds_scale};
+        
+        find_intersect_segments(intersections, xy_seg_, slice_segment, slice_plane, plane_roi, 4/_ds_scale);
+    
+
+        for (auto seg : intersections) {
+            QColor col(128+rand()%127, 128+rand()%127, 128+rand()%127);
+            QPainterPath path;
+
+            bool first = true;
+            for (auto wp : seg)
+            {
+                cv::Vec3f p = slice_plane->project(wp, 1.0, _ds_scale);
+                if (first)
+                    path.moveTo(p[0],p[1]);
+                else
+                    path.lineTo(p[0],p[1]);
+                first = false;
             }
+            auto item = fGraphicsView->scene()->addPath(path, QPen(col, 2/_scene_scale));
+            item->setZValue(5);
+            _intersect_items.push_back(item);
         }
+    }
         
         /*if (!_slice_vis_valid && _seg_tool && slice_plane) {
     #pragma omp parallel for
@@ -437,7 +474,6 @@ void CVolumeViewer::renderVisible(bool force)
             if (_seg_tool->control_points.size())
                 _slice_vis_valid = true;
         }*/
-    }
     
     update();
 }

@@ -54,6 +54,7 @@ public:
     void renderVisible(bool force = false);
     cv::Mat render_area(const cv::Rect &roi);
     void invalidateVis();
+    void invalidateIntersect();
     
     CVolumeViewerView* fGraphicsView;
 
@@ -130,6 +131,8 @@ protected:
     
     bool _slice_vis_valid = false;
     std::vector<QGraphicsItem*> slice_vis_items; 
+    bool _intersect_valid = false;
+    std::vector<QGraphicsItem*> _intersect_items; 
     ControlPointSegmentator *_seg_tool = nullptr;
     
     CSliceCollection *_slice_col = nullptr;
