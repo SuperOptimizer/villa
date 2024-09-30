@@ -304,6 +304,18 @@ QGraphicsItem *cursorItem()
     return parent;
 }
 
+QGraphicsItem *crossItem()
+{
+    QPen pen(QBrush(Qt::red), 1);
+    QGraphicsLineItem *parent = new QGraphicsLineItem(-5, -5, 5, 5);
+    parent->setZValue(10);
+    parent->setPen(pen);
+    QGraphicsLineItem *line = new QGraphicsLineItem(-5, 5, 5, -5, parent);
+    line->setPen(pen);
+    
+    return parent;
+}
+
 //TODO make poi tracking optional and configurable
 void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
 {    
@@ -447,36 +459,37 @@ void CVolumeViewer::renderVisible(bool force)
                     path.lineTo(p[0],p[1]);
                 first = false;
             }
-            auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 2/_scene_scale));
+            auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 1/_scene_scale));
             item->setZValue(5);
             _intersect_items.push_back(item);
         }
     }
         
-        /*if (!_slice_vis_valid && _seg_tool && slice_plane) {
-    #pragma omp parallel for
-            for (auto &wp : _seg_tool->control_points) {
-                float dist = slice_plane->pointDist(wp);
-                
-                if (dist > 0.5)
-                    continue;
-                
-                cv::Vec3f p = slice_plane->project(wp, 1.0, _ds_scale);
-                
-    #pragma omp critical
-                {
-                    auto item = fGraphicsView->scene()->addEllipse({p[0]-1,p[1]-1,2,2}, QPen(Qt::yellow, 1));
-                    //FIXME rename/clean
-                    slice_vis_items.push_back(item);
-                    item->setParentItem(fBaseImageItem);
-                }
-            }
+    if (!_slice_vis_valid && _seg_tool && slice_plane) {
+#pragma omp parallel for
+        for (auto &wp : _seg_tool->control_points) {
+            float dist = slice_plane->pointDist(wp);
             
-            if (_seg_tool->control_points.size())
-                _slice_vis_valid = true;
-        }*/
-    
-    update();
+            if (dist > 0.5)
+                continue;
+            
+            cv::Vec3f p = slice_plane->project(wp, 1.0, _ds_scale);
+            
+#pragma omp critical
+            {
+                // auto item = crossItem();
+                // item->setPos(p[0], p[1]);
+                auto item = fGraphicsView->scene()->addEllipse({-1,-1,2,2}, QPen(Qt::red, 1));
+                item->setZValue(8);
+                item->setPos(p[0],p[1]);
+                //FIXME rename/clean
+                slice_vis_items.push_back(item);
+            }
+        }
+        
+        if (_seg_tool->control_points.size())
+            _slice_vis_valid = true;
+    }
 }
 
 void CVolumeViewer::onScrolled()
