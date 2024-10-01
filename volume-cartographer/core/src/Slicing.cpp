@@ -743,7 +743,6 @@ float IDWHeightPlaneCoords::scalarp(cv::Vec3f point) const
     return point.dot(_normal) - origin.dot(_normal) - height(point);
 }
 
-static float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, float init_step = 16.0, float min_step = 0.125);
 static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p);
 
 void set_block(cv::Mat_<uint8_t> &block, const cv::Vec3f &last_loc, const cv::Vec3f &loc, const cv::Rect &roi, float step)
@@ -1277,7 +1276,7 @@ static float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, c
 //search location in points where we minimize error to multiple objectives using iterated local search
 //tgts,tds -> distance to some POIs
 //plane -> stay on plane
-static float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, float init_step, float min_step)
+float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, float init_step, float min_step)
 {
     // std::cout << "start minlo" << loc << std::endl;
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
@@ -1290,8 +1289,10 @@ static float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3
     cv::Vec3f val = at_int(points, loc);
     out = val;
     float best = tdist_sum(val, tgts, tds);
-    float d = plane->pointDist(val);
-    best += d*d;
+    if (plane) {
+        float d = plane->pointDist(val);
+        best += d*d;
+    }
     float res;
     
     // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
@@ -1318,8 +1319,10 @@ static float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3
             val = at_int(points, cand);
             // std::cout << "at" << cand << val << std::endl;
             res = tdist_sum(val, tgts, tds);
-            float d = plane->pointDist(val);
-            res += d*d;
+            if (plane) {
+                float d = plane->pointDist(val);
+                res += d*d;
+            }
             if (res < best) {
                 // std::cout << res << val << step << cand << "\n";
                 changed = true;
@@ -1374,19 +1377,30 @@ cv::Mat_<cv::Vec3f> smooth_vc_segmentation(const cv::Mat_<cv::Vec3f> &points)
 void vc_segmentation_scales(cv::Mat_<cv::Vec3f> points, double &sx, double &sy)
 {
     //so we get something somewhat meaningful by default
-    double sum_x = 1;
-    double sum_y = 1;
-    int count = 1;
+    double sum_x = 0;
+    double sum_y = 0;
+    int count = 0;
     //NOTE leave out bordes as these contain lots of artifacst if coming from smooth_segmentation() ... would need median or something ...
-    int jmin = points.size().height*0.1;
+    int jmin = points.size().height*0.1+1;
     int jmax = points.size().height*0.9;
+    int imin = points.size().width*0.1+1;
+    int imax = points.size().width*0.9;
+    int step = 4;
+    if (points.size().height < 20) {
+        std::cout << "small array vc scales " << std::endl;
+        jmin = 1;
+        jmax = points.size().height;
+        imin = 1;
+        imax = points.size().width;
+        step = 1;
+    }
 #pragma omp parallel for
-    for(int j=jmin;j<jmax;j+=8) {
-        double _sum_x = 1;
-        double _sum_y = 1;
-        int _count = 1;
+    for(int j=jmin;j<jmax;j+=step) {
+        double _sum_x = 0;
+        double _sum_y = 0;
+        int _count = 0;
         cv::Vec3f *row = points.ptr<cv::Vec3f>(j);
-        for(int i=points.size().width*0.1;i<points.size().width*0.9;i+=8) {
+        for(int i=imin;i<imax;i+=step) {
             cv::Vec3f v = points(j,i)-points(j,i-1);
             _sum_x += sqrt(v.dot(v));
             v = points(j,i)-points(j-1,i);

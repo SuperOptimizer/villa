@@ -307,30 +307,227 @@ cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss(cv::Mat_<cv::Vec3f> point
     return out;
 }
 
-//instead of optimizing the distance to a (blurred) location which might not exist on the plane,
-//optimize for a location which intersects neighoring spheres
-//(basically try to ignore surface normal without knowing what the normal actually is)
-cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss_indirect(cv::Mat_<cv::Vec3f> points)
+static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
-    cv::Mat_<cv::Vec3f> out = points.clone();
-    cv::Mat_<cv::Vec3f> blur = points.clone();
-    cv::Mat_<cv::Vec2f> locs(points.size());
+    return{a[0]*b[0],a[1]*b[1]};
+}
+
+float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, cv::Vec2f init_step, float min_step_f)
+{
+    // std::cout << "start minlo" << loc << std::endl;
+    cv::Rect boundary(1,1,points.cols-2,points.rows-2);
+    if (!boundary.contains({loc[0],loc[1]})) {
+        out = {-1,-1,-1};
+        return -1;
+    }
     
-    cv::GaussianBlur(points, blur, {1,255}, 0);
+    bool changed = true;
+    cv::Vec3f val = at_int(points, loc);
+    out = val;
+    float best = tdist_sum(val, tgts, tds);
+    if (plane) {
+        float d = plane->pointDist(val);
+        best += d*d;
+    }
+    float res;
     
-    int dist = 20;
+    //TODO add more search patterns, compare motion estimatino for video compression, x264/x265, ...
+    std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
+    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
+    cv::Vec2f step = init_step;
     
-    #pragma omp parallel for
-    for(int j=2*dist;j<points.rows-2*dist;j++)
-        for(int i=2*dist;i<points.cols-2*dist;i++) {
-            std::vector<cv::Vec3f> tgts = {blur(j-dist,i),blur(j+dist,i),blur(j,i+dist/5),blur(j,i-dist/5)};
-            std::vector<float> dists = {sqrt(sdist(tgts[0],blur(j,i))),sqrt(sdist(tgts[1],blur(j,i))),sqrt(sdist(tgts[2],blur(j,i))),sqrt(sdist(tgts[3],blur(j,i)))};
-            // printf("%f %f %f %f\n", dists[0], dists[1], dists[2], dists[3]);
-            cv::Vec2f loc = {i,j};
-            min_loc(points, loc, out(j,i), tgts, dists, false);
+    
+    // std::cout << "init " << best << tgts[0] << val << loc << "\n";
+    
+    
+    while (changed) {
+        changed = false;
+        
+        for(auto &off : search) {
+            cv::Vec2f cand = loc+mul(off,step);
+            
+            if (!boundary.contains({cand[0],cand[1]})) {
+                out = {-1,-1,-1};
+                loc = {-1,-1};
+                return -1;
+            }
+            
+            
+            val = at_int(points, cand);
+            // std::cout << "at" << cand << val << std::endl;
+            res = tdist_sum(val, tgts, tds);
+            if (plane) {
+                float d = plane->pointDist(val);
+                res += d*d;
+            }
+            if (res < best) {
+                // std::cout << res << val << step << cand << "\n";
+                changed = true;
+                best = res;
+                loc = cand;
+                out = val;
+            }
+            // else
+            // std::cout << "(" << res << val << step << cand << "\n";
         }
         
-        return out;
+        if (changed)
+            continue;
+        
+        step *= 0.5;
+        changed = true;
+        
+        if (step[0] < min_step_f*init_step[0])
+            break;
+    }
+    
+    // std::cout << "best" << best << out <<  std::endl;
+    return sqrt(best/tgts.size());
+}
+
+
+float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, cv::Vec2f init_step, const std::vector<cv::Vec3f> &opt_t, const std::vector<float> &opt_d)
+{
+    // std::cout << init << loc << std::endl;
+    cv::Vec2f init_loc = loc;
+    
+    std::vector<cv::Vec3f> t2 = tgts;
+    t2.insert(t2.end(), opt_t.begin(), opt_t.end());
+    std::vector<float> d2 = tds;
+    d2.insert(d2.end(), opt_d.begin(), opt_d.end());
+    
+    float res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.01);
+    float res2 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01);
+    
+    printf("%f (%f)\n", res2, res1);
+    
+    if (res2 < 5.0)
+        return res2;
+
+    for(int i=0;i<100;i++)
+    {
+        cv::Vec2f off = {rand()%100,rand()%100};
+        off -= cv::Vec2f(50,50);
+        off = mul(off, init_step);
+        loc = init_loc + off;
+        
+        res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.01);
+        res2 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01);
+        
+        
+        if (res2 < 5.0) {
+            printf("  it %d %f (%f)\n", res2, res1, i);
+            return res2;
+        }
+    }
+    
+    loc = init_loc;
+    res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.01);
+    res2 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01);
+    printf("fallback %f (%f)\n", res2, res1);
+    
+    return res2;
+}
+
+//lets try again
+cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
+{
+    
+    double sx, sy;
+    vc_segmentation_scales(points, sx, sy);
+    
+    cv::Vec2f step = {sx*8, sy*8};
+    
+    std::cout << "input avg step " << sx << " " << sy << points.size() << std::endl;
+    
+    //TODO use scaling and average diffeence vecs for init?
+    float D = sqrt(2);
+    
+    float T = 100;
+    int w = 10;
+    int h = 10;
+    
+    cv::Mat_<cv::Vec3f> out(h,w);
+    cv::Mat_<cv::Vec2f> locs(h,w);
+    out.setTo(-1);
+    
+    //FIXME the init locations are probably very important!
+    
+    //FIXME local search can be affected by noise/artefacts in data, add some re-init random initilizations if we see failures?
+    
+    locs(0,0) = {points.cols/2, points.rows/2};
+    out(0,0) = at_int(points, locs(0,0));
+    
+    float res;
+    
+    //first point to the right
+    locs(0,1) = locs(0,0)+cv::Vec2f(0,1);
+    res = min_loc_dbg(points, locs(0,1), out(0,1), {out(0,0)}, {T}, nullptr, step, 0.01);
+    std::cout << res << std::endl;
+    
+    //bottom left
+    locs(1,0) = locs(0,0)+cv::Vec2f(0,1);
+    res = min_loc_dbg(points, locs(1,0), out(1,0), {out(0,0),out(0,1)}, {T,D*T}, nullptr, step, 0.01);
+    std::cout << res << std::endl;
+    
+    //bottom right
+    locs(1,1) = locs(0,0)+cv::Vec2f(1,1);
+    res = min_loc_dbg(points, locs(1,1), out(1,1), {out(0,0),out(0,1),out(1,0)}, {D*T,T,T}, nullptr, step, 0.01);
+    std::cout << res << std::endl;
+    
+    std::cout << out(0,0) << out(0,1) << std::endl;
+    std::cout << out(1,0) << out(1,1) << std::endl;
+    
+    //now lets expand a whole row
+    for(int i=2;i<w;i++) {
+        float res;
+        //predict upper loc
+        locs(0,i) = 2*locs(0,i-1)-locs(0,i-2);
+        
+        multi_step_search(points, locs(0,i), out(0,i), {out(0,i-1),out(1,i-1)}, {T,D*T}, nullptr, step, {out(0,i-2)}, {2*T});
+        
+//         res = min_loc_dbg(points, locs(0,i), out(0,i), {out(0,i-2),out(0,i-1),out(1,i-1)}, {2*T,T,D*T}, nullptr, step, 0.01);
+//         
+//         std::cout << res << std::endl;
+// 
+//         //predict lower loc
+        locs(1,i) = 2*locs(1,i-1)-locs(1,i-2);
+        //         res = min_loc_dbg(points, locs(1,i), out(1,i), {out(0,i),out(0,i-1),out(1,i-1)}, {T,D*T,T}, nullptr, step, 0.01);
+        multi_step_search(points, locs(1,i), out(1,i), {out(0,i),out(0,i-1),out(1,i-1)}, {T,D*T,T}, nullptr, step, {}, {});
+//         std::cout << res << std::endl;
+    }
+    
+    //now lets expand the rest
+    for(int j=2;j<h;j++) {
+        float res;
+        std::cout << "next line " << j << std::endl;
+        locs(j,0) = 2*locs(j-1,0)-locs(j-2,0);
+        
+        // cv::Vec3f init = at_int(points, locs(j,0));
+        multi_step_search(points, locs(j,0), out(j,0), {out(j-1,0),out(j-1,1)}, {T,T*D}, nullptr, step, {out(j-2,0)}, {2*T});
+        
+        // min_loc_dbg(points, locs(j,0), out(j,0), {out(j-1,0),out(j-2,0),out(j-1,1)}, {T,2*T,T*D}, nullptr, step, 0.1);
+        // min_loc_dbg(points, locs(j,0), out(j,0), {out(j-1,0),init,out(j-1,1)}, {T,0,T*D}, nullptr, step, 0.1);
+        // res = min_loc_dbg(points, locs(j,0), out(j,0), {out(j-1,0),out(j-1,1)}, {T,T*D}, nullptr, step, 0.01);
+        
+//         if (res > 10) {
+//             
+//         }
+        
+        for(int i=1;i<w;i++) {
+            locs(j,i) = 2*locs(j,i-1)-locs(j,i-2);
+            cv::Vec3f init = at_int(points, locs(j,i));
+            
+            multi_step_search(points, locs(j,i), out(j,i), {out(j-1,i),out(j-1,i-1),out(j,i-1)}, {T,D*T,T}, nullptr, step, {out(j-2,i),out(j,i-2)}, {2*T,2*T});
+            
+            // multi_step_search(points, locs(j,i), out(j,i), {out(j-1,i),out(j-1,i-1)}, {T,T*D}, nullptr, step, init);
+            // res = min_loc_dbg(points, locs(j,i), out(j,i), {out(j-1,i),out(j-1,i-1),out(j,i-1)}, {T,D*T,T}, nullptr, step, 0.01);
+            // std::cout << res << std::endl;
+        }
+    }
+    
+    
+    return out;
 }
 
 //try to ignore the local surface normal in error calculation
@@ -490,7 +687,9 @@ int main(int argc, char *argv[])
     cv::Mat_<cv::Vec3f> points;
     src.convertTo(points, CV_32F);
     
-    points = smooth_vc_segmentation(points);
+    points = derive_regular_region_largesteps(points);
+    
+    // cv::resize(points, points, {0,0}, 10.0, 10.0);
 
     double sx, sy;
     vc_segmentation_scales(points, sx, sy);
@@ -503,6 +702,7 @@ int main(int argc, char *argv[])
     
     std::cout << points.size() << sx << " " << sy << "\n";
     
+    // return EXIT_SUCCESS;
     float ds_scale = 0.5;
     float output_scale = 0.5;
     
