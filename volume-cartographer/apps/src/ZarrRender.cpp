@@ -420,13 +420,13 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
         w *= w;
         w_sum += w;
     }
-    w2.push_back(10);
-    tds.push_back(0);
+    // w2.push_back(10);
+    // tds.push_back(0);
     
     float res1 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01, ws);
     float res2 = 0;
     float res3;
-    res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
+    // res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
     cv::Vec3f val;
     if (res1 >= 0) {
         val = at_int(points, loc);
@@ -435,11 +435,11 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
     else
         res3 = res1;
     
-    printf("%f %f\n", res3, res1);
+    // printf("%f %f\n", res3, res1);
     
     // return res3;
     
-    float th = 10.0;
+    float th = 5.0;
     
     if (res3 < th)
         return res3;
@@ -454,7 +454,7 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
         loc = init_loc + off;
         
         res1 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01, ws);
-        res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
+        // res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
         // res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
         if (res1 >= 0) {
             val = at_int(points, loc);
@@ -473,7 +473,7 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
     
     loc = init_loc;
     res1 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01, ws);
-    res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
+    // res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
     if (res1 >= 0) {
         val = at_int(points, loc);
         res3 = sqrt(tdist_sum(val, tgts, tds, w2)/w_sum);
@@ -573,8 +573,8 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     float D = sqrt(2);
     
     float T = 10;
-    int w = 500;
-    int h = 500;
+    int w = 1000;
+    int h = 1000;
     
     int r = 3;
     
@@ -584,9 +584,13 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     cv::Mat_<cv::Vec2f> locs(h,w);
     cv::Mat_<uint8_t> state(h,w);
     cv::Mat_<float> dbg(h,w);
+    cv::Mat_<float> x_curv(h,w);
+    cv::Mat_<float> y_curv(h,w);
     out.setTo(-1);
     state.setTo(0);
     dbg.setTo(0);
+    x_curv.setTo(1);
+    y_curv.setTo(1);
     
     //FIXME the init locations are probably very important!
     
@@ -664,6 +668,9 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
         fringe.resize(0);
         
         printf("have %d cands %d %d\n", cands.size(), succ, total_fail);
+
+        cv::Mat_<cv::Vec3f> curv_data(2*r+1,2*r+1);
+        cv::Mat_<uint8_t> curv_valid(2*r+1,2*r+1);
         
         for(auto p : cands) {
             std::vector<cv::Vec3f> refs;
@@ -673,23 +680,69 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
             cv::Vec2f loc_sum = 0;
             int fail = 0;
             
+            curv_valid.setTo(0);
+            
+            for(int oy=std::max(p[0]-r,0);oy<=p[0]+r;oy++)
+                for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,out.cols-1);ox++)
+                    if (state(oy,ox) == 1) {
+                        int dy = oy-p[0];
+                        int dx = ox-p[1];
+                        curv_valid(dy+r,dx+r) = 1;
+                        curv_data(dy+r,dx+r) = out(oy,ox);
+                    }
+            
+            float x_curve_sum = 0;
+            int x_curve_count = 0;
+            for(int j=0;j<2*r+1;j++)
+                for(int i=0;i<2*r+1-2;i++) {
+                    if (curv_valid(j,i) && curv_valid(j,i+1) && curv_valid(j,i+2)) {
+                        x_curve_sum += sqrt(sdist(curv_data(j,i),curv_data(j,i+2)))/(2*T);
+                        x_curve_count++;
+                        // printf("%f\n",sqrt(sdist(curv_data(j,i),curv_data(j,i+2)))/(2*T));
+                    }
+                }
+            if (x_curve_count)
+                x_curv(p) = sqrt(std::min(1.0f,x_curve_sum/x_curve_count));
+            
+            float y_curve_sum = 0;
+            int y_curve_count = 0;
+            for(int j=0;j<2*r+1-2;j++)
+                for(int i=0;i<2*r+1;i++) {
+                    if (curv_valid(j,i) && curv_valid(j+1,i) && curv_valid(j+2,i)) {
+                        y_curve_sum += sqrt(sdist(curv_data(j,i),curv_data(j+2,i)))/(2*T);
+                        y_curve_count++;
+                        // printf("%f\n",sqrt(sdist(curv_data(j,i),curv_data(j,i+2)))/(2*T));
+                    }
+                }
+                if (y_curve_count)
+                    y_curv(p) = sqrt(std::min(1.0f,y_curve_sum/y_curve_count));
+            
+            // printf("avg curv xy %f %f\n",x_curv(p),y_curv(p));
+            
             for(int oy=std::max(p[0]-r,0);oy<=p[0]+r;oy++)
                 for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,out.cols-1);ox++)
                     if (state(oy,ox) == 1) {
                         refs.push_back(out(oy,ox));
-                        int dy = oy-p[0];
-                        int dx = ox-p[1];
+                        float curv_pow_x = pow(x_curv(p),abs(ox-p[1]));
+                        float curv_pow_y = pow(y_curv(p),abs(oy-p[0]));
+                        float dy = abs(oy-p[0])*curv_pow_x;
+                        float dx = abs(ox-p[1])*curv_pow_y;
+                        // float dy = (oy-p[0])*y_curv(p);
+                        // float dx = (ox-p[1])*x_curv(p);
+                        // float dy = (oy-p[0]);
+                        // float dx = (ox-p[1]);
                         float d = sqrt(dy*dy+dx*dx);
                         dists.push_back(T*d);
                         loc_sum += locs(oy,ox);
                         // float w = 1.0/(std::max(abs(dbg(oy,ox)),1.0f));
-                        ws.push_back(1/d);
+                        float w = 1*curv_pow_x*curv_pow_y/d;
+                        ws.push_back(w);
                         dbg_outp.push_back({dy,dx});
                     }
                     else if (state(oy,ox) == 10)
                         fail++;
-                    // else if (state(oy,ox) == 10)
-                        // fail++;
+            // else if (state(oy,ox) == 10)
+            // fail++;
                     
             locs(p) = loc_sum*(1.0/dists.size());
             
@@ -706,7 +759,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
             res = multi_step_search(points, locs(p), out(p), refs, dists, nullptr, step, {}, {}, failstate, ws);
             all_locs.push_back(locs(p));
             
-            // printf("%f\n", res);
+            printf("%f\n", res);
 
             dbg(p) = -res;
                     
@@ -723,7 +776,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
                 //             succ_ps.push_back(out(l));
                 //     }
                     
-                std::vector<cv::Vec3f> input_ps;
+                /*std::vector<cv::Vec3f> input_ps;
                 std::vector<cv::Vec3f> rounded_ps;
                 cv::Vec2i ref_loc = loc_sum*(1.0/dists.size());
                 // cv::Vec2i ref_loc = locs(some_point);
@@ -748,7 +801,9 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
                 write_ply("res.ply", {out(p)});
                 // write_ply("points_nearest.ply", rounded_ps);
                 
-                return out;
+                cv::imwrite("xcurv.tif",x_curv);
+                cv::imwrite("ycurv.tif",y_curv);
+                return out;*/
             }
             else if (res < 0) {
                 //image edge encountered
@@ -775,6 +830,8 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     cv::resize(dbg, dbg, {0,0}, 10.0, 10.0, cv::INTER_NEAREST);
     cv::imwrite("dbg.tif", dbg);
     
+    cv::imwrite("xcurv.tif",x_curv);
+    cv::imwrite("ycurv.tif",y_curv);
     
     //now lets expand a whole row
     /*for(int i=2;i<w;i++) {
