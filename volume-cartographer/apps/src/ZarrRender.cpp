@@ -422,7 +422,7 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
     
     // return res3;
     
-    float th = 5.0;
+    float th = 10.0;
     
     if (res3 < th)
         return res3;
@@ -497,6 +497,22 @@ float multi_step_search2(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::
 }
 
 
+void write_ply(std::string path, const std::vector<cv::Vec3f> &points)
+{
+    std::ofstream ply;
+    ply.open(path);
+
+    ply << "ply\nformat ascii 1.0\n"; 
+    ply << "element vertex " << points.size() << "\n"; 
+    ply << "property float x\n"; 
+    ply << "property float y\n"; 
+    ply << "property float z\n"; 
+    ply << "end_header\n"; 
+    
+    for(auto p : points)
+        ply << p[0] << " " << p[1] << " " << p[2] << "\n";
+}
+
 //lets try again
 //FIXME mark covered regions as not available so we can't repeat them'
 cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
@@ -513,7 +529,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     //TODO use scaling and average diffeence vecs for init?
     float D = sqrt(2);
     
-    float T = 20;
+    float T = 10;
     int w = 500;
     int h = 500;
     
@@ -583,6 +599,8 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     int succ = 0;
     int total_fail = 0;
     
+    std::vector<cv::Vec2f> all_locs;
+    
     while (fringe.size()) {
         for(auto p : fringe)
         {
@@ -608,6 +626,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
             std::vector<cv::Vec3f> refs;
             std::vector<float> dists;
             std::vector<float> ws;
+            std::vector<cv::Vec2i> dbg_outp;
             cv::Vec2f loc_sum = 0;
             int fail = 0;
             
@@ -622,6 +641,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
                         loc_sum += locs(oy,ox);
                         // float w = 1.0/(std::max(abs(dbg(oy,ox)),1.0f));
                         // ws.push_back(w);
+                        dbg_outp.push_back({oy,ox});
                     }
                     else if (state(oy,ox) == 10)
                         fail++;
@@ -641,21 +661,47 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
                     
             int failstate = 0;
             res = multi_step_search(points, locs(p), out(p), refs, dists, nullptr, step, {}, {}, failstate, ws);
+            all_locs.push_back(locs(p));
             
             // printf("%f\n", res);
 
             dbg(p) = -res;
                     
             if (failstate) {
-                //no good minimum found
-                // state(p) = 10;
-                // out(p) = -1;
-                // succ++;
+                printf("%f\n", res);
                 setfail.push_back(p);
                 total_fail++;
-                // printf("%f\n", res);
-                // state(p) = 1;
-                // fringe.push_back(p);
+                
+                std::vector<cv::Vec3f> succ_ps;
+                for(int j=0;j<10;j++)
+                    for(int i=0;i<10;i++) {
+                        cv::Vec2i l = p+cv::Vec2i(j-5,i-5);
+                        if (state(l) == 1)
+                            succ_ps.push_back(out(l));
+                    }
+                    
+                std::vector<cv::Vec3f> input_ps;
+                std::vector<cv::Vec3f> rounded_ps;
+                cv::Vec2i ref_loc = loc_sum*(1.0/dists.size());
+                // cv::Vec2i ref_loc = locs(some_point);
+                for(int j=0;j<50;j++)
+                    for(int i=0;i<50;i++) {
+                        cv::Vec2i l = ref_loc+cv::Vec2i(j-25,i-25);
+                        input_ps.push_back(points(l[1],l[0]));
+                    }
+                // for(auto l : dbg_outp)
+                    // input_ps.push_back(points(locs(l)[0],locs(l)[1]));
+                // for(auto l : all_locs) 
+                //     input_ps.push_back(at_int(points,l));
+                // for(auto l : all_locs) 
+                //     rounded_ps.push_back(points(l[1],l[0]));
+                
+                write_ply("surf.ply", succ_ps);
+                write_ply("points.ply", input_ps);
+                write_ply("res.ply", {out(p)});
+                // write_ply("points_nearest.ply", rounded_ps);
+                
+                return out;
             }
             else if (res < 0) {
                 //image edge encountered
@@ -972,8 +1018,8 @@ int main(int argc, char *argv[])
     // cv::resize(points, points, {0,0}, 10.0, 10.0);
 
     double sx, sy;
-    sx = 0.05;
-    sy = 0.05;
+    sx = 0.1;
+    sy = 0.1;
     // vc_segmentation_scales(points, sx, sy);
     delete timer;
     
