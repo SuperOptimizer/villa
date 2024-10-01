@@ -632,6 +632,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     std::vector<cv::Vec2i> neighs = {{1,0},{0,1},{-1,0},{0,-1}};
     
     cv::Rect bounds(0,0,h-1,w-1);
+    // cv::Rect bounds(0,0,h-8,w-8);
     
     state(y0,x0) = 1;
     state(y0+1,x0) = 1;
@@ -682,7 +683,9 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
             
             curv_valid.setTo(0);
             
-            for(int oy=std::max(p[0]-r,0);oy<=p[0]+r;oy++)
+            // printf("run %d %d\n",p[1],p[0]);
+            
+            for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,out.rows-1);oy++)
                 for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,out.cols-1);ox++)
                     if (state(oy,ox) == 1) {
                         int dy = oy-p[0];
@@ -719,7 +722,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
             
             // printf("avg curv xy %f %f\n",x_curv(p),y_curv(p));
             
-            for(int oy=std::max(p[0]-r,0);oy<=p[0]+r;oy++)
+            for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,out.rows-1);oy++)
                 for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,out.cols-1);ox++)
                     if (state(oy,ox) == 1) {
                         refs.push_back(out(oy,ox));
