@@ -406,28 +406,30 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
     // float res2 = min_loc_dbg(points, loc, out, join(tgts,{out}), join(tds,{0}), plane, init_step*0.1, 0.1);
     float res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step*0.1, 0.1);
     
-    printf("%f (%f %f)\n", res3, res2, res1);
+    // printf("%f (%f %f)\n", res3, res2, res1);
     
     // return res3;
     
     if (res3 < 5.0)
         return res3;
 
-    for(int i=0;i<10;i++)
+    printf("start it %f\n", res3);
+    
+    for(int i=0;i<100;i++)
     {
         cv::Vec2f off = {rand()%100,rand()%100};
         off -= cv::Vec2f(50,50);
-        off = mul(off, init_step)*20;
+        off = mul(off, init_step)*100/50;
         loc = init_loc + off;
         
-        res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.1);
+        res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step*10, 0.01);
         // res2 = min_loc_dbg(points, loc, out, join(tgts,{out}), join(tds,{0}), plane, init_step*0.1, 0.1);
-        res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step*0.1, 0.1);
+        res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01);
         
-        // printf("%f\n", res3);
+        // printf("   %f %f\n", res3, res1);
         
         if (res3 < 5.0) {
-            printf("  it %f (%f %f)\n", res3, res2, res1);
+            printf("  it %f (%f)\n", res3, res1);
             return res3;
         }
     }
@@ -438,7 +440,7 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
     res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step*0.1, 0.1);
     printf("  fallback %f (%f %f)\n", res3, res2, res1);
     
-    return -1;
+    return -res3;
 }
 
 float multi_step_search2(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, cv::Vec2f init_step, const std::vector<cv::Vec3f> &opt_t, const std::vector<float> &opt_d)
@@ -483,10 +485,11 @@ float multi_step_search2(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::
 //lets try again
 cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
 {
-    
     double sx, sy;
     vc_segmentation_scales(points, sx, sy);
     
+    std::vector<cv::Vec2i> fringe;
+    std::vector<cv::Vec2i> cands;
     
     std::cout << "input avg step " << sx << " " << sy << points.size() << std::endl;
     
@@ -497,43 +500,133 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     int w = 200;
     int h = 100;
     
-    int r = 2;
+    int r = 3;
     
     cv::Vec2f step = {sx*T/10, sy*T/10};
     
     cv::Mat_<cv::Vec3f> out(h,w);
     cv::Mat_<cv::Vec2f> locs(h,w);
+    cv::Mat_<uint8_t> state(h,w);
+    cv::Mat_<float> dbg(h,w);
     out.setTo(-1);
+    state.setTo(0);
+    dbg.setTo(0);
     
     //FIXME the init locations are probably very important!
     
     //FIXME local search can be affected by noise/artefacts in data, add some re-init random initilizations if we see failures?
     
-    locs(0,0) = {points.cols/2, points.rows/2};
-    out(0,0) = at_int(points, locs(0,0));
+    int x0 = w/2;
+    int y0 = h/2;
+
+    locs(y0,x0) = {points.cols/2, points.rows/2};
+    out(y0,x0) = at_int(points, locs(y0,x0));
     
     float res;
     
+    
     //first point to the right
-    locs(0,1) = locs(0,0)+cv::Vec2f(1,0);
-    res = min_loc_dbg(points, locs(0,1), out(0,1), {out(0,0)}, {T}, nullptr, step, 0.01);
+    locs(y0,x0+1) = locs(y0,x0)+cv::Vec2f(1,0);
+    res = min_loc_dbg(points, locs(y0,x0+1), out(y0,x0+1), {out(y0,x0)}, {T}, nullptr, step, 0.01);
     std::cout << res << std::endl;
     
     //bottom left
-    locs(1,0) = locs(0,0)+cv::Vec2f(0,1);
-    res = min_loc_dbg(points, locs(1,0), out(1,0), {out(0,0),out(0,1)}, {T,D*T}, nullptr, step, 0.01);
+    locs(y0+1,x0) = locs(y0,x0)+cv::Vec2f(0,1);
+    res = min_loc_dbg(points, locs(y0+1,x0), out(y0+1,x0), {out(y0,x0),out(y0,x0+1)}, {T,D*T}, nullptr, step, 0.01);
     std::cout << res << std::endl;
     
     //bottom right
-    locs(1,1) = locs(0,0)+cv::Vec2f(1,1);
-    res = min_loc_dbg(points, locs(1,1), out(1,1), {out(0,0),out(0,1),out(1,0)}, {D*T,T,T}, nullptr, step, 0.01);
+    locs(y0+1,x0+1) = locs(y0,x0)+cv::Vec2f(1,1);
+    res = min_loc_dbg(points, locs(y0+1,x0+1), out(y0+1,x0+1), {out(y0,x0),out(y0,x0+1),out(y0+1,x0)}, {D*T,T,T}, nullptr, step, 0.01);
     std::cout << res << std::endl;
     
-    std::cout << out(0,0) << out(0,1) << std::endl;
-    std::cout << out(1,0) << out(1,1) << std::endl;
+    std::cout << out(y0,x0) << out(y0,x0+1) << std::endl;
+    std::cout << out(y0+1,x0) << out(y0+1,x0+1) << std::endl;
+    
+    // locs(j,i) = locs(j-1,i);
+    
+    std::vector<cv::Vec3f> refs;
+    std::vector<float> dists;
+    
+    std::vector<cv::Vec2i> neighs = {{1,0},{0,1},{-1,0},{0,-1}};
+    
+    cv::Rect bounds(0,0,h-1,w-1);
+    
+    state(y0,x0) = 1;
+    state(y0+1,x0) = 1;
+    state(y0,x0+1) = 1;
+    state(y0+1,x0+1) = 1;
+    
+    fringe.push_back({y0,x0});
+    fringe.push_back({y0+1,x0});
+    fringe.push_back({y0,x0+1});
+    fringe.push_back({y0+1,x0+1});
+    
+    for(int s=0;s<30;s++) {
+        for(auto p : fringe)
+        {
+            if (state(p) != 1)
+                continue;
+            
+            // std::cout << "check " << p << std::endl;
+            
+            for(auto n : neighs)
+                if (bounds.contains(p+n) && state(p+n) == 0) {
+                    state(p+n) = 2;
+                    cands.push_back(p+n);
+                    // std::cout << "cand  " << p+n << std::endl;
+                }
+        }
+        
+        
+        fringe.resize(0);
+        
+        printf("have %d cands\n", cands.size());
+        
+        for(auto p : cands) {
+            std::vector<cv::Vec3f> refs;
+            std::vector<float> dists;
+            cv::Vec2f loc_sum = 0;
+            int count = 0;
+            
+            for(int oy=std::max(p[0]-r,0);oy<=p[0]+r;oy++)
+                for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,out.cols-1);ox++)
+                    if (state(oy,ox) == 1) {
+                        refs.push_back(out(oy,ox));
+                        int dy = oy-p[0];
+                        int dx = ox-p[1];
+                        dists.push_back(T*sqrt(dy*dy+dx*dx));
+                        loc_sum += locs(oy,ox);
+                    }
+                    
+            locs(p) = loc_sum*(1.0/dists.size());
+                    
+            res = multi_step_search(points, locs(p), out(p), refs, dists, nullptr, step, {}, {});
+            
+
+            dbg(p) = -res;
+                    
+            printf("%f\n", res);
+            
+            // if (res == -1) {
+            //     state(p) = 10;
+            //     out(p) = -1;
+            //     return out;
+            // }
+            // else {
+                state(p) = 1;
+                fringe.push_back(p);
+            // }
+            
+        }
+    }
+    
+    cv::resize(dbg, dbg, {0,0}, 10.0, 10.0, cv::INTER_NEAREST);
+    cv::imwrite("dbg.tif", dbg);
+    
     
     //now lets expand a whole row
-    for(int i=2;i<w;i++) {
+    /*for(int i=2;i<w;i++) {
 //         float res;
 //         //predict upper loc
 //         // locs(0,i) = 2*locs(0,i-1)-locs(0,i-2);
@@ -652,7 +745,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
             // }
             
         }
-    }
+    }*/
     
     
     return out;
