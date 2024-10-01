@@ -635,7 +635,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
                 continue;
             }
             
-            if (succ > 200 && dists.size()-4*fail <= 13) {
+            if (succ > 200 && dists.size()-4*fail <= 12) {
                 continue;
             }
                     
