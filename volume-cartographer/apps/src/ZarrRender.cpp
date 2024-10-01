@@ -203,7 +203,7 @@ float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, const st
     float sum = 0;
     for(int i=0;i<tgts.size();i++) {
         float d = tdist(v, tgts[i], tds[i]);
-        sum += d*d/tds[i]*20;
+        sum += d*d;///tds[i]*20;
     }
     
     return sum;
@@ -413,11 +413,11 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
     if (res3 < 5.0)
         return res3;
 
-    for(int i=0;i<100;i++)
+    for(int i=0;i<10;i++)
     {
         cv::Vec2f off = {rand()%100,rand()%100};
         off -= cv::Vec2f(50,50);
-        off = mul(off, init_step)*10;
+        off = mul(off, init_step)*20;
         loc = init_loc + off;
         
         res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.1);
@@ -494,7 +494,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     float D = sqrt(2);
     
     float T = 20;
-    int w = 100;
+    int w = 200;
     int h = 100;
     
     cv::Vec2f step = {sx*T/10, sy*T/10};
@@ -606,12 +606,13 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
             // res = multi_step_search(points, locs(j,i), out(j,i), {out(j-1,i),out(j-1,i-1),out(j,i-1)}, {T,D*T,T}, &plane, step, {out(j-2,i),out(j,i-2)}, {2*T,2*T});
             
             printf("%f\n", res);
-/*            
+            
             if (res == -1) {
-                // out(j,i) = -1;
+                out(j,i) = -1;
                 // locs(j,i) = locs(j-1,i);
-                return out;
-            }*/
+                // return out;
+                continue;
+            }
             
         }
     }
