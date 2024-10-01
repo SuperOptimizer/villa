@@ -536,6 +536,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     int y0 = h/2;
 
     locs(y0,x0) = {200, 1000};
+    // locs(y0,x0) = {600, 1000};
     out(y0,x0) = at_int(points, locs(y0,x0));
     
     float res;
@@ -618,8 +619,8 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
                         float d = sqrt(dy*dy+dx*dx);
                         dists.push_back(T*d);
                         loc_sum += locs(oy,ox);
-                        float w = 1.0/(std::max(abs(dbg(oy,ox)),1.0f));
-                        ws.push_back(w);
+                        // float w = 1.0/(std::max(abs(dbg(oy,ox)),1.0f));
+                        // ws.push_back(w);
                     }
                     else if (state(oy,ox) == 10)
                         fail++;
@@ -628,16 +629,16 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
                     
             locs(p) = loc_sum*(1.0/dists.size());
             
-            if (fail >= 1) {
+            if (fail >= 3) {
                 dbg(p) = -1;
                 state(p) = 10;
                 out(p) = -1;
                 continue;
             }
             
-            // if (succ > 100 && dists.size()-4*fail <= 12) {
-            //     continue;
-            // }
+            if (succ > 100 && dists.size()-4*fail <= 12) {
+                continue;
+            }
                     
             int failstate = 0;
             res = multi_step_search(points, locs(p), out(p), refs, dists, nullptr, step, {}, {}, failstate, ws);
