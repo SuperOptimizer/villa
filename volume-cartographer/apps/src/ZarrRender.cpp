@@ -506,6 +506,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     
     std::vector<cv::Vec2i> fringe;
     std::vector<cv::Vec2i> cands;
+    std::vector<cv::Vec2i> setfail;
     
     std::cout << "input avg step " << sx << " " << sy << points.size() << std::endl;
     
@@ -629,14 +630,12 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
                     
             locs(p) = loc_sum*(1.0/dists.size());
             
-            if (fail >= 3) {
-                dbg(p) = -1;
-                state(p) = 10;
-                out(p) = -1;
+            if (fail >= 2) {
+                setfail.push_back(p);
                 continue;
             }
             
-            if (succ > 100 && dists.size()-4*fail <= 12) {
+            if (succ > 200 && dists.size()-4*fail <= 13) {
                 continue;
             }
                     
@@ -649,9 +648,10 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
                     
             if (failstate) {
                 //no good minimum found
-                state(p) = 10;
+                // state(p) = 10;
                 // out(p) = -1;
                 // succ++;
+                setfail.push_back(p);
                 total_fail++;
                 // printf("%f\n", res);
                 // state(p) = 1;
@@ -670,6 +670,13 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
             
         }
         cands.resize(0);
+        
+        for(auto p : setfail) {
+            dbg(p) = -1;
+            state(p) = 10;
+            out(p) = -1;
+        }
+        setfail.resize(0);
     }
     
     cv::resize(dbg, dbg, {0,0}, 10.0, 10.0, cv::INTER_NEAREST);
