@@ -198,15 +198,26 @@ float tdist(const cv::Vec3f &a, const cv::Vec3f &b, float t_dist)
     return abs(l-t_dist);
 }
 
-float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds)
+float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, const std::vector<float> ws = {})
 {
-    float sum = 0;
-    for(int i=0;i<tgts.size();i++) {
-        float d = tdist(v, tgts[i], tds[i]);
-        sum += d*d;///tds[i]*20;
+    if (!ws.size()) {
+        float sum = 0;
+        for(int i=0;i<tgts.size();i++) {
+            float d = tdist(v, tgts[i], tds[i]);
+            sum += d*d;///tds[i]*20;
+        }
+        
+        return sum;
     }
-    
-    return sum;
+    else {
+        float sum = 0;
+        for(int i=0;i<tgts.size();i++) {
+            float d = tdist(v, tgts[i], tds[i]);
+            sum += d*d*ws[i];
+        }
+        
+        return sum;
+    }
 }
 
 void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, bool z_search = true)
@@ -312,7 +323,7 @@ static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
     return{a[0]*b[0],a[1]*b[1]};
 }
 
-float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, cv::Vec2f init_step, float min_step_f)
+float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, cv::Vec2f init_step, float min_step_f, const std::vector<float> &ws = {})
 {
     // std::cout << "start minlo" << loc << std::endl;
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
@@ -324,7 +335,7 @@ float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &
     bool changed = true;
     cv::Vec3f val = at_int(points, loc);
     out = val;
-    float best = tdist_sum(val, tgts, tds);
+    float best = tdist_sum(val, tgts, tds, ws);
     if (plane) {
         float d = plane->pointDist(val);
         best += d*d;
@@ -355,7 +366,7 @@ float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &
             
             val = at_int(points, cand);
             // std::cout << "at" << cand << val << std::endl;
-            res = tdist_sum(val, tgts, tds);
+            res = tdist_sum(val, tgts, tds, ws);
             if (plane) {
                 float d = plane->pointDist(val);
                 res += d*d;
@@ -393,7 +404,7 @@ template<typename T> std::vector<T> join(const std::vector<T> &a, const std::vec
     return c;
 }
 
-float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, cv::Vec2f init_step, const std::vector<cv::Vec3f> &opt_t, const std::vector<float> &opt_d, int &failstate)
+float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, cv::Vec2f init_step, const std::vector<cv::Vec3f> &opt_t, const std::vector<float> &opt_d, int &failstate, const std::vector<float> &ws)
 {
     // std::cout << init << loc << std::endl;
     failstate = 0;
@@ -402,19 +413,21 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
     std::vector<cv::Vec3f> t2 = join(tgts, opt_t);
     std::vector<float> d2 = join(tds, opt_d);
     
-    float res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.1);
+    float res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.1, ws);
     float res2 = 0;
     // float res2 = min_loc_dbg(points, loc, out, join(tgts,{out}), join(tds,{0}), plane, init_step*0.1, 0.1);
-    float res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step*0.1, 0.1);
+    float res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step*0.1, 0.1, ws);
     
     // printf("%f (%f %f)\n", res3, res2, res1);
     
     // return res3;
     
-    if (res3 < 5.0)
+    float th = 5.0;
+    
+    if (res3 < th)
         return res3;
 
-    printf("start it %f\n", res3);
+    // printf("start it %f\n", res3);
     
     for(int i=0;i<100;i++)
     {
@@ -423,22 +436,22 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
         off = mul(off, init_step)*100/50;
         loc = init_loc + off;
         
-        res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step*10, 0.01);
+        res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step*10, 0.01, ws);
         // res2 = min_loc_dbg(points, loc, out, join(tgts,{out}), join(tds,{0}), plane, init_step*0.1, 0.1);
-        res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01);
+        res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01, ws);
         
         // printf("   %f %f\n", res3, res1);
         
-        if (res3 < 5.0) {
+        if (res3 < th) {
             // printf("  it %f (%f)\n", res3, res1);
             return res3;
         }
     }
     
     loc = init_loc;
-    res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.1);
+    res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.1, ws);
     // res2 = min_loc_dbg(points, loc, out, join(tgts,{out}), join(tds,{0}), plane, init_step*0.1, 0.1);
-    res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step*0.1, 0.1);
+    res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step*0.1, 0.1, ws);
     // printf("  fallback %f (%f %f)\n", res3, res2, res1);
     failstate = 1;
     
@@ -485,6 +498,7 @@ float multi_step_search2(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::
 
 
 //lets try again
+//FIXME mark covered regions as not available so we can't repeat them'
 cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
 {
     double sx, sy;
@@ -499,8 +513,8 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     float D = sqrt(2);
     
     float T = 20;
-    int w = 300;
-    int h = 300;
+    int w = 500;
+    int h = 500;
     
     int r = 3;
     
@@ -565,6 +579,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     fringe.push_back({y0+1,x0+1});
     
     int succ = 0;
+    int total_fail = 0;
     
     while (fringe.size()) {
         for(auto p : fringe)
@@ -585,11 +600,12 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
         
         fringe.resize(0);
         
-        printf("have %d cands\n", cands.size());
+        printf("have %d cands %d %d\n", cands.size(), succ, total_fail);
         
         for(auto p : cands) {
             std::vector<cv::Vec3f> refs;
             std::vector<float> dists;
+            std::vector<float> ws;
             cv::Vec2f loc_sum = 0;
             int fail = 0;
             
@@ -599,38 +615,46 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
                         refs.push_back(out(oy,ox));
                         int dy = oy-p[0];
                         int dx = ox-p[1];
-                        dists.push_back(T*sqrt(dy*dy+dx*dx));
+                        float d = sqrt(dy*dy+dx*dx);
+                        dists.push_back(T*d);
                         loc_sum += locs(oy,ox);
+                        float w = 1.0/(std::max(abs(dbg(oy,ox)),1.0f));
+                        ws.push_back(w);
                     }
                     else if (state(oy,ox) == 10)
                         fail++;
+                    // else if (state(oy,ox) == 10)
+                        // fail++;
                     
             locs(p) = loc_sum*(1.0/dists.size());
             
-            if (fail >= 2) {
+            if (fail >= 1) {
                 dbg(p) = -1;
-                state(p) = 12;
+                state(p) = 10;
                 out(p) = -1;
                 continue;
             }
             
-            if (succ > 100 && dists.size()-fail <= 12) {
-                continue;
-            }
+            // if (succ > 100 && dists.size()-4*fail <= 12) {
+            //     continue;
+            // }
                     
             int failstate = 0;
-            res = multi_step_search(points, locs(p), out(p), refs, dists, nullptr, step, {}, {}, failstate);
+            res = multi_step_search(points, locs(p), out(p), refs, dists, nullptr, step, {}, {}, failstate, ws);
             
+            // printf("%f\n", res);
 
             dbg(p) = -res;
                     
             if (failstate) {
                 //no good minimum found
-                // state(p) = 10;
+                state(p) = 10;
                 // out(p) = -1;
-                succ++;
-                state(p) = 1;
-                fringe.push_back(p);
+                // succ++;
+                total_fail++;
+                // printf("%f\n", res);
+                // state(p) = 1;
+                // fringe.push_back(p);
             }
             else if (res < 0) {
                 //image edge encountered
