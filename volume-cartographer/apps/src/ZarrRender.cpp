@@ -412,17 +412,20 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
     
     std::vector<cv::Vec3f> t2 = join(tgts, opt_t);
     std::vector<float> d2 = join(tds, opt_d);
+    std::vector<float> w2 = ws;
+    for(auto &w : w2)
+        w *= w;
     
     float res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.1, ws);
     float res2 = 0;
     // float res2 = min_loc_dbg(points, loc, out, join(tgts,{out}), join(tds,{0}), plane, init_step*0.1, 0.1);
-    float res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step*0.1, 0.1, ws);
+    float res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step*0.1, 0.1, w2);
     
     // printf("%f (%f %f)\n", res3, res2, res1);
     
     // return res3;
     
-    float th = 10.0;
+    float th = 5.0;
     
     if (res3 < th)
         return res3;
@@ -438,7 +441,7 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
         
         res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step*10, 0.01, ws);
         // res2 = min_loc_dbg(points, loc, out, join(tgts,{out}), join(tds,{0}), plane, init_step*0.1, 0.1);
-        res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01, ws);
+        res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01, w2);
         
         // printf("   %f %f\n", res3, res1);
         
@@ -451,8 +454,22 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
     loc = init_loc;
     res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.1, ws);
     // res2 = min_loc_dbg(points, loc, out, join(tgts,{out}), join(tds,{0}), plane, init_step*0.1, 0.1);
-    res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step*0.1, 0.1, ws);
+    res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step*0.1, 0.1, w2);
     // printf("  fallback %f (%f %f)\n", res3, res2, res1);
+    
+    
+    //lets brute force this for once
+    /*for (int j=0;j<100;j++)
+        for (int i=0;i<100;i++) {
+            loc = init_loc + 0.1*mul(init_step,cv::Vec2f(j-50,i-50));
+            // res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.1, ws);
+            cv::Vec3f val = at_int(points, loc);
+            res1 = sqrt(tdist_sum(val, t2, d2, ws)/t2.size());
+            printf("brute %f\n", res1);
+        }*/
+    
+    
+    
     failstate = 1;
     
     return -abs(res3);
@@ -640,7 +657,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
                         dists.push_back(T*d);
                         loc_sum += locs(oy,ox);
                         // float w = 1.0/(std::max(abs(dbg(oy,ox)),1.0f));
-                        // ws.push_back(w);
+                        ws.push_back(1/d);
                         dbg_outp.push_back({oy,ox});
                     }
                     else if (state(oy,ox) == 10)
