@@ -393,9 +393,10 @@ template<typename T> std::vector<T> join(const std::vector<T> &a, const std::vec
     return c;
 }
 
-float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, cv::Vec2f init_step, const std::vector<cv::Vec3f> &opt_t, const std::vector<float> &opt_d)
+float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, cv::Vec2f init_step, const std::vector<cv::Vec3f> &opt_t, const std::vector<float> &opt_d, int &failstate)
 {
     // std::cout << init << loc << std::endl;
+    failstate = 0;
     cv::Vec2f init_loc = loc;
     
     std::vector<cv::Vec3f> t2 = join(tgts, opt_t);
@@ -429,7 +430,7 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
         // printf("   %f %f\n", res3, res1);
         
         if (res3 < 5.0) {
-            printf("  it %f (%f)\n", res3, res1);
+            // printf("  it %f (%f)\n", res3, res1);
             return res3;
         }
     }
@@ -438,9 +439,10 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
     res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.1);
     // res2 = min_loc_dbg(points, loc, out, join(tgts,{out}), join(tds,{0}), plane, init_step*0.1, 0.1);
     res3 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step*0.1, 0.1);
-    printf("  fallback %f (%f %f)\n", res3, res2, res1);
+    // printf("  fallback %f (%f %f)\n", res3, res2, res1);
+    failstate = 1;
     
-    return -res3;
+    return -abs(res3);
 }
 
 float multi_step_search2(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, cv::Vec2f init_step, const std::vector<cv::Vec3f> &opt_t, const std::vector<float> &opt_d)
@@ -497,8 +499,8 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     float D = sqrt(2);
     
     float T = 20;
-    int w = 200;
-    int h = 100;
+    int w = 300;
+    int h = 300;
     
     int r = 3;
     
@@ -519,7 +521,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     int x0 = w/2;
     int y0 = h/2;
 
-    locs(y0,x0) = {points.cols/2, points.rows/2};
+    locs(y0,x0) = {200, 1000};
     out(y0,x0) = at_int(points, locs(y0,x0));
     
     float res;
@@ -562,7 +564,9 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     fringe.push_back({y0,x0+1});
     fringe.push_back({y0+1,x0+1});
     
-    for(int s=0;s<30;s++) {
+    int succ = 0;
+    
+    while (fringe.size()) {
         for(auto p : fringe)
         {
             if (state(p) != 1)
@@ -587,7 +591,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
             std::vector<cv::Vec3f> refs;
             std::vector<float> dists;
             cv::Vec2f loc_sum = 0;
-            int count = 0;
+            int fail = 0;
             
             for(int oy=std::max(p[0]-r,0);oy<=p[0]+r;oy++)
                 for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,out.cols-1);ox++)
@@ -598,27 +602,49 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
                         dists.push_back(T*sqrt(dy*dy+dx*dx));
                         loc_sum += locs(oy,ox);
                     }
+                    else if (state(oy,ox) == 10)
+                        fail++;
                     
             locs(p) = loc_sum*(1.0/dists.size());
+            
+            if (fail >= 2) {
+                dbg(p) = -1;
+                state(p) = 12;
+                out(p) = -1;
+                continue;
+            }
+            
+            if (succ > 100 && dists.size()-fail <= 12) {
+                continue;
+            }
                     
-            res = multi_step_search(points, locs(p), out(p), refs, dists, nullptr, step, {}, {});
+            int failstate = 0;
+            res = multi_step_search(points, locs(p), out(p), refs, dists, nullptr, step, {}, {}, failstate);
             
 
             dbg(p) = -res;
                     
-            printf("%f\n", res);
-            
-            // if (res == -1) {
-            //     state(p) = 10;
-            //     out(p) = -1;
-            //     return out;
-            // }
-            // else {
+            if (failstate) {
+                //no good minimum found
+                // state(p) = 10;
+                // out(p) = -1;
+                succ++;
                 state(p) = 1;
                 fringe.push_back(p);
-            // }
+            }
+            else if (res < 0) {
+                //image edge encountered
+                state(p) = 11;
+                out(p) = -1;
+            }
+            else {
+                succ++;
+                state(p) = 1;
+                fringe.push_back(p);
+            }
             
         }
+        cands.resize(0);
     }
     
     cv::resize(dbg, dbg, {0,0}, 10.0, 10.0, cv::INTER_NEAREST);
@@ -908,6 +934,7 @@ int main(int argc, char *argv[])
     cv::Mat_<cv::Vec3f> points;
     src.convertTo(points, CV_32F);
     
+    // points = smooth_vc_segmentation(points);
     points = derive_regular_region_largesteps(points);
     
     // cv::resize(points, points, {0,0}, 10.0, 10.0);
