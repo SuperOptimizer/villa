@@ -518,6 +518,11 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
         // cv::Vec3f init = at_int(points, locs(j,0));
         multi_step_search(points, locs(j,0), out(j,0), {out(j-1,0),out(j-1,1)}, {T,T*D}, nullptr, step, {out(j-2,0)}, {2*T});
         
+        locs(j,1) = locs(j-1,1);
+        
+        // cv::Vec3f init = at_int(points, locs(j,0));
+        multi_step_search(points, locs(j,1), out(j,1), {out(j,0),out(j-1,1),out(j-1,0)}, {T,T,T*D}, nullptr, step, {out(j-2,0)}, {2*T});
+        
         // min_loc_dbg(points, locs(j,0), out(j,0), {out(j-1,0),out(j-2,0),out(j-1,1)}, {T,2*T,T*D}, nullptr, step, 0.1);
         // min_loc_dbg(points, locs(j,0), out(j,0), {out(j-1,0),init,out(j-1,1)}, {T,0,T*D}, nullptr, step, 0.1);
         // res = min_loc_dbg(points, locs(j,0), out(j,0), {out(j-1,0),out(j-1,1)}, {T,T*D}, nullptr, step, 0.01);
@@ -526,7 +531,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
 //             
 //         }
         
-        for(int i=1;i<w;i++) {
+        for(int i=2;i<w;i++) {
             // locs(j,i) = 2*locs(j,i-1)-locs(j,i-2);
             locs(j,i) = locs(j-1,i);
             // cv::Vec3f init = at_int(points, locs(j,i));
@@ -705,7 +710,9 @@ int main(int argc, char *argv[])
     // cv::resize(points, points, {0,0}, 10.0, 10.0);
 
     double sx, sy;
-    vc_segmentation_scales(points, sx, sy);
+    sx = 0.05;
+    sy = 0.05;
+    // vc_segmentation_scales(points, sx, sy);
     delete timer;
     
     GridCoords generator(&points, sx, sy);
