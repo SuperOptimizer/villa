@@ -560,6 +560,8 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
     std::vector<cv::Vec2i> fringe;
     std::vector<cv::Vec2i> cands;
     std::vector<cv::Vec2i> setfail;
+    std::vector<cv::Vec2i> collected_failures;
+    std::vector<cv::Vec2i> skipped;
     
     std::cout << "input avg step " << sx << " " << sy << points.size() << std::endl;
     
@@ -642,34 +644,66 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
     
     int succ = 0;
     int total_fail = 0;
+    int last_round_updated = 4;
     
     std::vector<cv::Vec2f> all_locs;
+    bool skipped_from_skipped = false;
+    int generation = 0;
     
-    while (fringe.size()) {
-        for(auto p : fringe)
-        {
-            if (state(p) != 1)
-                continue;
-            
-            // std::cout << "check " << p << std::endl;
-            
-            for(auto n : neighs)
-                if (bounds.contains(p+n) && state(p+n) == 0) {
-                    state(p+n) = 2;
-                    cands.push_back(p+n);
-                    // std::cout << "cand  " << p+n << std::endl;
-                }
+    while (fringe.size() || (!skipped_from_skipped && skipped.size()) || collected_failures.size()) {
+        generation++;
+        if (generation == 2000)
+            break;
+        bool ignore_failures = false;
+        last_round_updated = 0;
+
+        //first: regular fring
+        if (fringe.size()) {
+            for(auto p : fringe)
+            {
+                if (state(p) != 1)
+                    continue;
+                
+                // std::cout << "check " << p << std::endl;
+                
+                for(auto n : neighs)
+                    if (bounds.contains(p+n) && state(p+n) == 0) {
+                        state(p+n) = 2;
+                        cands.push_back(p+n);
+                        // std::cout << "cand  " << p+n << std::endl;
+                    }
+            }
+            for(auto p : cands)
+                state(p) = 0;
+            printf("gen %d processing %d fringe cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
+            fringe.resize(0);
+            skipped_from_skipped = false;
         }
-        
-        
-        fringe.resize(0);
-        
-        printf("have %d cands %d %d\n", cands.size(), succ, total_fail);
+        else if (last_round_updated && skipped.size()) {
+            //revisit skipped cands, conditions might have changed
+            cands = skipped;
+            printf("gen %d processing %d skipped cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
+            skipped.resize(0);
+            skipped_from_skipped = true;
+        }
+        else {
+            //ignore failures for one round
+            for(auto p : collected_failures)
+                state(p) = 0;
+            cands = collected_failures;
+            printf("gen %d processing %d fail cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
+            collected_failures.resize(0);
+            ignore_failures = true;
+            skipped_from_skipped = false;
+        }
 
         cv::Mat_<cv::Vec3f> curv_data(2*r+1,2*r+1);
         cv::Mat_<uint8_t> curv_valid(2*r+1,2*r+1);
         
         for(auto p : cands) {
+            if (state(p))
+                continue;
+            
             std::vector<cv::Vec3f> refs;
             std::vector<float> dists;
             std::vector<float> ws;
@@ -751,6 +785,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
             }
             
             if (succ > 200 && dists.size()-4*fail <= 12) {
+                skipped.push_back(p);
                 continue;
             }
                     
@@ -758,12 +793,12 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
             res = multi_step_search(points, locs(p), out(p), refs, dists, nullptr, step, {}, {}, failstate, ws, th);
             all_locs.push_back(locs(p));
             
-            printf("%f\n", res);
+            // printf("%f\n", res);
 
             dbg(p) = -res;
                     
-            if (failstate) {
-                printf("%f %d %d\n", res, p[1]*5, p[0]*5);
+            if (failstate && !ignore_failures) {
+                printf("fail %f %d %d\n", res, p[1]*5, p[0]*5);
                 setfail.push_back(p);
                 total_fail++;
                 
@@ -775,7 +810,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
                 //             succ_ps.push_back(out(l));
                 //     }
                     
-                std::vector<cv::Vec3f> input_ps;
+                /*std::vector<cv::Vec3f> input_ps;
                 std::vector<cv::Vec3f> rounded_ps;
                 cv::Vec2i ref_loc = loc_sum*(1.0/dists.size());
                 // cv::Vec2i ref_loc = locs(some_point);
@@ -797,14 +832,14 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
                 
                 write_ply("surf.ply", refs);
                 write_ply("points.ply", input_ps);
-                write_ply("res.ply", {out(p)});
+                write_ply("res.ply", {out(p)});*/
                 // write_ply("points_nearest.ply", rounded_ps);
                 
                 // cv::imwrite("xcurv.tif",x_curv);
                 // cv::imwrite("ycurv.tif",y_curv);
                 // return out;
             }
-            else if (res < 0) {
+            else if (res < 0 && !failstate) {
                 //image edge encountered
                 state(p) = 11;
                 out(p) = -1;
@@ -817,13 +852,21 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
             
         }
         cands.resize(0);
+  
         
         for(auto p : setfail) {
             dbg(p) = -1;
             state(p) = 10;
             out(p) = -1;
+            collected_failures.push_back(p);
         }
         setfail.resize(0);
+        
+        //always reset ignore failures!
+        ignore_failures = false;
+        
+        printf("-> total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
+        
     }
     
     cv::resize(dbg, dbg, {0,0}, 10.0, 10.0, cv::INTER_NEAREST);
@@ -1116,7 +1159,7 @@ int main(int argc, char *argv[])
     src.convertTo(points, CV_32F);
     
     // points = smooth_vc_segmentation(points);
-    points = derive_regular_region_largesteps(points, 800, 4000);
+    points = derive_regular_region_largesteps(points, 200, 1000);
     
     // cv::resize(points, points, {0,0}, 10.0, 10.0);
 
