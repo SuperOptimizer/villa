@@ -87,6 +87,26 @@ target_include_directories(vc_slicing
         $<INSTALL_INTERFACE:include>
 )
 
+set(surface_srcs
+    src/Surface.cpp
+)
+add_library(vc_surface
+    ${surface_srcs}
+)
+add_library(VC::surface ALIAS vc_surface)
+target_link_libraries(vc_surface
+    PRIVATE
+        VC::slicing
+        OpenMP::OpenMP_CXX
+    PUBLIC
+        opencv_core
+)
+target_include_directories(vc_surface
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+
 configure_file(src/Version.cpp.in Version.cpp)
 
 add_library(vc_core
