@@ -404,7 +404,7 @@ template<typename T> std::vector<T> join(const std::vector<T> &a, const std::vec
     return c;
 }
 
-float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds_, PlaneCoords *plane, cv::Vec2f init_step, const std::vector<cv::Vec3f> &opt_t, const std::vector<float> &opt_d, int &failstate, const std::vector<float> &ws)
+float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds_, PlaneCoords *plane, cv::Vec2f init_step, const std::vector<cv::Vec3f> &opt_t, const std::vector<float> &opt_d, int &failstate, const std::vector<float> &ws, float th)
 {
     // std::cout << init << loc << std::endl;
     failstate = 0;
@@ -434,12 +434,6 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
     }
     else
         res3 = res1;
-    
-    // printf("%f %f\n", res3, res1);
-    
-    // return res3;
-    
-    float th = 5.0;
     
     if (res3 < th)
         return res3;
@@ -558,7 +552,7 @@ void write_ply(std::string path, const std::vector<cv::Vec3f> &points)
 
 //lets try again
 //FIXME mark covered regions as not available so we can't repeat them'
-cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
+cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points, int seed_x, int seed_y)
 {
     double sx, sy;
     vc_segmentation_scales(points, sx, sy);
@@ -572,9 +566,11 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     //TODO use scaling and average diffeence vecs for init?
     float D = sqrt(2);
     
-    float T = 10;
+    float T = 20;
     int w = 1000;
     int h = 1000;
+    
+    float th = T/2;
     
     int r = 3;
     
@@ -599,7 +595,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
     int x0 = w/2;
     int y0 = h/2;
 
-    locs(y0,x0) = {200, 1000};
+    locs(y0,x0) = {seed_x, seed_y};
     // locs(y0,x0) = {600, 1000};
     out(y0,x0) = at_int(points, locs(y0,x0));
     
@@ -759,7 +755,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points)
             }
                     
             int failstate = 0;
-            res = multi_step_search(points, locs(p), out(p), refs, dists, nullptr, step, {}, {}, failstate, ws);
+            res = multi_step_search(points, locs(p), out(p), refs, dists, nullptr, step, {}, {}, failstate, ws, th);
             all_locs.push_back(locs(p));
             
             printf("%f\n", res);
@@ -1118,15 +1114,15 @@ int main(int argc, char *argv[])
     
     cv::Mat_<cv::Vec3f> points;
     src.convertTo(points, CV_32F);
-    
+    /*
     // points = smooth_vc_segmentation(points);
     points = derive_regular_region_largesteps(points);
     
     // cv::resize(points, points, {0,0}, 10.0, 10.0);
 
     double sx, sy;
-    sx = 0.1;
-    sy = 0.1;
+    sx = 0.05;
+    sy = 0.05;
     // vc_segmentation_scales(points, sx, sy);
     delete timer;
     
@@ -1141,6 +1137,8 @@ int main(int argc, char *argv[])
     float ds_scale = 0.5;
     float output_scale = 0.5;
     
+    chunk_cache
+    
     timer = new MeasureLife("rendering ...\n");
     for(int off=min_slice;off<=max_slice;off++) {
         generator.setOffsetZ(off-32);
@@ -1151,6 +1149,42 @@ int main(int argc, char *argv[])
         coords *= ds_scale/output_scale;
         
         ChunkCache chunk_cache(10e9);
+        
+        readInterpolated3D(img, ds.get(), coords, &chunk_cache);
+        cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+        
+        std::stringstream ss;
+        ss << outdir_path << std::setw(2) << std::setfill('0') << off << ".tif";
+        cv::imwrite(ss.str(), m);
+    }
+    std::cout << "rendering ";
+    delete timer;*/
+    
+    
+    // points = smooth_vc_segmentation(points);
+    points = derive_regular_region_largesteps(points);
+    
+    
+    double sx, sy;
+    sx = 0.05;
+    sy = 0.05;
+    delete timer;
+    
+    GridCoords generator(&points, sx, sy);
+    
+    xt::xarray<float> coords;
+    xt::xarray<uint8_t> img;
+    
+    std::cout << points.size() << sx << " " << sy << "\n";
+    
+    // return EXIT_SUCCESS;
+    float ds_scale = 0.5;
+    float output_scale = 0.5;
+    
+    generator.gen_coords(coords, 0, 0, points.cols/sx*output_scale, points.rows/sy*output_scale, 1.0, output_scale);
+    coords *= ds_scale/output_scale;
+        
+    ChunkCache chunk_cache(10e9);
         
         readInterpolated3D(img, ds.get(), coords, &chunk_cache);
         cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
