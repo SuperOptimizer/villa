@@ -775,7 +775,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
                 //             succ_ps.push_back(out(l));
                 //     }
                     
-                /*std::vector<cv::Vec3f> input_ps;
+                std::vector<cv::Vec3f> input_ps;
                 std::vector<cv::Vec3f> rounded_ps;
                 cv::Vec2i ref_loc = loc_sum*(1.0/dists.size());
                 // cv::Vec2i ref_loc = locs(some_point);
@@ -800,9 +800,9 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
                 write_ply("res.ply", {out(p)});
                 // write_ply("points_nearest.ply", rounded_ps);
                 
-                cv::imwrite("xcurv.tif",x_curv);
-                cv::imwrite("ycurv.tif",y_curv);
-                return out;*/
+                // cv::imwrite("xcurv.tif",x_curv);
+                // cv::imwrite("ycurv.tif",y_curv);
+                // return out;
             }
             else if (res < 0) {
                 //image edge encountered
@@ -1114,9 +1114,9 @@ int main(int argc, char *argv[])
     
     cv::Mat_<cv::Vec3f> points;
     src.convertTo(points, CV_32F);
-    /*
+    
     // points = smooth_vc_segmentation(points);
-    points = derive_regular_region_largesteps(points);
+    points = derive_regular_region_largesteps(points, 800, 4000);
     
     // cv::resize(points, points, {0,0}, 10.0, 10.0);
 
@@ -1137,7 +1137,7 @@ int main(int argc, char *argv[])
     float ds_scale = 0.5;
     float output_scale = 0.5;
     
-    chunk_cache
+    ChunkCache chunk_cache(10e9);
     
     timer = new MeasureLife("rendering ...\n");
     for(int off=min_slice;off<=max_slice;off++) {
@@ -1148,7 +1148,6 @@ int main(int argc, char *argv[])
         //we read from scale 1
         coords *= ds_scale/output_scale;
         
-        ChunkCache chunk_cache(10e9);
         
         readInterpolated3D(img, ds.get(), coords, &chunk_cache);
         cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
@@ -1158,43 +1157,43 @@ int main(int argc, char *argv[])
         cv::imwrite(ss.str(), m);
     }
     std::cout << "rendering ";
-    delete timer;*/
+    delete timer;
     
     
     // points = smooth_vc_segmentation(points);
-    points = derive_regular_region_largesteps(points);
-    
-    
-    double sx, sy;
-    sx = 0.05;
-    sy = 0.05;
-    delete timer;
-    
-    GridCoords generator(&points, sx, sy);
-    
-    xt::xarray<float> coords;
-    xt::xarray<uint8_t> img;
-    
-    std::cout << points.size() << sx << " " << sy << "\n";
-    
-    // return EXIT_SUCCESS;
-    float ds_scale = 0.5;
-    float output_scale = 0.5;
-    
-    generator.gen_coords(coords, 0, 0, points.cols/sx*output_scale, points.rows/sy*output_scale, 1.0, output_scale);
-    coords *= ds_scale/output_scale;
-        
-    ChunkCache chunk_cache(10e9);
-        
-        readInterpolated3D(img, ds.get(), coords, &chunk_cache);
-        cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
-        
-        std::stringstream ss;
-        ss << outdir_path << std::setw(2) << std::setfill('0') << off << ".tif";
-        cv::imwrite(ss.str(), m);
-    }
-    std::cout << "rendering ";
-    delete timer;
-    
-    return 0;
+//     points = derive_regular_region_largesteps(points, 200, 1000);
+//     
+//     
+//     double sx, sy;
+//     sx = 0.05;
+//     sy = 0.05;
+//     delete timer;
+//     
+//     GridCoords generator(&points, sx, sy);
+//     
+//     xt::xarray<float> coords;
+//     xt::xarray<uint8_t> img;
+//     
+//     std::cout << points.size() << sx << " " << sy << "\n";
+//     
+//     // return EXIT_SUCCESS;
+//     float ds_scale = 0.5;
+//     float output_scale = 0.5;
+//     
+//     generator.gen_coords(coords, 0, 0, points.cols/sx*output_scale, points.rows/sy*output_scale, 1.0, output_scale);
+//     coords *= ds_scale/output_scale;
+//         
+//     ChunkCache chunk_cache(10e9);
+//         
+//         readInterpolated3D(img, ds.get(), coords, &chunk_cache);
+//         cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+//         
+//         std::stringstream ss;
+//         ss << outdir_path << std::setw(2) << std::setfill('0') << off << ".tif";
+//         cv::imwrite(ss.str(), m);
+//     }
+//     std::cout << "rendering ";
+//     delete timer;
+//     
+//     return 0;
 }
