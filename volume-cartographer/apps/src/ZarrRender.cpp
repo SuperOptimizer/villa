@@ -142,7 +142,7 @@ void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, 
     // std::cout << "at" << loc << val << std::endl;
     out = val;
     float best = sdist(val, tgt);
-    // printf("init dist %f\n", best);
+    printf("init dist %f\n", best);
     float res;
     
     std::vector<cv::Vec2f> search;
@@ -187,7 +187,7 @@ void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, 
         }
     }
     
-    // std::cout << "best" << best << tgt << out << "\n" <<  std::endl;
+    std::cout << "best" << best << tgt << out << "\n" <<  std::endl;
 }
 
 float tdist(const cv::Vec3f &a, const cv::Vec3f &b, float t_dist)
@@ -358,9 +358,15 @@ float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &
             cv::Vec2f cand = loc+mul(off,step);
             
             if (!boundary.contains({cand[0],cand[1]})) {
-                out = {-1,-1,-1};
-                loc = {-1,-1};
-                return -1;
+                if (step[0] < min_step_f*init_step[0]) {
+                    out = {-1,-1,-1};
+                    loc = {-1,-1};
+                    // std::cout << "oops edge" << "\n";
+                    return -1;
+                }
+                else
+                    //skip to next scale
+                    break;
             }
             
             
@@ -392,7 +398,7 @@ float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &
             break;
     }
     
-    // std::cout << "best" << best << out <<  std::endl;
+    // std::cout << "best" << best << out << "\n" <<  std::endl;
     return sqrt(best/tgts.size());
 }
 
@@ -552,7 +558,7 @@ void write_ply(std::string path, const std::vector<cv::Vec3f> &points)
 
 //lets try again
 //FIXME mark covered regions as not available so we can't repeat them'
-cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points, int seed_x, int seed_y)
+cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &points, int seed_x, int seed_y, float step_size)
 {
     double sx, sy;
     vc_segmentation_scales(points, sx, sy);
@@ -568,11 +574,11 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
     //TODO use scaling and average diffeence vecs for init?
     float D = sqrt(2);
     
-    float T = 20;
-    int w = 1000;
-    int h = 1000;
+    float T = step_size;
+    int w = 4000/step_size;
+    int h = 4000/step_size;
     
-    float th = T/2;
+    float th = T/4;
     
     int r = 3;
     
@@ -596,6 +602,8 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
     
     int x0 = w/2;
     int y0 = h/2;
+
+    cv::Rect used_area(x0,y0,1,1);
 
     locs(y0,x0) = {seed_x, seed_y};
     // locs(y0,x0) = {600, 1000};
@@ -649,12 +657,13 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
     std::vector<cv::Vec2f> all_locs;
     bool skipped_from_skipped = false;
     int generation = 0;
+    int stop_gen = 500;
+    bool ignore_failures = false;
     
     while (fringe.size() || (!skipped_from_skipped && skipped.size()) || collected_failures.size()) {
         generation++;
-        if (generation == 2000)
+        if (generation == stop_gen)
             break;
-        bool ignore_failures = false;
         last_round_updated = 0;
 
         //first: regular fring
@@ -679,18 +688,19 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
             fringe.resize(0);
             skipped_from_skipped = false;
         }
-        else if (last_round_updated && skipped.size()) {
-            //revisit skipped cands, conditions might have changed
+        else if ((last_round_updated && skipped.size()) || collected_failures.size()) {
+            //skipped && failed points are processed at the same time so we expand smoothly
+            for(auto p : skipped)
+                state(p) = 0;
             cands = skipped;
             printf("gen %d processing %d skipped cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
             skipped.resize(0);
             skipped_from_skipped = true;
-        }
-        else {
-            //ignore failures for one round
-            for(auto p : collected_failures)
+
+            for(auto p : collected_failures) {
                 state(p) = 0;
-            cands = collected_failures;
+                cands.push_back(p);
+            }
             printf("gen %d processing %d fail cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
             collected_failures.resize(0);
             ignore_failures = true;
@@ -779,12 +789,12 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
                     
             locs(p) = loc_sum*(1.0/dists.size());
             
-            if (fail >= 2) {
+            if (fail >= 2 && !ignore_failures) {
                 setfail.push_back(p);
                 continue;
             }
             
-            if (succ > 200 && dists.size()-4*fail <= 12) {
+            if (!ignore_failures && succ > 200 && dists.size()-4*fail <= 12) {
                 skipped.push_back(p);
                 continue;
             }
@@ -845,9 +855,13 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
                 out(p) = -1;
             }
             else {
+                last_round_updated++;
                 succ++;
                 state(p) = 1;
                 fringe.push_back(p);
+                if (!used_area.contains({p[1],p[0]})) {
+                    used_area = used_area | cv::Rect(p[1],p[0],1,1);
+                }
             }
             
         }
@@ -862,11 +876,10 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
         }
         setfail.resize(0);
         
-        //always reset ignore failures!
-        ignore_failures = false;
+        // if (ignore_failures)
+        //     stop_gen = generation+10;
         
         printf("-> total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
-        
     }
     
     cv::resize(dbg, dbg, {0,0}, 10.0, 10.0, cv::INTER_NEAREST);
@@ -997,8 +1010,72 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(cv::Mat_<cv::Vec3f> points,
         }
     }*/
     
+    return out(used_area).clone();
+}
+
+cv::Mat_<cv::Vec3f> upsample_with_grounding_simple(const cv::Mat_<cv::Vec3f> &small, const cv::Size &tgt_size, const cv::Mat_<cv::Vec3f> &points, double sx, double sy)
+{
+    cv::Mat_<cv::Vec3f> large;
+    cv::Mat_<cv::Vec2f> locs(small.size());
+    // large = small;
+    // cv::resize(small, large, small.size()*2, cv::INTER_CUBIC);
+    cv::resize(small, large, tgt_size, cv::INTER_CUBIC);
     
-    return out;
+    cv::Vec2f step_large = {sx*128, sy*128};
+    cv::Vec2f step = {sx*10, sy*10};
+    
+    int rdone = 0;
+    
+#pragma omp parallel for
+    for(int j=0;j<small.rows;j++) {
+        cv::Vec2f loc = {points.cols/2, points.rows/2};
+        for(int i=0;i<small.cols;i++) {
+            cv::Vec3f tgt = small(j,i);
+            cv::Vec3f val = small(j,i);
+            if (tgt[0] == -1)
+                continue;
+
+            float res;
+            
+            res = min_loc_dbg(points, loc, val, {tgt}, {0}, nullptr, step, 0.1);
+            
+            if (res < 1.0 && res >= 0.0) {
+                locs(j,i) = loc;
+                continue;
+            }
+            
+            cv::Vec2f best_loc = loc;
+            float best_dist = 1000000000;
+            for(int r=0;r<100;r++) {
+                loc = {rand() % points.cols, rand() % points.rows};
+                res = min_loc_dbg(points, loc, val, {tgt}, {0}, nullptr, step_large, 0.001);
+                if (res < best_dist) {
+                    best_dist = res;
+                    best_loc = loc;
+                }
+                if (res < 1.0 && res >= 0.0)
+                    break;
+            }
+            res = min_loc_dbg(points, best_loc, val, {tgt}, {0}, nullptr, step*0.001, 0.1);
+            loc = best_loc;
+            locs(j,i) = best_loc;
+        }
+    }
+    
+    cv::resize(locs, locs, large.size(), cv::INTER_CUBIC);
+
+#pragma omp parallel for
+    for(int j=0;j<large.rows;j++) {
+        for(int i=0;i<large.cols;i++) {
+            cv::Vec3f tgt = large(j,i);
+            if (tgt[0] == -1)
+                continue;
+            float res;
+            
+            res = min_loc_dbg(points, locs(j,i), large(j,i), {tgt}, {0}, nullptr, step, 0.01);
+    }
+    
+    return large;
 }
 
 //try to ignore the local surface normal in error calculation
@@ -1155,25 +1232,44 @@ int main(int argc, char *argv[])
     timer = new MeasureLife("smoothing segment ...");
     cv::Mat src(segment_raw.height(), segment_raw.width(), CV_64FC3, (void*)const_cast<cv::Vec3d*>(&segment_raw[0]));
     
-    cv::Mat_<cv::Vec3f> points;
-    src.convertTo(points, CV_32F);
+    cv::Mat_<cv::Vec3f> points_base, points;
+    src.convertTo(points_base, CV_32F);
+    
+    double base_sx, base_sy;
+    vc_segmentation_scales(points_base, base_sx, base_sy);
     
     // points = smooth_vc_segmentation(points);
-    points = derive_regular_region_largesteps(points, 200, 1000);
+    // points = derive_regular_region_largesteps(points, points.cols/2, points.rows/2);
+    float search_step = 100;
+    float tgt_step = 5;
+    points = derive_regular_region_largesteps(points_base, 200, 1000, search_step);
+    points = upsample_with_grounding(points, {points.cols*search_step/tgt_step,points.rows*search_step/tgt_step}, points_base, base_sx, base_sy);
+    
+    
+    
+    std::cout << "poit " << points.size() << std::endl;
+    // points = points_base({0,0,200,1000});
     
     // cv::resize(points, points, {0,0}, 10.0, 10.0);
 
     double sx, sy;
-    sx = 0.05;
-    sy = 0.05;
+    sx = 1/tgt_step;
+    sy = 1/tgt_step;
+    // sx = base_sx;
+    // sy = base_sy;
     // vc_segmentation_scales(points, sx, sy);
     delete timer;
+    
+    // vc_segmentation_scales(points_base, sx, sy);
+    // points = points_base({0,0,800,3000});
     
     GridCoords generator(&points, sx, sy);
     
     xt::xarray<float> coords;
     xt::xarray<uint8_t> img;
     
+    std::cout << points.size() << sx << " " << sy << "\n";
+    vc_segmentation_scales(points({points.cols/4,points.rows/4,points.cols/2,points.rows/2}), sx, sy);
     std::cout << points.size() << sx << " " << sy << "\n";
     
     // return EXIT_SUCCESS;
@@ -1184,7 +1280,7 @@ int main(int argc, char *argv[])
     
     timer = new MeasureLife("rendering ...\n");
     for(int off=min_slice;off<=max_slice;off++) {
-        generator.setOffsetZ(off-32);
+        generator.setOffsetZ(0);
         MeasureLife time_slice("slice "+std::to_string(off)+" ... ");
         generator.gen_coords(coords, 0, 0, points.cols/sx*output_scale, points.rows/sy*output_scale, 1.0, output_scale);
         
@@ -1198,6 +1294,8 @@ int main(int argc, char *argv[])
         std::stringstream ss;
         ss << outdir_path << std::setw(2) << std::setfill('0') << off << ".tif";
         cv::imwrite(ss.str(), m);
+        
+        std::cout << "get size " << points.cols/sx*output_scale << " " << points.rows/sy*output_scale << m.size() << std::endl;
     }
     std::cout << "rendering ";
     delete timer;
