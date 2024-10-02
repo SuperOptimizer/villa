@@ -505,6 +505,8 @@ int main(int argc, char *argv[])
     
     float ds_scale = 0.5;
     float output_scale = 0.5;
+
+    ChunkCache chunk_cache(10e9);
     
     timer = new MeasureLife("rendering ...\n");
     for(int off=min_slice;off<=max_slice;off++) {
@@ -515,7 +517,6 @@ int main(int argc, char *argv[])
         //we read from scale 1
         coords *= ds_scale/output_scale;
         
-        ChunkCache chunk_cache(10e9);
         
         readInterpolated3D(img, ds.get(), coords, &chunk_cache);
         cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
