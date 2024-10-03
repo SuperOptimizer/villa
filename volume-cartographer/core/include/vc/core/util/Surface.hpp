@@ -25,7 +25,8 @@ public:
     //not yet
     // virtual void normal(SurfacePointer *ptr, cv::Vec3f offset);
     
-    static QuadSurface *load_from_vcps(const std::string &path);
+    static QuadSurface *load_quad_from_vcps(const std::string &path);
+    static QuadSurface *regularized_local_quad(QuadSurface *, SurfacePointer *ptr, int w, int h, int step_init = 100, int step_surface = 5);
 };
 
 //quads based surface class with a pointer of nominal scale 1

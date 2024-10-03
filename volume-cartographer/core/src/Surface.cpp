@@ -88,7 +88,7 @@ cv::Vec3f QuadSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
 }
 
 
-QuadSurface *Surface::load_from_vcps(const std::string &path)
+QuadSurface *Surface::load_quad_from_vcps(const std::string &path)
 {    
     volcart::OrderedPointSet<cv::Vec3d> segment_raw = volcart::PointSetIO<cv::Vec3d>::ReadOrderedPointSet(path);
     
@@ -114,3 +114,6 @@ CoordGenerator *QuadSurface::generator(SurfacePointer *ptr, const cv::Vec3f &off
     //FIXME implement & use offset for gridcoords    
     return new GridCoords(&_points, _scale[0], _scale[1], total_offset);
 }
+
+
+static QuadSurface *regularized_local_quad(QuadSurface *, SurfacePointer *ptr, int w, int h, int step_init = 100, int step_surface = 5);
