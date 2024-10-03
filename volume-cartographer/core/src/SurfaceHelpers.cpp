@@ -88,7 +88,7 @@ shape idCoord(const std::unique_ptr<z5::Dataset> &ds, shape id)
     return coord;
 }
 
-void timed_plane_slice(PlaneCoords &plane, z5::Dataset *ds, size_t size, ChunkCache *cache, std::string msg)
+static void timed_plane_slice(PlaneCoords &plane, z5::Dataset *ds, size_t size, ChunkCache *cache, std::string msg)
 {
     xt::xarray<float> coords;
     xt::xarray<uint8_t> img;
@@ -103,7 +103,7 @@ void timed_plane_slice(PlaneCoords &plane, z5::Dataset *ds, size_t size, ChunkCa
     std::cout << std::chrono::duration<double>(end-start).count() << "s slicing " << msg << std::endl; 
 }
 
-cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
+static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
 {
     int x = p[0];
     int y = p[1];
@@ -121,13 +121,13 @@ cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
     return (1-fy)*p0 + fy*p1;
 }
 
-float sdist(const cv::Vec3f &a, const cv::Vec3f &b)
+static float sdist(const cv::Vec3f &a, const cv::Vec3f &b)
 {
     cv::Vec3f d = a-b;
     return d.dot(d);
 }
 
-void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt, bool z_search = true)
+static void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt, bool z_search = true)
 {
     // std::cout << "start minlo" << loc << std::endl;
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
@@ -191,7 +191,7 @@ void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, 
     std::cout << "best" << best << tgt << out << "\n" <<  std::endl;
 }
 
-float tdist(const cv::Vec3f &a, const cv::Vec3f &b, float t_dist)
+static float tdist(const cv::Vec3f &a, const cv::Vec3f &b, float t_dist)
 {
     cv::Vec3f d = a-b;
     float l = sqrt(d.dot(d));
@@ -199,7 +199,7 @@ float tdist(const cv::Vec3f &a, const cv::Vec3f &b, float t_dist)
     return abs(l-t_dist);
 }
 
-float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, const std::vector<float> ws = {})
+static float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, const std::vector<float> ws = {})
 {
     if (!ws.size()) {
         float sum = 0;
@@ -221,7 +221,7 @@ float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, const st
     }
 }
 
-void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, bool z_search = true)
+static void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, bool z_search = true)
 {
     // std::cout << "start minlo" << loc << std::endl;
     cv::Rect boundary(1,1,points.cols-1,points.rows-1);
@@ -284,16 +284,8 @@ void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, 
     // std::cout << "best" << best << tgts[0] << out << "\n" <<  std::endl;
 }
 
-cv::Vec3f pred(const cv::Mat_<cv::Vec3f> &points, int x, int y, int x1,int y1, int x2, int y2, float mul)
-{
-    cv::Vec3f from = points(y+y1, x+x1);
-    cv::Vec3f ref = points(y+y2, x+x2);
-    cv::Vec3f dir = (from-ref)*mul;
-    
-    return from+dir;
-}
-
 //this works surprisingly well, though some artifacts where original there was a lot of skew
+//FIXME add to api ...
 cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss(cv::Mat_<cv::Vec3f> points)
 {
     cv::Mat_<cv::Vec3f> out = points.clone();
@@ -319,12 +311,12 @@ cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss(cv::Mat_<cv::Vec3f> point
     return out;
 }
 
-static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
+static static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
     return{a[0]*b[0],a[1]*b[1]};
 }
 
-float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, cv::Vec2f init_step, float min_step_f, const std::vector<float> &ws = {}, bool robust_edge = false)
+static float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, cv::Vec2f init_step, float min_step_f, const std::vector<float> &ws = {}, bool robust_edge = false)
 {
     // std::cout << "start minlo" << loc << std::endl;
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
@@ -402,7 +394,7 @@ float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &
     return sqrt(best/tgts.size());
 }
 
-template<typename T> std::vector<T> join(const std::vector<T> &a, const std::vector<T> &b)
+static template<typename T> std::vector<T> join(const std::vector<T> &a, const std::vector<T> &b)
 {
     std::vector<T> c = a;
     c.insert(c.end(), b.begin(), b.end());
@@ -410,7 +402,7 @@ template<typename T> std::vector<T> join(const std::vector<T> &a, const std::vec
     return c;
 }
 
-float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds_, PlaneCoords *plane, cv::Vec2f init_step, const std::vector<cv::Vec3f> &opt_t, const std::vector<float> &opt_d, int &failstate, const std::vector<float> &ws, float th)
+static float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds_, PlaneCoords *plane, cv::Vec2f init_step, const std::vector<cv::Vec3f> &opt_t, const std::vector<float> &opt_d, int &failstate, const std::vector<float> &ws, float th)
 {
     // std::cout << init << loc << std::endl;
     failstate = 0;
@@ -499,61 +491,6 @@ float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::V
     failstate = 1;
     
     return -abs(res3);
-}
-
-float multi_step_search2(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, cv::Vec2f init_step, const std::vector<cv::Vec3f> &opt_t, const std::vector<float> &opt_d)
-{
-    // std::cout << init << loc << std::endl;
-    cv::Vec2f init_loc = loc;
-    
-    std::vector<cv::Vec3f> t2 = join(tgts, opt_t);
-    std::vector<float> d2 = join(tds, opt_d);
-    
-    float res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.01);
-    
-    // printf("%f (%f %f)\n", res3, res2, res1);
-    printf("%f\n", res1);
-    
-    if (res1 < 5.0)
-        return res1;
-    
-    for(int i=0;i<100;i++)
-    {
-        cv::Vec2f off = {rand()%100,rand()%100};
-        off -= cv::Vec2f(50,50);
-        off = mul(off, init_step);
-        loc = init_loc + off;
-        
-        res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.01);
-        
-        if (res1 < 5.0) {
-            printf("  it %f \n", res1);
-            return res1;
-        }
-    }
-    
-    loc = init_loc;
-    res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.01);
-    printf("  fallback %f\n", res1);
-    
-    return res1;
-}
-
-
-void write_ply(std::string path, const std::vector<cv::Vec3f> &points)
-{
-    std::ofstream ply;
-    ply.open(path);
-
-    ply << "ply\nformat ascii 1.0\n"; 
-    ply << "element vertex " << points.size() << "\n"; 
-    ply << "property float x\n"; 
-    ply << "property float y\n"; 
-    ply << "property float z\n"; 
-    ply << "end_header\n"; 
-    
-    for(auto p : points)
-        ply << p[0] << " " << p[1] << " " << p[2] << "\n";
 }
 
 //lets try again
