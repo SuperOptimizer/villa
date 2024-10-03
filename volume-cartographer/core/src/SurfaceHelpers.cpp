@@ -1,34 +1,13 @@
-#include <nlohmann/json.hpp>
-
-#include <xtensor/xarray.hpp>
-#include <xtensor/xaxis_slice_iterator.hpp>
-#include <xtensor/xio.hpp>
-#include <xtensor/xbuilder.hpp>
-#include <xtensor/xview.hpp>
-
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/filesystem/dataset.hxx"
-#include "z5/common.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-#include "z5/attributes.hxx"
+#include "SurfaceHelpers.hpp"
 
 #include <opencv2/highgui.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
-#include <opencv2/calib3d.hpp>
+// #include <opencv2/calib3d.hpp>
 
 #include "vc/core/util/Slicing.hpp"
-#include "vc/core/io/PointSetIO.hpp"
 
-#include <unordered_map>
-#include <filesystem>
-
-using shape = z5::types::ShapeType;
-using namespace xt::placeholders;
-namespace fs = std::filesystem; 
-
-std::ostream& operator<< (std::ostream& out, const std::vector<size_t> &v) {
+static std::ostream& operator<< (std::ostream& out, const std::vector<size_t> &v) {
     if ( !v.empty() ) {
         out << '[';
         for(auto &v : v)
@@ -38,7 +17,7 @@ std::ostream& operator<< (std::ostream& out, const std::vector<size_t> &v) {
     return out;
 }
 
-std::ostream& operator<< (std::ostream& out, const std::vector<int> &v) {
+static std::ostream& operator<< (std::ostream& out, const std::vector<int> &v) {
     if ( !v.empty() ) {
         out << '[';
         for(auto &v : v)
@@ -59,7 +38,7 @@ std::ostream& operator<< (std::ostream& out, const std::array<size_t,N> &v) {
     return out;
 }
 
-std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v) {
+static std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v) {
     if ( !v.empty() ) {
         out << '[';
         for(auto &v : v)
@@ -67,25 +46,6 @@ std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v) {
         out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
     }
     return out;
-}
-
-
-shape chunkId(const std::unique_ptr<z5::Dataset> &ds, shape coord)
-{
-    shape div = ds->chunking().blockShape();
-    shape id = coord;
-    for(int i=0;i<id.size();i++)
-        id[i] /= div[i];
-    return id;
-}
-
-shape idCoord(const std::unique_ptr<z5::Dataset> &ds, shape id)
-{
-    shape mul = ds->chunking().blockShape();
-    shape coord = id;
-    for(int i=0;i<coord.size();i++)
-        coord[i] *= mul[i];
-    return coord;
 }
 
 static void timed_plane_slice(PlaneCoords &plane, z5::Dataset *ds, size_t size, ChunkCache *cache, std::string msg)
@@ -286,7 +246,7 @@ static void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f
 
 //this works surprisingly well, though some artifacts where original there was a lot of skew
 //FIXME add to api ...
-cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss(cv::Mat_<cv::Vec3f> points)
+static cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss(cv::Mat_<cv::Vec3f> points)
 {
     cv::Mat_<cv::Vec3f> out = points.clone();
     cv::Mat_<cv::Vec3f> blur(points.cols, points.rows);
@@ -311,7 +271,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss(cv::Mat_<cv::Vec3f> point
     return out;
 }
 
-static static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
+static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
     return{a[0]*b[0],a[1]*b[1]};
 }
@@ -394,7 +354,7 @@ static float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::
     return sqrt(best/tgts.size());
 }
 
-static template<typename T> std::vector<T> join(const std::vector<T> &a, const std::vector<T> &b)
+template<typename T> std::vector<T> join(const std::vector<T> &a, const std::vector<T> &b)
 {
     std::vector<T> c = a;
     c.insert(c.end(), b.begin(), b.end());
@@ -495,7 +455,7 @@ static float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc
 
 //lets try again
 //FIXME mark covered regions as not available so we can't repeat them'
-cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &points, int seed_x, int seed_y, float step_size)
+cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &points, int seed_x, int seed_y, float step_size, int w, int h)
 {
     double sx, sy;
     vc_segmentation_scales(points, sx, sy);
@@ -512,8 +472,6 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
     float D = sqrt(2);
     
     float T = step_size;
-    int w = 64000/step_size;
-    int h = 64000/step_size;
     
     float th = T/4;
     
@@ -1153,266 +1111,4 @@ cv::Mat_<cv::Vec3f> upsample_with_grounding(const cv::Mat_<cv::Vec3f> &small, co
         large = upsample_with_grounding_simple(large, tgt_size, points, sx, sy);
     
     return large;
-}
-
-//try to ignore the local surface normal in error calculation
-cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss_normalcomp(cv::Mat_<cv::Vec3f> points)
-{
-    //TODO calc local normal, blurr it pass through to minimzation
-}
-
-//given an input image 
-cv::Mat_<cv::Vec3f> derive_regular_region(cv::Mat_<cv::Vec3f> points)
-{
-    cv::Mat_<cv::Vec3f> out = points.clone();
-    cv::Mat_<cv::Vec2f> locs(points.size());
-
-    cv::GaussianBlur(out, out, {1,255}, 0);
-    
-#pragma omp parallel for
-    for(int j=1;j<points.rows;j++)
-        for(int i=1;i<points.cols-1;i++) {
-            // min_loc(points, {i,j}, out(j,i), {out(j,i)[0],out(j,i)[1],out(j,i)[2]});
-            cv::Vec2f loc = {i,j};
-            min_loc(points, loc, out(j,i), out(j,i));
-        }
-    
-    // cv::Mat_<cv::Vec3f> global;
-    // cv::reduce(points, global, 0, cv::REDUCE_AVG);
-    //     for(int i=0;i<points.cols;i++) {
-    //         for(int j=0;j<points.rows;j++) {
-    //             min_loc(points, loc(j,i), out(j,i), {global(i)[0],global(i)[1],points(j,i)[2]});
-    //         }
-    //     }
-    
-//    /* // for(int j=499;j<500;j++) {
-//     int j = 499;
-//         //construct a line intersecting fixed z with spacing of 1
-//         cv::Vec3f last_p = points(j,99);
-//         cv::Vec2f last_loc = {j,99};
-//         for(int i=100;i<points.cols-100;i++) {
-//             std::vector<cv::Vec3f> tgts = {last_p};
-//             auto dists = {1.0f};
-//             min_loc(points, last_loc, out(j,i), tgts, dists, false);
-//             last_p = out(j, i);
-//             locs(j,i) = {i,j};
-//         }
-//         // break;
-//     // }
-//     
-//     float sqd = sqrt(2);
-//     
-// //     // float dist
-// // // #pragma omp parallel for
-//     for(int j=500;j<1000;j++)
-// #pragma omp parallel for
-//         for(int i=200;i<800;i++) {
-//             std::vector<cv::Vec3f> tgts = {out(j-1,i-1),out(j-1,i),out(j-1,i+1)};
-//             // std::vector<cv::Vec3f> tgts = {out(j-1,i-1),out(j-1,i),out(j-1,i+1),out(j-1,i-2),out(j-1,i+2)};
-//             auto dists = {sqd,1.0f,sqd};
-//             // auto dists = {5.0f,1.0f,5.0f,10.0f,10.0f};
-//             // std::cout << sqrt(sdist(tgts[0],points(j,i))) << " " << sqrt(sdist(tgts[1],points(j,i))) << " "  << sqrt(sdist(tgts[2],points(j,i)))  << std::endl;
-//             locs(j,i) = locs(j-1,i);
-//             min_loc(points, locs(j,i), out(j,i), tgts, dists);
-//         }
-//         
-//     for(int j=510;j<520;j++)
-//         // #pragma omp parallel for
-//         for(int i=200;i<800;i++) {
-//             out(j,i) = {-1,-1,-1};
-//         }*/
-
-    return out;
-}
-
-// void parallel_equal_gauss_blur(cv::Mat src, cv::Mat tgt, int size)
-// {
-//     //for large sigmas a tranpose would be useful! this is actually slower than openmo snge thread, probobably need larger chunks
-//         
-//     cv::Mat tmp(src.size(), src.type());
-// 
-// #pragma omp parallel for
-//     for(int j=0;j<src.rows;j++) 
-//         cv::GaussianBlur(src({0,j,src.cols,1}), tmp({0,j,src.cols,1}), {size,1}, 0);
-// #pragma omp parallel for
-//     for(int i=0;i<src.cols;i++) 
-//         cv::GaussianBlur(tmp({i,0,1, src.rows}), tgt({i,0,1, src.rows}), {1,size}, 0);
-// }
-
-//somehow opencvs functions are pretty slow 
-static inline cv::Vec3f normed(const cv::Vec3f v)
-{
-    return v/sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);
-}
-
-class MeasureLife
-{
-public:
-    MeasureLife(std::string msg)
-    {
-        std::cout << msg << std::flush;
-        start = std::chrono::high_resolution_clock::now();
-    }
-    ~MeasureLife()
-    {
-        auto end = std::chrono::high_resolution_clock::now();
-        std::cout << " took " << std::chrono::duration<double>(end-start).count() << " s" << std::endl;
-    }
-private:
-    std::chrono::time_point<std::chrono::high_resolution_clock> start;
-};
-
-int main(int argc, char *argv[])
-{
-    assert(argc >= 4 && argc <= 5);
-    
-    const char *vol_path = argv[1];
-    const char *segment_path = argv[2];
-    const char *outdir_path = argv[3];
-    
-    int min_slice = 0;
-    int max_slice = 65;
-    
-    if (!fs::exists(outdir_path)) {
-        fs::create_directory(outdir_path);
-    }
-    else if (!fs::is_directory(outdir_path)) {
-        printf("ERROR: target path %s is not a directory\n", outdir_path);
-        return EXIT_FAILURE;
-    }
-
-    if (argc == 5) {
-        min_slice = atoi(argv[4]);
-        max_slice = min_slice;
-    }
-    else if (!fs::is_empty(outdir_path)) {
-        printf("ERROR: target path %s is not empty\n", outdir_path);
-        return EXIT_FAILURE;
-    }
-
-    else if (!fs::is_directory(outdir_path) || !fs::is_empty(outdir_path)) {
-        printf("ERROR: target path %s is not an empty directory\n", outdir_path);
-        return EXIT_FAILURE;
-    }
-  
-    z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset ds_handle(group, "1", "/");
-    std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
-
-    std::cout << "zarr dataset size for scale group 1 " << ds->shape() << std::endl;
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
-
-    auto timer = new MeasureLife("reading segment ...");
-    volcart::OrderedPointSet<cv::Vec3d> segment_raw = volcart::PointSetIO<cv::Vec3d>::ReadOrderedPointSet(segment_path);
-    delete timer;
-    
-    timer = new MeasureLife("smoothing segment ...");
-    cv::Mat src(segment_raw.height(), segment_raw.width(), CV_64FC3, (void*)const_cast<cv::Vec3d*>(&segment_raw[0]));
-    
-    cv::Mat_<cv::Vec3f> points_base, points;
-    src.convertTo(points_base, CV_32F);
-    
-    double base_sx, base_sy;
-    vc_segmentation_scales(points_base, base_sx, base_sy);
-    
-    // points = smooth_vc_segmentation(points);
-    // points = derive_regular_region_largesteps(points, points.cols/2, points.rows/2);
-    float search_step = 100;
-    float tgt_step = 5;
-    points = derive_regular_region_largesteps(points_base, points_base.cols/2, points_base.rows/2, search_step);
-    // points = upsample_with_grounding_skip(points, {points.cols*search_step/tgt_step,points.rows*search_step/tgt_step}, points_base, base_sx, base_sy);
-    points = upsample_with_grounding_skip(points, search_step/tgt_step, points_base, base_sx, base_sy);
-    
-    
-    
-    std::cout << "poit " << points.size() << std::endl;
-    // points = points_base({0,0,200,1000});
-    
-    // cv::resize(points, points, {0,0}, 10.0, 10.0);
-
-    double sx, sy;
-    sx = 1/tgt_step;
-    sy = 1/tgt_step;
-    // sx = base_sx;
-    // sy = base_sy;
-    // vc_segmentation_scales(points, sx, sy);
-    delete timer;
-    
-    // vc_segmentation_scales(points_base, sx, sy);
-    // points = points_base({0,0,800,3000});
-    
-    GridCoords generator(&points, sx, sy);
-    
-    xt::xarray<float> coords;
-    xt::xarray<uint8_t> img;
-    
-    std::cout << points.size() << sx << " " << sy << "\n";
-    vc_segmentation_scales(points({points.cols/4,points.rows/4,points.cols/2,points.rows/2}), sx, sy);
-    std::cout << points.size() << sx << " " << sy << "\n";
-    
-    // return EXIT_SUCCESS;
-    float ds_scale = 0.5;
-    float output_scale = 0.5;
-
-    ChunkCache chunk_cache(10e9);
-    
-    timer = new MeasureLife("rendering ...\n");
-    for(int off=min_slice;off<=max_slice;off++) {
-        generator.setOffsetZ(0);
-        MeasureLife time_slice("slice "+std::to_string(off)+" ... ");
-        generator.gen_coords(coords, 0, 0, points.cols/sx*output_scale, points.rows/sy*output_scale, 1.0, output_scale);
-        
-        //we read from scale 1
-        coords *= ds_scale/output_scale;
-        
-        
-        readInterpolated3D(img, ds.get(), coords, &chunk_cache);
-        cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
-        
-        std::stringstream ss;
-        ss << outdir_path << std::setw(2) << std::setfill('0') << off << ".tif";
-        cv::imwrite(ss.str(), m);
-        
-        std::cout << "get size " << points.cols/sx*output_scale << " " << points.rows/sy*output_scale << m.size() << std::endl;
-    }
-    std::cout << "rendering ";
-    delete timer;
-    
-    
-    // points = smooth_vc_segmentation(points);
-//     points = derive_regular_region_largesteps(points, 200, 1000);
-//     
-//     
-//     double sx, sy;
-//     sx = 0.05;
-//     sy = 0.05;
-//     delete timer;
-//     
-//     GridCoords generator(&points, sx, sy);
-//     
-//     xt::xarray<float> coords;
-//     xt::xarray<uint8_t> img;
-//     
-//     std::cout << points.size() << sx << " " << sy << "\n";
-//     
-//     // return EXIT_SUCCESS;
-//     float ds_scale = 0.5;
-//     float output_scale = 0.5;
-//     
-//     generator.gen_coords(coords, 0, 0, points.cols/sx*output_scale, points.rows/sy*output_scale, 1.0, output_scale);
-//     coords *= ds_scale/output_scale;
-//         
-//     ChunkCache chunk_cache(10e9);
-//         
-//         readInterpolated3D(img, ds.get(), coords, &chunk_cache);
-//         cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
-//         
-//         std::stringstream ss;
-//         ss << outdir_path << std::setw(2) << std::setfill('0') << off << ".tif";
-//         cv::imwrite(ss.str(), m);
-//     }
-//     std::cout << "rendering ";
-//     delete timer;
-//     
-//     return 0;
 }

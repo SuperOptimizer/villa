@@ -3,6 +3,8 @@
 #include "vc/core/io/PointSetIO.hpp"
 #include "vc/core/util/Slicing.hpp"
 
+#include "SurfaceHelpers.hpp"
+
 class SurfacePointer
 {
     
@@ -88,7 +90,7 @@ cv::Vec3f QuadSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
 }
 
 
-QuadSurface *Surface::load_quad_from_vcps(const std::string &path)
+QuadSurface *load_quad_from_vcps(const std::string &path)
 {    
     volcart::OrderedPointSet<cv::Vec3d> segment_raw = volcart::PointSetIO<cv::Vec3d>::ReadOrderedPointSet(path);
     
@@ -116,4 +118,16 @@ CoordGenerator *QuadSurface::generator(SurfacePointer *ptr, const cv::Vec3f &off
 }
 
 
-static QuadSurface *regularized_local_quad(QuadSurface *, SurfacePointer *ptr, int w, int h, int step_init = 100, int step_surface = 5);
+QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search, int step_out)
+{
+    cv::Mat_<cv::Vec3f> points;
+    
+    TrivialSurfacePointer *trivial_ptr = (TrivialSurfacePointer*)ptr;
+    
+    std::cout << "ptr" << trivial_ptr->point << std::endl;
+    
+    points = derive_regular_region_largesteps(src->_points, trivial_ptr->point[0]+src->_center[0], trivial_ptr->point[1]+src->_center[1], step_search, w*step_out/step_search, h*step_out/step_search);
+    points = upsample_with_grounding(points, {w,h}, src->_points, src->_scale[0], src->_scale[1]);
+    
+    return new QuadSurface(points, {1.0/step_out, 1.0/step_out});
+}

@@ -481,7 +481,19 @@ int main(int argc, char *argv[])
     std::cout << "zarr dataset size for scale group 1 " << ds->shape() << std::endl;
     std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
     
-    Surface *surf = Surface::load_quad_from_vcps(segment_path);
+    QuadSurface *surf_raw = load_quad_from_vcps(segment_path);
+    
+    float ds_scale = 0.5;
+    float output_scale = 0.5;
+    
+    int w = 2000;
+    int h = 2000;
+    
+    int search_step = 100;
+    int mesh_step = 5;
+    
+    Surface *surf = regularized_local_quad(surf_raw, surf_raw->pointer(), w/mesh_step/output_scale, h/mesh_step/output_scale, 100, 5);
+    
     CoordGenerator *gen = surf->generator();
 
 //     auto timer = new MeasureLife("reading segment ...");
@@ -507,8 +519,6 @@ int main(int argc, char *argv[])
     
     // std::cout << points.size() << sx << " " << sy << "\n";
     
-    float ds_scale = 0.5;
-    float output_scale = 0.5;
 
     ChunkCache chunk_cache(10e9);
     
@@ -516,8 +526,8 @@ int main(int argc, char *argv[])
     for(int off=min_slice;off<=max_slice;off++) {
         gen->setOffsetZ(off-32);
         MeasureLife time_slice("slice "+std::to_string(off)+" ... ");
-        // gen->gen_coords(coords, 0, 0, points.cols/sx*output_scale, points.rows/sy*output_scale, 1.0, output_scale);
-        gen->gen_coords(coords, -5000, -5000, 10000, 10000, 1.0, output_scale);
+        //FIXME area size and offset are not quite there yet
+        gen->gen_coords(coords, -w/2*output_scale, -h/2*output_scale, w+100, h+100, 1.0, output_scale);
         
         //we read from scale 1
         coords *= ds_scale/output_scale;
@@ -534,10 +544,4 @@ int main(int argc, char *argv[])
     delete timer;
     
     return 0;
-}
-
-
-QuadSurface *Surface::regularized_local_quad(QuadSurface *, SurfacePointer *ptr, int w, int h, int step_init, int step_surface)
-{
-    return nullptr;
 }

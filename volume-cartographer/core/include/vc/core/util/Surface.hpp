@@ -6,6 +6,10 @@ class SurfacePointer;
 class CoordGenerator;
 class QuadSurface;
 
+
+QuadSurface *load_quad_from_vcps(const std::string &path);
+QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search = 100, int step_out = 5);
+
 //base surface class
 class Surface
 {
@@ -24,9 +28,6 @@ public:
     virtual CoordGenerator *generator(SurfacePointer *ptr = nullptr, const cv::Vec3f &offset = {0,0,0}) = 0;
     //not yet
     // virtual void normal(SurfacePointer *ptr, cv::Vec3f offset);
-    
-    static QuadSurface *load_quad_from_vcps(const std::string &path);
-    static QuadSurface *regularized_local_quad(QuadSurface *, SurfacePointer *ptr, int w, int h, int step_init = 100, int step_surface = 5);
 };
 
 //quads based surface class with a pointer of nominal scale 1
@@ -39,6 +40,8 @@ public:
     bool valid(SurfacePointer *ptr, const cv::Vec3f &offset) override;
     cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset) override;
     CoordGenerator *generator(SurfacePointer *ptr, const cv::Vec3f &offset) override;
+    
+    friend QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search, int step_out);
 protected:
     cv::Mat_<cv::Vec3f> _points;
     cv::Rect _bounds;
