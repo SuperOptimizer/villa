@@ -16,6 +16,7 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/calib3d.hpp>
 
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/io/PointSetIO.hpp"
@@ -1084,6 +1085,11 @@ float dist2(int x, int y)
     return sqrt(x*x+y*y);
 }
 
+float dist2(const cv::Vec2f &v)
+{
+    return sqrt(v[0]*v[0]+v[1]*v[1]);
+}
+
 cv::Mat_<cv::Vec3f> upsample_with_grounding_skip(const cv::Mat_<cv::Vec3f> &small, int scale, const cv::Mat_<cv::Vec3f> &points, double sx, double sy)
 {
     std::cout << "upsample with interpolation & search " << small.size() << " x " << scale << std::endl; 
@@ -1144,14 +1150,24 @@ cv::Mat_<cv::Vec3f> upsample_with_grounding_skip(const cv::Mat_<cv::Vec3f> &smal
             cv::Vec3f tgt2 = small(j,i+1);
             cv::Vec3f tgt3 = small(j+1,i);
             cv::Vec3f tgt4 = small(j+1,i+1);
-            float dx = 0.5*sqrt(sdist(small(j,i+1),small(j,i))) + 0.5*sqrt(sdist(small(j+1,i+1),small(j+1,i)));
-            float dy = 0.5*sqrt(sdist(small(j,i),small(j+1,i))) + 0.5*sqrt(sdist(small(j,i+1),small(j+1,i+1)));
-            dx /= scale;
-            dy /= scale;
+            float dx1 = sqrt(sdist(small(j,i+1),small(j,i)))/scale;
+            float dx2 = sqrt(sdist(small(j+1,i+1),small(j+1,i)))/scale;
+            float dy1 = sqrt(sdist(small(j,i),small(j+1,i)))/scale;
+            float dy2 = sqrt(sdist(small(j,i+1),small(j+1,i+1)))/scale;
+            // dx /= scale;
+            // dy /= scale;
             //TODO same for the others
             if (tgt1[0] == -1)
                 continue;
             
+            //TODO had a neat idea of using perspective transform to get good target distances ... not quite sure which coords to use though so until then use linear interpolation for the target distance
+            //we are only interested in distances, so regard the quad as the length of four sides!
+            // std::vector<cv::Vec2f> dist_coords = {{0,0},{0,scale},{scale,0},{scale,scale}};
+            // std::vector<cv::Vec3f> dist_loc = {tgt1,tgt2,tgt3,tgt4};
+            // cv::Mat m = cv::findHomography(dist_coords,dist_loc);
+            
+            //TODO this will overwrite points on the border between two blocks ... maybe average those?
+            //TODO ideally we would do a local fit ... and that do that anyways also already on the initial search whe creating the mesh ...
             for(int ly=0;ly<scale;ly++)
                 for(int lx=0;lx<scale;lx++) {
                     // large(j*scale+ly,i*scale+lx) = at_int(points, locs(j*scale+ly,i*scale+lx));
@@ -1163,8 +1179,19 @@ cv::Mat_<cv::Vec3f> upsample_with_grounding_skip(const cv::Mat_<cv::Vec3f> &smal
                     int nx = scale-lx;
                     int ny = scale-ly;
                     
-                    std::vector<float> dists = {dist2(lx*dx,ly*dy),dist2(nx*dx,ly*dy),dist2(lx*dx,ny*dy),dist2(nx*dx,ny*dy)};
+                    // std::vector<cv::Vec2f> dist_loc;
+                    // dist_coords = {{lx,ly}, {nx,ly},{lx,ny},{nx,ny}};
+                    
+                    // cv::perspectiveTransform(dist_coords, dist_loc, m);
+                    
+                    // std::vector<float> dists = {dist2(dist_loc[0]),dist2(dist_loc[1]),dist2(dist_loc[3]),dist2(dist_loc[3])};
                     // std::vector<float> dists = {1,0,0,0};
+                    float fy = float(ly)/scale;
+                    float fx = float(lx)/scale;
+                
+                    float dx = (1-fy)*dx1+fy*dx2;
+                    float dy = (1-fx)*dy1+fx*dy2;
+                    std::vector<float> dists = {dist2(lx*dx,ly*dy),dist2(nx*dx,ly*dy),dist2(lx*dx,ny*dy),dist2(nx*dx,ny*dy)};
                     float res = min_loc_dbg(points, locs(j*scale+ly,i*scale+lx), large(j*scale+ly,i*scale+lx), {tgt1,tgt2,tgt3,tgt4}, dists, nullptr, step, 0.001, {}, true);
                 }
             
