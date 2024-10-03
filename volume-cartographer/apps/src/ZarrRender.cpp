@@ -1192,7 +1192,8 @@ cv::Mat_<cv::Vec3f> upsample_with_grounding_skip(const cv::Mat_<cv::Vec3f> &smal
                     float dx = (1-fy)*dx1+fy*dx2;
                     float dy = (1-fx)*dy1+fx*dy2;
                     std::vector<float> dists = {dist2(lx*dx,ly*dy),dist2(nx*dx,ly*dy),dist2(lx*dx,ny*dy),dist2(nx*dx,ny*dy)};
-                    float res = min_loc_dbg(points, locs(j*scale+ly,i*scale+lx), large(j*scale+ly,i*scale+lx), {tgt1,tgt2,tgt3,tgt4}, dists, nullptr, step, 0.001, {}, true);
+                    std::vector<float> ws = {1/dists[0], 1/dists[1],1/dists[2],1/dists[3]};
+                    float res = min_loc_dbg(points, locs(j*scale+ly,i*scale+lx), large(j*scale+ly,i*scale+lx), {tgt1,tgt2,tgt3,tgt4}, dists, nullptr, step, 0.001, ws, true);
                 }
             
         }
