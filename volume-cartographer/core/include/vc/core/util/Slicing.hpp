@@ -8,6 +8,8 @@ namespace z5
     class Dataset;
 }
 
+//TODO make the z-offsets a more generic 3d offset? (like in gridcoords)
+
 class CoordGenerator
 {
 public:
@@ -50,7 +52,7 @@ class GridCoords : public CoordGenerator
 {
 public:
     GridCoords() {};
-    GridCoords(cv::Mat_<cv::Vec3f> *points, float sx = 1.0, float sy = 1.0) : _points(points), _sx(sx), _sy(sy) {};
+    GridCoords(cv::Mat_<cv::Vec3f> *points, float sx = 1.0, float sy = 1.0, const cv::Vec3f &offset = {0,0,0}) : _points(points), _sx(sx), _sy(sy), _offset(offset) {};
     void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
     cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) override;
     using CoordGenerator::gen_coords;
@@ -58,6 +60,7 @@ public:
     cv::Mat_<cv::Vec3f> _normals;
     float _sx = 1.0;
     float _sy = 1.0;
+    cv::Vec3f _offset;
 private:
     cv::Mat_<cv::Vec3f> &normals();
 };

@@ -1171,7 +1171,9 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
     
     float s = 1/coord_scale;
     std::vector<cv::Vec2f> dst = {{0,0},{w,0},{0,h}};
-    std::vector<cv::Vec2f> src = {cv::Vec2f(x*_sx,y*_sy)*s,cv::Vec2f((x+w)*_sx,y*_sy)*s,cv::Vec2f(x*_sx,(y+h)*_sy)*s};
+    float ox = x + _offset[0];
+    float oy = y + _offset[1];
+    std::vector<cv::Vec2f> src = {cv::Vec2f(ox*_sx,oy*_sy)*s,cv::Vec2f((ox+w)*_sx,oy*_sy)*s,cv::Vec2f(ox*_sx,(oy+h)*_sy)*s};
     
     cv::Mat affine = cv::getAffineTransform(src, dst);
     
@@ -1181,7 +1183,7 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
         cv::Mat warped_normals;
         cv::warpAffine(normals(), warped_normals, affine, {w,h});
         
-        warped += warped_normals*_z_off;
+        warped += warped_normals*(_z_off + _offset[2]);
     }
     
 #pragma omp parallel for

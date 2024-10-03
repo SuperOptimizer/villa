@@ -187,6 +187,16 @@ target_link_libraries(vc_zarrrender
     VC::slicing
 )
 
+## vc_zarrrendersurface ##
+add_executable(vc_zarrrendersurface src/ZarrRenderSurface.cpp)
+target_link_libraries(vc_zarrrendersurface
+    nlohmann_json::nlohmann_json
+    z5
+    opencv_highgui
+    VC::slicing
+    VC::surface
+)
+
 ## experiements for flattening ##
 add_executable(vc_zarralphacomp src/ZarrAlphaComp.cpp)
 target_link_libraries(vc_zarralphacomp
