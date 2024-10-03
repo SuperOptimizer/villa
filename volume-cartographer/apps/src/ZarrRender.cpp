@@ -575,8 +575,8 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
     float D = sqrt(2);
     
     float T = step_size;
-    int w = 32000/step_size;
-    int h = 32000/step_size;
+    int w = 64000/step_size;
+    int h = 64000/step_size;
     
     float th = T/4;
     
@@ -1382,7 +1382,7 @@ int main(int argc, char *argv[])
     // points = derive_regular_region_largesteps(points, points.cols/2, points.rows/2);
     float search_step = 100;
     float tgt_step = 5;
-    points = derive_regular_region_largesteps(points_base, 200, 1000, search_step);
+    points = derive_regular_region_largesteps(points_base, points_base.cols/2, points_base.rows/2, search_step);
     // points = upsample_with_grounding_skip(points, {points.cols*search_step/tgt_step,points.rows*search_step/tgt_step}, points_base, base_sx, base_sy);
     points = upsample_with_grounding_skip(points, search_step/tgt_step, points_base, base_sx, base_sy);
     
