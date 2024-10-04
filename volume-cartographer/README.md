@@ -6,6 +6,7 @@ CT scans of ancient, badly damaged manuscripts, but can be applied in many
 volumetric analysis applications.
 
 ## WIP 3D volume slicing
+- ome-zarr enabled VC is available as *VC3D* alongside the existing VC binary
 - this branch implements (OME)-Zarr based volume viewing and arbitrary plane slicing, currently used to show XY,YZ,XZ planes + 1 plane with free rotation
 - along the way a lot of functionaltiy was disabled/broken - for now use it just to look at stuff, do not touch segmentation
 - usage
