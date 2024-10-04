@@ -380,7 +380,7 @@ auto Volume::load_slice_(int index) const -> cv::Mat
     }
     
     if (isZarr) {
-        throw std::runtime_error("load_slice_ not implemented for Zarr");
+        throw std::runtime_error("load_slice_ called with zarr - if this is VC - launch VC3D to load zarr volumes");
     }
     
     auto slicePath = getSlicePath(index);
