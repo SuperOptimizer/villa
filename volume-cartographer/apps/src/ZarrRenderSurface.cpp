@@ -495,6 +495,23 @@ int main(int argc, char *argv[])
     Surface *surf = regularized_local_quad(surf_raw, surf_raw->pointer(), w/mesh_step/output_scale, h/mesh_step/output_scale, 100, 5);
     
     CoordGenerator *gen = surf->generator();
+    
+    /* 
+     ok to support control point offset:
+     - how to find pointers relativ to each other?
+        - search for coordinate within surface
+            - use voxel/scale space to accelerate?
+        - also have a generic pointer(?) (just store 3d coord + normal / orientation?)
+        
+        so to impleent control point along normal:
+        - create: control point surface constructor stored 3d coord + normal from input surface
+        - generation is relative to some input surface (and depends on how even the output coord system of that input surface is!)
+            - given the render-input surface:
+                - search pointer location of stored 3d coordinate (could use normal!)
+                - generate a fixed region as input input coords + offset
+                - generate mask based on output coord size!
+            - can a also work when changing input surface/parametrization!
+            */
 
 //     auto timer = new MeasureLife("reading segment ...");
 //     volcart::OrderedPointSet<cv::Vec3d> segment_raw = volcart::PointSetIO<cv::Vec3d>::ReadOrderedPointSet(segment_path);

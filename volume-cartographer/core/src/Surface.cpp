@@ -17,27 +17,35 @@ public:
     cv::Vec3f point;
 };
 
+// class PairedSurfacePointer : public SurfacePointer
+// {
+// public:
+//     PairedSurfacePointer(const cv::Vec3f &surface_point, const cv::Vec3f &world_point) : sp(surface_point), wp(world_point) {};
+//     cv::Vec3f wp;
+//     cv::Vec3f sp;
+// };
+
 cv::Vec2f offsetPoint2d(TrivialSurfacePointer *ptr, const cv::Vec3f &offset)
 {
     cv::Vec3f p = ptr->point + offset;
     return {p[0], p[1]};
 }
 
-class IndirectSurfacePointer : SurfacePointer
-{
-public:
-    IndirectSurfacePointer(Surface *surface_, cv::Vec3f point_) : surf(surface_), point(point_) {};
-    Surface *surf;
-    cv::Vec3f point;
-};
+// class IndirectSurfacePointer : SurfacePointer
+// {
+// public:
+//     IndirectSurfacePointer(Surface *surface_, cv::Vec3f point_) : surf(surface_), point(point_) {};
+//     Surface *surf;
+//     cv::Vec3f point;
+// };
 
-class FusionSurfacePointer : SurfacePointer
-{
-public:
-    FusionSurfacePointer();
-protected:
-    std::vector<IndirectSurfacePointer*> _surfaces;
-};
+// class FusionSurfacePointer : SurfacePointer
+// {
+// public:
+//     FusionSurfacePointer();
+// protected:
+//     std::vector<IndirectSurfacePointer*> _surfaces;
+// };
 
 //TODO add non-cloning variant?
 QuadSurface::QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &scale)
@@ -130,4 +138,37 @@ QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w
     points = upsample_with_grounding(points, {w,h}, src->_points, src->_scale[0], src->_scale[1]);
     
     return new QuadSurface(points, {1.0/step_out, 1.0/step_out});
+}
+
+SurfacePointer *ControlPointSurface::pointer()
+{
+    return _base->pointer();
+}
+
+void ControlPointSurface::move(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    base->move(ptr, move);
+}
+bool ControlPointSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    //FIXME check ROI! + base surface valid
+    return true;
+}
+
+cv::Vec3f ControlPointSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    //FIXME basesurface coord + dist and orign normal dependent offset
+}
+
+CoordGenerator *ControlPointSurface::generator(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    //create new dependent generator ... which is just original + offset value
+}
+
+void ControlPointSurface::setBase(QuadSurface *base)
+{
+    _base = base;
+    
+    //FIXME refresh the cursor!
+    //should still be the same? cursors should stay at a 3d position?!?
 }
