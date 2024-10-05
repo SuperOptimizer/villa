@@ -97,6 +97,12 @@ cv::Vec3f QuadSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
     return at_int(_points, offsetPoint2d((TrivialSurfacePointer*)ptr,offset+_center));
 }
 
+cv::Vec3f QuadSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    cv::Vec2f loc = offsetPoint2d((TrivialSurfacePointer*)ptr,offset+_center);
+    
+    return grid_normal(_points, {loc[0],loc[1],0});
+}
 
 QuadSurface *load_quad_from_vcps(const std::string &path)
 {    
@@ -140,6 +146,48 @@ QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w
     return new QuadSurface(points, {1.0/step_out, 1.0/step_out});
 }
 
+//just forwards everything but gen_coords ... can we make this more elegant without having to call the specific methods?
+class ControlPointCoords : public CoordGenerator
+{
+public:
+    CoordGenerator *_base = nullptr;
+    ControlPointCoords(CoordGenerator *base) : _base(base) {};
+    void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override
+    {
+        _base->gen_coords(coords,x,y,w,h,render_scale,coord_scale);
+        
+        std::cout << "call mod gen_coords" << std::endl;
+        
+        for(int j=0;j<h;j++)
+            for(int i=0;i<h;i++) {
+                float ox = 0.1*(i-w/2);
+                float oy = 0.1*(j-h/2);
+                float sd = ox*ox + oy*oy;
+                coords(j,i,0) += 100.0/std::max(1.0f,sd);
+            }
+    }
+    void setOffsetZ(float off) override { _base->setOffsetZ(off); };
+    float offsetZ() override { return _base->offsetZ(); };
+    cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) override { return _base->normal(loc); };
+    cv::Vec3f coord(const cv::Vec3f &loc = {0,0,0}) override { return _base->coord(loc); };
+    protected:
+        float _z_off = 0;
+    
+};
+
+ControlPointSurface::ControlPointSurface(Surface *base, SurfacePointer *base_ptr, cv::Vec3f control_point)
+{
+    _base = base;
+    _ptr = base_ptr;
+    _orig_wp = base->coord(_ptr);
+    _normal = base->normal(_ptr);
+    _control_point = control_point;
+    
+    //TODO should we check consistency of these values? Or shoud we calc normal from base & control point?
+    //we could also use control point as a plane with the normal of the surface normal and calc dist along projected 3d point onto the normal - this way its independent of the base xy layout (better not that will probably mess up very detailed complex 3d surfaces that do not follow the normal). But we could use the normal of base + projected distance ...
+    //these could just be different options for how to apply the control point ...
+}
+
 SurfacePointer *ControlPointSurface::pointer()
 {
     return _base->pointer();
@@ -147,7 +195,7 @@ SurfacePointer *ControlPointSurface::pointer()
 
 void ControlPointSurface::move(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
-    base->move(ptr, move);
+    _base->move(ptr, offset);
 }
 bool ControlPointSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
@@ -157,18 +205,28 @@ bool ControlPointSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
 
 cv::Vec3f ControlPointSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
-    //FIXME basesurface coord + dist and orign normal dependent offset
+    //FIXME should actually check distance between control point and surface ...
+    // return _base(ptr) + _normal*10;
+    std::cout << "FIXME: implement ControlPointSurface::coord()" << std::endl;
+    cv::Vec3f(-1,-1,-1);
+}
+
+cv::Vec3f ControlPointSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    std::cout << "FIXME: implement ControlPointSurface::normal()" << std::endl;
+    cv::Vec3f(-1,-1,-1);
 }
 
 CoordGenerator *ControlPointSurface::generator(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
-    //create new dependent generator ... which is just original + offset value
+    return new ControlPointCoords(_base->generator(ptr, offset));
 }
 
 void ControlPointSurface::setBase(QuadSurface *base)
 {
     _base = base;
     
+    abort();
     //FIXME refresh the cursor!
     //should still be the same? cursors should stay at a 3d position?!?
 }

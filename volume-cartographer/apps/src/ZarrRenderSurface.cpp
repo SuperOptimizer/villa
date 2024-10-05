@@ -492,26 +492,15 @@ int main(int argc, char *argv[])
     int search_step = 100;
     int mesh_step = 5;
     
-    Surface *surf = regularized_local_quad(surf_raw, surf_raw->pointer(), w/mesh_step/output_scale, h/mesh_step/output_scale, 100, 5);
+    Surface *surf = surf_raw;
+    // Surface *surf = regularized_local_quad(surf_raw, surf_raw->pointer(), w/mesh_step/output_scale, h/mesh_step/output_scale, 100, 5);
     
-    CoordGenerator *gen = surf->generator();
+    // CoordGenerator *gen = surf->generator();
     
-    /* 
-     ok to support control point offset:
-     - how to find pointers relativ to each other?
-        - search for coordinate within surface
-            - use voxel/scale space to accelerate?
-        - also have a generic pointer(?) (just store 3d coord + normal / orientation?)
-        
-        so to impleent control point along normal:
-        - create: control point surface constructor stored 3d coord + normal from input surface
-        - generation is relative to some input surface (and depends on how even the output coord system of that input surface is!)
-            - given the render-input surface:
-                - search pointer location of stored 3d coordinate (could use normal!)
-                - generate a fixed region as input input coords + offset
-                - generate mask based on output coord size!
-            - can a also work when changing input surface/parametrization!
-            */
+    SurfacePointer *control_point_loc = surf->pointer();
+    ControlPointSurface correction_surf(surf, control_point_loc, surf->coord(control_point_loc) + 10*surf->normal(control_point_loc));
+    
+    CoordGenerator *gen = correction_surf.generator();
 
 //     auto timer = new MeasureLife("reading segment ...");
 //     volcart::OrderedPointSet<cv::Vec3d> segment_raw = volcart::PointSetIO<cv::Vec3d>::ReadOrderedPointSet(segment_path);
@@ -544,7 +533,7 @@ int main(int argc, char *argv[])
         gen->setOffsetZ(off-32);
         MeasureLife time_slice("slice "+std::to_string(off)+" ... ");
         //FIXME area size and offset are not quite there yet
-        gen->gen_coords(coords, -w/2*output_scale, -h/2*output_scale, w+100, h+100, 1.0, output_scale);
+        gen->gen_coords(coords, -w/2*output_scale, -h/2*output_scale, w, h, 1.0, output_scale);
         
         //we read from scale 1
         coords *= ds_scale/output_scale;

@@ -660,7 +660,16 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int
         }
 }
 
-void IDWHeightPlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
+/*void PlaneCoords::gen_normals(xt::xarray<float> &normals_out, int x, int y, int w, int h, float render_scale, float coord_scale)
+{   
+    normals_out = xt::zeros<float>({1,1,3});
+    
+    normals_out(0,0,0) = _normal[2];
+    normals_out(0,0,1) = _normal[1];
+    normals_out(0,0,2) = _normal[0];
+}*/
+
+/*void IDWHeightPlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
 {
     cv::Vec3f vx, vy;
     vxy_from_normal(origin,_normal,vx,vy);
@@ -681,7 +690,7 @@ void IDWHeightPlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, i
             coords(j,i,1) = p[1];
             coords(j,i,2) = p[0];
         }
-}
+}*/
 
 /*cv::Point3f PlaneCoords::gen_coords(float i, float j, int x, int y, float render_scale, float coord_scale) const
 {    
@@ -709,7 +718,7 @@ float PlaneCoords::scalarp(cv::Vec3f point) const
     return point.dot(_normal) - origin.dot(_normal);
 }
 
-float IDWHeightPlaneCoords::height(cv::Vec3f point) const
+/*float IDWHeightPlaneCoords::height(cv::Vec3f point) const
 {
     if (control_points->size() < 4)
         return 0;
@@ -741,7 +750,7 @@ float IDWHeightPlaneCoords::height(cv::Vec3f point) const
 float IDWHeightPlaneCoords::scalarp(cv::Vec3f point) const
 {    
     return point.dot(_normal) - origin.dot(_normal) - height(point);
-}
+}*/
 
 static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p);
 
@@ -1020,7 +1029,7 @@ void ControlPointSegmentator::add(cv::Vec3f wp, cv::Vec3f normal)
     control_points.push_back(wp);
 }
 
-void PlaneIDWSegmentator::add(cv::Vec3f wp, cv::Vec3f normal)
+/*void PlaneIDWSegmentator::add(cv::Vec3f wp, cv::Vec3f normal)
 {
     std::cout << "added point" << _points.size()+1 << wp << normal << std::endl;
     if (_points.size() < 2) {
@@ -1059,9 +1068,7 @@ PlaneCoords *PlaneIDWSegmentator::generator() const
 PlaneIDWSegmentator::PlaneIDWSegmentator()
 {
     _generator = new IDWHeightPlaneCoords(&control_points);
-}
-
-
+}*/
 
 void PlaneCoords::setNormal(cv::Vec3f normal)
 {
@@ -1117,15 +1124,6 @@ static inline cv::Vec3f normed(const cv::Vec3f v)
     return v/sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);
 }
 
-//TODO only calc for area?
-cv::Mat_<cv::Vec3f> &GridCoords::normals()
-{
-    if (_normals.empty()) 
-        _normals = vc_segmentation_calc_normals(*_points);
-
-    return _normals;
-}
-
 static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
 {
     int x = p[0];
@@ -1153,9 +1151,34 @@ cv::Vec3f CoordGenerator::coord(const cv::Vec3f &loc)
     return {coords(0,0,2),coords(0,0,1),coords(0,0,0)};
 }
 
+static cv::Vec2f vmin(const cv::Vec2f &a, const cv::Vec2f &b)
+{
+    return {std::min(a[0],b[0]),std::min(a[1],b[1])};
+}
+
+static cv::Vec2f vmax(const cv::Vec2f &a, const cv::Vec2f &b)
+{
+    return {std::max(a[0],b[0]),std::max(a[1],b[1])};
+}
+
+cv::Vec3f grid_normal(const cv::Mat_<cv::Vec3f> &points, const cv::Vec3f &loc)
+{
+    cv::Vec2f inb_loc = {loc[0], loc[1]};
+    //move inside from the grid border so w can access required locations
+    inb_loc = vmax(inb_loc, {1,1});
+    inb_loc = vmin(inb_loc, {points.cols-2,points.rows-1});
+    
+    cv::Vec3f xv = normed(at_int(points,inb_loc+cv::Vec2f(1,0))-at_int(points,inb_loc-cv::Vec2f(1,0)));
+    cv::Vec3f yv = normed(at_int(points,inb_loc+cv::Vec2f(0,1))-at_int(points,inb_loc-cv::Vec2f(0,1)));
+    
+    cv::Vec3f n = yv.cross(xv);
+    
+    return normed(n);
+}
+
 cv::Vec3f GridCoords::normal(const cv::Vec3f &loc)
 {
-    return at_int(normals(), {loc[1]*_sy, loc[1]*_sx});
+    return grid_normal(*_points, loc);
 }
 
 void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
@@ -1179,10 +1202,7 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
     cv::warpAffine(*_points, warped, affine, {w,h});
     
     if (_z_off) {
-        cv::Mat warped_normals;
-        cv::warpAffine(normals(), warped_normals, affine, {w,h});
-        
-        warped += warped_normals*(_z_off + _offset[2]);
+        std::cout << "FIX offset for GridCoords::gen_coords!" << std::endl;
     }
     
 #pragma omp parallel for
@@ -1194,6 +1214,37 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
             coords(j,i,2) = point[0]*coord_scale;
         }
 }
+
+/*void GridCoords::gen_normals(xt::xarray<float> &normals_out, int x, int y, int w, int h, float render_scale, float coord_scale)
+{
+    if (render_scale > 1.0 || render_scale < 0.5) {
+        std::cout << "FIXME: support wider render scale for GridCoords::gen_coords()" << std::endl;
+        return;
+    }
+    
+    normals_out = xt::zeros<float>({h,w,3});
+    
+    float s = 1/coord_scale;
+    std::vector<cv::Vec2f> dst = {{0,0},{w,0},{0,h}};
+    float ox = x + _offset[0];
+    float oy = y + _offset[1];
+    std::vector<cv::Vec2f> src = {cv::Vec2f(ox*_sx,oy*_sy)*s,cv::Vec2f((ox+w)*_sx,oy*_sy)*s,cv::Vec2f(ox*_sx,(oy+h)*_sy)*s};
+    
+    cv::Mat affine = cv::getAffineTransform(src, dst);
+    
+    cv::Mat_<cv::Vec3f> warped_normals;
+    cv::warpAffine(normals(), warped_normals, affine, {w,h});
+    
+#pragma omp parallel for
+    for(int j=0;j<h;j++)
+        for(int i=0;i<w;i++) {
+            cv::Vec3f normal = warped_normals(j,i);
+            cv::normalize(normal, normal);
+            normals_out(j,i,0) = normal[2];
+            normals_out(j,i,1) = normal[1];
+            normals_out(j,i,2) = normal[0];
+        }
+}*/
 
 static float sdist(const cv::Vec3f &a, const cv::Vec3f &b)
 {
