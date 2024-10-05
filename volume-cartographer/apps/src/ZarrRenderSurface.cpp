@@ -486,8 +486,8 @@ int main(int argc, char *argv[])
     float ds_scale = 0.5;
     float output_scale = 0.5;
     
-    int w = 2000;
-    int h = 2000;
+    int w = 1000;
+    int h = 1000;
     
     int search_step = 100;
     int mesh_step = 5;
@@ -508,15 +508,10 @@ int main(int argc, char *argv[])
     corr->addControlPoint(ptr, surf->coord(ptr) + 10*surf->normal(ptr));
     
     surf->move(ptr, {0,-10,0});    
-    corr->addControlPoint(ptr, surf->coord(ptr) + 10*surf->normal(ptr));
-    
-    // surf->move(ptr, {20,0,0});
-    // corr = new ControlPointSurface(corr, ptr, {-1,-1,-1});
-    
-    // surf->move(ptr, {20,0,0});
-    // corr = new ControlPointSurface(corr, ptr, {-1,-1,-1});
+    corr->addControlPoint(ptr, surf->coord(ptr) + 10*surf->normal(ptr));    
     
     CoordGenerator *gen = corr->generator(center);
+    // CoordGenerator *gen = surf->generator(center);
 
 //     auto timer = new MeasureLife("reading segment ...");
 //     volcart::OrderedPointSet<cv::Vec3d> segment_raw = volcart::PointSetIO<cv::Vec3d>::ReadOrderedPointSet(segment_path);
@@ -549,7 +544,7 @@ int main(int argc, char *argv[])
         gen->setOffsetZ(off-32);
         MeasureLife time_slice("slice "+std::to_string(off)+" ... ");
         //FIXME area size and offset are not quite there yet
-        gen->gen_coords(coords, -w/2*output_scale, -h/2*output_scale, w, h, 1.0, output_scale);
+        gen->gen_coords(coords, -w/2, -h/2, w, h, 1.0, output_scale);
         
         //we read from scale 1
         coords *= ds_scale/output_scale;

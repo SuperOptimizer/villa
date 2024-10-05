@@ -56,7 +56,8 @@ QuadSurface::QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &sca
     //-1 as many times we read with linear interpolation and access +1 locations
     _bounds = {0,0,points.cols-1,points.rows-1};
     _scale = scale;
-    _center = {points.cols/2,points.rows/2,0};
+    _center = {points.cols/2.0/_scale[0],points.rows/2.0/_scale[1],0};
+    std::cout << "quad center scale" << _center << _scale <<  _points.size() <<  std::endl;
 }
 
 SurfacePointer *QuadSurface::pointer()
@@ -67,7 +68,6 @@ SurfacePointer *QuadSurface::pointer()
 
 static cv::Vec3f offset3(const cv::Vec3f &loc, const cv::Vec3f &offset_scaled, const cv::Vec2f &scale, const cv::Vec3f &offset_unscaled)
 {
-    // std::cout << "offset3" << loc << offset_scaled << scale << offset_unscaled << std::endl;
     return loc + cv::Vec3f(offset_scaled[0]*scale[0]+offset_unscaled[0], offset_scaled[1]*scale[1]+offset_unscaled[1], offset_scaled[2]+offset_unscaled[2]);
 }
 
@@ -82,14 +82,13 @@ void QuadSurface::move(SurfacePointer *ptr, const cv::Vec3f &offset)
     assert(ptr_inst);
     
     ptr_inst->loc = offset3(ptr_inst->loc, offset, _scale, {0,0,0});
-    // std::cout << "moved " << ptr << ptr_inst->loc << offset << std::endl;
 }
 
 bool QuadSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
-    cv::Vec2i p = offset2(ptr_inst->loc, offset, _scale, _center);
+    cv::Vec2i p = offset2(ptr_inst->loc, offset+_center, _scale, {0,0,0});
     
     return _bounds.contains(p);
 }
@@ -116,7 +115,7 @@ cv::Vec3f QuadSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
-    cv::Vec2f p = offset2(ptr_inst->loc, offset, _scale, _center);
+    cv::Vec2f p = offset2(ptr_inst->loc, offset+_center, _scale, {0,0,0});
     
     return at_int(_points, p);
 }
@@ -125,7 +124,7 @@ cv::Vec3f QuadSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
-    cv::Vec3f p = offset3(ptr_inst->loc, offset, _scale, _center);
+    cv::Vec3f p = offset3(ptr_inst->loc, offset+_center, _scale, {0,0,0});
     p[0] /= _scale[0];
     p[1] /= _scale[1];
     
@@ -136,7 +135,7 @@ cv::Vec3f QuadSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
-    cv::Vec3f p = offset3(ptr_inst->loc, offset, _scale, _center);
+    cv::Vec3f p = offset3(ptr_inst->loc, offset+_center, _scale, {0,0,0});
     
     return grid_normal(_points, p);
 }
@@ -266,7 +265,7 @@ QuadSurface *load_quad_from_vcps(const std::string &path)
 CoordGenerator *QuadSurface::generator(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     //without pointer we just use the center == default pointer
-    cv::Vec3f total_offset = offset3(0, offset, _scale, 0);
+    cv::Vec3f total_offset = offset3(0, offset+_center, _scale, {0,0,0});
     
     if (ptr) {
         TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
@@ -275,8 +274,9 @@ CoordGenerator *QuadSurface::generator(SurfacePointer *ptr, const cv::Vec3f &off
         total_offset += ptr_inst->loc;
     }
     
-    //FIXME implement & use offset for gridcoords    
-    return new GridCoords(&_points, _scale[0], _scale[1], total_offset);
+    //FIXME implement & use offset for gridcoords
+    std::cout << "quad gen center" << _center << std::endl;
+    return new GridCoords(&_points, _scale[0], _scale[1], _center);
 }
 
 
@@ -322,10 +322,8 @@ void ControlPointCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int
     //FIXME does generator create a new generator? need at some point check ownerships of these apis ...
     _base_gen->gen_coords(coords,x,y,w,h,render_scale,coord_scale);
     
-    std::cout << "call mod gen_coords " << x << " " << y << _surf->_base->loc(_gen_ptr)*coord_scale << _surf->_base->loc(_surf->_controls[0].ptr)*coord_scale << std::endl;
-    
     for(int j=0;j<h;j++)
-        for(int i=0;i<h;i++) {
+        for(int i=0;i<w;i++) {
             float ox = 0.1*(i-w/2);
             float oy = 0.1*(j-h/2);
             float sd = ox*ox + oy*oy;
