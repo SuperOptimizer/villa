@@ -499,8 +499,16 @@ int main(int argc, char *argv[])
     
     SurfacePointer *center = surf->pointer();
     SurfacePointer *ptr = surf->pointer();
-    surf->move(ptr, {20,0,0});
-    ControlPointSurface *corr = new ControlPointSurface(surf, ptr, surf->coord(ptr) + 10*surf->normal(ptr));
+    ControlPointSurface *corr = new ControlPointSurface(surf);
+
+    surf->move(ptr, {20,0,0});    
+    corr->addControlPoint(ptr, surf->coord(ptr) + 10*surf->normal(ptr));
+    
+    surf->move(ptr, {15,16,0});    
+    corr->addControlPoint(ptr, surf->coord(ptr) + 10*surf->normal(ptr));
+    
+    surf->move(ptr, {0,-10,0});    
+    corr->addControlPoint(ptr, surf->coord(ptr) + 10*surf->normal(ptr));
     
     // surf->move(ptr, {20,0,0});
     // corr = new ControlPointSurface(corr, ptr, {-1,-1,-1});

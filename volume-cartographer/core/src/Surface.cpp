@@ -8,14 +8,14 @@
 class SurfacePointer
 {
 public:
-    virtual ~SurfacePointer() {};
+    virtual SurfacePointer *clone() const = 0;
 };
 
 class TrivialSurfacePointer : public SurfacePointer
 {
 public:
-    TrivialSurfacePointer(cv::Vec3f loc_) : loc(loc_) {};
-    ~TrivialSurfacePointer() override {};
+    TrivialSurfacePointer(cv::Vec3f loc_) : loc(loc_) {}
+    SurfacePointer *clone() const override { return new TrivialSurfacePointer(*this); }
     cv::Vec3f loc;
 };
 
@@ -298,52 +298,61 @@ QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w
 class ControlPointCoords : public CoordGenerator
 {
 public:
-    CoordGenerator *_base_gen;
-    TrivialSurfacePointer *_gen_ptr;
-    TrivialSurfacePointer *_ctrl_ptr;
-    Surface *_base_surf;
-    ControlPointCoords(CoordGenerator *base_gen, TrivialSurfacePointer *gen_ptr, TrivialSurfacePointer *ctrl_ptr, Surface *base_surf) : _base_gen(base_gen), _gen_ptr(gen_ptr), _ctrl_ptr(ctrl_ptr), _base_surf(base_surf) {};
-    void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override
-    {
-        _base_gen->gen_coords(coords,x,y,w,h,render_scale,coord_scale);
-        
-        std::cout << "call mod gen_coords " << x << " " << y << _base_surf->loc(_gen_ptr)*coord_scale << _base_surf->loc(_ctrl_ptr)*coord_scale << std::endl;
-        
-        for(int j=0;j<h;j++)
-            for(int i=0;i<h;i++) {
-                float ox = 0.1*(i-w/2);
-                float oy = 0.1*(j-h/2);
-                float sd = ox*ox + oy*oy;
-                coords(j,i,0) += 100.0/std::max(1.0f,sd);
-            }
-    }
+    ControlPointCoords(TrivialSurfacePointer *gen_ptr, ControlPointSurface *surf);
+    void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
     void setOffsetZ(float off) override { _base_gen->setOffsetZ(off); };
     float offsetZ() override { return _base_gen->offsetZ(); };
     cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) override { return _base_gen->normal(loc); };
     cv::Vec3f coord(const cv::Vec3f &loc = {0,0,0}) override { return _base_gen->coord(loc); };
-    protected:
-        float _z_off = 0;
-    
+protected:
+    TrivialSurfacePointer *_gen_ptr;
+    ControlPointSurface *_surf;
+    CoordGenerator *_base_gen;
 };
 
-ControlPointSurface::ControlPointSurface(Surface *base, SurfacePointer *base_ptr, cv::Vec3f control_point)
+ControlPointCoords::ControlPointCoords(TrivialSurfacePointer *gen_ptr, ControlPointSurface *surf)
 {
-    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(base_ptr);
-    assert(ptr_inst);
+    _gen_ptr = gen_ptr;
+    _surf = surf;
+    _base_gen = _surf->_base->generator(_gen_ptr);
+}
+
+void ControlPointCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
+{
+    //FIXME does generator create a new generator? need at some point check ownerships of these apis ...
+    _base_gen->gen_coords(coords,x,y,w,h,render_scale,coord_scale);
     
-    std::cout << "constr ptr " << ptr_inst->loc << std::endl;
+    std::cout << "call mod gen_coords " << x << " " << y << _surf->_base->loc(_gen_ptr)*coord_scale << _surf->_base->loc(_surf->_controls[0].ptr)*coord_scale << std::endl;
     
+    for(int j=0;j<h;j++)
+        for(int i=0;i<h;i++) {
+            float ox = 0.1*(i-w/2);
+            float oy = 0.1*(j-h/2);
+            float sd = ox*ox + oy*oy;
+            coords(j,i,0) += 100.0/std::max(1.0f,sd);
+        }
+}
+
+
+ControlPointSurface::ControlPointSurface(Surface *base)
+{
     _base = base;
-    _ptr = new TrivialSurfacePointer(ptr_inst->loc);
-    _orig_wp = base->coord(_ptr);
-    _normal = base->normal(_ptr);
-    _control_point = control_point;
+}
+
+SurfaceControlPoint::SurfaceControlPoint(Surface *base, SurfacePointer *ptr_, const cv::Vec3f &control)
+{
+    ptr = ptr_->clone();
+    orig_wp = base->coord(ptr_);
+    normal = base->normal(ptr_);
+    control_point = control;
+}
+
+void ControlPointSurface::addControlPoint(SurfacePointer *base_ptr, cv::Vec3f control_point)
+{
+    _controls.push_back(SurfaceControlPoint(_base, base_ptr, control_point));
     
-    std::cout << "constr ctrlp ptr " << _ptr->loc << _ptr << std::endl;
+    std::cout << "add control " << control_point << _base->loc(base_ptr) << _base->loc(_controls[0].ptr) << std::endl;
     
-    //TODO should we check consistency of these values? Or shoud we calc normal from base & control point?
-    //we could also use control point as a plane with the normal of the surface normal and calc dist along projected 3d point onto the normal - this way its independent of the base xy layout (better not that will probably mess up very detailed complex 3d surfaces that do not follow the normal). But we could use the normal of base + projected distance ...
-    //these could just be different options for how to apply the control point ...
 }
 
 SurfacePointer *ControlPointSurface::pointer()
@@ -388,11 +397,7 @@ CoordGenerator *ControlPointSurface::generator(SurfacePointer *ptr, const cv::Ve
     TrivialSurfacePointer *gen_ptr = new TrivialSurfacePointer(ptr_inst->loc);
     _base->move(gen_ptr, offset);
     
-    std::cout << "constr gen" << gen_ptr->loc << _ptr->loc << std::endl;
-    
-    //FIXME need to compare generator with control point locations!!!
-    
-    return new ControlPointCoords(_base->generator(gen_ptr), gen_ptr, _ptr, _base);
+    return new ControlPointCoords(gen_ptr, this);
 }
 
 float ControlPointSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
@@ -404,5 +409,5 @@ void ControlPointSurface::setBase(QuadSurface *base)
 {
     _base = base;
     
-    _base->pointTo(_ptr, _orig_wp, 10.0);
+    //FIXME reset control points?
 }

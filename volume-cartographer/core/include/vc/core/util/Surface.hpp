@@ -57,12 +57,24 @@ protected:
     cv::Vec3f _center;
 };
 
+//might in the future have more properties! or those props are handled in whatever class manages a set of control points ...
+class SurfaceControlPoint
+{
+public:
+    SurfaceControlPoint(Surface *base, SurfacePointer *ptr_, const cv::Vec3f &control);
+    SurfacePointer *ptr; //ptr to control point in base surface
+    cv::Vec3f orig_wp; //the original 3d location where the control point was created
+    cv::Vec3f normal; //original normal
+    cv::Vec3f control_point; //actual control point location - should be in line with _orig_wp along the normal, but could change if the underlaying surface changes!
+};
+
 //everything shall be exactly the same as a parent quad-surface, apart fromt the actual output coords around the normals
 //and we might want an alpha map at some point but here is not required
 class ControlPointSurface : public Surface
 {
 public:
-    ControlPointSurface(Surface *base, SurfacePointer *base_ptr, cv::Vec3f control_point);
+    ControlPointSurface(Surface *base);
+    void addControlPoint(SurfacePointer *base_ptr, cv::Vec3f control_point);
     SurfacePointer *pointer() override;
     void move(SurfacePointer *ptr, const cv::Vec3f &offset) override;
     bool valid(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
@@ -73,13 +85,13 @@ public:
     float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th) override;
     //TODO make derivative/dependencies generic/common interface
     void setBase(QuadSurface *base);
+    
+    friend class ControlPointCoords;
 
 protected:
     Surface *_base; //base surface
-    TrivialSurfacePointer *_ptr; //ptr to control point in base surface
-    cv::Vec3f _orig_wp; //the original 3d location where the control point was created
-    cv::Vec3f _normal; //original normal
-    cv::Vec3f _control_point; //actual control point location - should be in line with _orig_wp along the normal, but could change if the underlaying surface changes!
+    std::vector<SurfaceControlPoint> _controls;
+
 };
 
 
