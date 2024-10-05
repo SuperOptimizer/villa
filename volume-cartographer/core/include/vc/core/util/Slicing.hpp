@@ -20,6 +20,7 @@ public:
     // virtual void gen_normals(xt::xarray<float> &normals, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) = 0;
     virtual void setOffsetZ(float off) { _z_off = off; };
     virtual float offsetZ() { return _z_off; };
+    virtual cv::Vec3f offset() = 0;
     virtual cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) = 0;
     virtual cv::Vec3f coord(const cv::Vec3f &loc = {0,0,0});
 protected:
@@ -42,6 +43,7 @@ public:
     // virtual void gen_coords(float i, float j, int x, int y, float render_scale, float coord_scale) const = 0;
     using CoordGenerator::gen_coords;
     cv::Vec3f origin = {0,0,0};
+    cv::Vec3f offset() override { abort(); };
     void setNormal(cv::Vec3f normal);
     cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) override { return _normal; };
 protected:
@@ -57,6 +59,7 @@ public:
     void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
     // void gen_normals(xt::xarray<float> &normals, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
     cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) override;
+    cv::Vec3f offset() override;
     using CoordGenerator::gen_coords;
     cv::Mat_<cv::Vec3f> *_points = nullptr;
     float _sx = 1.0;

@@ -1181,6 +1181,11 @@ cv::Vec3f GridCoords::normal(const cv::Vec3f &loc)
     return grid_normal(*_points, loc);
 }
 
+cv::Vec3f GridCoords::offset()
+{
+    return _offset;
+}
+
 void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
 {
     if (render_scale > 1.0 || render_scale < 0.5) {

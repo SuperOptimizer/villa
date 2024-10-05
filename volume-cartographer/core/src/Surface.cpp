@@ -302,6 +302,7 @@ public:
     void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
     void setOffsetZ(float off) override { _base_gen->setOffsetZ(off); };
     float offsetZ() override { return _base_gen->offsetZ(); };
+    cv::Vec3f offset() override { return _base_gen->offset(); };
     cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) override { return _base_gen->normal(loc); };
     cv::Vec3f coord(const cv::Vec3f &loc = {0,0,0}) override { return _base_gen->coord(loc); };
 protected:
@@ -322,13 +323,27 @@ void ControlPointCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int
     //FIXME does generator create a new generator? need at some point check ownerships of these apis ...
     _base_gen->gen_coords(coords,x,y,w,h,render_scale,coord_scale);
     
-    for(int j=0;j<h;j++)
-        for(int i=0;i<w;i++) {
-            float ox = 0.1*(i-w/2);
-            float oy = 0.1*(j-h/2);
-            float sd = ox*ox + oy*oy;
-            coords(j,i,0) += 100.0/std::max(1.0f,sd);
-        }
+    cv::Rect bounds(0,0,w,h);
+    
+    // cv::Vec2f off2d = {_offset[0]*_sx,_offset[1]*_sy};
+    // 0 ~ x*_sx*s+off2d.x
+    
+    for(auto p : _surf->_controls) {
+        cv::Vec3f loc = _surf->_base->loc(p.ptr) - cv::Vec3f(_base_gen->offset()[0],_base_gen->offset()[1],0);
+        loc *= 1/coord_scale;
+        loc -= cv::Vec3f(x,y,0);
+        cv::Rect roi(loc[0]-20,loc[1]-20,40,40);
+        cv::Rect area = roi & bounds;
+        for(int j=area.y;j<area.y+area.height;j++)
+            for(int i=area.x;i<area.x+area.width;i++) {
+                // float ox = 0.1*(i-w/2);
+                // float oy = 0.1*(j-h/2);
+                // float sd = ox*ox + oy*oy;
+                coords(j,i,0) = -1;
+                coords(j,i,1) = -1;
+                coords(j,i,2) = -1;
+            }
+    }
 }
 
 
