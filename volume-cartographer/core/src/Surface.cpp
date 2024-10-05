@@ -7,14 +7,16 @@
 
 class SurfacePointer
 {
-    
+public:
+    virtual ~SurfacePointer() {};
 };
 
 class TrivialSurfacePointer : public SurfacePointer
 {
 public:
-    TrivialSurfacePointer(cv::Vec3f point_) : point(point_) {};
-    cv::Vec3f point;
+    TrivialSurfacePointer(cv::Vec3f loc_) : loc(loc_) {};
+    ~TrivialSurfacePointer() override {};
+    cv::Vec3f loc;
 };
 
 // class PairedSurfacePointer : public SurfacePointer
@@ -27,7 +29,7 @@ public:
 
 cv::Vec2f offsetPoint2d(TrivialSurfacePointer *ptr, const cv::Vec3f &offset)
 {
-    cv::Vec3f p = ptr->point + offset;
+    cv::Vec3f p = ptr->loc + offset;
     return {p[0], p[1]};
 }
 
@@ -63,15 +65,33 @@ SurfacePointer *QuadSurface::pointer()
 }
 
 
+static cv::Vec3f offset3(const cv::Vec3f &loc, const cv::Vec3f &offset_scaled, const cv::Vec2f &scale, const cv::Vec3f &offset_unscaled)
+{
+    // std::cout << "offset3" << loc << offset_scaled << scale << offset_unscaled << std::endl;
+    return loc + cv::Vec3f(offset_scaled[0]*scale[0]+offset_unscaled[0], offset_scaled[1]*scale[1]+offset_unscaled[1], offset_scaled[2]+offset_unscaled[2]);
+}
+
+static cv::Vec2f offset2(const cv::Vec3f &loc, const cv::Vec3f &offset_scaled, const cv::Vec2f &scale, const cv::Vec3f &offset_unscaled)
+{
+    return cv::Vec2f(loc[0],loc[1]) + cv::Vec2f(offset_scaled[0]*scale[0]+offset_unscaled[0], offset_scaled[1]*scale[1]+offset_unscaled[1]);
+}
+
 void QuadSurface::move(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
-    ((TrivialSurfacePointer*)ptr)->point += offset;
+    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+    assert(ptr_inst);
+    
+    ptr_inst->loc = offset3(ptr_inst->loc, offset, _scale, {0,0,0});
+    // std::cout << "moved " << ptr << ptr_inst->loc << offset << std::endl;
 }
 
 bool QuadSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
-    cv::Vec3f p = ((TrivialSurfacePointer*)ptr)->point + offset + _center;
-    return _bounds.contains({p[0],p[1]});
+    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+    assert(ptr_inst);
+    cv::Vec2i p = offset2(ptr_inst->loc, offset, _scale, _center);
+    
+    return _bounds.contains(p);
 }
 
 static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
@@ -94,14 +114,138 @@ static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
 
 cv::Vec3f QuadSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
-    return at_int(_points, offsetPoint2d((TrivialSurfacePointer*)ptr,offset+_center));
+    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+    assert(ptr_inst);
+    cv::Vec2f p = offset2(ptr_inst->loc, offset, _scale, _center);
+    
+    return at_int(_points, p);
+}
+
+cv::Vec3f QuadSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+    assert(ptr_inst);
+    cv::Vec3f p = offset3(ptr_inst->loc, offset, _scale, _center);
+    p[0] /= _scale[0];
+    p[1] /= _scale[1];
+    
+    return p;
 }
 
 cv::Vec3f QuadSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
-    cv::Vec2f loc = offsetPoint2d((TrivialSurfacePointer*)ptr,offset+_center);
+    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+    assert(ptr_inst);
+    cv::Vec3f p = offset3(ptr_inst->loc, offset, _scale, _center);
     
-    return grid_normal(_points, {loc[0],loc[1],0});
+    return grid_normal(_points, p);
+}
+
+static float sdist(const cv::Vec3f &a, const cv::Vec3f &b)
+{
+    cv::Vec3f d = a-b;
+    return d.dot(d);
+}
+
+static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
+{
+    return{a[0]*b[0],a[1]*b[1]};
+}
+
+static float search_min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt, cv::Vec2f init_step, float min_step_x)
+{
+    cv::Rect boundary(1,1,points.cols-2,points.rows-2);
+    if (!boundary.contains({loc[0],loc[1]})) {
+        out = {-1,-1,-1};
+        return -1;
+    }
+    
+    bool changed = true;
+    cv::Vec3f val = at_int(points, loc);
+    out = val;
+    float best = sdist(val, tgt);
+    float res;
+    
+    //TODO check maybe add more search patterns, compare motion estimatino for video compression, x264/x265, ...
+    std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
+    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
+    cv::Vec2f step = init_step;
+    
+    while (changed) {
+        changed = false;
+        
+        for(auto &off : search) {
+            cv::Vec2f cand = loc+mul(off,step);
+            
+            //just skip if out of bounds
+            if (!boundary.contains({cand[0],cand[1]}))
+                continue;
+            
+            val = at_int(points, cand);
+            res = sdist(val, tgt);
+            if (res < best) {
+                changed = true;
+                best = res;
+                loc = cand;
+                out = val;
+            }
+        }
+        
+        if (changed)
+            continue;
+        
+        step *= 0.5;
+        changed = true;
+        
+        if (step[0] < min_step_x)
+            break;
+    }
+
+    return sqrt(best);
+}
+
+//search the surface point that is closest to th tgt coord
+float QuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
+{
+    TrivialSurfacePointer *tgt_ptr = dynamic_cast<TrivialSurfacePointer*>(ptr);
+    assert(tgt_ptr);
+
+    cv::Vec2f loc = {tgt_ptr->loc[0],tgt_ptr->loc[1]};
+    cv::Vec3f _out;
+    
+    cv::Vec2f step_small = {std::max(1.0f,_scale[0]),std::max(1.0f,_scale[1])};
+    float min_mul = std::min(0.1*_points.cols/_scale[0],0.1*_points.rows/_scale[1]);
+    cv::Vec2f step_large = {min_mul*_scale[0],min_mul*_scale[1]};
+
+    float dist = search_min_loc(_points, loc, _out, tgt, step_small, _scale[0]*0.01);
+    
+    if (dist < th && dist >= 0) {
+        tgt_ptr->loc = {loc[0],loc[1]};
+        return dist;
+    }
+    
+    cv::Vec2f min_loc = loc;
+    float min_dist = dist;
+    if (min_dist < 0)
+        min_dist = 10*(_points.cols/_scale[0]+_points.rows/_scale[1]);
+    
+    //FIXME is this excessive?
+    for(int r=0;r<1000;r++) {
+        loc = {1 + (rand() % _points.cols-3), 1 + (rand() % _points.rows-3)};
+        
+        float dist = search_min_loc(_points, loc, _out, tgt, step_large, _scale[0]*0.01);
+        
+        if (dist < th && dist >= 0) {
+            tgt_ptr->loc = {loc[0],loc[1]};
+            return dist;
+        } else if (dist >= 0 && dist < min_dist) {
+            min_loc = loc;
+            min_dist = dist;
+        }
+    }
+    
+    tgt_ptr->loc = {min_loc[0],min_loc[1]};
+    return min_dist;
 }
 
 QuadSurface *load_quad_from_vcps(const std::string &path)
@@ -121,11 +265,15 @@ QuadSurface *load_quad_from_vcps(const std::string &path)
 
 CoordGenerator *QuadSurface::generator(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
-    cv::Vec3f total_offset = offset+_center;
-    
     //without pointer we just use the center == default pointer
-    if (ptr)
-        total_offset += ((TrivialSurfacePointer*)ptr)->point;
+    cv::Vec3f total_offset = offset3(0, offset, _scale, 0);
+    
+    if (ptr) {
+        TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+        assert(ptr_inst);
+
+        total_offset += ptr_inst->loc;
+    }
     
     //FIXME implement & use offset for gridcoords    
     return new GridCoords(&_points, _scale[0], _scale[1], total_offset);
@@ -138,9 +286,9 @@ QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w
     
     TrivialSurfacePointer *trivial_ptr = (TrivialSurfacePointer*)ptr;
     
-    std::cout << "ptr" << trivial_ptr->point << std::endl;
+    std::cout << "ptr" << trivial_ptr->loc << std::endl;
     
-    points = derive_regular_region_largesteps(src->_points, trivial_ptr->point[0]+src->_center[0], trivial_ptr->point[1]+src->_center[1], step_search, w*step_out/step_search, h*step_out/step_search);
+    points = derive_regular_region_largesteps(src->_points, trivial_ptr->loc[0]+src->_center[0], trivial_ptr->loc[1]+src->_center[1], step_search, w*step_out/step_search, h*step_out/step_search);
     points = upsample_with_grounding(points, {w,h}, src->_points, src->_scale[0], src->_scale[1]);
     
     return new QuadSurface(points, {1.0/step_out, 1.0/step_out});
@@ -150,13 +298,16 @@ QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w
 class ControlPointCoords : public CoordGenerator
 {
 public:
-    CoordGenerator *_base = nullptr;
-    ControlPointCoords(CoordGenerator *base) : _base(base) {};
+    CoordGenerator *_base_gen;
+    TrivialSurfacePointer *_gen_ptr;
+    TrivialSurfacePointer *_ctrl_ptr;
+    Surface *_base_surf;
+    ControlPointCoords(CoordGenerator *base_gen, TrivialSurfacePointer *gen_ptr, TrivialSurfacePointer *ctrl_ptr, Surface *base_surf) : _base_gen(base_gen), _gen_ptr(gen_ptr), _ctrl_ptr(ctrl_ptr), _base_surf(base_surf) {};
     void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override
     {
-        _base->gen_coords(coords,x,y,w,h,render_scale,coord_scale);
+        _base_gen->gen_coords(coords,x,y,w,h,render_scale,coord_scale);
         
-        std::cout << "call mod gen_coords" << std::endl;
+        std::cout << "call mod gen_coords " << x << " " << y << _base_surf->loc(_gen_ptr)*coord_scale << _base_surf->loc(_ctrl_ptr)*coord_scale << std::endl;
         
         for(int j=0;j<h;j++)
             for(int i=0;i<h;i++) {
@@ -166,10 +317,10 @@ public:
                 coords(j,i,0) += 100.0/std::max(1.0f,sd);
             }
     }
-    void setOffsetZ(float off) override { _base->setOffsetZ(off); };
-    float offsetZ() override { return _base->offsetZ(); };
-    cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) override { return _base->normal(loc); };
-    cv::Vec3f coord(const cv::Vec3f &loc = {0,0,0}) override { return _base->coord(loc); };
+    void setOffsetZ(float off) override { _base_gen->setOffsetZ(off); };
+    float offsetZ() override { return _base_gen->offsetZ(); };
+    cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) override { return _base_gen->normal(loc); };
+    cv::Vec3f coord(const cv::Vec3f &loc = {0,0,0}) override { return _base_gen->coord(loc); };
     protected:
         float _z_off = 0;
     
@@ -177,11 +328,18 @@ public:
 
 ControlPointSurface::ControlPointSurface(Surface *base, SurfacePointer *base_ptr, cv::Vec3f control_point)
 {
+    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(base_ptr);
+    assert(ptr_inst);
+    
+    std::cout << "constr ptr " << ptr_inst->loc << std::endl;
+    
     _base = base;
-    _ptr = base_ptr;
+    _ptr = new TrivialSurfacePointer(ptr_inst->loc);
     _orig_wp = base->coord(_ptr);
     _normal = base->normal(_ptr);
     _control_point = control_point;
+    
+    std::cout << "constr ctrlp ptr " << _ptr->loc << _ptr << std::endl;
     
     //TODO should we check consistency of these values? Or shoud we calc normal from base & control point?
     //we could also use control point as a plane with the normal of the surface normal and calc dist along projected 3d point onto the normal - this way its independent of the base xy layout (better not that will probably mess up very detailed complex 3d surfaces that do not follow the normal). But we could use the normal of base + projected distance ...
@@ -199,8 +357,13 @@ void ControlPointSurface::move(SurfacePointer *ptr, const cv::Vec3f &offset)
 }
 bool ControlPointSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
-    //FIXME check ROI! + base surface valid
-    return true;
+    _base->valid(ptr, offset);
+}
+
+cv::Vec3f ControlPointSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    std::cout << "FIXME: implement ControlPointSurface::loc()" << std::endl;
+    cv::Vec3f(-1,-1,-1);
 }
 
 cv::Vec3f ControlPointSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
@@ -219,14 +382,27 @@ cv::Vec3f ControlPointSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offs
 
 CoordGenerator *ControlPointSurface::generator(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
-    return new ControlPointCoords(_base->generator(ptr, offset));
+    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+    assert(ptr_inst);
+    
+    TrivialSurfacePointer *gen_ptr = new TrivialSurfacePointer(ptr_inst->loc);
+    _base->move(gen_ptr, offset);
+    
+    std::cout << "constr gen" << gen_ptr->loc << _ptr->loc << std::endl;
+    
+    //FIXME need to compare generator with control point locations!!!
+    
+    return new ControlPointCoords(_base->generator(gen_ptr), gen_ptr, _ptr, _base);
 }
 
+float ControlPointSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
+{
+    //surfacepointer is supposed to always stay in the same nominal coordinates - so always refer down to the most lowest level / input / source
+    _base->pointTo(ptr, tgt, th);
+}
 void ControlPointSurface::setBase(QuadSurface *base)
 {
     _base = base;
     
-    abort();
-    //FIXME refresh the cursor!
-    //should still be the same? cursors should stay at a 3d position?!?
+    _base->pointTo(_ptr, _orig_wp, 10.0);
 }

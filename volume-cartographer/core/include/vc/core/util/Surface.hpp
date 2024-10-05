@@ -5,6 +5,7 @@
 class SurfacePointer;
 class CoordGenerator;
 class QuadSurface;
+class TrivialSurfacePointer;
 
 
 QuadSurface *load_quad_from_vcps(const std::string &path);
@@ -21,12 +22,15 @@ public:
     virtual void move(SurfacePointer *ptr, const cv::Vec3f &offset) = 0;
     //does the pointer location contain valid surface data
     virtual bool valid(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) = 0;
+    //nominal pointer coordinates (in "output" coordinates)
+    virtual cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) = 0;
     //read coord at pointer location, potentially with (3) offset
     virtual cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) = 0;
     virtual cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) = 0;
+    virtual float pointTo(SurfacePointer *ptr, const cv::Vec3f &coord, float th) = 0;
     //coordgenerator relative to ptr&offset
     //needs to be deleted after use
-    virtual CoordGenerator *generator(SurfacePointer *ptr = nullptr, const cv::Vec3f &offset = {0,0,0}) = 0;
+    virtual CoordGenerator *generator(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) = 0;
     //not yet
     // virtual void normal(SurfacePointer *ptr, cv::Vec3f offset);
 };
@@ -39,9 +43,11 @@ public:
     QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &scale);
     void move(SurfacePointer *ptr, const cv::Vec3f &offset) override;
     bool valid(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    CoordGenerator *generator(SurfacePointer *ptr = nullptr, const cv::Vec3f &offset = {0,0,0}) override;
+    CoordGenerator *generator(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th) override;
     
     friend QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search, int step_out);
 protected:
@@ -60,18 +66,20 @@ public:
     SurfacePointer *pointer() override;
     void move(SurfacePointer *ptr, const cv::Vec3f &offset) override;
     bool valid(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    CoordGenerator *generator(SurfacePointer *ptr = nullptr, const cv::Vec3f &offset = {0,0,0}) override;
+    CoordGenerator *generator(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th) override;
     //TODO make derivative/dependencies generic/common interface
     void setBase(QuadSurface *base);
 
 protected:
     Surface *_base; //base surface
-    SurfacePointer *_ptr; //ptr to control point in base surface
+    TrivialSurfacePointer *_ptr; //ptr to control point in base surface
     cv::Vec3f _orig_wp; //the original 3d location where the control point was created
     cv::Vec3f _normal; //original normal
-    cv::Vec3f _control_point; //actual control point location - should be in line with _orig_wp along the normal!
+    cv::Vec3f _control_point; //actual control point location - should be in line with _orig_wp along the normal, but could change if the underlaying surface changes!
 };
 
 

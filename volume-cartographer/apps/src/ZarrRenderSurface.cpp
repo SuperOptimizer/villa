@@ -497,10 +497,18 @@ int main(int argc, char *argv[])
     
     // CoordGenerator *gen = surf->generator();
     
-    SurfacePointer *control_point_loc = surf->pointer();
-    ControlPointSurface correction_surf(surf, control_point_loc, surf->coord(control_point_loc) + 10*surf->normal(control_point_loc));
+    SurfacePointer *center = surf->pointer();
+    SurfacePointer *ptr = surf->pointer();
+    surf->move(ptr, {20,0,0});
+    ControlPointSurface *corr = new ControlPointSurface(surf, ptr, surf->coord(ptr) + 10*surf->normal(ptr));
     
-    CoordGenerator *gen = correction_surf.generator();
+    // surf->move(ptr, {20,0,0});
+    // corr = new ControlPointSurface(corr, ptr, {-1,-1,-1});
+    
+    // surf->move(ptr, {20,0,0});
+    // corr = new ControlPointSurface(corr, ptr, {-1,-1,-1});
+    
+    CoordGenerator *gen = corr->generator(center);
 
 //     auto timer = new MeasureLife("reading segment ...");
 //     volcart::OrderedPointSet<cv::Vec3d> segment_raw = volcart::PointSetIO<cv::Vec3d>::ReadOrderedPointSet(segment_path);

@@ -1201,7 +1201,7 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
     
     cv::warpAffine(*_points, warped, affine, {w,h});
     
-    if (_z_off) {
+    if (_z_off || _offset[2]) {
         std::cout << "FIX offset for GridCoords::gen_coords!" << std::endl;
     }
     
