@@ -45,8 +45,8 @@ public:
     cv::Vec3f offset() override { abort(); };
     void setNormal(cv::Vec3f normal);
     cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) override { return _normal; };
-protected:
     cv::Vec3f origin = {0,0,0};
+protected:
     cv::Vec3f _normal = {0,0,1};
 };
 
