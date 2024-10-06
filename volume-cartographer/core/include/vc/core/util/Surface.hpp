@@ -91,25 +91,28 @@ public:
 protected:
     Surface *_base; //base surface
     std::vector<SurfaceControlPoint> _controls;
-
 };
 
+class RefineCompCoords;
 
-//quads based surface class with a pointer of nominal scale 1
-// class ControlPointOffset : public QuadSurface
-// {
-// public:
-//     SurfacePointer *pointer();
-//     QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &scale);
-//     void move(SurfacePointer *ptr, const cv::Vec3f &offset) override;
-//     bool valid(SurfacePointer *ptr, const cv::Vec3f &offset) override;
-//     cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset) override;
-//     CoordGenerator *generator(SurfacePointer *ptr, const cv::Vec3f &offset) override;
-//     
-//     friend QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search, int step_out);
-// protected:
-//     cv::Mat_<cv::Vec3f> _points;
-//     cv::Rect _bounds;
-//     cv::Vec2f _scale;
-//     cv::Vec3f _center;
-// };
+//TODO add generic "delta-base-surface" class to join functionality of delta surfaces like ControlPointSurface,RefineCompSurface
+class RefineCompSurface : public Surface
+{
+public:
+    RefineCompSurface(Surface *base);
+    SurfacePointer *pointer() override;
+    void move(SurfacePointer *ptr, const cv::Vec3f &offset) override;
+    bool valid(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    CoordGenerator *generator(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th) override;
+    //TODO make derivative/dependencies generic/common interface
+    void setBase(QuadSurface *base);
+    
+    friend class RefineCompCoords;
+    
+protected:
+    Surface *_base; //base surface
+};

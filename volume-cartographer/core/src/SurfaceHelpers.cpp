@@ -601,6 +601,8 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
             ignore_failures = true;
             skipped_from_skipped = false;
         }
+        else
+            break;
 
         cv::Mat_<cv::Vec3f> curv_data(2*r+1,2*r+1);
         cv::Mat_<uint8_t> curv_valid(2*r+1,2*r+1);

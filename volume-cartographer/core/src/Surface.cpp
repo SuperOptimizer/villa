@@ -287,7 +287,7 @@ QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w
     
     std::cout << "ptr" << trivial_ptr->loc << std::endl;
     
-    points = derive_regular_region_largesteps(src->_points, trivial_ptr->loc[0]+src->_center[0], trivial_ptr->loc[1]+src->_center[1], step_search, w*step_out/step_search, h*step_out/step_search);
+    points = derive_regular_region_largesteps(src->_points, trivial_ptr->loc[0]+src->_center[0]*src->_scale[0], trivial_ptr->loc[1]+src->_center[1]*src->_scale[1], step_search, w*step_out/step_search, h*step_out/step_search);
     points = upsample_with_grounding(points, {w,h}, src->_points, src->_scale[0], src->_scale[1]);
     
     return new QuadSurface(points, {1.0/step_out, 1.0/step_out});
@@ -349,18 +349,17 @@ void ControlPointCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int
     }
 }
 
-
-ControlPointSurface::ControlPointSurface(Surface *base)
-{
-    _base = base;
-}
-
 SurfaceControlPoint::SurfaceControlPoint(Surface *base, SurfacePointer *ptr_, const cv::Vec3f &control)
 {
     ptr = ptr_->clone();
     orig_wp = base->coord(ptr_);
     normal = base->normal(ptr_);
     control_point = control;
+}
+
+ControlPointSurface::ControlPointSurface(Surface *base)
+{
+    _base = base;
 }
 
 void ControlPointSurface::addControlPoint(SurfacePointer *base_ptr, cv::Vec3f control_point)
@@ -426,4 +425,265 @@ void ControlPointSurface::setBase(QuadSurface *base)
     _base = base;
     
     //FIXME reset control points?
+    std::cout << "ERROR implement ControlPointSurface::setBase()" << std::endl;
+}
+
+/*cv::Mat_<cv::Vec3f> surf_alpha_integ_dbg(z5::Dataset *ds, ChunkCache *chunk_cache, const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<cv::Vec3f> &normals)
+{
+    cv::Mat_<cv::Vec3f> res;
+    
+    cv::Mat_<float> integ(points.size(), 0);
+    cv::Mat_<float> integ_blur(points.size(), 0);
+    cv::Mat_<float> transparent(points.size(), 1);
+    cv::Mat_<float> blur(points.size(), 0);
+    cv::Mat_<float> integ_z(points.size(), 0);
+    
+    for(int n=0;n<21;n++) {
+        xt::xarray<uint8_t> raw_extract;
+        // coords = points_reg*2.0;
+        float off = (n-5)*0.5;
+        readInterpolated3D(raw_extract, ds, xt_from_mat((points+normals*off)*0.5), chunk_cache);
+        cv::Mat_<uint8_t> slice = cv::Mat(raw_extract.shape(0), raw_extract.shape(1), CV_8U, raw_extract.data());
+        
+        // char buf[64];
+        // sprintf(buf, "slice%02d.tif", n);
+        // cv::imwrite(buf, slice);
+        
+        cv::Mat floatslice;
+        slice.convertTo(floatslice, CV_32F, 1/255.0);
+        
+        cv::GaussianBlur(floatslice, blur, {7,7}, 0);
+        cv::Mat opaq_slice = blur;
+        
+        float low = 0.0; //map to 0
+        float up = 1.0; //map to 1
+        opaq_slice = (opaq_slice-low)/(up-low);
+        opaq_slice = cv::min(opaq_slice,1);
+        opaq_slice = cv::max(opaq_slice,0);
+        
+        // sprintf(buf, "opaq%02d.tif", n);
+        // cv::imwrite(buf, opaq_slice);
+        
+        printf("vals %d i t o b v: %f %f %f %f\n", n, integ.at<float>(500,600), transparent.at<float>(500,600), opaq_slice.at<float>(500,600), blur.at<float>(500,600), floatslice.at<float>(500,600));
+        
+        cv::Mat joint = transparent.mul(opaq_slice);
+        integ += joint.mul(floatslice);
+        integ_blur += joint.mul(blur);
+        integ_z += joint * off;
+        transparent = transparent-joint;
+        
+        // sprintf(buf, "transp%02d.tif", n);
+        // cv::imwrite(buf, transparent);
+        // 
+        // sprintf(buf, "opaq2%02d.tif", n);
+        // cv::imwrite(buf, opaq_slice);
+        
+        printf("res %d i t: %f %f\n", n, integ.at<float>(500,600), transparent.at<float>(500,600));
+        
+        // avgimg = avgimg + floatslice;
+        // cv::imwrite(buf, avgimg/(n+1));
+        
+        // slices.push_back(slice);
+        // for(int j=0;j<points.rows;j++)
+        //     for(int i=0;i<points.cols;i++) {
+        //         //found == 0: still searching for first time < 50!
+        //         //found == 1: record < 50 start looking for >= 50 to stop
+        //         //found == 2: done, found border
+        //         if (slice(j,i) < 40 && found(j,i) <= 1) {
+        //             height(j,i) = n+1;
+        //             found(j,i) = 1;
+        //         }
+        //         else if (slice(j,i) >= 40 && found(j,i) == 1) {
+        //             found(j,i) = 2;
+        //         }
+        //     }
+    }        // slices.push_back(slice);
+    
+    integ /= (1-transparent);
+    integ_blur /= (1-transparent);
+    integ_z /= (1-transparent);
+    
+    cv::imwrite("blended.tif", integ);
+    cv::imwrite("blended_blur.tif", integ_blur);
+    cv::imwrite("blended_comp1.tif", integ/(integ_blur+0.5));
+    cv::imwrite("blended_comp3.tif", integ-integ_blur+0.5);
+    cv::imwrite("blended_comp2.tif", integ/(integ_blur+0.01));
+    cv::imwrite("tranparency.tif", transparent);
+    
+    // for(int j=0;j<points.rows;j++)
+    //     for(int i=0;i<points.cols;i++)
+    //         if (found(j,i) == 1)
+    //             height(j,i) = 0;
+    
+    //never change opencv, never change ...
+    
+    // cv::cvtColor(height, mul, cv::COLOR_GRAY2BGR);
+    // cv::imwrite("max.tif", maximg);
+    
+    cv::Mat mul;
+    cv::cvtColor(integ_z, mul, cv::COLOR_GRAY2BGR);
+    cv::Mat_<cv::Vec3f> new_surf = points + normals.mul(mul);
+    cv::Mat_<cv::Vec3f> new_surf_1 = new_surf + normals;
+    cv::Mat_<cv::Vec3f> new_surf_n1 = new_surf - normals;
+    //     
+    xt::xarray<uint8_t> img;
+    readInterpolated3D(img, ds, xt_from_mat(new_surf*0.5), chunk_cache);
+    cv::Mat_<uint8_t> slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+    //     
+    printf("writ slice!\n");
+    cv::imwrite("new_surf.tif", slice);
+    
+    readInterpolated3D(img, ds, xt_from_mat(new_surf_1*0.5), chunk_cache);
+    slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+    cv::imwrite("new_surf1.tif", slice);
+    
+    readInterpolated3D(img, ds, xt_from_mat(new_surf_n1*0.5), chunk_cache);
+    slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+    cv::imwrite("new_surf-1.tif", slice);
+    
+    // cv::Mat_<float> height_vis = height/21;
+    // height_vis = cv::min(height_vis,1-height_vis)*2;
+    // cv::imwrite("off.tif", height_vis);
+    
+    //now big question: how far away from average is the new surf!
+    
+    //     cv::Mat avg_surf;
+    //     cv::GaussianBlur(new_surf, avg_surf, {7,7}, 0);
+    //     
+    //     readInterpolated3D(img, ds, xt_from_mat(avg_surf*0.5), chunk_cache);
+    //     slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+    //     
+    //     cv::imwrite("avg_surf.tif", slice);
+    //     
+    //     
+    //     cv::Mat_<float> rel_height(points.size(), 0);
+    //     
+    //     cv::Mat_<cv::Vec3f> dist = avg_surf-new_surf;
+    //     
+    //     #pragma omp parallel for
+    //     for(int j=0;j<points.rows;j++)
+    //         for(int i=0;i<points.cols;i++) {
+    //             rel_height(j,i) = cv::norm(dist(j,i));
+    //         }
+    //         
+    //         cv::imwrite("rel_height.tif", rel_height);
+    
+    return new_surf;
+}*/
+
+//just forwards everything but gen_coords ... can we make this more elegant without having to call the specific methods?
+class RefineCompCoords : public CoordGenerator
+{
+public:
+    RefineCompCoords(TrivialSurfacePointer *gen_ptr, RefineCompSurface *surf);
+    void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
+    void setOffsetZ(float off) override { _base_gen->setOffsetZ(off); };
+    float offsetZ() override { return _base_gen->offsetZ(); };
+    cv::Vec3f offset() override { return _base_gen->offset(); };
+    cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) override { return _base_gen->normal(loc); };
+    cv::Vec3f coord(const cv::Vec3f &loc = {0,0,0}) override { return _base_gen->coord(loc); };
+protected:
+    TrivialSurfacePointer *_gen_ptr;
+    RefineCompSurface *_surf;
+    CoordGenerator *_base_gen;
+};
+
+RefineCompCoords::RefineCompCoords(TrivialSurfacePointer *gen_ptr, RefineCompSurface *surf)
+{
+    _gen_ptr = gen_ptr;
+    _surf = surf;
+    _base_gen = _surf->_base->generator(_gen_ptr);
+}
+
+void RefineCompCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
+{
+    //FIXME does generator create a new generator? need at some point check ownerships of these apis ...
+    _base_gen->gen_coords(coords,x,y,w,h,render_scale,coord_scale);
+    
+//     cv::Rect bounds(0,0,w,h);
+//     
+//     // cv::Vec2f off2d = {_offset[0]*_sx,_offset[1]*_sy};
+//     // 0 ~ x*_sx*s+off2d.x
+//     
+//     for(auto p : _surf->_controls) {
+//         cv::Vec3f loc = _surf->_base->loc(p.ptr) - cv::Vec3f(_base_gen->offset()[0],_base_gen->offset()[1],0);
+//         loc *= 1/coord_scale;
+//         loc -= cv::Vec3f(x,y,0);
+//         cv::Rect roi(loc[0]-40,loc[1]-40,80,80);
+//         cv::Rect area = roi & bounds;
+//         
+//         PlaneCoords plane(p.control_point, p.normal);
+//         float delta = plane.scalarp(_surf->_base->coord(p.ptr));
+//         cv::Vec3f move = delta*p.normal;
+//         
+//         for(int j=area.y;j<area.y+area.height;j++)
+//             for(int i=area.x;i<area.x+area.width;i++) {
+//                 float w = sdist(loc, cv::Vec3f(i,j,0));
+//                 w = exp(-w/(20*20));
+//                 coords(j,i,2) += w*move[0];
+//                 coords(j,i,1) += w*move[1];
+//                 coords(j,i,0) += w*move[2];
+//             }
+//     }
+}
+
+RefineCompSurface::RefineCompSurface(Surface *base)
+{
+    _base = base;
+}
+
+SurfacePointer *RefineCompSurface::pointer()
+{
+    return _base->pointer();
+}
+
+void RefineCompSurface::move(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    _base->move(ptr, offset);
+}
+bool RefineCompSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    _base->valid(ptr, offset);
+}
+
+cv::Vec3f RefineCompSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    std::cout << "FIXME: implement RefineCompSurface::loc()" << std::endl;
+    cv::Vec3f(-1,-1,-1);
+}
+
+cv::Vec3f RefineCompSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    //FIXME should actually check distance between control point and surface ...
+    // return _base(ptr) + _normal*10;
+    std::cout << "FIXME: implement RefineCompSurface::coord()" << std::endl;
+    cv::Vec3f(-1,-1,-1);
+}
+
+cv::Vec3f RefineCompSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    std::cout << "FIXME: implement RefineCompSurface::normal()" << std::endl;
+    cv::Vec3f(-1,-1,-1);
+}
+
+CoordGenerator *RefineCompSurface::generator(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+    assert(ptr_inst);
+    
+    TrivialSurfacePointer *gen_ptr = new TrivialSurfacePointer(ptr_inst->loc);
+    _base->move(gen_ptr, offset);
+    
+    return new RefineCompCoords(gen_ptr, this);
+}
+
+float RefineCompSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
+{
+    //surfacepointer is supposed to always stay in the same nominal coordinates - so always refer down to the most lowest level / input / source
+    _base->pointTo(ptr, tgt, th);
+}
+
+void RefineCompSurface::setBase(QuadSurface *base)
+{
+    _base = base;
 }

@@ -493,31 +493,34 @@ int main(int argc, char *argv[])
     int mesh_step = 5;
     
     Surface *surf = surf_raw;
-    // Surface *surf = regularized_local_quad(surf_raw, surf_raw->pointer(), w/mesh_step/output_scale, h/mesh_step/output_scale, 100, 5);
+    SurfacePointer *poi = surf->pointer();
+    // surf->move(poi, {-10200,-13200,0});
+    surf->move(poi, {-10200,-13200,0});
+    surf = regularized_local_quad(surf_raw, poi, w/mesh_step/output_scale, h/mesh_step/output_scale, 100, 5);
     
     // CoordGenerator *gen = surf->generator();
     
-    SurfacePointer *center = surf->pointer();
-    SurfacePointer *ptr = surf->pointer();
-    surf->move(center, {-10200,-13200,0});
-    surf->move(ptr, {-10200,-13200,0});
-    ControlPointSurface *corr = new ControlPointSurface(surf);
-
-    surf->move(ptr, {-70,-29,0});   
-    // surf->move(ptr, {-10,-0,0});   
-    corr->addControlPoint(ptr, surf->coord(ptr) + -6*surf->normal(ptr));
-    
-    surf->move(ptr, {20,0,0});    
-    corr->addControlPoint(ptr, surf->coord(ptr) + -6*surf->normal(ptr));
+    // SurfacePointer *center = surf->pointer();
+    // SurfacePointer *ptr = surf->pointer();
+    // surf->move(center, {-10200,-13200,0});
+//     surf->move(ptr, {-10200,-13200,0});
+//     ControlPointSurface *corr = new ControlPointSurface(surf);
+// 
+//     surf->move(ptr, {-70,-29,0});   
+//     // surf->move(ptr, {-10,-0,0});   
+//     corr->addControlPoint(ptr, surf->coord(ptr) + -6*surf->normal(ptr));
 //     
-    surf->move(ptr, {20,0,0});    
-    corr->addControlPoint(ptr, surf->coord(ptr) + -5*surf->normal(ptr));
-
-    surf->move(ptr, {-55,5,0});    
-    corr->addControlPoint(ptr, surf->coord(ptr) + -5*surf->normal(ptr));
-    
-    CoordGenerator *gen = corr->generator(center);
-    // CoordGenerator *gen = surf->generator(center);
+//     surf->move(ptr, {20,0,0});    
+//     corr->addControlPoint(ptr, surf->coord(ptr) + -6*surf->normal(ptr));
+// //     
+//     surf->move(ptr, {20,0,0});    
+//     corr->addControlPoint(ptr, surf->coord(ptr) + -5*surf->normal(ptr));
+// 
+//     surf->move(ptr, {-55,5,0});    
+//     corr->addControlPoint(ptr, surf->coord(ptr) + -5*surf->normal(ptr));
+//     
+//     CoordGenerator *gen = corr->generator(center);
+    CoordGenerator *gen = surf->generator(surf->pointer());
 
 //     auto timer = new MeasureLife("reading segment ...");
 //     volcart::OrderedPointSet<cv::Vec3d> segment_raw = volcart::PointSetIO<cv::Vec3d>::ReadOrderedPointSet(segment_path);
