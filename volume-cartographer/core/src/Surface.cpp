@@ -275,8 +275,7 @@ CoordGenerator *QuadSurface::generator(SurfacePointer *ptr, const cv::Vec3f &off
     }
     
     //FIXME implement & use offset for gridcoords
-    std::cout << "quad gen center" << _center << std::endl;
-    return new GridCoords(&_points, _scale[0], _scale[1], _center);
+    return new GridCoords(&_points, _scale[0], _scale[1], {total_offset[0]/_scale[0],total_offset[1]/_scale[1],total_offset[2]});
 }
 
 
@@ -332,16 +331,20 @@ void ControlPointCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int
         cv::Vec3f loc = _surf->_base->loc(p.ptr) - cv::Vec3f(_base_gen->offset()[0],_base_gen->offset()[1],0);
         loc *= 1/coord_scale;
         loc -= cv::Vec3f(x,y,0);
-        cv::Rect roi(loc[0]-20,loc[1]-20,40,40);
+        cv::Rect roi(loc[0]-40,loc[1]-40,80,80);
         cv::Rect area = roi & bounds;
+        
+        PlaneCoords plane(p.control_point, p.normal);
+        float delta = plane.scalarp(_surf->_base->coord(p.ptr));
+        cv::Vec3f move = delta*p.normal;
+
         for(int j=area.y;j<area.y+area.height;j++)
             for(int i=area.x;i<area.x+area.width;i++) {
-                // float ox = 0.1*(i-w/2);
-                // float oy = 0.1*(j-h/2);
-                // float sd = ox*ox + oy*oy;
-                coords(j,i,0) = -1;
-                coords(j,i,1) = -1;
-                coords(j,i,2) = -1;
+                float w = sdist(loc, cv::Vec3f(i,j,0));
+                w = exp(-w/(20*20));
+                coords(j,i,2) += w*move[0];
+                coords(j,i,1) += w*move[1];
+                coords(j,i,0) += w*move[2];
             }
     }
 }

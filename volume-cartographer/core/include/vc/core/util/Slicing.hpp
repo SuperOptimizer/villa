@@ -42,11 +42,11 @@ public:
     virtual float height(cv::Vec3f point) const { return 0.0; };
     // virtual void gen_coords(float i, float j, int x, int y, float render_scale, float coord_scale) const = 0;
     using CoordGenerator::gen_coords;
-    cv::Vec3f origin = {0,0,0};
     cv::Vec3f offset() override { abort(); };
     void setNormal(cv::Vec3f normal);
     cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) override { return _normal; };
 protected:
+    cv::Vec3f origin = {0,0,0};
     cv::Vec3f _normal = {0,0,1};
 };
 

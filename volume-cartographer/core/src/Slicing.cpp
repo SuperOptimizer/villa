@@ -1199,6 +1199,7 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
     float s = 1/coord_scale;
     std::vector<cv::Vec2f> dst = {{0,0},{w,0},{0,h}};
     cv::Vec2f off2d = {_offset[0]*_sx,_offset[1]*_sy};
+    std::cout << "using off2d " << off2d << _offset << std::endl;
     std::vector<cv::Vec2f> src = {cv::Vec2f(x*_sx,y*_sy)*s+off2d,cv::Vec2f((x+w)*_sx,y*_sy)*s+off2d,cv::Vec2f(x*_sx,(y+h)*_sy)*s+off2d};
     
     cv::Mat affine = cv::getAffineTransform(src, dst);
