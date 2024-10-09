@@ -1207,7 +1207,14 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
     cv::warpAffine(*_points, warped, affine, {w,h});
     
     if (_z_off || _offset[2]) {
-        std::cout << "FIX offset for GridCoords::gen_coords!" << std::endl;
+        // std::cout << "FIX offset for GridCoords::gen_coords!" << std::endl;
+        
+        cv::Mat_<cv::Vec3f> normals(warped.size());
+        for(int j=0;j<h;j++)
+            for(int i=0;i<w;i++)
+                normals(j, i) = grid_normal(warped, {i,j});
+        
+        warped += normals*(_z_off+_offset[2]);
     }
     
 #pragma omp parallel for
