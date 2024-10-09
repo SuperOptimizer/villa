@@ -5,6 +5,8 @@
 
 #include "SurfaceHelpers.hpp"
 
+#include <opencv2/imgproc.hpp>
+
 class SurfacePointer
 {
 public:
@@ -262,7 +264,97 @@ QuadSurface *load_quad_from_vcps(const std::string &path)
     return new QuadSurface(points, {sx,sy});
 }
 
-CoordGenerator *QuadSurface::generator(SurfacePointer *ptr, const cv::Vec3f &offset)
+/*void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
+{
+    if (render_scale > 1.0 || render_scale < 0.5) {
+        std::cout << "FIXME: support wider render scale for GridCoords::gen_coords()" << std::endl;
+        return;
+    }
+    
+    coords = xt::zeros<float>({h,w,3});
+    cv::Mat_<cv::Vec3f> warped;
+    
+    float s = 1/coord_scale;
+    std::vector<cv::Vec2f> dst = {{0,0},{w,0},{0,h}};
+    cv::Vec2f off2d = {_offset[0]*_sx,_offset[1]*_sy};
+    std::cout << "using off2d " << off2d << _offset << std::endl;
+    std::vector<cv::Vec2f> src = {cv::Vec2f(x*_sx,y*_sy)*s+off2d,cv::Vec2f((x+w)*_sx,y*_sy)*s+off2d,cv::Vec2f(x*_sx,(y+h)*_sy)*s+off2d};
+    
+    cv::Mat affine = cv::getAffineTransform(src, dst);
+    
+    cv::warpAffine(*_points, warped, affine, {w,h});
+    
+    if (_z_off || _offset[2]) {
+        // std::cout << "FIX offset for GridCoords::gen_coords!" << std::endl;
+        
+        cv::Mat_<cv::Vec3f> normals(warped.size());
+        for(int j=0;j<h;j++)
+            for(int i=0;i<w;i++)
+                normals(j, i) = grid_normal(warped, {i,j});
+        
+        warped += normals*(_z_off+_offset[2]);
+    }
+    
+    #pragma omp parallel for
+    for(int j=0;j<h;j++)
+        for(int i=0;i<w;i++) {
+            cv::Vec3f point = warped(j,i);
+            coords(j,i,0) = point[2]*coord_scale;
+            coords(j,i,1) = point[1]*coord_scale;
+            coords(j,i,2) = point[0]*coord_scale;
+        }
+}*/
+
+
+void QuadSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
+{
+    TrivialSurfacePointer _ptr({0,0,0});
+    if (!ptr)
+        ptr = &_ptr;
+    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+    
+    bool create_normals = normals || offset[2] || ptr_inst->loc[2];
+    
+    cv::Vec3f total_offset = offset3(0, offset+_center, _scale, ptr_inst->loc);
+    
+    int w = size.width;
+    int h = size.height;
+
+    cv::Mat_<cv::Vec3f> _coords_header;
+    cv::Mat_<cv::Vec3f> _normals_header;
+    
+    if (!coords)
+        coords = &_coords_header;
+    if (!normals)
+        normals = &_normals_header;
+    
+    coords->create(size);
+    cv::Mat_<cv::Vec3f> warped;
+    
+    float s = 1/scale;
+    std::vector<cv::Vec2f> dst = {{0,0},{w,0},{0,h}};
+    cv::Vec2f off2d = {total_offset[0]*_scale[0],total_offset[1]*_scale[1]};
+    // std::cout << "using off2d " << off2d << _offset << std::endl;
+    std::vector<cv::Vec2f> src = {off2d,cv::Vec2f(w*_scale[0]*s,0)+off2d,cv::Vec2f(0,h*_scale[1]*s)+off2d};
+    
+    cv::Mat affine = cv::getAffineTransform(src, dst);
+    
+    cv::warpAffine(_points, *coords, affine, size);
+    
+    if (create_normals) {
+        // std::cout << "FIX offset for GridCoords::gen_coords!" << std::endl;
+        
+        normals->create(size);
+        for(int j=0;j<h;j++)
+            for(int i=0;i<w;i++)
+                (*normals)(j, i) = grid_normal(*coords, {i,j});
+        
+        warped += (*normals)*total_offset[2];
+    }
+    
+    (*coords) *= scale;
+}
+/*CoordGenerator *QuadSurface::generator(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     //without pointer we just use the center == default pointer
     cv::Vec3f total_offset = offset3(0, offset+_center, _scale, {0,0,0});
@@ -276,7 +368,7 @@ CoordGenerator *QuadSurface::generator(SurfacePointer *ptr, const cv::Vec3f &off
     
     //FIXME implement & use offset for gridcoords
     return new GridCoords(&_points, _scale[0], _scale[1], {total_offset[0]/_scale[0],total_offset[1]/_scale[1],total_offset[2]});
-}
+}*/
 
 
 QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search, int step_out)
@@ -294,7 +386,7 @@ QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w
 }
 
 //just forwards everything but gen_coords ... can we make this more elegant without having to call the specific methods?
-class ControlPointCoords : public CoordGenerator
+/*class ControlPointCoords : public CoordGenerator
 {
 public:
     ControlPointCoords(TrivialSurfacePointer *gen_ptr, ControlPointSurface *surf);
@@ -347,7 +439,7 @@ void ControlPointCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int
                 coords(j,i,0) += w*move[2];
             }
     }
-}
+}*/
 
 SurfaceControlPoint::SurfaceControlPoint(Surface *base, SurfacePointer *ptr_, const cv::Vec3f &control)
 {
@@ -404,7 +496,7 @@ cv::Vec3f ControlPointSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offs
     cv::Vec3f(-1,-1,-1);
 }
 
-CoordGenerator *ControlPointSurface::generator(SurfacePointer *ptr, const cv::Vec3f &offset)
+/*CoordGenerator *ControlPointSurface::generator(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
@@ -413,6 +505,12 @@ CoordGenerator *ControlPointSurface::generator(SurfacePointer *ptr, const cv::Ve
     _base->move(gen_ptr, offset);
     
     return new ControlPointCoords(gen_ptr, this);
+}*/
+
+void ControlPointSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
+{
+    //FIXME actually implement surface shift! always need normals and coords!
+    _base->gen(coords, normals, size, ptr, scale, offset);
 }
 
 float ControlPointSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
@@ -572,7 +670,7 @@ void ControlPointSurface::setBase(QuadSurface *base)
 }*/
 
 //just forwards everything but gen_coords ... can we make this more elegant without having to call the specific methods?
-class RefineCompCoords : public CoordGenerator
+/*class RefineCompCoords : public CoordGenerator
 {
 public:
     RefineCompCoords(TrivialSurfacePointer *gen_ptr, RefineCompSurface *surf);
@@ -585,7 +683,7 @@ public:
 protected:
     TrivialSurfacePointer *_gen_ptr;
     RefineCompSurface *_surf;
-    CoordGenerator *_base_gen;
+    // CoordGenerator *_base_gen;
 };
 
 RefineCompCoords::RefineCompCoords(TrivialSurfacePointer *gen_ptr, RefineCompSurface *surf)
@@ -625,7 +723,7 @@ void RefineCompCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w
 //                 coords(j,i,0) += w*move[2];
 //             }
 //     }
-}
+}*/
 
 RefineCompSurface::RefineCompSurface(Surface *base)
 {
@@ -666,16 +764,16 @@ cv::Vec3f RefineCompSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset
     cv::Vec3f(-1,-1,-1);
 }
 
-CoordGenerator *RefineCompSurface::generator(SurfacePointer *ptr, const cv::Vec3f &offset)
-{
-    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
-    assert(ptr_inst);
-    
-    TrivialSurfacePointer *gen_ptr = new TrivialSurfacePointer(ptr_inst->loc);
-    _base->move(gen_ptr, offset);
-    
-    return new RefineCompCoords(gen_ptr, this);
-}
+// CoordGenerator *RefineCompSurface::generator(SurfacePointer *ptr, const cv::Vec3f &offset)
+// {
+//     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+//     assert(ptr_inst);
+//     
+//     TrivialSurfacePointer *gen_ptr = new TrivialSurfacePointer(ptr_inst->loc);
+//     _base->move(gen_ptr, offset);
+//     
+//     return new RefineCompCoords(gen_ptr, this);
+// }
 
 float RefineCompSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
 {

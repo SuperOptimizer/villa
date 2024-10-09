@@ -20,9 +20,11 @@ public:
     // virtual void gen_normals(xt::xarray<float> &normals, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) = 0;
     virtual void setOffsetZ(float off) { _z_off = off; };
     virtual float offsetZ() { return _z_off; };
-    virtual cv::Vec3f offset() = 0;
-    virtual cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) = 0;
-    virtual cv::Vec3f coord(const cv::Vec3f &loc = {0,0,0});
+    // virtual cv::Vec3f offset() = 0;
+    [[deprecated]]
+    virtual cv::Vec3f normal_legacy(const cv::Vec3f &loc = {0,0,0}) = 0;
+    [[deprecated]]
+    virtual cv::Vec3f coord_legacy(const cv::Vec3f &loc = {0,0,0});
 protected:
     float _z_off = 0;
 };
@@ -42,9 +44,9 @@ public:
     virtual float height(cv::Vec3f point) const { return 0.0; };
     // virtual void gen_coords(float i, float j, int x, int y, float render_scale, float coord_scale) const = 0;
     using CoordGenerator::gen_coords;
-    cv::Vec3f offset() override { abort(); };
+    // cv::Vec3f offset() override { abort(); };
     void setNormal(cv::Vec3f normal);
-    cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) override { return _normal; };
+    cv::Vec3f normal_legacy(const cv::Vec3f &loc = {0,0,0}) override { return _normal; };
     cv::Vec3f origin = {0,0,0};
 protected:
     cv::Vec3f _normal = {0,0,1};
@@ -58,8 +60,8 @@ public:
     GridCoords(cv::Mat_<cv::Vec3f> *points, float sx = 1.0, float sy = 1.0, const cv::Vec3f &offset = {0,0,0}) : _points(points), _sx(sx), _sy(sy), _offset(offset) {};
     void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
     // void gen_normals(xt::xarray<float> &normals, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
-    cv::Vec3f normal(const cv::Vec3f &loc = {0,0,0}) override;
-    cv::Vec3f offset() override;
+    cv::Vec3f normal_legacy(const cv::Vec3f &loc = {0,0,0}) override;
+    // cv::Vec3f offset() override;
     using CoordGenerator::gen_coords;
     cv::Mat_<cv::Vec3f> *_points = nullptr;
     float _sx = 1.0;
@@ -152,6 +154,7 @@ private:
 
 //NOTE depending on request this might load a lot (the whole array) into RAM
 void readInterpolated3D(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords, ChunkCache *cache = nullptr);
+void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache *cache = nullptr);
 cv::Mat_<cv::Vec3f> smooth_vc_segmentation(const cv::Mat_<cv::Vec3f> &points);
 cv::Mat_<cv::Vec3f> vc_segmentation_calc_normals(const cv::Mat_<cv::Vec3f> &points);
 void vc_segmentation_scales(cv::Mat_<cv::Vec3f> points, double &sx, double &sy);

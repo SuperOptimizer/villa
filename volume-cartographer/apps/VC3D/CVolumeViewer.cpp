@@ -125,7 +125,7 @@ void CVolumeViewer::onCursorMove(QPointF scene_loc)
     if (!cursor)
         cursor = new POI;
     
-    cursor->p = _slice->coord(slice_loc);
+    cursor->p = _slice->coord_legacy(slice_loc);
     
     _slice_col->setPOI("cursor", cursor);
 }
@@ -227,8 +227,8 @@ void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, 
 
     cv::Vec3f slice_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
     
-    cv::Vec3f n = _slice->normal(slice_loc);
-    cv::Vec3f p = _slice->coord(slice_loc);
+    cv::Vec3f n = _slice->normal_legacy(slice_loc);
+    cv::Vec3f p = _slice->coord_legacy(slice_loc);
     
 
     sendVolumeClicked(p, n, _slice, slice_loc, buttons, modifiers);

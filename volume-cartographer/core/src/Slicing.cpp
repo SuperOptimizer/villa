@@ -197,6 +197,168 @@ void readInterpolated3D(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xar
     readInterpolated3D_a2_trilin(out, ds, coords, cache);
 }
 
+//WARNING x,y,z order swapped for coords - its swapped in assign&use, so is fine but naming is wrong!
+void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache *cache)
+{
+    out = cv::Mat_<uint8_t>(coords.size(), 0);
+    
+    ChunkCache local_cache(1e9);
+    
+    if (!cache) {
+        std::cout << "WARNING should use a shared chunk cache!" << std::endl;
+        cache = &local_cache;
+    }
+    
+    //FIXME assert dims
+    //FIXME based on key math we should check bounds here using volume and chunk size
+    uint64_t key_base = cache->groupKey(ds->path());
+    
+    auto cw = ds->chunking().blockShape()[0];
+    auto ch = ds->chunking().blockShape()[1];
+    auto cd = ds->chunking().blockShape()[2];
+    
+    int w = coords.cols;
+    int h = coords.rows;
+    
+    std::shared_mutex mutex;
+    
+    auto retrieve_single_value_cached = [&cw,&ch,&cd,&mutex,&cache,&key_base,&ds](int ox, int oy, int oz) -> uint8_t
+    {
+        xt::xarray<uint8_t> *chunk = nullptr;
+        
+        int ix = int(ox)/cw;
+        int iy = int(oy)/ch;
+        int iz = int(oz)/cd;
+        
+        uint64_t key = key_base ^ uint64_t(ix) ^ (uint64_t(iy)<<16) ^ (uint64_t(iz)<<32);
+        
+        mutex.lock_shared();
+        
+        if (!cache->has(key)) {
+            mutex.unlock();
+            chunk = z5::multiarray::readChunk<uint8_t>(*ds, {size_t(ix),size_t(iy),size_t(iz)});
+            mutex.lock();
+            cache->put(key, chunk);
+        }
+        else
+            chunk = cache->get(key);
+        mutex.unlock();
+        
+        if (!chunk)
+            return 0;
+        
+        int lx = ox-ix*cw;
+        int ly = oy-iy*ch;
+        int lz = oz-iz*cd;
+        
+        return chunk->operator()(lx,ly,lz);
+    };
+    
+    
+    //FIXME need to iterate all dims e.g. could have z or more ... (maybe just flatten ... so we only have z at most)
+    //the whole loop is 0.29s of 0.75s (if threaded)
+    // #pragma omp parallel for schedule(dynamic, 512) collapse(2)
+#pragma omp parallel for
+    for(size_t y = 0;y<h;y++) {
+        // xt::xarray<uint16_t> last_id;
+        uint64_t last_key = -1;
+        xt::xarray<uint8_t> *chunk = nullptr;
+        for(size_t x = 0;x<w;x++) {            
+            float ox = coords(y,x)[2];
+            float oy = coords(y,x)[1];
+            float oz = coords(y,x)[0];
+            
+            if (ox < 0 || oy < 0 || oz < 0)
+                continue;
+            
+            int ix = int(ox)/cw;
+            int iy = int(oy)/ch;
+            int iz = int(oz)/cd;
+            
+            uint64_t key = key_base ^ uint64_t(ix) ^ (uint64_t(iy)<<16) ^ (uint64_t(iz)<<32);
+            
+            if (key != last_key) {
+                
+                last_key = key;
+                
+                mutex.lock_shared();
+                
+                if (!cache->has(key)) {
+                    mutex.unlock();
+                    chunk = z5::multiarray::readChunk<uint8_t>(*ds, {size_t(ix),size_t(iy),size_t(iz)});
+                    mutex.lock();
+                    cache->put(key, chunk);
+                }
+                else
+                    chunk = cache->get(key);
+                mutex.unlock();
+            }
+            
+            if (chunk) {
+                int lx = ox-ix*cw;
+                int ly = oy-iy*ch;
+                int lz = oz-iz*cd;
+                
+                float c000 = chunk->operator()(lx,ly,lz);
+                float c100;
+                float c010;
+                float c110;
+                float c001;
+                float c101;
+                float c011;
+                float c111;
+                
+                //FIXME implement single chunk get?
+                if (lx+1 >= cw || ly+1 >= ch || lz+1 >= cd) {
+                    if (lx+1>=cw)
+                        c100 = retrieve_single_value_cached(ox+1,oy,oz);
+                    else
+                        c100 = chunk->operator()(lx+1,ly,lz);
+                    
+                    if (ly+1 >= ch)
+                        c010 = retrieve_single_value_cached(ox,oy+1,oz);
+                    else
+                        c010 = chunk->operator()(lx,ly+1,lz);
+                    if (lz+1 >= cd)
+                        c001 = retrieve_single_value_cached(ox,oy,oz+1);
+                    else
+                        c001 = chunk->operator()(lx,ly,lz+1);
+                    
+                    c110 = retrieve_single_value_cached(ox+1,oy+1,oz);
+                    c101 = retrieve_single_value_cached(ox+1,oy,oz+1);
+                    c011 = retrieve_single_value_cached(ox,oy+1,oz+1);
+                    c111 = retrieve_single_value_cached(ox+1,oy+1,oz+1);
+                }
+                else {
+                    c100 = chunk->operator()(lx+1,ly,lz);
+                    c010 = chunk->operator()(lx,ly+1,lz);
+                    c110 = chunk->operator()(lx+1,ly+1,lz);
+                    c001 = chunk->operator()(lx,ly,lz+1);
+                    c101 = chunk->operator()(lx+1,ly,lz+1);
+                    c011 = chunk->operator()(lx,ly+1,lz+1);
+                    c111 = chunk->operator()(lx+1,ly+1,lz+1);
+                }
+                
+                float fx = ox-int(ox);
+                float fy = oy-int(oy);
+                float fz = oz-int(oz);
+                
+                float c00 = (1-fz)*c000 + fz*c001;
+                float c01 = (1-fz)*c010 + fz*c011;
+                float c10 = (1-fz)*c100 + fz*c101;
+                float c11 = (1-fz)*c110 + fz*c111;
+                
+                float c0 = (1-fy)*c00 + fy*c01;
+                float c1 = (1-fy)*c10 + fy*c11;
+                
+                float c = (1-fx)*c0 + fx*c1;
+                
+                out(y,x) = c;
+            }
+        }
+    }
+}
+
 void readInterpolated3D_plain(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords)
 {
     // auto dims = xt::range(_,coords.shape().size()-2);
@@ -1142,7 +1304,7 @@ static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
     return (1-fy)*p0 + fy*p1;
 }
 
-cv::Vec3f CoordGenerator::coord(const cv::Vec3f &loc)
+cv::Vec3f CoordGenerator::coord_legacy(const cv::Vec3f &loc)
 {
     xt::xarray<float> coords;
     assert(loc.z == 0);
@@ -1176,15 +1338,15 @@ cv::Vec3f grid_normal(const cv::Mat_<cv::Vec3f> &points, const cv::Vec3f &loc)
     return normed(n);
 }
 
-cv::Vec3f GridCoords::normal(const cv::Vec3f &loc)
+cv::Vec3f GridCoords::normal_legacy(const cv::Vec3f &loc)
 {
     return grid_normal(*_points, loc);
 }
-
-cv::Vec3f GridCoords::offset()
-{
-    return _offset;
-}
+// 
+// cv::Vec3f GridCoords::offset()
+// {
+//     return _offset;
+// }
 
 void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
 {

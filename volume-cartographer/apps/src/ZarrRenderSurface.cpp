@@ -334,11 +334,11 @@ cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss_indirect(cv::Mat_<cv::Vec
         return out;
 }
 
-//try to ignore the local surface normal in error calculation
-cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss_normalcomp(cv::Mat_<cv::Vec3f> points)
-{
-    //TODO calc local normal, blurr it pass through to minimzation
-}
+// //try to ignore the local surface normal in error calculation
+// cv::Mat_<cv::Vec3f> derive_regular_region_stupid_gauss_normalcomp(cv::Mat_<cv::Vec3f> points)
+// {
+//     //TODO calc local normal, blurr it pass through to minimzation
+// }
 
 //given an input image 
 cv::Mat_<cv::Vec3f> derive_regular_region(cv::Mat_<cv::Vec3f> points)
@@ -519,7 +519,7 @@ int main(int argc, char *argv[])
 //     surf->move(ptr, {-55,5,0});    
 //     corr->addControlPoint(ptr, surf->coord(ptr) + -5*surf->normal(ptr));
     
-    CoordGenerator *gen = corr->generator(center);
+    // CoordGenerator *gen = nullptr; //FIXME corr->generator(center);
     // CoordGenerator *gen = surf->generator(surf->pointer());
 
 //     auto timer = new MeasureLife("reading segment ...");
@@ -540,8 +540,8 @@ int main(int argc, char *argv[])
 //     
 //     GridCoords generator(&points, sx, sy);
     
-    xt::xarray<float> coords;
-    xt::xarray<uint8_t> img;
+    cv::Mat_<cv::Vec3f> coords;
+    cv::Mat_<uint8_t> img;
     
     // std::cout << points.size() << sx << " " << sy << "\n";
     
@@ -550,21 +550,18 @@ int main(int argc, char *argv[])
     
     auto timer = new MeasureLife("rendering ...\n");
     for(int off=min_slice;off<=max_slice;off++) {
-        gen->setOffsetZ(off-32);
         MeasureLife time_slice("slice "+std::to_string(off)+" ... ");
         //FIXME area size and offset are not quite there yet
-        gen->gen_coords(coords, -w/2, -h/2, w, h, 1.0, output_scale);
+        // gen->gen_coords(coords, -w/2, -h/2, w, h, 1.0, output_scale);
+        surf->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
         
-        //we read from scale 1
         coords *= ds_scale/output_scale;
         
-        
         readInterpolated3D(img, ds.get(), coords, &chunk_cache);
-        cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
         
         std::stringstream ss;
         ss << outdir_path << std::setw(2) << std::setfill('0') << off << ".tif";
-        cv::imwrite(ss.str(), m);
+        cv::imwrite(ss.str(), img);
     }
     std::cout << "rendering ";
     delete timer;

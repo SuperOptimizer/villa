@@ -2990,12 +2990,12 @@ void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, CoordGenerato
             if (!segYZ)
                 segYZ = new PlaneCoords();
             
-            p2 = grid_slice->coord({slice_loc[0]+1,slice_loc[1],0});
+            p2 = grid_slice->coord_legacy({slice_loc[0]+1,slice_loc[1],0});
             
             segXZ->origin = vol_loc;
             segXZ->setNormal(p2-vol_loc);
             
-            p2 = grid_slice->coord({slice_loc[0],slice_loc[1]+1,0});
+            p2 = grid_slice->coord_legacy({slice_loc[0],slice_loc[1]+1,0});
             
             segYZ->origin = vol_loc;
             segYZ->setNormal(p2-vol_loc);

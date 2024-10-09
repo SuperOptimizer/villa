@@ -30,7 +30,7 @@ public:
     virtual float pointTo(SurfacePointer *ptr, const cv::Vec3f &coord, float th) = 0;
     //coordgenerator relative to ptr&offset
     //needs to be deleted after use
-    virtual CoordGenerator *generator(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) = 0;
+    virtual void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) = 0;
     //not yet
     // virtual void normal(SurfacePointer *ptr, cv::Vec3f offset);
 };
@@ -46,7 +46,8 @@ public:
     cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    CoordGenerator *generator(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    // CoordGenerator *generator(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;
     float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th) override;
     
     friend QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search, int step_out);
@@ -81,19 +82,20 @@ public:
     cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    CoordGenerator *generator(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    // CoordGenerator *generator(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;
     float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th) override;
     //TODO make derivative/dependencies generic/common interface
     void setBase(QuadSurface *base);
     
-    friend class ControlPointCoords;
+    // friend class ControlPointCoords;
 
 protected:
     Surface *_base; //base surface
     std::vector<SurfaceControlPoint> _controls;
 };
 
-class RefineCompCoords;
+// class RefineCompCoords;
 
 //TODO add generic "delta-base-surface" class to join functionality of delta surfaces like ControlPointSurface,RefineCompSurface
 class RefineCompSurface : public Surface
@@ -106,12 +108,13 @@ public:
     cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    CoordGenerator *generator(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    //FIXME
+    // void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;
     float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th) override;
     //TODO make derivative/dependencies generic/common interface
     void setBase(QuadSurface *base);
     
-    friend class RefineCompCoords;
+    // friend class RefineCompCoords;
     
 protected:
     Surface *_base; //base surface
