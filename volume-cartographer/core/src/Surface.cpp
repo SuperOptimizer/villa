@@ -104,7 +104,7 @@ cv::Vec3f QuadSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
-    cv::Vec3f p = internal_loc(offset+_center, ptr_inst->loc, _scale);
+    cv::Vec3f p = internal_loc(offset, ptr_inst->loc, _scale);
     
     return at_int(_points, {p[0],p[1]});
 }
@@ -114,14 +114,14 @@ cv::Vec3f QuadSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
     
-    return nominal_loc(offset+_center, ptr_inst->loc, _scale);
+    return nominal_loc(offset-_center, ptr_inst->loc, _scale);
 }
 
 cv::Vec3f QuadSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
-    cv::Vec3f p = internal_loc(offset+_center, ptr_inst->loc, _scale);
+    cv::Vec3f p = internal_loc(offset, ptr_inst->loc, _scale);
     
     return grid_normal(_points, p);
 }
@@ -517,7 +517,7 @@ void ControlPointSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> 
     int h = size.height;
     cv::Rect bounds(0,0,w,h);
     
-    cv::Vec3f upper_left = nominal_loc(offset/scale+_base->_center, ptr_inst->loc, _base->_scale);
+    cv::Vec3f upper_left = nominal_loc(offset/scale, ptr_inst->loc, _base->_scale);
     
     float z_offset = upper_left[2];
     upper_left[2] = 0;
@@ -527,9 +527,9 @@ void ControlPointSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> 
     std::cout << "offset" << upper_left << _base->_center << ptr_inst->loc << std::endl;
     
     for(auto p : _controls) {
-        cv::Vec3f p_loc = nominal_loc(_base->loc(p.ptr) + offset/scale + _base->_center, ptr_inst->loc, _base->_scale)  - upper_left;
+        cv::Vec3f p_loc = nominal_loc(_base->loc(p.ptr) + _base->_center, ptr_inst->loc, _base->_scale)  - upper_left;
+        std::cout << p_loc << p_loc*scale <<  _base->loc(p.ptr) << ptr_inst->loc << std::endl;
         p_loc *= scale;
-        std::cout << p_loc << _base->loc(p.ptr) << ptr_inst->loc << std::endl;
         cv::Rect roi(p_loc[0]-40,p_loc[1]-40,80,80);
         cv::Rect area = roi & bounds;
         

@@ -545,6 +545,7 @@ int main(int argc, char *argv[])
     
     // std::cout << points.size() << sx << " " << sy << "\n";
     
+    output_scale *= 0.5;
 
     ChunkCache chunk_cache(10e9);
     
