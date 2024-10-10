@@ -104,7 +104,7 @@ cv::Vec3f QuadSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
-    cv::Vec3f p = internal_loc(offset, ptr_inst->loc, _scale);
+    cv::Vec3f p = internal_loc(offset+_center, ptr_inst->loc, _scale);
     
     return at_int(_points, {p[0],p[1]});
 }
@@ -114,14 +114,16 @@ cv::Vec3f QuadSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
     
-    return nominal_loc(offset-_center, ptr_inst->loc, _scale);
+    return nominal_loc(offset, ptr_inst->loc, _scale);
 }
 
 cv::Vec3f QuadSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
-    cv::Vec3f p = internal_loc(offset, ptr_inst->loc, _scale);
+    cv::Vec3f p = internal_loc(offset+_center, ptr_inst->loc, _scale);
+    
+    std::cout << "calc normal" << _points.size << p << std::endl;
     
     return grid_normal(_points, p);
 }
@@ -298,8 +300,8 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals,
     
     bool create_normals = normals || offset[2] || ptr_inst->loc[2];
     
-    cv::Vec3f offset_internal = internal_loc(offset/scale+_center, ptr_inst->loc, _scale);
-    std::cout << "upper left" << _points.size() << offset_internal << ptr_inst->loc << _center << offset << scale << _scale << std::endl;
+    cv::Vec3f upper_left_actual = internal_loc(offset/scale+_center, ptr_inst->loc, _scale);
+    std::cout << "upper left" << _points.size() << upper_left_actual << ptr_inst->loc << _center << offset << scale << _scale << std::endl;
     
     int w = size.width;
     int h = size.height;
@@ -316,7 +318,7 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals,
     cv::Mat_<cv::Vec3f> warped;
     
     std::vector<cv::Vec2f> dst = {{0,0},{w,0},{0,h}};
-    cv::Vec2f off2d = {offset_internal[0],offset_internal[1]};
+    cv::Vec2f off2d = {upper_left_actual[0],upper_left_actual[1]};
     std::cout << "using off2d " << off2d << std::endl;
     std::vector<cv::Vec2f> src = {off2d,off2d+cv::Vec2f(w*_scale[0]/scale,0),off2d+cv::Vec2f(0,h*_scale[1]/scale)};
     
@@ -332,7 +334,7 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals,
             for(int i=0;i<w;i++)
                 (*normals)(j, i) = grid_normal(*coords, {i,j});
         
-        warped += (*normals)*offset_internal[2];
+        warped += (*normals)*upper_left_actual[2];
     }
     
     (*coords) *= scale;
@@ -517,17 +519,17 @@ void ControlPointSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> 
     int h = size.height;
     cv::Rect bounds(0,0,w,h);
     
-    cv::Vec3f upper_left = nominal_loc(offset/scale, ptr_inst->loc, _base->_scale);
+    cv::Vec3f upper_left_nominal = nominal_loc(offset/scale, ptr_inst->loc, _base->_scale);
     
-    float z_offset = upper_left[2];
-    upper_left[2] = 0;
+    float z_offset = upper_left_nominal[2];
+    upper_left_nominal[2] = 0;
     
     //FIXME implement z_offset
     
-    std::cout << "offset" << upper_left << _base->_center << ptr_inst->loc << std::endl;
+    std::cout << "offset" << upper_left_nominal << _base->_center << ptr_inst->loc << std::endl;
     
     for(auto p : _controls) {
-        cv::Vec3f p_loc = nominal_loc(_base->loc(p.ptr) + _base->_center, ptr_inst->loc, _base->_scale)  - upper_left;
+        cv::Vec3f p_loc = nominal_loc(_base->loc(p.ptr), ptr_inst->loc, _base->_scale)  - upper_left_nominal;
         std::cout << p_loc << p_loc*scale <<  _base->loc(p.ptr) << ptr_inst->loc << std::endl;
         p_loc *= scale;
         cv::Rect roi(p_loc[0]-40,p_loc[1]-40,80,80);
@@ -537,7 +539,7 @@ void ControlPointSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> 
         float delta = plane.scalarp(_base->coord(p.ptr));
         cv::Vec3f move = delta*p.normal;
         
-        std::cout << area << roi << bounds << std::endl;
+        std::cout << area << roi << bounds << move << p.control_point << p.normal << _base->coord(p.ptr) << std::endl;
         
         for(int j=area.y;j<area.y+area.height;j++)
             for(int i=area.x;i<area.x+area.width;i++) {
