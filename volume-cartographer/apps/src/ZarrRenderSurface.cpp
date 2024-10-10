@@ -492,7 +492,7 @@ int main(int argc, char *argv[])
     int search_step = 100;
     int mesh_step = 5;
     
-    Surface *surf = surf_raw;
+    QuadSurface *surf = surf_raw;
     SurfacePointer *poi = surf->pointer();
     // surf->move(poi, {-10200,-13200,0});
     surf->move(poi, {-10200,-13200,0});
@@ -506,12 +506,12 @@ int main(int argc, char *argv[])
     // surf->move(ptr, {-10200,-13200,0});
     ControlPointSurface *corr = new ControlPointSurface(surf);
 
-    surf->move(ptr, {-70,-11,0});   
+    surf->move(ptr, {-280,-40,0});   
     // surf->move(ptr, {-10,-0,0});   
     corr->addControlPoint(ptr, surf->coord(ptr) + -6*surf->normal(ptr));
     
-    surf->move(ptr, {-62+70,27+11,0});    
-    corr->addControlPoint(ptr, surf->coord(ptr) + -6*surf->normal(ptr));
+    // surf->move(ptr, {-62+70,27+11,0});    
+    // corr->addControlPoint(ptr, surf->coord(ptr) + -6*surf->normal(ptr));
 // //     
 //     surf->move(ptr, {20,0,0});    
 //     corr->addControlPoint(ptr, surf->coord(ptr) + -5*surf->normal(ptr));
@@ -553,7 +553,8 @@ int main(int argc, char *argv[])
         MeasureLife time_slice("slice "+std::to_string(off)+" ... ");
         //FIXME area size and offset are not quite there yet
         // gen->gen_coords(coords, -w/2, -h/2, w, h, 1.0, output_scale);
-        surf->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
+        // corr->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
+        corr->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
         
         coords *= ds_scale/output_scale;
         

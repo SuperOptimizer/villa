@@ -8,8 +8,7 @@ namespace z5
     class Dataset;
 }
 
-//TODO make the z-offsets a more generic 3d offset? (like in gridcoords)
-
+//TODO replace coord-generator with surface!
 class CoordGenerator
 {
 public:

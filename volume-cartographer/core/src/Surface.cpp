@@ -21,35 +21,11 @@ public:
     cv::Vec3f loc;
 };
 
-// class PairedSurfacePointer : public SurfacePointer
-// {
-// public:
-//     PairedSurfacePointer(const cv::Vec3f &surface_point, const cv::Vec3f &world_point) : sp(surface_point), wp(world_point) {};
-//     cv::Vec3f wp;
-//     cv::Vec3f sp;
-// };
-
 cv::Vec2f offsetPoint2d(TrivialSurfacePointer *ptr, const cv::Vec3f &offset)
 {
     cv::Vec3f p = ptr->loc + offset;
     return {p[0], p[1]};
 }
-
-// class IndirectSurfacePointer : SurfacePointer
-// {
-// public:
-//     IndirectSurfacePointer(Surface *surface_, cv::Vec3f point_) : surf(surface_), point(point_) {};
-//     Surface *surf;
-//     cv::Vec3f point;
-// };
-
-// class FusionSurfacePointer : SurfacePointer
-// {
-// public:
-//     FusionSurfacePointer();
-// protected:
-//     std::vector<IndirectSurfacePointer*> _surfaces;
-// };
 
 //TODO add non-cloning variant?
 QuadSurface::QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &scale)
@@ -67,32 +43,43 @@ SurfacePointer *QuadSurface::pointer()
     return new TrivialSurfacePointer({0,0,0});
 }
 
-
-static cv::Vec3f offset3(const cv::Vec3f &loc, const cv::Vec3f &offset_scaled, const cv::Vec2f &scale, const cv::Vec3f &offset_unscaled)
+//there are two coords, outside (nominal) and inside
+static cv::Vec3f internal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal, const cv::Vec2f &scale)
 {
-    return loc + cv::Vec3f(offset_scaled[0]*scale[0]+offset_unscaled[0], offset_scaled[1]*scale[1]+offset_unscaled[1], offset_scaled[2]+offset_unscaled[2]);
+    return internal + cv::Vec3f(nominal[0]*scale[0], nominal[1]*scale[1], nominal[2]);
 }
 
-static cv::Vec2f offset2(const cv::Vec3f &loc, const cv::Vec3f &offset_scaled, const cv::Vec2f &scale, const cv::Vec3f &offset_unscaled)
+static cv::Vec3f nominal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal, const cv::Vec2f &scale)
 {
-    return cv::Vec2f(loc[0],loc[1]) + cv::Vec2f(offset_scaled[0]*scale[0]+offset_unscaled[0], offset_scaled[1]*scale[1]+offset_unscaled[1]);
+    return nominal + cv::Vec3f(internal[0]/scale[0], internal[1]/scale[1], internal[2]);
 }
+
+//FIXME loc & offset_unscaled are redundant!
+// static cv::Vec3f offset3(const cv::Vec3f &loc, const cv::Vec3f &offset_scaled, const cv::Vec2f &scale, const cv::Vec3f &offset_unscaled)
+// {
+//     return loc + cv::Vec3f(offset_scaled[0]*scale[0]+offset_unscaled[0], offset_scaled[1]*scale[1]+offset_unscaled[1], offset_scaled[2]+offset_unscaled[2]);
+// }
+
+// static cv::Vec2f offset2(const cv::Vec3f &loc, const cv::Vec3f &offset_scaled, const cv::Vec2f &scale, const cv::Vec3f &offset_unscaled)
+// {
+//     return cv::Vec2f(loc[0],loc[1]) + cv::Vec2f(offset_scaled[0]*scale[0]+offset_unscaled[0], offset_scaled[1]*scale[1]+offset_unscaled[1]);
+// }
 
 void QuadSurface::move(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
     
-    ptr_inst->loc = offset3(ptr_inst->loc, offset, _scale, {0,0,0});
+    ptr_inst->loc += cv::Vec3f(offset[0]*_scale[0],offset[1]*_scale[1],offset[2]);
 }
 
 bool QuadSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
-    cv::Vec2i p = offset2(ptr_inst->loc, offset+_center, _scale, {0,0,0});
+    cv::Vec3f p = internal_loc(offset+_center, ptr_inst->loc, _scale);
     
-    return _bounds.contains(p);
+    return _bounds.contains({p[0],p[1]});
 }
 
 static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
@@ -117,27 +104,24 @@ cv::Vec3f QuadSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
-    cv::Vec2f p = offset2(ptr_inst->loc, offset+_center, _scale, {0,0,0});
+    cv::Vec3f p = internal_loc(offset+_center, ptr_inst->loc, _scale);
     
-    return at_int(_points, p);
+    return at_int(_points, {p[0],p[1]});
 }
 
 cv::Vec3f QuadSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
-    cv::Vec3f p = offset3(ptr_inst->loc, offset+_center, _scale, {0,0,0});
-    p[0] /= _scale[0];
-    p[1] /= _scale[1];
     
-    return p;
+    return nominal_loc(offset+_center, ptr_inst->loc, _scale);
 }
 
 cv::Vec3f QuadSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
-    cv::Vec3f p = offset3(ptr_inst->loc, offset+_center, _scale, {0,0,0});
+    cv::Vec3f p = internal_loc(offset+_center, ptr_inst->loc, _scale);
     
     return grid_normal(_points, p);
 }
@@ -305,7 +289,6 @@ QuadSurface *load_quad_from_vcps(const std::string &path)
         }
 }*/
 
-
 void QuadSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer _ptr({0,0,0});
@@ -315,7 +298,8 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals,
     
     bool create_normals = normals || offset[2] || ptr_inst->loc[2];
     
-    cv::Vec3f total_offset = offset3(0, offset+_center, _scale, ptr_inst->loc);
+    cv::Vec3f offset_internal = internal_loc(offset/scale+_center, ptr_inst->loc, _scale);
+    std::cout << "upper left" << _points.size() << offset_internal << ptr_inst->loc << _center << offset << scale << _scale << std::endl;
     
     int w = size.width;
     int h = size.height;
@@ -331,11 +315,10 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals,
     coords->create(size);
     cv::Mat_<cv::Vec3f> warped;
     
-    float s = 1/scale;
     std::vector<cv::Vec2f> dst = {{0,0},{w,0},{0,h}};
-    cv::Vec2f off2d = {total_offset[0]*_scale[0],total_offset[1]*_scale[1]};
-    // std::cout << "using off2d " << off2d << _offset << std::endl;
-    std::vector<cv::Vec2f> src = {off2d,cv::Vec2f(w*_scale[0]*s,0)+off2d,cv::Vec2f(0,h*_scale[1]*s)+off2d};
+    cv::Vec2f off2d = {offset_internal[0],offset_internal[1]};
+    std::cout << "using off2d " << off2d << std::endl;
+    std::vector<cv::Vec2f> src = {off2d,off2d+cv::Vec2f(w*_scale[0]/scale,0),off2d+cv::Vec2f(0,h*_scale[1]/scale)};
     
     cv::Mat affine = cv::getAffineTransform(src, dst);
     
@@ -349,7 +332,7 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals,
             for(int i=0;i<w;i++)
                 (*normals)(j, i) = grid_normal(*coords, {i,j});
         
-        warped += (*normals)*total_offset[2];
+        warped += (*normals)*offset_internal[2];
     }
     
     (*coords) *= scale;
@@ -449,7 +432,7 @@ SurfaceControlPoint::SurfaceControlPoint(Surface *base, SurfacePointer *ptr_, co
     control_point = control;
 }
 
-ControlPointSurface::ControlPointSurface(Surface *base)
+ControlPointSurface::ControlPointSurface(QuadSurface *base)
 {
     _base = base;
 }
@@ -458,7 +441,7 @@ void ControlPointSurface::addControlPoint(SurfacePointer *base_ptr, cv::Vec3f co
 {
     _controls.push_back(SurfaceControlPoint(_base, base_ptr, control_point));
     
-    std::cout << "add control " << control_point << _base->loc(base_ptr) << _base->loc(_controls[0].ptr) << std::endl;
+    std::cout << "add control " << control_point << _base->loc(base_ptr) << _base->loc(_controls[0].ptr) << _base->_center << _base->loc(_base->pointer()) << std::endl;
     
 }
 
@@ -507,10 +490,63 @@ cv::Vec3f ControlPointSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offs
     return new ControlPointCoords(gen_ptr, this);
 }*/
 
-void ControlPointSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
+void ControlPointSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> *normals_, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
 {
-    //FIXME actually implement surface shift! always need normals and coords!
-    _base->gen(coords, normals, size, ptr, scale, offset);
+    std::cout << "corr gen " << _controls.size() << std::endl;
+    cv::Mat_<cv::Vec3f> _coords_local;
+    // cv::Mat_<cv::Vec3f> _normals_local;
+    
+    cv::Mat_<cv::Vec3f> *coords = coords_;
+    // cv::Mat_<cv::Vec3f> *normals = normals_;
+    
+    if (!coords)
+        coords = &_coords_local;
+    // if (!normals)
+        // normals = &_normals_local;
+    
+    TrivialSurfacePointer _ptr_local({0,0,0});
+    if (!ptr)
+        ptr = &_ptr_local;
+    
+    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+    assert(ptr_inst);
+
+    _base->gen(coords, normals_, size, ptr, scale, offset);
+    
+    int w = size.width;
+    int h = size.height;
+    cv::Rect bounds(0,0,w,h);
+    
+    cv::Vec3f upper_left = nominal_loc(offset/scale+_base->_center, ptr_inst->loc, _base->_scale);
+    
+    float z_offset = upper_left[2];
+    upper_left[2] = 0;
+    
+    //FIXME implement z_offset
+    
+    std::cout << "offset" << upper_left << _base->_center << ptr_inst->loc << std::endl;
+    
+    for(auto p : _controls) {
+        cv::Vec3f p_loc = nominal_loc(_base->loc(p.ptr) + offset/scale + _base->_center, ptr_inst->loc, _base->_scale)  - upper_left;
+        p_loc *= scale;
+        std::cout << p_loc << _base->loc(p.ptr) << ptr_inst->loc << std::endl;
+        cv::Rect roi(p_loc[0]-40,p_loc[1]-40,80,80);
+        cv::Rect area = roi & bounds;
+        
+        PlaneCoords plane(p.control_point, p.normal);
+        float delta = plane.scalarp(_base->coord(p.ptr));
+        cv::Vec3f move = delta*p.normal;
+        
+        std::cout << area << roi << bounds << std::endl;
+        
+        for(int j=area.y;j<area.y+area.height;j++)
+            for(int i=area.x;i<area.x+area.width;i++) {
+                //TODO correct by scale!
+                float w = sdist(p_loc, cv::Vec3f(i,j,0));
+                w = exp(-w/(20*20));
+                (*coords)(j,i) += w*move;
+            }
+    }
 }
 
 float ControlPointSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
