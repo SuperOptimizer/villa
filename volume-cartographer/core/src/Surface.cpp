@@ -6,6 +6,8 @@
 #include "SurfaceHelpers.hpp"
 
 #include <opencv2/imgproc.hpp>
+//TODO remove
+#include <opencv2/highgui.hpp>
 
 class SurfacePointer
 {
@@ -43,7 +45,7 @@ SurfacePointer *QuadSurface::pointer()
     return new TrivialSurfacePointer({0,0,0});
 }
 
-//there are two coords, outside (nominal) and inside
+//NOTE we have 3 coordiante systems. Nominal (voxel volume) coordinates, internal relative (ptr) coords (where _center is at 0/0) and internal absolute (_points) coordinates where the upper left corner is at 0/0.
 static cv::Vec3f internal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal, const cv::Vec2f &scale)
 {
     return internal + cv::Vec3f(nominal[0]*scale[0], nominal[1]*scale[1], nominal[2]);
@@ -315,7 +317,6 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals,
         normals = &_normals_header;
     
     coords->create(size);
-    cv::Mat_<cv::Vec3f> warped;
     
     std::vector<cv::Vec2f> dst = {{0,0},{w,0},{0,h}};
     cv::Vec2f off2d = {upper_left_actual[0],upper_left_actual[1]};
@@ -334,7 +335,7 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals,
             for(int i=0;i<w;i++)
                 (*normals)(j, i) = grid_normal(*coords, {i,j});
         
-        warped += (*normals)*upper_left_actual[2];
+        *coords += (*normals)*upper_left_actual[2];
     }
     
     (*coords) *= scale;
@@ -763,9 +764,11 @@ void RefineCompCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w
 //     }
 }*/
 
-RefineCompSurface::RefineCompSurface(Surface *base)
+RefineCompSurface::RefineCompSurface(Surface *base, z5::Dataset *ds, ChunkCache *cache)
 {
     _base = base;
+    _ds = ds;
+    _cache = cache;
 }
 
 SurfacePointer *RefineCompSurface::pointer()
@@ -802,16 +805,163 @@ cv::Vec3f RefineCompSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset
     cv::Vec3f(-1,-1,-1);
 }
 
-// CoordGenerator *RefineCompSurface::generator(SurfacePointer *ptr, const cv::Vec3f &offset)
-// {
-//     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
-//     assert(ptr_inst);
+void RefineCompSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> *normals_, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
+{
+    cv::Mat_<cv::Vec3f> _coords_local;
+    cv::Mat_<cv::Vec3f> _normals_local;
+    
+    cv::Mat_<cv::Vec3f> *coords = coords_;
+    cv::Mat_<cv::Vec3f> *normals = normals_;
+    
+    if (!coords)
+        coords = &_coords_local;
+    if (!normals)
+    normals = &_normals_local;
+    
+    TrivialSurfacePointer _ptr_local({0,0,0});
+    if (!ptr)
+        ptr = &_ptr_local;
+    
+    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+    assert(ptr_inst);
+    
+    _base->gen(coords, normals, size, ptr, scale, offset);
+    
+    cv::Mat_<cv::Vec3f> res;
+    
+    cv::Mat_<float> integ(size, 0);
+    cv::Mat_<float> integ_blur(size, 0);
+    cv::Mat_<float> transparent(size, 1);
+    cv::Mat_<float> blur(size, 0);
+    cv::Mat_<float> integ_z(size, 0);
+    
+    for(int n=0;n<21;n++) {
+        cv::Mat_<uint8_t> slice;
+        float off = (n-5)*0.5;
+        readInterpolated3D(slice, _ds, (*coords+*normals*off*scale), _cache);
+        
+        cv::Mat floatslice;
+        slice.convertTo(floatslice, CV_32F, 1/255.0);
+        
+        cv::GaussianBlur(floatslice, blur, {7,7}, 0);
+        cv::Mat opaq_slice = blur;
+        
+        float low = 0.0; //map to 0
+        float up = 1.0; //map to 1
+        opaq_slice = (opaq_slice-low)/(up-low);
+        opaq_slice = cv::min(opaq_slice,1);
+        opaq_slice = cv::max(opaq_slice,0);
+        
+        // sprintf(buf, "opaq%02d.tif", n);
+        // cv::imwrite(buf, opaq_slice);
+        
+        // printf("vals %d i t o b v: %f %f %f %f\n", n, integ.at<float>(500,600), transparent.at<float>(500,600), opaq_slice.at<float>(500,600), blur.at<float>(500,600), floatslice.at<float>(500,600));
+        
+        cv::Mat joint = transparent.mul(opaq_slice);
+        integ += joint.mul(floatslice);
+        integ_blur += joint.mul(blur);
+        integ_z += joint * off * scale;
+        transparent = transparent-joint;
+        
+        // sprintf(buf, "transp%02d.tif", n);
+        // cv::imwrite(buf, transparent);
+        // 
+        // sprintf(buf, "opaq2%02d.tif", n);
+        // cv::imwrite(buf, opaq_slice);
+        
+        // printf("res %d i t: %f %f\n", n, integ.at<float>(500,600), transparent.at<float>(500,600));
+        
+        // avgimg = avgimg + floatslice;
+        // cv::imwrite(buf, avgimg/(n+1));
+        
+        // slices.push_back(slice);
+        // for(int j=0;j<points.rows;j++)
+        //     for(int i=0;i<points.cols;i++) {
+        //         //found == 0: still searching for first time < 50!
+        //         //found == 1: record < 50 start looking for >= 50 to stop
+        //         //found == 2: done, found border
+        //         if (slice(j,i) < 40 && found(j,i) <= 1) {
+        //             height(j,i) = n+1;
+        //             found(j,i) = 1;
+        //         }
+        //         else if (slice(j,i) >= 40 && found(j,i) == 1) {
+        //             found(j,i) = 2;
+        //         }
+        //     }
+    }        // slices.push_back(slice);
+    
+    integ /= (1-transparent);
+    integ_blur /= (1-transparent);
+    integ_z /= (1-transparent);
+    
+    cv::imwrite("blended.tif", integ);
+    cv::imwrite("blended_blur.tif", integ_blur);
+    cv::imwrite("blended_comp1.tif", integ/(integ_blur+0.5));
+    cv::imwrite("blended_comp3.tif", integ-integ_blur+0.5);
+    cv::imwrite("blended_comp2.tif", integ/(integ_blur+0.01));
+    cv::imwrite("tranparency.tif", transparent);
+    
+    // for(int j=0;j<points.rows;j++)
+    //     for(int i=0;i<points.cols;i++)
+    //         if (found(j,i) == 1)
+    //             height(j,i) = 0;
+    
+    //never change opencv, never change ...
+    
+    // cv::cvtColor(height, mul, cv::COLOR_GRAY2BGR);
+    // cv::imwrite("max.tif", maximg);
+    
+    cv::Mat mul;
+    cv::cvtColor(integ_z, mul, cv::COLOR_GRAY2BGR);
+    // cv::Mat_<cv::Vec3f> new_surf = points + normals.mul(mul);
+    *coords += (*normals).mul(mul+1);
+    // cv::Mat_<cv::Vec3f> new_surf_1 = new_surf + normals;
+    // cv::Mat_<cv::Vec3f> new_surf_n1 = new_surf - normals;
+    //     
+    // xt::xarray<uint8_t> img;
+    // readInterpolated3D(img, ds, xt_from_mat(new_surf*0.5), chunk_cache);
+    // cv::Mat_<uint8_t> slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+    //     
+    // printf("writ slice!\n");
+    // cv::imwrite("new_surf.tif", slice);
+    
+//     readInterpolated3D(img, ds, xt_from_mat(new_surf_1*0.5), chunk_cache);
+//     slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+//     cv::imwrite("new_surf1.tif", slice);
 //     
-//     TrivialSurfacePointer *gen_ptr = new TrivialSurfacePointer(ptr_inst->loc);
-//     _base->move(gen_ptr, offset);
-//     
-//     return new RefineCompCoords(gen_ptr, this);
-// }
+//     readInterpolated3D(img, ds, xt_from_mat(new_surf_n1*0.5), chunk_cache);
+//     slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+//     cv::imwrite("new_surf-1.tif", slice);
+    
+    // cv::Mat_<float> height_vis = height/21;
+    // height_vis = cv::min(height_vis,1-height_vis)*2;
+    // cv::imwrite("off.tif", height_vis);
+    
+    //now big question: how far away from average is the new surf!
+    
+    //     cv::Mat avg_surf;
+    //     cv::GaussianBlur(new_surf, avg_surf, {7,7}, 0);
+    //     
+    //     readInterpolated3D(img, ds, xt_from_mat(avg_surf*0.5), chunk_cache);
+    //     slice = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+    //     
+    //     cv::imwrite("avg_surf.tif", slice);
+    //     
+    //     
+    //     cv::Mat_<float> rel_height(points.size(), 0);
+    //     
+    //     cv::Mat_<cv::Vec3f> dist = avg_surf-new_surf;
+    //     
+    //     #pragma omp parallel for
+    //     for(int j=0;j<points.rows;j++)
+    //         for(int i=0;i<points.cols;i++) {
+    //             rel_height(j,i) = cv::norm(dist(j,i));
+    //         }
+    //         
+    //         cv::imwrite("rel_height.tif", rel_height);
+    
+    // return new_surf;
+}
 
 float RefineCompSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
 {

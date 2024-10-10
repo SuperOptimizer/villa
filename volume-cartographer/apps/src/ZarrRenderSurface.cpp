@@ -483,6 +483,8 @@ int main(int argc, char *argv[])
     
     QuadSurface *surf_raw = load_quad_from_vcps(segment_path);
     
+    ChunkCache chunk_cache(10e9);
+    
     float ds_scale = 0.5;
     float output_scale = 0.5;
     
@@ -509,6 +511,8 @@ int main(int argc, char *argv[])
     surf->move(ptr, {-280,-40,0});   
     // surf->move(ptr, {-10,-0,0});   
     corr->addControlPoint(ptr, surf->coord(ptr) + -6*surf->normal(ptr));
+    
+    Surface *comp_surf = new RefineCompSurface(surf, ds.get(), &chunk_cache);
     
     // surf->move(ptr, {-62+70,27+11,0});    
     // corr->addControlPoint(ptr, surf->coord(ptr) + -6*surf->normal(ptr));
@@ -546,8 +550,6 @@ int main(int argc, char *argv[])
     // std::cout << points.size() << sx << " " << sy << "\n";
     
     // output_scale *= 0.5;
-
-    ChunkCache chunk_cache(10e9);
     
     auto timer = new MeasureLife("rendering ...\n");
     for(int off=min_slice;off<=max_slice;off++) {
@@ -555,7 +557,7 @@ int main(int argc, char *argv[])
         //FIXME area size and offset are not quite there yet
         // gen->gen_coords(coords, -w/2, -h/2, w, h, 1.0, output_scale);
         // corr->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
-        corr->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
+        comp_surf->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
         
         coords *= ds_scale/output_scale;
         

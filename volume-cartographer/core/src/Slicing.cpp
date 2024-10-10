@@ -1328,7 +1328,7 @@ cv::Vec3f grid_normal(const cv::Mat_<cv::Vec3f> &points, const cv::Vec3f &loc)
     cv::Vec2f inb_loc = {loc[0], loc[1]};
     //move inside from the grid border so w can access required locations
     inb_loc = vmax(inb_loc, {1,1});
-    inb_loc = vmin(inb_loc, {points.cols-2,points.rows-1});
+    inb_loc = vmin(inb_loc, {points.cols-3,points.rows-3});
     
     cv::Vec3f xv = normed(at_int(points,inb_loc+cv::Vec2f(1,0))-at_int(points,inb_loc-cv::Vec2f(1,0)));
     cv::Vec3f yv = normed(at_int(points,inb_loc+cv::Vec2f(0,1))-at_int(points,inb_loc-cv::Vec2f(0,1)));

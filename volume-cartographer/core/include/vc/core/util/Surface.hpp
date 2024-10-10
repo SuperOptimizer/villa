@@ -6,6 +6,11 @@ class SurfacePointer;
 class CoordGenerator;
 class QuadSurface;
 class TrivialSurfacePointer;
+class ChunkCache;
+
+namespace z5 {
+    class Dataset;
+}
 
 
 QuadSurface *load_quad_from_vcps(const std::string &path);
@@ -84,10 +89,9 @@ public:
     cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    // CoordGenerator *generator(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;
     float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th) override;
-    //TODO make derivative/dependencies generic/common interface
+
     void setBase(QuadSurface *base);
     
     // friend class ControlPointCoords;
@@ -98,26 +102,24 @@ protected:
 };
 
 // class RefineCompCoords;
-
-//TODO add generic "delta-base-surface" class to join functionality of delta surfaces like ControlPointSurface,RefineCompSurface
+//TODO make derivative/dependencies generic/common interface
+//and add generic "delta-base-surface" class to join functionality of delta surfaces like ControlPointSurface,RefineCompSurface
 class RefineCompSurface : public Surface
 {
 public:
-    RefineCompSurface(Surface *base);
+    RefineCompSurface(Surface *base, z5::Dataset *ds, ChunkCache *cache);
     SurfacePointer *pointer() override;
     void move(SurfacePointer *ptr, const cv::Vec3f &offset) override;
     bool valid(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    //FIXME
-    // void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;
+    void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;
     float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th) override;
-    //TODO make derivative/dependencies generic/common interface
     void setBase(QuadSurface *base);
-    
-    // friend class RefineCompCoords;
     
 protected:
     Surface *_base; //base surface
+    z5::Dataset *_ds;
+    ChunkCache *_cache;
 };
