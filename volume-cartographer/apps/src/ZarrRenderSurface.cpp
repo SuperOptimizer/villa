@@ -503,13 +503,17 @@ int main(int argc, char *argv[])
     // CoordGenerator *gen = surf->generator();
     
     SurfacePointer *center = surf->pointer();
-    SurfacePointer *ptr = surf->pointer();
-    // surf->move(center, {-10200,-13200,0});
-    // surf->move(ptr, {-10200,-13200,0});
     ControlPointSurface *corr = new ControlPointSurface(surf);
 
-    surf->move(ptr, {-280,-40,0});   
-    // surf->move(ptr, {-10,-0,0});   
+    // surf->move(ptr, {-280,-40,0});
+    SurfacePointer *ptr;
+
+    ptr = surf->pointer();
+    surf->move(ptr, {123*2,146*2,0});   
+    corr->addControlPoint(ptr, surf->coord(ptr) + 5*surf->normal(ptr));
+     
+    ptr = surf->pointer();
+    surf->move(ptr, {-210*2,16*2,0});   
     corr->addControlPoint(ptr, surf->coord(ptr) + -6*surf->normal(ptr));
     
     Surface *comp_surf = new RefineCompSurface(corr, ds.get(), &chunk_cache);
