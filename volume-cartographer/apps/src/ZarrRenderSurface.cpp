@@ -474,6 +474,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
   
+    MeasureLife *timer = new MeasureLife("loading ...");
     z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
     z5::filesystem::handle::Dataset ds_handle(group, "1", "/");
     std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
@@ -482,6 +483,7 @@ int main(int argc, char *argv[])
     std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
     
     QuadSurface *surf_raw = load_quad_from_vcps(segment_path);
+    delete timer;
     
     ChunkCache chunk_cache(10e9);
     
@@ -498,7 +500,10 @@ int main(int argc, char *argv[])
     SurfacePointer *poi = surf->pointer();
     // surf->move(poi, {-10200,-13200,0});
     surf->move(poi, {-10200,-13200,0});
-    surf = regularized_local_quad(surf_raw, poi, w/mesh_step/output_scale, h/mesh_step/output_scale, 100, 5);
+    {
+        MeasureLife timer("build local mesh ...");
+        surf = regularized_local_quad(surf_raw, poi, w/mesh_step/output_scale, h/mesh_step/output_scale, 100, 5);
+    }
     
     // CoordGenerator *gen = surf->generator();
     
@@ -509,12 +514,14 @@ int main(int argc, char *argv[])
     SurfacePointer *ptr;
 
     ptr = surf->pointer();
-    surf->move(ptr, {123*2,146*2,0});   
-    corr->addControlPoint(ptr, surf->coord(ptr) + 5*surf->normal(ptr));
+    // surf->move(ptr, {111*2,145*2,0});
+    surf->move(ptr, {-210*2,16*2,0});
+    corr->addControlPoint(ptr, surf->coord(ptr) + -6*surf->normal(ptr));
      
     ptr = surf->pointer();
-    surf->move(ptr, {-210*2,16*2,0});   
-    corr->addControlPoint(ptr, surf->coord(ptr) + -6*surf->normal(ptr));
+    // surf->move(ptr, {-210*2,16*2,0});
+    surf->move(ptr, {-255*2,-38*2,0});
+    corr->addControlPoint(ptr, surf->coord(ptr) + -10*surf->normal(ptr));
     
     Surface *comp_surf = new RefineCompSurface(corr, ds.get(), &chunk_cache);
     
@@ -555,13 +562,10 @@ int main(int argc, char *argv[])
     
     // output_scale *= 0.5;
     
-    auto timer = new MeasureLife("rendering ...\n");
+    timer = new MeasureLife("rendering ...\n");
     for(int off=min_slice;off<=max_slice;off++) {
         MeasureLife time_slice("slice "+std::to_string(off)+" ... ");
-        //FIXME area size and offset are not quite there yet
-        // gen->gen_coords(coords, -w/2, -h/2, w, h, 1.0, output_scale);
-        // corr->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
-        comp_surf->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
+        corr->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
         
         coords *= ds_scale/output_scale;
         
