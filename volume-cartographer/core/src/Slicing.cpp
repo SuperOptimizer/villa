@@ -824,6 +824,7 @@ static cv::Vec3f nominal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal
 
 void PlaneCoords::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
 {
+    assert(ptr == nullptr);
     // TrivialSurfacePointer _ptr({0,0,0});
     // if (!ptr)
     //     ptr = &_ptr;
