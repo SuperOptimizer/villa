@@ -8,6 +8,8 @@ namespace z5
     class Dataset;
 }
 
+class SurfacePointer;
+
 //TODO replace coord-generator with surface!
 class CoordGenerator
 {
@@ -16,6 +18,7 @@ public:
     void gen_coords(xt::xarray<float> &coords, int w, int h);
     void gen_coords(xt::xarray<float> &coords, const cv::Rect &roi, float render_scale = 1.0, float coord_scale = 1.0);
     virtual void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) = 0;
+    virtual void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) = 0;
     // virtual void gen_normals(xt::xarray<float> &normals, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) = 0;
     virtual void setOffsetZ(float off) { _z_off = off; };
     virtual float offsetZ() { return _z_off; };
@@ -37,6 +40,7 @@ public:
     virtual float pointDist(cv::Vec3f wp);
     virtual cv::Vec3f project(cv::Vec3f wp, float render_scale = 1.0, float coord_scale = 1.0);
     void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
+    void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;
     // void gen_normals(xt::xarray<float> &normals, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
     // float plane_mul() const;
     virtual float scalarp(cv::Vec3f point) const;
@@ -58,6 +62,7 @@ public:
     GridCoords() {};
     GridCoords(cv::Mat_<cv::Vec3f> &points, float sx = 1.0, float sy = 1.0, const cv::Vec3f &offset = {0,0,0}) : _points(points), _sx(sx), _sy(sy), _offset(offset) {};
     void gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
+    void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override {};
     // void gen_normals(xt::xarray<float> &normals, int x, int y, int w, int h, float render_scale = 1.0, float coord_scale = 1.0) override;
     cv::Vec3f normal_legacy(const cv::Vec3f &loc = {0,0,0}) override;
     // cv::Vec3f offset() override;

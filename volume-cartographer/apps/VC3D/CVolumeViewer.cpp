@@ -370,14 +370,25 @@ void CVolumeViewer::onSegmentatorChanged(std::string name, ControlPointSegmentat
 
 cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 {
-    xt::xarray<float> coords;
-    xt::xarray<uint8_t> img;
+    // xt::xarray<float> coords;
+    // xt::xarray<uint8_t> img;
 
-    _slice->gen_coords(coords, roi, 1.0, _ds_scale);
-    readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords, cache);
-    cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+    // _slice->gen_coords(coords, roi, 1.0, _ds_scale);
+    // readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords, cache);
+    // cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
+
+    std::cout << "render_area " << roi << _ds_scale << "/" << _ds_sd_idx << std::endl;
+
+    cv::Mat_<cv::Vec3f> coords;
+    cv::Mat_<uint8_t> img;
+    _slice->gen(&coords, nullptr, roi.size(), nullptr, _ds_scale, {roi.x/_ds_scale, roi.y/_ds_scale, 0.0f});
+    readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords*_ds_scale, cache);
+
+    // void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override {};
+
+    std::cout << "center coord" << coords(coords.rows/2,coords.cols/2) << std::endl;
     
-    return m.clone();
+    return img;
 }
 
 class LifeTime

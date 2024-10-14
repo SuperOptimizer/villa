@@ -812,6 +812,72 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int
         }
 }
 
+static cv::Vec3f internal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal, const cv::Vec2f &scale)
+{
+    return internal + cv::Vec3f(nominal[0]*scale[0], nominal[1]*scale[1], nominal[2]);
+}
+
+static cv::Vec3f nominal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal, const cv::Vec2f &scale)
+{
+    return nominal + cv::Vec3f(internal[0]/scale[0], internal[1]/scale[1], internal[2]);
+}
+
+void PlaneCoords::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
+{
+    // TrivialSurfacePointer _ptr({0,0,0});
+    // if (!ptr)
+    //     ptr = &_ptr;
+    // TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+
+    bool create_normals = normals || offset[2] /*|| ptr_inst->loc[2]*/;
+
+    cv::Vec3f total_offset = internal_loc(offset, {0,0,0}/*ptr_inst->loc*/, {1,1});
+    // std::cout << "PlaneCoords::gen upper left" << upper_left_actual /*<< ptr_inst->loc*/ << origin << offset << scale << std::endl;
+
+    int w = size.width;
+    int h = size.height;
+
+    cv::Mat_<cv::Vec3f> _coords_header;
+    cv::Mat_<cv::Vec3f> _normals_header;
+
+    if (!coords)
+        coords = &_coords_header;
+    if (!normals)
+        normals = &_normals_header;
+
+    coords->create(size);
+
+    if (create_normals) {
+        // std::cout << "FIX offset for GridCoords::gen_coords!" << std::endl;
+
+        normals->create(size);
+        // for(int j=0;j<h;j++)
+        //     for(int i=0;i<w;i++)
+        //         (*normals)(j, i) = grid_normal(*coords, {i,j});
+        //
+        // *coords += (*normals)*upper_left_actual[2];
+    }
+
+    cv::Vec3f vx, vy;
+    vxy_from_normal(origin,_normal,vx,vy);
+
+    float m = 1/scale;
+
+    cv::Vec3f use_origin = origin + _normal*(_z_off+total_offset[2]);
+
+    std::cout << "using vx vy normal " << vx << vy << _normal << total_offset << std::endl;
+
+#pragma omp parallel for
+    for(int j=0;j<h;j++)
+        for(int i=0;i<w;i++) {
+            // cv::Vec3f p = vx*(i*m+total_offset[0]) + vy*(j*m+total_offset[1]) + _normal*total_offset[2] + origin;
+            // (*coords)(j,i)[0] = p[2];
+            // (*coords)(j,i)[1] = p[1];
+            // (*coords)(j,i)[2] = p[0];
+            (*coords)(j,i) = vx*(i*m+total_offset[0]) + vy*(j*m+total_offset[1]) + _normal*(_z_off + total_offset[2]) + origin;
+        }
+}
+
 float plane_mul(cv::Vec3f n)
 {
     return 1.0/sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
