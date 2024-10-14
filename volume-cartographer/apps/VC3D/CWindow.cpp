@@ -166,12 +166,15 @@ void CWindow::CreateWidgets(void)
     newConnectedCVolumeViewer("yz plane", mdiArea);
     newConnectedCVolumeViewer("segmentation", mdiArea);
     mdiArea->tileSubWindows();
-    
+
+    treeStaticSurfaces = this->findChild<QTreeWidget*>("treeWidgetStaticSurfaces");
+    treeDynamicSurfaces = this->findChild<QTreeWidget*>("treeWidgetDynamicSurfaces");
+
     // connect(this, &CWindow::sendSegSelected, this, &CWindow::onSegSelected);
 
     // new and remove path buttons
-    connect(ui.btnNewPath, SIGNAL(clicked()), this, SLOT(OnNewPathClicked()));
-    connect(ui.btnRemovePath, SIGNAL(clicked()), this, SLOT(OnRemovePathClicked()));
+    // connect(ui.btnNewPath, SIGNAL(clicked()), this, SLOT(OnNewPathClicked()));
+    // connect(ui.btnRemovePath, SIGNAL(clicked()), this, SLOT(OnRemovePathClicked()));
 
     // TODO CHANGE VOLUME LOADING; FIRST CHECK FOR OTHER VOLUMES IN THE STRUCTS
     volSelect = this->findChild<QComboBox*>("volSelect");
@@ -183,33 +186,6 @@ void CWindow::CreateWidgets(void)
             } catch (const std::out_of_range& e) {
                 QMessageBox::warning(this, "Error", "Could not load volume.");
                 return;
-            }
-            setVolume(newVolume);
-        });
-
-    // TODO CHANGE VOLUME LOADING; FIRST CHECK FOR OTHER VOLUMES IN THE STRUCTS
-    previewSelect = this->findChild<QComboBox*>("previewSelect");
-    connect(
-        previewSelect, &QComboBox::currentIndexChanged, [this](const int& index) {
-            vc::Volume::Pointer newVolume;
-            if (index == 0) {
-                try {
-                    newVolume = fVpkg->volume(volSelect->currentData().toString().toStdString());
-                } catch (const std::out_of_range& e) {
-                    QMessageBox::warning(this, "Error", "Could not load volume.");
-                    return;
-                }
-            }
-            else {
-                try {
-                    newVolume = fVpkg->volume(volSelect->currentData().toString().toStdString());
-                    //first entry is no preview, use base volume
-                    if (index)
-                        newVolume = fVpkg->preview(newVolume->id(), previewSelect->currentData().toString().toStdString());
-                } catch (const std::out_of_range& e) {
-                    QMessageBox::warning(this, "Error", "Could not load volume.");
-                    return;
-                }
             }
             setVolume(newVolume);
         });
@@ -250,8 +226,6 @@ void CWindow::CreateMenus(void)
     fFileMenu = new QMenu(tr("&File"), this);
     fFileMenu->addAction(fOpenVolAct);
     fFileMenu->addMenu(fRecentVolpkgMenu);
-    fFileMenu->addSeparator();
-    fFileMenu->addAction(fSavePointCloudAct);
     fFileMenu->addSeparator();
     fFileMenu->addAction(fSettingsAct);
     fFileMenu->addSeparator();
@@ -296,11 +270,6 @@ void CWindow::CreateActions(void)
         connect(action, &QAction::triggered, this, &CWindow::OpenRecent);
     }
 
-    fSavePointCloudAct = new QAction(style()->standardIcon(QStyle::SP_DialogSaveButton), tr("&Save volpkg..."), this);
-    connect(
-        fSavePointCloudAct, SIGNAL(triggered()), this, SLOT(SavePointCloud()));
-    fSavePointCloudAct->setShortcut(QKeySequence::Save);
-
     fSettingsAct = new QAction(tr("Settings"), this);
     connect(fSettingsAct, SIGNAL(triggered()), this, SLOT(ShowSettings()));
 
@@ -312,9 +281,6 @@ void CWindow::CreateActions(void)
 
     fAboutAct = new QAction(tr("&About..."), this);
     connect(fAboutAct, SIGNAL(triggered()), this, SLOT(About()));
-
-    fPrintDebugInfo = new QAction  (tr("Debug info"), this);
-    connect(fPrintDebugInfo, SIGNAL(triggered()), this, SLOT(PrintDebugInfo()));
 }
 
 void CWindow::UpdateRecentVolpkgActions()
@@ -400,10 +366,7 @@ void CWindow::setWidgetsEnabled(bool state)
 {
     this->findChild<QGroupBox*>("grpVolManager")->setEnabled(state);
     this->findChild<QGroupBox*>("grpSeg")->setEnabled(state);
-    this->findChild<QPushButton*>("btnSegTool")->setEnabled(state);
-    this->findChild<QPushButton*>("btnPenTool")->setEnabled(state);
     this->findChild<QGroupBox*>("grpEditing")->setEnabled(state);
-    // fVolumeViewerWidget->SetButtonsEnabled(state);
 }
 
 auto CWindow::InitializeVolumePkg(const std::string& nVpkgPath) -> bool
@@ -443,7 +406,6 @@ void CWindow::UpdateView(void)
         ->setText(QString(fVpkg->name().c_str()));
 
     volSelect->setEnabled(can_change_volume_());
-    previewSelect->setEnabled(can_change_preview_());
     assignVol->setEnabled(can_change_volume_());
 
     update();
@@ -557,6 +519,13 @@ void CWindow::OpenVolume(const QString& path)
             QVariant(QString::fromStdString(id)));
     }
 
+    treeStaticSurfaces->clear();
+    for (auto& s : fVpkg->segmentationIDs()) {
+        QTreeWidgetItem *item = new QTreeWidgetItem(treeStaticSurfaces);
+        item->setText(0, QString(s.c_str()));
+        item->setCheckState(1, Qt::Unchecked);
+    }
+
     UpdateRecentVolpkgList(aVpkgPath);
 }
 
@@ -564,8 +533,6 @@ void CWindow::CloseVolume(void)
 {
     fVpkg = nullptr;
     currentVolume = nullptr;
-    ui.chkDisplayAll->setChecked(false);
-    ui.chkComputeAll->setChecked(false);
     UpdateView();
 }
 
@@ -662,16 +629,6 @@ auto CWindow::can_change_volume_() -> bool
 {
     bool canChange = fVpkg != nullptr && fVpkg->numberOfVolumes() > 1;
     return canChange;
-}
-
-auto CWindow::can_change_preview_() -> bool
-{    
-    if (!fVpkg)
-        return false;
-    if (!currentVolume)
-        return false;
-    
-    return fVpkg->numberOfPreviews(currentVolume->id());
 }
 
 // Handle request to step impact range down

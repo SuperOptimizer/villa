@@ -188,83 +188,58 @@
            </widget>
           </item>
           <item>
-           <layout class="QHBoxLayout" name="horizontalLayout_2">
-            <item>
-             <widget class="QCheckBox" name="chkDisplayAll">
-              <property name="text">
-               <string>Display All</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QCheckBox" name="chkComputeAll">
-              <property name="text">
-               <string>Compute All</string>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item>
-           <widget class="QTreeWidget" name="treeWidgetPaths">
+           <widget class="QTreeWidget" name="treeWidgetStaticSurfaces">
             <property name="indentation">
              <number>0</number>
             </property>
+            <property name="columnCount">
+             <number>1</number>
+            </property>
+            <attribute name="headerVisible">
+             <bool>true</bool>
+            </attribute>
             <attribute name="headerMinimumSectionSize">
              <number>50</number>
+            </attribute>
+            <attribute name="headerDefaultSectionSize">
+             <number>120</number>
             </attribute>
             <attribute name="headerStretchLastSection">
              <bool>true</bool>
             </attribute>
             <column>
              <property name="text">
-              <string>Segment ID</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Display</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Compute</string>
+              <string>Static Surface ID</string>
              </property>
             </column>
            </widget>
           </item>
           <item>
-           <layout class="QHBoxLayout" name="horizontalLayout_3">
-            <item>
-             <widget class="QPushButton" name="btnNewPath">
-              <property name="minimumSize">
-               <size>
-                <width>20</width>
-                <height>20</height>
-               </size>
-              </property>
-              <property name="text">
-               <string>New</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="btnRemovePath">
-              <property name="enabled">
-               <bool>false</bool>
-              </property>
-              <property name="minimumSize">
-               <size>
-                <width>20</width>
-                <height>20</height>
-               </size>
-              </property>
-              <property name="text">
-               <string>Remove</string>
-              </property>
-             </widget>
-            </item>
-           </layout>
+           <widget class="QTreeWidget" name="treeWidgetDynamicSurfaces">
+            <property name="indentation">
+             <number>0</number>
+            </property>
+            <property name="columnCount">
+             <number>1</number>
+            </property>
+            <attribute name="headerVisible">
+             <bool>true</bool>
+            </attribute>
+            <attribute name="headerMinimumSectionSize">
+             <number>50</number>
+            </attribute>
+            <attribute name="headerDefaultSectionSize">
+             <number>120</number>
+            </attribute>
+            <attribute name="headerStretchLastSection">
+             <bool>true</bool>
+            </attribute>
+            <column>
+             <property name="text">
+              <string>Dynamic Surface ID</string>
+             </property>
+            </column>
+           </widget>
           </item>
           <item>
            <widget class="QLabel" name="label_vol">
@@ -275,9 +250,6 @@
           </item>
           <item>
            <widget class="QComboBox" name="volSelect"/>
-          </item>
-          <item>
-           <widget class="QComboBox" name="previewSelect"/>
           </item>
           <item>
            <widget class="QPushButton" name="assignVol">
@@ -486,8 +458,8 @@
             <rect>
              <x>0</x>
              <y>0</y>
-             <width>367</width>
-             <height>360</height>
+             <width>327</width>
+             <height>385</height>
             </rect>
            </property>
            <property name="layoutDirection">
@@ -893,7 +865,7 @@
  <resources/>
  <connections/>
  <buttongroups>
-  <buttongroup name="buttonGroupBackward"/>
   <buttongroup name="buttonGroupForward"/>
+  <buttongroup name="buttonGroupBackward"/>
  </buttongroups>
 </ui>

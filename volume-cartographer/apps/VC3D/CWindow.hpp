@@ -3,36 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <unordered_map>
-
 #include <opencv2/core.hpp>
-
-// #include <QCloseEvent>
-// #include <QComboBox>
-// #include <QMessageBox>
-// #include <QObject>
-// #include <QRect>
-// #include <QShortcut>
-// #include <QSpinBox>
-// #include <QThread>
-// #include <QTimer>
-// #include <QtWidgets>
-
-// #include "BlockingDialog.hpp"
-// #include "CBSpline.hpp"
-// #include "CXCurve.hpp"
-// #include "MathUtils.hpp"
 #include "ui_VCMain.h"
-
-// #include "vc/core/types/VolumePkg.hpp"
-// #include "vc/segmentation/ChainSegmentationAlgorithm.hpp"
-
-// #include <thread>
-// #include <condition_variable>
-// #include <atomic>
-// #include <SDL2/SDL.h>
-// #include <cmath>
-// #include <queue>
 
 #define MAX_RECENT_VOLPKG 10
 
@@ -89,7 +61,6 @@ private:
     void CreateWidgets(void);
     void CreateMenus(void);
     void CreateActions(void);
-    void CreateBackend(void);
 
     void UpdateView(void);
 
@@ -140,7 +111,6 @@ private:
 
     QAction* fOpenVolAct;
     QAction* fOpenRecentVolpkg[MAX_RECENT_VOLPKG]{};
-    QAction* fSavePointCloudAct;
     QAction* fSettingsAct;
     QAction* fExitAct;
     QAction* fKeybinds;
@@ -148,8 +118,10 @@ private:
     QAction* fPrintDebugInfo;
 
     QComboBox* volSelect;
-    QComboBox* previewSelect;
     QPushButton* assignVol;
+
+    QTreeWidget *treeStaticSurfaces;
+    QTreeWidget *treeDynamicSurfaces;
     
     //TODO abstract these into separate QWidget class?
     QLabel* lblLoc[3];
@@ -160,7 +132,6 @@ private:
     QStatusBar* statusBar;
 
     bool can_change_volume_();
-    bool can_change_preview_();
     
     ChunkCache *chunk_cache;
     std::vector<CVolumeViewer*> _viewers;
