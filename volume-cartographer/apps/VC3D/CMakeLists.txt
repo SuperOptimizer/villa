@@ -16,7 +16,7 @@ set(srcs
     ColorFrame.hpp
     SettingsDialog.cpp
     UndoCommands.cpp
-    CSliceCollection.cpp
+    CSurfaceCollection.cpp
 )
 
 set(MACOSX_BUNDLE_ICON logo.icns)

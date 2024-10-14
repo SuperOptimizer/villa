@@ -20,7 +20,7 @@ struct POI
 //slices: all the defined slices of all kinds
 //Segmentators: segmentations and interactions with segments
 //POIs : e.g. active constrol points or slicing focus points
-class CSliceCollection : public QObject
+class CSurfaceCollection : public QObject
 {
     Q_OBJECT
     

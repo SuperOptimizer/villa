@@ -9,7 +9,7 @@
 
 #include "CVolumeViewerView.hpp"
 #include "SegmentationStruct.hpp"
-#include "CSliceCollection.hpp"
+#include "CSurfaceCollection.hpp"
 
 #include "vc/core/util/Slicing.hpp"
 
@@ -22,7 +22,7 @@ using qga = QGuiApplication;
 #define ZOOM_FACTOR 2.0 //1.414213562373095
 
 // Constructor
-CVolumeViewer::CVolumeViewer(CSliceCollection *slices, QWidget* parent)
+CVolumeViewer::CVolumeViewer(CSurfaceCollection *slices, QWidget* parent)
     : QWidget(parent)
     , fCanvas(nullptr)
     // , fScrollArea(nullptr)

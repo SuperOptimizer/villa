@@ -18,7 +18,7 @@ namespace ChaoVis
 
 class CVolumeViewerView;
 class SegmentationStruct;
-class CSliceCollection;
+class CSurfaceCollection;
 class POI;
 
 class CVolumeViewer : public QWidget
@@ -34,7 +34,7 @@ public:
 
     QPushButton* fNextBtn;
     QPushButton* fPrevBtn;
-    CVolumeViewer(CSliceCollection *col, QWidget* parent = 0);
+    CVolumeViewer(CSurfaceCollection *col, QWidget* parent = 0);
     ~CVolumeViewer(void);
 
     void SetViewState(EViewState nViewState) { fViewState = nViewState; }
@@ -135,7 +135,7 @@ protected:
     std::vector<QGraphicsItem*> _intersect_items; 
     ControlPointSegmentator *_seg_tool = nullptr;
     
-    CSliceCollection *_slice_col = nullptr;
+    CSurfaceCollection *_slice_col = nullptr;
 };  // class CVolumeViewer
 
 }  // namespace ChaoVis

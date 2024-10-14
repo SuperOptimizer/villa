@@ -24,10 +24,6 @@ auto main(int argc, char* argv[]) -> int
     QApplication::setApplicationVersion(
         QString::fromStdString(vc::ProjectInfo::VersionString()));
 
-    qRegisterMetaType<CWindow::Segmenter>("Segmenter");
-    qRegisterMetaType<CWindow::Segmenter::PointSet>(
-        "CWindow::Segmenter::PointSet");
-
     CWindow aWin;
     aWin.show();
     return QApplication::exec();
