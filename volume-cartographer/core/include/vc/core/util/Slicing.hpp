@@ -68,10 +68,8 @@ public:
     cv::Vec3f _offset;
 };
 
-void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale);
-
 //TODO constrain to visible area? or add visiable area disaplay?
-void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, GridCoords *grid, PlaneCoords *plane, const cv::Rect &plane_roi, float step);
+void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneCoords *plane, const cv::Rect &plane_roi, float step);
 
 float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, float init_step = 16.0, float min_step = 0.125);
 

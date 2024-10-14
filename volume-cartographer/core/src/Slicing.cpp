@@ -853,7 +853,7 @@ uint8_t get_block(const cv::Mat_<uint8_t> &block, const cv::Vec3f &loc, const cv
     return block(y, x);
 }
 
-void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, GridCoords *grid, PlaneCoords *plane, const cv::Rect &plane_roi, float step)
+void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneCoords *plane, const cv::Rect &plane_roi, float step)
 {
     //start with random points and search for a plane intersection
     
@@ -861,7 +861,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     
     cv::Mat_<uint8_t> block(cv::Size(plane_roi.width/block_step, plane_roi.height/block_step), 0);
     
-    cv::Rect grid_bounds(1,1,grid->_points.cols-2,grid->_points.rows-2);
+    cv::Rect grid_bounds(1,1,points.cols-2,points.rows-2);
     
     for(int r=0;r<100;r++) {
         std::vector<cv::Vec3f> seg;
@@ -881,14 +881,14 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         
         //initial points
         for(int i=0;i<100;i++) {
-            loc = {std::rand() % (grid->_points.cols-1), std::rand() % (grid->_points.rows-1)};
-            point = at_int(grid->_points, loc);
+            loc = {std::rand() % (points.cols-1), std::rand() % (points.rows-1)};
+            point = at_int(points, loc);
             
             plane_loc = plane->project(point);
             if (!plane_roi.contains({plane_loc[0],plane_loc[1]}))
                 continue;
     
-            dist = min_loc(grid->_points, loc, point, {}, {}, plane);
+            dist = min_loc(points, loc, point, {}, {}, plane);
             
             plane_loc = plane->project(point);
             if (!plane_roi.contains({plane_loc[0],plane_loc[1]}))
@@ -912,7 +912,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         //point2
         loc2 = loc;
         //search point at distance of 1 to init point
-        dist = min_loc(grid->_points, loc2, point2, {point}, {1}, plane);
+        dist = min_loc(points, loc2, point2, {point}, {1}, plane);
         
         if (dist < 0 || dist > 1)
             continue;
@@ -933,13 +933,13 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             if (!grid_bounds.contains({loc3[0],loc3[1]}))
                 break;
             
-            point3 = at_int(grid->_points, loc3);
+            point3 = at_int(points, loc3);
             
             //search point close to prediction + dist 1 to last point
-            dist = min_loc(grid->_points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5);
+            dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5);
             
             //then refine
-            dist = min_loc(grid->_points, loc3, point3, {point2}, {step}, plane, 0.5);
+            dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.5);
             
             if (dist < 0 || dist > 1)
                 break;
@@ -975,13 +975,13 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             if (!grid_bounds.contains({loc3[0],loc3[1]}))
                 break;
                 
-                point3 = at_int(grid->_points, loc3);
+                point3 = at_int(points, loc3);
                 
                 //search point close to prediction + dist 1 to last point
-                dist = min_loc(grid->_points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5);
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5);
                 
                 //then refine
-                dist = min_loc(grid->_points, loc3, point3, {point2}, {step}, plane, 0.5);
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.5);
                 
                 if (dist < 0 || dist > 1)
                     break;
@@ -1013,87 +1013,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     }
 }
 
-void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi, const PlaneCoords *other, CoordGenerator *roi_gen, const cv::Rect roi, float render_scale, float coord_scale)
-{
-    xt::xarray<float> coords;
-    
-    //FIXME make generators more flexible so we can generate more sparse data
-    roi_gen->gen_coords(coords, roi, render_scale, coord_scale);
-    
-    std::vector<std::tuple<cv::Point,cv::Point3f,float>> upper;
-    std::vector<std::tuple<cv::Point,cv::Point3f,float>> lower;
-    std::vector<cv::Point2f> seg_points;
-
-    for(int c=0;c<1000;c++) {
-        int x = std::rand() % roi.width;
-        int y = std::rand() % roi.height;
-        
-        
-        cv::Point3f point = {coords(y,x,2),coords(y,x,1),coords(y,x,0)};
-        point /= coord_scale;
-        
-        cv::Point2f img_point = {x,y};
-        
-        float scalarp = other->scalarp(point);
-        
-        if (scalarp > 0)
-            upper.push_back({img_point,point,scalarp});
-        else if(scalarp < 0)
-            lower.push_back({img_point,point,-scalarp});
-    }
-    
-    auto rng = std::default_random_engine {};
-    std::shuffle(upper.begin(), upper.end(), rng);
-    std::shuffle(lower.begin(), lower.end(), rng);
-    
-    
-    std::vector<cv::Point2f> intersects;
-    
-    //brute force cause I'm lazy
-    //FIXME if we have very vew points in uppper/lower: regenerate more points around there or reuse points
-    for(int r=0;r<std::min<int>(100,std::min(upper.size(),lower.size()));r++) {
-        float d_up = std::get<2>(upper[r]);
-        float d_low = std::get<2>(lower[r]);
-        cv::Point2f ip_up = std::get<0>(upper[r]);
-        cv::Point2f ip_low = std::get<0>(lower[r]);
-        
-        cv::Point2f res = d_low/(d_up+d_low) * ip_up + d_up/(d_up+d_low) * ip_low;
-        
-        for(int s=0;s<5;s++) {
-            assert(coords.in_bounds(round(res.y),round(res.x),2));
-            //FIXME interpolate point and use lower acceptance threshold
-            cv::Point3f point = {coords(round(res.y),round(res.x),2),coords(round(res.y),round(res.x),1),coords(round(res.y),round(res.x),0)};
-            point /= coord_scale;
-            float sdist = other->scalarp(point);
-            if (abs(sdist) < 0.5/coord_scale)
-                break;
-
-            if (sdist > 0) {
-                d_up = sdist;
-                ip_up = res;
-            }
-            else if(sdist < 0) {
-                d_low = -sdist;
-                ip_low = res;
-            }
-            
-            res = d_low/(d_up+d_low) * ip_up + d_up/(d_up+d_low) * ip_low;
-        }
-        
-        
-        // cv::Point2f img_point = {x/render_scale+roi.x,y/render_scale+roi.y};
-        intersects.push_back({res.x+roi.x*render_scale,res.y+roi.y*render_scale});
-    }
-    
-    //this will only work if we have straight line!
-    std::sort(intersects.begin(),
-              intersects.end(),
-              [](const cv::Point2f &a, const cv::Point2f &b){if (a.y != b.y) return a.y < b.y; return a.x < b.x; }
-        );
-    
-    segments_roi.push_back(intersects);
-}
-
 void PlaneCoords::setNormal(cv::Vec3f normal)
 {
     cv::normalize(normal, _normal);
@@ -1106,17 +1025,6 @@ float PlaneCoords::pointDist(cv::Vec3f wp)
         
     return abs(scalarp);
 }
-
-// float PlaneCoords::pointDistNoNorm(cv::Vec3f wp)
-// {
-//     cv::Vec3f n;
-//     cv::normalize(normal, n, 1,0, cv::NORM_L2);
-//     float plane_off = origin.dot(n);
-//     float plane_mul = 1.0/sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
-//     float scalarp = wp.dot(n) - plane_off;
-//     
-//     return abs(scalarp)*plane_mul;
-// }
 
 cv::Vec3f PlaneCoords::project(cv::Vec3f wp, float render_scale, float coord_scale)
 {

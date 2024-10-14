@@ -441,7 +441,7 @@ void CVolumeViewer::renderVisible(bool force)
         
         cv::Rect plane_roi = {curr_img_area.x()/_ds_scale, curr_img_area.y()/_ds_scale, curr_img_area.width()/_ds_scale, curr_img_area.height()/_ds_scale};
         
-        find_intersect_segments(intersections, xy_seg_, slice_segment, slice_plane, plane_roi, 4/_ds_scale);
+        find_intersect_segments(intersections, xy_seg_, slice_segment->_points, slice_plane, plane_roi, 4/_ds_scale);
     
 
         for (auto seg : intersections) {
