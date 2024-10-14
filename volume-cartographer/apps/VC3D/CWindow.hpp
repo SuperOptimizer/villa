@@ -16,7 +16,7 @@ static constexpr int VOLPKG_SLICE_MIN_INDEX = 0;
 class PlaneCoords;
 class CoordGenerator;
 class ChunkCache;
-class ControlPointSegmentator;
+class PointRectSegmentator;
 
 namespace volcart {
     class Volume;
@@ -51,7 +51,6 @@ public slots:
     void onLocChanged(void);
     void onPlaneSliceChanged(void);
     void onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, CoordGenerator *slice, cv::Vec3f slice_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
-    void onShiftNormal(cv::Vec3f step);
 
 public:
     CWindow();
@@ -91,8 +90,10 @@ private slots:
     void Keybindings(void);
     void About(void);
     void ShowSettings();
+    void onStaticSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous);
 private:
     std::shared_ptr<volcart::VolumePkg> fVpkg;
+    PointRectSegmentator* _segmentator;
     QString fVpkgPath;
     std::string fVpkgName;
 

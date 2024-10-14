@@ -123,7 +123,6 @@ CVolumeViewer *CWindow::newConnectedCVolumeViewer(std::string show_slice, QMdiAr
     connect(_slices, &CSurfaceCollection::sendPOIChanged, volView, &CVolumeViewer::onPOIChanged);
     connect(_slices, &CSurfaceCollection::sendSegmentatorChanged, volView, &CVolumeViewer::onSegmentatorChanged);
     connect(volView, &CVolumeViewer::sendVolumeClicked, this, &CWindow::onVolumeClicked);
-    connect(volView, &CVolumeViewer::sendShiftNormal, this, &CWindow::onShiftNormal);
     
     volView->setSlice(show_slice);
     
@@ -170,7 +169,7 @@ void CWindow::CreateWidgets(void)
     treeStaticSurfaces = this->findChild<QTreeWidget*>("treeWidgetStaticSurfaces");
     treeDynamicSurfaces = this->findChild<QTreeWidget*>("treeWidgetDynamicSurfaces");
 
-    // connect(this, &CWindow::sendSegSelected, this, &CWindow::onSegSelected);
+    connect(treeStaticSurfaces, &QTreeWidget::currentItemChanged, this, &CWindow::onStaticSurfaceSelected);
 
     // new and remove path buttons
     // connect(ui.btnNewPath, SIGNAL(clicked()), this, SLOT(OnNewPathClicked()));
@@ -524,6 +523,7 @@ void CWindow::OpenVolume(const QString& path)
         QTreeWidgetItem *item = new QTreeWidgetItem(treeStaticSurfaces);
         item->setText(0, QString(s.c_str()));
         item->setCheckState(1, Qt::Unchecked);
+        item->setData(0, Qt::UserRole, QVariant(s.c_str()));
     }
 
     UpdateRecentVolpkgList(aVpkgPath);
@@ -694,21 +694,6 @@ void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, CoordGenerato
 }
 
 // Handle request to step impact range down
-void CWindow::onShiftNormal(cv::Vec3f shift)
-{    
-//     slice_plane->origin += shift;
-//     slice_xy->origin += shift;
-//     slice_xz->origin += shift;
-//     slice_yz->origin += shift;
-//     
-//     lblLoc[0]->setText(QString::number(slice_plane->origin[2]));
-//     lblLoc[1]->setText(QString::number(slice_plane->origin[1]));
-//     lblLoc[2]->setText(QString::number(slice_plane->origin[0]));
-//     
-//     sendSliceChanged();
-}
-
-// Handle request to step impact range down
 void CWindow::onPlaneSliceChanged(void)
 {    
     cv::Vec3f normal;
@@ -724,4 +709,29 @@ void CWindow::onPlaneSliceChanged(void)
  
     plane->setNormal(normal);
     _slices->setSlice("manual plane", plane);
+}
+
+void CWindow::onStaticSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous)
+{
+    std::string surf_id = current->data(0, Qt::UserRole).toString().toStdString();
+
+    std::cout << "sel" << surf_id << std::endl;
+
+    volcart::OrderedPointSet<cv::Vec3d> segment_raw = fVpkg->segmentation(surf_id)->getPointSet();
+
+    // volcart::OrderedPointSet<cv::Vec3d> segment_raw = volcart::PointSetIO<cv::Vec3d>::ReadOrderedPointSet(path);
+    cv::Mat src(segment_raw.height(), segment_raw.width(), CV_64FC3, (void*)const_cast<cv::Vec3d*>(&segment_raw[0]));
+
+    cv::Mat_<cv::Vec3f> points;
+    src.convertTo(points, CV_32F);
+
+    double sx, sy;
+
+    vc_segmentation_scales(points, sx, sy);
+
+    _segmentator = new PointRectSegmentator();
+    _segmentator->set(points);
+
+    _slices->setSegmentator("default", _segmentator);
+    _slices->setSlice("segmentation", _segmentator->generator());
 }
