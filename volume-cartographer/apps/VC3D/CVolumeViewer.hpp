@@ -26,19 +26,11 @@ class CVolumeViewer : public QWidget
     Q_OBJECT
 
 public:
-    enum EViewState {
-        ViewStateEdit,  // edit mode
-        ViewStateDraw,  // draw mode
-        ViewStateIdle   // idle mode
-    };
-
     QPushButton* fNextBtn;
     QPushButton* fPrevBtn;
     CVolumeViewer(CSurfaceCollection *col, QWidget* parent = 0);
     ~CVolumeViewer(void);
 
-    void SetViewState(EViewState nViewState) { fViewState = nViewState; }
-    EViewState GetViewState(void) { return fViewState; }
     void Reset();
 
     virtual void SetImage(const QImage& nSrc);
@@ -57,9 +49,6 @@ public:
     void invalidateIntersect();
     
     CVolumeViewerView* fGraphicsView;
-
-protected:
-    // bool eventFilter(QObject* watched, QEvent* event);
 
 public slots:
     void OnVolumeChanged(volcart::Volume::Pointer vol);
@@ -96,7 +85,6 @@ protected:
     // QComboBox* fAxisCombo;
 
     // data
-    EViewState fViewState;
     QImage* fImgQImage;
     int sliceIndexToolStart{-1};
     int fScanRange;  // how many slices a mouse wheel step will jump

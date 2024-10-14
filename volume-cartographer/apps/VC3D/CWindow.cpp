@@ -121,7 +121,6 @@ CVolumeViewer *CWindow::newConnectedCVolumeViewer(std::string show_slice, QMdiAr
     connect(this, &CWindow::sendVolumeChanged, volView, &CVolumeViewer::OnVolumeChanged);
     connect(_slices, &CSurfaceCollection::sendSliceChanged, volView, &CVolumeViewer::onSliceChanged);
     connect(_slices, &CSurfaceCollection::sendPOIChanged, volView, &CVolumeViewer::onPOIChanged);
-    connect(_slices, &CSurfaceCollection::sendSegmentatorChanged, volView, &CVolumeViewer::onSegmentatorChanged);
     connect(volView, &CVolumeViewer::sendVolumeClicked, this, &CWindow::onVolumeClicked);
     
     volView->setSlice(show_slice);
@@ -732,6 +731,5 @@ void CWindow::onStaticSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem 
     _segmentator = new PointRectSegmentator();
     _segmentator->set(points);
 
-    _slices->setSegmentator("default", _segmentator);
     _slices->setSlice("segmentation", _segmentator->generator());
 }

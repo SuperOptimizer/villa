@@ -26,24 +26,20 @@ class CSurfaceCollection : public QObject
     
 public:
     void setSlice(const std::string &name, CoordGenerator*);
-    void setSegmentator(const std::string &name, ControlPointSegmentator*);
     void setPOI(const std::string &name, POI *poi);
     CoordGenerator*slice(const std::string &name);
     ControlPointSegmentator* segmentator(const std::string &name);
     POI *poi(const std::string &name);
     std::vector<std::string> slices();
-    std::vector<std::string> segmentators();
     std::vector<std::string> pois();
     
 signals:
     void sendSliceChanged(std::string, CoordGenerator*);
-    void sendSegmentatorChanged(std::string, ControlPointSegmentator*);
     void sendPOIChanged(std::string, POI*);
     
 protected:
     bool _regular_pan = false;
     std::unordered_map<std::string, CoordGenerator*> _slices;
-    std::unordered_map<std::string, ControlPointSegmentator*> _segmentators;
     std::unordered_map<std::string, POI*> _pois;
 };
 
