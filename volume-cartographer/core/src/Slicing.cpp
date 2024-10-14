@@ -797,16 +797,6 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int
     cv::Vec3f vx, vy;
     vxy_from_normal(origin,_normal,vx,vy);
     
-    //why bother if xtensor is soo slow (around 10x of manual loop below even w/o threading)
-    //     xt::xarray<float> vx_t{{{vx[2],vx[1],vx[0]}}};
-    //     xt::xarray<float> vy_t{{{vy[2],vy[1],vy[0]}}};
-    //     xt::xarray<float> origin_t{{{origin[2],origin[1],origin[0]}}};
-    //     
-    //     xt::xarray<float> xrange = xt::arange<float>(-w/2,w/2).reshape({1, -1, 1});
-    //     xt::xarray<float> yrange = xt::arange<float>(-h/2,h/2).reshape({-1, 1, 1});
-    //     
-    //     coords = vx_t*xrange + vy_t*yrange+origin_t;
-    
     coords = xt::empty<float>({h,w,3});
     
     float m = 1/render_scale;
@@ -822,54 +812,6 @@ void PlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int
         }
 }
 
-/*void PlaneCoords::gen_normals(xt::xarray<float> &normals_out, int x, int y, int w, int h, float render_scale, float coord_scale)
-{   
-    normals_out = xt::zeros<float>({1,1,3});
-    
-    normals_out(0,0,0) = _normal[2];
-    normals_out(0,0,1) = _normal[1];
-    normals_out(0,0,2) = _normal[0];
-}*/
-
-/*void IDWHeightPlaneCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int h, float render_scale, float coord_scale)
-{
-    cv::Vec3f vx, vy;
-    vxy_from_normal(origin,_normal,vx,vy);
-    
-    coords = xt::empty<float>({h,w,3});
-    
-    float m = 1/render_scale;
-    
-#pragma omp parallel for
-    for(int j=0;j<h;j++)
-        for(int i=0;i<w;i++) {
-            float px = vx[0]*(i*m+x) + vy[0]*(j*m+y) + origin[0]*coord_scale;
-            float py = vx[1]*(i*m+x) + vy[1]*(j*m+y) + origin[1]*coord_scale;
-            float pz = vx[2]*(i*m+x) + vy[2]*(j*m+y) + origin[2]*coord_scale;
-            cv::Vec3f p = {px,py,pz};
-            p += height({px/coord_scale,py/coord_scale,pz/coord_scale})*coord_scale*_normal;
-            coords(j,i,0) = p[2];
-            coords(j,i,1) = p[1];
-            coords(j,i,2) = p[0];
-        }
-}*/
-
-/*cv::Point3f PlaneCoords::gen_coords(float i, float j, int x, int y, float render_scale, float coord_scale) const
-{    
-    float m = 1/render_scale;
-
-    float cz = vx[2]*(i*m+x) + vy[2]*(j*m+y) + origin[2]*coord_scale;
-    float cy = vx[1]*(i*m+x) + vy[1]*(j*m+y) + origin[1]*coord_scale;
-    float cx = vx[0]*(i*m+x) + vy[0]*(j*m+y) + origin[0]*coord_scale;
-    
-    return {cx,cy,cz};
-}*/
-
-// bool plane_side(const cv::Point3f &point, const cv::Point3f &normal, float plane_off)
-// {
-//     return point.dot(normal) >= plane_off;
-// }
-
 float plane_mul(cv::Vec3f n)
 {
     return 1.0/sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
@@ -879,40 +821,6 @@ float PlaneCoords::scalarp(cv::Vec3f point) const
 {
     return point.dot(_normal) - origin.dot(_normal);
 }
-
-/*float IDWHeightPlaneCoords::height(cv::Vec3f point) const
-{
-    if (control_points->size() < 4)
-        return 0;
-    
-    cv::Point3f projected_ref = point - (point.dot(_normal) - origin.dot(_normal))*_normal;
-    
-    // std::cout << point << "\n";
-    
-    double sum = 0;
-    double weights = 0;
-    for(auto &control : *control_points) {
-        double h = (control.dot(_normal) - origin.dot(_normal));
-        cv::Point3f projected_control = control - h*_normal;
-        // std::cout << control << projected_control << std::endl;
-        double dist = cv::norm(projected_control-projected_ref);
-        // printf("controlh %f dist %f\n", h, dist);
-        double w = 1/(dist*dist);
-        sum += w*h;
-        weights += w;
-        // printf(" %f  %f\n", sum, weights);
-    }
-    
-    // printf("height %f\n", sum/weights);
-    
-    return sum/weights;
-}
-
-
-float IDWHeightPlaneCoords::scalarp(cv::Vec3f point) const
-{    
-    return point.dot(_normal) - origin.dot(_normal) - height(point);
-}*/
 
 static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p);
 
@@ -953,7 +861,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     
     cv::Mat_<uint8_t> block(cv::Size(plane_roi.width/block_step, plane_roi.height/block_step), 0);
     
-    cv::Rect grid_bounds(1,1,grid->_points->cols-2,grid->_points->rows-2);
+    cv::Rect grid_bounds(1,1,grid->_points.cols-2,grid->_points.rows-2);
     
     for(int r=0;r<100;r++) {
         std::vector<cv::Vec3f> seg;
@@ -973,14 +881,14 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         
         //initial points
         for(int i=0;i<100;i++) {
-            loc = {std::rand() % (grid->_points->cols-1), std::rand() % (grid->_points->rows-1)};
-            point = at_int(*grid->_points, loc);
+            loc = {std::rand() % (grid->_points.cols-1), std::rand() % (grid->_points.rows-1)};
+            point = at_int(grid->_points, loc);
             
             plane_loc = plane->project(point);
             if (!plane_roi.contains({plane_loc[0],plane_loc[1]}))
                 continue;
     
-            dist = min_loc(*grid->_points, loc, point, {}, {}, plane);
+            dist = min_loc(grid->_points, loc, point, {}, {}, plane);
             
             plane_loc = plane->project(point);
             if (!plane_roi.contains({plane_loc[0],plane_loc[1]}))
@@ -1004,7 +912,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         //point2
         loc2 = loc;
         //search point at distance of 1 to init point
-        dist = min_loc(*grid->_points, loc2, point2, {point}, {1}, plane);
+        dist = min_loc(grid->_points, loc2, point2, {point}, {1}, plane);
         
         if (dist < 0 || dist > 1)
             continue;
@@ -1025,13 +933,13 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             if (!grid_bounds.contains({loc3[0],loc3[1]}))
                 break;
             
-            point3 = at_int(*grid->_points, loc3);
+            point3 = at_int(grid->_points, loc3);
             
             //search point close to prediction + dist 1 to last point
-            dist = min_loc(*grid->_points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5);
+            dist = min_loc(grid->_points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5);
             
             //then refine
-            dist = min_loc(*grid->_points, loc3, point3, {point2}, {step}, plane, 0.5);
+            dist = min_loc(grid->_points, loc3, point3, {point2}, {step}, plane, 0.5);
             
             if (dist < 0 || dist > 1)
                 break;
@@ -1067,13 +975,13 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             if (!grid_bounds.contains({loc3[0],loc3[1]}))
                 break;
                 
-                point3 = at_int(*grid->_points, loc3);
+                point3 = at_int(grid->_points, loc3);
                 
                 //search point close to prediction + dist 1 to last point
-                dist = min_loc(*grid->_points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5);
+                dist = min_loc(grid->_points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5);
                 
                 //then refine
-                dist = min_loc(*grid->_points, loc3, point3, {point2}, {step}, plane, 0.5);
+                dist = min_loc(grid->_points, loc3, point3, {point2}, {step}, plane, 0.5);
                 
                 if (dist < 0 || dist > 1)
                     break;
@@ -1186,52 +1094,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Point2f>> &segments_roi
     segments_roi.push_back(intersects);
 }
 
-void ControlPointSegmentator::add(cv::Vec3f wp, cv::Vec3f normal)
-{
-    control_points.push_back(wp);
-}
-
-/*void PlaneIDWSegmentator::add(cv::Vec3f wp, cv::Vec3f normal)
-{
-    std::cout << "added point" << _points.size()+1 << wp << normal << std::endl;
-    if (_points.size() < 2) {
-        _points.push_back({{0,0},wp});
-        control_points.push_back(wp);
-        return;
-    }
-    
-    //FIXME check if points are on the same line!
-    if (_points.size() == 2) {
-        _points.push_back({{0,0},wp});
-        control_points.push_back(wp);
-        
-        //FIXME calc 2d pints
-        
-        _generator->origin = _points[0].second;
-        cv::Vec3f vx, vy;
-        cv::normalize(_points[1].second-_points[0].second, vx, 1,0, cv::NORM_L2);
-        cv::normalize(_points[2].second-_points[0].second, vy, 1,0, cv::NORM_L2);
-        _generator->setNormal(vx.cross(vy));
-        
-        // std::cout << "updated plane to " << _generator->origin << _generator->normal << std::endl;
-        
-        return;
-    }
-
-    _points.push_back({{0,0},wp});
-    control_points.push_back(wp);
-}
-
-PlaneCoords *PlaneIDWSegmentator::generator() const
-{
-    return _generator;
-}
-
-PlaneIDWSegmentator::PlaneIDWSegmentator()
-{
-    _generator = new IDWHeightPlaneCoords(&control_points);
-}*/
-
 void PlaneCoords::setNormal(cv::Vec3f normal)
 {
     cv::normalize(normal, _normal);
@@ -1340,7 +1202,7 @@ cv::Vec3f grid_normal(const cv::Mat_<cv::Vec3f> &points, const cv::Vec3f &loc)
 
 cv::Vec3f GridCoords::normal_legacy(const cv::Vec3f &loc)
 {
-    return grid_normal(*_points, loc);
+    return grid_normal(_points, loc);
 }
 // 
 // cv::Vec3f GridCoords::offset()
@@ -1366,7 +1228,7 @@ void GridCoords::gen_coords(xt::xarray<float> &coords, int x, int y, int w, int 
     
     cv::Mat affine = cv::getAffineTransform(src, dst);
     
-    cv::warpAffine(*_points, warped, affine, {w,h});
+    cv::warpAffine(_points, warped, affine, {w,h});
     
     if (_z_off || _offset[2]) {
         // std::cout << "FIX offset for GridCoords::gen_coords!" << std::endl;
@@ -1671,24 +1533,4 @@ cv::Mat_<cv::Vec3f> vc_segmentation_calc_normals(const cv::Mat_<cv::Vec3f> &poin
                 normals(j,i) = normed(normals(j,i));
     
     return normals;
-}
-
-void PointRectSegmentator::set(cv::Mat_<cv::Vec3f> &points)
-{
-    _points = smooth_vc_segmentation(points);
-    
-    for(int j=0;j<_points.size().height;j++) {
-        cv::Vec3f *row = _points.ptr<cv::Vec3f>(j);
-        for(int i=0;i<_points.size().width;i++)
-            control_points.push_back(row[i]);
-    }
-    
-   vc_segmentation_scales(_points, _sx, _sy);
-    
-    _generator.reset(new GridCoords(&_points, _sx, _sy));
-}
-
-CoordGenerator *PointRectSegmentator::generator()
-{
-    return _generator.get();
 }

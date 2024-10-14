@@ -728,8 +728,7 @@ void CWindow::onStaticSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem 
 
     vc_segmentation_scales(points, sx, sy);
 
-    _segmentator = new PointRectSegmentator();
-    _segmentator->set(points);
+    _seg_slice = new GridCoords(points, sx, sy);
 
-    _slices->setSlice("segmentation", _segmentator->generator());
+    _slices->setSlice("segmentation", _seg_slice);
 }

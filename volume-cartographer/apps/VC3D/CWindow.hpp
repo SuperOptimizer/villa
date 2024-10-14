@@ -13,10 +13,8 @@ static constexpr int VOLPKG_MIN_VERSION = 6;
 static constexpr int VOLPKG_SLICE_MIN_INDEX = 0;
 
 //our own fw declarations
-class PlaneCoords;
-class CoordGenerator;
 class ChunkCache;
-class PointRectSegmentator;
+class CoordGenerator;
 
 namespace volcart {
     class Volume;
@@ -93,7 +91,7 @@ private slots:
     void onStaticSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous);
 private:
     std::shared_ptr<volcart::VolumePkg> fVpkg;
-    PointRectSegmentator* _segmentator;
+    CoordGenerator *_seg_slice;
     QString fVpkgPath;
     std::string fVpkgName;
 

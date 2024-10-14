@@ -464,7 +464,7 @@ void CVolumeViewer::renderVisible(bool force)
         }
     }
         
-    if (!_slice_vis_valid && _seg_tool && slice_plane) {
+    /*if (!_slice_vis_valid && _seg_tool && slice_plane) {
 #pragma omp parallel for
         for (auto &wp : _seg_tool->control_points) {
             float dist = slice_plane->pointDist(wp);
@@ -488,7 +488,7 @@ void CVolumeViewer::renderVisible(bool force)
         
         if (_seg_tool->control_points.size())
             _slice_vis_valid = true;
-    }
+    }*/
 }
 
 void CVolumeViewer::onScrolled()
