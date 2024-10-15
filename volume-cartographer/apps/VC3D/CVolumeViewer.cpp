@@ -231,9 +231,12 @@ void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, 
         return;
 
     cv::Vec3f surf_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
+
+    //FIXME actually work with a pointer ...
+    SurfacePointer *ptr = _surf->pointer();
     
-    cv::Vec3f n = _surf->normal(nullptr, surf_loc);
-    cv::Vec3f p = _surf->coord(nullptr, surf_loc);
+    cv::Vec3f n = _surf->normal(ptr, surf_loc);
+    cv::Vec3f p = _surf->coord(ptr, surf_loc);
     
 
     sendVolumeClicked(p, n, _surf, surf_loc, buttons, modifiers);
