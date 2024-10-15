@@ -82,6 +82,8 @@ public:
     // CoordGenerator *generator(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;
     float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th) override;
+
+    cv::Mat_<cv::Vec3f> rawPoints() { return _points; }
     
     friend QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search, int step_out);
     friend class ControlPointSurface;

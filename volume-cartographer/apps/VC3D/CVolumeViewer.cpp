@@ -432,18 +432,17 @@ void CVolumeViewer::renderVisible(bool force)
     
     fBaseImageItem->setOffset(curr_img_area.topLeft());
     PlaneSurface *plane = dynamic_cast<PlaneSurface*>(_surf);
-    //FIXME intersection with generic or quads surface!
-    // QuadsSurface *segment = dynamic_cast<GridCoords*>(_surf_col->surface("segmentation"));
+    QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface("segmentation"));
     
     if (_surf_col->surface("segmentation"))
         std::cout << "FIXME vis intersect" << std::endl;
-    /*if (!_intersect_valid && slice_plane && slice_segment) {
+    if (!_intersect_valid && plane && segmentation) {
         std::vector<std::vector<cv::Vec2f>> xy_seg_;
         std::vector<std::vector<cv::Vec3f>> intersections;
         
         cv::Rect plane_roi = {curr_img_area.x()/_ds_scale, curr_img_area.y()/_ds_scale, curr_img_area.width()/_ds_scale, curr_img_area.height()/_ds_scale};
         
-        find_intersect_segments(intersections, xy_seg_, slice_segment->_points, slice_plane, plane_roi, 4/_ds_scale);
+        find_intersect_segments(intersections, xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_ds_scale);
     
 
         for (auto seg : intersections) {
@@ -453,7 +452,7 @@ void CVolumeViewer::renderVisible(bool force)
             bool first = true;
             for (auto wp : seg)
             {
-                cv::Vec3f p = slice_plane->project(wp, 1.0, _ds_scale);
+                cv::Vec3f p = plane->project(wp, 1.0, _ds_scale);
                 if (first)
                     path.moveTo(p[0],p[1]);
                 else
@@ -464,7 +463,7 @@ void CVolumeViewer::renderVisible(bool force)
             item->setZValue(5);
             _intersect_items.push_back(item);
         }
-    }*/
+    }
         
     /*if (!_slice_vis_valid && _seg_tool && slice_plane) {
 #pragma omp parallel for

@@ -645,7 +645,6 @@ void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf
     if (modifiers & Qt::ControlModifier) {
         //TODO make this configurable and cleaner?
         //NOTE this comes before the focus poi, so focus is applied by views using these slices
-        std::cout << "FIXME segment-slices" << std::endl;
         QuadSurface *quad_surf = dynamic_cast<QuadSurface*>(surf);
         if (quad_surf) {
             PlaneSurface *segXZ = dynamic_cast<PlaneSurface*>(_surf_col->surface("seg xz"));
