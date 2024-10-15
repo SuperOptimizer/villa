@@ -206,6 +206,21 @@ void PlaneSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals
         }
 }
 
+
+cv::Vec3f PlaneSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    cv::Mat_<cv::Vec3f> coords;
+
+    gen(&coords, nullptr, {1,1}, ptr, 1.0, offset);
+
+    return coords(0,0);
+}
+
+cv::Vec3f PlaneSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    return _normal;
+}
+
 //TODO add non-cloning variant?
 QuadSurface::QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &scale)
 {
