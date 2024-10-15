@@ -40,6 +40,34 @@ public:
     // virtual void normal(SurfacePointer *ptr, cv::Vec3f offset);
 };
 
+class PlaneSurface : public Surface
+{
+public:
+    //Surface API FIXME
+    SurfacePointer *pointer() override { return nullptr; };
+    void move(SurfacePointer *ptr, const cv::Vec3f &offset) override {};
+    bool valid(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override { return false; };
+    cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override { return {0,0,0}; };
+    cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override { return {0,0,0}; };
+    cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override { return {0,0,0}; };
+    float pointTo(SurfacePointer *ptr, const cv::Vec3f &coord, float th) override { return 0.0; };
+
+    PlaneSurface() {};
+    PlaneSurface(cv::Vec3f origin_, cv::Vec3f normal_);
+
+    void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;
+
+    float pointDist(cv::Vec3f wp);
+    cv::Vec3f project(cv::Vec3f wp, float render_scale = 1.0, float coord_scale = 1.0);
+    void setNormal(cv::Vec3f normal);
+    // cv::Vec3f normal_legacy(const cv::Vec3f &loc = {0,0,0}) { return _normal; };
+    float scalarp(cv::Vec3f point) const;
+
+    cv::Vec3f origin = {0,0,0};
+protected:
+    cv::Vec3f _normal = {0,0,1};
+};
+
 //quads based surface class with a pointer of nominal scale 1
 class QuadSurface : public Surface
 {
@@ -123,3 +151,8 @@ protected:
     z5::Dataset *_ds;
     ChunkCache *_cache;
 };
+
+//TODO constrain to visible area? or add visiable area disaplay?
+void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step);
+
+float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, float init_step = 16.0, float min_step = 0.125);

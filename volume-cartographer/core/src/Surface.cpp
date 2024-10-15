@@ -6,6 +6,7 @@
 #include "SurfaceHelpers.hpp"
 
 #include <opencv2/imgproc.hpp>
+#include <opencv2/calib3d.hpp>
 //TODO remove
 #include <opencv2/highgui.hpp>
 
@@ -29,6 +30,182 @@ cv::Vec2f offsetPoint2d(TrivialSurfacePointer *ptr, const cv::Vec3f &offset)
     return {p[0], p[1]};
 }
 
+//NOTE we have 3 coordiante systems. Nominal (voxel volume) coordinates, internal relative (ptr) coords (where _center is at 0/0) and internal absolute (_points) coordinates where the upper left corner is at 0/0.
+static cv::Vec3f internal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal, const cv::Vec2f &scale)
+{
+    return internal + cv::Vec3f(nominal[0]*scale[0], nominal[1]*scale[1], nominal[2]);
+}
+
+static cv::Vec3f nominal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal, const cv::Vec2f &scale)
+{
+    return nominal + cv::Vec3f(internal[0]/scale[0], internal[1]/scale[1], internal[2]);
+}
+
+PlaneSurface::PlaneSurface(cv::Vec3f origin_, cv::Vec3f normal) : origin(origin_)
+{
+    cv::normalize(normal, _normal);
+
+};
+
+void PlaneSurface::setNormal(cv::Vec3f normal)
+{
+    cv::normalize(normal, _normal);
+}
+
+float PlaneSurface::pointDist(cv::Vec3f wp)
+{
+    float plane_off = origin.dot(_normal);
+    float scalarp = wp.dot(_normal) - plane_off /*- _z_off*/;
+
+    return abs(scalarp);
+}
+
+//given origin and normal, return the normalized vector v which describes a point : origin + v which lies in the plane and maximizes v.x at the cost of v.y,v.z
+static cv::Vec3f vx_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
+{
+    //impossible
+    if (n[1] == 0 && n[2] == 0)
+        return {0,0,0};
+
+    //also trivial
+    if (n[0] == 0)
+        return {1,0,0};
+
+    cv::Vec3f v = {1,0,0};
+
+    if (n[1] == 0) {
+        v[1] = 0;
+        //either n1 or n2 must be != 0, see first edge case
+        v[2] = -n[0]/n[2];
+        cv::normalize(v, v, 1,0, cv::NORM_L2);
+        return v;
+    }
+
+    if (n[2] == 0) {
+        //either n1 or n2 must be != 0, see first edge case
+        v[1] = -n[0]/n[1];
+        v[2] = 0;
+        cv::normalize(v, v, 1,0, cv::NORM_L2);
+        return v;
+    }
+
+    v[1] = -n[0]/(n[1]+n[2]);
+    v[2] = v[1];
+    cv::normalize(v, v, 1,0, cv::NORM_L2);
+
+    return v;
+}
+
+static cv::Vec3f vy_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
+{
+    cv::Vec3f v = vx_from_orig_norm({o[1],o[0],o[2]}, {n[1],n[0],n[2]});
+    return {v[1],v[0],v[2]};
+}
+
+static void vxy_from_normal(cv::Vec3f orig, cv::Vec3f normal, cv::Vec3f &vx, cv::Vec3f &vy)
+{
+    vx = vx_from_orig_norm(orig, normal);
+    vy = vy_from_orig_norm(orig, normal);
+
+    //TODO will there be a jump around the midpoint?
+    if (abs(vx[0]) >= abs(vy[1]))
+        vy = cv::Mat(normal).cross(cv::Mat(vx));
+    else
+        vx = cv::Mat(normal).cross(cv::Mat(vy));
+
+    //FIXME probably not the right way to normalize the direction?
+    if (vx[0] < 0)
+        vx *= -1;
+    if (vy[1] < 0)
+        vy *= -1;
+}
+
+cv::Vec3f PlaneSurface::project(cv::Vec3f wp, float render_scale, float coord_scale)
+{
+    cv::Vec3f vx, vy;
+
+    vxy_from_normal(origin,_normal,vx,vy);
+
+    vx = vx/render_scale/coord_scale;
+    vy = vy/render_scale/coord_scale;
+
+    std::vector <cv::Vec3f> src = {origin,origin+_normal,origin+vx,origin+vy};
+    std::vector <cv::Vec3f> tgt = {{0,0,0},{0,0,1},{1,0,0},{0,1,0}};
+    cv::Mat transf;
+    cv::Mat inliers;
+
+    cv::estimateAffine3D(src, tgt, transf, inliers, 0.1, 0.99);
+
+    cv::Mat M = transf({0,0,3,3});
+    cv::Mat T = transf({3,0,1,3});
+
+    cv::Mat_<double> res = M*cv::Vec3d(wp)+T;
+
+    return {res(0,0), res(0,1), res(0,2)};
+}
+
+float PlaneSurface::scalarp(cv::Vec3f point) const
+{
+    return point.dot(_normal) - origin.dot(_normal);
+}
+
+void PlaneSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
+{
+    assert(ptr == nullptr);
+    // TrivialSurfacePointer _ptr({0,0,0});
+    // if (!ptr)
+    //     ptr = &_ptr;
+    // TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+
+    bool create_normals = normals || offset[2] /*|| ptr_inst->loc[2]*/;
+
+    cv::Vec3f total_offset = internal_loc(offset, {0,0,0}/*ptr_inst->loc*/, {1,1});
+    // std::cout << "PlaneCoords::gen upper left" << upper_left_actual /*<< ptr_inst->loc*/ << origin << offset << scale << std::endl;
+
+    int w = size.width;
+    int h = size.height;
+
+    cv::Mat_<cv::Vec3f> _coords_header;
+    cv::Mat_<cv::Vec3f> _normals_header;
+
+    if (!coords)
+        coords = &_coords_header;
+    if (!normals)
+        normals = &_normals_header;
+
+    coords->create(size);
+
+    if (create_normals) {
+        // std::cout << "FIX offset for GridCoords::gen_coords!" << std::endl;
+
+        normals->create(size);
+        // for(int j=0;j<h;j++)
+        //     for(int i=0;i<w;i++)
+        //         (*normals)(j, i) = grid_normal(*coords, {i,j});
+        //
+        // *coords += (*normals)*upper_left_actual[2];
+    }
+
+    cv::Vec3f vx, vy;
+    vxy_from_normal(origin,_normal,vx,vy);
+
+    float m = 1/scale;
+
+    cv::Vec3f use_origin = origin + _normal*total_offset[2];
+
+    std::cout << "using vx vy normal " << vx << vy << _normal << total_offset << std::endl;
+
+#pragma omp parallel for
+    for(int j=0;j<h;j++)
+        for(int i=0;i<w;i++) {
+            // cv::Vec3f p = vx*(i*m+total_offset[0]) + vy*(j*m+total_offset[1]) + _normal*total_offset[2] + origin;
+            // (*coords)(j,i)[0] = p[2];
+            // (*coords)(j,i)[1] = p[1];
+            // (*coords)(j,i)[2] = p[0];
+            (*coords)(j,i) = vx*(i*m+total_offset[0]) + vy*(j*m+total_offset[1]) + use_origin;
+        }
+}
+
 //TODO add non-cloning variant?
 QuadSurface::QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &scale)
 {
@@ -43,17 +220,6 @@ QuadSurface::QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &sca
 SurfacePointer *QuadSurface::pointer()
 {
     return new TrivialSurfacePointer({0,0,0});
-}
-
-//NOTE we have 3 coordiante systems. Nominal (voxel volume) coordinates, internal relative (ptr) coords (where _center is at 0/0) and internal absolute (_points) coordinates where the upper left corner is at 0/0.
-static cv::Vec3f internal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal, const cv::Vec2f &scale)
-{
-    return internal + cv::Vec3f(nominal[0]*scale[0], nominal[1]*scale[1], nominal[2]);
-}
-
-static cv::Vec3f nominal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal, const cv::Vec2f &scale)
-{
-    return nominal + cv::Vec3f(internal[0]/scale[0], internal[1]/scale[1], internal[2]);
 }
 
 //FIXME loc & offset_unscaled are redundant!
@@ -139,6 +305,100 @@ static float sdist(const cv::Vec3f &a, const cv::Vec3f &b)
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
     return{a[0]*b[0],a[1]*b[1]};
+}
+
+static float tdist(const cv::Vec3f &a, const cv::Vec3f &b, float t_dist)
+{
+    cv::Vec3f d = a-b;
+    float l = sqrt(d.dot(d));
+
+    return abs(l-t_dist);
+}
+
+static float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds)
+{
+    float sum = 0;
+    for(int i=0;i<tgts.size();i++) {
+        float d = tdist(v, tgts[i], tds[i]);
+        sum += d*d;
+    }
+
+    return sum;
+}
+
+//search location in points where we minimize error to multiple objectives using iterated local search
+//tgts,tds -> distance to some POIs
+//plane -> stay on plane
+float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, float init_step, float min_step)
+{
+    // std::cout << "start minlo" << loc << std::endl;
+    cv::Rect boundary(1,1,points.cols-2,points.rows-2);
+    if (!boundary.contains({loc[0],loc[1]})) {
+        out = {-1,-1,-1};
+        return -1;
+    }
+
+    bool changed = true;
+    cv::Vec3f val = at_int(points, loc);
+    out = val;
+    float best = tdist_sum(val, tgts, tds);
+    if (plane) {
+        float d = plane->pointDist(val);
+        best += d*d;
+    }
+    float res;
+
+    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
+    std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
+    float step = init_step;
+
+
+    // std::cout << "init " << best << tgts[0] << val << loc << "\n";
+
+
+    while (changed) {
+        changed = false;
+
+        for(auto &off : search) {
+            cv::Vec2f cand = loc+off*step;
+
+            if (!boundary.contains({cand[0],cand[1]})) {
+                out = {-1,-1,-1};
+                loc = {-1,-1};
+                return -1;
+            }
+
+
+            val = at_int(points, cand);
+            // std::cout << "at" << cand << val << std::endl;
+            res = tdist_sum(val, tgts, tds);
+            if (plane) {
+                float d = plane->pointDist(val);
+                res += d*d;
+            }
+            if (res < best) {
+                // std::cout << res << val << step << cand << "\n";
+                changed = true;
+                best = res;
+                loc = cand;
+                out = val;
+            }
+            // else
+            // std::cout << "(" << res << val << step << cand << "\n";
+        }
+
+        if (changed)
+            continue;
+
+        step *= 0.5;
+        changed = true;
+
+        if (step < min_step)
+            break;
+    }
+
+    // std::cout << "best" << best << out << "\n" <<  std::endl;
+    return best;
 }
 
 static float search_min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt, cv::Vec2f init_step, float min_step_x)
@@ -459,13 +719,13 @@ void ControlPointSurface::move(SurfacePointer *ptr, const cv::Vec3f &offset)
 }
 bool ControlPointSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
-    _base->valid(ptr, offset);
+    return _base->valid(ptr, offset);
 }
 
 cv::Vec3f ControlPointSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     std::cout << "FIXME: implement ControlPointSurface::loc()" << std::endl;
-    cv::Vec3f(-1,-1,-1);
+    return cv::Vec3f(-1,-1,-1);
 }
 
 cv::Vec3f ControlPointSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
@@ -473,13 +733,13 @@ cv::Vec3f ControlPointSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offse
     //FIXME should actually check distance between control point and surface ...
     // return _base(ptr) + _normal*10;
     std::cout << "FIXME: implement ControlPointSurface::coord()" << std::endl;
-    cv::Vec3f(-1,-1,-1);
+    return cv::Vec3f(-1,-1,-1);
 }
 
 cv::Vec3f ControlPointSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     std::cout << "FIXME: implement ControlPointSurface::normal()" << std::endl;
-    cv::Vec3f(-1,-1,-1);
+    return cv::Vec3f(-1,-1,-1);
 }
 
 /*CoordGenerator *ControlPointSurface::generator(SurfacePointer *ptr, const cv::Vec3f &offset)
@@ -536,7 +796,7 @@ void ControlPointSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> 
         cv::Rect roi(p_loc[0]-40,p_loc[1]-40,80,80);
         cv::Rect area = roi & bounds;
         
-        PlaneCoords plane(p.control_point, p.normal);
+        PlaneSurface plane(p.control_point, p.normal);
         float delta = plane.scalarp(_base->coord(p.ptr));
         cv::Vec3f move = delta*p.normal;
         
@@ -555,7 +815,7 @@ void ControlPointSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> 
 float ControlPointSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
 {
     //surfacepointer is supposed to always stay in the same nominal coordinates - so always refer down to the most lowest level / input / source
-    _base->pointTo(ptr, tgt, th);
+    return _base->pointTo(ptr, tgt, th);
 }
 void ControlPointSurface::setBase(QuadSurface *base)
 {
@@ -782,13 +1042,13 @@ void RefineCompSurface::move(SurfacePointer *ptr, const cv::Vec3f &offset)
 }
 bool RefineCompSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
-    _base->valid(ptr, offset);
+    return _base->valid(ptr, offset);
 }
 
 cv::Vec3f RefineCompSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     std::cout << "FIXME: implement RefineCompSurface::loc()" << std::endl;
-    cv::Vec3f(-1,-1,-1);
+    return cv::Vec3f(-1,-1,-1);
 }
 
 cv::Vec3f RefineCompSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
@@ -796,13 +1056,13 @@ cv::Vec3f RefineCompSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
     //FIXME should actually check distance between control point and surface ...
     // return _base(ptr) + _normal*10;
     std::cout << "FIXME: implement RefineCompSurface::coord()" << std::endl;
-    cv::Vec3f(-1,-1,-1);
+    return cv::Vec3f(-1,-1,-1);
 }
 
 cv::Vec3f RefineCompSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     std::cout << "FIXME: implement RefineCompSurface::normal()" << std::endl;
-    cv::Vec3f(-1,-1,-1);
+    return cv::Vec3f(-1,-1,-1);
 }
 
 void RefineCompSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> *normals_, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
@@ -879,10 +1139,199 @@ void RefineCompSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> *n
 float RefineCompSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
 {
     //surfacepointer is supposed to always stay in the same nominal coordinates - so always refer down to the most lowest level / input / source
-    _base->pointTo(ptr, tgt, th);
+    return _base->pointTo(ptr, tgt, th);
 }
 
 void RefineCompSurface::setBase(QuadSurface *base)
 {
     _base = base;
+}
+
+void set_block(cv::Mat_<uint8_t> &block, const cv::Vec3f &last_loc, const cv::Vec3f &loc, const cv::Rect &roi, float step)
+{
+    int x1 = (loc[0]-roi.x)/step;
+    int y1 = (loc[1]-roi.y)/step;
+    int x2 = (last_loc[0]-roi.x)/step;
+    int y2 = (last_loc[1]-roi.y)/step;
+
+    if (x1 < 0 || y1 < 0 || x1 >= block.cols || y1 >= block.rows)
+        return;
+    if (x2 < 0 || y2 < 0 || x2 >= block.cols || y2 >= block.rows)
+        return;
+
+    if (x1 == x2 && y1 == y2)
+        block(y1, x1) = 1;
+    else
+        cv::line(block, {x1,y1},{x2,y2}, 1);
+}
+
+uint8_t get_block(const cv::Mat_<uint8_t> &block, const cv::Vec3f &loc, const cv::Rect &roi, float step)
+{
+    int x = (loc[0]-roi.x)/step;
+    int y = (loc[1]-roi.y)/step;
+
+    if (x < 0 || y < 0 || x >= block.cols || y >= block.rows)
+        return 1;
+
+    return block(y, x);
+}
+
+void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step)
+{
+    //start with random points and search for a plane intersection
+
+    float block_step = 0.5*step;
+
+    cv::Mat_<uint8_t> block(cv::Size(plane_roi.width/block_step, plane_roi.height/block_step), 0);
+
+    cv::Rect grid_bounds(1,1,points.cols-2,points.rows-2);
+
+    for(int r=0;r<100;r++) {
+        std::vector<cv::Vec3f> seg;
+        std::vector<cv::Vec2f> seg_loc;
+        std::vector<cv::Vec3f> seg2;
+        std::vector<cv::Vec2f> seg_loc2;
+        cv::Vec2f loc;
+        cv::Vec2f loc2;
+        cv::Vec2f loc3;
+        cv::Vec3f point;
+        cv::Vec3f point2;
+        cv::Vec3f point3;
+        cv::Vec3f plane_loc;
+        cv::Vec3f last_plane_loc;
+        float dist = -1;
+
+
+        //initial points
+        for(int i=0;i<100;i++) {
+            loc = {std::rand() % (points.cols-1), std::rand() % (points.rows-1)};
+            point = at_int(points, loc);
+
+            plane_loc = plane->project(point);
+            if (!plane_roi.contains({plane_loc[0],plane_loc[1]}))
+                continue;
+
+                dist = min_loc(points, loc, point, {}, {}, plane);
+
+                plane_loc = plane->project(point);
+                if (!plane_roi.contains({plane_loc[0],plane_loc[1]}))
+                    dist = -1;
+
+                    if (get_block(block, plane_loc, plane_roi, block_step))
+                        dist = -1;
+
+            if (dist >= 0 && dist <= 1)
+                break;
+        }
+
+        // std::cout << loc << " init at dist " << dist << std::endl;
+
+        if (dist < 0 || dist > 1)
+            continue;
+
+        seg.push_back(point);
+        seg_loc.push_back(loc);
+
+        //point2
+        loc2 = loc;
+        //search point at distance of 1 to init point
+        dist = min_loc(points, loc2, point2, {point}, {1}, plane);
+
+        if (dist < 0 || dist > 1)
+            continue;
+
+        seg.push_back(point2);
+        seg_loc.push_back(loc2);
+
+        last_plane_loc = plane->project(point);
+        plane_loc = plane->project(point2);
+        set_block(block, last_plane_loc, plane_loc, plane_roi, block_step);
+        last_plane_loc = plane_loc;
+
+        //go one direction
+        for(int n=0;n<100;n++) {
+            //now search following points
+            cv::Vec2f loc3 = loc2+loc2-loc;
+
+            if (!grid_bounds.contains({loc3[0],loc3[1]}))
+                break;
+
+                point3 = at_int(points, loc3);
+
+                //search point close to prediction + dist 1 to last point
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5);
+
+                //then refine
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.5);
+
+                if (dist < 0 || dist > 1)
+                    break;
+
+            seg.push_back(point3);
+            seg_loc.push_back(loc3);
+            point = point2;
+            point2 = point3;
+            loc = loc2;
+            loc2 = loc3;
+
+            plane_loc = plane->project(point3);
+            if (get_block(block, plane_loc, plane_roi, block_step))
+                break;
+
+            set_block(block, last_plane_loc, plane_loc, plane_roi, block_step);
+            last_plane_loc = plane_loc;
+        }
+
+        //now the other direction
+        loc2 = seg_loc[0];
+        loc = seg_loc[1];
+        point2 = seg[0];
+        point = seg[1];
+
+        last_plane_loc = plane->project(point2);
+
+        //FIXME repeat by not copying code ...
+        for(int n=0;n<100;n++) {
+            //now search following points
+            cv::Vec2f loc3 = loc2+loc2-loc;
+
+            if (!grid_bounds.contains({loc3[0],loc3[1]}))
+                break;
+
+                point3 = at_int(points, loc3);
+
+                //search point close to prediction + dist 1 to last point
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5);
+
+                //then refine
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.5);
+
+                if (dist < 0 || dist > 1)
+                    break;
+
+            seg2.push_back(point3);
+            seg_loc2.push_back(loc3);
+            point = point2;
+            point2 = point3;
+            loc = loc2;
+            loc2 = loc3;
+
+            plane_loc = plane->project(point3);
+            if (get_block(block, plane_loc, plane_roi, block_step))
+                break;
+
+            set_block(block, last_plane_loc, plane_loc, plane_roi, block_step);
+            last_plane_loc = plane_loc;
+        }
+
+        std::reverse(seg2.begin(), seg2.end());
+        std::reverse(seg_loc2.begin(), seg_loc2.end());
+
+        seg2.insert(seg2.end(), seg.begin(), seg.end());
+        seg_loc2.insert(seg_loc2.end(), seg_loc.begin(), seg_loc.end());
+
+
+        seg_vol.push_back(seg2);
+        seg_grid.push_back(seg_loc2);
+    }
 }

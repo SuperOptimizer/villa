@@ -66,6 +66,7 @@ include_directories(${GSL_INCLUDE_DIRS})
 target_link_libraries(${target}
     VC::core
     VC::slicing
+    VC::surface
     VC::meshing
     VC::segmentation
     Qt6::Core

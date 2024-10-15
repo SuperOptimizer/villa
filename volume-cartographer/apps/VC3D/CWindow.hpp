@@ -14,7 +14,7 @@ static constexpr int VOLPKG_SLICE_MIN_INDEX = 0;
 
 //our own fw declarations
 class ChunkCache;
-class CoordGenerator;
+class Surface;
 
 namespace volcart {
     class Volume;
@@ -42,13 +42,13 @@ public:
 signals:
     void sendLocChanged(int x, int y, int z);
     void sendVolumeChanged(std::shared_ptr<volcart::Volume> vol);
-    void sendSliceChanged(std::string,CoordGenerator*);
+    void sendSliceChanged(std::string,Surface*);
 
 public slots:
     void onShowStatusMessage(QString text, int timeout);
     void onLocChanged(void);
-    void onPlaneSliceChanged(void);
-    void onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, CoordGenerator *slice, cv::Vec3f slice_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
+    void onManualPlaneChanged(void);
+    void onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf, cv::Vec3f slice_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
 
 public:
     CWindow();
@@ -91,7 +91,7 @@ private slots:
     void onStaticSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous);
 private:
     std::shared_ptr<volcart::VolumePkg> fVpkg;
-    CoordGenerator *_seg_slice;
+    Surface *_seg_surf;
     QString fVpkgPath;
     std::string fVpkgName;
 
@@ -134,7 +134,7 @@ private:
     
     ChunkCache *chunk_cache;
     std::vector<CVolumeViewer*> _viewers;
-    CSurfaceCollection *_slices;
+    CSurfaceCollection *_surf_col;
 };  // class CWindow
 
 }  // namespace ChaoVis

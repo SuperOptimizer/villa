@@ -4,10 +4,10 @@
 
 using namespace ChaoVis;
 
-void CSurfaceCollection::setSlice(const std::string &name, CoordGenerator* slice)
+void CSurfaceCollection::setSurface(const std::string &name, Surface* surf)
 {
-    _slices[name] = slice;
-    sendSliceChanged(name, slice);
+    _surfs[name] = surf;
+    sendSurfaceChanged(name, surf);
 }
 
 void CSurfaceCollection::setPOI(const std::string &name, POI *poi)
@@ -16,11 +16,11 @@ void CSurfaceCollection::setPOI(const std::string &name, POI *poi)
     sendPOIChanged(name, poi);
 }
 
-CoordGenerator* CSurfaceCollection::slice(const std::string &name)
+Surface* CSurfaceCollection::surface(const std::string &name)
 {
-    if (!_slices.count(name))
+    if (!_surfs.count(name))
         return nullptr;
-    return _slices[name];
+    return _surfs[name];
 }
 
 POI *CSurfaceCollection::poi(const std::string &name)
@@ -30,10 +30,10 @@ POI *CSurfaceCollection::poi(const std::string &name)
     return _pois[name];
 }
 
-std::vector<std::string> CSurfaceCollection::slices()
+std::vector<std::string> CSurfaceCollection::surfaces()
 {
     std::vector<std::string> keys;
-    for(auto &it : _slices)
+    for(auto &it : _surfs)
         keys.push_back(it.first);
     
     return keys;

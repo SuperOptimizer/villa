@@ -8,10 +8,10 @@ namespace z5
     class Dataset;
 }
 
-class SurfacePointer;
+// class SurfacePointer;
 
 //TODO replace coord-generator with surface!
-class CoordGenerator
+/*class CoordGenerator
 {
 public:
     //given input volume shape, fill a coord slice
@@ -29,10 +29,10 @@ public:
     virtual cv::Vec3f coord_legacy(const cv::Vec3f &loc = {0,0,0});
 protected:
     float _z_off = 0;
-};
+};*/
 
 //FIXME make normal private and keep normalized
-class PlaneCoords : public CoordGenerator
+/*class PlaneCoords : public CoordGenerator
 {
 public:
     PlaneCoords() {};
@@ -53,10 +53,10 @@ public:
     cv::Vec3f origin = {0,0,0};
 protected:
     cv::Vec3f _normal = {0,0,1};
-};
+};*/
 
 //FIXME make normal private and keep normalized
-class GridCoords : public CoordGenerator
+/*class GridCoords : public CoordGenerator
 {
 public:
     GridCoords() {};
@@ -71,12 +71,7 @@ public:
     float _sx = 1.0;
     float _sy = 1.0;
     cv::Vec3f _offset;
-};
-
-//TODO constrain to visible area? or add visiable area disaplay?
-void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneCoords *plane, const cv::Rect &plane_roi, float step);
-
-float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneCoords *plane, float init_step = 16.0, float min_step = 0.125);
+};*/
 
 //TODO generation overrun
 //TODO groupkey overrun

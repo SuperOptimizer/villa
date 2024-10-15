@@ -11,6 +11,8 @@
 #include "SegmentationStruct.hpp"
 #include "CSurfaceCollection.hpp"
 
+#include "vc/core/types/VolumePkg.hpp"
+#include "vc/core/util/Surface.hpp"
 #include "vc/core/util/Slicing.hpp"
 
 using namespace ChaoVis;
@@ -22,7 +24,7 @@ using qga = QGuiApplication;
 #define ZOOM_FACTOR 2.0 //1.414213562373095
 
 // Constructor
-CVolumeViewer::CVolumeViewer(CSurfaceCollection *slices, QWidget* parent)
+CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, QWidget* parent)
     : QWidget(parent)
     , fCanvas(nullptr)
     // , fScrollArea(nullptr)
@@ -35,7 +37,7 @@ CVolumeViewer::CVolumeViewer(CSurfaceCollection *slices, QWidget* parent)
     , fImgQImage(nullptr)
     , fBaseImageItem(nullptr)
     , fScanRange(1)
-    , _slice_col(slices)
+    , _surf_col(col)
 {
     fBaseImageItem = nullptr;
 
@@ -115,18 +117,19 @@ QPointF visible_center(QGraphicsView *view)
 
 void CVolumeViewer::onCursorMove(QPointF scene_loc)
 {
-    if (!_slice)
+    // std::cout << "FIXME CVolumeViewer::onCursorMove()" << std::endl;
+    /*if (!_surf)
         return;
     
     cv::Vec3f slice_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
 
-    POI *cursor = _slice_col->poi("cursor");
+    POI *cursor = _surf_col->poi("cursor");
     if (!cursor)
         cursor = new POI;
     
-    cursor->p = _slice->coord_legacy(slice_loc);
+    cursor->p = _surf->coord_legacy(slice_loc);
     
-    _slice_col->setPOI("cursor", cursor);
+    _surf_col->setPOI("cursor", cursor);*/
 }
 
 void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers modifiers)
@@ -135,12 +138,13 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
     invalidateVis();
     invalidateIntersect();
     
-    if (!_slice)
+    if (!_surf)
         return;
     
     if (modifiers & Qt::ShiftModifier) {
-        _slice->setOffsetZ(_slice->offsetZ()+steps);
-        _slice_col->setSlice(_slice_name, _slice);
+        std::cout << "FIXME zoffset onzoom" << std::endl;
+        // _surf->setOffsetZ(_surf->offsetZ()+steps);
+        // _surf_col->setSlice(_surf_name, _surf);
     }
     else {
         float zoom = pow(ZOOM_FACTOR, steps);
@@ -200,9 +204,10 @@ void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
     renderVisible(true);
 }
 
-cv::Vec3f loc3d_at_imgpos(volcart::Volume *vol, CoordGenerator *slice, QPointF loc, float scale)
+cv::Vec3f loc3d_at_imgpos(volcart::Volume *vol, Surface *surf, QPointF loc, float scale)
 {
-    xt::xarray<float> coords;
+    std::cout << "FIXME Cvolview::loc3d_at_imgpos()" << std::endl;
+    /*xt::xarray<float> coords;
     
     int sd_idx = 1;
     
@@ -216,21 +221,23 @@ cv::Vec3f loc3d_at_imgpos(volcart::Volume *vol, CoordGenerator *slice, QPointF l
     
     coords /= round_scale;
     
-    return {coords(0,0,2),coords(0,0,1),coords(0,0,0)};
+    return {coords(0,0,2),coords(0,0,1),coords(0,0,0)};*/
+    return {0,0,0};
 }
 
 void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
 {
-    if (!_slice)
+    std::cout << "FIXME CVolumeViewer::onVolumeClicked()" << std::endl;
+    /*if (!_surf)
         return;
 
-    cv::Vec3f slice_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
+    cv::Vec3f surf_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
     
-    cv::Vec3f n = _slice->normal_legacy(slice_loc);
-    cv::Vec3f p = _slice->coord_legacy(slice_loc);
+    cv::Vec3f n = _surf->normal_legacy(surf_loc);
+    cv::Vec3f p = _surf->coord_legacy(surf_loc);
     
 
-    sendVolumeClicked(p, n, _slice, slice_loc, buttons, modifiers);
+    sendVolumeClicked(p, n, _surf, surf_loc, buttons, modifiers);*/
 }
 
 void CVolumeViewer::setCache(ChunkCache *cache_)
@@ -238,11 +245,11 @@ void CVolumeViewer::setCache(ChunkCache *cache_)
     cache = cache_;
 }
 
-void CVolumeViewer::setSlice(const std::string &name)
+void CVolumeViewer::setSurface(const std::string &name)
 {
-    _slice_name = name;
-    _slice = nullptr;
-    onSliceChanged(name, _slice_col->slice(name));
+    _surf_name = name;
+    _surf = nullptr;
+    onSurfaceChanged(name, _surf_col->surface(name));
 }
 
 
@@ -266,22 +273,22 @@ void CVolumeViewer::invalidateIntersect()
     _intersect_items.resize(0);
 }
 
-void CVolumeViewer::onSliceChanged(std::string name, CoordGenerator *slice)
+void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
 {
     //TODO distinguis different elements for rendering! (slice, intersect, control points) completely separately!
-    if (_slice_name == "segmentation")
+    if (_surf_name == "segmentation")
         invalidateIntersect();
     
-    if (_slice_name == name) {
-        _slice = slice;
-        if (!_slice)
+    if (_surf_name == name) {
+        _surf = surf;
+        if (!_surf)
             fScene->clear();
         else
             invalidateVis();
     }
     
-    //FIXME do not re-render slice if only segmentation changed?
-    if (name == _slice_name || name == "segmentation") {
+    //FIXME do not re-render surf if only segmentation changed?
+    if (name == _surf_name || name == "segmentation") {
         curr_img_area = {0,0,0,0};
         renderVisible();
     }
@@ -322,7 +329,7 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
         return;
     
     if (name == "focus") {
-        PlaneCoords *plane = dynamic_cast<PlaneCoords*>(_slice);
+        PlaneSurface *plane = dynamic_cast<PlaneSurface*>(_surf);
         
         if (!plane)
             return;
@@ -334,10 +341,10 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
         
         plane->origin = poi->p;
         
-        _slice_col->setSlice(_slice_name, plane);
+        _surf_col->setSurface(_surf_name, plane);
     }
     else if (name == "cursor") {
-        PlaneCoords *slice_plane = dynamic_cast<PlaneCoords*>(_slice);
+        PlaneSurface *slice_plane = dynamic_cast<PlaneSurface*>(_surf);
         
         if (slice_plane) {
             
@@ -360,20 +367,12 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
     }
 }
 
-void CVolumeViewer::onSegmentatorChanged(std::string name, ControlPointSegmentator *seg)
-{
-    if (name != "default")
-        return;
-
-    _seg_tool = seg;
-}
-
 cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 {
     // xt::xarray<float> coords;
     // xt::xarray<uint8_t> img;
 
-    // _slice->gen_coords(coords, roi, 1.0, _ds_scale);
+    // _surf->gen_coords(coords, roi, 1.0, _ds_scale);
     // readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords, cache);
     // cv::Mat m = cv::Mat(img.shape(0), img.shape(1), CV_8U, img.data());
 
@@ -381,7 +380,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 
     cv::Mat_<cv::Vec3f> coords;
     cv::Mat_<uint8_t> img;
-    _slice->gen(&coords, nullptr, roi.size(), nullptr, _ds_scale, {roi.x/_ds_scale, roi.y/_ds_scale, 0.0f});
+    _surf->gen(&coords, nullptr, roi.size(), nullptr, _ds_scale, {roi.x/_ds_scale, roi.y/_ds_scale, 0.0f});
     readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords*_ds_scale, cache);
 
     // void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override {};
@@ -410,7 +409,7 @@ private:
 
 void CVolumeViewer::renderVisible(bool force)
 {
-    if (!volume || !volume->zarrDataset() || !_slice)
+    if (!volume || !volume->zarrDataset() || !_surf)
         return;
     
     QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->viewport()->geometry()).boundingRect();
@@ -443,10 +442,13 @@ void CVolumeViewer::renderVisible(bool force)
     _center_marker->setParentItem(fBaseImageItem);
     
     fBaseImageItem->setOffset(curr_img_area.topLeft());
-    PlaneCoords *slice_plane = dynamic_cast<PlaneCoords*>(_slice);
-    GridCoords *slice_segment = dynamic_cast<GridCoords*>(_slice_col->slice("segmentation"));
+    PlaneSurface *plane = dynamic_cast<PlaneSurface*>(_surf);
+    //FIXME intersection with generic or quads surface!
+    // QuadsSurface *segment = dynamic_cast<GridCoords*>(_surf_col->surface("segmentation"));
     
-    if (!_intersect_valid && slice_plane && slice_segment) {
+    if (_surf_col->surface("segmentation"))
+        std::cout << "FIXME vis intersect" << std::endl;
+    /*if (!_intersect_valid && slice_plane && slice_segment) {
         std::vector<std::vector<cv::Vec2f>> xy_seg_;
         std::vector<std::vector<cv::Vec3f>> intersections;
         
@@ -473,7 +475,7 @@ void CVolumeViewer::renderVisible(bool force)
             item->setZValue(5);
             _intersect_items.push_back(item);
         }
-    }
+    }*/
         
     /*if (!_slice_vis_valid && _seg_tool && slice_plane) {
 #pragma omp parallel for

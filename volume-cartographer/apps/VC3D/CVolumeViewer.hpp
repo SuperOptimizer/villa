@@ -5,13 +5,14 @@
 #include <QtWidgets>
 #include <opencv2/core/core.hpp>
 
-#include "vc/core/types/VolumePkg.hpp"
-
-class PlaneCoords;
-class CoordGenerator;
 class ChunkCache;
-class ControlPointSegmentator;
+class Surface;
+
 class QGraphicsScene;
+
+namespace volcart {
+    class Volume;
+}
 
 namespace ChaoVis
 {
@@ -41,7 +42,7 @@ public:
     void ResetRotation();
     void setCache(ChunkCache *cache);
     void loadSlice();
-    void setSlice(const std::string &name);
+    void setSurface(const std::string &name);
     cv::Mat getCoordSlice();
     void renderVisible(bool force = false);
     cv::Mat render_area(const cv::Rect &roi);
@@ -51,11 +52,10 @@ public:
     CVolumeViewerView* fGraphicsView;
 
 public slots:
-    void OnVolumeChanged(volcart::Volume::Pointer vol);
+    void OnVolumeChanged(std::shared_ptr<volcart::Volume> vol);
     void onVolumeClicked(QPointF scene_loc,Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
-    void onSliceChanged(std::string name, CoordGenerator *slice);
+    void onSurfaceChanged(std::string name, Surface *surf);
     void onPOIChanged(std::string name, POI *poi);
-    void onSegmentatorChanged(std::string name, ControlPointSegmentator *seg);
     void onScrolled();
     void onZoom(int steps, QPointF scene_point, Qt::KeyboardModifiers modifiers);
     void onCursorMove(QPointF);
@@ -63,7 +63,7 @@ public slots:
 signals:
     void SendSignalSliceShift(int shift, int axis);
     void SendSignalStatusMessageAvailable(QString text, int timeout);
-    void sendVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, CoordGenerator *slice, cv::Vec3f slice_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
+    void sendVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf, cv::Vec3f surf_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void sendShiftNormal(cv::Vec3f step);
 
 protected:
@@ -98,9 +98,9 @@ protected:
 
     QGraphicsPixmapItem* fBaseImageItem;
     
-    volcart::Volume::Pointer volume = nullptr;
-    CoordGenerator *_slice = nullptr;
-    std::string _slice_name;
+    std::shared_ptr<volcart::Volume> volume = nullptr;
+    Surface *_surf = nullptr;
+    std::string _surf_name;
     int axis = 0;
     int loc[3] = {0,0,0};
     
@@ -115,15 +115,13 @@ protected:
     
     QGraphicsItem *_center_marker = nullptr;
     QGraphicsItem *_cursor = nullptr;
-    // std::vector<PlaneCoords*> other_slices;
     
     bool _slice_vis_valid = false;
     std::vector<QGraphicsItem*> slice_vis_items; 
     bool _intersect_valid = false;
-    std::vector<QGraphicsItem*> _intersect_items; 
-    ControlPointSegmentator *_seg_tool = nullptr;
+    std::vector<QGraphicsItem*> _intersect_items;;
     
-    CSurfaceCollection *_slice_col = nullptr;
+    CSurfaceCollection *_surf_col = nullptr;
 };  // class CVolumeViewer
 
 }  // namespace ChaoVis

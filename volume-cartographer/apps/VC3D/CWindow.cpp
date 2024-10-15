@@ -22,6 +22,7 @@
 #include "vc/segmentation/LocalResliceParticleSim.hpp"
 #include "vc/segmentation/OpticalFlowSegmentation.hpp"
 
+#include "vc/core/util/Surface.hpp"
 #include "vc/core/util/Slicing.hpp"
 
 namespace vc = volcart;
@@ -42,14 +43,14 @@ CWindow::CWindow() :
     //TODO make configurable
     chunk_cache = new ChunkCache(10e9);
     
-    _slices = new CSurfaceCollection();
+    _surf_col = new CSurfaceCollection();
     
     // seg_tool = new PointRectSegmentator();
     
-    _slices->setSlice("manual plane", new PlaneCoords({2000,2000,2000},{1,1,1}));
-    _slices->setSlice("xy plane", new PlaneCoords({2000,2000,2000},{0,0,1}));
-    _slices->setSlice("xz plane", new PlaneCoords({2000,2000,2000},{0,1,0}));
-    _slices->setSlice("yz plane", new PlaneCoords({2000,2000,2000},{1,0,0}));
+    _surf_col->setSurface("manual plane", new PlaneSurface({2000,2000,2000},{1,1,1}));
+    _surf_col->setSurface("xy plane", new PlaneSurface({2000,2000,2000},{0,0,1}));
+    _surf_col->setSurface("xz plane", new PlaneSurface({2000,2000,2000},{0,1,0}));
+    _surf_col->setSurface("yz plane", new PlaneSurface({2000,2000,2000},{1,0,0}));
     
     // create UI widgets
     CreateWidgets();
@@ -112,18 +113,18 @@ CWindow::~CWindow(void)
     SDL_Quit();
 }
 
-CVolumeViewer *CWindow::newConnectedCVolumeViewer(std::string show_slice, QMdiArea *mdiArea)
+CVolumeViewer *CWindow::newConnectedCVolumeViewer(std::string show_surf, QMdiArea *mdiArea)
 {
-    auto volView = new CVolumeViewer(_slices, mdiArea);
+    auto volView = new CVolumeViewer(_surf_col, mdiArea);
     QMdiSubWindow *win = mdiArea->addSubWindow(volView);
-    win->setWindowTitle(show_slice.c_str());
+    win->setWindowTitle(show_surf.c_str());
     volView->setCache(chunk_cache);
     connect(this, &CWindow::sendVolumeChanged, volView, &CVolumeViewer::OnVolumeChanged);
-    connect(_slices, &CSurfaceCollection::sendSliceChanged, volView, &CVolumeViewer::onSliceChanged);
-    connect(_slices, &CSurfaceCollection::sendPOIChanged, volView, &CVolumeViewer::onPOIChanged);
+    connect(_surf_col, &CSurfaceCollection::sendSurfaceChanged, volView, &CVolumeViewer::onSurfaceChanged);
+    connect(_surf_col, &CSurfaceCollection::sendPOIChanged, volView, &CVolumeViewer::onPOIChanged);
     connect(volView, &CVolumeViewer::sendVolumeClicked, this, &CWindow::onVolumeClicked);
     
-    volView->setSlice(show_slice);
+    volView->setSurface(show_surf);
     
     _viewers.push_back(volView);
     
@@ -140,7 +141,7 @@ void CWindow::setVolume(std::shared_ptr<volcart::Volume> newvol)
     
     // onVolumeClicked({0,0},{w/2,h/2,d/2});
     
-    onPlaneSliceChanged();
+    onManualPlaneChanged();
     sendVolumeChanged(currentVolume);
 }
 
@@ -205,9 +206,9 @@ void CWindow::CreateWidgets(void)
     for(int i=0;i<3;i++)
         spNorm[i]->setRange(-10,10);
     
-    connect(spNorm[0], &QDoubleSpinBox::valueChanged, this, &CWindow::onPlaneSliceChanged);
-    connect(spNorm[1], &QDoubleSpinBox::valueChanged, this, &CWindow::onPlaneSliceChanged);
-    connect(spNorm[2], &QDoubleSpinBox::valueChanged, this, &CWindow::onPlaneSliceChanged);
+    connect(spNorm[0], &QDoubleSpinBox::valueChanged, this, &CWindow::onManualPlaneChanged);
+    connect(spNorm[1], &QDoubleSpinBox::valueChanged, this, &CWindow::onManualPlaneChanged);
+    connect(spNorm[2], &QDoubleSpinBox::valueChanged, this, &CWindow::onManualPlaneChanged);
 }
 
 // Create menus
@@ -638,17 +639,17 @@ void CWindow::onLocChanged(void)
     // sendLocChanged(spinLoc[0]->value(),spinLoc[1]->value(),spinLoc[2]->value());
 }
 
-// Handle request to step impact range down
-void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, CoordGenerator *slice, cv::Vec3f slice_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
+void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf, cv::Vec3f surf_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
 {
     //current action: move default POI
     if (modifiers & Qt::ControlModifier) {
         //TODO make this configurable and cleaner?
         //NOTE this comes before the focus poi, so focus is applied by views using these slices
-        GridCoords *grid_slice = dynamic_cast<GridCoords*>(slice);
+        std::cout << "FIXME segment-slices" << std::endl;
+        /*GridCoords *grid_slice = dynamic_cast<GridCoords*>(surf);
         if (grid_slice) {
-            PlaneCoords *segXZ = dynamic_cast<PlaneCoords*>(_slices->slice("seg xz"));
-            PlaneCoords *segYZ = dynamic_cast<PlaneCoords*>(_slices->slice("seg yz"));
+            PlaneCoords *segXZ = dynamic_cast<PlaneCoords*>(_surf_col->surface("seg xz"));
+            PlaneCoords *segYZ = dynamic_cast<PlaneCoords*>(_surf_col->surface("seg yz"));
             cv::Vec3f p2;
             
             if (!segXZ)
@@ -666,20 +667,20 @@ void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, CoordGenerato
             segYZ->origin = vol_loc;
             segYZ->setNormal(p2-vol_loc);
             
-            _slices->setSlice("seg xz", segXZ);
-            _slices->setSlice("seg yz", segYZ);
-        }
+            _surf_col->setSurface("seg xz", segXZ);
+            _surf_col->setSurface("seg yz", segYZ);
+        }*/
         
-        POI *poi = _slices->poi("focus");
+        POI *poi = _surf_col->poi("focus");
         
         if (!poi)
             poi = new POI;
 
-        poi->src = slice;
+        poi->src = surf;
         poi->p = vol_loc;
         poi->n = normal;
         
-        _slices->setPOI("focus", poi);
+        _surf_col->setPOI("focus", poi);
         
         
 //FIXME add generic display of POIs!
@@ -692,8 +693,7 @@ void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, CoordGenerato
     }
 }
 
-// Handle request to step impact range down
-void CWindow::onPlaneSliceChanged(void)
+void CWindow::onManualPlaneChanged(void)
 {    
     cv::Vec3f normal;
     
@@ -701,13 +701,13 @@ void CWindow::onPlaneSliceChanged(void)
         normal[i] = spNorm[i]->value();
     }
  
-    PlaneCoords *plane = dynamic_cast<PlaneCoords*>(_slices->slice("manual plane"));
+    PlaneSurface *plane = dynamic_cast<PlaneSurface*>(_surf_col->surface("manual plane"));
  
     if (!plane)
         return;
  
     plane->setNormal(normal);
-    _slices->setSlice("manual plane", plane);
+    _surf_col->setSurface("manual plane", plane);
 }
 
 void CWindow::onStaticSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous)
@@ -728,7 +728,6 @@ void CWindow::onStaticSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem 
 
     vc_segmentation_scales(points, sx, sy);
 
-    _seg_slice = new GridCoords(points, sx, sy);
-
-    _slices->setSlice("segmentation", _seg_slice);
+    _seg_surf = new QuadSurface(points, {sx,sy});
+    _surf_col->setSurface("segmentation", _seg_surf);
 }
