@@ -18,7 +18,6 @@ namespace ChaoVis
 {
 
 class CVolumeViewerView;
-class SegmentationStruct;
 class CSurfaceCollection;
 class POI;
 
@@ -27,23 +26,11 @@ class CVolumeViewer : public QWidget
     Q_OBJECT
 
 public:
-    QPushButton* fNextBtn;
-    QPushButton* fPrevBtn;
     CVolumeViewer(CSurfaceCollection *col, QWidget* parent = 0);
     ~CVolumeViewer(void);
 
-    void Reset();
-
-    virtual void SetImage(const QImage& nSrc);
-    void SetImageIndex(int nImageIndex);
-    void SetNumSlices(int num);
-    void SetRotation(int degress);
-    void Rotate(int delta);
-    void ResetRotation();
     void setCache(ChunkCache *cache);
-    void loadSlice();
     void setSurface(const std::string &name);
-    cv::Mat getCoordSlice();
     void renderVisible(bool force = false);
     cv::Mat render_area(const cv::Rect &roi);
     void invalidateVis();
@@ -72,28 +59,10 @@ protected:
 
 protected:
     // widget components
-    // CVolumeViewerView* fGraphicsView;
     QGraphicsScene* fScene;
-
-    QLabel* fCanvas;
-    QScrollArea* fScrollArea;
-    QPushButton* fZoomInBtn;
-    QPushButton* fZoomOutBtn;
-    QPushButton* fResetBtn;
-    QSpinBox* fImageRotationSpin;
-    QHBoxLayout* fButtonsLayout;
-    // QComboBox* fAxisCombo;
 
     // data
     QImage* fImgQImage;
-    int sliceIndexToolStart{-1};
-    int fScanRange;  // how many slices a mouse wheel step will jump
-    // Required to be able to reset the rotation without also resetting the scaling
-    int currentRotation{0};
-
-    // user settings
-    bool fCenterOnZoomEnabled;
-    int fScrollSpeed{-1};
     bool fSkipImageFormatConv;
 
     QGraphicsPixmapItem* fBaseImageItem;

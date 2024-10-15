@@ -23,27 +23,14 @@ using qga = QGuiApplication;
 // #define ZOOM_FACTOR 1.148698354997035
 #define ZOOM_FACTOR 2.0 //1.414213562373095
 
-// Constructor
 CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, QWidget* parent)
     : QWidget(parent)
-    , fCanvas(nullptr)
-    // , fScrollArea(nullptr)
     , fGraphicsView(nullptr)
-    , fZoomInBtn(nullptr)
-    , fZoomOutBtn(nullptr)
-    , fResetBtn(nullptr)
-    , fNextBtn(nullptr)
-    , fPrevBtn(nullptr)
-    , fImgQImage(nullptr)
     , fBaseImageItem(nullptr)
-    , fScanRange(1)
     , _surf_col(col)
 {
-    fBaseImageItem = nullptr;
-
     // Create graphics view
     fGraphicsView = new CVolumeViewerView(this);
-    
     
     fGraphicsView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     fGraphicsView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
@@ -81,26 +68,6 @@ CVolumeViewer::~CVolumeViewer(void)
     deleteNULL(fScene);
 }
 
-void CVolumeViewer::SetImage(const QImage& nSrc)
-{
-    if (fImgQImage == nullptr) {
-        fImgQImage = new QImage(nSrc);
-    } else {
-        *fImgQImage = nSrc;
-    }
-
-    // Create a QPixmap from the QImage
-    QPixmap pixmap = QPixmap::fromImage(*fImgQImage, fSkipImageFormatConv ? Qt::NoFormatConversion : Qt::AutoColor);
-
-    // Add the QPixmap to the scene as a QGraphicsPixmapItem
-    if (!fBaseImageItem) {
-        fBaseImageItem = fScene->addPixmap(pixmap);
-    } else {
-        fBaseImageItem->setPixmap(pixmap);
-    }
-    update();
-}
-
 void round_scale(float &scale)
 {
     if (abs(scale-round(log2(scale))) < 0.02)
@@ -117,7 +84,6 @@ QPointF visible_center(QGraphicsView *view)
 
 void CVolumeViewer::onCursorMove(QPointF scene_loc)
 {
-    // std::cout << "FIXME CVolumeViewer::onCursorMove()" << std::endl;
     if (!_surf)
         return;
     
@@ -142,7 +108,6 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
         return;
     
     if (modifiers & Qt::ShiftModifier) {
-        std::cout << "FIXME zoffset onzoom" << std::endl;
         _z_off += steps;
         renderVisible(true);
     }
@@ -202,27 +167,6 @@ void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
     _min_scale = pow(2.0,1.-volume->numScales());
 
     renderVisible(true);
-}
-
-cv::Vec3f loc3d_at_imgpos(volcart::Volume *vol, Surface *surf, QPointF loc, float scale)
-{
-    std::cout << "FIXME Cvolview::loc3d_at_imgpos()" << std::endl;
-    /*xt::xarray<float> coords;
-    
-    int sd_idx = 1;
-    
-    float round_scale = 0.5;
-    while (0.5*round_scale >= scale && sd_idx < vol->numScales()-1) {
-        sd_idx++;
-        round_scale *= 0.5;
-    }
-    
-    slice->gen_coords(coords, loc.x()*round_scale/scale,loc.y()*round_scale/scale, 1, 1, scale/round_scale, round_scale);
-    
-    coords /= round_scale;
-    
-    return {coords(0,0,2),coords(0,0,1),coords(0,0,0)};*/
-    return {0,0,0};
 }
 
 void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
@@ -495,9 +439,4 @@ void CVolumeViewer::renderVisible(bool force)
 void CVolumeViewer::onScrolled()
 {
     renderVisible();
-}
-
-cv::Mat CVolumeViewer::getCoordSlice()
-{
-    return cv::Mat();
 }

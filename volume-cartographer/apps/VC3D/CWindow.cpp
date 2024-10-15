@@ -11,7 +11,6 @@
 #include "CVolumeViewer.hpp"
 #include "UDataManipulateUtils.hpp"
 #include "SettingsDialog.hpp"
-#include "UndoCommands.hpp"
 #include "CSurfaceCollection.hpp"
 
 #include "vc/core/types/Color.hpp"
@@ -38,14 +37,11 @@ CWindow::CWindow() :
     setWindowIcon(QPixmap(":/images/logo.png"));
     ui.setupUi(this);
     // setAttribute(Qt::WA_DeleteOnClose);
-    SDL_Init(SDL_INIT_AUDIO);
 
     //TODO make configurable
     chunk_cache = new ChunkCache(10e9);
     
     _surf_col = new CSurfaceCollection();
-    
-    // seg_tool = new PointRectSegmentator();
     
     _surf_col->setSurface("manual plane", new PlaneSurface({2000,2000,2000},{1,1,1}));
     _surf_col->setSurface("xy plane", new PlaneSurface({2000,2000,2000},{0,0,1}));
@@ -110,7 +106,6 @@ CWindow::CWindow() :
 // Destructor
 CWindow::~CWindow(void)
 {
-    SDL_Quit();
 }
 
 CVolumeViewer *CWindow::newConnectedCVolumeViewer(std::string show_surf, QMdiArea *mdiArea)
@@ -408,49 +403,6 @@ void CWindow::UpdateView(void)
     assignVol->setEnabled(can_change_volume_());
 
     update();
-}
-
-void CWindow::audio_callback(void *user_data, Uint8 *raw_buffer, int bytes) {
-        Sint16 *buffer = reinterpret_cast<Sint16*>(raw_buffer);
-        int length = bytes / 2; // 2 bytes per sample for AUDIO_S16SYS
-        int &sample_nr = *reinterpret_cast<int*>(user_data);
-
-        for (int i = 0; i < length; i++, sample_nr++)
-        {
-            double time = static_cast<double>(sample_nr) / FREQUENCY;
-            // This will give us a sine wave at 440 Hz
-            buffer[i] = static_cast<Sint16>(AMPLITUDE * std::sin(2.0f * 3.14159f * 440.0f * time));
-        }
-    }
-
-void CWindow::playPing() {
-    SDL_AudioSpec desiredSpec;
-
-    desiredSpec.freq = FREQUENCY;
-    desiredSpec.format = AUDIO_S16SYS;
-    desiredSpec.channels = 0;
-    desiredSpec.samples = 2048;
-    desiredSpec.callback = audio_callback;
-
-    int sample_nr = 0;
-
-    desiredSpec.userdata = &sample_nr;
-
-    SDL_AudioSpec obtainedSpec;
-
-    // you might want to look for errors here
-    SDL_OpenAudio(&desiredSpec, &obtainedSpec);
-
-    // start play audio
-    SDL_PauseAudio(0);
-
-    // play for 1000 milliseconds (1.0 second)
-    SDL_Delay(1000);
-
-    // Stop audio playback
-    SDL_PauseAudio(1);
-
-    SDL_CloseAudio();
 }
 
 void CWindow::onShowStatusMessage(QString text, int timeout)

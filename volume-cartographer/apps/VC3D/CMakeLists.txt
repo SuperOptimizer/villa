@@ -6,16 +6,12 @@ set(srcs
     VCAppMain.cpp
     CMesh.cpp
     CWindow.cpp
-    CXCurve.cpp
     UDataManipulateUtils.cpp
     CVolumeViewer.cpp
     CVolumeViewerView.cpp
-    CBSpline.cpp
-    CBezierCurve.cpp
     BlockingDialog.hpp
     ColorFrame.hpp
     SettingsDialog.cpp
-    UndoCommands.cpp
     CSurfaceCollection.cpp
 )
 
