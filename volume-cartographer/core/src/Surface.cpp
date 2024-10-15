@@ -597,8 +597,6 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals,
         
         *coords += (*normals)*upper_left_actual[2];
     }
-    
-    (*coords) *= scale;
 }
 /*CoordGenerator *QuadSurface::generator(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
