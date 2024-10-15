@@ -159,7 +159,7 @@ void PlaneSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals
 
     bool create_normals = normals || offset[2] /*|| ptr_inst->loc[2]*/;
 
-    cv::Vec3f total_offset = internal_loc(offset, {0,0,0}/*ptr_inst->loc*/, {1,1});
+    cv::Vec3f total_offset = internal_loc(offset/scale, {0,0,0}/*ptr_inst->loc*/, {1,1});
     // std::cout << "PlaneCoords::gen upper left" << upper_left_actual /*<< ptr_inst->loc*/ << origin << offset << scale << std::endl;
 
     int w = size.width;

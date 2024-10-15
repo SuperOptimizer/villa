@@ -380,7 +380,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 
     cv::Mat_<cv::Vec3f> coords;
     cv::Mat_<uint8_t> img;
-    _surf->gen(&coords, nullptr, roi.size(), nullptr, _ds_scale, {roi.x/_ds_scale, roi.y/_ds_scale, 0.0f});
+    _surf->gen(&coords, nullptr, roi.size(), nullptr, _ds_scale, {roi.x, roi.y, 0.0f});
     readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords*_ds_scale, cache);
 
     // void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override {};
