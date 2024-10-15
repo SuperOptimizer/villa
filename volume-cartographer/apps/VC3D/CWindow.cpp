@@ -646,30 +646,32 @@ void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf
         //TODO make this configurable and cleaner?
         //NOTE this comes before the focus poi, so focus is applied by views using these slices
         std::cout << "FIXME segment-slices" << std::endl;
-        /*GridCoords *grid_slice = dynamic_cast<GridCoords*>(surf);
-        if (grid_slice) {
-            PlaneCoords *segXZ = dynamic_cast<PlaneCoords*>(_surf_col->surface("seg xz"));
-            PlaneCoords *segYZ = dynamic_cast<PlaneCoords*>(_surf_col->surface("seg yz"));
+        QuadSurface *quad_surf = dynamic_cast<QuadSurface*>(surf);
+        if (quad_surf) {
+            PlaneSurface *segXZ = dynamic_cast<PlaneSurface*>(_surf_col->surface("seg xz"));
+            PlaneSurface *segYZ = dynamic_cast<PlaneSurface*>(_surf_col->surface("seg yz"));
             cv::Vec3f p2;
             
             if (!segXZ)
-                segXZ = new PlaneCoords();
+                segXZ = new PlaneSurface();
             if (!segYZ)
-                segYZ = new PlaneCoords();
-            
-            p2 = grid_slice->coord_legacy({slice_loc[0]+1,slice_loc[1],0});
+                segYZ = new PlaneSurface();
+
+            //FIXME actually properly use ptr ...
+            SurfacePointer *ptr = quad_surf->pointer();
+            p2 = quad_surf->coord(ptr, {surf_loc[0]+1,surf_loc[1],0});
             
             segXZ->origin = vol_loc;
             segXZ->setNormal(p2-vol_loc);
             
-            p2 = grid_slice->coord_legacy({slice_loc[0],slice_loc[1]+1,0});
+            p2 = quad_surf->coord(ptr, {surf_loc[0],surf_loc[1]+1,0});
             
             segYZ->origin = vol_loc;
             segYZ->setNormal(p2-vol_loc);
             
             _surf_col->setSurface("seg xz", segXZ);
             _surf_col->setSurface("seg yz", segYZ);
-        }*/
+        }
         
         POI *poi = _surf_col->poi("focus");
         
