@@ -170,41 +170,41 @@ target_link_libraries(vc_imgtozarr
 set_property(TARGET vc_imgtozarr PROPERTY CXX_STANDARD 20)
 
 ## zarrextract ##
-add_executable(vc_zarrextract src/ZarrExtract.cpp)
-target_link_libraries(vc_zarrextract
-    nlohmann_json::nlohmann_json
-    z5
-    opencv_highgui
-    VC::slicing
-)
+# add_executable(vc_zarrextract src/ZarrExtract.cpp)
+# target_link_libraries(vc_zarrextract
+#     nlohmann_json::nlohmann_json
+#     z5
+#     opencv_highgui
+#     VC::slicing
+# )
 
 ## vc_zarrrender ##
-add_executable(vc_zarrrender src/ZarrRender.cpp)
-target_link_libraries(vc_zarrrender
-    nlohmann_json::nlohmann_json
-    z5
-    opencv_highgui
-    VC::slicing
-)
+# add_executable(vc_zarrrender src/ZarrRender.cpp)
+# target_link_libraries(vc_zarrrender
+#     nlohmann_json::nlohmann_json
+#     z5
+#     opencv_highgui
+#     VC::slicing
+# )
 
 ## vc_zarrrendersurface ##
-add_executable(vc_zarrrendersurface src/ZarrRenderSurface.cpp)
-target_link_libraries(vc_zarrrendersurface
-    nlohmann_json::nlohmann_json
-    z5
-    opencv_highgui
-    VC::slicing
-    VC::surface
-)
+# add_executable(vc_zarrrendersurface src/ZarrRenderSurface.cpp)
+# target_link_libraries(vc_zarrrendersurface
+#     nlohmann_json::nlohmann_json
+#     z5
+#     opencv_highgui
+#     VC::slicing
+#     VC::surface
+# )
 
 ## experiements for flattening ##
-add_executable(vc_zarralphacomp src/ZarrAlphaComp.cpp)
-target_link_libraries(vc_zarralphacomp
-    nlohmann_json::nlohmann_json
-    z5
-    opencv_highgui
-    VC::slicing
-)
+# add_executable(vc_zarralphacomp src/ZarrAlphaComp.cpp)
+# target_link_libraries(vc_zarralphacomp
+#     nlohmann_json::nlohmann_json
+#     z5
+#     opencv_highgui
+#     VC::slicing
+# )
 
 # Install targets
 if(VC_INSTALL_APPS)
