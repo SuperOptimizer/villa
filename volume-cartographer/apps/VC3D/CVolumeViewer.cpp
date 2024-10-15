@@ -118,7 +118,7 @@ QPointF visible_center(QGraphicsView *view)
 void CVolumeViewer::onCursorMove(QPointF scene_loc)
 {
     // std::cout << "FIXME CVolumeViewer::onCursorMove()" << std::endl;
-    /*if (!_surf)
+    if (!_surf)
         return;
     
     cv::Vec3f slice_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
@@ -127,9 +127,9 @@ void CVolumeViewer::onCursorMove(QPointF scene_loc)
     if (!cursor)
         cursor = new POI;
     
-    cursor->p = _surf->coord_legacy(slice_loc);
+    cursor->p = _surf->coord(_surf->pointer(), slice_loc);
     
-    _surf_col->setPOI("cursor", cursor);*/
+    _surf_col->setPOI("cursor", cursor);
 }
 
 void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers modifiers)
@@ -143,8 +143,8 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
     
     if (modifiers & Qt::ShiftModifier) {
         std::cout << "FIXME zoffset onzoom" << std::endl;
-        // _surf->setOffsetZ(_surf->offsetZ()+steps);
-        // _surf_col->setSlice(_surf_name, _surf);
+        _z_off += steps;
+        renderVisible(true);
     }
     else {
         float zoom = pow(ZOOM_FACTOR, steps);
@@ -373,7 +373,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 {
     cv::Mat_<cv::Vec3f> coords;
     cv::Mat_<uint8_t> img;
-    _surf->gen(&coords, nullptr, roi.size(), nullptr, _ds_scale, {roi.x, roi.y, 0.0f});
+    _surf->gen(&coords, nullptr, roi.size(), nullptr, _ds_scale, {roi.x, roi.y, _z_off});
     readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords*_ds_scale, cache);
     
     return img;
