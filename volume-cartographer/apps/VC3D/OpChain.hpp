@@ -14,7 +14,7 @@ namespace z5 {
 enum class OpChainSourceMode: int
 {
     RAW = 0,
-    REGULARIZE_DEFAULT
+    DEFAULT_MESHING
 };
 
 
