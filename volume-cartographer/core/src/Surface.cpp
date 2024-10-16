@@ -586,51 +586,22 @@ SurfaceControlPoint::SurfaceControlPoint(Surface *base, SurfacePointer *ptr_, co
     control_point = control;
 }
 
-ControlPointSurface::ControlPointSurface(QuadSurface *base)
+DeltaQuadSurface::DeltaQuadSurface(QuadSurface *base)
 {
-    _base = base;
+    *(QuadSurface*)this = *base;
+}
+
+void DeltaQuadSurface::setBase(QuadSurface *base)
+{
+    *(QuadSurface*)this = *base;
 }
 
 void ControlPointSurface::addControlPoint(SurfacePointer *base_ptr, cv::Vec3f control_point)
 {
-    _controls.push_back(SurfaceControlPoint(_base, base_ptr, control_point));
+    _controls.push_back(SurfaceControlPoint(this, base_ptr, control_point));
     
-    std::cout << "add control " << control_point << _base->loc(base_ptr) << _base->loc(_controls[0].ptr) << _base->_center << _base->loc(_base->pointer()) << std::endl;
+    std::cout << "add control " << control_point << loc(base_ptr) << loc(_controls[0].ptr) << _center << loc(pointer()) << std::endl;
     
-}
-
-SurfacePointer *ControlPointSurface::pointer()
-{
-    return _base->pointer();
-}
-
-void ControlPointSurface::move(SurfacePointer *ptr, const cv::Vec3f &offset)
-{
-    _base->move(ptr, offset);
-}
-bool ControlPointSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
-{
-    return _base->valid(ptr, offset);
-}
-
-cv::Vec3f ControlPointSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
-{
-    std::cout << "FIXME: implement ControlPointSurface::loc()" << std::endl;
-    return cv::Vec3f(-1,-1,-1);
-}
-
-cv::Vec3f ControlPointSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
-{
-    //FIXME should actually check distance between control point and surface ...
-    // return _base(ptr) + _normal*10;
-    std::cout << "FIXME: implement ControlPointSurface::coord()" << std::endl;
-    return cv::Vec3f(-1,-1,-1);
-}
-
-cv::Vec3f ControlPointSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
-{
-    std::cout << "FIXME: implement ControlPointSurface::normal()" << std::endl;
-    return cv::Vec3f(-1,-1,-1);
 }
 
 void ControlPointSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> *normals_, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
@@ -654,33 +625,33 @@ void ControlPointSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> 
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
 
-    _base->gen(coords, normals_, size, ptr, scale, offset);
+    QuadSurface::gen(coords, normals_, size, ptr, scale, offset);
     
     int w = size.width;
     int h = size.height;
     cv::Rect bounds(0,0,w,h);
     
-    cv::Vec3f upper_left_nominal = nominal_loc(offset/scale, ptr_inst->loc, _base->_scale);
+    cv::Vec3f upper_left_nominal = nominal_loc(offset/scale, ptr_inst->loc, _scale);
     
     float z_offset = upper_left_nominal[2];
     upper_left_nominal[2] = 0;
     
     //FIXME implement z_offset
     
-    std::cout << "offset" << upper_left_nominal << _base->_center << ptr_inst->loc << std::endl;
+    std::cout << "offset" << upper_left_nominal << _center << ptr_inst->loc << std::endl;
     
     for(auto p : _controls) {
-        cv::Vec3f p_loc = nominal_loc(_base->loc(p.ptr), ptr_inst->loc, _base->_scale)  - upper_left_nominal;
-        std::cout << p_loc << p_loc*scale <<  _base->loc(p.ptr) << ptr_inst->loc << std::endl;
+        cv::Vec3f p_loc = nominal_loc(loc(p.ptr), ptr_inst->loc, _scale)  - upper_left_nominal;
+        std::cout << p_loc << p_loc*scale <<  loc(p.ptr) << ptr_inst->loc << std::endl;
         p_loc *= scale;
         cv::Rect roi(p_loc[0]-40,p_loc[1]-40,80,80);
         cv::Rect area = roi & bounds;
         
         PlaneSurface plane(p.control_point, p.normal);
-        float delta = plane.scalarp(_base->coord(p.ptr));
+        float delta = plane.scalarp(coord(p.ptr));
         cv::Vec3f move = delta*p.normal;
         
-        std::cout << area << roi << bounds << move << p.control_point << p.normal << _base->coord(p.ptr) << std::endl;
+        std::cout << area << roi << bounds << move << p.control_point << p.normal << coord(p.ptr) << std::endl;
         
         for(int j=area.y;j<area.y+area.height;j++)
             for(int i=area.x;i<area.x+area.width;i++) {
@@ -692,58 +663,19 @@ void ControlPointSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> 
     }
 }
 
-float ControlPointSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
-{
-    //surfacepointer is supposed to always stay in the same nominal coordinates - so always refer down to the most lowest level / input / source
-    return _base->pointTo(ptr, tgt, th);
-}
 void ControlPointSurface::setBase(QuadSurface *base)
 {
-    _base = base;
+    DeltaQuadSurface::setBase(base);
     
     //FIXME reset control points?
-    std::cout << "ERROR implement ControlPointSurface::setBase()" << std::endl;
+    std::cout << "ERROR implement search for ControlPointSurface::setBase()" << std::endl;
 }
 
-RefineCompSurface::RefineCompSurface(Surface *base, z5::Dataset *ds, ChunkCache *cache)
+RefineCompSurface::RefineCompSurface(QuadSurface *base, z5::Dataset *ds, ChunkCache *cache)
+: DeltaQuadSurface(base)
 {
-    _base = base;
     _ds = ds;
     _cache = cache;
-}
-
-SurfacePointer *RefineCompSurface::pointer()
-{
-    return _base->pointer();
-}
-
-void RefineCompSurface::move(SurfacePointer *ptr, const cv::Vec3f &offset)
-{
-    _base->move(ptr, offset);
-}
-bool RefineCompSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
-{
-    return _base->valid(ptr, offset);
-}
-
-cv::Vec3f RefineCompSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
-{
-    std::cout << "FIXME: implement RefineCompSurface::loc()" << std::endl;
-    return cv::Vec3f(-1,-1,-1);
-}
-
-cv::Vec3f RefineCompSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
-{
-    //FIXME should actually check distance between control point and surface ...
-    // return _base(ptr) + _normal*10;
-    std::cout << "FIXME: implement RefineCompSurface::coord()" << std::endl;
-    return cv::Vec3f(-1,-1,-1);
-}
-
-cv::Vec3f RefineCompSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
-{
-    std::cout << "FIXME: implement RefineCompSurface::normal()" << std::endl;
-    return cv::Vec3f(-1,-1,-1);
 }
 
 void RefineCompSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> *normals_, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
@@ -766,7 +698,7 @@ void RefineCompSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> *n
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
     
-    _base->gen(coords, normals, size, ptr, scale, offset);
+    QuadSurface::gen(coords, normals, size, ptr, scale, offset);
     
     cv::Mat_<cv::Vec3f> res;
     
@@ -815,17 +747,6 @@ void RefineCompSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> *n
     cv::Mat mul;
     cv::cvtColor(integ_z, mul, cv::COLOR_GRAY2BGR);
     *coords += (*normals).mul(mul+1);
-}
-
-float RefineCompSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
-{
-    //surfacepointer is supposed to always stay in the same nominal coordinates - so always refer down to the most lowest level / input / source
-    return _base->pointTo(ptr, tgt, th);
-}
-
-void RefineCompSurface::setBase(QuadSurface *base)
-{
-    _base = base;
 }
 
 void set_block(cv::Mat_<uint8_t> &block, const cv::Vec3f &last_loc, const cv::Vec3f &loc, const cv::Rect &roi, float step)

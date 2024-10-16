@@ -60,7 +60,6 @@ public:
     float pointDist(cv::Vec3f wp);
     cv::Vec3f project(cv::Vec3f wp, float render_scale = 1.0, float coord_scale = 1.0);
     void setNormal(cv::Vec3f normal);
-    // cv::Vec3f normal_legacy(const cv::Vec3f &loc = {0,0,0}) { return _normal; };
     float scalarp(cv::Vec3f point) const;
 
     cv::Vec3f origin = {0,0,0};
@@ -68,23 +67,23 @@ protected:
     cv::Vec3f _normal = {0,0,1};
 };
 
-//quads based surface class with a pointer of nominal scale 1
+//quads based surface class with a pointer implementing a nominal scale of 1 voxel
 class QuadSurface : public Surface
 {
 public:
     SurfacePointer *pointer();
+    QuadSurface() {};
     QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &scale);
     void move(SurfacePointer *ptr, const cv::Vec3f &offset) override;
     bool valid(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    // CoordGenerator *generator(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;
     float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th) override;
 
     cv::Mat_<cv::Vec3f> rawPoints() { return _points; }
-    
+
     friend QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search, int step_out);
     friend class ControlPointSurface;
 protected:
@@ -92,6 +91,17 @@ protected:
     cv::Rect _bounds;
     cv::Vec2f _scale;
     cv::Vec3f _center;
+};
+
+//surface representing some operation on top of a base surface
+//by default all ops but gen() are forwarded to the base
+class DeltaQuadSurface : public QuadSurface
+{
+public:
+    //default - just assign base ptr, override if additional processing necessary
+    //like relocate ctrl points, mark as dirty, ...
+    virtual void setBase(QuadSurface *base);
+    DeltaQuadSurface(QuadSurface *base);
 };
 
 //might in the future have more properties! or those props are handled in whatever class manages a set of control points ...
@@ -105,51 +115,26 @@ public:
     cv::Vec3f control_point; //actual control point location - should be in line with _orig_wp along the normal, but could change if the underlaying surface changes!
 };
 
-//everything shall be exactly the same as a parent quad-surface, apart fromt the actual output coords around the normals
-//and we might want an alpha map at some point but here is not required
-//TODO could we just use inheritance?
-class ControlPointSurface : public Surface
+class ControlPointSurface : public DeltaQuadSurface
 {
 public:
-    ControlPointSurface(QuadSurface *base);
+    ControlPointSurface(QuadSurface *base) : DeltaQuadSurface(base) {};
     void addControlPoint(SurfacePointer *base_ptr, cv::Vec3f control_point);
-    SurfacePointer *pointer() override;
-    void move(SurfacePointer *ptr, const cv::Vec3f &offset) override;
-    bool valid(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;
-    float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th) override;
 
     void setBase(QuadSurface *base);
-    
-    // friend class ControlPointCoords;
 
 protected:
-    QuadSurface *_base; //base surface
     std::vector<SurfaceControlPoint> _controls;
 };
 
-// class RefineCompCoords;
-//TODO make derivative/dependencies generic/common interface
-//and add generic "delta-base-surface" class to join functionality of delta surfaces like ControlPointSurface,RefineCompSurface
-class RefineCompSurface : public Surface
+class RefineCompSurface : public DeltaQuadSurface
 {
 public:
-    RefineCompSurface(Surface *base, z5::Dataset *ds, ChunkCache *cache);
-    SurfacePointer *pointer() override;
-    void move(SurfacePointer *ptr, const cv::Vec3f &offset) override;
-    bool valid(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    RefineCompSurface(QuadSurface *base, z5::Dataset *ds, ChunkCache *cache);
     void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;
-    float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th) override;
-    void setBase(QuadSurface *base);
     
 protected:
-    Surface *_base; //base surface
     z5::Dataset *_ds;
     ChunkCache *_cache;
 };
