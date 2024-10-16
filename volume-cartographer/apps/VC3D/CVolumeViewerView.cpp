@@ -59,7 +59,7 @@ void CVolumeViewerView::mousePressEvent(QMouseEvent *event)
     if (event->button() == Qt::MiddleButton || event->button() == Qt::RightButton)
     {
         _regular_pan = true;
-        _last_pan_position = event->position();
+        _last_pan_position = QPoint(event->position().x(), event->position().y());
         setCursor(Qt::ClosedHandCursor);
         event->accept();
         return;
@@ -71,14 +71,14 @@ void CVolumeViewerView::mouseMoveEvent(QMouseEvent *event)
 {
     if (_regular_pan)
     {
-        QPointF scroll = _last_pan_position - event->position();
+        QPoint scroll = _last_pan_position - QPoint(event->position().x(), event->position().y());
         
         int x = horizontalScrollBar()->value() + scroll.x();
         horizontalScrollBar()->setValue(x);
         int y = verticalScrollBar()->value() + scroll.y();
         verticalScrollBar()->setValue(y);
         
-        _last_pan_position = event->position();
+        _last_pan_position = QPoint(event->position().x(), event->position().y());
         event->accept();
         return;
     }
