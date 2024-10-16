@@ -44,13 +44,13 @@ class PlaneSurface : public Surface
 {
 public:
     //Surface API FIXME
-    SurfacePointer *pointer() override { return nullptr; };
-    void move(SurfacePointer *ptr, const cv::Vec3f &offset) override {};
-    bool valid(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override { return false; };
-    cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override { return {0,0,0}; };
+    SurfacePointer *pointer() override;
+    void move(SurfacePointer *ptr, const cv::Vec3f &offset);
+    bool valid(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override { return true; };
+    cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    float pointTo(SurfacePointer *ptr, const cv::Vec3f &coord, float th) override { return 0.0; };
+    float pointTo(SurfacePointer *ptr, const cv::Vec3f &coord, float th) override { abort(); };
 
     PlaneSurface() {};
     PlaneSurface(cv::Vec3f origin_, cv::Vec3f normal_);

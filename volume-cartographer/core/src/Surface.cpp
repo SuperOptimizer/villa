@@ -151,15 +151,14 @@ float PlaneSurface::scalarp(cv::Vec3f point) const
 
 void PlaneSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
 {
-    assert(ptr == nullptr);
-    // TrivialSurfacePointer _ptr({0,0,0});
-    // if (!ptr)
-    //     ptr = &_ptr;
-    // TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+    TrivialSurfacePointer _ptr({0,0,0});
+    if (!ptr)
+        ptr = &_ptr;
+    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
 
-    bool create_normals = normals || offset[2] /*|| ptr_inst->loc[2]*/;
+    bool create_normals = normals || offset[2] || ptr_inst->loc[2];
 
-    cv::Vec3f total_offset = internal_loc(offset/scale, {0,0,0}/*ptr_inst->loc*/, {1,1});
+    cv::Vec3f total_offset = internal_loc(offset/scale, ptr_inst->loc, {1,1});
     // std::cout << "PlaneCoords::gen upper left" << upper_left_actual /*<< ptr_inst->loc*/ << origin << offset << scale << std::endl;
 
     int w = size.width;
@@ -206,6 +205,26 @@ void PlaneSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals
         }
 }
 
+SurfacePointer *PlaneSurface::pointer()
+{
+    return new TrivialSurfacePointer({0,0,0});
+}
+
+void PlaneSurface::move(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+    assert(ptr_inst);
+
+    ptr_inst->loc += offset;
+}
+
+cv::Vec3f PlaneSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+    assert(ptr_inst);
+
+    return ptr_inst->loc+offset;
+}
 
 cv::Vec3f PlaneSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
