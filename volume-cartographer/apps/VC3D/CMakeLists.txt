@@ -13,6 +13,7 @@ set(srcs
     ColorFrame.hpp
     SettingsDialog.cpp
     CSurfaceCollection.cpp
+    OpChain.cpp
 )
 
 set(MACOSX_BUNDLE_ICON logo.icns)
