@@ -12,6 +12,7 @@
 #include "UDataManipulateUtils.hpp"
 #include "SettingsDialog.hpp"
 #include "CSurfaceCollection.hpp"
+#include "OpChain.hpp"
 
 #include "vc/core/types/Color.hpp"
 #include "vc/core/types/Exceptions.hpp"
@@ -681,6 +682,7 @@ void CWindow::onStaticSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem 
 
     vc_segmentation_scales(points, sx, sy);
 
-    _seg_surf = new QuadSurface(points, {sx,sy});
+    // _seg_surf = new QuadSurface(points, {sx,sy});
+    _seg_surf = new OpChain(new QuadSurface(points, {sx,sy}));
     _surf_col->setSurface("segmentation", _seg_surf);
 }

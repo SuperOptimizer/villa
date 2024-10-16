@@ -22,8 +22,8 @@ enum class OpChainSourceMode: int
 class OpChain : public Surface {
 public:
     OpChain(QuadSurface *src) : _src(src) {};
-    cv::Mat render(SurfacePointer *ptr, const cv::Rect &roi, float z, float scale, ChunkCache *cache, z5::Dataset *ds);
-    QuadSurface *surf(SurfacePointer *ptr, const cv::Rect &roi, float z, float scale, ChunkCache *cache, z5::Dataset *ds);
+    // cv::Mat render(SurfacePointer *ptr, const cv::Size &size, float z, float scale, ChunkCache *cache, z5::Dataset *ds);
+    QuadSurface *surf(SurfacePointer *ptr, const cv::Size &size, float z, float scale, ChunkCache *cache, z5::Dataset *ds);
     void append(DeltaQuadSurface *op);
 
     SurfacePointer *pointer() override;
@@ -37,13 +37,13 @@ public:
 
 
 protected:
-    OpChainSourceMode _src_mode = OpChainSourceMode::RAW;
+    OpChainSourceMode _src_mode = OpChainSourceMode::DEFAULT_MESHING;
     std::vector<DeltaQuadSurface*> _ops;
     QuadSurface *_src = nullptr;
     QuadSurface *_crop = nullptr;
 
-    float _last_scale = 0;
-    cv::Vec3f _last_offset = {0,0,0};
-    TrivialSurfacePointer *_last_ptr = nullptr;
-    cv::Mat_<cv::Vec3f> _last_gen;
+    // float _last_scale = 0;
+    // cv::Vec3f _last_offset = {0,0,0};
+    // TrivialSurfacePointer *_last_ptr = nullptr;
+    // cv::Mat_<cv::Vec3f> _last_gen;
 };

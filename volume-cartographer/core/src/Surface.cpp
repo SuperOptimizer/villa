@@ -10,20 +10,6 @@
 //TODO remove
 #include <opencv2/highgui.hpp>
 
-class SurfacePointer
-{
-public:
-    virtual SurfacePointer *clone() const = 0;
-};
-
-class TrivialSurfacePointer : public SurfacePointer
-{
-public:
-    TrivialSurfacePointer(cv::Vec3f loc_) : loc(loc_) {}
-    SurfacePointer *clone() const override { return new TrivialSurfacePointer(*this); }
-    cv::Vec3f loc;
-};
-
 cv::Vec2f offsetPoint2d(TrivialSurfacePointer *ptr, const cv::Vec3f &offset)
 {
     cv::Vec3f p = ptr->loc + offset;
