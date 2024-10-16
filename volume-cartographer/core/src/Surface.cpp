@@ -288,7 +288,11 @@ cv::Vec3f QuadSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
     cv::Vec3f p = internal_loc(offset+_center, ptr_inst->loc, _scale);
-    
+
+    cv::Rect bounds = {0,0,_points.cols-2,_points.rows-2};
+    if (!bounds.contains({p[0],p[1]}))
+        return {-1,-1,-1};
+
     return at_int(_points, {p[0],p[1]});
 }
 
@@ -305,8 +309,6 @@ cv::Vec3f QuadSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
     cv::Vec3f p = internal_loc(offset+_center, ptr_inst->loc, _scale);
-    
-    std::cout << "calc normal" << _points.size << p << std::endl;
     
     return grid_normal(_points, p);
 }
