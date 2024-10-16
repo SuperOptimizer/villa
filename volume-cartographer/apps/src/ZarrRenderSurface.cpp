@@ -88,21 +88,6 @@ shape idCoord(const std::unique_ptr<z5::Dataset> &ds, shape id)
     return coord;
 }
 
-void timed_plane_slice(PlaneCoords &plane, z5::Dataset *ds, size_t size, ChunkCache *cache, std::string msg)
-{
-    xt::xarray<float> coords;
-    xt::xarray<uint8_t> img;
-    
-    auto start = std::chrono::high_resolution_clock::now();
-    plane.gen_coords(coords, size, size);
-    auto end = std::chrono::high_resolution_clock::now();
-    // std::cout << std::chrono::duration<double>(end-start).count() << "s gen_coords() " << msg << std::endl;
-    start = std::chrono::high_resolution_clock::now();
-    readInterpolated3D(img, ds, coords, cache);
-    end = std::chrono::high_resolution_clock::now();
-    std::cout << std::chrono::duration<double>(end-start).count() << "s slicing " << msg << std::endl; 
-}
-
 cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
 {
     int x = p[0];
@@ -567,7 +552,7 @@ int main(int argc, char *argv[])
         MeasureLife time_slice("slice "+std::to_string(off)+" ... ");
         corr->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
         
-        coords *= ds_scale/output_scale;
+        coords *= ds_scale;
         
         readInterpolated3D(img, ds.get(), coords, &chunk_cache);
         
