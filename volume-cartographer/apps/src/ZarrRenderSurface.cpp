@@ -483,8 +483,7 @@ int main(int argc, char *argv[])
     
     QuadSurface *surf = surf_raw;
     SurfacePointer *poi = surf->pointer();
-    // surf->move(poi, {-10200,-13200,0});
-    surf->move(poi, {-10200-5000,-13200,0});
+    surf->move(poi, {-10200,-13200,0});
     {
         MeasureLife timer("build local mesh ...");
         surf = regularized_local_quad(surf_raw, poi, w/mesh_step/output_scale, h/mesh_step/output_scale, search_step, mesh_step);
