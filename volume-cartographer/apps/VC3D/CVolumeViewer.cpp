@@ -195,6 +195,7 @@ void CVolumeViewer::setSurface(const std::string &name)
 {
     _surf_name = name;
     _surf = nullptr;
+    _ptr = nullptr;
     onSurfaceChanged(name, _surf_col->surface(name));
 }
 
@@ -315,9 +316,22 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
 
 cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 {
+    std::cout << "render " << std::endl;
+    cv::Vec2f roi_c = {roi.x+roi.width/2, roi.y + roi.height/2};
+
+    if (!_ptr) {
+        _ptr = _surf->pointer();
+        _vis_center = roi_c;
+    }
+    else {
+        cv::Vec3f diff = {roi_c[0]-_vis_center[0],roi_c[1]-_vis_center[1],0};
+        _surf->move(_ptr, diff/_ds_scale);
+        _vis_center = roi_c;
+    }
+
     cv::Mat_<cv::Vec3f> coords;
     cv::Mat_<uint8_t> img;
-    _surf->gen(&coords, nullptr, roi.size(), nullptr, _ds_scale, {roi.x, roi.y, _z_off});
+    _surf->gen(&coords, nullptr, roi.size(), _ptr, _ds_scale, {-roi.width/2, -roi.height/2, _z_off});
     readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords*_ds_scale, cache);
     
     return img;

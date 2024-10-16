@@ -7,6 +7,7 @@
 
 class ChunkCache;
 class Surface;
+class SurfacePointer;
 
 class QGraphicsScene;
 
@@ -69,6 +70,8 @@ protected:
     
     std::shared_ptr<volcart::Volume> volume = nullptr;
     Surface *_surf = nullptr;
+    SurfacePointer *_ptr = nullptr;
+    cv::Vec2f _vis_center = {0,0};
     std::string _surf_name;
     int axis = 0;
     int loc[3] = {0,0,0};
