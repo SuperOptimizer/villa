@@ -478,16 +478,16 @@ int main(int argc, char *argv[])
     int w = 1000;
     int h = 1000;
     
-    int search_step = 100;
-    int mesh_step = 5;
+    int search_step = 40;
+    int mesh_step = 20;
     
     QuadSurface *surf = surf_raw;
     SurfacePointer *poi = surf->pointer();
     // surf->move(poi, {-10200,-13200,0});
-    surf->move(poi, {-10200,-13200,0});
+    surf->move(poi, {-10200-5000,-13200,0});
     {
         MeasureLife timer("build local mesh ...");
-        surf = regularized_local_quad(surf_raw, poi, w/mesh_step/output_scale, h/mesh_step/output_scale, 100, 5);
+        surf = regularized_local_quad(surf_raw, poi, w/mesh_step/output_scale, h/mesh_step/output_scale, search_step, mesh_step);
     }
     
     // CoordGenerator *gen = surf->generator();
@@ -550,7 +550,7 @@ int main(int argc, char *argv[])
     timer = new MeasureLife("rendering ...\n");
     for(int off=min_slice;off<=max_slice;off++) {
         MeasureLife time_slice("slice "+std::to_string(off)+" ... ");
-        corr->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
+        surf->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
         
         coords *= ds_scale;
         

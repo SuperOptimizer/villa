@@ -492,6 +492,10 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
     x_curv.setTo(1);
     y_curv.setTo(1);
     
+    cv::Rect src_bounds(0,0,points.cols-3,points.rows-3);
+    if (!src_bounds.contains({seed_x,seed_y}))
+        return out;
+
     //FIXME the init locations are probably very important!
     
     //FIXME local search can be affected by noise/artefacts in data, add some re-init random initilizations if we see failures?
@@ -500,9 +504,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
     int y0 = h/2;
 
     cv::Rect used_area(x0,y0,1,1);
-
     locs(y0,x0) = {seed_x, seed_y};
-    // locs(y0,x0) = {600, 1000};
     out(y0,x0) = at_int(points, locs(y0,x0));
     
     float res;
@@ -532,9 +534,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
     // std::vector<float> dists;
     
     std::vector<cv::Vec2i> neighs = {{1,0},{0,1},{-1,0},{0,-1}};
-    
     cv::Rect bounds(0,0,h-1,w-1);
-    // cv::Rect bounds(0,0,h-8,w-8);
     
     state(y0,x0) = 1;
     state(y0+1,x0) = 1;
