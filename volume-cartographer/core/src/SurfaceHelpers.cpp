@@ -82,6 +82,24 @@ static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
     return (1-fy)*p0 + fy*p1;
 }
 
+static float atf_int(const cv::Mat_<float> &points, cv::Vec2f p)
+{
+    int x = p[0];
+    int y = p[1];
+    float fx = p[0]-x;
+    float fy = p[1]-y;
+
+    float p00 = points(y,x);
+    float p01 = points(y,x+1);
+    float p10 = points(y+1,x);
+    float p11 = points(y+1,x+1);
+
+    float p0 = (1-fx)*p00 + fx*p01;
+    float p1 = (1-fx)*p10 + fx*p11;
+
+    return (1-fy)*p0 + fy*p1;
+}
+
 static float sdist(const cv::Vec3f &a, const cv::Vec3f &b)
 {
     cv::Vec3f d = a-b;
@@ -277,7 +295,7 @@ static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
     return{a[0]*b[0],a[1]*b[1]};
 }
 
-static float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, cv::Vec2f init_step, float min_step_f, const std::vector<float> &ws = {}, bool robust_edge = false)
+static float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, cv::Vec2f init_step, float min_step_f, const std::vector<float> &ws = {}, bool robust_edge = false, const cv::Mat_<float> &used = cv::Mat())
 {
     // std::cout << "start minlo" << loc << std::endl;
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
@@ -294,6 +312,8 @@ static float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::
         float d = plane->pointDist(val);
         best += d*d;
     }
+    if (!used.empty())
+        best += atf_int(used, loc)*100.0;
     float res;
     
     //TODO add more search patterns, compare motion estimatino for video compression, x264/x265, ...
@@ -326,6 +346,8 @@ static float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::
             val = at_int(points, cand);
             // std::cout << "at" << cand << val << std::endl;
             res = tdist_sum(val, tgts, tds, ws);
+            if (!used.empty())
+                res += atf_int(used, loc)*100.0;
             if (plane) {
                 float d = plane->pointDist(val);
                 res += d*d;
@@ -363,7 +385,7 @@ template<typename T> std::vector<T> join(const std::vector<T> &a, const std::vec
     return c;
 }
 
-static float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds_, PlaneSurface *plane, cv::Vec2f init_step, const std::vector<cv::Vec3f> &opt_t, const std::vector<float> &opt_d, int &failstate, const std::vector<float> &ws, float th)
+static float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds_, PlaneSurface *plane, cv::Vec2f init_step, const std::vector<cv::Vec3f> &opt_t, const std::vector<float> &opt_d, int &failstate, const std::vector<float> &ws, float th, const cv::Mat_<float> &used = cv::Mat())
 {
     // std::cout << init << loc << std::endl;
     failstate = 0;
@@ -382,7 +404,7 @@ static float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc
     // w2.push_back(10);
     // tds.push_back(0);
     
-    float res1 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01, ws);
+    float res1 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01, ws, false, used);
     float res2 = 0;
     float res3;
     // res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
@@ -399,6 +421,8 @@ static float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc
 
     // printf("start it %f\n", res3);
     
+    float best_res = res3;
+    cv::Vec2f best_loc = loc;
     for(int i=0;i<10;i++)
     {
         cv::Vec2f off = {rand()%100,rand()%100};
@@ -406,12 +430,16 @@ static float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc
         off = mul(off, init_step)*100/50;
         loc = init_loc + off;
         
-        res1 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01, ws);
+        res1 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01, ws, false, used);
         // res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
         // res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
         if (res1 >= 0) {
             val = at_int(points, loc);
             res3 = sqrt(tdist_sum(val, tgts, tds, w2)/w_sum);
+            if (res1 < best_res) {
+                best_res = res1;
+                best_loc = loc;
+            }
         }
         else
             res3 = res1;
@@ -424,8 +452,8 @@ static float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc
         }
     }
     
-    loc = init_loc;
-    res1 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01, ws);
+    loc = best_loc;
+    res1 = min_loc_dbg(points, loc, out, tgts, tds, plane, init_step, 0.01, ws, false, used);
     // res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
     if (res1 >= 0) {
         val = at_int(points, loc);
@@ -476,7 +504,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
     
     float th = T/4;
     
-    int r = 3;
+    int r = 4;
     
     cv::Vec2f step = {sx*T/10, sy*T/10};
     
@@ -486,7 +514,9 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
     cv::Mat_<float> dbg(h,w);
     cv::Mat_<float> x_curv(h,w);
     cv::Mat_<float> y_curv(h,w);
+    cv::Mat_<float> used(points.size());
     out.setTo(-1);
+    used.setTo(0);
     state.setTo(0);
     dbg.setTo(0);
     x_curv.setTo(1);
@@ -698,7 +728,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
             }
                     
             int failstate = 0;
-            res = multi_step_search(points, locs(p), out(p), refs, dists, nullptr, step, {}, {}, failstate, ws, th);
+            res = multi_step_search(points, locs(p), out(p), refs, dists, nullptr, step, {}, {}, failstate, ws, th, used);
             all_locs.push_back(locs(p));
             
             // printf("%f\n", res);
@@ -760,6 +790,13 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
                 if (!used_area.contains({p[1],p[0]})) {
                     used_area = used_area | cv::Rect(p[1],p[0],1,1);
                 }
+                cv::Rect roi = {locs(p)[0]-80,locs(p)[1]-80,160,160};
+                roi = roi & src_bounds;
+                for(int j=roi.y;j<roi.br().y;j++)
+                    for(int i=roi.x;i<roi.br().x;i++) {
+                        // used(j,i) = std::max(used(j,i), float(1.0-1.0/T*sqrt(sdist(points(locs(p)[1],locs(p)[0]), points(j,i))+1e-2)));
+                        used(j,i) = std::min(1.0f, used(j,i) + std::max(0.0f, float(1.0-1.0/T*sqrt(sdist(points(locs(p)[1],locs(p)[0]), points(j,i))+1e-2))));
+                    }
             }
             
         }
@@ -780,11 +817,11 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
         printf("-> total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
     }
     
-    cv::resize(dbg, dbg, {0,0}, 10.0, 10.0, cv::INTER_NEAREST);
-    cv::imwrite("dbg.tif", dbg);
+    // cv::resize(dbg, dbg, {0,0}, 10.0, 10.0, cv::INTER_NEAREST);
+    // cv::imwrite("dbg.tif", dbg);
     
-    cv::imwrite("xcurv.tif",x_curv);
-    cv::imwrite("ycurv.tif",y_curv);
+    // cv::imwrite("xcurv.tif",x_curv);
+    // cv::imwrite("ycurv.tif",y_curv);
     
     //now lets expand a whole row
     /*for(int i=2;i<w;i++) {

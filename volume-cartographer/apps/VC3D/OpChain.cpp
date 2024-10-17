@@ -95,8 +95,8 @@ void OpChain::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv:
     }
     else if (_src_mode == OpChainSourceMode::DEFAULT_MESHING)
     {
-        int search_step = 40;
-        int mesh_step = 20;
+        int search_step = 100;
+        int mesh_step = 5;
 
         _crop = regularized_local_quad(_src, ptr, size.width/mesh_step/scale, size.height/mesh_step/scale, search_step, mesh_step);
         last = _crop;
