@@ -399,7 +399,7 @@ static float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc
 
     // printf("start it %f\n", res3);
     
-    for(int i=0;i<100;i++)
+    for(int i=0;i<10;i++)
     {
         cv::Vec2f off = {rand()%100,rand()%100};
         off -= cv::Vec2f(50,50);
@@ -456,7 +456,7 @@ static float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc
 
 //lets try again
 //FIXME mark covered regions as not available so we can't repeat them'
-cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &points, int seed_x, int seed_y, float step_size, int w, int h)
+cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &points, cv::Mat_<cv::Vec2f> &locs, int seed_x, int seed_y, float step_size, int w, int h)
 {
     double sx, sy;
     vc_segmentation_scales(points, sx, sy);
@@ -481,7 +481,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
     cv::Vec2f step = {sx*T/10, sy*T/10};
     
     cv::Mat_<cv::Vec3f> out(h,w);
-    cv::Mat_<cv::Vec2f> locs(h,w);
+    locs.create(h,w);
     cv::Mat_<uint8_t> state(h,w);
     cv::Mat_<float> dbg(h,w);
     cv::Mat_<float> x_curv(h,w);
@@ -911,56 +911,16 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
     return out(used_area).clone();
 }
 
-cv::Mat_<cv::Vec3f> upsample_with_grounding_simple(const cv::Mat_<cv::Vec3f> &small, const cv::Size &tgt_size, const cv::Mat_<cv::Vec3f> &points, double sx, double sy)
+cv::Mat_<cv::Vec3f> upsample_with_grounding_simple(const cv::Mat_<cv::Vec3f> &small, cv::Mat_<cv::Vec2f> &locs, const cv::Size &tgt_size, const cv::Mat_<cv::Vec3f> &points, double sx, double sy)
 {
     std::cout << "upsample with simple interpolation " << small.size() << " -> " << tgt_size << std::endl; 
     cv::Mat_<cv::Vec3f> large;
-    cv::Mat_<cv::Vec2f> locs(small.size());
+    // cv::Mat_<cv::Vec2f> locs(small.size());
     // large = small;
     // cv::resize(small, large, small.size()*2, cv::INTER_CUBIC);
     cv::resize(small, large, tgt_size, cv::INTER_CUBIC);
     
-    cv::Vec2f step_large = {sx*128, sy*128};
     cv::Vec2f step = {sx*10, sy*10};
-    
-    int rdone = 0;
-    
-#pragma omp parallel for
-    for(int j=0;j<small.rows;j++) {
-        cv::Vec2f loc = {points.cols/2, points.rows/2};
-        for(int i=0;i<small.cols;i++) {
-            cv::Vec3f tgt = small(j,i);
-            cv::Vec3f val = small(j,i);
-            if (tgt[0] == -1)
-                continue;
-
-            float res;
-            
-            res = min_loc_dbg(points, loc, val, {tgt}, {0}, nullptr, step, 0.1, {}, true);
-            
-            if (res < 1.0 && res >= 0.0) {
-                locs(j,i) = loc;
-                continue;
-            }
-            
-            cv::Vec2f best_loc = loc;
-            float best_dist = 1000000000;
-            for(int r=0;r<100;r++) {
-                loc = {rand() % points.cols, rand() % points.rows};
-                res = min_loc_dbg(points, loc, val, {tgt}, {0}, nullptr, step_large, 0.001, {}, true);
-                if (res < best_dist) {
-                    best_dist = res;
-                    best_loc = loc;
-                }
-                if (res < 1.0 && res >= 0.0)
-                    break;
-            }
-            res = min_loc_dbg(points, best_loc, val, {tgt}, {0}, nullptr, step*0.001, 0.1, {}, true);
-            loc = best_loc;
-            locs(j,i) = best_loc;
-        }
-    }
-    
     cv::resize(locs, locs, large.size(), cv::INTER_CUBIC);
 
 #pragma omp parallel for
@@ -971,7 +931,7 @@ cv::Mat_<cv::Vec3f> upsample_with_grounding_simple(const cv::Mat_<cv::Vec3f> &sm
                 continue;
             float res;
             
-            res = min_loc_dbg(points, locs(j,i), large(j,i), {tgt}, {0}, nullptr, step, 0.01, {}, true);
+            res = min_loc_dbg(points, locs(j,i), large(j,i), {tgt}, {0}, nullptr, step, 0.001, {}, true);
         }
     }
     
@@ -988,51 +948,15 @@ float dist2(const cv::Vec2f &v)
     return sqrt(v[0]*v[0]+v[1]*v[1]);
 }
 
-cv::Mat_<cv::Vec3f> upsample_with_grounding_skip(const cv::Mat_<cv::Vec3f> &small, int scale, const cv::Mat_<cv::Vec3f> &points, double sx, double sy)
+cv::Mat_<cv::Vec3f> upsample_with_grounding_skip(const cv::Mat_<cv::Vec3f> &small, cv::Mat_<cv::Vec2f> &locs, int scale, const cv::Mat_<cv::Vec3f> &points, double sx, double sy)
 {
     std::cout << "upsample with interpolation & search " << small.size() << " x " << scale << std::endl; 
-    cv::Mat_<cv::Vec2f> locs(small.size());
+    // cv::Mat_<cv::Vec2f> locs(small.size());
     
     cv::Vec2f step_large = {sx*128, sy*128};
     cv::Vec2f step = {sx*10, sy*10};
     
     int rdone = 0;
-    
-    #pragma omp parallel for
-    for(int j=0;j<small.rows;j++) {
-        cv::Vec2f loc = {points.cols/2, points.rows/2};
-        for(int i=0;i<small.cols;i++) {
-            cv::Vec3f tgt = small(j,i);
-            cv::Vec3f val = small(j,i);
-            if (tgt[0] == -1)
-                continue;
-            
-            float res;
-            
-            res = min_loc_dbg(points, loc, val, {tgt}, {0}, nullptr, step, 0.1, {}, true);
-            
-            if (res < 1.0 && res >= 0.0) {
-                locs(j,i) = loc;
-                continue;
-            }
-            
-            cv::Vec2f best_loc = loc;
-            float best_dist = 1000000000;
-            for(int r=0;r<100;r++) {
-                loc = {rand() % points.cols, rand() % points.rows};
-                res = min_loc_dbg(points, loc, val, {tgt}, {0}, nullptr, step_large, 0.001, {}, true);
-                if (res < best_dist) {
-                    best_dist = res;
-                    best_loc = loc;
-                }
-                if (res < 1.0 && res >= 0.0)
-                    break;
-            }
-            res = min_loc_dbg(points, best_loc, val, {tgt}, {0}, nullptr, step*0.001, 0.1, {}, true);
-            loc = best_loc;
-            locs(j,i) = best_loc;
-        }
-    }
     
     cv::Size tgt_size = small.size() * scale;
     cv::Mat_<cv::Vec3f> large(tgt_size);
@@ -1048,16 +972,23 @@ cv::Mat_<cv::Vec3f> upsample_with_grounding_skip(const cv::Mat_<cv::Vec3f> &smal
             cv::Vec3f tgt2 = small(j,i+1);
             cv::Vec3f tgt3 = small(j+1,i);
             cv::Vec3f tgt4 = small(j+1,i+1);
-            float dx1 = sqrt(sdist(small(j,i+1),small(j,i)))/scale;
-            float dx2 = sqrt(sdist(small(j+1,i+1),small(j+1,i)))/scale;
-            float dy1 = sqrt(sdist(small(j,i),small(j+1,i)))/scale;
-            float dy2 = sqrt(sdist(small(j,i+1),small(j+1,i+1)))/scale;
             // dx /= scale;
             // dy /= scale;
             //TODO same for the others
             if (tgt1[0] == -1)
                 continue;
+            if (tgt2[0] == -1)
+                continue;
+            if (tgt3[0] == -1)
+                continue;
+            if (tgt4[0] == -1)
+                continue;
             
+            float dx1 = sqrt(sdist(small(j,i+1),small(j,i)))/scale;
+            float dx2 = sqrt(sdist(small(j+1,i+1),small(j+1,i)))/scale;
+            float dy1 = sqrt(sdist(small(j,i),small(j+1,i)))/scale;
+            float dy2 = sqrt(sdist(small(j,i+1),small(j+1,i+1)))/scale;
+
             //TODO had a neat idea of using perspective transform to get good target distances ... not quite sure which coords to use though so until then use linear interpolation for the target distance
             //we are only interested in distances, so regard the quad as the length of four sides!
             // std::vector<cv::Vec2f> dist_coords = {{0,0},{0,scale},{scale,0},{scale,scale}};
@@ -1099,19 +1030,25 @@ cv::Mat_<cv::Vec3f> upsample_with_grounding_skip(const cv::Mat_<cv::Vec3f> &smal
     return large;
 }
 
-cv::Mat_<cv::Vec3f> upsample_with_grounding(const cv::Mat_<cv::Vec3f> &small, const cv::Size &tgt_size, const cv::Mat_<cv::Vec3f> &points, double sx, double sy)
+cv::Mat_<cv::Vec3f> upsample_with_grounding(cv::Mat_<cv::Vec3f> &small, cv::Mat_<cv::Vec2f> &locs, const cv::Size &tgt_size, const cv::Mat_<cv::Vec3f> &points, double sx, double sy)
 {
     int scale = std::max(tgt_size.width/small.cols, tgt_size.height/small.rows);
-    
     cv::Size int_tgt = tgt_size*scale;
-    
     cv::Mat_<cv::Vec3f> large = small;
-    
-    if (small.size() != int_tgt)
-        large = upsample_with_grounding_skip(small, scale, points, sx, sy);
+
+    while (scale >= 2) {
+        scale = 2;
+        int_tgt = tgt_size*scale;
+
+        if (small.size() != int_tgt)
+            large = upsample_with_grounding_skip(small, locs, scale, points, sx, sy);
+
+        small = large;
+        scale = std::max(tgt_size.width/small.cols, tgt_size.height/small.rows);
+    }
 
     if (int_tgt != tgt_size)
-        large = upsample_with_grounding_simple(large, tgt_size, points, sx, sy);
-    
+        large = upsample_with_grounding_simple(large, locs, tgt_size, points, sx, sy);
+
     return large;
 }

@@ -478,8 +478,8 @@ int main(int argc, char *argv[])
     int w = 1000;
     int h = 1000;
     
-    int search_step = 40;
-    int mesh_step = 20;
+    int search_step = 100;
+    int mesh_step = 5;
     
     QuadSurface *surf = surf_raw;
     SurfacePointer *poi = surf->pointer();
