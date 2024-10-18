@@ -14,6 +14,8 @@ set(srcs
     SettingsDialog.cpp
     CSurfaceCollection.cpp
     OpChain.cpp
+    opslist.cpp
+    opssettings.cpp
 )
 
 set(MACOSX_BUNDLE_ICON logo.icns)

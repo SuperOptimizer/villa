@@ -13,6 +13,9 @@
 #include "SettingsDialog.hpp"
 #include "CSurfaceCollection.hpp"
 #include "OpChain.hpp"
+#include "opslist.hpp"
+#include "opssettings.hpp"
+
 
 #include "vc/core/types/Color.hpp"
 #include "vc/core/types/Exceptions.hpp"
@@ -162,10 +165,17 @@ void CWindow::CreateWidgets(void)
     newConnectedCVolumeViewer("segmentation", mdiArea);
     mdiArea->tileSubWindows();
 
-    treeStaticSurfaces = this->findChild<QTreeWidget*>("treeWidgetStaticSurfaces");
-    treeDynamicSurfaces = this->findChild<QTreeWidget*>("treeWidgetDynamicSurfaces");
+    treeWidgetSurfaces = this->findChild<QTreeWidget*>("treeWidgetSurfaces");
+    auto dockWidgetOpList = this->findChild<QDockWidget*>("dockWidgetOpList");
+    auto dockWidgetOpSettings = this->findChild<QDockWidget*>("dockWidgetOpSettings");
+    wOpsList = new OpsList(dockWidgetOpList);
+    dockWidgetOpList->setWidget(wOpsList);
+    wOpsSettings = new OpsSettings(dockWidgetOpSettings);
+    dockWidgetOpSettings->setWidget(wOpsSettings);
 
-    connect(treeStaticSurfaces, &QTreeWidget::currentItemChanged, this, &CWindow::onStaticSurfaceSelected);
+    connect(treeWidgetSurfaces, &QTreeWidget::currentItemChanged, this, &CWindow::onSurfaceSelected);
+    connect(this, &CWindow::sendOpChainSelected, wOpsList, &OpsList::onOpChainSelected);
+    connect(wOpsList, &OpsList::sendOpSelected, wOpsSettings, &OpsSettings::onOpSelected);
 
     // new and remove path buttons
     // connect(ui.btnNewPath, SIGNAL(clicked()), this, SLOT(OnNewPathClicked()));
@@ -230,8 +240,6 @@ void CWindow::CreateMenus(void)
 
     fViewMenu = new QMenu(tr("&View"), this);
     fViewMenu->addAction(findChild<QDockWidget*>("dockWidgetVolumes")->toggleViewAction());
-    fViewMenu->addAction(findChild<QDockWidget*>("dockWidgetSegmentation")->toggleViewAction());
-    fViewMenu->addAction(findChild<QDockWidget*>("dockWidgetAnnotations")->toggleViewAction());
 
     fHelpMenu = new QMenu(tr("&Help"), this);
     fHelpMenu->addAction(fKeybinds);
@@ -471,9 +479,9 @@ void CWindow::OpenVolume(const QString& path)
             QVariant(QString::fromStdString(id)));
     }
 
-    treeStaticSurfaces->clear();
+    treeWidgetSurfaces->clear();
     for (auto& s : fVpkg->segmentationIDs()) {
-        QTreeWidgetItem *item = new QTreeWidgetItem(treeStaticSurfaces);
+        QTreeWidgetItem *item = new QTreeWidgetItem(treeWidgetSurfaces);
         item->setText(0, QString(s.c_str()));
         item->setCheckState(1, Qt::Unchecked);
         item->setData(0, Qt::UserRole, QVariant(s.c_str()));
@@ -664,25 +672,25 @@ void CWindow::onManualPlaneChanged(void)
     _surf_col->setSurface("manual plane", plane);
 }
 
-void CWindow::onStaticSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous)
+void CWindow::onSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous)
 {
     std::string surf_id = current->data(0, Qt::UserRole).toString().toStdString();
 
-    std::cout << "sel" << surf_id << std::endl;
+    if (!_opchains.count(surf_id)) {
+        volcart::OrderedPointSet<cv::Vec3d> segment_raw = fVpkg->segmentation(surf_id)->getPointSet();
 
-    volcart::OrderedPointSet<cv::Vec3d> segment_raw = fVpkg->segmentation(surf_id)->getPointSet();
+        cv::Mat src(segment_raw.height(), segment_raw.width(), CV_64FC3, (void*)const_cast<cv::Vec3d*>(&segment_raw[0]));
 
-    // volcart::OrderedPointSet<cv::Vec3d> segment_raw = volcart::PointSetIO<cv::Vec3d>::ReadOrderedPointSet(path);
-    cv::Mat src(segment_raw.height(), segment_raw.width(), CV_64FC3, (void*)const_cast<cv::Vec3d*>(&segment_raw[0]));
+        cv::Mat_<cv::Vec3f> points;
+        src.convertTo(points, CV_32F);
 
-    cv::Mat_<cv::Vec3f> points;
-    src.convertTo(points, CV_32F);
+        double sx, sy;
 
-    double sx, sy;
+        vc_segmentation_scales(points, sx, sy);
 
-    vc_segmentation_scales(points, sx, sy);
+        _opchains[surf_id] = new OpChain(new QuadSurface(points, {sx,sy}));
+    }
 
-    // _seg_surf = new QuadSurface(points, {sx,sy});
-    _seg_surf = new OpChain(new QuadSurface(points, {sx,sy}));
-    _surf_col->setSurface("segmentation", _seg_surf);
+    _surf_col->setSurface("segmentation", _opchains[surf_id]);
+    sendOpChainSelected(_opchains[surf_id]);
 }

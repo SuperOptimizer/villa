@@ -35,6 +35,7 @@ public:
     float pointTo(SurfacePointer *ptr, const cv::Vec3f &coord, float th)  override;
     void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset);
 
+    std::vector<DeltaQuadSurface*> ops() { return _ops; };
 
 protected:
     OpChainSourceMode _src_mode = OpChainSourceMode::DEFAULT_MESHING;
@@ -47,3 +48,5 @@ protected:
     // TrivialSurfacePointer *_last_ptr = nullptr;
     // cv::Mat_<cv::Vec3f> _last_gen;
 };
+
+const char * op_name(Surface *op);

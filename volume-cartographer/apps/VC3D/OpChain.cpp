@@ -114,3 +114,13 @@ void OpChain::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv:
     else
         last->gen(coords, normals, size, nullptr, scale, {-size.width/2, -size.height/2, ((TrivialSurfacePointer*)ptr_center)->loc[2]});
 }
+
+const char *op_name(Surface *op)
+{
+    if (!op)
+        return "";
+
+    if (dynamic_cast<OpChain*>(op))
+        return "source";
+    return "FIXME unknown op name";
+}

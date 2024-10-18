@@ -15,6 +15,7 @@ static constexpr int VOLPKG_SLICE_MIN_INDEX = 0;
 //our own fw declarations
 class ChunkCache;
 class Surface;
+class OpChain;
 
 namespace volcart {
     class Volume;
@@ -23,6 +24,8 @@ namespace volcart {
 
 //Qt fw declaration
 class QMdiArea;
+class OpsList;
+class OpsSettings;
 
 namespace ChaoVis
 {
@@ -43,6 +46,7 @@ signals:
     void sendLocChanged(int x, int y, int z);
     void sendVolumeChanged(std::shared_ptr<volcart::Volume> vol);
     void sendSliceChanged(std::string,Surface*);
+    void sendOpChainSelected(OpChain*);
 
 public slots:
     void onShowStatusMessage(QString text, int timeout);
@@ -88,7 +92,7 @@ private slots:
     void Keybindings(void);
     void About(void);
     void ShowSettings();
-    void onStaticSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous);
+    void onSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous);
 private:
     std::shared_ptr<volcart::VolumePkg> fVpkg;
     Surface *_seg_surf;
@@ -119,8 +123,9 @@ private:
     QComboBox* volSelect;
     QPushButton* assignVol;
 
-    QTreeWidget *treeStaticSurfaces;
-    QTreeWidget *treeDynamicSurfaces;
+    QTreeWidget *treeWidgetSurfaces;
+    OpsList *wOpsList;
+    OpsSettings *wOpsSettings;
     
     //TODO abstract these into separate QWidget class?
     QLabel* lblLoc[3];
@@ -135,6 +140,8 @@ private:
     ChunkCache *chunk_cache;
     std::vector<CVolumeViewer*> _viewers;
     CSurfaceCollection *_surf_col;
+
+    std::unordered_map<std::string,OpChain*> _opchains;
 };  // class CWindow
 
 }  // namespace ChaoVis
