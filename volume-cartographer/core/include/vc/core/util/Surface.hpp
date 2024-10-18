@@ -142,7 +142,7 @@ protected:
 class RefineCompSurface : public DeltaQuadSurface
 {
 public:
-    RefineCompSurface(QuadSurface *base, z5::Dataset *ds, ChunkCache *cache);
+    RefineCompSurface(z5::Dataset *ds, ChunkCache *cache, QuadSurface *base = nullptr);
     void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;
     
 protected:

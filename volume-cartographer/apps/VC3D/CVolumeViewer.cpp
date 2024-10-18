@@ -116,6 +116,11 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
         
         _scale *= zoom;
         round_scale(_scale);
+
+        if (dynamic_cast<PlaneSurface*>(_surf))
+            _min_scale = pow(2.0,1.-volume->numScales());
+        else
+            _min_scale = 0.5;
         
         if (_scale >= _max_scale) {
             _ds_scale = _max_scale;

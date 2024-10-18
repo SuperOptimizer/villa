@@ -595,12 +595,14 @@ SurfaceControlPoint::SurfaceControlPoint(Surface *base, SurfacePointer *ptr_, co
 
 DeltaQuadSurface::DeltaQuadSurface(QuadSurface *base)
 {
-    *(QuadSurface*)this = *base;
+    if (base)
+        *(QuadSurface*)this = *base;
 }
 
 void DeltaQuadSurface::setBase(QuadSurface *base)
 {
-    *(QuadSurface*)this = *base;
+    if (base)
+        *(QuadSurface*)this = *base;
 }
 
 void ControlPointSurface::addControlPoint(SurfacePointer *base_ptr, cv::Vec3f control_point)
@@ -678,7 +680,7 @@ void ControlPointSurface::setBase(QuadSurface *base)
     std::cout << "ERROR implement search for ControlPointSurface::setBase()" << std::endl;
 }
 
-RefineCompSurface::RefineCompSurface(QuadSurface *base, z5::Dataset *ds, ChunkCache *cache)
+RefineCompSurface::RefineCompSurface(z5::Dataset *ds, ChunkCache *cache, QuadSurface *base)
 : DeltaQuadSurface(base)
 {
     _ds = ds;
@@ -718,7 +720,7 @@ void RefineCompSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> *n
     for(int n=0;n<21;n++) {
         cv::Mat_<uint8_t> slice;
         float off = (n-5)*0.5;
-        readInterpolated3D(slice, _ds, (*coords+*normals*off*scale), _cache);
+        readInterpolated3D(slice, _ds, (*coords+*normals*off)*scale, _cache);
         
         cv::Mat floatslice;
         slice.convertTo(floatslice, CV_32F, 1/255.0);
