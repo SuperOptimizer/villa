@@ -122,5 +122,7 @@ const char *op_name(Surface *op)
 
     if (dynamic_cast<OpChain*>(op))
         return "source";
+    if (dynamic_cast<RefineCompSurface*>(op))
+        return "refineAlphaComp";
     return "FIXME unknown op name";
 }

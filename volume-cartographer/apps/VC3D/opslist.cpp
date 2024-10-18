@@ -58,6 +58,7 @@ void OpsList::onAppendOpClicked()
         _op_chain->append(new RefineCompSurface(_ds, _cache));
     }
 
+    onOpChainSelected(_op_chain);
     sendOpChainChanged(_op_chain);
 }
 
