@@ -719,7 +719,7 @@ void RefineCompSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> *n
     
     for(int n=0;n<21;n++) {
         cv::Mat_<uint8_t> slice;
-        float off = (n-5)*0.5;
+        float off = (n-5);
         readInterpolated3D(slice, _ds, (*coords+*normals*off)*scale, _cache);
         
         cv::Mat floatslice;
@@ -755,7 +755,7 @@ void RefineCompSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> *n
 
     cv::Mat mul;
     cv::cvtColor(integ_z, mul, cv::COLOR_GRAY2BGR);
-    *coords += (*normals).mul(mul+1);
+    *coords += (*normals).mul(mul+1+offset[2]);
 }
 
 void set_block(cv::Mat_<uint8_t> &block, const cv::Vec3f &last_loc, const cv::Vec3f &loc, const cv::Rect &roi, float step)
