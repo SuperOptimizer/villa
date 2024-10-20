@@ -37,8 +37,8 @@ public slots:
     void onAppendOpClicked();
 
 signals:
-    void sendOpSelected(Surface *surf);
-    void sendOpChainChanged(OpChain *ops);
+    void sendOpSelected(Surface *surf, OpChain *chain);
+    void sendOpChainChanged(OpChain *chain);
 
 private:
     Ui::OpsList* ui;

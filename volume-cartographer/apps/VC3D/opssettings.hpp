@@ -5,6 +5,8 @@
 
 class Surface;
 class QGroupBox;
+class QCheckBox;
+class OpChain;
 
 namespace Ui
 {
@@ -20,11 +22,19 @@ public:
     ~OpsSettings();
 
 public slots:
-    void onOpSelected(Surface *surf);
+    void onOpSelected(Surface *op, OpChain *chain);
+    void onEnabledChanged();
+
+signals:
+    void sendOpChainChanged(OpChain *chain);
 
 private:
     Ui::OpsSettings* ui;
     QGroupBox *_box;
+    QCheckBox *_enable;
+
+    Surface *_op = nullptr;
+    OpChain *_chain = nullptr;
 };
 
 #endif  // OPSSETTINGS_HPP

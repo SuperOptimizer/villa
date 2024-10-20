@@ -104,6 +104,8 @@ void OpChain::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv:
 
     //reset op chain
     for(auto s : _ops) {
+        if (!enabled(s))
+            continue;
         s->setBase(last);
         last = s;
     }
@@ -112,7 +114,7 @@ void OpChain::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv:
         last->gen(coords, normals, size, ptr, scale, offset);
     }
     else
-        last->gen(coords, normals, size, nullptr, scale, {-size.width/2, -size.height/2, ((TrivialSurfacePointer*)ptr_center)->loc[2]});
+        last->gen(coords, normals, size, nullptr, scale, {-size.width/2, -size.height/2, ((TrivialSurfacePointer*)ptr_center)->loc[2]+offset[2]});
 }
 
 const char *op_name(Surface *op)
@@ -125,4 +127,18 @@ const char *op_name(Surface *op)
     if (dynamic_cast<RefineCompSurface*>(op))
         return "refineAlphaComp";
     return "FIXME unknown op name";
+}
+
+
+void OpChain::setEnabled(DeltaQuadSurface *surf, bool enabled)
+{
+    if (enabled)
+        _disabled.erase(surf);
+    else
+        _disabled.insert(surf);
+}
+
+bool OpChain::enabled(DeltaQuadSurface *surf)
+{
+    return _disabled.count(surf) == 0;
 }

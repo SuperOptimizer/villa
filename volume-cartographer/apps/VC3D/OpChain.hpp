@@ -2,6 +2,8 @@
 
 #include "vc/core/util/Surface.hpp"
 
+#include <set>
+
 class QuadSurface;
 class DeltaQuadSurface;
 class SurfacePointer;
@@ -37,9 +39,13 @@ public:
 
     std::vector<DeltaQuadSurface*> ops() { return _ops; };
 
+    void setEnabled(DeltaQuadSurface *surf, bool enabled);
+    bool enabled(DeltaQuadSurface *surf);
+
 protected:
     OpChainSourceMode _src_mode = OpChainSourceMode::DEFAULT_MESHING;
     std::vector<DeltaQuadSurface*> _ops;
+    std::set<DeltaQuadSurface*> _disabled;
     QuadSurface *_src = nullptr;
     QuadSurface *_crop = nullptr;
 

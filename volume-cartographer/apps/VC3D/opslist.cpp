@@ -40,9 +40,9 @@ void OpsList::onOpChainSelected(OpChain *ops)
 void OpsList::onSelChanged(QTreeWidgetItem *current, QTreeWidgetItem *previous)
 {
     if (!current)
-        sendOpSelected(nullptr);
+        sendOpSelected(nullptr, _op_chain);
     else
-        sendOpSelected((Surface*)get<void*>(current->data(0, Qt::UserRole)));
+        sendOpSelected((Surface*)get<void*>(current->data(0, Qt::UserRole)), _op_chain);
 }
 
 void OpsList::onAppendOpClicked()

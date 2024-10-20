@@ -180,6 +180,9 @@ void CWindow::CreateWidgets(void)
     connect(this, &CWindow::sendOpChainSelected, wOpsList, &OpsList::onOpChainSelected);
     connect(wOpsList, &OpsList::sendOpSelected, wOpsSettings, &OpsSettings::onOpSelected);
 
+    connect(wOpsList, &OpsList::sendOpChainChanged, this, &CWindow::onOpChainChanged);
+    connect(wOpsSettings, &OpsSettings::sendOpChainChanged, this, &CWindow::onOpChainChanged);
+
     // new and remove path buttons
     // connect(ui.btnNewPath, SIGNAL(clicked()), this, SLOT(OnNewPathClicked()));
     // connect(ui.btnRemovePath, SIGNAL(clicked()), this, SLOT(OnRemovePathClicked()));
@@ -673,6 +676,11 @@ void CWindow::onManualPlaneChanged(void)
  
     plane->setNormal(normal);
     _surf_col->setSurface("manual plane", plane);
+}
+
+void CWindow::onOpChainChanged(OpChain *chain)
+{
+    _surf_col->setSurface("segmentation", chain);
 }
 
 void CWindow::onSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous)
