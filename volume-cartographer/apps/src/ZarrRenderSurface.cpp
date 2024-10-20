@@ -515,7 +515,7 @@ int main(int argc, char *argv[])
     surf->move(ptr, {-255*2,-38*2,0});
     corr->addControlPoint(ptr, surf->coord(ptr) + -10*surf->normal(ptr));
     
-    Surface *comp_surf = new RefineCompSurface(corr, ds.get(), &chunk_cache);
+    Surface *comp_surf = new RefineCompSurface(ds.get(), &chunk_cache, corr);
     
     // surf->move(ptr, {-62+70,27+11,0});    
     // corr->addControlPoint(ptr, surf->coord(ptr) + -6*surf->normal(ptr));
