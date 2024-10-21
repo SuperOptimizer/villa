@@ -35,6 +35,8 @@ private:
 
     Surface *_op = nullptr;
     OpChain *_chain = nullptr;
+    
+    QWidget *_form = nullptr;
 };
 
 #endif  // OPSSETTINGS_HPP

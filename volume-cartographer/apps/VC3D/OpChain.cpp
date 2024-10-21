@@ -3,36 +3,6 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Surface.hpp"
 
-// QuadSurface *OpChain::surf(SurfacePointer *ptr, const cv::Size &size, float scale, ChunkCache *cache, z5::Dataset *ds)
-// {
-//     QuadSurface *last = nullptr;
-//
-//     if (_src_mode == OpChainSourceMode::RAW) {
-//         last = _src;
-//     }
-//     else if (_src_mode == OpChainSourceMode::DEFAULT_MESHING)
-//     {
-//         //re-parametrize base then go trough surfaces ...
-//         if (_crop) {
-//             delete _crop;
-//             _crop = nullptr;
-//         }
-//
-//         int search_step = 40;
-//         int mesh_step = 20;
-//
-//         _crop = regularized_local_quad(_src, ptr, size.width/mesh_step/scale, size.height/mesh_step/scale, search_step, mesh_step);
-//     }
-//
-//     //reset op chain
-//     for(auto s : _ops) {
-//         s->setBase(last);
-//         last = s;
-//     }
-//
-//     return last;
-// }
-
 void OpChain::append(DeltaQuadSurface *op)
 {
     _ops.push_back(op);
@@ -93,7 +63,15 @@ void OpChain::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv:
         ptr_center = ptr_center->clone();
         _src->move(ptr_center, offset+cv::Vec3f(-size.width/2,-size.height/2,0));
     }
-    else if (_src_mode == OpChainSourceMode::DEFAULT_MESHING)
+    else if (_src_mode == OpChainSourceMode::BLUR) {
+        if (!_src_blur)
+            _src_blur = smooth_vc_segmentation(_src);
+        
+        last = _src_blur;
+        ptr_center = ptr_center->clone();
+        _src->move(ptr_center, offset+cv::Vec3f(-size.width/2,-size.height/2,0));
+    }
+    else if (_src_mode == OpChainSourceMode::GREEDY)
     {
         int search_step = 100;
         int mesh_step = 5;
@@ -110,7 +88,7 @@ void OpChain::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv:
         last = s;
     }
 
-    if (_src_mode == OpChainSourceMode::RAW) {
+    if (_src_mode == OpChainSourceMode::RAW || _src_mode == OpChainSourceMode::BLUR) {
         last->gen(coords, normals, size, ptr, scale, offset);
     }
     else

@@ -237,6 +237,16 @@ QuadSurface::QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &sca
     std::cout << "quad center scale" << _center << _scale <<  _points.size() <<  std::endl;
 }
 
+QuadSurface *smooth_vc_segmentation(QuadSurface *src)
+{
+    cv::Mat_<cv::Vec3f> points = smooth_vc_segmentation(src->_points);
+    
+    double sx, sy;
+    vc_segmentation_scales(points, sx, sy);
+    
+    return new QuadSurface(points, {sx,sy});
+}
+
 SurfacePointer *QuadSurface::pointer()
 {
     return new TrivialSurfacePointer({0,0,0});

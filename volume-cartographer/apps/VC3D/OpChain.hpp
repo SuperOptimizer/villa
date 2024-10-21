@@ -8,6 +8,7 @@ class QuadSurface;
 class DeltaQuadSurface;
 class SurfacePointer;
 class ChunkCache;
+class FormSetSrc;
 
 namespace z5 {
     class Dataset;
@@ -16,7 +17,8 @@ namespace z5 {
 enum class OpChainSourceMode: int
 {
     RAW = 0,
-    DEFAULT_MESHING
+    BLUR = 1,
+    GREEDY = 2
 };
 
 //special "windowed" surface that represents a set of delta surfaces on top of a base QuadSurface
@@ -41,18 +43,17 @@ public:
 
     void setEnabled(DeltaQuadSurface *surf, bool enabled);
     bool enabled(DeltaQuadSurface *surf);
+    
+    friend class FormSetSrc;
 
 protected:
-    OpChainSourceMode _src_mode = OpChainSourceMode::DEFAULT_MESHING;
+    OpChainSourceMode _src_mode = OpChainSourceMode::RAW;
     std::vector<DeltaQuadSurface*> _ops;
     std::set<DeltaQuadSurface*> _disabled;
     QuadSurface *_src = nullptr;
     QuadSurface *_crop = nullptr;
-
-    // float _last_scale = 0;
-    // cv::Vec3f _last_offset = {0,0,0};
-    // TrivialSurfacePointer *_last_ptr = nullptr;
-    // cv::Mat_<cv::Vec3f> _last_gen;
+    
+    QuadSurface *_src_blur = nullptr;
 };
 
 const char * op_name(Surface *op);

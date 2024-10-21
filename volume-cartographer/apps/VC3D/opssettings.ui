@@ -23,7 +23,7 @@
       <item>
        <widget class="QCheckBox" name="chkEnableLayer">
         <property name="text">
-         <string>CheckBox</string>
+         <string>layer enabled</string>
         </property>
         <property name="checked">
          <bool>true</bool>

@@ -26,6 +26,7 @@ public:
 
 QuadSurface *load_quad_from_vcps(const std::string &path);
 QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search = 100, int step_out = 5);
+QuadSurface *smooth_vc_segmentation(QuadSurface *src);
 
 //base surface class
 class Surface
@@ -96,6 +97,7 @@ public:
     cv::Mat_<cv::Vec3f> rawPoints() { return _points; }
 
     friend QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search, int step_out);
+    friend QuadSurface *smooth_vc_segmentation(QuadSurface *src);
     friend class ControlPointSurface;
 protected:
     cv::Mat_<cv::Vec3f> _points;
@@ -103,6 +105,7 @@ protected:
     cv::Vec2f _scale;
     cv::Vec3f _center;
 };
+
 
 //surface representing some operation on top of a base surface
 //by default all ops but gen() are forwarded to the base

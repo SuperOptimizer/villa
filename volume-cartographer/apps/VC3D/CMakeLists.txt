@@ -16,6 +16,7 @@ set(srcs
     OpChain.cpp
     opslist.cpp
     opssettings.cpp
+    formsetsrc.cpp
 )
 
 set(MACOSX_BUNDLE_ICON logo.icns)
