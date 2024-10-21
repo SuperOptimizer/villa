@@ -15,6 +15,8 @@
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/Slicing.hpp"
 
+#include "OpChain.hpp"
+
 using namespace ChaoVis;
 using qga = QGuiApplication;
 
@@ -228,7 +230,7 @@ void CVolumeViewer::invalidateIntersect()
 void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
 {
     //TODO distinguis different elements for rendering! (slice, intersect, control points) completely separately!
-    if (_surf_name == "segmentation")
+    if (_surf_name == "visible_segmentation")
         invalidateIntersect();
     
     if (_surf_name == name) {
@@ -344,6 +346,16 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
         }
 
         _surf->gen(&coords, nullptr, roi.size(), _ptr, _ds_scale, {-roi.width/2, -roi.height/2, _z_off});
+        
+        if (_surf_name == "segmentation") {
+            QuadSurface *old_crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));            
+            double sx, sy;
+            vc_segmentation_scales(coords, sx, sy);
+            QuadSurface *crop = new QuadSurface(coords.clone(), {sx, sy});
+            _surf_col->setSurface("visible_segmentation", crop);
+            if (old_crop)
+                delete old_crop;
+        }
     }
 
     readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords*_ds_scale, cache);
@@ -404,10 +416,8 @@ void CVolumeViewer::renderVisible(bool force)
     
     fBaseImageItem->setOffset(curr_img_area.topLeft());
     PlaneSurface *plane = dynamic_cast<PlaneSurface*>(_surf);
-    QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface("segmentation"));
+    QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
     
-    if (_surf_col->surface("segmentation"))
-        std::cout << "FIXME vis intersect" << std::endl;
     if (!_intersect_valid && plane && segmentation) {
         std::vector<std::vector<cv::Vec2f>> xy_seg_;
         std::vector<std::vector<cv::Vec3f>> intersections;
