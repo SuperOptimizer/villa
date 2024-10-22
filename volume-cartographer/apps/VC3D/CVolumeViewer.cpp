@@ -398,7 +398,6 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
 
 cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 {
-    std::cout << "render " << roi << std::endl;
     cv::Mat_<cv::Vec3f> coords;
     cv::Mat_<uint8_t> img;
 
@@ -566,6 +565,9 @@ void CVolumeViewer::renderIntersections()
 
     PlaneSurface *plane = dynamic_cast<PlaneSurface*>(_surf);
     
+    if (_z_off)
+        return;
+    
     if (plane) {
         for(auto key : _intersect_tgts)
             if (!_intersect_items.count(key) && dynamic_cast<QuadSurface*>(_surf_col->surface(key))) {
@@ -626,7 +628,7 @@ void CVolumeViewer::renderIntersections()
                 bool first = true;
                 for (auto wp : seg)
                 {
-                    crop->pointTo(ptr, wp, 1.0);
+                    float res = crop->pointTo(ptr, wp, 1.0);
                     cv::Vec3f p = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
                     if (first)
                         path.moveTo(p[0],p[1]);
