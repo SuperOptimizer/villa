@@ -270,9 +270,12 @@ void CVolumeViewer::invalidateIntersect(const std::string &name)
 
 void CVolumeViewer::onIntersectionChanged(std::string a, std::string b, Intersection *intersection)
 {
+    if (_ignore_intersect_change && intersection == _ignore_intersect_change)
+        return;
+
     if (a == _surf_name)
         invalidateIntersect(b);
-    else if (a == _surf_name)
+    else if (b == _surf_name)
         invalidateIntersect(a);
     
     renderIntersections();
@@ -410,7 +413,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
         _surf->gen(&coords, nullptr, roi.size(), _ptr, _ds_scale, {-roi.width/2, -roi.height/2, _z_off});
         
         if (_surf_name == "segmentation") {
-            QuadSurface *old_crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));            
+            QuadSurface *old_crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
             
             QuadSurface *crop = new QuadSurface(coords.clone(), {_ds_scale, _ds_scale});
             _surf_col->setSurface("visible_segmentation", crop);
@@ -577,6 +580,46 @@ void CVolumeViewer::renderIntersections()
                 for (auto wp : seg)
                 {
                     cv::Vec3f p = plane->project(wp, 1.0, _ds_scale);
+                    if (first)
+                        path.moveTo(p[0],p[1]);
+                    else
+                        path.lineTo(p[0],p[1]);
+                    first = false;
+                }
+                auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 1/_scene_scale));
+                item->setZValue(5);
+                items.push_back(item);
+            }
+            _intersect_items[key] = items;
+            _ignore_intersect_change = new Intersection({intersections});
+            _surf_col->setIntersection(_surf_name, key, _ignore_intersect_change);
+            _ignore_intersect_change = nullptr;
+        }
+    }
+    else if (_surf_name == "segmentation" && dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"))) {
+        QuadSurface *crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
+
+        //TODO make configurable, for now just show everything!
+        std::vector<std::pair<std::string,std::string>> intersects = _surf_col->intersections("visible_segmentation");
+        for(auto pair : intersects) {
+            std::string key = pair.first;
+            if (key == "visible_segmentation")
+                key = pair.second;
+            
+            if (_intersect_items.count(key) || !_intersect_tgts.count(key))
+                continue;
+            
+            std::vector<QGraphicsItem*> items;
+            for (auto seg : _surf_col->intersection(pair.first, pair.second)->lines) {
+                QPainterPath path;
+                
+                SurfacePointer *ptr = crop->pointer();
+                bool first = true;
+                for (auto wp : seg)
+                {
+                    //FIXME! use output surface!
+                    crop->pointTo(ptr, wp, 1.0);
+                    cv::Vec3f p = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
                     if (first)
                         path.moveTo(p[0],p[1]);
                     else

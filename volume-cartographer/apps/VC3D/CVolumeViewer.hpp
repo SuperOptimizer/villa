@@ -103,6 +103,7 @@ protected:
     
     std::set<std::string> _intersect_tgts = {"visible_segmentation"};
     std::unordered_map<std::string,std::vector<QGraphicsItem*>> _intersect_items;
+    Intersection *_ignore_intersect_change = nullptr;
     
     CSurfaceCollection *_surf_col = nullptr;
 };  // class CVolumeViewer

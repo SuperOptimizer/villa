@@ -166,7 +166,7 @@ void CWindow::CreateWidgets(void)
     newConnectedCVolumeViewer("xy plane", mdiArea);
     newConnectedCVolumeViewer("xz plane", mdiArea);
     newConnectedCVolumeViewer("yz plane", mdiArea);
-    newConnectedCVolumeViewer("segmentation", mdiArea);
+    newConnectedCVolumeViewer("segmentation", mdiArea)->setIntersects({"seg xz","seg yz"});
     mdiArea->tileSubWindows();
 
     treeWidgetSurfaces = this->findChild<QTreeWidget*>("treeWidgetSurfaces");
