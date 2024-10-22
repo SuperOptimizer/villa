@@ -79,8 +79,8 @@ protected:
     void update();
     cv::Vec3f _normal = {0,0,1};
     cv::Vec3f _origin = {0,0,0};
-    cv::Mat _M;
-    cv::Mat _T;
+    cv::Matx33d _M;
+    cv::Vec3d _T;
 };
 
 //quads based surface class with a pointer implementing a nominal scale of 1 voxel

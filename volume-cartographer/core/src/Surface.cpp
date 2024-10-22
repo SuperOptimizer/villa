@@ -137,10 +137,10 @@ void PlaneSurface::update()
 
 cv::Vec3f PlaneSurface::project(cv::Vec3f wp, float render_scale, float coord_scale)
 {
-    cv::Mat_<double> res = _M*cv::Vec3d(wp)+_T;
+    cv::Vec3d res = _M*cv::Vec3d(wp)+_T;
     res *= render_scale*coord_scale;
 
-    return {res(0,0), res(0,1), res(0,2)};
+    return {res(0), res(1), res(2)};
 }
 
 float PlaneSurface::scalarp(cv::Vec3f point) const
