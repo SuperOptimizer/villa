@@ -113,13 +113,26 @@ protected:
 
 //surface representing some operation on top of a base surface
 //by default all ops but gen() are forwarded to the base
-class DeltaQuadSurface : public QuadSurface
+class DeltaQuadSurface : public Surface
 {
 public:
     //default - just assign base ptr, override if additional processing necessary
     //like relocate ctrl points, mark as dirty, ...
-    virtual void setBase(QuadSurface *base);
-    DeltaQuadSurface(QuadSurface *base);
+    virtual void setBase(Surface *base);
+    DeltaQuadSurface(Surface *base);
+    
+    virtual SurfacePointer *pointer() override;
+    
+    void move(SurfacePointer *ptr, const cv::Vec3f &offset) override;
+    bool valid(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override = 0;
+    float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th) override;
+
+protected:
+    Surface *_base = nullptr;
 };
 
 //might in the future have more properties! or those props are handled in whatever class manages a set of control points ...
@@ -136,11 +149,11 @@ public:
 class ControlPointSurface : public DeltaQuadSurface
 {
 public:
-    ControlPointSurface(QuadSurface *base) : DeltaQuadSurface(base) {};
+    ControlPointSurface(Surface *base) : DeltaQuadSurface(base) {};
     void addControlPoint(SurfacePointer *base_ptr, cv::Vec3f control_point);
     void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;
 
-    void setBase(QuadSurface *base);
+    void setBase(Surface *base);
 
 protected:
     std::vector<SurfaceControlPoint> _controls;

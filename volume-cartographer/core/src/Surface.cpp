@@ -611,23 +611,56 @@ SurfaceControlPoint::SurfaceControlPoint(Surface *base, SurfacePointer *ptr_, co
     control_point = control;
 }
 
-DeltaQuadSurface::DeltaQuadSurface(QuadSurface *base)
+DeltaQuadSurface::DeltaQuadSurface(Surface *base) : _base(base)
 {
-    if (base)
-        *(QuadSurface*)this = *base;
+    
 }
 
-void DeltaQuadSurface::setBase(QuadSurface *base)
+void DeltaQuadSurface::setBase(Surface *base)
 {
-    if (base)
-        *(QuadSurface*)this = *base;
+    _base = base;
 }
+
+SurfacePointer *DeltaQuadSurface::pointer()
+{
+    return _base->pointer();
+}
+
+
+void DeltaQuadSurface::move(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    _base->move(ptr, offset);
+}
+
+bool DeltaQuadSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    return _base->valid(ptr, offset);
+}
+
+cv::Vec3f DeltaQuadSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    return _base->loc(ptr, offset);
+}
+
+cv::Vec3f DeltaQuadSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    return _base->coord(ptr, offset);
+}
+
+cv::Vec3f DeltaQuadSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
+{
+    return _base->normal(ptr, offset);
+}
+
+float DeltaQuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
+{
+    return _base->pointTo(ptr, tgt, th);
+}
+
 
 void ControlPointSurface::addControlPoint(SurfacePointer *base_ptr, cv::Vec3f control_point)
 {
     _controls.push_back(SurfaceControlPoint(this, base_ptr, control_point));
-    
-    std::cout << "add control " << control_point << loc(base_ptr) << loc(_controls[0].ptr) << _center << loc(pointer()) << std::endl;
     
 }
 
@@ -652,23 +685,23 @@ void ControlPointSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> 
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
 
-    QuadSurface::gen(coords, normals_, size, ptr, scale, offset);
+    _base->gen(coords, normals_, size, ptr, scale, offset);
     
     int w = size.width;
     int h = size.height;
     cv::Rect bounds(0,0,w,h);
     
-    cv::Vec3f upper_left_nominal = nominal_loc(offset/scale, ptr_inst->loc, _scale);
+    //FIXME can we do this without assuming quad base? I think so ...
+    
+    cv::Vec3f upper_left_nominal = nominal_loc(offset/scale, ptr_inst->loc, dynamic_cast<QuadSurface*>(_base)->_scale);
     
     float z_offset = upper_left_nominal[2];
     upper_left_nominal[2] = 0;
     
     //FIXME implement z_offset
     
-    std::cout << "offset" << upper_left_nominal << _center << ptr_inst->loc << std::endl;
-    
     for(auto p : _controls) {
-        cv::Vec3f p_loc = nominal_loc(loc(p.ptr), ptr_inst->loc, _scale)  - upper_left_nominal;
+        cv::Vec3f p_loc = nominal_loc(loc(p.ptr), ptr_inst->loc, dynamic_cast<QuadSurface*>(_base)->_scale)  - upper_left_nominal;
         std::cout << p_loc << p_loc*scale <<  loc(p.ptr) << ptr_inst->loc << std::endl;
         p_loc *= scale;
         cv::Rect roi(p_loc[0]-40,p_loc[1]-40,80,80);
@@ -690,9 +723,11 @@ void ControlPointSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> 
     }
 }
 
-void ControlPointSurface::setBase(QuadSurface *base)
+void ControlPointSurface::setBase(Surface *base)
 {
     DeltaQuadSurface::setBase(base);
+    
+    assert(dynamic_cast<QuadSurface*>(base));
     
     //FIXME reset control points?
     std::cout << "ERROR implement search for ControlPointSurface::setBase()" << std::endl;
@@ -725,7 +760,7 @@ void RefineCompSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> *n
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(ptr_inst);
     
-    QuadSurface::gen(coords, normals, size, ptr, scale, offset);
+    _base->gen(coords, normals, size, ptr, scale, offset);
     
     cv::Mat_<cv::Vec3f> res;
     

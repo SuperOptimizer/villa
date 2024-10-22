@@ -52,7 +52,6 @@ protected:
     std::set<DeltaQuadSurface*> _disabled;
     QuadSurface *_src = nullptr;
     QuadSurface *_crop = nullptr;
-    
     QuadSurface *_src_blur = nullptr;
 };
 

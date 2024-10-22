@@ -48,7 +48,7 @@ float OpChain::pointTo(SurfacePointer *ptr, const cv::Vec3f &coord, float th)
 
 void OpChain::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
 {
-    QuadSurface *last = nullptr;
+    Surface *last = nullptr;
     SurfacePointer *ptr_center = ptr;
     if (!ptr_center)
         ptr_center = _src->pointer();
