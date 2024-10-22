@@ -245,7 +245,6 @@ QuadSurface::QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &sca
     _bounds = {0,0,points.cols-1,points.rows-1};
     _scale = scale;
     _center = {points.cols/2.0/_scale[0],points.rows/2.0/_scale[1],0};
-    std::cout << "quad center scale" << _center << _scale <<  _points.size() <<  std::endl;
 }
 
 QuadSurface *smooth_vc_segmentation(QuadSurface *src)
@@ -554,7 +553,6 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals,
     bool create_normals = normals || offset[2] || ptr_inst->loc[2];
     
     cv::Vec3f upper_left_actual = internal_loc(offset/scale+_center, ptr_inst->loc, _scale);
-    std::cout << "upper left" << _points.size() << upper_left_actual << ptr_inst->loc << _center << offset << scale << _scale << std::endl;
     
     int w = size.width;
     int h = size.height;
@@ -571,7 +569,6 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals,
     
     std::vector<cv::Vec2f> dst = {{0,0},{w,0},{0,h}};
     cv::Vec2f off2d = {upper_left_actual[0],upper_left_actual[1]};
-    std::cout << "using off2d " << off2d << std::endl;
     std::vector<cv::Vec2f> src = {off2d,off2d+cv::Vec2f(w*_scale[0]/scale,0),off2d+cv::Vec2f(0,h*_scale[1]/scale)};
     
     cv::Mat affine = cv::getAffineTransform(src, dst);

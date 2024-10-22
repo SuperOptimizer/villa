@@ -297,7 +297,6 @@ void CVolumeViewer::setIntersects(const std::set<std::string> &set)
 void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
 {
     invalidateIntersect(name);
-    renderIntersections();
     
     if (_surf_name == name) {
         _surf = surf;
@@ -312,6 +311,8 @@ void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
         curr_img_area = {0,0,0,0};
         renderVisible();
     }
+    
+    renderIntersections();
 }
 
 QGraphicsItem *cursorItem()

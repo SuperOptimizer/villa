@@ -47,7 +47,7 @@ public:
     friend class FormSetSrc;
 
 protected:
-    OpChainSourceMode _src_mode = OpChainSourceMode::RAW;
+    OpChainSourceMode _src_mode = OpChainSourceMode::BLUR;
     std::vector<DeltaQuadSurface*> _ops;
     std::set<DeltaQuadSurface*> _disabled;
     QuadSurface *_src = nullptr;
