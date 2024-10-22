@@ -365,21 +365,30 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
     }
     else if (name == "cursor") {
         PlaneSurface *slice_plane = dynamic_cast<PlaneSurface*>(_surf);
+        QuadSurface *crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
         
-        if (slice_plane) {
-            
-            if (!_cursor) {
-                _cursor = cursorItem();
-                fScene->addItem(_cursor);
-            }
-            
-            float dist = slice_plane->pointDist(poi->p);
-            
-            if (dist < 100.0/_ds_scale) {
-                cv::Vec3f sp = slice_plane->project(poi->p, 1.0, _ds_scale);
-                
+        cv::Vec3f sp;
+        float dist = -1;
+        if (slice_plane) {            
+            dist = slice_plane->pointDist(poi->p);
+            sp = slice_plane->project(poi->p, 1.0, _ds_scale);
+        }
+        else if (_surf_name == "segmentation" && crop)
+        {
+            SurfacePointer *ptr = crop->pointer();
+            dist = crop->pointTo(ptr, poi->p, 20.0);
+            sp = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
+        }
+        
+        if (!_cursor) {
+            _cursor = cursorItem();
+            fScene->addItem(_cursor);
+        }
+        
+        if (dist != -1) {
+            if (dist < 20.0/_ds_scale) {
                 _cursor->setPos(sp[0], sp[1]);
-                _cursor->setOpacity(1.0-dist*_ds_scale/100.0);
+                _cursor->setOpacity(1.0-dist*_ds_scale/20.0);
             }
             else
                 _cursor->setOpacity(0.0);
@@ -617,7 +626,6 @@ void CVolumeViewer::renderIntersections()
                 bool first = true;
                 for (auto wp : seg)
                 {
-                    //FIXME! use output surface!
                     crop->pointTo(ptr, wp, 1.0);
                     cv::Vec3f p = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
                     if (first)
