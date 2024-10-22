@@ -181,16 +181,35 @@ void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, 
     if (!_surf)
         return;
 
-    cv::Vec3f surf_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
+    //for PlaneSurface we work with absolute coordinates only
+    if (dynamic_cast<PlaneSurface*>(_surf)) {
+        cv::Vec3f surf_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
 
-    //FIXME actually work with a pointer ...
-    SurfacePointer *ptr = _surf->pointer();
-    
-    cv::Vec3f n = _surf->normal(ptr, surf_loc);
-    cv::Vec3f p = _surf->coord(ptr, surf_loc);
-    
-
-    sendVolumeClicked(p, n, _surf, surf_loc, buttons, modifiers);
+        SurfacePointer *ptr = _surf->pointer();
+        
+        cv::Vec3f n = _surf->normal(ptr, surf_loc);
+        cv::Vec3f p = _surf->coord(ptr, surf_loc);
+        
+        sendVolumeClicked(p, n, _surf, surf_loc, buttons, modifiers);
+    }
+    //FIXME quite some assumptions ...
+    else if (_surf_name == "segmentation") {
+        assert(_ptr);
+        assert(dynamic_cast<OpChain*>(_surf));
+        
+        QuadSurface* crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation")); 
+        
+        cv::Vec3f delta = {(scene_loc.x()-_vis_center[0])/_ds_scale, (scene_loc.y()-_vis_center[1])/_ds_scale,0};
+        
+        //NOTE crop center and original scene _ptr are off by < 0.5 voxels?
+        SurfacePointer *ptr = crop->pointer();
+        cv::Vec3f n = crop->normal(ptr, delta);
+        cv::Vec3f p = crop->coord(ptr, delta);
+        
+        sendVolumeClicked(p, n, crop, {0,0,0}, buttons, modifiers);
+    }
+    else
+        std::cout << "FIXME: onVolumeClicked()" << std::endl;
 }
 
 void CVolumeViewer::setCache(ChunkCache *cache_)
@@ -323,8 +342,7 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
 
 cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 {
-    std::cout << "render " << std::endl;
-
+    std::cout << "render " << roi << std::endl;
     cv::Mat_<cv::Vec3f> coords;
     cv::Mat_<uint8_t> img;
 
@@ -349,9 +367,8 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
         
         if (_surf_name == "segmentation") {
             QuadSurface *old_crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));            
-            double sx, sy;
-            vc_segmentation_scales(coords, sx, sy);
-            QuadSurface *crop = new QuadSurface(coords.clone(), {sx, sy});
+            
+            QuadSurface *crop = new QuadSurface(coords.clone(), {_ds_scale, _ds_scale});
             _surf_col->setSurface("visible_segmentation", crop);
             if (old_crop)
                 delete old_crop;

@@ -60,16 +60,12 @@ void OpChain::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv:
 
     if (_src_mode == OpChainSourceMode::RAW) {
         last = _src;
-        ptr_center = ptr_center->clone();
-        _src->move(ptr_center, offset+cv::Vec3f(-size.width/2,-size.height/2,0));
     }
     else if (_src_mode == OpChainSourceMode::BLUR) {
         if (!_src_blur)
             _src_blur = smooth_vc_segmentation(_src);
         
         last = _src_blur;
-        ptr_center = ptr_center->clone();
-        _src->move(ptr_center, offset+cv::Vec3f(-size.width/2,-size.height/2,0));
     }
     else if (_src_mode == OpChainSourceMode::GREEDY)
     {

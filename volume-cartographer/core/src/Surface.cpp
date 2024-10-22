@@ -178,8 +178,6 @@ void PlaneSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals
 
     cv::Vec3f use_origin = origin + _normal*total_offset[2];
 
-    std::cout << "using vx vy normal " << vx << vy << _normal << total_offset << std::endl;
-
 #pragma omp parallel for
     for(int j=0;j<h;j++)
         for(int i=0;i<w;i++) {
@@ -296,7 +294,7 @@ cv::Vec3f QuadSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
     cv::Rect bounds = {0,0,_points.cols-2,_points.rows-2};
     if (!bounds.contains({p[0],p[1]}))
         return {-1,-1,-1};
-
+        
     return at_int(_points, {p[0],p[1]});
 }
 
@@ -480,7 +478,7 @@ float QuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
     TrivialSurfacePointer *tgt_ptr = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(tgt_ptr);
 
-    cv::Vec2f loc = {tgt_ptr->loc[0],tgt_ptr->loc[1]};
+    cv::Vec2f loc = cv::Vec2f(tgt_ptr->loc[0],tgt_ptr->loc[1]) + cv::Vec2f(_center[0]*_scale[0],_center[1]*_scale[1]);
     cv::Vec3f _out;
     
     cv::Vec2f step_small = {std::max(1.0f,_scale[0]),std::max(1.0f,_scale[1])};
@@ -490,7 +488,7 @@ float QuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
     float dist = search_min_loc(_points, loc, _out, tgt, step_small, _scale[0]*0.01);
     
     if (dist < th && dist >= 0) {
-        tgt_ptr->loc = {loc[0],loc[1]};
+        tgt_ptr->loc = cv::Vec3f(loc[0],loc[1],0) - cv::Vec3f(_center[0]*_scale[0],_center[1]*_scale[1],0);
         return dist;
     }
     
@@ -506,7 +504,7 @@ float QuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
         float dist = search_min_loc(_points, loc, _out, tgt, step_large, _scale[0]*0.01);
         
         if (dist < th && dist >= 0) {
-            tgt_ptr->loc = {loc[0],loc[1]};
+            tgt_ptr->loc = cv::Vec3f(loc[0],loc[1],0) - cv::Vec3f(_center[0]*_scale[0],_center[1]*_scale[1],0);
             return dist;
         } else if (dist >= 0 && dist < min_dist) {
             min_loc = loc;
@@ -514,7 +512,7 @@ float QuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
         }
     }
     
-    tgt_ptr->loc = {min_loc[0],min_loc[1]};
+    tgt_ptr->loc = cv::Vec3f(min_loc[0],min_loc[1],0) - cv::Vec3f(_center[0]*_scale[0],_center[1]*_scale[1],0);
     return min_dist;
 }
 

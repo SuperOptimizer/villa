@@ -610,27 +610,30 @@ void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf
 {
     //current action: move default POI
     if (modifiers & Qt::ControlModifier) {
-        //TODO make this configurable and cleaner?
         //NOTE this comes before the focus poi, so focus is applied by views using these slices
-        QuadSurface *quad_surf = dynamic_cast<QuadSurface*>(surf);
-        if (quad_surf) {
+        //FIXME this assumes a single segmentation ... make configurable and cleaner ...
+        QuadSurface *segment = dynamic_cast<QuadSurface*>(surf);
+        if (segment) {
             PlaneSurface *segXZ = dynamic_cast<PlaneSurface*>(_surf_col->surface("seg xz"));
             PlaneSurface *segYZ = dynamic_cast<PlaneSurface*>(_surf_col->surface("seg yz"));
-            cv::Vec3f p2;
             
             if (!segXZ)
                 segXZ = new PlaneSurface();
             if (!segYZ)
                 segYZ = new PlaneSurface();
 
-            //FIXME actually properly use ptr ...
-            SurfacePointer *ptr = quad_surf->pointer();
-            p2 = quad_surf->coord(ptr, {surf_loc[0]+1,surf_loc[1],0});
+            //FIXME actually properly use ptr .
+            // cv::Vec3f p2;..
+            SurfacePointer *ptr = segment->pointer();
+            float err = segment->pointTo(ptr, vol_loc, 1.0);
+            
+            cv::Vec3f p2;
+            p2 = segment->coord(ptr, {1,0,0});
             
             segXZ->origin = vol_loc;
             segXZ->setNormal(p2-vol_loc);
             
-            p2 = quad_surf->coord(ptr, {surf_loc[0],surf_loc[1]+1,0});
+            p2 = segment->coord(ptr, {0,1,0});
             
             segYZ->origin = vol_loc;
             segYZ->setNormal(p2-vol_loc);
