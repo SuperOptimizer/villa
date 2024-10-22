@@ -184,6 +184,8 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
         fGraphicsView->centerOn(center);
         renderVisible();
     }
+    
+    renderIntersections();
 }
 
 void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
@@ -245,21 +247,54 @@ void CVolumeViewer::invalidateVis()
     slice_vis_items.resize(0);
 }
 
-void CVolumeViewer::invalidateIntersect()
+void CVolumeViewer::invalidateIntersect(const std::string &name)
 {
-    _intersect_valid = false;    
-    for(auto &item : _intersect_items) {
-        fScene->removeItem(item);
-        delete item;
+    if (!name.size()) {
+        for(auto &pair : _intersect_items) {
+            for(auto &item : pair.second) {
+                fScene->removeItem(item);
+                delete item;
+            }
+        }
+        _intersect_items.clear();
     }
-    _intersect_items.resize(0);
+    else if (_intersect_items.count(name)) {
+        for(auto &item : _intersect_items[name]) {
+            fScene->removeItem(item);
+            delete item;
+        }
+        _intersect_items.erase(name);
+    }
+}
+
+
+void CVolumeViewer::onIntersectionChanged(std::string a, std::string b, Intersection *intersection)
+{
+    if (a == _surf_name)
+        invalidateIntersect(b);
+    else if (a == _surf_name)
+        invalidateIntersect(a);
+    
+    renderIntersections();
+}
+
+
+std::set<std::string> CVolumeViewer::intersects()
+{
+    return _intersect_tgts;
+}
+
+void CVolumeViewer::setIntersects(const std::set<std::string> &set)
+{
+    _intersect_tgts = set;
+    
+    renderIntersections();
 }
 
 void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
 {
-    //TODO distinguis different elements for rendering! (slice, intersect, control points) completely separately!
-    if (_surf_name == "visible_segmentation")
-        invalidateIntersect();
+    invalidateIntersect(name);
+    renderIntersections();
     
     if (_surf_name == name) {
         _surf = surf;
@@ -270,7 +305,7 @@ void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
     }
     
     //FIXME do not re-render surf if only segmentation changed?
-    if (name == _surf_name || name == "segmentation") {
+    if (name == _surf_name) {
         curr_img_area = {0,0,0,0};
         renderVisible();
     }
@@ -434,44 +469,44 @@ void CVolumeViewer::renderVisible(bool force)
     if (!_center_marker) {
         _center_marker = fScene->addEllipse({-10,-10,20,20}, QPen(Qt::yellow, 3, Qt::DashDotLine, Qt::RoundCap, Qt::RoundJoin));
         _center_marker->setZValue(11);
-        
     }
 
     
     _center_marker->setParentItem(fBaseImageItem);
     
     fBaseImageItem->setOffset(curr_img_area.topLeft());
-    PlaneSurface *plane = dynamic_cast<PlaneSurface*>(_surf);
-    QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
-    
-    if (!_intersect_valid && plane && segmentation) {
-        std::vector<std::vector<cv::Vec2f>> xy_seg_;
-        std::vector<std::vector<cv::Vec3f>> intersections;
-        
-        cv::Rect plane_roi = {curr_img_area.x()/_ds_scale, curr_img_area.y()/_ds_scale, curr_img_area.width()/_ds_scale, curr_img_area.height()/_ds_scale};
-        
-        find_intersect_segments(intersections, xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_ds_scale);
-    
 
-        for (auto seg : intersections) {
-            QColor col(128+rand()%127, 128+rand()%127, 128+rand()%127);
-            QPainterPath path;
-
-            bool first = true;
-            for (auto wp : seg)
-            {
-                cv::Vec3f p = plane->project(wp, 1.0, _ds_scale);
-                if (first)
-                    path.moveTo(p[0],p[1]);
-                else
-                    path.lineTo(p[0],p[1]);
-                first = false;
-            }
-            auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 1/_scene_scale));
-            item->setZValue(5);
-            _intersect_items.push_back(item);
-        }
-    }
+//     PlaneSurface *plane = dynamic_cast<PlaneSurface*>(_surf);
+//     QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
+//     
+//     if (!_intersect_valid && plane && segmentation) {
+//         std::vector<std::vector<cv::Vec2f>> xy_seg_;
+//         std::vector<std::vector<cv::Vec3f>> intersections;
+//         
+//         cv::Rect plane_roi = {curr_img_area.x()/_ds_scale, curr_img_area.y()/_ds_scale, curr_img_area.width()/_ds_scale, curr_img_area.height()/_ds_scale};
+//         
+//         find_intersect_segments(intersections, xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_ds_scale);
+//     
+// 
+//         for (auto seg : intersections) {
+//             QColor col(128+rand()%127, 128+rand()%127, 128+rand()%127);
+//             QPainterPath path;
+// 
+//             bool first = true;
+//             for (auto wp : seg)
+//             {
+//                 cv::Vec3f p = plane->project(wp, 1.0, _ds_scale);
+//                 if (first)
+//                     path.moveTo(p[0],p[1]);
+//                 else
+//                     path.lineTo(p[0],p[1]);
+//                 first = false;
+//             }
+//             auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 1/_scene_scale));
+//             item->setZValue(5);
+//             _intersect_items.push_back(item);
+//         }
+//     }
         
     /*if (!_slice_vis_valid && _seg_tool && slice_plane) {
 #pragma omp parallel for
@@ -498,6 +533,63 @@ void CVolumeViewer::renderVisible(bool force)
         if (_seg_tool->control_points.size())
             _slice_vis_valid = true;
     }*/
+}
+
+void CVolumeViewer::renderIntersections()
+{
+    if (!volume || !volume->zarrDataset() || !_surf)
+        return;
+    
+    std::vector<std::string> remove;
+    for (auto &pair : _intersect_items)
+        if (!_intersect_tgts.count(pair.first)) {
+            for(auto &item : pair.second) {
+                fScene->removeItem(item);
+                delete item;
+            }
+            remove.push_back(pair.first);
+        }
+    for(auto key : remove)
+        _intersect_items.erase(key);
+
+    PlaneSurface *plane = dynamic_cast<PlaneSurface*>(_surf);
+    
+    if (plane) {
+        for(auto key : _intersect_tgts)
+            if (!_intersect_items.count(key) && dynamic_cast<QuadSurface*>(_surf_col->surface(key))) {
+            
+            QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface(key));
+            
+            std::vector<std::vector<cv::Vec2f>> xy_seg_;
+            std::vector<std::vector<cv::Vec3f>> intersections;
+            
+            cv::Rect plane_roi = {curr_img_area.x()/_ds_scale, curr_img_area.y()/_ds_scale, curr_img_area.width()/_ds_scale, curr_img_area.height()/_ds_scale};
+            
+            find_intersect_segments(intersections, xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_ds_scale);
+            
+            std::vector<QGraphicsItem*> items;
+            
+            for (auto seg : intersections) {
+                QColor col(128+rand()%127, 128+rand()%127, 128+rand()%127);
+                QPainterPath path;
+                
+                bool first = true;
+                for (auto wp : seg)
+                {
+                    cv::Vec3f p = plane->project(wp, 1.0, _ds_scale);
+                    if (first)
+                        path.moveTo(p[0],p[1]);
+                    else
+                        path.lineTo(p[0],p[1]);
+                    first = false;
+                }
+                auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 1/_scene_scale));
+                item->setZValue(5);
+                items.push_back(item);
+            }
+            _intersect_items[key] = items;
+        }
+    }
 }
 
 void CVolumeViewer::onScrolled()

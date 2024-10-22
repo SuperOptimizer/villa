@@ -5,6 +5,8 @@
 #include <QtWidgets>
 #include <opencv2/core/core.hpp>
 
+#include <set>
+
 class ChunkCache;
 class Surface;
 class SurfacePointer;
@@ -21,6 +23,7 @@ namespace ChaoVis
 class CVolumeViewerView;
 class CSurfaceCollection;
 class POI;
+class Intersection;
 
 class CVolumeViewer : public QWidget
 {
@@ -33,9 +36,13 @@ public:
     void setCache(ChunkCache *cache);
     void setSurface(const std::string &name);
     void renderVisible(bool force = false);
+    void renderIntersections();
     cv::Mat render_area(const cv::Rect &roi);
     void invalidateVis();
-    void invalidateIntersect();
+    void invalidateIntersect(const std::string &name = "");
+    
+    std::set<std::string> intersects();
+    void setIntersects(const std::set<std::string> &set);
     
     CVolumeViewerView* fGraphicsView;
 
@@ -44,6 +51,7 @@ public slots:
     void onVolumeClicked(QPointF scene_loc,Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void onSurfaceChanged(std::string name, Surface *surf);
     void onPOIChanged(std::string name, POI *poi);
+    void onIntersectionChanged(std::string a, std::string b, Intersection *intersection);
     void onScrolled();
     void onZoom(int steps, QPointF scene_point, Qt::KeyboardModifiers modifiers);
     void onCursorMove(QPointF);
@@ -92,8 +100,9 @@ protected:
     
     bool _slice_vis_valid = false;
     std::vector<QGraphicsItem*> slice_vis_items; 
-    bool _intersect_valid = false;
-    std::vector<QGraphicsItem*> _intersect_items;;
+    
+    std::set<std::string> _intersect_tgts = {"visible_segmentation"};
+    std::unordered_map<std::string,std::vector<QGraphicsItem*>> _intersect_items;
     
     CSurfaceCollection *_surf_col = nullptr;
 };  // class CVolumeViewer
