@@ -475,8 +475,8 @@ int main(int argc, char *argv[])
     float ds_scale = 0.5;
     float output_scale = 0.5;
     
-    int w = 1000;
-    int h = 1000;
+    int w = 2000;
+    int h = 2000;
     
     int search_step = 100;
     int mesh_step = 5;
@@ -491,7 +491,7 @@ int main(int argc, char *argv[])
     //took 5.13091 s
     //gen 57 processing 0 fringe cands (total succ/fail 2397/5 fringe: 1 skipped: 0 failures: 0
     // -> total succ/fail 2397/5 fringe: 0 skipped: 0 failures: 0
-    surf->move(poi, {-78.09/0.159367,-460.323/0.476525,0});
+    surf->move(poi, {-78.09/0.159367+500,-460.323/0.476525+500,0});
     {
         MeasureLife timer("build local mesh ...");
         surf = regularized_local_quad(surf_raw, poi, w/mesh_step/output_scale, h/mesh_step/output_scale, search_step, mesh_step);
@@ -557,7 +557,7 @@ int main(int argc, char *argv[])
     timer = new MeasureLife("rendering ...\n");
     for(int off=min_slice;off<=max_slice;off++) {
         MeasureLife time_slice("slice "+std::to_string(off)+" ... ");
-        surf->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
+        comp_surf->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
         
         coords *= ds_scale;
         

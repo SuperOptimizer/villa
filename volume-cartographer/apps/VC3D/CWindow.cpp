@@ -606,7 +606,7 @@ void CWindow::onLocChanged(void)
     // sendLocChanged(spinLoc[0]->value(),spinLoc[1]->value(),spinLoc[2]->value());
 }
 
-void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf, cv::Vec3f surf_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
+void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
 {
     //current action: move default POI
     if (modifiers & Qt::ControlModifier) {

@@ -84,18 +84,45 @@ QPointF visible_center(QGraphicsView *view)
 }
 
 
+void scene2vol(cv::Vec3f &p, cv::Vec3f &n, Surface *_surf, const std::string &_surf_name, CSurfaceCollection *_surf_col, const QPointF &scene_loc, const cv::Vec2f &_vis_center, float _ds_scale)
+{
+    //for PlaneSurface we work with absolute coordinates only
+    if (dynamic_cast<PlaneSurface*>(_surf)) {
+        cv::Vec3f surf_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
+        
+        SurfacePointer *ptr = _surf->pointer();
+        
+        n = _surf->normal(ptr, surf_loc);
+        p = _surf->coord(ptr, surf_loc);
+    }
+    //FIXME quite some assumptions ...
+    else if (_surf_name == "segmentation") {
+        // assert(_ptr);
+        assert(dynamic_cast<OpChain*>(_surf));
+        
+        QuadSurface* crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation")); 
+        
+        cv::Vec3f delta = {(scene_loc.x()-_vis_center[0])/_ds_scale, (scene_loc.y()-_vis_center[1])/_ds_scale,0};
+        
+        //NOTE crop center and original scene _ptr are off by < 0.5 voxels?
+        SurfacePointer *ptr = crop->pointer();
+        n = crop->normal(ptr, delta);
+        p = crop->coord(ptr, delta);
+    }
+}
+
 void CVolumeViewer::onCursorMove(QPointF scene_loc)
 {
     if (!_surf)
         return;
-    
-    cv::Vec3f slice_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
 
     POI *cursor = _surf_col->poi("cursor");
     if (!cursor)
         cursor = new POI;
     
-    cursor->p = _surf->coord(_surf->pointer(), slice_loc);
+    cv::Vec3f p, n;
+    scene2vol(p, n, _surf, _surf_name, _surf_col, scene_loc, _vis_center, _ds_scale);
+    cursor->p = p;
     
     _surf_col->setPOI("cursor", cursor);
 }
@@ -180,34 +207,16 @@ void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, 
 {
     if (!_surf)
         return;
+    
+    cv::Vec3f p, n;
+    scene2vol(p, n, _surf, _surf_name, _surf_col, scene_loc, _vis_center, _ds_scale);
 
     //for PlaneSurface we work with absolute coordinates only
-    if (dynamic_cast<PlaneSurface*>(_surf)) {
-        cv::Vec3f surf_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
-
-        SurfacePointer *ptr = _surf->pointer();
-        
-        cv::Vec3f n = _surf->normal(ptr, surf_loc);
-        cv::Vec3f p = _surf->coord(ptr, surf_loc);
-        
-        sendVolumeClicked(p, n, _surf, surf_loc, buttons, modifiers);
-    }
+    if (dynamic_cast<PlaneSurface*>(_surf))
+        sendVolumeClicked(p, n, _surf, buttons, modifiers);
     //FIXME quite some assumptions ...
-    else if (_surf_name == "segmentation") {
-        assert(_ptr);
-        assert(dynamic_cast<OpChain*>(_surf));
-        
-        QuadSurface* crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation")); 
-        
-        cv::Vec3f delta = {(scene_loc.x()-_vis_center[0])/_ds_scale, (scene_loc.y()-_vis_center[1])/_ds_scale,0};
-        
-        //NOTE crop center and original scene _ptr are off by < 0.5 voxels?
-        SurfacePointer *ptr = crop->pointer();
-        cv::Vec3f n = crop->normal(ptr, delta);
-        cv::Vec3f p = crop->coord(ptr, delta);
-        
-        sendVolumeClicked(p, n, crop, {0,0,0}, buttons, modifiers);
-    }
+    else if (_surf_name == "segmentation")
+        sendVolumeClicked(p, n, _surf_col->surface("visible_segmentation"), buttons, modifiers);
     else
         std::cout << "FIXME: onVolumeClicked()" << std::endl;
 }

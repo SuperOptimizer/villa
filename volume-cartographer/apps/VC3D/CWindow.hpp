@@ -52,7 +52,7 @@ public slots:
     void onShowStatusMessage(QString text, int timeout);
     void onLocChanged(void);
     void onManualPlaneChanged(void);
-    void onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf, cv::Vec3f slice_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
+    void onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void onOpChainChanged(OpChain *chain);
 
 public:
