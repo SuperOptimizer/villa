@@ -3,7 +3,7 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Surface.hpp"
 
-void OpChain::append(DeltaQuadSurface *op)
+void OpChain::append(DeltaSurface *op)
 {
     _ops.push_back(op);
 }
@@ -40,10 +40,10 @@ cv::Vec3f OpChain::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
     return _src->normal(ptr, offset);
 }
 
-float OpChain::pointTo(SurfacePointer *ptr, const cv::Vec3f &coord, float th)
+float OpChain::pointTo(SurfacePointer *ptr, const cv::Vec3f &coord, float th, int max_iters)
 {
     //FIXME use cached surf? Or use src surface?
-    return _src->pointTo(ptr, coord, th);
+    return _src->pointTo(ptr, coord, th, max_iters);
 }
 
 void OpChain::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
@@ -104,7 +104,7 @@ const char *op_name(Surface *op)
 }
 
 
-void OpChain::setEnabled(DeltaQuadSurface *surf, bool enabled)
+void OpChain::setEnabled(DeltaSurface *surf, bool enabled)
 {
     if (enabled)
         _disabled.erase(surf);
@@ -112,7 +112,7 @@ void OpChain::setEnabled(DeltaQuadSurface *surf, bool enabled)
         _disabled.insert(surf);
 }
 
-bool OpChain::enabled(DeltaQuadSurface *surf)
+bool OpChain::enabled(DeltaSurface *surf)
 {
     return _disabled.count(surf) == 0;
 }

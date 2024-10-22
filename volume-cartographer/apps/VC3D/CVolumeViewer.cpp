@@ -547,6 +547,19 @@ void CVolumeViewer::renderVisible(bool force)
     }*/
 }
 
+struct vec3f_hash {
+    size_t operator()(cv::Vec3f p) const
+    {
+        size_t hash1 = std::hash<float>{}(p[0]);
+        size_t hash2 = std::hash<float>{}(p[1]);
+        size_t hash3 = std::hash<float>{}(p[2]);
+        
+        //magic numbers from boost. should be good enough
+        size_t hash = hash1  ^ (hash2 + 0x9e3779b9 + (hash1 << 6) + (hash1 >> 2));
+        return hash  ^ (hash3 + 0x9e3779b9 + (hash << 6) + (hash >> 2));
+    }
+};
+
 void CVolumeViewer::renderIntersections()
 {
     if (!volume || !volume->zarrDataset() || !_surf)
@@ -621,16 +634,40 @@ void CVolumeViewer::renderIntersections()
             if (_intersect_items.count(key) || !_intersect_tgts.count(key))
                 continue;
             
+            std::unordered_map<cv::Vec3f,cv::Vec3f,vec3f_hash> location_cache;
+            std::vector<cv::Vec3f> src_locations;
+            SurfacePointer *ptrs[omp_get_max_threads()] = {};
+            
+            for (auto seg : _surf_col->intersection(pair.first, pair.second)->lines)
+                for (auto wp : seg)
+                    src_locations.push_back(wp);
+            
+#pragma omp parallel
+            {
+                SurfacePointer *ptr = crop->pointer();
+#pragma omp for
+                for (auto wp : src_locations) {
+                    float res = crop->pointTo(ptr, wp, 1.0, 5);
+                    cv::Vec3f p = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
+                    //FIXME still happening?
+                    // if (res >= 1.0)
+                        // std::cout << "WARNING pointTo() high residual in renderIntersections()" << std::endl;
+#pragma omp critical
+                    location_cache[wp] = p;
+                }
+            }
+            
             std::vector<QGraphicsItem*> items;
             for (auto seg : _surf_col->intersection(pair.first, pair.second)->lines) {
                 QPainterPath path;
                 
-                SurfacePointer *ptr = crop->pointer();
+                // SurfacePointer *ptr = crop->pointer();
                 bool first = true;
                 for (auto wp : seg)
                 {
-                    float res = crop->pointTo(ptr, wp, 1.0);
-                    cv::Vec3f p = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
+                    // float res = crop->pointTo(ptr, wp, 1.0);
+                    // cv::Vec3f p = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
+                    cv::Vec3f p = location_cache[wp];
                     if (first)
                         path.moveTo(p[0],p[1]);
                     else

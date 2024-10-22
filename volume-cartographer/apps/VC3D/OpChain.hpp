@@ -5,7 +5,7 @@
 #include <set>
 
 class QuadSurface;
-class DeltaQuadSurface;
+class DeltaSurface;
 class SurfacePointer;
 class ChunkCache;
 class FormSetSrc;
@@ -28,7 +28,7 @@ public:
     OpChain(QuadSurface *src) : _src(src) {};
     // cv::Mat render(SurfacePointer *ptr, const cv::Size &size, float z, float scale, ChunkCache *cache, z5::Dataset *ds);
     QuadSurface *surf(SurfacePointer *ptr, const cv::Size &size, float z, float scale, ChunkCache *cache, z5::Dataset *ds);
-    void append(DeltaQuadSurface *op);
+    void append(DeltaSurface *op);
 
     SurfacePointer *pointer() override;
     void move(SurfacePointer *ptr, const cv::Vec3f &offset) override;
@@ -36,20 +36,20 @@ public:
     cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    float pointTo(SurfacePointer *ptr, const cv::Vec3f &coord, float th)  override;
+    float pointTo(SurfacePointer *ptr, const cv::Vec3f &coord, float th, int max_iters = 1000)  override;
     void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset);
 
-    std::vector<DeltaQuadSurface*> ops() { return _ops; };
+    std::vector<DeltaSurface*> ops() { return _ops; };
 
-    void setEnabled(DeltaQuadSurface *surf, bool enabled);
-    bool enabled(DeltaQuadSurface *surf);
+    void setEnabled(DeltaSurface *surf, bool enabled);
+    bool enabled(DeltaSurface *surf);
     
     friend class FormSetSrc;
 
 protected:
     OpChainSourceMode _src_mode = OpChainSourceMode::BLUR;
-    std::vector<DeltaQuadSurface*> _ops;
-    std::set<DeltaQuadSurface*> _disabled;
+    std::vector<DeltaSurface*> _ops;
+    std::set<DeltaSurface*> _disabled;
     QuadSurface *_src = nullptr;
     QuadSurface *_crop = nullptr;
     QuadSurface *_src_blur = nullptr;

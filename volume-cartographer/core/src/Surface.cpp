@@ -485,7 +485,7 @@ static float search_min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, c
 }
 
 //search the surface point that is closest to th tgt coord
-float QuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
+float QuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th, int max_iters)
 {
     TrivialSurfacePointer *tgt_ptr = dynamic_cast<TrivialSurfacePointer*>(ptr);
     assert(tgt_ptr);
@@ -510,7 +510,7 @@ float QuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
         min_dist = 10*(_points.cols/_scale[0]+_points.rows/_scale[1]);
     
     //FIXME is this excessive?
-    for(int r=0;r<1000;r++) {
+    for(int r=0;r<max_iters;r++) {
         loc = {1 + (rand() % _points.cols-3), 1 + (rand() % _points.rows-3)};
         
         float dist = search_min_loc(_points, loc, _out, tgt, step_large, _scale[0]*0.01);
@@ -611,50 +611,50 @@ SurfaceControlPoint::SurfaceControlPoint(Surface *base, SurfacePointer *ptr_, co
     control_point = control;
 }
 
-DeltaQuadSurface::DeltaQuadSurface(Surface *base) : _base(base)
+DeltaSurface::DeltaSurface(Surface *base) : _base(base)
 {
     
 }
 
-void DeltaQuadSurface::setBase(Surface *base)
+void DeltaSurface::setBase(Surface *base)
 {
     _base = base;
 }
 
-SurfacePointer *DeltaQuadSurface::pointer()
+SurfacePointer *DeltaSurface::pointer()
 {
     return _base->pointer();
 }
 
 
-void DeltaQuadSurface::move(SurfacePointer *ptr, const cv::Vec3f &offset)
+void DeltaSurface::move(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     _base->move(ptr, offset);
 }
 
-bool DeltaQuadSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
+bool DeltaSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     return _base->valid(ptr, offset);
 }
 
-cv::Vec3f DeltaQuadSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
+cv::Vec3f DeltaSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     return _base->loc(ptr, offset);
 }
 
-cv::Vec3f DeltaQuadSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
+cv::Vec3f DeltaSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     return _base->coord(ptr, offset);
 }
 
-cv::Vec3f DeltaQuadSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
+cv::Vec3f DeltaSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     return _base->normal(ptr, offset);
 }
 
-float DeltaQuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th)
+float DeltaSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th, int max_iters)
 {
-    return _base->pointTo(ptr, tgt, th);
+    return _base->pointTo(ptr, tgt, th, max_iters);
 }
 
 
@@ -725,7 +725,7 @@ void ControlPointSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> 
 
 void ControlPointSurface::setBase(Surface *base)
 {
-    DeltaQuadSurface::setBase(base);
+    DeltaSurface::setBase(base);
     
     assert(dynamic_cast<QuadSurface*>(base));
     
@@ -734,7 +734,7 @@ void ControlPointSurface::setBase(Surface *base)
 }
 
 RefineCompSurface::RefineCompSurface(z5::Dataset *ds, ChunkCache *cache, QuadSurface *base)
-: DeltaQuadSurface(base)
+: DeltaSurface(base)
 {
     _ds = ds;
     _cache = cache;

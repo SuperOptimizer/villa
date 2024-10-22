@@ -20,7 +20,7 @@ OpsSettings::~OpsSettings() { delete ui; }
 
 void OpsSettings::onEnabledChanged()
 {
-    _chain->setEnabled((DeltaQuadSurface*)_op, _enable->isChecked());
+    _chain->setEnabled((DeltaSurface*)_op, _enable->isChecked());
     sendOpChainChanged(_chain);
 }
 
@@ -47,12 +47,12 @@ void OpsSettings::onOpSelected(Surface *op, OpChain *chain)
 
     _box->setTitle(QString(op_name(op)));
 
-    if (!dynamic_cast<DeltaQuadSurface*>(_op))
+    if (!dynamic_cast<DeltaSurface*>(_op))
         _enable->setEnabled(false);
     else {
         _enable->setEnabled(true);
         QSignalBlocker blocker(_enable);
-        _enable->setChecked(_chain->enabled((DeltaQuadSurface*)_op));
+        _enable->setChecked(_chain->enabled((DeltaSurface*)_op));
     }
     
     if (_form)
