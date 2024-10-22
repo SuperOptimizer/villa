@@ -631,12 +631,12 @@ void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf
             cv::Vec3f p2;
             p2 = segment->coord(ptr, {1,0,0});
             
-            segXZ->origin = vol_loc;
+            segXZ->setOrigin(vol_loc);
             segXZ->setNormal(p2-vol_loc);
             
             p2 = segment->coord(ptr, {0,1,0});
             
-            segYZ->origin = vol_loc;
+            segYZ->setOrigin(vol_loc);
             segYZ->setNormal(p2-vol_loc);
             
             _surf_col->setSurface("seg xz", segXZ);

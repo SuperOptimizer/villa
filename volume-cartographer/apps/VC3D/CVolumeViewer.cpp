@@ -356,10 +356,10 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
         
         fGraphicsView->centerOn(0,0);
         
-        if (poi->p == plane->origin)
+        if (poi->p == plane->origin())
             return;
         
-        plane->origin = poi->p;
+        plane->setOrigin(poi->p);
         
         _surf_col->setSurface(_surf_name, plane);
     }

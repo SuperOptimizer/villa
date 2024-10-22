@@ -27,20 +27,32 @@ static cv::Vec3f nominal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal
     return nominal + cv::Vec3f(internal[0]/scale[0], internal[1]/scale[1], internal[2]);
 }
 
-PlaneSurface::PlaneSurface(cv::Vec3f origin_, cv::Vec3f normal) : origin(origin_)
+PlaneSurface::PlaneSurface(cv::Vec3f origin_, cv::Vec3f normal) : _origin(origin_)
 {
     cv::normalize(normal, _normal);
-
+    update();
 };
 
 void PlaneSurface::setNormal(cv::Vec3f normal)
 {
     cv::normalize(normal, _normal);
+    update();
+}
+
+void PlaneSurface::setOrigin(cv::Vec3f origin)
+{
+    _origin = origin;
+    update();
+}
+
+cv::Vec3f PlaneSurface::origin()
+{
+    return _origin;
 }
 
 float PlaneSurface::pointDist(cv::Vec3f wp)
 {
-    float plane_off = origin.dot(_normal);
+    float plane_off = _origin.dot(_normal);
     float scalarp = wp.dot(_normal) - plane_off /*- _z_off*/;
 
     return abs(scalarp);
@@ -106,33 +118,34 @@ static void vxy_from_normal(cv::Vec3f orig, cv::Vec3f normal, cv::Vec3f &vx, cv:
         vy *= -1;
 }
 
-cv::Vec3f PlaneSurface::project(cv::Vec3f wp, float render_scale, float coord_scale)
+void PlaneSurface::update()
 {
     cv::Vec3f vx, vy;
 
-    vxy_from_normal(origin,_normal,vx,vy);
+    vxy_from_normal(_origin,_normal,vx,vy);
 
-    vx = vx/render_scale/coord_scale;
-    vy = vy/render_scale/coord_scale;
-
-    std::vector <cv::Vec3f> src = {origin,origin+_normal,origin+vx,origin+vy};
+    std::vector <cv::Vec3f> src = {_origin,_origin+_normal,_origin+vx,_origin+vy};
     std::vector <cv::Vec3f> tgt = {{0,0,0},{0,0,1},{1,0,0},{0,1,0}};
     cv::Mat transf;
     cv::Mat inliers;
 
     cv::estimateAffine3D(src, tgt, transf, inliers, 0.1, 0.99);
 
-    cv::Mat M = transf({0,0,3,3});
-    cv::Mat T = transf({3,0,1,3});
+    _M = transf({0,0,3,3});
+    _T = transf({3,0,1,3});
+}
 
-    cv::Mat_<double> res = M*cv::Vec3d(wp)+T;
+cv::Vec3f PlaneSurface::project(cv::Vec3f wp, float render_scale, float coord_scale)
+{
+    cv::Mat_<double> res = _M*cv::Vec3d(wp)+_T;
+    res *= render_scale*coord_scale;
 
     return {res(0,0), res(0,1), res(0,2)};
 }
 
 float PlaneSurface::scalarp(cv::Vec3f point) const
 {
-    return point.dot(_normal) - origin.dot(_normal);
+    return point.dot(_normal) - _origin.dot(_normal);
 }
 
 void PlaneSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)
@@ -172,11 +185,11 @@ void PlaneSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals
     }
 
     cv::Vec3f vx, vy;
-    vxy_from_normal(origin,_normal,vx,vy);
+    vxy_from_normal(_origin,_normal,vx,vy);
 
     float m = 1/scale;
 
-    cv::Vec3f use_origin = origin + _normal*total_offset[2];
+    cv::Vec3f use_origin = _origin + _normal*total_offset[2];
 
 #pragma omp parallel for
     for(int j=0;j<h;j++)

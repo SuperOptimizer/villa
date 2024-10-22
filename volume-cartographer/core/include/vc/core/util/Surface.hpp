@@ -72,11 +72,15 @@ public:
     float pointDist(cv::Vec3f wp);
     cv::Vec3f project(cv::Vec3f wp, float render_scale = 1.0, float coord_scale = 1.0);
     void setNormal(cv::Vec3f normal);
+    void setOrigin(cv::Vec3f origin);
+    cv::Vec3f origin();
     float scalarp(cv::Vec3f point) const;
-
-    cv::Vec3f origin = {0,0,0};
 protected:
+    void update();
     cv::Vec3f _normal = {0,0,1};
+    cv::Vec3f _origin = {0,0,0};
+    cv::Mat _M;
+    cv::Mat _T;
 };
 
 //quads based surface class with a pointer implementing a nominal scale of 1 voxel
