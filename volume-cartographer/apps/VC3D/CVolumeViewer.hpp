@@ -5,68 +5,53 @@
 #include <QtWidgets>
 #include <opencv2/core/core.hpp>
 
-#include "vc/core/types/VolumePkg.hpp"
+#include <set>
 
-class PlaneCoords;
-class CoordGenerator;
 class ChunkCache;
-class ControlPointSegmentator;
+class Surface;
+class SurfacePointer;
+
 class QGraphicsScene;
+
+namespace volcart {
+    class Volume;
+}
 
 namespace ChaoVis
 {
 
 class CVolumeViewerView;
-class SegmentationStruct;
-class CSliceCollection;
+class CSurfaceCollection;
 class POI;
+class Intersection;
 
 class CVolumeViewer : public QWidget
 {
     Q_OBJECT
 
 public:
-    enum EViewState {
-        ViewStateEdit,  // edit mode
-        ViewStateDraw,  // draw mode
-        ViewStateIdle   // idle mode
-    };
-
-    QPushButton* fNextBtn;
-    QPushButton* fPrevBtn;
-    CVolumeViewer(CSliceCollection *col, QWidget* parent = 0);
+    CVolumeViewer(CSurfaceCollection *col, QWidget* parent = 0);
     ~CVolumeViewer(void);
 
-    void SetViewState(EViewState nViewState) { fViewState = nViewState; }
-    EViewState GetViewState(void) { return fViewState; }
-    void Reset();
-
-    virtual void SetImage(const QImage& nSrc);
-    void SetImageIndex(int nImageIndex);
-    void SetNumSlices(int num);
-    void SetRotation(int degress);
-    void Rotate(int delta);
-    void ResetRotation();
     void setCache(ChunkCache *cache);
-    void loadSlice();
-    void setSlice(const std::string &name);
-    cv::Mat getCoordSlice();
+    void setSurface(const std::string &name);
     void renderVisible(bool force = false);
+    void renderIntersections();
     cv::Mat render_area(const cv::Rect &roi);
     void invalidateVis();
-    void invalidateIntersect();
+    void invalidateIntersect(const std::string &name = "");
+    
+    std::set<std::string> intersects();
+    void setIntersects(const std::set<std::string> &set);
     
     CVolumeViewerView* fGraphicsView;
 
-protected:
-    // bool eventFilter(QObject* watched, QEvent* event);
-
 public slots:
-    void OnVolumeChanged(volcart::Volume::Pointer vol);
+    void OnVolumeChanged(std::shared_ptr<volcart::Volume> vol);
     void onVolumeClicked(QPointF scene_loc,Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
-    void onSliceChanged(std::string name, CoordGenerator *slice);
+    void onSurfaceChanged(std::string name, Surface *surf);
     void onPOIChanged(std::string name, POI *poi);
-    void onSegmentatorChanged(std::string name, ControlPointSegmentator *seg);
+    void onIntersectionChanged(std::string a, std::string b, Intersection *intersection);
     void onScrolled();
     void onZoom(int steps, QPointF scene_point, Qt::KeyboardModifiers modifiers);
     void onCursorMove(QPointF);
@@ -74,7 +59,7 @@ public slots:
 signals:
     void SendSignalSliceShift(int shift, int axis);
     void SendSignalStatusMessageAvailable(QString text, int timeout);
-    void sendVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, CoordGenerator *slice, cv::Vec3f slice_loc, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
+    void sendVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void sendShiftNormal(cv::Vec3f step);
 
 protected:
@@ -83,36 +68,19 @@ protected:
 
 protected:
     // widget components
-    // CVolumeViewerView* fGraphicsView;
     QGraphicsScene* fScene;
 
-    QLabel* fCanvas;
-    QScrollArea* fScrollArea;
-    QPushButton* fZoomInBtn;
-    QPushButton* fZoomOutBtn;
-    QPushButton* fResetBtn;
-    QSpinBox* fImageRotationSpin;
-    QHBoxLayout* fButtonsLayout;
-    // QComboBox* fAxisCombo;
-
     // data
-    EViewState fViewState;
     QImage* fImgQImage;
-    int sliceIndexToolStart{-1};
-    int fScanRange;  // how many slices a mouse wheel step will jump
-    // Required to be able to reset the rotation without also resetting the scaling
-    int currentRotation{0};
-
-    // user settings
-    bool fCenterOnZoomEnabled;
-    int fScrollSpeed{-1};
     bool fSkipImageFormatConv;
 
     QGraphicsPixmapItem* fBaseImageItem;
     
-    volcart::Volume::Pointer volume = nullptr;
-    CoordGenerator *_slice = nullptr;
-    std::string _slice_name;
+    std::shared_ptr<volcart::Volume> volume = nullptr;
+    Surface *_surf = nullptr;
+    SurfacePointer *_ptr = nullptr;
+    cv::Vec2f _vis_center = {0,0};
+    std::string _surf_name;
     int axis = 0;
     int loc[3] = {0,0,0};
     
@@ -124,18 +92,20 @@ protected:
     int _ds_sd_idx = 1;
     float _max_scale = 1;
     float _min_scale = 1;
+
+    float _z_off = 0.0;
     
     QGraphicsItem *_center_marker = nullptr;
     QGraphicsItem *_cursor = nullptr;
-    // std::vector<PlaneCoords*> other_slices;
     
     bool _slice_vis_valid = false;
     std::vector<QGraphicsItem*> slice_vis_items; 
-    bool _intersect_valid = false;
-    std::vector<QGraphicsItem*> _intersect_items; 
-    ControlPointSegmentator *_seg_tool = nullptr;
     
-    CSliceCollection *_slice_col = nullptr;
+    std::set<std::string> _intersect_tgts = {"visible_segmentation"};
+    std::unordered_map<std::string,std::vector<QGraphicsItem*>> _intersect_items;
+    Intersection *_ignore_intersect_change = nullptr;
+    
+    CSurfaceCollection *_surf_col = nullptr;
 };  // class CVolumeViewer
 
 }  // namespace ChaoVis

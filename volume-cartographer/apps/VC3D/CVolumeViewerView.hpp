@@ -25,7 +25,7 @@ signals:
     
 protected:
     bool _regular_pan = false;
-    QPointF _last_pan_position;
+    QPoint _last_pan_position;
 };
 
 }

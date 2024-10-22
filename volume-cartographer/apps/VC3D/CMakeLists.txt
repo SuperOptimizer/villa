@@ -6,17 +6,17 @@ set(srcs
     VCAppMain.cpp
     CMesh.cpp
     CWindow.cpp
-    CXCurve.cpp
     UDataManipulateUtils.cpp
     CVolumeViewer.cpp
     CVolumeViewerView.cpp
-    CBSpline.cpp
-    CBezierCurve.cpp
     BlockingDialog.hpp
     ColorFrame.hpp
     SettingsDialog.cpp
-    UndoCommands.cpp
-    CSliceCollection.cpp
+    CSurfaceCollection.cpp
+    OpChain.cpp
+    opslist.cpp
+    opssettings.cpp
+    formsetsrc.cpp
 )
 
 set(MACOSX_BUNDLE_ICON logo.icns)
@@ -66,6 +66,7 @@ include_directories(${GSL_INCLUDE_DIRS})
 target_link_libraries(${target}
     VC::core
     VC::slicing
+    VC::surface
     VC::meshing
     VC::segmentation
     Qt6::Core
