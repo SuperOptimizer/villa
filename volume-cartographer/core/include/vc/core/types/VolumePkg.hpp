@@ -222,6 +222,8 @@ public:
     [[nodiscard]] auto segmentation(const Segmentation::Identifier& id) const
         -> const Segmentation::Pointer;
 
+    std::vector<filesystem::path> segmentationFiles();
+
     /** @copydoc VolumePkg::segmentation(const Segmentation::Identifier&) const
      */
     auto segmentation(const Segmentation::Identifier& id)
@@ -325,6 +327,7 @@ private:
     std::map<Transform3D::Identifier, Transform3D::Pointer> transforms_;
     /** The list of Previews/Scales in the VolumePkg vol-id -> preview name -> volume */
     std::map<Volume::Identifier, std::map<std::string, Volume::Pointer>> previews_;
+    std::vector<filesystem::path> segmentation_files_;
 
     /**
      * @brief Populates an empty VolumePkg::config from a volcart::Dictionary

@@ -55,6 +55,8 @@ inline void keep(const fs::path& dir)
     }
 }
 
+const std::set<std::string> supportedSegmentFileExtensions = {".vcps",".obj"};
+
 ////// Upgrade functions //////
 auto VolpkgV3ToV4(const Metadata& meta) -> Metadata
 {
@@ -306,8 +308,22 @@ VolumePkg::VolumePkg(const fs::path& fileLocation) : rootDir_{fileLocation}
     // Load segmentations into the segmentations_
     for (const auto& entry : fs::directory_iterator(::SegsDir(rootDir_))) {
         if (fs::is_directory(entry)) {
-            auto s = Segmentation::New(entry);
-            segmentations_.emplace(s->id(), s);
+            try {
+                auto s = Segmentation::New(entry);
+                segmentations_.emplace(s->id(), s);
+            }
+            catch (...) {
+                std::cout << "WARNING: some error occured, skipping segment dir: " << entry.path() << std::endl;
+            }
+        }
+    }
+
+    // Load segmentations into the segmentations_
+    for (const auto& entry : fs::recursive_directory_iterator(::SegsDir(rootDir_))) {
+        std::cout << entry.path().extension() << std::endl;
+        if (fs::is_regular_file(entry) && supportedSegmentFileExtensions.count(entry.path().extension())) {
+            segmentation_files_.push_back(entry.path());
+            std::cout << "found " << entry.path() << std::endl;
         }
     }
 
@@ -521,6 +537,11 @@ auto VolumePkg::segmentation(const DiskBasedObjectBaseClass::Identifier& id)
     const -> const Segmentation::Pointer
 {
     return segmentations_.at(id);
+}
+
+std::vector<fs::path> VolumePkg::segmentationFiles()
+{
+    return segmentation_files_;
 }
 
 auto VolumePkg::segmentation(const DiskBasedObjectBaseClass::Identifier& id)

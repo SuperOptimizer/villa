@@ -426,6 +426,22 @@ void CWindow::onShowStatusMessage(QString text, int timeout)
     statusBar->showMessage(text, timeout);
 }
 
+fs::path seg_path_name(const fs::path &path)
+{
+    std::string name;
+    bool store = false;
+    for(auto elm : path) {
+        if (store)
+            name += "/"+elm.string();
+        else if (elm == "paths")
+            store = true;
+        else
+            std::cout << elm << std::endl;
+    }
+    name.erase(0,1);
+    return name;
+}
+
 // Open volume package
 void CWindow::OpenVolume(const QString& path)
 {
@@ -487,11 +503,11 @@ void CWindow::OpenVolume(const QString& path)
     }
 
     treeWidgetSurfaces->clear();
-    for (auto& s : fVpkg->segmentationIDs()) {
+    for (auto& s : fVpkg->segmentationFiles()) {
         QTreeWidgetItem *item = new QTreeWidgetItem(treeWidgetSurfaces);
-        item->setText(0, QString(s.c_str()));
+        item->setText(0, QString(seg_path_name(s.string()).c_str()));
         item->setCheckState(1, Qt::Unchecked);
-        item->setData(0, Qt::UserRole, QVariant(s.c_str()));
+        item->setData(0, Qt::UserRole, QVariant(s.string().c_str()));
     }
 
     UpdateRecentVolpkgList(aVpkgPath);
@@ -687,23 +703,22 @@ void CWindow::onOpChainChanged(OpChain *chain)
 
 void CWindow::onSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous)
 {
-    std::string surf_id = current->data(0, Qt::UserRole).toString().toStdString();
+    std::string surf_path = current->data(0, Qt::UserRole).toString().toStdString();
 
-    if (!_opchains.count(surf_id)) {
-        volcart::OrderedPointSet<cv::Vec3d> segment_raw = fVpkg->segmentation(surf_id)->getPointSet();
-
-        cv::Mat src(segment_raw.height(), segment_raw.width(), CV_64FC3, (void*)const_cast<cv::Vec3d*>(&segment_raw[0]));
-
-        cv::Mat_<cv::Vec3f> points;
-        src.convertTo(points, CV_32F);
-
-        double sx, sy;
-
-        vc_segmentation_scales(points, sx, sy);
-
-        _opchains[surf_id] = new OpChain(new QuadSurface(points, {sx,sy}));
+    if (!_opchains.count(surf_path)) {
+        if (fs::path(surf_path).extension() == ".vcps")
+            _opchains[surf_path] = new OpChain(load_quad_from_vcps(surf_path));
+        else if (fs::path(surf_path).extension() == ".obj") {
+            QuadSurface *quads = load_quad_from_obj(surf_path);
+            if (quads)
+                _opchains[surf_path] = new OpChain(quads);
+        }
     }
 
-    _surf_col->setSurface("segmentation", _opchains[surf_id]);
-    sendOpChainSelected(_opchains[surf_id]);
+    if (_opchains[surf_path]) {
+        _surf_col->setSurface("segmentation", _opchains[surf_path]);
+        sendOpChainSelected(_opchains[surf_path]);
+    }
+    else
+        std::cout << "ERROR loading " << surf_path << std::endl;
 }

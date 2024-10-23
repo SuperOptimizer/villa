@@ -10,6 +10,8 @@
 //TODO remove
 #include <opencv2/highgui.hpp>
 
+#include <unordered_map>
+
 cv::Vec2f offsetPoint2d(TrivialSurfacePointer *ptr, const cv::Vec3f &offset)
 {
     cv::Vec3f p = ptr->loc + offset;
@@ -541,6 +543,64 @@ QuadSurface *load_quad_from_vcps(const std::string &path)
     vc_segmentation_scales(points, sx, sy);
     
     return new QuadSurface(points, {sx,sy});
+}
+
+bool face_contains_vertex(cv::Vec3i face, int vertex)
+{
+    if (face[0] == vertex)
+        return true;
+    if (face[1] == vertex)
+        return true;
+    if (face[2] == vertex)
+        return true;
+    return false;
+}
+
+//try to interpret triangle surface as quads - only works in cases where an actual quad surface is stored as a triangle surface
+QuadSurface *load_quad_from_obj(const std::string &path)
+{
+    //triangle ID to 3d location
+    std::unordered_map<int,cv::Vec3f> vertices;
+    //any face corner vertex id to the actual face id
+    std::unordered_multimap<int,cv::Vec3i> faces;
+
+    std::ifstream obj(path);
+    std::string line;
+    while (std::getline(obj, line))
+    {
+        if (line.size() <  7)
+            continue;
+        if (line[0] == 'v' && line[1] == ' ') {
+            std::istringstream iss(line);
+            float x, y, z;
+            char v;
+            if (!(iss >> v >> x >> y >> z)) {
+                //something went wrong
+                return nullptr;
+            }
+            vertices[vertices.size()] = {x,y,z};
+        }
+        else if (line[0] == 'f' && line[1] == ' ') {
+            std::istringstream iss(line);
+            std::string idstring;
+            int a, b, c;
+            char f;
+            if (!(iss >> f >> idstring)) {
+                //something went wrong
+                return nullptr;
+            }
+            std::replace(idstring.begin(), idstring.end(), '/', ' ');
+            iss.str(idstring);
+            if (!(iss >> a >> b >> c)) {
+                //something went wrong
+                return nullptr;
+            }
+            cv::Vec3i face = {a,b,c};
+            faces.insert({{a,face},{b,face},{c,face}});
+        }
+    }
+
+    return nullptr;
 }
 
 void QuadSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset)

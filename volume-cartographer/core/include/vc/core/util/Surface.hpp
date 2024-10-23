@@ -25,6 +25,7 @@ public:
 };
 
 QuadSurface *load_quad_from_vcps(const std::string &path);
+QuadSurface *load_quad_from_obj(const std::string &path);
 QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search = 100, int step_out = 5);
 QuadSurface *smooth_vc_segmentation(QuadSurface *src);
 
