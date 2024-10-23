@@ -811,6 +811,7 @@ void RefineCompSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> *n
     *coords += (*normals).mul(mul+1+offset[2]);
 }
 
+//TODO check if this actually works?!
 void set_block(cv::Mat_<uint8_t> &block, const cv::Vec3f &last_loc, const cv::Vec3f &loc, const cv::Rect &roi, float step)
 {
     int x1 = (loc[0]-roi.x)/step;
@@ -826,7 +827,7 @@ void set_block(cv::Mat_<uint8_t> &block, const cv::Vec3f &last_loc, const cv::Ve
     if (x1 == x2 && y1 == y2)
         block(y1, x1) = 1;
     else
-        cv::line(block, {x1,y1},{x2,y2}, 1);
+        cv::line(block, {x1,y1},{x2,y2}, 3);
 }
 
 uint8_t get_block(const cv::Mat_<uint8_t> &block, const cv::Vec3f &loc, const cv::Rect &roi, float step)

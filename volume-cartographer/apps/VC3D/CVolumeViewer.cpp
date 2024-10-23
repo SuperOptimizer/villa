@@ -249,7 +249,7 @@ void CVolumeViewer::invalidateVis()
 
 void CVolumeViewer::invalidateIntersect(const std::string &name)
 {
-    if (!name.size()) {
+    if (!name.size() || name == _surf_name) {
         for(auto &pair : _intersect_items) {
             for(auto &item : pair.second) {
                 fScene->removeItem(item);
@@ -273,9 +273,10 @@ void CVolumeViewer::onIntersectionChanged(std::string a, std::string b, Intersec
     if (_ignore_intersect_change && intersection == _ignore_intersect_change)
         return;
 
-    if (a == _surf_name)
+    //FIXME fix segmentation vs visible_segmentation naming and usage ..., think about dependency chain ..
+    if (a == _surf_name || (_surf_name == "segmentation" && a == "visible_segmentation"))
         invalidateIntersect(b);
-    else if (b == _surf_name)
+    else if (b == _surf_name || (_surf_name == "segmentation" && b == "visible_segmentation"))
         invalidateIntersect(a);
     
     renderIntersections();
@@ -296,8 +297,6 @@ void CVolumeViewer::setIntersects(const std::set<std::string> &set)
 
 void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
 {
-    invalidateIntersect(name);
-    
     if (_surf_name == name) {
         _surf = surf;
         if (!_surf)
@@ -305,13 +304,14 @@ void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
         else
             invalidateVis();
     }
-    
+
     //FIXME do not re-render surf if only segmentation changed?
     if (name == _surf_name) {
         curr_img_area = {0,0,0,0};
         renderVisible();
     }
-    
+
+    invalidateIntersect(name);
     renderIntersections();
 }
 
@@ -422,6 +422,8 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
         _surf->gen(&coords, nullptr, roi.size(), _ptr, _ds_scale, {-roi.width/2, -roi.height/2, _z_off});
         
         if (_surf_name == "segmentation") {
+            invalidateIntersect();
+
             QuadSurface *old_crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
             
             QuadSurface *crop = new QuadSurface(coords.clone(), {_ds_scale, _ds_scale});
@@ -464,7 +466,6 @@ void CVolumeViewer::renderVisible(bool force)
         return;
     
     curr_img_area = {bbox.left()-128,bbox.top()-128, bbox.width()+256, bbox.height()+256};
-    invalidateIntersect();
     
     cv::Mat img = render_area({curr_img_area.x(), curr_img_area.y(), curr_img_area.width(), curr_img_area.height()});
     
@@ -483,68 +484,12 @@ void CVolumeViewer::renderVisible(bool force)
         _center_marker->setZValue(11);
     }
 
-    
     _center_marker->setParentItem(fBaseImageItem);
     
     fBaseImageItem->setOffset(curr_img_area.topLeft());
 
-//     PlaneSurface *plane = dynamic_cast<PlaneSurface*>(_surf);
-//     QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
-//     
-//     if (!_intersect_valid && plane && segmentation) {
-//         std::vector<std::vector<cv::Vec2f>> xy_seg_;
-//         std::vector<std::vector<cv::Vec3f>> intersections;
-//         
-//         cv::Rect plane_roi = {curr_img_area.x()/_ds_scale, curr_img_area.y()/_ds_scale, curr_img_area.width()/_ds_scale, curr_img_area.height()/_ds_scale};
-//         
-//         find_intersect_segments(intersections, xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_ds_scale);
-//     
-// 
-//         for (auto seg : intersections) {
-//             QColor col(128+rand()%127, 128+rand()%127, 128+rand()%127);
-//             QPainterPath path;
-// 
-//             bool first = true;
-//             for (auto wp : seg)
-//             {
-//                 cv::Vec3f p = plane->project(wp, 1.0, _ds_scale);
-//                 if (first)
-//                     path.moveTo(p[0],p[1]);
-//                 else
-//                     path.lineTo(p[0],p[1]);
-//                 first = false;
-//             }
-//             auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 1/_scene_scale));
-//             item->setZValue(5);
-//             _intersect_items.push_back(item);
-//         }
-//     }
-        
-    /*if (!_slice_vis_valid && _seg_tool && slice_plane) {
-#pragma omp parallel for
-        for (auto &wp : _seg_tool->control_points) {
-            float dist = slice_plane->pointDist(wp);
-            
-            if (dist > 0.5)
-                continue;
-            
-            cv::Vec3f p = slice_plane->project(wp, 1.0, _ds_scale);
-            
-#pragma omp critical
-            {
-                // auto item = crossItem();
-                // item->setPos(p[0], p[1]);
-                auto item = fGraphicsView->scene()->addEllipse({-1,-1,2,2}, QPen(Qt::red, 1));
-                item->setZValue(8);
-                item->setPos(p[0],p[1]);
-                //FIXME rename/clean
-                slice_vis_items.push_back(item);
-            }
-        }
-        
-        if (_seg_tool->control_points.size())
-            _slice_vis_valid = true;
-    }*/
+    invalidateIntersect();
+    renderIntersections();
 }
 
 struct vec3f_hash {
