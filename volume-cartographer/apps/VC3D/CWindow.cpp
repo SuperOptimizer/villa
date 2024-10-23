@@ -653,6 +653,10 @@ void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf
         poi->n = normal;
         
         _surf_col->setPOI("focus", poi);
+
+        lblLoc[0]->setText(QString::number(poi->p[0]));
+        lblLoc[1]->setText(QString::number(poi->p[1]));
+        lblLoc[2]->setText(QString::number(poi->p[2]));
     }
     else {
         std::cout << "FIXME do something with regular click" << std::endl;

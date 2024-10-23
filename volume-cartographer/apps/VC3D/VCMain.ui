@@ -661,7 +661,7 @@
        <item row="0" column="0">
         <widget class="QLabel" name="label_9">
          <property name="text">
-          <string>slice center</string>
+          <string>focus</string>
          </property>
         </widget>
        </item>
@@ -700,7 +700,7 @@
        <item row="1" column="0">
         <widget class="QLabel" name="label_12">
          <property name="text">
-          <string>slice normal</string>
+          <string>normal</string>
          </property>
         </widget>
        </item>
@@ -767,7 +767,7 @@
  <resources/>
  <connections/>
  <buttongroups>
-  <buttongroup name="buttonGroupForward"/>
   <buttongroup name="buttonGroupBackward"/>
+  <buttongroup name="buttonGroupForward"/>
  </buttongroups>
 </ui>
