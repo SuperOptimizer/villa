@@ -592,7 +592,7 @@ void CVolumeViewer::renderIntersections()
                 SurfacePointer *ptr = crop->pointer();
 #pragma omp for
                 for (auto wp : src_locations) {
-                    float res = crop->pointTo(ptr, wp, 1.0, 5);
+                    float res = crop->pointTo(ptr, wp, 1.0, 100);
                     cv::Vec3f p = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
                     //FIXME still happening?
                     // if (res >= 1.0)

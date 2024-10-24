@@ -1140,8 +1140,8 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
 {
     DSReader reader = {ds,scale,cache};
 
-    int w = 250;
-    int h = 250;
+    int w = 450;
+    int h = 450;
     cv::Size curr_size = {w,h};
     cv::Rect bounds(0,0,w-1,h-1);
 
@@ -1200,9 +1200,11 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
     fringe.push_back({y0+1,x0+1});
 
     int gen_count = 0;
+    int succ = 0;
+    int fail = 0;
 
     while (fringe.size()) {
-        if (gen_count == 100)
+        if (gen_count == 200)
             break;
 
 
@@ -1217,7 +1219,7 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
                     cands.push_back(p+n);
                 }
         }
-        printf("gen %d fringe %d cands %d\n", gen_count, fringe.size(), cands.size());
+        printf("gen %d fringe %d cands %d s/f %d/%d\n", gen_count, fringe.size(), cands.size(), succ, fail);
         fringe.resize(0);
 
         for(auto &p : cands) {
@@ -1239,7 +1241,7 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
                         coord += points(oy,ox)-vxs(oy,ox)*dx*step-vys(oy,ox)*dy*step;
                         vx += vxs(oy,ox);
                         vy += vys(oy,ox);
-                        refs.push_back({{-dx*step,-dy*step},coord});
+                        refs.push_back({{dx*step,dy*step},coord});
                         ws.push_back(1.0f/sqrt(dy*dy+dx*dx));
                     }
             if (ref_count < 2)
@@ -1259,9 +1261,10 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
             float top = alphacomp_offset(reader, coord/scale, normal, 0, 50, 1.0);
             float bottom = alphacomp_offset(reader, coord/scale, normal, 0, -50, -1.0);
             float middle = (top + bottom)*0.5;
-            // middle = clampsigned(middle, step*0.3);
+            middle = clampsigned(middle, step*1.0/reader.scale);
+            //TODO check effectiveness after calculating area?
 
-            //FIX min of distance!
+            //TODO better failure measures ...
             // printf("gen %d range %f corr %f\n", gen_count, top-bottom, middle);
             if (top-bottom >= 20.0 && top-middle >= 20.0 && middle-bottom >= 10.0 && top >= 10 && bottom <= -10) {
                 state(p) = 1;
@@ -1278,11 +1281,13 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
                 if (!used_area.contains({p[1],p[0]})) {
                     used_area = used_area | cv::Rect(p[1],p[0],1,1);
                 }
+                succ++;
             }
             else {
                 //set fail and ignore
                 state(p) = 10;
-                printf("fail\n");
+                // printf("fail\n");
+                fail++;
             }
         }
 
@@ -1296,6 +1301,8 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
     // for(int j=0;j<points.rows;j++)
     //     for(int i=0;i<points.cols;i++)
     //         points(j, i) += normals(j,i)*alphacomp_offset(reader, points(j,i), normals(j,i), 0, -100, -2.0);
+
+    printf("generated approximate surface %fkvx^2\n", succ*step*step/1000000.0);
 
     return new QuadSurface(points, {1.0f/step/scale,1.0f/step/scale});
 
