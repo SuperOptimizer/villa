@@ -1082,8 +1082,9 @@ float alphacomp_offset(DSReader &reader, cv::Vec3f point, cv::Vec3f normal, floa
     plane.gen(&coords, nullptr, size, nullptr, reader.scale, {0,0,0});
 
     coords *= reader.scale;
+    float s = copysignf(1.0,step);
 
-    for(double off=start;off<=stop;off+=step) {
+    for(double off=start;off*s<=stop*s;off+=step) {
         cv::Mat_<uint8_t> slice;
         //I hate opencv
         cv::Mat_<cv::Vec3f> offmat(size, normal*off*reader.scale);
@@ -1237,15 +1238,25 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
             //TODO actually do a search ;-)
 
             //lets assume succes :-D
-            state(p) = 1;
-            points(p) = coord;
-            vxs(p) = vx;
-            vys(p) = vy;
-            normals(p) = normal;
-            fringe.push_back(p);
-            if (!used_area.contains({p[1],p[0]})) {
-                used_area = used_area | cv::Rect(p[1],p[0],1,1);
+
+            float top = alphacomp_offset(reader, coord/scale, normal, 0, 100, 2.0);
+            float bottom = alphacomp_offset(reader, coord/scale, normal, 0, -100, -2.0);
+            float middle = (top+bottom)*0.5;
+
+            if (top-bottom >= 10.0) {
+                state(p) = 1;
+                points(p) = coord + reader.scale*normal*middle;
+                vxs(p) = vx;
+                vys(p) = vy;
+                normals(p) = normal;
+                fringe.push_back(p);
+                if (!used_area.contains({p[1],p[0]})) {
+                    used_area = used_area | cv::Rect(p[1],p[0],1,1);
+                }
             }
+            else
+                //set fail and ignore
+                state(p) = 10;
         }
 
         cands.resize(0);
@@ -1255,9 +1266,9 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
     points = points(used_area)/scale;
     normals = normals(used_area);
 
-    for(int j=0;j<points.rows;j++)
-        for(int i=0;i<points.cols;i++)
-            points(j, i) += normals(j,i)*alphacomp_offset(reader, points(j,i), normals(j,i), 0, 100, 2.0);
+    // for(int j=0;j<points.rows;j++)
+    //     for(int i=0;i<points.cols;i++)
+    //         points(j, i) += normals(j,i)*alphacomp_offset(reader, points(j,i), normals(j,i), 0, -100, -2.0);
 
     return new QuadSurface(points, {1.0f/step/scale,1.0f/step/scale});
 
