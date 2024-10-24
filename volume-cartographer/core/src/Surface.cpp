@@ -1213,17 +1213,19 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
             cv::Vec3f vy = {0,0,0};
             cv::Vec3f coord = {0,0,0};
             cv::Vec3f normal = {0,0,0};
+            std::vector<std::pair<cv::Vec2i,cv::Vec3f>> refs;
             //predict a position and a normal as avg of neighs
             for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,h-1);oy++)
                 for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,w-1);ox++)
                     if (state(oy,ox) == 1) {
                         ref_count++;
                         normal += normals(oy,ox);
-                        float dy = oy-p[0];
-                        float dx = ox-p[1];
+                        int dy = oy-p[0];
+                        int dx = ox-p[1];
                         coord += points(oy,ox)+vxs(oy,ox)*dx*step+vys(oy,ox)*dy*step;
                         vx += vxs(oy,ox);
                         vy += vys(oy,ox);
+                        refs.push_back({{-dx*step,-dy*step},coord});
                     }
             if (ref_count < 2)
                 continue;
@@ -1246,6 +1248,9 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
             if (top-bottom >= 10.0) {
                 state(p) = 1;
                 points(p) = coord + reader.scale*normal*middle;
+
+                refine_normal(refs, points(p), normal, vx, vy);
+
                 vxs(p) = vx;
                 vys(p) = vy;
                 normals(p) = normal;
@@ -1253,6 +1258,19 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
                 if (!used_area.contains({p[1],p[0]})) {
                     used_area = used_area | cv::Rect(p[1],p[0],1,1);
                 }
+
+                //refresh normals around newly found points!
+                for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,h-1);oy++)
+                    for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,w-1);ox++)
+                        if (state(oy,ox) == 1) {
+                            ref_count++;
+                            normal += normals(oy,ox);
+                            float dy = oy-p[0];
+                            float dx = ox-p[1];
+                            coord += points(oy,ox)+vxs(oy,ox)*dx*step+vys(oy,ox)*dy*step;
+                            vx += vxs(oy,ox);
+                            vy += vys(oy,ox);
+                        }
             }
             else
                 //set fail and ignore
