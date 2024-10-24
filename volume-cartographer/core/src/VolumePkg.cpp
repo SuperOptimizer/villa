@@ -320,10 +320,8 @@ VolumePkg::VolumePkg(const fs::path& fileLocation) : rootDir_{fileLocation}
 
     // Load segmentations into the segmentations_
     for (const auto& entry : fs::recursive_directory_iterator(::SegsDir(rootDir_))) {
-        std::cout << entry.path().extension() << std::endl;
         if (fs::is_regular_file(entry) && supportedSegmentFileExtensions.count(entry.path().extension())) {
             segmentation_files_.push_back(entry.path());
-            std::cout << "found " << entry.path() << std::endl;
         }
     }
 

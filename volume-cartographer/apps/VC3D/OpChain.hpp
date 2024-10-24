@@ -25,7 +25,7 @@ enum class OpChainSourceMode: int
 //caches the generated coords to base surface method on this cached representation
 class OpChain : public Surface {
 public:
-    OpChain(QuadSurface *src) : _src(src) {};
+    OpChain(QuadSurface *src) : _src(src) { if (src->rawPoints().rows < 1000) _src_mode = OpChainSourceMode::RAW; };
     // cv::Mat render(SurfacePointer *ptr, const cv::Size &size, float z, float scale, ChunkCache *cache, z5::Dataset *ds);
     QuadSurface *surf(SurfacePointer *ptr, const cv::Size &size, float z, float scale, ChunkCache *cache, z5::Dataset *ds);
     void append(DeltaSurface *op);

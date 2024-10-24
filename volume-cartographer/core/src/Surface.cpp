@@ -1060,3 +1060,134 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         seg_grid.push_back(seg_loc2);
     }
 }
+
+QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, cv::Vec3f normal, float step)
+{
+    int w = 100;
+    int h = 100;
+    cv::Size curr_size = {w,h};
+    cv::Rect bounds(0,0,w-1,h-1);
+
+    origin *= scale;
+    cv::normalize(normal, normal);
+
+    cv::Mat_<cv::Vec3f> points(h,w,-1);
+    cv::Mat_<cv::Vec3f> vxs(h,w,-1);
+    cv::Mat_<cv::Vec3f> vys(h,w,-1);
+    cv::Mat_<cv::Vec3f> normals(h,w,-1);
+    cv::Mat_<uint8_t> state(curr_size,0);
+
+    std::vector<cv::Vec2i> fringe;
+    std::vector<cv::Vec2i> cands;
+
+    std::vector<cv::Vec2i> neighs = {{1,0},{0,1},{-1,0},{0,-1}};
+
+    int r = 1;
+
+    int x0 = w/2;
+    int y0 = h/2;
+
+    cv::Vec3f vx = vx_from_orig_norm(origin, normal);
+    cv::Vec3f vy = vy_from_orig_norm(origin, normal);
+    normalize(vx,vx);
+    normalize(vy,vy);
+
+    cv::Rect used_area(x0,y0,1,1);
+    points(y0,x0) = origin;
+    points(y0,x0+1) = origin+vx*step;
+    points(y0+1,x0) = origin+vy*step;
+    points(y0+1,x0+1) = origin+vx*step+vy*step;
+    state(y0,x0) = 1;
+    state(y0,x0+1) = 1;
+    state(y0+1,x0) = 1;
+    state(y0+1,x0+1) = 1;
+    normals(y0,x0) = normal;
+    normals(y0,x0+1) = normal;
+    normals(y0+1,x0) = normal;
+    normals(y0+1,x0+1) = normal;
+
+    vxs(y0,x0) = vx;
+    vxs(y0,x0+1) = vx;
+    vxs(y0+1,x0) = vx;
+    vxs(y0+1,x0+1) = vx;
+
+    vys(y0,x0) = vy;
+    vys(y0,x0+1) = vy;
+    vys(y0+1,x0) = vy;
+    vys(y0+1,x0+1) = vy;
+
+    fringe.push_back({y0,x0});
+    fringe.push_back({y0+1,x0});
+    fringe.push_back({y0,x0+1});
+    fringe.push_back({y0+1,x0+1});
+
+    int gen_count = 0;
+
+    while (fringe.size()) {
+        if (gen_count == 10)
+            break;
+
+
+        for(auto p : fringe)
+        {
+            if (state(p) != 1)
+                continue;
+
+            for(auto n : neighs)
+                if (bounds.contains(p+n) && state(p+n) == 0) {
+                    state(p+n) = 2;
+                    cands.push_back(p+n);
+                }
+        }
+        printf("gen %d fringe %d cands %d\n", gen_count, fringe.size(), cands.size());
+        fringe.resize(0);
+
+        for(auto &p : cands) {
+            int ref_count = 0;
+            cv::Vec3f vx = {0,0,0};
+            cv::Vec3f vy = {0,0,0};
+            cv::Vec3f coord = {0,0,0};
+            cv::Vec3f normal = {0,0,0};
+            //predict a position and a normal as avg of neighs
+            for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,h-1);oy++)
+                for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,w-1);ox++)
+                    if (state(oy,ox) == 1) {
+                        ref_count++;
+                        normal += normals(oy,ox);
+                        float dy = oy-p[0];
+                        float dx = ox-p[1];
+                        coord += points(oy,ox)+vxs(oy,ox)*dx*step+vys(oy,ox)*dy*step;
+                        vx += vxs(oy,ox);
+                        vy += vys(oy,ox);
+                    }
+            if (ref_count < 2)
+                continue;
+
+            vx /= ref_count;
+            vy /= ref_count;
+            normalize(vx,vx);
+            normalize(vy,vy);
+            coord /= ref_count;
+            normal /= ref_count;
+
+            //TODO actually do a search ;-)
+
+            //lets assume succes :-D
+            state(p) = 1;
+            points(p) = coord;
+            vxs(p) = vx;
+            vys(p) = vy;
+            normals(p) = normal;
+            std::cout << coord << p << std::endl;
+            fringe.push_back(p);
+            if (!used_area.contains({p[1],p[0]})) {
+                used_area = used_area | cv::Rect(p[1],p[0],1,1);
+            }
+        }
+
+        cands.resize(0);
+        gen_count++;
+    }
+
+    return new QuadSurface(points(used_area)/scale, {1.0f/step/scale,1.0f/step/scale});
+}
