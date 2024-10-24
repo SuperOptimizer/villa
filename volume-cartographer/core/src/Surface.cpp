@@ -1061,8 +1061,71 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     }
 }
 
+struct DSReader
+{
+    z5::Dataset *ds;
+    float scale;
+    ChunkCache *cache;
+};
+
+float alphacomp_offset(DSReader &reader, cv::Vec3f point, cv::Vec3f normal, float start, float stop, float step)
+{
+    cv::Size size = {7,7};
+    cv::Point2i c = {3,3};
+
+    float transparent = 1;
+    cv::Mat_<float> blur(size, 0);
+    float integ_z = 0;
+
+    cv::Mat_<cv::Vec3f> coords;
+    PlaneSurface plane(point, normal);
+    plane.gen(&coords, nullptr, size, nullptr, reader.scale, {0,0,0});
+
+    coords *= reader.scale;
+
+    for(double off=start;off<=stop;off+=step) {
+        cv::Mat_<uint8_t> slice;
+        //I hate opencv
+        cv::Mat_<cv::Vec3f> offmat(size, normal*off*reader.scale);
+        readInterpolated3D(slice, reader.ds, coords+offmat, reader.cache);
+
+        cv::Mat floatslice;
+        slice.convertTo(floatslice, CV_32F, 1/255.0);
+
+        cv::GaussianBlur(floatslice, blur, {7,7}, 0);
+        cv::Mat_<float> opaq_slice = blur;
+
+        float low = 0.1; //map to 0
+        float up = 1.0; //map to 1
+        opaq_slice = (opaq_slice-low)/(up-low);
+        opaq_slice = cv::min(opaq_slice,1);
+        opaq_slice = cv::max(opaq_slice,0);
+
+        float joint = transparent*opaq_slice(c);
+        integ_z += joint * off;
+        transparent = transparent-joint;
+    }
+
+    integ_z /= (1-transparent+1e-5);
+
+    return integ_z;
+}
+
+//given in an "empty" area
+//retrieve volume around point and center within empty space in z dir
+// float z_volume_refinement(DSReader &reader, cv::Vec3f point, cv::Vec3f normal)
+// {
+//     PlaneSurface plane(point, normal);
+//
+//     for(int z=-20;z<20;z++) {
+//
+//     }
+// }
+
 QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, cv::Vec3f normal, float step)
 {
+    DSReader reader = {ds,scale,cache};
+
     int w = 100;
     int h = 100;
     cv::Size curr_size = {w,h};
@@ -1097,6 +1160,7 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
     points(y0,x0+1) = origin+vx*step;
     points(y0+1,x0) = origin+vy*step;
     points(y0+1,x0+1) = origin+vx*step+vy*step;
+
     state(y0,x0) = 1;
     state(y0,x0+1) = 1;
     state(y0+1,x0) = 1;
@@ -1178,7 +1242,6 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
             vxs(p) = vx;
             vys(p) = vy;
             normals(p) = normal;
-            std::cout << coord << p << std::endl;
             fringe.push_back(p);
             if (!used_area.contains({p[1],p[0]})) {
                 used_area = used_area | cv::Rect(p[1],p[0],1,1);
@@ -1189,5 +1252,18 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
         gen_count++;
     }
 
-    return new QuadSurface(points(used_area)/scale, {1.0f/step/scale,1.0f/step/scale});
+    points = points(used_area)/scale;
+    normals = normals(used_area);
+
+    for(int j=0;j<points.rows;j++)
+        for(int i=0;i<points.cols;i++)
+            points(j, i) += normals(j,i)*alphacomp_offset(reader, points(j,i), normals(j,i), 0, 100, 2.0);
+
+    return new QuadSurface(points, {1.0f/step/scale,1.0f/step/scale});
+
+
+    // points = points/scale;
+    // points(y0, x0) += normals(y0, x0)*alphacomp_offset(reader, points(y0, x0), normals(y0, x0), 0, 100, 2.0);
+    //
+    // return new QuadSurface(points(used_area), {1.0f/step/scale,1.0f/step/scale});
 }
