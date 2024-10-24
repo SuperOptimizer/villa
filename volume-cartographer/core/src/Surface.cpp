@@ -1159,7 +1159,7 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
 
     std::vector<cv::Vec2i> neighs = {{1,0},{0,1},{-1,0},{0,-1}};
 
-    int r = 1;
+    int r = 2;
 
     int x0 = w/2;
     int y0 = h/2;
@@ -1204,7 +1204,7 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
     int fail = 0;
 
     while (fringe.size()) {
-        if (gen_count == 200)
+        if (gen_count == 100)
             break;
 
 
@@ -1244,7 +1244,7 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
                         refs.push_back({{dx*step,dy*step},coord});
                         ws.push_back(1.0f/sqrt(dy*dy+dx*dx));
                     }
-            if (ref_count < 2)
+            if (ref_count < 3)
                 continue;
 
             vx /= ref_count;
