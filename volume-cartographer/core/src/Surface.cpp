@@ -1140,8 +1140,8 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
 {
     DSReader reader = {ds,scale,cache};
 
-    int w = 150;
-    int h = 150;
+    int w = 250;
+    int h = 250;
     cv::Size curr_size = {w,h};
     cv::Rect bounds(0,0,w-1,h-1);
 
@@ -1202,7 +1202,7 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
     int gen_count = 0;
 
     while (fringe.size()) {
-        if (gen_count == 50)
+        if (gen_count == 100)
             break;
 
 
@@ -1239,7 +1239,7 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
                         coord += points(oy,ox)-vxs(oy,ox)*dx*step-vys(oy,ox)*dy*step;
                         vx += vxs(oy,ox);
                         vy += vys(oy,ox);
-                        refs.push_back({{dx*step,dy*step},coord});
+                        refs.push_back({{-dx*step,-dy*step},coord});
                         ws.push_back(1.0f/sqrt(dy*dy+dx*dx));
                     }
             if (ref_count < 2)
@@ -1259,17 +1259,17 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
             float top = alphacomp_offset(reader, coord/scale, normal, 0, 50, 1.0);
             float bottom = alphacomp_offset(reader, coord/scale, normal, 0, -50, -1.0);
             float middle = (top + bottom)*0.5;
-            middle = clampsigned(middle, step*0.3);
+            // middle = clampsigned(middle, step*0.3);
 
             //FIX min of distance!
-            printf("gen %d range %f corr %f\n", gen_count, top-bottom, middle);
+            // printf("gen %d range %f corr %f\n", gen_count, top-bottom, middle);
             if (top-bottom >= 20.0 && top-middle >= 20.0 && middle-bottom >= 10.0 && top >= 10 && bottom <= -10) {
                 state(p) = 1;
                 points(p) = coord + reader.scale*normal*middle;
 
                 refs.push_back({{0,0},points(p)});
                 ws.push_back(1.0);
-                // refine_normal(refs, points(p), normal, vx, vy, ws);
+                refine_normal(refs, points(p), normal, vx, vy, ws);
 
                 vxs(p) = vx;
                 vys(p) = vy;
