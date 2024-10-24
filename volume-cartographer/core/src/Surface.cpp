@@ -1107,7 +1107,10 @@ float alphacomp_offset(DSReader &reader, cv::Vec3f point, cv::Vec3f normal, floa
         transparent = transparent-joint;
     }
 
-    integ_z /= (1-transparent+1e-5);
+    integ_z += transparent * stop;
+    transparent = 0.0;
+
+    // integ_z /= (1-transparent+1e-5);
 
     return integ_z;
 }
@@ -1123,12 +1126,22 @@ float alphacomp_offset(DSReader &reader, cv::Vec3f point, cv::Vec3f normal, floa
 //     }
 // }
 
+float clampsigned(float val, float limit)
+{
+    if (val >= limit)
+        return limit;
+    if (val <= -limit)
+        return -limit;
+
+    return val;
+}
+
 QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, cv::Vec3f normal, float step)
 {
     DSReader reader = {ds,scale,cache};
 
-    int w = 100;
-    int h = 100;
+    int w = 150;
+    int h = 150;
     cv::Size curr_size = {w,h};
     cv::Rect bounds(0,0,w-1,h-1);
 
@@ -1189,7 +1202,7 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
     int gen_count = 0;
 
     while (fringe.size()) {
-        if (gen_count == 10)
+        if (gen_count == 50)
             break;
 
 
@@ -1214,6 +1227,7 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
             cv::Vec3f coord = {0,0,0};
             cv::Vec3f normal = {0,0,0};
             std::vector<std::pair<cv::Vec2i,cv::Vec3f>> refs;
+            std::vector<float> ws;
             //predict a position and a normal as avg of neighs
             for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,h-1);oy++)
                 for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,w-1);ox++)
@@ -1222,10 +1236,11 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
                         normal += normals(oy,ox);
                         int dy = oy-p[0];
                         int dx = ox-p[1];
-                        coord += points(oy,ox)+vxs(oy,ox)*dx*step+vys(oy,ox)*dy*step;
+                        coord += points(oy,ox)-vxs(oy,ox)*dx*step-vys(oy,ox)*dy*step;
                         vx += vxs(oy,ox);
                         vy += vys(oy,ox);
-                        refs.push_back({{-dx*step,-dy*step},coord});
+                        refs.push_back({{dx*step,dy*step},coord});
+                        ws.push_back(1.0f/sqrt(dy*dy+dx*dx));
                     }
             if (ref_count < 2)
                 continue;
@@ -1241,15 +1256,20 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
 
             //lets assume succes :-D
 
-            float top = alphacomp_offset(reader, coord/scale, normal, 0, 100, 2.0);
-            float bottom = alphacomp_offset(reader, coord/scale, normal, 0, -100, -2.0);
-            float middle = (top+bottom)*0.5;
+            float top = alphacomp_offset(reader, coord/scale, normal, 0, 50, 1.0);
+            float bottom = alphacomp_offset(reader, coord/scale, normal, 0, -50, -1.0);
+            float middle = (top + bottom)*0.5;
+            middle = clampsigned(middle, step*0.3);
 
-            if (top-bottom >= 10.0) {
+            //FIX min of distance!
+            printf("gen %d range %f corr %f\n", gen_count, top-bottom, middle);
+            if (top-bottom >= 20.0 && top-middle >= 20.0 && middle-bottom >= 10.0 && top >= 10 && bottom <= -10) {
                 state(p) = 1;
                 points(p) = coord + reader.scale*normal*middle;
 
-                refine_normal(refs, points(p), normal, vx, vy);
+                refs.push_back({{0,0},points(p)});
+                ws.push_back(1.0);
+                // refine_normal(refs, points(p), normal, vx, vy, ws);
 
                 vxs(p) = vx;
                 vys(p) = vy;
@@ -1258,23 +1278,12 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
                 if (!used_area.contains({p[1],p[0]})) {
                     used_area = used_area | cv::Rect(p[1],p[0],1,1);
                 }
-
-                //refresh normals around newly found points!
-                for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,h-1);oy++)
-                    for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,w-1);ox++)
-                        if (state(oy,ox) == 1) {
-                            ref_count++;
-                            normal += normals(oy,ox);
-                            float dy = oy-p[0];
-                            float dx = ox-p[1];
-                            coord += points(oy,ox)+vxs(oy,ox)*dx*step+vys(oy,ox)*dy*step;
-                            vx += vxs(oy,ox);
-                            vy += vys(oy,ox);
-                        }
             }
-            else
+            else {
                 //set fail and ignore
                 state(p) = 10;
+                printf("fail\n");
+            }
         }
 
         cands.resize(0);

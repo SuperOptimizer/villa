@@ -1143,7 +1143,7 @@ struct OrthogonalLoss {
 };
 
 struct ParallelLoss {
-    ParallelLoss(const cv::Vec3f &ref)
+    ParallelLoss(const cv::Vec3f &ref, float w) : _w(w)
     {
         cv::normalize(ref, _ref);
     }
@@ -1155,20 +1155,21 @@ struct ParallelLoss {
 
         T la = sqrt(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
 
-        residual[0] = T(1.0)-dot/la;
+        residual[0] = T(_w)-T(_w)*dot/la;
 
         return true;
     }
 
     cv::Vec3f _ref;
+    float _w;
 
-    static ceres::CostFunction* Create(const cv::Vec3f &ref)
+    static ceres::CostFunction* Create(const cv::Vec3f &ref, const float &w)
     {
-        return new ceres::AutoDiffCostFunction<ParallelLoss, 1, 3>(new ParallelLoss(ref));
+        return new ceres::AutoDiffCostFunction<ParallelLoss, 1, 3>(new ParallelLoss(ref, w));
     }
 };
 
-void refine_normal(const std::vector<std::pair<cv::Vec2i,cv::Vec3f>> &refs, cv::Vec3f &point, cv::Vec3f &normal, cv::Vec3f &vx, cv::Vec3f &vy)
+void refine_normal(const std::vector<std::pair<cv::Vec2i,cv::Vec3f>> &refs, cv::Vec3f &point, cv::Vec3f &normal, cv::Vec3f &vx, cv::Vec3f &vy, const std::vector<float> &ws)
 {
     //losses are
     //points all should be in plane defined by normal && point
@@ -1185,14 +1186,18 @@ void refine_normal(const std::vector<std::pair<cv::Vec2i,cv::Vec3f>> &refs, cv::
     double vyd[3] = {vy[0],vy[1],vy[2]};
     double nd[3] = {normal[0],normal[1],normal[2]};
 
-    for(auto &a : refs)
-        for(auto &b : refs) {
+    for(int j=0;j<refs.size();j++) {
+        auto a = refs[j];
+        for(int i=0;i<refs.size();i++) {
+            auto b = refs[i];
+            float w = std::max(ws[j],ws[i]);
             //add vx, vy losses
             if (a.first[0] == b.first[0])
-                problem.AddResidualBlock(ParallelLoss::Create(b.second-a.second), nullptr, vyd);
+                problem.AddResidualBlock(ParallelLoss::Create(b.second-a.second,w), nullptr, vyd);
             else if (a.first[1] == b.first[1])
-                problem.AddResidualBlock(ParallelLoss::Create(b.second-a.second), nullptr, vxd);
+                problem.AddResidualBlock(ParallelLoss::Create(b.second-a.second,w), nullptr, vxd);
         }
+    }
 
     problem.AddResidualBlock(OrthogonalLoss::Create(), nullptr, vxd, vyd);
     problem.AddResidualBlock(OrthogonalLoss::Create(), nullptr, vyd, nd);
