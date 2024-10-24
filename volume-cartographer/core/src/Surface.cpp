@@ -1204,7 +1204,7 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
     int fail = 0;
 
     while (fringe.size()) {
-        if (gen_count == 100)
+        if (gen_count == 200)
             break;
 
 
@@ -1258,15 +1258,27 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
 
             //lets assume succes :-D
 
+            float tgt_dist = 20;
+            float fail_dist = 10.0;
+
             float top = alphacomp_offset(reader, coord/scale, normal, 0, 50, 1.0);
             float bottom = alphacomp_offset(reader, coord/scale, normal, 0, -50, -1.0);
-            float middle = (top + bottom)*0.5;
+            float middle = 0; //(top-tgt_dist + bottom+tgt_dist)*0.5;
+            if (top >= tgt_dist && -bottom >= tgt_dist)
+                middle = (top + bottom)*0.5;
+            else if (top >= tgt_dist)
+                 middle = bottom + tgt_dist;
+            else if (-bottom >= tgt_dist)
+                middle = top - tgt_dist;
+            else
+                middle = (top + bottom)*0.5;
+
             middle = clampsigned(middle, step*1.0/reader.scale);
             //TODO check effectiveness after calculating area?
 
             //TODO better failure measures ...
             // printf("gen %d range %f corr %f\n", gen_count, top-bottom, middle);
-            if (top-bottom >= 20.0 && top-middle >= 20.0 && middle-bottom >= 10.0 && top >= 10 && bottom <= -10) {
+            if (top-middle >= fail_dist && middle-bottom >= fail_dist && top >= fail_dist && bottom <= -fail_dist) {
                 state(p) = 1;
                 points(p) = coord + reader.scale*normal*middle;
 
