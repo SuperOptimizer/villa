@@ -3,6 +3,8 @@
 #include <xtensor/xarray.hpp>
 #include <opencv2/core.hpp>
 
+#include <shared_mutex>
+
 namespace z5
 {
     class Dataset;
@@ -22,17 +24,20 @@ public:
     
     //key should be unique for chunk and contain groupkey (groupkey sets highest 16bits of uint64_t)
     void put(uint64_t key, xt::xarray<uint8_t> *ar);
-    xt::xarray<uint8_t> *get(uint64_t key);
+    std::shared_ptr<xt::xarray<uint8_t>> get(uint64_t key);
     bool has(uint64_t key);
+    std::shared_mutex mutex;
 private:
     uint64_t _generation = 0;
     size_t _size = 0;
     size_t _stored = 0;
-    std::unordered_map<uint64_t,xt::xarray<uint8_t>*> _store;
+    std::unordered_map<uint64_t,std::shared_ptr<xt::xarray<uint8_t>>> _store;
     //store generation number
     std::unordered_map<uint64_t,uint64_t> _gen_store;
     //store group keys
     std::unordered_map<std::string,uint64_t> _group_store;
+
+    std::shared_mutex _mutex;
 };
 
 //NOTE depending on request this might load a lot (the whole array) into RAM
