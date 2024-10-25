@@ -197,6 +197,15 @@ target_link_libraries(vc_zarrrendersurface
     VC::surface
 )
 
+add_executable(vc_objrefine src/ObjAlphaCompRefinement.cpp)
+target_link_libraries(vc_objrefine
+    nlohmann_json::nlohmann_json
+    z5
+    opencv_highgui
+    VC::slicing
+    VC::surface
+)
+
 ## experiements for flattening ##
 # add_executable(vc_zarralphacomp src/ZarrAlphaComp.cpp)
 # target_link_libraries(vc_zarralphacomp
