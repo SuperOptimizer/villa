@@ -557,7 +557,7 @@ int main(int argc, char *argv[])
     timer = new MeasureLife("rendering ...\n");
     for(int off=min_slice;off<=max_slice;off++) {
         MeasureLife time_slice("slice "+std::to_string(off)+" ... ");
-        comp_surf->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
+        surf->gen(&coords, nullptr, {w,h}, nullptr, output_scale, {-w/2,-h/2,off-32});
         
         coords *= ds_scale;
         

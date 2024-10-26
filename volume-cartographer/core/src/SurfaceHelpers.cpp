@@ -6,6 +6,7 @@
 // #include <opencv2/calib3d.hpp>
 
 #include "ceres/ceres.h"
+#include "ceres/cubic_interpolation.h"
 
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Surface.hpp"
@@ -484,8 +485,6 @@ static float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc
     return -abs(res3);
 }
 
-//lets try again
-//FIXME mark covered regions as not available so we can't repeat them'
 cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &points, cv::Mat_<cv::Vec2f> &locs, int seed_x, int seed_y, float step_size, int w, int h)
 {
     double sx, sy;
@@ -818,136 +817,447 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
         
         printf("-> total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
     }
+
+    out = out(used_area).clone();
+    state = state(used_area);
+
+    std::vector<cv::Vec3f> valid_ps;
+    for(int j=0;j<out.rows;j++)
+        for(int i=0;i<out.cols;i++)
+            if (state(j, i)== 1)
+                valid_ps.push_back(out(j,i));
+
+    write_ply("points.ply", valid_ps);
     
-    // cv::resize(dbg, dbg, {0,0}, 10.0, 10.0, cv::INTER_NEAREST);
-    // cv::imwrite("dbg.tif", dbg);
-    
-    // cv::imwrite("xcurv.tif",x_curv);
-    // cv::imwrite("ycurv.tif",y_curv);
-    
-    //now lets expand a whole row
-    /*for(int i=2;i<w;i++) {
-//         float res;
-//         //predict upper loc
-//         // locs(0,i) = 2*locs(0,i-1)-locs(0,i-2);
-//         locs(0,i) = locs(0,i-1);
-//         
-//         //FIXME this may take a curve?
-//         res = multi_step_search(points, locs(0,i), out(0,i), {out(0,i-1),out(1,i-1)}, {T,D*T}, nullptr, step, {out(0,i-2)}, {2*T});
-//         
-//         if (res == -1)
-//             break;
-//         
-// //         res = min_loc_dbg(points, locs(0,i), out(0,i), {out(0,i-2),out(0,i-1),out(1,i-1)}, {2*T,T,D*T}, nullptr, step, 0.01);
-// //         
-// //         std::cout << res << std::endl;
-// // 
-// //         //predict lower loc
-//         // locs(1,i) = 2*locs(1,i-1)-locs(1,i-2);
-//         locs(1,i) = locs(1,i-1);
-//         //         res = min_loc_dbg(points, locs(1,i), out(1,i), {out(0,i),out(0,i-1),out(1,i-1)}, {T,D*T,T}, nullptr, step, 0.01);
-//         res = multi_step_search(points, locs(1,i), out(1,i), {out(0,i),out(0,i-1),out(1,i-1)}, {T,D*T,T}, nullptr, step, {out(1,i-2)}, {2*T});
-//         //         std::cout << res << std::endl;
-//         if (res == -1)
-//             break;
-        {
-            std::vector<cv::Vec3f> refs;
-            std::vector<float> dists;
-            
-            int j = 0;
-            
-            for(int oy=std::max(j-r,0);oy<=2;oy++)
-                for(int ox=std::max(i-r,0);ox<=std::min(i+r,out.cols-1);ox++)
-                    if (out(oy,ox)[0] != -1 && (ox != i || oy != j)) {
-                        refs.push_back(out(oy,ox));
-                        int dy = oy-j;
-                        int dx = ox-i;
-                        dists.push_back(T*sqrt(dy*dy+dx*dx));
-                    }
-                    
-            locs(j,i) = locs(j,i-1);
-            // if (dists.size() < 4) {
-            //     out(j,i) = 0;
-            // }
-            // else {
-                res = multi_step_search(points, locs(j,i), out(j,i), refs, dists, nullptr, step, {}, {});
-                
-            //     if (res == -1)
-            //         out(j,i) = -1;
-            // }
-        }
-        
-        {
-            std::vector<cv::Vec3f> refs;
-            std::vector<float> dists;
-            
-            int j = 1;
-            
-            for(int oy=std::max(j-r,0);oy<=2;oy++)
-                for(int ox=std::max(i-r,0);ox<=std::min(i+r,out.cols-1);ox++)
-                    if (out(oy,ox)[0] != -1 && (ox != i || oy != j)) {
-                        refs.push_back(out(oy,ox));
-                        int dy = oy-j;
-                        int dx = ox-i;
-                        dists.push_back(T*sqrt(dy*dy+dx*dx));
-                    }
-                    
-            locs(j,i) = locs(j,i-1);
-            // if (dists.size() < 4) {
-            //     out(j,i) = 0;
-            // }
-            // else {
-                res = multi_step_search(points, locs(j,i), out(j,i), refs, dists, nullptr, step, {}, {});
-                
-            //     if (res == -1)
-            //         out(j,i) = -1;
-            // }
-        }
-        
+    return out;
+}
+
+struct CeresGrid2DcvMat3f {
+    enum { DATA_DIMENSION = 3 };
+    void GetValue(int row, int col, double* f) const
+    {
+        cv::Vec3f v = _m(row, col);
+        f[0] = v[0];
+        f[1] = v[1];
+        f[2] = v[2];
     }
-    
-    //now lets expand the rest
-    for(int j=2;j<h;j++) {
+    cv::Mat_<cv::Vec3f> _m;
+};
+
+
+//cost functions for physical paper
+struct DistLoss {
+    DistLoss(float dist) : _d(dist) {};
+    template <typename T>
+    bool operator()(const T* const a, const T* const b, T* residual) const {
+        T d[3];
+        d[0] = a[0] - b[0];
+        d[1] = a[1] - b[1];
+        d[2] = a[2] - b[2];
+
+        d[0] = sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+
+        residual[0] = d[0] - T(_d);
+
+        return true;
+    }
+
+    double _d;
+
+    static ceres::CostFunction* Create(float d)
+    {
+        return new ceres::AutoDiffCostFunction<DistLoss, 1, 3, 3>(new DistLoss(d));
+    }
+};
+
+//cost functions for physical paper
+struct StraightLoss {
+    template <typename T>
+    bool operator()(const T* const a, const T* const b, const T* const c, T* residual) const {
+        T v[3], p[3];
+        v[0] = b[0] - a[0];
+        v[1] = b[1] - a[1];
+        v[2] = b[2] - a[2];
+
+        p[0] = b[0] + v[0];
+        p[1] = b[1] + v[1];
+        p[2] = b[2] + v[2];
+
+        residual[0] = p[0] - c[0];
+        residual[1] = p[1] - c[1];
+        residual[2] = p[2] - c[2];
+
+        return true;
+    }
+
+    static ceres::CostFunction* Create()
+    {
+        return new ceres::AutoDiffCostFunction<StraightLoss, 3, 3, 3, 3>(new StraightLoss());
+    }
+};
+
+//cost functions for physical paper
+struct SurfaceLoss {
+    SurfaceLoss(cv::Mat &grid) : _interpolator(CeresGrid2DcvMat3f({grid})) {};
+    template <typename T>
+    bool operator()(const T* const p, const T* const l, T* residual) const {
+        T v[3];
+
+        _interpolator.Evaluate(l[1], l[0], v);
+
+        residual[0] = v[0] - p[0];
+        residual[1] = v[1] - p[1];
+        residual[2] = v[2] - p[2];
+
+        return true;
+    }
+
+    static ceres::CostFunction* Create(cv::Mat &grid)
+    {
+        return new ceres::AutoDiffCostFunction<SurfaceLoss, 3, 3, 2>(new SurfaceLoss(grid));
+    }
+
+    ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> _interpolator;
+};
+
+//use a physical paper model
+//first predict a position from just the physical model (keeping everything else constant)
+//then refine with physical model and bicubic interpolation of surface location
+//later refine whole model
+cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec3f> &points, cv::Mat_<cv::Vec2f> &locs, int seed_x, int seed_y, float step_size, int w, int h)
+{
+    double sx, sy;
+    vc_segmentation_scales(points, sx, sy);
+
+    std::vector<cv::Vec2i> fringe;
+    std::vector<cv::Vec2i> cands;
+    std::vector<cv::Vec2i> setfail;
+    std::vector<cv::Vec2i> collected_failures;
+    std::vector<cv::Vec2i> skipped;
+
+    std::cout << "input avg step " << sx << " " << sy << points.size() << std::endl;
+
+    //TODO use scaling and average diffeence vecs for init?
+    float D = sqrt(2);
+
+    float T = step_size;
+
+    float th = T/4;
+
+    int r = 1;
+
+    cv::Vec2f step = {sx*T/10, sy*T/10};
+
+    cv::Mat_<cv::Vec3f> out(h,w);
+    locs.create(h,w);
+    cv::Mat_<uint8_t> state(h,w);
+    cv::Mat_<float> dbg(h,w);
+    cv::Mat_<float> x_curv(h,w);
+    cv::Mat_<float> y_curv(h,w);
+    cv::Mat_<float> used(points.size());
+    out.setTo(-1);
+    used.setTo(0);
+    state.setTo(0);
+    dbg.setTo(0);
+    x_curv.setTo(1);
+    y_curv.setTo(1);
+
+    cv::Rect src_bounds(0,0,points.cols-3,points.rows-3);
+    if (!src_bounds.contains({seed_x,seed_y}))
+        return out;
+
+        //FIXME the init locations are probably very important!
+
+        //FIXME local search can be affected by noise/artefacts in data, add some re-init random initilizations if we see failures?
+
+        int x0 = w/2;
+        int y0 = h/2;
+
+        cv::Rect used_area(x0,y0,1,1);
+        locs(y0,x0) = {seed_x, seed_y};
+        out(y0,x0) = at_int(points, locs(y0,x0));
+
         float res;
-        
-        for(int i=0;i<w;i++) {
-            locs(j,i) = locs(j-1,i);
-            
-            std::vector<cv::Vec3f> refs;
-            std::vector<float> dists;
-            
-            
-            for(int oy=std::max(j-r,0);oy<=j;oy++)
-                for(int ox=std::max(i-r,0);ox<=std::min(i+r,out.cols-1);ox++)
-                    if (out(oy,ox)[0] != -1 && (ox != i || oy != j)) {
-                        refs.push_back(out(oy,ox));
-                        int dy = oy-j;
-                        int dx = ox-i;
-                        dists.push_back(T*sqrt(dy*dy+dx*dx));
+
+
+        //first point to the right
+        locs(y0,x0+1) = locs(y0,x0)+cv::Vec2f(1,0);
+        res = min_loc_dbg(points, locs(y0,x0+1), out(y0,x0+1), {out(y0,x0)}, {T}, nullptr, step, 0.01);
+        std::cout << res << std::endl;
+
+        //bottom left
+        locs(y0+1,x0) = locs(y0,x0)+cv::Vec2f(0,1);
+        res = min_loc_dbg(points, locs(y0+1,x0), out(y0+1,x0), {out(y0,x0),out(y0,x0+1)}, {T,D*T}, nullptr, step, 0.01);
+        std::cout << res << std::endl;
+
+        //bottom right
+        locs(y0+1,x0+1) = locs(y0,x0)+cv::Vec2f(1,1);
+        res = min_loc_dbg(points, locs(y0+1,x0+1), out(y0+1,x0+1), {out(y0,x0),out(y0,x0+1),out(y0+1,x0)}, {D*T,T,T}, nullptr, step, 0.01);
+        std::cout << res << std::endl;
+
+        std::cout << out(y0,x0) << out(y0,x0+1) << std::endl;
+        std::cout << out(y0+1,x0) << out(y0+1,x0+1) << std::endl;
+
+        // locs(j,i) = locs(j-1,i);
+
+        // std::vector<cv::Vec3f> refs;
+        // std::vector<float> dists;
+
+        std::vector<cv::Vec2i> neighs = {{1,0},{0,1},{-1,0},{0,-1}};
+        cv::Rect bounds(0,0,h-1,w-1);
+
+        state(y0,x0) = 1;
+        state(y0+1,x0) = 1;
+        state(y0,x0+1) = 1;
+        state(y0+1,x0+1) = 1;
+
+        fringe.push_back({y0,x0});
+        fringe.push_back({y0+1,x0});
+        fringe.push_back({y0,x0+1});
+        fringe.push_back({y0+1,x0+1});
+
+        int succ = 0;
+        int total_fail = 0;
+        int last_round_updated = 4;
+
+        std::vector<cv::Vec2f> all_locs;
+        bool skipped_from_skipped = false;
+        int generation = 0;
+        int stop_gen = -1;
+        bool ignore_failures = false;
+
+        while (fringe.size() || (!skipped_from_skipped && skipped.size()) || collected_failures.size()) {
+            generation++;
+            if (generation == stop_gen)
+                break;
+            last_round_updated = 0;
+
+            //first: regular fring
+            if (fringe.size()) {
+                for(auto p : fringe)
+                {
+                    if (state(p) != 1)
+                        continue;
+
+                    // std::cout << "check " << p << std::endl;
+
+                    for(auto n : neighs)
+                        if (bounds.contains(p+n) && state(p+n) == 0) {
+                            state(p+n) = 2;
+                            cands.push_back(p+n);
+                            // std::cout << "cand  " << p+n << std::endl;
+                        }
+                }
+                for(auto p : cands)
+                    state(p) = 0;
+                printf("gen %d processing %d fringe cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
+                fringe.resize(0);
+                skipped_from_skipped = false;
+            }
+            else if ((last_round_updated && skipped.size()) || collected_failures.size()) {
+                //skipped && failed points are processed at the same time so we expand smoothly
+                for(auto p : skipped)
+                    state(p) = 0;
+                cands = skipped;
+                printf("gen %d processing %d skipped cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
+                skipped.resize(0);
+                skipped_from_skipped = true;
+
+                for(auto p : collected_failures) {
+                    state(p) = 0;
+                    cands.push_back(p);
+                }
+                printf("gen %d processing %d fail cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
+                collected_failures.resize(0);
+                ignore_failures = true;
+                skipped_from_skipped = false;
+            }
+            else
+                break;
+
+            cv::Mat_<cv::Vec3f> curv_data(2*r+1,2*r+1);
+            cv::Mat_<uint8_t> curv_valid(2*r+1,2*r+1);
+
+            for(auto p : cands) {
+                if (state(p))
+                    continue;
+
+                std::vector<cv::Vec3f> refs;
+                std::vector<float> dists;
+                std::vector<float> ws;
+                std::vector<cv::Vec2i> dbg_outp;
+                cv::Vec2f loc_sum = 0;
+                int fail = 0;
+
+                curv_valid.setTo(0);
+
+                // printf("run %d %d\n",p[1],p[0]);
+
+                for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,out.rows-1);oy++)
+                    for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,out.cols-1);ox++)
+                        if (state(oy,ox) == 1) {
+                            int dy = oy-p[0];
+                            int dx = ox-p[1];
+                            curv_valid(dy+r,dx+r) = 1;
+                            curv_data(dy+r,dx+r) = out(oy,ox);
+                        }
+
+                        float x_curve_sum = 0;
+                    int x_curve_count = 0;
+                for(int j=0;j<2*r+1;j++)
+                    for(int i=0;i<2*r+1-2;i++) {
+                        if (curv_valid(j,i) && curv_valid(j,i+1) && curv_valid(j,i+2)) {
+                            x_curve_sum += sqrt(sdist(curv_data(j,i),curv_data(j,i+2)))/(2*T);
+                            x_curve_count++;
+                            // printf("%f\n",sqrt(sdist(curv_data(j,i),curv_data(j,i+2)))/(2*T));
+                        }
                     }
-                    
-            // if (dists.size() < 4) {
-            //     out(j,i) = -1;
-            //     continue;
-            // }
-                    
-            res = multi_step_search(points, locs(j,i), out(j,i), refs, dists, nullptr, step, {}, {});
-            
-            // res = multi_step_search(points, locs(j,i), out(j,i), {out(j-1,i),out(j-1,i-1),out(j,i-1)}, {T,D*T,T}, &plane, step, {out(j-2,i),out(j,i-2)}, {2*T,2*T});
-            
-            printf("%f\n", res);
-            
-            // if (res == -1) {
-            //     out(j,i) = -1;
-            //     // locs(j,i) = locs(j-1,i);
-            //     // return out;
-            //     continue;
-            // }
-            
+                    if (x_curve_count)
+                        x_curv(p) = sqrt(std::min(1.0f,x_curve_sum/x_curve_count));
+
+                float y_curve_sum = 0;
+                int y_curve_count = 0;
+                for(int j=0;j<2*r+1-2;j++)
+                    for(int i=0;i<2*r+1;i++) {
+                        if (curv_valid(j,i) && curv_valid(j+1,i) && curv_valid(j+2,i)) {
+                            y_curve_sum += sqrt(sdist(curv_data(j,i),curv_data(j+2,i)))/(2*T);
+                            y_curve_count++;
+                            // printf("%f\n",sqrt(sdist(curv_data(j,i),curv_data(j,i+2)))/(2*T));
+                        }
+                    }
+                    if (y_curve_count)
+                        y_curv(p) = sqrt(std::min(1.0f,y_curve_sum/y_curve_count));
+
+                // printf("avg curv xy %f %f\n",x_curv(p),y_curv(p));
+
+                for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,out.rows-1);oy++)
+                    for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,out.cols-1);ox++)
+                        if (state(oy,ox) == 1) {
+                            refs.push_back(out(oy,ox));
+                            float curv_pow_x = pow(x_curv(p),abs(ox-p[1]));
+                            float curv_pow_y = pow(y_curv(p),abs(oy-p[0]));
+                            float dy = abs(oy-p[0])*curv_pow_x;
+                            float dx = abs(ox-p[1])*curv_pow_y;
+                            // float dy = (oy-p[0])*y_curv(p);
+                            // float dx = (ox-p[1])*x_curv(p);
+                            // float dy = (oy-p[0]);
+                            // float dx = (ox-p[1]);
+                            float d = sqrt(dy*dy+dx*dx);
+                            dists.push_back(T*d);
+                            loc_sum += locs(oy,ox);
+                            // float w = 1.0/(std::max(abs(dbg(oy,ox)),1.0f));
+                            float w = 1*curv_pow_x*curv_pow_y/d;
+                            ws.push_back(w);
+                            dbg_outp.push_back({dy,dx});
+                        }
+                        else if (state(oy,ox) == 10)
+                            fail++;
+                // else if (state(oy,ox) == 10)
+                // fail++;
+
+                locs(p) = loc_sum*(1.0/dists.size());
+
+                if (fail >= 2 && !ignore_failures) {
+                    setfail.push_back(p);
+                    continue;
+                }
+
+                if (!ignore_failures && succ > 200 && dists.size()-4*fail <= 12) {
+                    skipped.push_back(p);
+                    continue;
+                }
+
+                int failstate = 0;
+                res = multi_step_search(points, locs(p), out(p), refs, dists, nullptr, step, {}, {}, failstate, ws, th, used);
+                all_locs.push_back(locs(p));
+
+                // printf("%f\n", res);
+
+                dbg(p) = -res;
+
+                if (failstate && !ignore_failures) {
+                    printf("fail %f %d %d\n", res, p[1]*5, p[0]*5);
+                    setfail.push_back(p);
+                    total_fail++;
+
+                    // std::vector<cv::Vec3f> succ_ps;
+                    // for(int j=0;j<10;j++)
+                    //     for(int i=0;i<10;i++) {
+                    //         cv::Vec2i l = p+cv::Vec2i(j-5,i-5);
+                    //         if (state(l) == 1)
+                    //             succ_ps.push_back(out(l));
+                    //     }
+
+                    /*std::vector<cv::Vec3f> input_ps;
+                     *               std::vector<cv::Vec3f> rounded_ps;
+                     *               cv::Vec2i ref_loc = loc_sum*(1.0/dists.size());
+                     *               // cv::Vec2i ref_loc = locs(some_point);
+                     *               for(int j=0;j<50;j++)
+                     *                   for(int i=0;i<50;i++) {
+                     *                       cv::Vec2i l = ref_loc+cv::Vec2i(j-25,i-25);
+                     *                       input_ps.push_back(points(l[1],l[0]));
+                }
+                // for(auto l : dbg_outp)
+                // input_ps.push_back(points(locs(l)[0],locs(l)[1]));
+                // for(auto l : all_locs)
+                //     input_ps.push_back(at_int(points,l));
+                // for(auto l : all_locs)
+                //     rounded_ps.push_back(points(l[1],l[0]));
+
+                for(int n=0;n<refs.size();n++) {
+                    std::cout << refs[n] << dbg_outp[0] << " " << dbg_outp[1] << std::endl;
+                }
+
+                write_ply("surf.ply", refs);
+                write_ply("points.ply", input_ps);
+                write_ply("res.ply", {out(p)});*/
+                    // write_ply("points_nearest.ply", rounded_ps);
+
+                    // cv::imwrite("xcurv.tif",x_curv);
+                    // cv::imwrite("ycurv.tif",y_curv);
+                    // return out;
+                }
+                else if (res < 0 && !failstate) {
+                    //image edge encountered
+                    state(p) = 11;
+                    out(p) = -1;
+                }
+                else {
+                    last_round_updated++;
+                    succ++;
+                    state(p) = 1;
+                    fringe.push_back(p);
+                    if (!used_area.contains({p[1],p[0]})) {
+                        used_area = used_area | cv::Rect(p[1],p[0],1,1);
+                    }
+                    cv::Rect roi = {locs(p)[0]-80,locs(p)[1]-80,160,160};
+                    roi = roi & src_bounds;
+                    for(int j=roi.y;j<roi.br().y;j++)
+                        for(int i=roi.x;i<roi.br().x;i++) {
+                            // used(j,i) = std::max(used(j,i), float(1.0-1.0/T*sqrt(sdist(points(locs(p)[1],locs(p)[0]), points(j,i))+1e-2)));
+                            used(j,i) = std::min(1.0f, used(j,i) + std::max(0.0f, float(1.0-1.0/T*sqrt(sdist(points(locs(p)[1],locs(p)[0]), points(j,i))+1e-2))));
+                        }
+                }
+
+            }
+            cands.resize(0);
+
+
+            for(auto p : setfail) {
+                dbg(p) = -1;
+                state(p) = 10;
+                out(p) = -1;
+                collected_failures.push_back(p);
+            }
+            setfail.resize(0);
+
+            // if (ignore_failures)
+            //     stop_gen = generation+10;
+
+            printf("-> total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
         }
-    }*/
-    
-    return out(used_area).clone();
+
+        return out(used_area).clone();
 }
 
 cv::Mat_<cv::Vec3f> upsample_with_grounding_simple(const cv::Mat_<cv::Vec3f> &small, cv::Mat_<cv::Vec2f> &locs, const cv::Size &tgt_size, const cv::Mat_<cv::Vec3f> &points, double sx, double sy)
