@@ -1572,7 +1572,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
             // options.max_num_iterations = 1000;
             // options.minimizer_progress_to_stdout = false;
             // ceres::Solver::Summary summary;
-            ceres::Solve(options_big, &problem, &summary);
+            ceres::Solve(options, &problem, &summary);
 
 
             loss_count += create_missing_centered_losses(big_problem, loss_status, p, state, out, interp, locd, step_size);
@@ -1592,6 +1592,8 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
             }
         }
 
+        if (generation > 3)
+            options_big.max_num_iterations = 10;
         std::cout << "running big solve" << std::endl;
         ceres::Solve(options_big, &big_problem, &summary);
         std::cout << summary.BriefReport() << "\n";
