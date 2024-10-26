@@ -1419,7 +1419,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     // std::vector<float> dists;
 
     std::vector<cv::Vec2i> neighs = {{1,0},{0,1},{-1,0},{0,-1}};
-    cv::Rect bounds(0,0,h-1,w-1);
+    cv::Rect bounds(2,2,h-3,w-3);
 
     state(y0,x0) = 1;
     state(y0+1,x0) = 1;
