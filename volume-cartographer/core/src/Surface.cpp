@@ -657,7 +657,7 @@ QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w
 
     cv::Mat_<cv::Vec2f> locs;
     
-    points = derive_regular_region_largesteps(src->_points, locs, trivial_ptr->loc[0]+src->_center[0]*src->_scale[0], trivial_ptr->loc[1]+src->_center[1]*src->_scale[1], step_search, w*step_out/step_search, h*step_out/step_search);
+    points = derive_regular_region_largesteps_phys(src->_points, locs, trivial_ptr->loc[0]+src->_center[0]*src->_scale[0], trivial_ptr->loc[1]+src->_center[1]*src->_scale[1], step_search, w*step_out/step_search, h*step_out/step_search);
     points = upsample_with_grounding(points, locs, {w,h}, src->_points, src->_scale[0], src->_scale[1]);
     
     return new QuadSurface(points, {1.0/step_out, 1.0/step_out});

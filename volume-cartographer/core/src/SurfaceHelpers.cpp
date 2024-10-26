@@ -11,6 +11,8 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Surface.hpp"
 
+#include <fstream>
+
 static std::ostream& operator<< (std::ostream& out, const std::vector<size_t> &v) {
     if ( !v.empty() ) {
         out << '[';
@@ -380,6 +382,88 @@ static float min_loc_dbg(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::
     return sqrt(best/tgts.size());
 }
 
+static float min_loc_dbgd(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3d &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, cv::Vec2f init_step, float min_step_f, const std::vector<float> &ws = {}, bool robust_edge = false, const cv::Mat_<float> &used = cv::Mat())
+{
+    // std::cout << "start minlo" << loc << std::endl;
+    cv::Rect boundary(1,1,points.cols-2,points.rows-2);
+    if (!boundary.contains({loc[0],loc[1]})) {
+        out = {-1,-1,-1};
+        return -1;
+    }
+
+    bool changed = true;
+    cv::Vec3f val = at_int(points, loc);
+    out = val;
+    float best = tdist_sum(val, tgts, tds, ws);
+    if (plane) {
+        float d = plane->pointDist(val);
+        best += d*d;
+    }
+    if (!used.empty())
+        best += atf_int(used, loc)*100.0;
+    float res;
+
+    //TODO add more search patterns, compare motion estimatino for video compression, x264/x265, ...
+    std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
+    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
+    cv::Vec2f step = init_step;
+
+
+    // std::cout << "init " << best << tgts[0] << val << loc << "\n";
+
+
+    while (changed) {
+        changed = false;
+
+        for(auto &off : search) {
+            cv::Vec2f cand = loc+mul(off,step);
+
+            if (!boundary.contains({cand[0],cand[1]})) {
+                if (!robust_edge || (step[0] < min_step_f*init_step[0])) {
+                    out = {-1,-1,-1};
+                    loc = {-1,-1};
+                    return -1;
+                }
+                else
+                    //skip to next scale
+                    break;
+            }
+
+
+            val = at_int(points, cand);
+            // std::cout << "at" << cand << val << std::endl;
+            res = tdist_sum(val, tgts, tds, ws);
+            if (!used.empty())
+                res += atf_int(used, loc)*100.0;
+            if (plane) {
+                float d = plane->pointDist(val);
+                res += d*d;
+            }
+            if (res < best) {
+                // std::cout << res << val << step << cand << "\n";
+                changed = true;
+                best = res;
+                loc = cand;
+                out = val;
+            }
+            // else
+            // std::cout << "(" << res << val << step << cand << "\n";
+        }
+
+        if (changed)
+            continue;
+
+        step *= 0.5;
+        changed = true;
+
+        if (step[0] < min_step_f*init_step[0])
+            break;
+    }
+
+    // std::cout << "best" << best << out << "\n" <<  std::endl;
+    return sqrt(best/tgts.size());
+}
+
 template<typename T> std::vector<T> join(const std::vector<T> &a, const std::vector<T> &b)
 {
     std::vector<T> c = a;
@@ -484,6 +568,120 @@ static float multi_step_search(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc
     
     return -abs(res3);
 }
+
+static float multi_step_searchd(const cv::Mat_<cv::Vec3d> &points, cv::Vec2f &loc, cv::Vec3d &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds_, PlaneSurface *plane, cv::Vec2f init_step, const std::vector<cv::Vec3f> &opt_t, const std::vector<float> &opt_d, int &failstate, const std::vector<float> &ws, float th, const cv::Mat_<float> &used = cv::Mat())
+{
+    // std::cout << init << loc << std::endl;
+    failstate = 0;
+    cv::Vec2f init_loc = loc;
+    cv::Vec3f first_res;
+
+    // std::vector<cv::Vec3f> t2 = join(tgts, opt_t);
+    // std::vector<float> d2 = join(tds, opt_d);
+    std::vector<float> w2 = ws;
+    std::vector<float> tds = tds_;
+    float w_sum = 0;
+    for(auto &w : w2) {
+        w *= w;
+        w_sum += w;
+    }
+    // w2.push_back(10);
+    // tds.push_back(0);
+
+    float res1 = min_loc_dbgd(points, loc, out, tgts, tds, plane, init_step, 0.01, ws, false, used);
+    float res2 = 0;
+    float res3;
+    // res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
+    cv::Vec3f val;
+    if (res1 >= 0) {
+        val = at_int(points, loc);
+        res3 = sqrt(tdist_sum(val, tgts, tds, w2)/w_sum);
+    }
+    else
+        res3 = res1;
+
+    if (res3 < th)
+        return res3;
+
+    // printf("start it %f\n", res3);
+
+    float best_res = res3;
+    cv::Vec2f best_loc = loc;
+    for(int i=0;i<10;i++)
+    {
+        cv::Vec2f off = {rand()%100,rand()%100};
+        off -= cv::Vec2f(50,50);
+        off = mul(off, init_step)*100/50;
+        loc = init_loc + off;
+
+        res1 = min_loc_dbgd(points, loc, out, tgts, tds, plane, init_step, 0.01, ws, false, used);
+        // res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
+        // res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
+        if (res1 >= 0) {
+            val = at_int(points, loc);
+            res3 = sqrt(tdist_sum(val, tgts, tds, w2)/w_sum);
+            if (res1 < best_res) {
+                best_res = res1;
+                best_loc = loc;
+            }
+        }
+        else
+            res3 = res1;
+
+        // printf("   %f %f\n", res3, res1);
+
+        if (res3 < th) {
+            // printf("  it %f (%f)\n", res3, res1);
+            return res3;
+        }
+    }
+
+    loc = best_loc;
+    res1 = min_loc_dbgd(points, loc, out, tgts, tds, plane, init_step, 0.01, ws, false, used);
+    // res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
+    if (res1 >= 0) {
+        val = at_int(points, loc);
+        res3 = sqrt(tdist_sum(val, tgts, tds, w2)/w_sum);
+    }
+    else
+        res3 = res1;
+    // res3 = min_loc_dbg(points, loc, out, join(tgts,{out}), tds, plane, init_step*0.1, 0.1, w2);
+    // printf("  fallback %f (%f %f)\n", res3, res2, res1);
+
+
+    //lets brute force this for once
+    /*for (int j=0;j<100;j++)
+     *       for (int i=0;i<100;i++) {
+     *           loc = init_loc + 0.1*mul(init_step,cv::Vec2f(j-50,i-50));
+     *           // res1 = min_loc_dbg(points, loc, out, t2, d2, plane, init_step, 0.1, ws);
+     *           cv::Vec3f val = at_int(points, loc);
+     *           res1 = sqrt(tdist_sum(val, t2, d2, ws)/t2.size());
+     *           printf("brute %f\n", res1);
+}*/
+
+
+
+    failstate = 1;
+
+    return -abs(res3);
+}
+
+void write_ply(std::string path, const std::vector<cv::Vec3f> &points)
+{
+    std::ofstream ply;
+    ply.open(path);
+
+    ply << "ply\nformat ascii 1.0\n";
+    ply << "element vertex " << points.size() << "\n";
+    ply << "property float x\n";
+    ply << "property float y\n";
+    ply << "property float z\n";
+    ply << "end_header\n";
+
+    for(auto p : points)
+        ply << p[0] << " " << p[1] << " " << p[2] << "\n";
+}
+
 
 cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &points, cv::Mat_<cv::Vec2f> &locs, int seed_x, int seed_y, float step_size, int w, int h)
 {
@@ -920,6 +1118,81 @@ struct SurfaceLoss {
     ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> _interpolator;
 };
 
+//gen straigt loss given point and 3 offsets
+int gen_straight_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, bool optimize_all)
+{
+    if (state(p+o1) != 1)
+        return 0;
+    if (state(p+o2) != 1)
+        return 0;
+    if (state(p+o3) != 1)
+        return 0;
+
+    problem.AddResidualBlock(StraightLoss::Create(), nullptr, &dpoints(p+o1)[0], &dpoints(p+o2)[0], &dpoints(p+o3)[0]);
+
+    if (!optimize_all) {
+        if (o1 != cv::Vec2i(0,0))
+            problem.SetParameterBlockConstant(&dpoints(p+o1)[0]);
+        if (o2 != cv::Vec2i(0,0))
+            problem.SetParameterBlockConstant(&dpoints(p+o2)[0]);
+        if (o3 != cv::Vec2i(0,0))
+            problem.SetParameterBlockConstant(&dpoints(p+o3)[0]);
+    }
+
+    return 1;
+}
+
+//gen straigt loss given point and 3 offsets
+int gen_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, float unit, bool optimize_all)
+{
+    if (state(p) != 1)
+        return 0;
+    if (state(p+off) != 1)
+        return 0;
+
+    problem.AddResidualBlock(DistLoss::Create(unit*cv::norm(off)), nullptr, &dpoints(p)[0], &dpoints(p+off)[0]);
+
+    if (!optimize_all) {
+        problem.SetParameterBlockConstant(&dpoints(p+off)[0]);
+    }
+
+    return 1;
+}
+
+//create all valid losses for this point
+int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, float unit, bool optimize_all = true)
+{
+    //generate losses for point p
+    uint8_t old_state = state(p);
+    state(p) = 1;
+
+    int count = 0;
+
+    //horizontal
+    count += gen_straight_loss(problem, p, {0,-2},{0,-1},{0,0},state, dpoints, optimize_all);
+    count += gen_straight_loss(problem, p, {0,-1},{0,0},{0,1},state, dpoints, optimize_all);
+    count += gen_straight_loss(problem, p, {0,0},{0,1},{0,2},state, dpoints, optimize_all);
+
+    //vertical
+    count += gen_straight_loss(problem, p, {-2,0},{-1,0},{0,0},state, dpoints, optimize_all);
+    count += gen_straight_loss(problem, p, {-1,0},{0,0},{1,0},state, dpoints, optimize_all);
+    count += gen_straight_loss(problem, p, {0,0},{1,0},{2,0},state, dpoints, optimize_all);
+
+    //direct neighboars
+    count += gen_dist_loss(problem, p, {0,-1},state, dpoints, unit, optimize_all);
+    count += gen_dist_loss(problem, p, {0,1},state, dpoints, unit, optimize_all);
+    count += gen_dist_loss(problem, p, {-1,0},state, dpoints, unit, optimize_all);
+    count += gen_dist_loss(problem, p, {1,0},state, dpoints, unit, optimize_all);
+
+    //diagonal neighbors
+    count += gen_dist_loss(problem, p, {1,-1},state, dpoints, unit, optimize_all);
+    count += gen_dist_loss(problem, p, {-1,1},state, dpoints, unit, optimize_all);
+    count += gen_dist_loss(problem, p, {1,1},state, dpoints, unit, optimize_all);
+    count += gen_dist_loss(problem, p, {-1,-1},state, dpoints, unit, optimize_all);
+
+    return count;
+}
+
 //use a physical paper model
 //first predict a position from just the physical model (keeping everything else constant)
 //then refine with physical model and bicubic interpolation of surface location
@@ -948,7 +1221,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
 
     cv::Vec2f step = {sx*T/10, sy*T/10};
 
-    cv::Mat_<cv::Vec3f> out(h,w);
+    cv::Mat_<cv::Vec3d> out(h,w);
     locs.create(h,w);
     cv::Mat_<uint8_t> state(h,w);
     cv::Mat_<float> dbg(h,w);
@@ -966,298 +1239,216 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     if (!src_bounds.contains({seed_x,seed_y}))
         return out;
 
-        //FIXME the init locations are probably very important!
+    //FIXME the init locations are probably very important!
 
-        //FIXME local search can be affected by noise/artefacts in data, add some re-init random initilizations if we see failures?
+    //FIXME local search can be affected by noise/artefacts in data, add some re-init random initilizations if we see failures?
 
-        int x0 = w/2;
-        int y0 = h/2;
+    int x0 = w/2;
+    int y0 = h/2;
 
-        cv::Rect used_area(x0,y0,1,1);
-        locs(y0,x0) = {seed_x, seed_y};
-        out(y0,x0) = at_int(points, locs(y0,x0));
+    cv::Rect used_area(x0,y0,2,2);
+    locs(y0,x0) = {seed_x, seed_y};
+    out(y0,x0) = at_int(points, locs(y0,x0));
 
-        float res;
+    float res;
 
 
-        //first point to the right
-        locs(y0,x0+1) = locs(y0,x0)+cv::Vec2f(1,0);
-        res = min_loc_dbg(points, locs(y0,x0+1), out(y0,x0+1), {out(y0,x0)}, {T}, nullptr, step, 0.01);
-        std::cout << res << std::endl;
+    //first point to the right
+    locs(y0,x0+1) = locs(y0,x0)+cv::Vec2f(1,0);
+    res = min_loc_dbgd(points, locs(y0,x0+1), out(y0,x0+1), {out(y0,x0)}, {T}, nullptr, step, 0.01);
+    std::cout << res << std::endl;
 
-        //bottom left
-        locs(y0+1,x0) = locs(y0,x0)+cv::Vec2f(0,1);
-        res = min_loc_dbg(points, locs(y0+1,x0), out(y0+1,x0), {out(y0,x0),out(y0,x0+1)}, {T,D*T}, nullptr, step, 0.01);
-        std::cout << res << std::endl;
+    //bottom left
+    locs(y0+1,x0) = locs(y0,x0)+cv::Vec2f(0,1);
+    res = min_loc_dbgd(points, locs(y0+1,x0), out(y0+1,x0), {out(y0,x0),out(y0,x0+1)}, {T,D*T}, nullptr, step, 0.01);
+    std::cout << res << std::endl;
 
-        //bottom right
-        locs(y0+1,x0+1) = locs(y0,x0)+cv::Vec2f(1,1);
-        res = min_loc_dbg(points, locs(y0+1,x0+1), out(y0+1,x0+1), {out(y0,x0),out(y0,x0+1),out(y0+1,x0)}, {D*T,T,T}, nullptr, step, 0.01);
-        std::cout << res << std::endl;
+    //bottom right
+    locs(y0+1,x0+1) = locs(y0,x0)+cv::Vec2f(1,1);
+    res = min_loc_dbgd(points, locs(y0+1,x0+1), out(y0+1,x0+1), {out(y0,x0),out(y0,x0+1),out(y0+1,x0)}, {D*T,T,T}, nullptr, step, 0.01);
+    std::cout << res << std::endl;
 
-        std::cout << out(y0,x0) << out(y0,x0+1) << std::endl;
-        std::cout << out(y0+1,x0) << out(y0+1,x0+1) << std::endl;
+    std::cout << out(y0,x0) << out(y0,x0+1) << std::endl;
+    std::cout << out(y0+1,x0) << out(y0+1,x0+1) << std::endl;
 
-        // locs(j,i) = locs(j-1,i);
+    // locs(j,i) = locs(j-1,i);
 
-        // std::vector<cv::Vec3f> refs;
-        // std::vector<float> dists;
+    // std::vector<cv::Vec3f> refs;
+    // std::vector<float> dists;
 
-        std::vector<cv::Vec2i> neighs = {{1,0},{0,1},{-1,0},{0,-1}};
-        cv::Rect bounds(0,0,h-1,w-1);
+    std::vector<cv::Vec2i> neighs = {{1,0},{0,1},{-1,0},{0,-1}};
+    cv::Rect bounds(0,0,h-1,w-1);
 
-        state(y0,x0) = 1;
-        state(y0+1,x0) = 1;
-        state(y0,x0+1) = 1;
-        state(y0+1,x0+1) = 1;
+    state(y0,x0) = 1;
+    state(y0+1,x0) = 1;
+    state(y0,x0+1) = 1;
+    state(y0+1,x0+1) = 1;
 
-        fringe.push_back({y0,x0});
-        fringe.push_back({y0+1,x0});
-        fringe.push_back({y0,x0+1});
-        fringe.push_back({y0+1,x0+1});
+    ceres::Problem problem;
 
-        int succ = 0;
-        int total_fail = 0;
-        int last_round_updated = 4;
+    int loss_count;
+    loss_count += create_centered_losses(problem, {y0,x0}, state, out, step_size);
+    loss_count += create_centered_losses(problem, {y0+1,x0}, state, out, step_size);
+    loss_count += create_centered_losses(problem, {y0,x0+1}, state, out, step_size);
+    loss_count += create_centered_losses(problem, {y0+1,x0+1}, state, out, step_size);
 
-        std::vector<cv::Vec2f> all_locs;
-        bool skipped_from_skipped = false;
-        int generation = 0;
-        int stop_gen = -1;
-        bool ignore_failures = false;
+    std::cout << "init loss count " << loss_count << std::endl;
 
-        while (fringe.size() || (!skipped_from_skipped && skipped.size()) || collected_failures.size()) {
-            generation++;
-            if (generation == stop_gen)
-                break;
-            last_round_updated = 0;
+    ceres::Solver::Options options;
+    options.linear_solver_type = ceres::DENSE_QR;
+    options.minimizer_progress_to_stdout = false;
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
 
-            //first: regular fring
-            if (fringe.size()) {
-                for(auto p : fringe)
-                {
-                    if (state(p) != 1)
-                        continue;
+    std::cout << summary.BriefReport() << "\n";
 
-                    // std::cout << "check " << p << std::endl;
+    fringe.push_back({y0,x0});
+    fringe.push_back({y0+1,x0});
+    fringe.push_back({y0,x0+1});
+    fringe.push_back({y0+1,x0+1});
 
-                    for(auto n : neighs)
-                        if (bounds.contains(p+n) && state(p+n) == 0) {
-                            state(p+n) = 2;
-                            cands.push_back(p+n);
-                            // std::cout << "cand  " << p+n << std::endl;
-                        }
-                }
-                for(auto p : cands)
-                    state(p) = 0;
-                printf("gen %d processing %d fringe cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
-                fringe.resize(0);
-                skipped_from_skipped = false;
-            }
-            else if ((last_round_updated && skipped.size()) || collected_failures.size()) {
-                //skipped && failed points are processed at the same time so we expand smoothly
-                for(auto p : skipped)
-                    state(p) = 0;
-                cands = skipped;
-                printf("gen %d processing %d skipped cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
-                skipped.resize(0);
-                skipped_from_skipped = true;
+    int succ = 0;
+    int total_fail = 0;
+    int last_round_updated = 4;
 
-                for(auto p : collected_failures) {
-                    state(p) = 0;
-                    cands.push_back(p);
-                }
-                printf("gen %d processing %d fail cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
-                collected_failures.resize(0);
-                ignore_failures = true;
-                skipped_from_skipped = false;
-            }
-            else
-                break;
+    std::vector<cv::Vec2f> all_locs;
+    bool skipped_from_skipped = false;
+    int generation = 0;
+    int stop_gen = 0;
+    bool ignore_failures = false;
 
-            cv::Mat_<cv::Vec3f> curv_data(2*r+1,2*r+1);
-            cv::Mat_<uint8_t> curv_valid(2*r+1,2*r+1);
+    std::cout << "go " << fringe.size() << std::endl;
 
-            for(auto p : cands) {
-                if (state(p))
+    while (fringe.size() || (!skipped_from_skipped && skipped.size()) || collected_failures.size()) {
+        generation++;
+        if (stop_gen && generation >= stop_gen)
+            break;
+        last_round_updated = 0;
+
+        //first: regular fring
+        if (fringe.size()) {
+            for(auto p : fringe)
+            {
+                if (state(p) != 1)
                     continue;
 
-                std::vector<cv::Vec3f> refs;
-                std::vector<float> dists;
-                std::vector<float> ws;
-                std::vector<cv::Vec2i> dbg_outp;
-                cv::Vec2f loc_sum = 0;
-                int fail = 0;
+                // std::cout << "check " << p << std::endl;
 
-                curv_valid.setTo(0);
-
-                // printf("run %d %d\n",p[1],p[0]);
-
-                for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,out.rows-1);oy++)
-                    for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,out.cols-1);ox++)
-                        if (state(oy,ox) == 1) {
-                            int dy = oy-p[0];
-                            int dx = ox-p[1];
-                            curv_valid(dy+r,dx+r) = 1;
-                            curv_data(dy+r,dx+r) = out(oy,ox);
-                        }
-
-                        float x_curve_sum = 0;
-                    int x_curve_count = 0;
-                for(int j=0;j<2*r+1;j++)
-                    for(int i=0;i<2*r+1-2;i++) {
-                        if (curv_valid(j,i) && curv_valid(j,i+1) && curv_valid(j,i+2)) {
-                            x_curve_sum += sqrt(sdist(curv_data(j,i),curv_data(j,i+2)))/(2*T);
-                            x_curve_count++;
-                            // printf("%f\n",sqrt(sdist(curv_data(j,i),curv_data(j,i+2)))/(2*T));
-                        }
+                for(auto n : neighs)
+                    if (bounds.contains(p+n) && state(p+n) == 0) {
+                        state(p+n) = 2;
+                        cands.push_back(p+n);
+                        // std::cout << "cand  " << p+n << std::endl;
                     }
-                    if (x_curve_count)
-                        x_curv(p) = sqrt(std::min(1.0f,x_curve_sum/x_curve_count));
-
-                float y_curve_sum = 0;
-                int y_curve_count = 0;
-                for(int j=0;j<2*r+1-2;j++)
-                    for(int i=0;i<2*r+1;i++) {
-                        if (curv_valid(j,i) && curv_valid(j+1,i) && curv_valid(j+2,i)) {
-                            y_curve_sum += sqrt(sdist(curv_data(j,i),curv_data(j+2,i)))/(2*T);
-                            y_curve_count++;
-                            // printf("%f\n",sqrt(sdist(curv_data(j,i),curv_data(j,i+2)))/(2*T));
-                        }
-                    }
-                    if (y_curve_count)
-                        y_curv(p) = sqrt(std::min(1.0f,y_curve_sum/y_curve_count));
-
-                // printf("avg curv xy %f %f\n",x_curv(p),y_curv(p));
-
-                for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,out.rows-1);oy++)
-                    for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,out.cols-1);ox++)
-                        if (state(oy,ox) == 1) {
-                            refs.push_back(out(oy,ox));
-                            float curv_pow_x = pow(x_curv(p),abs(ox-p[1]));
-                            float curv_pow_y = pow(y_curv(p),abs(oy-p[0]));
-                            float dy = abs(oy-p[0])*curv_pow_x;
-                            float dx = abs(ox-p[1])*curv_pow_y;
-                            // float dy = (oy-p[0])*y_curv(p);
-                            // float dx = (ox-p[1])*x_curv(p);
-                            // float dy = (oy-p[0]);
-                            // float dx = (ox-p[1]);
-                            float d = sqrt(dy*dy+dx*dx);
-                            dists.push_back(T*d);
-                            loc_sum += locs(oy,ox);
-                            // float w = 1.0/(std::max(abs(dbg(oy,ox)),1.0f));
-                            float w = 1*curv_pow_x*curv_pow_y/d;
-                            ws.push_back(w);
-                            dbg_outp.push_back({dy,dx});
-                        }
-                        else if (state(oy,ox) == 10)
-                            fail++;
-                // else if (state(oy,ox) == 10)
-                // fail++;
-
-                locs(p) = loc_sum*(1.0/dists.size());
-
-                if (fail >= 2 && !ignore_failures) {
-                    setfail.push_back(p);
-                    continue;
-                }
-
-                if (!ignore_failures && succ > 200 && dists.size()-4*fail <= 12) {
-                    skipped.push_back(p);
-                    continue;
-                }
-
-                int failstate = 0;
-                res = multi_step_search(points, locs(p), out(p), refs, dists, nullptr, step, {}, {}, failstate, ws, th, used);
-                all_locs.push_back(locs(p));
-
-                // printf("%f\n", res);
-
-                dbg(p) = -res;
-
-                if (failstate && !ignore_failures) {
-                    printf("fail %f %d %d\n", res, p[1]*5, p[0]*5);
-                    setfail.push_back(p);
-                    total_fail++;
-
-                    // std::vector<cv::Vec3f> succ_ps;
-                    // for(int j=0;j<10;j++)
-                    //     for(int i=0;i<10;i++) {
-                    //         cv::Vec2i l = p+cv::Vec2i(j-5,i-5);
-                    //         if (state(l) == 1)
-                    //             succ_ps.push_back(out(l));
-                    //     }
-
-                    /*std::vector<cv::Vec3f> input_ps;
-                     *               std::vector<cv::Vec3f> rounded_ps;
-                     *               cv::Vec2i ref_loc = loc_sum*(1.0/dists.size());
-                     *               // cv::Vec2i ref_loc = locs(some_point);
-                     *               for(int j=0;j<50;j++)
-                     *                   for(int i=0;i<50;i++) {
-                     *                       cv::Vec2i l = ref_loc+cv::Vec2i(j-25,i-25);
-                     *                       input_ps.push_back(points(l[1],l[0]));
-                }
-                // for(auto l : dbg_outp)
-                // input_ps.push_back(points(locs(l)[0],locs(l)[1]));
-                // for(auto l : all_locs)
-                //     input_ps.push_back(at_int(points,l));
-                // for(auto l : all_locs)
-                //     rounded_ps.push_back(points(l[1],l[0]));
-
-                for(int n=0;n<refs.size();n++) {
-                    std::cout << refs[n] << dbg_outp[0] << " " << dbg_outp[1] << std::endl;
-                }
-
-                write_ply("surf.ply", refs);
-                write_ply("points.ply", input_ps);
-                write_ply("res.ply", {out(p)});*/
-                    // write_ply("points_nearest.ply", rounded_ps);
-
-                    // cv::imwrite("xcurv.tif",x_curv);
-                    // cv::imwrite("ycurv.tif",y_curv);
-                    // return out;
-                }
-                else if (res < 0 && !failstate) {
-                    //image edge encountered
-                    state(p) = 11;
-                    out(p) = -1;
-                }
-                else {
-                    last_round_updated++;
-                    succ++;
-                    state(p) = 1;
-                    fringe.push_back(p);
-                    if (!used_area.contains({p[1],p[0]})) {
-                        used_area = used_area | cv::Rect(p[1],p[0],1,1);
-                    }
-                    cv::Rect roi = {locs(p)[0]-80,locs(p)[1]-80,160,160};
-                    roi = roi & src_bounds;
-                    for(int j=roi.y;j<roi.br().y;j++)
-                        for(int i=roi.x;i<roi.br().x;i++) {
-                            // used(j,i) = std::max(used(j,i), float(1.0-1.0/T*sqrt(sdist(points(locs(p)[1],locs(p)[0]), points(j,i))+1e-2)));
-                            used(j,i) = std::min(1.0f, used(j,i) + std::max(0.0f, float(1.0-1.0/T*sqrt(sdist(points(locs(p)[1],locs(p)[0]), points(j,i))+1e-2))));
-                        }
-                }
-
             }
-            cands.resize(0);
+            for(auto p : cands)
+                state(p) = 0;
+            printf("gen %d processing %d fringe cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
+            fringe.resize(0);
+            skipped_from_skipped = false;
+        }
+        else if ((last_round_updated && skipped.size()) || collected_failures.size()) {
+            //skipped && failed points are processed at the same time so we expand smoothly
+            for(auto p : skipped)
+                state(p) = 0;
+            cands = skipped;
+            printf("gen %d processing %d skipped cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
+            skipped.resize(0);
+            skipped_from_skipped = true;
 
-
-            for(auto p : setfail) {
-                dbg(p) = -1;
-                state(p) = 10;
-                out(p) = -1;
-                collected_failures.push_back(p);
+            for(auto p : collected_failures) {
+                state(p) = 0;
+                cands.push_back(p);
             }
-            setfail.resize(0);
-
-            // if (ignore_failures)
-            //     stop_gen = generation+10;
-
-            printf("-> total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
+            printf("gen %d processing %d fail cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
+            collected_failures.resize(0);
+            ignore_failures = true;
+            skipped_from_skipped = false;
+        }
+        else {
+            std::cout << "done " << std::endl;
+            break;
         }
 
-        return out(used_area).clone();
+        std::cout << "cands " << cands.size() << std::endl;
+        for(auto p : cands) {
+            if (state(p))
+                continue;
+
+            int ref_count = 0;
+            cv::Vec3d avg = {0,0,0};
+            for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,out.rows-1);oy++)
+                for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,out.cols-1);ox++)
+                    if (state(oy,ox) == 1) {
+                        ref_count++;
+                        avg += out(oy,ox);
+                    }
+
+            if (ref_count < 2){
+                std::cout << "skip" << ref_count << p << std::endl;
+                skipped.push_back(p);
+                continue;
+            }
+
+            avg /= ref_count;
+            out(p) = avg;
+
+            ceres::Problem problem;
+
+            int loss_count = create_centered_losses(problem, p, state, out, step_size, false);
+
+            std::cout << "loss count " << loss_count << std::endl;
+
+            ceres::Solver::Options options;
+            options.linear_solver_type = ceres::DENSE_QR;
+            options.minimizer_progress_to_stdout = false;
+            ceres::Solver::Summary summary;
+            ceres::Solve(options, &problem, &summary);
+
+            std::cout << summary.BriefReport() << "\n";
+
+            last_round_updated++;
+            succ++;
+            state(p) = 1;
+            fringe.push_back(p);
+            if (!used_area.contains({p[1],p[0]})) {
+                used_area = used_area | cv::Rect(p[1],p[0],1,1);
+            }
+
+            // stop_gen = generation+1;
+            // break;
+
+        }
+        cands.resize(0);
+
+
+        for(auto p : setfail) {
+            dbg(p) = -1;
+            state(p) = 10;
+            out(p) = -1;
+            collected_failures.push_back(p);
+        }
+        setfail.resize(0);
+
+        // if (ignore_failures)
+        //     stop_gen = generation+10;
+
+        printf("-> total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
+    }
+
+    cv::Mat_<cv::Vec3f> outf;
+    out(used_area).convertTo(outf, CV_32F);
+    state = state(used_area);
+
+    std::vector<cv::Vec3f> valid_ps;
+    for(int j=0;j<outf.rows;j++)
+        for(int i=0;i<outf.cols;i++)
+            if (state(j, i)== 1)
+                valid_ps.push_back(outf(j,i));
+
+    write_ply("points.ply", valid_ps);
+
+    return outf;
 }
 
 cv::Mat_<cv::Vec3f> upsample_with_grounding_simple(const cv::Mat_<cv::Vec3f> &small, cv::Mat_<cv::Vec2f> &locs, const cv::Size &tgt_size, const cv::Mat_<cv::Vec3f> &points, double sx, double sy)
