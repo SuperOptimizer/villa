@@ -475,8 +475,8 @@ int main(int argc, char *argv[])
     float ds_scale = 0.5;
     float output_scale = 0.5;
     
-    int w = 500;
-    int h = 500;
+    int w = 2000;
+    int h = 2000;
     
     int search_step = 100;
     int mesh_step = 5;
