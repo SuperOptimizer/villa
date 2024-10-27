@@ -475,8 +475,8 @@ int main(int argc, char *argv[])
     float ds_scale = 0.5;
     float output_scale = 0.5;
     
-    int w = 4000;
-    int h = 4000;
+    int w = 16000;
+    int h = 16000;
     
     int search_step = 100;
     int mesh_step = 5;
@@ -492,7 +492,7 @@ int main(int argc, char *argv[])
     //gen 57 processing 0 fringe cands (total succ/fail 2397/5 fringe: 1 skipped: 0 failures: 0
     // -> total succ/fail 2397/5 fringe: 0 skipped: 0 failures: 0
     // surf->move(poi, {5000,3000,0}); //with 4424 and 4k this gives us a very crumbly area!
-    surf->move(poi, {5000,2000,0}); //bit closer ... but also different, still breaks with used blocking
+    // surf->move(poi, {5000,2000,0}); //bit closer ... but also different, still breaks with used blocking
     // surf->move(poi, {5000,1000,0}); //also problem but sothe area
     {
         MeasureLife timer("build local mesh ...");
