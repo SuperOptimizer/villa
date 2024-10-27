@@ -1438,12 +1438,12 @@ int create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &
     if (!loss_mask(6, p, {0,0}, loss_status)) {
         count += set_loss_mask(6, p, {0,0}, loss_status, gen_surf_loss(problem, p, state, out, interp, loc));
 
-        int r = 3;
+        int r = 4;
         count += set_loss_mask(6, p, {0,0}, loss_status, gen_surf_loss(problem, p, state, out, interp, loc));
         for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,state.rows-1);oy++)
             for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,state.cols-1);ox++) {
                 cv::Vec2i off = {oy-p[0],ox-p[1]};
-                gen_loc_dist_loss(problem, p, off, state, loc, loc_scale, 0.75*unit);
+                gen_loc_dist_loss(problem, p, off, state, loc, loc_scale, 1.0*unit);
             }
     }
 
