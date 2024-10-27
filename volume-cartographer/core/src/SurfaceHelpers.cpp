@@ -1499,7 +1499,7 @@ void freeze_inner_params(ceres::Problem &problem, int edge_dist, cv::Mat_<uint8_
 
     cv::distanceTransform(state, dist, cv::DIST_L1, cv::DIST_MASK_3);
 
-    cv::imwrite("dists.tif",dist);
+    // cv::imwrite("dists.tif",dist);
 
     for(int j=0;j<dist.rows;j++)
         for(int i=0;i<dist.cols;i++) {
@@ -1652,13 +1652,14 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     ceres::Solver::Options options_big;
     // options_big.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
     options_big.linear_solver_type = ceres::SPARSE_SCHUR;
+    // options_big.linear_solver_type = ceres::DENSE_QR;
     // options_big.linear_solver_type = ceres::DENSE_NORMAL_CHOLESKY;
     // options_big.dense_linear_algebra_library_type = ceres::CUDA;
     // options_big.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
     options_big.minimizer_progress_to_stdout = false;
     //TODO check for update ...
     // options_big.enable_fast_removal = true;
-    options_big.num_threads = omp_get_max_threads();
+    // options_big.num_threads = omp_get_max_threads();
     options_big.max_num_iterations = 10000;
 
     ceres::Solver::Summary summary;
@@ -1845,17 +1846,17 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     out(used_area).convertTo(outf, CV_32F);
     state = state(used_area);
 
-    cv::imwrite("cost_init.tif", cost_init(used_area));
-    cv::imwrite("search_init.tif", search_init(used_area));
-    cv::imwrite("used.tif", used);
-
-    std::vector<cv::Vec3f> valid_ps;
-    for(int j=0;j<outf.rows;j++)
-        for(int i=0;i<outf.cols;i++)
-            if (state(j, i)== 1)
-                valid_ps.push_back(outf(j,i));
-
-    write_ply("points_solve.ply", valid_ps);
+    // cv::imwrite("cost_init.tif", cost_init(used_area));
+    // cv::imwrite("search_init.tif", search_init(used_area));
+    // cv::imwrite("used.tif", used);
+    //
+    // std::vector<cv::Vec3f> valid_ps;
+    // for(int j=0;j<outf.rows;j++)
+    //     for(int i=0;i<outf.cols;i++)
+    //         if (state(j, i)== 1)
+    //             valid_ps.push_back(outf(j,i));
+    //
+    // write_ply("points_solve.ply", valid_ps);
 
     locd(used_area).convertTo(locs, CV_32F);
 
@@ -1870,22 +1871,22 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
                     outf(j, i) = {-1,-1,-1};
             }
 
-    valid_ps.resize(0);
-    for(int j=0;j<outf.rows;j++)
-        for(int i=0;i<outf.cols;i++)
-            if (state(j, i)== 1)
-                valid_ps.push_back(outf(j,i));
-
-    write_ply("points_surf.ply", valid_ps);
-
-    valid_ps.resize(0);
-    std::cout << points.size << std::endl;
-    cv::Mat_<cv::Vec3f> pcrop = points(cv::Rect(seed_x-100,seed_y-400,200,800));
-    for(int j=0;j<pcrop.rows;j++)
-        for(int i=0;i<pcrop.cols;i++)
-            valid_ps.push_back(pcrop(j,i));
-
-    write_ply("input.ply", valid_ps);
+    // valid_ps.resize(0);
+    // for(int j=0;j<outf.rows;j++)
+    //     for(int i=0;i<outf.cols;i++)
+    //         if (state(j, i)== 1)
+    //             valid_ps.push_back(outf(j,i));
+    //
+    // write_ply("points_surf.ply", valid_ps);
+    //
+    // valid_ps.resize(0);
+    // std::cout << points.size << std::endl;
+    // cv::Mat_<cv::Vec3f> pcrop = points(cv::Rect(seed_x-100,seed_y-400,200,800));
+    // for(int j=0;j<pcrop.rows;j++)
+    //     for(int i=0;i<pcrop.cols;i++)
+    //         valid_ps.push_back(pcrop(j,i));
+    //
+    // write_ply("input.ply", valid_ps);
 
 
     //FIXME wtf?

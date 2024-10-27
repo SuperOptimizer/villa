@@ -475,8 +475,8 @@ int main(int argc, char *argv[])
     float ds_scale = 0.5;
     float output_scale = 0.5;
     
-    int w = 16000;
-    int h = 16000;
+    int w = 1000;
+    int h = 1000;
     
     int search_step = 100;
     int mesh_step = 5;
@@ -494,6 +494,14 @@ int main(int argc, char *argv[])
     // surf->move(poi, {5000,3000,0}); //with 4424 and 4k this gives us a very crumbly area!
     // surf->move(poi, {5000,2000,0}); //bit closer ... but also different, still breaks with used blocking
     // surf->move(poi, {5000,1000,0}); //also problem but sothe area
+    //borked starting point:
+    /*ptr[401.681, 1338.67, 0]
+    input avg step 0.159367 0.476525[3542 x 13401]
+    0.000465393
+    0.0126262
+    54.6884
+    [4485.85, 3721.01, 8039][4439.43, 3809.07, 8029.47]
+    [4471.36, 3724.09, 8137.91][4508.38, 3675.18, 8105.97]*/
     {
         MeasureLife timer("build local mesh ...");
         surf = regularized_local_quad(surf_raw, poi, w/mesh_step/output_scale, h/mesh_step/output_scale, search_step, mesh_step);
