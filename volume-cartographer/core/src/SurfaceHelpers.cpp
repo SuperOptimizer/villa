@@ -411,6 +411,7 @@ static float min_loc_dbgd(const cv::Mat_<cv::Vec3f> &points, cv::Vec2d &loc, cv:
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
     if (!boundary.contains({loc[0],loc[1]})) {
         out = {-1,-1,-1};
+        loc = {-1,-1};
         return -1;
     }
 
@@ -1242,14 +1243,29 @@ struct UsedSurfaceLoss {
 #define OPTIMIZE_ALL 1
 #define SURF_LOSS 2
 
+#define STATE_UNUSED 0
+#define STATE_LOC_VALID 1
+#define STATE_PROCESSING 2
+#define STATE_COORD_VALID 4
+
+bool loc_valid(int state)
+{
+    return state & STATE_LOC_VALID;
+}
+
+bool coord_valid(int state)
+{
+    return (state & STATE_COORD_VALID) || (state & STATE_LOC_VALID);
+}
+
 //gen straigt loss given point and 3 offsets
 int gen_straight_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, bool optimize_all)
 {
-    if (state(p+o1) != 1)
+    if (!coord_valid(state(p+o1)))
         return 0;
-    if (state(p+o2) != 1)
+    if (!coord_valid(state(p+o2)))
         return 0;
-    if (state(p+o3) != 1)
+    if (!coord_valid(state(p+o3)))
         return 0;
 
     problem.AddResidualBlock(StraightLoss::Create(), nullptr, &dpoints(p+o1)[0], &dpoints(p+o2)[0], &dpoints(p+o3)[0]);
@@ -1269,9 +1285,9 @@ int gen_straight_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec
 //gen straigt loss given point and 3 offsets
 int gen_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, float unit, bool optimize_all)
 {
-    if (state(p) != 1)
+    if (!coord_valid(state(p)))
         return 0;
-    if (state(p+off) != 1)
+    if (!coord_valid(state(p+off)))
         return 0;
 
     problem.AddResidualBlock(DistLoss::Create(unit*cv::norm(off)), nullptr, &dpoints(p)[0], &dpoints(p+off)[0]);
@@ -1286,7 +1302,7 @@ int gen_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &
 //gen straigt loss given point and 3 offsets
 int gen_surf_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, cv::Mat_<cv::Vec2d> &loc, float w = 1.0)
 {
-    if (state(p) != 1)
+    if (!loc_valid(state(p)))
         return 0;
 
     problem.AddResidualBlock(SurfaceLoss::Create(interp, w), nullptr, &out(p)[0], &loc(p)[0]);
@@ -1295,20 +1311,20 @@ int gen_surf_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t>
 }
 
 //gen straigt loss given point and 3 offsets
-int gen_used_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat1f> &interp, cv::Mat_<cv::Vec2d> &loc, float w = 1.0)
-{
-    if (state(p) != 1)
-        return 0;
-
-    problem.AddResidualBlock(UsedSurfaceLoss::Create(interp, w), nullptr, &loc(p)[0]);
-
-    return 1;
-}
+// int gen_used_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat1f> &interp, cv::Mat_<cv::Vec2d> &loc, float w = 1.0)
+// {
+//     if (state(p) != 1)
+//         return 0;
+//
+//     problem.AddResidualBlock(UsedSurfaceLoss::Create(interp, w), nullptr, &loc(p)[0]);
+//
+//     return 1;
+// }
 
 //gen straigt loss given point and 3 offsets
 ceres::ResidualBlockId gen_loc_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec2d> &loc, cv::Vec2f loc_scale, float mindist, float w = 1.0)
 {
-    if ((!off[0] && !off [1]) || state(p+off) != 1)
+    if ((!off[0] && !off [1]) || !loc_valid(state(p+off)))
         return nullptr;
 
     // cv::Vec2d d = loc(p) - loc(p+off);
@@ -1324,9 +1340,6 @@ ceres::ResidualBlockId gen_loc_dist_loss(ceres::Problem &problem, const cv::Vec2
 int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, cv::Mat_<cv::Vec2d> &loc, float unit, int flags = 0)
 {
     //generate losses for point p
-    uint8_t old_state = state(p);
-    state(p) = 1;
-
     int count = 0;
 
     //horizontal
@@ -1353,8 +1366,6 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
 
     if (flags & SURF_LOSS)
         count += gen_surf_loss(problem, p, state, out, interp, loc);
-
-    state(p) = old_state;
 
     return count;
 }
@@ -1688,23 +1699,24 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
 
         for(auto p : fringe)
         {
-            if (state(p) != 1)
+            //TODO maybe should also check neighs of cood_valid?
+            if (!loc_valid(state(p)))
                 continue;
 
             for(auto n : neighs)
                 if (bounds.contains(p+n) && state(p+n) == 0) {
-                    state(p+n) = 2;
+                    state(p+n) = STATE_PROCESSING;
                     cands.push_back(p+n);
                 }
         }
         for(auto p : cands)
-            state(p) = 0;
+            state(p) = STATE_UNUSED;
         printf("gen %d processing %d fringe cands (total done %d fringe: %d\n", generation, cands.size(), succ, fringe.size());
         fringe.resize(0);
 
         std::cout << "cands " << cands.size() << std::endl;
         for(auto p : cands) {
-            if (state(p))
+            if (state(p) != STATE_UNUSED)
                 continue;
 
             int ref_count = 0;
@@ -1712,7 +1724,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
             cv::Vec2d avgl = {0,0};
             for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,out.rows-1);oy++)
                 for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,out.cols-1);ox++)
-                    if (state(oy,ox) == 1) {
+                    if (loc_valid(state(oy,ox))) {
                         ref_count++;
                         avg += out(oy,ox);
                         avgl += locd(oy,ox);
@@ -1728,18 +1740,10 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
 
             ceres::Problem problem;
 
+            state(p) = STATE_COORD_VALID;
             int local_loss_count = create_centered_losses(problem, p, state, out, interp, locd, step_size);
 
             // std::cout << "loss count " << local_loss_count << std::endl;
-
-            int used_r = 4;
-
-            for(int oy=std::max(p[0]-used_r,0);oy<=std::min(p[0]+used_r,state.rows-1);oy++)
-                for(int ox=std::max(p[1]-used_r,0);ox<=std::min(p[1]+used_r,state.cols-1);ox++) {
-                    cv::Vec2i off = {oy-p[0],ox-p[1]};
-                    if (gen_loc_dist_loss(problem, p, off, state, locd, {sx,sy}, 1.0*step_size))
-                        problem.SetParameterBlockConstant(&locd(p+off)[0]);
-                }
 
             //FIXME need to handle the edge of the input definition!!
 
@@ -1753,31 +1757,45 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
 
             float res = min_loc_dbgd(points, locd(p), out(p), {out(p)}, {0}, nullptr, step, 0.01, {}, false, used);
 
+
             //FIXME sometimes we get a random failure not at edge!
             int flags = OPTIMIZE_ALL;
             if (res < 0) {
+                state(p) = STATE_COORD_VALID;
                 out(p) = avg;
-                locd(p) = avgl;
+                // locd(p) = avgl;
                 // encountered points edge?
                 // TODO we could include it (without surface) into the problem, so we get a surface over the edge of the defined input? just include it but use special state, so its not used to count further refs against ...
                 // state(p) = 10;
                 // continue;
             }
-            else
+            else {
+                state(p) = STATE_LOC_VALID;
                 flags |= SURF_LOSS;
+            }
 
-            gen_surf_loss(problem, p, state, out, interp, locd);
-            // gen_used_loss(problem, p, state, out, interp_used, locd, 100.0);
+            if (loc_valid(state(p))) {
+                int used_r = 4;
+                for(int oy=std::max(p[0]-used_r,0);oy<=std::min(p[0]+used_r,state.rows-1);oy++)
+                    for(int ox=std::max(p[1]-used_r,0);ox<=std::min(p[1]+used_r,state.cols-1);ox++) {
+                        cv::Vec2i off = {oy-p[0],ox-p[1]};
+                        if (gen_loc_dist_loss(problem, p, off, state, locd, {sx,sy}, 1.0*step_size))
+                            problem.SetParameterBlockConstant(&locd(p+off)[0]);
+                    }
 
-            // int used_r = 4;
-            //
-            // for(int oy=std::max(p[0]-used_r,0);oy<=std::min(p[0]+used_r,state.rows-1);oy++)
-            //     for(int ox=std::max(p[1]-used_r,0);ox<=std::min(p[1]+used_r,state.cols-1);ox++) {
-            //         cv::Vec2i off = {oy-p[0],ox-p[1]};
-            //         gen_loc_dist_loss(problem, p, off, state, locd, {sx,sy}, 1.0*step_size);
-            //     }
+                gen_surf_loss(problem, p, state, out, interp, locd);
+                // gen_used_loss(problem, p, state, out, interp_used, locd, 100.0);
 
-            ceres::Solve(options, &problem, &summary);
+                // int used_r = 4;
+                //
+                // for(int oy=std::max(p[0]-used_r,0);oy<=std::min(p[0]+used_r,state.rows-1);oy++)
+                //     for(int ox=std::max(p[1]-used_r,0);ox<=std::min(p[1]+used_r,state.cols-1);ox++) {
+                //         cv::Vec2i off = {oy-p[0],ox-p[1]};
+                //         gen_loc_dist_loss(problem, p, off, state, locd, {sx,sy}, 1.0*step_size);
+                //     }
+
+                ceres::Solve(options, &problem, &summary);
+            }
             cost_init(p) = summary.final_cost;
 
             search_init(p) = res;
@@ -1786,14 +1804,13 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
 
             last_round_updated++;
             succ++;
-            state(p) = 1;
             fringe.push_back(p);
             if (!used_area.contains({p[1],p[0]})) {
                 used_area = used_area | cv::Rect(p[1],p[0],1,1);
             }
 
             //FIXME better failure/out-of-bounds handling?
-            if (flags & SURF_LOSS) {
+            if (loc_valid(state(p))) {
                 cv::Rect roi = {locd(p)[0]-T,locd(p)[1]-T,2*T,2*T};
                 roi = roi & bounds;
                 for(int j=roi.y;j<roi.br().y;j++)
