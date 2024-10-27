@@ -1261,19 +1261,19 @@ cv::Vec2i lower_p(const cv::Vec2i &point, const cv::Vec2i &offset)
         return point;
 }
 
-bool loss_mask(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &loss_status)
+bool loss_mask(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status)
 {
     return loss_status(lower_p(p, {1,1})) & (1 << bit);
 }
 
-int set_loss_mask(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &loss_status, int set)
+int set_loss_mask(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, int set)
 {
     if (set)
         loss_status(lower_p(p, {1,1})) |= (1 << bit);
     return set;
 }
 
-int conditional_dist_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, float unit, bool optimize_all)
+int conditional_dist_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, float unit, bool optimize_all)
 {
     int set = 0;
     if (!loss_mask(bit, p, off, loss_status))
@@ -1281,7 +1281,7 @@ int conditional_dist_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv:
     return set;
 };
 
-int conditional_straight_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<uint8_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, bool optimize_all)
+int conditional_straight_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<uint16_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, bool optimize_all)
 {
     int set = 0;
     if (!loss_mask(bit, p, o2, loss_status))
@@ -1290,7 +1290,7 @@ int conditional_straight_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &o1, 
 };
 
 //create only missing losses so we can optimize the whole problem
-int create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint8_t> &loss_status, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, cv::Mat_<cv::Vec2d> &loc, float unit)
+int create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &loss_status, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, cv::Mat_<cv::Vec2d> &loc, float unit)
 {
     //generate losses for point p
     uint8_t old_state = state(p);
@@ -1333,6 +1333,31 @@ int create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint8_t> &l
     return count;
 }
 
+void freeze_inner_params(ceres::Problem &problem, int edge_dist, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, cv::Mat_<cv::Vec2d> &loc, cv::Mat_<uint16_t> &loss_status)
+{
+    cv::Mat_<float> dist(state.size());
+
+    edge_dist = std::min(edge_dist,254);
+
+    cv::distanceTransform(state, dist, cv::DIST_L1, cv::DIST_MASK_3);
+
+    cv::imwrite("dists.tif",dist);
+
+    for(int j=0;j<dist.rows;j++)
+        for(int i=0;i<dist.cols;i++) {
+            if (dist(j,i) >= edge_dist && !loss_mask(7, {j,i}, {0,0}, loss_status)) {
+                problem.SetParameterBlockConstant(&out(j,i)[0]);
+                problem.SetParameterBlockConstant(&loc(j,i)[0]);
+                set_loss_mask(7, {j,i}, {0,0}, loss_status, 1);
+            }
+            if (dist(j,i) >= edge_dist+1 && !loss_mask(8, {j,i}, {0,0}, loss_status)) {
+                problem.RemoveParameterBlock(&out(j,i)[0]);
+                problem.RemoveParameterBlock(&loc(j,i)[0]);
+                set_loss_mask(8, {j,i}, {0,0}, loss_status, 1);
+            }
+        }
+}
+
 //use a physical paper model
 //first predict a position from just the physical model (keeping everything else constant)
 //then refine with physical model and bicubic interpolation of surface location
@@ -1362,7 +1387,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     cv::Mat_<cv::Vec2d> locd(h,w);
     locs.create(h,w);
     cv::Mat_<uint8_t> state(h,w);
-    cv::Mat_<uint8_t> loss_status(cv::Size(w,h),0);
+    cv::Mat_<uint16_t> loss_status(cv::Size(w,h),0);
     cv::Mat_<float> dbg(h,w);
     cv::Mat_<float> x_curv(h,w);
     cv::Mat_<float> y_curv(h,w);
@@ -1446,6 +1471,8 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     // options_big.dense_linear_algebra_library_type = ceres::CUDA;
     // options_big.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
     options_big.minimizer_progress_to_stdout = false;
+    //TODO check for update ...
+    // options_big.enable_fast_removal = true;
     options_big.num_threads = omp_get_max_threads();
     options_big.max_num_iterations = 10000;
 
@@ -1558,8 +1585,11 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
             }
         }
 
-        if (generation > 3)
+        if (generation > 3) {
+            freeze_inner_params(big_problem, 5, state, out, locd, loss_status);
+
             options_big.max_num_iterations = 10;
+        }
         std::cout << "running big solve" << std::endl;
         ceres::Solve(options_big, &big_problem, &summary);
         std::cout << summary.BriefReport() << "\n";
