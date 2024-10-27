@@ -1110,6 +1110,38 @@ struct DistLoss {
 };
 
 //cost functions for physical paper
+struct LocMinDistLoss {
+    // LocMinDistLoss(const cv::Vec2f &scale, float mindist, float w) : _scale(scale), {};
+    template <typename T>
+    bool operator()(const T* const a, const T* const b, T* residual) const {
+        T as[2];
+        T bs[2];
+
+        T d[2];
+        d[0] = (a[0]-b[0])/T(_scale[0]);
+        d[1] = (a[1]-b[1])/T(_scale[1]);
+
+        T d2 = d[0]*d[0] + d[1]*d[1];
+
+        if (d2 < T(_mindist*_mindist))
+            residual[0] = T(_mindist) - sqrt(d2);
+        else
+            residual[0] = T(0);
+
+        return true;
+    }
+
+    cv::Vec2f _scale;
+    float _mindist;
+    float _w;
+
+    static ceres::CostFunction* Create(const cv::Vec2f &scale, float mindist, float w)
+    {
+        return new ceres::AutoDiffCostFunction<LocMinDistLoss, 1, 2, 2>(new LocMinDistLoss({scale, mindist, w}));
+    }
+};
+
+//cost functions for physical paper
 struct StraightLoss {
     template <typename T>
     bool operator()(const T* const a, const T* const b, const T* const c, T* residual) const {
@@ -1256,6 +1288,23 @@ int gen_used_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t>
     return 1;
 }
 
+//gen straigt loss given point and 3 offsets
+int gen_loc_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec2d> &loc, cv::Vec2f loc_scale, float mindist, float w = 1.0)
+{
+    if ((!off[0] && !off [1]) || state(p+off) != 1)
+        return 0;
+
+    // cv::Vec2d d = loc(p) - loc(p+off);
+    // d[0] /= loc_scale[0];
+    // d[1] /= loc_scale[1];
+    // std::cout << off << cv::norm(d)/cv::norm(off) << loc_scale << std::endl;
+
+
+    problem.AddResidualBlock(LocMinDistLoss::Create(loc_scale, cv::norm(off)*mindist, w), nullptr, &loc(p)[0], &loc(p+off)[0]);
+
+    return 1;
+}
+
 //create all valid losses for this point
 int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, cv::Mat_<cv::Vec2d> &loc, float unit, int flags = 0)
 {
@@ -1351,7 +1400,7 @@ int conditional_straight_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &o1, 
 };
 
 //create only missing losses so we can optimize the whole problem
-int create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &loss_status, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, cv::Mat_<cv::Vec2d> &loc, float unit)
+int create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &loss_status, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, cv::Mat_<cv::Vec2d> &loc, float unit, const cv::Vec2f &loc_scale)
 {
     //generate losses for point p
     uint8_t old_state = state(p);
@@ -1386,8 +1435,17 @@ int create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &
     count += conditional_dist_loss(5, p, {1,1}, loss_status, problem, state, out, unit, flags);
     count += conditional_dist_loss(5, p, {-1,-1}, loss_status, problem, state, out, unit, flags);
 
-    if (!loss_mask(6, p, {0,0}, loss_status))
+    if (!loss_mask(6, p, {0,0}, loss_status)) {
         count += set_loss_mask(6, p, {0,0}, loss_status, gen_surf_loss(problem, p, state, out, interp, loc));
+
+        int r = 3;
+        count += set_loss_mask(6, p, {0,0}, loss_status, gen_surf_loss(problem, p, state, out, interp, loc));
+        for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,state.rows-1);oy++)
+            for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,state.cols-1);ox++) {
+                cv::Vec2i off = {oy-p[0],ox-p[1]};
+                gen_loc_dist_loss(problem, p, off, state, loc, loc_scale, 0.75*unit);
+            }
+    }
 
     state(p) = old_state;
 
@@ -1520,10 +1578,10 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     ceres::BiCubicInterpolator<CeresGrid2DcvMat1f> interp_used(grid_used);
 
     int loss_count;
-    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0,x0}, state, out, interp, locd, step_size);
-    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0+1,x0}, state, out, interp, locd, step_size);
-    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0,x0+1}, state, out, interp, locd, step_size);
-    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0+1,x0+1}, state, out, interp, locd, step_size);
+    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0,x0}, state, out, interp, locd, step_size, {sx,sy});
+    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0+1,x0}, state, out, interp, locd, step_size, {sx,sy});
+    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0,x0+1}, state, out, interp, locd, step_size, {sx,sy});
+    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0+1,x0+1}, state, out, interp, locd, step_size, {sx,sy});
 
     big_problem.SetParameterBlockConstant(&locd(y0,x0)[0]);
     big_problem.SetParameterBlockConstant(&out(y0,x0)[0]);
@@ -1541,8 +1599,6 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     // options_big.enable_fast_removal = true;
     options_big.num_threads = omp_get_max_threads();
     options_big.max_num_iterations = 10000;
-
-    big_problem.SetParameterBlockConstant(&locd(y0,x0)[0]);
 
     ceres::Solver::Summary summary;
     ceres::Solve(options_big, &big_problem, &summary);
@@ -1643,7 +1699,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
 
             search_init(p) = res;
 
-            loss_count += create_missing_centered_losses(big_problem, loss_status, p, state, out, interp, locd, step_size);
+            loss_count += create_missing_centered_losses(big_problem, loss_status, p, state, out, interp, locd, step_size, {sx,sy});
 
             last_round_updated++;
             succ++;
