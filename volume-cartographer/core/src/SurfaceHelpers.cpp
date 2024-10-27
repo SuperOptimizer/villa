@@ -2214,6 +2214,35 @@ using st_u = StupidTensor<uint8_t>;
 using st_f = StupidTensor<float>;
 using st_3f = StupidTensor<cv::Vec3f>;
 
+class StupidTensorInterpolator
+{
+public:
+    StupidTensorInterpolator(st_f &t)
+    {
+        _d = t.planes.size();
+        for(auto &p : t.planes)
+            grid_planes.push_back(CeresGrid2DcvMat1f({p}));
+        for(auto &p : grid_planes)
+            interp_planes.push_back(ceres::BiCubicInterpolator<CeresGrid2DcvMat1f>(p));
+    };
+    std::vector<CeresGrid2DcvMat1f> grid_planes;
+    std::vector<ceres::BiCubicInterpolator<CeresGrid2DcvMat1f>> interp_planes;
+    template <typename T> void Evaluate(T &z, T &y, T &x, T *out)
+    {
+        //FIXME linear interpolate along z
+        if (z < 0.0)
+            interp_planes[0].Evaluate(y, x, out);
+        else if (z >= _d-2)
+            return interp_planes[_d-1].Evaluate(y, x, out);
+        else {
+            T m = z-floor(z);
+            int zi = z;
+            return (T(1)-m)*interp_planes[zi].Evaluate(y, x, out) + m*interp_planes[zi+1].Evaluate(y, x, out);
+        }
+    }
+    int _d = 0;
+};
+
 void distanceTransform(const st_u &src, st_f &dist)
 {
     st_f a(src);
