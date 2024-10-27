@@ -2172,3 +2172,160 @@ void refine_normal(const std::vector<std::pair<cv::Vec2i,cv::Vec3f>> &refs, cv::
 
     return;
 }
+
+struct DSReader
+{
+    z5::Dataset *ds;
+    float scale;
+    ChunkCache *cache;
+};
+
+//can't decide between C++ tensor libs, xtensor wasn't great and few algos supported anyways...
+template <typename T>
+class StupidTensor
+{
+public:
+    StupidTensor() {};
+    template <typename O> StupidTensor(const StupidTensor<O> &other) { create(other.planes[0].size(), other.planes.size()); };
+    StupidTensor(const cv::Size &size, int d) { create(size, d); };
+    void create(const cv::Size &size, int d)
+    {
+        planes.resize(d);
+        for(auto &p : planes)
+            p.create(size);
+    }
+    void setTo(const T &v)
+    {
+        for(auto &p : planes)
+            p.setTo(v);
+    }
+    template <typename O> void convertTo(O &out, int code) const
+    {
+        out.create(planes[0].size(), planes.size());
+        for(int z=0;z<planes.size();z++)
+            planes[z].convertTo(out.planes[z], code);
+    }
+    T &at(int z, int y, int x) { return planes[z](y,x); }
+    T &operator()(int z, int y, int x) { return at(z,y,x); }
+    std::vector<cv::Mat_<T>> planes;
+};
+
+using st_u = StupidTensor<uint8_t>;
+using st_f = StupidTensor<float>;
+using st_3f = StupidTensor<cv::Vec3f>;
+
+void distanceTransform(const st_u &src, st_f &dist)
+{
+    st_f a(src);
+    st_f b(src);
+
+    src.convertTo(a, CV_32F);
+
+    st_f *p1 = &a;
+    st_f *p2 = &b;
+
+    int w = src.planes[0].cols;
+    int h = src.planes[0].rows;
+    int d = src.planes.size();
+
+    for(int k=0;k<d;k++)
+        for(int j=0;j<h;j++)
+            for(int i=0;i<w;i++)
+                if (p1->at(k,j,i) != 0)
+                    p1->at(k,j,i) = -1;
+
+    int n_set = 1;
+    while (n_set) {
+        n_set = 0;
+        for(int k=0;k<d;k++)
+            for(int j=0;j<h;j++)
+                for(int i=0;i<w;i++) {
+                    float dist = p1->at(k,j,i);
+                    if (dist == -1) {
+                        n_set++;
+                        if (k) dist = std::max(dist, p1->at(k-1,j,i));
+                        if (k < d-1) dist = std::max(dist, p1->at(k+1,j,i));
+                        if (j) dist = std::max(dist, p1->at(k,j-1,i));
+                        if (j < h-1) dist = std::max(dist, p1->at(k,j+1,i));
+                        if (i) dist = std::max(dist, p1->at(k,j,i-1));
+                        if (i < w-1) dist = std::max(dist, p1->at(k,j,i+1));
+                        if (dist >= 0)
+                            p2->at(k,j,i) = dist+1;
+                        else
+                            p2->at(k,j,i) = dist;
+
+                    }
+                    else
+                        p2->at(k,j,i) = dist;
+
+                }
+        st_f *tmp = p1;
+        p1 = p2;
+        p2 = tmp;
+    }
+
+    dist = *p1;
+}
+
+QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, cv::Vec3f normal, float step)
+{
+    DSReader reader = {ds,scale,cache};
+
+    int w = 450;
+    int h = 450;
+    int z = 450;
+    cv::Size curr_size = {w,h};
+    cv::Rect bounds(0,0,w-1,h-1);
+
+    // origin *= scale;
+    cv::normalize(normal, normal);
+
+    int x0 = w/2;
+    int y0 = h/2;
+
+    cv::Vec3f vx = vx_from_orig_norm(origin, normal);
+    cv::Vec3f vy = vy_from_orig_norm(origin, normal);
+    normalize(vx,vx);
+    normalize(vy,vy);
+
+    PlaneSurface plane(origin, normal);
+    cv::Mat_<cv::Vec3f> coords(h,w);
+    plane.gen(&coords, nullptr, curr_size, nullptr, reader.scale, {0,0,0});
+
+    coords *= reader.scale;
+    // for(double z=-100)
+    double off = 0;
+    cv::Mat_<uint8_t> slice(h,w);
+
+    st_u vol;
+    st_f voldist;
+
+    for(double off=-20;off<20;off+=1) {
+        cv::Mat_<cv::Vec3f> offmat(curr_size, normal*off);
+        readInterpolated3D(slice, reader.ds, coords+offmat, reader.cache);
+        vol.planes.push_back(slice.clone());
+    }
+
+    for(auto &p : vol.planes)
+        cv::threshold(p, p, 50, 1, cv::THRESH_BINARY_INV);
+
+
+    distanceTransform(vol, voldist);
+
+    for(int i=0;i<vol.planes.size();i++)
+    {
+        char buf[64];
+        sprintf(buf, "voldist_%04d.tif", i);
+        imwrite(buf, voldist.planes[i]);
+    }
+
+    // cv::Mat_<float> dist(h,w);
+    // cv::Mat_<uint8_t> bw(h,w);
+    // cv::threshold(slice, bw, 50, 1, cv::THRESH_BINARY_INV);
+    // cv::distanceTransform(bw, dist, cv::DIST_L1, cv::DIST_MASK_3);
+    // cv::imwrite("slice.tif", slice);
+    // cv::imwrite("bw.tif", bw);
+    // cv::imwrite("dist.tif", dist/10);
+
+    return nullptr;
+}

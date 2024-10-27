@@ -61,7 +61,7 @@ float PlaneSurface::pointDist(cv::Vec3f wp)
 }
 
 //given origin and normal, return the normalized vector v which describes a point : origin + v which lies in the plane and maximizes v.x at the cost of v.y,v.z
-static cv::Vec3f vx_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
+cv::Vec3f vx_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
 {
     //impossible
     if (n[1] == 0 && n[2] == 0)
@@ -96,7 +96,7 @@ static cv::Vec3f vx_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
     return v;
 }
 
-static cv::Vec3f vy_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
+cv::Vec3f vy_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
 {
     cv::Vec3f v = vx_from_orig_norm({o[1],o[0],o[2]}, {n[1],n[0],n[2]});
     return {v[1],v[0],v[2]};
@@ -1068,7 +1068,7 @@ struct DSReader
     ChunkCache *cache;
 };
 
-float alphacomp_offset(DSReader &reader, cv::Vec3f point, cv::Vec3f normal, float start, float stop, float step)
+static float alphacomp_offset(DSReader &reader, cv::Vec3f point, cv::Vec3f normal, float start, float stop, float step)
 {
     cv::Size size = {7,7};
     cv::Point2i c = {3,3};
