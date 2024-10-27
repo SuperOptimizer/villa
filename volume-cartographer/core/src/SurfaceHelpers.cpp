@@ -1150,6 +1150,9 @@ struct SurfaceLoss {
     const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &_interpolator;
 };
 
+#define OPTIMIZE_ALL 1
+#define SURF_LOSS 2
+
 //gen straigt loss given point and 3 offsets
 int gen_straight_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, bool optimize_all)
 {
@@ -1203,7 +1206,7 @@ int gen_surf_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t>
 }
 
 //create all valid losses for this point
-int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, cv::Mat_<cv::Vec2d> &loc, float unit, bool optimize_all = true)
+int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, cv::Mat_<cv::Vec2d> &loc, float unit, int flags = 0)
 {
     //generate losses for point p
     uint8_t old_state = state(p);
@@ -1212,33 +1215,40 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     int count = 0;
 
     //horizontal
-    count += gen_straight_loss(problem, p, {0,-2},{0,-1},{0,0}, state, out, optimize_all);
-    count += gen_straight_loss(problem, p, {0,-1},{0,0},{0,1}, state, out, optimize_all);
-    count += gen_straight_loss(problem, p, {0,0},{0,1},{0,2}, state, out, optimize_all);
+    count += gen_straight_loss(problem, p, {0,-2},{0,-1},{0,0}, state, out, flags & OPTIMIZE_ALL);
+    count += gen_straight_loss(problem, p, {0,-1},{0,0},{0,1}, state, out, flags & OPTIMIZE_ALL);
+    count += gen_straight_loss(problem, p, {0,0},{0,1},{0,2}, state, out, flags & OPTIMIZE_ALL);
 
     //vertical
-    count += gen_straight_loss(problem, p, {-2,0},{-1,0},{0,0}, state, out, optimize_all);
-    count += gen_straight_loss(problem, p, {-1,0},{0,0},{1,0}, state, out, optimize_all);
-    count += gen_straight_loss(problem, p, {0,0},{1,0},{2,0}, state, out, optimize_all);
+    count += gen_straight_loss(problem, p, {-2,0},{-1,0},{0,0}, state, out, flags & OPTIMIZE_ALL);
+    count += gen_straight_loss(problem, p, {-1,0},{0,0},{1,0}, state, out, flags & OPTIMIZE_ALL);
+    count += gen_straight_loss(problem, p, {0,0},{1,0},{2,0}, state, out, flags & OPTIMIZE_ALL);
 
     //direct neighboars
-    count += gen_dist_loss(problem, p, {0,-1}, state, out, unit, optimize_all);
-    count += gen_dist_loss(problem, p, {0,1}, state, out, unit, optimize_all);
-    count += gen_dist_loss(problem, p, {-1,0}, state, out, unit, optimize_all);
-    count += gen_dist_loss(problem, p, {1,0}, state, out, unit, optimize_all);
+    count += gen_dist_loss(problem, p, {0,-1}, state, out, unit, flags & OPTIMIZE_ALL);
+    count += gen_dist_loss(problem, p, {0,1}, state, out, unit, flags & OPTIMIZE_ALL);
+    count += gen_dist_loss(problem, p, {-1,0}, state, out, unit, flags & OPTIMIZE_ALL);
+    count += gen_dist_loss(problem, p, {1,0}, state, out, unit, flags & OPTIMIZE_ALL);
 
     //diagonal neighbors
-    count += gen_dist_loss(problem, p, {1,-1}, state, out, unit, optimize_all);
-    count += gen_dist_loss(problem, p, {-1,1}, state, out, unit, optimize_all);
-    count += gen_dist_loss(problem, p, {1,1}, state, out, unit, optimize_all);
-    count += gen_dist_loss(problem, p, {-1,-1}, state, out, unit, optimize_all);
+    count += gen_dist_loss(problem, p, {1,-1}, state, out, unit, flags & OPTIMIZE_ALL);
+    count += gen_dist_loss(problem, p, {-1,1}, state, out, unit, flags & OPTIMIZE_ALL);
+    count += gen_dist_loss(problem, p, {1,1}, state, out, unit, flags & OPTIMIZE_ALL);
+    count += gen_dist_loss(problem, p, {-1,-1}, state, out, unit, flags & OPTIMIZE_ALL);
 
-    count += gen_surf_loss(problem, p, state, out, interp, loc);
+    if (flags & SURF_LOSS)
+        count += gen_surf_loss(problem, p, state, out, interp, loc);
 
     state(p) = old_state;
 
     return count;
 }
+
+//add losses for a whole area!
+// int create_centered_losses_range(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, cv::Mat_<cv::Vec2d> &loc, float unit, bool optimize_all)
+// {
+//
+// }
 
 // bit = 5;
 // if (loss_status(lower_p(p, {1,1})) & (1 << bit)) {
@@ -1296,34 +1306,34 @@ int create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &
     uint8_t old_state = state(p);
     state(p) = 1;
 
-    bool optimize_all = true;
+    int flags = SURF_LOSS | OPTIMIZE_ALL;
 
     int count = 0;
 
     //horizontal
-    count += conditional_straight_loss(0, p, {0,-2},{0,-1},{0,0}, loss_status, problem, state, out, optimize_all);
-    count += conditional_straight_loss(0, p, {0,-1},{0,0},{0,1}, loss_status, problem, state, out, optimize_all);
-    count += conditional_straight_loss(0, p, {0,0},{0,1},{0,2}, loss_status, problem, state, out, optimize_all);
+    count += conditional_straight_loss(0, p, {0,-2},{0,-1},{0,0}, loss_status, problem, state, out, flags);
+    count += conditional_straight_loss(0, p, {0,-1},{0,0},{0,1}, loss_status, problem, state, out, flags);
+    count += conditional_straight_loss(0, p, {0,0},{0,1},{0,2}, loss_status, problem, state, out, flags);
 
     //vertical
-    count += conditional_straight_loss(1, p, {-2,0},{-1,0},{0,0}, loss_status, problem, state, out, optimize_all);
-    count += conditional_straight_loss(1, p, {-1,0},{0,0},{1,0}, loss_status, problem, state, out, optimize_all);
-    count += conditional_straight_loss(1, p, {0,0},{1,0},{2,0}, loss_status, problem, state, out, optimize_all);
+    count += conditional_straight_loss(1, p, {-2,0},{-1,0},{0,0}, loss_status, problem, state, out, flags);
+    count += conditional_straight_loss(1, p, {-1,0},{0,0},{1,0}, loss_status, problem, state, out, flags);
+    count += conditional_straight_loss(1, p, {0,0},{1,0},{2,0}, loss_status, problem, state, out, flags);
 
     //direct neighboars h
-    count += conditional_dist_loss(2, p, {0,-1}, loss_status, problem, state, out, unit, optimize_all);
-    count += conditional_dist_loss(2, p, {0,1}, loss_status, problem, state, out, unit, optimize_all);
+    count += conditional_dist_loss(2, p, {0,-1}, loss_status, problem, state, out, unit, flags);
+    count += conditional_dist_loss(2, p, {0,1}, loss_status, problem, state, out, unit, flags);
 
     //direct neighbors v
-    count += conditional_dist_loss(3, p, {-1,0}, loss_status, problem, state, out, unit, optimize_all);
-    count += conditional_dist_loss(3, p, {1,0}, loss_status, problem, state, out, unit, optimize_all);
+    count += conditional_dist_loss(3, p, {-1,0}, loss_status, problem, state, out, unit, flags);
+    count += conditional_dist_loss(3, p, {1,0}, loss_status, problem, state, out, unit, flags);
 
     //diagonal neighbors
-    count += conditional_dist_loss(4, p, {1,-1}, loss_status, problem, state, out, unit, optimize_all);
-    count += conditional_dist_loss(4, p, {-1,1}, loss_status, problem, state, out, unit, optimize_all);
+    count += conditional_dist_loss(4, p, {1,-1}, loss_status, problem, state, out, unit, flags);
+    count += conditional_dist_loss(4, p, {-1,1}, loss_status, problem, state, out, unit, flags);
 
-    count += conditional_dist_loss(5, p, {1,1}, loss_status, problem, state, out, unit, optimize_all);
-    count += conditional_dist_loss(5, p, {-1,-1}, loss_status, problem, state, out, unit, optimize_all);
+    count += conditional_dist_loss(5, p, {1,1}, loss_status, problem, state, out, unit, flags);
+    count += conditional_dist_loss(5, p, {-1,-1}, loss_status, problem, state, out, unit, flags);
 
     if (!loss_mask(6, p, {0,0}, loss_status))
         count += set_loss_mask(6, p, {0,0}, loss_status, gen_surf_loss(problem, p, state, out, interp, loc));
@@ -1388,6 +1398,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     locs.create(h,w);
     cv::Mat_<uint8_t> state(h,w);
     cv::Mat_<uint16_t> loss_status(cv::Size(w,h),0);
+    cv::Mat_<float> cost_init(cv::Size(w,h),0);
     cv::Mat_<float> dbg(h,w);
     cv::Mat_<float> x_curv(h,w);
     cv::Mat_<float> y_curv(h,w);
@@ -1556,7 +1567,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
 
             ceres::Problem problem;
 
-            int local_loss_count = create_centered_losses(problem, p, state, out, interp, locd, step_size, false);
+            int local_loss_count = create_centered_losses(problem, p, state, out, interp, locd, step_size);
 
             // std::cout << "loss count " << local_loss_count << std::endl;
 
@@ -1566,7 +1577,14 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
             // options.minimizer_progress_to_stdout = false;
             // ceres::Solver::Summary summary;
             ceres::Solve(options, &problem, &summary);
+            cost_init(p) = summary.final_cost;
 
+            float res = min_loc_dbgd(points, locd(p), out(p), {out(p)}, {0}, nullptr, step, 0.01, {}, false);
+
+            gen_surf_loss(problem, p, state, out, interp, locd);
+
+            ceres::Solve(options, &problem, &summary);
+            cost_init(p) = summary.final_cost;
 
             loss_count += create_missing_centered_losses(big_problem, loss_status, p, state, out, interp, locd, step_size);
 
@@ -1586,7 +1604,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
         }
 
         if (generation > 3) {
-            freeze_inner_params(big_problem, 5, state, out, locd, loss_status);
+            freeze_inner_params(big_problem, 10, state, out, locd, loss_status);
 
             options_big.max_num_iterations = 10;
         }
@@ -1602,6 +1620,8 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     cv::Mat_<cv::Vec3f> outf;
     out(used_area).convertTo(outf, CV_32F);
     state = state(used_area);
+
+    cv::imwrite("cost_init.tif", cost_init(used_area));
 
     std::vector<cv::Vec3f> valid_ps;
     for(int j=0;j<outf.rows;j++)
