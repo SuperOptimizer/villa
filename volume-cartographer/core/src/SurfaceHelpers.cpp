@@ -1289,10 +1289,10 @@ int gen_used_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t>
 }
 
 //gen straigt loss given point and 3 offsets
-int gen_loc_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec2d> &loc, cv::Vec2f loc_scale, float mindist, float w = 1.0)
+ceres::ResidualBlockId gen_loc_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec2d> &loc, cv::Vec2f loc_scale, float mindist, float w = 1.0)
 {
     if ((!off[0] && !off [1]) || state(p+off) != 1)
-        return 0;
+        return nullptr;
 
     // cv::Vec2d d = loc(p) - loc(p+off);
     // d[0] /= loc_scale[0];
@@ -1300,9 +1300,7 @@ int gen_loc_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec
     // std::cout << off << cv::norm(d)/cv::norm(off) << loc_scale << std::endl;
 
 
-    problem.AddResidualBlock(LocMinDistLoss::Create(loc_scale, cv::norm(off)*mindist, w), nullptr, &loc(p)[0], &loc(p+off)[0]);
-
-    return 1;
+    return problem.AddResidualBlock(LocMinDistLoss::Create(loc_scale, cv::norm(off)*mindist, w), nullptr, &loc(p)[0], &loc(p+off)[0]);
 }
 
 //create all valid losses for this point
@@ -1399,8 +1397,20 @@ int conditional_straight_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &o1, 
     return set;
 };
 
+
+struct vec2i_hash {
+    size_t operator()(cv::Vec2i p) const
+    {
+        size_t hash1 = std::hash<float>{}(p[0]);
+        size_t hash2 = std::hash<float>{}(p[1]);
+
+        //magic numbers from boost. should be good enough
+        return hash1  ^ (hash2 + 0x9e3779b9 + (hash1 << 6) + (hash1 >> 2));
+    }
+};
+
 //create only missing losses so we can optimize the whole problem
-int create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &loss_status, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, cv::Mat_<cv::Vec2d> &loc, float unit, const cv::Vec2f &loc_scale)
+int create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &loss_status, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, cv::Mat_<cv::Vec2d> &loc, float unit, const cv::Vec2f &loc_scale, std::unordered_map<cv::Vec2i,std::vector<ceres::ResidualBlockId>,vec2i_hash> &foldLossIds)
 {
     //generate losses for point p
     uint8_t old_state = state(p);
@@ -1440,10 +1450,13 @@ int create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &
 
         int r = 4;
         count += set_loss_mask(6, p, {0,0}, loss_status, gen_surf_loss(problem, p, state, out, interp, loc));
+
         for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,state.rows-1);oy++)
             for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,state.cols-1);ox++) {
                 cv::Vec2i off = {oy-p[0],ox-p[1]};
-                gen_loc_dist_loss(problem, p, off, state, loc, loc_scale, 1.0*unit);
+                ceres::ResidualBlockId id = gen_loc_dist_loss(problem, p, off, state, loc, loc_scale, 1.0*unit);
+                if (id)
+                    foldLossIds[p].push_back(id);
             }
     }
 
@@ -1473,6 +1486,32 @@ void freeze_inner_params(ceres::Problem &problem, int edge_dist, cv::Mat_<uint8_
                 problem.RemoveParameterBlock(&out(j,i)[0]);
                 problem.RemoveParameterBlock(&loc(j,i)[0]);
                 set_loss_mask(8, {j,i}, {0,0}, loss_status, 1);
+            }
+        }
+}
+
+void remove_inner_foldlosses(ceres::Problem &problem, int edge_dist, cv::Mat_<uint8_t> &state,  std::unordered_map<cv::Vec2i,std::vector<ceres::ResidualBlockId>,vec2i_hash> &foldLossIds)
+{
+    cv::Mat_<float> dist(state.size());
+
+    edge_dist = std::min(edge_dist,254);
+
+    std::vector<ceres::ResidualBlockId> residual_blocks;
+    problem.GetResidualBlocks(&residual_blocks);
+    std::set<ceres::ResidualBlockId> set;
+    for(auto &id : residual_blocks)
+        set.insert(id);
+
+    cv::distanceTransform(state, dist, cv::DIST_L1, cv::DIST_MASK_3);
+
+    for(int j=0;j<dist.rows;j++)
+        for(int i=0;i<dist.cols;i++) {
+            if (dist(j,i) >= edge_dist && foldLossIds.count({j,i})) {
+                cv::Vec2i p = {j,i};
+                for(auto &id : foldLossIds[p])
+                    if (set.count(id))
+                        problem.RemoveResidualBlock(id);
+                foldLossIds[p].resize(0);
             }
         }
 }
@@ -1513,6 +1552,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     cv::Mat_<float> x_curv(h,w);
     cv::Mat_<float> y_curv(h,w);
     cv::Mat_<float> used(points.size());
+    std::unordered_map<cv::Vec2i,std::vector<ceres::ResidualBlockId>,vec2i_hash> foldLossIds;
     out.setTo(-1);
     used.setTo(0);
     state.setTo(0);
@@ -1578,10 +1618,10 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     ceres::BiCubicInterpolator<CeresGrid2DcvMat1f> interp_used(grid_used);
 
     int loss_count;
-    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0,x0}, state, out, interp, locd, step_size, {sx,sy});
-    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0+1,x0}, state, out, interp, locd, step_size, {sx,sy});
-    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0,x0+1}, state, out, interp, locd, step_size, {sx,sy});
-    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0+1,x0+1}, state, out, interp, locd, step_size, {sx,sy});
+    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0,x0}, state, out, interp, locd, step_size, {sx,sy}, foldLossIds);
+    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0+1,x0}, state, out, interp, locd, step_size, {sx,sy}, foldLossIds);
+    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0,x0+1}, state, out, interp, locd, step_size, {sx,sy}, foldLossIds);
+    loss_count += create_missing_centered_losses(big_problem, loss_status, {y0+1,x0+1}, state, out, interp, locd, step_size, {sx,sy}, foldLossIds);
 
     big_problem.SetParameterBlockConstant(&locd(y0,x0)[0]);
     big_problem.SetParameterBlockConstant(&out(y0,x0)[0]);
@@ -1699,7 +1739,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
 
             search_init(p) = res;
 
-            loss_count += create_missing_centered_losses(big_problem, loss_status, p, state, out, interp, locd, step_size, {sx,sy});
+            loss_count += create_missing_centered_losses(big_problem, loss_status, p, state, out, interp, locd, step_size, {sx,sy}, foldLossIds);
 
             last_round_updated++;
             succ++;
@@ -1725,6 +1765,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
         }
 
         if (generation > 3) {
+            remove_inner_foldlosses(big_problem, 2, state, foldLossIds);
             freeze_inner_params(big_problem, 10, state, out, locd, loss_status);
 
             options_big.max_num_iterations = 10;
