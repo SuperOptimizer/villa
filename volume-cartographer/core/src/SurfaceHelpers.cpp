@@ -1344,9 +1344,6 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
 
     std::vector<cv::Vec2i> fringe;
     std::vector<cv::Vec2i> cands;
-    std::vector<cv::Vec2i> setfail;
-    std::vector<cv::Vec2i> collected_failures;
-    std::vector<cv::Vec2i> skipped;
 
     std::cout << "input avg step " << sx << " " << sy << points.size() << std::endl;
 
@@ -1445,6 +1442,9 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     ceres::Solver::Options options_big;
     // options_big.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
     options_big.linear_solver_type = ceres::SPARSE_SCHUR;
+    // options_big.linear_solver_type = ceres::DENSE_NORMAL_CHOLESKY;
+    // options_big.dense_linear_algebra_library_type = ceres::CUDA;
+    // options_big.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
     options_big.minimizer_progress_to_stdout = false;
     options_big.num_threads = omp_get_max_threads();
     options_big.max_num_iterations = 10000;
@@ -1456,6 +1456,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
 
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_QR;
+    // options.dense_linear_algebra_library_type = ceres::CUDA;
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 10000;
 
@@ -1475,64 +1476,32 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     int total_fail = 0;
     int last_round_updated = 4;
 
-    std::vector<cv::Vec2f> all_locs;
-    bool skipped_from_skipped = false;
     int generation = 0;
     int stop_gen = 0;
     bool ignore_failures = false;
 
     std::cout << "go " << fringe.size() << std::endl;
 
-    while (fringe.size() || (!skipped_from_skipped && skipped.size()) || collected_failures.size()) {
+    while (fringe.size()) {
         generation++;
         if (stop_gen && generation >= stop_gen)
             break;
-        last_round_updated = 0;
 
-        //first: regular fring
-        if (fringe.size()) {
-            for(auto p : fringe)
-            {
-                if (state(p) != 1)
-                    continue;
+        for(auto p : fringe)
+        {
+            if (state(p) != 1)
+                continue;
 
-                // std::cout << "check " << p << std::endl;
-
-                for(auto n : neighs)
-                    if (bounds.contains(p+n) && state(p+n) == 0) {
-                        state(p+n) = 2;
-                        cands.push_back(p+n);
-                        // std::cout << "cand  " << p+n << std::endl;
-                    }
-            }
-            for(auto p : cands)
-                state(p) = 0;
-            printf("gen %d processing %d fringe cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
-            fringe.resize(0);
-            skipped_from_skipped = false;
+            for(auto n : neighs)
+                if (bounds.contains(p+n) && state(p+n) == 0) {
+                    state(p+n) = 2;
+                    cands.push_back(p+n);
+                }
         }
-        else if ((last_round_updated && skipped.size()) || collected_failures.size()) {
-            //skipped && failed points are processed at the same time so we expand smoothly
-            for(auto p : skipped)
-                state(p) = 0;
-            cands = skipped;
-            printf("gen %d processing %d skipped cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
-            skipped.resize(0);
-            skipped_from_skipped = true;
-
-            for(auto p : collected_failures) {
-                state(p) = 0;
-                cands.push_back(p);
-            }
-            printf("gen %d processing %d fail cands (total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", generation, cands.size(), succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
-            collected_failures.resize(0);
-            ignore_failures = true;
-            skipped_from_skipped = false;
-        }
-        else {
-            std::cout << "done " << std::endl;
-            break;
-        }
+        for(auto p : cands)
+            state(p) = 0;
+        printf("gen %d processing %d fringe cands (total done %d fringe: %d\n", generation, cands.size(), succ, fringe.size());
+        fringe.resize(0);
 
         std::cout << "cands " << cands.size() << std::endl;
         for(auto p : cands) {
@@ -1550,11 +1519,8 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
                         avgl += locd(oy,ox);
                     }
 
-            if (ref_count < 2) {
-                std::cout << "skip" << ref_count << p << std::endl;
-                skipped.push_back(p);
+            if (ref_count < 2)
                 continue;
-            }
 
             avg /= ref_count;
             avgl /= ref_count;
@@ -1600,19 +1566,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
 
         cands.resize(0);
 
-
-        for(auto p : setfail) {
-            dbg(p) = -1;
-            state(p) = 10;
-            out(p) = -1;
-            collected_failures.push_back(p);
-        }
-        setfail.resize(0);
-
-        // if (ignore_failures)
-        //     stop_gen = generation+10;
-
-        printf("-> total succ/fail %d/%d fringe: %d skipped: %d failures: %d\n", succ, total_fail, fringe.size(), skipped.size(), collected_failures.size());
+        printf("-> total done %d/ fringe: %d\n", succ, fringe.size());
     }
 
     cv::Mat_<cv::Vec3f> outf;
@@ -1629,9 +1583,16 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
 
     locd(used_area).convertTo(locs, CV_32F);
 
+    cv::Rect out_bounds(0,0,points.cols-2,points.rows-2);
     for(int j=0;j<outf.rows;j++)
         for(int i=0;i<outf.cols;i++)
-            outf(j, i) = at_int(points, locs(j,i));
+            if (state(j,i) == 1) {
+                cv::Vec2i l = locs(j,i);
+                if (out_bounds.contains(l))
+                    outf(j, i) = at_int(points, locs(j,i));
+                else
+                    outf(j, i) = {-1,-1,-1};
+            }
 
     valid_ps.resize(0);
     for(int j=0;j<outf.rows;j++)
