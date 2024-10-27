@@ -1069,6 +1069,20 @@ struct CeresGrid2DcvMat3f {
     const cv::Mat_<cv::Vec3f> _m;
 };
 
+struct CeresGrid2DcvMat1f {
+    enum { DATA_DIMENSION = 1 };
+    void GetValue(int row, int col, double* f) const
+    {
+        if (col >= _m.cols) col = _m.cols-1;
+        if (row >= _m.rows) row = _m.rows-1;
+        if (col <= 0) col = 0;
+        if (row <= 0) row = 0;
+        cv::Vec3f v = _m(row, col);
+        f[0] = v[0];
+    }
+    const cv::Mat_<float> _m;
+};
+
 
 //cost functions for physical paper
 struct DistLoss {
@@ -1123,31 +1137,57 @@ struct StraightLoss {
 
 //cost functions for physical paper
 struct SurfaceLoss {
-    SurfaceLoss(const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp) : _interpolator(interp) {};
+    SurfaceLoss(const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, float w) : _interpolator(interp), _w(w) {};
     template <typename T>
     bool operator()(const T* const p, const T* const l, T* residual) const {
         T v[3];
 
         _interpolator.Evaluate(l[1], l[0], v);
 
-        residual[0] = v[0] - p[0];
-        residual[1] = v[1] - p[1];
-        residual[2] = v[2] - p[2];
+        residual[0] = T(_w)*(v[0] - p[0]);
+        residual[1] = T(_w)*(v[1] - p[1]);
+        residual[2] = T(_w)*(v[2] - p[2]);
 
         return true;
     }
 
-    static ceres::CostFunction* Create(const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp)
+    float _w;
+
+    static ceres::CostFunction* Create(const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, float w = 1.0)
     {
         // auto l = new SurfaceLoss(grid);
         // std::cout << l->_interpolator.grid_._m.size() << std::endl;
         // auto g = CeresGrid2DcvMat3f({grid});
         // std::cout << g._m.size() << std::endl;
         // std::cout << l->_interpolator.grid_._m.size() << std::endl;
-        return new ceres::AutoDiffCostFunction<SurfaceLoss, 3, 3, 2>(new SurfaceLoss(interp));
+        return new ceres::AutoDiffCostFunction<SurfaceLoss, 3, 3, 2>(new SurfaceLoss(interp, w));
     }
 
     const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &_interpolator;
+};
+
+//cost functions for physical paper
+struct UsedSurfaceLoss {
+    UsedSurfaceLoss(const ceres::BiCubicInterpolator<CeresGrid2DcvMat1f> &interp, float w) : _interpolator(interp), _w(w) {};
+    template <typename T>
+    bool operator()(const T* const l, T* residual) const {
+        T v[1];
+
+        _interpolator.Evaluate(l[1], l[0], v);
+
+        residual[0] = T(_w)*(v[0]);
+
+        return true;
+    }
+
+    float _w;
+
+    static ceres::CostFunction* Create(const ceres::BiCubicInterpolator<CeresGrid2DcvMat1f> &interp, float w = 1.0)
+    {
+        return new ceres::AutoDiffCostFunction<UsedSurfaceLoss, 3, 2>(new UsedSurfaceLoss(interp, w));
+    }
+
+    const ceres::BiCubicInterpolator<CeresGrid2DcvMat1f> &_interpolator;
 };
 
 #define OPTIMIZE_ALL 1
@@ -1195,12 +1235,23 @@ int gen_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &
 }
 
 //gen straigt loss given point and 3 offsets
-int gen_surf_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, cv::Mat_<cv::Vec2d> &loc)
+int gen_surf_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> &interp, cv::Mat_<cv::Vec2d> &loc, float w = 1.0)
 {
     if (state(p) != 1)
         return 0;
 
-    problem.AddResidualBlock(SurfaceLoss::Create(interp), nullptr, &out(p)[0], &loc(p)[0]);
+    problem.AddResidualBlock(SurfaceLoss::Create(interp, w), nullptr, &out(p)[0], &loc(p)[0]);
+
+    return 1;
+}
+
+//gen straigt loss given point and 3 offsets
+int gen_used_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat1f> &interp, cv::Mat_<cv::Vec2d> &loc, float w = 1.0)
+{
+    if (state(p) != 1)
+        return 0;
+
+    problem.AddResidualBlock(UsedSurfaceLoss::Create(interp, w), nullptr, &loc(p)[0]);
 
     return 1;
 }
@@ -1399,6 +1450,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     cv::Mat_<uint8_t> state(h,w);
     cv::Mat_<uint16_t> loss_status(cv::Size(w,h),0);
     cv::Mat_<float> cost_init(cv::Size(w,h),0);
+    cv::Mat_<float> search_init(cv::Size(w,h),0);
     cv::Mat_<float> dbg(h,w);
     cv::Mat_<float> x_curv(h,w);
     cv::Mat_<float> y_curv(h,w);
@@ -1463,6 +1515,9 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
 
     CeresGrid2DcvMat3f grid({points});
     ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> interp(grid);
+
+    CeresGrid2DcvMat1f grid_used({points});
+    ceres::BiCubicInterpolator<CeresGrid2DcvMat1f> interp_used(grid_used);
 
     int loss_count;
     loss_count += create_missing_centered_losses(big_problem, loss_status, {y0,x0}, state, out, interp, locd, step_size);
@@ -1579,12 +1634,14 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
             ceres::Solve(options, &problem, &summary);
             cost_init(p) = summary.final_cost;
 
-            float res = min_loc_dbgd(points, locd(p), out(p), {out(p)}, {0}, nullptr, step, 0.01, {}, false);
+            float res = min_loc_dbgd(points, locd(p), out(p), {out(p)}, {0}, nullptr, step, 0.01, {}, false, used);
 
             gen_surf_loss(problem, p, state, out, interp, locd);
-
+            gen_used_loss(problem, p, state, out, interp_used, locd, 100.0);
             ceres::Solve(options, &problem, &summary);
             cost_init(p) = summary.final_cost;
+
+            search_init(p) = res;
 
             loss_count += create_missing_centered_losses(big_problem, loss_status, p, state, out, interp, locd, step_size);
 
@@ -1595,6 +1652,14 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
             if (!used_area.contains({p[1],p[0]})) {
                 used_area = used_area | cv::Rect(p[1],p[0],1,1);
             }
+
+            //FIXME make dist depend on T ?
+            cv::Rect roi = {locd(p)[0]-T,locd(p)[1]-T,2*T,2*T};
+            roi = roi & src_bounds;
+            for(int j=roi.y;j<roi.br().y;j++)
+                for(int i=roi.x;i<roi.br().x;i++) {
+                    used(j,i) = std::min(1.0f, used(j,i) + std::max(0.0f, float(1.0-1.0/T*sqrt(sdist(points(locd(p)[1],locd(p)[0]), points(j,i))+1e-2))));
+                }
 
             if (summary.termination_type == ceres::NO_CONVERGENCE) {
                 // std::cout << summary.BriefReport() << "\n";
@@ -1622,6 +1687,8 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
     state = state(used_area);
 
     cv::imwrite("cost_init.tif", cost_init(used_area));
+    cv::imwrite("search_init.tif", search_init(used_area));
+    cv::imwrite("used.tif", used);
 
     std::vector<cv::Vec3f> valid_ps;
     for(int j=0;j<outf.rows;j++)
