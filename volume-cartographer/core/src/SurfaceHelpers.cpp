@@ -1311,15 +1311,15 @@ int gen_surf_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t>
 }
 
 //gen straigt loss given point and 3 offsets
-// int gen_used_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat1f> &interp, cv::Mat_<cv::Vec2d> &loc, float w = 1.0)
-// {
-//     if (state(p) != 1)
-//         return 0;
-//
-//     problem.AddResidualBlock(UsedSurfaceLoss::Create(interp, w), nullptr, &loc(p)[0]);
-//
-//     return 1;
-// }
+int gen_used_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, const ceres::BiCubicInterpolator<CeresGrid2DcvMat1f> &interp, cv::Mat_<cv::Vec2d> &loc, float w = 1.0)
+{
+    if (!loc_valid(state(p)))
+        return 0;
+
+    problem.AddResidualBlock(UsedSurfaceLoss::Create(interp, w), nullptr, &loc(p)[0]);
+
+    return 1;
+}
 
 //gen straigt loss given point and 3 offsets
 ceres::ResidualBlockId gen_loc_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec2d> &loc, cv::Vec2f loc_scale, float mindist, float w = 1.0)
@@ -1567,7 +1567,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
 
     float th = T/4;
 
-    int r = 1;
+    int r = 2;
 
     cv::Vec2f step = {sx*T/10, sy*T/10};
 
@@ -1730,7 +1730,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
                         avgl += locd(oy,ox);
                     }
 
-            if (ref_count < 2)
+            if (ref_count < 4)
                 continue;
 
             avg /= ref_count;
