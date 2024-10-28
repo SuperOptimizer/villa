@@ -1321,6 +1321,7 @@ struct UsedSurfaceLoss {
 #define STATE_PROCESSING 2
 #define STATE_COORD_VALID 4
 #define STATE_FAIL 8
+#define STATE_PHYS_ONLY 16
 
 bool loc_valid(int state)
 {
@@ -2407,7 +2408,7 @@ void distanceTransform(const st_u &src, st_f &dist)
 
 
 //gen straigt loss given point and 3 offsets
-int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float w = 0.001)
+int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float w = 0.01)
 {
     if (!loc_valid(state(p)))
         return 0;
@@ -2620,7 +2621,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     options.linear_solver_type = ceres::DENSE_QR;
     // options.dense_linear_algebra_library_type = ceres::CUDA;
     options.minimizer_progress_to_stdout = false;
-    options.max_num_iterations = 10000;
+    options.max_num_iterations = 100;
 
 
     std::cout << summary.BriefReport() << "\n";
@@ -2641,7 +2642,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     int succ = 0;
 
     int generation = 0;
-    int stop_gen = 50;
+    int stop_gen = 100;
 
     while (fringe.size()) {
         generation++;
@@ -2709,20 +2710,51 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             // ceres::Solver::Summary summary;
             ceres::Solve(options, &problem, &summary);
 
+            double loss1 = summary.final_cost;
+
+            if (loss1 > 0.1) {
+                cv::Vec3d best_loc = locs(p);
+                double best_loss = loss1;
+                for (int n=0;n<100;n++) {
+                    int range = step*10;
+                    locs(p) = avg + cv::Vec3d((rand()%(range*2))-range,(rand()%(range*2))-range,(rand()%(range*2))-range);
+                    ceres::Solve(options, &problem, &summary);
+                    loss1 = summary.final_cost;
+                    if (loss1 < best_loss) {
+                        best_loss = loss1;
+                        best_loc = locs(p);
+                    }
+                    if (loss1 < 0.1)
+                        break;
+                }
+                loss1 = best_loss;
+                locs(p) = best_loc;
+            }
+
+            cv::Vec3d phys_only_loc = locs(p);
+
             // ceres::Solve(options, &problem, &summary);
 
             gen_space_loss(problem, p, state, locs, interp);
 
             ceres::Solve(options, &problem, &summary);
 
-            // std::cout << summary.final_cost << std::endl;
+            // std::cout << loss1 << " " << summary.final_cost << std::endl;
 
             double dist;
             interp.Evaluate(locs(p)[2],locs(p)[1],locs(p)[0], &dist);
 
             if (dist <= 2 || summary.final_cost >= 0.1) {
-                state(p) = STATE_FAIL;
-                locs(p) = {-1,-1,-1};
+                if (loss1 < 0.1) {
+                    locs(p) = phys_only_loc;
+                    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, Ts, foldLossIds, OPTIMIZE_ALL);
+                    state(p) = STATE_PHYS_ONLY;
+                }
+                else {
+                    std::cout << "full phys fail!  " << loss1 << std::endl;
+                    //just completely ignore this sapce
+                    state(p) = STATE_FAIL;
+                }
             }
             else {
                 //FIXMe still add (some?) material losses for empty points so we get valid surface structure!
@@ -2788,14 +2820,14 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             }
         }
 
-        // if (generation == 3) {
-        //     big_problem.SetParameterBlockVariable(&locs(y0,x0)[0]);
-        //     big_problem.SetParameterBlockVariable(&locs(y0+1,x0)[0]);
-        //     big_problem.SetParameterBlockVariable(&locs(y0,x0+1)[0]);
-        //     big_problem.SetParameterBlockVariable(&locs(y0+1,x0+1)[0]);
-        //
-        //     options_big.max_num_iterations = 100;
-        // }
+        if (generation == 3) {
+            // big_problem.SetParameterBlockVariable(&locs(y0,x0)[0]);
+            // big_problem.SetParameterBlockVariable(&locs(y0+1,x0)[0]);
+            // big_problem.SetParameterBlockVariable(&locs(y0,x0+1)[0]);
+            // big_problem.SetParameterBlockVariable(&locs(y0+1,x0+1)[0]);
+
+            options_big.max_num_iterations = 10;
+        }
         //
         // if (generation > 3) {
         // //     remove_inner_foldlosses(big_problem, 2, state, foldLossIds);
@@ -2808,7 +2840,12 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             std::cout << "running big solve" << std::endl;
             ceres::Solve(options_big, &big_problem, &summary);
             std::cout << summary.BriefReport() << "\n";
-            options_big.max_num_iterations = 100;
+            // if (summary.final_cost > 100) {
+            //     stop_gen = generation+1;
+            //     break;
+            // }
+
+            // options_big.max_num_iterations = 100;
         // }
         //
         // if (generation == 3) {
@@ -2849,6 +2886,8 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     cv::imwrite("dists.tif", dists);
     points *= 1/reader.scale;
 
+    printf("generated approximate surface %fkvx^2\n", succ*step*step/1000000.0);
+    printf("generated approximate surface %fmm^2\n", succ*step*step*0.008*0.008);
 
     return new QuadSurface(points, {1/T, 1/T});
 }
