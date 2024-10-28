@@ -36,9 +36,12 @@ void CVolumeViewerView::mouseReleaseEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::MiddleButton || event->button() == Qt::RightButton)
     {
-        _regular_pan = false;
         setCursor(Qt::ArrowCursor);
         event->accept();
+        if (_regular_pan) {
+            _regular_pan = false;
+            sendPanRelease(event->button(), event->modifiers());
+        }
         return;
     }
     else

@@ -38,6 +38,7 @@ public:
     cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     float pointTo(SurfacePointer *ptr, const cv::Vec3f &coord, float th, int max_iters = 1000)  override;
     void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset);
+    bool slow() { return _src_mode == OpChainSourceMode::GREEDY || (_src_mode == OpChainSourceMode::BLUR && !_src_blur); }
 
     std::vector<DeltaSurface*> ops() { return _ops; };
 
