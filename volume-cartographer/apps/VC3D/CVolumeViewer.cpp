@@ -45,6 +45,7 @@ CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, QWidget* parent)
     connect(fGraphicsView, &CVolumeViewerView::sendVolumeClicked, this, &CVolumeViewer::onVolumeClicked);
     connect(fGraphicsView, &CVolumeViewerView::sendZoom, this, &CVolumeViewer::onZoom);
     connect(fGraphicsView, &CVolumeViewerView::sendCursorMove, this, &CVolumeViewer::onCursorMove);
+    connect(fGraphicsView, &CVolumeViewerView::sendPanRelease, this, &CVolumeViewer::onPanRelease);
 
     // Create graphics scene
     fScene = new QGraphicsScene({-2500,-2500,5000,5000}, this);
@@ -628,7 +629,14 @@ void CVolumeViewer::renderIntersections()
     }
 }
 
-void CVolumeViewer::onScrolled()
+
+void CVolumeViewer::onPanRelease(Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
 {
     renderVisible();
+}
+
+void CVolumeViewer::onScrolled()
+{
+    if (!dynamic_cast<OpChain*>(_surf) || !dynamic_cast<OpChain*>(_surf)->slow())
+        renderVisible();
 }
