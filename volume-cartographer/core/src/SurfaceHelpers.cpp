@@ -2407,7 +2407,7 @@ void distanceTransform(const st_u &src, st_f &dist)
 
 
 //gen straigt loss given point and 3 offsets
-int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float w = 0.01)
+int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float w = 0.001)
 {
     if (!loc_valid(state(p)))
         return 0;
@@ -2563,7 +2563,8 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     float T = step;
     float Ts = step*reader.scale;
 
-    int r = 2;
+    int r = 1;
+    int r2 = 3;
 
     cv::Mat_<cv::Vec3d> locs(size,cv::Vec3f(-1,-1,-1));
     cv::Mat_<uint8_t> state(size,0);
@@ -2640,7 +2641,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     int succ = 0;
 
     int generation = 0;
-    int stop_gen = 30   ;
+    int stop_gen = 50;
 
     while (fringe.size()) {
         generation++;
@@ -2678,8 +2679,16 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                         avg += locs(oy,ox);
                     }
 
-                    if (ref_count < 4)
-                        continue;
+
+            int ref_count2 = 0;
+            for(int oy=std::max(p[0]-r2,0);oy<=std::min(p[0]+r2,locs.rows-1);oy++)
+                for(int ox=std::max(p[1]-r2,0);ox<=std::min(p[1]+r2,locs.cols-1);ox++)
+                    if (loc_valid(state(oy,ox))) {
+                        ref_count2++;
+                    }
+
+            if (ref_count < 2 || (generation > 3 && ref_count2 < 14))
+                continue;
 
             avg /= ref_count;
             locs(p) = avg;
@@ -2706,13 +2715,17 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
             ceres::Solve(options, &problem, &summary);
 
+            // std::cout << summary.final_cost << std::endl;
+
             double dist;
             interp.Evaluate(locs(p)[2],locs(p)[1],locs(p)[0], &dist);
 
-            if (dist <= 2) {
+            if (dist <= 2 || summary.final_cost >= 0.1) {
                 state(p) = STATE_FAIL;
+                locs(p) = {-1,-1,-1};
             }
             else {
+                //FIXMe still add (some?) material losses for empty points so we get valid surface structure!
                 loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, Ts, foldLossIds);
 
                 succ++;
@@ -2795,6 +2808,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             std::cout << "running big solve" << std::endl;
             ceres::Solve(options_big, &big_problem, &summary);
             std::cout << summary.BriefReport() << "\n";
+            options_big.max_num_iterations = 100;
         // }
         //
         // if (generation == 3) {
@@ -2816,19 +2830,25 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     }
 
     locs = locs(used_area);
+    state = state(used_area);
     cv::Mat_<cv::Vec3f> points(locs.size(), cv::Vec3f(-1,-1,-1));
+    cv::Mat_<float> dists(points.size(), 1000);
     for(int j=0;j<locs.rows;j++)
         for(int i=0;i<locs.cols;i++) {
-            if (locs(j,i)[0] == -1)
+            if (!loc_valid(state(j,i)))
                 continue;
             cv::Vec3d l = locs(j,i);
             double p[3];
             interp_coords.Evaluate<double>(l[2],l[1],l[0], p);
             points(j,i) = {p[0],p[1],p[2]};
-            // std::cout << locs(j,i) << " -> " << points(j,i) << std::endl;
+            double d;
+            interp.Evaluate<double>(l[2],l[1],l[0], &d);
+            dists(j,i) = d;
         }
 
-        points *= 1/reader.scale;
+    cv::imwrite("dists.tif", dists);
+    points *= 1/reader.scale;
+
 
     return new QuadSurface(points, {1/T, 1/T});
 }
