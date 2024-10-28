@@ -2360,7 +2360,7 @@ struct EmptySpaceLoss {
 
         _interpolator.Evaluate<T>(l[2], l[1], l[0], &v);
 
-        residual[0] = T(_w)/(v*T(0.1)+T(0.01));
+        residual[0] = T(_w)/(v+T(0.3));
 
         return true;
     }
@@ -2430,7 +2430,7 @@ void distanceTransform(const st_u &src, st_f &dist)
 
 
 //gen straigt loss given point and 3 offsets
-int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float w = 0.01)
+int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float w = 0.1)
 {
     if (!loc_valid(state(p)))
         return 0;
