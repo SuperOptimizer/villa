@@ -1242,7 +1242,7 @@ struct StraightLoss {
 
         T dot = (d1[0]*d2[0] + d1[1]*d2[1] + d1[2]*d2[2])/(l1*l2);
 
-        residual[0] = T(10000)*(T(1)-dot)*(T(1)-dot);
+        residual[0] = T(10)*(T(1)-dot);
 
         return true;
     }
@@ -2430,7 +2430,7 @@ void distanceTransform(const st_u &src, st_f &dist)
 
 
 //gen straigt loss given point and 3 offsets
-int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float w = 0.002)
+int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float w = 0.01)
 {
     if (!loc_valid(state(p)))
         return 0;
@@ -2671,6 +2671,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     // options_big.enable_fast_removal = true;
     options_big.num_threads = omp_get_max_threads();
     options_big.max_num_iterations = 10000;
+    options_big.function_tolerance = 1e-4;
 
 
     ceres::Solver::Summary summary;
@@ -2681,6 +2682,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     // options.dense_linear_algebra_library_type = ceres::CUDA;
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 200;
+    options.function_tolerance = 1e-3;
 
 
     std::cout << summary.BriefReport() << "\n";
@@ -2706,7 +2708,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     int generation = 0;
     int stop_gen = 100;
     int phys_fail_count = 0;
-    double phys_fail_th = 0.01;
+    double phys_fail_th = 0.1;
 
     while (fringe.size()) {
         ALifeTime timer_gen;
