@@ -1242,7 +1242,7 @@ struct StraightLoss {
 
         T dot = (d1[0]*d2[0] + d1[1]*d2[1] + d1[2]*d2[2])/(l1*l2);
 
-        residual[0] = T(100)*(T(1)-dot)*(T(1)-dot);
+        residual[0] = T(10000)*(T(1)-dot)*(T(1)-dot);
 
         return true;
     }
@@ -2430,7 +2430,7 @@ void distanceTransform(const st_u &src, st_f &dist)
 
 
 //gen straigt loss given point and 3 offsets
-int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float w = 0.01)
+int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float w = 0.002)
 {
     if (!loc_valid(state(p)))
         return 0;
@@ -2704,8 +2704,9 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     int succ = 0;
 
     int generation = 0;
-    int stop_gen = 200;
+    int stop_gen = 100;
     int phys_fail_count = 0;
+    double phys_fail_th = 0.01;
 
     while (fringe.size()) {
         ALifeTime timer_gen;
@@ -2779,7 +2780,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
             double loss1 = summary.final_cost;
 
-            if (loss1 > 0.1) {
+            if (loss1 > phys_fail_th) {
                 cv::Vec3d best_loc = locs(p);
                 double best_loss = loss1;
                 for (int n=0;n<100;n++) {
@@ -2791,7 +2792,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                         best_loss = loss1;
                         best_loc = locs(p);
                     }
-                    if (loss1 < 0.1)
+                    if (loss1 < phys_fail_th)
                         break;
                 }
                 loss1 = best_loss;
@@ -2818,7 +2819,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                 //FIXME should have special handling for this case ...
                 state(p) = STATE_LOC_VALID;
                 // }
-                if (loss1 > 0.1) {
+                if (loss1 > phys_fail_th) {
                     //just completely ignore this sapce
                     // state(p) = STATE_FAIL;
                     phys_fail(p) = 1;
@@ -2827,10 +2828,10 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                     float err = 0;
                     for(int range = 1; range<=16;range++) {
                         err = local_optimization(range, p, state, locs, interp, Ts);
-                        if (err <= 0.1)
+                        if (err <= phys_fail_th)
                             break;
                     }
-                    if (err > 0.1) {
+                    if (err > phys_fail_th) {
                         std::cout << "local phys fail! " << err << std::endl;
                         phys_fail_count++;
                         phys_fail_count_gen++;
@@ -2913,7 +2914,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         //this actually did work (but was slow ...)
         if (phys_fail_count_gen) {
             options_big.minimizer_progress_to_stdout = true;
-            options_big.max_num_iterations = 1000;
+            options_big.max_num_iterations = 100;
         }
         else
             options_big.minimizer_progress_to_stdout = false;
