@@ -1177,28 +1177,57 @@ struct LocMinDistLoss {
 };
 
 //cost functions for physical paper
+// struct StraightLoss {
+//     template <typename T>
+//     bool operator()(const T* const a, const T* const b, const T* const c, T* residual) const {
+//         T v[3], p[3];
+//         v[0] = b[0] - a[0];
+//         v[1] = b[1] - a[1];
+//         v[2] = b[2] - a[2];
+//
+//         p[0] = b[0] + v[0];
+//         p[1] = b[1] + v[1];
+//         p[2] = b[2] + v[2];
+//
+//         residual[0] = T(100)*(p[0] - c[0]);
+//         residual[1] = T(100)*(p[1] - c[1]);
+//         residual[2] = T(100)*(p[2] - c[2]);
+//
+//         return true;
+//     }
+//
+//     static ceres::CostFunction* Create()
+//     {
+//         return new ceres::AutoDiffCostFunction<StraightLoss, 3, 3, 3, 3>(new StraightLoss());
+//     }
+// };
+
+//cost functions for physical paper
 struct StraightLoss {
     template <typename T>
     bool operator()(const T* const a, const T* const b, const T* const c, T* residual) const {
-        T v[3], p[3];
-        v[0] = b[0] - a[0];
-        v[1] = b[1] - a[1];
-        v[2] = b[2] - a[2];
+        T d1[3], d2[3];
+        d1[0] = b[0] - a[0];
+        d1[1] = b[1] - a[1];
+        d1[2] = b[2] - a[2];
 
-        p[0] = b[0] + v[0];
-        p[1] = b[1] + v[1];
-        p[2] = b[2] + v[2];
+        d2[0] = c[0] - b[0];
+        d2[1] = c[1] - b[1];
+        d2[2] = c[2] - b[2];
 
-        residual[0] = T(3)*(p[0] - c[0]);
-        residual[1] = T(3)*(p[1] - c[1]);
-        residual[2] = T(3)*(p[2] - c[2]);
+        T l1 = sqrt(d1[0]*d1[0] + d1[1]*d1[1] + d1[2]*d1[2]);
+        T l2 = sqrt(d2[0]*d2[0] + d2[1]*d2[1] + d2[2]*d2[2]);
+
+        T dot = (d1[0]*d2[0] + d1[1]*d2[1] + d1[2]*d2[2])/(l1*l2);
+
+        residual[0] = T(100)*(T(1)-dot)*(T(1)-dot);
 
         return true;
     }
 
     static ceres::CostFunction* Create()
     {
-        return new ceres::AutoDiffCostFunction<StraightLoss, 3, 3, 3, 3>(new StraightLoss());
+        return new ceres::AutoDiffCostFunction<StraightLoss, 1, 3, 3, 3>(new StraightLoss());
     }
 };
 
@@ -1551,14 +1580,14 @@ void freeze_inner_params(ceres::Problem &problem, int edge_dist, cv::Mat_<uint8_
             if (dist(j,i) >= edge_dist && !loss_mask(7, {j,i}, {0,0}, loss_status)) {
                 if (problem.HasParameterBlock(&out(j,i)[0]))
                     problem.SetParameterBlockConstant(&out(j,i)[0]);
-                if (problem.HasParameterBlock(&loc(j,i)[0]))
+                if (!loc.empty() && problem.HasParameterBlock(&loc(j,i)[0]))
                     problem.SetParameterBlockConstant(&loc(j,i)[0]);
                 set_loss_mask(7, {j,i}, {0,0}, loss_status, 1);
             }
             if (dist(j,i) >= edge_dist+1 && !loss_mask(8, {j,i}, {0,0}, loss_status)) {
                 if (problem.HasParameterBlock(&out(j,i)[0]))
                     problem.RemoveParameterBlock(&out(j,i)[0]);
-                if (problem.HasParameterBlock(&loc(j,i)[0]))
+                if (!loc.empty() && problem.HasParameterBlock(&loc(j,i)[0]))
                     problem.RemoveParameterBlock(&loc(j,i)[0]);
                 set_loss_mask(8, {j,i}, {0,0}, loss_status, 1);
             }
@@ -2308,7 +2337,7 @@ struct EmptySpaceLoss {
 
         _interpolator.Evaluate<T>(l[2], l[1], l[0], &v);
 
-        residual[0] = T(_w)/(v*T(0.1)+T(1e-5));
+        residual[0] = T(_w)/(v*T(0.1)+T(0.01));
 
         return true;
     }
@@ -2378,7 +2407,7 @@ void distanceTransform(const st_u &src, st_f &dist)
 
 
 //gen straigt loss given point and 3 offsets
-int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float w = 1.0)
+int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float w = 0.01)
 {
     if (!loc_valid(state(p)))
         return 0;
@@ -2563,10 +2592,10 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0+1,x0+1}, state, locs, interp, Ts, foldLossIds);
 
     //TODO only fix later
-    big_problem.SetParameterBlockConstant(&locs(y0,x0)[0]);
-    big_problem.SetParameterBlockConstant(&locs(y0+1,x0)[0]);
-    big_problem.SetParameterBlockConstant(&locs(y0,x0+1)[0]);
-    big_problem.SetParameterBlockConstant(&locs(y0+1,x0+1)[0]);
+    // big_problem.SetParameterBlockConstant(&locs(y0,x0)[0]);
+    // big_problem.SetParameterBlockConstant(&locs(y0+1,x0)[0]);
+    // big_problem.SetParameterBlockConstant(&locs(y0,x0+1)[0]);
+    // big_problem.SetParameterBlockConstant(&locs(y0+1,x0+1)[0]);
 
     std::cout << "init loss count " << loss_count << std::endl;
 
@@ -2611,7 +2640,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     int succ = 0;
 
     int generation = 0;
-    int stop_gen = 50;
+    int stop_gen = 30   ;
 
     while (fringe.size()) {
         generation++;
@@ -2671,9 +2700,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             // ceres::Solver::Summary summary;
             ceres::Solve(options, &problem, &summary);
 
-            loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, Ts, foldLossIds);
-
-            ceres::Solve(options, &problem, &summary);
+            // ceres::Solve(options, &problem, &summary);
 
             gen_space_loss(problem, p, state, locs, interp);
 
@@ -2686,6 +2713,8 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                 state(p) = STATE_FAIL;
             }
             else {
+                loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, Ts, foldLossIds);
+
                 succ++;
                 fringe.push_back(p);
                 if (!used_area.contains({p[1],p[0]})) {
@@ -2746,31 +2775,39 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             }
         }
 
-        if (generation == 3) {
-            big_problem.SetParameterBlockVariable(&locs(y0,x0)[0]);
-            big_problem.SetParameterBlockVariable(&locs(y0+1,x0)[0]);
-            big_problem.SetParameterBlockVariable(&locs(y0,x0+1)[0]);
-            big_problem.SetParameterBlockVariable(&locs(y0+1,x0+1)[0]);
-        }
+        // if (generation == 3) {
+        //     big_problem.SetParameterBlockVariable(&locs(y0,x0)[0]);
+        //     big_problem.SetParameterBlockVariable(&locs(y0+1,x0)[0]);
+        //     big_problem.SetParameterBlockVariable(&locs(y0,x0+1)[0]);
+        //     big_problem.SetParameterBlockVariable(&locs(y0+1,x0+1)[0]);
         //
-        // // if (generation > 3) {
+        //     options_big.max_num_iterations = 100;
+        // }
+        //
+        // if (generation > 3) {
         // //     remove_inner_foldlosses(big_problem, 2, state, foldLossIds);
-        // //     freeze_inner_params(big_problem, 10, state, out, locd, loss_status);
+                // freeze_inner_params(big_problem, 10, state, out, locd, loss_status);
         // //
-        // //     options_big.max_num_iterations = 10;
+        //     options_big.max_num_iterations = 100;
         // }
 
-        if (generation >= 3) {
+        // if (generation >= 3) {
             std::cout << "running big solve" << std::endl;
             ceres::Solve(options_big, &big_problem, &summary);
             std::cout << summary.BriefReport() << "\n";
-        }
+        // }
         //
-        if (generation == 3) {
-            big_problem.SetParameterBlockConstant(&locs(y0,x0)[0]);
-            big_problem.SetParameterBlockConstant(&locs(y0+1,x0)[0]);
-            big_problem.SetParameterBlockConstant(&locs(y0,x0+1)[0]);
-            big_problem.SetParameterBlockConstant(&locs(y0+1,x0+1)[0]);
+        // if (generation == 3) {
+        //     big_problem.SetParameterBlockConstant(&locs(y0,x0)[0]);
+        //     big_problem.SetParameterBlockConstant(&locs(y0+1,x0)[0]);
+        //     big_problem.SetParameterBlockConstant(&locs(y0,x0+1)[0]);
+        //     big_problem.SetParameterBlockConstant(&locs(y0+1,x0+1)[0]);
+        // }
+
+
+        if (generation > 3) {
+            cv::Mat_<cv::Vec2d> _empty;
+            freeze_inner_params(big_problem, 10, state, locs, _empty, loss_status);
         }
 
         cands.resize(0);
