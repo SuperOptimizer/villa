@@ -54,6 +54,28 @@ static std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v
     return out;
 }
 
+class ALifeTime
+{
+public:
+    ALifeTime(const std::string &msg = "")
+    {
+        if (msg.size())
+            std::cout << msg << std::flush;
+        start = std::chrono::high_resolution_clock::now();
+    }
+    std::string del_msg;
+    ~ALifeTime()
+    {
+        auto end = std::chrono::high_resolution_clock::now();
+        if (del_msg.size())
+            std::cout << del_msg << std::chrono::duration<double>(end-start).count() << " s" << std::endl;
+        else
+            std::cout << " took " << std::chrono::duration<double>(end-start).count() << " s" << std::endl;
+    }
+private:
+    std::chrono::time_point<std::chrono::high_resolution_clock> start;
+};
+
 /*static void timed_plane_slice(PlaneCoords &plane, z5::Dataset *ds, size_t size, ChunkCache *cache, std::string msg)
 {
     xt::xarray<float> coords;
@@ -2453,7 +2475,7 @@ int emptytrace_create_centered_losses(ceres::Problem &problem, const cv::Vec2i &
 }
 
 //create only missing losses so we can optimize the whole problem
-int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &loss_status, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float unit, std::unordered_map<cv::Vec2i,std::vector<ceres::ResidualBlockId>,vec2i_hash> &foldLossIds, int flags = SPACE_LOSS | OPTIMIZE_ALL)
+int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &loss_status, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float unit, int flags = SPACE_LOSS | OPTIMIZE_ALL)
 {
     //generate losses for point p
     int count = 0;
@@ -2505,8 +2527,45 @@ int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<
     return count;
 }
 
+//optimize within a radius, setting edge points to constant
+float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, const StupidTensorInterpolator<float,1> &interp, float unit)
+{
+    ceres::Problem problem;
+    cv::Mat_<uint16_t> loss_status(state.size(), 0);
+
+    int r_outer = radius+3;
+
+    for(int oy=std::max(p[0]-radius,0);oy<=std::min(p[0]+radius,locs.rows-1);oy++)
+        for(int ox=std::max(p[1]-radius,0);ox<=std::min(p[1]+radius,locs.cols-1);ox++) {
+            cv::Vec2i op = {oy, ox};
+            if (cv::norm(p-op) <= radius)
+                emptytrace_create_missing_centered_losses(problem, loss_status, op, state, locs, interp, unit);
+        }
+    for(int oy=std::max(p[0]-r_outer,0);oy<=std::min(p[0]+r_outer,locs.rows-1);oy++)
+        for(int ox=std::max(p[1]-r_outer,0);ox<=std::min(p[1]+r_outer,locs.cols-1);ox++) {
+            cv::Vec2i op = {oy, ox};
+            if (cv::norm(p-op) > radius && problem.HasParameterBlock(&locs(op)[0]))
+                problem.SetParameterBlockConstant(&locs(op)[0]);
+        }
+
+
+    ceres::Solver::Options options;
+    options.linear_solver_type = ceres::SPARSE_SCHUR;
+    options.minimizer_progress_to_stdout = false;
+    options.max_num_iterations = 500;
+    options.num_threads = omp_get_max_threads();
+
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+
+    std::cout << "local solve radius" << radius << " " << summary.BriefReport() << std::endl;
+
+    return sqrt(summary.final_cost/summary.num_residual_blocks);
+}
+
 QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, cv::Vec3f normal, float step)
 {
+    ALifeTime timer("empty space tracing ...");
     DSReader reader = {ds,scale,cache};
 
     int w = 450;
@@ -2572,8 +2631,6 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     cv::Mat_<uint8_t> phys_fail(size,0);
     cv::Mat_<uint16_t> loss_status(cv::Size(w,h),0);
 
-    std::unordered_map<cv::Vec2i,std::vector<ceres::ResidualBlockId>,vec2i_hash> foldLossIds;
-
     cv::Rect used_area(x0,y0,2,2);
     //these are locations in the local volume!
     locs(y0,x0) = {x0,y0,z/2};
@@ -2589,10 +2646,10 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     ceres::Problem big_problem;
 
     int loss_count;
-    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0,x0}, state, locs, interp, Ts, foldLossIds);
-    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0+1,x0}, state, locs, interp, Ts, foldLossIds);
-    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0,x0+1}, state, locs, interp, Ts, foldLossIds);
-    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0+1,x0+1}, state, locs, interp, Ts, foldLossIds);
+    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0,x0}, state, locs, interp, Ts);
+    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0+1,x0}, state, locs, interp, Ts);
+    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0,x0+1}, state, locs, interp, Ts);
+    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0+1,x0+1}, state, locs, interp, Ts);
 
     //TODO only fix later
     // big_problem.SetParameterBlockConstant(&locs(y0,x0)[0]);
@@ -2612,7 +2669,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     options_big.minimizer_progress_to_stdout = false;
     //TODO check for update ...
     // options_big.enable_fast_removal = true;
-    // options_big.num_threads = omp_get_max_threads();
+    options_big.num_threads = omp_get_max_threads();
     options_big.max_num_iterations = 10000;
 
 
@@ -2647,10 +2704,13 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     int succ = 0;
 
     int generation = 0;
-    int stop_gen = 100;
+    int stop_gen = 200;
     int phys_fail_count = 0;
 
     while (fringe.size()) {
+        ALifeTime timer_gen;
+        timer_gen.del_msg = "time per generation ";
+
         int phys_fail_count_gen = 0;
         generation++;
         if (stop_gen && generation >= stop_gen)
@@ -2754,22 +2814,32 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             if (dist <= 2 || summary.final_cost >= 0.1) {
                 // if (loss1 < 0.1) {
                 locs(p) = phys_only_loc;
-                loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, Ts, foldLossIds, OPTIMIZE_ALL);
+                loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, Ts, OPTIMIZE_ALL);
                 //FIXME should have special handling for this case ...
                 state(p) = STATE_LOC_VALID;
                 // }
                 if (loss1 > 0.1) {
-                    phys_fail_count++;
-                    phys_fail_count_gen++;
-                    std::cout << "phys fail!  " << loss1 << std::endl;
                     //just completely ignore this sapce
                     // state(p) = STATE_FAIL;
                     phys_fail(p) = 1;
+
+
+                    float err = 0;
+                    for(int range = 1; range<=16;range++) {
+                        err = local_optimization(range, p, state, locs, interp, Ts);
+                        if (err <= 0.1)
+                            break;
+                    }
+                    if (err > 0.1) {
+                        std::cout << "local phys fail! " << err << std::endl;
+                        phys_fail_count++;
+                        phys_fail_count_gen++;
+                    }
                 }
             }
             else {
                 //FIXMe still add (some?) material losses for empty points so we get valid surface structure!
-                loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, Ts, foldLossIds);
+                loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, Ts);
 
                 succ++;
                 fringe.push_back(p);
@@ -2841,8 +2911,12 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         }
 
         //this actually did work (but was slow ...)
-        if (phys_fail_count_gen)
+        if (phys_fail_count_gen) {
+            options_big.minimizer_progress_to_stdout = true;
             options_big.max_num_iterations = 1000;
+        }
+        else
+            options_big.minimizer_progress_to_stdout = false;
 
         //
         // if (generation > 3) {
