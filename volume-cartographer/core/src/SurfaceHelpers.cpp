@@ -2570,9 +2570,9 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     ALifeTime timer("empty space tracing ...");
     DSReader reader = {ds,scale,cache};
 
-    int w = 600;
-    int h = 600;
-    int z = 600;
+    int w = 450;
+    int h = 450;
+    int z = 150;
     cv::Size size = {w,h};
     cv::Rect bounds(0,0,w-1,h-1);
     cv::normalize(normal, normal);
@@ -2819,7 +2819,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             //FIXME revisit dists after (every?) iteration?
             if (dist <= 1 || summary.final_cost >= 0.1) {
                 locs(p) = phys_only_loc;
-                state(p) = STATE_LOC_VALID;
+                state(p) = STATE_COORD_VALID;
                 loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, Ts, OPTIMIZE_ALL);
                 //FIXME should have special handling for this case ...
                 if (loss1 > phys_fail_th) {
@@ -2840,6 +2840,8 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                         phys_fail_count_gen++;
                     }
                 }
+                //this is the reason we don't just extend forever ...
+                fringe.push_back(p);
             }
             else {
                 //FIXMe still add (some?) material losses for empty points so we get valid surface structure!
