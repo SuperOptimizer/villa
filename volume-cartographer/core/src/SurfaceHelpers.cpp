@@ -1242,7 +1242,7 @@ struct StraightLoss {
 
         T dot = (d1[0]*d2[0] + d1[1]*d2[1] + d1[2]*d2[2])/(l1*l2);
 
-        residual[0] = T(10)*(T(1)-dot);
+        residual[0] = T(30)*(T(1)-dot);
 
         return true;
     }
@@ -1496,13 +1496,13 @@ cv::Vec2i lower_p(const cv::Vec2i &point, const cv::Vec2i &offset)
 
 bool loss_mask(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status)
 {
-    return loss_status(lower_p(p, {1,1})) & (1 << bit);
+    return loss_status(lower_p(p, off)) & (1 << bit);
 }
 
 int set_loss_mask(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, int set)
 {
     if (set)
-        loss_status(lower_p(p, {1,1})) |= (1 << bit);
+        loss_status(lower_p(p, off)) |= (1 << bit);
     return set;
 }
 
@@ -2389,6 +2389,7 @@ void distanceTransform(const st_u &src, st_f &dist)
     int h = src.planes[0].rows;
     int d = src.planes.size();
 
+#pragma omp parallel for
     for(int k=0;k<d;k++)
         for(int j=0;j<h;j++)
             for(int i=0;i<w;i++)
@@ -2398,6 +2399,7 @@ void distanceTransform(const st_u &src, st_f &dist)
     int n_set = 1;
     while (n_set) {
         n_set = 0;
+#pragma omp parallel for
         for(int k=0;k<d;k++)
             for(int j=0;j<h;j++)
                 for(int i=0;i<w;i++) {
@@ -2430,7 +2432,7 @@ void distanceTransform(const st_u &src, st_f &dist)
 
 
 //gen straigt loss given point and 3 offsets
-int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float w = 0.1)
+int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<float,1> &interp, float w = 0.2)
 {
     if (!loc_valid(state(p)))
         return 0;
@@ -2568,9 +2570,9 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     ALifeTime timer("empty space tracing ...");
     DSReader reader = {ds,scale,cache};
 
-    int w = 450;
-    int h = 450;
-    int z = 150;
+    int w = 600;
+    int h = 600;
+    int z = 600;
     cv::Size size = {w,h};
     cv::Rect bounds(0,0,w-1,h-1);
     cv::normalize(normal, normal);
@@ -2814,13 +2816,12 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             double dist;
             interp.Evaluate(locs(p)[2],locs(p)[1],locs(p)[0], &dist);
 
-            if (dist <= 2 || summary.final_cost >= 0.1) {
-                // if (loss1 < 0.1) {
+            //FIXME revisit dists after (every?) iteration?
+            if (dist <= 1 || summary.final_cost >= 0.1) {
                 locs(p) = phys_only_loc;
+                state(p) = STATE_LOC_VALID;
                 loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, Ts, OPTIMIZE_ALL);
                 //FIXME should have special handling for this case ...
-                state(p) = STATE_LOC_VALID;
-                // }
                 if (loss1 > phys_fail_th) {
                     //just completely ignore this sapce
                     // state(p) = STATE_FAIL;
@@ -2959,6 +2960,9 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
         printf("-> total done %d/ fringe: %d\n", succ, fringe.size());
     }
+
+    loss_status = loss_status(used_area);
+    cv::imwrite("loss_status.tif", loss_status);
 
     locs = locs(used_area);
     state = state(used_area);
