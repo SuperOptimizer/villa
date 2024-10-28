@@ -2281,7 +2281,7 @@ struct EmptySpaceLoss {
 
         _interpolator.Evaluate<T>(l[2], l[1], l[0], &v);
 
-        residual[0] = T(1)/v+T(1e-4);
+        residual[0] = T(_w)/(v*T(0.1)+T(1e-4));
 
         return true;
     }
