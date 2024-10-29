@@ -1624,44 +1624,6 @@ void freeze_inner_params(ceres::Problem &problem, int edge_dist, cv::Mat_<uint8_
         }
 }
 
-// void add_phy_losses_closing(ceres::Problem &problem, int edge_dist, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, cv::Mat_<cv::Vec2d> &loc, cv::Mat_<uint16_t> &loss_status)
-// {
-//     cv::Mat_<float> dist(state.size());
-//
-//     edge_dist = std::min(edge_dist,254);
-//
-//     cv::Mat_<uint8_t> masked;
-//     bitwise_and(masked, (uint8_t)STATE_LOC_VALID, masked);
-//
-//     Mat m = cv::getStructuringElement(MORPH_RECT, {3,3});
-//
-//     cv::dilate(masked, )
-//
-//
-//     cv::distanceTransform(masked, dist, cv::DIST_L1, cv::DIST_MASK_3);
-//
-//
-//     // cv::imwrite("dists.tif",dist);
-//
-//     for(int j=0;j<dist.rows;j++)
-//         for(int i=0;i<dist.cols;i++) {
-//             if (dist(j,i) >= edge_dist && !loss_mask(7, {j,i}, {0,0}, loss_status)) {
-//                 if (problem.HasParameterBlock(&out(j,i)[0]))
-//                     problem.SetParameterBlockConstant(&out(j,i)[0]);
-//                 if (!loc.empty() && problem.HasParameterBlock(&loc(j,i)[0]))
-//                     problem.SetParameterBlockConstant(&loc(j,i)[0]);
-//                 set_loss_mask(7, {j,i}, {0,0}, loss_status, 1);
-//             }
-//             if (dist(j,i) >= edge_dist+1 && !loss_mask(8, {j,i}, {0,0}, loss_status)) {
-//                 if (problem.HasParameterBlock(&out(j,i)[0]))
-//                     problem.RemoveParameterBlock(&out(j,i)[0]);
-//                 if (!loc.empty() && problem.HasParameterBlock(&loc(j,i)[0]))
-//                     problem.RemoveParameterBlock(&loc(j,i)[0]);
-//                 set_loss_mask(8, {j,i}, {0,0}, loss_status, 1);
-//             }
-//         }
-// }
-
 void remove_inner_foldlosses(ceres::Problem &problem, int edge_dist, cv::Mat_<uint8_t> &state,  std::unordered_map<cv::Vec2i,std::vector<ceres::ResidualBlockId>,vec2i_hash> &foldLossIds)
 {
     cv::Mat_<float> dist(state.size());
@@ -2362,6 +2324,7 @@ class StupidTensorInterpolator
 using V = cv::Vec<B,N>;
 public:
     using GRID = CeresGrid2DcvMat_<B,N>;
+    StupidTensorInterpolator() {};
     StupidTensorInterpolator(StupidTensor<V> &t)
     {
         _d = t.planes.size();
@@ -2610,6 +2573,85 @@ float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &stat
     return sqrt(summary.final_cost/summary.num_residual_blocks);
 }
 
+
+//use closing operation to add inner points, TODO should probably also implement fringe based extension ...
+void add_phy_losses_closing(ceres::Problem &big_problem, int radius, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, cv::Mat_<uint16_t> &loss_status, const std::vector<cv::Vec2i> &cands, float unit, float phys_fail_th, const
+StupidTensorInterpolator<float,1> &interp)
+{
+    cv::Mat_<float> dist(state.size());
+
+    cv::Mat_<uint8_t> masked;
+    bitwise_and(state, (uint8_t)STATE_LOC_VALID, masked);
+
+    cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
+
+    cv::dilate(masked, masked, m, {-1,-1}, radius);
+    cv::erode(masked, masked, m, {-1,-1}, radius);
+
+    int r2 = 1;
+
+    //FIXME use fringe-like approach for better ordering!
+    for(int j=0;j<locs.rows;j++)
+        for(int i=0;i<locs.cols;i++) {
+            cv::Vec2i p = {j,i};
+            if (!masked(p))
+                continue;
+
+            if (state(p) & (STATE_COORD_VALID | STATE_LOC_VALID)) {
+                //just fill in ... should not be necessary?
+                emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, unit, OPTIMIZE_ALL);
+                continue;
+            }
+
+            if ((state(p) & (STATE_COORD_VALID | STATE_LOC_VALID)) == 0) {
+                int ref_count = 0;
+                cv::Vec3d avg = {0,0,0};
+                for(int oy=std::max(p[0]-r2,0);oy<=std::min(p[0]+r2,locs.rows-1);oy++)
+                    for(int ox=std::max(p[1]-r2,0);ox<=std::min(p[1]+r2,locs.cols-1);ox++)
+                        if (state(oy,ox) & STATE_COORD_VALID) {
+                            avg += locs(oy,ox);
+                            ref_count++;
+                        }
+                avg /= ref_count;
+
+                if (ref_count < 2)
+                    continue;
+
+                locs(p) = avg;
+                state(p) |= STATE_COORD_VALID;
+
+                ceres::Problem problem;
+
+                int local_loss_count = emptytrace_create_centered_losses(problem, p, state, locs, interp, unit);
+
+                ceres::Solver::Options options;
+                options.linear_solver_type = ceres::DENSE_QR;
+                options.max_num_iterations = 100;
+                ceres::Solver::Summary summary;
+                ceres::Solve(options, &problem, &summary);
+
+                double loss1 = summary.final_cost;
+
+                // std::cout << loss1 << std::endl;
+
+                if (loss1 > phys_fail_th) {
+                    float err = 0;
+                    for(int range = 1; range<=16;range++) {
+                        err = local_optimization(range, p, state, locs, interp, unit);
+                        if (err <= phys_fail_th)
+                            break;
+                    }
+
+                    if (err > phys_fail_th)
+                        std::cout << std::endl << "WARNING WARNING WARNING" << std::endl << "fix phys inpaint init! " << loss1 << std::endl << std::endl;
+                }
+
+                emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, unit, OPTIMIZE_ALL);
+            }
+
+    }
+}
+
 QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, cv::Vec3f normal, float step)
 {
     ALifeTime timer("empty space tracing ...");
@@ -2821,7 +2863,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
             ceres::Problem problem;
 
-            state(p) = STATE_LOC_VALID;
+            state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
             int local_loss_count = emptytrace_create_centered_losses(problem, p, state, locs, interp, Ts);
 
             // std::cout << "loss count " << local_loss_count << std::endl;
@@ -2959,6 +3001,8 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             //     break;
             // }
         }
+
+        add_phy_losses_closing(big_problem, 20, state, locs, loss_status, cands, Ts, phys_fail_th, interp);
 
         if (generation >= 3) {
             // big_problem.SetParameterBlockVariable(&locs(y0,x0)[0]);
