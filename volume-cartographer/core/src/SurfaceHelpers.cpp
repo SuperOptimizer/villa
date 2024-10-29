@@ -1595,7 +1595,13 @@ void freeze_inner_params(ceres::Problem &problem, int edge_dist, cv::Mat_<uint8_
 
     edge_dist = std::min(edge_dist,254);
 
-    cv::distanceTransform(state, dist, cv::DIST_L1, cv::DIST_MASK_3);
+
+    cv::Mat_<uint8_t> masked;
+    bitwise_and(masked, (uint8_t)STATE_LOC_VALID, masked);
+
+
+    cv::distanceTransform(masked, dist, cv::DIST_L1, cv::DIST_MASK_3);
+
 
     // cv::imwrite("dists.tif",dist);
 
@@ -1617,6 +1623,44 @@ void freeze_inner_params(ceres::Problem &problem, int edge_dist, cv::Mat_<uint8_
             }
         }
 }
+
+// void add_phy_losses_closing(ceres::Problem &problem, int edge_dist, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, cv::Mat_<cv::Vec2d> &loc, cv::Mat_<uint16_t> &loss_status)
+// {
+//     cv::Mat_<float> dist(state.size());
+//
+//     edge_dist = std::min(edge_dist,254);
+//
+//     cv::Mat_<uint8_t> masked;
+//     bitwise_and(masked, (uint8_t)STATE_LOC_VALID, masked);
+//
+//     Mat m = cv::getStructuringElement(MORPH_RECT, {3,3});
+//
+//     cv::dilate(masked, )
+//
+//
+//     cv::distanceTransform(masked, dist, cv::DIST_L1, cv::DIST_MASK_3);
+//
+//
+//     // cv::imwrite("dists.tif",dist);
+//
+//     for(int j=0;j<dist.rows;j++)
+//         for(int i=0;i<dist.cols;i++) {
+//             if (dist(j,i) >= edge_dist && !loss_mask(7, {j,i}, {0,0}, loss_status)) {
+//                 if (problem.HasParameterBlock(&out(j,i)[0]))
+//                     problem.SetParameterBlockConstant(&out(j,i)[0]);
+//                 if (!loc.empty() && problem.HasParameterBlock(&loc(j,i)[0]))
+//                     problem.SetParameterBlockConstant(&loc(j,i)[0]);
+//                 set_loss_mask(7, {j,i}, {0,0}, loss_status, 1);
+//             }
+//             if (dist(j,i) >= edge_dist+1 && !loss_mask(8, {j,i}, {0,0}, loss_status)) {
+//                 if (problem.HasParameterBlock(&out(j,i)[0]))
+//                     problem.RemoveParameterBlock(&out(j,i)[0]);
+//                 if (!loc.empty() && problem.HasParameterBlock(&loc(j,i)[0]))
+//                     problem.RemoveParameterBlock(&loc(j,i)[0]);
+//                 set_loss_mask(8, {j,i}, {0,0}, loss_status, 1);
+//             }
+//         }
+// }
 
 void remove_inner_foldlosses(ceres::Problem &problem, int edge_dist, cv::Mat_<uint8_t> &state,  std::unordered_map<cv::Vec2i,std::vector<ceres::ResidualBlockId>,vec2i_hash> &foldLossIds)
 {
@@ -2725,17 +2769,19 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         for(auto p : fringe)
         {
             //TODO maybe should also check neighs of cood_valid?
-            if (!loc_valid(state(p)) && state(p))
+            if (!loc_valid(state(p)))
                 continue;
 
             for(auto n : neighs)
-                if (bounds.contains(p+n) && state(p+n) == 0) {
-                    state(p+n) = STATE_PROCESSING;
+                if (bounds.contains(p+n)
+                    && (state(p+n) & STATE_PROCESSING) == 0
+                    && (state(p+n) & STATE_LOC_VALID) == 0) {
+                    state(p+n) |= STATE_PROCESSING;
                     cands.push_back(p+n);
                 }
         }
-        for(auto p : cands)
-            state(p) = STATE_UNUSED;
+        // for(auto p : cands)
+            // state(p) = STATE_UNUSED;
         printf("gen %d processing %d fringe cands (total done %d fringe: %d\n", generation, cands.size(), succ, fringe.size());
         fringe.resize(0);
 
@@ -2745,14 +2791,14 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         // std::shuffle(std::begin(cands), std::end(cands), rng);
 
         for(auto p : cands) {
-            if (state(p) != STATE_UNUSED)
+            if (state(p) & STATE_LOC_VALID)
                 continue;
 
             int ref_count = 0;
             cv::Vec3d avg = {0,0,0};
             for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,locs.rows-1);oy++)
                 for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,locs.cols-1);ox++)
-                    if (loc_valid(state(oy,ox))) {
+                    if (state(oy,ox) & STATE_LOC_VALID) {
                         ref_count++;
                         avg += locs(oy,ox);
                     }
@@ -2761,12 +2807,14 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             int ref_count2 = 0;
             for(int oy=std::max(p[0]-r2,0);oy<=std::min(p[0]+r2,locs.rows-1);oy++)
                 for(int ox=std::max(p[1]-r2,0);ox<=std::min(p[1]+r2,locs.cols-1);ox++)
-                    if (loc_valid(state(oy,ox))) {
+                    if (state(oy,ox) & STATE_LOC_VALID) {
                         ref_count2++;
                     }
 
-            if (ref_count < 2 || (generation > 3 && ref_count2 < 14))
+            if (ref_count < 2 || (generation > 3 && ref_count2 < 14)) {
+                state(p) &= ~STATE_PROCESSING;
                 continue;
+            }
 
             avg /= ref_count;
             locs(p) = avg;
@@ -2846,7 +2894,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                     }
                 }
                 //this is the reason we don't just extend forever ...
-                fringe.push_back(p);
+                // fringe.push_back(p);
             }
             else {
                 //FIXMe still add (some?) material losses for empty points so we get valid surface structure!
