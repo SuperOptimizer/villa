@@ -2699,15 +2699,12 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
     st_1u vol;
     st_1u voldist;
-    //FIXME volcords is a huge waste of space ... somehow do this on-demand ...
-    st_3f vol_coords;
 
     for(int zi=0;zi<z;zi++) {
         double off = zi - z/2;
         cv::Mat_<cv::Vec3f> offmat(size, normal*off);
         readInterpolated3D(slice, reader.ds, coords+offmat, reader.cache);
         vol.planes.push_back(slice.clone());
-        vol_coords.planes.push_back(coords+offmat);
     }
 
     for(auto &p : vol.planes)
@@ -2724,7 +2721,6 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
     //start of empty space tracing
     StupidTensorInterpolator<uint8_t,1> interp(voldist);
-    StupidTensorInterpolator<float,3> interp_coords(vol_coords);
 
     std::vector<cv::Vec2i> fringe;
     std::vector<cv::Vec2i> cands;
@@ -3074,7 +3070,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
         if (generation > 3) {
             cv::Mat_<cv::Vec2d> _empty;
-            freeze_inner_params(big_problem, 10, state, locs, _empty, loss_status);
+            freeze_inner_params(big_problem, 10, state, locs, _empty, loss_status, STATE_COORD_VALID | STATE_LOC_VALID);
         }
 
         cands.resize(0);
@@ -3084,6 +3080,9 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
     loss_status = loss_status(used_area);
     cv::imwrite("loss_status.tif", loss_status);
+
+    CeresGrid2DcvMat3f grid_coords({coords});
+    ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> interp_coords(grid_coords);
 
     locs = locs(used_area);
     state = state(used_area);
@@ -3095,8 +3094,12 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                 continue;
             cv::Vec3d l = locs(j,i);
             double p[3];
-            interp_coords.Evaluate<double>(l[2],l[1],l[0], p);
-            points(j,i) = {p[0],p[1],p[2]};
+
+            interp_coords.Evaluate(l[1],l[0], p);
+            cv::Vec3f coord = {p[0],p[1],p[2]};
+            coord += (l[2]-z/2) * normal;
+            points(j,i) = coord;
+
             double d;
             interp.Evaluate<double>(l[2],l[1],l[0], &d);
             dists(j,i) = d;
