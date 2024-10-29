@@ -12,6 +12,7 @@
 #include "vc/core/util/Surface.hpp"
 
 #include <fstream>
+// #include <random>
 
 static std::ostream& operator<< (std::ostream& out, const std::vector<size_t> &v) {
     if ( !v.empty() ) {
@@ -1242,7 +1243,7 @@ struct StraightLoss {
 
         T dot = (d1[0]*d2[0] + d1[1]*d2[1] + d1[2]*d2[2])/(l1*l2);
 
-        residual[0] = T(30)*(T(1)-dot);
+        residual[0] = T(10)*(T(1)-dot);
 
         return true;
     }
@@ -2572,7 +2573,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
     int w = 450;
     int h = 450;
-    int z = 150;
+    int z = 450;
     cv::Size size = {w,h};
     cv::Rect bounds(0,0,w-1,h-1);
     cv::normalize(normal, normal);
@@ -2593,7 +2594,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     st_f voldist;
     st_3f vol_coords;
 
-    for(double off=-75;off<75;off+=1) {
+    for(double off=-z/2;off<450-z/2;off+=1) {
         cv::Mat_<cv::Vec3f> offmat(size, normal*off);
         readInterpolated3D(slice, reader.ds, coords+offmat, reader.cache);
         vol.planes.push_back(slice.clone());
@@ -2739,6 +2740,10 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         fringe.resize(0);
 
         std::cout << "cands " << cands.size() << std::endl;
+
+        // auto rng = std::default_random_engine {};
+        // std::shuffle(std::begin(cands), std::end(cands), rng);
+
         for(auto p : cands) {
             if (state(p) != STATE_UNUSED)
                 continue;
