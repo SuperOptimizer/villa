@@ -2657,9 +2657,11 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     ALifeTime timer("empty space tracing ...");
     DSReader reader = {ds,scale,cache};
 
-    int w = 450;
-    int h = 450;
-    int z = 450;
+    int stop_gen = 150;
+
+    int w = 2*step*reader.scale*1.25*stop_gen;
+    int h = w;
+    int z = w;
     cv::Size size = {w,h};
     cv::Rect bounds(0,0,w-1,h-1);
     cv::normalize(normal, normal);
@@ -2680,7 +2682,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     st_f voldist;
     st_3f vol_coords;
 
-    for(double off=-z/2;off<450-z/2;off+=1) {
+    for(double off=-z/2;off<z-z/2;off+=1) {
         cv::Mat_<cv::Vec3f> offmat(size, normal*off);
         readInterpolated3D(slice, reader.ds, coords+offmat, reader.cache);
         vol.planes.push_back(slice.clone());
@@ -2795,7 +2797,6 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     int succ = 0;
 
     int generation = 0;
-    int stop_gen = 100;
     int phys_fail_count = 0;
     double phys_fail_th = 0.1;
 
