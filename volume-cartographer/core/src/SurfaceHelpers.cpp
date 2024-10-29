@@ -1127,7 +1127,7 @@ struct CeresGrid2DcvMat_ {
 
 //cost functions for physical paper
 struct DistLoss {
-    DistLoss(float dist) : _d(dist) {};
+    DistLoss(float dist, float w) : _d(dist), _w(w) {};
     template <typename T>
     bool operator()(const T* const a, const T* const b, T* residual) const {
         //FIXME where are invalid coords coming from?
@@ -1148,16 +1148,17 @@ struct DistLoss {
 
         d[0] = sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
 
-        residual[0] = d[0] - T(_d);
+        residual[0] = T(_w)*(d[0]/T(_d) - T(1));
 
         return true;
     }
 
     double _d;
+    double _w;
 
-    static ceres::CostFunction* Create(float d)
+    static ceres::CostFunction* Create(float d, float w = 1.0)
     {
-        return new ceres::AutoDiffCostFunction<DistLoss, 1, 3, 3>(new DistLoss(d));
+        return new ceres::AutoDiffCostFunction<DistLoss, 1, 3, 3>(new DistLoss(d, w));
     }
 };
 
@@ -1381,14 +1382,14 @@ int gen_straight_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec
 }
 
 //gen straigt loss given point and 3 offsets
-int gen_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, float unit, bool optimize_all)
+int gen_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, float unit, bool optimize_all, float w = 1.0)
 {
     if (!coord_valid(state(p)))
         return 0;
     if (!coord_valid(state(p+off)))
         return 0;
 
-    problem.AddResidualBlock(DistLoss::Create(unit*cv::norm(off)), nullptr, &dpoints(p)[0], &dpoints(p+off)[0]);
+    problem.AddResidualBlock(DistLoss::Create(unit*cv::norm(off),w), nullptr, &dpoints(p)[0], &dpoints(p+off)[0]);
 
     if (!optimize_all) {
         problem.SetParameterBlockConstant(&dpoints(p+off)[0]);
@@ -1420,7 +1421,7 @@ int gen_used_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t>
 }
 
 //gen straigt loss given point and 3 offsets
-ceres::ResidualBlockId gen_loc_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec2d> &loc, cv::Vec2f loc_scale, float mindist, float w = 1.0)
+ceres::ResidualBlockId gen_loc_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec2d> &loc, cv::Vec2f loc_scale, float mindist, float w = 0.1)
 {
     if ((!off[0] && !off [1]) || !loc_valid(state(p+off)))
         return nullptr;
@@ -1450,17 +1451,19 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     count += gen_straight_loss(problem, p, {-1,0},{0,0},{1,0}, state, out, flags & OPTIMIZE_ALL);
     count += gen_straight_loss(problem, p, {0,0},{1,0},{2,0}, state, out, flags & OPTIMIZE_ALL);
 
+    float dist_w = 1.0;
+
     //direct neighboars
-    count += gen_dist_loss(problem, p, {0,-1}, state, out, unit, flags & OPTIMIZE_ALL);
-    count += gen_dist_loss(problem, p, {0,1}, state, out, unit, flags & OPTIMIZE_ALL);
-    count += gen_dist_loss(problem, p, {-1,0}, state, out, unit, flags & OPTIMIZE_ALL);
-    count += gen_dist_loss(problem, p, {1,0}, state, out, unit, flags & OPTIMIZE_ALL);
+    count += gen_dist_loss(problem, p, {0,-1}, state, out, unit, flags & OPTIMIZE_ALL, dist_w);
+    count += gen_dist_loss(problem, p, {0,1}, state, out, unit, flags & OPTIMIZE_ALL, dist_w);
+    count += gen_dist_loss(problem, p, {-1,0}, state, out, unit, flags & OPTIMIZE_ALL, dist_w);
+    count += gen_dist_loss(problem, p, {1,0}, state, out, unit, flags & OPTIMIZE_ALL, dist_w);
 
     //diagonal neighbors
-    count += gen_dist_loss(problem, p, {1,-1}, state, out, unit, flags & OPTIMIZE_ALL);
-    count += gen_dist_loss(problem, p, {-1,1}, state, out, unit, flags & OPTIMIZE_ALL);
-    count += gen_dist_loss(problem, p, {1,1}, state, out, unit, flags & OPTIMIZE_ALL);
-    count += gen_dist_loss(problem, p, {-1,-1}, state, out, unit, flags & OPTIMIZE_ALL);
+    count += gen_dist_loss(problem, p, {1,-1}, state, out, unit, flags & OPTIMIZE_ALL, dist_w);
+    count += gen_dist_loss(problem, p, {-1,1}, state, out, unit, flags & OPTIMIZE_ALL, dist_w);
+    count += gen_dist_loss(problem, p, {1,1}, state, out, unit, flags & OPTIMIZE_ALL, dist_w);
+    count += gen_dist_loss(problem, p, {-1,-1}, state, out, unit, flags & OPTIMIZE_ALL, dist_w);
 
     if (flags & SURF_LOSS)
         count += gen_surf_loss(problem, p, state, out, interp, loc);
@@ -1507,11 +1510,11 @@ int set_loss_mask(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<ui
     return set;
 }
 
-int conditional_dist_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, float unit, bool optimize_all)
+int conditional_dist_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &out, float unit, bool optimize_all, float w = 1.0)
 {
     int set = 0;
     if (!loss_mask(bit, p, off, loss_status))
-        set = set_loss_mask(bit, p, off, loss_status, gen_dist_loss(problem, p, off, state, out, unit, optimize_all));
+        set = set_loss_mask(bit, p, off, loss_status, gen_dist_loss(problem, p, off, state, out, unit, optimize_all, w));
     return set;
 };
 
@@ -1554,20 +1557,22 @@ int create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &
     count += conditional_straight_loss(1, p, {-1,0},{0,0},{1,0}, loss_status, problem, state, out, flags);
     count += conditional_straight_loss(1, p, {0,0},{1,0},{2,0}, loss_status, problem, state, out, flags);
 
+    float dist_w = 1.0;
+
     //direct neighboars h
-    count += conditional_dist_loss(2, p, {0,-1}, loss_status, problem, state, out, unit, flags);
-    count += conditional_dist_loss(2, p, {0,1}, loss_status, problem, state, out, unit, flags);
+    count += conditional_dist_loss(2, p, {0,-1}, loss_status, problem, state, out, unit, flags, dist_w);
+    count += conditional_dist_loss(2, p, {0,1}, loss_status, problem, state, out, unit, flags, dist_w);
 
     //direct neighbors v
-    count += conditional_dist_loss(3, p, {-1,0}, loss_status, problem, state, out, unit, flags);
-    count += conditional_dist_loss(3, p, {1,0}, loss_status, problem, state, out, unit, flags);
+    count += conditional_dist_loss(3, p, {-1,0}, loss_status, problem, state, out, unit, flags, dist_w);
+    count += conditional_dist_loss(3, p, {1,0}, loss_status, problem, state, out, unit, flags, dist_w);
 
     //diagonal neighbors
-    count += conditional_dist_loss(4, p, {1,-1}, loss_status, problem, state, out, unit, flags);
-    count += conditional_dist_loss(4, p, {-1,1}, loss_status, problem, state, out, unit, flags);
+    count += conditional_dist_loss(4, p, {1,-1}, loss_status, problem, state, out, unit, flags, dist_w);
+    count += conditional_dist_loss(4, p, {-1,1}, loss_status, problem, state, out, unit, flags, dist_w);
 
-    count += conditional_dist_loss(5, p, {1,1}, loss_status, problem, state, out, unit, flags);
-    count += conditional_dist_loss(5, p, {-1,-1}, loss_status, problem, state, out, unit, flags);
+    count += conditional_dist_loss(5, p, {1,1}, loss_status, problem, state, out, unit, flags, dist_w);
+    count += conditional_dist_loss(5, p, {-1,-1}, loss_status, problem, state, out, unit, flags, dist_w);
 
     if (flags & SURF_LOSS && !loss_mask(6, p, {0,0}, loss_status)) {
         count += set_loss_mask(6, p, {0,0}, loss_status, gen_surf_loss(problem, p, state, out, interp, loc));
@@ -1932,7 +1937,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps_phys(const cv::Mat_<cv::Vec
         }
 
         if (generation > 3) {
-            remove_inner_foldlosses(big_problem, 2, state, foldLossIds);
+            remove_inner_foldlosses(big_problem, 4, state, foldLossIds);
             freeze_inner_params(big_problem, 10, state, out, locd, loss_status, STATE_LOC_VALID);
 
             options_big.max_num_iterations = 10;
