@@ -2712,13 +2712,6 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
     distanceTransform(vol, voldist, 40);
 
-    for(int i=0;i<vol.planes.size();i++)
-    {
-        char buf[64];
-        sprintf(buf, "voldist_%04d.tif", i);
-        imwrite(buf, voldist.planes[i]);
-    }
-
     //start of empty space tracing
     StupidTensorInterpolator<uint8_t,1> interp(voldist);
 
