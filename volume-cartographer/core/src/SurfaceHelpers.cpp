@@ -1243,7 +1243,7 @@ struct StraightLoss {
 
         T dot = (d1[0]*d2[0] + d1[1]*d2[1] + d1[2]*d2[2])/(l1*l2);
 
-        residual[0] = T(10)*(T(1)-dot);
+        residual[0] = T(0.3)*(T(1)-dot);
 
         return true;
     }
@@ -2384,6 +2384,37 @@ struct EmptySpaceLoss {
 
 };
 
+//cost functions for physical paper
+struct EmptySpaceLineLoss {
+    // EmptySpaceMultiLoss(const StupidTensorInterpolator<uint8_t,1> &interp, int steps, uint8_t *state_a, uint8_t *state_b,  w) : _interpolator(interp), _steps(steps), _w(w) {};
+    template <typename T>
+    bool operator()(const T* const la, const T* const lb, T* residual) const {
+        T v;
+        T sum = T(0);
+
+        for(int i=1;i<_steps;i++) {
+            T f2 = T(float(i)/_steps);
+            T f1 = T(1.0f-float(i)/_steps);
+            _interpolator.Evaluate<T>(f1*la[2]+f2*lb[2], f1*la[1]+f2*lb[1], f1*la[0]+f2*lb[0], &v);
+            sum += T(_w)/(v+T(0.3));
+        }
+
+        residual[0] = sum/T(_steps-1);
+
+        return true;
+    }
+
+    const StupidTensorInterpolator<uint8_t,1> &_interpolator;
+    int _steps;
+    float _w;
+
+    static ceres::CostFunction* Create(const StupidTensorInterpolator<uint8_t,1> &interp, int steps, float w = 1.0)
+    {
+        return new ceres::AutoDiffCostFunction<EmptySpaceLineLoss, 1, 3, 3>(new EmptySpaceLineLoss({interp, steps, w}));
+    }
+
+};
+
 uint8_t max_d_ign(uint8_t a, uint8_t b)
 {
     if (a == 255)
@@ -2419,6 +2450,7 @@ void distanceTransform(const st_1u &src, st_1u &dist, int steps)
 
     int n_set = 1;
     for(int n=0;n<steps;n++) {
+        std::cout << "step " << n << " of " << steps << std::endl;
         n_set = 0;
 #pragma omp parallel for
         for(int k=0;k<d;k++)
@@ -2437,7 +2469,6 @@ void distanceTransform(const st_1u &src, st_1u &dist, int steps)
                             p2->at(k,j,i) = dist+1;
                         else
                             p2->at(k,j,i) = dist;
-
                     }
                     else
                         p2->at(k,j,i) = dist;
@@ -2459,13 +2490,25 @@ void distanceTransform(const st_1u &src, st_1u &dist, int steps)
 }
 
 
-//gen straigt loss given point and 3 offsets
-int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<uint8_t,1> &interp, float w = 0.2)
+int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<uint8_t,1> &interp, float w = 0.4)
 {
     if (!loc_valid(state(p)))
         return 0;
 
     problem.AddResidualBlock(EmptySpaceLoss::Create(interp, w), nullptr, &loc(p)[0]);
+
+    return 1;
+}
+
+int gen_space_line_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<uint8_t,1> &interp, float w = 0.4)
+{
+    if (!loc_valid(state(p)))
+        return 0;
+    if (!loc_valid(state(p+off)))
+        return 0;
+
+    //TODO this will always succeed, but costfunction might not actually work, maybe actually check if it can be added?
+    problem.AddResidualBlock(EmptySpaceLineLoss::Create(interp, 4, w), nullptr, &loc(p)[0], &loc(p+off)[0]);
 
     return 1;
 }
@@ -2498,11 +2541,25 @@ int emptytrace_create_centered_losses(ceres::Problem &problem, const cv::Vec2i &
     count += gen_dist_loss(problem, p, {1,1}, state, loc, unit, flags & OPTIMIZE_ALL);
     count += gen_dist_loss(problem, p, {-1,-1}, state, loc, unit, flags & OPTIMIZE_ALL);
 
-    if (flags & SPACE_LOSS)
+    if (flags & SPACE_LOSS) {
         count += gen_space_loss(problem, p, state, loc, interp);
+
+        count += gen_space_line_loss(problem, p, {1,0}, state, loc, interp);
+        count += gen_space_line_loss(problem, p, {-1,0}, state, loc, interp);
+        count += gen_space_line_loss(problem, p, {0,1}, state, loc, interp);
+        count += gen_space_line_loss(problem, p, {0,-1}, state, loc, interp);
+    }
 
     return count;
 }
+
+int conditional_spaceline_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<uint8_t,1> &interp)
+{
+    int set = 0;
+    if (!loss_mask(bit, p, off, loss_status))
+        set = set_loss_mask(bit, p, off, loss_status, gen_space_line_loss(problem, p, off, state, loc, interp));
+    return set;
+};
 
 //create only missing losses so we can optimize the whole problem
 int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &loss_status, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<uint8_t,1> &interp, float unit, int flags = SPACE_LOSS | OPTIMIZE_ALL)
@@ -2535,24 +2592,16 @@ int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<
     count += conditional_dist_loss(5, p, {1,1}, loss_status, problem, state, loc, unit, flags);
     count += conditional_dist_loss(5, p, {-1,-1}, loss_status, problem, state, loc, unit, flags);
 
-    if (flags & SPACE_LOSS && !loss_mask(6, p, {0,0}, loss_status)) {
-        count += set_loss_mask(6, p, {0,0}, loss_status, gen_space_loss(problem, p, state, loc, interp));
-    }
+    if (flags & SPACE_LOSS) {
+        if (!loss_mask(6, p, {0,0}, loss_status))
+            count += set_loss_mask(6, p, {0,0}, loss_status, gen_space_loss(problem, p, state, loc, interp));
 
-    // if (flags & SURF_LOSS && !loss_mask(6, p, {0,0}, loss_status)) {
-    //     count += set_loss_mask(6, p, {0,0}, loss_status, gen_surf_loss(problem, p, state, out, interp, loc));
-    //
-    //     int r = 4;
-    //     count += set_loss_mask(6, p, {0,0}, loss_status, gen_surf_loss(problem, p, state, out, interp, loc));
-    //
-    //     for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,state.rows-1);oy++)
-    //         for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,state.cols-1);ox++) {
-    //             cv::Vec2i off = {oy-p[0],ox-p[1]};
-    //             ceres::ResidualBlockId id = gen_loc_dist_loss(problem, p, off, state, loc, loc_scale, 1.0*unit);
-    //             if (id)
-    //                 foldLossIds[p].push_back(id);
-    //         }
-    // }
+        count += conditional_spaceline_loss(7, p, {1,0}, loss_status, problem, state, loc, interp);
+        count += conditional_spaceline_loss(7, p, {-1,0}, loss_status, problem, state, loc, interp);
+
+        count += conditional_spaceline_loss(8, p, {0,1}, loss_status, problem, state, loc, interp);
+        count += conditional_spaceline_loss(8, p, {0,-1}, loss_status, problem, state, loc, interp);
+    }
 
     return count;
 }
@@ -2674,10 +2723,10 @@ StupidTensorInterpolator<uint8_t,1> &interp)
 
 QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, cv::Vec3f normal, float step)
 {
-    ALifeTime timer("empty space tracing ...");
+    ALifeTime f_timer("empty space tracing\n");
     DSReader reader = {ds,scale,cache};
 
-    int stop_gen = 150;
+    int stop_gen = 70;
 
     int w = 2*step*reader.scale*1.25*stop_gen;
     int h = w;
@@ -2700,17 +2749,27 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     st_1u vol;
     st_1u voldist;
 
+    std::cout << " reading " << double(w)*h*z/1000/1000 << "M voxels" << std::endl;
+    ALifeTime *timer = new ALifeTime("reading...");
     for(int zi=0;zi<z;zi++) {
         double off = zi - z/2;
         cv::Mat_<cv::Vec3f> offmat(size, normal*off);
         readInterpolated3D(slice, reader.ds, coords+offmat, reader.cache);
         vol.planes.push_back(slice.clone());
     }
+    delete timer;
 
+    timer = new ALifeTime("thresholding...");
+#pragma omp parallel for
     for(auto &p : vol.planes)
         cv::threshold(p, p, 50, 1, cv::THRESH_BINARY_INV);
+    delete timer;
 
+    timer = new ALifeTime("distancestransform...");
     distanceTransform(vol, voldist, 40);
+    delete timer;
+
+    timer = new ALifeTime("search & optimization ...");
 
     //start of empty space tracing
     StupidTensorInterpolator<uint8_t,1> interp(voldist);
@@ -2915,15 +2974,33 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
             gen_space_loss(problem, p, state, locs, interp);
 
+            gen_space_line_loss(problem, p, {1,0}, state, locs, interp);
+            gen_space_line_loss(problem, p, {-1,0}, state, locs, interp);
+            gen_space_line_loss(problem, p, {0,1}, state, locs, interp);
+            gen_space_line_loss(problem, p, {0,-1}, state, locs, interp);
+
             ceres::Solve(options, &problem, &summary);
 
             // std::cout << loss1 << " " << summary.final_cost << std::endl;
 
             double dist;
+            //check steps
             interp.Evaluate(locs(p)[2],locs(p)[1],locs(p)[0], &dist);
+            for (auto &off : neighs) {
+                if (state(p+off) & STATE_LOC_VALID) {
+                    for(int i=1;i<4;i++) {
+                        float f1 = float(i)/4;
+                        float f2 = 1-f1;
+                        cv::Vec3d l = locs(p)*f1 + locs(p+off)*f2;
+                        double d2;
+                        interp.Evaluate(l[2],l[1],l[0], &d2);
+                        dist = std::min(dist, d2);
+                    }
+                }
+            }
 
             //FIXME revisit dists after (every?) iteration?
-            if (dist <= 1 || summary.final_cost >= 0.1) {
+            if (dist <= 0 || summary.final_cost >= 0.1) {
                 locs(p) = phys_only_loc;
                 state(p) = STATE_COORD_VALID;
                 loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, Ts, OPTIMIZE_ALL);
@@ -3063,16 +3140,18 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
         if (generation > 3) {
             cv::Mat_<cv::Vec2d> _empty;
-            freeze_inner_params(big_problem, 10, state, locs, _empty, loss_status, STATE_COORD_VALID | STATE_LOC_VALID);
+            // freeze_inner_params(big_problem, 10, state, locs, _empty, loss_status, STATE_COORD_VALID | STATE_LOC_VALID);
+            freeze_inner_params(big_problem, 10, state, locs, _empty, loss_status, STATE_LOC_VALID);
         }
 
         cands.resize(0);
 
         printf("-> total done %d/ fringe: %d\n", succ, fringe.size());
     }
+    delete timer;
 
-    loss_status = loss_status(used_area);
-    cv::imwrite("loss_status.tif", loss_status);
+    // loss_status = loss_status(used_area);
+    // cv::imwrite("loss_status.tif", loss_status);
 
     CeresGrid2DcvMat3f grid_coords({coords});
     ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> interp_coords(grid_coords);
@@ -3099,9 +3178,9 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         }
 
 
-    cv::imwrite("phys_fail.tif", phys_fail*255);
+    // cv::imwrite("phys_fail.tif", phys_fail*255);
 
-    cv::imwrite("dists.tif", dists);
+    // cv::imwrite("dists.tif", dists);
     points *= 1/reader.scale;
 
     printf("generated approximate surface %fkvx^2\n", succ*step*step/1000000.0);

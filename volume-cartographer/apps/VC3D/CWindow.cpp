@@ -43,7 +43,7 @@ CWindow::CWindow() :
     // setAttribute(Qt::WA_DeleteOnClose);
 
     //TODO make configurable
-    chunk_cache = new ChunkCache(10e9);
+    chunk_cache = new ChunkCache(5e9);
     
     _surf_col = new CSurfaceCollection();
     
@@ -508,7 +508,7 @@ void CWindow::OpenVolume(const QString& path)
     item->setData(0, Qt::UserRole, QVariant("experiment"));
 
     // empty_space_tracing_quad_phys(currentVolume->zarrDataset(1), 0.5, chunk_cache, {5646,2756,2000}, {5688,2786,2000}, 5);
-    _opchains["experiment"] = new OpChain(empty_space_tracing_quad_phys(currentVolume->zarrDataset(1), 0.5, chunk_cache, {5646,2756,2000}, {5688,2786,2000}, 5));
+    _opchains["experiment"] = new OpChain(empty_space_tracing_quad_phys(currentVolume->zarrDataset(1), 0.5, chunk_cache, {5646,2756,2000}, {5688,2786,2000}, 20));
     // _opchains["experiment"] = new OpChain(empty_space_tracing_quad(currentVolume->zarrDataset(1), 0.5, chunk_cache, {5646,2756,2000}, {5688,2786,2000}, 5));
 
     for (auto& s : fVpkg->segmentationFiles()) {
