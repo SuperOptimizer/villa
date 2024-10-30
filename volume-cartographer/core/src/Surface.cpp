@@ -829,10 +829,13 @@ void RefineCompSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> *n
     cv::Mat_<float> transparent(size, 1);
     cv::Mat_<float> blur(size, 0);
     cv::Mat_<float> integ_z(size, 0);
-    
-    for(int n=0;n<21;n++) {
+
+    if (stop < start)
+        step = -abs(step);
+
+    for(int n=0;n<=(stop-start)/step;n++) {
         cv::Mat_<uint8_t> slice;
-        float off = (n-5);
+        float off = start + step*n;
         readInterpolated3D(slice, _ds, (*coords+*normals*off)*scale, _cache);
         
         cv::Mat floatslice;
@@ -841,16 +844,9 @@ void RefineCompSurface::gen(cv::Mat_<cv::Vec3f> *coords_, cv::Mat_<cv::Vec3f> *n
         cv::GaussianBlur(floatslice, blur, {7,7}, 0);
         cv::Mat opaq_slice = blur;
         
-        float low = 0.0; //map to 0
-        float up = 1.0; //map to 1
-        opaq_slice = (opaq_slice-low)/(up-low);
+        opaq_slice = (opaq_slice-low)/(high-low);
         opaq_slice = cv::min(opaq_slice,1);
         opaq_slice = cv::max(opaq_slice,0);
-        
-        // sprintf(buf, "opaq%02d.tif", n);
-        // cv::imwrite(buf, opaq_slice);
-        
-        // printf("vals %d i t o b v: %f %f %f %f\n", n, integ.at<float>(500,600), transparent.at<float>(500,600), opaq_slice.at<float>(500,600), blur.at<float>(500,600), floatslice.at<float>(500,600));
         
         cv::Mat joint = transparent.mul(opaq_slice);
         // integ += joint.mul(floatslice);
