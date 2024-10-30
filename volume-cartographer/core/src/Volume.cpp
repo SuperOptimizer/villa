@@ -86,7 +86,8 @@ void Volume::zarrOpen()
     
     //FIXME hardcoded assumption that groups correspond to power-2 scaledowns ...
     for(auto name : groups) {
-        z5::filesystem::handle::Dataset ds_handle(group, name, "/");
+        z5::filesystem::handle::Dataset ds_handle(group, name, nlohmann::json::parse(std::ifstream(path_/name/".zarray")).value<>("dimension_separator","."));
+
         zarrDs_.push_back(z5::filesystem::openDataset(ds_handle));
         if (zarrDs_.back()->getDtype() != z5::types::Datatype::uint8)
             throw std::runtime_error("only uint8 is currently supported for zarr datasets incompatible type found in "+path_.string()+" / " +name);
