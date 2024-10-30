@@ -2176,7 +2176,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     ALifeTime f_timer("empty space tracing\n");
     DSReader reader = {ds,scale,cache};
 
-    int stop_gen = 100;
+    int stop_gen = 150;
 
     //FIXME show and handle area edge!
     int w = 2*step*reader.scale*1.1*stop_gen;
@@ -2213,7 +2213,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     timer = new ALifeTime("thresholding...");
 #pragma omp parallel for
     for(auto &p : vol.planes)
-        cv::threshold(p, p, 50, 1, cv::THRESH_BINARY_INV);
+        cv::threshold(p, p, 1, 1, cv::THRESH_BINARY);
     delete timer;
 
     timer = new ALifeTime("distancestransform...");
@@ -2425,7 +2425,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                         cv::Vec3d l = locs(p)*f1 + locs(p+off)*f2;
                         double d2;
                         interp.Evaluate(l[2],l[1],l[0], &d2);
-                        dist = std::min(dist, d2);
+                        dist = std::max(dist, d2);
                     }
                 }
             }
@@ -2463,7 +2463,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             }
         }
 
-        add_phy_losses_closing(big_problem, 20, state, locs, loss_status, cands, Ts, phys_fail_th, interp);
+        add_phy_losses_closing(big_problem, 5, state, locs, loss_status, cands, Ts, phys_fail_th, interp);
 
         if (generation >= 3) {
             options_big.max_num_iterations = 10;

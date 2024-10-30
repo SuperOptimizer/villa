@@ -149,6 +149,19 @@ void CWindow::setVolume(std::shared_ptr<volcart::Volume> newvol)
     // onVolumeClicked({0,0},{w/2,h/2,d/2});
     
     onManualPlaneChanged();
+
+    if (currentVolume->numScales() == 1 && _opchains.count("experiment") == 0) {
+        QTreeWidgetItem *item = new QTreeWidgetItem(treeWidgetSurfaces);
+        item->setText(0, QString("experiment"));
+        item->setData(0, Qt::UserRole, QVariant("experiment"));
+        // cv::Vec3d point = {4670,1750,1793}; //quite small
+        // cv::Vec3d point = {4723,1783,1821}; //also rather small
+        // cv::Vec3d point = {4639.19, 1907.98, 1777.74}; //ok for fibers
+        cv::Vec3d point = {4476.81, 2483.53, 5753.1}; //surf
+        cv::Vec3d n = point*1.1;
+        n[2] = 0;
+        _opchains["experiment"] = new OpChain(empty_space_tracing_quad_phys(currentVolume->zarrDataset(0), 1.0, chunk_cache, point, point+n, 5));
+    }
 }
 
 // Create widgets
@@ -506,13 +519,19 @@ void CWindow::OpenVolume(const QString& path)
     treeWidgetSurfaces->clear();
 
 
-    // QTreeWidgetItem *item = new QTreeWidgetItem(treeWidgetSurfaces);
-    // item->setText(0, QString("experiment"));
-    // item->setData(0, Qt::UserRole, QVariant("experiment"));
 
     // empty_space_tracing_quad_phys(currentVolume->zarrDataset(1), 0.5, chunk_cache, {5646,2756,2000}, {5688,2786,2000}, 5);
     // _opchains["experiment"] = new OpChain(empty_space_tracing_quad_phys(currentVolume->zarrDataset(1), 0.5, chunk_cache, {5646,2756,2000}, {5688,2786,2000}, 20));
     // _opchains["experiment"] = new OpChain(empty_space_tracing_quad(currentVolume->zarrDataset(1), 0.5, chunk_cache, {5646,2756,2000}, {5688,2786,2000}, 5));
+
+    //fiber tracing
+    //4625/1960/1971 -> 4654/1938/1971
+    // if (currentVolume->numScales() == 1) {
+    //     QTreeWidgetItem *item = new QTreeWidgetItem(treeWidgetSurfaces);
+    //     item->setText(0, QString("experiment"));
+    //     item->setData(0, Qt::UserRole, QVariant("experiment"));
+    //     _opchains["experiment"] = empty_space_tracing_quad_phys(currentVolume->zarrDataset(0), 1.0, chunk_cache, {4625,1960,1971}, {4654,1938,1971}, 5);
+    // }
 
     for (auto& s : fVpkg->segmentationFiles()) {
         QTreeWidgetItem *item = new QTreeWidgetItem(treeWidgetSurfaces);
