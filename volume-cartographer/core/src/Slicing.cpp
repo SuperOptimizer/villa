@@ -148,6 +148,16 @@ ChunkCache::~ChunkCache()
         it.second.reset();
 }
 
+void ChunkCache::reset()
+{
+    _gen_store.clear();
+    _group_store.clear();
+    _store.clear();
+
+    _generation = 0;
+    _stored = 0;
+}
+
 std::shared_ptr<xt::xarray<uint8_t>> ChunkCache::get(uint64_t key)
 {
     auto res = _store.find(key);

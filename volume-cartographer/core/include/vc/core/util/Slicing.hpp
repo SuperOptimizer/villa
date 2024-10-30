@@ -25,6 +25,7 @@ public:
     //key should be unique for chunk and contain groupkey (groupkey sets highest 16bits of uint64_t)
     void put(uint64_t key, xt::xarray<uint8_t> *ar);
     std::shared_ptr<xt::xarray<uint8_t>> get(uint64_t key);
+    void reset();
     bool has(uint64_t key);
     std::shared_mutex mutex;
 private:
