@@ -137,6 +137,12 @@ void CWindow::setVolume(std::shared_ptr<volcart::Volume> newvol)
 
     //FIXME currently hardcoded to 0.5
     wOpsList->setDataset(currentVolume->zarrDataset(1), chunk_cache, 0.5);
+    sendVolumeChanged(currentVolume);
+
+    if (currentVolume->numScales() >= 2)
+        wOpsList->setDataset(currentVolume->zarrDataset(1), chunk_cache, 0.5);
+    else
+        wOpsList->setDataset(currentVolume->zarrDataset(0), chunk_cache, 1.0);
     
     int w = currentVolume->sliceWidth();
     int h = currentVolume->sliceHeight();
@@ -145,7 +151,6 @@ void CWindow::setVolume(std::shared_ptr<volcart::Volume> newvol)
     // onVolumeClicked({0,0},{w/2,h/2,d/2});
     
     onManualPlaneChanged();
-    sendVolumeChanged(currentVolume);
 }
 
 // Create widgets
@@ -503,12 +508,12 @@ void CWindow::OpenVolume(const QString& path)
     treeWidgetSurfaces->clear();
 
 
-    QTreeWidgetItem *item = new QTreeWidgetItem(treeWidgetSurfaces);
-    item->setText(0, QString("experiment"));
-    item->setData(0, Qt::UserRole, QVariant("experiment"));
+    // QTreeWidgetItem *item = new QTreeWidgetItem(treeWidgetSurfaces);
+    // item->setText(0, QString("experiment"));
+    // item->setData(0, Qt::UserRole, QVariant("experiment"));
 
     // empty_space_tracing_quad_phys(currentVolume->zarrDataset(1), 0.5, chunk_cache, {5646,2756,2000}, {5688,2786,2000}, 5);
-    _opchains["experiment"] = new OpChain(empty_space_tracing_quad_phys(currentVolume->zarrDataset(1), 0.5, chunk_cache, {5646,2756,2000}, {5688,2786,2000}, 20));
+    // _opchains["experiment"] = new OpChain(empty_space_tracing_quad_phys(currentVolume->zarrDataset(1), 0.5, chunk_cache, {5646,2756,2000}, {5688,2786,2000}, 20));
     // _opchains["experiment"] = new OpChain(empty_space_tracing_quad(currentVolume->zarrDataset(1), 0.5, chunk_cache, {5646,2756,2000}, {5688,2786,2000}, 5));
 
     for (auto& s : fVpkg->segmentationFiles()) {
