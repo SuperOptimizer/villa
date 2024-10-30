@@ -135,8 +135,6 @@ void CWindow::setVolume(std::shared_ptr<volcart::Volume> newvol)
 {
     currentVolume = newvol;
 
-    //FIXME currently hardcoded to 0.5
-    wOpsList->setDataset(currentVolume->zarrDataset(1), chunk_cache, 0.5);
     sendVolumeChanged(currentVolume);
 
     if (currentVolume->numScales() >= 2)

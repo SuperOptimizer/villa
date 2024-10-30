@@ -247,7 +247,7 @@ public:
     void cachePurge() const;
     /**@}*/
 
-    z5::Dataset *zarrDataset(int level = 1);
+    z5::Dataset *zarrDataset(int level = 0);
     size_t numScales();
     
 protected:
