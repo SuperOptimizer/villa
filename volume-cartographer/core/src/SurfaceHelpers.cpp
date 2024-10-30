@@ -1961,6 +1961,8 @@ int gen_space_line_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::V
     return 1;
 }
 
+float space_trace_dist_w = 3.0;
+
 //create all valid losses for this point
 int emptytrace_create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<uint8_t,1> &interp, float unit, int flags = 0)
 {
@@ -1978,16 +1980,16 @@ int emptytrace_create_centered_losses(ceres::Problem &problem, const cv::Vec2i &
     count += gen_straight_loss(problem, p, {0,0},{1,0},{2,0}, state, loc, flags & OPTIMIZE_ALL);
 
     //direct neighboars
-    count += gen_dist_loss(problem, p, {0,-1}, state, loc, unit, flags & OPTIMIZE_ALL);
-    count += gen_dist_loss(problem, p, {0,1}, state, loc, unit, flags & OPTIMIZE_ALL);
-    count += gen_dist_loss(problem, p, {-1,0}, state, loc, unit, flags & OPTIMIZE_ALL);
-    count += gen_dist_loss(problem, p, {1,0}, state, loc, unit, flags & OPTIMIZE_ALL);
+    count += gen_dist_loss(problem, p, {0,-1}, state, loc, unit, flags & OPTIMIZE_ALL, space_trace_dist_w);
+    count += gen_dist_loss(problem, p, {0,1}, state, loc, unit, flags & OPTIMIZE_ALL, space_trace_dist_w);
+    count += gen_dist_loss(problem, p, {-1,0}, state, loc, unit, flags & OPTIMIZE_ALL, space_trace_dist_w);
+    count += gen_dist_loss(problem, p, {1,0}, state, loc, unit, flags & OPTIMIZE_ALL, space_trace_dist_w);
 
     //diagonal neighbors
-    count += gen_dist_loss(problem, p, {1,-1}, state, loc, unit, flags & OPTIMIZE_ALL);
-    count += gen_dist_loss(problem, p, {-1,1}, state, loc, unit, flags & OPTIMIZE_ALL);
-    count += gen_dist_loss(problem, p, {1,1}, state, loc, unit, flags & OPTIMIZE_ALL);
-    count += gen_dist_loss(problem, p, {-1,-1}, state, loc, unit, flags & OPTIMIZE_ALL);
+    count += gen_dist_loss(problem, p, {1,-1}, state, loc, unit, flags & OPTIMIZE_ALL, space_trace_dist_w);
+    count += gen_dist_loss(problem, p, {-1,1}, state, loc, unit, flags & OPTIMIZE_ALL, space_trace_dist_w);
+    count += gen_dist_loss(problem, p, {1,1}, state, loc, unit, flags & OPTIMIZE_ALL, space_trace_dist_w);
+    count += gen_dist_loss(problem, p, {-1,-1}, state, loc, unit, flags & OPTIMIZE_ALL, space_trace_dist_w);
 
     if (flags & SPACE_LOSS) {
         count += gen_space_loss(problem, p, state, loc, interp);
@@ -2026,19 +2028,19 @@ int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<
     count += conditional_straight_loss(1, p, {0,0},{1,0},{2,0}, loss_status, problem, state, loc, flags);
 
     //direct neighboars h
-    count += conditional_dist_loss(2, p, {0,-1}, loss_status, problem, state, loc, unit, flags);
-    count += conditional_dist_loss(2, p, {0,1}, loss_status, problem, state, loc, unit, flags);
+    count += conditional_dist_loss(2, p, {0,-1}, loss_status, problem, state, loc, unit, flags, space_trace_dist_w);
+    count += conditional_dist_loss(2, p, {0,1}, loss_status, problem, state, loc, unit, flags, space_trace_dist_w);
 
     //direct neighbors v
-    count += conditional_dist_loss(3, p, {-1,0}, loss_status, problem, state, loc, unit, flags);
-    count += conditional_dist_loss(3, p, {1,0}, loss_status, problem, state, loc, unit, flags);
+    count += conditional_dist_loss(3, p, {-1,0}, loss_status, problem, state, loc, unit, flags, space_trace_dist_w);
+    count += conditional_dist_loss(3, p, {1,0}, loss_status, problem, state, loc, unit, flags, space_trace_dist_w);
 
     //diagonal neighbors
-    count += conditional_dist_loss(4, p, {1,-1}, loss_status, problem, state, loc, unit, flags);
-    count += conditional_dist_loss(4, p, {-1,1}, loss_status, problem, state, loc, unit, flags);
+    count += conditional_dist_loss(4, p, {1,-1}, loss_status, problem, state, loc, unit, flags, space_trace_dist_w);
+    count += conditional_dist_loss(4, p, {-1,1}, loss_status, problem, state, loc, unit, flags, space_trace_dist_w);
 
-    count += conditional_dist_loss(5, p, {1,1}, loss_status, problem, state, loc, unit, flags);
-    count += conditional_dist_loss(5, p, {-1,-1}, loss_status, problem, state, loc, unit, flags);
+    count += conditional_dist_loss(5, p, {1,1}, loss_status, problem, state, loc, unit, flags, space_trace_dist_w);
+    count += conditional_dist_loss(5, p, {-1,-1}, loss_status, problem, state, loc, unit, flags, space_trace_dist_w);
 
     if (flags & SPACE_LOSS) {
         if (!loss_mask(6, p, {0,0}, loss_status))
@@ -2174,10 +2176,10 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     ALifeTime f_timer("empty space tracing\n");
     DSReader reader = {ds,scale,cache};
 
-    int stop_gen = 70;
+    int stop_gen = 100;
 
     //FIXME show and handle area edge!
-    int w = 2*step*reader.scale*1.25*stop_gen;
+    int w = 2*step*reader.scale*1.1*stop_gen;
     int h = w;
     int z = w/2;
     cv::Size size = {w,h};
