@@ -197,6 +197,14 @@ target_link_libraries(vc_zarrrendersurface
     VC::surface
 )
 
+add_executable(vc_chunked_compute src/TestChunkedCompute.cpp)
+target_link_libraries(vc_chunked_compute
+    z5
+    opencv_core
+    VC::slicing
+    VC::surface
+)
+
 add_executable(vc_objrefine src/ObjAlphaCompRefinement.cpp)
 target_link_libraries(vc_objrefine
     nlohmann_json::nlohmann_json
