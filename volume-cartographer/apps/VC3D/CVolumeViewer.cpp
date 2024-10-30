@@ -206,9 +206,20 @@ void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
     // printf("max size %d\n", max_size);
     fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
     
-    //FIXME currently hardcoded
-    _max_scale = 0.5;
-    _min_scale = pow(2.0,1.-volume->numScales());
+    if (volume->numScales() >= 2) {
+        //FIXME currently hardcoded
+        _max_scale = 0.5;
+        _min_scale = pow(2.0,1.-volume->numScales());
+    }
+    else {
+        //FIXME currently hardcoded
+        _max_scale = 1.0;
+        _min_scale = 1.0;
+    }
+
+    _ds_scale = _max_scale;
+    _ds_sd_idx = -log2(_ds_scale);
+    _scene_scale = _scale/_ds_scale;
 
     _lbl->setText(QString("%1x %2").arg(_scale).arg(_z_off));
 
