@@ -108,15 +108,14 @@ uint64_t ChunkCache::groupKey(std::string name)
     
 void ChunkCache::put(uint64_t key, xt::xarray<uint8_t> *ar)
 {
-    if (ar)
-        _stored += ar->size();
-    
     if (_stored >= _size) {
-        printf("cache reduce %f\n",float(_stored)/1024/1024);
         //stores (key,generation)
         using KP = std::pair<uint64_t, uint64_t>;
         std::vector<KP> gen_list(_gen_store.begin(), _gen_store.end());
         std::sort(gen_list.begin(), gen_list.end(), [](KP &a, KP &b){ return a.second < b.second; });
+        uint64_t _del_min;
+        uint64_t _del_max;
+        int del_count = 0;
         for(auto it : gen_list) {
             std::shared_ptr<xt::xarray<uint8_t>> ar = _store[it.first];
             //TODO we could remove this with lower probability so we dont store infiniteyl empty blocks but also keep more of them as they are cheap
@@ -124,18 +123,35 @@ void ChunkCache::put(uint64_t key, xt::xarray<uint8_t> *ar)
                 size_t size = ar.get()->storage().size();
                 ar.reset();
                 _stored -= size;
-            }
             
-            _store.erase(it.first);
-            _gen_store.erase(it.first);
+                _store.erase(it.first);
+                _gen_store.erase(it.first);
+                if (del_count) {
+                    _del_min = std::min(it.first, _del_min);
+                    _del_max = std::max(it.first, _del_max);
+                }
+                else {
+                    _del_min = it.first;
+                    _del_max = it.first;
+                }
+                del_count++;
+            }
 
             //we delete 10% of cache content to amortize sorting costs
-            if (_stored < 0.9*_size)
+            if (_stored < 0.9*_size) {
                 break;
+            }
         }
-        printf("cache reduce done %f\n",float(_stored)/1024/1024);
+        // printf("cache reduce done %f deleted %d from %lu - %lu off %d\n",float(_stored)/1024/1024, del_count, _del_min, _del_max, gen_list.size());
     }
-    
+
+    if (ar) {
+        if (_store.count(key)) {
+            assert(_store[key].get());
+            _stored -= ar->size();
+        }
+        _stored += ar->size();
+    }
     _store[key].reset(ar);
     _generation++;
     _gen_store[key] = _generation;
@@ -221,7 +237,7 @@ void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds, const cv::Mat_<
         
         uint64_t key = key_base ^ uint64_t(ix) ^ (uint64_t(iy)<<16) ^ (uint64_t(iz)<<32);
         
-        cache->mutex.lock_shared();
+        cache->mutex.lock();
         
         if (!cache->has(key)) {
             cache->mutex.unlock();
@@ -277,7 +293,7 @@ void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds, const cv::Mat_<
 
                     last_key = key;
 
-                    cache->mutex.lock_shared();
+                    cache->mutex.lock();
 
                     if (!cache->has(key)) {
                         cache->mutex.unlock();
@@ -396,7 +412,7 @@ void readInterpolated3D_a2_trilin(xt::xarray<uint8_t> &out, z5::Dataset *ds, con
         
         uint64_t key = key_base ^ uint64_t(ix) ^ (uint64_t(iy)<<16) ^ (uint64_t(iz)<<32);
         
-        cache->mutex.lock_shared();
+        cache->mutex.lock();
         
         if (!cache->has(key)) {
             cache->mutex.unlock();
@@ -452,7 +468,7 @@ void readInterpolated3D_a2_trilin(xt::xarray<uint8_t> &out, z5::Dataset *ds, con
                 
                 last_key = key;
                 
-                cache->mutex.lock_shared();
+                cache->mutex.lock();
                 
                 if (!cache->has(key)) {
                     cache->mutex.unlock();
