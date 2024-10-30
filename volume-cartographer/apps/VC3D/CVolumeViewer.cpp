@@ -62,6 +62,11 @@ CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, QWidget* parent)
     aWidgetLayout->addWidget(fGraphicsView);
 
     setLayout(aWidgetLayout);
+
+
+    _lbl = new QLabel(this);
+    _lbl->setStyleSheet("QLabel { color : white; }");
+    _lbl->move(10,5);
 }
 
 // Destructor
@@ -185,6 +190,8 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
         fGraphicsView->centerOn(center);
         renderVisible();
     }
+
+    _lbl->setText(QString("%1x %2").arg(_scale).arg(_z_off));
     
     renderIntersections();
 }
@@ -193,15 +200,17 @@ void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
 {
     volume = volume_;
     
-    printf("sizes %d %d %d\n", volume_->sliceWidth(), volume_->sliceHeight(), volume_->numSlices());
+    // printf("sizes %d %d %d\n", volume_->sliceWidth(), volume_->sliceHeight(), volume_->numSlices());
     
     int max_size = std::max(volume_->sliceWidth(), std::max(volume_->numSlices(), volume_->sliceHeight()))*_ds_scale + 512;
-    printf("max size %d\n", max_size);
+    // printf("max size %d\n", max_size);
     fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
     
     //FIXME currently hardcoded
     _max_scale = 0.5;
     _min_scale = pow(2.0,1.-volume->numScales());
+
+    _lbl->setText(QString("%1x %2").arg(_scale).arg(_z_off));
 
     renderVisible(true);
 }

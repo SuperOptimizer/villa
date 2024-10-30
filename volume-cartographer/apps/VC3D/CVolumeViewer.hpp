@@ -94,6 +94,8 @@ protected:
     float _max_scale = 1;
     float _min_scale = 1;
 
+    QLabel *_lbl = nullptr;
+
     float _z_off = 0.0;
     
     QGraphicsItem *_center_marker = nullptr;
