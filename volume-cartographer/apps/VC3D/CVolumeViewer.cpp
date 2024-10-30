@@ -155,7 +155,7 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
         if (dynamic_cast<PlaneSurface*>(_surf))
             _min_scale = pow(2.0,1.-volume->numScales());
         else
-            _min_scale = 0.5;
+            _min_scale = std::max(pow(2.0,1.-volume->numScales()), 0.5);
         
         if (_scale >= _max_scale) {
             _ds_scale = _max_scale;

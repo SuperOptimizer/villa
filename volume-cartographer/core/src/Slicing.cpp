@@ -258,8 +258,6 @@ void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds, const cv::Mat_<
         int lx = ox-ix*cw;
         int ly = oy-iy*ch;
         int lz = oz-iz*cd;
-        
-        chunk_ref.reset();
 
         return chunk->operator()(lx,ly,lz);
     };
@@ -433,8 +431,6 @@ void readInterpolated3D_a2_trilin(xt::xarray<uint8_t> &out, z5::Dataset *ds, con
         int lx = ox-ix*cw;
         int ly = oy-iy*ch;
         int lz = oz-iz*cd;
-        
-        chunk_ref.reset();
 
         return chunk->operator()(lx,ly,lz);
     };
@@ -546,7 +542,6 @@ void readInterpolated3D_a2_trilin(xt::xarray<uint8_t> &out, z5::Dataset *ds, con
                 out(y,x,0) = c;
             }
         }
-        chunk_ref.reset();
     }
 }
 
