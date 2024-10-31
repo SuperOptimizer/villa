@@ -157,6 +157,66 @@ void ChunkCache::put(uint64_t key, xt::xarray<uint8_t> *ar)
     _gen_store[key] = _generation;
 }
 
+//algorithm 2: do interpolation on basis of individual chunks
+void readArea3D(xt::xtensor<uint8_t,3,xt::layout_type::column_major> &out, const cv::Vec3i offset, const cv::Vec3i size, z5::Dataset *ds, ChunkCache *cache)
+{
+    //FIXME assert dims
+    //FIXME based on key math we should check bounds here using volume and chunk size
+    uint64_t key_base = cache->groupKey(ds->path());
+
+    auto chunksize = ds->chunking().blockShape();
+
+    cv::Vec3i to = offset+size;
+    cv::Vec3i offset_valid = offset;
+    for(int i=0;i<3;i++) {
+        offset_valid[i] = std::max(0,offset_valid[i]);
+        to[i] = std::max(0,to[i]);
+        offset_valid[i] = std::min(int(ds->shape(i)),offset_valid[i]);
+        to[i] = std::min(int(ds->shape(i)),to[i]);
+    }
+
+// #pragma omp parallel
+    {
+        uint64_t last_key = -1;
+        std::shared_ptr<xt::xarray<uint8_t>> chunk_ref;
+        xt::xarray<uint8_t> *chunk = nullptr;
+// #pragma omp for collapse(3)
+        for(size_t z = offset_valid[0];z<to[0];z++)
+            for(size_t y = offset_valid[1];y<to[1];y++)
+                for(size_t x = offset_valid[2];x<to[2];x++) {
+
+                    int iz = z/chunksize[0];
+                    int iy = y/chunksize[1];
+                    int ix = x/chunksize[2];
+
+                    uint64_t key = key_base ^ uint64_t(ix) ^ (uint64_t(iy)<<16) ^ (uint64_t(iz)<<32);
+
+                    cache->mutex.lock();
+
+                    if (!cache->has(key)) {
+                        cache->mutex.unlock();
+                        chunk = z5::multiarray::readChunk<uint8_t>(*ds, {size_t(ix),size_t(iy),size_t(iz)});
+                        cache->mutex.lock();
+                        cache->put(key, chunk);
+                        chunk_ref = cache->get(key);
+                    }
+                    else {
+                        chunk_ref = cache->get(key);
+                        chunk = chunk_ref.get();
+                    }
+                    cache->mutex.unlock();
+
+                    if (chunk) {
+                        int lz = z-iz*chunksize[0];
+                        int ly = y-iy*chunksize[1];
+                        int lx = x-ix*chunksize[2];
+
+                        out(z-offset[0], y-offset[1], x-offset[3]) = chunk->operator()(lx,ly,lz);
+                    }
+            }
+    }
+}
+
 
 ChunkCache::~ChunkCache()
 {
