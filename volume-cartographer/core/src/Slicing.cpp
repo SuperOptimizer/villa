@@ -158,11 +158,13 @@ void ChunkCache::put(uint64_t key, xt::xarray<uint8_t> *ar)
 }
 
 //algorithm 2: do interpolation on basis of individual chunks
-void readArea3D(xt::xtensor<uint8_t,3,xt::layout_type::column_major> &out, const cv::Vec3i offset, const cv::Vec3i size, z5::Dataset *ds, ChunkCache *cache)
+void readArea3D(xt::xtensor<uint8_t,3,xt::layout_type::column_major> &out, const cv::Vec3i offset, z5::Dataset *ds, ChunkCache *cache)
 {
     //FIXME assert dims
     //FIXME based on key math we should check bounds here using volume and chunk size
     uint64_t key_base = cache->groupKey(ds->path());
+
+    cv::Vec3i size = {out.shape()[0],out.shape()[1],out.shape()[2]};
 
     auto chunksize = ds->chunking().blockShape();
 
@@ -174,6 +176,8 @@ void readArea3D(xt::xtensor<uint8_t,3,xt::layout_type::column_major> &out, const
         offset_valid[i] = std::min(int(ds->shape(i)),offset_valid[i]);
         to[i] = std::min(int(ds->shape(i)),to[i]);
     }
+
+    // std::cout << ds->shape() << std::endl;
 
 // #pragma omp parallel
     {
@@ -191,27 +195,31 @@ void readArea3D(xt::xtensor<uint8_t,3,xt::layout_type::column_major> &out, const
 
                     uint64_t key = key_base ^ uint64_t(ix) ^ (uint64_t(iy)<<16) ^ (uint64_t(iz)<<32);
 
-                    cache->mutex.lock();
-
-                    if (!cache->has(key)) {
-                        cache->mutex.unlock();
-                        chunk = z5::multiarray::readChunk<uint8_t>(*ds, {size_t(ix),size_t(iy),size_t(iz)});
+                    if (key != last_key) {
                         cache->mutex.lock();
-                        cache->put(key, chunk);
-                        chunk_ref = cache->get(key);
+
+                        if (!cache->has(key)) {
+                            cache->mutex.unlock();
+                            // std::cout << "reading chunk " << cv::Vec3i(ix,iy,iz) << " for " << cv::Vec3i(x,y,z) << chunksize << std::endl;
+                            chunk = z5::multiarray::readChunk<uint8_t>(*ds, {size_t(iz),size_t(iy),size_t(ix)});
+                            cache->mutex.lock();
+                            cache->put(key, chunk);
+                            chunk_ref = cache->get(key);
+                        }
+                        else {
+                            chunk_ref = cache->get(key);
+                            chunk = chunk_ref.get();
+                        }
+                        cache->mutex.unlock();
                     }
-                    else {
-                        chunk_ref = cache->get(key);
-                        chunk = chunk_ref.get();
-                    }
-                    cache->mutex.unlock();
 
                     if (chunk) {
                         int lz = z-iz*chunksize[0];
                         int ly = y-iy*chunksize[1];
                         int lx = x-ix*chunksize[2];
 
-                        out(z-offset[0], y-offset[1], x-offset[3]) = chunk->operator()(lx,ly,lz);
+                        // std::cout << cv::Vec3i({z-offset[0], y-offset[1], x-offset[3]}) << out.shape() << cv::Vec3i({to[0]-offset[0], to[1]-offset[1], to[2]-offset[2]}) << std::endl;
+                        out(z-offset[0], y-offset[1], x-offset[2]) = chunk->operator()(lz,ly,lx);
                     }
             }
     }

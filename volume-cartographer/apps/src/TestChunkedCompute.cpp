@@ -12,14 +12,11 @@ struct passTroughComputor
     enum {BORDER = 20};
     enum {CHUNK_SIZE = 32};
     enum {FILL_V = 0};
-    enum {COMPUTE_EMPTY = 1};
     template <typename T> void compute(const T &large, T &small)
     {
-        std::cout << BORDER+CHUNK_SIZE << std::endl;
         int low = int(BORDER);
         int high = int(BORDER)+int(CHUNK_SIZE);
         small = view(large, xt::range(low,high),xt::range(low,high),xt::range(low,high));
-        std::cout << "assigned shape " << &small << large.shape() << small.shape() << low << high << std::endl;
     }
 };
 
@@ -42,10 +39,9 @@ int main(int argc, char *argv[])
     int h = 4000;
 
     cv::Mat_<uint8_t> img(cv::Size(w,h),0);
-    for(int j=20;j<h-20;j++) {
-        std::cout << j << std::endl;
-        for(int i=20;i<w-20;i++)
-            img(j,i) = proc_tensor(i-10,j-10,4000);
+    for(int j=1000;j<2000;j++) {
+        for(int i=1000;i<2000;i++)
+            img(j,i) = proc_tensor(4000,j-10,i-10);
     }
 
     cv::imwrite("slice.tif", img);
