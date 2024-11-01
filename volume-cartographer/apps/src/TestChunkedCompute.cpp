@@ -20,37 +20,99 @@ struct passTroughComputor
     }
 };
 
+template <typename E>
+E _max_d_ign(const E &a, const E &b)
+{
+    if (a == E(-1))
+        return b;
+    if (b == E(-1))
+        return a;
+    return std::max(a,b);
+}
+
+template <typename T, typename E>
+void _dist_iteration(T &from, T &to, int s)
+{
+    E magic = -1;
+#pragma omp parallel for
+    for(int k=0;k<s;k++)
+        for(int j=0;j<s;j++)
+            for(int i=0;i<s;i++) {
+                E dist = from(k,j,i);
+                if (dist == magic) {
+                    if (k) dist = _max_d_ign(dist, from(k-1,j,i));
+                    if (k < s-1) dist = _max_d_ign(dist, from(k+1,j,i));
+                    if (j) dist = _max_d_ign(dist, from(k,j-1,i));
+                    if (j < s-1) dist = _max_d_ign(dist, from(k,j+1,i));
+                    if (i) dist = _max_d_ign(dist, from(k,j,i-1));
+                    if (i < s-1) dist = _max_d_ign(dist, from(k,j,i+1));
+                    if (dist != magic)
+                        to(k,j,i) = dist+1;
+                    else
+                        to(k,j,i) = dist;
+                }
+                else
+                    to(k,j,i) = dist;
+
+            }
+}
+
+template <typename T, typename E>
+T distance_transform(const T &chunk, int steps, int size)
+{
+    T c1 = xt::empty<E>(chunk.shape());
+    T c2 = xt::empty<E>(chunk.shape());
+
+    c1 = chunk;
+
+    E magic = -1;
+
+    for(int n=0;n<steps/2;n++) {
+        _dist_iteration<T,E>(c1,c2,size);
+        _dist_iteration<T,E>(c2,c1,size);
+    }
+
+    #pragma omp parallel for
+    for(int z=0;z<size;z++)
+        for(int y=0;y<size;y++)
+            for(int x=0;x<size;x++)
+                if (c1(z,y,x) == magic)
+                    c1(z,y,x) = steps;
+
+    return c1;
+}
+
 struct thresholdedDistance
 {
-    enum {BORDER = 0};
+    enum {BORDER = 16};
     enum {CHUNK_SIZE = 32};
     enum {FILL_V = 0};
     template <typename T, typename E> void compute(const T &large, T &small)
     {
-        T c1 = xt::empty<E>(large.shape());
-        T c2 = xt::empty<E>(large.shape());
-
-        c1 = large;
-
-        T &p1 = c1;
-        T &p2 = c2;
+        T outer = xt::empty<E>(large.shape());
 
         int s = CHUNK_SIZE+2*BORDER;
+        E magic = -1;
 
 #pragma omp parallel for
         for(int z=0;z<s;z++)
             for(int y=0;y<s;y++)
                 for(int x=0;x<s;x++)
-                    if (p1(z,y,x) >= 50)
-                        p1(z,y,x) = 1;
+                    if (large(z,y,x) < 50)
+                        outer(z,y,x) = magic;
                     else
-                        p1(z,y,x) = 0;
+                        outer(z,y,x) = 0;
 
+        outer = distance_transform<T,E>(outer, 15, s);
 
         int low = int(BORDER);
         int high = int(BORDER)+int(CHUNK_SIZE);
-        small = view(p1, xt::range(low,high),xt::range(low,high),xt::range(low,high));
+
+        auto crop_outer = view(outer, xt::range(low,high),xt::range(low,high),xt::range(low,high));
+
+        small = crop_outer;
     }
+
 };
 
 int main(int argc, char *argv[])
@@ -65,11 +127,11 @@ int main(int argc, char *argv[])
 
     std::cout << ds.get()->shape() << std::endl;
     
-    passTroughComputor compute;
+    thresholdedDistance compute;
 
     ChunkCache chunk_cache(10e9);
 
-    Chunked3d<uint8_t,passTroughComputor> proc_tensor(compute, ds.get(), &chunk_cache);
+    Chunked3d<uint8_t,thresholdedDistance> proc_tensor(compute, ds.get(), &chunk_cache);
 
     int w = ds.get()->shape(2);
     int h = ds.get()->shape(1);
@@ -91,8 +153,8 @@ int main(int argc, char *argv[])
     {
         Chunked3dAccessor acc(proc_tensor);
 #pragma omp for
-        for(int j=0;j<h;j++) {
-            for(int i=0;i<w;i++)
+        for(int j=2000;j<3000;j++) {
+            for(int i=2500;i<4500;i++)
                 img(j,i) = acc.safe_at(2000,j,i);
         }
 
