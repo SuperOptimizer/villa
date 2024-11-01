@@ -185,6 +185,7 @@ void readArea3D(xt::xtensor<uint8_t,3,xt::layout_type::column_major> &out, const
         std::shared_ptr<xt::xarray<uint8_t>> chunk_ref;
         xt::xarray<uint8_t> *chunk = nullptr;
 // #pragma omp for collapse(3)
+        //FIXME go through in chunk!
         for(size_t z = offset_valid[0];z<to[0];z++)
             for(size_t y = offset_valid[1];y<to[1];y++)
                 for(size_t x = offset_valid[2];x<to[2];x++) {
@@ -211,6 +212,7 @@ void readArea3D(xt::xtensor<uint8_t,3,xt::layout_type::column_major> &out, const
                             chunk = chunk_ref.get();
                         }
                         cache->mutex.unlock();
+                        last_key = key;
                     }
 
                     if (chunk) {
