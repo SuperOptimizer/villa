@@ -1,5 +1,7 @@
 #pragma once
 
+#include "vc/core/types/ChunkedTensor.hpp"
+
 #include <opencv2/core.hpp>
 
 #include "ceres/ceres.h"
@@ -366,24 +368,74 @@ public:
     int _d = 0;
 };
 
+
+template <typename T, typename C>
+struct CeresGridChunked3DTensor {
+    enum { DATA_DIMENSION = 1 };
+    void GetValue(int row, int col, double* f) const
+    {
+        f[0] = _t(_z, row, col);
+    }
+    Chunked3d<T,C> &_t;
+    int _z;
+};
+
+template <typename T, typename C>
+class Chunked3dInterpolator
+{
+public:
+    Chunked3dInterpolator(Chunked3d<T,C> &t, int depth)
+    {
+        for(int z=0;z<depth;z++)
+            interp_grids.push_back(CeresGridChunked3DTensor<T,C>({t,z}));
+        for(auto &grid : interp_grids)
+            interp_planes.push_back(ceres::BiCubicInterpolator<CeresGridChunked3DTensor<T,C>>(grid));
+    };
+    std::vector<CeresGridChunked3DTensor<T,C>> interp_grids;
+    std::vector<ceres::BiCubicInterpolator<CeresGridChunked3DTensor<T,C>>> interp_planes;
+
+    template <typename V> void Evaluate(const V &z, const V &y, const V &x, V *out) const
+    {
+        //FIXME linear interpolate along z
+        if (z < 0.0)
+            interp_planes[0].Evaluate(y, x, out);
+        else if (z >= interp_planes.size())
+            return interp_planes[interp_planes.size()-1].Evaluate(y, x, out);
+        else {
+            V m = z-floor(z);
+            int zi = idx(z);
+            V low;
+            V high;
+            interp_planes[zi].Evaluate(y, x, &low);
+            interp_planes[zi+1].Evaluate(y, x, &high);
+            *out = (V(1)-m)*low + m*high;
+        }
+    }
+    int  idx(const double &v) const { return v; }
+    template< typename JetT>
+    int  idx(const JetT &v) const { return v.a; }
+    int _d = 0;
+};
+
 //cost functions for physical paper
+template <typename I>
 struct EmptySpaceLoss {
-    EmptySpaceLoss(const StupidTensorInterpolator<uint8_t,1> &interp, float w) : _interpolator(interp), _w(w) {};
+    EmptySpaceLoss(const I &interp, float w) : _interpolator(interp), _w(w) {};
     template <typename T>
     bool operator()(const T* const l, T* residual) const {
         T v;
 
-        _interpolator.Evaluate<T>(l[2], l[1], l[0], &v);
+        _interpolator.template Evaluate<T>(l[2], l[1], l[0], &v);
 
-        residual[0] = T(_w)/(v+T(0.3));
+        residual[0] = T(_w)*v*v;
 
         return true;
     }
 
     float _w;
-    const StupidTensorInterpolator<uint8_t,1> &_interpolator;
+    const I &_interpolator;
 
-    static ceres::CostFunction* Create(const StupidTensorInterpolator<uint8_t,1> &interp, float w = 1.0)
+    static ceres::CostFunction* Create(const I &interp, float w = 1.0)
     {
         return new ceres::AutoDiffCostFunction<EmptySpaceLoss, 1, 3>(new EmptySpaceLoss(interp, w));
     }
@@ -391,6 +443,7 @@ struct EmptySpaceLoss {
 };
 
 //cost functions for physical paper
+template <typename I>
 struct EmptySpaceLineLoss {
     // EmptySpaceMultiLoss(const StupidTensorInterpolator<uint8_t,1> &interp, int steps, uint8_t *state_a, uint8_t *state_b,  w) : _interpolator(interp), _steps(steps), _w(w) {};
     template <typename T>
@@ -401,8 +454,8 @@ struct EmptySpaceLineLoss {
         for(int i=1;i<_steps;i++) {
             T f2 = T(float(i)/_steps);
             T f1 = T(1.0f-float(i)/_steps);
-            _interpolator.Evaluate<T>(f1*la[2]+f2*lb[2], f1*la[1]+f2*lb[1], f1*la[0]+f2*lb[0], &v);
-            sum += T(_w)/(v+T(0.3));
+            _interpolator.template Evaluate<T>(f1*la[2]+f2*lb[2], f1*la[1]+f2*lb[1], f1*la[0]+f2*lb[0], &v);
+            sum += T(_w)*v*v;
         }
 
         residual[0] = sum/T(_steps-1);
@@ -410,11 +463,11 @@ struct EmptySpaceLineLoss {
         return true;
     }
 
-    const StupidTensorInterpolator<uint8_t,1> &_interpolator;
+    const I &_interpolator;
     int _steps;
     float _w;
 
-    static ceres::CostFunction* Create(const StupidTensorInterpolator<uint8_t,1> &interp, int steps, float w = 1.0)
+    static ceres::CostFunction* Create(const I &interp, int steps, float w = 1.0)
     {
         return new ceres::AutoDiffCostFunction<EmptySpaceLineLoss, 1, 3, 3>(new EmptySpaceLineLoss({interp, steps, w}));
     }

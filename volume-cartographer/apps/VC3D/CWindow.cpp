@@ -160,7 +160,7 @@ void CWindow::setVolume(std::shared_ptr<volcart::Volume> newvol)
         cv::Vec3d point = {4476.81, 2483.53, 5753.1}; //surf
         cv::Vec3d n = point*1.1;
         n[2] = 0;
-        _opchains["experiment"] = new OpChain(empty_space_tracing_quad_phys(currentVolume->zarrDataset(0), 1.0, chunk_cache, point, point+n, 5));
+        _opchains["experiment"] = new OpChain(empty_space_tracing_quad_phys(currentVolume->zarrDataset(0), 1.0, chunk_cache, point, point+n, 10));
     }
 }
 

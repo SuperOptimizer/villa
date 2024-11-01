@@ -8,49 +8,53 @@
 
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Surface.hpp"
+#include "vc/core/types/ChunkedTensor.hpp"
+
+
+#include <xtensor/xview.hpp>
 
 #include <fstream>
 
-static std::ostream& operator<< (std::ostream& out, const std::vector<size_t> &v) {
-    if ( !v.empty() ) {
-        out << '[';
-        for(auto &v : v)
-            out << v << ",";
-        out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
-    }
-    return out;
-}
-
-static std::ostream& operator<< (std::ostream& out, const std::vector<int> &v) {
-    if ( !v.empty() ) {
-        out << '[';
-        for(auto &v : v)
-            out << v << ",";
-        out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
-    }
-    return out;
-}
-
-template <size_t N>
-std::ostream& operator<< (std::ostream& out, const std::array<size_t,N> &v) {
-    if ( !v.empty() ) {
-        out << '[';
-        for(auto &v : v)
-            out << v << ",";
-        out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
-    }
-    return out;
-}
-
-static std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v) {
-    if ( !v.empty() ) {
-        out << '[';
-        for(auto &v : v)
-            out << v << ",";
-        out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
-    }
-    return out;
-}
+// static std::ostream& operator<< (std::ostream& out, const std::vector<size_t> &v) {
+//     if ( !v.empty() ) {
+//         out << '[';
+//         for(auto &v : v)
+//             out << v << ",";
+//         out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
+//     }
+//     return out;
+// }
+//
+// static std::ostream& operator<< (std::ostream& out, const std::vector<int> &v) {
+//     if ( !v.empty() ) {
+//         out << '[';
+//         for(auto &v : v)
+//             out << v << ",";
+//         out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
+//     }
+//     return out;
+// }
+//
+// template <size_t N>
+// static std::ostream& operator<< (std::ostream& out, const std::array<size_t,N> &v) {
+//     if ( !v.empty() ) {
+//         out << '[';
+//         for(auto &v : v)
+//             out << v << ",";
+//         out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
+//     }
+//     return out;
+// }
+//
+// static std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v) {
+//     if ( !v.empty() ) {
+//         out << '[';
+//         for(auto &v : v)
+//             out << v << ",";
+//         out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
+//     }
+//     return out;
+// }
 
 class ALifeTime
 {
@@ -1937,18 +1941,19 @@ void distanceTransform(const st_1u &src, st_1u &dist, int steps)
                     dist.at(k,j,i)[0] = steps;
 }
 
-
-int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<uint8_t,1> &interp, float w = 0.4)
+template <typename I>
+int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, float w = 0.1)
 {
     if (!loc_valid(state(p)))
         return 0;
 
-    problem.AddResidualBlock(EmptySpaceLoss::Create(interp, w), nullptr, &loc(p)[0]);
+    problem.AddResidualBlock(EmptySpaceLoss<I>::Create(interp, w), nullptr, &loc(p)[0]);
 
     return 1;
 }
 
-int gen_space_line_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<uint8_t,1> &interp, float w = 0.4)
+template <typename I>
+int gen_space_line_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, float w = 0.1)
 {
     if (!loc_valid(state(p)))
         return 0;
@@ -1956,7 +1961,7 @@ int gen_space_line_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::V
         return 0;
 
     //TODO this will always succeed, but costfunction might not actually work, maybe actually check if it can be added?
-    problem.AddResidualBlock(EmptySpaceLineLoss::Create(interp, 4, w), nullptr, &loc(p)[0], &loc(p+off)[0]);
+    problem.AddResidualBlock(EmptySpaceLineLoss<I>::Create(interp, 10, w), nullptr, &loc(p)[0], &loc(p+off)[0]);
 
     return 1;
 }
@@ -1964,7 +1969,8 @@ int gen_space_line_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::V
 float space_trace_dist_w = 3.0;
 
 //create all valid losses for this point
-int emptytrace_create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<uint8_t,1> &interp, float unit, int flags = 0)
+template <typename I>
+int emptytrace_create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, float unit, int flags = 0)
 {
     //generate losses for point p
     int count = 0;
@@ -2003,7 +2009,8 @@ int emptytrace_create_centered_losses(ceres::Problem &problem, const cv::Vec2i &
     return count;
 }
 
-int conditional_spaceline_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<uint8_t,1> &interp)
+template <typename I>
+int conditional_spaceline_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp)
 {
     int set = 0;
     if (!loss_mask(bit, p, off, loss_status))
@@ -2012,7 +2019,8 @@ int conditional_spaceline_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &off
 };
 
 //create only missing losses so we can optimize the whole problem
-int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &loss_status, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const StupidTensorInterpolator<uint8_t,1> &interp, float unit, int flags = SPACE_LOSS | OPTIMIZE_ALL)
+template <typename I>
+int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &loss_status, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, float unit, int flags = SPACE_LOSS | OPTIMIZE_ALL)
 {
     //generate losses for point p
     int count = 0;
@@ -2057,7 +2065,8 @@ int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<
 }
 
 //optimize within a radius, setting edge points to constant
-float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, const StupidTensorInterpolator<uint8_t,1> &interp, float unit)
+template <typename I>
+float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, const I &interp, float unit)
 {
     ceres::Problem problem;
     cv::Mat_<uint16_t> loss_status(state.size(), 0);
@@ -2094,8 +2103,9 @@ float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &stat
 
 
 //use closing operation to add inner points, TODO should probably also implement fringe based extension ...
+template <typename I>
 void add_phy_losses_closing(ceres::Problem &big_problem, int radius, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, cv::Mat_<uint16_t> &loss_status, const std::vector<cv::Vec2i> &cands, float unit, float phys_fail_th, const
-StupidTensorInterpolator<uint8_t,1> &interp)
+I &interp)
 {
     cv::Mat_<float> dist(state.size());
 
@@ -2171,12 +2181,108 @@ StupidTensorInterpolator<uint8_t,1> &interp)
     }
 }
 
+
+template <typename E>
+E _max_d_ign(const E &a, const E &b)
+{
+    if (a == E(-1))
+        return b;
+    if (b == E(-1))
+        return a;
+    return std::max(a,b);
+}
+
+template <typename T, typename E>
+void _dist_iteration(T &from, T &to, int s)
+{
+    E magic = -1;
+    #pragma omp parallel for
+    for(int k=0;k<s;k++)
+        for(int j=0;j<s;j++)
+            for(int i=0;i<s;i++) {
+                E dist = from(k,j,i);
+                if (dist == magic) {
+                    if (k) dist = _max_d_ign(dist, from(k-1,j,i));
+                    if (k < s-1) dist = _max_d_ign(dist, from(k+1,j,i));
+                    if (j) dist = _max_d_ign(dist, from(k,j-1,i));
+                    if (j < s-1) dist = _max_d_ign(dist, from(k,j+1,i));
+                    if (i) dist = _max_d_ign(dist, from(k,j,i-1));
+                    if (i < s-1) dist = _max_d_ign(dist, from(k,j,i+1));
+                    if (dist != magic)
+                        to(k,j,i) = dist+1;
+                    else
+                        to(k,j,i) = dist;
+                }
+                else
+                    to(k,j,i) = dist;
+
+            }
+}
+
+template <typename T, typename E>
+T distance_transform(const T &chunk, int steps, int size)
+{
+    T c1 = xt::empty<E>(chunk.shape());
+    T c2 = xt::empty<E>(chunk.shape());
+
+    c1 = chunk;
+
+    E magic = -1;
+
+    for(int n=0;n<steps/2;n++) {
+        _dist_iteration<T,E>(c1,c2,size);
+        _dist_iteration<T,E>(c2,c1,size);
+    }
+
+    #pragma omp parallel for
+    for(int z=0;z<size;z++)
+        for(int y=0;y<size;y++)
+            for(int x=0;x<size;x++)
+                if (c1(z,y,x) == magic)
+                    c1(z,y,x) = steps;
+
+    return c1;
+}
+
+struct thresholdedDistance
+{
+    enum {BORDER = 16};
+    enum {CHUNK_SIZE = 32};
+    enum {FILL_V = 0};
+    template <typename T, typename E> void compute(const T &large, T &small)
+    {
+        T outer = xt::empty<E>(large.shape());
+
+        int s = CHUNK_SIZE+2*BORDER;
+        E magic = -1;
+
+        #pragma omp parallel for
+        for(int z=0;z<s;z++)
+            for(int y=0;y<s;y++)
+                for(int x=0;x<s;x++)
+                    if (large(z,y,x) < 50)
+                        outer(z,y,x) = magic;
+        else
+            outer(z,y,x) = 0;
+
+        outer = distance_transform<T,E>(outer, 15, s);
+
+        int low = int(BORDER);
+        int high = int(BORDER)+int(CHUNK_SIZE);
+
+        auto crop_outer = view(outer, xt::range(low,high),xt::range(low,high),xt::range(low,high));
+
+        small = crop_outer;
+    }
+
+};
+
 QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, cv::Vec3f normal, float step)
 {
     ALifeTime f_timer("empty space tracing\n");
     DSReader reader = {ds,scale,cache};
 
-    int stop_gen = 150;
+    int stop_gen = 75;
 
     //FIXME show and handle area edge!
     int w = 2*step*reader.scale*1.1*stop_gen;
@@ -2189,41 +2295,46 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     int x0 = w/2;
     int y0 = h/2;
 
-    PlaneSurface plane(origin, normal);
-    cv::Mat_<cv::Vec3f> coords(h,w);
-    plane.gen(&coords, nullptr, size, nullptr, reader.scale, {-w/2,-h/2,0});
+    // PlaneSurface plane(origin, normal);
+    // cv::Mat_<cv::Vec3f> coords(h,w);
+    // plane.gen(&coords, nullptr, size, nullptr, reader.scale, {-w/2,-h/2,0});
 
-    coords *= reader.scale;
-    double off = 0;
-    cv::Mat_<uint8_t> slice(h,w);
+    // coords *= reader.scale;
+    // double off = 0;
+    // cv::Mat_<uint8_t> slice(h,w);
+    //
+    // st_1u vol;
+    // st_1u voldist;
+    //
+    // std::cout << " reading " << double(w)*h*z/1000/1000 << "M voxels" << std::endl;
+    // ALifeTime *timer = new ALifeTime("reading...");
+    // for(int zi=0;zi<z;zi++) {
+    //     double off = zi - z/2;
+    //     cv::Mat_<cv::Vec3f> offmat(size, normal*off);
+    //     readInterpolated3D(slice, reader.ds, coords+offmat, reader.cache);
+    //     vol.planes.push_back(slice.clone());
+    // }
+    // delete timer;
 
-    st_1u vol;
-    st_1u voldist;
+//     timer = new ALifeTime("thresholding...");
+// #pragma omp parallel for
+//     for(auto &p : vol.planes)
+//         cv::threshold(p, p, 1, 1, cv::THRESH_BINARY);
+//     delete timer;
+//
+//     timer = new ALifeTime("distancestransform...");
+//     distanceTransform(vol, voldist, 40);
+//     delete timer;
 
-    std::cout << " reading " << double(w)*h*z/1000/1000 << "M voxels" << std::endl;
-    ALifeTime *timer = new ALifeTime("reading...");
-    for(int zi=0;zi<z;zi++) {
-        double off = zi - z/2;
-        cv::Mat_<cv::Vec3f> offmat(size, normal*off);
-        readInterpolated3D(slice, reader.ds, coords+offmat, reader.cache);
-        vol.planes.push_back(slice.clone());
-    }
-    delete timer;
 
-    timer = new ALifeTime("thresholding...");
-#pragma omp parallel for
-    for(auto &p : vol.planes)
-        cv::threshold(p, p, 1, 1, cv::THRESH_BINARY);
-    delete timer;
+    thresholdedDistance compute;
 
-    timer = new ALifeTime("distancestransform...");
-    distanceTransform(vol, voldist, 40);
-    delete timer;
+    Chunked3d<uint8_t,thresholdedDistance> proc_tensor(compute, ds, cache);
 
-    timer = new ALifeTime("search & optimization ...");
+    ALifeTime *timer = new ALifeTime("search & optimization ...");
 
     //start of empty space tracing
-    StupidTensorInterpolator<uint8_t,1> interp(voldist);
+    Chunked3dInterpolator<uint8_t,thresholdedDistance> interp(proc_tensor,ds->shape(0));
 
     std::vector<cv::Vec2i> fringe;
     std::vector<cv::Vec2i> cands;
@@ -2242,12 +2353,15 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     cv::Mat_<uint8_t> phys_fail(size,0);
     cv::Mat_<uint16_t> loss_status(cv::Size(w,h),0);
 
+    cv::Vec3f vx = vx_from_orig_norm(origin, normal);
+    cv::Vec3f vy = vy_from_orig_norm(origin, normal);
+
     cv::Rect used_area(x0,y0,2,2);
     //these are locations in the local volume!
-    locs(y0,x0) = {x0,y0,z/2};
-    locs(y0,x0+1) = locs(y0,x0) + cv::Vec3d(Ts,0,0);
-    locs(y0+1,x0) = locs(y0,x0) + cv::Vec3d(0,Ts,0);
-    locs(y0+1,x0+1) = locs(y0,x0) + cv::Vec3d(Ts,Ts,0);
+    locs(y0,x0) = origin;
+    locs(y0,x0+1) = origin+vx*Ts;
+    locs(y0+1,x0) = origin+vy*Ts;
+    locs(y0+1,x0+1) = origin+vx*Ts + vy*Ts;
 
     state(y0,x0) = STATE_LOC_VALID;
     state(y0+1,x0) = STATE_LOC_VALID;
@@ -2431,7 +2545,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             }
 
             //FIXME revisit dists after (every?) iteration?
-            if (dist <= 0 || summary.final_cost >= 0.1) {
+            if (dist >= 2 || summary.final_cost >= 0.1) {
                 locs(p) = phys_only_loc;
                 state(p) = STATE_COORD_VALID;
                 loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, Ts, OPTIMIZE_ALL);
@@ -2496,38 +2610,38 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     // loss_status = loss_status(used_area);
     // cv::imwrite("loss_status.tif", loss_status);
 
-    CeresGrid2DcvMat3f grid_coords({coords});
-    ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> interp_coords(grid_coords);
+    // CeresGrid2DcvMat3f grid_coords({coords});
+    // ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> interp_coords(grid_coords);
 
     locs = locs(used_area);
     state = state(used_area);
-    cv::Mat_<cv::Vec3f> points(locs.size(), cv::Vec3f(-1,-1,-1));
-    cv::Mat_<float> dists(points.size(), 1000);
-    for(int j=0;j<locs.rows;j++)
-        for(int i=0;i<locs.cols;i++) {
-            if (!loc_valid(state(j,i)))
-                continue;
-            cv::Vec3d l = locs(j,i);
-            double p[3];
-
-            interp_coords.Evaluate(l[1],l[0], p);
-            cv::Vec3f coord = {p[0],p[1],p[2]};
-            coord += (l[2]-z/2) * normal;
-            points(j,i) = coord;
-
-            double d;
-            interp.Evaluate<double>(l[2],l[1],l[0], &d);
-            dists(j,i) = d;
-        }
+    // cv::Mat_<cv::Vec3f> points(locs.size(), cv::Vec3f(-1,-1,-1));
+    // cv::Mat_<float> dists(points.size(), 1000);
+    // for(int j=0;j<locs.rows;j++)
+    //     for(int i=0;i<locs.cols;i++) {
+    //         if (!loc_valid(state(j,i)))
+    //             continue;
+    //         cv::Vec3d l = locs(j,i);
+    //         double p[3];
+    //
+    //         interp_coords.Evaluate(l[1],l[0], p);
+    //         cv::Vec3f coord = {p[0],p[1],p[2]};
+    //         coord += (l[2]-z/2) * normal;
+    //         points(j,i) = coord;
+    //
+    //         double d;
+    //         interp.Evaluate<double>(l[2],l[1],l[0], &d);
+    //         dists(j,i) = d;
+    //     }
 
 
     // cv::imwrite("phys_fail.tif", phys_fail*255);
 
     // cv::imwrite("dists.tif", dists);
-    points *= 1/reader.scale;
+    // points *= 1/reader.scale;
 
     printf("generated approximate surface %fkvx^2\n", succ*step*step/1000000.0);
     printf("generated approximate surface %fmm^2\n", succ*step*step*0.008*0.008);
 
-    return new QuadSurface(points, {1/T, 1/T});
+    return new QuadSurface(locs, {1/T, 1/T});
 }
