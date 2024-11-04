@@ -384,12 +384,13 @@ struct CeresGridChunked3DTensor {
 
 template <typename T, typename C>
 struct CeresGridChunked3DTensor3D {
+    CeresGridChunked3DTensor3D(Chunked3dAccessor<T,C> &a) : _a(a) {};
     enum { DATA_DIMENSION = 1 };
     void GetValue(int z, int row, int col, double* f)
     {
         f[0] = _a.safe_at(z, row, col);
     }
-    Chunked3dAccessor<T,C> _a;
+    Chunked3dAccessor<T,C> &_a;
 };
 
 //FIXME add thread safe variant!
@@ -397,40 +398,56 @@ template <typename T, typename C>
 class CachedChunked3dInterpolator
 {
 public:
-    CachedChunked3dInterpolator(Chunked3d<T,C> &t) : _low_a({Chunked3dAccessor<T,C>(t)}), _high_a({Chunked3dAccessor<T,C>(t)}), _low_i({_low_a}), _high_i({_high_a})
+    CachedChunked3dInterpolator(Chunked3d<T,C> &t) : _low_a(t), _high_a(t), _low_g(_low_a), _high_g(_high_a), _low_i(_low_g), _high_i(_high_g)
     {
         _d = t.shape()[0];
+
+        // std::cout << "CachedChunked3dInterpolator acc" << &_low_a << " " << &_low_a._ar << std::endl;
+        // std::cout << "CachedChunked3dInterpolator acc" << &_low_i.grid_._a << std::endl;
     };
 
-    CeresGridChunked3DTensor3D<T,C> _low_a;
-    CeresGridChunked3DTensor3D<T,C> _high_a;
+    // CachedChunked3dInterpolator(Chunked3d<T,C> &t)
+    // {
+    //     _low_a = {t};
+    //     _high_a = (t);
+    //     _low_g = {_low_a};
+    //     _high_g = {_high_a};
+    //     _low_i = {_low_g};
+    //     _high_i = {_high_g};
+    //
+    //     _d = t.shape()[0];
+    // };
+
+    Chunked3dAccessor<T,C> _low_a;
+    Chunked3dAccessor<T,C> _high_a;
+
+    CeresGridChunked3DTensor3D<T,C> _low_g;
+    CeresGridChunked3DTensor3D<T,C> _high_g;
 
     ceres::LinxBiCubicInterpolator<CeresGridChunked3DTensor3D<T,C>> _low_i;
     ceres::LinxBiCubicInterpolator<CeresGridChunked3DTensor3D<T,C>> _high_i;
 
-    template <typename V> void Evaluate(const V &z, const V &y, const V &x, V *out) const
+    template <typename V> void Evaluate(const V &z, const V &y, const V &x, V *out)
     {
-        auto self = const_cast<CachedChunked3dInterpolator*>(this);
-
         double zv = val(z);
         //FIXME linear interpolate along z
         if (zv < 0.0) {
-            self->_low_i.set_z(zv);
-            self->_low_i.Evaluate(y, x, out);
+            _low_i.set_z(zv);
+            _low_i.Evaluate(y, x, out);
         }
         else if (int(zv)+1 >= _d) {
-            self->_high_i.set_z(_d-1);
-            self->_high_i.Evaluate(y, x, out);
+            _high_i.set_z(_d-1);
+            _high_i.Evaluate(y, x, out);
         }
         else {
             V m = z-floor(z);
             int zi = zv;
             V low;
             V high;
-            self->_low_i.set_z(zi);
-            self->_high_i.set_z(zi+1);
-            self->_low_i.Evaluate(y, x, &low);
-            self->_high_i.Evaluate(y, x, &high);
+            _low_i.set_z(zi);
+            _high_i.set_z(zi+1);
+            _low_i.Evaluate(y, x, &low);
+            _high_i.Evaluate(y, x, &high);
             *out = (V(1)-m)*low + m*high;
         }
     }
@@ -504,12 +521,12 @@ struct EmptySpaceLoss {
 
 template <typename T, typename C>
 struct EmptySpaceLossAcc {
-    EmptySpaceLossAcc(Chunked3d<T,C> &t, float w) : _interpolator(t), _w(w) {};
+    EmptySpaceLossAcc(Chunked3d<T,C> &t, float w) : _interpolator(std::make_unique<CachedChunked3dInterpolator<T,C>>(t)), _w(w) {};
     template <typename E>
     bool operator()(const E* const l, E* residual) const {
         E v;
 
-        _interpolator.template Evaluate<E>(l[2], l[1], l[0], &v);
+        _interpolator->template Evaluate<E>(l[2], l[1], l[0], &v);
 
         residual[0] = E(_w)*v*v;
 
@@ -517,7 +534,7 @@ struct EmptySpaceLossAcc {
     }
 
     float _w;
-    CachedChunked3dInterpolator<T,C> _interpolator;
+    std::unique_ptr<CachedChunked3dInterpolator<T,C>> _interpolator;
 
     static ceres::CostFunction* Create(Chunked3d<T,C> &t, float w = 1.0)
     {
@@ -561,7 +578,16 @@ struct EmptySpaceLineLoss {
 //cost functions for physical paper
 template <typename T, typename C>
 struct EmptySpaceLineLossAcc {
-    // EmptySpaceMultiLoss(const StupidTensorInterpolator<uint8_t,1> &interp, int steps, uint8_t *state_a, uint8_t *state_b,  w) : _interpolator(interp), _steps(steps), _w(w) {};
+    EmptySpaceLineLossAcc(Chunked3d<T,C> &t, int steps, float w) : _steps(steps), _w(w)
+    {
+        // _interpolator = std::make_unique<std::vector<CachedChunked3dInterpolator<T,C>>>();
+        // for(int i=1;i<_steps;i++)
+        //     _interpolator->push_back(t);
+        // _interpolator.reset(new CachedChunked3dInterpolator<T,C>(t));
+        _interpolator.resize(_steps-1);
+        for(int i=1;i<_steps;i++)
+            _interpolator[i-1].reset(new CachedChunked3dInterpolator<T,C>(t));
+    };
     template <typename E>
     bool operator()(const E* const la, const E* const lb, E* residual) const {
         E v;
@@ -570,7 +596,8 @@ struct EmptySpaceLineLossAcc {
         for(int i=1;i<_steps;i++) {
             E f2 = E(float(i)/_steps);
             E f1 = E(1.0f-float(i)/_steps);
-            _interpolator.template Evaluate<E>(f1*la[2]+f2*lb[2], f1*la[1]+f2*lb[1], f1*la[0]+f2*lb[0], &v);
+            // (*_interpolator)[i-1].template Evaluate<E>(f1*la[2]+f2*lb[2], f1*la[1]+f2*lb[1], f1*la[0]+f2*lb[0], &v);
+            _interpolator[i-1].get()->template Evaluate<E>(f1*la[2]+f2*lb[2], f1*la[1]+f2*lb[1], f1*la[0]+f2*lb[0], &v);
             sum += E(_w)*v*v;
         }
 
@@ -579,13 +606,15 @@ struct EmptySpaceLineLossAcc {
         return true;
     }
 
-    CachedChunked3dInterpolator<T,C> _interpolator;
+    // std::unique_ptr<std::vector<CachedChunked3dInterpolator<T,C>>> _interpolator;
+    std::vector<std::unique_ptr<CachedChunked3dInterpolator<T,C>>> _interpolator;
+    // std::unique_ptr<CachedChunked3dInterpolator<T,C>> _interpolator;
     int _steps;
     float _w;
 
     static ceres::CostFunction* Create(Chunked3d<T,C> &t, int steps, float w = 1.0)
     {
-        return new ceres::AutoDiffCostFunction<EmptySpaceLineLossAcc, 1, 3, 3>(new EmptySpaceLineLossAcc({t, steps, w}));
+        return new ceres::AutoDiffCostFunction<EmptySpaceLineLossAcc, 1, 3, 3>(new EmptySpaceLineLossAcc(t, steps, w));
     }
 
 };

@@ -175,6 +175,13 @@ public:
     std::shared_mutex _mutex;
 };
 
+static uint64_t miss = 0;
+static uint64_t total = 0;
+
+void print_accessor_stats()
+{
+    std::cout << "acc miss/total " << miss << " " << total << " " << double(miss)/total << std::endl;
+}
 
 template <typename T, typename C>
 class Chunked3dAccessor
@@ -207,6 +214,8 @@ public:
                 get_chunk(p);
         }
 
+        total++;
+
         return _chunk->operator()(p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]);
     }
 
@@ -235,6 +244,9 @@ public:
                 get_chunk_safe(p);
         }
 
+#pragma omp atomic
+        total++;
+
         return _chunk->operator()(p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]);
     }
 
@@ -245,6 +257,7 @@ public:
 
     void get_chunk(const cv::Vec3i &p)
     {
+        miss++;
         cv::Vec3i id = {p[0]/C::CHUNK_SIZE,p[1]/C::CHUNK_SIZE,p[2]/C::CHUNK_SIZE};
         _chunk = _ar.chunk(id);
         _corner = id*C::CHUNK_SIZE;
@@ -252,14 +265,16 @@ public:
 
     void get_chunk_safe(const cv::Vec3i &p)
     {
+#pragma omp atomic
+        miss++;
         cv::Vec3i id = {p[0]/C::CHUNK_SIZE,p[1]/C::CHUNK_SIZE,p[2]/C::CHUNK_SIZE};
         _chunk = _ar.chunk_safe(id);
         _corner = id*C::CHUNK_SIZE;
     }
 
+    Chunked3d<T,C> &_ar;
 protected:
     CHUNKT *_chunk;
-    Chunked3d<T,C> &_ar;
     cv::Vec3i _corner = {-1,-1,-1};
 };
 

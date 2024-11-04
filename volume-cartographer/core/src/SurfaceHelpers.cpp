@@ -2043,7 +2043,7 @@ int emptytrace_create_centered_losses(ceres::Problem &problem, const cv::Vec2i &
 }
 
 template <typename T, typename C>
-int conditional_spaceline_loss_slow(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, Chunked3d<T,C> &t, int steps)
+int conditional_spaceline_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, Chunked3d<T,C> &t, int steps)
 {
     int set = 0;
     if (!loss_mask(bit, p, off, loss_status))
@@ -2052,7 +2052,7 @@ int conditional_spaceline_loss_slow(int bit, const cv::Vec2i &p, const cv::Vec2i
 };
 
 template <typename I>
-int conditional_spaceline_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, int steps)
+int conditional_spaceline_loss_slow(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, int steps)
 {
     int set = 0;
     if (!loss_mask(bit, p, off, loss_status))
@@ -2096,11 +2096,11 @@ int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<
         if (!loss_mask(6, p, {0,0}, loss_status))
             count += set_loss_mask(6, p, {0,0}, loss_status, gen_space_loss(problem, p, state, loc, t));
 
-        count += conditional_spaceline_loss(7, p, {1,0}, loss_status, problem, state, loc, interp, unit);
-        count += conditional_spaceline_loss(7, p, {-1,0}, loss_status, problem, state, loc, interp, unit);
+        count += conditional_spaceline_loss(7, p, {1,0}, loss_status, problem, state, loc, t, unit);
+        count += conditional_spaceline_loss(7, p, {-1,0}, loss_status, problem, state, loc, t, unit);
 
-        count += conditional_spaceline_loss(8, p, {0,1}, loss_status, problem, state, loc, interp, unit);
-        count += conditional_spaceline_loss(8, p, {0,-1}, loss_status, problem, state, loc, interp, unit);
+        count += conditional_spaceline_loss(8, p, {0,1}, loss_status, problem, state, loc, t, unit);
+        count += conditional_spaceline_loss(8, p, {0,-1}, loss_status, problem, state, loc, t, unit);
     }
 
     return count;
@@ -2292,7 +2292,7 @@ T distance_transform(const T &chunk, int steps, int size)
 struct thresholdedDistance
 {
     enum {BORDER = 16};
-    enum {CHUNK_SIZE = 32};
+    enum {CHUNK_SIZE = 64};
     enum {FILL_V = 0};
     template <typename T, typename E> void compute(const T &large, T &small)
     {
@@ -2623,7 +2623,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             init_dist(p) = dist;
 
             //FIXME revisit dists after (every?) iteration?
-            if (dist >= 2 || summary.final_cost >= 0.1) {
+            if (dist >= 4 || summary.final_cost >= 0.1) {
                 locs(p) = phys_only_loc;
                 state(p) = STATE_COORD_VALID;
                 loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, proc_tensor, Ts, OPTIMIZE_ALL);
@@ -2694,6 +2694,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
         timer_gen.unit = succ_gen*0.008*0.008*T*T;
         timer_gen.unit_string = "mm^2";
+        print_accessor_stats();
 
     }
     delete timer;
@@ -2709,11 +2710,18 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     init_dist = init_dist(used_area);
 
     cv::imwrite("init_dist.tif", init_dist);
+    cv::imwrite("state.tif", state);
+
+    cv::Mat_<uint8_t> classification(locs.size(), 0);
+    for(int j=0;j<locs.rows;j++)
+        for(int i=0;i<locs.cols;i++)
+            classification(j,i) = dbg_tensor(locs(j,i)[2],locs(j,i)[1],locs(j,i)[0]);
+    cv::imwrite("class.tif", classification);
 
     cv::Mat_<uint8_t> dists(locs.size(), 0);
     for(int j=0;j<locs.rows;j++)
         for(int i=0;i<locs.cols;i++)
-            dists(j,i) = dbg_tensor(locs(j,i)[2],locs(j,i)[1],locs(j,i)[0]);
+            dists(j,i) = proc_tensor(locs(j,i)[2],locs(j,i)[1],locs(j,i)[0]);
     cv::imwrite("dists.tif", dists);
 
     // cv::Mat_<cv::Vec3f> points(locs.size(), cv::Vec3f(-1,-1,-1));
