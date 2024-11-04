@@ -2140,7 +2140,8 @@ float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &stat
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
 
-    std::cout << "local solve radius" << radius << " " << summary.BriefReport() << std::endl;
+    if (!quiet)
+        std::cout << "local solve radius" << radius << " " << summary.BriefReport() << std::endl;
 
     return sqrt(summary.final_cost/summary.num_residual_blocks);
 }
@@ -2336,6 +2337,37 @@ struct passTroughComputor
     }
 };
 
+float min_dist(const cv::Vec2i &p, const std::vector<cv::Vec2i> &list)
+{
+    double dist = 10000000000;
+    for(auto &o : list) {
+        if (o[0] == -1 || o == p)
+            continue;
+        dist = std::min(cv::norm(o-p), dist);
+    }
+
+    return dist;
+}
+
+cv::Point2i extract_point_min_dist(std::vector<cv::Vec2i> &cands, std::vector<cv::Vec2i> &blocked, int &idx, float dist)
+{
+    for(int i=0;i<cands.size();i++) {
+        cv::Vec2i p = cands[(i + idx) % cands.size()];
+
+        if (p[0] == -1)
+            continue;
+
+        if (min_dist(p, blocked) >= dist) {
+            cands[(i + idx) % cands.size()] = {-1,-1};
+            idx = (i + idx + 1) % cands.size();
+
+            return p;
+        }
+    }
+
+    return {-1,-1};
+}
+
 QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, cv::Vec3f normal, float step)
 {
     ALifeTime f_timer("empty space tracing\n");
@@ -2465,8 +2497,8 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     options_big.function_tolerance = 1e-4;
 
 
-    ceres::Solver::Summary summary;
-    ceres::Solve(options_big, &big_problem, &summary);
+    ceres::Solver::Summary big_summary;
+    ceres::Solve(options_big, &big_problem, &big_summary);
 
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_QR;
@@ -2477,14 +2509,14 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     options.num_threads = omp_get_max_threads();;
 
 
-    std::cout << summary.BriefReport() << "\n";
+    std::cout << big_summary.BriefReport() << "\n";
 
     fringe.push_back({y0,x0});
     fringe.push_back({y0+1,x0});
     fringe.push_back({y0,x0+1});
     fringe.push_back({y0+1,x0+1});
 
-    ceres::Solve(options_big, &big_problem, &summary);
+    ceres::Solve(options_big, &big_problem, &big_summary);
 
 
     std::vector<cv::Vec2i> neighs = {{1,0},{0,1},{-1,0},{0,-1}};
@@ -2494,6 +2526,8 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     int generation = 0;
     int phys_fail_count = 0;
     double phys_fail_th = 0.1;
+
+    int max_local_opt_r = 4;
 
     // omp_set_num_threads(1);
 
@@ -2531,132 +2565,170 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         int succ_gen = 0;
         std::vector<cv::Vec2i> succ_gen_ps;
 
-        for(auto p : cands) {
-            if (state(p) & STATE_LOC_VALID)
-                continue;
+        std::vector<cv::Vec2i> thread_ps(omp_get_max_threads());
 
-            int ref_count = 0;
-            cv::Vec3d avg = {0,0,0};
-            for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,locs.rows-1);oy++)
-                for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,locs.cols-1);ox++)
-                    if (state(oy,ox) & STATE_LOC_VALID) {
-                        ref_count++;
-                        avg += locs(oy,ox);
-                    }
+        for(auto &p : thread_ps)
+            p = {-1,-1};
 
-
-            int ref_count2 = 0;
-            for(int oy=std::max(p[0]-r2,0);oy<=std::min(p[0]+r2,locs.rows-1);oy++)
-                for(int ox=std::max(p[1]-r2,0);ox<=std::min(p[1]+r2,locs.cols-1);ox++)
-                    if (state(oy,ox) & STATE_LOC_VALID) {
-                        ref_count2++;
-                    }
-
-            if (ref_count < 2 /*|| (generation > 3 && ref_count2 < 14)*/) {
-                state(p) &= ~STATE_PROCESSING;
-                continue;
-            }
-
-            avg /= ref_count;
-            locs(p) = avg;
-
-            ceres::Problem problem;
-
-            state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
-            int local_loss_count = emptytrace_create_centered_losses(problem, p, state, locs, interp, proc_tensor, Ts);
-
-            //FIXME need to handle the edge of the input definition!!
-            ceres::Solve(options, &problem, &summary);
-
-            double loss1 = summary.final_cost;
-
-            if (loss1 > phys_fail_th) {
-                cv::Vec3d best_loc = locs(p);
-                double best_loss = loss1;
-                for (int n=0;n<100;n++) {
-                    int range = step*10;
-                    locs(p) = avg + cv::Vec3d((rand()%(range*2))-range,(rand()%(range*2))-range,(rand()%(range*2))-range);
-                    ceres::Solve(options, &problem, &summary);
-                    loss1 = summary.final_cost;
-                    if (loss1 < best_loss) {
-                        best_loss = loss1;
-                        best_loc = locs(p);
-                    }
-                    if (loss1 < phys_fail_th)
-                        break;
+#pragma omp parallel
+        {
+            int idx = rand() % cands.size();
+            while (true) {
+                int t_id = omp_get_thread_num();
+                cv::Vec2i p;
+#pragma omp critical
+                {
+                    thread_ps[t_id] = {-1,-1};
+                    thread_ps[t_id] = extract_point_min_dist(cands, thread_ps, idx, max_local_opt_r*2+1);
+                    p = thread_ps[t_id];
                 }
-                loss1 = best_loss;
-                locs(p) = best_loc;
-            }
+                if (p[0] == -1)
+                    break;
 
-            cv::Vec3d phys_only_loc = locs(p);
+//                 int parallism = 0;
+// #pragma omp critical
+//                 for(auto &o : thread_ps)
+//                     if (o[0] != -1)
+//                         parallism++;
+//
+//                 std::cout << "threads active: " << parallism << std::endl;
 
-            gen_space_loss(problem, p, state, locs, proc_tensor);
+                if (state(p) & STATE_LOC_VALID)
+                    continue;
 
-            gen_space_line_loss(problem, p, {1,0}, state, locs, proc_tensor, T);
-            gen_space_line_loss(problem, p, {-1,0}, state, locs, proc_tensor, T);
-            gen_space_line_loss(problem, p, {0,1}, state, locs, proc_tensor, T);
-            gen_space_line_loss(problem, p, {0,-1}, state, locs, proc_tensor, T);
+                int ref_count = 0;
+                cv::Vec3d avg = {0,0,0};
+                for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,locs.rows-1);oy++)
+                    for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,locs.cols-1);ox++)
+                        if (state(oy,ox) & STATE_LOC_VALID) {
+                            ref_count++;
+                            avg += locs(oy,ox);
+                        }
 
-            ceres::Solve(options, &problem, &summary);
-            // local_optimization(1, p, state, locs, interp, proc_tensor, Ts, true);
 
-            double dist;
-            //check steps
-            interp.Evaluate(locs(p)[2],locs(p)[1],locs(p)[0], &dist);
-            int count = 0;
-            for (auto &off : neighs) {
-                if (state(p+off) & STATE_LOC_VALID) {
-                    for(int i=1;i<T;i++) {
-                        float f1 = float(i)/T;
-                        float f2 = 1-f1;
-                        cv::Vec3d l = locs(p)*f1 + locs(p+off)*f2;
-                        double d2;
-                        interp.Evaluate(l[2],l[1],l[0], &d2);
-                        // dist += d2;
-                        dist = std::max(dist, d2);
-                        count++;
-                    }
+                int ref_count2 = 0;
+                for(int oy=std::max(p[0]-r2,0);oy<=std::min(p[0]+r2,locs.rows-1);oy++)
+                    for(int ox=std::max(p[1]-r2,0);ox<=std::min(p[1]+r2,locs.cols-1);ox++)
+                        if (state(oy,ox) & STATE_LOC_VALID) {
+                            ref_count2++;
+                        }
+
+                if (ref_count < 2 /*|| (generation > 3 && ref_count2 < 14)*/) {
+                    state(p) &= ~STATE_PROCESSING;
+                    continue;
                 }
-            }
 
-            // dist /= count;
+                avg /= ref_count;
+                locs(p) = avg;
 
-            init_dist(p) = dist;
+                ceres::Problem problem;
 
-            //FIXME revisit dists after (every?) iteration?
-            if (dist >= 2 || summary.final_cost >= 0.1) {
-                locs(p) = phys_only_loc;
-                state(p) = STATE_COORD_VALID;
-                loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, proc_tensor, Ts, OPTIMIZE_ALL);
+                state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
+                int local_loss_count = emptytrace_create_centered_losses(problem, p, state, locs, interp, proc_tensor, Ts);
+
+                //FIXME need to handle the edge of the input definition!!
+                ceres::Solver::Summary summary;
+                ceres::Solve(options, &problem, &summary);
+
+                double loss1 = summary.final_cost;
+
                 if (loss1 > phys_fail_th) {
-                    phys_fail(p) = 1;
-
-                    float err = 0;
-                    for(int range = 1; range<=16;range++) {
-                        err = local_optimization(range, p, state, locs, interp, proc_tensor, Ts);
-                        if (err <= phys_fail_th)
+                    cv::Vec3d best_loc = locs(p);
+                    double best_loss = loss1;
+                    for (int n=0;n<100;n++) {
+                        int range = step*10;
+                        locs(p) = avg + cv::Vec3d((rand()%(range*2))-range,(rand()%(range*2))-range,(rand()%(range*2))-range);
+                        ceres::Solve(options, &problem, &summary);
+                        loss1 = summary.final_cost;
+                        if (loss1 < best_loss) {
+                            best_loss = loss1;
+                            best_loc = locs(p);
+                        }
+                        if (loss1 < phys_fail_th)
                             break;
                     }
-                    if (err > phys_fail_th) {
-                        std::cout << "local phys fail! " << err << std::endl;
-                        phys_fail_count++;
-                        phys_fail_count_gen++;
+                    loss1 = best_loss;
+                    locs(p) = best_loc;
+                }
+
+                cv::Vec3d phys_only_loc = locs(p);
+
+                gen_space_loss(problem, p, state, locs, proc_tensor);
+
+                gen_space_line_loss(problem, p, {1,0}, state, locs, proc_tensor, T);
+                gen_space_line_loss(problem, p, {-1,0}, state, locs, proc_tensor, T);
+                gen_space_line_loss(problem, p, {0,1}, state, locs, proc_tensor, T);
+                gen_space_line_loss(problem, p, {0,-1}, state, locs, proc_tensor, T);
+
+                ceres::Solve(options, &problem, &summary);
+                // local_optimization(1, p, state, locs, interp, proc_tensor, Ts, true);
+
+                double dist;
+                //check steps
+                interp.Evaluate(locs(p)[2],locs(p)[1],locs(p)[0], &dist);
+                int count = 0;
+                for (auto &off : neighs) {
+                    if (state(p+off) & STATE_LOC_VALID) {
+                        for(int i=1;i<T;i++) {
+                            float f1 = float(i)/T;
+                            float f2 = 1-f1;
+                            cv::Vec3d l = locs(p)*f1 + locs(p+off)*f2;
+                            double d2;
+                            interp.Evaluate(l[2],l[1],l[0], &d2);
+                            // dist += d2;
+                            dist = std::max(dist, d2);
+                            count++;
+                        }
                     }
                 }
-            }
-            else {
-                //FIXMe still add (some?) material losses for empty points so we get valid surface structure!
-                loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, proc_tensor, Ts);
 
-                succ++;
-                succ_gen++;
-                fringe.push_back(p);
-                if (!used_area.contains({p[1],p[0]})) {
-                    used_area = used_area | cv::Rect(p[1],p[0],1,1);
+                // dist /= count;
+
+                init_dist(p) = dist;
+
+                //FIXME revisit dists after (every?) iteration?
+                if (dist >= 2 || summary.final_cost >= 0.1) {
+                    locs(p) = phys_only_loc;
+                    state(p) = STATE_COORD_VALID;
+#pragma omp critical
+                    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, proc_tensor, Ts, OPTIMIZE_ALL);
+                    if (loss1 > phys_fail_th) {
+                        phys_fail(p) = 1;
+
+                        float err = 0;
+                        for(int range = 1; range<=max_local_opt_r;range++) {
+                            err = local_optimization(range, p, state, locs, interp, proc_tensor, Ts);
+                            if (err <= phys_fail_th)
+                                break;
+                        }
+                        if (err > phys_fail_th) {
+                            std::cout << "local phys fail! " << err << std::endl;
+#pragma omp atomic
+                            phys_fail_count++;
+#pragma omp atomic
+                            phys_fail_count_gen++;
+                        }
+                    }
                 }
+                else {
+                    //FIXMe still add (some?) material losses for empty points so we get valid surface structure!
+#pragma omp critical
+                    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, proc_tensor, Ts);
+#pragma omp atomic
+                    succ++;
+#pragma omp atomic
+                    succ_gen++;
+#pragma omp critical
+                    {
+                        fringe.push_back(p);
+                        if (!used_area.contains({p[1],p[0]})) {
+                            used_area = used_area | cv::Rect(p[1],p[0],1,1);
+                        }
+                    }
+                }
+#pragma omp critical
+                succ_gen_ps.push_back(p);
             }
-            succ_gen_ps.push_back(p);
         }
 
         add_phy_losses_closing(big_problem, 20, state, locs, loss_status, cands, Ts, phys_fail_th, interp, proc_tensor);
@@ -2674,15 +2746,37 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             options_big.minimizer_progress_to_stdout = false;
 
         if (generation >= 20) {
+            std::vector<cv::Vec2i> opt_local;
             for(auto p : succ_gen_ps)
                 if (p[0] % 4 == 0 && p[1] % 4 == 0)
+                    opt_local.push_back(p);
+
+            for(auto &p : thread_ps)
+                p = {-1,-1};
+#pragma omp parallel
+            if (opt_local.size()) {
+                int idx = rand() % opt_local.size();
+                while (true) {
+                    int t_id = omp_get_thread_num();
+                    cv::Vec2i p;
+                    #pragma omp critical
+                    {
+                        thread_ps[t_id] = {-1,-1};
+                        thread_ps[t_id] = extract_point_min_dist(cands, thread_ps, idx, 17);
+                        p = thread_ps[t_id];
+                    }
+                    if (p[0] == -1)
+                        break;
+
                     local_optimization(8, p, state, locs, interp, proc_tensor, Ts);
+                }
+            }
         }
         else {
             std::cout << "running big solve" << std::endl;
-            ceres::Solve(options_big, &big_problem, &summary);
-            std::cout << summary.BriefReport() << "\n";
-            std::cout << "avg err:" << sqrt(summary.final_cost/summary.num_residual_blocks) << std::endl;
+            ceres::Solve(options_big, &big_problem, &big_summary);
+            std::cout << big_summary.BriefReport() << "\n";
+            std::cout << "avg err:" << sqrt(big_summary.final_cost/big_summary.num_residual_blocks) << std::endl;
         }
 
         if (generation > 10) {
