@@ -1034,7 +1034,7 @@ bool coord_valid(int state)
 }
 
 //gen straigt loss given point and 3 offsets
-int gen_straight_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, bool optimize_all)
+int gen_straight_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, bool optimize_all, float w = 1.0)
 {
     if (!coord_valid(state(p+o1)))
         return 0;
@@ -1043,7 +1043,7 @@ int gen_straight_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec
     if (!coord_valid(state(p+o3)))
         return 0;
 
-    problem.AddResidualBlock(StraightLoss::Create(), nullptr, &dpoints(p+o1)[0], &dpoints(p+o2)[0], &dpoints(p+o3)[0]);
+    problem.AddResidualBlock(StraightLoss::Create(w), nullptr, &dpoints(p+o1)[0], &dpoints(p+o2)[0], &dpoints(p+o3)[0]);
 
     if (!optimize_all) {
         if (o1 != cv::Vec2i(0,0))
@@ -1999,7 +1999,7 @@ int gen_space_line_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::V
     return 1;
 }
 
-float space_trace_dist_w = 3.0;
+float space_trace_dist_w = 1.0;
 
 //create all valid losses for this point
 template <typename I, typename T, typename C>
@@ -2132,7 +2132,8 @@ float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &stat
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::SPARSE_SCHUR;
     options.minimizer_progress_to_stdout = false;
-    options.max_num_iterations = 500;
+    options.max_num_iterations = 10000;
+    options.function_tolerance = 1e-4;
     // options.num_threads = 1;
     options.num_threads = omp_get_max_threads();
 
@@ -2492,7 +2493,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
     int generation = 0;
     int phys_fail_count = 0;
-    double phys_fail_th = 0.5;
+    double phys_fail_th = 0.1;
 
     // omp_set_num_threads(1);
 
@@ -2623,7 +2624,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             init_dist(p) = dist;
 
             //FIXME revisit dists after (every?) iteration?
-            if (dist >= 4 || summary.final_cost >= 0.1) {
+            if (dist >= 2 || summary.final_cost >= 0.1) {
                 locs(p) = phys_only_loc;
                 state(p) = STATE_COORD_VALID;
                 loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, proc_tensor, Ts, OPTIMIZE_ALL);

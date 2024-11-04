@@ -134,6 +134,7 @@ struct LocMinDistLoss {
 
 //cost functions for physical paper
 struct StraightLoss {
+    StraightLoss(float w) : _w(w) {};
     template <typename T>
     bool operator()(const T* const a, const T* const b, const T* const c, T* residual) const {
         T d1[3], d2[3];
@@ -150,14 +151,16 @@ struct StraightLoss {
 
         T dot = (d1[0]*d2[0] + d1[1]*d2[1] + d1[2]*d2[2])/(l1*l2);
 
-        residual[0] = T(0.3)*(T(1)-dot);
+        residual[0] = T(_w)*(T(1)-dot);
 
         return true;
     }
 
-    static ceres::CostFunction* Create()
+    float _w;
+
+    static ceres::CostFunction* Create(float w = 1.0)
     {
-        return new ceres::AutoDiffCostFunction<StraightLoss, 1, 3, 3, 3>(new StraightLoss());
+        return new ceres::AutoDiffCostFunction<StraightLoss, 1, 3, 3, 3>(new StraightLoss(w));
     }
 };
 
@@ -504,7 +507,7 @@ struct EmptySpaceLoss {
 
         _interpolator.template Evaluate<T>(l[2], l[1], l[0], &v);
 
-        residual[0] = T(_w)*v*v;
+        residual[0] = T(_w)*v;
 
         return true;
     }
@@ -528,7 +531,7 @@ struct EmptySpaceLossAcc {
 
         _interpolator->template Evaluate<E>(l[2], l[1], l[0], &v);
 
-        residual[0] = E(_w)*v*v;
+        residual[0] = E(_w)*v;
 
         return true;
     }
@@ -556,7 +559,7 @@ struct EmptySpaceLineLoss {
             T f2 = T(float(i)/_steps);
             T f1 = T(1.0f-float(i)/_steps);
             _interpolator.template Evaluate<T>(f1*la[2]+f2*lb[2], f1*la[1]+f2*lb[1], f1*la[0]+f2*lb[0], &v);
-            sum += T(_w)*v*v;
+            sum += T(_w)*v;
         }
 
         residual[0] = sum/T(_steps-1);
@@ -598,7 +601,7 @@ struct EmptySpaceLineLossAcc {
             E f1 = E(1.0f-float(i)/_steps);
             // (*_interpolator)[i-1].template Evaluate<E>(f1*la[2]+f2*lb[2], f1*la[1]+f2*lb[1], f1*la[0]+f2*lb[0], &v);
             _interpolator[i-1].get()->template Evaluate<E>(f1*la[2]+f2*lb[2], f1*la[1]+f2*lb[1], f1*la[0]+f2*lb[0], &v);
-            sum += E(_w)*v*v;
+            sum += E(_w)*v;
         }
 
         residual[0] = sum/E(_steps-1);
