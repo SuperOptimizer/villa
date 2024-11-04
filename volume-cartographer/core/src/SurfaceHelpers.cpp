@@ -2658,7 +2658,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             succ_gen_ps.push_back(p);
         }
 
-        add_phy_losses_closing(big_problem, 5, state, locs, loss_status, cands, Ts, phys_fail_th, interp, proc_tensor);
+        add_phy_losses_closing(big_problem, 20, state, locs, loss_status, cands, Ts, phys_fail_th, interp, proc_tensor);
 
         if (generation >= 3) {
             options_big.max_num_iterations = 10;
