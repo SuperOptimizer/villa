@@ -1950,18 +1950,29 @@ void distanceTransform(const st_1u &src, st_1u &dist, int steps)
 }
 
 template <typename I>
-int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, float w = 0.1)
+int gen_space_loss_slow(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, float w = 0.1)
 {
     if (!loc_valid(state(p)))
         return 0;
 
-    problem.AddResidualBlock(EmptySpaceLoss<I>::Create(interp, w), nullptr, &loc(p)[0]);
+    // problem.AddResidualBlock(EmptySpaceLoss<I>::Create(interp, w), nullptr, &loc(p)[0]);
+
+    return 1;
+}
+
+template <typename T, typename C>
+int gen_space_loss(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, Chunked3d<T,C> &t, float w = 0.1)
+{
+    if (!loc_valid(state(p)))
+        return 0;
+
+    problem.AddResidualBlock(EmptySpaceLossAcc<T,C>::Create(t, w), nullptr, &loc(p)[0]);
 
     return 1;
 }
 
 template <typename I>
-int gen_space_line_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, int steps, float w = 0.1)
+int gen_space_line_loss_slow(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, int steps, float w = 0.1)
 {
     if (!loc_valid(state(p)))
         return 0;
@@ -1974,11 +1985,25 @@ int gen_space_line_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::V
     return 1;
 }
 
+template <typename T, typename C>
+int gen_space_line_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, Chunked3d<T,C> &t, int steps, float w = 0.1)
+{
+    if (!loc_valid(state(p)))
+        return 0;
+    if (!loc_valid(state(p+off)))
+        return 0;
+
+    //TODO this will always succeed, but costfunction might not actually work, maybe actually check if it can be added?
+    problem.AddResidualBlock(EmptySpaceLineLossAcc<T,C>::Create(t, steps, w), nullptr, &loc(p)[0], &loc(p+off)[0]);
+
+    return 1;
+}
+
 float space_trace_dist_w = 3.0;
 
 //create all valid losses for this point
-template <typename I>
-int emptytrace_create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, float unit, int flags = 0)
+template <typename I, typename T, typename C>
+int emptytrace_create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, Chunked3d<T,C> &t, float unit, int flags = 0)
 {
     //generate losses for point p
     int count = 0;
@@ -2006,29 +2031,38 @@ int emptytrace_create_centered_losses(ceres::Problem &problem, const cv::Vec2i &
     count += gen_dist_loss(problem, p, {-1,-1}, state, loc, unit, flags & OPTIMIZE_ALL, space_trace_dist_w);
 
     if (flags & SPACE_LOSS) {
-        count += gen_space_loss(problem, p, state, loc, interp);
+        count += gen_space_loss(problem, p, state, loc, t);
 
-        count += gen_space_line_loss(problem, p, {1,0}, state, loc, interp, unit);
-        count += gen_space_line_loss(problem, p, {-1,0}, state, loc, interp, unit);
-        count += gen_space_line_loss(problem, p, {0,1}, state, loc, interp, unit);
-        count += gen_space_line_loss(problem, p, {0,-1}, state, loc, interp, unit);
+        count += gen_space_line_loss(problem, p, {1,0}, state, loc, t, unit);
+        count += gen_space_line_loss(problem, p, {-1,0}, state, loc, t, unit);
+        count += gen_space_line_loss(problem, p, {0,1}, state, loc, t, unit);
+        count += gen_space_line_loss(problem, p, {0,-1}, state, loc, t, unit);
     }
 
     return count;
 }
+
+template <typename T, typename C>
+int conditional_spaceline_loss_slow(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, Chunked3d<T,C> &t, int steps)
+{
+    int set = 0;
+    if (!loss_mask(bit, p, off, loss_status))
+        set = set_loss_mask(bit, p, off, loss_status, gen_space_line_loss(problem, p, off, state, loc, t, steps));
+    return set;
+};
 
 template <typename I>
 int conditional_spaceline_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, int steps)
 {
     int set = 0;
     if (!loss_mask(bit, p, off, loss_status))
-        set = set_loss_mask(bit, p, off, loss_status, gen_space_line_loss(problem, p, off, state, loc, interp, steps));
+        set = set_loss_mask(bit, p, off, loss_status, gen_space_line_loss_slow(problem, p, off, state, loc, interp, steps));
     return set;
 };
 
 //create only missing losses so we can optimize the whole problem
-template <typename I>
-int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &loss_status, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, float unit, int flags = SPACE_LOSS | OPTIMIZE_ALL)
+template <typename I, typename T, typename C>
+int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &loss_status, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, Chunked3d<T,C> &t, float unit, int flags = SPACE_LOSS | OPTIMIZE_ALL)
 {
     //generate losses for point p
     int count = 0;
@@ -2060,7 +2094,7 @@ int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<
 
     if (flags & SPACE_LOSS) {
         if (!loss_mask(6, p, {0,0}, loss_status))
-            count += set_loss_mask(6, p, {0,0}, loss_status, gen_space_loss(problem, p, state, loc, interp));
+            count += set_loss_mask(6, p, {0,0}, loss_status, gen_space_loss(problem, p, state, loc, t));
 
         count += conditional_spaceline_loss(7, p, {1,0}, loss_status, problem, state, loc, interp, unit);
         count += conditional_spaceline_loss(7, p, {-1,0}, loss_status, problem, state, loc, interp, unit);
@@ -2073,8 +2107,8 @@ int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<
 }
 
 //optimize within a radius, setting edge points to constant
-template <typename I>
-float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, const I &interp, float unit)
+template <typename I, typename T, typename C>
+float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, const I &interp, Chunked3d<T,C> &t, float unit)
 {
     ceres::Problem problem;
     cv::Mat_<uint16_t> loss_status(state.size(), 0);
@@ -2085,7 +2119,7 @@ float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &stat
         for(int ox=std::max(p[1]-radius,0);ox<=std::min(p[1]+radius,locs.cols-1);ox++) {
             cv::Vec2i op = {oy, ox};
             if (cv::norm(p-op) <= radius)
-                emptytrace_create_missing_centered_losses(problem, loss_status, op, state, locs, interp, unit);
+                emptytrace_create_missing_centered_losses(problem, loss_status, op, state, locs, interp, t, unit);
         }
     for(int oy=std::max(p[0]-r_outer,0);oy<=std::min(p[0]+r_outer,locs.rows-1);oy++)
         for(int ox=std::max(p[1]-r_outer,0);ox<=std::min(p[1]+r_outer,locs.cols-1);ox++) {
@@ -2099,6 +2133,7 @@ float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &stat
     options.linear_solver_type = ceres::SPARSE_SCHUR;
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 500;
+    // options.num_threads = 1;
     options.num_threads = omp_get_max_threads();
 
     ceres::Solver::Summary summary;
@@ -2111,9 +2146,9 @@ float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &stat
 
 
 //use closing operation to add inner points, TODO should probably also implement fringe based extension ...
-template <typename I>
+template <typename I, typename T, typename C>
 void add_phy_losses_closing(ceres::Problem &big_problem, int radius, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, cv::Mat_<uint16_t> &loss_status, const std::vector<cv::Vec2i> &cands, float unit, float phys_fail_th, const
-I &interp)
+I &interp, Chunked3d<T,C> &t)
 {
     cv::Mat_<float> dist(state.size());
 
@@ -2136,7 +2171,7 @@ I &interp)
 
             if (state(p) & (STATE_COORD_VALID | STATE_LOC_VALID)) {
                 //just fill in ... should not be necessary?
-                emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, unit, OPTIMIZE_ALL);
+                emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, t, unit, OPTIMIZE_ALL);
                 continue;
             }
 
@@ -2159,11 +2194,13 @@ I &interp)
 
                 ceres::Problem problem;
 
-                int local_loss_count = emptytrace_create_centered_losses(problem, p, state, locs, interp, unit);
+                int local_loss_count = emptytrace_create_centered_losses(problem, p, state, locs, interp, t, unit);
 
                 ceres::Solver::Options options;
                 options.linear_solver_type = ceres::DENSE_QR;
                 options.max_num_iterations = 100;
+                // options.num_threads = 1;
+                options.num_threads = omp_get_max_threads();
                 ceres::Solver::Summary summary;
                 ceres::Solve(options, &problem, &summary);
 
@@ -2174,7 +2211,7 @@ I &interp)
                 if (loss1 > phys_fail_th) {
                     float err = 0;
                     for(int range = 1; range<=16;range++) {
-                        err = local_optimization(range, p, state, locs, interp, unit);
+                        err = local_optimization(range, p, state, locs, interp, t, unit);
                         if (err <= phys_fail_th)
                             break;
                     }
@@ -2183,7 +2220,7 @@ I &interp)
                         std::cout << std::endl << "WARNING WARNING WARNING" << std::endl << "fix phys inpaint init! " << loss1 << std::endl << std::endl;
                 }
 
-                emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, unit, OPTIMIZE_ALL);
+                emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, t, unit, OPTIMIZE_ALL);
             }
 
     }
@@ -2204,7 +2241,7 @@ template <typename T, typename E>
 void _dist_iteration(T &from, T &to, int s)
 {
     E magic = -1;
-    #pragma omp parallel for
+#pragma omp parallel for
     for(int k=0;k<s;k++)
         for(int j=0;j<s;j++)
             for(int i=0;i<s;i++) {
@@ -2242,7 +2279,7 @@ T distance_transform(const T &chunk, int steps, int size)
         _dist_iteration<T,E>(c2,c1,size);
     }
 
-    #pragma omp parallel for
+#pragma omp parallel for
     for(int z=0;z<size;z++)
         for(int y=0;y<size;y++)
             for(int x=0;x<size;x++)
@@ -2264,7 +2301,7 @@ struct thresholdedDistance
         int s = CHUNK_SIZE+2*BORDER;
         E magic = -1;
 
-        #pragma omp parallel for
+#pragma omp parallel for
         for(int z=0;z<s;z++)
             for(int y=0;y<s;y++)
                 for(int x=0;x<s;x++)
@@ -2398,10 +2435,10 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     ceres::Problem big_problem;
 
     int loss_count;
-    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0,x0}, state, locs, interp, Ts);
-    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0+1,x0}, state, locs, interp, Ts);
-    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0,x0+1}, state, locs, interp, Ts);
-    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0+1,x0+1}, state, locs, interp, Ts);
+    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0,x0}, state, locs, interp, proc_tensor, Ts);
+    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0+1,x0}, state, locs, interp, proc_tensor, Ts);
+    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0,x0+1}, state, locs, interp, proc_tensor, Ts);
+    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, {y0+1,x0+1}, state, locs, interp, proc_tensor, Ts);
 
     //TODO only fix later
     // big_problem.SetParameterBlockConstant(&locs(y0,x0)[0]);
@@ -2422,6 +2459,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     //TODO check for update ...
     // options_big.enable_fast_removal = true;
     options_big.num_threads = omp_get_max_threads();
+    // options_big.num_threads = 1;
     options_big.max_num_iterations = 10000;
     options_big.function_tolerance = 1e-4;
 
@@ -2435,6 +2473,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 200;
     options.function_tolerance = 1e-3;
+    options.num_threads = omp_get_max_threads();;
 
 
     std::cout << summary.BriefReport() << "\n";
@@ -2454,6 +2493,8 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     int generation = 0;
     int phys_fail_count = 0;
     double phys_fail_th = 0.5;
+
+    // omp_set_num_threads(1);
 
     while (fringe.size()) {
         ALifeTime timer_gen;
@@ -2487,6 +2528,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         // std::shuffle(std::begin(cands), std::end(cands), rng);
 
         int succ_gen = 0;
+        std::vector<cv::Vec2i> succ_gen_ps;
 
         for(auto p : cands) {
             if (state(p) & STATE_LOC_VALID)
@@ -2520,7 +2562,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             ceres::Problem problem;
 
             state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
-            int local_loss_count = emptytrace_create_centered_losses(problem, p, state, locs, interp, Ts);
+            int local_loss_count = emptytrace_create_centered_losses(problem, p, state, locs, interp, proc_tensor, Ts);
 
             //FIXME need to handle the edge of the input definition!!
             ceres::Solve(options, &problem, &summary);
@@ -2548,12 +2590,12 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
             cv::Vec3d phys_only_loc = locs(p);
 
-            gen_space_loss(problem, p, state, locs, interp);
+            gen_space_loss(problem, p, state, locs, proc_tensor);
 
-            gen_space_line_loss(problem, p, {1,0}, state, locs, interp, T);
-            gen_space_line_loss(problem, p, {-1,0}, state, locs, interp, T);
-            gen_space_line_loss(problem, p, {0,1}, state, locs, interp, T);
-            gen_space_line_loss(problem, p, {0,-1}, state, locs, interp, T);
+            gen_space_line_loss(problem, p, {1,0}, state, locs, proc_tensor, T);
+            gen_space_line_loss(problem, p, {-1,0}, state, locs, proc_tensor, T);
+            gen_space_line_loss(problem, p, {0,1}, state, locs, proc_tensor, T);
+            gen_space_line_loss(problem, p, {0,-1}, state, locs, proc_tensor, T);
 
             ceres::Solve(options, &problem, &summary);
 
@@ -2569,27 +2611,28 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                         cv::Vec3d l = locs(p)*f1 + locs(p+off)*f2;
                         double d2;
                         interp.Evaluate(l[2],l[1],l[0], &d2);
-                        dist += d2;
+                        // dist += d2;
+                        dist = std::max(dist, d2);
                         count++;
                     }
                 }
             }
 
-            dist /= count;
+            // dist /= count;
 
             init_dist(p) = dist;
 
             //FIXME revisit dists after (every?) iteration?
-            if (dist >= 1 || summary.final_cost >= 0.1) {
+            if (dist >= 2 || summary.final_cost >= 0.1) {
                 locs(p) = phys_only_loc;
                 state(p) = STATE_COORD_VALID;
-                loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, Ts, OPTIMIZE_ALL);
+                loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, proc_tensor, Ts, OPTIMIZE_ALL);
                 if (loss1 > phys_fail_th) {
                     phys_fail(p) = 1;
 
                     float err = 0;
                     for(int range = 1; range<=16;range++) {
-                        err = local_optimization(range, p, state, locs, interp, Ts);
+                        err = local_optimization(range, p, state, locs, interp, proc_tensor, Ts);
                         if (err <= phys_fail_th)
                             break;
                     }
@@ -2602,7 +2645,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             }
             else {
                 //FIXMe still add (some?) material losses for empty points so we get valid surface structure!
-                loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, Ts);
+                loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, interp, proc_tensor, Ts);
 
                 succ++;
                 succ_gen++;
@@ -2611,9 +2654,10 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                     used_area = used_area | cv::Rect(p[1],p[0],1,1);
                 }
             }
+            succ_gen_ps.push_back(p);
         }
 
-        add_phy_losses_closing(big_problem, 5, state, locs, loss_status, cands, Ts, phys_fail_th, interp);
+        add_phy_losses_closing(big_problem, 5, state, locs, loss_status, cands, Ts, phys_fail_th, interp, proc_tensor);
 
         if (generation >= 3) {
             options_big.max_num_iterations = 10;
@@ -2627,10 +2671,17 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         else
             options_big.minimizer_progress_to_stdout = false;
 
-        std::cout << "running big solve" << std::endl;
-        ceres::Solve(options_big, &big_problem, &summary);
-        std::cout << summary.BriefReport() << "\n";
-        std::cout << "avg err:" << sqrt(summary.final_cost/summary.num_residual_blocks) << std::endl;
+        if (generation >= 20) {
+            for(auto p : succ_gen_ps)
+                if (p[0] % 4 == 0 && p[1] % 4 == 0)
+                    local_optimization(8, p, state, locs, interp, proc_tensor, Ts);
+        }
+        else {
+            std::cout << "running big solve" << std::endl;
+            ceres::Solve(options_big, &big_problem, &summary);
+            std::cout << summary.BriefReport() << "\n";
+            std::cout << "avg err:" << sqrt(summary.final_cost/summary.num_residual_blocks) << std::endl;
+        }
 
         if (generation > 10) {
             cv::Mat_<cv::Vec2d> _empty;

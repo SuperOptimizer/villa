@@ -162,6 +162,11 @@ public:
         return chunk;
     }
 
+    auto shape()
+    {
+        return _ds->shape();
+    }
+
     std::unordered_map<cv::Vec3i,CHUNKT*,vec3i_hash> _chunks;
     z5::Dataset *_ds;
     ChunkCache *_cache;

@@ -7,6 +7,8 @@
 #include "ceres/ceres.h"
 #include "ceres/cubic_interpolation.h"
 
+#include "cubic_interpolation_acc.h"
+
 struct CeresGrid2DcvMat3f {
     enum { DATA_DIMENSION = 3 };
     void GetValue(int row, int col, double* f) const
@@ -381,6 +383,64 @@ struct CeresGridChunked3DTensor {
 };
 
 template <typename T, typename C>
+struct CeresGridChunked3DTensor3D {
+    enum { DATA_DIMENSION = 1 };
+    void GetValue(int z, int row, int col, double* f)
+    {
+        f[0] = _a.safe_at(z, row, col);
+    }
+    Chunked3dAccessor<T,C> _a;
+};
+
+//FIXME add thread safe variant!
+template <typename T, typename C>
+class CachedChunked3dInterpolator
+{
+public:
+    CachedChunked3dInterpolator(Chunked3d<T,C> &t) : _low_a({Chunked3dAccessor<T,C>(t)}), _high_a({Chunked3dAccessor<T,C>(t)}), _low_i({_low_a}), _high_i({_high_a})
+    {
+        _d = t.shape()[0];
+    };
+
+    CeresGridChunked3DTensor3D<T,C> _low_a;
+    CeresGridChunked3DTensor3D<T,C> _high_a;
+
+    ceres::LinxBiCubicInterpolator<CeresGridChunked3DTensor3D<T,C>> _low_i;
+    ceres::LinxBiCubicInterpolator<CeresGridChunked3DTensor3D<T,C>> _high_i;
+
+    template <typename V> void Evaluate(const V &z, const V &y, const V &x, V *out) const
+    {
+        auto self = const_cast<CachedChunked3dInterpolator*>(this);
+
+        double zv = val(z);
+        //FIXME linear interpolate along z
+        if (zv < 0.0) {
+            self->_low_i.set_z(zv);
+            self->_low_i.Evaluate(y, x, out);
+        }
+        else if (int(zv)+1 >= _d) {
+            self->_high_i.set_z(_d-1);
+            self->_high_i.Evaluate(y, x, out);
+        }
+        else {
+            V m = z-floor(z);
+            int zi = zv;
+            V low;
+            V high;
+            self->_low_i.set_z(zi);
+            self->_high_i.set_z(zi+1);
+            self->_low_i.Evaluate(y, x, &low);
+            self->_high_i.Evaluate(y, x, &high);
+            *out = (V(1)-m)*low + m*high;
+        }
+    }
+    double  val(const double &v) const { return v; }
+    template< typename JetT>
+    double  val(const JetT &v) const { return v.a; }
+    int _d = 0;
+};
+
+template <typename T, typename C>
 class Chunked3dInterpolator
 {
 public:
@@ -442,6 +502,30 @@ struct EmptySpaceLoss {
 
 };
 
+template <typename T, typename C>
+struct EmptySpaceLossAcc {
+    EmptySpaceLossAcc(Chunked3d<T,C> &t, float w) : _interpolator(t), _w(w) {};
+    template <typename E>
+    bool operator()(const E* const l, E* residual) const {
+        E v;
+
+        _interpolator.template Evaluate<E>(l[2], l[1], l[0], &v);
+
+        residual[0] = E(_w)*v*v;
+
+        return true;
+    }
+
+    float _w;
+    CachedChunked3dInterpolator<T,C> _interpolator;
+
+    static ceres::CostFunction* Create(Chunked3d<T,C> &t, float w = 1.0)
+    {
+        return new ceres::AutoDiffCostFunction<EmptySpaceLossAcc<T,C>, 1, 3>(new EmptySpaceLossAcc<T,C>(t, w));
+    }
+
+};
+
 //cost functions for physical paper
 template <typename I>
 struct EmptySpaceLineLoss {
@@ -470,6 +554,38 @@ struct EmptySpaceLineLoss {
     static ceres::CostFunction* Create(const I &interp, int steps, float w = 1.0)
     {
         return new ceres::AutoDiffCostFunction<EmptySpaceLineLoss, 1, 3, 3>(new EmptySpaceLineLoss({interp, steps, w}));
+    }
+
+};
+
+//cost functions for physical paper
+template <typename T, typename C>
+struct EmptySpaceLineLossAcc {
+    // EmptySpaceMultiLoss(const StupidTensorInterpolator<uint8_t,1> &interp, int steps, uint8_t *state_a, uint8_t *state_b,  w) : _interpolator(interp), _steps(steps), _w(w) {};
+    template <typename E>
+    bool operator()(const E* const la, const E* const lb, E* residual) const {
+        E v;
+        E sum = E(0);
+
+        for(int i=1;i<_steps;i++) {
+            E f2 = E(float(i)/_steps);
+            E f1 = E(1.0f-float(i)/_steps);
+            _interpolator.template Evaluate<E>(f1*la[2]+f2*lb[2], f1*la[1]+f2*lb[1], f1*la[0]+f2*lb[0], &v);
+            sum += E(_w)*v*v;
+        }
+
+        residual[0] = sum/E(_steps-1);
+
+        return true;
+    }
+
+    CachedChunked3dInterpolator<T,C> _interpolator;
+    int _steps;
+    float _w;
+
+    static ceres::CostFunction* Create(Chunked3d<T,C> &t, int steps, float w = 1.0)
+    {
+        return new ceres::AutoDiffCostFunction<EmptySpaceLineLossAcc, 1, 3, 3>(new EmptySpaceLineLossAcc({t, steps, w}));
     }
 
 };
