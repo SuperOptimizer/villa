@@ -1034,7 +1034,7 @@ bool coord_valid(int state)
 }
 
 //gen straigt loss given point and 3 offsets
-int gen_straight_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, bool optimize_all, float w = 1.0)
+int gen_straight_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, bool optimize_all, float w = 3.0)
 {
     if (!coord_valid(state(p+o1)))
         return 0;
@@ -2108,7 +2108,7 @@ int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<
 
 //optimize within a radius, setting edge points to constant
 template <typename I, typename T, typename C>
-float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, const I &interp, Chunked3d<T,C> &t, float unit)
+float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, const I &interp, Chunked3d<T,C> &t, float unit, bool quiet = false)
 {
     ceres::Problem problem;
     cv::Mat_<uint16_t> loss_status(state.size(), 0);
@@ -2599,6 +2599,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             gen_space_line_loss(problem, p, {0,-1}, state, locs, proc_tensor, T);
 
             ceres::Solve(options, &problem, &summary);
+            // local_optimization(1, p, state, locs, interp, proc_tensor, Ts, true);
 
             double dist;
             //check steps

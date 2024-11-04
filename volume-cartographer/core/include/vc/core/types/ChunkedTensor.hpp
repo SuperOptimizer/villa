@@ -44,6 +44,12 @@ struct vec3i_hash {
     }
 };
 
+
+static uint64_t miss = 0;
+static uint64_t total = 0;
+static uint64_t chunk_compute_collisions = 0;
+static uint64_t chunk_compute_total = 0;
+
 template <typename T, typename C> class Chunked3dAccessor;
 
 //chunked 3d tensor for on-demand computation from a zarr dataset ... could as some point be file backed ...
@@ -115,6 +121,11 @@ public:
             _mutex.lock();
             if (!_chunks.count(id))
                 _chunks[id] = small;
+            else
+#pragma omp atomic
+                chunk_compute_collisions++;
+#pragma omp atomic
+            chunk_compute_total++;
             _mutex.unlock();
 
         return small;
@@ -175,12 +186,10 @@ public:
     std::shared_mutex _mutex;
 };
 
-static uint64_t miss = 0;
-static uint64_t total = 0;
-
 void print_accessor_stats()
 {
     std::cout << "acc miss/total " << miss << " " << total << " " << double(miss)/total << std::endl;
+    std::cout << "chunk compute overhead/total " << chunk_compute_collisions << " " << chunk_compute_total << " " << double(chunk_compute_collisions)/chunk_compute_total << std::endl;
 }
 
 template <typename T, typename C>

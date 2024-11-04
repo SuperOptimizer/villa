@@ -401,7 +401,60 @@ template <typename T, typename C>
 class CachedChunked3dInterpolator
 {
 public:
-    CachedChunked3dInterpolator(Chunked3d<T,C> &t) : _low_a(t), _high_a(t), _low_g(_low_a), _high_g(_high_a), _low_i(_low_g), _high_i(_high_g)
+    CachedChunked3dInterpolator(Chunked3d<T,C> &t) : _a(t)
+    {
+        _shape = {t.shape()[0], t.shape()[1], t.shape()[2]};
+    };
+
+    Chunked3dAccessor<T,C> _a;
+
+    template <typename V> void Evaluate(const V &z, const V &y, const V &x, V *out)
+    {
+        cv::Vec3d f = {val(z),val(y),val(x)};
+        cv::Vec3i corner = f;
+        for(int i=0;i<3;i++) {
+            corner[i] = std::max(corner[i], 0);
+            corner[i] = std::min(corner[i], _shape[i]-2);
+        }
+        V fc[3] = { z - V(corner[0]), y - V(corner[1]), x - V(corner[2])};
+        for(int i=0;i<3;i++) {
+            if (fc[i] < 0)
+                fc[i] = V(0);
+            else if (fc[i] > 1)
+                fc[i] = V(1);
+        }
+
+        V c000 = V(_a.safe_at(corner));
+        V c100 = V(_a.safe_at(corner+cv::Vec3i(1,0,0)));
+        V c010 = V(_a.safe_at(corner+cv::Vec3i(0,1,0)));
+        V c110 = V(_a.safe_at(corner+cv::Vec3i(1,1,0)));
+        V c001 = V(_a.safe_at(corner+cv::Vec3i(0,0,1)));
+        V c101 = V(_a.safe_at(corner+cv::Vec3i(1,0,1)));
+        V c011 = V(_a.safe_at(corner+cv::Vec3i(0,1,1)));
+        V c111 = V(_a.safe_at(corner+cv::Vec3i(1,1,1)));
+
+        V c00 = (V(1)-fc[2])*c000 + fc[2]*c001;
+        V c01 = (V(1)-fc[2])*c010 + fc[2]*c011;
+        V c10 = (V(1)-fc[2])*c100 + fc[2]*c101;
+        V c11 = (V(1)-fc[2])*c110 + fc[2]*c111;
+
+        V c0 = (V(1)-fc[1])*c00 + fc[1]*c01;
+        V c1 = (V(1)-fc[1])*c10 + fc[1]*c11;
+
+        *out = (V(1)-fc[0])*c0 + fc[0]*c1;
+    }
+    double  val(const double &v) const { return v; }
+    template< typename JetT>
+    double  val(const JetT &v) const { return v.a; }
+    // static template <typename E> lin_int(E &loc, int max, )
+    cv::Vec3i _shape;
+};
+
+template <typename T, typename C>
+class CachedChunked3dInterpolatorMixed
+{
+public:
+    CachedChunked3dInterpolatorMixed(Chunked3d<T,C> &t) : _low_a(t), _high_a(t), _low_g(_low_a), _high_g(_high_a), _low_i(_low_g), _high_i(_high_g)
     {
         _d = t.shape()[0];
 
@@ -459,6 +512,8 @@ public:
     double  val(const JetT &v) const { return v.a; }
     int _d = 0;
 };
+
+
 
 template <typename T, typename C>
 class Chunked3dInterpolator
