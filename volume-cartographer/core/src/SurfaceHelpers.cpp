@@ -2362,7 +2362,7 @@ I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added)
                     }
                     avg /= ref_count;
 
-            std::cout << "try inpaint " << ref_count << std::endl;
+            // std::cout << "try inpaint " << ref_count << std::endl;
 
             if (ref_count < 2)
                 continue;
@@ -2387,7 +2387,7 @@ I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added)
             //
             double loss1 = summary.final_cost;
 
-            std::cout << loss1 << std::endl;
+            // std::cout << loss1 << std::endl;
 
             // if (loss1 > phys_fail_th) {
             //     float err = 0;
@@ -2560,7 +2560,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     ALifeTime f_timer("empty space tracing\n");
     DSReader reader = {ds,scale,cache};
 
-    int stop_gen = 50;
+    int stop_gen = 100;
 
     //FIXME show and handle area edge!
     int w = 2*step*reader.scale*1.1*stop_gen + 1500;
