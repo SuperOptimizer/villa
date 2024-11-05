@@ -2322,6 +2322,66 @@ I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added)
     }
 }
 
+
+static float min_dist(const cv::Vec2i &p, const std::vector<cv::Vec2i> &list)
+{
+    double dist = 10000000000;
+    for(auto &o : list) {
+        if (o[0] == -1 || o == p)
+            continue;
+        dist = std::min(cv::norm(o-p), dist);
+    }
+
+    return dist;
+}
+
+static cv::Point2i extract_point_min_dist(std::vector<cv::Vec2i> &cands, std::vector<cv::Vec2i> &blocked, int &idx, float dist)
+{
+    for(int i=0;i<cands.size();i++) {
+        cv::Vec2i p = cands[(i + idx) % cands.size()];
+
+        if (p[0] == -1)
+            continue;
+
+        if (min_dist(p, blocked) >= dist) {
+            cands[(i + idx) % cands.size()] = {-1,-1};
+            idx = (i + idx + 1) % cands.size();
+
+            return p;
+        }
+    }
+
+    return {-1,-1};
+}
+
+//collection of points which can be retrieved with minimum distance requirement
+class OmpThreadPointCol
+{
+public:
+    OmpThreadPointCol(float dist, const std::vector<cv::Vec2i> &src) :
+        _thread_count(omp_get_max_threads()),
+        _dist(dist),
+        _points(src),
+        _thread_points(_thread_count,{-1,-1}),
+        _thread_idx(_thread_count, -1) {};
+    cv::Point2i next()
+    {
+        int t_id = omp_get_thread_num();
+        if (_thread_idx[t_id] == -1)
+            _thread_idx[t_id] = rand() % _thread_count;
+        _thread_points[t_id] = {-1,-1};
+#pragma omp critical
+        _thread_points[t_id] = extract_point_min_dist(_points, _thread_points, _thread_idx[t_id], _dist);
+        return _thread_points[t_id];
+    }
+protected:
+    int _thread_count;
+    float _dist;
+    std::vector<cv::Vec2i> _points;
+    std::vector<cv::Vec2i> _thread_points;
+    std::vector<int> _thread_idx;
+};
+
 //use closing operation to add inner points, TODO should probably also implement fringe based extension ...
 template <typename I, typename T, typename C>
 void add_phy_losses_closing_list(ceres::Problem &big_problem, int radius, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, cv::Mat_<cv::Vec3d> &a1, cv::Mat_<cv::Vec3d> &a2, cv::Mat_<cv::Vec3d> &a3, cv::Mat_<cv::Vec3d> &a4, cv::Mat_<uint16_t> &loss_status, const std::vector<cv::Vec2i> &cands, float unit, float phys_fail_th, const
@@ -2341,8 +2401,17 @@ I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added)
 
     cv::Mat_<cv::Vec3d> _empty;
 
-    for (auto &p : cands) {
-        if (p[0] == -1 || !masked(p))
+    OmpThreadPointCol threadcol(5, cands);
+
+#pragma omp parallel
+    while (true)
+    {
+        cv::Vec2i p = threadcol.next();
+
+        if (p[0] == -1)
+            break;
+
+        if (!masked(p))
             continue;
 
         // if (state(p) & (STATE_COORD_VALID | STATE_LOC_VALID)) {
@@ -2524,43 +2593,12 @@ struct passTroughComputor
     }
 };
 
-float min_dist(const cv::Vec2i &p, const std::vector<cv::Vec2i> &list)
-{
-    double dist = 10000000000;
-    for(auto &o : list) {
-        if (o[0] == -1 || o == p)
-            continue;
-        dist = std::min(cv::norm(o-p), dist);
-    }
-
-    return dist;
-}
-
-cv::Point2i extract_point_min_dist(std::vector<cv::Vec2i> &cands, std::vector<cv::Vec2i> &blocked, int &idx, float dist)
-{
-    for(int i=0;i<cands.size();i++) {
-        cv::Vec2i p = cands[(i + idx) % cands.size()];
-
-        if (p[0] == -1)
-            continue;
-
-        if (min_dist(p, blocked) >= dist) {
-            cands[(i + idx) % cands.size()] = {-1,-1};
-            idx = (i + idx + 1) % cands.size();
-
-            return p;
-        }
-    }
-
-    return {-1,-1};
-}
-
 QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, cv::Vec3f normal, float step)
 {
     ALifeTime f_timer("empty space tracing\n");
     DSReader reader = {ds,scale,cache};
 
-    int stop_gen = 200;
+    int stop_gen = 50;
 
     //FIXME show and handle area edge!
     int w = 2*step*reader.scale*1.1*stop_gen + 1500;
@@ -2795,22 +2833,17 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
         std::vector<cv::Vec2i> thread_ps(omp_get_max_threads());
 
-        for(auto &p : thread_ps)
-            p = {-1,-1};
+        // for(auto &p : thread_ps)
+            // p = {-1,-1};
+
+        OmpThreadPointCol cands_threadcol(max_local_opt_r*2+1, cands);
 
 #pragma omp parallel
         {
             CachedChunked3dInterpolator<uint8_t,thresholdedDistance> interp(proc_tensor);
-            int idx = rand() % cands.size();
+//             int idx = rand() % cands.size();
             while (true) {
-                int t_id = omp_get_thread_num();
-                cv::Vec2i p;
-#pragma omp critical
-                {
-                    thread_ps[t_id] = {-1,-1};
-                    thread_ps[t_id] = extract_point_min_dist(cands, thread_ps, idx, max_local_opt_r*2+1);
-                    p = thread_ps[t_id];
-                }
+                cv::Vec2i p = cands_threadcol.next();
                 if (p[0] == -1)
                     break;
 
@@ -3005,26 +3038,16 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             std::vector<cv::Vec2i> opt_local;
             for(auto p : succ_gen_ps)
                 if (p[0] % 4 == 0 && p[1] % 4 == 0)
-                    // local_optimization(8, p, state, locs, a1,a2,a3,a4, interp_global, proc_tensor, Ts);
                     opt_local.push_back(p);
 
-            std::cout << "local opt n: " << opt_local.size() << std::endl;
-
-            for(auto &p : thread_ps)
-                p = {-1,-1};
-#pragma omp parallel
             if (opt_local.size()) {
-                CachedChunked3dInterpolator<uint8_t,thresholdedDistance> interp(proc_tensor);
-                int idx = rand() % opt_local.size();
-                while (true) {
-                    int t_id = omp_get_thread_num();
-                    cv::Vec2i p;
-                    #pragma omp critical
-                    {
-                        thread_ps[t_id] = {-1,-1};
-                        thread_ps[t_id] = extract_point_min_dist(opt_local, thread_ps, idx, 17);
-                        p = thread_ps[t_id];
-                    }
+                OmpThreadPointCol opt_local_threadcol(17, opt_local);
+
+#pragma omp parallel
+                while (true)
+                {
+                    CachedChunked3dInterpolator<uint8_t,thresholdedDistance> interp(proc_tensor);
+                    cv::Vec2i p = opt_local_threadcol.next();
                     if (p[0] == -1)
                         break;
 
