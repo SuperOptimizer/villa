@@ -2362,6 +2362,8 @@ I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added)
                     }
                     avg /= ref_count;
 
+            std::cout << "try inpaint " << ref_count << std::endl;
+
             if (ref_count < 2)
                 continue;
 
@@ -2380,12 +2382,12 @@ I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added)
             ceres::Solver::Summary summary;
             ceres::Solve(options, &problem, &summary);
 
-            // local_inpaint_optimization(4, p, state, locs, a1, a2, a3, a4, interp, t, unit);
+            local_inpaint_optimization(4, p, state, locs, a1, a2, a3, a4, interp, t, unit);
 
             //
             double loss1 = summary.final_cost;
 
-            // std::cout << loss1 << std::endl;
+            std::cout << loss1 << std::endl;
 
             // if (loss1 > phys_fail_th) {
             //     float err = 0;
@@ -2558,7 +2560,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     ALifeTime f_timer("empty space tracing\n");
     DSReader reader = {ds,scale,cache};
 
-    int stop_gen = 100;
+    int stop_gen = 50;
 
     //FIXME show and handle area edge!
     int w = 2*step*reader.scale*1.1*stop_gen + 1500;
@@ -2760,14 +2762,14 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         for(auto p : fringe)
         {
             //TODO maybe should also check neighs of cood_valid?
-            if (!loc_valid(state(p))) {
-                if (state(p) & STATE_COORD_VALID) {
-                    for(auto n : neighs)
-                        if (bounds.contains(p+n)
-                            && (state(p+n) & (STATE_PROCESSING | STATE_LOC_VALID | STATE_COORD_VALID)) == 0) {
-                                rest_ps.push_back(p+n);
-                            }
-                }
+            if (state(p) & (STATE_COORD_VALID | STATE_COORD_VALID) == 0) {
+                // if (state(p) & STATE_COORD_VALID) {
+                //     for(auto n : neighs)
+                //         if (bounds.contains(p+n)
+                //             && (state(p+n) & (STATE_PROCESSING | STATE_LOC_VALID | STATE_COORD_VALID)) == 0) {
+                //                 rest_ps.push_back(p+n);
+                //             }
+                // }
                 continue;
             }
 
@@ -2798,7 +2800,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         for(auto &p : thread_ps)
             p = {-1,-1};
 
-#pragma omp parallel
+// #pragma omp parallel
         {
             CachedChunked3dInterpolator<uint8_t,thresholdedDistance> interp(proc_tensor);
             int idx = rand() % cands.size();
@@ -2823,7 +2825,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 //
 //                 std::cout << "threads active: " << parallism << std::endl;
 
-                if (state(p) & STATE_LOC_VALID)
+                if (state(p) & (STATE_LOC_VALID | STATE_COORD_VALID))
                     continue;
 
                 int ref_count = 0;
@@ -2835,13 +2837,12 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                             avg += locs(oy,ox);
                         }
 
-
-                int ref_count2 = 0;
-                for(int oy=std::max(p[0]-r2,0);oy<=std::min(p[0]+r2,locs.rows-1);oy++)
-                    for(int ox=std::max(p[1]-r2,0);ox<=std::min(p[1]+r2,locs.cols-1);ox++)
-                        if (state(oy,ox) & STATE_LOC_VALID) {
-                            ref_count2++;
-                        }
+                // int ref_count2 = 0;
+                // for(int oy=std::max(p[0]-r2,0);oy<=std::min(p[0]+r2,locs.rows-1);oy++)
+                //     for(int ox=std::max(p[1]-r2,0);ox<=std::min(p[1]+r2,locs.cols-1);ox++)
+                //         if (state(oy,ox) & (STATE_LOC_VALID | STATE_COORD_VALID)) {
+                //             ref_count2++;
+                //         }
 
                 if (ref_count < 2 /*|| (generation > 3 && ref_count2 < 14)*/) {
                     state(p) &= ~STATE_PROCESSING;
@@ -2976,9 +2977,13 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             }
         }
 
+        for(auto p: fringe)
+            if (locs(p)[0] == -1)
+                std::cout << "impossible!" << p << cv::Vec2i(y0,x0) << std::endl;
+
         std::vector<cv::Vec2i> added;
         // add_phy_losses_closing_list(big_problem, 20, state, locs, a1,a2,a3,a4, loss_status, cands, Ts, phys_fail_th, interp_global, proc_tensor, added);
-        // add_phy_losses_closing_list(big_problem, 20, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added);
+        add_phy_losses_closing_list(big_problem, 20, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added);
         // add_phy_losses_closing_list(big_problem, 20, state, locs, a1,a2,a3,a4, loss_status, cands, Ts, phys_fail_th, interp_global, proc_tensor, added);
         // add_phy_losses_closing_list(big_problem, 20, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added);
         for(auto &p : added) {
@@ -3002,29 +3007,32 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
             std::vector<cv::Vec2i> opt_local;
             for(auto p : succ_gen_ps)
                 if (p[0] % 4 == 0 && p[1] % 4 == 0)
-                    opt_local.push_back(p);
-
-            for(auto &p : thread_ps)
-                p = {-1,-1};
-#pragma omp parallel
-            if (opt_local.size()) {
-                CachedChunked3dInterpolator<uint8_t,thresholdedDistance> interp(proc_tensor);
-                int idx = rand() % opt_local.size();
-                while (true) {
-                    int t_id = omp_get_thread_num();
-                    cv::Vec2i p;
-                    #pragma omp critical
-                    {
-                        thread_ps[t_id] = {-1,-1};
-                        thread_ps[t_id] = extract_point_min_dist(cands, thread_ps, idx, 17);
-                        p = thread_ps[t_id];
-                    }
-                    if (p[0] == -1)
-                        break;
-
-                    local_optimization(8, p, state, locs, a1,a2,a3,a4, interp, proc_tensor, Ts);
-                }
-            }
+                    local_optimization(8, p, state, locs, a1,a2,a3,a4, interp_global, proc_tensor, Ts);
+//                     opt_local.push_back(p);
+//
+//             std::cout << "local opt n: " << opt_local.size() << std::endl;
+//
+//             for(auto &p : thread_ps)
+//                 p = {-1,-1};
+// #pragma omp parallel
+//             if (opt_local.size()) {
+//                 CachedChunked3dInterpolator<uint8_t,thresholdedDistance> interp(proc_tensor);
+//                 int idx = rand() % opt_local.size();
+//                 while (true) {
+//                     int t_id = omp_get_thread_num();
+//                     cv::Vec2i p;
+//                     #pragma omp critical
+//                     {
+//                         thread_ps[t_id] = {-1,-1};
+//                         thread_ps[t_id] = extract_point_min_dist(cands, thread_ps, idx, 17);
+//                         p = thread_ps[t_id];
+//                     }
+//                     if (p[0] == -1)
+//                         break;
+//
+//                     local_optimization(8, p, state, locs, a1,a2,a3,a4, interp, proc_tensor, Ts);
+//                 }
+//             }
         }
         else {
             std::cout << "running big solve" << std::endl;
