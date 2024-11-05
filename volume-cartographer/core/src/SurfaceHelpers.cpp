@@ -2385,7 +2385,7 @@ protected:
 //use closing operation to add inner points, TODO should probably also implement fringe based extension ...
 template <typename I, typename T, typename C>
 void add_phy_losses_closing_list(ceres::Problem &big_problem, int radius, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, cv::Mat_<cv::Vec3d> &a1, cv::Mat_<cv::Vec3d> &a2, cv::Mat_<cv::Vec3d> &a3, cv::Mat_<cv::Vec3d> &a4, cv::Mat_<uint16_t> &loss_status, const std::vector<cv::Vec2i> &cands, float unit, float phys_fail_th, const
-I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added)
+I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added, bool global_opt)
 {
     cv::Mat_<float> dist(state.size());
 
@@ -2470,12 +2470,18 @@ I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added)
             //         std::cout << std::endl << "WARNING WARNING WARNING" << std::endl << "fix phys inpaint init! " << loss1 << std::endl << std::endl;
             // }
 
-        if (loss1 > phys_fail_th) {
-            std::cout << "fix phys inpaint init! " << loss1 << std::endl;
-        }
-        else
-            emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, _empty, _empty, _empty, _empty, interp, t, unit, OPTIMIZE_ALL);
-            added.push_back(p);
+            if (loss1 > phys_fail_th) {
+                std::cout << "fix phys inpaint init! " << loss1 << std::endl;
+                state(p) = 0;
+            }
+            else {
+                if (global_opt) {
+#pragma omp critical
+                    emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, _empty, _empty, _empty, _empty, interp, t, unit, OPTIMIZE_ALL);
+                }
+#pragma omp critical
+                added.push_back(p);
+            }
         }
     }
 }
@@ -2787,6 +2793,8 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     // omp_set_num_threads(1);
 
     while (fringe.size()) {
+        bool global_opt = generation <= 20;
+
         ALifeTime timer_gen;
         timer_gen.del_msg = "time per generation ";
 
@@ -2965,8 +2973,10 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                 if (dist >= 2 || summary.final_cost >= 0.1) {
                     locs(p) = phys_only_loc;
                     state(p) = STATE_COORD_VALID;
+                    if (global_opt) {
 #pragma omp critical
-                    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, a1,a2,a3,a4, interp, proc_tensor, Ts, OPTIMIZE_ALL);
+                        loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, a1,a2,a3,a4, interp, proc_tensor, Ts, OPTIMIZE_ALL);
+                    }
                     if (loss1 > phys_fail_th) {
                         phys_fail(p) = 1;
 
@@ -2987,8 +2997,11 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                 }
                 else {
                     //FIXMe still add (some?) material losses for empty points so we get valid surface structure!
+
+                    if (global_opt) {
 #pragma omp critical
-                    loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, a1,a2,a3,a4, interp, proc_tensor, Ts);
+                        loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, a1,a2,a3,a4, interp, proc_tensor, Ts);
+                    }
 #pragma omp atomic
                     succ++;
 #pragma omp atomic
@@ -3034,7 +3047,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         else
             options_big.minimizer_progress_to_stdout = false;
 
-        if (generation >= 20) {
+        if (!global_opt) {
             std::vector<cv::Vec2i> opt_local;
             for(auto p : succ_gen_ps)
                 if (p[0] % 4 == 0 && p[1] % 4 == 0)
@@ -3095,13 +3108,13 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         //         }
         //     }
 
-        add_phy_losses_closing_list(big_problem, 20, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added);
+        add_phy_losses_closing_list(big_problem, 20, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added, global_opt);
         for(auto &p : added) {
             // succ_gen_ps.push_back(p);
             fringe.push_back(p);
         }
 
-        if (generation > 10) {
+        if (generation > 10 && global_opt) {
             cv::Mat_<cv::Vec2d> _empty;
             freeze_inner_params(big_problem, 10, state, locs, _empty, loss_status, STATE_LOC_VALID | STATE_COORD_VALID);
         }
