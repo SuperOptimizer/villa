@@ -194,7 +194,7 @@ void readArea3D(xt::xtensor<uint8_t,3,xt::layout_type::column_major> &out, const
                     int iy = y/chunksize[1];
                     int ix = x/chunksize[2];
 
-                    cv::Vec4i idx = {group_idx,ix,iy,iz};
+                    cv::Vec4i idx = {group_idx,iz,iy,ix};
 
                     if (idx != last_idx) {
                         last_idx = idx;
@@ -203,7 +203,7 @@ void readArea3D(xt::xtensor<uint8_t,3,xt::layout_type::column_major> &out, const
                         if (!cache->has(idx)) {
                             cache->mutex.unlock();
                             // std::cout << "reading chunk " << cv::Vec3i(ix,iy,iz) << " for " << cv::Vec3i(x,y,z) << chunksize << std::endl;
-                            chunk = z5::multiarray::readChunk<uint8_t>(*ds, {size_t(ix),size_t(iy),size_t(iz)});
+                            chunk = z5::multiarray::readChunk<uint8_t>(*ds, {size_t(iz),size_t(iy),size_t(ix)});
                             cache->mutex.lock();
                             cache->put(idx, chunk);
                             chunk_ref = cache->get(idx);

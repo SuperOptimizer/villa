@@ -65,11 +65,13 @@ struct DistLoss {
         //FIXME where are invalid coords coming from?
         if (a[0] == -1 && a[1] == -1 && a[2] == -1) {
             residual[0] = T(0);
+            std::cout << "invalidn CORNER" << std::endl;
             return true;
         }
         //FIXME where are invalid coords coming from?
         if (b[0] == -1 && b[1] == -1 && b[2] == -1) {
             residual[0] = T(0);
+            std::cout << "invalidn CORNER" << std::endl;
             return true;
         }
 
@@ -78,9 +80,12 @@ struct DistLoss {
         d[1] = a[1] - b[1];
         d[2] = a[2] - b[2];
 
-        d[0] = sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+        T dist = sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
 
-        residual[0] = T(_w)*(d[0]/T(_d) - T(1));
+        if (dist < _d)
+            residual[0] = T(_w)*(T(_d)/dist - T(1));
+        else
+            residual[0] = T(_w)*(dist/T(_d) - T(1));
 
         return true;
     }
@@ -411,7 +416,7 @@ public:
     template <typename V> void Evaluate(const V &z, const V &y, const V &x, V *out)
     {
         cv::Vec3d f = {val(z),val(y),val(x)};
-        cv::Vec3i corner = f;
+        cv::Vec3i corner = {floor(f[0]),floor(f[1]),floor(f[2])};
         for(int i=0;i<3;i++) {
             corner[i] = std::max(corner[i], 0);
             corner[i] = std::min(corner[i], _shape[i]-2);
@@ -442,6 +447,8 @@ public:
         V c1 = (V(1)-fc[1])*c10 + fc[1]*c11;
 
         *out = (V(1)-fc[0])*c0 + fc[0]*c1;
+
+        // std::cout << fc[0] << " from " << c0 << " to " << c1 << f << corner << std::endl;
     }
     double  val(const double &v) const { return v; }
     template< typename JetT>
@@ -684,6 +691,8 @@ struct EmptySpaceLineLossAcc {
     bool operator()(const E* const la, const E* const lb, E* residual) const {
         E v;
         E sum = E(0);
+
+        bool ign = false;
 
         for(int i=1;i<_steps;i++) {
             E f2 = E(float(i)/_steps);
