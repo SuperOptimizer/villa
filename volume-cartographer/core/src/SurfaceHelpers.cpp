@@ -2641,7 +2641,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     ALifeTime f_timer("empty space tracing\n");
     DSReader reader = {ds,scale,cache};
 
-    int stop_gen = 200;
+    int stop_gen = 400;
 
     //FIXME show and handle area edge!
     int w = 2*step*reader.scale*1.1*stop_gen;

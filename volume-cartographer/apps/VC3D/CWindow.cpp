@@ -43,7 +43,7 @@ CWindow::CWindow() :
     // setAttribute(Qt::WA_DeleteOnClose);
 
     //TODO make configurable
-    chunk_cache = new ChunkCache(5e9);
+    chunk_cache = new ChunkCache(10e9);
     
     _surf_col = new CSurfaceCollection();
     
@@ -157,7 +157,9 @@ void CWindow::setVolume(std::shared_ptr<volcart::Volume> newvol)
         // cv::Vec3d point = {4670,1750,1793}; //quite small
         // cv::Vec3d point = {4723,1783,1821}; //also rather small
         // cv::Vec3d point = {4639.19, 1907.98, 1777.74}; //ok for fibers
-        cv::Vec3d point = {4476.81, 2483.53, 5753.1}; //surf
+        cv::Vec3d point = {4476.81, 2483.53, 5753.1}; //pretty big  seed!
+        // cv::Vec3d point = {3418.62, 2442.62, 6069.76}; //tricky seed!
+        // 4660.82, 3417.98, 5636.57 notehr tricky seed?
         cv::Vec3d n = point*1.1;
         n[2] = 0;
         _opchains["experiment"] = new OpChain(empty_space_tracing_quad_phys(currentVolume->zarrDataset(0), 1.0, chunk_cache, point, point+n, 10));
@@ -656,6 +658,7 @@ void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf
 {
     //current action: move default POI
     if (modifiers & Qt::ControlModifier) {
+        std::cout << "clicked on vol loc " << vol_loc << std::endl;
         //NOTE this comes before the focus poi, so focus is applied by views using these slices
         //FIXME this assumes a single segmentation ... make configurable and cleaner ...
         QuadSurface *segment = dynamic_cast<QuadSurface*>(surf);
