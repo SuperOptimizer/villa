@@ -1982,21 +1982,21 @@ int gen_space_line_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::V
     if (!loc_valid(state(p+off)))
         return 0;
 
-    Chunked3dAccessor<T,C> a(t);
+    // Chunked3dAccessor<T,C> a(t);
 
-    float len = cv::norm(loc(p)-loc(p+off));
-
-    double dist = 0;
-    for(int i=0;i<=len;i++) {
-        float f1 = float(i)/len;
-        float f2 = 1-f1;
-        cv::Vec3d l = loc(p)*f1 + loc(p+off)*f2;
-        double d2 = a.safe_at(l);
-        dist = std::max(dist, d2);
-    }
-
-    if (dist >= dist_th)
-        return 0;
+    // float len = cv::norm(loc(p)-loc(p+off));
+    //
+    // double dist = 0;
+    // for(int i=0;i<=len;i++) {
+    //     float f1 = float(i)/len;
+    //     float f2 = 1-f1;
+    //     cv::Vec3d l = loc(p)*f1 + loc(p+off)*f2;
+    //     double d2 = a.safe_at(l);
+    //     dist = std::max(dist, d2);
+    // }
+    //
+    // if (dist >= dist_th)
+    //     return 0;
 
     //TODO this will always succeed, but costfunction might not actually work, maybe actually check if it can be added?
     problem.AddResidualBlock(EmptySpaceLineLossAcc<T,C>::Create(t, steps, w), nullptr, &loc(p)[0], &loc(p+off)[0]);
@@ -2179,7 +2179,7 @@ float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &stat
     options.max_num_iterations = 10000;
     options.function_tolerance = 1e-4;
     // options.num_threads = 1;
-    options.num_threads = omp_get_max_threads();
+    // options.num_threads = omp_get_max_threads();
 
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
@@ -2195,9 +2195,14 @@ template <typename I, typename T, typename C>
 float local_inpaint_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, cv::Mat_<cv::Vec3d> &a1, cv::Mat_<cv::Vec3d> &a2, cv::Mat_<cv::Vec3d> &a3, cv::Mat_<cv::Vec3d> &a4, const I &interp, Chunked3d<T,C> &t, float unit, bool quiet = false)
 {
     ceres::Problem problem;
-    cv::Mat_<uint16_t> loss_status(state.size(), 0);
+    //FIXME I think this could be way faster!
+    cv::Mat_<uint16_t> loss_status(state.size());
 
     int r_outer = radius+3;
+
+    for(int oy=std::max(p[0]-r_outer,0);oy<=std::min(p[0]+r_outer,locs.rows-1);oy++)
+        for(int ox=std::max(p[1]-r_outer,0);ox<=std::min(p[1]+r_outer,locs.cols-1);ox++)
+            loss_status(oy,ox) = 0;
 
     for(int oy=std::max(p[0]-radius,0);oy<=std::min(p[0]+radius,locs.rows-1);oy++)
         for(int ox=std::max(p[1]-radius,0);ox<=std::min(p[1]+radius,locs.cols-1);ox++) {
@@ -2219,7 +2224,7 @@ float local_inpaint_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_
         options.max_num_iterations = 10000;
         options.function_tolerance = 1e-4;
         // options.num_threads = 1;
-        options.num_threads = omp_get_max_threads();
+        // options.num_threads = omp_get_max_threads();
 
         ceres::Solver::Summary summary;
         ceres::Solve(options, &problem, &summary);
@@ -2288,7 +2293,7 @@ I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added)
                 options.linear_solver_type = ceres::DENSE_QR;
                 options.max_num_iterations = 1000;
                 // options.num_threads = 1;
-                options.num_threads = omp_get_max_threads();
+                // options.num_threads = omp_get_max_threads();
                 ceres::Solver::Summary summary;
                 ceres::Solve(options, &problem, &summary);
 
@@ -2401,7 +2406,7 @@ I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added, bool global_opt)
 
     cv::Mat_<cv::Vec3d> _empty;
 
-    OmpThreadPointCol threadcol(5, cands);
+    OmpThreadPointCol threadcol(9, cands);
 
 #pragma omp parallel
     while (true)
@@ -2447,11 +2452,14 @@ I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added, bool global_opt)
             options.linear_solver_type = ceres::DENSE_QR;
             options.max_num_iterations = 1000;
             // options.num_threads = 1;
-            options.num_threads = omp_get_max_threads();
+            // options.num_threads = omp_get_max_threads();
             ceres::Solver::Summary summary;
             ceres::Solve(options, &problem, &summary);
 
-            local_inpaint_optimization(2, p, state, locs, a1, a2, a3, a4, interp, t, unit);
+            // local_inpaint_optimization(4, p, state, locs, a1, a2, a3, a4, interp, t, unit);
+
+            local_inpaint_optimization(2, p, state, locs, a1, a2, a3, a4, interp, t, unit, true);
+            local_optimization(4, p, state, locs, a1, a2, a3, a4, interp, t, unit, true);
 
             //
             double loss1 = summary.final_cost;
@@ -2472,16 +2480,17 @@ I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added, bool global_opt)
 
             if (loss1 > phys_fail_th) {
                 std::cout << "fix phys inpaint init! " << loss1 << std::endl;
-                state(p) = 0;
+                // local_optimization(4, p, state, locs, a1, a2, a3, a4, interp, t, unit);
+                // state(p) = 0;
             }
-            else {
+            // else {
                 if (global_opt) {
 #pragma omp critical
                     emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, _empty, _empty, _empty, _empty, interp, t, unit, OPTIMIZE_ALL);
                 }
 #pragma omp critical
                 added.push_back(p);
-            }
+            // }
         }
     }
 }
@@ -2553,6 +2562,7 @@ struct thresholdedDistance
 {
     enum {BORDER = 16};
     enum {CHUNK_SIZE = 64};
+    const std::string CHUNK_DIR = "/home/hendrik/.cache/vcchunksdist_16_64";
     enum {FILL_V = 0};
     template <typename T, typename E> void compute(const T &large, T &small)
     {
@@ -2590,6 +2600,7 @@ struct passTroughComputor
 {
     enum {BORDER = 0};
     enum {CHUNK_SIZE = 32};
+    const std::string CHUNK_DIR = "";
     enum {FILL_V = 0};
     template <typename T, typename E> void compute(const T &large, T &small)
     {
@@ -2604,10 +2615,10 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     ALifeTime f_timer("empty space tracing\n");
     DSReader reader = {ds,scale,cache};
 
-    int stop_gen = 50;
+    int stop_gen = 400;
 
     //FIXME show and handle area edge!
-    int w = 2*step*reader.scale*1.1*stop_gen + 1500;
+    int w = 2*step*reader.scale*1.1*stop_gen;
     int h = w;
     int z = w;
     cv::Size size = {w,h};
@@ -2739,7 +2750,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     options_big.minimizer_progress_to_stdout = false;
     //TODO check for update ...
     // options_big.enable_fast_removal = true;
-    options_big.num_threads = omp_get_max_threads();
+    // options_big.num_threads = omp_get_max_threads();
     // options_big.num_threads = 1;
     options_big.max_num_iterations = 10000;
     // options_big.function_tolerance = 1e-4;
@@ -2754,7 +2765,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 200;
     options.function_tolerance = 1e-3;
-    options.num_threads = omp_get_max_threads();
+    // options.num_threads = omp_get_max_threads();
     // options.num_threads = 1;
 
 
@@ -3064,7 +3075,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                     if (p[0] == -1)
                         break;
 
-                    local_optimization(8, p, state, locs, a1,a2,a3,a4, interp, proc_tensor, Ts);
+                    local_optimization(8, p, state, locs, a1,a2,a3,a4, interp, proc_tensor, Ts, true);
                 }
             }
         }
