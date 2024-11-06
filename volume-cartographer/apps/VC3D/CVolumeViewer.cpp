@@ -657,6 +657,8 @@ void CVolumeViewer::onPanRelease(Qt::MouseButton buttons, Qt::KeyboardModifiers 
 
 void CVolumeViewer::onScrolled()
 {
-    if (!dynamic_cast<OpChain*>(_surf) || !dynamic_cast<OpChain*>(_surf)->slow())
+    // if (!dynamic_cast<OpChain*>(_surf) && !dynamic_cast<OpChain*>(_surf)->slow() && _min_scale == 1.0)
+        // renderVisible();
+    if ((!dynamic_cast<OpChain*>(_surf) || !dynamic_cast<OpChain*>(_surf)->slow()) && _min_scale < 1.0)
         renderVisible();
 }
