@@ -2486,7 +2486,7 @@ I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added, bool global_opt, bo
 
         // std::cout << "try inpaint " << ref_count << std::endl;
 
-        if (ref_count < 4)
+        if (ref_count < 3)
             continue;
 
         if (ref_count2 < 25)
@@ -2514,8 +2514,8 @@ I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added, bool global_opt, bo
 
         //
 
-        local_inpaint_optimization(2, p, state, locs, a1, a2, a3, a4, interp, t, unit);
-        local_optimization(4, p, state, locs, a1, a2, a3, a4, interp, t, unit);
+        local_inpaint_optimization(2, p, state, locs, a1, a2, a3, a4, interp, t, unit, true);
+        local_optimization(4, p, state, locs, a1, a2, a3, a4, interp, t, unit, true);
 
         ceres::Solve(options, &problem, &summary);
         double loss1 = summary.final_cost;
@@ -2672,7 +2672,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     ALifeTime f_timer("empty space tracing\n");
     DSReader reader = {ds,scale,cache};
 
-    int stop_gen = 400;
+    int stop_gen = 600;
 
     //FIXME show and handle area edge!
     int w = 2*step*reader.scale*1.1*stop_gen;
@@ -3180,9 +3180,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         //     }
 
         cv::Rect used_plus = {used_area.x-8,used_area.y-8,used_area.width+16,used_area.height+16};
-        //FIXME not efficient ...
-        for(int r=0;r<10;r++)
-            area_wrap_phy_losses_closing_list(used_plus, big_problem, generation/2, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added, global_opt, false);
+        area_wrap_phy_losses_closing_list(used_plus, big_problem, generation/2, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added, global_opt, false);
         area_wrap_phy_losses_closing_list(used_plus, big_problem, generation/2, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added, global_opt, true);
         // add_phy_losses_closing_list(big_problem, 20, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added, global_opt);
         for(auto &p : added) {
