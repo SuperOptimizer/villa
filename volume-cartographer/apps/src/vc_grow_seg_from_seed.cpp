@@ -24,6 +24,8 @@
 #include <unordered_map>
 #include <filesystem>
 
+#include "vc/core/types/ChunkedTensor.hpp"
+
 using shape = z5::types::ShapeType;
 using namespace xt::placeholders;
 namespace fs = std::filesystem;
@@ -59,15 +61,14 @@ private:
 
 int main(int argc, char *argv[])
 {
-    if (argc != 6) {
+    if (argc != 6 && argc != 3) {
         std::cout << "usage: " << argv[0] << " <zarr-volume> <json-params> <seed-x> <seed-y> <seed-z>" << std::endl;
+        std::cout << "or:    " << argv[0] << " <zarr-volume> <json-params>" << std::endl;
         return EXIT_SUCCESS;
     }
 
     fs::path vol_path = argv[1];
     const char *params_path = argv[2];
-
-    cv::Vec3f origin = {atof(argv[3]),atof(argv[4]),atof(argv[5])};
 
     std::ifstream params_f(params_path);
     json params = json::parse(params_f);
@@ -79,7 +80,57 @@ int main(int argc, char *argv[])
     std::cout << "zarr dataset size for scale group 0 " << ds->shape() << std::endl;
     std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
 
-    ChunkCache chunk_cache(2e9);
+    ChunkCache chunk_cache(1e9);
+
+
+    passTroughComputor pass;
+    Chunked3d<uint8_t,passTroughComputor> tensor(pass, ds.get(), &chunk_cache);
+    CachedChunked3dInterpolator<uint8_t,passTroughComputor> interpolator(tensor);
+
+    auto chunk_size = ds->chunking().blockShape();
+
+    srand(clock());
+
+    cv::Vec3d origin;
+    if (argc == 6) {
+        origin = {atof(argv[3]),atof(argv[4]),atof(argv[5])};
+        double v;
+        interpolator.Evaluate(origin[2], origin[1], origin[0], &v);
+        std::cout << "seed location value is " << v << std::endl;
+    }
+    else
+    {
+        int count = 0;
+        bool succ = false;
+        while(!succ) {
+            origin = {128 + (rand() % (ds->shape(0)-384)), 128 + (rand() % (ds->shape(1)-384)), 128 + (rand() % (ds->shape(2)-384))};
+
+            count++;
+            auto chunk_id = chunk_size;
+            chunk_id[0] = origin[2]/chunk_id[0];
+            chunk_id[1] = origin[1]/chunk_id[1];
+            chunk_id[2] = origin[0]/chunk_id[2];
+
+            if (!ds->chunkExists(chunk_id))
+                continue;
+
+            cv::Vec3d dir = {(rand() % 1024) - 512,(rand() % 1024) - 512,(rand() % 1024) - 512};
+            cv::normalize(dir, dir);
+
+            for(int i=0;i<128;i++) {
+                double v;
+                cv::Vec3d p = origin + i*dir;
+                interpolator.Evaluate(p[2], p[1], p[0], &v);
+                if (v >= 128) {
+                    succ = true;
+                    origin = p;
+                    std::cout << "try " << count << " seed " << origin << " value is " << v << std::endl;
+                    break;
+                }
+            }
+        }
+    }
+
 
     QuadSurface *surf = empty_space_tracing_quad_phys(ds.get(), 1.0, &chunk_cache, origin, 20);
 }

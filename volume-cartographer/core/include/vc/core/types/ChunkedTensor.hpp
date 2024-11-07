@@ -51,6 +51,20 @@ struct vec3i_hash {
     }
 };
 
+struct passTroughComputor
+{
+    enum {BORDER = 0};
+    enum {CHUNK_SIZE = 32};
+    const std::string CHUNK_DIR = "";
+    enum {FILL_V = 0};
+    template <typename T, typename E> void compute(const T &large, T &small)
+    {
+        int low = int(BORDER);
+        int high = int(BORDER)+int(CHUNK_SIZE);
+        small = view(large, xt::range(low,high),xt::range(low,high),xt::range(low,high));
+    }
+};
+
 static uint64_t miss = 0;
 static uint64_t total = 0;
 static uint64_t chunk_compute_collisions = 0;
@@ -615,11 +629,7 @@ public:
     uint64_t _tmp_counter = 0;
 };
 
-void print_accessor_stats()
-{
-    std::cout << "acc miss/total " << miss << " " << total << " " << double(miss)/total << std::endl;
-    std::cout << "chunk compute overhead/total " << chunk_compute_collisions << " " << chunk_compute_total << " " << double(chunk_compute_collisions)/chunk_compute_total << std::endl;
-}
+void print_accessor_stats();
 
 template <typename T, typename C>
 class Chunked3dAccessorXT
@@ -816,4 +826,60 @@ public:
 protected:
     T *_chunk;
     cv::Vec3i _corner = {-1,-1,-1};
+};
+
+//FIXME add thread safe variant!
+template <typename T, typename C>
+class CachedChunked3dInterpolator
+{
+public:
+    CachedChunked3dInterpolator(Chunked3d<T,C> &t) : _a(t)
+    {
+        _shape = {t.shape()[0], t.shape()[1], t.shape()[2]};
+    };
+
+    Chunked3dAccessor<T,C> _a;
+
+    template <typename V> void Evaluate(const V &z, const V &y, const V &x, V *out)
+    {
+        cv::Vec3d f = {val(z),val(y),val(x)};
+        cv::Vec3i corner = {floor(f[0]),floor(f[1]),floor(f[2])};
+        for(int i=0;i<3;i++) {
+            corner[i] = std::max(corner[i], 0);
+            corner[i] = std::min(corner[i], _shape[i]-2);
+        }
+        V fc[3] = { z - V(corner[0]), y - V(corner[1]), x - V(corner[2])};
+        for(int i=0;i<3;i++) {
+            if (fc[i] < 0)
+                fc[i] = V(0);
+            else if (fc[i] > 1)
+                fc[i] = V(1);
+        }
+
+        V c000 = V(_a.safe_at(corner));
+        V c100 = V(_a.safe_at(corner+cv::Vec3i(1,0,0)));
+        V c010 = V(_a.safe_at(corner+cv::Vec3i(0,1,0)));
+        V c110 = V(_a.safe_at(corner+cv::Vec3i(1,1,0)));
+        V c001 = V(_a.safe_at(corner+cv::Vec3i(0,0,1)));
+        V c101 = V(_a.safe_at(corner+cv::Vec3i(1,0,1)));
+        V c011 = V(_a.safe_at(corner+cv::Vec3i(0,1,1)));
+        V c111 = V(_a.safe_at(corner+cv::Vec3i(1,1,1)));
+
+        V c00 = (V(1)-fc[2])*c000 + fc[2]*c001;
+        V c01 = (V(1)-fc[2])*c010 + fc[2]*c011;
+        V c10 = (V(1)-fc[2])*c100 + fc[2]*c101;
+        V c11 = (V(1)-fc[2])*c110 + fc[2]*c111;
+
+        V c0 = (V(1)-fc[1])*c00 + fc[1]*c01;
+        V c1 = (V(1)-fc[1])*c10 + fc[1]*c11;
+
+        *out = (V(1)-fc[0])*c0 + fc[0]*c1;
+
+        // std::cout << fc[0] << " from " << c0 << " to " << c1 << f << corner << std::endl;
+    }
+    double  val(const double &v) const { return v; }
+    template< typename JetT>
+    double  val(const JetT &v) const { return v.a; }
+    // static template <typename E> lin_int(E &loc, int max, )
+    cv::Vec3i _shape;
 };

@@ -90,6 +90,7 @@ target_include_directories(vc_slicing
 set(surface_srcs
     src/Surface.cpp
     src/SurfaceHelpers.cpp
+    src/ChunkedTensor.cpp
 )
 add_library(vc_surface
     ${surface_srcs}

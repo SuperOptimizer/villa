@@ -2676,20 +2676,6 @@ struct thresholdedDistance
 
 };
 
-struct passTroughComputor
-{
-    enum {BORDER = 0};
-    enum {CHUNK_SIZE = 32};
-    const std::string CHUNK_DIR = "";
-    enum {FILL_V = 0};
-    template <typename T, typename E> void compute(const T &large, T &small)
-    {
-        int low = int(BORDER);
-        int high = int(BORDER)+int(CHUNK_SIZE);
-        small = view(large, xt::range(low,high),xt::range(low,high),xt::range(low,high));
-    }
-};
-
 float dist_th = 2.0;
 
 QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, float step)
@@ -2750,6 +2736,9 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     passTroughComputor pass;
 
     Chunked3d<uint8_t,passTroughComputor> dbg_tensor(pass, ds, cache);
+
+    std::cout << "seed val " << origin << " " <<
+    (int)dbg_tensor(origin[2],origin[1],origin[0]) << std::endl;
 
     ALifeTime *timer = new ALifeTime("search & optimization ...");
 
