@@ -125,7 +125,7 @@ int main(int argc, char *argv[])
     z5::filesystem::handle::Dataset ds_handle(group, group_name, nlohmann::json::parse(std::ifstream(std::filesystem::path(vol_path)/group_name/".zarray")).value<>("dimension_separator","."));
     std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
 
-    std::cout << ds.get()->shape() << std::endl;
+    // std::cout << ds.get()->shape() << std::endl;
     
     thresholdedDistance compute;
 

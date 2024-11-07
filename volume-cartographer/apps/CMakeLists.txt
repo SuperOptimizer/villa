@@ -197,16 +197,25 @@ target_link_libraries(vc_zarrrendersurface
     VC::surface
 )
 
-add_executable(vc_chunked_compute src/TestChunkedCompute.cpp)
-target_link_libraries(vc_chunked_compute
+# add_executable(vc_chunked_compute src/TestChunkedCompute.cpp)
+# target_link_libraries(vc_chunked_compute
+#     z5
+#     opencv_core
+#     VC::slicing
+#     VC::surface
+# )
+
+add_executable(vc_objrefine src/ObjAlphaCompRefinement.cpp)
+target_link_libraries(vc_objrefine
+    nlohmann_json::nlohmann_json
     z5
-    opencv_core
+    opencv_highgui
     VC::slicing
     VC::surface
 )
 
-add_executable(vc_objrefine src/ObjAlphaCompRefinement.cpp)
-target_link_libraries(vc_objrefine
+add_executable(vc_grow_seg_from_seed src/vc_grow_seg_from_seed.cpp)
+target_link_libraries(vc_grow_seg_from_seed
     nlohmann_json::nlohmann_json
     z5
     opencv_highgui

@@ -154,15 +154,11 @@ void CWindow::setVolume(std::shared_ptr<volcart::Volume> newvol)
         QTreeWidgetItem *item = new QTreeWidgetItem(treeWidgetSurfaces);
         item->setText(0, QString("experiment"));
         item->setData(0, Qt::UserRole, QVariant("experiment"));
-        // cv::Vec3d point = {4670,1750,1793}; //quite small
-        // cv::Vec3d point = {4723,1783,1821}; //also rather small
-        // cv::Vec3d point = {4639.19, 1907.98, 1777.74}; //ok for fibers
-        cv::Vec3d point = {4476.81, 2483.53, 5753.1}; //pretty big  seed!
+        cv::Vec3d point = {4476.81, 2483.53, 5753.1}; //reliable big  seed!
         // cv::Vec3d point = {3418.62, 2442.62, 6069.76}; //tricky seed!
         // 4660.82, 3417.98, 5636.57 notehr tricky seed?
-        cv::Vec3d n = point*1.1;
-        n[2] = 0;
-        _opchains["experiment"] = new OpChain(empty_space_tracing_quad_phys(currentVolume->zarrDataset(0), 1.0, chunk_cache, point, point+n, 10));
+        // cv::Vec3d point = {4745.46, 3021.84, 5482.22}; // in front of big hole
+        _opchains["experiment"] = new OpChain(empty_space_tracing_quad_phys(currentVolume->zarrDataset(0), 1.0, chunk_cache, point, 20));
     }
 }
 
