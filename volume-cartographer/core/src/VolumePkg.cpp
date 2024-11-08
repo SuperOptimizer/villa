@@ -312,8 +312,9 @@ VolumePkg::VolumePkg(const fs::path& fileLocation) : rootDir_{fileLocation}
                 auto s = Segmentation::New(entry);
                 segmentations_.emplace(s->id(), s);
             }
-            catch (...) {
-                std::cout << "WARNING: some error occured, skipping segment dir: " << entry.path() << std::endl;
+            catch (const std::exception &exc) {
+                std::cout << "WARNING: some exception occured, skipping segment dir: " << entry.path() << std::endl;
+                std::cerr << exc.what();
             }
         }
     }
