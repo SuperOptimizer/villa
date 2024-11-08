@@ -82,6 +82,11 @@ public:
             std::cout << std::endl;
 
     }
+    double seconds()
+    {
+        auto end = std::chrono::high_resolution_clock::now();
+        return std::chrono::duration<double>(end-start).count();
+    }
 private:
     std::chrono::time_point<std::chrono::high_resolution_clock> start;
 };
@@ -2874,6 +2879,9 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
     omp_set_num_threads(1);
 
+    std::vector<float> gen_max_cost;
+    std::vector<float> gen_avg_cost;
+
     while (fringe.size()) {
         bool global_opt = generation <= 20;
 
@@ -3060,7 +3068,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                     state(p) = STATE_COORD_VALID;
                     if (global_opt) {
 #pragma omp critical
-                        loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, a1,a2,a3,a4, interp, proc_tensor, Ts, OPTIMIZE_ALL);
+                        loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, a1,a2,a3,a4, interp_global, proc_tensor, Ts, OPTIMIZE_ALL);
                     }
                     if (loss1 > phys_fail_th) {
                         phys_fail(p) = 1;
@@ -3085,7 +3093,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
                     if (global_opt) {
 #pragma omp critical
-                        loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, a1,a2,a3,a4, interp, proc_tensor, Ts);
+                        loss_count += emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, a1,a2,a3,a4, interp_global, proc_tensor, Ts);
                     }
 #pragma omp atomic
                     succ++;
@@ -3209,6 +3217,24 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
         cands.resize(0);
 
+        cv::Mat_<cv::Vec3d> locs_crop = locs(used_area);
+        cv::Mat_<uint8_t> state_crop = state(used_area);
+        double max_cost = 0;
+        double avg_cost = 0;
+        int cost_count = 0;
+        for(int j=0;j<locs_crop.rows;j++)
+            for(int i=0;i<locs_crop.cols;i++) {
+                ceres::Problem problem;
+                emptytrace_create_centered_losses(problem, {j,i}, state_crop, locs_crop, interp_global, proc_tensor, Ts);
+                double cost = 0.0;
+                problem.Evaluate(ceres::Problem::EvaluateOptions(), &cost, nullptr, nullptr, nullptr);
+                max_cost = std::max(max_cost, cost);
+                avg_cost += cost;
+                cost_count++;
+            }
+        gen_avg_cost.push_back(avg_cost/cost_count);
+        gen_max_cost.push_back(max_cost);
+
         printf("-> total done %d/ fringe: %d surf: %fmm^2\n", succ, fringe.size(), succ*step*step*0.008*0.008);
 
         timer_gen.unit = succ_gen*0.008*0.008*T*T;
@@ -3225,7 +3251,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     // ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> interp_coords(grid_coords);
 
     locs = locs(used_area);
-    // state = state(used_area);
+    state = state(used_area);
     // init_dist = init_dist(used_area);
 
     // cv::imwrite("init_dist.tif", init_dist);
@@ -3268,8 +3294,36 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     // cv::imwrite("dists.tif", dists);
     // points *= 1/reader.scale;
 
+    double max_cost = 0;
+    double avg_cost = 0;
+    int count = 0;
+    for(int j=0;j<locs.rows;j++)
+        for(int i=0;i<locs.cols;i++) {
+            ceres::Problem problem;
+            emptytrace_create_centered_losses(problem, {j,i}, state, locs, interp_global, proc_tensor, Ts);
+            double cost = 0.0;
+            problem.Evaluate(ceres::Problem::EvaluateOptions(), &cost, nullptr, nullptr, nullptr);
+            max_cost = std::max(max_cost, cost);
+            avg_cost += cost;
+            count++;
+        }
+    avg_cost /= count;
+
+
     // printf("generated approximate surface %fkvx^2\n", succ*step*step/1000000.0);
     printf("generated approximate surface %fmm^2\n", succ*step*step*0.008*0.008);
 
-    return new QuadSurface(locs, {1/T, 1/T});
+    QuadSurface *surf = new QuadSurface(locs, {1/T, 1/T});
+
+    surf->meta = new nlohmann::json;
+    (*surf->meta)["area_cm"] = succ*step*step*0.008*0.008/100;
+    (*surf->meta)["max_cost"] = max_cost;
+    (*surf->meta)["avg_cost"] = avg_cost;
+    (*surf->meta)["max_gen"] = generation;
+    (*surf->meta)["gen_avg_cost"] = gen_avg_cost;
+    (*surf->meta)["gen_max_cost"] = gen_max_cost;
+    (*surf->meta)["seed"] = {origin[0],origin[1],origin[2]};
+    (*surf->meta)["elapsed_time_s"] = f_timer.seconds();
+
+    return surf;
 }

@@ -23,6 +23,7 @@
 
 #include <unordered_map>
 #include <filesystem>
+#include <omp.h>
 
 #include "vc/core/types/ChunkedTensor.hpp"
 
@@ -59,16 +60,43 @@ private:
     std::chrono::time_point<std::chrono::high_resolution_clock> start;
 };
 
+std::string time_str()
+{
+    using namespace std::chrono;
+
+    // get current time
+    auto now = system_clock::now();
+
+    // get number of milliseconds for the current second
+    // (remainder after division into seconds)
+    auto ms = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
+
+    // convert to std::time_t in order to convert to std::tm (broken time)
+    auto timer = system_clock::to_time_t(now);
+
+    // convert to broken time
+    std::tm bt = *std::localtime(&timer);
+
+    std::ostringstream oss;
+
+    oss << std::put_time(&bt, "%Y%m%d%H%M%S"); // HH:MM:SS
+    oss << std::setfill('0') << std::setw(3) << ms.count();
+
+    return oss.str();
+}
+
+
 int main(int argc, char *argv[])
 {
-    if (argc != 6 && argc != 3) {
-        std::cout << "usage: " << argv[0] << " <zarr-volume> <json-params> <seed-x> <seed-y> <seed-z>" << std::endl;
-        std::cout << "or:    " << argv[0] << " <zarr-volume> <json-params>" << std::endl;
+    if (argc != 7 && argc != 4) {
+        std::cout << "usage: " << argv[0] << " <zarr-volume> <tgt-dir> <json-params> <seed-x> <seed-y> <seed-z>" << std::endl;
+        std::cout << "or:    " << argv[0] << " <zarr-volume> <tgt-dir> <json-params>" << std::endl;
         return EXIT_SUCCESS;
     }
 
     fs::path vol_path = argv[1];
-    const char *params_path = argv[2];
+    fs::path tgt_dir = argv[2];
+    const char *params_path = argv[3];
 
     std::ifstream params_f(params_path);
     json params = json::parse(params_f);
@@ -92,8 +120,8 @@ int main(int argc, char *argv[])
     srand(clock());
 
     cv::Vec3d origin;
-    if (argc == 6) {
-        origin = {atof(argv[3]),atof(argv[4]),atof(argv[5])};
+    if (argc == 7) {
+        origin = {atof(argv[4]),atof(argv[5]),atof(argv[6])};
         double v;
         interpolator.Evaluate(origin[2], origin[1], origin[0], &v);
         std::cout << "seed location value is " << v << std::endl;
@@ -104,6 +132,7 @@ int main(int argc, char *argv[])
         bool succ = false;
         while(!succ) {
             origin = {128 + (rand() % (ds->shape(0)-384)), 128 + (rand() % (ds->shape(1)-384)), 128 + (rand() % (ds->shape(2)-384))};
+            origin[2] = 6500 + (rand() % 2000) - 1000;
 
             count++;
             auto chunk_id = chunk_size;
@@ -131,6 +160,10 @@ int main(int argc, char *argv[])
         }
     }
 
+    omp_set_num_threads(1);
 
     QuadSurface *surf = empty_space_tracing_quad_phys(ds.get(), 1.0, &chunk_cache, origin, 20);
+    std::string uuid = "auto_grown_" + time_str();
+    tgt_dir = tgt_dir / uuid;
+    surf->save(tgt_dir, uuid);
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <opencv2/core.hpp> 
+#include <nlohmann/json_fwd.hpp>
 
 class QuadSurface;
 class ChunkCache;
@@ -8,7 +9,6 @@ class ChunkCache;
 namespace z5 {
     class Dataset;
 }
-
 
 class SurfacePointer
 {
@@ -24,8 +24,16 @@ public:
     cv::Vec3f loc;
 };
 
+struct Rect3D {
+    cv::Vec3f low, high;
+};
+
+bool intersect(const Rect3D &a, const Rect3D &b);
+Rect3D expand_rect(const Rect3D &a, const cv::Vec3f &p);
+
 QuadSurface *load_quad_from_vcps(const std::string &path);
 QuadSurface *load_quad_from_obj(const std::string &path);
+QuadSurface *load_quad_from_tifxyz(const std::string &path);
 QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, cv::Vec3f normal, float step = 10);
 QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, float step = 10);
 QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search = 100, int step_out = 5);
@@ -54,8 +62,7 @@ public:
     //coordgenerator relative to ptr&offset
     //needs to be deleted after use
     virtual void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) = 0;
-    //not yet
-    // virtual void normal(SurfacePointer *ptr, cv::Vec3f offset);
+    nlohmann::json *meta = nullptr;
 };
 
 class PlaneSurface : public Surface
@@ -104,6 +111,9 @@ public:
     void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;
     float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th, int max_iters = 1000) override;
 
+    void save(const std::string &path, const std::string &uuid);
+    Rect3D bbox();
+
     virtual cv::Mat_<cv::Vec3f> rawPoints() { return _points; }
 
     friend QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search, int step_out);
@@ -114,6 +124,7 @@ protected:
     cv::Rect _bounds;
     cv::Vec2f _scale;
     cv::Vec3f _center;
+    Rect3D _bbox = {{-1,-1,-1},{-1,-1,-1}};
 };
 
 

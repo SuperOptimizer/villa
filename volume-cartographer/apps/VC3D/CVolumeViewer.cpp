@@ -549,27 +549,76 @@ void CVolumeViewer::renderIntersections()
         return;
     
     if (plane) {
-        for(auto key : _intersect_tgts)
+        cv::Rect plane_roi = {curr_img_area.x()/_ds_scale, curr_img_area.y()/_ds_scale, curr_img_area.width()/_ds_scale, curr_img_area.height()/_ds_scale};
+
+        cv::Vec3f corner = plane->coord(nullptr, {plane_roi.x, plane_roi.y, 0.0});
+        Rect3D view_bbox = {corner, corner};
+        view_bbox = expand_rect(view_bbox, plane->coord(nullptr, {plane_roi.br().x, plane_roi.y, 0}));
+        view_bbox = expand_rect(view_bbox, plane->coord(nullptr, {plane_roi.x, plane_roi.br().y, 0}));
+        view_bbox = expand_rect(view_bbox, plane->coord(nullptr, {plane_roi.br().x, plane_roi.br().y, 0}));
+
+        std::vector<std::string> intersect_cands;
+        std::vector<std::string> intersect_tgts_v;
+
+        for (auto key : _intersect_tgts)
+            intersect_tgts_v.push_back(key);
+
+#pragma omp parallel for
+        for(int n=0;n<intersect_tgts_v.size();n++) {
+            std::string key = intersect_tgts_v[n];
             if (!_intersect_items.count(key) && dynamic_cast<QuadSurface*>(_surf_col->surface(key))) {
-            
+                QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface(key));
+
+                if (intersect(view_bbox, segmentation->bbox()))
+#pragma omp critical
+                    intersect_cands.push_back(key);
+                else
+#pragma omp critical
+                    _intersect_items[key] = {};
+            }
+        }
+
+        std::vector<std::vector<std::vector<cv::Vec3f>>> intersections(intersect_cands.size());
+
+#pragma omp parallel for
+        for(int n=0;n<intersect_cands.size();n++) {
+            std::string key = intersect_cands[n];
             QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface(key));
-            
+
             std::vector<std::vector<cv::Vec2f>> xy_seg_;
-            std::vector<std::vector<cv::Vec3f>> intersections;
-            
-            cv::Rect plane_roi = {curr_img_area.x()/_ds_scale, curr_img_area.y()/_ds_scale, curr_img_area.width()/_ds_scale, curr_img_area.height()/_ds_scale};
-            
-            find_intersect_segments(intersections, xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_ds_scale);
-            
+            find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_ds_scale);
+        }
+
+        std::hash<std::string> str_hasher;
+
+        for(int n=0;n<intersect_cands.size();n++) {
+            std::string key = intersect_cands[n];
+
+            if (!intersections.size()) {
+                _intersect_items[key] = {};
+                continue;
+            }
+
+            size_t seed = str_hasher(key);
+            srand(seed);
+
+            int prim = rand() % 3;
+            cv::Vec3i cvcol = {100 + rand() % 255, 100 + rand() % 255, 100 + rand() % 255};
+            cvcol[prim] = 200 + rand() % 55;
+
+            QColor col(cvcol[0],cvcol[1],cvcol[2]);
+
+            QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface(intersect_cands[n]));
             std::vector<QGraphicsItem*> items;
-            
-            for (auto seg : intersections) {
-                QColor col(128+rand()%127, 128+rand()%127, 128+rand()%127);
+
+            int len = 0;
+            for (auto seg : intersections[n]) {
                 QPainterPath path;
-                
+
                 bool first = true;
                 for (auto wp : seg)
                 {
+                    len++;
                     cv::Vec3f p = plane->project(wp, 1.0, _ds_scale);
                     if (first)
                         path.moveTo(p[0],p[1]);
@@ -577,12 +626,12 @@ void CVolumeViewer::renderIntersections()
                         path.lineTo(p[0],p[1]);
                     first = false;
                 }
-                auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 1/_scene_scale));
+                auto item = fGraphicsView->scene()->addPath(path, QPen(col, 2/_scene_scale));
                 item->setZValue(5);
                 items.push_back(item);
             }
             _intersect_items[key] = items;
-            _ignore_intersect_change = new Intersection({intersections});
+            _ignore_intersect_change = new Intersection({intersections[n]});
             _surf_col->setIntersection(_surf_name, key, _ignore_intersect_change);
             _ignore_intersect_change = nullptr;
         }
@@ -659,6 +708,6 @@ void CVolumeViewer::onScrolled()
 {
     // if (!dynamic_cast<OpChain*>(_surf) && !dynamic_cast<OpChain*>(_surf)->slow() && _min_scale == 1.0)
         // renderVisible();
-    if ((!dynamic_cast<OpChain*>(_surf) || !dynamic_cast<OpChain*>(_surf)->slow()) && _min_scale < 1.0)
-        renderVisible();
+    // if ((!dynamic_cast<OpChain*>(_surf) || !dynamic_cast<OpChain*>(_surf)->slow()) && _min_scale < 1.0)
+        // renderVisible();
 }

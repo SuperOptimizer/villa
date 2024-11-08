@@ -44,7 +44,9 @@ public:
 
     void setEnabled(DeltaSurface *surf, bool enabled);
     bool enabled(DeltaSurface *surf);
-    
+    QuadSurface *src() { return _src; }
+
+
     friend class FormSetSrc;
 
 protected:

@@ -11,6 +11,9 @@
 #include <opencv2/highgui.hpp>
 
 #include <unordered_map>
+#include <nlohmann/json.hpp>
+
+namespace fs = std::filesystem;
 
 cv::Vec2f offsetPoint2d(TrivialSurfacePointer *ptr, const cv::Vec3f &offset)
 {
@@ -386,8 +389,6 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
     float step = init_step;
 
 
-    // std::cout << "init " << best << tgts[0] << val << loc << "\n";
-
 
     while (changed) {
         changed = false;
@@ -417,7 +418,7 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
                 out = val;
             }
             // else
-            // std::cout << "(" << res << val << step << cand << "\n";
+                // std::cout << "(" << res << val << step << cand << "\n";
         }
 
         if (changed)
@@ -907,7 +908,9 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
     cv::Rect grid_bounds(1,1,points.cols-2,points.rows-2);
 
-    for(int r=0;r<100;r++) {
+    // std::cout << points.size() << std::endl;
+
+    for(int r=0;r<std::max(10, std::max(points.cols,points.rows)/100);r++) {
         std::vector<cv::Vec3f> seg;
         std::vector<cv::Vec2f> seg_loc;
         std::vector<cv::Vec3f> seg2;
@@ -924,7 +927,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
 
         //initial points
-        for(int i=0;i<100;i++) {
+        for(int i=0;i<std::max(10, std::max(points.cols,points.rows)/100);i++) {
             loc = {std::rand() % (points.cols-1), std::rand() % (points.rows-1)};
             point = at_int(points, loc);
 
@@ -932,23 +935,25 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             if (!plane_roi.contains({plane_loc[0],plane_loc[1]}))
                 continue;
 
-                dist = min_loc(points, loc, point, {}, {}, plane);
+                dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.01);
+                // std::cout << dist << std::endl;
 
                 plane_loc = plane->project(point);
                 if (!plane_roi.contains({plane_loc[0],plane_loc[1]}))
                     dist = -1;
 
-                    if (get_block(block, plane_loc, plane_roi, block_step))
-                        dist = -1;
+                if (get_block(block, plane_loc, plane_roi, block_step))
+                    dist = -1;
 
             if (dist >= 0 && dist <= 1)
                 break;
         }
 
-        // std::cout << loc << " init at dist " << dist << std::endl;
 
         if (dist < 0 || dist > 1)
             continue;
+
+        // std::cout << loc << " init at dist " << dist << std::endl;
 
         seg.push_back(point);
         seg_loc.push_back(loc);
@@ -956,7 +961,9 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         //point2
         loc2 = loc;
         //search point at distance of 1 to init point
-        dist = min_loc(points, loc2, point2, {point}, {1}, plane);
+        dist = min_loc(points, loc2, point2, {point}, {1}, plane, 0.5, 0.01);
+
+        // std::cout << "loc2 dist " << dist << loc << loc2 << point << point2 << points.size() << std::endl;
 
         if (dist < 0 || dist > 1)
             continue;
@@ -980,10 +987,10 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 point3 = at_int(points, loc3);
 
                 //search point close to prediction + dist 1 to last point
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5);
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5, 0.01);
 
                 //then refine
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.5);
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.5, 0.01);
 
                 if (dist < 0 || dist > 1)
                     break;
@@ -1022,10 +1029,10 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 point3 = at_int(points, loc3);
 
                 //search point close to prediction + dist 1 to last point
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5);
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5, 0.01);
 
                 //then refine
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.5);
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.5, 0.01);
 
                 if (dist < 0 || dist > 1)
                     break;
@@ -1319,4 +1326,85 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
     // points(y0, x0) += normals(y0, x0)*alphacomp_offset(reader, points(y0, x0), normals(y0, x0), 0, 100, 2.0);
     //
     // return new QuadSurface(points(used_area), {1.0f/step/scale,1.0f/step/scale});
+}
+
+void QuadSurface::save(const std::string &path, const std::string &uuid)
+{
+    if (!fs::create_directories(path))
+        throw std::runtime_error("error creating dir for QuadSurface::save()");
+
+    std::vector<cv::Mat> xyz;
+
+    cv::split(_points, xyz);
+
+    cv::imwrite(path+"/x.tif", xyz[0]);
+    cv::imwrite(path+"/y.tif", xyz[1]);
+    cv::imwrite(path+"/z.tif", xyz[2]);
+
+    if (!meta)
+        meta = new nlohmann::json;
+
+    (*meta)["type"] = "seg";
+    (*meta)["uuid"] = uuid;
+    (*meta)["format"] = "tifxyz";
+    (*meta)["scale"] = {_scale[0], _scale[1]};
+    std::ofstream o(path+"/meta.json");
+    o << std::setw(4) << (*meta) << std::endl;
+}
+
+Rect3D QuadSurface::bbox()
+{
+    if (_bbox.low[0] == -1) {
+        _bbox.low = _points(0,0);
+        _bbox.high = _points(0,0);
+
+        for(int j=0;j<_points.rows;j++)
+            for(int i=0;i<_points.cols;i++)
+                for(int c=0;c<3;c++)
+                    if (_bbox.low[0] == -1)
+                        _bbox = {_points(j,i),_points(j,i)};
+                    else if (_points(j,i)[0] != -1)
+                        _bbox = expand_rect(_bbox, _points(j,i));
+    }
+
+    return _bbox;
+}
+
+QuadSurface *load_quad_from_tifxyz(const std::string &path)
+{
+    std::vector<cv::Mat_<float>> xyz = {cv::imread(path+"/x.tif",cv::IMREAD_UNCHANGED),cv::imread(path+"/y.tif",cv::IMREAD_UNCHANGED),cv::imread(path+"/z.tif",cv::IMREAD_UNCHANGED)};
+
+    cv::Mat_<cv::Vec3f> points;
+    cv::merge(xyz, points);
+
+    std::ifstream meta_f(path+"/meta.json");
+    nlohmann::json metadata = nlohmann::json::parse(meta_f);
+
+    cv::Vec2f scale = {metadata["scale"][0].get<float>(), metadata["scale"][1].get<float>()};
+
+    return new QuadSurface(points, scale);
+}
+
+Rect3D expand_rect(const Rect3D &a, const cv::Vec3f &p)
+{
+    Rect3D res = a;
+    for(int d=0;d<3;d++) {
+        res.low[d] = std::min(res.low[d], p[d]);
+        res.high[d] = std::max(res.high[d], p[d]);
+    }
+
+    return res;
+}
+
+
+bool intersect(const Rect3D &a, const Rect3D &b)
+{
+    for(int d=0;d<3;d++) {
+        if (a.high[d] < b.low[d])
+            return false;
+        if (a.low[d] > b.high[d])
+            return false;
+    }
+
+    return true;
 }

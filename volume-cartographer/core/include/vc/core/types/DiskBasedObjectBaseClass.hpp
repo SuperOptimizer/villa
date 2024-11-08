@@ -51,6 +51,8 @@ public:
     
     static bool checkDir(volcart::filesystem::path path);
 
+    Metadata &metadata() { return metadata_; };
+
 protected:
     /** Load the object from file */
     explicit DiskBasedObjectBaseClass(volcart::filesystem::path path);

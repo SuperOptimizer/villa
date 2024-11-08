@@ -149,17 +149,6 @@ void CWindow::setVolume(std::shared_ptr<volcart::Volume> newvol)
     // onVolumeClicked({0,0},{w/2,h/2,d/2});
     
     onManualPlaneChanged();
-
-    if (currentVolume->numScales() == 1 && _opchains.count("experiment") == 0) {
-        QTreeWidgetItem *item = new QTreeWidgetItem(treeWidgetSurfaces);
-        item->setText(0, QString("experiment"));
-        item->setData(0, Qt::UserRole, QVariant("experiment"));
-        cv::Vec3d point = {4476.81, 2483.53, 5753.1}; //reliable big  seed!
-        // cv::Vec3d point = {3418.62, 2442.62, 6069.76}; //tricky seed!
-        // 4660.82, 3417.98, 5636.57 notehr tricky seed?
-        // cv::Vec3d point = {4745.46, 3021.84, 5482.22}; // in front of big hole
-        _opchains["experiment"] = new OpChain(empty_space_tracing_quad_phys(currentVolume->zarrDataset(0), 1.0, chunk_cache, point, 20));
-    }
 }
 
 // Create widgets
@@ -174,12 +163,12 @@ void CWindow::CreateWidgets(void)
     QMdiArea *mdiArea = new QMdiArea(ui.tabSegment);
     aWidgetLayout->addWidget(mdiArea);
     
-    newConnectedCVolumeViewer("manual plane", mdiArea);
-    newConnectedCVolumeViewer("seg xz", mdiArea);
-    newConnectedCVolumeViewer("seg yz", mdiArea);
-    newConnectedCVolumeViewer("xy plane", mdiArea);
-    newConnectedCVolumeViewer("xz plane", mdiArea);
-    newConnectedCVolumeViewer("yz plane", mdiArea);
+    // newConnectedCVolumeViewer("manual plane", mdiArea);
+    newConnectedCVolumeViewer("seg xz", mdiArea)->setIntersects({"segmentation"});
+    newConnectedCVolumeViewer("seg yz", mdiArea)->setIntersects({"segmentation"});
+    newConnectedCVolumeViewer("xy plane", mdiArea)->setIntersects({"segmentation"});
+    // newConnectedCVolumeViewer("xz plane", mdiArea);
+    // newConnectedCVolumeViewer("yz plane", mdiArea);
     newConnectedCVolumeViewer("segmentation", mdiArea)->setIntersects({"seg xz","seg yz"});
     mdiArea->tileSubWindows();
 
@@ -516,26 +505,28 @@ void CWindow::OpenVolume(const QString& path)
 
     treeWidgetSurfaces->clear();
 
+    std::set<std::string> dbg_intersects = {"segmentation"};
 
-
-    // empty_space_tracing_quad_phys(currentVolume->zarrDataset(1), 0.5, chunk_cache, {5646,2756,2000}, {5688,2786,2000}, 5);
-    // _opchains["experiment"] = new OpChain(empty_space_tracing_quad_phys(currentVolume->zarrDataset(1), 0.5, chunk_cache, {5646,2756,2000}, {5688,2786,2000}, 20));
-    // _opchains["experiment"] = new OpChain(empty_space_tracing_quad(currentVolume->zarrDataset(1), 0.5, chunk_cache, {5646,2756,2000}, {5688,2786,2000}, 5));
-
-    //fiber tracing
-    //4625/1960/1971 -> 4654/1938/1971
-    // if (currentVolume->numScales() == 1) {
-    //     QTreeWidgetItem *item = new QTreeWidgetItem(treeWidgetSurfaces);
-    //     item->setText(0, QString("experiment"));
-    //     item->setData(0, Qt::UserRole, QVariant("experiment"));
-    //     _opchains["experiment"] = empty_space_tracing_quad_phys(currentVolume->zarrDataset(0), 1.0, chunk_cache, {4625,1960,1971}, {4654,1938,1971}, 5);
-    // }
-
-    for (auto& s : fVpkg->segmentationFiles()) {
+    //TODO list sub-segmentation formats (like objs...)
+    for (auto &id : fVpkg->segmentationIDs()) {
         QTreeWidgetItem *item = new QTreeWidgetItem(treeWidgetSurfaces);
-        item->setText(0, QString(seg_path_name(s.string()).c_str()));
-        item->setData(0, Qt::UserRole, QVariant(s.string().c_str()));
+        item->setText(0, QString(id.c_str()));
+        item->setData(0, Qt::UserRole, QVariant(id.c_str()));
+
+        auto seg = fVpkg->segmentation(id);
+        if (seg->metadata().hasKey("format") && seg->metadata().get<std::string>("format") == "tifxyz") {
+            QuadSurface *surf = load_quad_from_tifxyz(seg->path());
+            _surf_col->setSurface(id, surf);
+            _opchains[id] = new OpChain(surf);
+            dbg_intersects.insert(id);
+            // if (dbg_intersects.size() == 4)
+            //     break;
+        }
     }
+
+    // for (auto &viewer : _viewers)
+    //     if (viewer->surfName() != "segmentation")
+    //         viewer->setIntersects(dbg_intersects);
 
     UpdateRecentVolpkgList(aVpkgPath);
 }
@@ -731,22 +722,28 @@ void CWindow::onOpChainChanged(OpChain *chain)
 
 void CWindow::onSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous)
 {
-    std::string surf_path = current->data(0, Qt::UserRole).toString().toStdString();
+    std::string surf_id = current->data(0, Qt::UserRole).toString().toStdString();
 
-    if (!_opchains.count(surf_path)) {
-        if (fs::path(surf_path).extension() == ".vcps")
-            _opchains[surf_path] = new OpChain(load_quad_from_vcps(surf_path));
-        else if (fs::path(surf_path).extension() == ".obj") {
-            QuadSurface *quads = load_quad_from_obj(surf_path);
-            if (quads)
-                _opchains[surf_path] = new OpChain(quads);
-        }
+    if (!_opchains.count(surf_id)) {
+        auto seg = fVpkg->segmentation(surf_id);
+
+        if (seg->metadata().hasKey("format") && seg->metadata().get<std::string>("format") == "tifxyz")
+            _opchains[surf_id] = new OpChain(load_quad_from_tifxyz(seg->path()));
+        else if (seg->metadata().hasKey("vcps"))
+            _opchains[surf_id] = new OpChain(load_quad_from_vcps(seg->path()/seg->metadata().get<std::string>("vcps")));
+
+        //TODO fix these
+        // else if (fs::path(surf_path).extension() == ".obj") {
+        //     QuadSurface *quads = load_quad_from_obj(surf_path);
+        //     if (quads)
+        //         _opchains[surf_path] = new OpChain(quads);
+        // }
     }
 
-    if (_opchains[surf_path]) {
-        _surf_col->setSurface("segmentation", _opchains[surf_path]);
-        sendOpChainSelected(_opchains[surf_path]);
+    if (_opchains[surf_id]) {
+        _surf_col->setSurface("segmentation", _opchains[surf_id]->src());
+        sendOpChainSelected(_opchains[surf_id]);
     }
     else
-        std::cout << "ERROR loading " << surf_path << std::endl;
+        std::cout << "ERROR loading " << surf_id << std::endl;
 }
