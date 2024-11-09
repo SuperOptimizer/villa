@@ -1344,12 +1344,16 @@ void QuadSurface::save(const std::string &path, const std::string &uuid)
     if (!meta)
         meta = new nlohmann::json;
 
+    (*meta)["bbox"] = {{bbox().low[0],bbox().low[1],bbox().low[2]},{bbox().high[0],bbox().high[1],bbox().high[2]}};
     (*meta)["type"] = "seg";
     (*meta)["uuid"] = uuid;
     (*meta)["format"] = "tifxyz";
     (*meta)["scale"] = {_scale[0], _scale[1]};
-    std::ofstream o(path+"/meta.json");
+    std::ofstream o(path+"/meta.json.tmp");
     o << std::setw(4) << (*meta) << std::endl;
+
+    //rename to make creation atomic
+    fs::rename(path+"/meta.json.tmp", path+"/meta.json");
 }
 
 Rect3D QuadSurface::bbox()
