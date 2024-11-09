@@ -689,7 +689,7 @@ void CVolumeViewer::renderIntersections()
                         path.lineTo(p[0],p[1]);
                     first = false;
                 }
-                auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 1/_scene_scale));
+                auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 2/_scene_scale));
                 item->setZValue(5);
                 items.push_back(item);
             }
