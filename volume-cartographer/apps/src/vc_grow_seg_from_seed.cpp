@@ -152,6 +152,19 @@ bool overlap(SurfaceMeta &a, SurfaceMeta &b)
     return false;
 }
 
+bool contains(SurfaceMeta &a, const cv::Vec3f &loc)
+{
+    if (!intersect(a.bbox, {loc,loc}))
+        return false;
+
+    SurfacePointer *ptr = a.surf()->pointer();
+
+    if (a.surf()->pointTo(ptr, loc, 2.0) <= 2.0)
+        return true;
+
+    return false;
+}
+
 int main(int argc, char *argv[])
 {
     if (argc != 7 && argc != 4) {
@@ -201,6 +214,7 @@ int main(int argc, char *argv[])
     SurfaceMeta *src;
 
     //expansion mode
+    int count_overlap;
     if (expansion_mode) {
         mode = "grow_random_choice";
         //got trough all exising segments (that match filter/start with auto ...)
@@ -249,63 +263,86 @@ int main(int argc, char *argv[])
         for(auto &it : partial)
             partial_shuffled.push_back(it.second);
 
+        std::vector<SurfaceMeta*> all_shuffled;
+        for(auto &it : partial)
+            all_shuffled.push_back(it.second);
+        for(auto &it : full)
+            all_shuffled.push_back(it.second);
+
         //FIXME we shold sort by creation date / generation so older get processed first and we grow nicely!
         auto rd = std::random_device {};
         auto rng = std::default_random_engine { rd() };
-        std::shuffle(std::begin(partial_shuffled), std::end(partial_shuffled), rng);
+        std::shuffle(std::begin(all_shuffled), std::end(all_shuffled), rng);
 
-        if (!partial_shuffled.size())
+        if (!all_shuffled.size())
             return EXIT_SUCCESS;
 
-        src = partial_shuffled[0];
-        cv::Mat_<cv::Vec3f> points = src->surf()->rawPoints();
-        int w = points.cols;
-        int h = points.rows;
+        for(auto &it : all_shuffled) {
+            src = it;
+            cv::Mat_<cv::Vec3f> points = src->surf()->rawPoints();
+            int w = points.cols;
+            int h = points.rows;
 
-        // cv::Mat_<uint8_t> searchvis(points.size(), 0);
+            // cv::Mat_<uint8_t> searchvis(points.size(), 0);
 
-        bool found = false;
-        // int fcount = 0;
-        while (!found/* || fcount < 128*/) {
-            cv::Vec2f p;
-            int side = rand() % 4;
-            if (side == 0)
-                p = {rand() % h, 0};
-            else if (side == 1)
-                p = {0, rand() % w};
-            else if (side == 2)
-                p = {rand() % h, w-1};
-            else if (side == 3)
-                p = {h-1, rand() % w};
+            bool found = false;
+            // int fcount = 0;
+            for (int r=0;r<10;r++) {
+                cv::Vec2f p;
+                int side = rand() % 4;
+                if (side == 0)
+                    p = {rand() % h, 0};
+                else if (side == 1)
+                    p = {0, rand() % w};
+                else if (side == 2)
+                    p = {rand() % h, w-1};
+                else if (side == 3)
+                    p = {h-1, rand() % w};
 
-            cv::Vec2f searchdir = cv::Vec2f(h/2,w/2) - p;
-            cv::normalize(searchdir, searchdir);
-            found = false;
-            for(int i=0;i<std::min(w/2/abs(searchdir[1]),h/2/abs(searchdir[0]));i++,p+=searchdir) {
-                found = true;
-                cv::Vec2i p_eval = p;
-                // searchvis(p_eval) = 127;
-                for(int r=0;r<5;r++) {
-                    cv::Vec2i p_eval = p+r*searchdir;
-                    if (points(p_eval)[0] == -1 ||get_val<double,CachedChunked3dInterpolator<uint8_t,passTroughComputor>>(interpolator, points(p_eval)) < 128) {
-                        found = false;
+                cv::Vec2f searchdir = cv::Vec2f(h/2,w/2) - p;
+                cv::normalize(searchdir, searchdir);
+                found = false;
+                for(int i=0;i<std::min(w/2/abs(searchdir[1]),h/2/abs(searchdir[0]));i++,p+=searchdir) {
+                    found = true;
+                    cv::Vec2i p_eval = p;
+                    // searchvis(p_eval) = 127;
+                    for(int r=0;r<5;r++) {
+                        cv::Vec2i p_eval = p+r*searchdir;
+                        if (points(p_eval)[0] == -1 ||get_val<double,CachedChunked3dInterpolator<uint8_t,passTroughComputor>>(interpolator, points(p_eval)) < 128) {
+                            found = false;
+                            break;
+                        }
+                        // else
+                            // searchvis(p_eval) = 255;;
+                    }
+                    if (found) {
+                        // fcount++;
+                        cv::Vec2i p_eval = p+2*searchdir;
+                        origin = points(p_eval);
                         break;
                     }
-                    // else
-                        // searchvis(p_eval) = 255;;
-                }
-                if (found) {
-                    // fcount++;
-                    cv::Vec2i p_eval = p+2*searchdir;
-                    origin = points(p_eval);
-                    break;
                 }
             }
+
+            if (!found)
+                continue;
+
+            count_overlap = 0;
+            for(auto comp : all_shuffled) {
+                if (comp == src)
+                    continue;
+                if (contains(*comp, origin))
+                    count_overlap++;
+                if (count_overlap >= 4)
+                    break;
+            }
+            if (count_overlap < 4)
+                break;
         }
 
         // cv::imwrite("searchvis.tif", searchvis);
 
-        std::cout << "found potential overlapping starting seed" << origin << std::endl;
+        std::cout << "found potential overlapping starting seed" << origin << "with overlap " << count_overlap << std::endl;
     }
     else {
         if (argc == 7) {
@@ -359,9 +396,10 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
 
     (*surf->meta)["source"] = "vc_grow_seg_from_seed";
-    (*surf->meta)["vc_gsfs_params"] = params;
+    // (*surf->meta)["vc_gsfs_params"] = params;
     (*surf->meta)["vc_gsfs_mode"] = mode;
     (*surf->meta)["vc_gsfs_version"] = "dev";
+    (*surf->meta)["seed_overlap"] = count_overlap;
     std::string uuid = name_prefix + time_str();
     fs::path seg_dir = tgt_dir / uuid;
     surf->save(seg_dir, uuid);
