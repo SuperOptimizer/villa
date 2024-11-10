@@ -127,6 +127,24 @@ static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2d p)
     return (1-fy)*p0 + fy*p1;
 }
 
+static cv::Vec3f at_int_inv(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
+{
+    int x = p[1];
+    int y = p[0];
+    float fx = p[1]-x;
+    float fy = p[0]-y;
+
+    cv::Vec3f p00 = points(y,x);
+    cv::Vec3f p01 = points(y,x+1);
+    cv::Vec3f p10 = points(y+1,x);
+    cv::Vec3f p11 = points(y+1,x+1);
+
+    cv::Vec3f p0 = (1-fx)*p00 + fx*p01;
+    cv::Vec3f p1 = (1-fx)*p10 + fx*p11;
+
+    return (1-fy)*p0 + fy*p1;
+}
+
 static float atf_int(const cv::Mat_<float> &points, cv::Vec2f p)
 {
     int x = p[0];
@@ -3328,9 +3346,174 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     return surf;
 }
 
+using SurfPoint = std::pair<SurfaceMeta*,cv::Vec2i>;
+
+class resPairId
+{
+public:
+    resPairId(int type_, const SurfPoint &a_, const SurfPoint &b_) : type(type_)
+    {
+        if (a.first < b.first) {
+            a = a_;
+            b = b_;
+        }
+        else {
+            a = b_;
+            b = a_;
+        }
+    }
+    bool operator==(const resPairId &o) const
+    {
+        if (type != o.type)
+            return false;
+        if (a != o.a)
+            return false;
+        if (b != o.b)
+            return false;
+        return true;
+    }
+
+    int type;
+    SurfPoint a;
+    SurfPoint b;
+};
+
+struct surf_track_hash {
+    size_t operator()(SurfPoint p) const
+    {
+        size_t hash1 = std::hash<void*>{}(p.first);
+        size_t hash2 = std::hash<int>{}(p.second[0]);
+        size_t hash3 = std::hash<int>{}(p.second[1]);
+
+        //magic numbers from boost. should be good enough
+        size_t hash = hash1  ^ (hash2 + 0x9e3779b9 + (hash1 << 6) + (hash1 >> 2));
+        hash =  hash  ^ (hash3 + 0x9e3779b9 + (hash << 6) + (hash >> 2));
+
+        return hash;
+    }
+};
+
+struct resPairId_hash {
+    size_t operator()(const resPairId &id) const
+    {
+        size_t hash1 = std::hash<int>{}(id.type);
+        size_t hash2 = surf_track_hash{}(id.a);
+        size_t hash3 = surf_track_hash{}(id.b);
+
+        //magic numbers from boost. should be good enough
+        size_t hash = hash1  ^ (hash2 + 0x9e3779b9 + (hash1 << 6) + (hash1 >> 2));
+        hash =  hash  ^ (hash3 + 0x9e3779b9 + (hash << 6) + (hash >> 2));
+
+        return hash;
+    }
+};
+
+//Surface tracking data for loss functions
+class SurfTrackerData
+{
+
+public:
+    cv::Vec2d &loc(SurfaceMeta *sm, const cv::Vec2i &loc)
+    {
+        return _data[std::make_pair(sm,loc)];
+    }
+    ceres::ResidualBlockId &resBlockId(const resPairId &id)
+    {
+        return _pair_resid[id];
+    }
+    bool has(const resPairId &id)
+    {
+        return _pair_resid.count(id);
+    }
+    std::set<SurfaceMeta*> &surfs(const cv::Vec2i &loc)
+    {
+        return _surfs[loc];
+    }
+    cv::Vec3d lookup_int(SurfaceMeta *sm, const cv::Vec2i &p)
+    {
+        auto id = std::make_pair(sm,p);
+        if (!_data.count(id))
+            throw std::runtime_error("error, lookup failed!");
+        cv::Vec2d l = loc(sm, p);
+        if (l[0] == -1)
+            return {-1,-1,-1};
+        else
+            return at_int_inv(sm->surf()->rawPoints(), l);
+    }
+protected:
+    std::unordered_map<SurfPoint,cv::Vec2d,surf_track_hash> _data;
+    std::unordered_map<resPairId,ceres::ResidualBlockId,resPairId_hash> _pair_resid;
+    std::unordered_map<cv::Vec2i,std::set<SurfaceMeta*>,vec2i_hash> _surfs;
+};
+
+int add_surftrack_distloss(SurfaceMeta *sm, const cv::Vec2i &p, const cv::Vec2i &off, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, float unit, int flags = 0, float w = 1.0)
+{
+    if ((state(p) & STATE_LOC_VALID) == 0)
+        return 0;
+    if ((state(p+off) & STATE_LOC_VALID) == 0)
+        return 0;
+
+    problem.AddResidualBlock(DistLoss2D::Create(unit*cv::norm(off),w), nullptr, &data.loc(sm, p)[0], &data.loc(sm, p+off)[0]);
+
+    if ((flags & OPTIMIZE_ALL) == 0)
+        problem.SetParameterBlockConstant(&data.loc(sm, p+off)[0]);
+
+    return 1;
+}
+
+int add_surftrack_straightloss(SurfaceMeta *sm, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, int flags = 0, float w = 1.0)
+{
+    if ((state(p+o1) & STATE_LOC_VALID) == 0)
+        return 0;
+    if ((state(p+o2) & STATE_LOC_VALID) == 0)
+        return 0;
+    if ((state(p+o3) & STATE_LOC_VALID) == 0)
+        return 0;
+
+    problem.AddResidualBlock(StraightLoss2D::Create(w), nullptr, &data.loc(sm, p+o1)[0], &data.loc(sm, p+o2)[0], &data.loc(sm, p+o3)[0]);
+
+    if ((flags & OPTIMIZE_ALL) == 0) {
+        if (o1 != cv::Vec2i(0,0))
+            problem.SetParameterBlockConstant(&data.loc(sm, p+o1)[0]);
+        if (o2 != cv::Vec2i(0,0))
+            problem.SetParameterBlockConstant(&data.loc(sm, p+o2)[0]);
+        if (o3 != cv::Vec2i(0,0))
+            problem.SetParameterBlockConstant(&data.loc(sm, p+o3)[0]);
+    }
+
+    return 1;
+}
+
+//will optimize only the center point
+void surftrack_add_local(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, float step)
+{
+    //direct
+    add_surftrack_distloss(sm, p, {0,1}, data, problem, state, step);
+    add_surftrack_distloss(sm, p, {1,0}, data, problem, state, step);
+    add_surftrack_distloss(sm, p, {0,-1}, data, problem, state, step);
+    add_surftrack_distloss(sm, p, {-1,0}, data, problem, state, step);
+
+    //diagonal
+    add_surftrack_distloss(sm, p, {1,1}, data, problem, state, step);
+    add_surftrack_distloss(sm, p, {1,-1}, data, problem, state, step);
+    add_surftrack_distloss(sm, p, {-1,1}, data, problem, state, step);
+    add_surftrack_distloss(sm, p, {-1,-1}, data, problem, state, step);
+
+    //horizontal
+    add_surftrack_straightloss(sm, p, {0,-2},{0,-1},{0,0}, data, problem, state);
+    add_surftrack_straightloss(sm, p, {0,-1},{0,0},{0,1}, data, problem, state);
+    add_surftrack_straightloss(sm, p, {0,0},{0,1},{0,2}, data, problem, state);
+
+    //vertical
+    add_surftrack_straightloss(sm, p, {-2,0},{-1,0},{0,0}, data, problem, state);
+    add_surftrack_straightloss(sm, p, {-1,0},{0,0},{1,0}, data, problem, state);
+    add_surftrack_straightloss(sm, p, {0,0},{1,0},{2,0}, data, problem, state);
+}
+
 QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMeta*> &surfs_v, float step)
 {
     std::unordered_map<std::string,SurfaceMeta*> surfs;
+    float src_step = 20;
 
     for(auto &sm : surfs_v)
         surfs[sm->name()] = sm;
@@ -3339,21 +3522,166 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         for(auto &name : sm->overlapping_str)
             sm->overlapping.insert(surfs[name]);
 
-    cv::Mat_<cv::Vec3f> points = seed->surf()->rawPoints();
+    cv::Mat_<cv::Vec3f> seed_points = seed->surf()->rawPoints();
 
-    cv::Mat_<uint8_t> counts(points.size(), 0);
-#pragma omp parallel for
-    for(int j=0;j<counts.rows;j++)
-        for(int i=0;i<counts.rows;i++)
-            for(auto &sm : seed->overlapping)
-                if (points(j,i)[0] != -1) {
-                    SurfacePointer *ptr = sm->surf()->pointer();
-                    float dist = sm->surf()->pointTo(ptr, points(j,i), 2.0, 4);
-                    if (dist <= 2.0)
-                        counts(j,i)++;
-                    std::cout << dist << " " << j << " " << i << std::endl;
+//     cv::Mat_<uint8_t> counts(seed_points.size(), 0);
+// #pragma omp parallel for
+//     for(int j=0;j<counts.rows;j++)
+//         for(int i=0;i<counts.rows;i++)
+//             for(auto &sm : seed->overlapping)
+//                 if (seed_points(j,i)[0] != -1) {
+//                     SurfacePointer *ptr = sm->surf()->pointer();
+//                     float dist = sm->surf()->pointTo(ptr, seed_points(j,i), 2.0, 4);
+//                     if (dist <= 2.0)
+//                         counts(j,i)++;
+//                     std::cout << dist << " " << j << " " << i << std::endl;
+//                 }
+//     cv::imwrite("counts.tif", counts);
+
+    int stop_gen = 4;
+    int w = stop_gen*2*1.1+5;
+    int h = stop_gen*2*1.1+5;
+    cv::Size  size = {w,h};
+    cv::Rect bounds(0,0,w-1,h-1);
+
+    int x0 = w/2;
+    int y0 = h/2;
+    int r = 1;
+
+    std::vector<cv::Vec2i> neighs = {{1,0},{0,1},{-1,0},{0,-1}};
+
+    std::vector<cv::Vec2i> fringe;
+    std::vector<cv::Vec2i> cands;
+
+    // std::unordered_map<std::tuple<SurfaceMeta,cv::Vec2f>>
+
+    // cv::Mat_<cv::Vec3d> locs(size,cv::Vec3f(-1,-1,-1));
+    cv::Mat_<uint8_t> state(size,0);
+    cv::Mat_<cv::Vec3d> points(size,{-1,-1,-1});
+
+    cv::Rect used_area(x0,y0,2,2);
+
+    SurfTrackerData data;
+
+    //start in the center
+    data.loc(seed,{y0,x0}) = {seed_points.rows/2, seed_points.cols/2 };
+    data.loc(seed,{y0,x0+1}) = {seed_points.rows/2, seed_points.cols/2+step };
+    data.loc(seed,{y0+1,x0}) = {seed_points.rows/2+step, seed_points.cols/2 };
+    data.loc(seed,{y0+1,x0+1}) = {seed_points.rows/2+step, seed_points.cols/2+step };
+
+    std::cout << "init " << data.loc(seed,{y0,x0}) << data.loc(seed,{y0,x0+1}) << data.loc(seed,{y0+1,x0}) << std::endl;
+
+    data.surfs({y0,x0}).insert(seed);
+    data.surfs({y0,x0+1}).insert(seed);
+    data.surfs({y0+1,x0}).insert(seed);
+    data.surfs({y0+1,x0+1}).insert(seed);
+
+    points({y0,x0}) = data.lookup_int(seed,{y0,x0});
+    points({y0,x0+1}) = data.lookup_int(seed,{y0,x0+1});
+    points({y0+1,x0}) = data.lookup_int(seed,{y0+1,x0});
+    points({y0+1,x0+1}) = data.lookup_int(seed,{y0+1,x0+1});
+
+    state(y0,x0) = STATE_LOC_VALID | STATE_COORD_VALID;
+    state(y0+1,x0) = STATE_LOC_VALID | STATE_COORD_VALID;
+    state(y0,x0+1) = STATE_LOC_VALID | STATE_COORD_VALID;
+    state(y0+1,x0+1) = STATE_LOC_VALID | STATE_COORD_VALID;
+
+    fringe.push_back({y0,x0});
+    fringe.push_back({y0+1,x0});
+    fringe.push_back({y0,x0+1});
+    fringe.push_back({y0+1,x0+1});
+
+    std::cout << "starting from " << x0 << " " << y0 << std::endl;
+
+    ceres::Solver::Options options;
+    options.linear_solver_type = ceres::DENSE_QR;
+    options.minimizer_progress_to_stdout = false;
+    options.max_num_iterations = 200;
+
+    int succ = 0;
+    for(int generation=0;generation<stop_gen;generation++) {
+        for(auto p : fringe)
+        {
+            if ((state(p) & STATE_LOC_VALID) == 0)
+                continue;
+
+            for(auto n : neighs)
+                if (bounds.contains(p+n)
+                    && (state(p+n) & STATE_PROCESSING) == 0
+                    && (state(p+n) & STATE_LOC_VALID) == 0)
+                {
+                    state(p+n) |= STATE_PROCESSING;
+                    cands.push_back(p+n);
                 }
-    cv::imwrite("counts.tif", counts);
+        }
+        fringe.resize(0);
 
-    return nullptr;
+        for(auto &p : cands) {
+            if (state(p) & STATE_LOC_VALID)
+                continue;
+
+            int ref_count = 0;
+            cv::Vec2d avg = {0,0};
+            for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,h-1);oy++)
+                for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,w-1);ox++)
+                    if (state(oy,ox) & STATE_LOC_VALID) {
+                        ref_count++;
+                        avg += data.loc(seed,{oy,ox});
+                    }
+
+
+            if (ref_count < 2) {
+                state(p) &= ~STATE_PROCESSING;
+                continue;
+            }
+
+            avg /= ref_count;
+            data.loc(seed,p) = avg;
+
+            // std::cout << data.loc(seed,p) << p << avg << std::endl;
+
+            ceres::Problem problem;
+
+            state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
+
+            surftrack_add_local(seed, p, data, problem, state, step);
+
+            ceres::Solver::Summary summary;
+            ceres::Solve(options, &problem, &summary);
+
+            // std::cout << summary.BriefReport() << "\n";
+
+            double loss = summary.final_cost;
+            fringe.push_back(p);
+            points(p) = data.lookup_int(seed,p);
+            succ++;
+            if (!used_area.contains({p[1],p[0]})) {
+                used_area = used_area | cv::Rect(p[1],p[0],1,1);
+            }
+        }
+
+
+        printf("gen %d processing %d fringe cands (total done %d fringe: %d\n", generation, cands.size(), succ, fringe.size());
+        if (!fringe.size())
+            break;
+    }
+
+    points = points(used_area);
+
+    // upsampling surface from segments
+    // cv::Mat_<cv::Vec3f> points(h*10,w*h);
+    // for(int j=0;j<h;j++)
+    //     for(int i=0;i<w;i++) {
+    //         //TODO do this for all (?) surfaces?
+    //
+    //     }
+
+    cv::resize(points, points, {}, step, step);
+
+    std::cout << points.size() << std::endl;
+
+    QuadSurface *surf = new QuadSurface(points, {1/src_step,1/src_step});
+    surf->meta = new nlohmann::json;
+
+    return surf;
 }

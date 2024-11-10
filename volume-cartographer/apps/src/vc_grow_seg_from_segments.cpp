@@ -153,13 +153,10 @@ int main(int argc, char *argv[])
             surfaces.push_back(sm);
         }
 
-    QuadSurface *surf = grow_surf_from_surfs(src, surfaces, 100.0);
+    QuadSurface *surf = grow_surf_from_surfs(src, surfaces, 1.0);
 
-    // QuadSurface *surf = empty_space_tracing_quad_phys(ds.get(), 1.0, &chunk_cache, origin, step_size);
-
-    // (*surf->meta)["source"] = "vc_grow_seg_from_segments";
-    // (*surf->meta)["seed_overlap"] = count_overlap;
-    // std::string uuid = "auto_traced_" + time_str();
-    // fs::path seg_dir = tgt_dir / uuid;
-    // surf->save(seg_dir, uuid);
+    (*surf->meta)["source"] = "vc_grow_seg_from_segments";
+    std::string uuid = "testing_auto_surf_trace" + time_str();
+    fs::path seg_dir = tgt_dir / uuid;
+    surf->save(seg_dir, uuid);
 }

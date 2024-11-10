@@ -100,6 +100,45 @@ struct DistLoss {
 };
 
 //cost functions for physical paper
+struct DistLoss2D {
+    DistLoss2D(float dist, float w) : _d(dist), _w(w) {};
+    template <typename T>
+    bool operator()(const T* const a, const T* const b, T* residual) const {
+        if (a[0] == -1 && a[1] == -1 && a[2] == -1) {
+            residual[0] = T(0);
+            std::cout << "invalid CORNER" << std::endl;
+            return true;
+        }
+        if (b[0] == -1 && b[1] == -1 && b[2] == -1) {
+            residual[0] = T(0);
+            std::cout << "invalid CORNER" << std::endl;
+            return true;
+        }
+
+        T d[2];
+        d[0] = a[0] - b[0];
+        d[1] = a[1] - b[1];
+
+        T dist = sqrt(d[0]*d[0] + d[1]*d[1]);
+
+        if (dist < _d)
+            residual[0] = T(_w)*(T(_d)/dist - T(1));
+        else
+            residual[0] = T(_w)*(dist/T(_d) - T(1));
+
+        return true;
+    }
+
+    double _d;
+    double _w;
+
+    static ceres::CostFunction* Create(float d, float w = 1.0)
+    {
+        return new ceres::AutoDiffCostFunction<DistLoss2D, 1, 2, 2>(new DistLoss2D(d, w));
+    }
+};
+
+//cost functions for physical paper
 struct LocMinDistLoss {
     // LocMinDistLoss(const cv::Vec2f &scale, float mindist, float w) : _scale(scale), {};
     template <typename T>
@@ -166,6 +205,36 @@ struct StraightLoss {
     static ceres::CostFunction* Create(float w = 1.0)
     {
         return new ceres::AutoDiffCostFunction<StraightLoss, 1, 3, 3, 3>(new StraightLoss(w));
+    }
+};
+
+//cost functions for physical paper
+struct StraightLoss2D {
+    StraightLoss2D(float w) : _w(w) {};
+    template <typename T>
+    bool operator()(const T* const a, const T* const b, const T* const c, T* residual) const {
+        T d1[2], d2[2];
+        d1[0] = b[0] - a[0];
+        d1[1] = b[1] - a[1];
+
+        d2[0] = c[0] - b[0];
+        d2[1] = c[1] - b[1];
+
+        T l1 = sqrt(d1[0]*d1[0] + d1[1]*d1[1]);
+        T l2 = sqrt(d2[0]*d2[0] + d2[1]*d2[1]);
+
+        T dot = (d1[0]*d2[0] + d1[1]*d2[1])/(l1*l2);
+
+        residual[0] = T(_w)*(T(1)-dot);
+
+        return true;
+    }
+
+    float _w;
+
+    static ceres::CostFunction* Create(float w = 1.0)
+    {
+        return new ceres::AutoDiffCostFunction<StraightLoss2D, 1, 2, 2, 2>(new StraightLoss2D(w));
     }
 };
 
