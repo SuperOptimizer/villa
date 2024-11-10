@@ -1412,3 +1412,72 @@ bool intersect(const Rect3D &a, const Rect3D &b)
 
     return true;
 }
+
+Rect3D rect_from_json(const nlohmann::json &json)
+{
+    return {{json[0][0],json[0][1],json[0][2]},{json[1][0],json[1][1],json[1][2]}};
+}
+
+bool overlap(SurfaceMeta &a, SurfaceMeta &b)
+{
+    if (!intersect(a.bbox, b.bbox))
+        return false;
+
+    cv::Mat_<cv::Vec3f> points = a.surf()->rawPoints();
+    for(int r=0;r<100;r++) {
+        cv::Vec2f p = {rand() % points.cols, rand() % points.rows};
+        cv::Vec3f loc = points(p[1],p[0]);
+        if (loc[0] == -1)
+            continue;
+
+        SurfacePointer *ptr = b.surf()->pointer();
+
+        if (b.surf()->pointTo(ptr, loc, 2.0) <= 2.0)
+            return true;
+    }
+
+    return false;
+}
+
+bool contains(SurfaceMeta &a, const cv::Vec3f &loc)
+{
+    if (!intersect(a.bbox, {loc,loc}))
+        return false;
+
+        SurfacePointer *ptr = a.surf()->pointer();
+
+        if (a.surf()->pointTo(ptr, loc, 2.0) <= 2.0)
+            return true;
+
+    return false;
+}
+
+
+SurfaceMeta::SurfaceMeta(const std::filesystem::path &path_, const nlohmann::json &json) : path(path_)
+{
+    bbox = rect_from_json(json["bbox"]);
+}
+
+void SurfaceMeta::readOverlapping()
+{
+    if (std::filesystem::exists(path / "overlapping"))
+        for (const auto& entry : fs::directory_iterator(path / "overlapping"))
+            overlapping_str.insert(entry.path().filename());
+}
+
+QuadSurface *SurfaceMeta::surf()
+{
+    if (!_surf)
+        _surf = load_quad_from_tifxyz(path);
+    return _surf;
+}
+
+void SurfaceMeta::setSurf(QuadSurface *surf)
+{
+    _surf = surf;
+}
+
+std::string SurfaceMeta::name()
+{
+    return path.filename();
+}

@@ -3327,3 +3327,33 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
     return surf;
 }
+
+QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMeta*> &surfs_v, float step)
+{
+    std::unordered_map<std::string,SurfaceMeta*> surfs;
+
+    for(auto &sm : surfs_v)
+        surfs[sm->name()] = sm;
+
+    for(auto &sm : surfs_v)
+        for(auto &name : sm->overlapping_str)
+            sm->overlapping.insert(surfs[name]);
+
+    cv::Mat_<cv::Vec3f> points = seed->surf()->rawPoints();
+
+    cv::Mat_<uint8_t> counts(points.size(), 0);
+#pragma omp parallel for
+    for(int j=0;j<counts.rows;j++)
+        for(int i=0;i<counts.rows;i++)
+            for(auto &sm : seed->overlapping)
+                if (points(j,i)[0] != -1) {
+                    SurfacePointer *ptr = sm->surf()->pointer();
+                    float dist = sm->surf()->pointTo(ptr, points(j,i), 2.0, 4);
+                    if (dist <= 2.0)
+                        counts(j,i)++;
+                    std::cout << dist << " " << j << " " << i << std::endl;
+                }
+    cv::imwrite("counts.tif", counts);
+
+    return nullptr;
+}

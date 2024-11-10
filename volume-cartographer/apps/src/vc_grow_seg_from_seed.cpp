@@ -85,84 +85,11 @@ std::string time_str()
     return oss.str();
 }
 
-Rect3D rect_from_json(const json &json)
-{
-    return {{json[0][0],json[0][1],json[0][2]},{json[1][0],json[1][1],json[1][2]}};
-}
-
-class SurfaceMeta
-{
-public:
-    SurfaceMeta() {};
-    SurfaceMeta(const fs::path &path_, const json &json) : path(path_)
-    {
-        bbox = rect_from_json(json["bbox"]);
-    }
-    void readOverlapping()
-    {
-        if (fs::exists(path / "overlapping"))
-            for (const auto& entry : fs::directory_iterator(path / "overlapping"))
-                overlapping.insert(entry.path().filename());
-    }
-    QuadSurface *surf()
-    {
-        if (!_surf)
-            _surf = load_quad_from_tifxyz(path);
-        return _surf;
-    }
-    void setSurf(QuadSurface *surf)
-    {
-        _surf = surf;
-    }
-    std::string name()
-    {
-        return path.filename();
-    }
-    fs::path path;
-    QuadSurface *_surf = nullptr;
-    Rect3D bbox;
-    std::set<std::string> overlapping;
-};
-
 template <typename T, typename I>
 float get_val(I &interp, cv::Vec3d l) {
     T v;
     interp.Evaluate(l[2], l[1], l[0], &v);
     return v;
-}
-
-bool overlap(SurfaceMeta &a, SurfaceMeta &b)
-{
-    if (!intersect(a.bbox, b.bbox))
-        return false;
-
-    cv::Mat_<cv::Vec3f> points = a.surf()->rawPoints();
-    for(int r=0;r<100;r++) {
-        cv::Vec2f p = {rand() % points.cols, rand() % points.rows};
-        cv::Vec3f loc = points(p[1],p[0]);
-        if (loc[0] == -1)
-            continue;
-
-        SurfacePointer *ptr = b.surf()->pointer();
-
-        if (b.surf()->pointTo(ptr, loc, 2.0) <= 2.0)
-            return true;
-    }
-
-    return false;
-}
-
-bool contains(SurfaceMeta &a, const cv::Vec3f &loc)
-{
-    if (!intersect(a.bbox, {loc,loc}))
-        return false;
-
-    SurfacePointer *ptr = a.surf()->pointer();
-
-    if (a.surf()->pointTo(ptr, loc, 2.0) <= 2.0)
-        return true;
-
-    return false;
 }
 
 int main(int argc, char *argv[])

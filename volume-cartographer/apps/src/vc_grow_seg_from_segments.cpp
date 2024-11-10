@@ -85,45 +85,6 @@ std::string time_str()
     return oss.str();
 }
 
-Rect3D rect_from_json(const json &json)
-{
-    return {{json[0][0],json[0][1],json[0][2]},{json[1][0],json[1][1],json[1][2]}};
-}
-
-class SurfaceMeta
-{
-public:
-    SurfaceMeta() {};
-    SurfaceMeta(const fs::path &path_, const json &json) : path(path_)
-    {
-        bbox = rect_from_json(json["bbox"]);
-    }
-    void readOverlapping()
-    {
-        if (fs::exists(path / "overlapping"))
-            for (const auto& entry : fs::directory_iterator(path / "overlapping"))
-                overlapping.insert(entry.path().filename());
-    }
-    QuadSurface *surf()
-    {
-        if (!_surf)
-            _surf = load_quad_from_tifxyz(path);
-        return _surf;
-    }
-    void setSurf(QuadSurface *surf)
-    {
-        _surf = surf;
-    }
-    std::string name()
-    {
-        return path.filename();
-    }
-    fs::path path;
-    QuadSurface *_surf = nullptr;
-    Rect3D bbox;
-    std::set<std::string> overlapping;
-};
-
 template <typename T, typename I>
 float get_val(I &interp, cv::Vec3d l) {
     T v;
@@ -131,38 +92,18 @@ float get_val(I &interp, cv::Vec3d l) {
     return v;
 }
 
-bool overlap(SurfaceMeta &a, SurfaceMeta &b)
-{
-    if (!intersect(a.bbox, b.bbox))
-        return false;
-
-    cv::Mat_<cv::Vec3f> points = a.surf()->rawPoints();
-    for(int r=0;r<100;r++) {
-        cv::Vec2f p = {rand() % points.cols, rand() % points.rows};
-        cv::Vec3f loc = points(p[1],p[0]);
-        if (loc[0] == -1)
-            continue;
-
-        SurfacePointer *ptr = b.surf()->pointer();
-
-        if (b.surf()->pointTo(ptr, loc, 2.0) <= 2.0)
-            return true;
-    }
-
-    return false;
-}
-
 int main(int argc, char *argv[])
 {
-    if (argc != 7 && argc != 4) {
-        std::cout << "usage: " << argv[0] << " <zarr-volume> <tgt-dir> <json-params> <seed-x> <seed-y> <seed-z>" << std::endl;
-        std::cout << "or:    " << argv[0] << " <zarr-volume> <tgt-dir> <json-params>" << std::endl;
+    if (argc != 6) {
+        std::cout << "usage: " << argv[0] << " <zarr-volume> <src-dir> <tgt-dir> <json-params> <src-segment>" << std::endl;
         return EXIT_SUCCESS;
     }
 
     fs::path vol_path = argv[1];
-    fs::path tgt_dir = argv[2];
-    const char *params_path = argv[3];
+    fs::path src_dir = argv[2];
+    fs::path tgt_dir = argv[3];
+    fs::path params_path = argv[4];
+    fs::path src_path = argv[5];
 
     std::ifstream params_f(params_path);
     json params = json::parse(params_f);
@@ -174,266 +115,51 @@ int main(int argc, char *argv[])
     std::cout << "zarr dataset size for scale group 0 " << ds->shape() << std::endl;
     std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
 
-    ChunkCache chunk_cache(1e9);
-
-
-    passTroughComputor pass;
-    Chunked3d<uint8_t,passTroughComputor> tensor(pass, ds.get(), &chunk_cache);
-    CachedChunked3dInterpolator<uint8_t,passTroughComputor> interpolator(tensor);
-
-    auto chunk_size = ds->chunking().blockShape();
-
-    srand(clock());
-
-    std::string mode;
-
-    cv::Vec3d origin;
-
     std::string name_prefix = "auto_grown_";
-    int tgt_overlap_count = 10;
-    float min_area_cm = 0.3;
-    float step_size = 20;
+    std::vector<SurfaceMeta*> surfaces;
 
-    bool expansion_mode = true;
+    fs::path meta_fn = src_path / "meta.json";
+    std::ifstream meta_f(meta_fn);
+    json meta = json::parse(meta_f);
+    SurfaceMeta *src = new SurfaceMeta(src_path, meta);
+    src->readOverlapping();
 
-    std::unordered_map<std::string,SurfaceMeta*> partial;
-    std::unordered_map<std::string,SurfaceMeta*> full;
-    SurfaceMeta *src;
+    for (const auto& entry : fs::directory_iterator(tgt_dir))
+        if (fs::is_directory(entry)) {
+            std::string name = entry.path().filename();
+            if (name.compare(0, name_prefix.size(), name_prefix))
+                continue;
 
-    //expansion mode
-    if (expansion_mode) {
-        mode = "grow_random_choice";
-        //got trough all exising segments (that match filter/start with auto ...)
-        //list which ones do not yet less N overlapping (in symlink dir)
-        //shuffle
-        //iterate and for every one
-            //select a random point (close to edge?)
-            //check against list if other surf in bbox if we can find the point
-            //if yes add symlinkg between the two segs
-            //if both still have less than N then grow a seg from the seed
-            //after growing, check locations on the new seg agains all existing segs
+            fs::path meta_fn = entry.path() / "meta.json";
+            if (!fs::exists(meta_fn))
+                continue;
 
-        for (const auto& entry : fs::directory_iterator(tgt_dir))
-            if (fs::is_directory(entry)) {
-                std::string name = entry.path().filename();
-                if (name.compare(0, name_prefix.size(), name_prefix))
-                    continue;
+            std::ifstream meta_f(meta_fn);
+            json meta = json::parse(meta_f);
 
-                std::cout << entry.path() << entry.path().filename() << std::endl;
+            if (!meta.count("bbox"))
+                continue;
 
-                fs::path meta_fn = entry.path() / "meta.json";
-                if (!fs::exists(meta_fn))
-                    continue;
+            if (meta.value("format","NONE") != "tifxyz")
+                continue;
 
-                std::ifstream meta_f(meta_fn);
-                json meta = json::parse(meta_f);
-
-                if (!meta.count("bbox"))
-                    continue;
-
-                if (meta.value("format","NONE") != "tifxyz")
-                    continue;
-
-                SurfaceMeta *sm = new SurfaceMeta(entry.path(), meta);
-                sm->readOverlapping();
-
-                // std::cout << "overlaps: " << sm->overlapping.size() << std::endl;
-
-                if (sm->overlapping.size() < tgt_overlap_count)
-                    partial[name] = sm;
-                else
-                    full[name] = sm;
+            SurfaceMeta *sm;
+            if (entry.path().filename() == src->name())
+                sm = src;
+            else {
+                sm = new SurfaceMeta(entry.path(), meta);
             }
 
-        std::vector<SurfaceMeta*> partial_shuffled;
-        for(auto &it : partial)
-            partial_shuffled.push_back(it.second);
-
-        //FIXME we shold sort by creation date / generation so older get processed first and we grow nicely!
-        auto rd = std::random_device {};
-        auto rng = std::default_random_engine { rd() };
-        std::shuffle(std::begin(partial_shuffled), std::end(partial_shuffled), rng);
-
-        if (!partial_shuffled.size())
-            return EXIT_SUCCESS;
-
-        src = partial_shuffled[0];
-        cv::Mat_<cv::Vec3f> points = src->surf()->rawPoints();
-        int w = points.cols;
-        int h = points.rows;
-
-        // cv::Mat_<uint8_t> searchvis(points.size(), 0);
-
-        bool found = false;
-        // int fcount = 0;
-        while (!found/* || fcount < 128*/) {
-            cv::Vec2f p;
-            int side = rand() % 4;
-            if (side == 0)
-                p = {rand() % h, 0};
-            else if (side == 1)
-                p = {0, rand() % w};
-            else if (side == 2)
-                p = {rand() % h, w-1};
-            else if (side == 3)
-                p = {h-1, rand() % w};
-
-            cv::Vec2f searchdir = cv::Vec2f(h/2,w/2) - p;
-            cv::normalize(searchdir, searchdir);
-            found = false;
-            for(int i=0;i<std::min(w/2/abs(searchdir[1]),h/2/abs(searchdir[0]));i++,p+=searchdir) {
-                found = true;
-                cv::Vec2i p_eval = p;
-                // searchvis(p_eval) = 127;
-                for(int r=0;r<5;r++) {
-                    cv::Vec2i p_eval = p+r*searchdir;
-                    if (points(p_eval)[0] == -1 ||get_val<double,CachedChunked3dInterpolator<uint8_t,passTroughComputor>>(interpolator, points(p_eval)) < 128) {
-                        found = false;
-                        break;
-                    }
-                    // else
-                        // searchvis(p_eval) = 255;;
-                }
-                if (found) {
-                    // fcount++;
-                    cv::Vec2i p_eval = p+2*searchdir;
-                    origin = points(p_eval);
-                    break;
-                }
-            }
+            surfaces.push_back(sm);
         }
 
-        // cv::imwrite("searchvis.tif", searchvis);
+    QuadSurface *surf = grow_surf_from_surfs(src, surfaces, 100.0);
 
-        std::cout << "found potential overlapping starting seed" << origin << std::endl;
-    }
-    else {
-        if (argc == 7) {
-            mode = "explicit_seed";
-            origin = {atof(argv[4]),atof(argv[5]),atof(argv[6])};
-            double v;
-            interpolator.Evaluate(origin[2], origin[1], origin[0], &v);
-            std::cout << "seed location value is " << v << std::endl;
-        }
-        else
-        {
-            mode = "random_seed";
-            int count = 0;
-            bool succ = false;
-            while(!succ) {
-                origin = {128 + (rand() % (ds->shape(0)-384)), 128 + (rand() % (ds->shape(1)-384)), 128 + (rand() % (ds->shape(2)-384))};
-                origin[2] = 6500 + (rand() % 2000) - 1000;
+    // QuadSurface *surf = empty_space_tracing_quad_phys(ds.get(), 1.0, &chunk_cache, origin, step_size);
 
-                count++;
-                auto chunk_id = chunk_size;
-                chunk_id[0] = origin[2]/chunk_id[0];
-                chunk_id[1] = origin[1]/chunk_id[1];
-                chunk_id[2] = origin[0]/chunk_id[2];
-
-                if (!ds->chunkExists(chunk_id))
-                    continue;
-
-                cv::Vec3d dir = {(rand() % 1024) - 512,(rand() % 1024) - 512,(rand() % 1024) - 512};
-                cv::normalize(dir, dir);
-
-                for(int i=0;i<128;i++) {
-                    double v;
-                    cv::Vec3d p = origin + i*dir;
-                    interpolator.Evaluate(p[2], p[1], p[0], &v);
-                    if (v >= 128) {
-                        succ = true;
-                        origin = p;
-                        std::cout << "try " << count << " seed " << origin << " value is " << v << std::endl;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    omp_set_num_threads(1);
-
-    QuadSurface *surf = empty_space_tracing_quad_phys(ds.get(), 1.0, &chunk_cache, origin, step_size);
-
-    if ((*surf->meta)["area_cm"] < 0.3)
-        return EXIT_SUCCESS;
-
-    (*surf->meta)["source"] = "vc_grow_seg_from_seed";
-    (*surf->meta)["vc_gsfs_params"] = params;
-    (*surf->meta)["vc_gsfs_mode"] = mode;
-    (*surf->meta)["vc_gsfs_version"] = "dev";
-    std::string uuid = name_prefix + time_str();
-    fs::path seg_dir = tgt_dir / uuid;
-    surf->save(seg_dir, uuid);
-
-    SurfaceMeta current;
-
-    if (expansion_mode) {
-        current.path = seg_dir;
-        current.setSurf(surf);
-        current.bbox = surf->bbox();
-
-        fs::path overlap_dir = current.path / "overlapping";
-        fs::create_directory(overlap_dir);
-
-        {std::ofstream touch(overlap_dir/src->name());}
-
-        fs::path overlap_src = src->path / "overlapping";
-        fs::create_directory(overlap_src);
-        {std::ofstream touch(overlap_src/current.name());}
-
-        for(auto &pair : full)
-            if (overlap(current, *pair.second)) {
-                std::ofstream touch_me(overlap_dir/pair.second->name());
-                fs::path overlap_other = pair.second->path / "overlapping";
-                fs::create_directory(overlap_other);
-                std::ofstream touch_you(overlap_other/current.name());
-            }
-
-        for(auto &pair : partial)
-            if (overlap(current, *pair.second)) {
-                std::ofstream touch_me(overlap_dir/pair.second->name());
-                fs::path overlap_other = pair.second->path / "overlapping";
-                fs::create_directory(overlap_other);
-                std::ofstream touch_you(overlap_other/current.name());
-            }
-
-        for (const auto& entry : fs::directory_iterator(tgt_dir))
-            if (fs::is_directory(entry) && !full.count(entry.path().filename()) && !partial.count(entry.path().filename()))
-            {
-                std::string name = entry.path().filename();
-                if (name.compare(0, name_prefix.size(), name_prefix))
-                    continue;
-
-                if (name == current.name())
-                    continue;
-
-                fs::path meta_fn = entry.path() / "meta.json";
-                if (!fs::exists(meta_fn))
-                    continue;
-
-                std::ifstream meta_f(meta_fn);
-                json meta = json::parse(meta_f);
-
-                if (!meta.count("bbox"))
-                    continue;
-
-                if (meta.value("format","NONE") != "tifxyz")
-                    continue;
-
-                SurfaceMeta other = SurfaceMeta(entry.path(), meta);
-                other.readOverlapping();
-
-                if (overlap(current, other)) {
-                    std::ofstream touch_me(overlap_dir/other.name());
-                    fs::path overlap_other = other.path / "overlapping";
-                    fs::create_directory(overlap_other);
-                    std::ofstream touch_you(overlap_other/current.name());
-                }
-            }
-
-
-
-
-    }
+    // (*surf->meta)["source"] = "vc_grow_seg_from_segments";
+    // (*surf->meta)["seed_overlap"] = count_overlap;
+    // std::string uuid = "auto_traced_" + time_str();
+    // fs::path seg_dir = tgt_dir / uuid;
+    // surf->save(seg_dir, uuid);
 }

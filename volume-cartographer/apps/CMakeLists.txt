@@ -223,6 +223,15 @@ target_link_libraries(vc_grow_seg_from_seed
     VC::surface
 )
 
+add_executable(vc_grow_seg_from_segments src/vc_grow_seg_from_segments.cpp)
+target_link_libraries(vc_grow_seg_from_segments
+    nlohmann_json::nlohmann_json
+    z5
+    opencv_highgui
+    VC::slicing
+    VC::surface
+)
+
 ## experiements for flattening ##
 # add_executable(vc_zarralphacomp src/ZarrAlphaComp.cpp)
 # target_link_libraries(vc_zarralphacomp

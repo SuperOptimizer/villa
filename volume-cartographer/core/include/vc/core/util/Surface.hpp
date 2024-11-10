@@ -1,4 +1,6 @@
 #pragma once
+#include <filesystem>
+#include <set>
 
 #include <opencv2/core.hpp> 
 #include <nlohmann/json_fwd.hpp>
@@ -192,7 +194,29 @@ protected:
     ChunkCache *_cache;
 };
 
+class SurfaceMeta
+{
+public:
+    SurfaceMeta() {};
+    SurfaceMeta(const std::filesystem::path &path_, const nlohmann::json &json);
+    void readOverlapping();
+    QuadSurface *surf();
+    void setSurf(QuadSurface *surf);
+    std::string name();
+    std::filesystem::path path;
+    QuadSurface *_surf = nullptr;
+    Rect3D bbox;
+    std::set<std::string> overlapping_str;
+    std::set<SurfaceMeta*> overlapping;
+};
+
+Rect3D rect_from_json(const nlohmann::json &json);
+bool overlap(SurfaceMeta &a, SurfaceMeta &b);
+bool contains(SurfaceMeta &a, const cv::Vec3f &loc);
+
 //TODO constrain to visible area? or add visiable area disaplay?
 void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step);
 
 float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, float init_step = 16.0, float min_step = 0.125);
+
+QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMeta*> &surfs_v, float step);
