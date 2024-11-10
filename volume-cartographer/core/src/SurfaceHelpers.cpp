@@ -3425,6 +3425,10 @@ public:
     {
         return _pair_resid.count(id);
     }
+    bool has(SurfaceMeta *sm, const cv::Vec2i &loc)
+    {
+        return _data.count({sm,loc});
+    }
     std::set<SurfaceMeta*> &surfs(const cv::Vec2i &loc)
     {
         return _surfs[loc];
@@ -3435,6 +3439,13 @@ public:
         if (!_data.count(id))
             throw std::runtime_error("error, lookup failed!");
         cv::Vec2d l = loc(sm, p);
+        if (l[0] == -1)
+            return {-1,-1,-1};
+        else
+            return at_int_inv(sm->surf()->rawPoints(), l);
+    }
+    cv::Vec3d lookup_int_loc(SurfaceMeta *sm, const cv::Vec2f &l)
+    {
         if (l[0] == -1)
             return {-1,-1,-1};
         else
@@ -3538,7 +3549,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //                 }
 //     cv::imwrite("counts.tif", counts);
 
-    int stop_gen = 4;
+    int stop_gen = 8;
     int w = stop_gen*2*1.1+5;
     int h = stop_gen*2*1.1+5;
     cv::Size  size = {w,h};
@@ -3569,7 +3580,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     data.loc(seed,{y0+1,x0}) = {seed_points.rows/2+step, seed_points.cols/2 };
     data.loc(seed,{y0+1,x0+1}) = {seed_points.rows/2+step, seed_points.cols/2+step };
 
-    std::cout << "init " << data.loc(seed,{y0,x0}) << data.loc(seed,{y0,x0+1}) << data.loc(seed,{y0+1,x0}) << std::endl;
+    std::cout << "init " << data.loc(seed,{y0,x0}) << data.loc(seed,{y0,x0+1}) << data.loc(seed,{y0+1,x0}) << data.loc(seed,{y0+1,x0+1}) << std::endl;
 
     data.surfs({y0,x0}).insert(seed);
     data.surfs({y0,x0+1}).insert(seed);
@@ -3638,8 +3649,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             avg /= ref_count;
             data.loc(seed,p) = avg;
 
-            // std::cout << data.loc(seed,p) << p << avg << std::endl;
-
             ceres::Problem problem;
 
             state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
@@ -3648,10 +3657,20 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
             ceres::Solver::Summary summary;
             ceres::Solve(options, &problem, &summary);
+            float best_loss = summary.final_cost;
+            cv::Vec2f best_loc = data.loc(seed,p);
+            //FIXME why is init tricky ...
+            // for (int n=0;n<5;n++) {
+            //     data.loc(seed,p) = avg + cv::Vec2d((rand()%1024-512)/256.0,(rand()%1024-512)/256.0);
+            //     ceres::Solve(options, &problem, &summary);
+            //     if (summary.final_cost < best_loss) {
+            //         best_loss = summary.final_cost;
+            //         best_loc = data.loc(seed,p);
+            //     }
+            // }
+            data.loc(seed,p) = best_loc;
+            // std::cout << best_loss << " " << summary.num_residual_blocks << std::endl;
 
-            // std::cout << summary.BriefReport() << "\n";
-
-            double loss = summary.final_cost;
             fringe.push_back(p);
             points(p) = data.lookup_int(seed,p);
             succ++;
@@ -3666,21 +3685,51 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             break;
     }
 
-    points = points(used_area);
+    // cv::Mat_<float> locx(points.size(),{-1});
+    // cv::Mat_<float> locy(points.size(),{-1});
+    // for(int j=used_area.y;j<used_area.br().y;j++)
+    //     for(int i=used_area.x;i<used_area.br().x;i++)
+    //         if (state(j,i) & STATE_LOC_VALID) {
+    //             locx(j,i) = data.loc(seed,{j,i})[1];
+    //             locy(j,i) = data.loc(seed,{j,i})[0];
+    //         }
+    // cv::imwrite("locx.tif", locx);
+    // cv::imwrite("locy.tif", locy);
 
     // upsampling surface from segments
-    // cv::Mat_<cv::Vec3f> points(h*10,w*h);
-    // for(int j=0;j<h;j++)
-    //     for(int i=0;i<w;i++) {
-    //         //TODO do this for all (?) surfaces?
-    //
-    //     }
+    cv::Mat_<cv::Vec3f> points_hr(points.rows*step, points.cols*step, {-1,-1,-1});
+    for(int j=used_area.y;j<used_area.br().y-1;j++)
+        for(int i=used_area.x;i<used_area.br().x-1;i++) {
+            if (state(j,i) & STATE_LOC_VALID
+                && state(j,i+1) & STATE_LOC_VALID
+                && state(j+1,i) & STATE_LOC_VALID
+                && state(j+1,i+1) & STATE_LOC_VALID)
+            {
+                //for now hardcoded upsampling of seed ...
+                cv::Vec2f l00 = data.loc(seed,{j,i});
+                cv::Vec2f l01 = data.loc(seed,{j,i+1});
+                cv::Vec2f l10 = data.loc(seed,{j+1,i});
+                cv::Vec2f l11 = data.loc(seed,{j+1,i+1});
 
-    cv::resize(points, points, {}, step, step);
+                    for(int sy=0;sy<=step;sy++)
+                        for(int sx=0;sx<=step;sx++) {
+                            float fx = sx/step;
+                            float fy = sy/step;
+                            cv::Vec2f l0 = (1-fx)*l00 + fx*l01;
+                            cv::Vec2f l1 = (1-fx)*l10 + fx*l11;
+                            cv::Vec2f l = (1-fy)*l0 + fy*l1;
+                            points_hr(j*step+sy,i*step+sx) = data.lookup_int_loc(seed,l);
+                        }
+                }
+        }
 
-    std::cout << points.size() << std::endl;
+    // points = points(used_area);
+    // state = state(used_area);
 
-    QuadSurface *surf = new QuadSurface(points, {1/src_step,1/src_step});
+
+    // std::cout << points.size() << std::endl;
+
+    QuadSurface *surf = new QuadSurface(points_hr, {1/src_step,1/src_step});
     surf->meta = new nlohmann::json;
 
     return surf;

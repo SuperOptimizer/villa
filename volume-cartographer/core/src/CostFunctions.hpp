@@ -121,10 +121,16 @@ struct DistLoss2D {
 
         T dist = sqrt(d[0]*d[0] + d[1]*d[1]);
 
-        if (dist < _d)
-            residual[0] = T(_w)*(T(_d)/dist - T(1));
-        else
-            residual[0] = T(_w)*(dist/T(_d) - T(1));
+        if (dist <= 0) {
+            residual[0] = T(_w)*(dist - T(1));
+            std::cout << "uhohh" << std::endl;
+        }
+        else {
+            if (dist < _d)
+                residual[0] = T(_w)*(T(_d)/(dist+T(1e-2)) - T(1));
+            else
+                residual[0] = T(_w)*(dist/T(_d) - T(1));
+        }
 
         return true;
     }
@@ -134,6 +140,8 @@ struct DistLoss2D {
 
     static ceres::CostFunction* Create(float d, float w = 1.0)
     {
+        if (d == 0)
+            throw std::runtime_error("dist can't be zero for DistLoss2D");
         return new ceres::AutoDiffCostFunction<DistLoss2D, 1, 2, 2>(new DistLoss2D(d, w));
     }
 };
