@@ -3530,8 +3530,11 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         surfs[sm->name()] = sm;
 
     for(auto &sm : surfs_v)
-        for(auto &name : sm->overlapping_str)
+        for(auto name : sm->overlapping_str)
             sm->overlapping.insert(surfs[name]);
+
+    std::cout << "total number of surfs:" << surfs.size() << std::endl;
+    std::cout << seed << "name" << seed->name() << " seed overlapping:" << seed->overlapping.size() << "/" << seed->overlapping_str.size() << std::endl;
 
     cv::Mat_<cv::Vec3f> seed_points = seed->surf()->rawPoints();
 
@@ -3602,6 +3605,18 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     fringe.push_back({y0,x0+1});
     fringe.push_back({y0+1,x0+1});
 
+    //insert initial surfs per location
+    for(auto p: fringe) {
+        data.surfs(p).insert(seed);
+        std::cout << "testing " << p << " from cands: " << seed->overlapping.size() << std::endl;
+        for(auto s : seed->overlapping) {
+            cv::Vec3f coord = points(p);
+            SurfacePointer *ptr = s->surf()->pointer();
+            if (s->surf()->pointTo(ptr, coord, 2.0) <= 2.0)
+                data.surfs(p).insert(s);
+        }
+    }
+
     std::cout << "starting from " << x0 << " " << y0 << std::endl;
 
     ceres::Solver::Options options;
@@ -3630,6 +3645,17 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         for(auto &p : cands) {
             if (state(p) & STATE_LOC_VALID)
                 continue;
+
+            std::set<SurfaceMeta*> local_surfs;
+
+            for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,h-1);oy++)
+                for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,w-1);ox++)
+                    if (state(oy,ox) & STATE_LOC_VALID) {
+                        auto p_surfs = data.surfs({oy,ox});
+                        local_surfs.insert(p_surfs.begin(), p_surfs.end());
+                    }
+
+            std::cout << "adding with local surf count " << local_surfs.size() << std::endl;
 
             int ref_count = 0;
             cv::Vec2d avg = {0,0};

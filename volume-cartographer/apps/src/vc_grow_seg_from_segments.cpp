@@ -124,7 +124,7 @@ int main(int argc, char *argv[])
     SurfaceMeta *src = new SurfaceMeta(src_path, meta);
     src->readOverlapping();
 
-    for (const auto& entry : fs::directory_iterator(tgt_dir))
+    for (const auto& entry : fs::directory_iterator(src_dir))
         if (fs::is_directory(entry)) {
             std::string name = entry.path().filename();
             if (name.compare(0, name_prefix.size(), name_prefix))
@@ -148,6 +148,7 @@ int main(int argc, char *argv[])
                 sm = src;
             else {
                 sm = new SurfaceMeta(entry.path(), meta);
+                sm->readOverlapping();
             }
 
             surfaces.push_back(sm);
