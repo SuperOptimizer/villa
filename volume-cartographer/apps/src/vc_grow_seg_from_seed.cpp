@@ -333,10 +333,10 @@ int main(int argc, char *argv[])
                     continue;
                 if (contains(*comp, origin))
                     count_overlap++;
-                if (count_overlap >= 4)
+                if (count_overlap >= 1)
                     break;
             }
-            if (count_overlap < 4)
+            if (count_overlap < 1)
                 break;
         }
 
