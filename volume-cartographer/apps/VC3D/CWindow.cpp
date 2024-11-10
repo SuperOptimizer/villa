@@ -524,9 +524,9 @@ void CWindow::OpenVolume(const QString& path)
         }
     }
 
-    // for (auto &viewer : _viewers)
-    //     if (viewer->surfName() != "segmentation")
-    //         viewer->setIntersects(dbg_intersects);
+    for (auto &viewer : _viewers)
+        if (viewer->surfName() != "segmentation")
+            viewer->setIntersects(dbg_intersects);
 
     UpdateRecentVolpkgList(aVpkgPath);
 }
