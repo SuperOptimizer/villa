@@ -3596,6 +3596,7 @@ double local_cost(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv:
 
     //FIXME normalize with number of res blocks!
     if (!count)
+        //FIXME why is this useful?!
         return 0;
     else
         return sqrt(test_loss/count);
@@ -3633,7 +3634,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //     cv::imwrite("counts.tif", counts);
 
     //FIXME shouldn change start of opt but does?! (32-good, 64 bad, 50 good?)
-    int stop_gen = 16;
+    int stop_gen = 64;
     float local_cost_inl_th = 0.1;
     int w = stop_gen*2*1.1+5;
     int h = stop_gen*2*1.1+5;
@@ -3803,7 +3804,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 data.erase(ref_surf,p);
                 state(p) = 0;
 
-                int inliers = 0;
+                // int inliers = 0;
                 int inliers_sum = 0;
                 for(auto test_surf : local_surfs) {
                     // if (test_surf == ref_surf)
@@ -3815,7 +3816,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         int count = 0;
                         float cost = local_cost(test_surf, p, data, state, step, test_surf->surf()->loc_raw(ptr), &count);
                         if (cost < local_cost_inl_th) {
-                            inliers++;
+                            // inliers++;
                             inliers_sum += count;
                         }
                         // std::cout << "cost " << cost << std::endl;
