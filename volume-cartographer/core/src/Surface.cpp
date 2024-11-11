@@ -323,6 +323,14 @@ cv::Vec3f QuadSurface::loc(SurfacePointer *ptr, const cv::Vec3f &offset)
     return nominal_loc(offset, ptr_inst->loc, _scale);
 }
 
+cv::Vec3f QuadSurface::loc_raw(SurfacePointer *ptr)
+{
+    TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);
+    assert(ptr_inst);
+
+    return internal_loc(_center, ptr_inst->loc, _scale);
+}
+
 cv::Vec3f QuadSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
 {
     TrivialSurfacePointer *ptr_inst = dynamic_cast<TrivialSurfacePointer*>(ptr);

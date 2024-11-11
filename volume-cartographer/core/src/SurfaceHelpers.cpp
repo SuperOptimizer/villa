@@ -3415,7 +3415,7 @@ class SurfTrackerData
 public:
     cv::Vec2d &loc(SurfaceMeta *sm, const cv::Vec2i &loc)
     {
-        return _data[std::make_pair(sm,loc)];
+        return _data[{sm,loc}];
     }
     ceres::ResidualBlockId &resBlockId(const resPairId &id)
     {
@@ -3459,11 +3459,12 @@ protected:
 
 int add_surftrack_distloss(SurfaceMeta *sm, const cv::Vec2i &p, const cv::Vec2i &off, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, float unit, int flags = 0, float w = 1.0)
 {
-    if ((state(p) & STATE_LOC_VALID) == 0)
+    if ((state(p) & STATE_LOC_VALID) == 0 || !data.has(sm, p))
         return 0;
-    if ((state(p+off) & STATE_LOC_VALID) == 0)
+    if ((state(p+off) & STATE_LOC_VALID) == 0 || !data.has(sm, p+off))
         return 0;
 
+    std::cout << "add dist " << sm << p << off << std::endl;
     problem.AddResidualBlock(DistLoss2D::Create(unit*cv::norm(off),w), nullptr, &data.loc(sm, p)[0], &data.loc(sm, p+off)[0]);
 
     if ((flags & OPTIMIZE_ALL) == 0)
@@ -3474,13 +3475,14 @@ int add_surftrack_distloss(SurfaceMeta *sm, const cv::Vec2i &p, const cv::Vec2i 
 
 int add_surftrack_straightloss(SurfaceMeta *sm, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, int flags = 0, float w = 1.0)
 {
-    if ((state(p+o1) & STATE_LOC_VALID) == 0)
+    if ((state(p+o1) & STATE_LOC_VALID) == 0 || !data.has(sm, p+o1))
         return 0;
-    if ((state(p+o2) & STATE_LOC_VALID) == 0)
+    if ((state(p+o2) & STATE_LOC_VALID) == 0 || !data.has(sm, p+o2))
         return 0;
-    if ((state(p+o3) & STATE_LOC_VALID) == 0)
+    if ((state(p+o3) & STATE_LOC_VALID) == 0 || !data.has(sm, p+o3))
         return 0;
 
+    std::cout << "add straight " << sm << p << o1 << o2 << o3 << std::endl;
     problem.AddResidualBlock(StraightLoss2D::Create(w), nullptr, &data.loc(sm, p+o1)[0], &data.loc(sm, p+o2)[0], &data.loc(sm, p+o3)[0]);
 
     if ((flags & OPTIMIZE_ALL) == 0) {
@@ -3552,7 +3554,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //                 }
 //     cv::imwrite("counts.tif", counts);
 
-    int stop_gen = 8;
+    int stop_gen = 3;
     int w = stop_gen*2*1.1+5;
     int h = stop_gen*2*1.1+5;
     cv::Size  size = {w,h};
@@ -3608,12 +3610,16 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     //insert initial surfs per location
     for(auto p: fringe) {
         data.surfs(p).insert(seed);
-        std::cout << "testing " << p << " from cands: " << seed->overlapping.size() << std::endl;
+        cv::Vec3f coord = points(p);
+        std::cout << "testing " << p << " from cands: " << seed->overlapping.size() << coord << std::endl;
         for(auto s : seed->overlapping) {
-            cv::Vec3f coord = points(p);
             SurfacePointer *ptr = s->surf()->pointer();
-            if (s->surf()->pointTo(ptr, coord, 2.0) <= 2.0)
+            if (s->surf()->pointTo(ptr, coord, 2.0) <= 2.0) {
+                cv::Vec3f loc = s->surf()->loc_raw(ptr);
+                std::cout << loc << std::endl;
                 data.surfs(p).insert(s);
+                data.loc(s, p) = {loc[1], loc[0]};
+            }
         }
     }
 
@@ -3646,7 +3652,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             if (state(p) & STATE_LOC_VALID)
                 continue;
 
-            std::set<SurfaceMeta*> local_surfs;
+            std::set<SurfaceMeta*> local_surfs = {seed};
 
             for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,h-1);oy++)
                 for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,w-1);ox++)
@@ -3655,72 +3661,150 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         local_surfs.insert(p_surfs.begin(), p_surfs.end());
                     }
 
-            std::cout << "adding with local surf count " << local_surfs.size() << std::endl;
+            std::cout << "adding with local surf count " << local_surfs.size() << p << std::endl;
 
-            int ref_count = 0;
-            cv::Vec2d avg = {0,0};
-            for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,h-1);oy++)
-                for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,w-1);ox++)
-                    if (state(oy,ox) & STATE_LOC_VALID) {
-                        ref_count++;
-                        avg += data.loc(seed,{oy,ox});
+            cv::Vec3d best_coord;
+            int best_inliers = -1;
+            SurfaceMeta *best_surf = nullptr;
+            //FIXME also store best loc or re-optimize it!
+            std::set<SurfaceMeta*> seed_surfs = {seed};
+            for(auto ref_surf : seed_surfs) {
+            // for(auto ref_surf : local_surfs) {
+                int ref_count = 0;
+                cv::Vec2d avg = {0,0};
+                for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,h-1);oy++)
+                    for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,w-1);ox++)
+                        //FIXME need to also check for -1/-1 entries at multiple locations? (maybe whereever we insert loc)
+                        if ((state(oy,ox) & STATE_LOC_VALID) && data.has(ref_surf,{oy,ox})) {
+                            ref_count++;
+                            avg += data.loc(ref_surf,{oy,ox});
+                        }
+
+                if (ref_count < 2)
+                    continue;
+
+                avg /= ref_count;
+                data.loc(ref_surf,p) = avg;
+
+                std::cout << "avg " << avg << data.lookup_int(ref_surf,p) << std::endl;
+
+                ceres::Problem problem;
+
+                state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
+
+                surftrack_add_local(ref_surf, p, data, problem, state, step);
+
+                ceres::Solver::Summary summary;
+                ceres::Solve(options, &problem, &summary);
+                float loss = summary.final_cost;
+
+                std::cout << "res " << data.loc(ref_surf,p) << " loss " << loss << std::endl;
+
+                // std::cout << summary.FullReport() << std::endl;
+
+                cv::Vec3d coord = data.lookup_int(ref_surf,p);
+                std::cout << "output " << coord << p << data.loc(ref_surf,p) << std::endl;
+                if (coord[0] == -1)
+                    continue;
+                int inliers = 0;
+                for(auto test_surf : local_surfs) {
+                    SurfacePointer *ptr = test_surf->surf()->pointer();
+                    //FIXME this does not check geometry, only if its also on the surfaces (which might be good enough...)
+                    if (test_surf->surf()->pointTo(ptr, coord, 2.0, 4) <= 2.0)
+                        inliers++;
+
+                    if (inliers > best_inliers) {
+                        best_inliers = inliers;
+                        best_coord = coord;
+                        best_surf = ref_surf;
                     }
 
-
-            if (ref_count < 2) {
-                state(p) &= ~STATE_PROCESSING;
-                continue;
+                    // ceres::Problem problem_test;
+                    // surftrack_add_local(test_surf, p, data, problem_test, state, step);
+                    //
+                    // double test_loss = 0;
+                    // problem_test.Evaluate(ceres::Problem::EvaluateOptions(), &test_loss, nullptr, nullptr, nullptr);
+                    // std::cout << test_surf << " " << test_loss << " res c " << summary.num_residual_blocks << std::endl;
+                }
+                std::cout << "inliers " << inliers << "/" << local_surfs.size() << std::endl;
             }
+            //FIXME if fail reset data.loc(ref_surf,p)
 
-            avg /= ref_count;
-            data.loc(seed,p) = avg;
+            if (best_coord[0] == -1)
+                throw std::runtime_error("WTF");
 
-            ceres::Problem problem;
+            if (best_inliers >= 1 /*&& best_inliers >= local_surfs.size()/2*/) {
 
-            state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
+                points(p) == best_coord;
+                data.surfs(p).insert(best_surf);
 
-            surftrack_add_local(seed, p, data, problem, state, step);
-
-            ceres::Solver::Summary summary;
-            ceres::Solve(options, &problem, &summary);
-            float best_loss = summary.final_cost;
-            cv::Vec2f best_loc = data.loc(seed,p);
-            //FIXME why is init tricky ...
-            // for (int n=0;n<5;n++) {
-            //     data.loc(seed,p) = avg + cv::Vec2d((rand()%1024-512)/256.0,(rand()%1024-512)/256.0);
-            //     ceres::Solve(options, &problem, &summary);
-            //     if (summary.final_cost < best_loss) {
-            //         best_loss = summary.final_cost;
-            //         best_loc = data.loc(seed,p);
-            //     }
-            // }
-            data.loc(seed,p) = best_loc;
-            // std::cout << best_loss << " " << summary.num_residual_blocks << std::endl;
-
-            fringe.push_back(p);
-            points(p) = data.lookup_int(seed,p);
-            succ++;
-            if (!used_area.contains({p[1],p[0]})) {
-                used_area = used_area | cv::Rect(p[1],p[0],1,1);
+                //FIXME could also iterate this until we don't add new sufs... might even be cleaner code
+                std::set<SurfaceMeta*> more_local_surfs;
+                //add agreeing surfs to location
+                /*for(auto test_surf : local_surfs) {
+                    SurfacePointer *ptr = test_surf->surf()->pointer();
+                    float res = test_surf->surf()->pointTo(ptr, best_coord, 2.0, 4);
+                    if (res <= 2.0) {
+                        cv::Vec3f loc = test_surf->surf()->loc_raw(ptr);
+                        // std::cout << res << " " << best_coord << loc << std::endl;
+                        data.loc(test_surf, p) = {loc[1], loc[0]};
+                        data.surfs(p).insert(test_surf);
+                        for(auto s : test_surf->overlapping)
+                            if (!data.has(s, p))
+                                more_local_surfs.insert(s);
+                    }
+                }
+                //check for more agreeing surfs by checking agreeings surfs neigbors
+                for(auto test_surf : more_local_surfs) {
+                    SurfacePointer *ptr = test_surf->surf()->pointer();
+                    float res = test_surf->surf()->pointTo(ptr, best_coord, 2.0, 4);
+                    if (res <= 2.0) {
+                        // std::cout << "more:" << res << std::endl;
+                        cv::Vec3f loc = test_surf->surf()->loc_raw(ptr);
+                        data.loc(test_surf, p) = {loc[1], loc[0]};
+                        data.surfs(p).insert(test_surf);
+                    }
+                }*/
+                std::cout << "p surf count" << p << " " << data.surfs(p).size() << best_coord << std::endl;
+                succ++;
+                if (!used_area.contains({p[1],p[0]})) {
+                    used_area = used_area | cv::Rect(p[1],p[0],1,1);
+                }
+                fringe.push_back(p);
             }
+            else if (best_inliers == -1) {
+                //just try again some other time
+                state(p) = 0;
+                //FIXME reset data.loc(ref_surf,p)
+                std::cout << std::endl << "FAIL1 " << best_inliers << std::endl;
+            }
+            else {
+                state(p) = STATE_FAIL;
+                //FIXME reset data.loc(ref_surf,p)
+                std::cout << std::endl << "FAIL2 " << best_inliers << std::endl;
+            }
+            std::cout << std::endl;
+
+            // if (succ >= 1)
+            // break;
         }
 
 
-        printf("gen %d processing %d fringe cands (total done %d fringe: %d\n", generation, cands.size(), succ, fringe.size());
+        printf("gen %d processing %d fringe cands (total done %d fringe: %d)\n", generation, cands.size(), succ, fringe.size());
         if (!fringe.size())
             break;
     }
 
-    // cv::Mat_<float> locx(points.size(),{-1});
-    // cv::Mat_<float> locy(points.size(),{-1});
-    // for(int j=used_area.y;j<used_area.br().y;j++)
-    //     for(int i=used_area.x;i<used_area.br().x;i++)
-    //         if (state(j,i) & STATE_LOC_VALID) {
-    //             locx(j,i) = data.loc(seed,{j,i})[1];
-    //             locy(j,i) = data.loc(seed,{j,i})[0];
-    //         }
-    // cv::imwrite("locx.tif", locx);
-    // cv::imwrite("locy.tif", locy);
+    cv::Mat_<float> locx(points.size(),{-1});
+    cv::Mat_<float> locy(points.size(),{-1});
+    for(int j=used_area.y;j<used_area.br().y;j++)
+        for(int i=used_area.x;i<used_area.br().x;i++)
+            if (state(j,i) & STATE_LOC_VALID) {
+                locx(j,i) = data.loc(seed,{j,i})[1];
+                locy(j,i) = data.loc(seed,{j,i})[0];
+            }
+    cv::imwrite("locx.tif", locx);
+    cv::imwrite("locy.tif", locy);
 
     // upsampling surface from segments
     cv::Mat_<cv::Vec3f> points_hr(points.rows*step, points.cols*step, {-1,-1,-1});

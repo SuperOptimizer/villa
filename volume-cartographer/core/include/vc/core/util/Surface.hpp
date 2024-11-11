@@ -108,6 +108,7 @@ public:
     void move(SurfacePointer *ptr, const cv::Vec3f &offset) override;
     bool valid(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f loc(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
+    cv::Vec3f loc_raw(SurfacePointer *ptr);
     cv::Vec3f coord(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     cv::Vec3f normal(SurfacePointer *ptr, const cv::Vec3f &offset = {0,0,0}) override;
     void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) override;

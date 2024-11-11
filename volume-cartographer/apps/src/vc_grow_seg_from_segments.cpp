@@ -156,9 +156,14 @@ int main(int argc, char *argv[])
 
     QuadSurface *surf = grow_surf_from_surfs(src, surfaces, 10.0);
 
+    if (!surf)
+        return EXIT_SUCCESS;
+
     (*surf->meta)["source"] = "vc_grow_seg_from_segments";
     // std::string uuid = "testing_auto_surf_trace" + time_str();
     std::string uuid = "testing_auto_surf_trace";;
     fs::path seg_dir = tgt_dir / uuid;
     surf->save(seg_dir, uuid);
+
+    return EXIT_SUCCESS;
 }
