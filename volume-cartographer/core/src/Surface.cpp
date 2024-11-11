@@ -906,7 +906,7 @@ uint8_t get_block(const cv::Mat_<uint8_t> &block, const cv::Vec3f &loc, const cv
     return block(y, x);
 }
 
-void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step)
+void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step, int min_tries)
 {
     //start with random points and search for a plane intersection
 
@@ -918,7 +918,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
     // std::cout << points.size() << std::endl;
 
-    for(int r=0;r<std::max(10, std::max(points.cols,points.rows)/100);r++) {
+    for(int r=0;r<std::max(min_tries, std::max(points.cols,points.rows)/100);r++) {
         std::vector<cv::Vec3f> seg;
         std::vector<cv::Vec2f> seg_loc;
         std::vector<cv::Vec3f> seg2;
@@ -935,7 +935,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
 
         //initial points
-        for(int i=0;i<std::max(10, std::max(points.cols,points.rows)/100);i++) {
+        for(int i=0;i<std::max(min_tries, std::max(points.cols,points.rows)/100);i++) {
             loc = {std::rand() % (points.cols-1), std::rand() % (points.rows-1)};
             point = at_int(points, loc);
 

@@ -294,6 +294,9 @@ void CVolumeViewer::onIntersectionChanged(std::string a, std::string b, Intersec
     if (_ignore_intersect_change && intersection == _ignore_intersect_change)
         return;
 
+    if (!_intersect_tgts.count(a) || !_intersect_tgts.count(b))
+        return;
+
     //FIXME fix segmentation vs visible_segmentation naming and usage ..., think about dependency chain ..
     if (a == _surf_name || (_surf_name == "segmentation" && a == "visible_segmentation"))
         invalidateIntersect(b);
@@ -586,7 +589,11 @@ void CVolumeViewer::renderIntersections()
             QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface(key));
 
             std::vector<std::vector<cv::Vec2f>> xy_seg_;
-            find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_ds_scale);
+            if (key == "segmentation")
+                find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_ds_scale, 100);
+            else
+                find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_ds_scale);
+
         }
 
         std::hash<std::string> str_hasher;
@@ -607,6 +614,15 @@ void CVolumeViewer::renderIntersections()
             cvcol[prim] = 200 + rand() % 55;
 
             QColor col(cvcol[0],cvcol[1],cvcol[2]);
+            float width = 2/_scene_scale;
+            int z_value = 5;
+
+            if (key == "segmentation") {
+                col = Qt::yellow;
+                width = 4/_scene_scale;
+                z_value = 20;
+            }
+
 
             QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface(intersect_cands[n]));
             std::vector<QGraphicsItem*> items;
@@ -626,8 +642,8 @@ void CVolumeViewer::renderIntersections()
                         path.lineTo(p[0],p[1]);
                     first = false;
                 }
-                auto item = fGraphicsView->scene()->addPath(path, QPen(col, 2/_scene_scale));
-                item->setZValue(5);
+                auto item = fGraphicsView->scene()->addPath(path, QPen(col, width));
+                item->setZValue(z_value);
                 items.push_back(item);
             }
             _intersect_items[key] = items;
@@ -640,10 +656,10 @@ void CVolumeViewer::renderIntersections()
         QuadSurface *crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
 
         //TODO make configurable, for now just show everything!
-        std::vector<std::pair<std::string,std::string>> intersects = _surf_col->intersections("visible_segmentation");
+        std::vector<std::pair<std::string,std::string>> intersects = _surf_col->intersections("segmentation");
         for(auto pair : intersects) {
             std::string key = pair.first;
-            if (key == "visible_segmentation")
+            if (key == "segmentation")
                 key = pair.second;
             
             if (_intersect_items.count(key) || !_intersect_tgts.count(key))
