@@ -3623,7 +3623,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //                 }
 //     cv::imwrite("counts.tif", counts);
 
-    int stop_gen = 16;
+    int stop_gen = 32;
     int w = stop_gen*2*1.1+5;
     int h = stop_gen*2*1.1+5;
     cv::Size  size = {w,h};
@@ -3797,7 +3797,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     SurfacePointer *ptr = test_surf->surf()->pointer();
                     //FIXME this does not check geometry, only if its also on the surfaces (which might be good enough...)
                     if (test_surf->surf()->pointTo(ptr, coord, 2.0, 4) <= 2.0) {
-                        if (local_cost(test_surf, p, data, state, step, test_surf->surf()->loc_raw(ptr)) < 1e-3)
+                        if (local_cost(test_surf, p, data, state, step, test_surf->surf()->loc_raw(ptr)) < 1e-2)
                             inliers++;
                     }
 
@@ -3844,7 +3844,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             //FIXME can check max dist between best_coord and any ref/avg init?
 
 
-            if (best_inliers >= 2 /*&& best_inliers >= local_surfs.size()/2*/) {
+            if (best_inliers >= 2 && best_inliers >= local_surfs.size()/2) {
                 if (best_coord[0] == -1)
                     throw std::runtime_error("WTF1");
                 points(p) = best_coord;
@@ -3874,7 +3874,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                             continue;
                             // throw std::runtime_error("WTF");
                         }
-                        if (local_cost(test_surf, p, data, state, step, loc) < 1e-3) {
+                        if (local_cost(test_surf, p, data, state, step, loc) < 1e-2) {
                             // std::cout << res << " " << best_coord << loc << std::endl;
                             data.loc(test_surf, p) = {loc[1], loc[0]};
                             data.surfs(p).insert(test_surf);
@@ -3897,7 +3897,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                             std::cout << "WTF3" << std::endl;
                             continue;
                         }
-                        if (local_cost(test_surf, p, data, state, step, loc) < 1e-3) {
+                        if (local_cost(test_surf, p, data, state, step, loc) < 1e-2) {
                             data.loc(test_surf, p) = {loc[1], loc[0]};
                             data.surfs(p).insert(test_surf);
                         }

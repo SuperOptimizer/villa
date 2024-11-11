@@ -154,7 +154,7 @@ int main(int argc, char *argv[])
             surfaces.push_back(sm);
         }
 
-    QuadSurface *surf = grow_surf_from_surfs(src, surfaces, 10.0);
+    QuadSurface *surf = grow_surf_from_surfs(src, surfaces, 5.0);
 
     if (!surf)
         return EXIT_SUCCESS;
