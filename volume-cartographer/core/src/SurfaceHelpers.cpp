@@ -3623,7 +3623,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //                 }
 //     cv::imwrite("counts.tif", counts);
 
-    int stop_gen = 5;
+    int stop_gen = 16;
     int w = stop_gen*2*1.1+5;
     int h = stop_gen*2*1.1+5;
     cv::Size  size = {w,h};
@@ -3844,10 +3844,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             //FIXME can check max dist between best_coord and any ref/avg init?
 
 
-
-            if (best_inliers >= 1 /*&& best_inliers >= local_surfs.size()/2*/) {
+            if (best_inliers >= 2 /*&& best_inliers >= local_surfs.size()/2*/) {
                 if (best_coord[0] == -1)
-                    throw std::runtime_error("WTF");
+                    throw std::runtime_error("WTF1");
                 points(p) = best_coord;
                 data.surfs(p).insert(best_surf);
                 state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
@@ -3866,12 +3865,12 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     float res = test_surf->surf()->pointTo(ptr, best_coord, 2.0, 4);
                     if (res <= 2.0) {
                         if (best_coord[0] == -1)
-                            throw std::runtime_error("WTF");
+                            throw std::runtime_error("WTF2");
                         cv::Vec3f loc = test_surf->surf()->loc_raw(ptr);
                         std::cout << "add surf " << res << loc << best_coord << std::endl;
                         cv::Vec3f coord = data.lookup_int_loc(test_surf, {loc[1], loc[0]});
                         if (coord[0] == -1) {
-                            std::cout << "WTF" << std::endl;
+                            std::cout << "WTF3" << std::endl;
                             continue;
                             // throw std::runtime_error("WTF");
                         }
@@ -3894,8 +3893,10 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         std::cout << "more:" << res << best_coord << loc << test_surf->surf()->rawPoints().size() << std::endl;
 
                         cv::Vec3f coord = data.lookup_int_loc(test_surf, {loc[1], loc[0]});
-                        if (coord[0] == -1)
-                            throw std::runtime_error("WTF");
+                        if (coord[0] == -1) {
+                            std::cout << "WTF3" << std::endl;
+                            continue;
+                        }
                         if (local_cost(test_surf, p, data, state, step, loc) < 1e-3) {
                             data.loc(test_surf, p) = {loc[1], loc[0]};
                             data.surfs(p).insert(test_surf);
@@ -3952,10 +3953,12 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
     std::cout << "used area " << std::endl;
 
+    // points = points(used_area);
+    cv::Mat_<cv::Vec3d> points_hr_int;
+    cv::resize(points, points_hr_int, {0,0}, step, step, cv::INTER_CUBIC);
+    // QuadSurface *surf = new QuadSurface(points, {1/src_step,1/src_step});
+
     // QuadSurface *surf = new QuadSurface(points(used_area), {1/src_step/step,1/src_step/step});
-    // surf->meta = new nlohmann::json;
-    //
-    // return surf;
 
     // upsampling surface from segments
     cv::Mat_<cv::Vec3f> points_hr(points.rows*step, points.cols*step, {0,0,0});
@@ -3992,7 +3995,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             if (counts_hr(j,i))
                 points_hr(j,i) /= counts_hr(j,i);
             else
-                points_hr(j,i) = {-1,-1,-1};
+                // points_hr(j,i) = {-1,-1,-1};
+                points_hr(j,i) = points_hr_int(j, i);
 
     // points = points(used_area);
     // state = state(used_area);
@@ -4001,6 +4005,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     // std::cout << points.size() << std::endl;
 
     QuadSurface *surf = new QuadSurface(points_hr, {1/src_step,1/src_step});
+
     surf->meta = new nlohmann::json;
 
     return surf;
