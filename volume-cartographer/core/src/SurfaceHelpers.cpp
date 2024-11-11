@@ -3852,7 +3852,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     // problem_test.Evaluate(ceres::Problem::EvaluateOptions(), &test_loss, nullptr, nullptr, nullptr);
                     // std::cout << test_surf << " " << test_loss << " res c " << summary.num_residual_blocks << std::endl;
                 }
-                if (inliers > best_inliers && inliers >= 2) {
+                if (inliers_sum > best_inliers) {
                     best_inliers = inliers_sum;
                     best_coord = coord;
                     best_surf = ref_surf;
