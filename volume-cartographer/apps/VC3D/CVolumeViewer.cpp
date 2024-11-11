@@ -411,9 +411,9 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
         }
         
         if (dist != -1) {
-            if (dist < 20.0/_ds_scale) {
+            if (dist < 20.0/_scale) {
                 _cursor->setPos(sp[0], sp[1]);
-                _cursor->setOpacity(1.0-dist*_ds_scale/20.0);
+                _cursor->setOpacity(1.0-dist*_scale/20.0);
             }
             else
                 _cursor->setOpacity(0.0);
