@@ -4032,32 +4032,59 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     cv::Mat_<cv::Vec3f> points_hr(points.rows*step, points.cols*step, {0,0,0});
     cv::Mat_<int> counts_hr(points.rows*step, points.cols*step, 0);
     for(int j=used_area.y;j<used_area.br().y-1;j++)
-        for(int i=used_area.x;i<used_area.br().x-1;i++)
-            for(auto &sm : data.surfs({j,i})) {
-                if (state(j,i) & STATE_LOC_VALID && data.valid_int(sm,{j,i})
-                    && state(j,i+1) & STATE_LOC_VALID && data.valid_int(sm,{j,i+1})
-                    && state(j+1,i) & STATE_LOC_VALID && data.valid_int(sm,{j+1,i})
-                    && state(j+1,i+1) & STATE_LOC_VALID && data.valid_int(sm,{j+1,i+1}))
-                {
-                    cv::Vec2f l00 = data.loc(sm,{j,i});
-                    cv::Vec2f l01 = data.loc(sm,{j,i+1});
-                    cv::Vec2f l10 = data.loc(sm,{j+1,i});
-                    cv::Vec2f l11 = data.loc(sm,{j+1,i+1});
+        for(int i=used_area.x;i<used_area.br().x-1;i++) {
+            if (state(j,i) & STATE_LOC_VALID
+                && state(j,i+1) & STATE_LOC_VALID
+                && state(j+1,i) & STATE_LOC_VALID
+                && state(j+1,i+1) & STATE_LOC_VALID)
+            {
+                for(auto &sm : data.surfs({j,i})) {
+                    if (state(j,i) & STATE_LOC_VALID && data.valid_int(sm,{j,i})
+                        && state(j,i+1) & STATE_LOC_VALID && data.valid_int(sm,{j,i+1})
+                        && state(j+1,i) & STATE_LOC_VALID && data.valid_int(sm,{j+1,i})
+                        && state(j+1,i+1) & STATE_LOC_VALID && data.valid_int(sm,{j+1,i+1}))
+                    {
+                        cv::Vec2f l00 = data.loc(sm,{j,i});
+                        cv::Vec2f l01 = data.loc(sm,{j,i+1});
+                        cv::Vec2f l10 = data.loc(sm,{j+1,i});
+                        cv::Vec2f l11 = data.loc(sm,{j+1,i+1});
 
-                        for(int sy=0;sy<=step;sy++)
-                            for(int sx=0;sx<=step;sx++) {
+                            for(int sy=0;sy<=step;sy++)
+                                for(int sx=0;sx<=step;sx++) {
+                                    float fx = sx/step;
+                                    float fy = sy/step;
+                                    cv::Vec2f l0 = (1-fx)*l00 + fx*l01;
+                                    cv::Vec2f l1 = (1-fx)*l10 + fx*l11;
+                                    cv::Vec2f l = (1-fy)*l0 + fy*l1;
+                                    points_hr(j*step+sy,i*step+sx) += data.lookup_int_loc(sm,l);
+                                    counts_hr(j*step+sy,i*step+sx) += 1;
+                                    // if (sx == 0 && sy == 0)
+                                    //     std::cout << "diff " << cv::Vec2i(j,i) << data.lookup_int_loc(sm,l) << points(j,i) << cv::norm(data.lookup_int_loc(sm,l) - points(j,i)) << std::endl;
+                                }
+                    }
+
+                }
+                if (!counts_hr(j*step+1,i*step+1)) {
+                    cv::Vec3d c00 = points(j,i);
+                    cv::Vec3d c01 = points(j,i+1);
+                    cv::Vec3d c10 = points(j+1,i);
+                    cv::Vec3d c11 = points(j+1,i+1);
+
+                    for(int sy=0;sy<=step;sy++)
+                        for(int sx=0;sx<=step;sx++) {
+                            if (!counts_hr(j*step+sy,i*step+sx)) {
                                 float fx = sx/step;
                                 float fy = sy/step;
-                                cv::Vec2f l0 = (1-fx)*l00 + fx*l01;
-                                cv::Vec2f l1 = (1-fx)*l10 + fx*l11;
-                                cv::Vec2f l = (1-fy)*l0 + fy*l1;
-                                points_hr(j*step+sy,i*step+sx) += data.lookup_int_loc(sm,l);
-                                counts_hr(j*step+sy,i*step+sx) += 1;
-                                // if (sx == 0 && sy == 0)
-                                //     std::cout << "diff " << cv::Vec2i(j,i) << data.lookup_int_loc(sm,l) << points(j,i) << cv::norm(data.lookup_int_loc(sm,l) - points(j,i)) << std::endl;
+                                cv::Vec3d c0 = (1-fx)*c00 + fx*c01;
+                                cv::Vec3d c1 = (1-fx)*c10 + fx*c11;
+                                cv::Vec3d c = (1-fy)*c0 + fy*c1;
+                                points_hr(j*step+sy,i*step+sx) = c;
+                                counts_hr(j*step+sy,i*step+sx) = 1;
                             }
-                    }
+                        }
+                }
             }
+        }
     for(int j=0;j<points_hr.rows;j++)
         for(int i=0;i<points_hr.cols;i++)
             if (counts_hr(j,i))
