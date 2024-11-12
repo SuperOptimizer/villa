@@ -3447,7 +3447,8 @@ public:
             return {-1,-1,-1};
         else {
             cv::Rect bounds = {0, 0, sm->surf()->rawPoints().rows-2,sm->surf()->rawPoints().cols-2};
-            if (bounds.contains(p))
+            cv::Vec2i li = {floor(l[0]),floor(l[1])};
+            if (bounds.contains(li))
                 return at_int_inv(sm->surf()->rawPoints(), l);
             else
                 return {-1,-1,-1};
@@ -3538,8 +3539,19 @@ int add_surftrack_straightloss(SurfaceMeta *sm, const cv::Vec2i &p, const cv::Ve
     return 1;
 }
 
+//gen straigt loss given point and 3 offsets
+int add_surftrack_surfloss(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, float w = 0.1)
+{
+    if ((state(p) & STATE_LOC_VALID) == 0 || !data.valid_int(sm, p))
+        return 0;
+
+    problem.AddResidualBlock(SurfaceLossD::Create(sm->surf()->rawPoints(), w), nullptr, &points(p)[0], &data.loc(sm, p)[0]);
+
+    return 1;
+}
+
 //will optimize only the center point
-int surftrack_add_local(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, float step)
+int surftrack_add_local(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, float step, int flags = 0)
 {
     int count = 0;
     //direct
@@ -3564,10 +3576,14 @@ int surftrack_add_local(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &dat
     count += add_surftrack_straightloss(sm, p, {-1,0},{0,0},{1,0}, data, problem, state);
     count += add_surftrack_straightloss(sm, p, {0,0},{1,0},{2,0}, data, problem, state);
 
+    if (flags & SURF_LOSS) {
+        count += add_surftrack_surfloss(sm, p, data, problem, state, points);
+    }
+
     return count;
 }
 
-double local_cost(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv::Mat_<uint8_t> &state, float step, cv::Vec3f loc, int *ref_count = nullptr)
+double local_cost(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, float step, cv::Vec3f loc, int *ref_count = nullptr)
 {
     assert(!data.has(sm, p));
     uint8_t state_old = state(p);
@@ -3580,7 +3596,7 @@ double local_cost(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv:
         data.loc(sm, p) = {loc[1], loc[0]};
 
         state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
-        count = surftrack_add_local(sm, p, data, problem_test, state, step);
+        count = surftrack_add_local(sm, p, data, problem_test, state, points, step);
         if (ref_count)
             *ref_count = count;
 
@@ -3634,7 +3650,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //     cv::imwrite("counts.tif", counts);
 
     //FIXME shouldn change start of opt but does?! (32-good, 64 bad, 50 good?)
-    int stop_gen = 64;
+    int stop_gen = 32;
     float local_cost_inl_th = 0.1;
     int w = stop_gen*2*1.1+5;
     int h = stop_gen*2*1.1+5;
@@ -3666,7 +3682,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     data.loc(seed,{y0+1,x0}) = {seed_points.rows/2+step, seed_points.cols/2 };
     data.loc(seed,{y0+1,x0+1}) = {seed_points.rows/2+step, seed_points.cols/2+step };
 
-    std::cout << "init " << data.loc(seed,{y0,x0}) << data.loc(seed,{y0,x0+1}) << data.loc(seed,{y0+1,x0}) << data.loc(seed,{y0+1,x0+1}) << std::endl;
+    // std::cout << "init " << data.loc(seed,{y0,x0}) << data.loc(seed,{y0,x0+1}) << data.loc(seed,{y0+1,x0}) << data.loc(seed,{y0+1,x0+1}) << std::endl;
 
     data.surfs({y0,x0}).insert(seed);
     data.surfs({y0,x0+1}).insert(seed);
@@ -3777,7 +3793,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
                 state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
 
-                surftrack_add_local(ref_surf, p, data, problem, state, step);
+                surftrack_add_local(ref_surf, p, data, problem, state, points, step);
 
                 ceres::Solver::Summary summary;
                 //FIXME solver can run out of valid area!
@@ -3814,7 +3830,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     //FIXME this does not check geometry, only if its also on the surfaces (which might be good enough...)
                     if (test_surf->surf()->pointTo(ptr, coord, 2.0, 4) <= 2.0) {
                         int count = 0;
-                        float cost = local_cost(test_surf, p, data, state, step, test_surf->surf()->loc_raw(ptr), &count);
+                        float cost = local_cost(test_surf, p, data, state, points, step, test_surf->surf()->loc_raw(ptr), &count);
                         if (cost < local_cost_inl_th) {
                             // inliers++;
                             inliers_sum += count;
@@ -3876,7 +3892,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
 
                 ceres::Problem problem;
-                surftrack_add_local(best_surf, p, data, problem, state, step);
+                surftrack_add_local(best_surf, p, data, problem, state, points, step, SURF_LOSS);
 
                 std::set<SurfaceMeta*> more_local_surfs;
                 for(auto test_surf : local_surfs) {
@@ -3886,10 +3902,10 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     SurfacePointer *ptr = test_surf->surf()->pointer();
                     if (test_surf->surf()->pointTo(ptr, best_coord, 2.0, 4) <= 2.0) {
                         cv::Vec3f loc = test_surf->surf()->loc_raw(ptr);
-                        if (local_cost(test_surf, p, data, state, step, loc) < local_cost_inl_th)
+                        if (local_cost(test_surf, p, data, state, points, step, loc) < local_cost_inl_th)
                             data.surfs(p).insert(test_surf);
                             data.loc(test_surf, p) = {loc[1], loc[0]};
-                            surftrack_add_local(test_surf, p, data, problem, state, step);
+                            surftrack_add_local(test_surf, p, data, problem, state, points, step, SURF_LOSS);
 
                             for(auto s : test_surf->overlapping)
                                 if (!data.has(s, p))
@@ -3947,7 +3963,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                             // std::cout << "WTF3" << std::endl;
                             continue;
                         }
-                        if (local_cost(test_surf, p, data, state, step, loc) < local_cost_inl_th) {
+                        if (local_cost(test_surf, p, data, state, points, step, loc) < local_cost_inl_th) {
                             data.loc(test_surf, p) = {loc[1], loc[0]};
                             data.surfs(p).insert(test_surf);
                         }

@@ -502,3 +502,27 @@ public:
     // static template <typename E> lin_int(E &loc, int max, )
     cv::Vec3i _shape;
 };
+
+template<typename T, int C>
+//l is [y, x]!
+bool loc_valid(const cv::Mat_<cv::Vec<T,C>> &m, const cv::Vec2d &l)
+{
+    if (l[0] == -1)
+        return false;
+
+    cv::Rect bounds = {0, 0, m.rows-2,m.cols-2};
+    cv::Vec2i li = {floor(l[0]),floor(l[1])};
+
+    if (!bounds.contains(li))
+        return false;
+
+    if (m(li[0],li[1])[0] == -1)
+        return false;
+    if (m(li[0]+1,li[1])[0] == -1)
+        return false;
+    if (m(li[0],li[1]+1)[0] == -1)
+        return false;
+    if (m(li[0]+1,li[1]+1)[0] == -1)
+        return false;
+    return true;
+}
