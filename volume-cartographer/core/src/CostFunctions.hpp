@@ -293,6 +293,7 @@ struct SurfaceLossD {
             residual[0] = T(0);
             residual[1] = T(0);
             residual[2] = T(0);
+            return true;
         }
 
         _interpolator.Evaluate(l[0], l[1], v);
