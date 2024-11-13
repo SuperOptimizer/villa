@@ -4075,11 +4075,11 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                     for(auto &s : surfs) {
                         SurfacePointer *ptr = s->surf()->pointer();
                         float res = s->surf()->pointTo(ptr, points_out(j, i), 2.0, 4);
-                            if (res <= 2.0) {
-                                data_out.surfs({j,i}).insert(s);
-                                cv::Vec3f loc = s->surf()->loc_raw(ptr);
-                                data_out.loc(s, {j,i}) = {loc[1], loc[0]};
-                            }
+                        if (res <= 2.0) {
+                            data_out.surfs({j,i}).insert(s);
+                            cv::Vec3f loc = s->surf()->loc_raw(ptr);
+                            data_out.loc(s, {j,i}) = {loc[1], loc[0]};
+                        }
                     }
                 }
             }
@@ -4089,17 +4089,18 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
         for(int i=used_area.x;i<used_area.br().x-1;i++)
             if (state_out(j,i) & STATE_VALID) {
                 std::set<SurfaceMeta*> surf_src = data_out.surfs({j,i});
-                // for (auto s : surf_src) {
-                //     int count;
-                //     cv::Vec2f loc = data_out.loc(s, {j,i});
-                //     float cost = local_cost(s, {j,i}, data_out, state_out, points_out, step, {loc[1], loc[0], -1}, &count);
-                //     // std::cout << cost << " count " << count << std::endl;
-                //     if (cost >= local_cost_inl_th || count < 3) {
-                //         data_out.erase(s, {j,i});
-                //         data_out.eraseSurf(s, {j,i});
-                //     }
-                //     //disasble if less than 1 surfs?
-                // }
+                for (auto s : surf_src) {
+                    int count;
+                    cv::Vec2f loc = data_out.loc(s, {j,i});
+                    //FIXME we break something just by calling local cost!
+                    float cost = loc[0]; // local_cost(s, {j,i}, data_out, state_out, points_out, step, {loc[1], loc[0], -1}, &count);
+                    if (cost >= local_cost_inl_th) {
+                        std::cout << cost << " count " << count << std::endl;
+                        // data_out.erase(s, {j,i});
+                        // data_out.eraseSurf(s, {j,i});
+                    }
+                    //disasble if less than 1 surfs?
+                }
                 std::cout << "remain " << data_out.surfs({j,i}).size() << " of " << surf_src.size() << std::endl;
                 if (!data_out.surfs({j,i}).size()) {
                     state_out(j,i) = 0;
