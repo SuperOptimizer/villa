@@ -3844,7 +3844,7 @@ double local_cost(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv:
         return sqrt(test_loss/count);
 }
 
-void local_solve(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, float step, int flags)
+double local_solve(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, float step, int flags)
 {
     ceres::Problem problem;
 
@@ -3858,8 +3858,14 @@ void local_solve(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv::
     //FIXME solver can run out of valid area!
     ceres::Solve(options, &problem, &summary);
 
-    std::cout << summary.BriefReport() << std::endl;
-    std::cout << "numres " << summary.num_residual_blocks << std::endl;
+    // std::cout << summary.BriefReport() << std::endl;
+    // std::cout << "numres " << summary.num_residual_blocks << std::endl;
+
+    if (summary.num_residual_blocks < 3)
+        return 10000;
+
+    std::cout << summary.final_cost/summary.num_residual_blocks << std::endl;
+    return summary.final_cost/summary.num_residual_blocks;
 }
 
 //try flattening the current surface mapping assuming direct 3d distances
@@ -3892,6 +3898,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 
     uint8_t STATE_VALID = STATE_LOC_VALID | STATE_COORD_VALID;
 
+    int res_count = 0;
     //slowly inpaint physics only points
     //FIXME for now we assume input is only STATE_LOC_VALID
     for(int r=0;r<closing_r;r++) {
@@ -3906,16 +3913,43 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                 if ((masked(j,i) & STATE_VALID) && (~new_state(j,i) & STATE_VALID)) {
                     new_state(j, i) = STATE_COORD_VALID;
                     points_new(j,i) = {1,2,3};
-                    local_solve(&sm, {j,i}, data_new, new_state, points_new, step*step_src, LOSS_3D_INDIRECT | SURF_LOSS);
+                    double err = local_solve(&sm, {j,i}, data_new, new_state, points_new, step*step_src, LOSS_3D_INDIRECT | SURF_LOSS);
+                    res_count += surftrack_add_global(&sm, {j,i}, data_new, problem, new_state, points_new, step*step_src, LOSS_3D_INDIRECT | OPTIMIZE_ALL);
+                    // if (err > 0.1) {
+                    //     new_state(j, i) = 0;
+                    //     points_new(j,i) = {-1,-1,-1};
+                    // }
                 }
     }
+
+    for(int j=used_area.y;j<used_area.br().y;j++)
+        for(int i=used_area.x;i<used_area.br().x;i++)
+            if (state(j,i) & STATE_LOC_VALID)
+                if (problem.HasParameterBlock(&points_new(j,i)[0]))
+                    problem.SetParameterBlockConstant(&points_new(j,i)[0]);
+
+    ceres::Solver::Options options;
+    options.linear_solver_type = ceres::SPARSE_SCHUR;
+    options.minimizer_progress_to_stdout = true;
+    options.max_num_iterations = 10000;
+
+    ceres::Solver::Summary summary;
+    //FIXME solver can run out of valid area!
+    ceres::Solve(options, &problem, &summary);
+    std::cout << summary.BriefReport() << std::endl;
+
+
+    for(int j=used_area.y;j<used_area.br().y;j++)
+        for(int i=used_area.x;i<used_area.br().x;i++)
+            if (state(j,i) & STATE_LOC_VALID)
+                if (problem.HasParameterBlock(&points_new(j,i)[0]))
+                    problem.SetParameterBlockVariable(&points_new(j,i)[0]);
 
     cv::imwrite("state_old.tif", state);
     cv::imwrite("state_new.tif", new_state);
 
     std::cout << "using " << used_area.tl() << used_area.br() << std::endl;
 
-    int res_count = 0;
     for(int j=used_area.y;j<used_area.br().y;j++)
         for(int i=used_area.x;i<used_area.br().x;i++)
             res_count += surftrack_add_global(&sm, {j,i}, data_new, problem, new_state, points_new, step*step_src, LOSS_3D_INDIRECT | SURF_LOSS | OPTIMIZE_ALL);
@@ -3932,13 +3966,6 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
         problem.SetParameterBlockConstant(&data_new.loc(&sm, seed+cv::Vec2i(1,1))[0]);
 
 
-    ceres::Solver::Options options;
-    options.linear_solver_type = ceres::SPARSE_SCHUR;
-    options.minimizer_progress_to_stdout = true;
-    options.max_num_iterations = 10000;
-
-
-    ceres::Solver::Summary summary;
     //FIXME solver can run out of valid area!
     ceres::Solve(options, &problem, &summary);
     std::cout << summary.BriefReport() << std::endl;
@@ -4031,7 +4058,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //     cv::imwrite("counts.tif", counts);
 
     //FIXME shouldn change start of opt but does?! (32-good, 64 bad, 50 good?)
-    int stop_gen = 16;
+    int stop_gen = 22;
     int opt_map_every = 6;
     float local_cost_inl_th = 0.1;
     int closing_r = 20;
@@ -4366,11 +4393,14 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             else if (best_inliers == -1) {
                 //just try again some other time
                 state(p) = 0;
+                points(p) = {-1,-1,-1};
                 //FIXME reset data.loc(ref_surf,p)
                 // std::cout << std::endl << "FAIL1 " << best_inliers << std::endl;
             }
             else {
-                state(p) = STATE_FAIL;
+                // state(p) = STATE_FAIL;
+                state(p) = 0;
+                points(p) = {-1,-1,-1};
                 //FIXME reset data.loc(ref_surf,p)
                 // std::cout << std::endl << "FAIL2 " << best_inliers << std::endl;
             }
@@ -4384,7 +4414,14 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
         //lets just see what happens
         if (generation && /*generation+1 != stop_gen &&*/ (generation % opt_map_every) == 0)
-            optimize_surface_mapping(data, state, points, used_area, step, src_step, {y0,x0}, closing_r);
+            optimize_surface_mapping(data, state, points, used_area, step, src_step, {y0,x0}, closing_r, true);
+
+        //recalc fringe after surface optimization (which often shrinks the surf)
+        fringe.resize(0);
+        for(int j=used_area.y-1;j<=used_area.br().y;j++)
+            for(int i=used_area.x-1;i<=used_area.br().x;i++)
+                if (state(j,i) & STATE_LOC_VALID)
+                    fringe.push_back({j,i});
 
         printf("gen %d processing %d fringe cands (total done %d fringe: %d)\n", generation, cands.size(), succ, fringe.size());
         if (!fringe.size())
