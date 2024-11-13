@@ -3868,6 +3868,53 @@ double local_solve(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv
     return summary.final_cost/summary.num_residual_blocks;
 }
 
+
+cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Rect &used_area, float step, float step_src)
+{
+    cv::Mat_<cv::Vec3f> points_hr(state.rows*step, state.cols*step, {0,0,0});
+    cv::Mat_<int> counts_hr(state.rows*step, state.cols*step, 0);
+    for(int j=used_area.y;j<used_area.br().y-1;j++)
+        for(int i=used_area.x;i<used_area.br().x-1;i++) {
+            if (state(j,i) & STATE_LOC_VALID
+                && state(j,i+1) & STATE_LOC_VALID
+                && state(j+1,i) & STATE_LOC_VALID
+                && state(j+1,i+1) & STATE_LOC_VALID)
+            {
+            for(auto &sm : data.surfs({j,i})) {
+                if (data.valid_int(sm,{j,i})
+                    && data.valid_int(sm,{j,i+1})
+                    && data.valid_int(sm,{j+1,i})
+                    && data.valid_int(sm,{j+1,i+1}))
+                {
+                    cv::Vec2f l00 = data.loc(sm,{j,i});
+                    cv::Vec2f l01 = data.loc(sm,{j,i+1});
+                    cv::Vec2f l10 = data.loc(sm,{j+1,i});
+                    cv::Vec2f l11 = data.loc(sm,{j+1,i+1});
+
+                    for(int sy=0;sy<=step;sy++)
+                        for(int sx=0;sx<=step;sx++) {
+                            float fx = sx/step;
+                            float fy = sy/step;
+                            cv::Vec2f l0 = (1-fx)*l00 + fx*l01;
+                            cv::Vec2f l1 = (1-fx)*l10 + fx*l11;
+                            cv::Vec2f l = (1-fy)*l0 + fy*l1;
+                            points_hr(j*step+sy,i*step+sx) += data.lookup_int_loc(sm,l);
+                            counts_hr(j*step+sy,i*step+sx) += 1;
+                        }
+                }
+            }
+        }
+    }
+    for(int j=0;j<points_hr.rows;j++)
+        for(int i=0;i<points_hr.cols;i++)
+            if (counts_hr(j,i))
+                points_hr(j,i) /= counts_hr(j,i);
+            else
+                points_hr(j,i) = {-1,-1,-1};
+
+    return points_hr;
+}
+
 //try flattening the current surface mapping assuming direct 3d distances
 //TODO use accurate distance metrics by building local surfaces?
 //TODO just (fixed) downweighting of areas where distances are more off?
@@ -3971,53 +4018,89 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     std::cout << summary.BriefReport() << std::endl;
     std::cout << "rms " << sqrt(summary.final_cost/summary.num_residual_blocks) << " count " << summary.num_residual_blocks << std::endl;
 
-    //reinterpolate from existing points
-    //FIXME this is still no end2end global optimization, so could over time diverge ...
+    //interpolate from the original set
+    cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, used_area, step, step_src);
+
     SurfTrackerData data_out;
     cv::Mat_<cv::Vec3d> points_out(points.size(), {-1,-1,-1});
-    cv::Mat_<int> count_out(points.size(), 0);
     cv::Mat_<uint8_t> state_out(state.size(), 0);
     for(int j=used_area.y;j<used_area.br().y-1;j++)
         for(int i=used_area.x;i<used_area.br().x-1;i++)
-            if (new_state(j,i) & STATE_VALID) {
-                points_out(j,i) = {0,0,0};
-                cv::Vec2f l = data_new.loc(&sm ,{j,i});
+            //FIXME (don't actually need this state, could just check if loc is valid!)
+            //FIXME we still produce holes (maybe cause of above?)
+            if (new_state(j,i) & STATE_LOC_VALID) {
+                cv::Vec2d l = data_new.loc(&sm ,{j,i});
                 int y = l[0];
                 int x = l[1];
-                for(auto &s : data.surfs({y,x})) {
-                    if (state(y,x) & STATE_LOC_VALID && data.valid_int(s,{y,x})
-                        && state(y,x+1) & STATE_LOC_VALID && data.valid_int(s,{y,x+1})
-                        && state(y+1,x) & STATE_LOC_VALID && data.valid_int(s,{y+1,x})
-                        && state(y+1,x+1) & STATE_LOC_VALID && data.valid_int(s,{y+1,x+1}))
-                    {
-                        cv::Vec2f l00 = data.loc(s,{y,x});
-                        cv::Vec2f l01 = data.loc(s,{y,x+1});
-                        cv::Vec2f l10 = data.loc(s,{y+1,x});
-                        cv::Vec2f l11 = data.loc(s,{y+1,x+1});
+                l *= step;
+                if (loc_valid(points_hr, l)) {
+                    points_out(j, i) = interp_lin_2d(points_hr, l);
+                    state_out(j, i) = STATE_LOC_VALID | STATE_COORD_VALID;
 
-                        float fx = l[1]-x;
-                        float fy = l[0]-y;
-                        cv::Vec2f l0 = (1-fx)*l00 + fx*l01;
-                        cv::Vec2f l1 = (1-fx)*l10 + fx*l11;
-                        cv::Vec2f l = (1-fy)*l0 + fy*l1;
-                        points_out(j,i) += data.lookup_int_loc(s,l);
-                        count_out(j,i) += 1;
-                        data_out.surfs({j,i}).insert(s);
-                        data_out.loc(s, {j,i}) = l;
-                        state_out(j, i) = STATE_LOC_VALID | STATE_COORD_VALID;
+                    std::set<SurfaceMeta*> surfs;
+                    surfs.insert(data.surfs({y,x}).begin(), data.surfs({y,x}).end());
+                    surfs.insert(data.surfs({y,x+1}).begin(), data.surfs({y,x+1}).end());
+                    surfs.insert(data.surfs({y+1,x}).begin(), data.surfs({y+1,x}).end());
+                    surfs.insert(data.surfs({y+1,x+1}).begin(), data.surfs({y+1,x+1}).end());
+                    for(auto &s : surfs) {
+                        SurfacePointer *ptr = s->surf()->pointer();
+                        float res = s->surf()->pointTo(ptr, points_out(j, i), 2.0, 4);
+                            if (res <= 2.0) {
+                                data_out.surfs({j,i}).insert(s);
+                                cv::Vec3f loc = s->surf()->loc_raw(ptr);
+                                data_out.loc(s, {j,i}) = {loc[1], loc[0]};
+                            }
                     }
+                }
             }
-            if (count_out(j,i)) {
-                points_out(j,i) /= count_out(j,i);
-                // std::cout << points(j,i) << " vs " << points_out(j,i) << std::endl;
-            }
-            else if (keep_inpainted) {
-                state_out(j, i) = STATE_COORD_VALID;
-                points_out(j,i) = points_new(j, i);
-            }
-            else
-                points_out(j,i) = {-1,-1,-1};
-        }
+
+    // // //reinterpolate from existing points
+    // // //FIXME this is still no end2end global optimization, so could over time diverge ...
+    // // SurfTrackerData data_out;
+    // // cv::Mat_<cv::Vec3d> points_out(points.size(), {-1,-1,-1});
+    // // cv::Mat_<int> count_out(points.size(), 0);
+    // // cv::Mat_<uint8_t> state_out(state.size(), 0);
+    // // for(int j=used_area.y;j<used_area.br().y-1;j++)
+    // //     for(int i=used_area.x;i<used_area.br().x-1;i++)
+    // //         if (new_state(j,i) & STATE_VALID) {
+    // //             points_out(j,i) = {0,0,0};
+    // //             cv::Vec2f l = data_new.loc(&sm ,{j,i});
+    // //             int y = l[0];
+    // //             int x = l[1];
+    // //             for(auto &s : data.surfs({y,x})) {
+    // //                 if (state(y,x) & STATE_LOC_VALID && data.valid_int(s,{y,x})
+    // //                     && state(y,x+1) & STATE_LOC_VALID && data.valid_int(s,{y,x+1})
+    // //                     && state(y+1,x) & STATE_LOC_VALID && data.valid_int(s,{y+1,x})
+    // //                     && state(y+1,x+1) & STATE_LOC_VALID && data.valid_int(s,{y+1,x+1}))
+    // //                 {
+    // //                     cv::Vec2f l00 = data.loc(s,{y,x});
+    // //                     cv::Vec2f l01 = data.loc(s,{y,x+1});
+    // //                     cv::Vec2f l10 = data.loc(s,{y+1,x});
+    // //                     cv::Vec2f l11 = data.loc(s,{y+1,x+1});
+    // //
+    // //                     float fx = l[1]-x;
+    // //                     float fy = l[0]-y;
+    // //                     cv::Vec2f l0 = (1-fx)*l00 + fx*l01;
+    // //                     cv::Vec2f l1 = (1-fx)*l10 + fx*l11;
+    // //                     cv::Vec2f l = (1-fy)*l0 + fy*l1;
+    // //                     points_out(j,i) += data.lookup_int_loc(s,l);
+    // //                     count_out(j,i) += 1;
+    // //                     data_out.surfs({j,i}).insert(s);
+    // //                     data_out.loc(s, {j,i}) = l;
+    // //                     state_out(j, i) = STATE_LOC_VALID | STATE_COORD_VALID;
+    // //                 }
+    // //         }
+    // //         if (count_out(j,i)) {
+    // //             points_out(j,i) /= count_out(j,i);
+    // //             // std::cout << points(j,i) << " vs " << points_out(j,i) << std::endl;
+    // //         }
+    // //         else if (keep_inpainted) {
+    // //             state_out(j, i) = STATE_COORD_VALID;
+    // //             points_out(j,i) = points_new(j, i);
+    // //         }
+    // //         else
+    // //             points_out(j,i) = {-1,-1,-1};
+    // //     }
 
     points = points_out;
     state = state_out;
@@ -4058,7 +4141,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //     cv::imwrite("counts.tif", counts);
 
     //FIXME shouldn change start of opt but does?! (32-good, 64 bad, 50 good?)
-    int stop_gen = 22;
+    int stop_gen = 64;
     int opt_map_every = 6;
     float local_cost_inl_th = 0.1;
     int closing_r = 20;
@@ -4414,7 +4497,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
         //lets just see what happens
         if (generation && /*generation+1 != stop_gen &&*/ (generation % opt_map_every) == 0)
-            optimize_surface_mapping(data, state, points, used_area, step, src_step, {y0,x0}, closing_r, false);
+            optimize_surface_mapping(data, state, points, used_area, step, src_step, {y0,x0}, closing_r, true   );
 
         //recalc fringe after surface optimization (which often shrinks the surf)
         fringe.resize(0);
