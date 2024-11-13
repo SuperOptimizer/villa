@@ -82,10 +82,16 @@ struct DistLoss {
 
         T dist = sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
 
-        if (dist < _d)
-            residual[0] = T(_w)*(T(_d)/dist - T(1));
-        else
-            residual[0] = T(_w)*(dist/T(_d) - T(1));
+        if (dist <= 0) {
+            residual[0] = T(_w)*(d[0]*d[0] + d[1]*d[1] + d[2]*d[2] - T(1));
+            // std::cout << "uhohh 3d" << std::endl;
+        }
+        else {
+            if (dist < _d)
+                residual[0] = T(_w)*(T(_d)/dist - T(1));
+            else
+                residual[0] = T(_w)*(dist/T(_d) - T(1));
+        }
 
         return true;
     }
@@ -282,9 +288,9 @@ struct SurfaceLoss {
 // ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> interp(grid);
 
 
-int  val(const double &v) { return v; }
+double  val(const double &v) { return v; }
 template <typename JetT>
-int  val(const JetT &v) { return v.a; }
+double  val(const JetT &v) { return v.a; }
 
 
 template<typename T, typename E, int C>
@@ -358,6 +364,7 @@ struct DistLossLoc3D {
         T a[3], b[3];
 
         if (!loc_valid<double,3>(_m, {val(la[0]), val(la[1])}) || !loc_valid<double,3>(_m, {val(lb[0]), val(lb[1])})) {
+            // std::cout << "no dist loss here " << cv::Vec2d(val(la[0]), val(la[1])) <<  cv::Vec2d(val(lb[0]), val(lb[1])) << _m.size << std::endl;
             residual[0] = T(0);
             return true;
         }
@@ -379,6 +386,8 @@ struct DistLossLoc3D {
             residual[0] = T(_w)*(T(_d)/dist - T(1));
         else
             residual[0] = T(_w)*(dist/T(_d) - T(1));
+
+        // std::cout << "yay" << cv::Vec2d(val(la[0]), val(la[1])) <<  cv::Vec2d(val(lb[0]), val(lb[1])) << _m.size <<  " " << val(residual[0]) << " : " << _d << "vs " << val(dist) << "as" << val(T(_w)*(T(_d)/dist - T(1)))  << " " << _w << " " << _d << " " << val(dist) << " " << _w*(_d/val(dist) - 1) << typeid(T).name() << std::endl;
 
         return true;
     }
