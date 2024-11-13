@@ -4229,8 +4229,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
     std::vector<cv::Vec2i> neighs = {{1,0},{0,1},{-1,0},{0,-1}};
 
-    std::vector<cv::Vec2i> fringe;
-    std::vector<cv::Vec2i> cands;
+    std::unordered_set<cv::Vec2i,vec2i_hash> fringe;
+    std::unordered_set<cv::Vec2i,vec2i_hash> cands;
 
     // std::unordered_map<std::tuple<SurfaceMeta,cv::Vec2f>>
 
@@ -4266,10 +4266,10 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     state(y0,x0+1) = STATE_LOC_VALID | STATE_COORD_VALID;
     state(y0+1,x0+1) = STATE_LOC_VALID | STATE_COORD_VALID;
 
-    fringe.push_back({y0,x0});
-    fringe.push_back({y0+1,x0});
-    fringe.push_back({y0,x0+1});
-    fringe.push_back({y0+1,x0+1});
+    fringe.insert(cv::Vec2i(y0,x0));
+    fringe.insert(cv::Vec2i(y0+1,x0));
+    fringe.insert(cv::Vec2i(y0,x0+1));
+    fringe.insert(cv::Vec2i(y0+1,x0+1));
 
     //insert initial surfs per location
     for(auto p: fringe) {
@@ -4280,7 +4280,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             SurfacePointer *ptr = s->surf()->pointer();
             if (s->surf()->pointTo(ptr, coord, 2.0) <= 2.0) {
                 cv::Vec3f loc = s->surf()->loc_raw(ptr);
-                std::cout << loc << std::endl;
+                // std::cout << loc << std::endl;
                 data.surfs(p).insert(s);
                 data.loc(s, p) = {loc[1], loc[0]};
             }
@@ -4308,10 +4308,12 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     && (state(p+n) & STATE_LOC_VALID) == 0)
                 {
                     state(p+n) |= STATE_PROCESSING;
-                    cands.push_back(p+n);
+                    cands.insert(p+n);
                 }
         }
-        fringe.resize(0);
+        fringe.clear();
+
+        std::cout << "go with cands " << cands.size() << std::endl;
 
         for(auto &p : cands) {
             if (state(p) & STATE_LOC_VALID)
@@ -4540,7 +4542,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 if (!used_area.contains({p[1],p[0]})) {
                     used_area = used_area | cv::Rect(p[1],p[0],1,1);
                 }
-                fringe.push_back(p);
+                fringe.insert(p);
 
                 // std::cout << std::endl << "checking against seed " << p << std::endl;
                 // if (data.has(seed, p))
@@ -4569,15 +4571,16 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         }
 
         //lets just see what happens
-        if (generation && /*generation+1 != stop_gen &&*/ (generation % opt_map_every) == 0)
+        if (generation && /*generation+1 != stop_gen &&*/ (generation % opt_map_every) == 0) {
             optimize_surface_mapping(data, state, points, used_area, step, src_step, {y0,x0}, closing_r, true   );
 
-        //recalc fringe after surface optimization (which often shrinks the surf)
-        fringe.resize(0);
-        for(int j=used_area.y-1;j<=used_area.br().y;j++)
-            for(int i=used_area.x-1;i<=used_area.br().x;i++)
-                if (state(j,i) & STATE_LOC_VALID)
-                    fringe.push_back({j,i});
+            //recalc fringe after surface optimization (which often shrinks the surf)
+            fringe.clear();
+            for(int j=used_area.y-1;j<=used_area.br().y;j++)
+                for(int i=used_area.x-1;i<=used_area.br().x;i++)
+                    if (state(j,i) & STATE_LOC_VALID)
+                        fringe.insert({j,i});
+        }
 
         printf("gen %d processing %d fringe cands (total done %d fringe: %d)\n", generation, cands.size(), succ, fringe.size());
         if (!fringe.size())
