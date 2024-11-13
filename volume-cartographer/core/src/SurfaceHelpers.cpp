@@ -3445,6 +3445,10 @@ public:
     {
         _data.erase({sm,loc});
     }
+    void eraseSurf(SurfaceMeta *sm, const cv::Vec2i &loc)
+    {
+        _surfs[loc].erase(sm);
+    }
     std::set<SurfaceMeta*> &surfs(const cv::Vec2i &loc)
     {
         return _surfs[loc];
@@ -3864,12 +3868,12 @@ double local_solve(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv
     if (summary.num_residual_blocks < 3)
         return 10000;
 
-    std::cout << summary.final_cost/summary.num_residual_blocks << std::endl;
+    // std::cout << summary.final_cost/summary.num_residual_blocks << std::endl;
     return summary.final_cost/summary.num_residual_blocks;
 }
 
 
-cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Rect &used_area, float step, float step_src)
+cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, cv::Rect &used_area, float step, float step_src)
 {
     cv::Mat_<cv::Vec3f> points_hr(state.rows*step, state.cols*step, {0,0,0});
     cv::Mat_<int> counts_hr(state.rows*step, state.cols*step, 0);
@@ -3903,6 +3907,25 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8
                         }
                 }
             }
+            if (!counts_hr(j*step+1,i*step+1)) {
+                cv::Vec3d c00 = points(j,i);
+                cv::Vec3d c01 = points(j,i+1);
+                cv::Vec3d c10 = points(j+1,i);
+                cv::Vec3d c11 = points(j+1,i+1);
+
+                for(int sy=0;sy<=step;sy++)
+                    for(int sx=0;sx<=step;sx++) {
+                        if (!counts_hr(j*step+sy,i*step+sx)) {
+                            float fx = sx/step;
+                            float fy = sy/step;
+                            cv::Vec3d c0 = (1-fx)*c00 + fx*c01;
+                            cv::Vec3d c1 = (1-fx)*c10 + fx*c11;
+                            cv::Vec3d c = (1-fy)*c0 + fy*c1;
+                            points_hr(j*step+sy,i*step+sx) = c;
+                            counts_hr(j*step+sy,i*step+sx) = 1;
+                        }
+                    }
+            }
         }
     }
     for(int j=0;j<points_hr.rows;j++)
@@ -3914,6 +3937,9 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8
 
     return points_hr;
 }
+
+int static dbg_counter = 0;
+float local_cost_inl_th = 0.1;
 
 //try flattening the current surface mapping assuming direct 3d distances
 //TODO use accurate distance metrics by building local surfaces?
@@ -3947,7 +3973,6 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 
     int res_count = 0;
     //slowly inpaint physics only points
-    //FIXME for now we assume input is only STATE_LOC_VALID
     for(int r=0;r<closing_r;r++) {
         cv::Mat_<uint8_t> masked;
         bitwise_and(state, STATE_VALID, masked);
@@ -3960,6 +3985,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                 if ((masked(j,i) & STATE_VALID) && (~new_state(j,i) & STATE_VALID)) {
                     new_state(j, i) = STATE_COORD_VALID;
                     points_new(j,i) = {1,2,3};
+                    //TODO add local area solve
                     double err = local_solve(&sm, {j,i}, data_new, new_state, points_new, step*step_src, LOSS_3D_INDIRECT | SURF_LOSS);
                     res_count += surftrack_add_global(&sm, {j,i}, data_new, problem, new_state, points_new, step*step_src, LOSS_3D_INDIRECT | OPTIMIZE_ALL);
                     // if (err > 0.1) {
@@ -3992,8 +4018,8 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                 if (problem.HasParameterBlock(&points_new(j,i)[0]))
                     problem.SetParameterBlockVariable(&points_new(j,i)[0]);
 
-    cv::imwrite("state_old.tif", state);
-    cv::imwrite("state_new.tif", new_state);
+    cv::imwrite("state_old"+std::to_string(dbg_counter)+".tif", state);
+    cv::imwrite("state_new"+std::to_string(dbg_counter)+".tif", new_state);
 
     std::cout << "using " << used_area.tl() << used_area.br() << std::endl;
 
@@ -4019,16 +4045,19 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     std::cout << "rms " << sqrt(summary.final_cost/summary.num_residual_blocks) << " count " << summary.num_residual_blocks << std::endl;
 
     //interpolate from the original set
-    cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, used_area, step, step_src);
+    cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, step_src);
 
+    cv::imwrite("points_lr"+std::to_string(dbg_counter)+".tif", points);
+    cv::imwrite("points_hr"+std::to_string(dbg_counter)+".tif", points_hr);
+
+    //FIXME we still produce holes
     SurfTrackerData data_out;
     cv::Mat_<cv::Vec3d> points_out(points.size(), {-1,-1,-1});
     cv::Mat_<uint8_t> state_out(state.size(), 0);
     for(int j=used_area.y;j<used_area.br().y-1;j++)
         for(int i=used_area.x;i<used_area.br().x-1;i++)
-            //FIXME (don't actually need this state, could just check if loc is valid!)
-            //FIXME we still produce holes (maybe cause of above?)
-            if (new_state(j,i) & STATE_LOC_VALID) {
+            if (new_state(j,i) & STATE_VALID) {
+            // if (data_new.has(&sm, {j,i})) {
                 cv::Vec2d l = data_new.loc(&sm ,{j,i});
                 int y = l[0];
                 int x = l[1];
@@ -4042,6 +4071,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                     surfs.insert(data.surfs({y,x+1}).begin(), data.surfs({y,x+1}).end());
                     surfs.insert(data.surfs({y+1,x}).begin(), data.surfs({y+1,x}).end());
                     surfs.insert(data.surfs({y+1,x+1}).begin(), data.surfs({y+1,x+1}).end());
+
                     for(auto &s : surfs) {
                         SurfacePointer *ptr = s->surf()->pointer();
                         float res = s->surf()->pointTo(ptr, points_out(j, i), 2.0, 4);
@@ -4051,6 +4081,29 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                                 data_out.loc(s, {j,i}) = {loc[1], loc[0]};
                             }
                     }
+                }
+            }
+
+    //now filter by consistency
+    for(int j=used_area.y;j<used_area.br().y-1;j++)
+        for(int i=used_area.x;i<used_area.br().x-1;i++)
+            if (state_out(j,i) & STATE_VALID) {
+                std::set<SurfaceMeta*> surf_src = data_out.surfs({j,i});
+                // for (auto s : surf_src) {
+                //     int count;
+                //     cv::Vec2f loc = data_out.loc(s, {j,i});
+                //     float cost = local_cost(s, {j,i}, data_out, state_out, points_out, step, {loc[1], loc[0], -1}, &count);
+                //     // std::cout << cost << " count " << count << std::endl;
+                //     if (cost >= local_cost_inl_th || count < 3) {
+                //         data_out.erase(s, {j,i});
+                //         data_out.eraseSurf(s, {j,i});
+                //     }
+                //     //disasble if less than 1 surfs?
+                // }
+                std::cout << "remain " << data_out.surfs({j,i}).size() << " of " << surf_src.size() << std::endl;
+                if (!data_out.surfs({j,i}).size()) {
+                    state_out(j,i) = 0;
+                    points_out(j, i) = {-1,-1,-1};
                 }
             }
 
@@ -4107,6 +4160,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     data = data_out;
 
     cv::imwrite("state_out.tif", state_out);
+    dbg_counter++;
 }
 
 QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMeta*> &surfs_v, float step)
@@ -4141,9 +4195,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //     cv::imwrite("counts.tif", counts);
 
     //FIXME shouldn change start of opt but does?! (32-good, 64 bad, 50 good?)
-    int stop_gen = 64;
+    int stop_gen = 32;
     int opt_map_every = 6;
-    float local_cost_inl_th = 0.1;
     int closing_r = 20;
     int w = stop_gen*2*1.1+5+2*closing_r;
     int h = stop_gen*2*1.1+5+2*closing_r;
