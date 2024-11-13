@@ -281,10 +281,44 @@ struct SurfaceLoss {
 // CeresGrid2DcvMat3f grid({points});
 // ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> interp(grid);
 
+
+int  val(const double &v) { return v; }
+template <typename JetT>
+int  val(const JetT &v) { return v.a; }
+
+
+template<typename T, typename E, int C>
+void interp_lin_2d(const cv::Mat_<cv::Vec<E,C>> &m, const T &y, const T &x, T *v) {
+    int yi = val(y);
+    int xi = val(x);
+
+    T fx = x - T(xi);
+    T fy = y - T(yi);
+
+    cv::Vec<E,C> c00 = m(yi,xi);
+    cv::Vec<E,C> c01 = m(yi,xi+1);
+    cv::Vec<E,C> c10 = m(yi+1,xi);
+    cv::Vec<E,C> c11 = m(yi+1,xi+1);
+
+    for (int i=0;i<C;i++) {
+        T c0 = (T(1)-fx)*T(c00[i]) + fx*T(c01[i]);
+        T c1 = (T(1)-fx)*T(c10[i]) + fx*T(c11[i]);
+        v[i] = (T(1)-fy)*c0 + fy*c1;
+    }
+}
+
+template<typename E1, typename E2, int C>
+cv::Vec<E2,C> interp_lin_2d(const cv::Mat_<cv::Vec<E2,C>> &m, const cv::Vec<E1,2> &l)
+{
+    cv::Vec<E1,C> v;
+    interp_lin_2d(m, l[0], l[1], &v[0]);
+    return v;
+}
+
 //cost functions for physical paper
 struct SurfaceLossD {
     //NOTE we expect loc to be [y, x]
-    SurfaceLossD(const cv::Mat_<cv::Vec3d> &m, float w) : _m(m), _grid({_m}), _interpolator(_grid), _w(w) {};
+    SurfaceLossD(const cv::Mat_<cv::Vec3d> &m, float w) : _m(m), _w(w) {};
     template <typename T>
     bool operator()(const T* const p, const T* const l, T* residual) const {
         T v[3];
@@ -296,7 +330,7 @@ struct SurfaceLossD {
             return true;
         }
 
-        _interpolator.Evaluate(l[0], l[1], v);
+        interp_lin_2d(_m, l[0], l[1], v);
 
         residual[0] = T(_w)*(v[0] - p[0]);
         residual[1] = T(_w)*(v[1] - p[1]);
@@ -306,13 +340,7 @@ struct SurfaceLossD {
     }
 
     const cv::Mat_<cv::Vec<double,3>> _m;
-    CeresGrid2DcvMat_<double,3> _grid;
-    const ceres::BiCubicInterpolator<CeresGrid2DcvMat_<double,3>> _interpolator;
     float _w;
-
-    int  val(const double &v) const { return v; }
-    template< typename JetT>
-    int  val(const JetT &v) const { return v.a; }
 
     static ceres::CostFunction* Create(const cv::Mat_<cv::Vec3d> &m, float w = 1.0)
     {
@@ -323,7 +351,7 @@ struct SurfaceLossD {
 
 //loss on tgt dist in 3d of lookup up 2d locations
 struct DistLossLoc3D {
-    DistLossLoc3D(const cv::Mat_<cv::Vec3d> &m, float dist, float w) : _d(dist), _m(m), _grid({_m}), _interpolator(_grid), _w(w) {};
+    DistLossLoc3D(const cv::Mat_<cv::Vec3d> &m, float dist, float w) : _m(m), _d(dist), _w(w) {};
     template <typename T>
     bool operator()(const T* const la, const T* const lb, T* residual) const {
 
@@ -334,8 +362,11 @@ struct DistLossLoc3D {
             return true;
         }
 
-        _interpolator.Evaluate(la[0], la[1], a);
-        _interpolator.Evaluate(lb[0], lb[1], a);
+        interp_lin_2d(_m, la[0], la[1], a);
+        interp_lin_2d(_m, lb[0], lb[1], b);
+
+        // _interpolator.Evaluate(la[0], la[1], a);
+        // _interpolator.Evaluate(lb[0], lb[1], a);
 
         T d[3];
         d[0] = a[0] - b[0];
@@ -352,15 +383,13 @@ struct DistLossLoc3D {
         return true;
     }
 
-    double _d;
     const cv::Mat_<cv::Vec<double,3>> _m;
-    CeresGrid2DcvMat_<double,3> _grid;
-    const ceres::BiCubicInterpolator<CeresGrid2DcvMat_<double,3>> _interpolator;
+    double _d;
     float _w;
 
     static ceres::CostFunction* Create(const cv::Mat_<cv::Vec3d> &m, float dist, float w = 1.0)
     {
-        return new ceres::AutoDiffCostFunction<DistLoss, 1, 2, 2>(new DistLoss(dist, w));
+        return new ceres::AutoDiffCostFunction<DistLossLoc3D, 1, 2, 2>(new DistLossLoc3D(m, dist, w));
     }
 };
 
