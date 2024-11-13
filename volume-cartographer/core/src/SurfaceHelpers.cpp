@@ -3930,8 +3930,8 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::SPARSE_SCHUR;
-    options.minimizer_progress_to_stdout = true;
-    options.max_num_iterations = 10000;
+    options.minimizer_progress_to_stdout = false;
+    options.max_num_iterations = 1000;
 
     ceres::Solver::Summary summary;
     //FIXME solver can run out of valid area!
@@ -4414,7 +4414,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
         //lets just see what happens
         if (generation && /*generation+1 != stop_gen &&*/ (generation % opt_map_every) == 0)
-            optimize_surface_mapping(data, state, points, used_area, step, src_step, {y0,x0}, closing_r, true);
+            optimize_surface_mapping(data, state, points, used_area, step, src_step, {y0,x0}, closing_r, false);
 
         //recalc fringe after surface optimization (which often shrinks the surf)
         fringe.resize(0);
