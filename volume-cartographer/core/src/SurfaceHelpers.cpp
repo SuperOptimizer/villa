@@ -3813,7 +3813,7 @@ int surftrack_add_global(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &da
     return count;
 }
 
-double local_cost(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, float step, cv::Vec3f loc, int *ref_count = nullptr)
+double local_cost_destructive(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, float step, cv::Vec3f loc, int *ref_count = nullptr)
 {
     assert(!data.has(sm, p));
     uint8_t state_old = state(p);
@@ -3825,7 +3825,6 @@ double local_cost(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv:
 
         data.loc(sm, p) = {loc[1], loc[0]};
 
-        state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
         count = surftrack_add_local(sm, p, data, problem_test, state, points, step);
         if (ref_count)
             *ref_count = count;
@@ -3839,6 +3838,28 @@ double local_cost(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv:
     } //destroy problme before data
     data.erase(sm, p);
     state(p) = state_old;
+
+    //FIXME normalize with number of res blocks!
+    if (!count)
+        //FIXME why is this useful?!
+        return 0;
+    else
+        return sqrt(test_loss/count);
+}
+
+
+double local_cost(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, float step, int *ref_count = nullptr)
+{
+    assert(!data.has(sm, p));
+    int count;
+    double test_loss = 0.0;
+        ceres::Problem problem_test;
+
+    count = surftrack_add_local(sm, p, data, problem_test, state, points, step);
+    if (ref_count)
+        *ref_count = count;
+
+    problem_test.Evaluate(ceres::Problem::EvaluateOptions(), &test_loss, nullptr, nullptr, nullptr);
 
     //FIXME normalize with number of res blocks!
     if (!count)
@@ -4091,18 +4112,16 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                 std::set<SurfaceMeta*> surf_src = data_out.surfs({j,i});
                 for (auto s : surf_src) {
                     int count;
-                    cv::Vec2f loc = data_out.loc(s, {j,i});
-                    //FIXME we break something just by calling local cost!
-                    float cost = loc[0]; // local_cost(s, {j,i}, data_out, state_out, points_out, step, {loc[1], loc[0], -1}, &count);
+                    float cost = local_cost(s, {j,i}, data_out, state_out, points_out, step, &count);
                     if (cost >= local_cost_inl_th) {
                         std::cout << cost << " count " << count << std::endl;
-                        // data_out.erase(s, {j,i});
-                        // data_out.eraseSurf(s, {j,i});
+                        data_out.erase(s, {j,i});
+                        data_out.eraseSurf(s, {j,i});
                     }
                     //disasble if less than 1 surfs?
                 }
-                std::cout << "remain " << data_out.surfs({j,i}).size() << " of " << surf_src.size() << std::endl;
-                if (!data_out.surfs({j,i}).size()) {
+                // std::cout << "remain " << data_out.surfs({j,i}).size() << " of " << surf_src.size() << std::endl;
+                if (data_out.surfs({j,i}).size() < 2) {
                     state_out(j,i) = 0;
                     points_out(j, i) = {-1,-1,-1};
                 }
@@ -4160,7 +4179,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     state = state_out;
     data = data_out;
 
-    cv::imwrite("state_out.tif", state_out);
+    cv::imwrite("state_out"+std::to_string(dbg_counter)+".tif", state_out);
     dbg_counter++;
 }
 
@@ -4377,7 +4396,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     //FIXME this does not check geometry, only if its also on the surfaces (which might be good enough...)
                     if (test_surf->surf()->pointTo(ptr, coord, 2.0, 4) <= 2.0) {
                         int count = 0;
-                        float cost = local_cost(test_surf, p, data, state, points, step, test_surf->surf()->loc_raw(ptr), &count);
+                        float cost = local_cost_destructive(test_surf, p, data, state, points, step, test_surf->surf()->loc_raw(ptr), &count);
                         if (cost < local_cost_inl_th) {
                             // inliers++;
                             inliers_sum += count;
@@ -4449,7 +4468,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     SurfacePointer *ptr = test_surf->surf()->pointer();
                     if (test_surf->surf()->pointTo(ptr, best_coord, 2.0, 4) <= 2.0) {
                         cv::Vec3f loc = test_surf->surf()->loc_raw(ptr);
-                        if (local_cost(test_surf, p, data, state, points, step, loc) < local_cost_inl_th)
+                        if (local_cost_destructive(test_surf, p, data, state, points, step, loc) < local_cost_inl_th)
                             data.surfs(p).insert(test_surf);
                             data.loc(test_surf, p) = {loc[1], loc[0]};
                             surftrack_add_local(test_surf, p, data, problem, state, points, step, SURF_LOSS);
@@ -4487,7 +4506,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 //             continue;
                 //             // throw std::runtime_error("WTF");
                 //         }
-                //         if (local_cost(test_surf, p, data, state, step, loc) < 1e-2) {
+                //         if (local_cost_destructive(test_surf, p, data, state, step, loc) < 1e-2) {
                 //             // std::cout << res << " " << best_coord << loc << std::endl;
                 //             data.loc(test_surf, p) = {loc[1], loc[0]};
                 //             data.surfs(p).insert(test_surf);
@@ -4510,7 +4529,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                             // std::cout << "WTF3" << std::endl;
                             continue;
                         }
-                        if (local_cost(test_surf, p, data, state, points, step, loc) < local_cost_inl_th) {
+                        if (local_cost_destructive(test_surf, p, data, state, points, step, loc) < local_cost_inl_th) {
                             data.loc(test_surf, p) = {loc[1], loc[0]};
                             data.surfs(p).insert(test_surf);
                         }
