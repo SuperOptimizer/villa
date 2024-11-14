@@ -4111,6 +4111,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     QuadSurface *dbg_surf = new QuadSurface(points_hr, {1/step_src,1/step_src});
     std::string uuid = "z_dbg_gen_"+strint((dbg_counter+1)*6, 3)+"_inp_hr";
     dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+    delete dbg_surf;
 
     //FIXME write out sm locs to see that part of the optimization!
 
@@ -4305,6 +4306,9 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 
     cv::imwrite("state_out"+std::to_string(dbg_counter)+".tif", state_out);
     dbg_counter++;
+
+    delete sm_inp._surf;
+    delete sm._surf;
 }
 
 QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMeta*> &surfs_v, float step)
@@ -4339,7 +4343,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //     cv::imwrite("counts.tif", counts);
 
     //FIXME shouldn change start of opt but does?! (32-good, 64 bad, 50 good?)
-    int stop_gen = 64;
+    int stop_gen = 128;
     int opt_map_every = 6;
     int closing_r = 20;
     int w = stop_gen*2*1.1+5+2*closing_r;
@@ -4354,7 +4358,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     std::vector<cv::Vec2i> neighs = {{1,0},{0,1},{-1,0},{0,-1}};
 
     std::unordered_set<cv::Vec2i,vec2i_hash> fringe;
-    std::unordered_set<cv::Vec2i,vec2i_hash> cands;
 
     // std::unordered_map<std::tuple<SurfaceMeta,cv::Vec2f>>
 
@@ -4422,6 +4425,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     int loc_valid_count = 0;
     int succ = 0;
     for(int generation=0;generation<stop_gen;generation++) {
+        std::unordered_set<cv::Vec2i,vec2i_hash> cands;
         for(auto p : fringe)
         {
             if ((state(p) & STATE_LOC_VALID) == 0)
@@ -4728,6 +4732,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         QuadSurface *dbg_surf = new QuadSurface(points_hr, {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(generation, 3);
         dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        delete dbg_surf;
 
         //lets just see what happens
         if (generation && /*generation+1 != stop_gen &&*/ (generation % opt_map_every) == 0) {
@@ -4746,12 +4751,14 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             QuadSurface *dbg_surf = new QuadSurface(points, {1/src_step/step,1/src_step/step});
             std::string uuid = "z_dbg_gen_"+strint(generation, 3)+"_opt_lr";
             dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+            delete dbg_surf;
             }
             {
                 cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, src_step);
                 QuadSurface *dbg_surf = new QuadSurface(points_hr, {1/src_step,1/src_step});
                 std::string uuid = "z_dbg_gen_"+strint(generation, 3)+"_opt_hr";
                 dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+                delete dbg_surf;
             }
 
         }
