@@ -4175,8 +4175,10 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                     // if (src_loc_valid_count < 3)
                         // continue;
 
+                    mutex.lock();
                     points_out(j, i) = interp_lin_2d(points_hr, l);
                     state_out(j, i) = STATE_LOC_VALID | STATE_COORD_VALID;
+                    mutex.unlock();
 
                     //FIXME jep - this is probably the issue (?)
                     // std::cout << cv::norm(points_out(j, i)-points_new(j,i)) << std::endl;
@@ -4367,7 +4369,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //     cv::imwrite("counts.tif", counts);
 
     //FIXME shouldn change start of opt but does?! (32-good, 64 bad, 50 good?)
-    int stop_gen = 32;
+    int stop_gen = 128;
     int opt_map_every = 6;
     int closing_r = 20;
     int w = stop_gen*2*1.1+5+2*closing_r;
