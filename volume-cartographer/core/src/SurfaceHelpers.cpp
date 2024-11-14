@@ -4171,8 +4171,8 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                             data_out.loc(s, {j,i}) = {loc[1], loc[0]};
                         }
                     }
-                    std::cout << cv::Vec2i(j,i) << " surfs " <<
-                    data_out.surfs({j,i}).size() << " in " << data.surfs({j,i}).size() << std::endl;
+                    // std::cout << cv::Vec2i(j,i) << " surfs " <<
+                    // data_out.surfs({j,i}).size() << " in " << data.surfs({j,i}).size() << std::endl;
                 }
             }
 
@@ -4190,7 +4190,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                     int count;
                     float cost = local_cost(s, {j,i}, data_out, state_out, points_out, step, &count);
                     if (cost >= local_cost_inl_th || count < 2) {
-                        std::cout << cost << " count " << count << std::endl;
+                        // std::cout << cost << " count " << count << std::endl;
                         data_out.erase(s, {j,i});
                         data_out.eraseSurf(s, {j,i});
                     }
@@ -4239,7 +4239,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     for(int j=used_area.y;j<used_area.br().y-1;j++)
         for(int i=used_area.x;i<used_area.br().x-1;i++)
             if (state_out(j,i) & STATE_LOC_VALID) {
-                std::cout << cv::Vec2i(j,i) << " surfs " << data_out.surfs({j,i}).size() << std::endl;
+                // std::cout << cv::Vec2i(j,i) << " surfs " << data_out.surfs({j,i}).size() << std::endl;
                 if (data_out.surfs({j,i}).size() < 2 && support_count(j,i) < 4) {
                     state_out(j,i) = 0;
                     points_out(j, i) = {-1,-1,-1};
@@ -4339,7 +4339,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //     cv::imwrite("counts.tif", counts);
 
     //FIXME shouldn change start of opt but does?! (32-good, 64 bad, 50 good?)
-    int stop_gen = 32;
+    int stop_gen = 64;
     int opt_map_every = 6;
     int closing_r = 20;
     int w = stop_gen*2*1.1+5+2*closing_r;
@@ -4419,6 +4419,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 200;
 
+    int loc_valid_count = 0;
     int succ = 0;
     for(int generation=0;generation<stop_gen;generation++) {
         for(auto p : fringe)
@@ -4729,10 +4730,18 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
         }
 
-        printf("gen %d processing %d fringe cands (total done %d fringe: %d)\n", generation, cands.size(), succ, fringe.size());
+        loc_valid_count = 0;
+        for(int j=used_area.y;j<used_area.br().y-1;j++)
+            for(int i=used_area.x;i<used_area.br().x-1;i++)
+                if (state(j,i) & STATE_LOC_VALID)
+                    loc_valid_count++;
+
+        printf("gen %d processing %d fringe cands (total done %d fringe: %d) area %f mm^2\n", generation, cands.size(), succ, fringe.size(),loc_valid_count*0.008*0.008*src_step*src_step*step*step);
         if (!fringe.size())
             break;
+
     }
+    std::cout << "area est: " << loc_valid_count*0.008*0.008*src_step*src_step*step*step << "mm^2" << std::endl;
 
     // cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, src_step);
 
@@ -4759,8 +4768,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     // QuadSurface *surf = new QuadSurface(points, {1/src_step,1/src_step});
 
     // QuadSurface *surf = new QuadSurface(points(used_area), {1/src_step/step,1/src_step/step});
-
-    int loc_valid_count = 0;
 
     // upsampling surface from segments
     // // cv::Mat_<cv::Vec3f> points_hr(points.rows*step, points.cols*step, {0,0,0});
@@ -4831,10 +4838,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     // // // points = points(used_area);
     // // // state = state(used_area);
 
-
     cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, src_step);
-
-    std::cout << "area est: " << loc_valid_count*0.008*0.008*src_step*src_step*step*step << "mm^2" << std::endl;
 
     // std::cout << points.size() << std::endl;
 
