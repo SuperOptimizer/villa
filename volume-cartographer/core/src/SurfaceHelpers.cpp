@@ -4189,7 +4189,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                 for (auto s : surf_src) {
                     int count;
                     float cost = local_cost(s, {j,i}, data_out, state_out, points_out, step, &count);
-                    if (cost >= local_cost_inl_th) {
+                    if (cost >= local_cost_inl_th || count < 2) {
                         std::cout << cost << " count " << count << std::endl;
                         data_out.erase(s, {j,i});
                         data_out.eraseSurf(s, {j,i});
@@ -4226,7 +4226,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                         cv::Vec3f loc_3d = test_surf->surf()->loc_raw(ptr);
                         float cost = local_cost_destructive(test_surf, {j,i}, data_out, state_out, points_out, step, loc_3d, &count);
 
-                        if (cost > local_cost_inl_th || count < 1)
+                        if (cost > local_cost_inl_th || count < 2)
                             continue;
 
                         data.surfs({j,i}).insert(test_surf);
@@ -4523,7 +4523,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     if (test_surf->surf()->pointTo(ptr, coord, 2.0, 4) <= 2.0) {
                         int count = 0;
                         float cost = local_cost_destructive(test_surf, p, data, state, points, step, test_surf->surf()->loc_raw(ptr), &count);
-                        if (cost < local_cost_inl_th) {
+                        if (cost < local_cost_inl_th && count >= 2) {
                             // inliers++;
                             inliers_sum += count;
                         }
