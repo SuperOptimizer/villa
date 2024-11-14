@@ -4472,7 +4472,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
 
         //do it two times
-        /*for (int n=0;n<2;n++)*/ {
+        for (int n=0;n<2;n++) {
             OmpThreadPointCol threadcol(5, cands);
 
             std::shared_mutex mutex;
@@ -4693,7 +4693,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         }
 
         //FIXME stupid hack for some bad growth ... should find something more generic and find out why its diverging!
-        if (generation > 10 && (generation % 2) == 0)
+        if (generation > 10 /*&& (generation % 2) == 0*/)
         {
             cv::Mat_<uint8_t> masked;
             bitwise_and(state, (uint8_t)STATE_LOC_VALID, masked);
