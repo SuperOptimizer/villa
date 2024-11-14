@@ -4109,20 +4109,20 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
         problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed+cv::Vec2i(1,1))[0]);
 
     //keep inner values fixed
-    cv::Mat_<uint8_t> masked;
-    bitwise_and(state, STATE_LOC_VALID, masked);
-    cv::erode(masked, masked, m, {-1,-1}, 10);
+    // cv::Mat_<uint8_t> masked;
+    // bitwise_and(state, STATE_LOC_VALID, masked);
+    // cv::erode(masked, masked, m, {-1,-1}, 10);
+    //
+    // for(int j=used_area.y;j<used_area.br().y;j++)
+    //     for(int i=used_area.x;i<used_area.br().x;i++)
+    //         if (masked(j,i)) {
+    //             if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed)[0]))
+    //                 problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed)[0]);
+    //             if (problem.HasParameterBlock(&points_new(j,i)[0]))
+    //                 problem.SetParameterBlockConstant(&points_new(j,i)[0]);
+    //         }
 
-    for(int j=used_area.y;j<used_area.br().y;j++)
-        for(int i=used_area.x;i<used_area.br().x;i++)
-            if (masked(j,i)) {
-                if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed)[0]))
-                    problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed)[0]);
-                if (problem.HasParameterBlock(&points_new(j,i)[0]))
-                    problem.SetParameterBlockConstant(&points_new(j,i)[0]);
-            }
-
-    options.max_num_iterations = 100;
+    // options.max_num_iterations = 100;
     ceres::Solve(options, &problem, &summary);
     std::cout << summary.FullReport() << std::endl;
     std::cout << "rms " << sqrt(summary.final_cost/summary.num_residual_blocks) << " count " << summary.num_residual_blocks << std::endl;
