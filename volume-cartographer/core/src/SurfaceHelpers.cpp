@@ -3896,14 +3896,15 @@ double local_solve(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv
 
 cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, cv::Rect &used_area, float step, float step_src)
 {
+
     cv::Mat_<cv::Vec3f> points_hr(state.rows*step, state.cols*step, {0,0,0});
     cv::Mat_<int> counts_hr(state.rows*step, state.cols*step, 0);
     for(int j=used_area.y;j<used_area.br().y-1;j++)
         for(int i=used_area.x;i<used_area.br().x-1;i++) {
-            if (state(j,i) & STATE_LOC_VALID
-                && state(j,i+1) & STATE_LOC_VALID
-                && state(j+1,i) & STATE_LOC_VALID
-                && state(j+1,i+1) & STATE_LOC_VALID)
+            if (state(j,i) & (STATE_LOC_VALID|STATE_COORD_VALID)
+                && state(j,i+1) & (STATE_LOC_VALID|STATE_COORD_VALID)
+                && state(j+1,i) & (STATE_LOC_VALID|STATE_COORD_VALID)
+                && state(j+1,i+1) & (STATE_LOC_VALID|STATE_COORD_VALID))
             {
             for(auto &sm : data.surfs({j,i})) {
                 if (data.valid_int(sm,{j,i})
@@ -3929,6 +3930,19 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8
                 }
             }
             if (!counts_hr(j*step+1,i*step+1)) {
+                int src_loc_valid_count = 0;
+                if (state(j,i) & STATE_LOC_VALID)
+                    src_loc_valid_count++;
+                if (state(j,i+1) & STATE_LOC_VALID)
+                    src_loc_valid_count++;
+                if (state(j+1,i) & STATE_LOC_VALID)
+                    src_loc_valid_count++;
+                if (state(j+1,i+1) & STATE_LOC_VALID)
+                    src_loc_valid_count++;
+
+                if (src_loc_valid_count >= 2)
+                    continue;
+
                 cv::Vec3d c00 = points(j,i);
                 cv::Vec3d c01 = points(j,i+1);
                 cv::Vec3d c10 = points(j+1,i);
@@ -4032,6 +4046,9 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     ceres::Solve(options, &problem, &summary);
     std::cout << summary.BriefReport() << std::endl;
 
+    cv::Mat_<cv::Vec3d> points_inpainted = points_new.clone();
+    cv::Mat_<uint8_t> state_inpainted = new_state.clone();
+
 
     for(int j=used_area.y;j<used_area.br().y;j++)
         for(int i=used_area.x;i<used_area.br().x;i++)
@@ -4066,7 +4083,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     std::cout << "rms " << sqrt(summary.final_cost/summary.num_residual_blocks) << " count " << summary.num_residual_blocks << std::endl;
 
     //interpolate from the original set
-    cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, step_src);
+    cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state_inpainted, points_inpainted, used_area, step, step_src);
 
     cv::imwrite("points_lr"+std::to_string(dbg_counter)+".tif", points);
     cv::imwrite("points_hr"+std::to_string(dbg_counter)+".tif", points_hr);
@@ -4423,7 +4440,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     //
                     //         std::cout << "surf test loss" << test_loss <<  " blocks " << summary.num_residual_blocks << std::endl;
                     //
-                    //         if (test_loss < 0.1)
+                    //         ifê (test_loss < 0.1)
                     //             inliers++;
                     //     } //destroy problme before data
                     //     data.erase(test_surf, p);
@@ -4445,6 +4462,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 }
                 // std::cout << "inliers " << inliers << "/" << local_surfs.size() << std::endl;
             }
+
+            cv::imwrite("points"+std::to_string(generation)+".tif", points);
+
             //FIXME if fail reset data.loc(ref_surf,p)
             // std::cout << "done " << best_inliers <<  best_coord << std::endl;
 
