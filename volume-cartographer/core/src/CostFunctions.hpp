@@ -128,7 +128,7 @@ struct DistLoss2D {
         T dist = sqrt(d[0]*d[0] + d[1]*d[1]);
 
         if (dist <= 0) {
-            residual[0] = T(_w)*(dist - T(1));
+            residual[0] = T(_w)*(d[0]*d[0] + d[1]*d[1] - T(1));
             std::cout << "uhohh" << std::endl;
         }
         else {
