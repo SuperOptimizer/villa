@@ -3930,7 +3930,7 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8
                 }
             }
             if (!counts_hr(j*step+1,i*step+1)) {
-                int src_loc_valid_count = 0;
+                /*int src_loc_valid_count = 0;
                 if (state(j,i) & STATE_LOC_VALID)
                     src_loc_valid_count++;
                 if (state(j,i+1) & STATE_LOC_VALID)
@@ -3941,7 +3941,7 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8
                     src_loc_valid_count++;
 
                 if (src_loc_valid_count >= 2)
-                    continue;
+                    continue;*/
 
                 cv::Vec3d c00 = points(j,i);
                 cv::Vec3d c01 = points(j,i+1);
@@ -4088,6 +4088,8 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     cv::imwrite("points_lr"+std::to_string(dbg_counter)+".tif", points);
     cv::imwrite("points_hr"+std::to_string(dbg_counter)+".tif", points_hr);
 
+    //FIXME checker for new states -> if loc moved into four corners with four LOC_VALID corners then output loc should be valid! -> TODO for this also keep some inpatin border surrounding the whole problem!
+
     //FIXME we still produce holes
     SurfTrackerData data_out;
     cv::Mat_<cv::Vec3d> points_out(points.size(), {-1,-1,-1});
@@ -4135,9 +4137,51 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                         data_out.erase(s, {j,i});
                         data_out.eraseSurf(s, {j,i});
                     }
-                    //disasble if less than 1 surfs?
+                    //disable if less than 1 surfs?
                 }
                 // std::cout << "remain " << data_out.surfs({j,i}).size() << " of " << surf_src.size() << std::endl;
+                // if (data_out.surfs({j,i}).size() < 2) {
+                //     state_out(j,i) = 0;
+                //     points_out(j, i) = {-1,-1,-1};
+                // }
+            }
+
+    //add more consistent surfs
+    //FIXME do this "growing somehow adaptively?"
+    for(int r=0;r<10;r++)
+        for(int j=used_area.y;j<used_area.br().y-1;j++)
+            for(int i=used_area.x;i<used_area.br().x-1;i++)
+                if (state_out(j,i) & STATE_LOC_VALID) {
+                    std::set<SurfaceMeta*> surf_cands;
+                    for(int y=j-1;y<=j+1;y++)
+                        for(int x=i-1;x<=i+1;x++)
+                            surf_cands.insert(data_out.surfs({y,x}).begin(), data_out.surfs({y,x}).end());
+
+                    for(auto test_surf : surf_cands) {
+                        if (data_out.has(test_surf, {j,i}))
+                            continue;
+
+                        SurfacePointer *ptr = test_surf->surf()->pointer();
+                        if (test_surf->surf()->pointTo(ptr, points_out(j, i), 2.0, 4) > 2.0)
+                            continue;
+
+                        int count = 0;
+                        cv::Vec3f loc_3d = test_surf->surf()->loc_raw(ptr);
+                        float cost = local_cost_destructive(test_surf, {j,i}, data_out, state_out, points_out, step, loc_3d, &count);
+
+                        if (cost > local_cost_inl_th || count < 1)
+                            continue;
+
+                        data.surfs({j,i}).insert(test_surf);
+                        data.loc(test_surf, {j,i}) = {loc_3d[1], loc_3d[0]};
+                    }
+                }
+
+
+    //reset unsupported points
+    for(int j=used_area.y;j<used_area.br().y-1;j++)
+        for(int i=used_area.x;i<used_area.br().x-1;i++)
+            if (state_out(j,i) & STATE_VALID) {
                 if (data_out.surfs({j,i}).size() < 2) {
                     state_out(j,i) = 0;
                     points_out(j, i) = {-1,-1,-1};
