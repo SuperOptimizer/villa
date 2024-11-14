@@ -3991,6 +3991,8 @@ std::string strint(int n, int width)
 
 int static dbg_counter = 0;
 float local_cost_inl_th = 0.1;
+int opt_map_every = 6;
+
 
 //try flattening the current surface mapping assuming direct 3d distances
 //TODO use accurate distance metrics by building local surfaces?
@@ -4131,7 +4133,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, new_state, points_inpainted, used_area, step, step_src);
 
     QuadSurface *dbg_surf = new QuadSurface(points_hr, {1/step_src,1/step_src});
-    std::string uuid = "z_dbg_gen_"+strint((dbg_counter+1)*6, 3)+"_inp_hr";
+    std::string uuid = "z_dbg_gen_"+strint((dbg_counter+1)*opt_map_every, 3)+"_inp_hr";
     dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
     delete dbg_surf;
 
@@ -4369,8 +4371,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //     cv::imwrite("counts.tif", counts);
 
     //FIXME shouldn change start of opt but does?! (32-good, 64 bad, 50 good?)
-    int stop_gen = 128;
-    int opt_map_every = 6;
+    int stop_gen = 64;
     int closing_r = 20;
     int w = stop_gen*2*1.1+5+2*closing_r;
     int h = stop_gen*2*1.1+5+2*closing_r;
