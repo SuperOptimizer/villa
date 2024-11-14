@@ -4726,6 +4726,13 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
         delete dbg_surf;
 
+        fringe.clear();
+        for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
+            for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
+                //FIXME WTF why isn't this working?!'
+                if (state(j,i) & STATE_LOC_VALID)
+                    fringe.insert(cv::Vec2i(j,i));
+
         //lets just see what happens
         if (generation && /*generation+1 != stop_gen &&*/ (generation % opt_map_every) == 0) {
             optimize_surface_mapping(data, state, points, used_area, step, src_step, {y0,x0}, closing_r, true   );
