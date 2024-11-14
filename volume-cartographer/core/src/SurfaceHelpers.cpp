@@ -4698,6 +4698,32 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
         }
 
+        //FIXME stupid hack for some bad growth ... should find something more generic and find out why its diverging!
+        if (generation > 10 && (generation % 2) == 0)
+        {
+            cv::Mat_<uint8_t> masked;
+            bitwise_and(state, (uint8_t)STATE_LOC_VALID, masked);
+
+            cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
+
+            cv::erode(masked, masked, m, {-1,-1}, 1);
+            cv::dilate(masked, masked, m, {-1,-1}, 1);
+
+            for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
+                for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
+                    //FIXME WTF why isn't this working?!'
+                    if (state(j,i) & STATE_LOC_VALID && ((masked(j,i) & STATE_LOC_VALID) == 0)) {
+                        state(j, i) = 0;
+                        for(auto &s : data.surfs({j,i})) {
+                            data.erase(s, {j,i});
+                            data.eraseSurf(s, {j,i});
+                            points(j,i) = {-1,-1,-1};
+                        }
+                    }
+        }
+
+        cv::imwrite("state"+std::to_string(generation)+".tif", state);
+
         cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, src_step);
         QuadSurface *dbg_surf = new QuadSurface(points_hr, {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(generation, 3);
