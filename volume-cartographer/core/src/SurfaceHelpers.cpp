@@ -3905,6 +3905,7 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8
 {
     cv::Mat_<cv::Vec3f> points_hr(state.rows*step, state.cols*step, {0,0,0});
     cv::Mat_<int> counts_hr(state.rows*step, state.cols*step, 0);
+#pragma omp parallel for
     for(int j=used_area.y;j<used_area.br().y-1;j++)
         for(int i=used_area.x;i<used_area.br().x-1;i++) {
             if (state(j,i) & (STATE_LOC_VALID|STATE_COORD_VALID)
@@ -3969,6 +3970,7 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8
             }
         }
     }
+#pragma omp parallel for
     for(int j=0;j<points_hr.rows;j++)
         for(int i=0;i<points_hr.cols;i++)
             if (counts_hr(j,i))
@@ -4001,6 +4003,8 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     cv::Mat_<cv::Vec3d> points_new = points.clone();
     SurfaceMeta sm;
     sm._surf = new QuadSurface(points, {1,1});
+
+    std::shared_mutex mutex;
 
     SurfTrackerData data_new;
     data_new._data = data._data;
@@ -4046,10 +4050,6 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                     //TODO add local area solve
                     double err = local_solve(&sm, {j,i}, data_new, new_state, points_new, step*step_src, LOSS_3D_INDIRECT | SURF_LOSS);
                     res_count += surftrack_add_global(&sm, {j,i}, data_new, problem_inpaint, new_state, points_new, step*step_src, LOSS_3D_INDIRECT | OPTIMIZE_ALL);
-                    // if (err > 0.1) {
-                    //     new_state(j, i) = 0;
-                    //     points_new(j,i) = {-1,-1,-1};
-                    // }
                 }
     }
 
@@ -4122,11 +4122,9 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                     problem.SetParameterBlockConstant(&points_new(j,i)[0]);
             }
 
-
-
-    //FIXME solver can run out of valid area!
+    options.max_num_iterations = 100;
     ceres::Solve(options, &problem, &summary);
-    std::cout << summary.BriefReport() << std::endl;
+    std::cout << summary.FullReport() << std::endl;
     std::cout << "rms " << sqrt(summary.final_cost/summary.num_residual_blocks) << " count " << summary.num_residual_blocks << std::endl;
 
     //interpolate from the original set
@@ -4150,15 +4148,18 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     cv::Mat_<cv::Vec3d> points_out(points.size(), {-1,-1,-1});
     cv::Mat_<uint8_t> state_out(state.size(), 0);
     cv::Mat_<uint8_t> support_count(state.size(), 0);
+#pragma omp parallel for
     for(int j=used_area.y;j<used_area.br().y;j++)
         for(int i=used_area.x;i<used_area.br().x;i++)
             if (new_state(j,i) & STATE_VALID) {
             // if (data_new.has(&sm, {j,i})) {
+                mutex.lock_shared();
                 cv::Vec2d l = data_inp.loc(&sm_inp ,{j,i});
                 int y = l[0];
                 int x = l[1];
                 l *= step;
                 if (loc_valid(points_hr, l)) {
+                    mutex.unlock();
                     int src_loc_valid_count = 0;
                     if (state(y,x) & STATE_LOC_VALID)
                         src_loc_valid_count++;
@@ -4180,25 +4181,31 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                     //FIXME jep - this is probably the issue (?)
                     // std::cout << cv::norm(points_out(j, i)-points_new(j,i)) << std::endl;
 
+                    mutex.lock_shared();
                     std::set<SurfaceMeta*> surfs;
                     surfs.insert(data.surfs({y,x}).begin(), data.surfs({y,x}).end());
                     surfs.insert(data.surfs({y,x+1}).begin(), data.surfs({y,x+1}).end());
                     surfs.insert(data.surfs({y+1,x}).begin(), data.surfs({y+1,x}).end());
                     surfs.insert(data.surfs({y+1,x+1}).begin(), data.surfs({y+1,x+1}).end());
+                    mutex.unlock();
 
                     for(auto &s : surfs) {
                         SurfacePointer *ptr = s->surf()->pointer();
                         float res = s->surf()->pointTo(ptr, points_out(j, i), 2.0, 4);
                         // std::cout << cv::Vec2i(j,i) << " res " << res << std::endl;
                         if (res <= 2.0) {
+                            mutex.lock();
                             data_out.surfs({j,i}).insert(s);
                             cv::Vec3f loc = s->surf()->loc_raw(ptr);
                             data_out.loc(s, {j,i}) = {loc[1], loc[0]};
+                            mutex.unlock();
                         }
                     }
                     // std::cout << cv::Vec2i(j,i) << " surfs " <<
                     // data_out.surfs({j,i}).size() << " in " << data.surfs({j,i}).size() << std::endl;
                 }
+                else
+                    mutex.unlock();
             }
 
     // points = points_out;
@@ -4215,17 +4222,10 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                     int count;
                     float cost = local_cost(s, {j,i}, data_out, state_out, points_out, step, &count);
                     if (cost >= local_cost_inl_th || count < 2) {
-                        // std::cout << cost << " count " << count << std::endl;
                         data_out.erase(s, {j,i});
                         data_out.eraseSurf(s, {j,i});
                     }
-                    //disable if less than 1 surfs?
                 }
-                // std::cout << "remain " << data_out.surfs({j,i}).size() << " of " << surf_src.size() << std::endl;
-                // if (data_out.surfs({j,i}).size() < 2) {
-                //     state_out(j,i) = 0;
-                //     points_out(j, i) = {-1,-1,-1};
-                // }
             }
 
     //add more consistent surfs
