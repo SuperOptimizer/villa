@@ -237,6 +237,11 @@ struct StraightLoss2D {
         T l1 = sqrt(d1[0]*d1[0] + d1[1]*d1[1]);
         T l2 = sqrt(d2[0]*d2[0] + d2[1]*d2[1]);
 
+        if (l1 <= 0 || l2 <= 0) {
+            residual[0] = T(_w)*((d1[0]*d1[0] + d1[1]*d1[1])*(d2[0]*d2[0] + d2[1]*d2[1]) - T(1));
+            std::cout << "uhohh2" << std::endl;
+        }
+
         T dot = (d1[0]*d2[0] + d1[1]*d2[1])/(l1*l2);
 
         residual[0] = T(_w)*(T(1)-dot);
