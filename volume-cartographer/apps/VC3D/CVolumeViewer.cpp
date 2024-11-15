@@ -184,7 +184,7 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
         QPointF center = visible_center(fGraphicsView) * zoom;
         
         //FIXME get correct size for slice!
-        int max_size = std::max(volume->sliceWidth(), std::max(volume->numSlices(), volume->sliceHeight()))*_ds_scale + 512;
+        int max_size = 100000 ;//std::max(volume->sliceWidth(), std::max(volume->numSlices(), volume->sliceHeight()))*_ds_scale + 512;
         fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
         
         fGraphicsView->centerOn(center);
@@ -201,8 +201,8 @@ void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
     volume = volume_;
     
     // printf("sizes %d %d %d\n", volume_->sliceWidth(), volume_->sliceHeight(), volume_->numSlices());
-    
-    int max_size = std::max(volume_->sliceWidth(), std::max(volume_->numSlices(), volume_->sliceHeight()))*_ds_scale + 512;
+
+    int max_size = 100000 ;//std::max(volume_->sliceWidth(), std::max(volume_->numSlices(), volume_->sliceHeight()))*_ds_scale + 512;
     // printf("max size %d\n", max_size);
     fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
     
@@ -619,7 +619,7 @@ void CVolumeViewer::renderIntersections()
 
             if (key == "segmentation") {
                 col = Qt::yellow;
-                width = 4/_scene_scale;
+                // width = 4/_scene_scale;
                 z_value = 20;
             }
 
