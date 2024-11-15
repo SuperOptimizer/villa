@@ -122,10 +122,10 @@ public:
     friend QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search, int step_out);
     friend QuadSurface *smooth_vc_segmentation(QuadSurface *src);
     friend class ControlPointSurface;
+    cv::Vec2f _scale;
 protected:
     cv::Mat_<cv::Vec3f> _points;
     cv::Rect _bounds;
-    cv::Vec2f _scale;
     cv::Vec3f _center;
     Rect3D _bbox = {{-1,-1,-1},{-1,-1,-1}};
 };

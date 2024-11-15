@@ -324,12 +324,12 @@ cv::Vec<E2,C> interp_lin_2d(const cv::Mat_<cv::Vec<E2,C>> &m, const cv::Vec<E1,2
 //cost functions for physical paper
 struct SurfaceLossD {
     //NOTE we expect loc to be [y, x]
-    SurfaceLossD(const cv::Mat_<cv::Vec3d> &m, float w) : _m(m), _w(w) {};
+    SurfaceLossD(const cv::Mat_<cv::Vec3f> &m, float w) : _m(m), _w(w) {};
     template <typename T>
     bool operator()(const T* const p, const T* const l, T* residual) const {
         T v[3];
 
-        if (!loc_valid<double,3>(_m, {val(l[0]), val(l[1])})) {
+        if (!loc_valid(_m, {val(l[0]), val(l[1])})) {
             residual[0] = T(0);
             residual[1] = T(0);
             residual[2] = T(0);
@@ -345,25 +345,53 @@ struct SurfaceLossD {
         return true;
     }
 
-    const cv::Mat_<cv::Vec<double,3>> _m;
+    const cv::Mat_<cv::Vec3f> _m;
     float _w;
 
-    static ceres::CostFunction* Create(const cv::Mat_<cv::Vec3d> &m, float w = 1.0)
+    static ceres::CostFunction* Create(const cv::Mat_<cv::Vec3f> &m, float w = 1.0)
     {
         return new ceres::AutoDiffCostFunction<SurfaceLossD, 3, 3, 2>(new SurfaceLossD(m, w));
     }
 
 };
 
+struct LinChkDistLoss {
+    LinChkDistLoss(const cv::Vec2d &p, float w) : _p(p), _w(w) {};
+    template <typename T>
+    bool operator()(const T* const p, T* residual) const {
+        T a = abs(p[0]-T(_p[0]));
+        T b = abs(p[1]-T(_p[1]));
+        if (a > 0)
+            residual[0] = sqrt(a);
+        else
+            residual[0] = T(0);
+        if (b > 0)
+            residual[1] = sqrt(b);
+        else
+            residual[1] = T(0);
+
+        return true;
+    }
+
+    cv::Vec2d _p;
+    float _w;
+
+    static ceres::CostFunction* Create(const cv::Vec2d &p, float w = 1.0)
+    {
+        return new ceres::AutoDiffCostFunction<LinChkDistLoss, 2, 2>(new LinChkDistLoss(p, w));
+    }
+
+};
+
 //loss on tgt dist in 3d of lookup up 2d locations
 struct DistLossLoc3D {
-    DistLossLoc3D(const cv::Mat_<cv::Vec3d> &m, float dist, float w) : _m(m), _d(dist), _w(w) {};
+    DistLossLoc3D(const cv::Mat_<cv::Vec3f> &m, float dist, float w) : _m(m), _d(dist), _w(w) {};
     template <typename T>
     bool operator()(const T* const la, const T* const lb, T* residual) const {
 
         T a[3], b[3];
 
-        if (!loc_valid<double,3>(_m, {val(la[0]), val(la[1])}) || !loc_valid<double,3>(_m, {val(lb[0]), val(lb[1])})) {
+        if (!loc_valid(_m, {val(la[0]), val(la[1])}) || !loc_valid(_m, {val(lb[0]), val(lb[1])})) {
             // std::cout << "no dist loss here " << cv::Vec2d(val(la[0]), val(la[1])) <<  cv::Vec2d(val(lb[0]), val(lb[1])) << _m.size << std::endl;
             residual[0] = T(0);
             return true;

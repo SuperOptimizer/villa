@@ -3991,7 +3991,7 @@ std::string strint(int n, int width)
 
 int static dbg_counter = 0;
 float local_cost_inl_th = 0.1;
-int opt_map_every = 6;
+int opt_map_every = 8;
 
 
 //try flattening the current surface mapping assuming direct 3d distances
@@ -4042,7 +4042,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
         bitwise_and(state, STATE_VALID, masked);
         cv::dilate(masked, masked, m, {-1,-1}, r);
         cv::erode(masked, masked, m, {-1,-1}, std::min(r,closing_r));
-        cv::imwrite("masked.tif", masked);
+        // cv::imwrite("masked.tif", masked);
 
         for(int j=used_area.y;j<used_area.br().y;j++)
             for(int i=used_area.x;i<used_area.br().x;i++)
@@ -4088,36 +4088,59 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     //             if (problem.HasParameterBlock(&points_new(j,i)[0]))
     //                 problem.SetParameterBlockVariable(&points_new(j,i)[0]);
 
-    cv::imwrite("state_old"+std::to_string(dbg_counter)+".tif", state);
-    cv::imwrite("state_new"+std::to_string(dbg_counter)+".tif", new_state);
+    // cv::imwrite("state_old"+std::to_string(dbg_counter)+".tif", state);
+    // cv::imwrite("state_new"+std::to_string(dbg_counter)+".tif", new_state);
 
     std::cout << "using " << used_area.tl() << used_area.br() << std::endl;
 
+    // cv::Mat_<uint16_t> lbls;
+    // // cv::Mat_<uint8_t> outer = state+1;
+    // // cv::Mat_<uint8_t> inner;
+    // // cv::Mat _dummy;
+    // // floodFill(outer, _dummy, {0,0}, 0, nullptr, 1, 1, 8);
+    // //
+    // // // bitwise_and(state, STATE_LOC_VALID, src);
+    // // // src = STATE_LOC_VALID - src;
+    // // // cv::connectedComponents(src, lbls, 8, CV_16U, cv::CCL_DEFAULT);
+    // // cv::imwrite("outer.tif", outer);
+    // //
+    // //
+    // // //keep inner values fixed
+    // // cv::erode(outer, outer, m, {-1,-1}, 32);
+    // // cv::erode(outer, inner, m, {-1,-1}, 6);
+
+    int fix_points = 0;
     for(int j=used_area.y;j<used_area.br().y;j++)
-        for(int i=used_area.x;i<used_area.br().x;i++) //FIXME should we use inpainted sm?
+        for(int i=used_area.x;i<used_area.br().x;i++) {
             res_count += surftrack_add_global(&sm_inp, {j,i}, data_inp, problem, new_state, points_new, step*step_src, LOSS_3D_INDIRECT | SURF_LOSS | OPTIMIZE_ALL);
+            if (j % 4 == 0 && i % 4 == 0) {
+                fix_points++;
+                if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0])) {
+                    problem.AddResidualBlock(LinChkDistLoss::Create(data_inp.loc(&sm_inp, {j,i}), 0.001), nullptr, &data_inp.loc(&sm_inp, {j,i})[0]);
+                }
+            }
+        }
+
 
     std::cout << "optimizing " << res_count << " residuals, seed " << seed << std::endl;
 
     //TODO test even if we allow it to drift the next steps should still continue to work
 
-    if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed)[0]))
-        problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed)[0]);
-    if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed+cv::Vec2i(0,1))[0]))
-        problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed+cv::Vec2i(0,1))[0]);
-    if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed+cv::Vec2i(1,0))[0]))
-        problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed+cv::Vec2i(1,0))[0]);
-    if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed+cv::Vec2i(1,1))[0]))
-        problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed+cv::Vec2i(1,1))[0]);
+    if (fix_points < 4) {
+        if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed)[0]))
+            problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed)[0]);
+        if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed+cv::Vec2i(0,1))[0]))
+            problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed+cv::Vec2i(0,1))[0]);
+        if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed+cv::Vec2i(1,0))[0]))
+            problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed+cv::Vec2i(1,0))[0]);
+        if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed+cv::Vec2i(1,1))[0]))
+            problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed+cv::Vec2i(1,1))[0]);
+    }
 
-    //keep inner values fixed
-    // cv::Mat_<uint8_t> masked;
-    // bitwise_and(state, STATE_LOC_VALID, masked);
-    // cv::erode(masked, masked, m, {-1,-1}, 10);
-    //
+    //somehow this really doesn't work ...
     // for(int j=used_area.y;j<used_area.br().y;j++)
     //     for(int i=used_area.x;i<used_area.br().x;i++)
-    //         if (masked(j,i)) {
+    //         if (outer(j,i)) {
     //             if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed)[0]))
     //                 problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed)[0]);
     //             if (problem.HasParameterBlock(&points_new(j,i)[0]))
@@ -4139,8 +4162,8 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 
     //FIXME write out sm locs to see that part of the optimization!
 
-    cv::imwrite("points_lr"+std::to_string(dbg_counter)+".tif", points);
-    cv::imwrite("points_hr"+std::to_string(dbg_counter)+".tif", points_hr);
+    // cv::imwrite("points_lr"+std::to_string(dbg_counter)+".tif", points);
+    // cv::imwrite("points_hr"+std::to_string(dbg_counter)+".tif", points_hr);
 
     //FIXME checker for new states -> if loc moved into four corners with four LOC_VALID corners then output loc should be valid! -> TODO for this also keep some inpatin border surrounding the whole problem!
 
@@ -4265,6 +4288,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 
 
     //reset unsupported points
+#pragma omp parallel for
     for(int j=used_area.y;j<used_area.br().y-1;j++)
         for(int i=used_area.x;i<used_area.br().x-1;i++)
             if (state_out(j,i) & STATE_LOC_VALID) {
@@ -4279,60 +4303,11 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                 points_out(j, i) = {-1,-1,-1};
             }
 
-
-    // // //reinterpolate from existing points
-    // // //FIXME this is still no end2end global optimization, so could over time diverge ...
-    // // SurfTrackerData data_out;
-    // // cv::Mat_<cv::Vec3d> points_out(points.size(), {-1,-1,-1});
-    // // cv::Mat_<int> count_out(points.size(), 0);
-    // // cv::Mat_<uint8_t> state_out(state.size(), 0);
-    // // for(int j=used_area.y;j<used_area.br().y-1;j++)
-    // //     for(int i=used_area.x;i<used_area.br().x-1;i++)
-    // //         if (new_state(j,i) & STATE_VALID) {
-    // //             points_out(j,i) = {0,0,0};
-    // //             cv::Vec2f l = data_new.loc(&sm ,{j,i});
-    // //             int y = l[0];
-    // //             int x = l[1];
-    // //             for(auto &s : data.surfs({y,x})) {
-    // //                 if (state(y,x) & STATE_LOC_VALID && data.valid_int(s,{y,x})
-    // //                     && state(y,x+1) & STATE_LOC_VALID && data.valid_int(s,{y,x+1})
-    // //                     && state(y+1,x) & STATE_LOC_VALID && data.valid_int(s,{y+1,x})
-    // //                     && state(y+1,x+1) & STATE_LOC_VALID && data.valid_int(s,{y+1,x+1}))
-    // //                 {
-    // //                     cv::Vec2f l00 = data.loc(s,{y,x});
-    // //                     cv::Vec2f l01 = data.loc(s,{y,x+1});
-    // //                     cv::Vec2f l10 = data.loc(s,{y+1,x});
-    // //                     cv::Vec2f l11 = data.loc(s,{y+1,x+1});
-    // //
-    // //                     float fx = l[1]-x;
-    // //                     float fy = l[0]-y;
-    // //                     cv::Vec2f l0 = (1-fx)*l00 + fx*l01;
-    // //                     cv::Vec2f l1 = (1-fx)*l10 + fx*l11;
-    // //                     cv::Vec2f l = (1-fy)*l0 + fy*l1;
-    // //                     points_out(j,i) += data.lookup_int_loc(s,l);
-    // //                     count_out(j,i) += 1;
-    // //                     data_out.surfs({j,i}).insert(s);
-    // //                     data_out.loc(s, {j,i}) = l;
-    // //                     state_out(j, i) = STATE_LOC_VALID | STATE_COORD_VALID;
-    // //                 }
-    // //         }
-    // //         if (count_out(j,i)) {
-    // //             points_out(j,i) /= count_out(j,i);
-    // //             // std::cout << points(j,i) << " vs " << points_out(j,i) << std::endl;
-    // //         }
-    // //         else if (keep_inpainted) {
-    // //             state_out(j, i) = STATE_COORD_VALID;
-    // //             points_out(j,i) = points_new(j, i);
-    // //         }
-    // //         else
-    // //             points_out(j,i) = {-1,-1,-1};
-    // //     }
-
     points = points_out;
     state = state_out;
     data = data_out;
 
-    cv::imwrite("state_out"+std::to_string(dbg_counter)+".tif", state_out);
+    // cv::imwrite("state_out"+std::to_string(dbg_counter)+".tif", state_out);
     dbg_counter++;
 
     delete sm_inp._surf;
@@ -4371,7 +4346,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //     cv::imwrite("counts.tif", counts);
 
     //FIXME shouldn change start of opt but does?! (32-good, 64 bad, 50 good?)
-    int stop_gen = 64;
+    int stop_gen = 512;
     int closing_r = 20;
     int w = stop_gen*2*1.1+5+2*closing_r;
     int h = stop_gen*2*1.1+5+2*closing_r;
@@ -4711,7 +4686,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     //FIXME WTF why isn't this working?!'
                     if (state(j,i) & STATE_LOC_VALID && ((masked(j,i) & STATE_LOC_VALID) == 0)) {
                         state(j, i) = 0;
-                        for(auto &s : data.surfs({j,i})) {
+                        std::set<SurfaceMeta*> surf_src = data.surfs({j,i});
+                        for(auto &s : surf_src) {
                             data.erase(s, {j,i});
                             data.eraseSurf(s, {j,i});
                             points(j,i) = {-1,-1,-1};

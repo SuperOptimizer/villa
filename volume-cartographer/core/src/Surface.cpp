@@ -1339,7 +1339,7 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
 void QuadSurface::save(const std::string &path, const std::string &uuid)
 {
     if (!fs::create_directories(path))
-        throw std::runtime_error("error creating dir for QuadSurface::save()");
+        throw std::runtime_error("error creating dir for QuadSurface::save(): "+path);
 
     std::vector<cv::Mat> xyz;
 
