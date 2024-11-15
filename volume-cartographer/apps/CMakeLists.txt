@@ -205,6 +205,22 @@ target_link_libraries(vc_zarrrendersurface
 #     VC::surface
 # )
 
+add_executable(vc_render_video src/vc_render_video.cpp)
+target_link_libraries(vc_render_video
+    z5
+    opencv_core
+    VC::slicing
+    VC::surface
+)
+
+add_executable(vc_render_tifxyz src/vc_render_tifxyz.cpp)
+target_link_libraries(vc_render_tifxyz
+    z5
+    opencv_core
+    VC::slicing
+    VC::surface
+)
+
 add_executable(vc_objrefine src/ObjAlphaCompRefinement.cpp)
 target_link_libraries(vc_objrefine
     nlohmann_json::nlohmann_json
