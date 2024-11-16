@@ -134,7 +134,7 @@ int main(int argc, char *argv[])
     float min_area_cm = 0.3;
     float step_size = 20;
 
-    bool expansion_mode = true;
+    bool expansion_mode = false;
 
     std::unordered_map<std::string,SurfaceMeta*> partial;
     std::unordered_map<std::string,SurfaceMeta*> full;
@@ -286,7 +286,7 @@ int main(int argc, char *argv[])
             bool succ = false;
             while(!succ) {
                 origin = {128 + (rand() % (ds->shape(0)-384)), 128 + (rand() % (ds->shape(1)-384)), 128 + (rand() % (ds->shape(2)-384))};
-                origin[2] = 6500 + (rand() % 2000) - 1000;
+                // origin[2] = 6500 + (rand() % 2000) - 1000;
 
                 count++;
                 auto chunk_id = chunk_size;
