@@ -106,7 +106,7 @@ void scene2vol(cv::Vec3f &p, cv::Vec3f &n, Surface *_surf, const std::string &_s
         // assert(_ptr);
         assert(dynamic_cast<OpChain*>(_surf));
         
-        QuadSurface* crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation")); 
+        QuadSurface* crop = dynamic_cast<QuadSurface*>(_surf_col->surface("segmentation")); 
         
         cv::Vec3f delta = {(scene_loc.x()-_vis_center[0])/_ds_scale, (scene_loc.y()-_vis_center[1])/_ds_scale,0};
         
@@ -589,8 +589,10 @@ void CVolumeViewer::renderIntersections()
             QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface(key));
 
             std::vector<std::vector<cv::Vec2f>> xy_seg_;
-            if (key == "segmentation")
-                find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_ds_scale, 100);
+            if (key == "segmentation") {
+                find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_ds_scale, 1000);
+                std::cout << "calc intersecti with" << key << std::endl;
+            }
             else
                 find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_ds_scale);
 
@@ -632,10 +634,20 @@ void CVolumeViewer::renderIntersections()
                 QPainterPath path;
 
                 bool first = true;
+                cv::Vec3f last = {-1,-1,-1};
                 for (auto wp : seg)
                 {
                     len++;
                     cv::Vec3f p = plane->project(wp, 1.0, _ds_scale);
+
+                    if (last[0] != -1 && cv::norm(p-last) >= 8) {
+                        auto item = fGraphicsView->scene()->addPath(path, QPen(col, width));
+                        item->setZValue(z_value);
+                        items.push_back(item);
+                        first = true;
+                    }
+                    last = p;
+
                     if (first)
                         path.moveTo(p[0],p[1]);
                     else
@@ -692,13 +704,20 @@ void CVolumeViewer::renderIntersections()
             for (auto seg : _surf_col->intersection(pair.first, pair.second)->lines) {
                 QPainterPath path;
                 
-                // SurfacePointer *ptr = crop->pointer();
                 bool first = true;
+                cv::Vec3f last = {-1,-1,-1};
                 for (auto wp : seg)
                 {
-                    // float res = crop->pointTo(ptr, wp, 1.0);
-                    // cv::Vec3f p = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
                     cv::Vec3f p = location_cache[wp];
+
+                    if (last[0] != -1 && cv::norm(p-last) >= 8) {
+                        auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 2/_scene_scale));
+                        item->setZValue(5);
+                        items.push_back(item);
+                        first = true;
+                    }
+                    last = p;
+
                     if (first)
                         path.moveTo(p[0],p[1]);
                     else
