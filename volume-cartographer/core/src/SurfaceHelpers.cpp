@@ -3460,9 +3460,9 @@ public:
     {
         return _surfs[loc];
     }
-    const std::set<SurfaceMeta*> &surfs(const cv::Vec2i &loc) const
+    const std::set<SurfaceMeta*> &surfsC(const cv::Vec2i &loc) const
     {
-        if (_surfs.count(loc))
+        if (!_surfs.count(loc))
             return _emptysurfs;
         else
             return _surfs.find(loc)->second;
@@ -3920,7 +3920,7 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8
 {
     cv::Mat_<cv::Vec3f> points_hr(state.rows*step, state.cols*step, {0,0,0});
     cv::Mat_<int> counts_hr(state.rows*step, state.cols*step, 0);
-#pragma omp parallel for
+#pragma omp parallel for //FIXME data access is just not threading friendly ...
     for(int j=used_area.y;j<used_area.br().y-1;j++)
         for(int i=used_area.x;i<used_area.br().x-1;i++) {
             if (state(j,i) & (STATE_LOC_VALID|STATE_COORD_VALID)
@@ -3928,7 +3928,7 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8
                 && state(j+1,i) & (STATE_LOC_VALID|STATE_COORD_VALID)
                 && state(j+1,i+1) & (STATE_LOC_VALID|STATE_COORD_VALID))
             {
-            for(auto &sm : data.surfs({j,i})) {
+            for(auto &sm : data.surfsC({j,i})) {
                 if (data.valid_int(sm,{j,i})
                     && data.valid_int(sm,{j,i+1})
                     && data.valid_int(sm,{j+1,i})
@@ -4196,7 +4196,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     cv::Mat_<cv::Vec3d> points_out(points.size(), {-1,-1,-1});
     cv::Mat_<uint8_t> state_out(state.size(), 0);
     cv::Mat_<uint8_t> support_count(state.size(), 0);
-#pragma omp parallel for
+#pragma omp parallel for //FIXME ... data.surfs is also writing..
     for(int j=used_area.y;j<used_area.br().y;j++)
         for(int i=used_area.x;i<used_area.br().x;i++)
             if (new_state(j,i) & STATE_VALID) {
@@ -4234,10 +4234,10 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 
                     mutex.lock_shared();
                     std::set<SurfaceMeta*> surfs;
-                    surfs.insert(data.surfs({y,x}).begin(), data.surfs({y,x}).end());
-                    surfs.insert(data.surfs({y,x+1}).begin(), data.surfs({y,x+1}).end());
-                    surfs.insert(data.surfs({y+1,x}).begin(), data.surfs({y+1,x}).end());
-                    surfs.insert(data.surfs({y+1,x+1}).begin(), data.surfs({y+1,x+1}).end());
+                    surfs.insert(data.surfsC({y,x}).begin(), data.surfsC({y,x}).end());
+                    surfs.insert(data.surfsC({y,x+1}).begin(), data.surfsC({y,x+1}).end());
+                    surfs.insert(data.surfsC({y+1,x}).begin(), data.surfsC({y+1,x}).end());
+                    surfs.insert(data.surfsC({y+1,x+1}).begin(), data.surfsC({y+1,x+1}).end());
                     mutex.unlock();
 
                     for(auto &s : surfs) {
