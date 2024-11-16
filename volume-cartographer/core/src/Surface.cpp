@@ -916,7 +916,8 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
     cv::Rect grid_bounds(1,1,points.cols-2,points.rows-2);
 
-    // std::cout << points.size() << std::endl;
+    std::vector<std::vector<cv::Vec3f>> seg_vol_raw;
+    std::vector<std::vector<cv::Vec2f>> seg_grid_raw;
 
     for(int r=0;r<std::max(min_tries, std::max(points.cols,points.rows)/100);r++) {
         std::vector<cv::Vec3f> seg;
@@ -969,7 +970,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         //point2
         loc2 = loc;
         //search point at distance of 1 to init point
-        dist = min_loc(points, loc2, point2, {point}, {1}, plane, 0.5, 0.01);
+        dist = min_loc(points, loc2, point2, {point}, {1}, plane, 0.01, 0.0001);
 
         // std::cout << "loc2 dist " << dist << loc << loc2 << point << point2 << points.size() << std::endl;
 
@@ -995,10 +996,10 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 point3 = at_int(points, loc3);
 
                 //search point close to prediction + dist 1 to last point
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5, 0.01);
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001);
 
                 //then refine
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.5, 0.01);
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
 
                 if (dist < 0 || dist > 1)
                     break;
@@ -1037,10 +1038,10 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 point3 = at_int(points, loc3);
 
                 //search point close to prediction + dist 1 to last point
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.5, 0.01);
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001);
 
                 //then refine
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.5, 0.01);
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
 
                 if (dist < 0 || dist > 1)
                     break;
@@ -1067,8 +1068,30 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         seg_loc2.insert(seg_loc2.end(), seg_loc.begin(), seg_loc.end());
 
 
-        seg_vol.push_back(seg2);
-        seg_grid.push_back(seg_loc2);
+        seg_vol_raw.push_back(seg2);
+        seg_grid_raw.push_back(seg_loc2);
+    }
+
+    //split up into disconnected segments
+    for(int s=0;s<seg_vol_raw.size();s++) {
+        std::vector<cv::Vec3f> seg_vol_curr;
+        std::vector<cv::Vec2f> seg_grid_curr;
+        cv::Vec3f last = {-1,-1,-1};
+        for(int n=0;n<seg_vol_raw[s].size();n++) {
+                if (last[0] != -1 && cv::norm(last-seg_vol_raw[s][n]) >= 2*step) {
+                seg_vol.push_back(seg_vol_curr);
+                seg_grid.push_back(seg_grid_curr);
+                seg_vol_curr.resize(0);
+                seg_grid_curr.resize(0);
+            }
+            last = seg_vol_raw[s][n];
+            seg_vol_curr.push_back(seg_vol_raw[s][n]);
+            seg_grid_curr.push_back(seg_grid_raw[s][n]);
+        }
+        if (seg_vol_curr.size() >= 2) {
+            seg_vol.push_back(seg_vol_curr);
+            seg_grid.push_back(seg_grid_curr);
+        }
     }
 }
 
