@@ -106,7 +106,7 @@ void scene2vol(cv::Vec3f &p, cv::Vec3f &n, Surface *_surf, const std::string &_s
         // assert(_ptr);
         assert(dynamic_cast<OpChain*>(_surf));
         
-        QuadSurface* crop = dynamic_cast<QuadSurface*>(_surf_col->surface("segmentation")); 
+        QuadSurface* crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation")); 
         
         cv::Vec3f delta = {(scene_loc.x()-_vis_center[0])/_ds_scale, (scene_loc.y()-_vis_center[1])/_ds_scale,0};
         
@@ -133,6 +133,37 @@ void CVolumeViewer::onCursorMove(QPointF scene_loc)
     _surf_col->setPOI("cursor", cursor);
 }
 
+void CVolumeViewer::recalcScales()
+{
+    // if (dynamic_cast<PlaneSurface*>(_surf))
+    _min_scale = pow(2.0,1.-volume->numScales());
+    // else
+    // _min_scale = std::max(pow(2.0,1.-volume->numScales()), 0.5);
+    
+    if (_scale >= _max_scale) {
+        _ds_scale = _max_scale;
+        _ds_sd_idx = -log2(_ds_scale);
+        _scene_scale = _scale/_ds_scale;
+    }
+    else if (_scale < _min_scale) {
+        _ds_scale = _min_scale;
+        _ds_sd_idx = -log2(_ds_scale);
+        _scene_scale = _scale/_ds_scale;
+    }
+    else {
+        _ds_sd_idx = -log2(_scale);
+        _ds_scale = pow(2,-_ds_sd_idx);
+        _scene_scale = _scale/_ds_scale;
+    }
+    
+    QTransform M = fGraphicsView->transform();
+    if (_scene_scale != M.m11()) {
+        double delta_scale = _scene_scale/M.m11();
+        M.scale(delta_scale,delta_scale);
+        fGraphicsView->setTransform(M);
+    }
+}
+
 void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers modifiers)
 {
     //TODO don't invalidate if only _scene_scale chagned
@@ -151,34 +182,8 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
         
         _scale *= zoom;
         round_scale(_scale);
-
-        if (dynamic_cast<PlaneSurface*>(_surf))
-            _min_scale = pow(2.0,1.-volume->numScales());
-        else
-            _min_scale = std::max(pow(2.0,1.-volume->numScales()), 0.5);
         
-        if (_scale >= _max_scale) {
-            _ds_scale = _max_scale;
-            _ds_sd_idx = -log2(_ds_scale);
-            _scene_scale = _scale/_ds_scale;
-        }
-        else if (_scale < _min_scale) {
-            _ds_scale = _min_scale;
-            _ds_sd_idx = -log2(_ds_scale);
-            _scene_scale = _scale/_ds_scale;
-        }
-        else {
-            _ds_sd_idx = -log2(_scale);
-            _ds_scale = pow(2,-_ds_sd_idx);
-            _scene_scale = _scale/_ds_scale;
-        }
-        
-        QTransform M = fGraphicsView->transform();
-        if (_scene_scale != M.m11()) {
-            double delta_scale = _scene_scale/M.m11();
-            M.scale(delta_scale,delta_scale);
-            fGraphicsView->setTransform(M);
-        }
+        recalcScales();
         
         curr_img_area = {0,0,0,0};
         QPointF center = visible_center(fGraphicsView) * zoom;
@@ -216,10 +221,8 @@ void CVolumeViewer::OnVolumeChanged(volcart::Volume::Pointer volume_)
         _max_scale = 1.0;
         _min_scale = 1.0;
     }
-
-    _ds_scale = _max_scale;
-    _ds_sd_idx = -log2(_ds_scale);
-    _scene_scale = _scale/_ds_scale;
+    
+    recalcScales();
 
     _lbl->setText(QString("%1x %2").arg(_scale).arg(_z_off));
 
@@ -428,7 +431,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 
     //PlaneSurface use absolute positioning to simplify intersection logic
     if (dynamic_cast<PlaneSurface*>(_surf)) {
-        _surf->gen(&coords, nullptr, roi.size(), nullptr, _ds_scale, {roi.x, roi.y, _z_off});
+        _surf->gen(&coords, nullptr, roi.size(), nullptr, _scale, {roi.x, roi.y, _z_off});
     }
     else {
         cv::Vec2f roi_c = {roi.x+roi.width/2, roi.y + roi.height/2};
@@ -439,11 +442,12 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
         }
         else {
             cv::Vec3f diff = {roi_c[0]-_vis_center[0],roi_c[1]-_vis_center[1],0};
-            _surf->move(_ptr, diff/_ds_scale);
+            _surf->move(_ptr, diff/_ds_scale); //FIXME is this correct?
             _vis_center = roi_c;
         }
 
-        _surf->gen(&coords, nullptr, roi.size(), _ptr, _ds_scale, {-roi.width/2, -roi.height/2, _z_off});
+        //
+        _surf->gen(&coords, nullptr, roi.size(), _ptr, _scale, {-roi.width/2, -roi.height/2, _z_off});
         
         if (_surf_name == "segmentation") {
             invalidateIntersect();
@@ -457,6 +461,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
         }
     }
 
+    std::cout << "readInterpolated3D() " << _ds_scale << " " << _scale << " " << roi << std::endl;
     readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords*_ds_scale, cache);
     
     return img;
@@ -511,6 +516,7 @@ void CVolumeViewer::renderVisible(bool force)
     _center_marker->setParentItem(fBaseImageItem);
     
     fBaseImageItem->setOffset(curr_img_area.topLeft());
+    fBaseImageItem->setScale(curr_img_area.width()/img.size().width);
 
     invalidateIntersect();
     renderIntersections();
@@ -552,7 +558,7 @@ void CVolumeViewer::renderIntersections()
         return;
     
     if (plane) {
-        cv::Rect plane_roi = {curr_img_area.x()/_ds_scale, curr_img_area.y()/_ds_scale, curr_img_area.width()/_ds_scale, curr_img_area.height()/_ds_scale};
+        cv::Rect plane_roi = {curr_img_area.x()/_scale, curr_img_area.y()/_scale, curr_img_area.width()/_scale, curr_img_area.height()/_scale};
 
         cv::Vec3f corner = plane->coord(nullptr, {plane_roi.x, plane_roi.y, 0.0});
         Rect3D view_bbox = {corner, corner};
@@ -590,11 +596,11 @@ void CVolumeViewer::renderIntersections()
 
             std::vector<std::vector<cv::Vec2f>> xy_seg_;
             if (key == "segmentation") {
-                find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_ds_scale, 1000);
+                find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_scale, 1000);
                 std::cout << "calc intersecti with" << key << std::endl;
             }
             else
-                find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_ds_scale);
+                find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_scale);
 
         }
 
@@ -638,7 +644,7 @@ void CVolumeViewer::renderIntersections()
                 for (auto wp : seg)
                 {
                     len++;
-                    cv::Vec3f p = plane->project(wp, 1.0, _ds_scale);
+                    cv::Vec3f p = plane->project(wp, 1.0, _scale);
 
                     if (last[0] != -1 && cv::norm(p-last) >= 8) {
                         auto item = fGraphicsView->scene()->addPath(path, QPen(col, width));
