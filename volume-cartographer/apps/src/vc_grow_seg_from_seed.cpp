@@ -134,7 +134,7 @@ int main(int argc, char *argv[])
     float min_area_cm = 0.3;
     float step_size = 20;
 
-    bool expansion_mode = false;
+    bool expansion_mode = true;
 
     std::unordered_map<std::string,SurfaceMeta*> partial;
     std::unordered_map<std::string,SurfaceMeta*> full;
