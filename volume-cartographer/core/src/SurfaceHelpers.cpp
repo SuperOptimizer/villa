@@ -4606,14 +4606,13 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 state(p) = 0;
                 
                 //TODO could also have priorities!
-                // if (approved_sm.count(ref_surf) && straight_count_init >= 2 && count_init >= 4) {
-                //     std::cout << "found reference!" << std::endl;
-                //     best_inliers = 1000;
-                //     best_coord = coord;
-                //     best_surf = ref_surf;
-                //     best_loc = ref_loc;
-                //     break;
-                // }
+                if (approved_sm.count(ref_surf) && straight_count_init >= 2 && count_init >= 4) {
+                    best_inliers = 1000;
+                    best_coord = coord;
+                    best_surf = ref_surf;
+                    best_loc = ref_loc;
+                    break;
+                }
 
                 int inliers_sum = 0;
                 int inliers_count = 0;
