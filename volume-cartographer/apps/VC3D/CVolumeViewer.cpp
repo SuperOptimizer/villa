@@ -575,7 +575,10 @@ void CVolumeViewer::renderIntersections()
 #pragma omp parallel for
         for(int n=0;n<intersect_tgts_v.size();n++) {
             std::string key = intersect_tgts_v[n];
-            if (!_intersect_items.count(key) && dynamic_cast<QuadSurface*>(_surf_col->surface(key))) {
+            bool haskey;
+#pragma omp critical
+            haskey = _intersect_items.count(key);
+            if (!haskey && dynamic_cast<QuadSurface*>(_surf_col->surface(key))) {
                 QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface(key));
 
                 if (intersect(view_bbox, segmentation->bbox()))

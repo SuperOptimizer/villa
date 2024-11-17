@@ -4396,7 +4396,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     //FIXME shouldn change start of opt but does?! (32-good, 64 bad, 50 good?)
     int stop_gen = 10000;
     int closing_r = 20;
-    int size_gen = 500;
+    int size_gen = 1000;
     int w = size_gen*2*1.1+5+2*closing_r;
     int h = size_gen*2*1.1+5+2*closing_r;
     cv::Size  size = {w,h};
@@ -4793,7 +4793,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         
         bool update_mapping = (succ >= 100 && (loc_valid_count-last_succ_parametrization) >= std::max(100.0, 0.3*last_succ_parametrization));
 
-        if (generation % 10 == 0 || update_mapping) {
+        if (generation % 50 == 0 || update_mapping) {
         cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, src_step);
         QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(generation, 5);
