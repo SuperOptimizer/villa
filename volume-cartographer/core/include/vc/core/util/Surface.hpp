@@ -27,7 +27,8 @@ public:
 };
 
 struct Rect3D {
-    cv::Vec3f low, high;
+    cv::Vec3f low = {0,0,0};
+    cv::Vec3f high = {0,0,0};
 };
 
 bool intersect(const Rect3D &a, const Rect3D &b);
@@ -200,6 +201,7 @@ class SurfaceMeta
 public:
     SurfaceMeta() {};
     SurfaceMeta(const std::filesystem::path &path_, const nlohmann::json &json);
+    SurfaceMeta(const std::filesystem::path &path_);
     void readOverlapping();
     QuadSurface *surf();
     void setSurf(QuadSurface *surf);
@@ -207,6 +209,7 @@ public:
     std::filesystem::path path;
     QuadSurface *_surf = nullptr;
     Rect3D bbox;
+    nlohmann::json *meta;
     std::set<std::string> overlapping_str;
     std::set<SurfaceMeta*> overlapping;
 };
