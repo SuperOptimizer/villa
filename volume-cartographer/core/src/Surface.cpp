@@ -2,6 +2,7 @@
 
 #include "vc/core/io/PointSetIO.hpp"
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/types/ChunkedTensor.hpp"
 
 #include "SurfaceHelpers.hpp"
 
@@ -375,9 +376,7 @@ static float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, c
 //plane -> stay on plane
 float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, float init_step, float min_step)
 {
-    // std::cout << "start minlo" << loc << std::endl;
-    cv::Rect boundary(1,1,points.cols-2,points.rows-2);
-    if (!boundary.contains({loc[0],loc[1]})) {
+    if (!loc_valid(points, {loc[1],loc[0]})) {
         out = {-1,-1,-1};
         return -1;
     }
@@ -404,12 +403,12 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
         for(auto &off : search) {
             cv::Vec2f cand = loc+off*step;
 
-            if (!boundary.contains({cand[0],cand[1]})) {
-                out = {-1,-1,-1};
-                loc = {-1,-1};
-                return -1;
+            if (!loc_valid(points, {cand[1],cand[0]})) {
+                // out = {-1,-1,-1};
+                // loc = {-1,-1};
+                // return -1;
+                continue;
             }
-
 
             val = at_int(points, cand);
             // std::cout << "at" << cand << val << std::endl;
@@ -906,6 +905,42 @@ uint8_t get_block(const cv::Mat_<uint8_t> &block, const cv::Vec3f &loc, const cv
     return block(y, x);
 }
 
+template<typename T, int C>
+//l is [y, x]!
+bool area_valid(const cv::Mat_<cv::Vec<T,C>> &m, cv::Vec2f l)
+{
+    if (l[0] == -1)
+        return false;
+
+    cv::Rect bounds = {1, 1, m.cols-3,m.rows-3};
+    cv::Vec2i li = {floor(l[0]),floor(l[1])};
+
+    if (!bounds.contains(li))
+        return false;
+
+    if (m(li[1],li[0])[0] == -1)
+        return false;
+    if (m(li[1]+1,li[0])[0] == -1)
+        return false;
+    if (m(li[1],li[0]+1)[0] == -1)
+        return false;
+    if (m(li[1]+1,li[0]+1)[0] == -1)
+        return false;
+
+    l -= cv::Vec2f(1,1);
+
+    if (m(li[1],li[0])[0] == -1)
+        return false;
+    if (m(li[1]+3,li[0])[0] == -1)
+        return false;
+    if (m(li[1],li[0]+3)[0] == -1)
+        return false;
+    if (m(li[1]+3,li[0]+3)[0] == -1)
+        return false;
+
+    return true;
+}
+
 void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step, int min_tries)
 {
     //start with random points and search for a plane intersection
@@ -945,7 +980,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 continue;
 
                 dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.01);
-                // std::cout << dist << std::endl;
 
                 plane_loc = plane->project(point);
                 if (!plane_roi.contains({plane_loc[0],plane_loc[1]}))
@@ -954,7 +988,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 if (get_block(block, plane_loc, plane_roi, block_step))
                     dist = -1;
 
-            if (dist >= 0 && dist <= 1)
+            if (dist >= 0 && dist <= 1 || !area_valid(points, loc))
                 break;
         }
 
@@ -974,7 +1008,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
         // std::cout << "loc2 dist " << dist << loc << loc2 << point << point2 << points.size() << std::endl;
 
-        if (dist < 0 || dist > 1)
+        if (dist < 0 || dist > 1 || !area_valid(points, loc))
             continue;
 
         seg.push_back(point2);
@@ -1001,7 +1035,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 //then refine
                 dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
 
-                if (dist < 0 || dist > 1)
+                if (dist < 0 || dist > 1 || !area_valid(points, loc))
                     break;
 
             seg.push_back(point3);
@@ -1043,7 +1077,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 //then refine
                 dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
 
-                if (dist < 0 || dist > 1)
+                if (dist < 0 || dist > 1 || !area_valid(points, loc))
                     break;
 
             seg2.push_back(point3);
@@ -1474,19 +1508,30 @@ bool contains(SurfaceMeta &a, const cv::Vec3f &loc)
 {
     if (!intersect(a.bbox, {loc,loc}))
         return false;
-
+        
         SurfacePointer *ptr = a.surf()->pointer();
-
+        
         if (a.surf()->pointTo(ptr, loc, 2.0) <= 2.0)
             return true;
-
+    
     return false;
 }
 
-
 SurfaceMeta::SurfaceMeta(const std::filesystem::path &path_, const nlohmann::json &json) : path(path_)
 {
-    bbox = rect_from_json(json["bbox"]);
+    if (json.contains("bbox"))
+        bbox = rect_from_json(json["bbox"]);
+    meta = new nlohmann::json;
+    *meta = json;
+}
+
+SurfaceMeta::SurfaceMeta(const std::filesystem::path &path_) : path(path_)
+{
+    std::ifstream meta_f(path_/"meta.json");
+    meta = new nlohmann::json;
+    *meta = nlohmann::json::parse(meta_f);
+    if (meta->contains("bbox"))
+        bbox = rect_from_json((*meta)["bbox"]);
 }
 
 void SurfaceMeta::readOverlapping()

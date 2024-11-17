@@ -2716,7 +2716,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     ALifeTime f_timer("empty space tracing\n");
     DSReader reader = {ds,scale,cache};
 
-    int stop_gen = 100;
+    int stop_gen = 50;
 
     //FIXME show and handle area edge!
     int w = 2*stop_gen+50;
@@ -4179,7 +4179,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, new_state, points_inpainted, used_area, step, step_src);
 
     QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/step_src,1/step_src});
-    std::string uuid = "z_dbg_gen_"+strint((dbg_counter+1)*opt_map_every, 3)+"_inp_hr";
+    std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_inp_hr";
     dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
     delete dbg_surf;
 
@@ -4338,17 +4338,41 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     delete sm._surf;
 }
 
+//check wether the location already exists
+// template <typename T, int C>
+// bool self_intersecting(const cv::Mat_<cv::Vec<T,C>> &points, cv::Vec3d tgt)
+// {
+//     cv::Rect bbox = {0,0,points.size().width, points.size().height};
+//     //search in larger and larger ranges
+//     for(float range=1.0;range<=std::max(points.size().width, points.size().height());range *= 1.05) {
+//         cv::Rect area = {};
+// 
+//     }
+//     float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, float init_step, float min_step)
+// }
+
 QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMeta*> &surfs_v, float step)
 {
     std::unordered_map<std::string,SurfaceMeta*> surfs;
     float src_step = 20;
+    
+    std::cout << "total surf count " << surfs_v.size() << std::endl;
 
-    for(auto &sm : surfs_v)
+    std::set<SurfaceMeta*> approved_sm;
+    
+    for(auto &sm : surfs_v) {
         surfs[sm->name()] = sm;
+        if (sm->meta->contains("tags") && sm->meta->at("tags").contains("approved"))
+            approved_sm.insert(sm);
+    }
+    
+    for(auto sm : approved_sm)
+        std::cout << "approved: " << sm->name() << std::endl;
 
     for(auto &sm : surfs_v)
-        for(auto name : sm->overlapping_str)
+        for(auto name : sm->overlapping_str) {
             sm->overlapping.insert(surfs[name]);
+        }
 
     std::cout << "total number of surfs:" << surfs.size() << std::endl;
     std::cout << seed << "name" << seed->name() << " seed overlapping:" << seed->overlapping.size() << "/" << seed->overlapping_str.size() << std::endl;
@@ -4370,12 +4394,15 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //     cv::imwrite("counts.tif", counts);
 
     //FIXME shouldn change start of opt but does?! (32-good, 64 bad, 50 good?)
-    int stop_gen = 512;
+    int stop_gen = 10000;
     int closing_r = 20;
-    int w = stop_gen*2*1.1+5+2*closing_r;
-    int h = stop_gen*2*1.1+5+2*closing_r;
+    int size_gen = 500;
+    int w = size_gen*2*1.1+5+2*closing_r;
+    int h = size_gen*2*1.1+5+2*closing_r;
     cv::Size  size = {w,h};
     cv::Rect bounds(0,0,w-1,h-1);
+    
+    cv::Rect save_bounds(closing_r+5,closing_r+5,w-5,h-closing_r-5);
 
     int x0 = w/2;
     int y0 = h/2;
@@ -4451,6 +4478,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
     int loc_valid_count = 0;
     int succ = 0;
+    int curr_best_inl_th = 20;
+    int last_succ_parametrization = 0;
+    //FIXME do while loop, check for max area!
     for(int generation=0;generation<stop_gen;generation++) {
         std::unordered_set<cv::Vec2i,vec2i_hash> cands;
         for(auto p : fringe)
@@ -4459,7 +4489,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 continue;
 
             for(auto n : neighs)
-                if (bounds.contains(p+n)
+                if (save_bounds.contains(p+n)
                     && (state(p+n) & STATE_PROCESSING) == 0
                     && (state(p+n) & STATE_LOC_VALID) == 0)
                 {
@@ -4469,13 +4499,13 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         }
         fringe.clear();
 
-        std::cout << "go with cands " << cands.size() << std::endl;
+        std::cout << "go with cands " << cands.size() << " inl_th " << curr_best_inl_th << std::endl;
 
         // for(auto &p : cands) {
 
 
         //do it two times
-        for (int n=0;n<2;n++) {
+        // for (int n=0;n<2;n++) {
             OmpThreadPointCol threadcol(5, cands);
 
             std::shared_mutex mutex;
@@ -4492,7 +4522,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
             std::set<SurfaceMeta*> local_surfs = {seed};
 
-            mutex.lock_shared();
+            mutex.lock();
             for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,h-1);oy++)
                 for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,w-1);ox++)
                     if (state(oy,ox) & STATE_LOC_VALID) {
@@ -4538,12 +4568,16 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
                 state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
 
-                mutex.lock_shared();
-                surftrack_add_local(ref_surf, p, data, problem, state, points, step);
+                mutex.lock();
+                int straight_count_init = 0;
+                int count_init = surftrack_add_local(ref_surf, p, data, problem, state, points, step, 0, &straight_count_init);
                 mutex.unlock();
                 ceres::Solver::Summary summary;
                 ceres::Solve(options, &problem, &summary);
-                float loss = summary.final_cost;
+                float cost_init = sqrt(summary.final_cost/count_init);
+        
+                // if (cost_init >= local_cost_inl_th || count_init < 2 || straight_count_init < 1)
+                    // continue;
 
                 mutex.lock_shared();
                 bool fail = false;
@@ -4570,6 +4604,16 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 }
 
                 state(p) = 0;
+                
+                //TODO could also have priorities!
+                // if (approved_sm.count(ref_surf) && straight_count_init >= 2 && count_init >= 4) {
+                //     std::cout << "found reference!" << std::endl;
+                //     best_inliers = 1000;
+                //     best_coord = coord;
+                //     best_surf = ref_surf;
+                //     best_loc = ref_loc;
+                //     break;
+                // }
 
                 int inliers_sum = 0;
                 int inliers_count = 0;
@@ -4590,6 +4634,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         }
                     }
                 }
+                // std::cout << "curr " << inliers_count << " " << inliers_sum << std::endl;
                 if (inliers_count >= 2 && inliers_sum > best_inliers) {
                     best_inliers = inliers_sum;
                     best_coord = coord;
@@ -4597,8 +4642,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     best_loc = ref_loc;
                 }
             }
+            // std::cout << "best inl " << best_inliers << std::endl;
 
-            if (best_inliers >= 6 /*&& best_inliers >= local_surfs.size()/2*/) {
+            if (best_inliers >= curr_best_inl_th /*&& best_inliers >= local_surfs.size()/2*/) {
                 if (best_coord[0] == -1)
                     throw std::runtime_error("WTF1");
                 points(p) = best_coord;
@@ -4606,11 +4652,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 mutex.lock();
                 data.surfs(p).insert(best_surf);
                 data.loc(best_surf, p) = best_loc;
-                mutex.unlock();
                 state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
 
                 ceres::Problem problem;
-                mutex.lock_shared();
                 surftrack_add_local(best_surf, p, data, problem, state, points, step, SURF_LOSS);
                 mutex.unlock();
 
@@ -4699,10 +4743,24 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             // break;
 
         }
+        
+        if (!fringe.size()) {
+            curr_best_inl_th *= 0.9;
+            if (curr_best_inl_th >= 6) {
+                for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
+                    for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
+                        //FIXME WTF why isn't this working?!'
+                        if (state(j,i) & STATE_LOC_VALID)
+                                fringe.insert(cv::Vec2i(j,i));
+            }
+            // std::cout << "next inl th " << curr_best_inl_th << " " << fringe.size() << used_area << " wtf " << (int)state(y0,x0) <<  std::endl;
         }
+        else
+            curr_best_inl_th = 20;
 
         //FIXME stupid hack for some bad growth ... should find something more generic and find out why its diverging!
-        if (generation > 10 /*&& (generation % 2) == 0*/)
+        //FIXME do this after mapping opt!
+        if (false /*generation > 10 && (generation % 2) == 0*/)
         {
             cv::Mat_<uint8_t> masked;
             bitwise_and(state, (uint8_t)STATE_LOC_VALID, masked);
@@ -4725,28 +4783,40 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         }
                     }
         }
-
+        
+        loc_valid_count = 0;
+        for(int j=used_area.y;j<used_area.br().y-1;j++)
+            for(int i=used_area.x;i<used_area.br().x-1;i++)
+                if (state(j,i) & STATE_LOC_VALID)
+                    loc_valid_count++;
+        
         cv::imwrite("state"+std::to_string(generation)+".tif", state);
+        
+        bool update_mapping = (succ >= 100 && (loc_valid_count-last_succ_parametrization) >= std::max(100.0, 0.3*last_succ_parametrization));
 
+        if (generation % 10 == 0 || update_mapping) {
         cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, src_step);
         QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
-        std::string uuid = "z_dbg_gen_"+strint(generation, 3);
+        std::string uuid = "z_dbg_gen_"+strint(generation, 5);
         dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
         delete dbg_surf;
+        }
 
-        fringe.clear();
-        for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
-            for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
-                //FIXME WTF why isn't this working?!'
-                if (state(j,i) & STATE_LOC_VALID)
-                    fringe.insert(cv::Vec2i(j,i));
+        // fringe.clear();
+        // for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
+        //     for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
+        //         //FIXME WTF why isn't this working?!'
+        //         if (state(j,i) & STATE_LOC_VALID)
+        //             fringe.insert(cv::Vec2i(j,i));
 
         //lets just see what happens
-        if (generation && /*generation+1 != stop_gen &&*/ (generation % opt_map_every) == 0) {
+        if (update_mapping /*generation+1 != stop_gen && (generation % opt_map_every) == 0*/) {
+            dbg_counter = generation;
             optimize_surface_mapping(data, state, points, used_area, step, src_step, {y0,x0}, closing_r, true   );
-
+            last_succ_parametrization = loc_valid_count;
             //recalc fringe after surface optimization (which often shrinks the surf)
             fringe.clear();
+            curr_best_inl_th = 20;
             for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
                 for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
                     //FIXME WTF why isn't this working?!'
@@ -4755,25 +4825,19 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
             // {
             // QuadSurface *dbg_surf = new QuadSurface(points, {1/src_step/step,1/src_step/step});
-            // std::string uuid = "z_dbg_gen_"+strint(generation, 3)+"_opt_lr";
+            // std::string uuid = "z_dbg_gen_"+strint(generation, 5)+"_opt_lr";
             // dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
             // delete dbg_surf;
             // }
             {
                 cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, src_step);
                 QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
-                std::string uuid = "z_dbg_gen_"+strint(generation, 3)+"_opt_hr";
+                std::string uuid = "z_dbg_gen_"+strint(generation, 5)+"_opt_hr";
                 dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
                 delete dbg_surf;
             }
 
         }
-
-        loc_valid_count = 0;
-        for(int j=used_area.y;j<used_area.br().y-1;j++)
-            for(int i=used_area.x;i<used_area.br().x-1;i++)
-                if (state(j,i) & STATE_LOC_VALID)
-                    loc_valid_count++;
 
         printf("gen %d processing %d fringe cands (total done %d fringe: %d) area %f mm^2\n", generation, cands.size(), succ, fringe.size(),loc_valid_count*0.008*0.008*src_step*src_step*step*step);
         if (!fringe.size())
