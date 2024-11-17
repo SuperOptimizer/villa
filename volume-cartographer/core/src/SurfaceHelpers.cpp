@@ -4132,18 +4132,31 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     // // cv::erode(outer, outer, m, {-1,-1}, 32);
     // // cv::erode(outer, inner, m, {-1,-1}, 6);
 
+    
+    
     int fix_points = 0;
     for(int j=used_area.y;j<used_area.br().y;j++)
         for(int i=used_area.x;i<used_area.br().x;i++) {
+            //FIXME is the interpolation also refering to points that are currently being optimized?! if yes check gradiets!
             res_count += surftrack_add_global(&sm_inp, {j,i}, data_inp, problem, new_state, points_new, step*step_src, LOSS_3D_INDIRECT | SURF_LOSS | OPTIMIZE_ALL);
-            if (j % 4 == 0 && i % 4 == 0) {
-                fix_points++;
-                if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0])) {
-                    problem.AddResidualBlock(LinChkDistLoss::Create(data_inp.loc(&sm_inp, {j,i}), 0.001), nullptr, &data_inp.loc(&sm_inp, {j,i})[0]);
-                }
-            }
+            // if (true/*j % 4 == 0 && i % 4 == 0*/) {
+            //     fix_points++;
+            //     if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0])) {
+            //         problem.AddResidualBlock(LinChkDistLoss::Create(data_inp.loc(&sm_inp, {j,i}), 0.001), nullptr, &data_inp.loc(&sm_inp, {j,i})[0]);
+            //     }
+            // }
         }
-
+        
+    if (!problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed)[0]))
+        throw std::runtime_error("oops we lost the seed");
+        
+    int fix_points_z = 0;
+    for(int j=used_area.y;j<used_area.br().y;j++)
+        for(int i=used_area.x;i<used_area.br().x;i++) {
+            fix_points_z++;
+            if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0]))
+                problem.AddResidualBlock(ZLocationLoss::Create(points_new(seed)[2] + (j-seed[0])*step*step_src, 0.001), nullptr, &points_new(j,i)[0]);
+        }
 
     std::cout << "optimizing " << res_count << " residuals, seed " << seed << std::endl;
 
@@ -4152,12 +4165,6 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     if (fix_points < 4) {
         if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed)[0]))
             problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed)[0]);
-        if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed+cv::Vec2i(0,1))[0]))
-            problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed+cv::Vec2i(0,1))[0]);
-        if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed+cv::Vec2i(1,0))[0]))
-            problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed+cv::Vec2i(1,0))[0]);
-        if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed+cv::Vec2i(1,1))[0]))
-            problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed+cv::Vec2i(1,1))[0]);
     }
 
     //somehow this really doesn't work ...
@@ -4174,14 +4181,34 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     ceres::Solve(options, &problem, &summary);
     std::cout << summary.FullReport() << std::endl;
     std::cout << "rms " << sqrt(summary.final_cost/summary.num_residual_blocks) << " count " << summary.num_residual_blocks << std::endl;
+    
+    // for(int j=used_area.y;j<used_area.br().y;j++)
+    //     for(int i=used_area.x;i<used_area.br().x;i++) {
+    //         if (true/*j % 4 == 0 && i % 4 == 0*/) {
+    //             // fix_points_z++;
+    //             if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0])) {
+    //                 // problem.AddResidualBlock(ZLocationLoss::Create(points_new, points_new(seed)[2] - (j-seed[0])*step*step_src, 100.0), nullptr, &data_inp.loc(&sm_inp, {j,i})[0]);
+    //                 std::cout << "out z " << points_new(seed)[2] + (j-seed[0])*step*step_src << " curr diff " << points_new(seed)[2] + (j-seed[0])*step*step_src - points_new(j,i)[2] << std::endl; 
+    //             }
+    //         }
+    //     }
 
     //interpolate from the original set
     cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, new_state, points_inpainted, used_area, step, step_src);
-
+    
+    {
     QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/step_src,1/step_src});
     std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_inp_hr";
     dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
     delete dbg_surf;
+    }
+    
+    {
+    QuadSurface *dbg_surf = new QuadSurface(points_new(used_area), {1/step_src,1/step_src});
+    std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_points_opt";
+    dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+    delete dbg_surf;
+    }
 
     //FIXME write out sm locs to see that part of the optimization!
 

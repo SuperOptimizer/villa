@@ -389,6 +389,27 @@ struct LinChkDistLoss {
 
 };
 
+struct ZLocationLoss {
+    ZLocationLoss(float z, float w) :  _z(z), _w(w) {};
+    template <typename T>
+    bool operator()(const T* const p, T* residual) const {
+        // T d = abs(p[2] - T(_z));
+        // residual[0] = T(_w)*(sqrt(d));
+        residual[0] = T(_w)*(p[2] - T(_z));
+        
+        return true;
+    }
+    
+    float _z;
+    float _w;
+    
+    static ceres::CostFunction* Create(float z, float w = 1.0)
+    {
+        return new ceres::AutoDiffCostFunction<ZLocationLoss, 1, 3>(new ZLocationLoss(z, w));
+    }
+    
+};
+
 //loss on tgt dist in 3d of lookup up 2d locations
 struct DistLossLoc3D {
     DistLossLoc3D(const cv::Mat_<cv::Vec3f> &m, float dist, float w) : _m(m), _d(dist), _w(w) {};
