@@ -215,6 +215,20 @@
            </widget>
           </item>
           <item>
+           <widget class="QComboBox" name="cmbFilterSegs">
+            <item>
+             <property name="text">
+              <string>show all</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>filter by focus point</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+          <item>
            <widget class="QLabel" name="label_vol">
             <property name="text">
              <string>Volume</string>
@@ -767,7 +781,7 @@
  <resources/>
  <connections/>
  <buttongroups>
-  <buttongroup name="buttonGroupBackward"/>
   <buttongroup name="buttonGroupForward"/>
+  <buttongroup name="buttonGroupBackward"/>
  </buttongroups>
 </ui>

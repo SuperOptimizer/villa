@@ -135,10 +135,10 @@ void CVolumeViewer::onCursorMove(QPointF scene_loc)
 
 void CVolumeViewer::recalcScales()
 {
-    // if (dynamic_cast<PlaneSurface*>(_surf))
-    _min_scale = pow(2.0,1.-volume->numScales());
-    // else
-    // _min_scale = std::max(pow(2.0,1.-volume->numScales()), 0.5);
+    if (dynamic_cast<PlaneSurface*>(_surf))
+        _min_scale = pow(2.0,1.-volume->numScales());
+    else
+        _min_scale = std::max(pow(2.0,1.-volume->numScales()), 0.5);
     
     if (_scale >= _max_scale) {
         _ds_scale = _max_scale;
@@ -442,7 +442,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
         }
         else {
             cv::Vec3f diff = {roi_c[0]-_vis_center[0],roi_c[1]-_vis_center[1],0};
-            _surf->move(_ptr, diff/_ds_scale); //FIXME is this correct?
+            _surf->move(_ptr, diff/_scale); //FIXME is this correct?
             _vis_center = roi_c;
         }
 
@@ -461,7 +461,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
         }
     }
 
-    std::cout << "readInterpolated3D() " << _ds_scale << " " << _scale << " " << roi << std::endl;
+    std::cout << "readInterpolated3D() " << _ds_scale << " " << _scale << " " << roi << coords.size << std::endl;
     readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords*_ds_scale, cache);
     
     return img;
@@ -518,8 +518,8 @@ void CVolumeViewer::renderVisible(bool force)
     fBaseImageItem->setOffset(curr_img_area.topLeft());
     fBaseImageItem->setScale(curr_img_area.width()/img.size().width);
 
-    invalidateIntersect();
-    renderIntersections();
+    // invalidateIntersect();
+    // renderIntersections();
 }
 
 struct vec3f_hash {

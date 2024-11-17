@@ -26,6 +26,7 @@ namespace volcart {
 class QMdiArea;
 class OpsList;
 class OpsSettings;
+class SurfaceMeta;
 
 namespace ChaoVis
 {
@@ -94,6 +95,7 @@ private slots:
     void About(void);
     void ShowSettings();
     void onSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous);
+    void onSegFilterChanged(int index);
 private:
     std::shared_ptr<volcart::VolumePkg> fVpkg;
     Surface *_seg_surf;
@@ -122,6 +124,7 @@ private:
     QAction* fPrintDebugInfo;
 
     QComboBox* volSelect;
+    QComboBox* cmbFilterSegs;
     QPushButton* assignVol;
 
     QTreeWidget *treeWidgetSurfaces;
@@ -143,6 +146,7 @@ private:
     CSurfaceCollection *_surf_col;
 
     std::unordered_map<std::string,OpChain*> _opchains;
+    std::unordered_map<std::string,SurfaceMeta*> _vol_qsurfs;
 };  // class CWindow
 
 }  // namespace ChaoVis

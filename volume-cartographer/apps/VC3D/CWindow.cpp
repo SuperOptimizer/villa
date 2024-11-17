@@ -205,6 +205,9 @@ void CWindow::CreateWidgets(void)
             setVolume(newVolume);
         });
 
+    cmbFilterSegs = this->findChild<QComboBox*>("cmbFilterSegs");
+    connect(cmbFilterSegs, &QComboBox::currentIndexChanged, this, &CWindow::onSegFilterChanged);
+    
     assignVol = this->findChild<QPushButton*>("assignVol");
 
     // Set up the status bar
@@ -505,28 +508,27 @@ void CWindow::OpenVolume(const QString& path)
 
     treeWidgetSurfaces->clear();
 
-    std::set<std::string> dbg_intersects = {"segmentation"};
-
-    //TODO list sub-segmentation formats (like objs...)
-    for (auto &id : fVpkg->segmentationIDs()) {
-        QTreeWidgetItem *item = new QTreeWidgetItem(treeWidgetSurfaces);
-        item->setText(0, QString(id.c_str()));
-        item->setData(0, Qt::UserRole, QVariant(id.c_str()));
-
-        auto seg = fVpkg->segmentation(id);
+    std::vector<std::string> seg_ids = fVpkg->segmentationIDs();
+    std::vector<std::pair<std::string,SurfaceMeta*>> load_sm(seg_ids.size());
+    
+#pragma omp parallel for
+    for(int i=0;i<seg_ids.size();i++) {
+        auto seg = fVpkg->segmentation(seg_ids[i]);
         if (seg->metadata().hasKey("format") && seg->metadata().get<std::string>("format") == "tifxyz") {
-            QuadSurface *surf = load_quad_from_tifxyz(seg->path());
-            _surf_col->setSurface(id, surf);
-            _opchains[id] = new OpChain(surf);
-            dbg_intersects.insert(id);
-            // if (dbg_intersects.size() == 4)
-            //     break;
+            SurfaceMeta *sm = new SurfaceMeta(seg->path());
+            sm->surf();
+            load_sm[i] = {seg_ids[i], sm};
         }
     }
-
-    for (auto &viewer : _viewers)
-        if (viewer->surfName() != "segmentation")
-            viewer->setIntersects(dbg_intersects);
+        
+    for(auto &pair : load_sm)
+        if (pair.second) {
+            //FIXME replace _vol_surfs with _suf_col by either upgrading surf col to surfacemeta
+            _vol_qsurfs[pair.first] = pair.second;
+            _surf_col->setSurface(pair.first, pair.second->surf());
+        }
+    
+    onSegFilterChanged(0);
 
     UpdateRecentVolpkgList(aVpkgPath);
 }
@@ -725,19 +727,20 @@ void CWindow::onSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previ
     std::string surf_id = current->data(0, Qt::UserRole).toString().toStdString();
 
     if (!_opchains.count(surf_id)) {
-        auto seg = fVpkg->segmentation(surf_id);
-
-        if (seg->metadata().hasKey("format") && seg->metadata().get<std::string>("format") == "tifxyz")
-            _opchains[surf_id] = new OpChain(load_quad_from_tifxyz(seg->path()));
-        else if (seg->metadata().hasKey("vcps"))
-            _opchains[surf_id] = new OpChain(load_quad_from_vcps(seg->path()/seg->metadata().get<std::string>("vcps")));
-
-        //TODO fix these
-        // else if (fs::path(surf_path).extension() == ".obj") {
-        //     QuadSurface *quads = load_quad_from_obj(surf_path);
-        //     if (quads)
-        //         _opchains[surf_path] = new OpChain(quads);
-        // }
+        if (_vol_qsurfs.count(surf_id)) {
+            _opchains[surf_id] = new OpChain(_vol_qsurfs[surf_id]->surf());
+        }
+        else {
+            auto seg = fVpkg->segmentation(surf_id);
+            if (seg->metadata().hasKey("vcps"))
+                _opchains[surf_id] = new OpChain(load_quad_from_vcps(seg->path()/seg->metadata().get<std::string>("vcps")));
+            //TODO fix these
+            // else if (fs::path(surf_path).extension() == ".obj") {
+            //     QuadSurface *quads = load_quad_from_obj(surf_path);
+            //     if (quads)
+            //         _opchains[surf_path] = new OpChain(quads);
+            // }
+        }
     }
 
     if (_opchains[surf_id]) {
@@ -746,4 +749,50 @@ void CWindow::onSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previ
     }
     else
         std::cout << "ERROR loading " << surf_id << std::endl;
+}
+
+
+void CWindow::onSegFilterChanged(int index)
+{
+    std::set<std::string> dbg_intersects = {"segmentation"};
+    
+    POI *poi = _surf_col->poi("focus");
+    
+    //TODO select a new idx if the old one is not in the list any more?
+    int orig_idx = -1;
+    
+    {
+        const QSignalBlocker blocker{treeWidgetSurfaces};
+        treeWidgetSurfaces->clear();
+        
+        //TODO list sub-segmentation formats (like objs...)
+        for (auto &id : fVpkg->segmentationIDs()) {
+            bool insert = false;
+            if (!_vol_qsurfs.count(id)) {
+                insert = true;
+            }
+            else {
+                //use alls
+                if (index == 0) {
+                    insert = true;
+                }
+                else if (index == 1 && contains(*_vol_qsurfs[id], poi->p)) {
+                    insert = true;
+                }
+            }
+            
+            if (insert) {
+                QTreeWidgetItem *item = new QTreeWidgetItem(treeWidgetSurfaces);
+                item->setText(0, QString(id.c_str()));
+                item->setData(0, Qt::UserRole, QVariant(id.c_str()));
+                
+                if (_vol_qsurfs.count(id))
+                    dbg_intersects.insert(id);
+            }
+        }
+        
+        for (auto &viewer : _viewers)
+            if (viewer->surfName() != "segmentation")
+                viewer->setIntersects(dbg_intersects);
+    }
 }
