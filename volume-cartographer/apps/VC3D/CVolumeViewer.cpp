@@ -699,10 +699,11 @@ void CVolumeViewer::renderIntersections()
                 SurfacePointer *ptr = crop->pointer();
 #pragma omp for
                 for (auto wp : src_locations) {
-                    float res = crop->pointTo(ptr, wp, 1.0, 100);
+                    float res = crop->pointTo(ptr, wp, 2.0, 100);
                     cv::Vec3f p = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
                     //FIXME still happening?
-                    // if (res >= 1.0)
+                    if (res >= 2.0)
+                        p = {-1,-1,-1};
                         // std::cout << "WARNING pointTo() high residual in renderIntersections()" << std::endl;
 #pragma omp critical
                     location_cache[wp] = p;
@@ -718,6 +719,9 @@ void CVolumeViewer::renderIntersections()
                 for (auto wp : seg)
                 {
                     cv::Vec3f p = location_cache[wp];
+                    
+                    if (p[0] == -1)
+                        continue;
 
                     if (last[0] != -1 && cv::norm(p-last) >= 8) {
                         auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 2/_scene_scale));
