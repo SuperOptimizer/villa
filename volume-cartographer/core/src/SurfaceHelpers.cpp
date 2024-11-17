@@ -3951,38 +3951,38 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8
                         }
                 }
             }
-            if (!counts_hr(j*step+1,i*step+1)) {
-                /*int src_loc_valid_count = 0;
-                if (state(j,i) & STATE_LOC_VALID)
-                    src_loc_valid_count++;
-                if (state(j,i+1) & STATE_LOC_VALID)
-                    src_loc_valid_count++;
-                if (state(j+1,i) & STATE_LOC_VALID)
-                    src_loc_valid_count++;
-                if (state(j+1,i+1) & STATE_LOC_VALID)
-                    src_loc_valid_count++;
-
-                if (src_loc_valid_count >= 2)
-                    continue;*/
-
-                cv::Vec3d c00 = points(j,i);
-                cv::Vec3d c01 = points(j,i+1);
-                cv::Vec3d c10 = points(j+1,i);
-                cv::Vec3d c11 = points(j+1,i+1);
-
-                for(int sy=0;sy<=step;sy++)
-                    for(int sx=0;sx<=step;sx++) {
-                        if (!counts_hr(j*step+sy,i*step+sx)) {
-                            float fx = sx/step;
-                            float fy = sy/step;
-                            cv::Vec3d c0 = (1-fx)*c00 + fx*c01;
-                            cv::Vec3d c1 = (1-fx)*c10 + fx*c11;
-                            cv::Vec3d c = (1-fy)*c0 + fy*c1;
-                            points_hr(j*step+sy,i*step+sx) = c;
-                            counts_hr(j*step+sy,i*step+sx) = 1;
-                        }
-                    }
-            }
+            // if (!counts_hr(j*step+1,i*step+1)) {
+            //     /*int src_loc_valid_count = 0;
+            //     if (state(j,i) & STATE_LOC_VALID)
+            //         src_loc_valid_count++;
+            //     if (state(j,i+1) & STATE_LOC_VALID)
+            //         src_loc_valid_count++;
+            //     if (state(j+1,i) & STATE_LOC_VALID)
+            //         src_loc_valid_count++;
+            //     if (state(j+1,i+1) & STATE_LOC_VALID)
+            //         src_loc_valid_count++;
+            // 
+            //     if (src_loc_valid_count >= 2)
+            //         continue;*/
+            // 
+            //     cv::Vec3d c00 = points(j,i);
+            //     cv::Vec3d c01 = points(j,i+1);
+            //     cv::Vec3d c10 = points(j+1,i);
+            //     cv::Vec3d c11 = points(j+1,i+1);
+            // 
+            //     for(int sy=0;sy<=step;sy++)
+            //         for(int sx=0;sx<=step;sx++) {
+            //             if (!counts_hr(j*step+sy,i*step+sx)) {
+            //                 float fx = sx/step;
+            //                 float fy = sy/step;
+            //                 cv::Vec3d c0 = (1-fx)*c00 + fx*c01;
+            //                 cv::Vec3d c1 = (1-fx)*c10 + fx*c11;
+            //                 cv::Vec3d c = (1-fy)*c0 + fy*c1;
+            //                 points_hr(j*step+sy,i*step+sx) = c;
+            //                 counts_hr(j*step+sy,i*step+sx) = 1;
+            //             }
+            //         }
+            // }
         }
     }
 #pragma omp parallel for
