@@ -52,6 +52,7 @@ public slots:
     void OnVolumeChanged(std::shared_ptr<volcart::Volume> vol);
     void onVolumeClicked(QPointF scene_loc,Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void onPanRelease(Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
+    void onPanStart(Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void onSurfaceChanged(std::string name, Surface *surf);
     void onPOIChanged(std::string name, POI *poi);
     void onIntersectionChanged(std::string a, std::string b, Intersection *intersection);

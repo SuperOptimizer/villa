@@ -63,6 +63,7 @@ void CVolumeViewerView::mousePressEvent(QMouseEvent *event)
     {
         _regular_pan = true;
         _last_pan_position = QPoint(event->position().x(), event->position().y());
+        sendPanStart(event->button(), event->modifiers());
         setCursor(Qt::ClosedHandCursor);
         event->accept();
         return;
