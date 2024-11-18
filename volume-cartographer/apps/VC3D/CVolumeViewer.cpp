@@ -94,28 +94,28 @@ QPointF visible_center(QGraphicsView *view)
 void scene2vol(cv::Vec3f &p, cv::Vec3f &n, Surface *_surf, const std::string &_surf_name, CSurfaceCollection *_surf_col, const QPointF &scene_loc, const cv::Vec2f &_vis_center, float _ds_scale)
 {
     //for PlaneSurface we work with absolute coordinates only
-    if (dynamic_cast<PlaneSurface*>(_surf)) {
+    // if (dynamic_cast<PlaneSurface*>(_surf)) {
         cv::Vec3f surf_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
         
         SurfacePointer *ptr = _surf->pointer();
         
         n = _surf->normal(ptr, surf_loc);
         p = _surf->coord(ptr, surf_loc);
-    }
-    //FIXME quite some assumptions ...
-    else if (_surf_name == "segmentation") {
-        // assert(_ptr);
-        assert(dynamic_cast<OpChain*>(_surf));
-        
-        QuadSurface* crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation")); 
-        
-        cv::Vec3f delta = {(scene_loc.x()-_vis_center[0])/_ds_scale, (scene_loc.y()-_vis_center[1])/_ds_scale,0};
-        
-        //NOTE crop center and original scene _ptr are off by < 0.5 voxels?
-        SurfacePointer *ptr = crop->pointer();
-        n = crop->normal(ptr, delta);
-        p = crop->coord(ptr, delta);
-    }
+//     }
+//     //FIXME quite some assumptions ...
+//     else if (_surf_name == "segmentation") {
+//         // assert(_ptr);
+//         assert(dynamic_cast<OpChain*>(_surf));
+//         
+//         QuadSurface* crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation")); 
+//         
+//         cv::Vec3f delta = {(scene_loc.x()-_vis_center[0])/_ds_scale, (scene_loc.y()-_vis_center[1])/_ds_scale,0};
+//         
+//         //NOTE crop center and original scene _ptr are off by < 0.5 voxels?
+//         SurfacePointer *ptr = crop->pointer();
+//         n = crop->normal(ptr, delta);
+//         p = crop->coord(ptr, delta);
+//     }
 }
 
 void CVolumeViewer::onCursorMove(QPointF scene_loc)
@@ -437,15 +437,15 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
     else {
         cv::Vec2f roi_c = {roi.x+roi.width/2, roi.y + roi.height/2};
 
-        if (!_ptr) {
+        // if (!_ptr) {
             _ptr = _surf->pointer();
-            _vis_center = roi_c;
-        }
-        else {
+            _vis_center = {0,0};
+        // }
+        // else {
             cv::Vec3f diff = {roi_c[0]-_vis_center[0],roi_c[1]-_vis_center[1],0};
             _surf->move(_ptr, diff/_scale); //FIXME is this correct?
             _vis_center = roi_c;
-        }
+        // }
 
         //
         _surf->gen(&coords, nullptr, roi.size(), _ptr, _scale, {-roi.width/2, -roi.height/2, _z_off});
