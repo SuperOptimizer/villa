@@ -4423,9 +4423,12 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     //FIXME shouldn change start of opt but does?! (32-good, 64 bad, 50 good?)
     int stop_gen = 10000;
     int closing_r = 20;
-    int size_gen = 1000;
-    int w = size_gen*2*1.1+5+2*closing_r;
-    int h = size_gen*2*1.1+5+2*closing_r;
+    int size_gen = 500;
+    // int w = size_gen*2*1.1+5+2*closing_r+200;
+    // int h = size_gen*2*1.1+5+2*closing_r;
+    //1k ~ 1cm
+    int w = 2*20000/src_step/step*2+10+2*closing_r;
+    int h = 2*15000/src_step/step*2+10+2*closing_r;
     cv::Size  size = {w,h};
     cv::Rect bounds(0,0,w-1,h-1);
     
@@ -4434,6 +4437,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     int x0 = w/2;
     int y0 = h/2;
     int r = 1;
+    
+    std::cout << "starting with size " << size << " seed " << cv::Vec2i(y0,x0) << std::endl;
 
     std::vector<cv::Vec2i> neighs = {{1,0},{0,1},{-1,0},{0,-1}};
 
@@ -4463,11 +4468,10 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     data.surfs({y0+1,x0}).insert(seed);
     data.surfs({y0+1,x0+1}).insert(seed);
 
-    points({y0,x0}) = data.lookup_int(seed,{y0,x0});
-    //FIXME WTF?!!!
-    points({y0,x0+1}) = data.lookup_int(seed,{y0+1,x0});
-    points({y0+1,x0}) = data.lookup_int(seed,{y0,x0+1});
-    points({y0+1,x0+1}) = data.lookup_int(seed,{y0+1,x0+1});
+    points(y0,x0) = data.lookup_int(seed,{y0,x0});
+    points(y0,x0+1) = data.lookup_int(seed,{y0,x0+1});
+    points(y0+1,x0) = data.lookup_int(seed,{y0+1,x0});
+    points(y0+1,x0+1) = data.lookup_int(seed,{y0+1,x0+1});
 
     state(y0,x0) = STATE_LOC_VALID | STATE_COORD_VALID;
     state(y0+1,x0) = STATE_LOC_VALID | STATE_COORD_VALID;
