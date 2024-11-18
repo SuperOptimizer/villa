@@ -405,7 +405,7 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
         else if (_surf_name == "segmentation" && crop)
         {
             SurfacePointer *ptr = crop->pointer();
-            dist = crop->pointTo(ptr, poi->p, 20.0);
+            dist = crop->pointTo(ptr, poi->p, 2.0);
             sp = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
         }
         
