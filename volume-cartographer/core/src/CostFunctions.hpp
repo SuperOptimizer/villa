@@ -410,8 +410,9 @@ struct ZCoordLoss {
     
 };
 
+template <typename V>
 struct ZLocationLoss {
-    ZLocationLoss(const cv::Mat_<cv::Vec3f> &m, float z, float w) :  _m(m), _z(z), _w(w) {};
+    ZLocationLoss(const cv::Mat_<V> &m, float z, float w) :  _m(m), _z(z), _w(w) {};
     template <typename T>
     bool operator()(const T* const l, T* residual) const {
         T p[3];
@@ -428,11 +429,11 @@ struct ZLocationLoss {
         return true;
     }
     
-    const cv::Mat_<cv::Vec<double,3>> _m;
+    const cv::Mat_<V> _m;
     float _z;
     float _w;
     
-    static ceres::CostFunction* Create(const cv::Mat_<cv::Vec3d> &m, float z, float w = 1.0)
+    static ceres::CostFunction* Create(const cv::Mat_<V> &m, float z, float w = 1.0)
     {
         return new ceres::AutoDiffCostFunction<ZLocationLoss, 1, 2>(new ZLocationLoss(m, z, w));
     }
