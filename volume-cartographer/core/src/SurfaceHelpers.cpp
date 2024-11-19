@@ -3678,7 +3678,7 @@ int cond_surftrack_straightloss_3D(int type, SurfaceMeta *sm, const cv::Vec2i &p
     return count;
 }
 
-float z_loc_loss_w = 0.001;
+float z_loc_loss_w = 0.0003;
 
 int add_surftrack_surfloss(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, float step, ceres::ResidualBlockId *res = nullptr, float w = 0.1)
 {
@@ -4195,7 +4195,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
         for(int i=used_area.x;i<used_area.br().x;i++) {
             fix_points_z++;
             if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0]))
-                problem.AddResidualBlock(ZLocationLoss<cv::Vec3d>::Create(points_new, data.seed_coord[2] + (j-data.seed_loc[0])*step*src_step, z_loc_loss_w), new ceres::HuberLoss(1.0), &data_inp.loc(&sm_inp, {j,i})[0]);
+                problem.AddResidualBlock(ZLocationLoss<cv::Vec3d>::Create(points_new, data.seed_coord[2] + (j-data.seed_loc[0])*step*src_step, z_loc_loss_w*10), new ceres::HuberLoss(1.0), &data_inp.loc(&sm_inp, {j,i})[0]);
                 // problem.AddResidualBlock(ZLocationLoss::Create(points_new, data_inp.seed_coord[2] + (j-data_inp.seed_loc[0])*step*src_step, z_loc_loss_w), new ceres::HuberLoss(1.0), &data.loc(&sm_inp, {j,i})[0]);
         }
 
