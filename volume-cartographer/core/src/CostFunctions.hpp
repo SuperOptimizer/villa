@@ -389,8 +389,8 @@ struct LinChkDistLoss {
 
 };
 
-struct ZLocationLoss {
-    ZLocationLoss(float z, float w) :  _z(z), _w(w) {};
+struct ZCoordLoss {
+    ZCoordLoss(float z, float w) :  _z(z), _w(w) {};
     template <typename T>
     bool operator()(const T* const p, T* residual) const {
         // T d = abs(p[2] - T(_z));
@@ -405,7 +405,36 @@ struct ZLocationLoss {
     
     static ceres::CostFunction* Create(float z, float w = 1.0)
     {
-        return new ceres::AutoDiffCostFunction<ZLocationLoss, 1, 3>(new ZLocationLoss(z, w));
+        return new ceres::AutoDiffCostFunction<ZCoordLoss, 1, 3>(new ZCoordLoss(z, w));
+    }
+    
+};
+
+struct ZLocationLoss {
+    ZLocationLoss(const cv::Mat_<cv::Vec3f> &m, float z, float w) :  _m(m), _z(z), _w(w) {};
+    template <typename T>
+    bool operator()(const T* const l, T* residual) const {
+        T p[3];
+        
+        if (!loc_valid(_m, {val(l[0]), val(l[1])})) {
+            residual[0] = T(0);
+            return true;
+        }
+        
+        interp_lin_2d(_m, l[0], l[1], p);
+        
+        residual[0] = T(_w)*(p[2] - T(_z));
+        
+        return true;
+    }
+    
+    const cv::Mat_<cv::Vec<double,3>> _m;
+    float _z;
+    float _w;
+    
+    static ceres::CostFunction* Create(const cv::Mat_<cv::Vec3d> &m, float z, float w = 1.0)
+    {
+        return new ceres::AutoDiffCostFunction<ZLocationLoss, 1, 2>(new ZLocationLoss(m, z, w));
     }
     
 };
