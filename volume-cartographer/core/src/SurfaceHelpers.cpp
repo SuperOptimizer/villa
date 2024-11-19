@@ -2712,14 +2712,14 @@ struct thresholdedDistance
 
 };
 
-float dist_th = 2.0;
+float dist_th = 1.0;
 
 QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, float step)
 {
     ALifeTime f_timer("empty space tracing\n");
     DSReader reader = {ds,scale,cache};
 
-    int stop_gen = 50;
+    int stop_gen = 100;
 
     //FIXME show and handle area edge!
     int w = 2*stop_gen+50;
@@ -2997,12 +2997,12 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                             avg += locs(oy,ox);
                         }
 
-                // int ref_count2 = 0;
-                // for(int oy=std::max(p[0]-r2,0);oy<=std::min(p[0]+r2,locs.rows-1);oy++)
-                //     for(int ox=std::max(p[1]-r2,0);ox<=std::min(p[1]+r2,locs.cols-1);ox++)
-                //         if (state(oy,ox) & (STATE_LOC_VALID | STATE_COORD_VALID)) {
-                //             ref_count2++;
-                //         }
+                int ref_count2 = 0;
+                for(int oy=std::max(p[0]-r2,0);oy<=std::min(p[0]+r2,locs.rows-1);oy++)
+                    for(int ox=std::max(p[1]-r2,0);ox<=std::min(p[1]+r2,locs.cols-1);ox++)
+                        if (state(oy,ox) & (STATE_LOC_VALID | STATE_COORD_VALID)) {
+                            ref_count2++;
+                        }
 
                 if (ref_count < 2 /*|| (generation > 3 && ref_count2 < 14)*/) {
                     state(p) &= ~STATE_PROCESSING;
