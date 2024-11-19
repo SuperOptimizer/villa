@@ -3778,10 +3778,10 @@ int surftrack_add_local(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &dat
 
     if (flags & SURF_LOSS) {
         int surf = add_surftrack_surfloss(sm, p, data, problem, state, points);
-        if (surf) {
-            problem.AddResidualBlock(ZLocationLoss::Create(data.seed_coord[2] + (p[0]-data.seed_loc[0])*step, 0.001), nullptr, &points(p)[0]);
+        // if (surf) {
+            // problem.AddResidualBlock(ZLocationLoss::Create(data.seed_coord[2] + (p[0]-data.seed_loc[0])*step, 0.001), nullptr, &points(p)[0]);
             count += surf + 1;
-        }
+        // }
     }
 
 
@@ -4484,34 +4484,34 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
     //start in the center
     data.loc(seed,{y0,x0}) = {seed_points.rows/2, seed_points.cols/2 };
-    data.loc(seed,{y0,x0+1}) = {seed_points.rows/2, seed_points.cols/2+step };
-    data.loc(seed,{y0+1,x0}) = {seed_points.rows/2+step, seed_points.cols/2 };
-    data.loc(seed,{y0+1,x0+1}) = {seed_points.rows/2+step, seed_points.cols/2+step };
+    // data.loc(seed,{y0,x0+1}) = {seed_points.rows/2, seed_points.cols/2+step };
+    // data.loc(seed,{y0+1,x0}) = {seed_points.rows/2+step, seed_points.cols/2 };
+    // data.loc(seed,{y0+1,x0+1}) = {seed_points.rows/2+step, seed_points.cols/2+step };
 
     // std::cout << "init " << data.loc(seed,{y0,x0}) << data.loc(seed,{y0,x0+1}) << data.loc(seed,{y0+1,x0}) << data.loc(seed,{y0+1,x0+1}) << std::endl;
 
     data.surfs({y0,x0}).insert(seed);
-    data.surfs({y0,x0+1}).insert(seed);
-    data.surfs({y0+1,x0}).insert(seed);
-    data.surfs({y0+1,x0+1}).insert(seed);
+    // data.surfs({y0,x0+1}).insert(seed);
+    // data.surfs({y0+1,x0}).insert(seed);
+    // data.surfs({y0+1,x0+1}).insert(seed);
 
     points(y0,x0) = data.lookup_int(seed,{y0,x0});
-    points(y0,x0+1) = data.lookup_int(seed,{y0,x0+1});
-    points(y0+1,x0) = data.lookup_int(seed,{y0+1,x0});
-    points(y0+1,x0+1) = data.lookup_int(seed,{y0+1,x0+1});
+    // points(y0,x0+1) = data.lookup_int(seed,{y0,x0+1});
+    // points(y0+1,x0) = data.lookup_int(seed,{y0+1,x0});
+    // points(y0+1,x0+1) = data.lookup_int(seed,{y0+1,x0+1});
     
     data.seed_coord = points(y0,x0);
     data.seed_loc = cv::Point2i(y0,x0);
 
     state(y0,x0) = STATE_LOC_VALID | STATE_COORD_VALID;
-    state(y0+1,x0) = STATE_LOC_VALID | STATE_COORD_VALID;
-    state(y0,x0+1) = STATE_LOC_VALID | STATE_COORD_VALID;
-    state(y0+1,x0+1) = STATE_LOC_VALID | STATE_COORD_VALID;
+    // state(y0+1,x0) = STATE_LOC_VALID | STATE_COORD_VALID;
+    // state(y0,x0+1) = STATE_LOC_VALID | STATE_COORD_VALID;
+    // state(y0+1,x0+1) = STATE_LOC_VALID | STATE_COORD_VALID;
 
     fringe.insert(cv::Vec2i(y0,x0));
-    fringe.insert(cv::Vec2i(y0+1,x0));
-    fringe.insert(cv::Vec2i(y0,x0+1));
-    fringe.insert(cv::Vec2i(y0+1,x0+1));
+    // fringe.insert(cv::Vec2i(y0+1,x0));
+    // fringe.insert(cv::Vec2i(y0,x0+1));
+    // fringe.insert(cv::Vec2i(y0+1,x0+1));
 
     //insert initial surfs per location
     for(auto p: fringe) {
@@ -4629,7 +4629,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                             ref_count++;
                             avg += data_th.loc(ref_surf,{oy,ox});
                             any_p = points(cv::Vec2i(data_th.loc(ref_surf,{oy,ox})));
-                            if (data.seed_loc == cv::Vec2i(oy,ox))
+                            if (data_th.seed_loc == cv::Vec2i(oy,ox))
                                 ref_seed = true;
                         }
 
@@ -4652,7 +4652,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 int straight_count_init = 0;
                 //FIXME instead of surf loss for search we can also add a y positoin on loc sampling of the local surf!
                 points(p) = any_p;
-                int count_init = surftrack_add_local(ref_surf, p, data_th, problem, state, points, step, 0, &straight_count_init);
+                int count_init = surftrack_add_local(ref_surf, p, data_th, problem, state, points, step, SURF_LOSS, &straight_count_init);
                 // mutex.unlock();
                 ceres::Solver::Summary summary;
                 ceres::Solve(options, &problem, &summary);
