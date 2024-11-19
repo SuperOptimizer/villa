@@ -3,6 +3,7 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/video/tracking.hpp>
 
 #include "CostFunctions.hpp"
 
@@ -3678,7 +3679,7 @@ int cond_surftrack_straightloss_3D(int type, SurfaceMeta *sm, const cv::Vec2i &p
     return count;
 }
 
-float z_loc_loss_w = 0.0003;
+float z_loc_loss_w = 0.0001;
 
 int add_surftrack_surfloss(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, float step, ceres::ResidualBlockId *res = nullptr, float w = 0.1)
 {
@@ -3781,6 +3782,16 @@ int surftrack_add_local(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &dat
         count_straight += add_surftrack_straightloss(sm, p, {-2,0},{-1,0},{0,0}, data, problem, state);
         count_straight += add_surftrack_straightloss(sm, p, {-1,0},{0,0},{1,0}, data, problem, state);
         count_straight += add_surftrack_straightloss(sm, p, {0,0},{1,0},{2,0}, data, problem, state);
+        
+        //dia1
+        count_straight += add_surftrack_straightloss(sm, p, {-2,-2},{-1,-1},{0,0}, data, problem, state);
+        count_straight += add_surftrack_straightloss(sm, p, {-1,-1},{0,0},{1,1}, data, problem, state);
+        count_straight += add_surftrack_straightloss(sm, p, {0,0},{1,1},{2,2}, data, problem, state);
+        
+        //dia1
+        count_straight += add_surftrack_straightloss(sm, p, {-2,2},{-1,1},{0,0}, data, problem, state);
+        count_straight += add_surftrack_straightloss(sm, p, {-1,1},{0,0},{1,-1}, data, problem, state);
+        count_straight += add_surftrack_straightloss(sm, p, {0,0},{1,-1},{2,-2}, data, problem, state);
     }
     
     //FIXME will add too many but lets see what happens ...
@@ -3837,6 +3848,16 @@ int surftrack_add_global(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &da
         count += cond_surftrack_straightloss_3D(5, sm, p, {-2,0},{-1,0},{0,0}, points, data, problem, state, flags);
         count += cond_surftrack_straightloss_3D(5, sm, p, {-1,0},{0,0},{1,0}, points, data, problem, state, flags);
         count += cond_surftrack_straightloss_3D(5, sm, p, {0,0},{1,0},{2,0}, points, data, problem, state, flags);
+        
+        //dia1
+        count += cond_surftrack_straightloss_3D(6, sm, p, {-2,-2},{-1,-1},{0,0}, points, data, problem, state, flags);
+        count += cond_surftrack_straightloss_3D(6, sm, p, {-1,-1},{0,0},{1,1}, points, data, problem, state, flags);
+        count += cond_surftrack_straightloss_3D(6, sm, p, {0,0},{1,1},{2,2}, points, data, problem, state, flags);
+        
+        //dia1
+        count += cond_surftrack_straightloss_3D(7, sm, p, {-2,2},{-1,1},{0,0}, points, data, problem, state, flags);
+        count += cond_surftrack_straightloss_3D(7, sm, p, {-1,1},{0,0},{1,-1}, points, data, problem, state, flags);
+        count += cond_surftrack_straightloss_3D(8, sm, p, {0,0},{1,-1},{2,-2}, points, data, problem, state, flags);
     }
     //losses are defined on surface
     else {
@@ -3865,7 +3886,7 @@ int surftrack_add_global(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &da
     }
 
     if (flags & SURF_LOSS && state(p) & STATE_LOC_VALID)
-        count += cond_surftrack_surfloss(6, sm, p, data, problem, state, points, step);
+        count += cond_surftrack_surfloss(8, sm, p, data, problem, state, points, step);
 
     return count;
 }
@@ -4024,6 +4045,60 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8
             //             }
             //         }
             // }
+//             if (!counts_hr(j*step+1,i*step+1)) {
+//                 std::unordered_map<SurfaceMeta*,std::pair<std::vector<cv::Vec2f>,std::vector<cv::Vec2f>>> supports;
+//                 for(int y=j-1;y<=j+2;y++)
+//                     for(int x=i-1;x<=i+2;x++)
+//                         for(auto &sm : data.surfsC({y,x}))
+//                             if (data.valid_int(sm,{y,x})) {
+//                                 supports[sm].first.push_back({y,x});
+//                                 supports[sm].second.push_back(data.loc(sm,{y,x}));
+//                             }
+//                 
+//                 // cv::Vec2d avg = {0, 0};
+//                 // int count = 0;
+//                 for(auto it : supports)
+//                     if (it.second.first.size() >= 3) {
+//                         int border_count = 0;
+//                         if (data.valid_int(it.first,{j,i})) border_count++;
+//                         if (data.valid_int(it.first,{j,i+1})) border_count++;
+//                         if (data.valid_int(it.first,{j+1,i})) border_count++;
+//                         if (data.valid_int(it.first,{j+1,i+1})) border_count++;
+//                         
+//                         if (border_count < 2)
+//                             continue;
+//                         
+//                         
+//                         cv::Mat M = cv::estimateRigidTransform(it.second.first, it.second.second, false);
+//                         
+//                         bool succ = true;
+//                         for(int n=0;n<it.second.first.size();n++)
+//                         {
+//                             cv::Vec2f p = it.second.first[n];
+//                             cv::Mat_<double> out = M*cv::Vec3d(p[0],p[1],1);
+//                             cv::Vec2f loc = {out(0,0), out(1,0)};
+//                             if (cv::norm(cv::Vec2d(out(0,0), out(1,0)) - data.loc(it.first,p)) >= 1.0) {
+//                                 succ = false;
+//                                 std::cout << "res " << p << out.size() << out << cv::Vec2f(out(0,0), out(1,0)) << data.loc(it.first,p) << std::endl;
+//                             }
+//                         }
+//                         
+//                         if (!succ)
+//                             continue;
+//                         
+//                         for(int sy=0;sy<=step;sy++)
+//                             for(int sx=0;sx<=step;sx++) {
+//                                 if (!counts_hr(j*step+sy,i*step+sx)) {
+//                                     cv::Vec2f p = {j+sy/step, i+sx/step};
+//                                     cv::Mat_<double> out = M*cv::Vec3d(p[0],p[1],1);
+//                                     cv::Vec2f loc = {out(0,0), out(1,0)};
+//                                     // std::cout << "res " << out.size() << std::endl;
+//                                     points_hr(j*step+sy,i*step+sx) += data.lookup_int_loc(it.first,loc);
+//                                     counts_hr(j*step+sy,i*step+sx) += 1;
+//                                 }
+//                             }
+//                     }
+//             }
         }
     }
 #pragma omp parallel for
@@ -4179,12 +4254,12 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
         for(int i=used_area.x;i<used_area.br().x;i++) {
             //FIXME is the interpolation also refering to points that are currently being optimized?! if yes check gradiets!
             res_count += surftrack_add_global(&sm_inp, {j,i}, data_inp, problem, new_state, points_new, step*src_step, LOSS_3D_INDIRECT | SURF_LOSS | OPTIMIZE_ALL);
-            // if (true/*j % 4 == 0 && i % 4 == 0*/) {
-            //     fix_points++;
-            //     if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0])) {
-            //         problem.AddResidualBlock(LinChkDistLoss::Create(data_inp.loc(&sm_inp, {j,i}), 0.001), nullptr, &data_inp.loc(&sm_inp, {j,i})[0]);
-            //     }
-            // }
+            if (true/*j % 4 == 0 && i % 4 == 0*/) {
+                fix_points++;
+                if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0])) {
+                    problem.AddResidualBlock(LinChkDistLoss::Create(data_inp.loc(&sm_inp, {j,i}), 0.001), nullptr, &data_inp.loc(&sm_inp, {j,i})[0]);
+                }
+            }
         }
         
 //     if (!problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed)[0]))
@@ -4369,9 +4444,10 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 
                         int count = 0;
                         cv::Vec3f loc_3d = test_surf->surf()->loc_raw(ptr);
-                        float cost = local_cost_destructive(test_surf, {j,i}, data_out, state_out, points_out, step, src_step, loc_3d, &count);
+                        int straight_count = 0;
+                        float cost = local_cost_destructive(test_surf, {j,i}, data_out, state_out, points_out, step, src_step, loc_3d, &count, &straight_count);
 
-                        if (cost > local_cost_inl_th || count < 2)
+                        if (cost > local_cost_inl_th || straight_count < 1 || count < 2)
                             continue;
 
                         data.surfs({j,i}).insert(test_surf);

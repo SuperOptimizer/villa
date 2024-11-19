@@ -103,6 +103,7 @@ target_link_libraries(vc_surface
         ceres
     PUBLIC
         opencv_core
+        opencv_video
 )
 target_include_directories(vc_surface
     PUBLIC
