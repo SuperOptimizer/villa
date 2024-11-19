@@ -4152,7 +4152,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     options.linear_solver_type = ceres::SPARSE_SCHUR;
     options.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
     options.minimizer_progress_to_stdout = false;
-    options.max_num_iterations = 10000;
+    options.max_num_iterations = 1000;
     options.num_threads = omp_get_max_threads();
 
     for(int j=used_area.y;j<used_area.br().y;j++)
