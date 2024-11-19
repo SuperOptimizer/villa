@@ -4547,12 +4547,12 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     // int w = size_gen*2*1.1+5+2*closing_r+200;
     // int h = size_gen*2*1.1+5+2*closing_r;
     //1k ~ 1cm
-    int w = 2*20000/src_step/step*2+10+2*closing_r;
+    int w = 2*80000/src_step/step*2+10+2*closing_r;
     int h = 2*15000/src_step/step*2+10+2*closing_r;
     cv::Size  size = {w,h};
     cv::Rect bounds(0,0,w-1,h-1);
     
-    cv::Rect save_bounds(closing_r+5,closing_r+5,w-5,h-closing_r-5);
+    cv::Rect save_bounds_inv(closing_r+5,closing_r+5,h-5,w-closing_r-5);
 
     int x0 = w/2;
     int y0 = h/2;
@@ -4650,14 +4650,14 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     continue;
 
                 for(auto n : neighs)
-                    if (save_bounds.contains(p+n)
+                    if (save_bounds_inv.contains(p+n)
                         && (state(p+n) & STATE_PROCESSING) == 0
                         && (state(p+n) & STATE_LOC_VALID) == 0)
                     {
                         state(p+n) |= STATE_PROCESSING;
                         cands.insert(p+n);
                     }
-                    else if (!save_bounds.contains(p+n)) {
+                    else if (!save_bounds_inv.contains(p+n)) {
                         std::cout << "touching border at " << p+n << std::endl;
                     }
             }
