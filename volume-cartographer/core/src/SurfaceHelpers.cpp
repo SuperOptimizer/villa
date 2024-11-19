@@ -1041,6 +1041,7 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
 #define SPACE_LOSS 2 //SURF and SPACE are never used together
 #define LOSS_3D_INDIRECT 4
 #define LOSS_ZLOC 8
+#define FLAG_GEN0 16
 
 #define STATE_UNUSED 0
 #define STATE_LOC_VALID 1
@@ -3679,7 +3680,7 @@ int cond_surftrack_straightloss_3D(int type, SurfaceMeta *sm, const cv::Vec2i &p
     return count;
 }
 
-float z_loc_loss_w = 0.0001;
+float z_loc_loss_w = 0.001;
 
 int add_surftrack_surfloss(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, float step, ceres::ResidualBlockId *res = nullptr, float w = 0.1)
 {
@@ -4254,23 +4255,28 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
         for(int i=used_area.x;i<used_area.br().x;i++) {
             //FIXME is the interpolation also refering to points that are currently being optimized?! if yes check gradiets!
             res_count += surftrack_add_global(&sm_inp, {j,i}, data_inp, problem, new_state, points_new, step*src_step, LOSS_3D_INDIRECT | SURF_LOSS | OPTIMIZE_ALL);
-            if (true/*j % 4 == 0 && i % 4 == 0*/) {
-                fix_points++;
-                if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0])) {
-                    problem.AddResidualBlock(LinChkDistLoss::Create(data_inp.loc(&sm_inp, {j,i}), 0.001), nullptr, &data_inp.loc(&sm_inp, {j,i})[0]);
-                }
-            }
+            // if (true/*j % 4 == 0 && i % 4 == 0*/) {
+            //     fix_points++;
+            //     if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0])) {
+            //         problem.AddResidualBlock(LinChkDistLoss::Create(data_inp.loc(&sm_inp, {j,i}), 0.001), nullptr, &data_inp.loc(&sm_inp, {j,i})[0]);
+            //     }
+            // }
         }
         
 //     if (!problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed)[0]))
 //         throw std::runtime_error("oops we lost the seed");
 //         
+    
+    
+    data_inp.seed_loc = seed;
+    data_inp.seed_coord = points_new(seed);
+    
     int fix_points_z = 0;
     for(int j=used_area.y;j<used_area.br().y;j++)
         for(int i=used_area.x;i<used_area.br().x;i++) {
             fix_points_z++;
             if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0]))
-                problem.AddResidualBlock(ZLocationLoss<cv::Vec3d>::Create(points_new, data.seed_coord[2] + (j-data.seed_loc[0])*step*src_step, z_loc_loss_w*10), new ceres::HuberLoss(1.0), &data_inp.loc(&sm_inp, {j,i})[0]);
+                problem.AddResidualBlock(ZLocationLoss<cv::Vec3d>::Create(points_new, data_inp.seed_coord[2] + (j-data_inp.seed_loc[0])*step*src_step, z_loc_loss_w), new ceres::HuberLoss(1.0), &data_inp.loc(&sm_inp, {j,i})[0]);
                 // problem.AddResidualBlock(ZLocationLoss::Create(points_new, data_inp.seed_coord[2] + (j-data_inp.seed_loc[0])*step*src_step, z_loc_loss_w), new ceres::HuberLoss(1.0), &data.loc(&sm_inp, {j,i})[0]);
         }
 
@@ -4278,11 +4284,11 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 
     //TODO test even if we allow it to drift the next steps should still continue to work
 
-    if (fix_points < 4) {
-        if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed)[0])) {
-            problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed)[0]);
-        }
-    }
+    // if (fix_points < 4) {
+    //     if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed)[0])) {
+    //         problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, seed)[0]);
+    //     }
+    // }
 
     //somehow this really doesn't work ...
     // for(int j=used_area.y;j<used_area.br().y;j++)
@@ -4640,8 +4646,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     for(int generation=0;generation<stop_gen;generation++) {
         std::unordered_set<cv::Vec2i,vec2i_hash> cands;
         if (generation == 0) {
-            cands.insert(cv::Vec2i(y0+1,x0));
             cands.insert(cv::Vec2i(y0-1,x0));
+            cands.insert(cv::Vec2i(y0+1,x0));
         }
         else
             for(auto p : fringe)
@@ -5091,7 +5097,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         
         bool update_mapping = (succ >= 100 && (loc_valid_count-last_succ_parametrization) >= std::max(100.0, 0.3*last_succ_parametrization));
 
-        if (generation % 50 == 0 || update_mapping) {
+        if (generation % 50 == 0 || update_mapping || generation < 10) {
         cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, src_step);
         QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(generation, 5);
