@@ -104,6 +104,8 @@ int main(int argc, char *argv[])
     fs::path tgt_dir = argv[3];
     fs::path params_path = argv[4];
     fs::path src_path = argv[5];
+    while (src_path.filename().empty())
+        src_path = src_path.parent_path();
 
     std::ifstream params_f(params_path);
     json params = json::parse(params_f);
@@ -154,13 +156,13 @@ int main(int argc, char *argv[])
             surfaces.push_back(sm);
         }
 
-    QuadSurface *surf = grow_surf_from_surfs(src, surfaces, 5.0);
+    QuadSurface *surf = grow_surf_from_surfs(src, surfaces, 20.0);
 
     if (!surf)
         return EXIT_SUCCESS;
 
     (*surf->meta)["source"] = "vc_grow_seg_from_segments";
-    // std::string uuid = "testing_auto_surf_trace" + time_str();
+    // std::string uuid = "testing_auto_surf_trace" + std::string("_opt_int_64%6_") + time_str();
     std::string uuid = "testing_auto_surf_trace";;
     fs::path seg_dir = tgt_dir / uuid;
     surf->save(seg_dir, uuid);
