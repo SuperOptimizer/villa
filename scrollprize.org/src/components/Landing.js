@@ -780,7 +780,7 @@ const team = {
   ],
   papyrology2024: [
     {
-      name: "Federica Nicolardi (coordinator)",
+      name: "Federica Nicolardi (Coordinator)",
       title: "Assistant Professor of Papyrology, University of Naples Federico II",
       href: "https://www.docenti.unina.it/federica.nicolardi",
     },
