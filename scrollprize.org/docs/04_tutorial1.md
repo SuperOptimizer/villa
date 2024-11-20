@@ -49,7 +49,7 @@ To get a basic understanding of the kind of data we’re working with, it’s us
 
 <div className="flex flex-wrap items-start">
   <figure className="sm:w-[48.4%]">
-    <img src="/img/tutorials/en-gedi-word-soup.gif"/>
+    <img src="/img/tutorials/en-gedi-word-soup.webp"/>
     <figcaption className="mt-0">Word soup in a simulated scroll <a href="https://www.youtube.com/watch?v=tL7rhIFNtQg">(source)</a></figcaption>
   </figure>
   <figure className="sm:w-[50%]">

@@ -58,7 +58,7 @@ The mesh is used to isolate and extract a thin "surface volume" of the mapped pa
 </div>
 
 <figure className="max-w-[600px]">
-  <img src="/img/data/surface_volume.gif"/>
+  <img src="/img/data/surface_volume.webp"/>
   <figcaption className="mt-0">Scrubbing through layers of the surface volume of segment <a href="https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/20230827161846/layers/">20230827161846</a>.</figcaption>
 </figure>
 
