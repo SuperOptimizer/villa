@@ -4514,18 +4514,19 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     std::set<SurfaceMeta*> approved_sm;
     
     for(auto &sm : surfs_v) {
-        surfs[sm->name()] = sm;
         if (sm->meta->contains("tags") && sm->meta->at("tags").contains("approved"))
             approved_sm.insert(sm);
+        if (!sm->meta->contains("tags") || !sm->meta->at("tags").contains("defective"))
+            surfs[sm->name()] = sm;
     }
     
     for(auto sm : approved_sm)
         std::cout << "approved: " << sm->name() << std::endl;
 
     for(auto &sm : surfs_v)
-        for(auto name : sm->overlapping_str) {
-            sm->overlapping.insert(surfs[name]);
-        }
+        for(auto name : sm->overlapping_str)
+            if (surfs.count(name))
+                sm->overlapping.insert(surfs[name]);
 
     std::cout << "total number of surfs:" << surfs.size() << std::endl;
     std::cout << seed << "name" << seed->name() << " seed overlapping:" << seed->overlapping.size() << "/" << seed->overlapping_str.size() << std::endl;
