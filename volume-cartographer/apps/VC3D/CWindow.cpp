@@ -659,7 +659,6 @@ void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf
         else
             _red_points.push_back(vol_loc);
         sendPointsChanged(_red_points, _blue_points);
-        std::cout << "clicked points " << std::endl;
         _lblPointsInfo->setText(QString("red: %1 blue: %2").arg(_red_points.size()).arg(_blue_points.size()));
     }
     else if (modifiers & Qt::ControlModifier) {
@@ -843,6 +842,9 @@ void CWindow::onSegFilterChanged(int index)
                 else if (index == 1 && contains(*_vol_qsurfs[id], poi->p)) {
                     insert = true;
                 }
+                else if (index == 2 && contains(*_vol_qsurfs[id], _red_points) && contains(*_vol_qsurfs[id], _blue_points)) {
+                    insert = true;
+                }
             }
             
             if (insert) {
@@ -864,6 +866,7 @@ void CWindow::onSegFilterChanged(int index)
 // Create menus
 void CWindow::onResetPoints(void)
 {
+    _lblPointsInfo->setText(QString("red: %1 blue: %2").arg(_red_points.size()).arg(_blue_points.size()));
     _red_points.resize(0);
     _blue_points.resize(0);
     

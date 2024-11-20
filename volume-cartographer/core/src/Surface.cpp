@@ -1538,6 +1538,15 @@ bool contains(SurfaceMeta &a, const cv::Vec3f &loc)
     return false;
 }
 
+bool contains(SurfaceMeta &a, const std::vector<cv::Vec3f> &locs)
+{
+    for(auto &p : locs)
+        if (!contains(a, p))
+            return false;
+    
+    return true;
+}
+
 SurfaceMeta::SurfaceMeta(const std::filesystem::path &path_, const nlohmann::json &json) : path(path_)
 {
     if (json.contains("bbox"))

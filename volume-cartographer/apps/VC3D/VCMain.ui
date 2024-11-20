@@ -226,6 +226,11 @@
               <string>filter by focus point</string>
              </property>
             </item>
+            <item>
+             <property name="text">
+              <string>filter by point sets</string>
+             </property>
+            </item>
            </widget>
           </item>
           <item>
