@@ -1416,7 +1416,7 @@ void QuadSurface::save(const std::string &path_, const std::string &uuid)
     (*meta)["uuid"] = uuid;
     (*meta)["format"] = "tifxyz";
     (*meta)["scale"] = {_scale[0], _scale[1]};
-    std::ofstream o(path/"/meta.json.tmp");
+    std::ofstream o(path/"meta.json.tmp");
     o << std::setw(4) << (*meta) << std::endl;
 
     //rename to make creation atomic
