@@ -130,6 +130,7 @@ int main(int argc, char *argv[])
     cv::Vec3d origin;
 
     std::string name_prefix = "auto_grown_";
+    // std::string name_prefix = "testing_autogrow";
     int tgt_overlap_count = 10;
     float min_area_cm = 0.3;
     float step_size = 20;
@@ -316,6 +317,10 @@ int main(int argc, char *argv[])
     }
 
     omp_set_num_threads(1);
+    
+    // origin = {3036.043212890625, 
+    //     4807.43798828125,
+    //     11265.13671875};
 
     QuadSurface *surf = empty_space_tracing_quad_phys(ds.get(), 1.0, &chunk_cache, origin, step_size);
 
