@@ -80,7 +80,6 @@ Scanning involves capturing hundreds to thousands of X-ray photographs of the ob
 <figure className="">
   <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/fragment-rotating2.webp">
     <source src="/img/tutorials/fragment-rotating2.webm" type="video/webm"/>
-    <source src="/img/tutorials/fragment-rotating2.webm" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">A fragment rotating, with an X-ray source (from a particle accelerator) on one side, and an X-ray camera on the other side <a href="https://www.youtube.com/watch?v=fg_08ukGlMw">(source)</a></figcaption>
 </figure>
@@ -90,7 +89,6 @@ The X-ray photos are combined into a 3D scan volume using [tomographic reconstru
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/scanning2.webp">
     <source src="/img/tutorials/scanning2.webm" type="video/webm"/>
-    <source src="/img/tutorials/scanning2.webm" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">Artistic visualization of constructing a 3D volume; in reality the object rotates as it is scanned.</figcaption>
 </figure>
@@ -131,7 +129,6 @@ The goal of segmentation is to map and capture information near the written surf
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/segmentation2.webp">
     <source src="/img/tutorials/segmentation2.webm" type="video/webm"/>
-    <source src="/img/tutorials/segmentation2.webm" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">Segmentation: finding a surface of papyrus.</figcaption>
 </figure>
@@ -160,7 +157,6 @@ We use machine learning models to detect ink, training them on previously identi
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/ink-detection-anim2-dark.webp">
     <source src="/img/tutorials/ink-detection-anim2-dark.webm" type="video/webm"/>
-    <source src="/img/tutorials/ink-detection-anim2-dark.webm" type="video/mp4"/>
   </video>
 </figure>
 
@@ -180,7 +176,6 @@ We go into great detail in [“Tutorial 5: Ink Detection”](tutorial5).
 <figure className="">
   <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/engedi-reconstruction3.webm">
     <source src="/img/tutorials/engedi-reconstruction3.webm" type="video/webm"/>
-    <source src="/img/tutorials/engedi-reconstruction3.webm" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">En-Gedi reconstruction of multiple segments, showing Hebrew text. Can you read it? <a href="https://www.youtube.com/watch?v=tL7rhIFNtQg">(source)</a></figcaption>
 </figure>

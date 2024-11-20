@@ -144,7 +144,6 @@ The idea is to train ML models on these fragments, since we have the ground trut
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] " poster="/img/tutorials/ink-training-anim3-dark.webp">
     <source src="/img/tutorials/ink-training-anim3-dark.webm" type="video/webm"/>
-    <source src="/img/tutorials/ink-training-anim3-dark.webm" type="video/mp4"/>
   </video>
 </figure>
 

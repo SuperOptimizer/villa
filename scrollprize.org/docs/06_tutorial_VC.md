@@ -280,7 +280,7 @@ You’ll notice now that the purple line becomes a series of points. This is you
 
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/new-pen.webp">
-    <source src="/img/tutorials/new_pen_tool.webm" type="video/mp4"/>
+    <source src="/img/tutorials/new_pen_tool.webm" type="video/webm"/>
   </video>
   <figcaption className="mt-0">Placing our first segmentation line with the pen tool.</figcaption>
 </figure>
@@ -299,7 +299,7 @@ Click “Start” to begin the segmentation run.
 
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/new-pen.webp">
-    <source src="/img/tutorials/new_seg_run.webm" type="video/mp4"/>
+    <source src="/img/tutorials/new_seg_run.webm" type="video/webm"/>
   </video>
   <figcaption className="mt-0">"Snapping" our segmentation line back onto the surface of the sheet.</figcaption>
 </figure>
@@ -312,7 +312,7 @@ You can press T at any time within the segmentation tool to return to the slice 
 
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/new-pen.webp">
-    <source src="/img/tutorials/second_seg_run.webm" type="video/mp4"/>
+    <source src="/img/tutorials/second_seg_run.webm" type="video/webm"/>
   </video>
   <figcaption className="mt-0">"Snapping" our segmentation line back onto the surface of the sheet.</figcaption>
 </figure>
@@ -322,7 +322,6 @@ After you’ve guided the line along the sheet, hit “Start” again, and repea
 <figure>
   <video playsInline muted controls className="max-w-[100%] rounded-xl" poster="/img/tutorials/vc-extrapolation2.webp">
     <source src="/img/tutorials/vc-extrapolation2.webm" type="video/webm"/>
-    <source src="/img/tutorials/vc-extrapolation2.webm" type="video/mp4"/>
   </video>
 </figure>
 
@@ -334,7 +333,6 @@ The process completed during this step looks like this in 3D. We've identified t
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/segmentation2.webp">
     <source src="/img/tutorials/segmentation2.webm" type="video/webm"/>
-    <source src="/img/tutorials/segmentation2.webm" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">Segmentation: finding a surface of papyrus.</figcaption>
 </figure>
@@ -437,7 +435,6 @@ When looking for ink in the volume, we need to look at more than just the voxels
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/surface-volume-extrusion3.webp">
     <source src="/img/tutorials/surface-volume-extrusion3.webm" type="video/webm"/>
-    <source src="/img/tutorials/surface-volume-extrusion3.webm" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">Building a neighborhood of voxels around our segment. Everything inside the neighborhood is used for texturing.</figcaption>
 </figure>
@@ -449,7 +446,6 @@ The ppm file that we generated contains a mapping between our flattened output i
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/surface-volume-flattening4.webp">
     <source src="/img/tutorials/surface-volume-flattening4.webm" type="video/webm"/>
-    <source src="/img/tutorials/surface-volume-flattening4.webm" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">Flattening of the subvolume.</figcaption>
 </figure>
@@ -459,7 +455,6 @@ The result of this process are the 65 tifs in the /layers/ directory, also refer
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/surface-volume-image-stack2.webp">
     <source src="/img/tutorials/surface-volume-image-stack2.webm" type="video/webm"/>
-    <source src="/img/tutorials/surface-volume-image-stack2.webm" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">The resulting “surface volume” is your .tif image stack in the /layers/ directory.</figcaption>
 </figure>

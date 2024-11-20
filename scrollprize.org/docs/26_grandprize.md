@@ -49,11 +49,9 @@ Two thousand years ago, a volcanic eruption buried an ancient library of papyrus
 <figure className="">
   <video autoPlay playsInline loop muted className="w-[100%] sm:w-[55.6%]" poster="/img/grandprize/library-lava-small.webp">
     <source src="/img/grandprize/library-lava-small.webm" type="video/webm"/>
-    <source src="/img/grandprize/library-lava-small.webm" type="video/mp4"/>
   </video>
   <video autoPlay playsInline loop muted className="hidden sm:inline sm:w-[44%]" poster="/img/grandprize/scroll-lava-small.webp">
     <source src="/img/grandprize/scroll-lava-small.webm" type="video/webm"/>
-    <source src="/img/grandprize/scroll-lava-small.webm" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">The scrolls were <a href="https://twitter.com/natfriedman/status/1703422593670541437">carbonized</a> by the eruption of Mount Vesuvius in 79 AD.</figcaption>
 </figure>
@@ -72,7 +70,6 @@ On March 15th, 2023, Nat Friedman, Daniel Gross, and Brent Seales launched the <
   <div className="w-[54%]">
     <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/scanning2.webp">
       <source src="/img/tutorials/scanning2.webm" type="video/webm"/>
-      <source src="/img/tutorials/scanning2.webm" type="video/mp4"/>
     </video>
     <figcaption className="mt-[-6px]">Artistic visualization of constructing a 3D volume.</figcaption>
   </div>
@@ -300,7 +297,6 @@ Machine learning models are infamous for “hallucinating”: making up text or 
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/ink-detection-anim3-dark.webp">
     <source src="/img/tutorials/ink-detection-anim3-dark.webm" type="video/webm"/>
-    <source src="/img/tutorials/ink-detection-anim3-dark.webm" type="video/mp4"/>
   </video>
   <figcaption className="mt-[-6px]">The models use small input/output windows. In some cases, the output is even only binary (“ink” vs “no ink”), as shown in this animation. This makes it extremely unlikely for the model to hallucinate shapes that look like letters.</figcaption>
 </figure>
@@ -317,8 +313,7 @@ These scrolls were scanned at Diamond Light Source, a particle accelerator near 
 
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] max-w-[600px]" poster="/img/grandprize/.webp">
-    <source src="/img/grandprize/.webm" type="video/webm"/>
-    <source src="/img/grandprize/scroll1.webm" type="video/mp4"/>
+    <source src="/img/grandprize/scroll1.webm" type="video/webm"/>
   </video>
   <figcaption className="mt-[-6px]">Scrubbing through the slice images of the scroll.</figcaption>
 </figure>
@@ -330,7 +325,6 @@ Volume Cartographer is operated by our team of full-time segmenters: Ben Kyles, 
 <figure>
   <video autoPlay playsInline loop muted className="max-w-[100%] rounded-xl" poster="/img/tutorials/vc-extrapolation2.webp">
     <source src="/img/tutorials/vc-extrapolation2.webm" type="video/webm"/>
-    <source src="/img/tutorials/vc-extrapolation2.webm" type="video/mp4"/>
   </video>
   <figcaption className="mt-[-6px]">Animation showing manual and automatic segmentation in Volume Cartographer.</figcaption>
 </figure>

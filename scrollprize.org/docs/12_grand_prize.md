@@ -57,7 +57,6 @@ You can approach this challenge through any means necessary: machine learning, c
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/overview/scroll-inside-animation-4.webp">
     <source src="/img/overview/scroll-inside-animation-4.webm" type="video/webm"/>
-    <source src="/img/overview/scroll-inside-animation-4.webm" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">3D X-ray scan of a scroll <a href="https://www.youtube.com/watch?v=PpNq2cFotyY">(source)</a></figcaption>
 </figure>

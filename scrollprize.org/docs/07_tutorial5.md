@@ -89,7 +89,6 @@ We train this model by picking a pixel in the binary label image, and sampling a
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] " poster="/img/tutorials/ink-training-anim3-dark.webp">
     <source src="/img/tutorials/ink-training-anim3-dark.webm" type="video/webm"/>
-    <source src="/img/tutorials/ink-training-anim3-dark.webm" type="video/mp4"/>
   </video>
 </figure>
 
@@ -98,7 +97,6 @@ We can then use the model to predict what a label image would have looked like, 
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/ink-detection-anim3-dark.webp">
     <source src="/img/tutorials/ink-detection-anim3-dark.webm" type="video/webm"/>
-    <source src="/img/tutorials/ink-detection-anim3-dark.webm" type="video/mp4"/>
   </video>
 </figure>
 
@@ -107,7 +105,6 @@ Of course, in reality the label image on the right doesn’t come out perfectly.
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] max-w-[238px]" poster="/img/landing/fragment-training2.webp">
     <source src="/img/landing/fragment-training2.webm" type="video/webm"/>
-    <source src="/img/landing/fragment-training2.webm" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">A model learning to detect ink on a fragment, showing different training epochs</figcaption>
 </figure>
