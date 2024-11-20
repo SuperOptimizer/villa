@@ -49,6 +49,7 @@ signals:
     void sendVolumeChanged(std::shared_ptr<volcart::Volume> vol);
     void sendSliceChanged(std::string,Surface*);
     void sendOpChainSelected(OpChain*);
+    void sendPointsChanged(const std::vector<cv::Vec3f> red, const std::vector<cv::Vec3f> blue);
 
 public slots:
     void onShowStatusMessage(QString text, int timeout);
@@ -57,6 +58,7 @@ public slots:
     void onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void onOpChainChanged(OpChain *chain);
     void onTagChanged(void);
+    void onResetPoints(void);
 
 public:
     CWindow();
@@ -127,12 +129,16 @@ private:
 
     QComboBox* volSelect;
     QComboBox* cmbFilterSegs;
-    QPushButton* assignVol;
     
     QCheckBox* _chkApproved;
     QCheckBox* _chkDefective;
+    QLabel* _lblPointsInfo;
+    QPushButton* _btnResetPoints;
     QuadSurface *_surf;
 
+    std::vector<cv::Vec3f> _red_points;
+    std::vector<cv::Vec3f> _blue_points;
+    
     QTreeWidget *treeWidgetSurfaces;
     OpsList *wOpsList;
     OpsSettings *wOpsSettings;

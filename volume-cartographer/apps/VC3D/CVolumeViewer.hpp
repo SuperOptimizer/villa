@@ -45,6 +45,7 @@ public:
     void setIntersects(const std::set<std::string> &set);
     std::string surfName() { return _surf_name; };
     void recalcScales();
+    void renderPoints();
     
     CVolumeViewerView* fGraphicsView;
 
@@ -59,6 +60,7 @@ public slots:
     void onScrolled();
     void onZoom(int steps, QPointF scene_point, Qt::KeyboardModifiers modifiers);
     void onCursorMove(QPointF);
+    void onPointsChanged(const std::vector<cv::Vec3f> red, const std::vector<cv::Vec3f> blue);
 
 signals:
     void SendSignalSliceShift(int shift, int axis);
@@ -112,6 +114,10 @@ protected:
     Intersection *_ignore_intersect_change = nullptr;
     
     CSurfaceCollection *_surf_col = nullptr;
+    
+    std::vector<cv::Vec3f> _red_points;
+    std::vector<cv::Vec3f> _blue_points;
+    std::vector<QGraphicsItem*> _points_items; 
 };  // class CVolumeViewer
 
 }  // namespace ChaoVis

@@ -243,7 +243,8 @@ void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, 
         sendVolumeClicked(p, n, _surf, buttons, modifiers);
     //FIXME quite some assumptions ...
     else if (_surf_name == "segmentation")
-        sendVolumeClicked(p, n, _surf_col->surface("visible_segmentation"), buttons, modifiers);
+        sendVolumeClicked(p, n, _surf_col->surface("segmentation"), buttons, modifiers);
+    // sendVolumeClicked(p, n, _surf_col->surface("visible_segmentation"), buttons, modifiers);
     else
         std::cout << "FIXME: onVolumeClicked()" << std::endl;
 }
@@ -394,7 +395,8 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
     }
     else if (name == "cursor") {
         PlaneSurface *slice_plane = dynamic_cast<PlaneSurface*>(_surf);
-        QuadSurface *crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
+        // QuadSurface *crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
+        QuadSurface *crop = dynamic_cast<QuadSurface*>(_surf_col->surface("segmentation"));
         
         cv::Vec3f sp;
         float dist = -1;
@@ -406,7 +408,7 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
         {
             SurfacePointer *ptr = crop->pointer();
             dist = crop->pointTo(ptr, poi->p, 2.0);
-            sp = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
+            sp = crop->loc(ptr)*_ds_scale ;//+ cv::Vec3f(_vis_center[0],_vis_center[1],0);
         }
         
         if (!_cursor) {
@@ -450,16 +452,16 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
         //
         _surf->gen(&coords, nullptr, roi.size(), _ptr, _scale, {-roi.width/2, -roi.height/2, _z_off});
         
-        if (_surf_name == "segmentation") {
-            invalidateIntersect();
-
-            QuadSurface *old_crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
-            
-            QuadSurface *crop = new QuadSurface(coords.clone(), {_ds_scale, _ds_scale});
-            _surf_col->setSurface("visible_segmentation", crop);
-            if (old_crop)
-                delete old_crop;
-        }
+//         if (_surf_name == "segmentation") {
+//             invalidateIntersect();
+// 
+//             QuadSurface *old_crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
+//             
+//             QuadSurface *crop = new QuadSurface(coords.clone(), {_ds_scale, _ds_scale});
+//             _surf_col->setSurface("visible_segmentation", crop);
+//             if (old_crop)
+//                 delete old_crop;
+//         }
     }
 
     std::cout << "readInterpolated3D() " << _ds_scale << " " << _scale << " " << roi << coords.size << std::endl;
@@ -494,6 +496,8 @@ void CVolumeViewer::renderVisible(bool force)
     
     if (!force && QRectF(curr_img_area).contains(bbox))
         return;
+    
+    renderPoints();
     
     curr_img_area = {bbox.left()-128,bbox.top()-128, bbox.width()+256, bbox.height()+256};
     
@@ -674,8 +678,8 @@ void CVolumeViewer::renderIntersections()
             _ignore_intersect_change = nullptr;
         }
     }
-    else if (_surf_name == "segmentation" && dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"))) {
-        QuadSurface *crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
+    else if (_surf_name == "segmentation" /*&& dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"))*/) {
+        // QuadSurface *crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
 
         //TODO make configurable, for now just show everything!
         std::vector<std::pair<std::string,std::string>> intersects = _surf_col->intersections("segmentation");
@@ -697,11 +701,14 @@ void CVolumeViewer::renderIntersections()
             
 #pragma omp parallel
             {
-                SurfacePointer *ptr = crop->pointer();
+                // SurfacePointer *ptr = crop->pointer();
+                SurfacePointer *ptr = _surf->pointer();
 #pragma omp for
                 for (auto wp : src_locations) {
-                    float res = crop->pointTo(ptr, wp, 2.0, 100);
-                    cv::Vec3f p = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
+                    // float res = crop->pointTo(ptr, wp, 2.0, 100);
+                    // cv::Vec3f p = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
+                    float res = _surf->pointTo(ptr, wp, 2.0, 100);
+                    cv::Vec3f p = _surf->loc(ptr)*_scale ;//+ cv::Vec3f(_vis_center[0],_vis_center[1],0);
                     //FIXME still happening?
                     if (res >= 2.0)
                         p = {-1,-1,-1};
@@ -778,4 +785,55 @@ void CVolumeViewer::onScrolled()
         // renderVisible();
     // if ((!dynamic_cast<OpChain*>(_surf) || !dynamic_cast<OpChain*>(_surf)->slow()) && _min_scale < 1.0)
         // renderVisible();
+}
+
+void CVolumeViewer::renderPoints()
+{
+    for(auto &item : _points_items)
+        fScene->removeItem(item);
+    _points_items.resize(0);
+    
+    std::vector<cv::Vec3f> all_ps(_red_points);
+    all_ps.insert(all_ps.end(), _blue_points.begin(), _blue_points.end());
+    
+    int n = -1;
+    for(auto &wp : all_ps) {
+        n++;
+        PlaneSurface *plane = dynamic_cast<PlaneSurface*>(_surf);
+        QuadSurface *quad = dynamic_cast<QuadSurface*>(_surf);
+        
+        cv::Vec3f p;
+        
+        if (plane) {
+            if (plane->pointDist(wp) >= 4.0)
+                continue;
+            p = plane->project(wp, 1.0, _ds_scale);
+        }
+        else if (quad) {
+            SurfacePointer *ptr = quad->pointer();
+            float res = _surf->pointTo(ptr, wp, 4.0, 100);
+            p = _surf->loc(ptr)*_scale;
+            if (res >= 4.0)
+                continue;
+        }
+        else
+            continue;
+        
+        QColor col = QColor(100, 100, 255);
+        if (n < _red_points.size())
+            col = QColor(255, 100, 100);
+        
+        QGraphicsItem *item = fScene->addEllipse(p[0]-4, p[1]-4, 8, 8, QPen(Qt::white), QBrush(col, Qt::SolidPattern));
+        item->setZValue(30);
+        _points_items.push_back(item);
+    }
+}
+
+
+void CVolumeViewer::onPointsChanged(const std::vector<cv::Vec3f> red, const std::vector<cv::Vec3f> blue)
+{
+    _red_points = red;
+    _blue_points = blue;
+    
+    renderPoints();
 }

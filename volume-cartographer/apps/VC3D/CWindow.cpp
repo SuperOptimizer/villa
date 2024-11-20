@@ -119,6 +119,7 @@ CVolumeViewer *CWindow::newConnectedCVolumeViewer(std::string show_surf, QMdiAre
     win->setWindowTitle(show_surf.c_str());
     volView->setCache(chunk_cache);
     connect(this, &CWindow::sendVolumeChanged, volView, &CVolumeViewer::OnVolumeChanged);
+    connect(this, &CWindow::sendPointsChanged, volView, &CVolumeViewer::onPointsChanged);
     connect(_surf_col, &CSurfaceCollection::sendSurfaceChanged, volView, &CVolumeViewer::onSurfaceChanged);
     connect(_surf_col, &CSurfaceCollection::sendPOIChanged, volView, &CVolumeViewer::onPOIChanged);
     connect(_surf_col, &CSurfaceCollection::sendIntersectionChanged, volView, &CVolumeViewer::onIntersectionChanged);
@@ -207,8 +208,6 @@ void CWindow::CreateWidgets(void)
 
     cmbFilterSegs = this->findChild<QComboBox*>("cmbFilterSegs");
     connect(cmbFilterSegs, &QComboBox::currentIndexChanged, this, &CWindow::onSegFilterChanged);
-    
-    assignVol = this->findChild<QPushButton*>("assignVol");
 
     // Set up the status bar
     statusBar = this->findChild<QStatusBar*>("statusBar");
@@ -234,6 +233,10 @@ void CWindow::CreateWidgets(void)
     
     connect(_chkApproved, &QCheckBox::stateChanged, this, &CWindow::onTagChanged);
     connect(_chkDefective, &QCheckBox::stateChanged, this, &CWindow::onTagChanged);
+    
+    _lblPointsInfo = this->findChild<QLabel*>("lblPointsInfo");
+    _btnResetPoints = this->findChild<QPushButton*>("btnResetPoints");
+    connect(_btnResetPoints, &QPushButton::pressed, this, &CWindow::onResetPoints);
 }
 
 // Create menus
@@ -428,7 +431,6 @@ void CWindow::UpdateView(void)
         ->setText(QString(fVpkg->name().c_str()));
 
     volSelect->setEnabled(can_change_volume_());
-    assignVol->setEnabled(can_change_volume_());
 
     update();
 }
@@ -651,8 +653,16 @@ void CWindow::onLocChanged(void)
 
 void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
 {
-    //current action: move default POI
-    if (modifiers & Qt::ControlModifier) {
+    if (modifiers & Qt::ShiftModifier) {
+        if (modifiers & Qt::ControlModifier)
+            _blue_points.push_back(vol_loc);
+        else
+            _red_points.push_back(vol_loc);
+        sendPointsChanged(_red_points, _blue_points);
+        std::cout << "clicked points " << std::endl;
+        _lblPointsInfo->setText(QString("red: %1 blue: %2").arg(_red_points.size()).arg(_blue_points.size()));
+    }
+    else if (modifiers & Qt::ControlModifier) {
         std::cout << "clicked on vol loc " << vol_loc << std::endl;
         //NOTE this comes before the focus poi, so focus is applied by views using these slices
         //FIXME this assumes a single segmentation ... make configurable and cleaner ...
@@ -849,4 +859,13 @@ void CWindow::onSegFilterChanged(int index)
             if (viewer->surfName() != "segmentation")
                 viewer->setIntersects(dbg_intersects);
     }
+}
+
+// Create menus
+void CWindow::onResetPoints(void)
+{
+    _red_points.resize(0);
+    _blue_points.resize(0);
+    
+    sendPointsChanged(_red_points, _blue_points);
 }
