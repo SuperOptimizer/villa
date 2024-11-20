@@ -93,7 +93,7 @@ const stories = ({ unrollVideo, mlVideo, xrayVideo }) => [
           ref={unrollVideo}
         >
           <source src="/img/landing/engedi5.webm" type="video/webm" />
-          <source src="/img/landing/engedi5.mp4" type="video/mp4" />
+          <source src="/img/landing/engedi5.webm" type="video/mp4" />
         </video>
         {inlineImage("/img/landing/brent1.webp")}
         {/* <div className="max-w-3xl mb-8">
@@ -144,7 +144,7 @@ const stories = ({ unrollVideo, mlVideo, xrayVideo }) => [
               poster="/img/landing/model-input3.webp"
             >
               <source src="/img/landing/model-input3.webm" type="video/webm" />
-              <source src="/img/landing/model-input3.mp4" type="video/mp4" />
+              <source src="/img/landing/model-input3.webm" type="video/mp4" />
             </video>
           </figure>
           <figure className="md:w-[33.4%] w-[54%] sepia-[.4] mb-0">
@@ -162,7 +162,7 @@ const stories = ({ unrollVideo, mlVideo, xrayVideo }) => [
                 type="video/webm"
               />
               <source
-                src="/img/landing/fragment-training2.mp4"
+                src="/img/landing/fragment-training2.webm"
                 type="video/mp4"
               />
             </video>
@@ -1479,7 +1479,7 @@ export function Landing() {
                 ref={heroVideo}
               >
                 <source
-                  src="img/landing/vesuvius-flipped-min.mp4"
+                  src="img/landing/vesuvius-flipped-min.webm"
                   type="video/mp4"
                 />
               </video>

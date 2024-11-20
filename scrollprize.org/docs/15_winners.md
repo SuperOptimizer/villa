@@ -223,7 +223,7 @@ This page lists all the prizes awarded so far:
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/KhartesViewer/khartes">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$10,000</div><span className="font-bold">Khartes improvements</span>: Chuck / @khartes_chuck</div>
     <video autoPlay playsInline muted loop className="w-[100%]">
-      <source src="/img/progress/202405/layer_offset_mini_demo.mp4" type="video/mp4"/>
+      <source src="/img/progress/202405/layer_offset_mini_demo.webm" type="video/mp4"/>
     </video>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1079907750265499772/1245553260362858577">
@@ -245,13 +245,13 @@ This page lists all the prizes awarded so far:
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1246129199304151052/1246129199304151052">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Browser-based scroll viewer</span>: Yao Hsiao / @Yao Hsiao</div>
     <video autoPlay playsInline muted loop className="w-[100%]">
-      <source src="/img/progress/202405/neuroglance-demo.mp4" type="video/mp4"/>
+      <source src="/img/progress/202405/neuroglance-demo.webm" type="video/mp4"/>
     </video>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/SuperOptimizer/Hraun">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">3D segmentation prototype</span>: Forrest McDonald / @VerditeLabs</div>
     <video autoPlay playsInline muted loop className="w-[100%]">
-      <source src="/img/progress/202405/hraun.mp4" type="video/mp4"/>
+      <source src="/img/progress/202405/hraun.webm" type="video/mp4"/>
     </video>
   </a>
 </div>
@@ -495,7 +495,7 @@ This page lists all the prizes awarded so far:
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$10,000</div><span className="font-bold">Khartes</span> by Chuck / @khartes_chuck</div>
     <video autoPlay playsInline muted loop className="w-[100%]">
       <source src="/img/progress/khartes.webm" type="video/webm"/>
-      <source src="/img/progress/khartes.mp4" type="video/mp4"/>
+      <source src="/img/progress/khartes.webm" type="video/mp4"/>
     </video>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1079907750265499772/1150930251824779424">
@@ -554,14 +554,14 @@ This page lists all the prizes awarded so far:
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$10,000</div><span className="font-bold"> Optical Flow Segmentation</span> by Julian / @RICHI</div>
     <video playsInline muted autoPlay loop className="max-w-[100%]" poster="/img/tutorials/vc-extrapolation2.webp">
       <source src="/img/tutorials/vc-extrapolation2.webm" type="video/webm"/>
-      <source src="/img/tutorials/vc-extrapolation2.mp4" type="video/mp4"/>
+      <source src="/img/tutorials/vc-extrapolation2.webm" type="video/mp4"/>
     </video>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/KhartesViewer/khartes">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$10,000</div><span className="font-bold"> Khartes</span> by Chuck / @khartes_chuck</div>
     <video autoPlay playsInline muted loop className="w-[100%]">
       <source src="/img/progress/khartes.webm" type="video/webm"/>
-      <source src="/img/progress/khartes.mp4" type="video/mp4"/>
+      <source src="/img/progress/khartes.webm" type="video/mp4"/>
     </video>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumes_masked/20230205180739/">
@@ -666,7 +666,7 @@ Before and during the competition, EduceLab has put out various works. With thes
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/educelab/quick-segment">
     <div className="mb-4"><span className="font-bold">Quick Segment</span> by Bruno, Sydney, and Drew</div>
     <video autoPlay playsInline muted loop className="w-[100%]">
-      <source src="/img/progress/quicksegment.mp4" type="video/mp4"/>
+      <source src="/img/progress/quicksegment.webm" type="video/mp4"/>
     </video>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://uknowledge.uky.edu/cs_etds/138/">
@@ -681,7 +681,7 @@ Before and during the competition, EduceLab has put out various works. With thes
     <div className="mb-4"><span className="font-bold">ink-id</span> by Stephen Parsons</div>
     <video autoPlay playsInline loop muted className="w-[100%] max-h-[150px]" poster="/img/landing/fragment-training2.webp">
       <source src="/img/landing/fragment-training2.webm" type="video/webm"/>
-      <source src="/img/landing/fragment-training2.mp4" type="video/mp4"/>
+      <source src="/img/landing/fragment-training2.webm" type="video/mp4"/>
     </video>
   </a>
 </div>

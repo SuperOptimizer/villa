@@ -41,7 +41,7 @@ As you will learn in the [tutorials](/tutorial), one of the big challenges of re
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/ink-detection-anim2-dark.webp">
     <source src="/img/tutorials/ink-detection-anim2-dark.webm" type="video/webm"/>
-    <source src="/img/tutorials/ink-detection-anim2-dark.mp4" type="video/mp4"/>
+    <source src="/img/tutorials/ink-detection-anim2-dark.webm" type="video/mp4"/>
   </video>
 </figure>
 

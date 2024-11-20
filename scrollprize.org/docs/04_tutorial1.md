@@ -55,7 +55,7 @@ To get a basic understanding of the kind of data we’re working with, it’s us
   <figure className="sm:w-[50%]">
     <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/meshlab-small2.webp">
       <source src="/img/tutorials/meshlab-small2.webm" type="video/webm"/>
-      <source src="/img/tutorials/meshlab-small2.mp4" type="video/mp4"/>
+      <source src="/img/tutorials/meshlab-small2.webm" type="video/mp4"/>
     </video>
     <figcaption className="mt-0">Mesh representation of the “campfire scroll”</figcaption>
   </figure>
@@ -164,7 +164,7 @@ In the resulting scan you can vaguely see some features, perhaps even some ink, 
 <figure>
   <video autoPlay playsInline loop muted className="max-w-[100%] rounded-xl" poster="/img/tutorials/imagej-raw-xrays2.webp">
     <source src="/img/tutorials/imagej-raw-xrays2.webm" type="video/webm"/>
-    <source src="/img/tutorials/imagej-raw-xrays2.mp4" type="video/mp4"/>
+    <source src="/img/tutorials/imagej-raw-xrays2.webm" type="video/mp4"/>
   </video>
 </figure>
 
@@ -189,7 +189,7 @@ The result should look like this:
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] max-w-[400px] rounded-xl" poster="/img/tutorials/imagej-slices2.webp">
     <source src="/img/tutorials/imagej-slices2.webm" type="video/webm"/>
-    <source src="/img/tutorials/imagej-slices2.mp4" type="video/mp4"/>
+    <source src="/img/tutorials/imagej-slices2.webm" type="video/mp4"/>
   </video>
 </figure>
 
@@ -206,7 +206,7 @@ In these images, radiodense materials have bright pixel values while more radiol
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] max-w-[700px] rounded-xl" poster="/img/tutorials/drag-up2.webp">
     <source src="/img/tutorials/drag-up2.webm" type="video/webm"/>
-    <source src="/img/tutorials/drag-up2.mp4" type="video/mp4"/>
+    <source src="/img/tutorials/drag-up2.webm" type="video/mp4"/>
   </video>
 </figure>
 
@@ -219,7 +219,7 @@ In these images, radiodense materials have bright pixel values while more radiol
 <figure>
   <video autoPlay playsInline loop muted className="w-[100%] max-w-[300px] rounded-xl" poster="/img/tutorials/alpha-graph2.webp">
     <source src="/img/tutorials/alpha-graph2.webm" type="video/webm"/>
-    <source src="/img/tutorials/alpha-graph2.mp4" type="video/mp4"/>
+    <source src="/img/tutorials/alpha-graph2.webm" type="video/mp4"/>
   </video>
 </figure>
 
@@ -238,7 +238,7 @@ Here is a video showing the whole process:
 <figure>
   <video controls playsInline muted className="w-[100%] rounded-xl" poster="/img/tutorials/imagej-word-soup2.webp">
     <source src="/img/tutorials/imagej-word-soup2.webm" type="video/webm"/>
-    <source src="/img/tutorials/imagej-word-soup2.mp4" type="video/mp4"/>
+    <source src="/img/tutorials/imagej-word-soup2.webm" type="video/mp4"/>
   </video>
 </figure>
 
@@ -281,6 +281,6 @@ Here is a video where we navigate around the model in Meshlab:
 <figure>
   <video controls playsInline muted className="w-[100%] rounded-xl" poster="/img/tutorials/meshlab2.webp">
     <source src="/img/tutorials/meshlab2.webm" type="video/webm"/>
-    <source src="/img/tutorials/meshlab2.mp4" type="video/mp4"/>
+    <source src="/img/tutorials/meshlab2.webm" type="video/mp4"/>
   </video>
 </figure>

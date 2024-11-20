@@ -106,7 +106,7 @@ Here are some other excellent books we recommend:
 <figure className="">
   <video autoPlay playsInline loop muted className="w-[60%]" poster="/img/faq/maquette2.webp">
     <source src="/img/faq/maquette2.webm" type="video/webm"/>
-    <source src="/img/faq/maquette2.mp4" type="video/mp4"/>
+    <source src="/img/faq/maquette2.webm" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">Herculaneum scroll reconstruction from a <a href="https://bibliopolis.it/shop/opera-incerta-sugli-dei/">book</a> by Marzia D’Angelo <a href="https://cispe.org/philodemus-opus-incertum-pherc-89-1301-1383/">(source)</a>; more explanation <a href="https://discord.com/channels/1079907749569237093/1085972686158712892/1115918553602855002">here</a></figcaption>
 </figure>
@@ -275,14 +275,14 @@ At high resolutions the field of view of the camera is too small to capture the 
   <figure className="sm:w-[34%] mr-4">
     <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/imagej-raw-xrays2.webp">
       <source src="/img/tutorials/imagej-raw-xrays2.webm" type="video/webm"/>
-      <source src="/img/tutorials/imagej-raw-xrays2.mp4" type="video/mp4"/>
+      <source src="/img/tutorials/imagej-raw-xrays2.webm" type="video/mp4"/>
     </video>
     <figcaption className="mt-0">Raw X-ray photos</figcaption>
   </figure>
   <figure className="sm:w-[63%]">
     <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/fragment-rotating2.webp">
       <source src="/img/tutorials/fragment-rotating2.webm" type="video/webm"/>
-      <source src="/img/tutorials/fragment-rotating2.mp4" type="video/mp4"/>
+      <source src="/img/tutorials/fragment-rotating2.webm" type="video/mp4"/>
     </video>
     <figcaption className="mt-0">A fragment rotating <a href="https://www.youtube.com/watch?v=fg_08ukGlMw">(source)</a></figcaption>
   </figure>
@@ -294,14 +294,14 @@ From the X-ray photos from different angles we can reconstruct a 3D volume, usin
   <figure className="sm:w-[38%]">
     <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/fragment-volume2.webp">
       <source src="/img/tutorials/fragment-volume2.webm" type="video/webm"/>
-      <source src="/img/tutorials/fragment-volume2.mp4" type="video/mp4"/>
+      <source src="/img/tutorials/fragment-volume2.webm" type="video/mp4"/>
     </video>
     <figcaption className="mt-0">Volumetric representation of a fragment, showing multiple layers of papyrus</figcaption>
   </figure>
   <figure className="sm:w-[60%]">
     <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/faq/fragment-pointcloud.webp">
       <source src="/img/faq/fragment-pointcloud.webm" type="video/webm"/>
-      <source src="/img/faq/fragment-pointcloud.mp4" type="video/mp4"/>
+      <source src="/img/faq/fragment-pointcloud.webm" type="video/mp4"/>
     </video>
     <figcaption className="mt-0">Mesh representation of the same fragment</figcaption>
   </figure>
@@ -474,7 +474,7 @@ Of course (🔊 sound on).
 <figure>
   <video loop controls className="w-[100%]" poster="/img/faq/papyrus-n64.webp">
     <source src="/img/faq/papyrus-n64.webm" type="video/webm"/>
-    <source src="/img/faq/papyrus-n64.mp4" type="video/mp4"/>
+    <source src="/img/faq/papyrus-n64.webm" type="video/mp4"/>
   </video>
 </figure>
 
