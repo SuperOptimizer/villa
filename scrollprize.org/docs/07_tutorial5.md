@@ -87,7 +87,7 @@ From a fragment (a) we obtain a 3D volume (b), from which we segment a mesh (c),
 We train this model by picking a pixel in the binary label image, and sampling a subvolume around the same coordinates from the surface volume. We then backpropagate the known label data to update the model weights:
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] " poster="/img/tutorials/ink-training-anim3-dark.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] " poster="/img/tutorials/ink-training-anim3-dark.webp">
     <source src="/img/tutorials/ink-training-anim3-dark.webm" type="video/webm"/>
     <source src="/img/tutorials/ink-training-anim3-dark.mp4" type="video/mp4"/>
   </video>
@@ -96,7 +96,7 @@ We train this model by picking a pixel in the binary label image, and sampling a
 We can then use the model to predict what a label image would have looked like, from different input data than you have trained on.
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/ink-detection-anim3-dark.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/ink-detection-anim3-dark.webp">
     <source src="/img/tutorials/ink-detection-anim3-dark.webm" type="video/webm"/>
     <source src="/img/tutorials/ink-detection-anim3-dark.mp4" type="video/mp4"/>
   </video>
@@ -105,7 +105,7 @@ We can then use the model to predict what a label image would have looked like, 
 Of course, in reality the label image on the right doesn’t come out perfectly. Stephen Parsons’ [ink-id](https://github.com/educelab/ink-id/) program is one example of an ML-based approach. It produces outputs like this (showing different training epochs in k-fold training/prediction):
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] max-w-[238px]" poster="/img/landing/fragment-training2.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] max-w-[238px]" poster="/img/landing/fragment-training2.webp">
     <source src="/img/landing/fragment-training2.webm" type="video/webm"/>
     <source src="/img/landing/fragment-training2.mp4" type="video/mp4"/>
   </video>
@@ -143,7 +143,7 @@ The [Ink Detection Progress Prize on Kaggle](https://www.kaggle.com/competitions
 So how can a machine learning model detect ink? In the electron microscope images below (from the paper [From invisibility to readability: Recovering the ink of Herculaneum](https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0215775&type=printable)), you can clearly see the difference between the inked and non-inked regions. We suspect that machine learning models are able to learn some of these features from the 3D X-ray scans.
 
 <figure>
-  <a href="/img/tutorials/sem.png" target="_blank"><img src="/img/tutorials/sem-alpha.webp"  className="w-[100%]"/></a>
+  <a href="/img/tutorials/sem.webp" target="_blank"><img src="/img/tutorials/sem-alpha.webp"  className="w-[100%]"/></a>
   <figcaption className="mt-0">Electron microscope pictures from the top (A and B) and the side (C) <a href="https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0215775">(source)</a></figcaption>
 </figure>
 

@@ -142,7 +142,7 @@ We have also aligned (“registered”) the surface volumes with the infrared ph
 The idea is to train ML models on these fragments, since we have the ground truth data of where the ink is (in addition to the [newly discovered “crackle” method](firstletters)). Then, those ML models can be applied to the scrolls.
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] " poster="/img/tutorials/ink-training-anim3-dark.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] " poster="/img/tutorials/ink-training-anim3-dark.webp">
     <source src="/img/tutorials/ink-training-anim3-dark.webm" type="video/webm"/>
     <source src="/img/tutorials/ink-training-anim3-dark.mp4" type="video/mp4"/>
   </video>

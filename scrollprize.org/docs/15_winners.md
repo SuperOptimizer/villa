@@ -552,7 +552,7 @@ This page lists all the prizes awarded so far:
 <div className="flex flex-row flex-wrap">
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/schillij95/volume-cartographer-papyrus/">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$10,000</div><span className="font-bold"> Optical Flow Segmentation</span> by Julian / @RICHI</div>
-    <video playsInline muted autoPlay loop className="max-w-[100%]" poster="/img/tutorials/vc-extrapolation2.jpg">
+    <video playsInline muted autoPlay loop className="max-w-[100%]" poster="/img/tutorials/vc-extrapolation2.webp">
       <source src="/img/tutorials/vc-extrapolation2.webm" type="video/webm"/>
       <source src="/img/tutorials/vc-extrapolation2.mp4" type="video/mp4"/>
     </video>
@@ -679,7 +679,7 @@ Before and during the competition, EduceLab has put out various works. With thes
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/educelab/ink-id">
     <div className="mb-4"><span className="font-bold">ink-id</span> by Stephen Parsons</div>
-    <video autoPlay playsInline loop muted className="w-[100%] max-h-[150px]" poster="/img/landing/fragment-training2.jpg">
+    <video autoPlay playsInline loop muted className="w-[100%] max-h-[150px]" poster="/img/landing/fragment-training2.webp">
       <source src="/img/landing/fragment-training2.webm" type="video/webm"/>
       <source src="/img/landing/fragment-training2.mp4" type="video/mp4"/>
     </video>

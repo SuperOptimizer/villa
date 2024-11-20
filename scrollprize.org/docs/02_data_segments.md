@@ -39,7 +39,7 @@ hide_table_of_contents: true
 Segmentation involves mapping sheets of papyrus inside a 3D X-ray scroll volume or fragment volume. 
 
 <figure className="max-w-[500px]">
-  <video autoPlay playsInline muted controls className="w-[100%] rounded-xl" poster="/img/tutorials/vc-extrapolation2.jpg">
+  <video autoPlay playsInline muted controls className="w-[100%] rounded-xl" poster="/img/tutorials/vc-extrapolation2.webp">
     <source src="/img/tutorials/vc-extrapolation2.webm" type="video/webm"/>
     <source src="/img/tutorials/vc-extrapolation2.mp4" type="video/mp4"/>
   </video>

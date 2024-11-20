@@ -14,13 +14,13 @@ hide_title: true
   <meta property="og:url" content="https://scrollprize.org/submissions_closed" />
   <meta property="og:title" content="Grand Prize submissions now closed" />
   <meta property="og:description" content="Stay tuned for next stages" />
-  <meta property="og:image" content="https://scrollprize.org/img/firstletters/purple_card-new.png" />
+  <meta property="og:image" content="https://scrollprize.org/img/firstletters/purple_card-new.webp" />
 
   <meta property="twitter:card" content="summary_large_image" />
   <meta property="twitter:url" content="https://scrollprize.org/submissions_closed" />
   <meta property="twitter:title" content="Grand Prize Submissions Now Closed" />
   <meta property="twitter:description" content="Stay tuned for next stages" />
-  <meta property="twitter:image" content="https://scrollprize.org/img/firstletters/purple_card-new.png" />
+  <meta property="twitter:image" content="https://scrollprize.org/img/firstletters/purple_card-new.webp" />
 </head>
 
 <img src="/img/firstletters/composite_thumb.webp" />

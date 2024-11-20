@@ -55,7 +55,7 @@ We have provided you with 3D X-ray scans of each of these scrolls, which you can
 You can approach this challenge through any means necessary: machine learning, computer vision, or machine-assisted tools operated by humans.
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/overview/scroll-inside-animation-4.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/overview/scroll-inside-animation-4.webp">
     <source src="/img/overview/scroll-inside-animation-4.webm" type="video/webm"/>
     <source src="/img/overview/scroll-inside-animation-4.mp4" type="video/mp4"/>
   </video>

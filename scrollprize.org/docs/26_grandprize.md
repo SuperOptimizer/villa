@@ -47,11 +47,11 @@ We’re announcing the winners of the Vesuvius Challenge 2023 Grand Prize. We’
 Two thousand years ago, a volcanic eruption buried an ancient library of papyrus scrolls now known as the Herculaneum Papyri.
 
 <figure className="">
-  <video autoPlay playsInline loop muted className="w-[100%] sm:w-[55.6%]" poster="/img/grandprize/library-lava-small.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] sm:w-[55.6%]" poster="/img/grandprize/library-lava-small.webp">
     <source src="/img/grandprize/library-lava-small.webm" type="video/webm"/>
     <source src="/img/grandprize/library-lava-small.mp4" type="video/mp4"/>
   </video>
-  <video autoPlay playsInline loop muted className="hidden sm:inline sm:w-[44%]" poster="/img/grandprize/scroll-lava-small.jpg">
+  <video autoPlay playsInline loop muted className="hidden sm:inline sm:w-[44%]" poster="/img/grandprize/scroll-lava-small.webp">
     <source src="/img/grandprize/scroll-lava-small.webm" type="video/webm"/>
     <source src="/img/grandprize/scroll-lava-small.mp4" type="video/mp4"/>
   </video>
@@ -70,7 +70,7 @@ On March 15th, 2023, Nat Friedman, Daniel Gross, and Brent Seales launched the <
 <div className="flex flex-wrap mb-4">
   <div className="w-[41%] mr-4 mb-2"><img src="/img/grandprize/seth-diamond.webp" className="w-[100%]"/><figcaption className="mt-[-6px]">Seth Parker <a href="https://scrollprize.substack.com/p/new-scans-of-herculaneum-papyri-at">scanning</a> a scroll at the <a href="https://www.diamond.ac.uk/">Diamond Light Source</a> particle accelerator.</figcaption></div>
   <div className="w-[54%]">
-    <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/scanning2.jpg">
+    <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/scanning2.webp">
       <source src="/img/tutorials/scanning2.webm" type="video/webm"/>
       <source src="/img/tutorials/scanning2.mp4" type="video/mp4"/>
     </video>
@@ -83,7 +83,7 @@ A global community of competitors and collaborators assembled to crack the probl
 Less than a year later, in December 2023, they succeeded. Finally, after 275 years, we can begin to read the scrolls:
 
 <div className="mb-4">
-  <a target="_blank" href="/img/grandprize/text_bcb-smaller.jpg"><img src="/img/grandprize/text_bcb-smaller.webp" className="w-[100%]"/></a>
+  <a target="_blank" href="/img/grandprize/text_bcb-smaller.webp"><img src="/img/grandprize/text_bcb-smaller.webp" className="w-[100%]"/></a>
   <figcaption className="mt-[-6px]">Text from PHerc.Paris. 4 (Institut de France), unseen for 2,000 years. Roughly 95% of the scroll remains to be read.</figcaption>
 </div>
 
@@ -117,7 +117,7 @@ For the Grand Prize, they assembled into a superteam, crushing it by creating wh
 The submission contains results from three different model architectures, each supporting the findings of the others, with the strongest images often coming from a [TimeSformer](https://arxiv.org/abs/2102.05095)-based model. Multiple measures prevent overfitting and hallucination, including results from multiple architectures, a study across input/output window sizes, label smoothing, and varying validation folds. Like with all our prizes, this ink detection code has been made public as open source (on [GitHub](https://github.com/younader/Vesuvius-Grandprize-Winner)), leveling up everyone in the community.
 
 <div className="mb-4">
-  <a target="_blank" href="/img/grandprize/youssef_text_wbb.png"><img src="/img/grandprize/youssef_text_wbb-smaller.webp" className="w-[100%]"/></a>
+  <a target="_blank" href="/img/grandprize/youssef_text_wbb.webp"><img src="/img/grandprize/youssef_text_wbb-smaller.webp" className="w-[100%]"/></a>
   <figcaption className="mt-[-6px]">The winners’ main submission image (TimeSformer 64x64).</figcaption>
 </div>
 
@@ -140,17 +140,17 @@ Congratulations to Youssef, Luke, and Julian. You are the well-deserved winners 
 Of the remaining submissions, the scores from our team of papyrologists identify a three-way tie for runner up. These entries show remarkably similar readability to each other, but still stand out from the rest by being significantly more readable. Congratulations to the following teams, each taking home $50,000!
 
 <div className="mb-4">
-  <a target="_blank" href="/img/grandprize/sq_text_wbb.png"><img src="/img/grandprize/sq_text_wbb-smaller.webp" className="w-[100%]"/></a>
+  <a target="_blank" href="/img/grandprize/sq_text_wbb.wbp"><img src="/img/grandprize/sq_text_wbb-smaller.webp" className="w-[100%]"/></a>
   <figcaption className="mt-[-6px]">Shao-Qian Mah. <a href="https://github.com/SQMah/Vesuvius-Grand-Prize-Submission/">GitHub</a></figcaption>
 </div>
 
 <div className="mb-4">
-  <a target="_blank" href="/img/grandprize/elian_text_wbb.png"><img src="/img/grandprize/elian_text_wbb-smaller.webp" className="w-[100%]"/></a>
+  <a target="_blank" href="/img/grandprize/elian_text_wbb.webp"><img src="/img/grandprize/elian_text_wbb-smaller.webp" className="w-[100%]"/></a>
   <figcaption className="mt-[-6px]">Elian Rafael Dal Prá, Sean Johnson, Leonardo Scabini, Raí Fernando Dal Prá, João Vitor Brentigani Torezan, Daniel Baldin Franceschini, Bruno Pereira Kellm, Marcelo Soccol Gris, and Odemir Martinez Bruno. <a href="https://github.com/erdpx/vesuvius-grand-prize">GitHub</a></figcaption>
 </div>
 
 <div className="mb-4">
-  <a target="_blank" href="/img/grandprize/lou_text_wbb.png"><img src="/img/grandprize/lou_text_wbb-smaller.webp" className="w-[100%]"/></a>
+  <a target="_blank" href="/img/grandprize/lou_text_wbb.webp"><img src="/img/grandprize/lou_text_wbb-smaller.webp" className="w-[100%]"/></a>
   <figcaption className="mt-[-6px]">Louis Schlessinger and Arefeh Sherafati. <a href="https://github.com/lschlessinger1/vesuvius-grand-prize-submission">GitHub</a></figcaption>
 </div>
 
@@ -172,7 +172,7 @@ Initial, rough draft transcriptions:
 
 <div className="pl-8 flex w-[100%] flex-wrap">
   <div className="sm:w-[48%] sm:mr-4 max-w-[300px]">
-    <a target="_blank" href="/img/grandprize/col-8.png"><img className="w-[100%]" src="/img/grandprize/col-8.webp"/></a>
+    <a target="_blank" href="/img/grandprize/col-8.webp"><img className="w-[100%]" src="/img/grandprize/col-8.webp"/></a>
   </div>
   <div className="sm:w-[48%] text-[80%]">
 
@@ -198,7 +198,7 @@ Initial, rough draft transcriptions:
 
 <div className="pl-8 flex w-[100%] flex-wrap mb-4">
   <div className="sm:w-[48%] sm:mr-4 max-w-[300px]">
-    <a target="_blank" href="/img/grandprize/col-7.png"><img className="w-[100%]" src="/img/grandprize/col-7.webp"/></a>
+    <a target="_blank" href="/img/grandprize/col-7.webp"><img className="w-[100%]" src="/img/grandprize/col-7.webp"/></a>
   </div>
   <div className="sm:w-[48%] text-[80%]">
 
@@ -222,7 +222,7 @@ Later in the scroll:
 
 <div className="pl-8 flex w-[100%] flex-wrap mb-4">
   <div className="sm:w-[48%] sm:mr-4 max-w-[300px]">
-    <a target="_blank" href="/img/grandprize/col-2.png"><img className="w-[100%]" src="/img/grandprize/col-2.webp"/></a>
+    <a target="_blank" href="/img/grandprize/col-2.webp"><img className="w-[100%]" src="/img/grandprize/col-2.webp"/></a>
   </div>
   <div className="sm:w-[48%] text-[80%]">
 
@@ -247,7 +247,7 @@ Finally the scroll concludes:
 
 <div className="pl-8 flex w-[100%] flex-wrap">
   <div className="sm:w-[48%] sm:mr-4 max-w-[300px]">
-    <a target="_blank" href="/img/grandprize/col-1.png"><img className="w-[100%]" src="/img/grandprize/col-1.webp"/></a>
+    <a target="_blank" href="/img/grandprize/col-1.webp"><img className="w-[100%]" src="/img/grandprize/col-1.webp"/></a>
   </div>
   <div className="sm:w-[48%] text-[80%]">
 
@@ -298,7 +298,7 @@ Machine learning models are infamous for “hallucinating”: making up text or 
 * **Small input/output windows.** The ink detection models are not based on Greek letters, optical character recognition (OCR), or language models. Instead, they independently detect tiny spots of ink in the CT scan, the writing appearing later when these are aggregated. As a result, the text appearing in the images is not the imagined output of a machine learning model, but is instead directly tied to the underlying data in the CT scan.
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/ink-detection-anim3-dark.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/ink-detection-anim3-dark.webp">
     <source src="/img/tutorials/ink-detection-anim3-dark.webm" type="video/webm"/>
     <source src="/img/tutorials/ink-detection-anim3-dark.mp4" type="video/mp4"/>
   </video>
@@ -316,7 +316,7 @@ Machine learning models are infamous for “hallucinating”: making up text or 
 These scrolls were scanned at Diamond Light Source, a particle accelerator near Oxford, England. The facility produces a parallel beam of X-rays at high flux, allowing for fast, accurate, and high-resolution imaging. The X-ray photos are turned into a 3D volume of voxels using tomographic reconstruction algorithms, resulting in a stack of slice images.
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] max-w-[600px]" poster="/img/grandprize/.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] max-w-[600px]" poster="/img/grandprize/.webp">
     <source src="/img/grandprize/.webm" type="video/webm"/>
     <source src="/img/grandprize/scroll1.mp4" type="video/mp4"/>
   </video>
@@ -328,7 +328,7 @@ The next step is to identify individual sheets of papyrus in 3D space. For this 
 Volume Cartographer is operated by our team of full-time segmenters: Ben Kyles, David Josey, and Konrad Rosenberg. They use a combination of automatic algorithms and manual adjustments to map out large areas of papyrus. This is still a painstaking process, with lots of room for improvement if we’re going to segment all the scrolls.
 
 <figure>
-  <video autoPlay playsInline loop muted className="max-w-[100%] rounded-xl" poster="/img/tutorials/vc-extrapolation2.jpg">
+  <video autoPlay playsInline loop muted className="max-w-[100%] rounded-xl" poster="/img/tutorials/vc-extrapolation2.webp">
     <source src="/img/tutorials/vc-extrapolation2.webm" type="video/webm"/>
     <source src="/img/tutorials/vc-extrapolation2.mp4" type="video/mp4"/>
   </video>

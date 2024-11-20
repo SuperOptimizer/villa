@@ -78,7 +78,7 @@ If you've ever had a CT scan at a hospital, this is the same process, except our
 Scanning involves capturing hundreds to thousands of X-ray photographs of the object from different rotational angles. Typically this is accomplished using an X-ray source on one side of the object, and an X-ray camera on the other side, and rotating the object 360° on a platform.
 
 <figure className="">
-  <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/fragment-rotating2.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/fragment-rotating2.webp">
     <source src="/img/tutorials/fragment-rotating2.webm" type="video/webm"/>
     <source src="/img/tutorials/fragment-rotating2.mp4" type="video/mp4"/>
   </video>
@@ -88,7 +88,7 @@ Scanning involves capturing hundreds to thousands of X-ray photographs of the ob
 The X-ray photos are combined into a 3D scan volume using [tomographic reconstruction](https://en.wikipedia.org/wiki/Tomographic_reconstruction) algorithms, typically by software that comes with the scanner. A volume is a 3D picture made up of 3D pixel cubes called voxels. The voxel size tells us the physical size of the cube, and the value stored in the voxel is that location's relative radiodensity.
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/scanning2.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/scanning2.webp">
     <source src="/img/tutorials/scanning2.webm" type="video/webm"/>
     <source src="/img/tutorials/scanning2.mp4" type="video/mp4"/>
   </video>
@@ -129,7 +129,7 @@ The [Representation Tutorial](tutorial2) provides an in-depth explanation of how
 The goal of segmentation is to map and capture information near the written surface of the rolled papyrus scroll. Each section of the written surface that we have mapped within the 3D volume and converted into a surface volume is called a "segment".
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/segmentation2.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/segmentation2.webp">
     <source src="/img/tutorials/segmentation2.webm" type="video/webm"/>
     <source src="/img/tutorials/segmentation2.mp4" type="video/mp4"/>
   </video>
@@ -158,7 +158,7 @@ In ["Tutorial: Segmentation and Flattening"](tutorial3) we’ll dive deeper into
 We use machine learning models to detect ink, training them on previously identified regions of ink. The trained models predict new regions of ink, which can be iteratively added to the training sets.
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/ink-detection-anim2-dark.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/ink-detection-anim2-dark.webp">
     <source src="/img/tutorials/ink-detection-anim2-dark.webm" type="video/webm"/>
     <source src="/img/tutorials/ink-detection-anim2-dark.mp4" type="video/mp4"/>
   </video>

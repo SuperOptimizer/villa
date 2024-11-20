@@ -57,7 +57,7 @@ As we saw in the ["Scanning" tutorial](/tutorial1), it’s quite hard to extract
 Two key steps to virtually unwrapping a scroll or manuscript are _segmenting_ a surface from inside the 3D volume and _flattening_ that surface to 2D. The video below shows the idea quite well; or check out the <a href="https://youtu.be/VG8oOMHCg74?t=37">full version</a> (It was made by Dr. Seales’s son and daughter!). The red line during the reconstruction phase represents the surface that we want to virtually unwrap.
 
 <figure>
-  <video autoPlay playsInline loop muted controls className="w-[100%]" poster="/img/tutorials/pi-symbol3.jpg">
+  <video autoPlay playsInline loop muted controls className="w-[100%]" poster="/img/tutorials/pi-symbol3.webp">
     <source src="/img/tutorials/pi-symbol3.webm" type="video/webm"/>
     <source src="/img/tutorials/pi-symbol3.mp4" type="video/mp4"/>
   </video>
@@ -321,7 +321,7 @@ You’ll notice now that the purple line becomes a series of points. This is you
 
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/new-pen.png">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorialwebp">
     <source src="/img/tutorials/new_pen_tool.mp4" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">Placing our first segmentation line with the pen tool.</figcaption>
@@ -340,7 +340,7 @@ Once you are happy with the location of the line, ensure your slice and anchor s
 Click “Start” to begin the segmentation run.
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/new-pen.png">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/new-pen.webp">
     <source src="/img/tutorials/new_seg_run.mp4" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">"Snapping" our segmentation line back onto the surface of the sheet.</figcaption>
@@ -353,7 +353,7 @@ You can press T at any time within the segmentation tool to return to the slice 
 :::
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/new-pen.png">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/new-pen.webp">
     <source src="/img/tutorials/second_seg_run.mp4" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">"Snapping" our segmentation line back onto the surface of the sheet.</figcaption>
@@ -362,7 +362,7 @@ You can press T at any time within the segmentation tool to return to the slice 
 After you’ve guided the line along the sheet, hit “Start” again, and repeat the process. This is the general workflow for segments of any size, from the GP winners at over 100cm^2 to the smallest segments. Conceptually, it works something like this:
 
 <figure>
-  <video playsInline muted controls className="max-w-[100%] rounded-xl" poster="/img/tutorials/vc-extrapolation2.jpg">
+  <video playsInline muted controls className="max-w-[100%] rounded-xl" poster="/img/tutorials/vc-extrapolation2.webp">
     <source src="/img/tutorials/vc-extrapolation2.webm" type="video/webm"/>
     <source src="/img/tutorials/vc-extrapolation2.mp4" type="video/mp4"/>
   </video>
@@ -374,7 +374,7 @@ Be sure to save it using *“File > Save volpkg”*. You can keep segmenting for
 The process completed during this step looks like this in 3D. We've identified the sheet surface, but still would have a hard time finding ink on a single voxel sheet that is still wrapped in the scroll. In the video below, the sheet is on the visible outside, but most of our segments are completely surrounded by additional sheets.
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/segmentation2.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/segmentation2.webp">
     <source src="/img/tutorials/segmentation2.webm" type="video/webm"/>
     <source src="/img/tutorials/segmentation2.mp4" type="video/mp4"/>
   </video>
@@ -477,7 +477,7 @@ So, what did we just do?
 When looking for ink in the volume, we need to look at more than just the voxels that directly intersect the segment mesh we just created. We also need to look a little bit “above“ and “below“ the mesh, at the neighborhood of voxels that surround our segment. Conceptually, this neighborhood looks something like this (though this video is exaggerated):
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/surface-volume-extrusion3.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/surface-volume-extrusion3.webp">
     <source src="/img/tutorials/surface-volume-extrusion3.webm" type="video/webm"/>
     <source src="/img/tutorials/surface-volume-extrusion3.mp4" type="video/mp4"/>
   </video>
@@ -489,7 +489,7 @@ To generate the composite .tif file, called `<SegmentNumber>.tif`, `vc_render` s
 The ppm file that we generated contains a mapping between our flattened output image and the original 3D surface. With this file, we transformed the 3D neighborhood into a simplified surface volume. That process looks something like this:
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/surface-volume-flattening4.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/surface-volume-flattening4.webp">
     <source src="/img/tutorials/surface-volume-flattening4.webm" type="video/webm"/>
     <source src="/img/tutorials/surface-volume-flattening4.mp4" type="video/mp4"/>
   </video>
@@ -499,7 +499,7 @@ The ppm file that we generated contains a mapping between our flattened output i
 The result of this process are the 65 tifs in the /layers/ directory. Each of these .tif images is a "slice" of the surface volume, with 32.tif ideally representing the middle, or the area directly on your segmentation line.
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/surface-volume-image-stack2.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/surface-volume-image-stack2.webp">
     <source src="/img/tutorials/surface-volume-image-stack2.webm" type="video/webm"/>
     <source src="/img/tutorials/surface-volume-image-stack2.mp4" type="video/mp4"/>
   </video>

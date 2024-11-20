@@ -14,13 +14,13 @@ hide_title: true
   <meta property="og:url" content="https://scrollprize.org/firstletters" />
   <meta property="og:title" content="First word discovered in unopened Herculaneum scroll by 21yo computer science student" />
   <meta property="og:description" content="Vesuvius Challenge $700,000 Grand Prize “now definitely achievable”" />
-  <meta property="og:image" content="https://scrollprize.org/img/firstletters/purple_card-new.png" />
+  <meta property="og:image" content="https://scrollprize.org/img/firstletters/purple_card-new.webp" />
 
   <meta property="twitter:card" content="summary_large_image" />
   <meta property="twitter:url" content="https://scrollprize.org/firstletters" />
   <meta property="twitter:title" content="First word discovered in unopened Herculaneum scroll by 21yo computer science student" />
   <meta property="twitter:description" content="Vesuvius Challenge $700,000 Grand Prize “now definitely achievable”" />
-  <meta property="twitter:image" content="https://scrollprize.org/img/firstletters/purple_card-new.png" />
+  <meta property="twitter:image" content="https://scrollprize.org/img/firstletters/purple_card-new.webp" />
 </head>
 
 <img src="/img/firstletters/composite_thumb.webp" />
@@ -236,7 +236,7 @@ The segmentation team and contestants continue to make progress, and a few days 
 
 <figure>
   <img src="/img/firstletters/youssef-new.webp" />
-  <figcaption className="mt-0">Youssef’s <a target="_blank" href="/img/firstletters/youssef-new.png">latest image</a> (<a target="_blank" href="/img/firstletters/composite_fullsize.png">variant</a>), from segments <a href="https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/20230929220924/">20230929220924</a> and <a href="https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/20231005123333/">20231005123333</a>.</figcaption>
+  <figcaption className="mt-0">Youssef’s <a target="_blank" href="/img/firstletters/youssef-new.webp">latest image</a> (<a target="_blank" href="/img/firstletters/composite_fullsize.webp">variant</a>), from segments <a href="https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/20230929220924/">20230929220924</a> and <a href="https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/20231005123333/">20231005123333</a>.</figcaption>
 </figure>
 
 In this image you can clearly see four and a half columns of text, separated by margins. Many more letters are now visible, though not all are immediately legible. Our papyrological team is working hard to further investigate this result, and we’ll have updates on this soon.
