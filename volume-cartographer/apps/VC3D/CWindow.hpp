@@ -15,6 +15,7 @@ static constexpr int VOLPKG_SLICE_MIN_INDEX = 0;
 //our own fw declarations
 class ChunkCache;
 class Surface;
+class QuadSurface;
 class OpChain;
 
 namespace volcart {
@@ -55,6 +56,7 @@ public slots:
     void onManualPlaneChanged(void);
     void onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void onOpChainChanged(OpChain *chain);
+    void onTagChanged(void);
 
 public:
     CWindow();
@@ -126,6 +128,10 @@ private:
     QComboBox* volSelect;
     QComboBox* cmbFilterSegs;
     QPushButton* assignVol;
+    
+    QCheckBox* _chkApproved;
+    QCheckBox* _chkDefective;
+    QuadSurface *_surf;
 
     QTreeWidget *treeWidgetSurfaces;
     OpsList *wOpsList;

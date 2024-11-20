@@ -66,6 +66,7 @@ public:
     //needs to be deleted after use
     virtual void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, SurfacePointer *ptr, float scale, const cv::Vec3f &offset) = 0;
     nlohmann::json *meta = nullptr;
+    std::filesystem::path path;
 };
 
 class PlaneSurface : public Surface
@@ -116,6 +117,7 @@ public:
     float pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th, int max_iters = 1000) override;
 
     void save(const std::string &path, const std::string &uuid);
+    void save_meta();
     Rect3D bbox();
 
     virtual cv::Mat_<cv::Vec3f> rawPoints() { return _points; }

@@ -1393,18 +1393,20 @@ QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *
     // return new QuadSurface(points(used_area), {1.0f/step/scale,1.0f/step/scale});
 }
 
-void QuadSurface::save(const std::string &path, const std::string &uuid)
+void QuadSurface::save(const std::string &path_, const std::string &uuid)
 {
+    path = path_;
+    
     if (!fs::create_directories(path))
-        throw std::runtime_error("error creating dir for QuadSurface::save(): "+path);
+        throw std::runtime_error("error creating dir for QuadSurface::save(): "+path.string());
 
     std::vector<cv::Mat> xyz;
 
     cv::split(_points, xyz);
 
-    cv::imwrite(path+"/x.tif", xyz[0]);
-    cv::imwrite(path+"/y.tif", xyz[1]);
-    cv::imwrite(path+"/z.tif", xyz[2]);
+    cv::imwrite(path/"x.tif", xyz[0]);
+    cv::imwrite(path/"y.tif", xyz[1]);
+    cv::imwrite(path/"z.tif", xyz[2]);
 
     if (!meta)
         meta = new nlohmann::json;
@@ -1414,11 +1416,25 @@ void QuadSurface::save(const std::string &path, const std::string &uuid)
     (*meta)["uuid"] = uuid;
     (*meta)["format"] = "tifxyz";
     (*meta)["scale"] = {_scale[0], _scale[1]};
-    std::ofstream o(path+"/meta.json.tmp");
+    std::ofstream o(path/"/meta.json.tmp");
     o << std::setw(4) << (*meta) << std::endl;
 
     //rename to make creation atomic
-    fs::rename(path+"/meta.json.tmp", path+"/meta.json");
+    fs::rename(path/"meta.json.tmp", path/+"meta.json");
+}
+
+void QuadSurface::save_meta()
+{
+    if (!meta)
+        throw std::runtime_error("can't save_meta() without metadata!");
+    if (path.empty())
+        throw std::runtime_error("no storage path for QuadSurface");
+
+    std::ofstream o(path/"meta.json.tmp");
+    o << std::setw(4) << (*meta) << std::endl;
+    
+    //rename to make creation atomic
+    fs::rename(path/"meta.json.tmp", path/"meta.json");
 }
 
 Rect3D QuadSurface::bbox()
@@ -1451,7 +1467,12 @@ QuadSurface *load_quad_from_tifxyz(const std::string &path)
 
     cv::Vec2f scale = {metadata["scale"][0].get<float>(), metadata["scale"][1].get<float>()};
 
-    return new QuadSurface(points, scale);
+    QuadSurface *surf = new QuadSurface(points, scale);
+    
+    surf->path = path;
+    surf->meta = new nlohmann::json(metadata);
+    
+    return surf;
 }
 
 Rect3D expand_rect(const Rect3D &a, const cv::Vec3f &p)

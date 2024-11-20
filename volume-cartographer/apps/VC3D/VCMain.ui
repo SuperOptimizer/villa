@@ -771,6 +771,29 @@
     <layout class="QGridLayout" name="gridLayout_4"/>
    </widget>
   </widget>
+  <widget class="QDockWidget" name="dockAnnotation">
+   <attribute name="dockWidgetArea">
+    <number>1</number>
+   </attribute>
+   <widget class="QWidget" name="dockWidgetContents">
+    <layout class="QGridLayout" name="gridLayout_5">
+     <item row="0" column="0">
+      <widget class="QCheckBox" name="chkApproved">
+       <property name="text">
+        <string>approved</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="0">
+      <widget class="QCheckBox" name="chkDefective">
+       <property name="text">
+        <string>defective</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </widget>
+  </widget>
   <action name="actionOpen">
    <property name="text">
     <string>Open</string>
@@ -781,7 +804,7 @@
  <resources/>
  <connections/>
  <buttongroups>
-  <buttongroup name="buttonGroupForward"/>
   <buttongroup name="buttonGroupBackward"/>
+  <buttongroup name="buttonGroupForward"/>
  </buttongroups>
 </ui>

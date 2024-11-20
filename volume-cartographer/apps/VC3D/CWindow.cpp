@@ -222,12 +222,18 @@ void CWindow::CreateWidgets(void)
     spNorm[1] = this->findChild<QDoubleSpinBox*>("dspNY");
     spNorm[2] = this->findChild<QDoubleSpinBox*>("dspNZ");
     
+    _chkApproved = this->findChild<QCheckBox*>("chkApproved");
+    _chkDefective = this->findChild<QCheckBox*>("chkDefective");
+    
     for(int i=0;i<3;i++)
         spNorm[i]->setRange(-10,10);
     
     connect(spNorm[0], &QDoubleSpinBox::valueChanged, this, &CWindow::onManualPlaneChanged);
     connect(spNorm[1], &QDoubleSpinBox::valueChanged, this, &CWindow::onManualPlaneChanged);
     connect(spNorm[2], &QDoubleSpinBox::valueChanged, this, &CWindow::onManualPlaneChanged);
+    
+    connect(_chkApproved, &QCheckBox::stateChanged, this, &CWindow::onTagChanged);
+    connect(_chkDefective, &QCheckBox::stateChanged, this, &CWindow::onTagChanged);
 }
 
 // Create menus
@@ -722,6 +728,31 @@ void CWindow::onOpChainChanged(OpChain *chain)
     _surf_col->setSurface("segmentation", chain);
 }
 
+void sync_tag(nlohmann::json &dict, bool checked, std::string name)
+{
+    if (checked && !dict.count(name))
+        dict[name] = nullptr;
+    if (!checked && dict.count(name))
+        dict.erase(name);
+}
+
+void CWindow::onTagChanged(void)
+{
+    if (_surf->meta->contains("tags")) {
+        sync_tag(_surf->meta->at("tags"), _chkApproved->checkState(), "approved");
+        sync_tag(_surf->meta->at("tags"), _chkDefective->checkState(), "defective");
+        _surf->save_meta();
+    }
+    else if (_chkApproved->checkState() || _chkDefective->checkState()) {
+        _surf->meta->push_back({"tags", nlohmann::json::object()});
+        if (_chkApproved->checkState())
+            _surf->meta->at("tags").push_back({"approved", nullptr});
+        if (_chkDefective->checkState())
+            _surf->meta->at("tags").push_back({"defective", nullptr});
+        _surf->save_meta();
+    }
+}
+
 void CWindow::onSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous)
 {
     std::string surf_id = current->data(0, Qt::UserRole).toString().toStdString();
@@ -746,6 +777,29 @@ void CWindow::onSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previ
     if (_opchains[surf_id]) {
         _surf_col->setSurface("segmentation", _opchains[surf_id]->src());
         sendOpChainSelected(_opchains[surf_id]);
+        _surf = _opchains[surf_id]->src();
+        {
+            const QSignalBlocker b1{_chkApproved};
+            const QSignalBlocker b2{_chkDefective};
+            
+            std::cout << "surf" << _surf->path << surf_id <<  _surf->meta << std::endl;
+            
+            _chkApproved->setEnabled(true);
+            _chkDefective->setEnabled(true);
+            
+            _chkApproved->setCheckState(Qt::Unchecked);
+            _chkDefective->setCheckState(Qt::Unchecked);
+            if (_surf->meta) {
+                if (_surf->meta->value("tags", nlohmann::json::object_t()).count("approved"))
+                    _chkApproved->setCheckState(Qt::Checked);
+                if (_surf->meta->value("tags", nlohmann::json::object_t()).count("defective"))
+                    _chkDefective->setCheckState(Qt::Checked);
+            }
+            else {
+                _chkApproved->setEnabled(false);
+                _chkDefective->setEnabled(false);
+            }
+        }
     }
     else
         std::cout << "ERROR loading " << surf_id << std::endl;
