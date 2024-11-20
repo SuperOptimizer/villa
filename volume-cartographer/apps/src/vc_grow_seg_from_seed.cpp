@@ -135,7 +135,7 @@ int main(int argc, char *argv[])
     float min_area_cm = 0.3;
     float step_size = 20;
 
-    bool expansion_mode = true;
+    bool expansion_mode = false;
 
     std::unordered_map<std::string,SurfaceMeta*> partial;
     std::unordered_map<std::string,SurfaceMeta*> full;
@@ -197,9 +197,7 @@ int main(int argc, char *argv[])
         for(auto &it : full)
             all_shuffled.push_back(it.second);
 
-        //FIXME we shold sort by creation date / generation so older get processed first and we grow nicely!
-        auto rd = std::random_device {};
-        auto rng = std::default_random_engine { rd() };
+        std::default_random_engine rng(clock());
         std::shuffle(std::begin(all_shuffled), std::end(all_shuffled), rng);
 
         if (!all_shuffled.size())
@@ -259,7 +257,7 @@ int main(int argc, char *argv[])
             for(auto comp : all_shuffled) {
                 if (comp == src)
                     continue;
-                if (contains(*comp, origin))
+                if (contains(*comp, origin, 10))
                     count_overlap++;
                 if (count_overlap >= 1)
                     break;
@@ -353,7 +351,7 @@ int main(int argc, char *argv[])
         {std::ofstream touch(overlap_src/current.name());}
 
         for(auto &pair : full)
-            if (overlap(current, *pair.second)) {
+            if (overlap(current, *pair.second, 10)) {
                 std::ofstream touch_me(overlap_dir/pair.second->name());
                 fs::path overlap_other = pair.second->path / "overlapping";
                 fs::create_directory(overlap_other);
@@ -361,7 +359,7 @@ int main(int argc, char *argv[])
             }
 
         for(auto &pair : partial)
-            if (overlap(current, *pair.second)) {
+            if (overlap(current, *pair.second, 10)) {
                 std::ofstream touch_me(overlap_dir/pair.second->name());
                 fs::path overlap_other = pair.second->path / "overlapping";
                 fs::create_directory(overlap_other);
@@ -394,7 +392,7 @@ int main(int argc, char *argv[])
                 SurfaceMeta other = SurfaceMeta(entry.path(), meta);
                 other.readOverlapping();
 
-                if (overlap(current, other)) {
+                if (overlap(current, other, 10)) {
                     std::ofstream touch_me(overlap_dir/other.name());
                     fs::path overlap_other = other.path / "overlapping";
                     fs::create_directory(overlap_other);
