@@ -55,7 +55,7 @@ The resulting 3D structure is called a “mesh”, capturing the complex shape o
 The mesh is used to isolate and extract a thin "surface volume" of the mapped papyrus surface in micro-CT. The surface volume is flattened into a stack of 65 image files (layers), where 32.tif is nominally the papyrus surface. 64.tif is “atop” of the surface and 00.tif is “below”.
 
 <div className="flex w-[100%]">
-    <div className="w-[100%] mb-2 mr-2"><img src="/img/data/mesh2surfvol.png" className="w-[100%]"/><figcaption className="mt-0">A flattened surface volume is produced starting from a mesh.</figcaption></div>
+    <div className="w-[100%] mb-2 mr-2"><img src="/img/data/mesh2surfvol.webp" className="w-[100%]"/><figcaption className="mt-0">A flattened surface volume is produced starting from a mesh.</figcaption></div>
 </div>
 
 <figure className="max-w-[600px]">
@@ -66,13 +66,13 @@ The mesh is used to isolate and extract a thin "surface volume" of the mapped pa
 The flattened surface volume can be used directly to look for ink, either by visual inspection or with machine learning tools.
 
 <div className="flex w-[100%]">
-  <div className="w-[100%] mb-2 mr-2"><img src="/img/data/ML-ink-detection.png" className="w-[100%]"/><figcaption className="mt-0">Machine learning ink detection models finding a Pi.</figcaption></div>
+  <div className="w-[100%] mb-2 mr-2"><img src="/img/data/ML-ink-detection.webp" className="w-[100%]"/><figcaption className="mt-0">Machine learning ink detection models finding a Pi.</figcaption></div>
 </div>
 
 Our Segmentation Team has been mapping select regions of the scrolls. The community has made this a significantly more automated process with improved tools, but it still involves considerable human input. 
 
 <div className="flex w-[100%]">
-  <div className="w-[100%] mb-2 mr-2"><img src="/img/data/segment_areas.png" className="w-[100%]"/><figcaption className="mt-0">Total segment area created over time by our team and community.</figcaption></div>
+  <div className="w-[100%] mb-2 mr-2"><img src="/img/data/segment_areas.webp" className="w-[100%]"/><figcaption className="mt-0">Total segment area created over time by our team and community.</figcaption></div>
 </div>
 
 You can view the meshes of our Scroll 1 segments in [Volume Viewer](https://github.com/tomhsiao1260/vc-whiteboard/tree/demo-3) (hosted [here](http://37.19.207.113:5174)) and [Segment Viewer](https://github.com/tomhsiao1260/segment-viewer) (hosted [here](http://37.19.207.113:5173)).

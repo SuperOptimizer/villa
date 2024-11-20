@@ -61,11 +61,11 @@ In the video below Dr. Seales talks about how ink detection got started for the 
 Not only can machine learning models detect the ink, on occasion we can see the ink directly in the 3D X-ray volumes. Here are some examples, with slices from the 3D surface volumes on the left, and infrared photos showing ink on the right (from the [data paper](https://arxiv.org/abs/2304.02084)):
 
 <figure className="">
-  <img src="/img/tutorials/ink2-alpha.png" />
+  <img src="/img/tutorials/ink2-alpha.webp" />
 </figure>
 
 <figure className="">
-  <img src="/img/tutorials/ink1-alpha.png" />
+  <img src="/img/tutorials/ink1-alpha.webp" />
 
   <figcaption className="mt-0">Ink visible in 3D surface volumes (left: 3D volume slice; right: infrared photo), found by Stephen Parsons</figcaption>
 </figure>
@@ -79,7 +79,7 @@ For the purposes of the tutorial, we will use the fragment datasets, which conta
 At a high level, training on a fragment works like this:
 
 <figure className="">
-  <img src="/img/tutorials/ml-overview-alpha.png" />
+  <img src="/img/tutorials/ml-overview-alpha.webp" />
 </figure>
 
 From a fragment (a) we obtain a 3D volume (b), from which we segment a mesh (c), around which we sample a surface volume (d). We also take an infrared photo (e) of the fragment, which we align (f) with the surface volume, and then manually turn into a binary label image (g).
@@ -116,9 +116,9 @@ When running ink-id on all the public fragments, the results look like this (pre
 
 <figure className="">
   <table className="w-[100%] max-w-[400px]">
-    <tr><td className="w-50%"><img className="w-[100%]" src="/img/tutorials/f1_composite.png" /></td><td className="w-50%"><img className="w-[100%]" src="/img/tutorials/f1_ir.png" /></td></tr>
-    <tr><td className="w-50%"><img className="w-[100%]" src="/img/tutorials/f2_composite.png" /></td><td className="w-50%"><img className="w-[100%]" src="/img/tutorials/f2_ir.png" /></td></tr>
-    <tr><td className="w-50%"><img className="w-[100%]" src="/img/tutorials/f3_composite.png" /></td><td className="w-50%"><img className="w-[100%]" src="/img/tutorials/f3_ir.png" /></td></tr>
+    <tr><td className="w-50%"><img className="w-[100%]" src="/img/tutorials/f1_composite.webp" /></td><td className="w-50%"><img className="w-[100%]" src="/img/tutorials/f1_ir.webp" /></td></tr>
+    <tr><td className="w-50%"><img className="w-[100%]" src="/img/tutorials/f2_composite.webp" /></td><td className="w-50%"><img className="w-[100%]" src="/img/tutorials/f2_ir.webp" /></td></tr>
+    <tr><td className="w-50%"><img className="w-[100%]" src="/img/tutorials/f3_composite.webp" /></td><td className="w-50%"><img className="w-[100%]" src="/img/tutorials/f3_ir.webp" /></td></tr>
   </table>
   <figcaption className="mt-0">Predicted label images from ink-id (left); infrared photos (right)</figcaption>
 </figure>
@@ -127,13 +127,13 @@ As you can see, some letters can be clearly seen, others not at all, and a lot o
 
 <div className="flex flex-wrap items-end max-w-[500px] mb-4">
   <figure className="w-[33%]">
-    <img src="/img/tutorials/f1_hidden_composite.png"/>
+    <img src="/img/tutorials/f1_hidden_composite.webp"/>
   </figure>
   <figure className="w-[33%]">
-    <img src="/img/tutorials/f2_hidden_composite.png"/>
+    <img src="/img/tutorials/f2_hidden_composite.webp"/>
   </figure>
   <figure className="w-[33%]">
-    <img src="/img/tutorials/f4_hidden_composite_partially_redacted.png"/>
+    <img src="/img/tutorials/f4_hidden_composite_partially_redacted.webp"/>
   </figure>
   <figcaption className="mt-0">“Hidden layers” of papyrus, partially revealed by machine learning.</figcaption>
 </div>
@@ -143,7 +143,7 @@ The [Ink Detection Progress Prize on Kaggle](https://www.kaggle.com/competitions
 So how can a machine learning model detect ink? In the electron microscope images below (from the paper [From invisibility to readability: Recovering the ink of Herculaneum](https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0215775&type=printable)), you can clearly see the difference between the inked and non-inked regions. We suspect that machine learning models are able to learn some of these features from the 3D X-ray scans.
 
 <figure>
-  <a href="/img/tutorials/sem.png" target="_blank"><img src="/img/tutorials/sem-alpha.png"  className="w-[100%]"/></a>
+  <a href="/img/tutorials/sem.png" target="_blank"><img src="/img/tutorials/sem-alpha.webp"  className="w-[100%]"/></a>
   <figcaption className="mt-0">Electron microscope pictures from the top (A and B) and the side (C) <a href="https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0215775">(source)</a></figcaption>
 </figure>
 

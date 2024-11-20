@@ -293,7 +293,7 @@ Let's take a moment to get oriented before continuing:
 4. Located at the bottom is some navigation information. The primary number useful to you here will be the current slice number.
 
 <figure>
-<img src="/img/tutorials/vc-open.png" className="rounded-xl"/>
+<img src="/img/tutorials/vc-open.webp" className="rounded-xl"/>
 </figure>
 
 ### Navigating a .volpkg
@@ -305,7 +305,7 @@ Now that we’ve oriented ourselves with the UI, let's open our .volpkg...
 3. Look now to the top left in the segments window; our VC shows some segmentations in the segmentation window, but yours at this point will be blank.
 
 <figure>
-  <img src="/img/tutorials/open-volpkg.png" className="rounded-xl"/>
+  <img src="/img/tutorials/open-volpkg.webp" className="rounded-xl"/>
 </figure>
 
 ### Creating a segment
@@ -330,7 +330,7 @@ You’ll notice now that the purple line becomes a series of points. This is you
 Now, click “Segmentation Tool” (You can also enter the segmentation tool by pressing 'T'). Let’s configure our Segmentation settings in the right box to match the ones in this image. The primary parameter you could modify here and see if you have any improvement is 'smoothen curve at bright points'.
 
 <figure>
-  <img src="/img/tutorials/ofs_settings.png" className="rounded-xl"/>
+  <img src="/img/tutorials/ofs_settings.webp" className="rounded-xl"/>
 </figure>
 
 If at this point your segmentation line is off the sheet, you can manipulate it in a few ways. The primary method for manipulating this line is to “snap” it to a point, by clicking. VC will take the X nearest points to the cursor (where X is the input range setting located in the bottom right, also in/decreased by hitting A and D respectively) and snap them to the cursor. You can also click and drag the line itself. Play around with this for a bit before continuing. In addition to just panning along the line with right click, you can press R+Scroll Wheel to follow the segmentation line automatically. This is also mapped to the front and back side mouse buttons, if you have them.
@@ -441,7 +441,7 @@ cd /new_segments/
 This command will render your points into a mesh, and then create the surface volume layers from it. This can take a long time depending on the size of your segment, but thankfully you will get some progress information on the console.
 
 <figure>
-  <img src="/img/tutorials/console-output.png"/>
+  <img src="/img/tutorials/console-output.webp"/>
 </figure>
 
 **Congratulations! You've completed your first segment!**

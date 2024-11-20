@@ -74,7 +74,7 @@ You can think of it as a big volume made of single units of grayscale LEGO block
 <figure className="text-center mx-auto">
   <div className="flex flex-wrap justify-center mx-auto">
     <img className="max-h-[250px] m-2" src="/img/tutorials/lego.webp"/>
-    <img className="max-h-[250px] m-2" src="/img/tutorials/scroll_6_7_21.png"/>
+    <img className="max-h-[250px] m-2" src="/img/tutorials/scroll_6_7_21.webp"/>
   </div>
   <figcaption className="mt-1">Figure 1. Scroll data as LEGO blocks and sagittal view of a subvolume slice.</figcaption>
 </figure>
@@ -93,7 +93,7 @@ At the same time, considering for every voxel a vector that points towards the _
 
 <figure className="text-center mx-auto">
   <div className="flex flex-wrap justify-center mx-auto">
-    <img className="max-h-[300px]" src="/img/tutorials/scroll_mask.png"/>
+    <img className="max-h-[300px]" src="/img/tutorials/scroll_mask.webp"/>
 </div>
 <figcaption className="mt-1">Figure 2. Sheet inner surface mask for a subvolume (sagittal view).</figcaption>
 </figure>
@@ -111,7 +111,7 @@ Exploiting the created empty space, our fisherman net can now _enter_ the scroll
 
 <figure className="text-center mx-auto">
   <div className="flex flex-wrap justify-center mx-auto">
-    <img className="max-h-[300px]" src="/img/tutorials/point_cloud.png"/>
+    <img className="max-h-[300px]" src="/img/tutorials/point_cloud.webp"/>
 </div>
 <figcaption className="mt-1">Figure 3. Point cloud, colors added for visualization's sake.</figcaption>
 </figure>
@@ -124,8 +124,8 @@ We don't want to select points that lie on parallel surfaces, since this would m
 
 <figure className="text-center mx-auto">
   <div className="flex flex-wrap justify-center mx-auto">
-    <img className="max-h-[250px] m-2" src="/img/tutorials/scroll_mask_groups.png"/>
-    <img className="max-h-[250px] m-2" src="/img/tutorials/sheets.png"/>
+    <img className="max-h-[250px] m-2" src="/img/tutorials/scroll_mask_groups.webp"/>
+    <img className="max-h-[250px] m-2" src="/img/tutorials/sheets.webp"/>
   </div>
   <figcaption className="mt-1">Figure 4. Identifying patches. (Left) Correct and incorrect grouping; (right) identified patches colored in the point cloud.</figcaption>
 </figure>
@@ -144,7 +144,7 @@ Stitching is an extension of the point cloud segmentation problem addressed in t
 
 <figure className="text-center mx-auto">
   <div className="flex flex-wrap justify-center mx-auto">
-    <img className="max-h-[250px]" src="/img/tutorials/stitching.png"/>
+    <img className="max-h-[250px]" src="/img/tutorials/stitching.webp"/>
 </div>
 <figcaption className="mt-1">Figure 5. Stitching adjacent patches (with the same winding number) together.</figcaption>
 </figure>
@@ -163,9 +163,9 @@ If instead of working on subvolumes we work on the full volume of the scroll, we
 
 <figure className="text-center mx-auto">
   <div className="flex flex-wrap justify-center mx-auto">
-    <img className="max-h-[250px] m-2" src="/img/tutorials/mesh_0.png"/>
-    <img className="max-h-[250px] m-2" src="/img/tutorials/mesh_1.png"/>
-    <img className="max-h-[250px] m-2" src="/img/tutorials/mesh_2.png"/>
+    <img className="max-h-[250px] m-2" src="/img/tutorials/mesh_0.webp"/>
+    <img className="max-h-[250px] m-2" src="/img/tutorials/mesh_1.webp"/>
+    <img className="max-h-[250px] m-2" src="/img/tutorials/mesh_2.webp"/>
   </div>
   <figcaption className="mt-1">Figure 6. Large mesh wrapped several times around the center. (Left) Side view; (center) from above; (right) zoomed-in view.</figcaption>
 </figure>
@@ -186,7 +186,7 @@ The vertices of the mesh shown in Figure 6 are displayed using the obtained UV p
 
 <figure className="text-center mx-auto">
   <div className="flex flex-wrap justify-center mx-auto">
-    <img className="max-h-[500px]" src="/img/tutorials/flat_mesh.png"/>
+    <img className="max-h-[500px]" src="/img/tutorials/flat_mesh.webp"/>
   </div>
   <figcaption className="mt-1">Figure 7. UV parametrization of the vertices of the mesh displayed in Figure 6.</figcaption>
 </figure>
@@ -202,7 +202,7 @@ For every integer couple (x,y) in the figure we insert a new point. These coordi
 
 <figure className="text-center mx-auto">
   <div className="flex flex-wrap justify-center mx-auto">
-    <img className="max-h-[400px] m-2" src="/img/tutorials/barycentric.png"/>
+    <img className="max-h-[400px] m-2" src="/img/tutorials/barycentric.webp"/>
   </div>
   <figcaption className="mt-1">Figure 8. A red point in a triangle represented with its barycentric coordinates.</figcaption>
 </figure>
@@ -220,7 +220,7 @@ This will allow us to obtain images with a smooth varying color. The segment fro
 
 <figure className="text-center mx-auto">
   <div className="flex flex-wrap justify-center mx-auto">
-    <img className="max-h-[500px] m-2" src="/img/tutorials/thaumato_composite_down.jpg"/>
+    <img className="max-h-[500px] m-2" src="/img/tutorials/thaumato_composite_down.webp"/>
   </div>
   <figcaption className="mt-1">Figure 9. The segment from Figure 7 rendered as a 2D image.</figcaption>
 </figure>
@@ -232,7 +232,7 @@ In Figure 10 we show the ink prediction from the `Phase 1 Grand Prize winning mo
 
 <figure className="text-center mx-auto">
   <div className="flex flex-wrap justify-center mx-auto">
-    <img className="max-h-[500px] m-2" src="/img/tutorials/thaumato_ink_detection.png"/>
+    <img className="max-h-[500px] m-2" src="/img/tutorials/thaumato_ink_detection.webp"/>
   </div>
   <figcaption className="mt-1">Figure 10. Ink prediction on the layers rendered from the UV in Figure 7.</figcaption>
 </figure>

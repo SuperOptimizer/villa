@@ -124,13 +124,13 @@ const stories = ({ unrollVideo, mlVideo, xrayVideo }) => [
         </div>
         <div className="flex overflow-hidden rounded-lg md:mb-8 mb-4 h-96 relative bg-black">
           <img
-            src="/img/landing/scroll-full-min.jpg"
+            src="/img/landing/scroll-full-min.webp"
             className="pan-horizontal max-w-none"
           />
         </div>
         {/* <figure className="md:w-[26%] w-[46%] sepia-[.4] mb-0">
             <img
-              src="/img/landing/fragment-zoomed.jpg"
+              src="/img/landing/fragment-zoomed.webp"
               className="h-full object-cover w-full"
             />
           </figure>
@@ -1417,7 +1417,7 @@ export function Landing() {
                     </div>
                     <img
                       className=""
-                      src="/img/landing/grand-prize-preview.png"
+                      src="/img/landing/grand-prize-preview.webp"
                     />
                     <Marquee
                       autoFill
@@ -1448,7 +1448,7 @@ export function Landing() {
                     </div>
                     <img
                       className="absolute top-[50px] right-0 max-w-[190px]"
-                      src="/img/landing/fragment.png"
+                      src="/img/landing/fragment.webp"
                     />
                   </div>
                 </a>

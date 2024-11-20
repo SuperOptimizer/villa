@@ -23,7 +23,7 @@ hide_title: true
   <meta property="twitter:image" content="https://scrollprize.org/img/firstletters/purple_card-new.png" />
 </head>
 
-<img src="/img/firstletters/composite_thumb.png" />
+<img src="/img/firstletters/composite_thumb.webp" />
 
 <h1 className="color-white text-4xl md:text-7xl font-black !mb-2 leading-none tracking-tighter">
   Grand Prize submissions <span style={{

@@ -195,7 +195,7 @@ The Papyrus is rolled up around a dowel called an umbilicus. Portions of it are 
 There are two ways you can write on papyrus: horizontally (“volumen”) or [vertically](https://en.wikipedia.org/wiki/Rotulus) (“rotulus”). All of the Herculaneum papyri are horizontal scrolls.
 
 <figure>
-<img src="/img/faq/Volumen_y_Rotulus.jpg"/>
+<img src="/img/faq/Volumen_y_Rotulus.webp"/>
 <figcaption className="mt-0">Horizontal and vertical scrolls <a href="https://commons.wikimedia.org/wiki/File:Volumen_y_Rotulus.jpg">(source)</a></figcaption>
 </figure>
 
@@ -232,7 +232,7 @@ This is very instructive and we highly recommend doing it! You will see how frag
 Of course, for it to be useful as ground truth data, you will need to find someone to let you image it in their CT scanner.
 
 <figure>
-<img src="/img/faq/charredpapyrus-small.jpg"/>
+<img src="/img/faq/charredpapyrus-small.webp"/>
 </figure>
 
 ### What software is available currently that might help me?
@@ -252,7 +252,7 @@ In this [Discord thread](https://discord.com/channels/1079907749569237093/108598
 Something like this:
 
 <figure className="">
-  <img src="/img/faq/janko-papyrus-small.jpg"/>
+  <img src="/img/faq/janko-papyrus-small.webp"/>
   <figcaption className="mt-0">Reconstructed scroll <a href="https://www.stockholmuniversitypress.se/site/chapters/10.16993/baj.f/download/462/">(source)</a></figcaption>
 </figure>
 
@@ -371,7 +371,7 @@ There remain open questions, but we do know the ink is sometimes directly visibl
 There may be other patterns present that are detectible by machine learning. We suspect that ink might be filling in between the grid pattern of papyrus, kind of like syrup filling in gaps in a waffle.
 
 <figure className="max-w-[400px]">
-  <img src="/img/faq/waffle.png"/>
+  <img src="/img/faq/waffle.webp"/>
   <figcaption className="mt-0">Syrup filling in gaps in a waffle <a href="https://youtu.be/mwe9sHZ58A0?t=3168">(source)</a></figcaption>
 </figure>
 
@@ -400,7 +400,7 @@ A great contribution to the community would be to build an open source 3D volume
 #### Scroll 1
 
 <figure>
-  <img src="/img/faq/scroll1-orientation.png"/>
+  <img src="/img/faq/scroll1-orientation.webp"/>
 </figure>
 
 The orientation of Scroll 1 follows the above image. When viewing one of the TIF cross-sections from the scan, the image number increases from the screen toward the viewer’s eye.
@@ -414,7 +414,7 @@ Therefore, the direction of a given line of writing should be clockwise around t
 #### Scroll 2
 
 <figure>
-  <img src="/img/faq/scroll2-orientation.png"/>
+  <img src="/img/faq/scroll2-orientation.webp"/>
 </figure>
 
 Relatedly, we can likely assume handedness is consistent between the scans of Scroll 1 and Scroll 2 (the TIF cross-section image number increases from the screen toward the viewer’s eye).

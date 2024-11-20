@@ -251,7 +251,7 @@ Let's take a moment to get oriented before continuing:
 4. Located at the bottom is some navigation information. The primary number useful to you here will be the current slice number.
 
 <figure>
-<img src="/img/tutorials/vc-open.png" className="rounded-xl"/>
+<img src="/img/tutorials/vc-open.webp" className="rounded-xl"/>
 </figure>
 
 ### Navigating a .volpkg
@@ -263,7 +263,7 @@ Now that we’ve oriented ourselves with the UI, let's open our .volpkg...
 3. Look now to the top left in the segments window; our VC shows some segmentations in the segmentation window, but yours at this point will be blank.
 
 <figure>
-  <img src="/img/tutorials/open-volpkg.png" className="rounded-xl"/>
+  <img src="/img/tutorials/open-volpkg.webp" className="rounded-xl"/>
 </figure>
 
 ### Creating a segment
@@ -279,7 +279,7 @@ You’ll notice now that the purple line becomes a series of points. This is you
 
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/new-pen.png">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/new-pen.webp">
     <source src="/img/tutorials/new_pen_tool.mp4" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">Placing our first segmentation line with the pen tool.</figcaption>
@@ -288,7 +288,7 @@ You’ll notice now that the purple line becomes a series of points. This is you
 Now, click “Segmentation Tool” (You can also enter the segmentation tool by pressing 'T'). Let’s configure our Segmentation settings in the right box to match the ones in this image. The primary parameter you could modify here and see if you have any improvement is 'smoothen curve at bright points'.
 
 <figure>
-  <img src="/img/tutorials/ofs_settings.png" className="rounded-xl"/>
+  <img src="/img/tutorials/ofs_settings.webp" className="rounded-xl"/>
 </figure>
 
 If at this point your segmentation line is off the sheet, you can manipulate it in a few ways. The primary method for manipulating this line is to “snap” it to a point, by clicking. VC will take the X nearest points to the cursor (where X is the input range setting located in the bottom right, also in/decreased by hitting A and D respectively) and snap them to the cursor. You can also click and drag the line itself. Play around with this for a bit before continuing. In addition to just panning along the line with right click, you can press R+Scroll Wheel to follow the segmentation line automatically. This is also mapped to the front and back side mouse buttons, if you have them.
@@ -298,7 +298,7 @@ Once you are happy with the location of the line, ensure your slice and anchor s
 Click “Start” to begin the segmentation run.
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/new-pen.png">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/new-pen.webp">
     <source src="/img/tutorials/new_seg_run.mp4" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">"Snapping" our segmentation line back onto the surface of the sheet.</figcaption>
@@ -311,7 +311,7 @@ You can press T at any time within the segmentation tool to return to the slice 
 :::
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/new-pen.png">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/new-pen.webp">
     <source src="/img/tutorials/second_seg_run.mp4" type="video/mp4"/>
   </video>
   <figcaption className="mt-0">"Snapping" our segmentation line back onto the surface of the sheet.</figcaption>
@@ -320,7 +320,7 @@ You can press T at any time within the segmentation tool to return to the slice 
 After you’ve guided the line along the sheet, hit “Start” again, and repeat the process. This is the general workflow for segments of any size, from the GP winners at over 100cm^2 to the smallest segments. Conceptually, it works something like this:
 
 <figure>
-  <video playsInline muted controls className="max-w-[100%] rounded-xl" poster="/img/tutorials/vc-extrapolation2.jpg">
+  <video playsInline muted controls className="max-w-[100%] rounded-xl" poster="/img/tutorials/vc-extrapolation2.webp">
     <source src="/img/tutorials/vc-extrapolation2.webm" type="video/webm"/>
     <source src="/img/tutorials/vc-extrapolation2.mp4" type="video/mp4"/>
   </video>
@@ -332,7 +332,7 @@ Be sure to save it using *“File > Save volpkg”*. You can keep segmenting for
 The process completed during this step looks like this in 3D. We've identified the sheet surface, but still would have a hard time finding ink on a single voxel sheet that is still wrapped in the scroll. In the video below, the sheet is on the visible outside, but most of our segments are completely surrounded by additional sheets.
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/segmentation2.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/segmentation2.webp">
     <source src="/img/tutorials/segmentation2.webm" type="video/webm"/>
     <source src="/img/tutorials/segmentation2.mp4" type="video/mp4"/>
   </video>
@@ -399,7 +399,7 @@ cd /new_segments/
 This command will render your points into a mesh, and then create the surface volume layers from it. This can take a long time depending on the size of your segment, but thankfully you will get some progress information on the console.
 
 <figure>
-  <img src="/img/tutorials/console-output.png"/>
+  <img src="/img/tutorials/console-output.webp"/>
 </figure>
 
 **Congratulations! You've completed your first segment!**
@@ -435,7 +435,7 @@ So, what did we just do?
 When looking for ink in the volume, we need to look at more than just the voxels that directly intersect the segment mesh we just created. We also need to look a little bit “above“ and “below“ the mesh, at the neighborhood of voxels that surround our segment. Conceptually, this neighborhood looks something like this (though this video is exaggerated):
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/surface-volume-extrusion3.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/surface-volume-extrusion3.webp">
     <source src="/img/tutorials/surface-volume-extrusion3.webm" type="video/webm"/>
     <source src="/img/tutorials/surface-volume-extrusion3.mp4" type="video/mp4"/>
   </video>
@@ -447,7 +447,7 @@ To generate the composite .tif file, called `<SegmentNumber>.tif`, `vc_render` s
 The ppm file that we generated contains a mapping between our flattened output image and the original 3D surface. With this file, we transformed the 3D neighborhood into a simplified flattened volume. That process looks something like this:
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/surface-volume-flattening4.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/surface-volume-flattening4.webp">
     <source src="/img/tutorials/surface-volume-flattening4.webm" type="video/webm"/>
     <source src="/img/tutorials/surface-volume-flattening4.mp4" type="video/mp4"/>
   </video>
@@ -457,7 +457,7 @@ The ppm file that we generated contains a mapping between our flattened output i
 The result of this process are the 65 tifs in the /layers/ directory, also referred to as a "surface volume". Each of these .tif images is a "slice" of the surface volume, with 32.tif ideally representing the middle, or the area directly on your segmentation line.
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/surface-volume-image-stack2.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] rounded-xl" poster="/img/tutorials/surface-volume-image-stack2.webp">
     <source src="/img/tutorials/surface-volume-image-stack2.webm" type="video/webm"/>
     <source src="/img/tutorials/surface-volume-image-stack2.mp4" type="video/mp4"/>
   </video>

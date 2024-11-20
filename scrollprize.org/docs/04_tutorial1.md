@@ -53,7 +53,7 @@ To get a basic understanding of the kind of data we’re working with, it’s us
     <figcaption className="mt-0">Word soup in a simulated scroll <a href="https://www.youtube.com/watch?v=tL7rhIFNtQg">(source)</a></figcaption>
   </figure>
   <figure className="sm:w-[50%]">
-    <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/meshlab-small2.jpg">
+    <video autoPlay playsInline loop muted className="w-[100%]" poster="/img/tutorials/meshlab-small2.webp">
       <source src="/img/tutorials/meshlab-small2.webm" type="video/webm"/>
       <source src="/img/tutorials/meshlab-small2.mp4" type="video/mp4"/>
     </video>
@@ -65,7 +65,7 @@ We’ll use [Stephen Parsons’s](https://www2.cs.uky.edu/dri/stephen-parsons/) 
 
 <figure className="max-w-[250px]">
 
-![](/img/tutorials/campfire-last-page.jpg)
+![](/img/tutorials/campfire-last-page.webp)
 
 <figcaption>Last page of the campfire scroll, with nonsense words</figcaption>
 </figure>
@@ -74,13 +74,13 @@ Stephen then _carbonized_ the scroll through a process that is similar to that o
 
 <figure className="">
   <div className="flex flex-wrap">
-    <img className="max-h-[250px]" src="/img/tutorials/campfire-rolled2.jpg"/>
-    <img className="max-h-[250px]" src="/img/tutorials/campfire-rolled.jpg"/>
-    <img className="max-h-[250px]" src="/img/tutorials/campfire-camp.jpg"/>
-    <img className="max-h-[250px]" src="/img/tutorials/campfire-container.jpg"/>
-    <img className="max-h-[250px]" src="/img/tutorials/campfire-result.jpg"/>
-    <img className="max-h-[250px]" src="/img/tutorials/campfire-scanning.jpg"/>
-    <img className="max-h-[250px]" src="/img/tutorials/campfire-scanning2.jpg"/>
+    <img className="max-h-[250px]" src="/img/tutorials/campfire-rolled2.webp"/>
+    <img className="max-h-[250px]" src="/img/tutorials/campfire-rolled.webp"/>
+    <img className="max-h-[250px]" src="/img/tutorials/campfire-camp.webp"/>
+    <img className="max-h-[250px]" src="/img/tutorials/campfire-container.webp"/>
+    <img className="max-h-[250px]" src="/img/tutorials/campfire-result.webp"/>
+    <img className="max-h-[250px]" src="/img/tutorials/campfire-scanning.webp"/>
+    <img className="max-h-[250px]" src="/img/tutorials/campfire-scanning2.webp"/>
   </div>
   <figcaption className="mt-1">Making of the campfire scroll</figcaption>
 </figure>
@@ -108,7 +108,7 @@ We’ll use the [“Fiji”](https://imagej.net/software/fiji/downloads) open so
 
 <figure className="max-w-[400px]">
 
-![](/img/tutorials/right-click-open.png)
+![](/img/tutorials/right-click-open.webp)
 
 </figure>
 
@@ -116,7 +116,7 @@ We’ll use the [“Fiji”](https://imagej.net/software/fiji/downloads) open so
 
 <figure className="max-w-[400px]">
 
-![](/img/tutorials/macos-open-anyway.png)
+![](/img/tutorials/macos-open-anyway.webp)
 
 </figure>
 
@@ -142,7 +142,7 @@ We don’t typically use these photos directly, but they are useful to understan
 
 <figure className="max-w-[556px]">
 
-![](/img/tutorials/imagej-import2.png)
+![](/img/tutorials/imagej-import2.webp)
 
 </figure>
 
@@ -162,7 +162,7 @@ Note that when you are loading a dataset that hasn’t been reduced in size befo
 In the resulting scan you can vaguely see some features, perhaps even some ink, but it's hard to see what is actually in there:
 
 <figure>
-  <video autoPlay playsInline loop muted className="max-w-[100%] rounded-xl" poster="/img/tutorials/imagej-raw-xrays2.jpg">
+  <video autoPlay playsInline loop muted className="max-w-[100%] rounded-xl" poster="/img/tutorials/imagej-raw-xrays2.webp">
     <source src="/img/tutorials/imagej-raw-xrays2.webm" type="video/webm"/>
     <source src="/img/tutorials/imagej-raw-xrays2.mp4" type="video/mp4"/>
   </video>
@@ -176,7 +176,7 @@ The result of reconstruction is a 3D image, or volume, which is made up of 3D pi
 
 <figure className="max-w-[556px]">
 
-![](/img/tutorials/imagej-import-rec2.png)
+![](/img/tutorials/imagej-import-rec2.webp)
 
 </figure>
 
@@ -187,7 +187,7 @@ The result of reconstruction is a 3D image, or volume, which is made up of 3D pi
 The result should look like this:
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] max-w-[400px] rounded-xl" poster="/img/tutorials/imagej-slices2.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] max-w-[400px] rounded-xl" poster="/img/tutorials/imagej-slices2.webp">
     <source src="/img/tutorials/imagej-slices2.webm" type="video/webm"/>
     <source src="/img/tutorials/imagej-slices2.mp4" type="video/mp4"/>
   </video>
@@ -204,7 +204,7 @@ In these images, radiodense materials have bright pixel values while more radiol
   * Then click and drag up on the visualization to rotate it down.
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] max-w-[700px] rounded-xl" poster="/img/tutorials/drag-up2.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] max-w-[700px] rounded-xl" poster="/img/tutorials/drag-up2.webp">
     <source src="/img/tutorials/drag-up2.webm" type="video/webm"/>
     <source src="/img/tutorials/drag-up2.mp4" type="video/mp4"/>
   </video>
@@ -217,7 +217,7 @@ In these images, radiodense materials have bright pixel values while more radiol
   * You have to do the drawing in one go, because Fiji can hang for a while when it decides to rerender the image.
 
 <figure>
-  <video autoPlay playsInline loop muted className="w-[100%] max-w-[300px] rounded-xl" poster="/img/tutorials/alpha-graph2.jpg">
+  <video autoPlay playsInline loop muted className="w-[100%] max-w-[300px] rounded-xl" poster="/img/tutorials/alpha-graph2.webp">
     <source src="/img/tutorials/alpha-graph2.webm" type="video/webm"/>
     <source src="/img/tutorials/alpha-graph2.mp4" type="video/mp4"/>
   </video>
@@ -230,13 +230,13 @@ In these images, radiodense materials have bright pixel values while more radiol
 * See if you can uncover the spiral on the last page of the scroll:
 
 <figure>
-  <img src="/img/tutorials/spiral.png" />
+  <img src="/img/tutorials/spiral.webp" />
 </figure>
 
 Here is a video showing the whole process:
 
 <figure>
-  <video controls playsInline muted className="w-[100%] rounded-xl" poster="/img/tutorials/imagej-word-soup2.jpg">
+  <video controls playsInline muted className="w-[100%] rounded-xl" poster="/img/tutorials/imagej-word-soup2.webp">
     <source src="/img/tutorials/imagej-word-soup2.webm" type="video/webm"/>
     <source src="/img/tutorials/imagej-word-soup2.mp4" type="video/mp4"/>
   </video>
@@ -258,7 +258,7 @@ There is another way we can visualize the volume: we can convert it into triangl
 * Wait a moment until the file is saved. It should be around 400MB.
 
 <figure className="max-w-[200px]">
-  <img src="/img/tutorials/mesh-export2.png" />
+  <img src="/img/tutorials/mesh-export2.webp" />
 </figure>
 
 Now, download and install [MeshLab](https://www.meshlab.net/#download).
@@ -269,7 +269,7 @@ Now, download and install [MeshLab](https://www.meshlab.net/#download).
 * Drag around using the left mouse button to rotate the mesh.
 
 <figure>
-  <img src="/img/tutorials/meshlab.png" className="rounded-xl" />
+  <img src="/img/tutorials/meshlab.webp" className="rounded-xl" />
 </figure>
 
 You can quite clearly see the different pieces of papyrus, and even the container holding the scroll in place inside the scanner. However, all information of letters contained in the data is lost.
@@ -279,7 +279,7 @@ We’ll use Meshlab in later tutorials, so it’s useful to have seen it.
 Here is a video where we navigate around the model in Meshlab:
 
 <figure>
-  <video controls playsInline muted className="w-[100%] rounded-xl" poster="/img/tutorials/meshlab2.jpg">
+  <video controls playsInline muted className="w-[100%] rounded-xl" poster="/img/tutorials/meshlab2.webp">
     <source src="/img/tutorials/meshlab2.webm" type="video/webm"/>
     <source src="/img/tutorials/meshlab2.mp4" type="video/mp4"/>
   </video>

@@ -62,9 +62,9 @@ Some scrolls were discovered in the charred remains of a cabinet, and others in 
 
 <figure>
 
-![](/img/background/Getty_Villa_exterior_small.jpg)
+![](/img/background/Getty_Villa_exterior_small.webp)
 
-<figcaption>The Getty Villa in California, a reproduction of the Villa of the Papyri <a href="https://commons.wikimedia.org/wiki/File:Henry_Pether_-_Eruzione_del_Vesuvio.jpg">(source)</a></figcaption>
+<figcaption>The Getty Villa in California, a reproduction of the Villa of the Papyri <a href="https://commons.wikimedia.org/wiki/File:Henry_Pether_-_Eruzione_del_Vesuvio.webp">(source)</a></figcaption>
 </figure>
 
 ## Reading (and destroying) scrolls
@@ -73,7 +73,7 @@ Initial attempts to open the scrolls involved chopping them in half lengthwise a
 
 <figure>
 
-![](/img/background/piaggio2.jpg)
+![](/img/background/piaggio2.webp)
 
 <figcaption>Piaggio’s unrolling machine <a href="https://commons.wikimedia.org/wiki/File:Abbot-Piaggio-machine-Herculaneum-papyri.jpg">(source)</a></figcaption>
 </figure>
@@ -82,7 +82,7 @@ Piaggio’s machine was used, with varying degrees of success, to open hundreds 
 
 <figure>
 
-![](/img/background/fragments.jpg)
+![](/img/background/fragments.webp)
 
 <figcaption>Scroll fragments <a href="https://www2.cs.uky.edu/dri/herculaneum-papyrus-scrolls/">(source)</a></figcaption>
 </figure>
@@ -95,7 +95,7 @@ The scrolls we have now may be just the beginning. When part of the Villa of the
 
 <figure>
 
-![](/img/background/rocio-espin-pinar-villa-papyri.jpg)
+![](/img/background/rocio-espin-pinar-villa-papyri.webp)
 
 <figcaption>The full size of the villa, with potentially a much bigger library; drawn by Rocío Espín <a href="https://www.artstation.com/rocioespin">(source)</a></figcaption>
 </figure>
@@ -110,7 +110,7 @@ Join us!
 
 <figure>
 
-![](/img/landing/scroll-full-min.jpg)
+![](/img/landing/scroll-full-min.webp)
 
 <figcaption>15 columns of text from PHerc. Paris. 4 (Scroll 1). Read more in the <a href="grandprize">2023 Grand Prize announcement</a>.</figcaption>
 </figure>

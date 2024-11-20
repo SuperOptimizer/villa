@@ -50,7 +50,7 @@ This page lists all the prizes awarded so far:
 <div className="flex flex-row flex-wrap">
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/bruniss/vesuvius-fibers">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$20,000</div><span className="font-bold">Fiber following</span>: Sean Johnson / @sean (bruniss)</div>
-    <img src="/img/progress/202409/fibers.png"/>
+    <img src="/img/progress/202409/fibers.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/younader/Inkalyzer">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$10,000</div><span className="font-bold">Inkalyzer</span>: Youssef Nader / @YoussefNader</div>
@@ -58,47 +58,47 @@ This page lists all the prizes awarded so far:
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1279263442913591349">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Fragment ink labeling</span>: Youssef Nader / @YoussefNader</div>
-    <img src="/img/progress/202409/fragments.png"/>
+    <img src="/img/progress/202409/fragments.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/hendrikschilling/volume-cartographer/tree/dev-zarr">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Fast meshing and flattening</span>: Hendrik Schilling / @waldkauz</div>
-    <img src="/img/progress/202409/VC.png"/>
+    <img src="/img/progress/202409/VC.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/JamesDarby345/Volumetric_Instance_to_Mesh">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Meshes from volumetric labels</span>: James Darby / @james darby</div>
-    <img src="/img/progress/202409/james.png"/>
+    <img src="/img/progress/202409/james.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/jrudolph/vesuvius-gui">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">vesuvius-gui improvements</span>: Johannes Rudolph / @jrudolph</div>
-    <img src="/img/progress/202409/vesuvius-gui.png"/>
+    <img src="/img/progress/202409/vesuvius-gui.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://drive.google.com/file/d/1wAEMLT3dd1bHMhL-UNKREKi2vVhQB-Ux/view?usp=drive_link">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Self-supervised ink detection</span>: Jorge García-Carrasco / @jgcarracsco, Andoni Irazusta-Garmendia / @theleprechaun25</div>
-    <img src="/img/progress/202409/dino.png"/>
+    <img src="/img/progress/202409/dino.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1290364437836075231">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Segmentation optimization</span>: Hendrik Schilling / @waldkauz</div>
-    <img src="/img/progress/202409/optimized.png"/>
+    <img src="/img/progress/202409/optimized.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://docs.google.com/document/d/1wM0yOsfJRqmB_8Bfr8eWChPL5DhHP_f8SX5DfwQdH9c/edit?usp=sharing">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Volumetric labeling improvements</span>: James Darby / @james darby</div>
-    <img src="/img/progress/202409/napari.png"/>
+    <img src="/img/progress/202409/napari.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/Paul-G2/ScrollSleuth">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Scroll Sleuth</span>: Paul Geiger / @PaulG</div>
-    <img src="/img/progress/202409/sleuth.jpg"/>
+    <img src="/img/progress/202409/sleuth.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/WillStevens/scrollreading/blob/main/report2.pdf">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Small surface segmentation</span>: William Stevens / @Will Stevens</div>
-    <img src="/img/progress/202409/stevens.png"/>
+    <img src="/img/progress/202409/stevens.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/KhartesViewer/khartes/tree/khartes3d-beta">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Data streaming in Khartes</span>: Chuck / @khartes_chuck</div>
-    <img src="/img/progress/202409/khartes.png"/>
+    <img src="/img/progress/202409/khartes.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/StewartSethA/VesuviusInkGenerator">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Vesuvius Ink Generator</span>: Seth Stewart</div>
-    <img src="/img/progress/202409/inkyness.png"/>
+    <img src="/img/progress/202409/inkyness.webp"/>
   </a>
 </div>
 
@@ -158,7 +158,7 @@ This page lists all the prizes awarded so far:
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/jgcarrasco/dino-ink-detection">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">DINO ink detection</span>: Jorge García Carrasco / @jgcarrasco</div>
-    <img src="/img/progress/202407/jorge.png"/>
+    <img src="/img/progress/202407/jorge.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/SuperOptimizer/Hraun">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Hraun updates</span>: Forrest McDonald / @verditelabs</div>
@@ -218,7 +218,7 @@ This page lists all the prizes awarded so far:
 <div className="flex flex-row flex-wrap">
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/spacegaier/volume-cartographer">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$10,000</div><span className="font-bold">Volume Cartographer improvements</span>: Philip Allgaier / @spacegaier</div>
-    <img src="/img/progress/202405/screenshot_gui_overview.png"/>
+    <img src="/img/progress/202405/screenshot_gui_overview.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/KhartesViewer/khartes">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$10,000</div><span className="font-bold">Khartes improvements</span>: Chuck / @khartes_chuck</div>
@@ -228,7 +228,7 @@ This page lists all the prizes awarded so far:
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1079907750265499772/1245553260362858577">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Scroll 2 segments</span>: Sean Johnson / @Bruniss</div>
-    <img src="/img/progress/202405/32.jpg"/>
+    <img src="/img/progress/202405/32.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/jrudolph/vesuvius-gui">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">vesuvius-gui</span>: Johannes Rudolph / @jrudolph</div>
@@ -236,11 +236,11 @@ This page lists all the prizes awarded so far:
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/OliverDaubney/vesuvius_basic_compression">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Scroll compression and masking</span>: Oliver Daubney / @O_D</div>
-    <img src="/img/progress/202405/masking.png"/>
+    <img src="/img/progress/202405/masking.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://docs.google.com/document/d/1SX83Dhz5sJXHhSRbADcNxUmuH53BypLRny01rbizK8I/edit?usp=sharing">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Volumetric segmentation architecture investigation</span>: James Darby / @james_darby</div>
-    <img src="/img/progress/202405/volumetric.png"/>
+    <img src="/img/progress/202405/volumetric.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1246129199304151052/1246129199304151052">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Browser-based scroll viewer</span>: Yao Hsiao / @Yao Hsiao</div>
@@ -264,35 +264,35 @@ This page lists all the prizes awarded so far:
 <div className="flex flex-row flex-wrap">
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/ryanchesler/3d-ink-detection">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$20,000</div><span className="font-bold">3D ink detection</span>: Ryan Chesler / @emel_ryan</div>
-    <img src="/img/progress/202404/3dink.jpg"/>
+    <img src="/img/progress/202404/3dink.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1234943853459669002/1234943853459669002">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Mesh merging</span>: Giorgio Angelotti / @Jordi</div>
-    <img src="/img/progress/202404/merged_meshes.jpg"/>
+    <img src="/img/progress/202404/merged_meshes.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/JamesDarby345/Vesuvius_3D_datasets">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Instance segmentation labels</span>: James Darby / @james darby</div>
-    <img src="/img/progress/202404/labels.jpg"/>
+    <img src="/img/progress/202404/labels.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/ryanchesler/LSM/blob/main/README.md">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Unsupervised pretraining</span>: Ryan Chesler / @emel_ryan</div>
-    <img src="/img/progress/202404/simmim.jpg"/>
+    <img src="/img/progress/202404/simmim.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1234969334535946303">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">New segments</span>: Sean Johnson / @Bruniss</div>
-    <img src="/img/progress/202404/20240228135119.jpg"/>
+    <img src="/img/progress/202404/20240228135119.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/SuperOptimizer/Hraun">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Volumetric processing tools</span>: Forrest McDonald / @VerditeLabs</div>
-    <img src="/img/progress/202404/hraun.jpg"/>
+    <img src="/img/progress/202404/hraun.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/giorgioangel/vesuvius-compare/">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Point cloud comparison</span>: Giorgio Angelotti / @Jordi</div>
-    <img src="/img/progress/202404/compare.jpg"/>
+    <img src="/img/progress/202404/compare.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1235042673899995176/1235042673899995176">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Instance segmentation experiments</span>: James Darby, Ryan Reszetnik, Liamo Pennimpede, Lucas Nelson</div>
-    <img src="/img/progress/202404/instance.jpg"/>
+    <img src="/img/progress/202404/instance.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1232307086952501313">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Meshing and chunking</span>: Santiago Pelufo / @spelufo</div>
@@ -318,7 +318,7 @@ This page lists all the prizes awarded so far:
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1193446455504011316">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$10,000</div><span className="font-bold">Multiresolution chunked volumes</span>: Chuck / @khartes_chuck</div>
-    <img src="/img/progress/os-mar24/khartes.jpg"/>
+    <img src="/img/progress/os-mar24/khartes.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1204133327083147264">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Volumetric ink detection</span>: Jorge Villaescusa / @mojonero</div>
@@ -326,11 +326,11 @@ This page lists all the prizes awarded so far:
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/tspersonalgithub/march_2024_progress_submission">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Volumetric segmentation labels</span>: Tim Skinner / @Tim S</div>
-    <img src="/img/progress/os-mar24/tim.jpg"/>
+    <img src="/img/progress/os-mar24/tim.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/JamesDarby345/VesuviusDataDownload">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Data improvements</span>: James Darby / @james darby</div>
-    <img src="/img/progress/os-mar24/download.png"/>
+    <img src="/img/progress/os-mar24/download.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/OliverDaubney/s2slabmap">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Segment-to-segment label mapping</span>: Oliver Daubney / @O_D</div>
@@ -350,7 +350,7 @@ This page lists all the prizes awarded so far:
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1223849912467460116">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Colab notebook and ink labels</span>: Nicola Bodill / @polytrope</div>
-    <img src="/img/progress/os-mar24/colab.png"/>
+    <img src="/img/progress/os-mar24/colab.webp"/>
   </a>
 </div>
 
@@ -362,19 +362,19 @@ This page lists all the prizes awarded so far:
 <div className="flex flex-row flex-wrap">
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/younader/Vesuvius-Grandprize-Winner">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$700,000</div><span className="font-bold">Winner</span>: Youssef Nader, Luke Farritor, and Julian Schilliger</div>
-    <img src="/img/grandprize/thumbs/youssef_color.jpg"/>
+    <img src="/img/grandprize/thumbs/youssef_color.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/SQMah/Vesuvius-Grand-Prize-Submission/">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$50,000</div><span className="font-bold">Runner up</span>: SQ Mah</div>
-    <img src="/img/grandprize/thumbs/sq.jpg"/>
+    <img src="/img/grandprize/thumbs/sq.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/lschlessinger1/vesuvius-grand-prize-submission">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$50,000</div><span className="font-bold">Runner up</span>: Lou Schlessinger and Arefeh Sherafati</div>
-    <img src="/img/grandprize/thumbs/louis.jpg"/>
+    <img src="/img/grandprize/thumbs/louis.webp"/>
   </a>
   <a className="max-w-[632px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/erdpx/vesuvius-grand-prize">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$50,000</div><span className="font-bold">Runner up</span>: Elian Rafael Dal Prá, Sean Johnson, Leonardo Scabini, Raí Fernando Dal Prá, João Vitor Brentigani Torezan, Daniel Baldin Franceschini, Bruno Pereira Kellm, Marcelo Soccol Gris, and Odemir Martinez Bruno</div>
-    <img className="max-w-[100%]" src="/img/grandprize/elian_text_wbb-smaller.png"/>
+    <img className="max-w-[100%]" src="/img/grandprize/elian_text_wbb-smaller.webp"/>
   </a>
 </div>
 
@@ -418,7 +418,7 @@ This page lists all the prizes awarded so far:
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1177039383375912990/1177039383375912990">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$5,000</div><span className="font-bold">Ink Detection Masks</span>: Anton Repushko / @repushko</div>
-    <img src="/img/progress/os-nov23/3.jpg"/>
+    <img src="/img/progress/os-nov23/3.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/educelab/volume-cartographer/issues/43">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Sharkbite fix</span>: Chuck / @khartes_chuck</div>
@@ -426,7 +426,7 @@ This page lists all the prizes awarded so far:
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/giorgioangel/vesuvius-kintsugi">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Vesuvius Kintsugi</span>: Giorgio Angelotti / @jordi45698</div>
-    <img src="/img/progress/os-nov23/5.png"/>
+    <img src="/img/progress/os-nov23/5.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://dl.ash2txt.org/community-uploads/bruniss/">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Crackle Labels</span>: Sean Johnson / @bruniss</div>
@@ -438,15 +438,15 @@ This page lists all the prizes awarded so far:
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/tomhsiao1260/segment-viewer">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$5,000</div><span className="font-bold">Segment Viewer</span> by Yao Hsiao / @Yao_Hsiao and Dalufishe / @Dalufish</div>
-    <img src="/img/progress/os-nov23/8.png"/>
+    <img src="/img/progress/os-nov23/8.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1179216516697296906/1179216516697296906">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Single-sheet Segmentation</span>: Brett Olsen / @brett_olsen</div>
-    <img src="/img/progress/os-nov23/9.png"/>
+    <img src="/img/progress/os-nov23/9.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://scrollprize.substack.com/p/many-open-source-prize-winners-25">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Multiple Contributions</span>: Santiago Pelufo / @spelufo</div>
-    <img src="/img/progress/os-nov23/10.png"/>
+    <img src="/img/progress/os-nov23/10.webp"/>
   </a>
 </div>
 
@@ -458,20 +458,20 @@ This page lists all the prizes awarded so far:
 <div className="flex flex-row flex-wrap">
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/lukeboi/scroll-first-letters">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$40,000</div><span className="font-bold">First Letters</span>: Luke Farritor / @lukeboi</div>
-    <img src="/img/firstletters/luke-submission.png"/>
+    <img src="/img/firstletters/luke-submission.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/younader/Vesuvius-First-Letters">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$10,000</div><span className="font-bold">First Letters, 2nd place</span>: Youssef Nader / @YoussefNader</div>
-    <img src="/img/firstletters/youssef-submission.png"/>
+    <img src="/img/firstletters/youssef-submission.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://caseyhandmer.wordpress.com/2023/08/05/reading-ancient-scrolls/">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$10,000</div><span className="font-bold">First Ink</span>: Casey Handmer / @cjhandmer</div>
     <div className="flex flex-wrap justify-between items-end max-w-[500px]">
       <figure className="w-[49%] mb-0">
-        <img src="/img/firstletters/pi1.png" />
+        <img src="/img/firstletters/pi1.webp" />
       </figure>
       <figure className="w-[49%] mb-0">
-        <img src="/img/firstletters/pi2.png" />
+        <img src="/img/firstletters/pi2.webp" />
       </figure>
     </div>
   </a>
@@ -566,7 +566,7 @@ This page lists all the prizes awarded so far:
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumes_masked/20230205180739/">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$5,000</div><span className="font-bold"> Masked data</span> by James / @thatGuy</div>
-    <img src="/img/progress/masked.png"/>
+    <img src="/img/progress/masked.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/tomhsiao1260/vc-whiteboard/tree/demo-3">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$5,000</div><span className="font-bold"> Volume Viewer</span> by Yao / @Yao_Hsiao</div>
@@ -594,43 +594,43 @@ This page lists all the prizes awarded so far:
 <div className="flex flex-row flex-wrap">
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/417496">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$25,000</div> 1st: ryches</div>
-    <img src="/img/ink/1.png"/>
+    <img src="/img/ink/1.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/417255">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$20,000</div> 2nd: RTX23090</div>
-    <img src="/img/ink/2.png"/>
+    <img src="/img/ink/2.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/417536">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$15,000</div> 3rd: wuyu</div>
-    <img src="/img/ink/3.png"/>
+    <img src="/img/ink/3.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/417779">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$10,000</div> 4th: POSCO DX - Heeyoung Ahn</div>
-    <img src="/img/ink/4.png"/>
+    <img src="/img/ink/4.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/417642">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$5,000</div> 5th: Aksell</div>
-    <img src="/img/ink/5.png"/>
+    <img src="/img/ink/5.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/417274">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$5,000</div> 6th: chumajin</div>
-    <img src="/img/progress/inkdetection.jpg"/>
+    <img src="/img/progress/inkdetection.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/417430">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$5,000</div> 7th: OverthINKingSegmenter</div>
-    <img src="/img/ink/7.png"/>
+    <img src="/img/ink/7.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/417383">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$5,000</div> 8th: Luck is all you need</div>
-    <img src="/img/ink/8.png"/>
+    <img src="/img/ink/8.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/417361">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$5,000</div> 9th: still 1 fold, 2 net</div>
-    <img src="/img/ink/9.png"/>
+    <img src="/img/ink/9.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/417363">
     <div className="mb-4"><div className="text-sm font-bold text-gray-300">$5,000</div> 10th: Feng Qilong</div>
-    <img src="/img/ink/10.png"/>
+    <img src="/img/ink/10.webp"/>
   </a>
 </div>
 
@@ -671,11 +671,11 @@ Before and during the competition, EduceLab has put out various works. With thes
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://uknowledge.uky.edu/cs_etds/138/">
     <div className="mb-4"><span className="font-bold">Hard-Hearted Scrolls (PhD dissertation)</span> by Stephen Parsons</div>
-    <div className="bg-white"><img src="/img/tutorials/ml-overview-alpha.png"/></div>
+    <div className="bg-white"><img src="/img/tutorials/ml-overview-alpha.webp"/></div>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/educelab/volume-cartographer">
     <div className="mb-4"><span className="font-bold">Volume Cartographer</span> by Seth Parker and many others</div>
-    <div className="bg-white"><img src="/img/tutorials/vc-initial.png"/></div>
+    <div className="bg-white"><img src="/img/tutorials/vc-initial.webp"/></div>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/educelab/ink-id">
     <div className="mb-4"><span className="font-bold">ink-id</span> by Stephen Parsons</div>
