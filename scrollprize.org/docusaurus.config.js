@@ -138,7 +138,6 @@ const config = {
         },
       };
     },
-    "./src/plugins/fetch-content",
     [
       "@docusaurus/plugin-client-redirects",
       {

@@ -1,8 +1,45 @@
+---
+title: "Community Projects"
+hide_table_of_contents: true
+hide_title: true
+---
+
+<head>
+  <html data-theme="dark" />
+
+  <meta
+    name="description"
+    content="A $1,000,000+ machine learning and computer vision competition"
+  />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://scrollprize.org" />
+  <meta property="og:title" content="Vesuvius Challenge" />
+  <meta
+    property="og:description"
+    content="A $1,000,000+ machine learning and computer vision competition"
+  />
+  <meta
+    property="og:image"
+    content="https://scrollprize.org/img/social/opengraph.jpg"
+  />
+
+  <meta property="twitter:card" content="summary_large_image" />
+  <meta property="twitter:url" content="https://scrollprize.org" />
+  <meta property="twitter:title" content="Vesuvius Challenge" />
+  <meta
+    property="twitter:description"
+    content="A $1,000,000+ machine learning and computer vision competition"
+  />
+  <meta
+    property="twitter:image"
+    content="https://scrollprize.org/img/social/opengraph.jpg"
+  />
+</head>
+
 # 📜 Awesome Scroll Tools [![Awesome](https://awesome.re/badge.svg)](https://awesome.re)
 
 Here are all the awesome awarded open source contributions from our community that will allow us to read the scrolls! 📚✨
-
-We maintain this list [on GitHub](https://github.com/ScrollPrize/awesome-scroll-tools) and it can also be found [on our website](https://scrollprize.org/community_projects).
 
 Contributions are divided into four categories: _Data access/visualization_, _Segmentation_, _Ink Detection_, and _Other_.
 
