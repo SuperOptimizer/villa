@@ -1,4 +1,4 @@
-name: Build Application
+name: 'Build crackle-viewer'
 
 permissions:
   contents: write
@@ -15,10 +15,14 @@ permissions:
 on:
   push:
     branches:
-      - master
+      - main
+    paths:
+      - 'crackle-viewer/**'
   pull_request:
     branches:
-      - master
+      - main
+    paths:
+      - 'crackle-viewer/**'
   workflow_dispatch:
 
 jobs:
@@ -34,11 +38,13 @@ jobs:
       with:
         python-version: '3.11'
     - name: Install PyInstaller and Dependencies
+      working-directory: ${{ github.workspace }}/crackle-viewer
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller
     - name: Build with PyInstaller
+      working-directory: ${{ github.workspace }}/crackle-viewer
       run: |
         pyinstaller crackle_viewer.spec
     - name: Upload Artifacts
@@ -88,6 +94,7 @@ jobs:
     
     - name: Zip Executable and Dependencies
       shell: pwsh
+      working-directory: ${{ github.workspace }}/crackle-viewer
       run: |
         $osType = "${{ runner.os }}"
         if ($osType -eq "Windows") {
