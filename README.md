@@ -3,6 +3,9 @@
 Vesuvius Challenge is a machine learning and computer vision competition to read the Herculaneum scrolls.
 This repository contains the source code for Vesuvius Challenge: scroll tools, libraries, our website, data processing scripts, and more.
 
+## [foundation](foundation/)
+Tools to build/manage scroll datasets and cloud infrastructure.
+
 ## [scroll-renderer](scroll-renderer/)
 Tools for flattening and rendering 3D mesh segments.
 
