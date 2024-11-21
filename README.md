@@ -6,5 +6,5 @@ This repository contains the source code for Vesuvius Challenge: scroll tools, l
 ## [scrollprize.org](scrollprize.org/)
 Source for the [Vesuvius Challenge website](https://scrollprize.org).
 
-## [ThaumatoAnakalyptor](ThaumatoAnakalyptor/)
+## [thaumato-anakalyptor](thaumato-anakalyptor/)
 An automatic segmentation pipeline designed for extraction of papyrus sheet segmentations from CT scans of ancient scrolls with minimal human intervention.
