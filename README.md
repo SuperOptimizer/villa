@@ -9,6 +9,9 @@ GUI tool to inspect and label ink deposits on virtually unwrapped segments of an
 ## [foundation](foundation/)
 Tools to build/manage scroll datasets and cloud infrastructure.
 
+## [ink-detection](ink-detection/)
+The ink detection used to win the Vesuvius Challenge 2023 Grand Prize.
+
 ## [scroll-renderer](scroll-renderer/)
 Tools for flattening and rendering 3D mesh segments.
 
