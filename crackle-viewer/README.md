@@ -1,7 +1,7 @@
 
 # Crackle-Viewer
 
-![Crackle-Viewer Logo](crackle_viewer.png)
+<img src="crackle_viewer.png" alt="Crackle-Viewer Logo" width="200"/>
 
 ## Awards
 This project won multiple awards in the [Vesuvius Challenge 2023](https://scrollprize.org/):
