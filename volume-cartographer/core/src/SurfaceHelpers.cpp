@@ -4682,13 +4682,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             }
             fringe.clear();
 
-        std::cout << "go with cands " << cands.size() << " inl_th " << curr_best_inl_th << std::endl;
+            std::cout << "go with cands " << cands.size() << " inl_th " << curr_best_inl_th << std::endl;
 
-        // for(auto &p : cands) {
-
-
-        //do it two times
-        // for (int n=0;n<2;n++) {
             OmpThreadPointCol threadcol(3, cands);
             
             std::vector<SurfTrackerData> data_ths(omp_get_max_threads());
@@ -4702,8 +4697,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         {
             cv::Vec2i p = threadcol.next();
             
-            // SurfTrackerData &data_th = data_ths[omp_get_thread_num()];
-            
             if (p[0] == -1)
                 break;
 
@@ -4714,7 +4707,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
             
             mutex.lock_shared();
-            // SurfTrackerData data_th(data);
             SurfTrackerData &data_th = data_ths[omp_get_thread_num()];
             int misses = 0;
             for(auto added : added_points_threads[omp_get_thread_num()]) {
@@ -4732,7 +4724,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             added_points_threads[omp_get_thread_num()].resize(0);
             mutex.unlock();
             
-            // mutex.lock_shared();
             for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,h-1);oy++)
                 for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,w-1);ox++)
                     if (state(oy,ox) & STATE_LOC_VALID) {
@@ -4740,27 +4731,19 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         local_surfs.insert(p_surfs.begin(), p_surfs.end());
                     }
 
-            // mutex.unlock();
-            // std::cout << "adding with local surf count " << local_surfs.size() << p << std::endl;
-
             cv::Vec3d best_coord = {-1,-1,-1};
             int best_inliers = -1;
             SurfaceMeta *best_surf = nullptr;
             cv::Vec2d best_loc = {-1,-1};
             bool best_ref_seed = false;
-            //FIXME also store best loc or re-optimize it!
-            // std::set<SurfaceMeta*> seed_surfs = {seed};
-            // for(auto ref_surf : seed_surfs) {
 
             for(auto ref_surf : local_surfs) {
                 int ref_count = 0;
                 cv::Vec2d avg = {0,0};
                 cv::Vec3d any_p = {0,0,0};
                 bool ref_seed = false;
-                // mutex.lock_shared();
                 for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,h-1);oy++)
                     for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,w-1);ox++)
-                        //FIXME need to also check for -1/-1 entries at multiple locations? (maybe whereever we insert loc)
                         if ((state(oy,ox) & STATE_LOC_VALID) && data_th.valid_int(ref_surf,{oy,ox})) {
                             ref_count++;
                             avg += data_th.loc(ref_surf,{oy,ox});
@@ -4769,39 +4752,25 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                                 ref_seed = true;
                         }
 
-                // mutex.unlock();
-
                 if (ref_count < 2 && !ref_seed)
                     continue;
 
                 avg /= ref_count;
 
-                // mutex.lock();
                 data_th.loc(ref_surf,p) = avg + cv::Vec2d((rand() % 1000)/500.0-1, (rand() % 1000)/500.0-1);
-                // mutex.unlock();
 
                 ceres::Problem problem;
 
                 state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
 
-                // mutex.lock_shared();
                 int straight_count_init = 0;
-                //FIXME instead of surf loss for search we can also add a y positoin on loc sampling of the local surf!
-                // points(p) = any_p;
                 int count_init = surftrack_add_local(ref_surf, p, data_th, problem, state, points, step, src_step, LOSS_ZLOC, &straight_count_init);
-                // mutex.unlock();
                 ceres::Solver::Summary summary;
                 ceres::Solve(options, &problem, &summary);
                 float cost_init = sqrt(summary.final_cost/count_init);
-        
-                if (generation == 0) {
-                    std::cout << summary.FullReport() << std::endl;
-                }
                 
                 // if (cost_init >= local_cost_inl_th || count_init < 2 || straight_count_init < 1)
                     // continue;
-                
-                // mutex.lock_shared();
                 bool fail = false;
                 cv::Vec2d ref_loc = data_th.loc(ref_surf,p);
 
@@ -4816,12 +4785,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         fail = true;
                 }
 
-                // mutex.unlock();
-
                 if (fail) {
-                    // mutex.lock();
                     data_th.erase(ref_surf, p);
-                    // mutex.unlock();
                     continue;
                 }
 
@@ -4847,26 +4812,17 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         int count = 0;
                         int straight_count = 0;
                         state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
-                        // mutex.lock();
                         cv::Vec3f loc = test_surf->surf()->loc_raw(ptr);
                         data_th.loc(test_surf, p) = {loc[1], loc[0]};
-                        // mutex.unlock();
-                        // mutex.lock_shared();
-                        //FIXME could be independent / shared lock if not destructive!!
                         float cost = local_cost(test_surf, p, data_th, state, points, step, src_step, &count, &straight_count);
-                        // mutex.unlock();
                         state(p) = 0;
-                        // mutex.lock();
                         data_th.erase(test_surf, p);
-                        // mutex.unlock();
-                        // std::cout << cost << " " << count << " " << straight_count << ref_seed << std::endl;
                         if (cost < local_cost_inl_th && (ref_seed || (count >= 2 && straight_count >= 1))) {
                             inliers_sum += count;
                             inliers_count++;
                         }
                     }
                 }
-                // std::cout << "curr " << inliers_count << " " << inliers_sum << std::endl;
                 if ((inliers_count >= 2 || ref_seed) && inliers_sum > best_inliers) {
                     best_inliers = inliers_sum;
                     best_coord = coord;
@@ -4875,7 +4831,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     best_ref_seed = ref_seed;
                 }
             }
-            // std::cout << "best inl " << best_inliers << std::endl;
 
             if ((best_inliers >= curr_best_inl_th || best_ref_seed) /*&& best_inliers >= local_surfs.size()/2*/) {
                 if (best_coord[0] == -1)
@@ -4883,11 +4838,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 
                 data_th.surfs(p).insert(best_surf);
                 data_th.loc(best_surf, p) = best_loc;
-                //FIXME mutex per thread!
-                // for(int i=0;i<omp_get_max_threads();i++) {
-                //     data_ths[i].surfs(p).insert(best_surf);
-                //     data_ths[i].loc(best_surf, p) = best_loc;
-                // }
                 state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
                 points(p) = best_coord;
                 
@@ -4896,8 +4846,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 
                 std::set<SurfaceMeta*> more_local_surfs;
                 for(auto test_surf : local_surfs) {
-                    // if (test_surf == best_surf)
-                    // continue;
                     
                     if (data_th.has(test_surf, p)) {
                         surftrack_add_local(test_surf, p, data_th, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
@@ -4915,20 +4863,14 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                             data_th.surfs(p).insert(test_surf);
                             surftrack_add_local(test_surf, p, data_th, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
                             
-                            // for(int i=0;i<omp_get_max_threads();i++) {
-                            //     data_ths[i].surfs(p).insert(test_surf);
-                            //     data_ths[i].loc(test_surf, p) = {loc[1], loc[0]};
-                            // }
-                            
                             for(auto s : test_surf->overlapping)
-                                if (!data_th.has(s, p) && /*!local_surfs.count(s) &&*/ s != best_surf)
+                                if (!data_th.has(s, p) && !local_surfs.count(s) && s != best_surf)
                                     more_local_surfs.insert(s);
                         }
                         else if (erase_if_out)
                             data_th.erase(test_surf, p);
                     }
                 }
-                // mutex.unlock();
                 
                 ceres::Solver::Summary summary;
                 
@@ -4940,29 +4882,17 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     float res = test_surf->surf()->pointTo(ptr, best_coord, same_surface_th, 4);
                     if (res <= same_surface_th) {
                         cv::Vec3f loc = test_surf->surf()->loc_raw(ptr);
-                        // std::cout << "more:" << res << best_coord << loc << test_surf->surf()->rawPoints().size() << std::endl;
-                        
-                        // mutex.lock_shared();
                         cv::Vec3f coord = data_th.lookup_int_loc(test_surf, {loc[1], loc[0]});
-                        // mutex.unlock();
                         if (coord[0] == -1) {
-                            // std::cout << "WTF3" << std::endl;
                             continue;
                         }
-                        // mutex.lock();
                         if (local_cost_destructive(test_surf, p, data_th, state, points, step, src_step, loc) < local_cost_inl_th) {
                             data_th.loc(test_surf, p) = {loc[1], loc[0]};
                             data_th.surfs(p).insert(test_surf);
-                            
-                            // for(int i=0;i<omp_get_max_threads();i++) {
-                            //     data_ths[i].surfs(p).insert(test_surf);
-                            //     data_ths[i].loc(test_surf, p) = {loc[1], loc[0]};
-                            // }
                         };
-                        // mutex.unlock();
                     }
                 }
-                // std::cout << "p surf count" << p << " " << data.surfs(p).size() << best_coord << std::endl;
+                
                 mutex.lock();
                 succ++;
                 
@@ -4980,115 +4910,16 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 }
                 fringe.insert(p);
                 mutex.unlock();
-                
-                // std::cout << std::endl << "checking against seed " << p << std::endl;
-                // if (data.has(seed, p))
-                // std::cout << "seed diff " << points(p) << best_coord << data.lookup_int(seed,p) << cv::norm(best_coord - data.lookup_int(seed,p)) << std::endl << std::endl;;
-            }/*
-            
-            if ((best_inliers >= curr_best_inl_th || best_ref_seed) ) {
-                if (best_coord[0] == -1)
-                    throw std::runtime_error("WTF1");
-                points(p) = best_coord;
-
-                mutex.lock();
-                data.surfs(p).insert(best_surf);
-                data.loc(best_surf, p) = best_loc;
-                state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
-
-                ceres::Problem problem;
-                surftrack_add_local(best_surf, p, data, problem, state, points, step, SURF_LOSS);
-                mutex.unlock();
-
-                std::set<SurfaceMeta*> more_local_surfs;
-                for(auto test_surf : local_surfs) {
-                    if (test_surf == best_surf)
-                        continue;
-
-                    SurfacePointer *ptr = test_surf->surf()->pointer();
-                    if (test_surf->surf()->pointTo(ptr, best_coord, same_surface_th, 4) <= same_surface_th) {
-                        cv::Vec3f loc = test_surf->surf()->loc_raw(ptr);
-                        mutex.lock();
-                        data.loc(test_surf, p) = {loc[1], loc[0]};
-                        mutex.unlock();
-                        mutex.lock_shared();
-                        if (local_cost(test_surf, p, data, state, points, step) < local_cost_inl_th) {
-                            mutex.unlock();
-                            mutex.lock();
-                            data.surfs(p).insert(test_surf);
-                            data.loc(test_surf, p) = {loc[1], loc[0]};
-                            mutex.unlock();
-                            mutex.lock_shared();
-                            surftrack_add_local(test_surf, p, data, problem, state, points, step, SURF_LOSS);
-
-                            for(auto s : test_surf->overlapping)
-                                if (!data.has(s, p))
-                                    more_local_surfs.insert(s);
-                        }
-                        mutex.unlock();
-                    }
-                }
-
-                ceres::Solver::Summary summary;
-                ceres::Solve(options, &problem, &summary);
-
-                //check for more agreeing surfs by checking agreeings surfs neigbors
-                for(auto test_surf : more_local_surfs) {
-                    SurfacePointer *ptr = test_surf->surf()->pointer();
-                    float res = test_surf->surf()->pointTo(ptr, best_coord, same_surface_th, 4);
-                    if (res <= same_surface_th) {
-                        cv::Vec3f loc = test_surf->surf()->loc_raw(ptr);
-                        // std::cout << "more:" << res << best_coord << loc << test_surf->surf()->rawPoints().size() << std::endl;
-
-                        mutex.lock_shared();
-                        cv::Vec3f coord = data.lookup_int_loc(test_surf, {loc[1], loc[0]});
-                        mutex.unlock();
-                        if (coord[0] == -1) {
-                            // std::cout << "WTF3" << std::endl;
-                            continue;
-                        }
-                        mutex.lock();
-                        if (local_cost_destructive(test_surf, p, data, state, points, step, loc) < local_cost_inl_th) {
-                            data.loc(test_surf, p) = {loc[1], loc[0]};
-                            data.surfs(p).insert(test_surf);
-                        };
-                        mutex.unlock();
-                    }
-                }
-                // std::cout << "p surf count" << p << " " << data.surfs(p).size() << best_coord << std::endl;
-                succ++;
-                mutex.lock();
-                if (!used_area.contains({p[1],p[0]})) {
-                    used_area = used_area | cv::Rect(p[1],p[0],1,1);
-                    used_area_hr = {used_area.x*step, used_area.y*step, used_area.width*step, used_area.height*step};
-                }
-                fringe.insert(p);
-                mutex.unlock();
-
-                // std::cout << std::endl << "checking against seed " << p << std::endl;
-                // if (data.has(seed, p))
-                    // std::cout << "seed diff " << points(p) << best_coord << data.lookup_int(seed,p) << cv::norm(best_coord - data.lookup_int(seed,p)) << std::endl << std::endl;;
-            }*/
+            }
             else if (best_inliers == -1) {
                 //just try again some other time
                 state(p) = 0;
                 points(p) = {-1,-1,-1};
-                //FIXME reset data.loc(ref_surf,p)
-                // std::cout << std::endl << "FAIL1 " << best_inliers << std::endl;
             }
             else {
-                // state(p) = STATE_FAIL;
                 state(p) = 0;
                 points(p) = {-1,-1,-1};
-                //FIXME reset data.loc(ref_surf,p)
-                // std::cout << std::endl << "FAIL2 " << best_inliers << std::endl;
             }
-            // std::cout << std::endl;
-
-            // if (succ >= 1)
-            // return nullptr;
-            // break;
-
         }
         
         if (!fringe.size()) {
