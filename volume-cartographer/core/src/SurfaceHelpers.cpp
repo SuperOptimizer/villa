@@ -4691,9 +4691,10 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         // for (int n=0;n<2;n++) {
             OmpThreadPointCol threadcol(3, cands);
             
-            // std::vector<SurfTrackerData> data_ths(omp_get_max_threads());
-            // for(int i=0;i<omp_get_max_threads();i++)
-            //     data_ths[i] = data;
+            std::vector<SurfTrackerData> data_ths(omp_get_max_threads());
+            std::vector<std::vector<cv::Vec2i>> added_points_threads(omp_get_max_threads());
+            for(int i=0;i<omp_get_max_threads();i++)
+                data_ths[i] = data;
 
             std::shared_mutex mutex;
 #pragma omp parallel
@@ -4713,7 +4714,22 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
             
             mutex.lock_shared();
-            SurfTrackerData data_th(data);// = data_ths[omp_get_thread_num()];
+            // SurfTrackerData data_th(data);
+            SurfTrackerData &data_th = data_ths[omp_get_thread_num()];
+            int misses = 0;
+            for(auto added : added_points_threads[omp_get_thread_num()]) {
+                data_th.surfs(added) = data.surfs(added);
+                for (auto &s : data.surfsC(added)) {
+                    if (!data.has(s, added))
+                        std::cout << "where the fuck is or data?" << std::endl;
+                        // throw std::runtime_error("where the fuck is or data?");
+                    else
+                        data_th.loc(s, added) = data.loc(s, added);
+                }
+            }
+            mutex.unlock();
+            mutex.lock();
+            added_points_threads[omp_get_thread_num()].resize(0);
             mutex.unlock();
             
             // mutex.lock_shared();
@@ -4864,41 +4880,40 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             if ((best_inliers >= curr_best_inl_th || best_ref_seed) /*&& best_inliers >= local_surfs.size()/2*/) {
                 if (best_coord[0] == -1)
                     throw std::runtime_error("WTF1");
-                points(p) = best_coord;
                 
-                mutex.lock();
-                data.surfs(p).insert(best_surf);
-                data.loc(best_surf, p) = best_loc;
+                data_th.surfs(p).insert(best_surf);
+                data_th.loc(best_surf, p) = best_loc;
                 //FIXME mutex per thread!
                 // for(int i=0;i<omp_get_max_threads();i++) {
                 //     data_ths[i].surfs(p).insert(best_surf);
                 //     data_ths[i].loc(best_surf, p) = best_loc;
                 // }
                 state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
+                points(p) = best_coord;
                 
                 ceres::Problem problem;
-                surftrack_add_local(best_surf, p, data, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
+                surftrack_add_local(best_surf, p, data_th, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
                 
                 std::set<SurfaceMeta*> more_local_surfs;
                 for(auto test_surf : local_surfs) {
                     // if (test_surf == best_surf)
                     // continue;
                     
-                    if (data.has(test_surf, p)) {
-                        surftrack_add_local(test_surf, p, data, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
+                    if (data_th.has(test_surf, p)) {
+                        surftrack_add_local(test_surf, p, data_th, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
                     }
                     
                     SurfacePointer *ptr = test_surf->surf()->pointer();
                     if (test_surf->surf()->pointTo(ptr, best_coord, same_surface_th, 4) <= same_surface_th) {
                         cv::Vec3f loc = test_surf->surf()->loc_raw(ptr);
                         bool erase_if_out = false;
-                        if (!data.has(test_surf, p)) {
+                        if (!data_th.has(test_surf, p)) {
                             erase_if_out = true;
-                            data.loc(test_surf, p) = {loc[1], loc[0]};
+                            data_th.loc(test_surf, p) = {loc[1], loc[0]};
                         }
-                        if (local_cost(test_surf, p, data, state, points, step, src_step) < local_cost_inl_th) {
-                            data.surfs(p).insert(test_surf);
-                            surftrack_add_local(test_surf, p, data, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
+                        if (local_cost(test_surf, p, data_th, state, points, step, src_step) < local_cost_inl_th) {
+                            data_th.surfs(p).insert(test_surf);
+                            surftrack_add_local(test_surf, p, data_th, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
                             
                             // for(int i=0;i<omp_get_max_threads();i++) {
                             //     data_ths[i].surfs(p).insert(test_surf);
@@ -4906,16 +4921,17 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                             // }
                             
                             for(auto s : test_surf->overlapping)
-                                if (!data.has(s, p) && /*!local_surfs.count(s) &&*/ s != best_surf)
+                                if (!data_th.has(s, p) && /*!local_surfs.count(s) &&*/ s != best_surf)
                                     more_local_surfs.insert(s);
                         }
                         else if (erase_if_out)
-                            data.erase(test_surf, p);
+                            data_th.erase(test_surf, p);
                     }
                 }
                 // mutex.unlock();
                 
                 ceres::Solver::Summary summary;
+                
                 ceres::Solve(options, &problem, &summary);
                 
                 //check for more agreeing surfs by checking agreeings surfs neigbors
@@ -4927,16 +4943,16 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         // std::cout << "more:" << res << best_coord << loc << test_surf->surf()->rawPoints().size() << std::endl;
                         
                         // mutex.lock_shared();
-                        cv::Vec3f coord = data.lookup_int_loc(test_surf, {loc[1], loc[0]});
+                        cv::Vec3f coord = data_th.lookup_int_loc(test_surf, {loc[1], loc[0]});
                         // mutex.unlock();
                         if (coord[0] == -1) {
                             // std::cout << "WTF3" << std::endl;
                             continue;
                         }
                         // mutex.lock();
-                        if (local_cost_destructive(test_surf, p, data, state, points, step, src_step, loc) < local_cost_inl_th) {
-                            data.loc(test_surf, p) = {loc[1], loc[0]};
-                            data.surfs(p).insert(test_surf);
+                        if (local_cost_destructive(test_surf, p, data_th, state, points, step, src_step, loc) < local_cost_inl_th) {
+                            data_th.loc(test_surf, p) = {loc[1], loc[0]};
+                            data_th.surfs(p).insert(test_surf);
                             
                             // for(int i=0;i<omp_get_max_threads();i++) {
                             //     data_ths[i].surfs(p).insert(test_surf);
@@ -4947,8 +4963,17 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     }
                 }
                 // std::cout << "p surf count" << p << " " << data.surfs(p).size() << best_coord << std::endl;
+                mutex.lock();
                 succ++;
-                // mutex.lock();
+                
+                data.surfs(p) = data_th.surfs(p);
+                for(auto &s : data.surfs(p))
+                    if (data_th.has(s, p))
+                        data.loc(s, p) = data_th.loc(s, p);
+                
+                for(int t=0;t<omp_get_max_threads();t++)
+                    added_points_threads[t].push_back(p);
+                
                 if (!used_area.contains({p[1],p[0]})) {
                     used_area = used_area | cv::Rect(p[1],p[0],1,1);
                     used_area_hr = {used_area.x*step, used_area.y*step, used_area.width*step, used_area.height*step};
