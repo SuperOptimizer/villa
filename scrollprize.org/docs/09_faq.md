@@ -420,7 +420,7 @@ Assuming consistent handedness, a counterclockwise spiral suggests the released 
 
 The direction of a given line of writing in Scroll 2 would be counterclockwise around the TIF cross-sections, with the bottom of the letters on higher-numbered images and the top of the letters on lower-numbered images.
 
-Note: Scrolls 3 & 4 are both oriented like Scroll 2, with counterclockwise spirals.
+Note: Scrolls 3 & 4 both appear to be oriented like Scroll 2, with counterclockwise spirals. However, a change in scanning convention flipped the ordering of the tif stack. When viewing a Scroll 3 or 4 TIF cross-sections from the scan, the image number decreases from the screen toward the viewer’s eye. Therefore, the direction of a given line of writing should be counterclockwise around the TIF cross-sections. The bottom of the letters should be on the lower-numbered images, and the top of the letters should be on the higher-numbered images.
 
 ### What happened to the people when Mount Vesuvius erupted? 😢
 
