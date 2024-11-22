@@ -98,7 +98,7 @@ We store the 3D scan volume as a directory full of .tif files, where each file r
 Remember that each pixel in the image stack actually represents a cube (voxel) of physical space. If your volume has a 10um voxel size, then 100 slices will be 1mm (1000um) of the object.
 
 <div className="flex w-[100%]">
-  <div className="w-[100%] mb-2 mr-2"><img src="/img/overview/scroll1-small-actual.webp" className="w-[100%]"/><figcaption className="mt-0">Scroll 1 (PHerc. Paris. 4)</figcaption></div>
+  <div className="w-[100%] mb-2 mr-2"><img src="/img/overview/scroll1-actual-new.webp" className="w-[100%]"/><figcaption className="mt-0">Scroll 1 (PHerc. Paris. 4)</figcaption></div>
 </div>
 <iframe className="w-[100%] max-w-[500px] mb-4 aspect-square" src="https://www.youtube.com/embed/cY5BIxkf5m0"  title="YouTube video player" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen></iframe>
 
