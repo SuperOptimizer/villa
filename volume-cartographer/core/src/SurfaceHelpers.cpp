@@ -4692,6 +4692,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 data_ths[i] = data;
 
             std::shared_mutex mutex;
+            int best_inliers_gen = 0;
 #pragma omp parallel
         while (true)
         {
@@ -4915,10 +4916,14 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 //just try again some other time
                 state(p) = 0;
                 points(p) = {-1,-1,-1};
+#pragma omp critical
+                best_inliers_gen = std::max(best_inliers_gen, best_inliers);
             }
             else {
                 state(p) = 0;
                 points(p) = {-1,-1,-1};
+#pragma omp critical
+                best_inliers_gen = std::max(best_inliers_gen, best_inliers);
             }
         }
         
@@ -4927,6 +4932,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 curr_best_inl_th -= 4;
             else
                 curr_best_inl_th -= 1;
+            if (best_inliers_gen >= 6)
+                curr_best_inl_th = std::min(curr_best_inl_th, best_inliers_gen);
             if (curr_best_inl_th >= 6) {
                 for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
                     for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
