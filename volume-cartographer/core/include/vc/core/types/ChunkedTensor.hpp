@@ -526,3 +526,10 @@ bool loc_valid(const cv::Mat_<cv::Vec<T,C>> &m, const cv::Vec2d &l)
         return false;
     return true;
 }
+
+template<typename T, int C>
+//l is [y, x]!
+bool loc_valid_xy(const cv::Mat_<cv::Vec<T,C>> &m, const cv::Vec2d &l)
+{
+    return loc_valid(m, {l[1],l[0]});
+}

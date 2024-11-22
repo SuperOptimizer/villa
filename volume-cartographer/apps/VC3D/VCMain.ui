@@ -277,6 +277,13 @@
             </layout>
            </widget>
           </item>
+          <item>
+           <widget class="QPushButton" name="btnEditMask">
+            <property name="text">
+             <string>edit segment mask</string>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>
@@ -813,7 +820,7 @@
  <resources/>
  <connections/>
  <buttongroups>
-  <buttongroup name="buttonGroupForward"/>
   <buttongroup name="buttonGroupBackward"/>
+  <buttongroup name="buttonGroupForward"/>
  </buttongroups>
 </ui>

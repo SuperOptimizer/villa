@@ -121,6 +121,7 @@ public:
     Rect3D bbox();
 
     virtual cv::Mat_<cv::Vec3f> rawPoints() { return _points; }
+    virtual void setRawPoints(cv::Mat_<cv::Vec3f> points) { _points = points; }
 
     friend QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search, int step_out);
     friend QuadSurface *smooth_vc_segmentation(QuadSurface *src);
@@ -217,8 +218,8 @@ public:
 };
 
 Rect3D rect_from_json(const nlohmann::json &json);
-bool overlap(SurfaceMeta &a, SurfaceMeta &b);
-bool contains(SurfaceMeta &a, const cv::Vec3f &loc);
+bool overlap(SurfaceMeta &a, SurfaceMeta &b, int max_iters = 1000);
+bool contains(SurfaceMeta &a, const cv::Vec3f &loc, int max_iters = 1000);
 bool contains(SurfaceMeta &a, const std::vector<cv::Vec3f> &locs);
 
 //TODO constrain to visible area? or add visiable area disaplay?

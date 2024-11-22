@@ -100,6 +100,7 @@ private slots:
     void ShowSettings();
     void onSurfaceSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous);
     void onSegFilterChanged(int index);
+    void onEditMaskPressed();
 private:
     std::shared_ptr<volcart::VolumePkg> fVpkg;
     Surface *_seg_surf;

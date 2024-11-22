@@ -912,30 +912,30 @@ bool area_valid(const cv::Mat_<cv::Vec<T,C>> &m, cv::Vec2f l)
     if (l[0] == -1)
         return false;
 
-    cv::Rect bounds = {1, 1, m.cols-3,m.rows-3};
+    cv::Rect bounds = {1, 1, m.rows-3,m.cols-3};
     cv::Vec2i li = {floor(l[0]),floor(l[1])};
 
     if (!bounds.contains(li))
         return false;
 
-    if (m(li[1],li[0])[0] == -1)
+    if (m(li[0],li[1])[0] == -1)
         return false;
-    if (m(li[1]+1,li[0])[0] == -1)
+    if (m(li[0]+1,li[1])[0] == -1)
         return false;
-    if (m(li[1],li[0]+1)[0] == -1)
+    if (m(li[0],li[1]+1)[0] == -1)
         return false;
-    if (m(li[1]+1,li[0]+1)[0] == -1)
+    if (m(li[0]+1,li[1]+1)[0] == -1)
         return false;
 
     l -= cv::Vec2f(1,1);
 
-    if (m(li[1],li[0])[0] == -1)
+    if (m(li[0],li[1])[0] == -1)
         return false;
-    if (m(li[1]+3,li[0])[0] == -1)
+    if (m(li[0]+3,li[1])[0] == -1)
         return false;
-    if (m(li[1],li[0]+3)[0] == -1)
+    if (m(li[0],li[1]+3)[0] == -1)
         return false;
-    if (m(li[1]+3,li[0]+3)[0] == -1)
+    if (m(li[0]+3,li[1]+3)[0] == -1)
         return false;
 
     return true;
@@ -988,7 +988,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 if (get_block(block, plane_loc, plane_roi, block_step))
                     dist = -1;
 
-            if (dist >= 0 && dist <= 1 || !area_valid(points, loc))
+            if (dist >= 0 && dist <= 1 || !loc_valid_xy(points, loc))
                 break;
         }
 
@@ -1008,7 +1008,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
         // std::cout << "loc2 dist " << dist << loc << loc2 << point << point2 << points.size() << std::endl;
 
-        if (dist < 0 || dist > 1 || !area_valid(points, loc))
+        if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc))
             continue;
 
         seg.push_back(point2);
@@ -1035,7 +1035,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 //then refine
                 dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
 
-                if (dist < 0 || dist > 1 || !area_valid(points, loc))
+                if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc))
                     break;
 
             seg.push_back(point3);
@@ -1077,7 +1077,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 //then refine
                 dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
 
-                if (dist < 0 || dist > 1 || !area_valid(points, loc))
+                if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc))
                     break;
 
             seg2.push_back(point3);
@@ -1472,6 +1472,19 @@ QuadSurface *load_quad_from_tifxyz(const std::string &path)
     surf->path = path;
     surf->meta = new nlohmann::json(metadata);
     
+    if (fs::exists(path+"/mask.tif")) {
+        std::vector<cv::Mat> layers;
+        cv::imreadmulti(path+"/mask.tif", layers, cv::IMREAD_GRAYSCALE);
+        cv::Mat_<uint8_t> mask = layers[0];
+        cv::Mat_<cv::Vec3f> points = surf->rawPoints();
+        cv::resize(mask, mask, points.size(), cv::INTER_NEAREST);
+        for(int j=0;j<points.rows;j++)
+            for(int i=0;i<points.cols;i++)
+                if (!mask(j,i))
+                    points(j,i) = {-1,-1,-1};
+        surf->setRawPoints(points);
+    }
+    
     return surf;
 }
 
@@ -1504,13 +1517,13 @@ Rect3D rect_from_json(const nlohmann::json &json)
     return {{json[0][0],json[0][1],json[0][2]},{json[1][0],json[1][1],json[1][2]}};
 }
 
-bool overlap(SurfaceMeta &a, SurfaceMeta &b)
+bool overlap(SurfaceMeta &a, SurfaceMeta &b, int max_iters)
 {
     if (!intersect(a.bbox, b.bbox))
         return false;
 
     cv::Mat_<cv::Vec3f> points = a.surf()->rawPoints();
-    for(int r=0;r<100;r++) {
+    for(int r=0;r<std::max(10, max_iters/10);r++) {
         cv::Vec2f p = {rand() % points.cols, rand() % points.rows};
         cv::Vec3f loc = points(p[1],p[0]);
         if (loc[0] == -1)
@@ -1518,21 +1531,21 @@ bool overlap(SurfaceMeta &a, SurfaceMeta &b)
 
         SurfacePointer *ptr = b.surf()->pointer();
 
-        if (b.surf()->pointTo(ptr, loc, 2.0) <= 2.0)
+        if (b.surf()->pointTo(ptr, loc, 2.0, max_iters) <= 2.0)
             return true;
     }
 
     return false;
 }
 
-bool contains(SurfaceMeta &a, const cv::Vec3f &loc)
+bool contains(SurfaceMeta &a, const cv::Vec3f &loc, int max_iters)
 {
     if (!intersect(a.bbox, {loc,loc}))
         return false;
         
         SurfacePointer *ptr = a.surf()->pointer();
         
-        if (a.surf()->pointTo(ptr, loc, 2.0) <= 2.0)
+        if (a.surf()->pointTo(ptr, loc, 2.0, max_iters) <= 2.0)
             return true;
     
     return false;

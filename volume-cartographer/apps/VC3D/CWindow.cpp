@@ -7,6 +7,7 @@
 #include <QSettings>
 #include <QMdiArea>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/highgui.hpp>
 
 #include "CVolumeViewer.hpp"
 #include "UDataManipulateUtils.hpp"
@@ -237,6 +238,7 @@ void CWindow::CreateWidgets(void)
     _lblPointsInfo = this->findChild<QLabel*>("lblPointsInfo");
     _btnResetPoints = this->findChild<QPushButton*>("btnResetPoints");
     connect(_btnResetPoints, &QPushButton::pressed, this, &CWindow::onResetPoints);
+    connect(this->findChild<QPushButton*>("btnEditMask"), &QPushButton::pressed, this, &CWindow::onEditMaskPressed);
 }
 
 // Create menus
@@ -863,7 +865,6 @@ void CWindow::onSegFilterChanged(int index)
     }
 }
 
-// Create menus
 void CWindow::onResetPoints(void)
 {
     _lblPointsInfo->setText(QString("red: %1 blue: %2").arg(_red_points.size()).arg(_blue_points.size()));
@@ -871,4 +872,31 @@ void CWindow::onResetPoints(void)
     _blue_points.resize(0);
     
     sendPointsChanged(_red_points, _blue_points);
+}
+
+void CWindow::onEditMaskPressed(void)
+{
+    if (!_surf)
+        return;
+    
+    //FIXME if mask already exists just open it!
+    
+    cv::Mat_<cv::Vec3f> points = _surf->rawPoints();
+    cv::Mat_<cv::Vec3f> scaled;
+    cv::resize(points, scaled, {0,0}, 1/_surf->_scale[0], 1/_surf->_scale[1], cv::INTER_CUBIC);
+    
+    cv::Mat_<uint8_t> img;
+    readInterpolated3D(img, currentVolume->zarrDataset(0), scaled, chunk_cache);
+    fs::path path = _surf->path/"mask.tif";
+    cv::resize(img, img, {0,0}, 0.25, 0.25, cv::INTER_CUBIC);
+    cv::Mat_<uint8_t> mask(img.size());
+    for(int j=0;j<img.rows;j++)
+        for(int i=0;i<img.cols;i++)
+            if (points(j*4*_surf->_scale[1],i*4*_surf->_scale[0])[0] == -1)
+                mask(j,i) = 0;
+            else
+                mask(j,i) = 255;
+    std::vector<cv::Mat> layers = {mask, img};
+    imwritemulti(path, layers);
+    QDesktopServices::openUrl(QUrl::fromLocalFile(path.string().c_str()));
 }

@@ -3553,11 +3553,11 @@ int add_surftrack_distloss(SurfaceMeta *sm, const cv::Vec2i &p, const cv::Vec2i 
 }
 
 
-int add_surftrack_distloss_3D(cv::Mat_<cv::Vec3d> &points, const cv::Vec2i &p, const cv::Vec2i &off, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, float unit, int flags = 0, ceres::ResidualBlockId *res = nullptr, float w = 3.0)
+int add_surftrack_distloss_3D(cv::Mat_<cv::Vec3d> &points, const cv::Vec2i &p, const cv::Vec2i &off, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, float unit, int flags = 0, ceres::ResidualBlockId *res = nullptr, float w = 2.0)
 {
-    if ((state(p) & (STATE_COORD_VALID | STATE_COORD_VALID)) == 0)
+    if ((state(p) & (STATE_COORD_VALID | STATE_LOC_VALID)) == 0)
         return 0;
-    if ((state(p+off) & (STATE_COORD_VALID | STATE_COORD_VALID)) == 0)
+    if ((state(p+off) & (STATE_COORD_VALID | STATE_LOC_VALID)) == 0)
         return 0;
 
     ceres::ResidualBlockId tmp = problem.AddResidualBlock(DistLoss::Create(unit*cv::norm(off),w), nullptr, &points(p)[0], &points(p+off)[0]);
@@ -3638,7 +3638,7 @@ int add_surftrack_straightloss(SurfaceMeta *sm, const cv::Vec2i &p, const cv::Ve
     return 1;
 }
 
-int add_surftrack_straightloss_3D(const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<cv::Vec3d> &points ,ceres::Problem &problem, const cv::Mat_<uint8_t> &state, int flags = 0, ceres::ResidualBlockId *res = nullptr, float w = 1.0)
+int add_surftrack_straightloss_3D(const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<cv::Vec3d> &points ,ceres::Problem &problem, const cv::Mat_<uint8_t> &state, int flags = 0, ceres::ResidualBlockId *res = nullptr, float w = 2.0)
 {
     if ((state(p+o1) & (STATE_LOC_VALID|STATE_COORD_VALID)) == 0)
         return 0;
@@ -3680,7 +3680,7 @@ int cond_surftrack_straightloss_3D(int type, SurfaceMeta *sm, const cv::Vec2i &p
     return count;
 }
 
-float z_loc_loss_w = 0.001;
+float z_loc_loss_w = 0.01;
 
 int add_surftrack_surfloss(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, float step, ceres::ResidualBlockId *res = nullptr, float w = 0.1)
 {
@@ -3858,7 +3858,7 @@ int surftrack_add_global(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &da
         //dia1
         count += cond_surftrack_straightloss_3D(7, sm, p, {-2,2},{-1,1},{0,0}, points, data, problem, state, flags);
         count += cond_surftrack_straightloss_3D(7, sm, p, {-1,1},{0,0},{1,-1}, points, data, problem, state, flags);
-        count += cond_surftrack_straightloss_3D(8, sm, p, {0,0},{1,-1},{2,-2}, points, data, problem, state, flags);
+        count += cond_surftrack_straightloss_3D(7, sm, p, {0,0},{1,-1},{2,-2}, points, data, problem, state, flags);
     }
     //losses are defined on surface
     else {
@@ -3979,7 +3979,7 @@ double local_solve(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &data, cv
 }
 
 
-cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, cv::Rect &used_area, float step, float step_src)
+cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, cv::Rect &used_area, float step, float step_src, bool inpaint = false)
 {
     cv::Mat_<cv::Vec3f> points_hr(state.rows*step, state.cols*step, {0,0,0});
     cv::Mat_<int> counts_hr(state.rows*step, state.cols*step, 0);
@@ -4014,38 +4014,38 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8
                         }
                 }
             }
-            // if (!counts_hr(j*step+1,i*step+1)) {
-            //     /*int src_loc_valid_count = 0;
-            //     if (state(j,i) & STATE_LOC_VALID)
-            //         src_loc_valid_count++;
-            //     if (state(j,i+1) & STATE_LOC_VALID)
-            //         src_loc_valid_count++;
-            //     if (state(j+1,i) & STATE_LOC_VALID)
-            //         src_loc_valid_count++;
-            //     if (state(j+1,i+1) & STATE_LOC_VALID)
-            //         src_loc_valid_count++;
-            // 
-            //     if (src_loc_valid_count >= 2)
-            //         continue;*/
-            // 
-            //     cv::Vec3d c00 = points(j,i);
-            //     cv::Vec3d c01 = points(j,i+1);
-            //     cv::Vec3d c10 = points(j+1,i);
-            //     cv::Vec3d c11 = points(j+1,i+1);
-            // 
-            //     for(int sy=0;sy<=step;sy++)
-            //         for(int sx=0;sx<=step;sx++) {
-            //             if (!counts_hr(j*step+sy,i*step+sx)) {
-            //                 float fx = sx/step;
-            //                 float fy = sy/step;
-            //                 cv::Vec3d c0 = (1-fx)*c00 + fx*c01;
-            //                 cv::Vec3d c1 = (1-fx)*c10 + fx*c11;
-            //                 cv::Vec3d c = (1-fy)*c0 + fy*c1;
-            //                 points_hr(j*step+sy,i*step+sx) = c;
-            //                 counts_hr(j*step+sy,i*step+sx) = 1;
-            //             }
-            //         }
-            // }
+            if (!counts_hr(j*step+1,i*step+1) && inpaint) {
+                /*int src_loc_valid_count = 0;
+                if (state(j,i) & STATE_LOC_VALID)
+                    src_loc_valid_count++;
+                if (state(j,i+1) & STATE_LOC_VALID)
+                    src_loc_valid_count++;
+                if (state(j+1,i) & STATE_LOC_VALID)
+                    src_loc_valid_count++;
+                if (state(j+1,i+1) & STATE_LOC_VALID)
+                    src_loc_valid_count++;
+            
+                if (src_loc_valid_count >= 2)
+                    continue;*/
+            
+                cv::Vec3d c00 = points(j,i);
+                cv::Vec3d c01 = points(j,i+1);
+                cv::Vec3d c10 = points(j+1,i);
+                cv::Vec3d c11 = points(j+1,i+1);
+            
+                for(int sy=0;sy<=step;sy++)
+                    for(int sx=0;sx<=step;sx++) {
+                        if (!counts_hr(j*step+sy,i*step+sx)) {
+                            float fx = sx/step;
+                            float fy = sy/step;
+                            cv::Vec3d c0 = (1-fx)*c00 + fx*c01;
+                            cv::Vec3d c1 = (1-fx)*c10 + fx*c11;
+                            cv::Vec3d c = (1-fy)*c0 + fy*c1;
+                            points_hr(j*step+sy,i*step+sx) = c;
+                            counts_hr(j*step+sy,i*step+sx) = 1;
+                        }
+                    }
+            }
 //             if (!counts_hr(j*step+1,i*step+1)) {
 //                 std::unordered_map<SurfaceMeta*,std::pair<std::vector<cv::Vec2f>,std::vector<cv::Vec2f>>> supports;
 //                 for(int y=j-1;y<=j+2;y++)
@@ -4257,9 +4257,9 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
             res_count += surftrack_add_global(&sm_inp, {j,i}, data_inp, problem, new_state, points_new, step*src_step, LOSS_3D_INDIRECT | SURF_LOSS | OPTIMIZE_ALL);
             // if (true/*j % 4 == 0 && i % 4 == 0*/) {
             //     fix_points++;
-            //     if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0])) {
-            //         problem.AddResidualBlock(LinChkDistLoss::Create(data_inp.loc(&sm_inp, {j,i}), 0.001), nullptr, &data_inp.loc(&sm_inp, {j,i})[0]);
-            //     }
+                if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0])) {
+                    problem.AddResidualBlock(LinChkDistLoss::Create(data_inp.loc(&sm_inp, {j,i}), 0.0001), nullptr, &data_inp.loc(&sm_inp, {j,i})[0]);
+                }
             // }
         }
         
@@ -4317,21 +4317,22 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     //     }
 
     //interpolate from the original set
+    
+    {
+        cv::Mat_<cv::Vec3d> points_hr_inp = surftrack_genpoints_hr(data, new_state, points_inpainted, used_area, step, src_step, true);
+        QuadSurface *dbg_surf = new QuadSurface(points_hr_inp(used_area_hr), {1/src_step,1/src_step});
+        std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_inp_hr";
+        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        delete dbg_surf;
+    }
+    
     cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, new_state, points_inpainted, used_area, step, src_step);
-    
-    {
-    QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
-    std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_inp_hr";
-    dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
-    delete dbg_surf;
-    }
-    
-    {
-    QuadSurface *dbg_surf = new QuadSurface(points_new(used_area), {1/src_step,1/src_step});
-    std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_points_opt";
-    dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
-    delete dbg_surf;
-    }
+    // {
+    // QuadSurface *dbg_surf = new QuadSurface(points_new(used_area), {1/src_step,1/src_step});
+    // std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_points_opt";
+    // dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+    // delete dbg_surf;
+    // }
 
     //FIXME write out sm locs to see that part of the optimization!
 
@@ -4468,7 +4469,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
         for(int i=used_area.x;i<used_area.br().x-1;i++)
             if (state_out(j,i) & STATE_LOC_VALID) {
                 // std::cout << cv::Vec2i(j,i) << " surfs " << data_out.surfs({j,i}).size() << std::endl;
-                if (data_out.surfs({j,i}).size() < 2 && support_count(j,i) < 4) {
+                if (data_out.surfs({j,i}).size() < 1 /*&& support_count(j,i) < 4*/) {
                     state_out(j,i) = 0;
                     points_out(j, i) = {-1,-1,-1};
                 }
@@ -4483,6 +4484,14 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     data = data_out;
     data.seed_loc = seed;
     data.seed_coord = points(seed);
+    
+    {
+        cv::Mat_<cv::Vec3d> points_hr_inp = surftrack_genpoints_hr(data, state, points, used_area, step, src_step, true);
+        QuadSurface *dbg_surf = new QuadSurface(points_hr_inp(used_area_hr), {1/src_step,1/src_step});
+        std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_opt_inp_hr";
+        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        delete dbg_surf;
+    }
     
     // cv::imwrite("state_out"+std::to_string(dbg_counter)+".tif", state_out);
     dbg_counter++;
@@ -4516,8 +4525,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     for(auto &sm : surfs_v) {
         if (sm->meta->contains("tags") && sm->meta->at("tags").contains("approved"))
             approved_sm.insert(sm);
-        if (!sm->meta->contains("tags") || !sm->meta->at("tags").contains("defective"))
+        if (!sm->meta->contains("tags") || !sm->meta->at("tags").contains("defective")) {            
             surfs[sm->name()] = sm;
+        }
     }
     
     for(auto sm : approved_sm)
@@ -4554,12 +4564,12 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     // int w = size_gen*2*1.1+5+2*closing_r+200;
     // int h = size_gen*2*1.1+5+2*closing_r;
     //1k ~ 1cm
-    int w = 2*80000/src_step/step*2+10+2*closing_r;
-    int h = 2*15000/src_step/step*2+10+2*closing_r;
+    int w = 7500/src_step/step*2+10+2*closing_r;
+    int h = 15000/src_step/step*2+10+2*closing_r;
     cv::Size  size = {w,h};
     cv::Rect bounds(0,0,w-1,h-1);
     
-    cv::Rect save_bounds_inv(closing_r+5,closing_r+5,h-5,w-closing_r-5);
+    cv::Rect save_bounds_inv(closing_r+5,closing_r+5,h-10,w-closing_r-10);
 
     int x0 = w/2;
     int y0 = h/2;
@@ -4639,6 +4649,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 200;
     
+    int final_opts = 5;
+    
     int loc_valid_count = 0;
     int succ = 0;
     int curr_best_inl_th = 20;
@@ -4664,9 +4676,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         state(p+n) |= STATE_PROCESSING;
                         cands.insert(p+n);
                     }
-                    else if (!save_bounds_inv.contains(p+n)) {
-                        std::cout << "touching border at " << p+n << std::endl;
-                    }
+                    // else if (!save_bounds_inv.contains(p+n)) {
+                    //     std::cout << "touching border at " << p+n << std::endl;
+                    // }
             }
             fringe.clear();
 
@@ -4691,10 +4703,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             
             // SurfTrackerData &data_th = data_ths[omp_get_thread_num()];
             
-            mutex.lock_shared();
-            SurfTrackerData data_th(data);// = data_ths[omp_get_thread_num()];
-            mutex.unlock();
-            
             if (p[0] == -1)
                 break;
 
@@ -4703,6 +4711,11 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
             std::set<SurfaceMeta*> local_surfs = {seed};
 
+            
+            mutex.lock_shared();
+            SurfTrackerData data_th(data);// = data_ths[omp_get_thread_num()];
+            mutex.unlock();
+            
             // mutex.lock_shared();
             for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,h-1);oy++)
                 for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,w-1);ox++)
@@ -4765,6 +4778,10 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 ceres::Solve(options, &problem, &summary);
                 float cost_init = sqrt(summary.final_cost/count_init);
         
+                if (generation == 0) {
+                    std::cout << summary.FullReport() << std::endl;
+                }
+                
                 // if (cost_init >= local_cost_inl_th || count_init < 2 || straight_count_init < 1)
                     // continue;
                 
@@ -4794,8 +4811,11 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
                 state(p) = 0;
                 
+                int inliers_sum = 0;
+                int inliers_count = 0;
                 //TODO could also have priorities!
                 if (approved_sm.count(ref_surf) && straight_count_init >= 2 && count_init >= 4) {
+                    std::cout << "found approved sm " << ref_surf->name() << std::endl;
                     best_inliers = 1000;
                     best_coord = coord;
                     best_surf = ref_surf;
@@ -4804,8 +4824,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     break;
                 }
 
-                int inliers_sum = 0;
-                int inliers_count = 0;
                 for(auto test_surf : local_surfs) {
                     SurfacePointer *ptr = test_surf->surf()->pointer();
                     //FIXME this does not check geometry, only if its also on the surfaces (which might be good enough...)
@@ -5049,7 +5067,10 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         }
         
         if (!fringe.size()) {
-            curr_best_inl_th *= 0.9;
+            if (curr_best_inl_th > 10)
+                curr_best_inl_th -= 4;
+            else
+                curr_best_inl_th -= 1;
             if (curr_best_inl_th >= 6) {
                 for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
                     for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
@@ -5097,6 +5118,10 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         cv::imwrite("state"+std::to_string(generation)+".tif", state);
         
         bool update_mapping = (succ >= 100 && (loc_valid_count-last_succ_parametrization) >= std::max(100.0, 0.3*last_succ_parametrization));
+        if (!fringe.size() && final_opts) {
+            final_opts--;
+            update_mapping = true;
+        }
 
         if (generation % 50 == 0 || update_mapping || generation < 10) {
         cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, src_step);
