@@ -4818,7 +4818,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         float cost = local_cost(test_surf, p, data_th, state, points, step, src_step, &count, &straight_count);
                         state(p) = 0;
                         data_th.erase(test_surf, p);
-                        if (cost < local_cost_inl_th && (ref_seed || (count >= 2 && straight_count >= 1))) {
+                        if (cost/ref_count < local_cost_inl_th && (ref_seed || (count >= 2 && straight_count >= 1))) {
                             inliers_sum += count;
                             inliers_count++;
                         }
