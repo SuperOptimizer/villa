@@ -94,21 +94,27 @@ float get_val(I &interp, cv::Vec3d l) {
 
 int main(int argc, char *argv[])
 {
-    if (argc != 5) {
-        std::cout << "usage: " << argv[0] << " <zarr-volume> <output> <seg-path> <tgt-scale>" << std::endl;
+    if (argc != 6 && argc != 7) {
+        std::cout << "usage: " << argv[0] << " <zarr-volume> <output/ptn> <seg-path> <tgt-scale> <ome-zarr-group-idx>" << std::endl;
+        std::cout << "or: " << argv[0] << " <zarr-volume> <output/ptn> <seg-path> <tgt-scale> <ome-zarr-group-idx> <num-slices>" << std::endl;
         return EXIT_SUCCESS;
     }
 
     fs::path vol_path = argv[1];
-    fs::path tgt_fn = argv[2];
+    const char *tgt_ptn = argv[2];
     fs::path seg_path = argv[3];
     float tgt_scale = atof(argv[4]);
+    int group_idx = atoi(argv[5]);
+    
+    int num_slices = 1;
+    if (argc == 7)
+        num_slices = atoi(argv[6]);
 
     z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset ds_handle(group, "1", json::parse(std::ifstream(vol_path/"1/.zarray")).value<>("dimension_separator","."));
+    z5::filesystem::handle::Dataset ds_handle(group, std::to_string(group_idx), json::parse(std::ifstream(vol_path/std::to_string(group_idx)/".zarray")).value<>("dimension_separator","."));
     std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
 
-    std::cout << "zarr dataset size for scale group 1 " << ds->shape() << std::endl;
+    std::cout << "zarr dataset size for scale group " << group_idx << ds->shape() << std::endl;
     std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
 
     ChunkCache chunk_cache(10e9);
@@ -121,16 +127,37 @@ int main(int argc, char *argv[])
         std::cout << "error when loading: " << seg_path << std::endl;
         return EXIT_FAILURE;
     }
-    cv::Mat_<cv::Vec3f> points = surf->rawPoints();
-    cv::resize(points, points, {0,0}, tgt_scale/surf->_scale[0], tgt_scale/surf->_scale[1], cv::INTER_CUBIC);
+    
+    cv::Size tgt_size = surf->rawPoints().size();
+    tgt_size.width *= tgt_scale/surf->_scale[0];
+    tgt_size.height *= tgt_scale/surf->_scale[1];
+    
+    std::cout << "rendering size " << tgt_size << " at scale " << tgt_scale << std::endl;
+    
+    cv::Mat_<cv::Vec3f> points, normals;
+    // surf->gen(&points, &normals, {4000,2500}, nullptr, 1.0, {-tgt_size.width/2+13744,-tgt_size.height/2+11076,0});
+    surf->gen(&points, &normals, tgt_size, nullptr, tgt_scale, {-tgt_size.width/2,-tgt_size.height/2,0});
 
     cv::Mat_<uint8_t> img;
 
-    points = points*0.5;
+    float ds_scale = pow(2,-group_idx);
+    if (group_idx)
+        points *= ds_scale;
 
-    readInterpolated3D(img, ds.get(), points, &chunk_cache);
-
-    cv::imwrite(tgt_fn, img);
+    if (num_slices == 1) {
+        readInterpolated3D(img, ds.get(), points, &chunk_cache);
+        cv::imwrite(tgt_ptn, img);
+    }
+    else {
+        char buf[1024];
+        for(int i=0;i<num_slices;i++) {
+            float off = i-num_slices/2;
+            readInterpolated3D(img, ds.get(), points+off*normals*ds_scale, &chunk_cache);
+            snprintf(buf, 1024, tgt_ptn, i);
+            cv::imwrite(buf, img);
+        }
+            
+    }
 
 
     return EXIT_SUCCESS;
