@@ -4319,15 +4319,23 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 
     for(int j=used_area.y;j<used_area.br().y;j++)
         for(int i=used_area.x;i<used_area.br().x;i++)
-            // if (state(j,i) & STATE_LOC_VALID || points_extr_hr(j*step,i*step)[0] != -1) {
-            if (points_extr_hr(j*step,i*step)[0] != -1) {
+            if (state(j,i) & STATE_LOC_VALID) {
                 data_new.surfs({j,i}).insert(&sm);
                 data_new.loc(&sm, {j,i}) = {j*step,i*step};
-                exp_state(j,i) = STATE_LOC_VALID | STATE_COORD_VALID;
-                points_new(j,i) = points_extr_hr(j*step,i*step);
             }
-            
     cv::Mat_<uint8_t> new_state = exp_state.clone();
+    
+    // for(int j=used_area.y;j<used_area.br().y;j++)
+    //     for(int i=used_area.x;i<used_area.br().x;i++)
+    //         // if (state(j,i) & STATE_LOC_VALID || points_extr_hr(j*step,i*step)[0] != -1) {
+    //         if (points_extr_hr(j*step,i*step)[0] != -1) {
+    //             data_new.surfs({j,i}).insert(&sm);
+    //             data_new.loc(&sm, {j,i}) = {j*step,i*step};
+    //             exp_state(j,i) = STATE_LOC_VALID | STATE_COORD_VALID;
+    //             points_new(j,i) = points_extr_hr(j*step,i*step);
+    //         }
+    // cv::Mat_<uint8_t> new_state = exp_state.clone();
+            
 
     //generate closed version of state
     cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
@@ -5004,7 +5012,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         float cost = local_cost(test_surf, p, data_th, state, points, step, src_step, &count, &straight_count);
                         state(p) = 0;
                         data_th.erase(test_surf, p);
-                        if (cost/ref_count < local_cost_inl_th && (ref_seed || (count >= 2 && straight_count >= 1))) {
+                        if (cost < local_cost_inl_th && (ref_seed || (count >= 2 && straight_count >= 1))) {
                             inliers_sum += count;
                             inliers_count++;
                         }
