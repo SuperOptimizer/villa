@@ -5581,7 +5581,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         //lets just see what happens
         if (update_mapping /*generation+1 != stop_gen && (generation % opt_map_every) == 0*/) {
             dbg_counter = generation;
-            optimize_surface_mapping(data, state, points, used_area, step, src_step, {y0,x0}, closing_r, true);
+            optimize_surface_mapping_extr(data, state, points, used_area, step, src_step, {y0,x0}, closing_r, true);
             last_succ_parametrization = loc_valid_count;
             //recalc fringe after surface optimization (which often shrinks the surf)
             fringe.clear();
