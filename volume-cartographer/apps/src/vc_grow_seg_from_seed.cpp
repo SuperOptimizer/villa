@@ -284,7 +284,7 @@ int main(int argc, char *argv[])
             int count = 0;
             bool succ = false;
             while(!succ) {
-                origin = {128 + (rand() % (ds->shape(0)-384)), 128 + (rand() % (ds->shape(1)-384)), 128 + (rand() % (ds->shape(2)-384))};
+                origin = {128 + (rand() % (ds->shape(2)-384)), 128 + (rand() % (ds->shape(1)-384)), 128 + (rand() % (ds->shape(0)-384))};
                 // origin[2] = 6500 + (rand() % 2000) - 1000;
 
                 count++;
