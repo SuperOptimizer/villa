@@ -70,8 +70,10 @@ namespace z5 {
                 return nullptr;
             }
 
-            assert(ds.isZarr());
-            assert(ds.getDtype() == z5::types::Datatype::uint8);
+            if (!ds.isZarr())
+                throw std::runtime_error("only zarr datasets supported currently!");
+            if (ds.getDtype() != z5::types::Datatype::uint8 && ds.getDtype() != z5::types::Datatype::uint16)
+                throw std::runtime_error("only uint8_t/uint16 zarrs supported currently!");
             
             types::ShapeType chunkShape;
             // size_t chunkSize;
@@ -86,12 +88,20 @@ namespace z5 {
             xt::xarray<T> *out = new xt::xarray<T>();
             *out = xt::empty<T>(maxChunkShape);
             
-            // read the data from storage
-            std::vector<char> dataBuffer;
-            ds.readRawChunk(chunkId, dataBuffer);
             
-            // decompress the data
-            ds.decompress(dataBuffer, out->data(), maxChunkSize);
+            // read/decompress & convert data
+            if (ds.getDtype() == z5::types::Datatype::uint8) {
+                ds.readChunk(chunkId, out->data());
+            }
+            else if (ds.getDtype() == z5::types::Datatype::uint16) {
+                xt::xarray<uint16_t> tmp = xt::empty<T>(maxChunkShape);
+                ds.readChunk(chunkId, tmp.data());
+
+                uint8_t *p8 = out->data();
+                uint16_t *p16 = tmp.data();
+                for(int i=0;i<maxChunkSize;i++)
+                    p8[i] = p16[i] / 257;
+            }
             
             return out;
         }
@@ -332,18 +342,25 @@ void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds, const cv::Mat_<
         return chunk->operator()(lx,ly,lz);
     };
     
+    size_t done = 0;
+    
     //TODO could iterate all dims e.g. could have z or more ... (maybe just flatten ... so we only have z at most)
-    //the whole loop is 0.29s of 0.75s (if threaded)
-    // #pragma omp parallel for schedule(dynamic, 512) collapse(2)
-    //TODO keep chunk over whole thread lifetime
 #pragma omp parallel
     {
 
         cv::Vec4i last_idx = {-1,-1,-1,-1};
         std::shared_ptr<xt::xarray<uint8_t>> chunk_ref;
         xt::xarray<uint8_t> *chunk = nullptr;
-#pragma omp for collapse(2)
+#pragma omp for
         for(size_t y = 0;y<h;y++) {
+            if (w*h > 10000000)
+#pragma omp critical
+            {
+                done++;
+                if (done % 1000000)
+                    std::cout << "done: " << double(done)/h*100 << "%" << std::endl;
+            }
+            
             for(size_t x = 0;x<w;x++) {
                 float ox = coords(y,x)[2];
                 float oy = coords(y,x)[1];
