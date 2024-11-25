@@ -16,7 +16,6 @@ Originally developed by [Youssef Nader](https://github.com/younader) and [Luke F
 
 ## [scroll-renderer](scroll-renderer/)
 Tools for flattening and rendering 3D mesh segments.
-Originally developed by [Giorgio Angelotti](https://github.com/giorgioangel).
 
 ## [scrollprize.org](scrollprize.org/)
 Source for the [Vesuvius Challenge website](https://scrollprize.org).
@@ -30,4 +29,3 @@ A single-header C library for accessing CT scans of ancient scrolls.
 
 ## [vesuvius](vesuvius/)
 A Python library for accessing CT scans of ancient scrolls.
-Originally developed by [Giorgio Angelotti](https://github.com/giorgioangel).
