@@ -48,7 +48,7 @@ Join our [Discord server](https://discord.gg/V4fJhvtaQn), subscribe to our [mail
 
 Get a feel for [the data](data) by looking inside a scroll that has not been opened in 2,000 years:
 * [In your browser](https://dl.ash2txt.org/view/Scroll1)
-* [In 1-2 lines of Python](https://github.com/ScrollPrize/vesuvius) (or [in C](https://github.com/ScrollPrize/vesuvius-c)!)
+* [In 1-2 lines of Python](https://github.com/ScrollPrize/villa/tree/main/vesuvius) (or [in C](https://github.com/ScrollPrize/villa/tree/main/vesuvius-c)!)
 
 ### 3. Dive in
 
@@ -63,7 +63,7 @@ There are currently two primary subproblems where we need your help:
 
 <Admonition type="info" icon="⚙️" title="Segmentation">
 * Prizes: $100,000 [First Automated Segmentation Prize](2024_prizes#first-automated-segmentation-prize)
-* Starting point: [Segmentation tutorial](tutorial3), [Segmentation - a different approach](tutorial4), and [Sheet Stitching Problem Playground](https://github.com/schillij95/graph_problem/tree/main)
+* Starting point: [Segmentation tutorial](tutorial3), [Segmentation - a different approach](tutorial4)
 </Admonition>
 
 <Admonition type="info" icon="🖋️" title="Ink Detection">
@@ -82,7 +82,7 @@ There are many great tools and resources that you can use and contribute to:
 * Starting point: [Awesome Scroll Tools](community_projects) and [Progress Prizes Wish List](2024_prizes#monthly-progress-prizes)
 </Admonition>
 
-For prototyping new ideas, we particularly recommend the [Python](https://github.com/ScrollPrize/vesuvius) and [C](https://github.com/ScrollPrize/vesuvius-c) libraries for easily working with scroll data.
+For prototyping new ideas, we particularly recommend the [Python](https://github.com/ScrollPrize/villa/tree/main/vesuvius) and [C](https://github.com/ScrollPrize/villa/tree/main/vesuvius-c) libraries for easily working with scroll data.
 
 Reach out to our [Discord community](https://discord.gg/V4fJhvtaQn) and [team](mailto:team@scrollprize.org) with your questions!
 
