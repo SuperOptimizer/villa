@@ -259,10 +259,10 @@ int main(int argc, char *argv[])
                     continue;
                 if (contains(*comp, origin, 10))
                     count_overlap++;
-                if (count_overlap >= 9)
+                if (count_overlap >= 19)
                     break;
             }
-            if (count_overlap < 9)
+            if (count_overlap < 19)
                 break;
         }
 
