@@ -368,11 +368,11 @@ struct LinChkDistLoss {
         T a = abs(p[0]-T(_p[0]));
         T b = abs(p[1]-T(_p[1]));
         if (a > 0)
-            residual[0] = sqrt(a);
+            residual[0] = T(_w)*sqrt(a);
         else
             residual[0] = T(0);
         if (b > 0)
-            residual[1] = sqrt(b);
+            residual[1] = T(_w)*sqrt(b);
         else
             residual[1] = T(0);
 
