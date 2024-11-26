@@ -86,4 +86,4 @@ gcc -o example example.c -lcurl -lblosc2 -ljson-c -lm
 
 ## Next features
 
-* Reading scroll segments (`.obj` mesh files)
+
