@@ -527,7 +527,7 @@ class Volume:
         else:
             raise IndexError("Invalid index. Must be a tuple of three elements (coordinates) or four elements (subvolume id and coordinates).")
         
-    def grab_canonical_energy(self) -> int:
+    def grab_canonical_energy(self) -> Optional[int]:
         """
         Get the canonical energy for the volume based on the scroll ID.
 
@@ -536,22 +536,13 @@ class Volume:
         int
             The canonical energy value.
         """
-        if self.scroll_id == 1:
-            return 54
-        elif self.scroll_id == "1b":
-            return 54
-        elif self.scroll_id == 2:
-            return 54
-        elif self.scroll_id == "2b":
-            return 54
-        elif self.scroll_id == "2c":
-            return 88
-        elif self.scroll_id == 3:
-            return 53
-        elif self.scroll_id == 4:
-            return 70
-        
-    def grab_canonical_resolution(self) -> float:
+        energy_mapping = {
+            1: 54, "1b": 54, 2: 54, "2b": 54, "2c": 88,
+            3: 53, 4: 88, 5: 53
+        }
+        return energy_mapping.get(self.scroll_id, None)
+
+    def grab_canonical_resolution(self) -> Optional[float]:
         """
         Get the canonical resolution for the volume based on the scroll ID.
 
@@ -560,21 +551,12 @@ class Volume:
         float
             The canonical resolution value.
         """
-        if self.scroll_id == 1:
-            return 7.91
-        elif self.scroll_id == "1b":
-            return 7.91
-        elif self.scroll_id == 2:
-            return 7.91
-        elif self.scroll_id == "2b":
-            return 7.91
-        elif self.scroll_id == "2c":
-            return 7.91
-        elif self.scroll_id == 3:
-            return 3.24
-        elif self.scroll_id == 4:
-            return 3.24
-        
+        resolution_mapping = {
+            1: 7.91, "1b": 7.91, 2: 7.91, "2b": 7.91, "2c": 7.91,
+            3: 3.24, 4: 3.24, 5: 7.91
+        }
+        return resolution_mapping.get(self.scroll_id, None)
+                
     def activate_caching(self) -> None:
         """
         Activate caching for the volume data.

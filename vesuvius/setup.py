@@ -18,11 +18,17 @@ class CustomInstallCommand(install):
         """
         warnings.warn(message, UserWarning)
 
+with open("README.md", "r", encoding="utf-8") as fh:
+    long_description = fh.read()
+
 setup(
     name='vesuvius',
-    version='0.1.8',
+    version='0.1.9',
     package_dir = {"": "src"},
     packages=find_packages(where="src"),
+    url='https://github.com/ScrollPrize/villa',
+    long_description=long_description,
+    long_description_content_type="text/markdown",
     install_requires=[
         'numpy',
         'requests',
@@ -49,8 +55,13 @@ setup(
     },
     classifiers=[
         'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.8',
         'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
+        'Intended Audience :: Developers',
+        'Intended Audience :: Science/Research',
+        'Topic :: Software Development :: Libraries',
+        'Topic :: Scientific/Engineering',
     ],
     cmdclass={
         'install': CustomInstallCommand,
