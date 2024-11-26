@@ -4154,6 +4154,36 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_extrapolate(SurfTrackerData &data, cv::M
 #pragma omp parallel for
         for(int j=used_area.y;j<used_area.br().y;j++)
             for(int i=used_area.x;i<used_area.br().x;i++) {
+                if (state(j,i) & (STATE_LOC_VALID|STATE_COORD_VALID)
+                    && state(j,i+1) & (STATE_LOC_VALID|STATE_COORD_VALID)
+                    && state(j+1,i) & (STATE_LOC_VALID|STATE_COORD_VALID)
+                    && state(j+1,i+1) & (STATE_LOC_VALID|STATE_COORD_VALID))
+                {
+                    for(auto &sm : data.surfsC({j,i})) {
+                        if (data.valid_int(sm,{j,i})
+                            && data.valid_int(sm,{j,i+1})
+                            && data.valid_int(sm,{j+1,i})
+                            && data.valid_int(sm,{j+1,i+1}))
+                        {
+                            cv::Vec2f l00 = data.loc(sm,{j,i});
+                            cv::Vec2f l01 = data.loc(sm,{j,i+1});
+                            cv::Vec2f l10 = data.loc(sm,{j+1,i});
+                            cv::Vec2f l11 = data.loc(sm,{j+1,i+1});
+                            
+                            for(int sy=0;sy<=step;sy++)
+                                for(int sx=0;sx<=step;sx++) {
+                                    float fx = sx/step;
+                                    float fy = sy/step;
+                                    cv::Vec2f l0 = (1-fx)*l00 + fx*l01;
+                                    cv::Vec2f l1 = (1-fx)*l10 + fx*l11;
+                                    cv::Vec2f l = (1-fy)*l0 + fy*l1;
+                                    points_hr_all(j*step+sy,i*step+sx) += data.lookup_int_loc(sm,l);
+                                    counts_hr_all(j*step+sy,i*step+sx) += 1;
+                                }
+                        }
+                    }
+                }
+                
                 std::unordered_map<SurfaceMeta*,std::pair<std::vector<cv::Vec2f>,std::vector<cv::Vec2f>>> supports;
                 for(int y=j-1;y<=j+2;y++)
                     for(int x=i-1;x<=i+2;x++)
@@ -4294,7 +4324,7 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_extrapolate(SurfTrackerData &data, cv::M
 //add inliers from extrapolation
 void surftrack_add_extr_inliers(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, cv::Rect used_area, float step, float src_step)
 {
-    std::cout << "start extr add" << std::endl;
+    // std::cout << "start extr add" << std::endl;
     cv::Rect used_area_hr = {used_area.x*step, used_area.y*step, used_area.width*step, used_area.height*step};
 
     ceres::Solver::Options options;
@@ -4427,7 +4457,7 @@ void surftrack_add_extr_inliers(SurfTrackerData &data, cv::Mat_<uint8_t> &state,
                         throw std::runtime_error("WTF1");
                     
                     
-                    std::cout << "adding to " << p << state(p) << std::endl;
+                    // std::cout << "adding to " << p << state(p) << std::endl;
                     
                     data.surfs(p).insert(best_surf);
                     data.loc(best_surf, p) = best_loc;
@@ -4530,7 +4560,21 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
                 data_new.surfs({j,i}).insert(&sm);
                 data_new.loc(&sm, {j,i}) = {j*step,i*step};
             }
+            else if (points_extr_hr(j*step, i*step)[0] != -1) {
+                data_new.surfs({j,i}).insert(&sm);
+                data_new.loc(&sm, {j,i}) = {j*step,i*step};
+                exp_state(j, i) = STATE_LOC_VALID | STATE_COORD_VALID;
+                points_new(j, i) = points_extr_hr(j*step, i*step);
+            }
     cv::Mat_<uint8_t> new_state = exp_state.clone();
+    
+    {
+        cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_hr(data_new, new_state, points_new, used_area, step, src_step);
+        QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
+        std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_points_extr_hr";
+        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        delete dbg_surf;
+    }
     
     // for(int j=used_area.y;j<used_area.br().y;j++)
     //     for(int i=used_area.x;i<used_area.br().x;i++)
@@ -4582,7 +4626,15 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
 
     ceres::Solve(options, &problem_inpaint, &summary);
     std::cout << summary.BriefReport() << std::endl;
-
+    
+    {
+        cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_hr(data_new, new_state, points_new, used_area, step, src_step, true);
+        QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
+        std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_inp_pre";
+        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        delete dbg_surf;
+    }
+    
     // cv::Mat_<cv::Vec3d> points_inpainted = points_extr.clone();
 
     //TODO we could directly use higher res here?
@@ -4634,6 +4686,7 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
     for(int j=used_area.y;j<used_area.br().y;j++)
         for(int i=used_area.x;i<used_area.br().x;i++) {
             //FIXME is the interpolation also refering to points that are currently being optimized?! if yes check gradiets!
+            //FIXME alwas add 2d losses!?
             res_count += surftrack_add_global(&sm, {j,i}, data_new, problem, new_state, points_new, step*src_step, LOSS_3D_INDIRECT | SURF_LOSS | OPTIMIZE_ALL);
             // if (true/*j % 4 == 0 && i % 4 == 0*/) {
             //     fix_points++;
@@ -4733,17 +4786,21 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
     cv::Mat_<cv::Vec3d> points_out(points.size(), {-1,-1,-1});
     cv::Mat_<uint8_t> state_out(state.size(), 0);
     cv::Mat_<uint8_t> support_count(state.size(), 0);
-#pragma omp parallel for //FIXME ... data.surfs is also writing..
+// #pragma omp parallel for //FIXME ... data.surfs is also writing..
     for(int j=used_area.y;j<used_area.br().y;j++)
         for(int i=used_area.x;i<used_area.br().x;i++)
             /*if (new_state(j,i) & STATE_VALID)*/ {
             // if (data_new.has(&sm, {j,i})) {
                 mutex.lock_shared();
-                cv::Vec2d l = data_new.loc(&sm ,{j,i});
-                int y = l[0]/step;
-                int x = l[1]/step;
                 // l *= step;
-                if (loc_valid(points_extr_hr, l)) {
+                cv::Vec2f opt_loc = {-1,-1};
+                if (data_new.has(&sm, {j,i}) && loc_valid(points_extr_hr, data_new.loc(&sm ,{j,i}))) {
+                    cv::Vec2d l = data_new.loc(&sm ,{j,i});
+                    int y = l[0]/step;
+                    int x = l[1]/step;
+                    
+                    opt_loc = l;
+                    
                     mutex.unlock();
                     int src_loc_valid_count = 0;
                     if (state(y,x) & STATE_LOC_VALID)
@@ -4765,10 +4822,32 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
                     points_out(j, i) = interp_lin_2d(points_extr_hr, l);
                     // std::cout << "valid " << cv::Vec2i(j, i) << points_out(j, i)  << std::endl;
                     state_out(j, i) = STATE_LOC_VALID | STATE_COORD_VALID;
-                    mutex.unlock();
+                }
+                else if (points_new(j, i)[0] != -1) {
+                    points_out(j, i) = points_new(j, i);
+                    state_out(j, i) = STATE_LOC_VALID | STATE_COORD_VALID;
+                }
 
+                mutex.unlock();
+                
+                if (points_out(j, i)[0] != -1) {
                     //FIXME jep - this is probably the issue (?)
                     // std::cout << cv::norm(points_out(j, i)-points_extr(j,i)) << std::endl;
+                    
+                    int x, y;
+                    if (opt_loc[0] == -1) {
+                        SurfacePointer *ptr_sm = sm.surf()->pointer();
+                        float res_sm = sm.surf()->pointTo(ptr_sm, points_out(j, i), same_surface_th, 20);
+                        cv::Vec3f loc_sm = sm.surf()->loc_raw(ptr_sm);
+                        std::cout << "init dist" << res_sm << std::endl;
+                        x = loc_sm[0]/step;
+                        y = loc_sm[1]/step;
+                    }
+                    else {
+                        x = opt_loc[1]/step;
+                        y = opt_loc[0]/step;
+                    }
+                        
 
                     mutex.lock_shared();
                     std::set<SurfaceMeta*> surfs;
@@ -4781,7 +4860,7 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
                     for(auto &s : surfs) {
                         SurfacePointer *ptr = s->surf()->pointer();
                         float res = s->surf()->pointTo(ptr, points_out(j, i), same_surface_th, 4);
-                        // std::cout << cv::Vec2i(j,i) << " res " << res << std::endl;
+                        std::cout << cv::Vec2i(j,i) << " res " << res << std::endl;
                         if (res <= same_surface_th) {
                             mutex.lock();
                             data_out.surfs({j,i}).insert(s);
@@ -4790,13 +4869,42 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
                             mutex.unlock();
                         }
                     }
-                    // std::cout << cv::Vec2i(j,i) << " surfs " <<
-                    // data_out.surfs({j,i}).size() << " in " << data.surfs({j,i}).size() << std::endl;
+                    std::cout << cv::Vec2i(j,i) << " surfs " << data_out.surfs({j,i}).size() << " prev " << data.surfs({j,i}).size() << " cand " << surfs.size() << opt_loc << std::endl << std::endl;;
                 }
-                else
-                    mutex.unlock();
             }
 
+    {
+        cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_hr(data_out, state_out, points_out, used_area, step, src_step);
+        QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
+        std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s1_inp";
+        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        delete dbg_surf;
+    }
+    {
+        cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_extrapolate(data_out, state_out, points_out, used_area, step, src_step);
+        QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
+        std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s1_inp_extr";
+        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        delete dbg_surf;
+    }
+    
+//     surftrack_add_extr_inliers(data_out, state_out, points_out, used_area, step, src_step);
+//     
+//     {
+//         cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_hr(data_out, state_out, points_out, used_area, step, src_step);
+//         QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
+//         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s1.5_inp";
+//         dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+//         delete dbg_surf;
+//     }
+//     {
+//         cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_extrapolate(data_out, state_out, points_out, used_area, step, src_step);
+//         QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
+//         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s1.5_inp_extr";
+//         dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+//         delete dbg_surf;
+//     }
+    
     // points = points_out;
     // state = state_out;
     // data = data_out;
@@ -4810,12 +4918,27 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
                 for (auto s : surf_src) {
                     int count;
                     float cost = local_cost(s, {j,i}, data_out, state_out, points_out, step, src_step, &count);
-                    if (cost >= local_cost_inl_th || count < 2) {
+                    if (cost >= local_cost_inl_th /*|| count < 2*/) {
                         data_out.erase(s, {j,i});
                         data_out.eraseSurf(s, {j,i});
                     }
                 }
             }
+            
+    {
+        cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_hr(data_out, state_out, points_out, used_area, step, src_step);
+        QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
+        std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s2_inp";
+        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        delete dbg_surf;
+    }
+    {
+        cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_extrapolate(data_out, state_out, points_out, used_area, step, src_step);
+        QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
+        std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s2_inp_extr";
+        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        delete dbg_surf;
+    }
 
     //add more consistent surfs
     //FIXME do this "growing somehow adaptively?"
@@ -4850,19 +4973,34 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
                 }
 
     //now filter by consistency
-    // for(int j=used_area.y;j<used_area.br().y-1;j++)
-    //     for(int i=used_area.x;i<used_area.br().x-1;i++)
-    //         if (state_out(j,i) & STATE_VALID) {
-    //             std::set<SurfaceMeta*> surf_src = data_out.surfs({j,i});
-    //             for (auto s : surf_src) {
-    //                 int count;
-    //                 float cost = local_cost(s, {j,i}, data_out, state_out, points_out, step, src_step, &count);
-    //                 if (cost >= local_cost_inl_th || count < 2) {
-    //                     data_out.erase(s, {j,i});
-    //                     data_out.eraseSurf(s, {j,i});
-    //                 }
-    //             }
-    //         }
+    for(int j=used_area.y;j<used_area.br().y-1;j++)
+        for(int i=used_area.x;i<used_area.br().x-1;i++)
+            if (state_out(j,i) & STATE_VALID) {
+                std::set<SurfaceMeta*> surf_src = data_out.surfs({j,i});
+                for (auto s : surf_src) {
+                    int count;
+                    float cost = local_cost(s, {j,i}, data_out, state_out, points_out, step, src_step, &count);
+                    if (cost >= local_cost_inl_th || count < 2) {
+                        data_out.erase(s, {j,i});
+                        data_out.eraseSurf(s, {j,i});
+                    }
+                }
+            }
+
+    {
+        cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_hr(data_out, state_out, points_out, used_area, step, src_step);
+        QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
+        std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s3_inp";
+        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        delete dbg_surf;
+    }
+    {
+        cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_extrapolate(data_out, state_out, points_out, used_area, step, src_step);
+        QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
+        std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s3_inp_extr";
+        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        delete dbg_surf;
+    }
 
     //reset unsupported points
 #pragma omp parallel for
@@ -4879,6 +5017,21 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
                 state_out(j,i) = 0;
                 points_out(j, i) = {-1,-1,-1};
             }
+
+    {
+        cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_hr(data_out, state_out, points_out, used_area, step, src_step);
+        QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
+        std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s4_inp";
+        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        delete dbg_surf;
+    }
+    {
+        cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_extrapolate(data_out, state_out, points_out, used_area, step, src_step);
+        QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
+        std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s4_inp_extr";
+        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        delete dbg_surf;
+    }
 
     points = points_out;
     state = state_out;
@@ -4937,10 +5090,10 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                 data_new.loc(&sm, {j,i}) = {j,i};
             }
             
-            cv::Mat_<uint8_t> new_state = state.clone();
+    cv::Mat_<uint8_t> new_state = state.clone();
         
-        //generate closed version of state
-        cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
+    //generate closed version of state
+    cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
     
     uint8_t STATE_VALID = STATE_LOC_VALID | STATE_COORD_VALID;
     
@@ -4963,6 +5116,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                     if (points_new(j,i)[0] == -3) {
                         //FIXME actually check for solver failure?
                         new_state(j, i) = 0;
+                        points_new(j,i) = {-1,-1,-1};
                     }
                     else
                         res_count += surftrack_add_global(&sm, {j,i}, data_new, problem_inpaint, new_state, points_new, step*src_step, LOSS_3D_INDIRECT | OPTIMIZE_ALL);
