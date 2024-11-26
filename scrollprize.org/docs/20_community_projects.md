@@ -65,6 +65,8 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 
 - [vesuvius-gui](https://github.com/jrudolph/vesuvius-gui) is a single binary GUI to render volumes and segments on-the-fly. By Johannes Rudolph
 
+- [vesuvius-phalanx](https://github.com/mvrcii/phalanx): Python library / CLI for accessing Vesuvius data. Allows flexible access to volume and fragment scroll data. By Marcel Roth
+
 ## Segmentation
 
 ### 🌟 Highlighted
