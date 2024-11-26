@@ -7,14 +7,14 @@ on:
 
 permissions:
   contents: read
-  id-token: write
+  id-token: write  # Required for OIDC authentication with PyPI
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./vesuvius
+        working-directory: ./vesuvius  # Adjust according to your repo structure
     steps:
       - name: Check out the code
         uses: actions/checkout@v3
@@ -34,23 +34,5 @@ jobs:
         run: |
           python -m build --sdist --wheel
 
-      - name: Get version from setup.py
-        id: get_version
-        run: |
-          VERSION=$(python setup.py --version)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Determine Repository URL
-        id: repository
-        run: |
-          if [[ "${{ steps.get_version.outputs.version }}" == *"rc"* ]]; then
-            echo "repository_url=https://test.pypi.org/legacy/" >> $GITHUB_OUTPUT
-          else
-            echo "repository_url=https://upload.pypi.org/legacy/" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Publish to PyPI/TestPyPI using Trusted Publisher
+      - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: ${{ steps.repository.outputs.repository_url }}
-          auth-provider: pypi
