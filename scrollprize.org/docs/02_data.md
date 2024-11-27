@@ -44,7 +44,7 @@ Also be sure to check out:
 * [EduceLab-Scrolls (2019)](https://arxiv.org/abs/2304.02084): technical paper describing the original data.
 * [EduceLab Data Sheet (2023)](https://drive.google.com/file/d/1I6JNrR6A9pMdANbn6uAuXbcDNwjk8qZ2/view?usp=sharing): technical paper describing more recent scans added to the dataset.
 * [Tutorials](tutorial): what to do with the data.
-* Our libraries to access data in 1-2 lines of code: in [Python](https://github.com/scrollprize/vesuvius) (with [intro notebook](https://colab.research.google.com/github/ScrollPrize/vesuvius/blob/main/notebooks/example1_data_access.ipynb)) and [in C](https://github.com/scrollprize/vesuvius-c)!
+* Our libraries to access data in 1-2 lines of code: in [Python](https://github.com/ScrollPrize/villa/tree/main/vesuvius) (with [intro notebook](https://colab.research.google.com/github/ScrollPrize/villa/blob/main/vesuvius/notebooks/example1_data_access.ipynb)) and [in C](https://github.com/ScrollPrize/villa/tree/main/vesuvius-c)!
 
 ## Scrolls
 
@@ -64,6 +64,7 @@ Scroll 1 was used to win the 2023 Grand Prize, but 95% of the scroll remains unr
             <div className="sm:w-[45%] mb-2"><img src="/img/overview/scroll2-small-actual.webp" className="w-[100%]"/><figcaption className="mt-[-6px]">Scroll 2 (PHerc. Paris. 3)</figcaption></div>
             <div className="sm:w-[35.5%] mb-2 mr-2"><img src="/img/overview/PHerc332.webp" className="w-[100%]"/><figcaption className="mt-[-6px]">Scroll 3 (PHerc. 332)</figcaption></div>
             <div className="sm:w-[55%] mb-2"><img src="/img/overview/PHerc1667.webp" className="w-[100%]"/><figcaption className="mt-[-6px]">Scroll 4 (PHerc. 1667)</figcaption></div>
+            <div className="sm:w-[55%] mb-2"><img src="/img/overview/PHerc172.webp" className="w-[100%]"/><figcaption className="mt-[-6px]">Scroll 5 (PHerc. 172)</figcaption></div>
           </div>
         </td>
       </tr>
