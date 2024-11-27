@@ -59,8 +59,8 @@ The scroll for which we have by far the most [segments](data_segments), and in w
 
 Volumes:
 
-* [20230205180739](https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumes/20230205180739/) (scroll top half): 7.91µm, 54keV, 14,376 x 128MB .tif files.
-* [20230206171837](https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumes/20230206171837/) (scroll bottom half): 7.91µm, 54keV, 10,532 x 130MB .tif files.
+* [20230205180739](https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumes/20230205180739/) (scroll top half): 7.91µm, 54keV, 14,376 x 128MB .tif files. Total size: 1.84 TB
+* [20230206171837](https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumes/20230206171837/) (scroll bottom half): 7.91µm, 54keV, 10,532 x 130MB .tif files. Total size: 1.37 TB
 
 ## Scroll 2 (PHerc. Paris 3)
 
@@ -75,9 +75,9 @@ The main volume has a scanning artifact in the middle of the volume, but much an
 
 Volumes:
 
-* [20230206082907](https://dl.ash2txt.org/full-scrolls/Scroll2/PHercParis3.volpkg/volumes/20230206082907/) (scroll top half): 7.91µm, 54keV, 6,586 x 191MB .tif files.
-* [20230210143520](https://dl.ash2txt.org/full-scrolls/Scroll2/PHercParis3.volpkg/volumes/20230210143520/) (scroll bottom half): 7.91µm, 54keV, 14,428 x 243MB .tif files.
-* [20230212125146](https://dl.ash2txt.org/full-scrolls/Scroll2/PHercParis3.volpkg/volumes/20230212125146/) (slab within top half): 7.91µm, 88keV, 1,610 x 189MB .tif files.
+* [20230206082907](https://dl.ash2txt.org/full-scrolls/Scroll2/PHercParis3.volpkg/volumes/20230206082907/) (scroll top half): 7.91µm, 54keV, 6,586 x 191MB .tif files. Total size: 1.26 TB
+* [20230210143520](https://dl.ash2txt.org/full-scrolls/Scroll2/PHercParis3.volpkg/volumes/20230210143520/) (scroll bottom half): 7.91µm, 54keV, 14,428 x 243MB .tif files. Total size: 3.50 TB
+* [20230212125146](https://dl.ash2txt.org/full-scrolls/Scroll2/PHercParis3.volpkg/volumes/20230212125146/) (slab within top half): 7.91µm, 88keV, 1,610 x 189MB .tif files. Total size: 304 GB
 
 ## Scroll 3 (PHerc. 332)
 
@@ -92,9 +92,9 @@ Due to the small size, could be scanned in entirety at extremely high resolution
 
 Volumes:
 
-* [20231027191953](https://dl.ash2txt.org/full-scrolls/Scroll3/PHerc332.volpkg/volumes/20231027191953/) (entire scroll): 3.24µm, 53keV, 22,941 x 178MB .tif files.
-* [20231117143551](https://dl.ash2txt.org/full-scrolls/Scroll3/PHerc332.volpkg/volumes/20231117143551/) (entire scroll): 7.91µm, 53keV, 9,778 x 24MB .tif files.
-* [20231201141544](https://dl.ash2txt.org/full-scrolls/Scroll3/PHerc332.volpkg/volumes/20231201141544/) (entire scroll): 3.24µm, 70keV, 22,932 x 178MB .tif files.
+* [20231027191953](https://dl.ash2txt.org/full-scrolls/Scroll3/PHerc332.volpkg/volumes/20231027191953/) (entire scroll): 3.24µm, 53keV, 22,941 x 178MB .tif files. Total size: 4.07 TB
+* [20231117143551](https://dl.ash2txt.org/full-scrolls/Scroll3/PHerc332.volpkg/volumes/20231117143551/) (entire scroll): 7.91µm, 53keV, 9,778 x 24MB .tif files. Total size: 236 GB
+* [20231201141544](https://dl.ash2txt.org/full-scrolls/Scroll3/PHerc332.volpkg/volumes/20231201141544/) (entire scroll): 3.24µm, 70keV, 22,932 x 178MB .tif files. Total size: 4.06 TB
 
 ## Scroll 4 (PHerc. 1667)
 
@@ -108,8 +108,8 @@ Similar in size to Scroll 3.
 
 Volumes:
 
-* [20231107190228](https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/volumes/20231107190228/) (entire scroll): 3.24µm, 88keV, 26,391 x 130MB .tif files.
-* [20231117161658](https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/volumes/20231117161658/) (entire scroll): 7.91µm, 53keV, 11,174 x 23MB .tif files.
+* [20231107190228](https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/volumes/20231107190228/) (entire scroll): 3.24µm, 88keV, 26,391 x 130MB .tif files. Total size: 3.41 TB
+* [20231117161658](https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/volumes/20231117161658/) (entire scroll): 7.91µm, 53keV, 11,174 x 23MB .tif files. Total size: 257 GB
 
 ## Scroll 5 (PHerc. 172)
 
@@ -122,4 +122,4 @@ Similar in size to Scroll 1.
 
 Volumes:
 
-* [20241024131838](https://dl.ash2txt.org/full-scrolls/Scroll5/PHerc172.volpkg/volumes/20241024131838/) (entire scroll): 7.91µm, 53keV, 21,000 x 116MB .tif files.
+* [20241024131838](https://dl.ash2txt.org/full-scrolls/Scroll5/PHerc172.volpkg/volumes/20241024131838/) (entire scroll): 7.91µm, 53keV, 21,000 x 122MB .tif files. Total size: 2.56 TB
