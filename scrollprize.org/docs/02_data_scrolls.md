@@ -110,3 +110,16 @@ Volumes:
 
 * [20231107190228](https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/volumes/20231107190228/) (entire scroll): 3.24µm, 88keV, 26,391 x 130MB .tif files.
 * [20231117161658](https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/volumes/20231117161658/) (entire scroll): 7.91µm, 53keV, 11,174 x 23MB .tif files.
+
+## Scroll 5 (PHerc. 172)
+
+From the [Bodleian Library](https://www.bodleian.ox.ac.uk/home) in Oxford.
+Similar in size to Scroll 1.
+
+<div className="flex w-[100%]">
+  <div className="sm:w-[55%] mb-2"><img src="/img/overview/PHerc172.webp" className="w-[100%]"/><figcaption className="mt-[0]">Scroll 5 (PHerc. 172)</figcaption></div>
+</div>
+
+Volumes:
+
+* [20241024131838](https://dl.ash2txt.org/full-scrolls/Scroll5/PHerc172.volpkg/volumes/20241024131838/) (entire scroll): 7.91µm, 53keV, 21,000 x 116MB .tif files.

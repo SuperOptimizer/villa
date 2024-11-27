@@ -324,7 +324,7 @@ const prizes = [
   {
     title: "Grand Prize",
     prizeMoney: "$200,000",
-    description: "Read 90% of each of Scrolls 1-4",
+    description: "Read 90% of each four scrolls",
     requirement: "",
     href: "2024_prizes#2024-grand-prize",
   },
