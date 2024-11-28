@@ -168,15 +168,19 @@ def slice_count(s, maxx):
 def load_tiff(tiffname):
     print(tiffname)
     if str(tiffname).endswith('.tif'):
-        return tifffile.imread(str(tiffname))
+        image =  tifffile.imread(str(tiffname))
     elif str(tiffname).endswith('.jpg'):
-        print("returning jpg")
         image = cv2.imread(str(tiffname), cv2.IMREAD_GRAYSCALE)
-        print(f"shape: {image.shape}")
-        return image
     else:
         print("returning none")
         return None
+    # if uint8, convert to uint16
+    if image.dtype == np.uint8:
+        image = image.astype(np.uint16)*256
+    # if float, convert to uint16
+    if image.dtype == np.float32:
+        image = (image*65535).astype(np.uint16)
+    return image
 
 def get_tiffs(tiffdir):
     # Note this is a generator, not a list
@@ -248,7 +252,7 @@ def get_tiff_volume_mask(tiff, itiff):
 
 def get_tiff_surface_mask(mask_path):
     mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-    mask = mask // 255
+    mask = mask > 0
     return mask
 
 def load_transform(transform_path):
@@ -644,7 +648,15 @@ def get_standard_config(tiffdir, output, volume_type):
         # Get the segment ID from the tiff directory
         segment_id = os.path.basename(os.path.dirname(tiffdir))
         standard_config['segment_id'] = segment_id
+        # find *_mask paths
         mask_path = os.path.join(os.path.dirname(tiffdir), f"{standard_config['segment_id']}_mask.png")
+        # if not found, try to find it in the parent directory
+        if not os.path.exists(mask_path):
+            # Define the search pattern
+            search_pattern = os.path.join(os.path.dirname(tiffdir), "*_mask.png")
+            # Find all matching files
+            mask_path = glob.glob(search_pattern)[0]
+            print(f"Mask not found in {os.path.dirname(tiffdir)}, finding alternative: {mask_path}")
         standard_config['mask_path'] = mask_path
         surface_volume_meate_path = os.path.join(os.path.dirname(tiffdir), "meta.json")
         surface_volume_meta = json.load(open(surface_volume_meate_path))
