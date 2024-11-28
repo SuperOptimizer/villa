@@ -38,7 +38,7 @@ QuadSurface *load_quad_from_vcps(const std::string &path);
 QuadSurface *load_quad_from_obj(const std::string &path);
 QuadSurface *load_quad_from_tifxyz(const std::string &path);
 QuadSurface *empty_space_tracing_quad(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, cv::Vec3f normal, float step = 10);
-QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, float step = 10);
+QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, float step = 10, const std::string &cache_root = "");
 QuadSurface *regularized_local_quad(QuadSurface *src, SurfacePointer *ptr, int w, int h, int step_search = 100, int step_out = 5);
 QuadSurface *smooth_vc_segmentation(QuadSurface *src);
 

@@ -7,7 +7,6 @@
 #include <omp.h>
 
 using shape = z5::types::ShapeType;
-using namespace xt::placeholders;
 namespace fs = std::filesystem;
 
 using json = nlohmann::json;
@@ -17,7 +16,7 @@ std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v) {
         out << '[';
         for(auto &v : v)
             out << v << ",";
-        out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
+        out << "\b]";
     }
     return out;
 }
@@ -25,23 +24,13 @@ std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v) {
 std::string time_str()
 {
     using namespace std::chrono;
-
-    // get current time
     auto now = system_clock::now();
-
-    // get number of milliseconds for the current second
-    // (remainder after division into seconds)
     auto ms = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
-
-    // convert to std::time_t in order to convert to std::tm (broken time)
     auto timer = system_clock::to_time_t(now);
-
-    // convert to broken time
     std::tm bt = *std::localtime(&timer);
-
+    
     std::ostringstream oss;
-
-    oss << std::put_time(&bt, "%Y%m%d%H%M%S"); // HH:MM:SS
+    oss << std::put_time(&bt, "%Y%m%d%H%M%S");
     oss << std::setfill('0') << std::setw(3) << ms.count();
 
     return oss.str();
@@ -93,6 +82,8 @@ int main(int argc, char *argv[])
     float min_area_cm = params.value("min_area_cm", 0.3);
     float step_size = params.value("step_size", 20);
     int search_effort = params.value("search_effort", 10);
+    
+    std::filesystem::path cache_root = params["cache_root"];
 
     std::string mode = params.value("mode", "seed");
     
@@ -106,7 +97,7 @@ int main(int argc, char *argv[])
     SurfaceMeta *src;
 
     //expansion mode
-    int count_overlap;
+    int count_overlap = 0;
     if (mode == "expansion") {
         //got trough all exising segments (that match filter/start with auto ...)
         //list which ones do not yet less N overlapping (in symlink dir)
@@ -267,12 +258,8 @@ int main(int argc, char *argv[])
     }
 
     omp_set_num_threads(1);
-    
-    // origin = {3036.043212890625, 
-    //     4807.43798828125,
-    //     11265.13671875};
 
-    QuadSurface *surf = empty_space_tracing_quad_phys(ds.get(), 1.0, &chunk_cache, origin, step_size);
+    QuadSurface *surf = empty_space_tracing_quad_phys(ds.get(), 1.0, &chunk_cache, origin, step_size, cache_root);
 
     if ((*surf->meta)["area_cm"] < min_area_cm)
         return EXIT_SUCCESS;
@@ -281,7 +268,8 @@ int main(int argc, char *argv[])
     (*surf->meta)["vc_gsfs_params"] = params;
     (*surf->meta)["vc_gsfs_mode"] = mode;
     (*surf->meta)["vc_gsfs_version"] = "dev";
-    (*surf->meta)["seed_overlap"] = count_overlap;
+    if (mode == "expansion")
+        (*surf->meta)["seed_overlap"] = count_overlap;
     std::string uuid = name_prefix + time_str();
     fs::path seg_dir = tgt_dir / uuid;
     surf->save(seg_dir, uuid);
