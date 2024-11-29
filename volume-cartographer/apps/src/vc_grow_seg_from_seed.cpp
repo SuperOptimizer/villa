@@ -265,7 +265,7 @@ int main(int argc, char *argv[])
 
     QuadSurface *surf = empty_space_tracing_quad_phys(ds.get(), 1.0, &chunk_cache, origin, generations, step_size, cache_root);
 
-    double area_cm2 = (*surf->meta)["area_vx2"]*voxelsize*voxelsize/10000.0;
+    double area_cm2 = (*surf->meta)["area_vx2"].get<double>()*voxelsize*voxelsize/10000.0;
     if (area_cm2 < min_area_cm)
         return EXIT_SUCCESS;
 
