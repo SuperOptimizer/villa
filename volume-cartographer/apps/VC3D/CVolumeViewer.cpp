@@ -225,7 +225,7 @@ void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, 
         return;
     
     cv::Vec3f p, n;
-    scene2vol(p, n, _surf, _surf_name, _surf_col, scene_loc, _vis_center, _ds_scale);
+    scene2vol(p, n, _surf, _surf_name, _surf_col, scene_loc, _vis_center, _scale);
 
     //for PlaneSurface we work with absolute coordinates only
     if (dynamic_cast<PlaneSurface*>(_surf))
@@ -570,7 +570,6 @@ void CVolumeViewer::renderIntersections()
             std::vector<std::vector<cv::Vec2f>> xy_seg_;
             if (key == "segmentation") {
                 find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_scale, 1000);
-                std::cout << "calc intersecti with" << key << std::endl;
             }
             else
                 find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_scale);
