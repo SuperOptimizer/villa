@@ -144,30 +144,19 @@ void CVolumeViewer::recalcScales()
     if (_scale >= _max_scale) {
         _ds_scale = _max_scale;
         _ds_sd_idx = -log2(_ds_scale);
-        _scene_scale = _scale/_ds_scale;
     }
     else if (_scale < _min_scale) {
         _ds_scale = _min_scale;
         _ds_sd_idx = -log2(_ds_scale);
-        _scene_scale = _scale/_ds_scale;
     }
     else {
         _ds_sd_idx = -log2(_scale);
         _ds_scale = pow(2,-_ds_sd_idx);
-        _scene_scale = _scale/_ds_scale;
-    }
-    
-    QTransform M = fGraphicsView->transform();
-    if (_scene_scale != M.m11()) {
-        double delta_scale = _scene_scale/M.m11();
-        M.scale(delta_scale,delta_scale);
-        fGraphicsView->setTransform(M);
     }
 }
 
 void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers modifiers)
 {
-    //TODO don't invalidate if only _scene_scale chagned
     invalidateVis();
     invalidateIntersect();
     
@@ -439,34 +428,14 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
     else {
         cv::Vec2f roi_c = {roi.x+roi.width/2, roi.y + roi.height/2};
 
-        // if (!_ptr) {
-            _ptr = _surf->pointer();
-            _vis_center = {0,0};
-        // }
-        // else {
-            cv::Vec3f diff = {roi_c[0]-_vis_center[0],roi_c[1]-_vis_center[1],0};
-            _surf->move(_ptr, diff/_scale); //FIXME is this correct?
-            _vis_center = roi_c;
-        // }
-
-        //
+        _ptr = _surf->pointer();
+        cv::Vec3f diff = {roi_c[0],roi_c[1],0};
+        _surf->move(_ptr, diff/_scale);
+        _vis_center = roi_c;
         _surf->gen(&coords, nullptr, roi.size(), _ptr, _scale, {-roi.width/2, -roi.height/2, _z_off});
-        
-//         if (_surf_name == "segmentation") {
-//             invalidateIntersect();
-// 
-//             QuadSurface *old_crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
-//             
-//             QuadSurface *crop = new QuadSurface(coords.clone(), {_ds_scale, _ds_scale});
-//             _surf_col->setSurface("visible_segmentation", crop);
-//             if (old_crop)
-//                 delete old_crop;
-//         }
     }
 
-    std::cout << "readInterpolated3D() " << _ds_scale << " " << _scale << " " << roi << coords.size << std::endl;
     readInterpolated3D(img, volume->zarrDataset(_ds_sd_idx), coords*_ds_scale, cache);
-    
     return img;
 }
 
@@ -521,10 +490,6 @@ void CVolumeViewer::renderVisible(bool force)
     _center_marker->setParentItem(fBaseImageItem);
     
     fBaseImageItem->setOffset(curr_img_area.topLeft());
-    fBaseImageItem->setScale(curr_img_area.width()/img.size().width);
-
-    // invalidateIntersect();
-    // renderIntersections();
 }
 
 struct vec3f_hash {
@@ -630,12 +595,12 @@ void CVolumeViewer::renderIntersections()
             cvcol[prim] = 200 + rand() % 55;
 
             QColor col(cvcol[0],cvcol[1],cvcol[2]);
-            float width = 2/_scene_scale;
+            float width = 2;
             int z_value = 5;
 
             if (key == "segmentation") {
                 col = Qt::yellow;
-                // width = 4/_scene_scale;
+                width = 3;
                 z_value = 20;
             }
 
@@ -732,7 +697,7 @@ void CVolumeViewer::renderIntersections()
                         continue;
 
                     if (last[0] != -1 && cv::norm(p-last) >= 8) {
-                        auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 2/_scene_scale));
+                        auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 2));
                         item->setZValue(5);
                         items.push_back(item);
                         first = true;
@@ -745,7 +710,7 @@ void CVolumeViewer::renderIntersections()
                         path.lineTo(p[0],p[1]);
                     first = false;
                 }
-                auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 2/_scene_scale));
+                auto item = fGraphicsView->scene()->addPath(path, QPen(Qt::yellow, 2));
                 item->setZValue(5);
                 items.push_back(item);
             }
