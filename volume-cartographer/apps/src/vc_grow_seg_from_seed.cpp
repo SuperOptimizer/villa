@@ -4,6 +4,7 @@
 
 #include "z5/factory.hxx"
 #include <nlohmann/json.hpp>
+
 #include <omp.h>
 
 using shape = z5::types::ShapeType;
@@ -46,8 +47,8 @@ float get_val(I &interp, cv::Vec3d l) {
 int main(int argc, char *argv[])
 {
     if (argc != 7 && argc != 4) {
-        std::cout << "usage: " << argv[0] << " <zarr-volume> <tgt-dir> <json-params> <seed-x> <seed-y> <seed-z>" << std::endl;
-        std::cout << "or:    " << argv[0] << " <zarr-volume> <tgt-dir> <json-params>" << std::endl;
+        std::cout << "usage: " << argv[0] << " <ome-zarr-volume> <tgt-dir> <json-params> <seed-x> <seed-y> <seed-z>" << std::endl;
+        std::cout << "or:    " << argv[0] << " <ome-zarr-volume> <tgt-dir> <json-params>" << std::endl;
         return EXIT_SUCCESS;
     }
 
@@ -82,6 +83,9 @@ int main(int argc, char *argv[])
     float min_area_cm = params.value("min_area_cm", 0.3);
     float step_size = params.value("step_size", 20);
     int search_effort = params.value("search_effort", 10);
+    int generations = params.value("generations", 100);
+
+    float voxelsize = json::parse(std::ifstream(vol_path/"meta.json"))["voxelsize"];
     
     std::filesystem::path cache_root = params["cache_root"];
 
@@ -259,11 +263,13 @@ int main(int argc, char *argv[])
 
     omp_set_num_threads(1);
 
-    QuadSurface *surf = empty_space_tracing_quad_phys(ds.get(), 1.0, &chunk_cache, origin, step_size, cache_root);
+    QuadSurface *surf = empty_space_tracing_quad_phys(ds.get(), 1.0, &chunk_cache, origin, generations, step_size, cache_root);
 
-    if ((*surf->meta)["area_cm"] < min_area_cm)
+    double area_cm2 = (*surf->meta)["area_vx2"]*voxelsize*voxelsize/10000.0;
+    if (area_cm2 < min_area_cm)
         return EXIT_SUCCESS;
 
+    (*surf->meta)["area_cm2"] = area_cm2;
     (*surf->meta)["source"] = "vc_grow_seg_from_seed";
     (*surf->meta)["vc_gsfs_params"] = params;
     (*surf->meta)["vc_gsfs_mode"] = mode;
