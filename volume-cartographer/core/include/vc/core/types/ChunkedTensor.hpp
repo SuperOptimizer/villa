@@ -513,9 +513,9 @@ public:
         }
         V fc[3] = { z - V(corner[0]), y - V(corner[1]), x - V(corner[2])};
         for(int i=0;i<3;i++) {
-            if (fc[i] < 0)
+            if (fc[i] < V(0))
                 fc[i] = V(0);
-            else if (fc[i] > 1)
+            else if (fc[i] > V(1))
                 fc[i] = V(1);
         }
 
