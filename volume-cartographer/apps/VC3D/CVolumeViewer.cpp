@@ -771,7 +771,7 @@ void CVolumeViewer::renderPoints()
         if (plane) {
             if (plane->pointDist(wp) >= 4.0)
                 continue;
-            p = plane->project(wp, 1.0, _ds_scale);
+            p = plane->project(wp, 1.0, _scale);
         }
         else if (quad) {
             SurfacePointer *ptr = quad->pointer();
