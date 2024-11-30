@@ -58,8 +58,30 @@ See [example.c](example.c) for example library usage.
 * [libcurl](https://curl.se/libcurl/)
 * [json-c](https://json-c.github.io/json-c/)
 * [c-blosc2](https://github.com/Blosc/c-blosc2)
+* (optional) [ffmpeg](https://www.ffmpeg.org/)
 
-`libcurl` is used for fetching volume chunks and is likely already available on your system. `c-blosc2` is used to decompress the Zarr chunks read from the server and may require installation. `json-c` is used to read the zarr metadata.
+`libcurl` is used for fetching volume chunks and is likely already available on your system. `c-blosc2` is used to decompress the Zarr chunks read from the server and may require installation. `json-c` is used to read the zarr metadata. `ffmpeg` is used to generate video from chunk data.
+
+### Installing Dependencies
+
+On Ubuntu, dependencies can be installed with
+
+```sh
+#install tools
+sudo apt install gcc build-essential cmake ffmpeg
+
+#install development libraries
+sudo apt install zlib1g zlib1g-dev liblz4-dev libblosc2-dev  libcurl4-openssl-dev
+
+#install dependencies from source
+git clone https://github.com/json-c/json-c.git
+cd json-c
+mkdir build
+cd build
+cmake ..
+make
+sudo make install
+```
 
 ### Build and run:
 
