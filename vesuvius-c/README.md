@@ -39,7 +39,7 @@ Resulting image:
 
 <img src="img/sample_image.png" alt="Example scroll data" width="200"/>
 
-The library fetches scroll data from the Vesuvius Challenge [data server](https://dl.ash2txt.org) in the background. Only the necessary volume chunks are requested, and an in-memory LRU cache holds recent chunks to avoid repeat downloads.
+The library fetches scroll data from the Vesuvius Challenge [data server](https://dl.ash2txt.org) in the background. Only the necessary volume chunks are requested, and an in-memory LRU cache holds recent chunks to avoid repeat downloads. On-disk caching is also used to store downloads between program invocations.
 
 For a similar library in Python, see [vesuvius](https://github.com/ScrollPrize/vesuvius).
 
@@ -58,7 +58,7 @@ See [example.c](example.c) for example library usage.
 * [libcurl](https://curl.se/libcurl/)
 * [json-c](https://json-c.github.io/json-c/)
 * [c-blosc2](https://github.com/Blosc/c-blosc2)
-* (optional) [ffmpeg](https://www.ffmpeg.org/)
+* [ffmpeg](https://www.ffmpeg.org/) (optional)
 
 `libcurl` is used for fetching volume chunks and is likely already available on your system. `c-blosc2` is used to decompress the Zarr chunks read from the server and may require installation. `json-c` is used to read the zarr metadata. `ffmpeg` is used to generate video from chunk data.
 
@@ -104,6 +104,17 @@ It may also be necessary to link with the system math library:
 ```sh
 gcc -o example example.c -lcurl -lblosc2 -ljson-c -lm
 ./example
+```
+
+Vesuvius-c also has a CMakeLists.txt that will automatically discover and link the necessary libraries:
+
+```sh
+cd vesuvius-c
+mkdir build
+cd build
+cmake ..
+make
+./vesuvius_example
 ```
 
 ## Next features
