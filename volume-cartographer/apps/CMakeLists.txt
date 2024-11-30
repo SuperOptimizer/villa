@@ -239,6 +239,14 @@ target_link_libraries(vc_grow_seg_from_seed
     VC::surface
 )
 
+add_executable(vc_tifxyz2obj src/vc_tifxyz2obj.cpp)
+target_link_libraries(vc_tifxyz2obj
+    nlohmann_json::nlohmann_json
+    opencv_highgui
+    VC::slicing
+    VC::surface
+)
+
 ## experiements for flattening ##
 # add_executable(vc_zarralphacomp src/ZarrAlphaComp.cpp)
 # target_link_libraries(vc_zarralphacomp
