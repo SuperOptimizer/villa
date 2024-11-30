@@ -3264,7 +3264,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         gen_avg_cost.push_back(avg_cost/cost_count);
         gen_max_cost.push_back(max_cost);
 
-        printf("-> total done %d/ fringe: %d surf: %fmm^2\n", succ, fringe.size(), succ*step*step);
+        printf("-> total done %d/ fringe: %d surf: %fM vx^2\n", succ, fringe.size(), double(succ)*step*step/1e9);
 
         timer_gen.unit = succ_gen*step*step;
         timer_gen.unit_string = "vx^2";
