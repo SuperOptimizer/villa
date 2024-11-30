@@ -34,11 +34,11 @@ int test_volume_load() {
     f32 *vertices;
     s32 *indices;
     printf("marching cubes on rescaled chunk\n");
-    if (vs_march_cubes(rescaled->data,rescaled->dims[0],rescaled->dims[1],rescaled->dims[2],.5f,&vertices,&indices,&vertex_count,&index_count)) {
+    if (vs_march_cubes(rescaled->data,rescaled->dims[0],rescaled->dims[1],rescaled->dims[2],.5f,&vertices,NULL,&indices,&vertex_count,&index_count)) {
         return 1;
     }
     printf("writing mesh to out_vol.ply\n");
-    if (vs_ply_write("out_vol.ply",vertices,NULL,indices,vertex_count,index_count)) {
+    if (vs_ply_write("out_vol.ply",vertices,NULL,NULL,indices,vertex_count,index_count)) {
         return 1;
     }
 
@@ -78,11 +78,11 @@ int test_fiber_load() {
     f32 *vertices;
     s32 *indices;
     printf("marching cubes on rescaled chunk\n");
-    if (vs_march_cubes(rescaled->data,rescaled->dims[0],rescaled->dims[1],rescaled->dims[2],.5f,&vertices,&indices,&vertex_count,&index_count)) {
+    if (vs_march_cubes(rescaled->data,rescaled->dims[0],rescaled->dims[1],rescaled->dims[2],.5f,&vertices,NULL,&indices,&vertex_count,&index_count)) {
         return 1;
     }
     printf("writing mesh to out_surface.ply\n");
-    if (vs_ply_write("out_surface.ply",vertices,NULL,indices,vertex_count,index_count)) {
+    if (vs_ply_write("out_surface.ply",vertices,NULL,NULL,indices,vertex_count,index_count)) {
         return 1;
     }
 
