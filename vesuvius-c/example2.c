@@ -33,8 +33,9 @@ int test_volume_load() {
     s32 vertex_count, index_count;
     f32 *vertices;
     s32 *indices;
+    f32* graycolors;
     printf("marching cubes on rescaled chunk\n");
-    if (vs_march_cubes(rescaled->data,rescaled->dims[0],rescaled->dims[1],rescaled->dims[2],.5f,&vertices,NULL,&indices,&vertex_count,&index_count)) {
+    if (vs_march_cubes(rescaled->data,rescaled->dims[0],rescaled->dims[1],rescaled->dims[2],.5f,&vertices,&graycolors,&indices,&vertex_count,&index_count)) {
         return 1;
     }
     printf("writing mesh to out_vol.ply\n");
@@ -76,9 +77,10 @@ int test_fiber_load() {
     chunk* rescaled = vs_normalize_chunk(mychunk);
     s32 vertex_count, index_count;
     f32 *vertices;
+    f32 *graycolors;
     s32 *indices;
     printf("marching cubes on rescaled chunk\n");
-    if (vs_march_cubes(rescaled->data,rescaled->dims[0],rescaled->dims[1],rescaled->dims[2],.5f,&vertices,NULL,&indices,&vertex_count,&index_count)) {
+    if (vs_march_cubes(rescaled->data,rescaled->dims[0],rescaled->dims[1],rescaled->dims[2],.5f,&vertices,&graycolors,&indices,&vertex_count,&index_count)) {
         return 1;
     }
     printf("writing mesh to out_surface.ply\n");
