@@ -5000,7 +5000,7 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
 #pragma omp parallel for
     for(int j=used_area.y;j<used_area.br().y-1;j++)
         for(int i=used_area.x;i<used_area.br().x-1;i++)
-            if (state_out(j,i) & STATE_LOC_VALID) {
+            if (state_out(j,i) & STATE_VALID) {
                 // std::cout << cv::Vec2i(j,i) << " surfs " << data_out.surfs({j,i}).size() << std::endl;
                 if (data_out.surfs({j,i}).size() < 1 /*&& support_count(j,i) < 4*/) {
                     state_out(j,i) = 0;
@@ -5257,7 +5257,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     //interpolate from the original set
     
     {
-        cv::Mat_<cv::Vec3d> points_hr_inp = surftrack_genpoints_extrapolate(data, new_state, points_inpainted, used_area, step, src_step, true);
+        cv::Mat_<cv::Vec3d> points_hr_inp = surftrack_genpoints_hr(data, new_state, points_inpainted, used_area, step, src_step, true);
         QuadSurface *dbg_surf = new QuadSurface(points_hr_inp(used_area_hr), {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_inp_hr";
         dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
@@ -5400,7 +5400,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 //                                             }
 //                                         }
 
-    for(int r=0;r<10;r++) {
+    for(int r=0;r<4;r++) {
         int added = 0;
 #pragma omp parallel for collapse(2) schedule(dynamic)
         for(int j=used_area.y;j<used_area.br().y-1;j++)
@@ -5433,7 +5433,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                             cost = local_cost_destructive(test_surf, {j,i}, data_out, state_out, points_out, step, src_step, loc_3d, &count, &straight_count);
                             mutex.unlock();
                             
-                            if (cost/count > local_cost_inl_th || straight_count < 1 || count < 2)
+                            if (cost > local_cost_inl_th || straight_count < 1 || count < 2)
                                 continue;
                             
                             mutex.lock();
@@ -5451,7 +5451,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 #pragma omp parallel for
     for(int j=used_area.y;j<used_area.br().y-1;j++)
         for(int i=used_area.x;i<used_area.br().x-1;i++)
-            if (state_out(j,i) & STATE_LOC_VALID) {
+            if (state_out(j,i) & STATE_VALID) {
                 // std::cout << cv::Vec2i(j,i) << " surfs " << data_out.surfs({j,i}).size() << std::endl;
                 if (data_out.surfs({j,i}).size() < 1 /*&& support_count(j,i) < 4*/) {
                     state_out(j,i) = 0;
@@ -5974,7 +5974,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             update_mapping = true;
         }
         
-        // update_mapping = false;
+        update_mapping = false;
         
         // if (update_mapping)
         // {
