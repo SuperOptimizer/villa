@@ -161,38 +161,50 @@ int main(int argc, char *argv[])
             bool found = false;
             // int fcount = 0;
             for (int r=0;r<10;r++) {
-                cv::Vec2f p;
-                int side = rand() % 4;
-                if (side == 0)
-                    p = {rand() % h, 0};
-                else if (side == 1)
-                    p = {0, rand() % w};
-                else if (side == 2)
-                    p = {rand() % h, w-1};
-                else if (side == 3)
-                    p = {h-1, rand() % w};
+                if ((rand() % 2) == 0)
+                {
+                    cv::Vec2i p = {rand() % h, rand() % w};
+                    
+                    if (points(p)[0] != -1 && get_val<double,CachedChunked3dInterpolator<uint8_t,passTroughComputor>>(interpolator, points(p)) >= 128) {
+                        found = true;
+                        origin = points(p);
+                        break;
+                    }
+                }
+                else {
+                    cv::Vec2f p;
+                    int side = rand() % 4;
+                    if (side == 0)
+                        p = {rand() % h, 0};
+                    else if (side == 1)
+                        p = {0, rand() % w};
+                    else if (side == 2)
+                        p = {rand() % h, w-1};
+                    else if (side == 3)
+                        p = {h-1, rand() % w};
 
-                cv::Vec2f searchdir = cv::Vec2f(h/2,w/2) - p;
-                cv::normalize(searchdir, searchdir);
-                found = false;
-                for(int i=0;i<std::min(w/2/abs(searchdir[1]),h/2/abs(searchdir[0]));i++,p+=searchdir) {
-                    found = true;
-                    cv::Vec2i p_eval = p;
-                    // searchvis(p_eval) = 127;
-                    for(int r=0;r<5;r++) {
-                        cv::Vec2i p_eval = p+r*searchdir;
-                        if (points(p_eval)[0] == -1 ||get_val<double,CachedChunked3dInterpolator<uint8_t,passTroughComputor>>(interpolator, points(p_eval)) < 128) {
-                            found = false;
+                    cv::Vec2f searchdir = cv::Vec2f(h/2,w/2) - p;
+                    cv::normalize(searchdir, searchdir);
+                    found = false;
+                    for(int i=0;i<std::min(w/2/abs(searchdir[1]),h/2/abs(searchdir[0]));i++,p+=searchdir) {
+                        found = true;
+                        cv::Vec2i p_eval = p;
+                        // searchvis(p_eval) = 127;
+                        for(int r=0;r<5;r++) {
+                            cv::Vec2i p_eval = p+r*searchdir;
+                            if (points(p_eval)[0] == -1 ||get_val<double,CachedChunked3dInterpolator<uint8_t,passTroughComputor>>(interpolator, points(p_eval)) < 128) {
+                                found = false;
+                                break;
+                            }
+                            // else
+                                // searchvis(p_eval) = 255;;
+                        }
+                        if (found) {
+                            // fcount++;
+                            cv::Vec2i p_eval = p+2*searchdir;
+                            origin = points(p_eval);
                             break;
                         }
-                        // else
-                            // searchvis(p_eval) = 255;;
-                    }
-                    if (found) {
-                        // fcount++;
-                        cv::Vec2i p_eval = p+2*searchdir;
-                        origin = points(p_eval);
-                        break;
                     }
                 }
             }
