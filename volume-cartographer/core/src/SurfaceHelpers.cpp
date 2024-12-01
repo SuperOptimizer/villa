@@ -5192,12 +5192,14 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
             //FIXME is the interpolation also refering to points that are currently being optimized?! if yes check gradiets!
             res_count += surftrack_add_global(&sm_inp, {j,i}, data_inp, problem, new_state, points_new, step*src_step, LOSS_3D_INDIRECT | SURF_LOSS | OPTIMIZE_ALL);
             // if (true/*j % 4 == 0 && i % 4 == 0*/) {
-            //     fix_points++;
+                fix_points++;
             if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0])) {
-                problem.AddResidualBlock(LinChkDistLoss::Create(data_inp.loc(&sm_inp, {j,i}), 0.1), nullptr, &data_inp.loc(&sm_inp, {j,i})[0]);
+                problem.AddResidualBlock(LinChkDistLoss::Create(data_inp.loc(&sm_inp, {j,i}), 1.0), nullptr, &data_inp.loc(&sm_inp, {j,i})[0]);
             }
             // }
         }
+        
+    std::cout << "nuzm fix points " << fix_points << std::endl;
         
         //     if (!problem.HasParameterBlock(&data_inp.loc(&sm_inp, seed)[0]))
         //         throw std::runtime_error("oops we lost the seed");
