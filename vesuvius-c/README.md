@@ -32,7 +32,7 @@ int main() {
 
 Resulting image:
 
-<img src="img/sample_image.png" alt="Example scroll data" width="200"/>
+![slice](https://github.com/user-attachments/assets/f9fe5667-41e6-49f3-9e15-ca1d366ce293)
 
 Vesuvius-c can be used to work with zarr volumes, modify them, and write out the result in various formats. This video demonstrates [christmas tree highlighting](example2.c#L94) using a combination of scroll volume and surface segmentation provided by [@bruniss](https://github.com/bruniss):
 
