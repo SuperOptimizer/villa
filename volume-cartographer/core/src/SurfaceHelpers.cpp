@@ -3564,7 +3564,7 @@ int cond_surftrack_distloss(int type, SurfaceMeta *sm, const cv::Vec2i &p, const
 // }
 
 
-int add_surftrack_straightloss(SurfaceMeta *sm, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, int flags = 0, float w = 1.0)
+int add_surftrack_straightloss(SurfaceMeta *sm, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, int flags = 0, float w = 0.7)
 {
     if ((state(p+o1) & STATE_LOC_VALID) == 0 || !data.has(sm, p+o1))
         return 0;
@@ -3735,14 +3735,14 @@ int surftrack_add_local(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &dat
         count_straight += add_surftrack_straightloss(sm, p, {0,0},{1,0},{2,0}, data, problem, state);
         
         //dia1
-        count_straight += add_surftrack_straightloss(sm, p, {-2,-2},{-1,-1},{0,0}, data, problem, state);
-        count_straight += add_surftrack_straightloss(sm, p, {-1,-1},{0,0},{1,1}, data, problem, state);
-        count_straight += add_surftrack_straightloss(sm, p, {0,0},{1,1},{2,2}, data, problem, state);
-        
-        //dia1
-        count_straight += add_surftrack_straightloss(sm, p, {-2,2},{-1,1},{0,0}, data, problem, state);
-        count_straight += add_surftrack_straightloss(sm, p, {-1,1},{0,0},{1,-1}, data, problem, state);
-        count_straight += add_surftrack_straightloss(sm, p, {0,0},{1,-1},{2,-2}, data, problem, state);
+//         count_straight += add_surftrack_straightloss(sm, p, {-2,-2},{-1,-1},{0,0}, data, problem, state);
+//         count_straight += add_surftrack_straightloss(sm, p, {-1,-1},{0,0},{1,1}, data, problem, state);
+//         count_straight += add_surftrack_straightloss(sm, p, {0,0},{1,1},{2,2}, data, problem, state);
+//         
+//         //dia1
+//         count_straight += add_surftrack_straightloss(sm, p, {-2,2},{-1,1},{0,0}, data, problem, state);
+//         count_straight += add_surftrack_straightloss(sm, p, {-1,1},{0,0},{1,-1}, data, problem, state);
+//         count_straight += add_surftrack_straightloss(sm, p, {0,0},{1,-1},{2,-2}, data, problem, state);
     }
     
     //FIXME will add too many but lets see what happens ...
@@ -5800,7 +5800,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         float cost = local_cost(test_surf, p, data_th, state, points, step, src_step, &count, &straight_count);
                         state(p) = 0;
                         data_th.erase(test_surf, p);
-                        if (cost < local_cost_inl_th && (ref_seed || (count >= 2 && straight_count >= 2))) {
+                        if (cost < local_cost_inl_th && (ref_seed || (count >= 2 && straight_count >= 1))) {
                             inliers_sum += count;
                             inliers_count++;
                         }
@@ -5993,13 +5993,13 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
             delete dbg_surf;
             }
-            {
-                cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_extrapolate(data, state, points, used_area, step, src_step);
-                QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
-                std::string uuid = "z_dbg_gen_"+strint(generation, 5)+"_extr";
-                dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
-                delete dbg_surf;
-            }
+            // {
+            //     cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_extrapolate(data, state, points, used_area, step, src_step);
+            //     QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
+            //     std::string uuid = "z_dbg_gen_"+strint(generation, 5)+"_extr";
+            //     dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+            //     delete dbg_surf;
+            // }
         }
         
         // fringe.clear();
