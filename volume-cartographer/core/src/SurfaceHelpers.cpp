@@ -4083,7 +4083,7 @@ std::string strint(int n, int width)
 }
 
 int static dbg_counter = 0;
-float local_cost_inl_th = 0.2;
+float local_cost_inl_th = 0.1;
 int opt_map_every = 8;
 float same_surface_th = 2.0;
 
@@ -5802,7 +5802,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         float cost = local_cost(test_surf, p, data_th, state, points, step, src_step, &count, &straight_count);
                         state(p) = 0;
                         data_th.erase(test_surf, p);
-                        if (cost < local_cost_inl_th && (ref_seed || (count >= 2 && straight_count >= 1))) {
+                        if (cost < 2*local_cost_inl_th && (ref_seed || (count >= 2 && straight_count >= 1))) {
                             inliers_sum += count;
                             inliers_count++;
                         }
@@ -5846,7 +5846,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         }
                         int count = 0;
                         float cost = local_cost(test_surf, p, data_th, state, points, step, src_step, &count);
-                        if (cost < local_cost_inl_th) {
+                        //FIXME opt then check all in extra again!
+                        if (cost < 2*local_cost_inl_th) {
                             data_th.surfs(p).insert(test_surf);
                             surftrack_add_local(test_surf, p, data_th, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
                             
