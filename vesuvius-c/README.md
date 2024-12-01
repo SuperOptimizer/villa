@@ -39,6 +39,11 @@ Resulting image:
 
 <img src="img/sample_image.png" alt="Example scroll data" width="200"/>
 
+Vesuvius-c can be used to work with zarr volumes, modify them, and write out the result in various formats. This video demonstrates [christmas tree highlighting](example2.c#L94) using a combination of scroll volume and surface segmentation provided by [@bruniss](https://github.com/bruniss):
+
+https://github.com/user-attachments/assets/e4b90221-744a-46d6-a7c2-cc3f1685fd54
+
+
 The library fetches scroll data from the Vesuvius Challenge [data server](https://dl.ash2txt.org) in the background. Only the necessary volume chunks are requested, and an in-memory LRU cache holds recent chunks to avoid repeat downloads. On-disk caching is also used to store downloads between program invocations.
 
 For a similar library in Python, see [vesuvius](https://github.com/ScrollPrize/vesuvius).
@@ -116,7 +121,3 @@ cmake ..
 make
 ./vesuvius_example
 ```
-
-## Next features
-
-
