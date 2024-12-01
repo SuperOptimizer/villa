@@ -8,30 +8,25 @@ From [Vesuvius Challenge](https://scrollprize.org), a single-header C library fo
 #include "vesuvius-c.h"
 
 int main() {
-    const char *scroll_id = "1";
-    const int energy = 54;
-    const double resolution = 7.91;
+    //pick a region in the scoll to visualize
+    int vol_start[3] = {3072,3072,3072};
+    int chunk_dims[3] = {128,512,512};
+    
+    //initialize the volume
+    volume* scroll_vol = vs_vol_new(
+        "./54keV_7.91um_Scroll1A.zarr/0/",
+        "https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumes_zarr_standardized/54keV_7.91um_Scroll1A.zarr/0/");
+    
+    // get the scroll data by reading it from the cache and downloading it if necessary
+    chunk* scroll_chunk = vs_vol_get_chunk(scroll_vol, vol_start,chunk_dims);
 
-    init_vesuvius(scroll_id, energy, resolution);
-
-    // Define a region of interest in the scroll volume
-    RegionOfInterest roi = {
-        .x_start = 3456, .y_start = 3256, .z_start = 6521,
-        .x_width = 256, .y_height = 256, .z_depth = 256,
-    };
-
-    // Fetch this region into a local 3D volume
-    unsigned char *volume = (unsigned char *)malloc(roi.x_width * roi.y_height * roi.z_depth);
-    get_volume_roi(roi, volume);
-
-    // Fetch a slice (ROI with depth = 1) from the volume
-    roi.z_start = roi.z_start + roi.z_depth / 2;
-    roi.z_depth = 1;
-    unsigned char *slice = (unsigned char *)malloc(roi.x_width * roi.y_height);
-    get_volume_slice(roi, slice);
+    // Fetch a slice  from the volume
+    slice* myslice = vs_slice_extract(scroll_chunk, 0);
 
     // Write slice image to file
-    write_bmp("slice.bmp", slice, roi.x_width, roi.y_height);
+    vs_bmp_write("xy_slice.bmp",myslice);
+    
+    return 0;
 }
 ```
 
