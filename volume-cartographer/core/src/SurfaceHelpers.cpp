@@ -5918,9 +5918,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 curr_best_inl_th -= 4;
             else
                 curr_best_inl_th -= 1;
-            if (best_inliers_gen >= 6)
+            if (best_inliers_gen >= 4)
                 curr_best_inl_th = std::min(curr_best_inl_th, best_inliers_gen);
-            if (curr_best_inl_th >= 6) {
+            if (curr_best_inl_th >= 4) {
                 for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
                     for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
                         //FIXME WTF why isn't this working?!'
@@ -5966,13 +5966,13 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         
         cv::imwrite("state"+std::to_string(generation)+".tif", state);
         
-        bool update_mapping = (succ >= 100 && (loc_valid_count-last_succ_parametrization) >= std::max(100.0, 0.3*last_succ_parametrization));
+        bool update_mapping = (succ >= 1000 && (loc_valid_count-last_succ_parametrization) >= std::max(100.0, 0.3*last_succ_parametrization));
         if (!fringe.size() && final_opts) {
             final_opts--;
             update_mapping = true;
         }
         
-        update_mapping = false;
+        // update_mapping = false;
         
         // if (update_mapping)
         // {
