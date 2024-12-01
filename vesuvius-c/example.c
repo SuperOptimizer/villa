@@ -5,7 +5,7 @@
 #define TEST_CACHEDIR "./54keV_7.91um_Scroll1A.zarr/0/"
 #define TEST_ZARR_URL "https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumes_zarr_standardized/54keV_7.91um_Scroll1A.zarr/0/"
 
-/*
+
 int main() {
 
     int x = 3693, y = 2881, z = 6777;
@@ -94,25 +94,4 @@ int main() {
     vs_mesh_translate(mymesh,1.0f,1.0f,1.0f);
 
     return 0;
-}
-*/
-
-int main() {
-    //pick a region in the scoll to visualize
-    int vol_start[3] = {3072,3072,3072};
-    int chunk_dims[3] = {128,512,512};
-
-    //initialize the volume
-    volume* scroll_vol = vs_vol_new(
-        "./54keV_7.91um_Scroll1A.zarr/0/",
-        "https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumes_zarr_standardized/54keV_7.91um_Scroll1A.zarr/0/");
-
-    // get the scroll data by reading it from the cache and downloading it if necessary
-    chunk* scroll_chunk = vs_vol_get_chunk(scroll_vol, vol_start,chunk_dims);
-
-    // Fetch a slice  from the volume
-    slice* myslice = vs_slice_extract(scroll_chunk, 0);
-
-    // Write slice image to file
-    vs_bmp_write("slice.bmp",myslice);
 }
