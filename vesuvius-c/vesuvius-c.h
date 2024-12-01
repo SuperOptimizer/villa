@@ -625,100 +625,6 @@ int get_volume_slice(RegionOfInterest region, unsigned char *slice) {
     return 0;
 }
 
-// BMP Header Structures
-#pragma pack(push, 1) // Ensure no padding
-typedef struct {
-    uint16_t bfType;
-    uint32_t bfSize;
-    uint16_t bfReserved1;
-    uint16_t bfReserved2;
-    uint32_t bfOffBits;
-} BMPFileHeader;
-
-typedef struct {
-    uint32_t biSize;
-    int32_t biWidth;
-    int32_t biHeight;
-    uint16_t biPlanes;
-    uint16_t biBitCount;
-    uint32_t biCompression;
-    uint32_t biSizeImage;
-    int32_t biXPelsPerMeter;
-    int32_t biYPelsPerMeter;
-    uint32_t biClrUsed;
-    uint32_t biClrImportant;
-} BMPInfoHeader;
-#pragma pack(pop)
-
-// Function to write the image slice to a BMP file
-int write_bmp(const char *filename, unsigned char *image, int width, int height) {
-    FILE *file = fopen(filename, "wb");
-    if (!file) {
-        fprintf(stderr, "Failed to open file for writing: %s\n", filename);
-        return -1;
-    }
-
-    // BMP file and info headers
-    BMPFileHeader file_header;
-    BMPInfoHeader info_header;
-
-    // Calculate the size of each row including padding
-    int rowSize = (width + 3) & ~3; // Round up to the nearest multiple of 4
-    int imageSize = rowSize * height;
-
-    // BMP file header
-    file_header.bfType = 0x4D42; // 'BM'
-    file_header.bfOffBits = sizeof(BMPFileHeader) + sizeof(BMPInfoHeader) + 256 * 4; // File header + Info header + Palette
-    file_header.bfSize = file_header.bfOffBits + imageSize;
-    file_header.bfReserved1 = 0;
-    file_header.bfReserved2 = 0;
-
-    // BMP info header
-    info_header.biSize = sizeof(BMPInfoHeader);
-    info_header.biWidth = width;
-    info_header.biHeight = -height; // Negative height to indicate top-down row order
-    info_header.biPlanes = 1;
-    info_header.biBitCount = 8; // 8 bits per pixel (grayscale)
-    info_header.biCompression = 0;
-    info_header.biSizeImage = imageSize;
-    info_header.biXPelsPerMeter = 2835; // 72 DPI
-    info_header.biYPelsPerMeter = 2835; // 72 DPI
-    info_header.biClrUsed = 256;
-    info_header.biClrImportant = 256;
-
-    // Write BMP file header
-    fwrite(&file_header, sizeof(BMPFileHeader), 1, file);
-
-    // Write BMP info header
-    fwrite(&info_header, sizeof(BMPInfoHeader), 1, file);
-
-    // Write the grayscale palette (256 shades of gray)
-    for (int i = 0; i < 256; ++i) {
-        unsigned char color[4] = {i, i, i, 0}; // R, G, B, Reserved
-        fwrite(color, sizeof(unsigned char), 4, file);
-    }
-
-    // Write the pixel data with padding
-    unsigned char *row = (unsigned char *)malloc(rowSize);
-    if (!row) {
-        fprintf(stderr, "Memory allocation failed\n");
-        fclose(file);
-        return -1;
-    }
-
-    for (int y = 0; y < height; ++y) {
-        // Copy the image row and pad it
-        memcpy(row, image + (height - 1 - y) * width, width);
-        memset(row + width, 0, rowSize - width); // Pad the row
-
-        // Write the padded row
-        fwrite(row, sizeof(unsigned char), rowSize, file);
-    }
-
-    free(row);
-    fclose(file);
-    return 0;
-}
 
 char *get_obj_cache_path(const char *id) {
     char *path = (char *)malloc(512 * sizeof(char));
@@ -1246,7 +1152,7 @@ chunk *vs_avgpool(chunk *inchunk, s32 kernel, s32 stride);
 chunk *vs_sumpool(chunk *inchunk, s32 kernel, s32 stride);
 chunk* vs_unsharp_mask_3d(chunk* input, float amount, s32 kernel_size);
 chunk* vs_normalize_chunk(chunk* input);
-chunk* vs_transpose(chunk* input, const char* current_layout);
+chunk* vs_transpose(chunk* input, const char* input_layout, const char* output_layout);
 chunk* vs_dilate(chunk* inchunk, s32 kernel);
 chunk* vs_erode(chunk* inchunk, s32 kernel);
 f32 vs_chunk_min(chunk *chunk);
@@ -2551,54 +2457,66 @@ chunk* vs_normalize_chunk(chunk* input) {
   return output;
 }
 
-chunk* vs_transpose(chunk* input, const char* current_layout) {
-    if (!input || !current_layout || strlen(current_layout) != 3) {
+chunk* vs_transpose(chunk* input, const char* input_layout, const char* output_layout) {
+    if (!input || !input_layout || !output_layout ||
+        strlen(input_layout) != 3 || strlen(output_layout) != 3) {
         return NULL;
     }
 
-    int mapping[3] = {0, 0, 0};
-
+    // map from input to z y x
+    int input_mapping[3] = {0, 0, 0};
     for (int i = 0; i < 3; i++) {
-        switch (current_layout[i]) {
-            case 'z':
-                mapping[0] = i;
-                break;
-            case 'y':
-                mapping[1] = i;
-                break;
-            case 'x':
-                mapping[2] = i;
-                break;
-            default:
-                return NULL;
+        switch (input_layout[i]) {
+            case 'z': input_mapping[0] = i; break;
+            case 'y': input_mapping[1] = i; break;
+            case 'x': input_mapping[2] = i; break;
+            default: return NULL;
         }
     }
 
-    int new_dims[3] = {
-        input->dims[mapping[0]],  // z
-        input->dims[mapping[1]],  // y
-        input->dims[mapping[2]]   // x
-    };
+    // map from z y x to output
+    int output_mapping[3] = {0, 0, 0};
+    for (int i = 0; i < 3; i++) {
+        switch (output_layout[i]) {
+            case 'z': output_mapping[i] = 0; break;
+            case 'y': output_mapping[i] = 1; break;
+            case 'x': output_mapping[i] = 2; break;
+            default: return NULL;
+        }
+    }
+
+    // Calculate new dimensions based on output layout
+    int new_dims[3];
+    for (int i = 0; i < 3; i++) {
+        new_dims[i] = input->dims[input_mapping[output_mapping[i]]];
+    }
 
     chunk* output = vs_chunk_new(new_dims);
     if (!output) {
         return NULL;
     }
 
-    // Perform the vs_transpose
-    for (int z = 0; z < new_dims[0]; z++) {
-        for (int y = 0; y < new_dims[1]; y++) {
-            for (int x = 0; x < new_dims[2]; x++) {
-                int idx[3] = {z, y, x};
+    // Perform the transpose
+    for (int i = 0; i < new_dims[0]; i++) {
+        for (int j = 0; j < new_dims[1]; j++) {
+            for (int k = 0; k < new_dims[2]; k++) {
+                // Current position in output order
+                int current_pos[3] = {i, j, k};
 
-                int old_indices[3] = {
-                    idx[mapping[0]],  // Z
-                    idx[mapping[1]],  // Y
-                    idx[mapping[2]]   // C
-                };
+                // Convert to canonical zyx order
+                int canonical_pos[3];
+                for (int dim = 0; dim < 3; dim++) {
+                    canonical_pos[output_mapping[dim]] = current_pos[dim];
+                }
 
-                float value = vs_chunk_get(input, old_indices[0], old_indices[1], old_indices[2]);
-                vs_chunk_set(output, z, y, x, value);
+                // Convert to input order
+                int input_pos[3];
+                for (int dim = 0; dim < 3; dim++) {
+                    input_pos[dim] = canonical_pos[input_mapping[dim]];
+                }
+
+                float value = vs_chunk_get(input, input_pos[0], input_pos[1], input_pos[2]);
+                vs_chunk_set(output, i, j, k, value);
             }
         }
     }
@@ -5923,6 +5841,110 @@ void vs_chunks_to_video(const chunk* r_chunk, const chunk* g_chunk, const chunk*
 
     // Clean up temporary files
     system("rm -rf temp_frames");
+}
+
+
+// BMP Header Structures
+#pragma pack(push, 1) // Ensure no padding
+typedef struct {
+    uint16_t bfType;
+    uint32_t bfSize;
+    uint16_t bfReserved1;
+    uint16_t bfReserved2;
+    uint32_t bfOffBits;
+} BMPFileHeader;
+
+typedef struct {
+    uint32_t biSize;
+    int32_t biWidth;
+    int32_t biHeight;
+    uint16_t biPlanes;
+    uint16_t biBitCount;
+    uint32_t biCompression;
+    uint32_t biSizeImage;
+    int32_t biXPelsPerMeter;
+    int32_t biYPelsPerMeter;
+    uint32_t biClrUsed;
+    uint32_t biClrImportant;
+} BMPInfoHeader;
+#pragma pack(pop)
+
+int vs_bmp_write(const char *filename, slice *image) {
+    FILE *file = fopen(filename, "wb");
+    if (!file) {
+        fprintf(stderr, "Failed to open file for writing: %s\n", filename);
+        return -1;
+    }
+
+    int width = image->dims[1];
+    int height = image->dims[0];
+
+    BMPFileHeader file_header;
+    BMPInfoHeader info_header;
+
+    // Calculate the size of each row including padding
+    int rowSize = (width + 3) & ~3; // Round up to the nearest multiple of 4
+    int imageSize = rowSize * height;
+
+    // BMP file header
+    file_header.bfType = 0x4D42; // 'BM'
+    file_header.bfOffBits = sizeof(BMPFileHeader) + sizeof(BMPInfoHeader) + 256 * 4; // File header + Info header + Palette
+    file_header.bfSize = file_header.bfOffBits + imageSize;
+    file_header.bfReserved1 = 0;
+    file_header.bfReserved2 = 0;
+
+    // BMP info header
+    info_header.biSize = sizeof(BMPInfoHeader);
+    info_header.biWidth = width;
+    info_header.biHeight = -height; // Negative height to indicate top-down row order
+    info_header.biPlanes = 1;
+    info_header.biBitCount = 8; // 8 bits per pixel (grayscale)
+    info_header.biCompression = 0;
+    info_header.biSizeImage = imageSize;
+    info_header.biXPelsPerMeter = 2835; // 72 DPI
+    info_header.biYPelsPerMeter = 2835; // 72 DPI
+    info_header.biClrUsed = 256;
+    info_header.biClrImportant = 256;
+
+    // Write BMP file header
+    fwrite(&file_header, sizeof(BMPFileHeader), 1, file);
+
+    // Write BMP info header
+    fwrite(&info_header, sizeof(BMPInfoHeader), 1, file);
+
+    // Write the grayscale palette (256 shades of gray)
+    for (int i = 0; i < 256; ++i) {
+        unsigned char color[4] = {i, i, i, 0}; // R, G, B, Reserved
+        fwrite(color, sizeof(unsigned char), 4, file);
+    }
+
+    // Allocate buffer for one row
+    unsigned char *row = (unsigned char *)malloc(rowSize);
+    if (!row) {
+        fprintf(stderr, "Memory allocation failed\n");
+        fclose(file);
+        return -1;
+    }
+
+    // Write the pixel data with padding, clamping values between 0 and 255
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            float pixel_value = vs_slice_get(image, y, x);
+            if (pixel_value < 0) pixel_value = 0;
+            if (pixel_value > 255) pixel_value = 255;
+            row[x] = (unsigned char)pixel_value;
+        }
+
+        // Clear padding bytes
+        memset(row + width, 0, rowSize - width);
+
+        // Write the padded row
+        fwrite(row, sizeof(unsigned char), rowSize, file);
+    }
+
+    free(row);
+    fclose(file);
+    return 0;
 }
 
 #endif // defined(VESUVIUS_IMPL)
