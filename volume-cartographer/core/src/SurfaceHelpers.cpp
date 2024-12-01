@@ -5848,7 +5848,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         int count = 0;
                         float cost = local_cost(test_surf, p, data_th, state, points, step, src_step, &count);
                         //FIXME opt then check all in extra again!
-                        if (cost < 2*local_cost_inl_th) {
+                        if (cost < 4*local_cost_inl_th) {
                             data_th.surfs(p).insert(test_surf);
                             surftrack_add_local(test_surf, p, data_th, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
                             
