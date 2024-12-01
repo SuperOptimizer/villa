@@ -5861,7 +5861,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 
                 ceres::Solve(options, &problem, &summary);
                 
-                //check for more agreeing surfs by checking agreeings surfs neigbors
+                //TODO only add/test if we have 2 neighs which both find locations
                 for(auto test_surf : more_local_surfs) {
                     SurfacePointer *ptr = test_surf->surf()->pointer();
                     float res = test_surf->surf()->pointTo(ptr, best_coord, same_surface_th, 10);
@@ -5972,7 +5972,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             update_mapping = true;
         }
         
-        update_mapping = false;
+        // update_mapping = false;
         
         // if (update_mapping)
         // {
