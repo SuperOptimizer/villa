@@ -4,6 +4,14 @@ project(vesuvius C)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_compile_options(-O0)
+    add_compile_definitions(DEBUG)
+else ()
+    add_compile_options(-O2)
+    add_compile_definitions(NDEBUG)
+endif ()
+
 add_executable(vesuvius_example example.c)
 add_executable(vesuvius_example2 example2.c)
 add_executable(vesuvius_tests runtests.c)

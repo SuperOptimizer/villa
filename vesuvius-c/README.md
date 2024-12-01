@@ -8,38 +8,38 @@ From [Vesuvius Challenge](https://scrollprize.org), a single-header C library fo
 #include "vesuvius-c.h"
 
 int main() {
-    const char *scroll_id = "1";
-    const int energy = 54;
-    const double resolution = 7.91;
+    //pick a region in the scoll to visualize
+    int vol_start[3] = {3072,3072,3072};
+    int chunk_dims[3] = {128,512,512};
+    
+    //initialize the volume
+    volume* scroll_vol = vs_vol_new(
+        "./54keV_7.91um_Scroll1A.zarr/0/",
+        "https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumes_zarr_standardized/54keV_7.91um_Scroll1A.zarr/0/");
+    
+    // get the scroll data by reading it from the cache and downloading it if necessary
+    chunk* scroll_chunk = vs_vol_get_chunk(scroll_vol, vol_start,chunk_dims);
 
-    init_vesuvius(scroll_id, energy, resolution);
-
-    // Define a region of interest in the scroll volume
-    RegionOfInterest roi = {
-        .x_start = 3456, .y_start = 3256, .z_start = 6521,
-        .x_width = 256, .y_height = 256, .z_depth = 256,
-    };
-
-    // Fetch this region into a local 3D volume
-    unsigned char *volume = (unsigned char *)malloc(roi.x_width * roi.y_height * roi.z_depth);
-    get_volume_roi(roi, volume);
-
-    // Fetch a slice (ROI with depth = 1) from the volume
-    roi.z_start = roi.z_start + roi.z_depth / 2;
-    roi.z_depth = 1;
-    unsigned char *slice = (unsigned char *)malloc(roi.x_width * roi.y_height);
-    get_volume_slice(roi, slice);
+    // Fetch a slice  from the volume
+    slice* myslice = vs_slice_extract(scroll_chunk, 0);
 
     // Write slice image to file
-    write_bmp("slice.bmp", slice, roi.x_width, roi.y_height);
+    vs_bmp_write("xy_slice.bmp",myslice);
+    
+    return 0;
 }
 ```
 
 Resulting image:
 
-<img src="img/sample_image.png" alt="Example scroll data" width="200"/>
+![slice](https://github.com/user-attachments/assets/f9fe5667-41e6-49f3-9e15-ca1d366ce293)
 
-The library fetches scroll data from the Vesuvius Challenge [data server](https://dl.ash2txt.org) in the background. Only the necessary volume chunks are requested, and an in-memory LRU cache holds recent chunks to avoid repeat downloads.
+Vesuvius-c can be used to work with zarr volumes, modify them, and write out the result in various formats. This video demonstrates [christmas tree highlighting](example2.c#L94) using a combination of scroll volume and surface segmentation provided by [@bruniss](https://github.com/bruniss):
+
+https://github.com/user-attachments/assets/e4b90221-744a-46d6-a7c2-cc3f1685fd54
+
+
+The library fetches scroll data from the Vesuvius Challenge [data server](https://dl.ash2txt.org) in the background. Only the necessary volume chunks are requested, and an in-memory LRU cache holds recent chunks to avoid repeat downloads. On-disk caching is also used to store downloads between program invocations.
 
 For a similar library in Python, see [vesuvius](https://github.com/ScrollPrize/vesuvius).
 
@@ -58,8 +58,30 @@ See [example.c](example.c) for example library usage.
 * [libcurl](https://curl.se/libcurl/)
 * [json-c](https://json-c.github.io/json-c/)
 * [c-blosc2](https://github.com/Blosc/c-blosc2)
+* [ffmpeg](https://www.ffmpeg.org/) (optional)
 
-`libcurl` is used for fetching volume chunks and is likely already available on your system. `c-blosc2` is used to decompress the Zarr chunks read from the server and may require installation. `json-c` is used to read the zarr metadata.
+`libcurl` is used for fetching volume chunks and is likely already available on your system. `c-blosc2` is used to decompress the Zarr chunks read from the server and may require installation. `json-c` is used to read the zarr metadata. `ffmpeg` is used to generate video from chunk data.
+
+### Installing Dependencies
+
+On Ubuntu, dependencies can be installed with
+
+```sh
+#install tools
+sudo apt install gcc build-essential cmake ffmpeg
+
+#install development libraries
+sudo apt install zlib1g zlib1g-dev liblz4-dev libblosc2-dev  libcurl4-openssl-dev
+
+#install dependencies from source
+git clone https://github.com/json-c/json-c.git
+cd json-c
+mkdir build
+cd build
+cmake ..
+make
+sudo make install
+```
 
 ### Build and run:
 
@@ -84,6 +106,13 @@ gcc -o example example.c -lcurl -lblosc2 -ljson-c -lm
 ./example
 ```
 
-## Next features
+Vesuvius-c also has a CMakeLists.txt that will automatically discover and link the necessary libraries:
 
-
+```sh
+cd vesuvius-c
+mkdir build
+cd build
+cmake ..
+make
+./vesuvius_example
+```

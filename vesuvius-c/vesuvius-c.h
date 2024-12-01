@@ -22,7 +22,6 @@
 //   - for pointers to primitive types the caller should just call free() on the pointer
 
 #include <ctype.h>
-#include <limits.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,935 +33,10 @@
 #include <sys/types.h>
 #include <errno.h>
 #include <float.h>
-
-// Buffer size for metadata JSON and URL
-#define BUFFER_SIZE 4096
-#define URL_SIZE 256
-
-#define CACHE_CAPACITY 100  // Define the LRU cache capacity
-#define CACHE_DIR ".vesuvius-cache"
-
-// Struct for scroll volume regions
-typedef struct {
-    int x_start;
-    int x_width;
-    int y_start;
-    int y_height;
-    int z_start;
-    int z_depth;
-} RegionOfInterest;
-
-typedef struct {
-    unsigned char *data;
-    size_t size;
-} MemoryChunk;
-
-typedef struct LRUNode {
-    int chunk_x;
-    int chunk_y;
-    int chunk_z;
-    MemoryChunk chunk;
-    struct LRUNode *prev;
-    struct LRUNode *next;
-} LRUNode;
-
-typedef struct {
-    LRUNode *head;
-    LRUNode *tail;
-    LRUNode *cache[CACHE_CAPACITY];
-    int count;
-} LRUCache;
-
-typedef struct {
-    float x, y, z;
-} Vertex;
-
-typedef struct {
-    int v1, v2, v3;  // Indices of the triangle's vertices
-} Triangle;
-
-typedef struct {
-    Vertex *vertices;
-    Triangle *triangles;
-    size_t vertex_count;
-    size_t triangle_count;
-} TriangleMesh;
-
-// Function prototypes
-static size_t write_callback(void *ptr, size_t size, size_t nmemb, void *stream);
-static int fetch_metadata(const char *url, char *buffer);
-static int parse_metadata(const char *buffer);
-int load_shape_and_chunksize(void);
-
-void init_vesuvius(const char *scroll_id, int energy, double resolution);
-
-LRUCache *init_cache();
-LRUNode *get_cache(LRUCache *cache, int chunk_x, int chunk_y, int chunk_z);
-void put_cache(LRUCache *cache, int chunk_x, int chunk_y, int chunk_z, MemoryChunk chunk);
-void move_to_head(LRUCache *cache, LRUNode *node);
-void evict_from_cache(LRUCache *cache);
-int hash_key(int chunk_x, int chunk_y, int chunk_z);
-
-size_t write_data(void *ptr, size_t size, size_t nmemb, MemoryChunk *chunk);
-
-int fetch_zarr_chunk(int chunk_x, int chunk_y, int chunk_z, MemoryChunk *chunk);
-
-int get_volume_voxel(int x, int y, int z, unsigned char *value);
-int get_volume_roi(RegionOfInterest region, unsigned char *volume);
-int get_volume_slice(RegionOfInterest region, unsigned char *slice);
-
-int write_bmp(const char *filename, unsigned char *image, int width, int height);
-int create_directories(const char *path);
-int write_chunk_to_disk(int chunk_x, int chunk_y, int chunk_z, MemoryChunk *chunk);
-int read_chunk_from_disk(int chunk_x, int chunk_y, int chunk_z, MemoryChunk *chunk);
-char *get_cache_path(int chunk_x, int chunk_y, int chunk_z);
-
-char *get_obj_cache_path(const char *id);
-int download_obj_file(const char *id, const char *cache_path);
-int fetch_obj_file(const char *id, char **obj_file_path);
-int parse_obj_file(const char *file_path, TriangleMesh *mesh);
-int get_triangle_mesh(const char *id, TriangleMesh *mesh);
-int write_trianglemesh_to_obj(const char *filename, const TriangleMesh *mesh);
-RegionOfInterest get_mesh_bounding_box(const TriangleMesh *mesh);
-void reset_mesh_origin_to_roi(TriangleMesh *mesh, const RegionOfInterest *roi);
-
-#ifdef VESUVIUS_IMPL
-
-// Global cache
-LRUCache *cache;
-
-// Global variable to store the dynamically constructed Zarr URL
-char ZARR_URL[URL_SIZE] = {0};  // Initially empty
-
-// Variables to hold Zarr's chunk sizes and shape, initially set to -1 to indicate uninitialized
-int CHUNK_SIZE_X = -1, CHUNK_SIZE_Y = -1, CHUNK_SIZE_Z = -1;
-int SHAPE_X = -1, SHAPE_Y = -1, SHAPE_Z = -1;
-
-// Internal function to write data fetched by cURL
-static size_t write_callback(void *ptr, size_t size, size_t nmemb, void *stream) {
-    strncat((char *)stream, (char *)ptr, size * nmemb);
-    return size * nmemb;
-}
-
-// Fetches the metadata JSON from the specified Zarr directory URL
-static int fetch_metadata(const char *url, char *buffer) {
-    CURL *curl;
-    CURLcode res;
-
-    // Construct the full URL to the `.zarray` metadata file
-    char metadata_url[URL_SIZE];
-    snprintf(metadata_url, URL_SIZE, "%s.zarray", url);
-
-    curl = curl_easy_init();
-    if (curl) {
-        curl_easy_setopt(curl, CURLOPT_URL, metadata_url);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, buffer);
-        res = curl_easy_perform(curl);
-        curl_easy_cleanup(curl);
-
-        if (res != CURLE_OK) {
-            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-            return -1;
-        }
-    } else {
-        fprintf(stderr, "Failed to initialize curl\n");
-        return -1;
-    }
-    return 0;
-}
-
-// Parses the metadata JSON to retrieve chunk sizes and shape
-static int parse_metadata(const char *buffer) {
-    struct json_object *parsed_json, *chunks, *shape;
-
-    parsed_json = json_tokener_parse(buffer);
-    if (parsed_json == NULL) {
-        fprintf(stderr, "Failed to parse JSON\n");
-        return -1;
-    }
-
-    // Extract "chunks" and "shape" arrays from JSON
-    if (!json_object_object_get_ex(parsed_json, "chunks", &chunks) ||
-        !json_object_object_get_ex(parsed_json, "shape", &shape)) {
-        fprintf(stderr, "Missing 'chunks' or 'shape' in metadata\n");
-        json_object_put(parsed_json);
-        return -1;
-    }
-
-    // Set chunk sizes from "chunks" array
-    CHUNK_SIZE_Z = json_object_get_int(json_object_array_get_idx(chunks, 0));
-    CHUNK_SIZE_Y = json_object_get_int(json_object_array_get_idx(chunks, 1));
-    CHUNK_SIZE_X = json_object_get_int(json_object_array_get_idx(chunks, 2));
-
-    // Set shape sizes from "shape" array
-    SHAPE_Z = json_object_get_int(json_object_array_get_idx(shape, 0));
-    SHAPE_Y = json_object_get_int(json_object_array_get_idx(shape, 1));
-    SHAPE_X = json_object_get_int(json_object_array_get_idx(shape, 2));
-
-    json_object_put(parsed_json);  // Free JSON object
-    return 0;
-}
-
-// Public function to initialize chunk sizes and shape
-int load_shape_and_chunksize() {
-    char buffer[BUFFER_SIZE] = {0};
-
-    if (fetch_metadata(ZARR_URL, buffer) != 0) {
-        fprintf(stderr, "Failed to fetch metadata\n");
-        return -1;
-    }
-    if (parse_metadata(buffer) != 0) {
-        fprintf(stderr, "Failed to parse metadata\n");
-        return -1;
-    }
-
-    return 0;
-}
-
-// Function to write data to memory (used by curl)
-size_t write_data(void *ptr, size_t size, size_t nmemb, MemoryChunk *chunk) {
-    size_t realsize = size * nmemb;
-    chunk->data = (unsigned char *)realloc(chunk->data, chunk->size + realsize);
-    if (chunk->data == NULL) {
-        fprintf(stderr, "Not enough memory (realloc returned NULL)\n");
-        return 0;
-    }
-    memcpy(&(chunk->data[chunk->size]), ptr, realsize);
-    chunk->size += realsize;
-    return realsize;
-}
-
-// Initialize the vesuvius library with dynamic URL construction
-void init_vesuvius(const char *scroll_id, int energy, double resolution) {
-    // Construct the ZARR_URL based on the provided parameters, stopping at the directory
-    snprintf(ZARR_URL, URL_SIZE,
-             "https://dl.ash2txt.org/other/dev/scrolls/%s/volumes/%dkeV_%.2fum.zarr/0/",
-             scroll_id, energy, resolution);
-
-    // Load shape and chunk size from the dynamically constructed ZARR_URL
-    if (load_shape_and_chunksize() != 0) {
-        fprintf(stderr, "Failed to load shape and chunk size\n");
-        exit(EXIT_FAILURE);  // Exit if metadata loading fails
-    }
-
-    // Print shape and chunk size to verify
-    printf("Loaded Zarr metadata from: %s\n", ZARR_URL);
-    printf("Shape: X=%d, Y=%d, Z=%d\n", SHAPE_X, SHAPE_Y, SHAPE_Z);
-    printf("Chunk Size: X=%d, Y=%d, Z=%d\n", CHUNK_SIZE_X, CHUNK_SIZE_Y, CHUNK_SIZE_Z);
-
-    // Initialize cache (assuming init_cache() initializes the cache system)
-    cache = init_cache();
-}
-
-// Initialize the LRU cache
-LRUCache *init_cache() {
-    LRUCache *cache = (LRUCache *)malloc(sizeof(LRUCache));
-    cache->head = NULL;
-    cache->tail = NULL;
-    cache->count = 0;
-
-    // Initialize all cache entries to NULL
-    for (int i = 0; i < CACHE_CAPACITY; i++) {
-        cache->cache[i] = NULL;
-    }
-
-    return cache;
-}
-
-// Hash function to generate a key for the cache
-int hash_key(int chunk_x, int chunk_y, int chunk_z) {
-    // Ensure the hash key is non-negative and within the bounds of CACHE_CAPACITY
-    return abs((chunk_x * 73856093) ^ (chunk_y * 19349663) ^ (chunk_z * 83492791)) % CACHE_CAPACITY;
-}
-
-// Get path for disk cache based on chunk coordinates
-char *get_cache_path(int chunk_x, int chunk_y, int chunk_z) {
-    char *path = (char *)malloc(512 * sizeof(char));
-    snprintf(path, 512, "%s/other/dev/scrolls/1/volumes/54keV_7.91um.zarr/0/%d/%d/%d", CACHE_DIR, chunk_z, chunk_y, chunk_x);
-    return path;
-}
-
-// Helper function to create directories recursively
-int create_directories(const char *path) {
-    char temp_path[512];
-    snprintf(temp_path, sizeof(temp_path), "%s", path);
-
-    for (char *p = temp_path + 1; *p; p++) {
-        if (*p == '/') {
-            *p = '\0';  // Temporarily terminate the string
-            if (mkdir(temp_path, 0755) != 0 && errno != EEXIST) {
-                return -1;  // Failed to create directory
-            }
-            *p = '/';  // Restore the original slash
-        }
-    }
-
-    // Create the last directory in the path
-    if (mkdir(temp_path, 0755) != 0 && errno != EEXIST) {
-        return -1;  // Failed to create final directory
-    }
-
-    return 0;  // Success
-}
-
-int write_chunk_to_disk(int chunk_x, int chunk_y, int chunk_z, MemoryChunk *chunk) {
-    char *path = get_cache_path(chunk_x, chunk_y, chunk_z);
-
-    // Ensure the directory structure is created recursively
-    char *dir = strdup(path);
-    char *last_slash = strrchr(dir, '/');
-    if (last_slash) {
-        *last_slash = '\0';  // Remove the file name, keeping only the directory path
-        if (create_directories(dir) != 0) {
-            fprintf(stderr, "Failed to create directory: %s\n", dir);
-            free(dir);
-            free(path);
-            return -1;
-        }
-    }
-    free(dir);
-
-    // Write chunk data to disk
-    FILE *file = fopen(path, "wb");
-    if (!file) {
-        fprintf(stderr, "Failed to open file: %s\n", path);
-        free(path);
-        return -1;
-    }
-
-    fwrite(chunk->data, sizeof(unsigned char), chunk->size, file);
-    fclose(file);
-    free(path);
-
-    return 0;
-}
-
-
-// Read a chunk from disk cache
-int read_chunk_from_disk(int chunk_x, int chunk_y, int chunk_z, MemoryChunk *chunk) {
-    char *path = get_cache_path(chunk_x, chunk_y, chunk_z);
-
-    FILE *file = fopen(path, "rb");
-    if (!file) {
-        free(path);
-        return -1; // File does not exist
-    }
-
-    fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    chunk->data = (unsigned char *)malloc(file_size);
-    if (chunk->data == NULL) {
-        fclose(file);
-        free(path);
-        return -1;
-    }
-
-    fread(chunk->data, sizeof(unsigned char), file_size, file);
-    chunk->size = file_size;
-
-    fclose(file);
-    free(path);
-    return 0;
-}
-
-// Get chunk from the cache
-LRUNode *get_cache(LRUCache *cache, int chunk_x, int chunk_y, int chunk_z) {
-    int key = hash_key(chunk_x, chunk_y, chunk_z);
-    LRUNode *node = cache->cache[key];
-
-    // Check if the node matches the requested chunk coordinates
-    if (node && node->chunk_x == chunk_x && node->chunk_y == chunk_y && node->chunk_z == chunk_z) {
-        move_to_head(cache, node);  // Move the node to the head (most recently used)
-        return node;
-    }
-    return NULL;
-}
-
-// Put a chunk into the cache
-void put_cache(LRUCache *cache, int chunk_x, int chunk_y, int chunk_z, MemoryChunk chunk) {
-    int key = hash_key(chunk_x, chunk_y, chunk_z);
-    LRUNode *node = (LRUNode *)malloc(sizeof(LRUNode));
-
-    node->chunk_x = chunk_x;
-    node->chunk_y = chunk_y;
-    node->chunk_z = chunk_z;
-    node->chunk = chunk;
-    node->prev = NULL;
-    node->next = cache->head;
-
-    if (cache->head != NULL) {
-        cache->head->prev = node;
-    }
-    cache->head = node;
-
-    if (cache->tail == NULL) {
-        cache->tail = node;
-    }
-
-    // If the cache is full, evict the least recently used node
-    if (cache->count == CACHE_CAPACITY) {
-        evict_from_cache(cache);
-    } else {
-        cache->count++;
-    }
-
-    cache->cache[key] = node;
-}
-
-// Move a node to the head of the LRU cache (most recently used)
-void move_to_head(LRUCache *cache, LRUNode *node) {
-    if (node == cache->head) return;
-
-    if (node->prev) {
-        node->prev->next = node->next;
-    }
-    if (node->next) {
-        node->next->prev = node->prev;
-    }
-
-    if (node == cache->tail) {
-        cache->tail = node->prev;
-    }
-
-    node->prev = NULL;
-    node->next = cache->head;
-
-    if (cache->head != NULL) {
-        cache->head->prev = node;
-    }
-    cache->head = node;
-}
-
-// Evict the least recently used node from the cache
-void evict_from_cache(LRUCache *cache) {
-    if (cache->tail == NULL) return;
-
-    LRUNode *node = cache->tail;
-
-    if (cache->tail->prev) {
-        cache->tail->prev->next = NULL;
-    }
-    cache->tail = cache->tail->prev;
-
-    int key = hash_key(node->chunk_x, node->chunk_y, node->chunk_z);
-    cache->cache[key] = NULL;
-
-    free(node->chunk.data);
-    free(node);
-}
-
-// Get chunk from the cache, disk, or fetch it
-int fetch_zarr_chunk(int chunk_x, int chunk_y, int chunk_z, MemoryChunk *chunk) {
-    LRUNode *cached_node = get_cache(cache, chunk_x, chunk_y, chunk_z);
-    if (cached_node) {
-        *chunk = cached_node->chunk;
-        return 0;
-    }
-
-    // Try reading from disk cache
-    if (read_chunk_from_disk(chunk_x, chunk_y, chunk_z, chunk) == 0) {
-        put_cache(cache, chunk_x, chunk_y, chunk_z, *chunk);  // Store in memory cache
-        return 0;
-    }
-
-    // Fetch the chunk from the server
-    CURL *curl;
-    CURLcode res;
-    char url[512];
-
-    snprintf(url, sizeof(url), "%s%d/%d/%d", ZARR_URL, chunk_z, chunk_y, chunk_x);
-    chunk->data = (unsigned char *)malloc(1);
-    chunk->size = 0;
-
-    curl = curl_easy_init();
-    if (curl) {
-        curl_easy_setopt(curl, CURLOPT_URL, url);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)chunk);
-
-        res = curl_easy_perform(curl);
-        if (res != CURLE_OK) {
-            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-            curl_easy_cleanup(curl);
-            return -1;
-        }
-        curl_easy_cleanup(curl);
-
-        // Decompress the chunk using Blosc
-        unsigned char *decompressed_data = (unsigned char *)malloc(CHUNK_SIZE_Z * CHUNK_SIZE_Y * CHUNK_SIZE_X);
-        int decompressed_size = blosc2_decompress(chunk->data, chunk->size, decompressed_data, CHUNK_SIZE_Z * CHUNK_SIZE_Y * CHUNK_SIZE_X);
-        if (decompressed_size < 0) {
-            fprintf(stderr, "Blosc2 decompression failed: %d\n", decompressed_size);
-            free(chunk->data);
-            free(decompressed_data);
-            return -1;
-        }
-
-        // Free the compressed data and update the chunk with the decompressed data
-        free(chunk->data);
-        chunk->data = decompressed_data;
-        chunk->size = decompressed_size;
-
-        // Store in memory and disk cache
-        put_cache(cache, chunk_x, chunk_y, chunk_z, *chunk);
-        write_chunk_to_disk(chunk_x, chunk_y, chunk_z, chunk);
-    }
-    return 0;
-}
-
-// Function to retrieve the value at a specific (x, y, z) index
-int get_volume_voxel(int x, int y, int z, unsigned char *value) {
-    // Calculate the corresponding chunk indices
-    int chunk_x = x / CHUNK_SIZE_X;
-    int chunk_y = y / CHUNK_SIZE_Y;
-    int chunk_z = z / CHUNK_SIZE_Z;
-
-    // Calculate the local indices within the chunk
-    int local_x = x % CHUNK_SIZE_X;
-    int local_y = y % CHUNK_SIZE_Y;
-    int local_z = z % CHUNK_SIZE_Z;
-
-    // Fetch the chunk data
-    MemoryChunk chunk = {0};
-    if (fetch_zarr_chunk(chunk_x, chunk_y, chunk_z, &chunk) != 0) {
-        fprintf(stderr, "Failed to fetch Zarr chunk\n");
-        return -1;
-    }
-
-    // Retrieve the value from the chunk data
-    *value = chunk.data[local_z * CHUNK_SIZE_X * CHUNK_SIZE_Y + local_y * CHUNK_SIZE_X + local_x];
-
-    return 0;
-}
-
-// Function to fill a 3D volume from the Zarr data
-int get_volume_roi(RegionOfInterest region, unsigned char *volume) {
-    // Validate boundaries
-    if (region.x_start < 0 || region.x_start + region.x_width > SHAPE_X ||
-        region.y_start < 0 || region.y_start + region.y_height > SHAPE_Y ||
-        region.z_start < 0 || region.z_start + region.z_depth > SHAPE_Z) {
-        fprintf(stderr, "Invalid boundaries for the volume\n");
-        return -1;
-    }
-
-    // Determine the range of chunks needed for the volume
-    int chunk_start_x = region.x_start / CHUNK_SIZE_X;
-    int chunk_end_x = (region.x_start + region.x_width - 1) / CHUNK_SIZE_X;
-    int chunk_start_y = region.y_start / CHUNK_SIZE_Y;
-    int chunk_end_y = (region.y_start + region.y_height - 1) / CHUNK_SIZE_Y;
-    int chunk_start_z = region.z_start / CHUNK_SIZE_Z;
-    int chunk_end_z = (region.z_start + region.z_depth - 1) / CHUNK_SIZE_Z;
-
-    // Loop over all chunks that cover the volume
-    for (int chunk_z = chunk_start_z; chunk_z <= chunk_end_z; ++chunk_z) {
-        for (int chunk_y = chunk_start_y; chunk_y <= chunk_end_y; ++chunk_y) {
-            for (int chunk_x = chunk_start_x; chunk_x <= chunk_end_x; ++chunk_x) {
-                // Fetch the chunk data
-                MemoryChunk chunk = {0};
-                if (fetch_zarr_chunk(chunk_x, chunk_y, chunk_z, &chunk) != 0) {
-                    fprintf(stderr, "Failed to fetch Zarr chunk (%d, %d, %d)\n", chunk_x, chunk_y, chunk_z);
-                    return -1;
-                }
-
-                // Calculate local boundaries within the chunk
-                int local_start_x = (chunk_x == chunk_start_x) ? region.x_start % CHUNK_SIZE_X : 0;
-                int local_end_x = (chunk_x == chunk_end_x) ? (region.x_start + region.x_width - 1) % CHUNK_SIZE_X : CHUNK_SIZE_X - 1;
-                int local_start_y = (chunk_y == chunk_start_y) ? region.y_start % CHUNK_SIZE_Y : 0;
-                int local_end_y = (chunk_y == chunk_end_y) ? (region.y_start + region.y_height - 1) % CHUNK_SIZE_Y : CHUNK_SIZE_Y - 1;
-                int local_start_z = (chunk_z == chunk_start_z) ? region.z_start % CHUNK_SIZE_Z : 0;
-                int local_end_z = (chunk_z == chunk_end_z) ? (region.z_start + region.z_depth - 1) % CHUNK_SIZE_Z : CHUNK_SIZE_Z - 1;
-
-                // Copy the relevant data from the chunk to the volume
-                for (int z = local_start_z; z <= local_end_z; ++z) {
-                    for (int y = local_start_y; y <= local_end_y; ++y) {
-                        memcpy(&volume[((chunk_z * CHUNK_SIZE_Z + z - region.z_start) * region.y_height +
-                                        (chunk_y * CHUNK_SIZE_Y + y - region.y_start)) * region.x_width +
-                                       (chunk_x * CHUNK_SIZE_X + local_start_x - region.x_start)],
-                               &chunk.data[z * CHUNK_SIZE_X * CHUNK_SIZE_Y + y * CHUNK_SIZE_X + local_start_x],
-                               local_end_x - local_start_x + 1);
-                    }
-                }
-            }
-        }
-    }
-
-    return 0;
-}
-
-int get_volume_slice(RegionOfInterest region, unsigned char *slice) {
-    // Validate boundaries
-    if (region.x_start < 0 || region.x_start + region.x_width > SHAPE_X ||
-        region.y_start < 0 || region.y_start + region.y_height > SHAPE_Y ||
-        region.z_start < 0 || region.z_start + region.z_depth > SHAPE_Z) {
-        fprintf(stderr, "Invalid boundaries for the volume\n");
-        return -1;
-    }
-
-    // Validate depth 1
-    if (region.z_depth != 1) {
-        fprintf(stderr, "Slice must have z_depth of 1\n");
-        return -1;
-    }
-
-    // Fetch the volume data for the slice
-    unsigned char *volume = (unsigned char *)malloc(region.x_width * region.y_height);
-    if (get_volume_roi(region, volume) != 0) {
-        fprintf(stderr, "Failed to fetch volume data for slice\n");
-        return -1;
-    }
-
-    // Copy the slice data from the volume
-    for (int y = 0; y < region.y_height; y++) {
-        for (int x = 0; x < region.x_width; x++) {
-            slice[y * region.x_width + x] = volume[y * region.x_width + x];
-        }
-    }
-
-    free(volume);
-    return 0;
-}
-
-// BMP Header Structures
-#pragma pack(push, 1) // Ensure no padding
-typedef struct {
-    uint16_t bfType;
-    uint32_t bfSize;
-    uint16_t bfReserved1;
-    uint16_t bfReserved2;
-    uint32_t bfOffBits;
-} BMPFileHeader;
-
-typedef struct {
-    uint32_t biSize;
-    int32_t biWidth;
-    int32_t biHeight;
-    uint16_t biPlanes;
-    uint16_t biBitCount;
-    uint32_t biCompression;
-    uint32_t biSizeImage;
-    int32_t biXPelsPerMeter;
-    int32_t biYPelsPerMeter;
-    uint32_t biClrUsed;
-    uint32_t biClrImportant;
-} BMPInfoHeader;
-#pragma pack(pop)
-
-// Function to write the image slice to a BMP file
-int write_bmp(const char *filename, unsigned char *image, int width, int height) {
-    FILE *file = fopen(filename, "wb");
-    if (!file) {
-        fprintf(stderr, "Failed to open file for writing: %s\n", filename);
-        return -1;
-    }
-
-    // BMP file and info headers
-    BMPFileHeader file_header;
-    BMPInfoHeader info_header;
-
-    // Calculate the size of each row including padding
-    int rowSize = (width + 3) & ~3; // Round up to the nearest multiple of 4
-    int imageSize = rowSize * height;
-
-    // BMP file header
-    file_header.bfType = 0x4D42; // 'BM'
-    file_header.bfOffBits = sizeof(BMPFileHeader) + sizeof(BMPInfoHeader) + 256 * 4; // File header + Info header + Palette
-    file_header.bfSize = file_header.bfOffBits + imageSize;
-    file_header.bfReserved1 = 0;
-    file_header.bfReserved2 = 0;
-
-    // BMP info header
-    info_header.biSize = sizeof(BMPInfoHeader);
-    info_header.biWidth = width;
-    info_header.biHeight = -height; // Negative height to indicate top-down row order
-    info_header.biPlanes = 1;
-    info_header.biBitCount = 8; // 8 bits per pixel (grayscale)
-    info_header.biCompression = 0;
-    info_header.biSizeImage = imageSize;
-    info_header.biXPelsPerMeter = 2835; // 72 DPI
-    info_header.biYPelsPerMeter = 2835; // 72 DPI
-    info_header.biClrUsed = 256;
-    info_header.biClrImportant = 256;
-
-    // Write BMP file header
-    fwrite(&file_header, sizeof(BMPFileHeader), 1, file);
-
-    // Write BMP info header
-    fwrite(&info_header, sizeof(BMPInfoHeader), 1, file);
-
-    // Write the grayscale palette (256 shades of gray)
-    for (int i = 0; i < 256; ++i) {
-        unsigned char color[4] = {i, i, i, 0}; // R, G, B, Reserved
-        fwrite(color, sizeof(unsigned char), 4, file);
-    }
-
-    // Write the pixel data with padding
-    unsigned char *row = (unsigned char *)malloc(rowSize);
-    if (!row) {
-        fprintf(stderr, "Memory allocation failed\n");
-        fclose(file);
-        return -1;
-    }
-
-    for (int y = 0; y < height; ++y) {
-        // Copy the image row and pad it
-        memcpy(row, image + (height - 1 - y) * width, width);
-        memset(row + width, 0, rowSize - width); // Pad the row
-
-        // Write the padded row
-        fwrite(row, sizeof(unsigned char), rowSize, file);
-    }
-
-    free(row);
-    fclose(file);
-    return 0;
-}
-
-char *get_obj_cache_path(const char *id) {
-    char *path = (char *)malloc(512 * sizeof(char));
-    snprintf(path, 512, "%s/full-scrolls/Scroll1/PHercParis4.volpkg/paths/%s/%s.obj", CACHE_DIR, id, id);
-    return path;
-}
-
-int download_obj_file(const char *id, const char *cache_path) {
-    CURL *curl;
-    CURLcode res;
-    char url[512];
-
-    snprintf(url, sizeof(url), "https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/%s/%s.obj", id, id);
-    FILE *file = fopen(cache_path, "wb");
-    if (!file) {
-        fprintf(stderr, "Failed to open file: %s\n", cache_path);
-        return -1;
-    }
-
-    curl = curl_easy_init();
-    if (curl) {
-        curl_easy_setopt(curl, CURLOPT_URL, url);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, file);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fwrite);
-
-        res = curl_easy_perform(curl);
-        if (res != CURLE_OK) {
-            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-            fclose(file);
-            curl_easy_cleanup(curl);
-            return -1;
-        }
-        curl_easy_cleanup(curl);
-    }
-    fclose(file);
-    return 0;
-}
-
-int fetch_obj_file(const char *id, char **obj_file_path) {
-    char *cache_path = get_obj_cache_path(id);
-
-    // Check if file exists in cache
-    FILE *file = fopen(cache_path, "r");
-    if (file) {
-        fclose(file);
-        *obj_file_path = cache_path;
-        return 0; // File already cached
-    }
-
-    // Create directory structure and download the file
-    char *dir = strdup(cache_path);
-    char *last_slash = strrchr(dir, '/');
-    if (last_slash) {
-        *last_slash = '\0';
-        if (create_directories(dir) != 0) {
-            fprintf(stderr, "Failed to create directory: %s\n", dir);
-            free(dir);
-            free(cache_path);
-            return -1;
-        }
-    }
-    free(dir);
-
-    // Download the file
-    if (download_obj_file(id, cache_path) != 0) {
-        free(cache_path);
-        return -1;
-    }
-
-    *obj_file_path = cache_path;
-    return 0;
-}
-
-int parse_obj_file(const char *file_path, TriangleMesh *mesh) {
-    FILE *file = fopen(file_path, "r");
-    if (!file) {
-        fprintf(stderr, "Failed to open .obj file: %s\n", file_path);
-        return -1;
-    }
-
-    // Initial capacities for vertices and triangles
-    size_t vertex_capacity = 100;
-    size_t triangle_capacity = 100;
-
-    // Allocate memory for vertices and triangles
-    mesh->vertices = (Vertex *)malloc(vertex_capacity * sizeof(Vertex));
-    mesh->triangles = (Triangle *)malloc(triangle_capacity * sizeof(Triangle));
-    mesh->vertex_count = 0;
-    mesh->triangle_count = 0;
-
-    if (!mesh->vertices || !mesh->triangles) {
-        fprintf(stderr, "Failed to allocate memory for mesh.\n");
-        fclose(file);
-        return -1;
-    }
-
-    char line[256];
-    while (fgets(line, sizeof(line), file)) {
-        // Parse vertex line (v)
-        if (strncmp(line, "v ", 2) == 0) {
-            // Resize the vertex array if capacity is exceeded
-            if (mesh->vertex_count >= vertex_capacity) {
-                vertex_capacity *= 2;
-                mesh->vertices = (Vertex *)realloc(mesh->vertices, vertex_capacity * sizeof(Vertex));
-                if (!mesh->vertices) {
-                    fprintf(stderr, "Failed to reallocate memory for vertices.\n");
-                    fclose(file);
-                    return -1;
-                }
-            }
-
-            // Read vertex coordinates
-            sscanf(line + 2, "%f %f %f", &mesh->vertices[mesh->vertex_count].x,
-                   &mesh->vertices[mesh->vertex_count].y, &mesh->vertices[mesh->vertex_count].z);
-            mesh->vertex_count++;
-        }
-        // Detect and skip vertex normal line (vn)
-        else if (strncmp(line, "vn ", 3) == 0) {
-            continue;
-        }
-        // Detect and skip texture coordinate line (vt)
-        else if (strncmp(line, "vt ", 3) == 0) {
-            continue;
-        }
-        // Parse face (f) line
-        else if (strncmp(line, "f ", 2) == 0) {
-            // Resize the triangle array if capacity is exceeded
-            if (mesh->triangle_count >= triangle_capacity) {
-                triangle_capacity *= 2;
-                mesh->triangles = (Triangle *)realloc(mesh->triangles, triangle_capacity * sizeof(Triangle));
-                if (!mesh->triangles) {
-                    fprintf(stderr, "Failed to reallocate memory for triangles.\n");
-                    fclose(file);
-                    return -1;
-                }
-            }
-
-            // Parse face with vertex indices (ignoring texture and normal indices)
-            int v1, v2, v3;
-            sscanf(line + 2, "%d/%*d/%*d %d/%*d/%*d %d/%*d/%*d", &v1, &v2, &v3);
-            mesh->triangles[mesh->triangle_count].v1 = v1 - 1;  // Convert to 0-based indexing
-            mesh->triangles[mesh->triangle_count].v2 = v2 - 1;
-            mesh->triangles[mesh->triangle_count].v3 = v3 - 1;
-            mesh->triangle_count++;
-        }
-    }
-
-    fclose(file);
-    return 0;
-}
-
-int get_triangle_mesh(const char *id, TriangleMesh *mesh) {
-    char *obj_file_path = NULL;
-    if (fetch_obj_file(id, &obj_file_path) != 0) {
-        fprintf(stderr, "Failed to fetch .obj file for ID: %s\n", id);
-        return -1;
-    }
-
-    if (parse_obj_file(obj_file_path, mesh) != 0) {
-        fprintf(stderr, "Failed to parse .obj file: %s\n", obj_file_path);
-        free(obj_file_path);
-        return -1;
-    }
-
-    free(obj_file_path);
-    return 0;
-}
-
-int write_trianglemesh_to_obj(const char *filename, const TriangleMesh *mesh) {
-    FILE *file = fopen(filename, "w");
-    if (!file) {
-        fprintf(stderr, "Error: Could not open file for writing: %s\n", filename);
-        return -1;
-    }
-
-    // Write vertices
-    for (size_t i = 0; i < mesh->vertex_count; ++i) {
-        const Vertex *v = &mesh->vertices[i];
-        fprintf(file, "v %f %f %f\n", v->x, v->y, v->z);
-    }
-
-    // Write faces (triangles)
-    for (size_t i = 0; i < mesh->triangle_count; ++i) {
-        const Triangle *t = &mesh->triangles[i];
-        // OBJ uses 1-based indexing, so increment the vertex indices by 1
-        fprintf(file, "f %d %d %d\n", t->v1 + 1, t->v2 + 1, t->v3 + 1);
-    }
-
-    fclose(file);
-    return 0;
-}
-
-RegionOfInterest get_mesh_bounding_box(const TriangleMesh *mesh) {
-    // Initialize the bounding box to extreme values
-    float min_x = FLT_MAX, min_y = FLT_MAX, min_z = FLT_MAX;
-    float max_x = -FLT_MAX, max_y = -FLT_MAX, max_z = -FLT_MAX;
-
-    // Traverse through all vertices to find the bounding box
-    for (size_t i = 0; i < mesh->vertex_count; ++i) {
-        const Vertex *v = &mesh->vertices[i];
-
-        if (v->x < min_x) min_x = v->x;
-        if (v->y < min_y) min_y = v->y;
-        if (v->z < min_z) min_z = v->z;
-
-        if (v->x > max_x) max_x = v->x;
-        if (v->y > max_y) max_y = v->y;
-        if (v->z > max_z) max_z = v->z;
-    }
-
-    // Calculate the dimensions of the bounding box
-    RegionOfInterest roi;
-    roi.x_start = min_x;
-    roi.y_start = min_y;
-    roi.z_start = min_z;
-    roi.x_width = max_x - min_x;
-    roi.y_height = max_y - min_y;
-    roi.z_depth = max_z - min_z;
-
-    return roi;
-}
-
-void reset_mesh_origin_to_roi(TriangleMesh *mesh, const RegionOfInterest *roi) {
-    // Subtract the ROI origin from each vertex in the mesh
-    for (size_t i = 0; i < mesh->vertex_count; ++i) {
-        mesh->vertices[i].x -= roi->x_start;
-        mesh->vertices[i].y -= roi->y_start;
-        mesh->vertices[i].z -= roi->z_start;
-    }
-}
-
-#endif
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <ctype.h>
 #include <stdint.h>
 #include <math.h>
-#include <float.h>
 #include <stdbool.h>
 #include <assert.h>
-#include <sys/stat.h>
-#include <string.h>
-#include <errno.h>
 #include <time.h>
 
 #include <curl/curl.h>
@@ -1022,6 +96,14 @@ typedef struct {
     size_t size;
 } DownloadBuffer;
 
+typedef struct {
+    CURLM* multi_handle;
+    CURL* easy_handle;
+    DownloadBuffer chunk;
+    bool complete;
+    long http_code;
+} MultiDownloadState;
+
 typedef struct chunk {
     int dims[3];
     float data[];
@@ -1038,6 +120,7 @@ typedef struct {
     f32 *vertices; // cannot be null
     s32 *indices; // cannot be null
     f32 *normals; // can be null if no normals
+    u8* colors; // can be null if no colors. RGB format, 3 u8 per vertex
     s32 vertex_count;
     s32 index_count;
 } mesh;
@@ -1152,7 +235,12 @@ typedef struct zarr_metadata {
     int32_t fill_value;
     char order; // Single character 'C' or 'F'
     int32_t zarr_format;
+    char dimension_separator;
 } zarr_metadata;
+
+typedef struct rgb {
+    u8 r, g, b;
+} rgb __attribute__((packed));
 
 // vol
 // A volume is an entire scroll at a given pixel density
@@ -1172,6 +260,18 @@ typedef struct volume {
     char url [1024];
     zarr_metadata metadata;
 } volume;
+
+typedef struct {
+    volume* vol;
+    s32 vol_start[3];
+    s32 chunk_dims[3];
+    chunk* ret;
+    int z, y, x;
+    int zstart, ystart, xstart;
+    int zend, yend, xend;
+    MultiDownloadState* download;
+    bool downloading;
+} ChunkLoadState;
 
 
 typedef enum {
@@ -1195,6 +295,8 @@ f32 vs_chamfer_distance(const f32* set1, s32 size1, const f32* set2, s32 size2);
 
 // curl
 long vs_download(const char* url, void** out_buffer);
+MultiDownloadState* vs_download_start(const char* url);
+bool vs_download_poll(MultiDownloadState* state, void** out_buffer, long* out_size);
 
 // histogram
 histogram *vs_histogram_new(s32 num_bins, f32 min_value, f32 max_value);
@@ -1218,10 +320,21 @@ chunk *vs_avgpool(chunk *inchunk, s32 kernel, s32 stride);
 chunk *vs_sumpool(chunk *inchunk, s32 kernel, s32 stride);
 chunk* vs_unsharp_mask_3d(chunk* input, float amount, s32 kernel_size);
 chunk* vs_normalize_chunk(chunk* input);
-chunk* vs_transpose(chunk* input, const char* current_layout);
+chunk* vs_transpose(chunk* input, const char* input_layout, const char* output_layout);
+chunk* vs_dilate(chunk* inchunk, s32 kernel);
+chunk* vs_erode(chunk* inchunk, s32 kernel);
+f32 vs_chunk_min(chunk *chunk);
+f32 vs_chunk_max(chunk *chunk);
+s32 vs_flood_fill(chunk* c, s32 z, s32 y, s32 x, chunk* visited, s32 max_size);
+chunk* vs_remove_small_components(chunk* c, s32 min_size);
+chunk* vs_threshold(chunk* inchunk, f32 threshold, f32 lo, f32 hi);
+chunk* vs_histogram_equalize(chunk* inchunk, s32 num_bins);
+chunk* vs_mask(chunk* inchunk, chunk* mask);
+s32 vs_count_labels(chunk* labeled_chunk, s32** counts);
+chunk* vs_connected_components_3d(chunk* in_chunk);
 
 // mesh
-mesh* vs_mesh_new(f32 *vertices, f32 *normals, s32 *indices, s32 vertex_count, s32 index_count);
+mesh* vs_mesh_new(f32 *vertices, f32 *normals, s32 *indices, u8* colors, s32 vertex_count, s32 index_count);
 void vs_mesh_free(mesh *mesh);
 void vs_mesh_get_bounds(const mesh *m,
                     f32 *origin_z, f32 *origin_y, f32 *origin_x,
@@ -1232,9 +345,12 @@ s32 vs_march_cubes(const f32* values,
                 s32 dimz, s32 dimy, s32 dimx,
                 f32 isovalue,
                 f32** out_vertices,      //  [z,y,x,z,y,x,...]
+                f32** out_colors,        //  [value, value, value, ...]
                 s32** out_indices,
                 s32* out_vertex_count,
                 s32* out_index_count);
+rgb vs_colormap_viridis(u8 val);
+int vs_colorize(const f32* grayscale, rgb* colors, s32 vertex_count, f32 min, f32 max);
 
 // nrrd
 nrrd* vs_nrrd_read(const char* filename);
@@ -1251,7 +367,8 @@ s32 vs_write_obj(const char* filename,
 // ply
 s32 vs_ply_write(const char *filename,
                     const f32 *vertices,
-                    const f32 *normals, // can be NULL if no normals
+                    const f32 *normals,
+                    const rgb *colors,
                     const s32 *indices,
                     s32 vertex_count,
                     s32 index_count);
@@ -1270,6 +387,10 @@ ppm* vs_ppm_read(const char* filename);
 int vs_ppm_write(const char* filename, const ppm* img, ppm_type type);
 void vs_ppm_set_pixel(ppm* img, u32 x, u32 y, u8 r, u8 g, u8 b);
 void vs_ppm_get_pixel(const ppm* img, u32 x, u32 y, u8* r, u8* g, u8* b);
+void vs_write_ppm_frame(FILE* fp, const chunk* r_chunk, const chunk* g_chunk,
+                    const chunk* b_chunk, int frame_idx);
+void vs_chunks_to_video(const chunk* r_chunk, const chunk* g_chunk, const chunk* b_chunk,
+                    const char* output_filename, int fps);
 
 //tiff
 TiffImage* vs_tiff_read(const char* filename);
@@ -1364,6 +485,7 @@ static void vs__process_cube(const f32* values,
                         s32 dimx, s32 dimy, s32 dimz,
                         f32 isovalue,
                         f32* vertices,
+                        f32* colors,
                         s32* indices,
                         s32* vertex_count,
                         s32* index_count);
@@ -1708,8 +830,7 @@ long vs_download(const char* url, void** out_buffer) {
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "libcurl-agent/1.0");
 
-    //TODO: with bearssl on windows I have to disable these
-    // does that matter?
+    //TODO: can we remove these? they were necessary for bearssl but unsure on openssl / gnutls / others
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 
@@ -1734,6 +855,64 @@ long vs_download(const char* url, void** out_buffer) {
     return chunk.size;
 }
 
+MultiDownloadState* vs_download_start(const char* url) {
+    MultiDownloadState* state = malloc(sizeof(MultiDownloadState));
+    if (!state) return NULL;
+
+    state->chunk.buffer = malloc(1);
+    state->chunk.size = 0;
+    state->complete = false;
+    state->http_code = 0;
+
+    if (!state->chunk.buffer) {
+        free(state);
+        return NULL;
+    }
+
+    state->chunk.buffer[0] = 0;
+
+    state->multi_handle = curl_multi_init();
+    state->easy_handle = curl_easy_init();
+
+    curl_easy_setopt(state->easy_handle, CURLOPT_URL, url);
+    curl_easy_setopt(state->easy_handle, CURLOPT_WRITEFUNCTION, vs__write_callback);
+    curl_easy_setopt(state->easy_handle, CURLOPT_WRITEDATA, (void *)&state->chunk);
+    curl_easy_setopt(state->easy_handle, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(state->easy_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
+    curl_easy_setopt(state->easy_handle, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(state->easy_handle, CURLOPT_SSL_VERIFYHOST, 0L);
+
+    curl_multi_add_handle(state->multi_handle, state->easy_handle);
+    return state;
+}
+
+bool vs_download_poll(MultiDownloadState* state, void** out_buffer, long* out_size) {
+    if (state->complete) return true;
+
+    int still_running;
+    curl_multi_perform(state->multi_handle, &still_running);
+
+    if (!still_running) {
+        curl_easy_getinfo(state->easy_handle, CURLINFO_RESPONSE_CODE, &state->http_code);
+        curl_multi_remove_handle(state->multi_handle, state->easy_handle);
+        curl_easy_cleanup(state->easy_handle);
+        curl_multi_cleanup(state->multi_handle);
+
+        state->complete = true;
+
+        if (state->http_code == 200 && out_buffer && out_size) {
+            *out_buffer = state->chunk.buffer;
+            *out_size = state->chunk.size;
+            return true;
+        }
+
+        free(state->chunk.buffer);
+        free(state);
+        return true;
+    }
+
+    return false;
+}
 
 // histogram
 histogram *vs_histogram_new(s32 num_bins, f32 min_value, f32 max_value) {
@@ -2013,6 +1192,252 @@ int vs_chunk_graft(chunk* dest, chunk* src, s32 src_start[static 3], s32 dest_st
   return 0;
 }
 
+chunk* vs_remove_small_components(chunk* c, s32 min_size) {
+    s32 dims[3] = {c->dims[0], c->dims[1], c->dims[2]};
+    chunk* visited = vs_chunk_new(dims);
+    chunk* ret = vs_chunk_new(dims);
+    memcpy(ret->data, c->data, dims[0] * dims[1] * dims[2] * sizeof(float));
+
+    // Pre-calculate offsets for 6 directions (+-z, +-y, +-x)
+    s32 offsets[6] = {
+        dims[1] * dims[2],      // +z
+        -dims[1] * dims[2],     // -z
+        dims[2],                // +y
+        -dims[2],               // -y
+        1,                      // +x
+        -1                      // -x
+    };
+
+    // Stack for DFS - pre-allocate once
+    s32* stack = malloc(dims[0] * dims[1] * dims[2] * sizeof(s32));
+
+    for (s32 i = 0; i < dims[0] * dims[1] * dims[2]; i++) {
+        if (ret->data[i] > 0.0f && visited->data[i] == 0.0f) {
+            s32 stack_top = 0;
+            s32 size = 0;
+            stack[stack_top++] = i;
+
+            // First pass - count size and mark visited
+            while (stack_top > 0) {
+                s32 curr = stack[--stack_top];
+                if (visited->data[curr] > 0.0f) continue;
+
+                visited->data[curr] = 1.0f;
+                size++;
+
+                if (size >= min_size) break; // Early exit if size requirement met
+
+                // Get z,y,x from linear index
+                s32 z = curr / (dims[1] * dims[2]);
+                s32 y = (curr % (dims[1] * dims[2])) / dims[2];
+                s32 x = curr % dims[2];
+
+                // Check all 6 directions
+                for (s32 dir = 0; dir < 6; dir++) {
+                    // Check if move is valid
+                    if ((dir == 0 && z >= dims[0]-1) ||
+                        (dir == 1 && z <= 0) ||
+                        (dir == 2 && y >= dims[1]-1) ||
+                        (dir == 3 && y <= 0) ||
+                        (dir == 4 && x >= dims[2]-1) ||
+                        (dir == 5 && x <= 0)) continue;
+
+                    s32 next = curr + offsets[dir];
+                    if (ret->data[next] > 0.0f && visited->data[next] == 0.0f) {
+                        stack[stack_top++] = next;
+                    }
+                }
+            }
+
+            // If component is too small, remove it
+            if (size < min_size) {
+                for (s32 j = 0; j < dims[0] * dims[1] * dims[2]; j++) {
+                    if (visited->data[j] == 1.0f) {
+                        ret->data[j] = 0.0f;
+                    }
+                }
+            }
+
+            // Reset visited markers for found component
+            for (s32 j = 0; j < dims[0] * dims[1] * dims[2]; j++) {
+                if (visited->data[j] == 1.0f) {
+                    visited->data[j] = 2.0f;  // Mark as processed
+                }
+            }
+        }
+    }
+
+    free(stack);
+    vs_chunk_free(visited);
+    return ret;
+}
+
+s32 vs_flood_fill(chunk* c, s32 start_z, s32 start_y, s32 start_x, chunk* visited, s32 max_size) {
+    s32 dims[3] = {c->dims[0], c->dims[1], c->dims[2]};
+    s32 start_idx = start_z * dims[1] * dims[2] + start_y * dims[2] + start_x;
+
+    // Early exit checks
+    if (start_z < 0 || start_z >= dims[0] ||
+        start_y < 0 || start_y >= dims[1] ||
+        start_x < 0 || start_x >= dims[2] ||
+        c->data[start_idx] == 0.0f ||
+        visited->data[start_idx] > 0.0f) {
+        return 0;
+    }
+
+    s32 offsets[6] = {
+        dims[1] * dims[2],  // +z
+        -dims[1] * dims[2], // -z
+        dims[2],            // +y
+        -dims[2],          // -y
+        1,                 // +x
+        -1                // -x
+    };
+
+    s32* stack = malloc(dims[0] * dims[1] * dims[2] * sizeof(s32));
+    s32 stack_top = 0;
+    s32 count = 0;
+
+    stack[stack_top++] = start_idx;
+
+    while (stack_top > 0) {
+        s32 curr = stack[--stack_top];
+        if (visited->data[curr] > 0.0f) continue;
+
+        visited->data[curr] = 1.0f;
+        count++;
+
+        if (max_size > 0 && count >= max_size) {
+            free(stack);
+            return max_size;
+        }
+
+        s32 z = curr / (dims[1] * dims[2]);
+        s32 y = (curr % (dims[1] * dims[2])) / dims[2];
+        s32 x = curr % dims[2];
+
+        for (s32 dir = 0; dir < 6; dir++) {
+            if ((dir == 0 && z >= dims[0]-1) ||
+                (dir == 1 && z <= 0) ||
+                (dir == 2 && y >= dims[1]-1) ||
+                (dir == 3 && y <= 0) ||
+                (dir == 4 && x >= dims[2]-1) ||
+                (dir == 5 && x <= 0)) continue;
+
+            s32 next = curr + offsets[dir];
+            if (c->data[next] > 0.0f && visited->data[next] == 0.0f) {
+                stack[stack_top++] = next;
+            }
+        }
+    }
+
+    free(stack);
+    return count;
+}
+
+chunk* vs_erode(chunk* inchunk, s32 kernel) {
+  s32 dims[3] = {inchunk->dims[0], inchunk->dims[1], inchunk->dims[2]};
+  chunk* ret = vs_chunk_new(dims);
+
+  s32 offset = kernel / 2;
+  for (s32 z = 0; z < dims[0]; z++)
+    for (s32 y = 0; y < dims[1]; y++)
+      for (s32 x = 0; x < dims[2]; x++) {
+        f32 min_val = vs_chunk_get(inchunk, z, y, x);
+        for (s32 zi = -offset; zi <= offset; zi++)
+          for (s32 yi = -offset; yi <= offset; yi++)
+            for (s32 xi = -offset; xi <= offset; xi++) {
+              s32 nz = z + zi;
+              s32 ny = y + yi;
+              s32 nx = x + xi;
+
+              if (nz < 0 || nz >= dims[0] ||
+                  ny < 0 || ny >= dims[1] ||
+                  nx < 0 || nx >= dims[2]) {
+                continue;
+              }
+
+              f32 val = vs_chunk_get(inchunk, nz, ny, nx);
+              if (val < min_val) {
+                min_val = val;
+              }
+            }
+        vs_chunk_set(ret, z, y, x, min_val);
+      }
+  return ret;
+}
+
+chunk* vs_dilate(chunk* inchunk, s32 kernel) {
+  s32 dims[3] = {inchunk->dims[0], inchunk->dims[1], inchunk->dims[2]};
+  chunk* ret = vs_chunk_new(dims);
+
+  s32 offset = kernel / 2;
+  for (s32 z = 0; z < dims[0]; z++)
+    for (s32 y = 0; y < dims[1]; y++)
+      for (s32 x = 0; x < dims[2]; x++) {
+        f32 max_val = 0.0f;
+        for (s32 zi = -offset; zi <= offset; zi++)
+          for (s32 yi = -offset; yi <= offset; yi++)
+            for (s32 xi = -offset; xi <= offset; xi++) {
+              s32 nz = z + zi;
+              s32 ny = y + yi;
+              s32 nx = x + xi;
+
+              if (nz < 0 || nz >= dims[0] ||
+                  ny < 0 || ny >= dims[1] ||
+                  nx < 0 || nx >= dims[2]) {
+                continue;
+              }
+
+              f32 val = vs_chunk_get(inchunk, nz, ny, nx);
+              if (val > max_val) {
+                max_val = val;
+              }
+            }
+        vs_chunk_set(ret, z, y, x, max_val);
+      }
+  return ret;
+}
+
+f32 vs_chunk_max(chunk *chunk) {
+    f32 max_val = chunk->data[0];
+    s32 total = chunk->dims[0] * chunk->dims[1] * chunk->dims[2];
+
+    for (s32 i = 1; i < total; i++) {
+        if (chunk->data[i] > max_val) {
+            max_val = chunk->data[i];
+        }
+    }
+    return max_val;
+}
+
+f32 vs_chunk_min(chunk *chunk) {
+    f32 min_val = chunk->data[0];
+    s32 total = chunk->dims[0] * chunk->dims[1] * chunk->dims[2];
+
+    for (s32 i = 1; i < total; i++) {
+        if (chunk->data[i] < min_val) {
+            min_val = chunk->data[i];
+        }
+    }
+    return min_val;
+}
+
+chunk* vs_threshold(chunk* inchunk, f32 threshold, f32 lo, f32 hi) {
+    chunk* ret = vs_chunk_new(inchunk->dims);
+
+    for (s32 z = 0; z < ret->dims[0]; z++) {
+        for (s32 y = 0; y < ret->dims[1]; y++) {
+            for (s32 x = 0; x < ret->dims[2]; x++) {
+                f32 current_value = vs_chunk_get(inchunk, z, y, x);
+                f32 output_value = (current_value < threshold) ? lo : hi;
+                vs_chunk_set(ret, z, y, x, output_value);
+            }
+        }
+    }
+
+    return ret;
+}
 
 chunk* vs_maxpool(chunk* inchunk, s32 kernel, s32 stride) {
   s32 dims[3] = {
@@ -2200,54 +1625,66 @@ chunk* vs_normalize_chunk(chunk* input) {
   return output;
 }
 
-chunk* vs_transpose(chunk* input, const char* current_layout) {
-    if (!input || !current_layout || strlen(current_layout) != 3) {
+chunk* vs_transpose(chunk* input, const char* input_layout, const char* output_layout) {
+    if (!input || !input_layout || !output_layout ||
+        strlen(input_layout) != 3 || strlen(output_layout) != 3) {
         return NULL;
     }
 
-    int mapping[3] = {0, 0, 0};
-
+    // map from input to z y x
+    int input_mapping[3] = {0, 0, 0};
     for (int i = 0; i < 3; i++) {
-        switch (current_layout[i]) {
-            case 'z':
-                mapping[0] = i;
-                break;
-            case 'y':
-                mapping[1] = i;
-                break;
-            case 'x':
-                mapping[2] = i;
-                break;
-            default:
-                return NULL;
+        switch (input_layout[i]) {
+            case 'z': input_mapping[0] = i; break;
+            case 'y': input_mapping[1] = i; break;
+            case 'x': input_mapping[2] = i; break;
+            default: return NULL;
         }
     }
 
-    int new_dims[3] = {
-        input->dims[mapping[0]],  // z
-        input->dims[mapping[1]],  // y
-        input->dims[mapping[2]]   // x
-    };
+    // map from z y x to output
+    int output_mapping[3] = {0, 0, 0};
+    for (int i = 0; i < 3; i++) {
+        switch (output_layout[i]) {
+            case 'z': output_mapping[i] = 0; break;
+            case 'y': output_mapping[i] = 1; break;
+            case 'x': output_mapping[i] = 2; break;
+            default: return NULL;
+        }
+    }
+
+    // Calculate new dimensions based on output layout
+    int new_dims[3];
+    for (int i = 0; i < 3; i++) {
+        new_dims[i] = input->dims[input_mapping[output_mapping[i]]];
+    }
 
     chunk* output = vs_chunk_new(new_dims);
     if (!output) {
         return NULL;
     }
 
-    // Perform the vs_transpose
-    for (int z = 0; z < new_dims[0]; z++) {
-        for (int y = 0; y < new_dims[1]; y++) {
-            for (int x = 0; x < new_dims[2]; x++) {
-                int idx[3] = {z, y, x};
+    // Perform the transpose
+    for (int i = 0; i < new_dims[0]; i++) {
+        for (int j = 0; j < new_dims[1]; j++) {
+            for (int k = 0; k < new_dims[2]; k++) {
+                // Current position in output order
+                int current_pos[3] = {i, j, k};
 
-                int old_indices[3] = {
-                    idx[mapping[0]],  // Z
-                    idx[mapping[1]],  // Y
-                    idx[mapping[2]]   // C
-                };
+                // Convert to canonical zyx order
+                int canonical_pos[3];
+                for (int dim = 0; dim < 3; dim++) {
+                    canonical_pos[output_mapping[dim]] = current_pos[dim];
+                }
 
-                float value = vs_chunk_get(input, old_indices[0], old_indices[1], old_indices[2]);
-                vs_chunk_set(output, z, y, x, value);
+                // Convert to input order
+                int input_pos[3];
+                for (int dim = 0; dim < 3; dim++) {
+                    input_pos[dim] = canonical_pos[input_mapping[dim]];
+                }
+
+                float value = vs_chunk_get(input, input_pos[0], input_pos[1], input_pos[2]);
+                vs_chunk_set(output, i, j, k, value);
             }
         }
     }
@@ -2255,11 +1692,241 @@ chunk* vs_transpose(chunk* input, const char* current_layout) {
     return output;
 }
 
+chunk* vs_histogram_equalize(chunk* inchunk, s32 num_bins) {
+    s32 total_voxels = inchunk->dims[0] * inchunk->dims[1] * inchunk->dims[2];
+
+    // Create histogram
+    histogram* hist = vs_chunk_histogram(inchunk->data,
+                                       inchunk->dims[0],
+                                       inchunk->dims[1],
+                                       inchunk->dims[2],
+                                       num_bins);
+    if (!hist) return NULL;
+
+    // Calculate cumulative distribution function (CDF)
+    u32* cdf = calloc(num_bins, sizeof(u32));
+    if (!cdf) {
+        vs_histogram_free(hist);
+        return NULL;
+    }
+
+    cdf[0] = hist->bins[0];
+    for (s32 i = 1; i < num_bins; i++) {
+        cdf[i] = cdf[i-1] + hist->bins[i];
+    }
+
+    // Find first non-zero bin
+    s32 cdf_min = 0;
+    for (s32 i = 0; i < num_bins; i++) {
+        if (cdf[i] > 0) {
+            cdf_min = cdf[i];
+            break;
+        }
+    }
+
+    // Create output chunk
+    chunk* ret = vs_chunk_new(inchunk->dims);
+    if (!ret) {
+        free(cdf);
+        vs_histogram_free(hist);
+        return NULL;
+    }
+
+    // Apply histogram equalization
+    f32 scale = (f32)(num_bins - 1) / (total_voxels - cdf_min);
+
+    for (s32 z = 0; z < inchunk->dims[0]; z++) {
+        for (s32 y = 0; y < inchunk->dims[1]; y++) {
+            for (s32 x = 0; x < inchunk->dims[2]; x++) {
+                f32 val = vs_chunk_get(inchunk, z, y, x);
+                s32 bin = vs__get_bin_index(hist, val);
+                f32 new_val = (cdf[bin] - cdf_min) * scale;
+
+                // Scale back to original range
+                new_val = hist->min_value + (new_val / (num_bins - 1)) *
+                         (hist->max_value - hist->min_value);
+
+                vs_chunk_set(ret, z, y, x, new_val);
+            }
+        }
+    }
+
+    free(cdf);
+    vs_histogram_free(hist);
+    return ret;
+}
+
+chunk* vs_mask(chunk* inchunk, chunk* mask) {
+    chunk* ret = vs_chunk_new(inchunk->dims);
+    for (int z = 0; z < inchunk->dims[0]; z++) {
+        for (int y = 0; y < inchunk->dims[1]; y++) {
+            for (int x = 0; x < inchunk->dims[2]; x++) {
+                f32 m = vs_chunk_get(mask,z,y,x);
+                f32 v = vs_chunk_get(inchunk,z,y,x);
+                vs_chunk_set(ret,z,y,x,m*v);
+            }
+        }
+    }
+    return ret;
+}
+
+#define LABEL_EPSILON 0.0001f
+#define is_labeled(val) (fabsf((val) - 1.0f) < LABEL_EPSILON)
+#define is_unlabeled(val)  (!(is_labeled(val)))
+
+
+void vs__flood_fill_2d(chunk* out_chunk, chunk* in_chunk, s32 z, s32 y, s32 x, f32 label) {
+    if (y < 0 || y >= in_chunk->dims[1] ||
+        x < 0 || x >= in_chunk->dims[2] ||
+        !is_labeled(vs_chunk_get(in_chunk, z, y, x)) ||
+        !is_unlabeled(vs_chunk_get(out_chunk, z, y, x))) {
+        return;
+    }
+
+    vs_chunk_set(out_chunk, z, y, x, label);
+
+    vs__flood_fill_2d(out_chunk, in_chunk, z, y+1, x, label);
+    vs__flood_fill_2d(out_chunk, in_chunk, z, y-1, x, label);
+    vs__flood_fill_2d(out_chunk, in_chunk, z, y, x+1, label);
+    vs__flood_fill_2d(out_chunk, in_chunk, z, y, x-1, label);
+}
+
+f32 vs__get_most_common_label(chunk* out_chunk, s32 z, s32 y, s32 x) {
+    f32 labels[9];  // Store unique labels
+    s32 counts[9];  // Store counts for each label
+    s32 num_unique = 0;
+
+    // Scan 3x3 neighborhood in previous slice
+    for (s32 dy = -1; dy <= 1; dy++) {
+        for (s32 dx = -1; dx <= 1; dx++) {
+            if (y + dy < 0 || y + dy >= out_chunk->dims[1] ||
+                x + dx < 0 || x + dx >= out_chunk->dims[2]) {
+                continue;
+            }
+
+            f32 label = vs_chunk_get(out_chunk, z-1, y+dy, x+dx);
+            if (is_unlabeled(label)) {
+                continue;
+            }
+
+            // Check if we've seen this label before
+            bool found = false;
+            for (s32 i = 0; i < num_unique; i++) {
+                if (fabsf(labels[i] - label) < LABEL_EPSILON) {
+                    counts[i]++;
+                    found = true;
+                    break;
+                }
+            }
+
+            // If new label, add it
+            if (!found && num_unique < 9) {
+                labels[num_unique] = label;
+                counts[num_unique] = 1;
+                num_unique++;
+            }
+        }
+    }
+
+    // Find label with highest count
+    if (num_unique == 0) {
+        return 0.0f;  // No labels found
+    }
+
+    s32 max_count = counts[0];
+    f32 most_common = labels[0];
+
+    for (s32 i = 1; i < num_unique; i++) {
+        if (counts[i] > max_count) {
+            max_count = counts[i];
+            most_common = labels[i];
+        }
+    }
+
+    return most_common;
+}
+chunk* vs_connected_components_3d(chunk* in_chunk) {
+    chunk* out_chunk = vs_chunk_new(in_chunk->dims);
+    f32 current_label = 0;
+
+    // Process first slice
+    for (s32 y = 0; y < in_chunk->dims[1]; y++) {
+        for (s32 x = 0; x < in_chunk->dims[2]; x++) {
+            if (is_labeled(vs_chunk_get(in_chunk, 0, y, x)) &&
+                is_unlabeled(vs_chunk_get(out_chunk, 0, y, x))) {
+                current_label += 1;
+                vs__flood_fill_2d(out_chunk, in_chunk, 0, y, x, current_label);
+                }
+        }
+    }
+
+    // Process subsequent slices
+    for (s32 z = 1; z < in_chunk->dims[0]; z++) {
+        // First pass: propagate existing labels forward
+        for (s32 y = 0; y < in_chunk->dims[1]; y++) {
+            for (s32 x = 0; x < in_chunk->dims[2]; x++) {
+                if (is_labeled(vs_chunk_get(in_chunk, z, y, x))) {
+                    f32 prev_label = vs__get_most_common_label(out_chunk, z, y, x);
+                    if (!is_unlabeled(prev_label)) {
+                        vs__flood_fill_2d(out_chunk, in_chunk, z, y, x, prev_label);
+                    }
+                }
+            }
+        }
+
+        // Second pass: create new labels for unlabeled segments
+        for (s32 y = 0; y < in_chunk->dims[1]; y++) {
+            for (s32 x = 0; x < in_chunk->dims[2]; x++) {
+                if (is_labeled(vs_chunk_get(in_chunk, z, y, x)) &&
+                    is_unlabeled(vs_chunk_get(out_chunk, z, y, x))) {
+                    current_label += 1;
+                    vs__flood_fill_2d(out_chunk, in_chunk, z, y, x, current_label);
+                    }
+            }
+        }
+    }
+
+    return out_chunk;
+}
+
+
+s32 vs_count_labels(chunk* labeled_chunk, s32** counts) {
+    // First pass: find max label
+    f32 max_label = 0;
+    for (s32 z = 0; z < labeled_chunk->dims[0]; z++) {
+        for (s32 y = 0; y < labeled_chunk->dims[1]; y++) {
+            for (s32 x = 0; x < labeled_chunk->dims[2]; x++) {
+                f32 label = vs_chunk_get(labeled_chunk, z, y, x);
+                if (label > max_label) {
+                    max_label = label;
+                }
+            }
+        }
+    }
+
+    // Allocate array for counts (+1 because we include 0)
+    s32 num_labels = (s32)max_label + 1;
+    *counts = (s32*)calloc(num_labels, sizeof(s32));
+
+    // Count voxels for each label
+    for (s32 z = 0; z < labeled_chunk->dims[0]; z++) {
+        for (s32 y = 0; y < labeled_chunk->dims[1]; y++) {
+            for (s32 x = 0; x < labeled_chunk->dims[2]; x++) {
+                f32 label = vs_chunk_get(labeled_chunk, z, y, x);
+                (*counts)[(s32)label]++;
+            }
+        }
+    }
+
+    return num_labels;
+}
+
 // mesh
 
 mesh* vs_mesh_new(f32 *vertices,
                     f32 *normals, // can be NULL if no normals
                     s32 *indices,
+                    u8* colors, // can be NULL if no colors
                     s32 vertex_count,
                     s32 index_count) {
 
@@ -2267,6 +1934,7 @@ mesh* vs_mesh_new(f32 *vertices,
     ret->vertices = vertices;
     ret->indices = indices;
     ret->normals = normals;
+    ret->colors = colors;
     ret->vertex_count = vertex_count;
     ret->index_count = index_count;
     return ret;
@@ -2278,6 +1946,7 @@ void vs_mesh_free(mesh *mesh) {
         free(mesh->vertices);
         free(mesh->indices);
         free(mesh->normals);
+        free(mesh->colors);
         free(mesh);
     }
 }
@@ -2366,27 +2035,31 @@ void vs_mesh_scale(mesh *m, f32 scale_z, f32 scale_y, f32 scale_x) {
     }
 }
 
-static void vs__interpolate_vertex(f32 isovalue,
+static void vs__interpolate_vertex_and_value(f32 isovalue,
                                     f32 v1, f32 v2,
                                     f32 x1, f32 y1, f32 z1,
                                     f32 x2, f32 y2, f32 z2,
-                                    f32* out_x, f32* out_y, f32* out_z) {
+                                    f32* out_x, f32* out_y, f32* out_z,
+                                    f32* out_value) {
     if (fabs(isovalue - v1) < 0.00001f) {
         *out_x = x1;
         *out_y = y1;
         *out_z = z1;
+        *out_value = v1;
         return;
     }
     if (fabs(isovalue - v2) < 0.00001f) {
         *out_x = x2;
         *out_y = y2;
         *out_z = z2;
+        *out_value = v2;
         return;
     }
     if (fabs(v1 - v2) < 0.00001f) {
         *out_x = x1;
         *out_y = y1;
         *out_z = z1;
+        *out_value = v1;
         return;
     }
 
@@ -2394,6 +2067,8 @@ static void vs__interpolate_vertex(f32 isovalue,
     *out_x = x1 + mu * (x2 - x1);
     *out_y = y1 + mu * (y2 - y1);
     *out_z = z1 + mu * (z2 - z1);
+
+    *out_value = v1;
 }
 
 static f32 vs__get_value(const f32* values, s32 x, s32 y, s32 z,
@@ -2406,6 +2081,7 @@ static void vs__process_cube(const f32* values,
                         s32 dimx, s32 dimy, s32 dimz,
                         f32 isovalue,
                         f32* vertices,
+                        f32* colors,
                         s32* indices,
                         s32* vertex_count,
                         s32* index_count) {
@@ -2723,78 +2399,91 @@ static const s32 triTable[256][16] =
         return;
 
     f32 edge_verts[12][3];  // [x,y,z] for each possible edge vertex
+    f32 edge_values[12];    // scalar field value for each edge vertex
 
     if (edgeTable[cubeindex] & 1)
-        vs__interpolate_vertex(isovalue, cube_values[0], cube_values[1],
+        vs__interpolate_vertex_and_value(isovalue, cube_values[0], cube_values[1],
                          x, y, z,             // vertex 0
                          x + 1, y, z,         // vertex 1
-                         &edge_verts[0][0], &edge_verts[0][1], &edge_verts[0][2]);
+                         &edge_verts[0][0], &edge_verts[0][1], &edge_verts[0][2],
+                         &edge_values[0]);
 
     if (edgeTable[cubeindex] & 2)
-        vs__interpolate_vertex(isovalue, cube_values[1], cube_values[2],
+        vs__interpolate_vertex_and_value(isovalue, cube_values[1], cube_values[2],
                          x + 1, y, z,         // vertex 1
                          x + 1, y + 1, z,     // vertex 2
-                         &edge_verts[1][0], &edge_verts[1][1], &edge_verts[1][2]);
+                         &edge_verts[1][0], &edge_verts[1][1], &edge_verts[1][2],
+                         &edge_values[1]);
 
     if (edgeTable[cubeindex] & 4)
-        vs__interpolate_vertex(isovalue, cube_values[2], cube_values[3],
+        vs__interpolate_vertex_and_value(isovalue, cube_values[2], cube_values[3],
                          x + 1, y + 1, z,     // vertex 2
                          x, y + 1, z,         // vertex 3
-                         &edge_verts[2][0], &edge_verts[2][1], &edge_verts[2][2]);
+                         &edge_verts[2][0], &edge_verts[2][1], &edge_verts[2][2],
+                         &edge_values[2]);
 
     if (edgeTable[cubeindex] & 8)
-        vs__interpolate_vertex(isovalue, cube_values[3], cube_values[0],
+        vs__interpolate_vertex_and_value(isovalue, cube_values[3], cube_values[0],
                          x, y + 1, z,         // vertex 3
                          x, y, z,             // vertex 0
-                         &edge_verts[3][0], &edge_verts[3][1], &edge_verts[3][2]);
+                         &edge_verts[3][0], &edge_verts[3][1], &edge_verts[3][2],
+                         &edge_values[3]);
 
     if (edgeTable[cubeindex] & 16)
-        vs__interpolate_vertex(isovalue, cube_values[4], cube_values[5],
+        vs__interpolate_vertex_and_value(isovalue, cube_values[4], cube_values[5],
                          x, y, z + 1,         // vertex 4
                          x + 1, y, z + 1,     // vertex 5
-                         &edge_verts[4][0], &edge_verts[4][1], &edge_verts[4][2]);
+                         &edge_verts[4][0], &edge_verts[4][1], &edge_verts[4][2],
+                         &edge_values[4]);
 
     if (edgeTable[cubeindex] & 32)
-        vs__interpolate_vertex(isovalue, cube_values[5], cube_values[6],
+        vs__interpolate_vertex_and_value(isovalue, cube_values[5], cube_values[6],
                          x + 1, y, z + 1,     // vertex 5
                          x + 1, y + 1, z + 1, // vertex 6
-                         &edge_verts[5][0], &edge_verts[5][1], &edge_verts[5][2]);
+                         &edge_verts[5][0], &edge_verts[5][1], &edge_verts[5][2],
+                         &edge_values[5]);
 
     if (edgeTable[cubeindex] & 64)
-        vs__interpolate_vertex(isovalue, cube_values[6], cube_values[7],
+        vs__interpolate_vertex_and_value(isovalue, cube_values[6], cube_values[7],
                          x + 1, y + 1, z + 1, // vertex 6
                          x, y + 1, z + 1,     // vertex 7
-                         &edge_verts[6][0], &edge_verts[6][1], &edge_verts[6][2]);
+                         &edge_verts[6][0], &edge_verts[6][1], &edge_verts[6][2],
+                         &edge_values[6]);
 
     if (edgeTable[cubeindex] & 128)
-        vs__interpolate_vertex(isovalue, cube_values[7], cube_values[4],
+        vs__interpolate_vertex_and_value(isovalue, cube_values[7], cube_values[4],
                          x, y + 1, z + 1,     // vertex 7
                          x, y, z + 1,         // vertex 4
-                         &edge_verts[7][0], &edge_verts[7][1], &edge_verts[7][2]);
+                         &edge_verts[7][0], &edge_verts[7][1], &edge_verts[7][2],
+                         &edge_values[7]);
 
     if (edgeTable[cubeindex] & 256)
-        vs__interpolate_vertex(isovalue, cube_values[0], cube_values[4],
+        vs__interpolate_vertex_and_value(isovalue, cube_values[0], cube_values[4],
                          x, y, z,             // vertex 0
                          x, y, z + 1,         // vertex 4
-                         &edge_verts[8][0], &edge_verts[8][1], &edge_verts[8][2]);
+                         &edge_verts[8][0], &edge_verts[8][1], &edge_verts[8][2],
+                         &edge_values[8]);
 
     if (edgeTable[cubeindex] & 512)
-        vs__interpolate_vertex(isovalue, cube_values[1], cube_values[5],
+        vs__interpolate_vertex_and_value(isovalue, cube_values[1], cube_values[5],
                          x + 1, y, z,         // vertex 1
                          x + 1, y, z + 1,     // vertex 5
-                         &edge_verts[9][0], &edge_verts[9][1], &edge_verts[9][2]);
+                         &edge_verts[9][0], &edge_verts[9][1], &edge_verts[9][2],
+                         &edge_values[9]);
 
     if (edgeTable[cubeindex] & 1024)
-        vs__interpolate_vertex(isovalue, cube_values[2], cube_values[6],
+        vs__interpolate_vertex_and_value(isovalue, cube_values[2], cube_values[6],
                          x + 1, y + 1, z,     // vertex 2
                          x + 1, y + 1, z + 1, // vertex 6
-                         &edge_verts[10][0], &edge_verts[10][1], &edge_verts[10][2]);
+                         &edge_verts[10][0], &edge_verts[10][1], &edge_verts[10][2],
+                         &edge_values[10]);
 
     if (edgeTable[cubeindex] & 2048)
-        vs__interpolate_vertex(isovalue, cube_values[3], cube_values[7],
+        vs__interpolate_vertex_and_value(isovalue, cube_values[3], cube_values[7],
                          x, y + 1, z,         // vertex 3
                          x, y + 1, z + 1,     // vertex 7
-                         &edge_verts[11][0], &edge_verts[11][1], &edge_verts[11][2]);
+                         &edge_verts[11][0], &edge_verts[11][1], &edge_verts[11][2],
+                         &edge_values[11]);
 
     for (s32 i = 0; triTable[cubeindex][i] != -1; i += 3) {
         for (s32 j = 0; j < 3; j++) {
@@ -2802,6 +2491,8 @@ static const s32 triTable[256][16] =
             vertices[*vertex_count * 3] = edge_verts[edge][0];
             vertices[*vertex_count * 3 + 1] = edge_verts[edge][1];
             vertices[*vertex_count * 3 + 2] = edge_verts[edge][2];
+
+            colors[*vertex_count] = edge_values[edge];  // Store the interpolated value
 
             indices[*index_count] = *vertex_count;
 
@@ -2815,6 +2506,7 @@ s32 vs_march_cubes(const f32* values,
                 s32 dimz, s32 dimy, s32 dimx,
                 f32 isovalue,
                 f32** out_vertices,      //  [z,y,x,z,y,x,...]
+                f32** out_colors,        //  [value, value, value, ...]
                 s32** out_indices,
                 s32* out_vertex_count,
                 s32* out_index_count) {
@@ -2822,12 +2514,13 @@ s32 vs_march_cubes(const f32* values,
     s32 max_triangles = (dimx - 1) * (dimy - 1) * (dimz - 1) * 5;
 
     f32* vertices = malloc(sizeof(f32) * max_triangles * 3 * 3); // 3 vertices per tri, 3 coords per vertex
-    s32* indices = malloc(sizeof(s32) * max_triangles * 3);          // 3 indices per triangle
+    f32* colors = malloc(sizeof(f32) * max_triangles * 3);       // 1 value per vertex
+    s32* indices = malloc(sizeof(s32) * max_triangles * 3);      // 3 indices per triangle
 
-    if (!vertices || !indices) {
+    if (!vertices || !colors || !indices) {
         free(vertices);
+        free(colors);
         free(indices);
-
         return 1;
     }
 
@@ -2838,7 +2531,7 @@ s32 vs_march_cubes(const f32* values,
         for (s32 y = 0; y < dimy - 1; y++) {
             for (s32 x = 0; x < dimx - 1; x++) {
                 vs__process_cube(values, x, y, z, dimx, dimy, dimz,
-                           isovalue, vertices, indices,
+                           isovalue, vertices, colors, indices,
                            &vertex_count, &index_count);
             }
         }
@@ -2846,13 +2539,92 @@ s32 vs_march_cubes(const f32* values,
 
     // Shrink arrays to actual size
     vertices = realloc(vertices, sizeof(f32) * vertex_count * 3);
+    colors = realloc(colors, sizeof(f32) * vertex_count);
     indices = realloc(indices, sizeof(s32) * index_count);
 
     *out_vertices = vertices;
+    *out_colors = colors;
     *out_indices = indices;
     *out_vertex_count = vertex_count;
     *out_index_count = index_count;
 
+    return 0;
+}
+
+rgb viridis_colormap(uint8_t value) {
+    static const rgb viridis_colors[256] = {
+        {68, 1, 84}, {68, 2, 85}, {68, 3, 87}, {69, 5, 88}, {69, 6, 90},
+        {69, 8, 91}, {70, 9, 92}, {70, 11, 94}, {70, 12, 95}, {70, 14, 97},
+        {71, 15, 98}, {71, 17, 99}, {71, 18, 101}, {71, 20, 102}, {71, 21, 103},
+        {71, 22, 105}, {71, 24, 106}, {72, 25, 107}, {72, 26, 108}, {72, 28, 110},
+        {72, 29, 111}, {72, 30, 112}, {72, 32, 113}, {72, 33, 114}, {72, 34, 115},
+        {72, 35, 116}, {71, 37, 117}, {71, 38, 118}, {71, 39, 119}, {71, 40, 120},
+        {71, 42, 121}, {71, 43, 122}, {71, 44, 123}, {70, 45, 124}, {70, 47, 124},
+        {70, 48, 125}, {70, 49, 126}, {69, 50, 127}, {69, 52, 127}, {69, 53, 128},
+        {69, 54, 129}, {68, 55, 129}, {68, 57, 130}, {67, 58, 131}, {67, 59, 131},
+        {67, 60, 132}, {66, 61, 132}, {66, 62, 133}, {66, 64, 133}, {65, 65, 134},
+        {65, 66, 134}, {64, 67, 135}, {64, 68, 135}, {63, 69, 135}, {63, 71, 136},
+        {62, 72, 136}, {62, 73, 137}, {61, 74, 137}, {61, 75, 137}, {61, 76, 137},
+        {60, 77, 138}, {60, 78, 138}, {59, 80, 138}, {59, 81, 138}, {58, 82, 139},
+        {58, 83, 139}, {57, 84, 139}, {57, 85, 139}, {56, 86, 139}, {56, 87, 140},
+        {55, 88, 140}, {55, 89, 140}, {54, 90, 140}, {54, 91, 140}, {53, 92, 140},
+        {53, 93, 140}, {52, 94, 141}, {52, 95, 141}, {51, 96, 141}, {51, 97, 141},
+        {50, 98, 141}, {50, 99, 141}, {49, 100, 141}, {49, 101, 141}, {49, 102, 141},
+        {48, 103, 141}, {48, 104, 141}, {47, 105, 141}, {47, 106, 141}, {46, 107, 142},
+        {46, 108, 142}, {46, 109, 142}, {45, 110, 142}, {45, 111, 142}, {44, 112, 142},
+        {44, 113, 142}, {44, 114, 142}, {43, 115, 142}, {43, 116, 142}, {42, 117, 142},
+        {42, 118, 142}, {42, 119, 142}, {41, 120, 142}, {41, 121, 142}, {40, 122, 142},
+        {40, 122, 142}, {40, 123, 142}, {39, 124, 142}, {39, 125, 142}, {39, 126, 142},
+        {38, 127, 142}, {38, 128, 142}, {38, 129, 142}, {37, 130, 142}, {37, 131, 141},
+        {36, 132, 141}, {36, 133, 141}, {36, 134, 141}, {35, 135, 141}, {35, 136, 141},
+        {35, 137, 141}, {34, 137, 141}, {34, 138, 141}, {34, 139, 141}, {33, 140, 141},
+        {33, 141, 140}, {33, 142, 140}, {32, 143, 140}, {32, 144, 140}, {32, 145, 140},
+        {31, 146, 140}, {31, 147, 139}, {31, 148, 139}, {31, 149, 139}, {31, 150, 139},
+        {30, 151, 138}, {30, 152, 138}, {30, 153, 138}, {30, 153, 138}, {30, 154, 137},
+        {30, 155, 137}, {30, 156, 137}, {30, 157, 136}, {30, 158, 136}, {30, 159, 136},
+        {30, 160, 135}, {31, 161, 135}, {31, 162, 134}, {31, 163, 134}, {32, 164, 133},
+        {32, 165, 133}, {33, 166, 133}, {33, 167, 132}, {34, 167, 132}, {35, 168, 131},
+        {35, 169, 130}, {36, 170, 130}, {37, 171, 129}, {38, 172, 129}, {39, 173, 128},
+        {40, 174, 127}, {41, 175, 127}, {42, 176, 126}, {43, 177, 125}, {44, 177, 125},
+        {46, 178, 124}, {47, 179, 123}, {48, 180, 122}, {50, 181, 122}, {51, 182, 121},
+        {53, 183, 120}, {54, 184, 119}, {56, 185, 118}, {57, 185, 118}, {59, 186, 117},
+        {61, 187, 116}, {62, 188, 115}, {64, 189, 114}, {66, 190, 113}, {68, 190, 112},
+        {69, 191, 111}, {71, 192, 110}, {73, 193, 109}, {75, 194, 108}, {77, 194, 107},
+        {79, 195, 105}, {81, 196, 104}, {83, 197, 103}, {85, 198, 102}, {87, 198, 101},
+        {89, 199, 100}, {91, 200, 98}, {94, 201, 97}, {96, 201, 96}, {98, 202, 95},
+        {100, 203, 93}, {103, 204, 92}, {105, 204, 91}, {107, 205, 89}, {109, 206, 88},
+        {112, 206, 86}, {114, 207, 85}, {116, 208, 84}, {119, 208, 82}, {121, 209, 81},
+        {124, 210, 79}, {126, 210, 78}, {129, 211, 76}, {131, 211, 75}, {134, 212, 73},
+        {136, 213, 71}, {139, 213, 70}, {141, 214, 68}, {144, 214, 67}, {146, 215, 65},
+        {149, 215, 63}, {151, 216, 62}, {154, 216, 60}, {157, 217, 58}, {159, 217, 56},
+        {162, 218, 55}, {165, 218, 53}, {167, 219, 51}, {170, 219, 50}, {173, 220, 48},
+        {175, 220, 46}, {178, 221, 44}, {181, 221, 43}, {183, 221, 41}, {186, 222, 39},
+        {189, 222, 38}, {191, 223, 36}, {194, 223, 34}, {197, 223, 33}, {199, 224, 31},
+        {202, 224, 30}, {205, 224, 29}, {207, 225, 28}, {210, 225, 27}, {212, 225, 26},
+        {215, 226, 25}, {218, 226, 24}, {220, 226, 24}, {223, 227, 24}, {225, 227, 24},
+        {228, 227, 24}, {231, 228, 25}, {233, 228, 25}, {236, 228, 26}, {238, 229, 27},
+        {241, 229, 28}, {243, 229, 30}, {246, 230, 31}, {248, 230, 33}, {250, 230, 34},
+        {253, 231, 36}
+    };
+    return viridis_colors[value];
+}
+
+int vs_colorize(const f32* grayscale, rgb* colors, s32 vertex_count, f32 min, f32 max) {
+    if (max <= min) {
+        LOG_ERROR("vs_colorize max (%f) must be greater than min (%f)", max, min);
+        return 1;
+    }
+
+    f32 range = max - min;
+    for (s32 i = 0; i < vertex_count; i++) {
+        if (grayscale[i] < min || grayscale[i] > max) {
+            LOG_ERROR("vs_colorize grayscale values must be between %f and %f. encountered %f", min, max, grayscale[i]);
+            return 1;
+        }
+
+        uint8_t value = (uint8_t)(((grayscale[i] - min) / range) * 255.0f);
+        colors[i] = viridis_colormap(value);
+    }
     return 0;
 }
 
@@ -3238,63 +3010,61 @@ s32 vs_write_obj(const char* filename,
 
 s32 vs_ply_write(const char *filename,
                     const f32 *vertices,
-                    const f32 *normals, // can be NULL if no normals
+                    const f32 *normals,
+                    const rgb *colors,
                     const s32 *indices,
                     s32 vertex_count,
                     s32 index_count) {
-
-  FILE *fp = fopen(filename, "w");
-  if (!fp) {
-    return 1;
-  }
-
-  fprintf(fp, "ply\n");
-  fprintf(fp, "format ascii 1.0\n");
-  fprintf(fp, "comment Created by minilibs\n");
-  fprintf(fp, "element vertex %d\n", vertex_count);
-  fprintf(fp, "property float x\n");
-  fprintf(fp, "property float y\n");
-  fprintf(fp, "property float z\n");
-
-  if (normals) {
-    fprintf(fp, "property float nx\n");
-    fprintf(fp, "property float ny\n");
-    fprintf(fp, "property float nz\n");
-  }
-
-  fprintf(fp, "element face %d\n", index_count / 3);
-  fprintf(fp, "property list uchar int vertex_indices\n");
-  fprintf(fp, "end_header\n");
-
-  for (s32 i = 0; i < vertex_count; i++) {
-    if (normals) {
-      fprintf(fp, "%.6f %.6f %.6f %.6f %.6f %.6f\n",
-              vertices[i * 3],     // x
-              vertices[i * 3 + 1], // y
-              vertices[i * 3 + 2], // z
-              normals[i * 3],     // nx
-              normals[i * 3 + 1], // ny
-              normals[i * 3 + 2]  // nz
-      );
-    } else {
-      fprintf(fp, "%.6f %.6f %.6f\n",
-              vertices[i * 3],     // x
-              vertices[i * 3 + 1], // y
-              vertices[i * 3 + 2]  // z
-      );
+    FILE *fp = fopen(filename, "w");
+    if (!fp) {
+        return 1;
     }
-  }
+    fprintf(fp, "ply\n");
+    fprintf(fp, "format ascii 1.0\n");
+    fprintf(fp, "comment Created by minilibs\n");
+    fprintf(fp, "element vertex %d\n", vertex_count);
+    fprintf(fp, "property float x\n");
+    fprintf(fp, "property float y\n");
+    fprintf(fp, "property float z\n");
+    if (normals) {
+        fprintf(fp, "property float nx\n");
+        fprintf(fp, "property float ny\n");
+        fprintf(fp, "property float nz\n");
+    }
+    if (colors) {
+        fprintf(fp, "property uchar red\n");
+        fprintf(fp, "property uchar green\n");
+        fprintf(fp, "property uchar blue\n");
+    }
+    fprintf(fp, "element face %d\n", index_count / 3);
+    fprintf(fp, "property list uchar int vertex_indices\n");
+    fprintf(fp, "end_header\n");
 
-  // Write faces
-  for (s32 i = 0; i < index_count; i += 3) {
-    fprintf(fp, "3 %d %d %d\n",
-            indices[i],
-            indices[i + 1],
-            indices[i + 2]);
-  }
+    for (s32 i = 0; i < vertex_count; i++) {
+        if (normals && colors) {
+            fprintf(fp, "%.6f %.6f %.6f %.6f %.6f %.6f %d %d %d\n",
+                    vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2],
+                    normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2],
+                    colors[i].r, colors[i].g, colors[i].b);
+        } else if (normals) {
+            fprintf(fp, "%.6f %.6f %.6f %.6f %.6f %.6f\n",
+                    vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2],
+                    normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
+        } else if (colors) {
+            fprintf(fp, "%.6f %.6f %.6f %d %d %d\n",
+                    vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2],
+                    colors[i].r, colors[i].g, colors[i].b);
+        } else {
+            fprintf(fp, "%.6f %.6f %.6f\n",
+                    vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]);
+        }
+    }
 
-  fclose(fp);
-  return 0;
+    for (s32 i = 0; i < index_count; i += 3) {
+        fprintf(fp, "3 %d %d %d\n", indices[i], indices[i + 1], indices[i + 2]);
+    }
+    fclose(fp);
+    return 0;
 }
 
 s32 vs_ply_read(const char *filename,
@@ -4605,7 +4375,12 @@ chunk *vs_vol_get_chunk(volume *vol, s32 vol_start[static 3], s32 chunk_dims[sta
             for (int x = xstart; x <= xend; x++) {
                 char blockpath[1024] = {'\0'};
                 chunk *c = NULL;
-                snprintf(blockpath, 1023, "%s/%d/%d/%d", vol->cache_dir, z, y, x);
+
+                if (vol->metadata.dimension_separator == '/') {
+                    snprintf(blockpath, 1023, "%s/%d/%d/%d", vol->cache_dir, z, y, x);
+                } else {
+                    snprintf(blockpath, 1023, "%s/%d.%d.%d", vol->cache_dir, z, y, x);
+                }
                 LOG_INFO("checking for zarr block at %s", blockpath);
                 if (vs__path_exists(blockpath)) {
                     LOG_INFO("reading %s from disk", blockpath);
@@ -4617,7 +4392,11 @@ chunk *vs_vol_get_chunk(volume *vol, s32 vol_start[static 3], s32 chunk_dims[sta
                     }
                 } else {
                     char url[1024] = {'\0'};
-                    snprintf(url, 1023, "%s/%d/%d/%d", vol->url, z, y, x);
+                    if (vol->metadata.dimension_separator == '/') {
+                        snprintf(url, 1023, "%s/%d/%d/%d", vol->url, z, y, x);
+                    } else {
+                        snprintf(url, 1023, "%s/%d.%d.%d", vol->url, z, y, x);
+                    }
                     LOG_INFO("downloading block from %s", url);
                     c = vs_zarr_fetch_block(url, vol->metadata);
                     if (c == NULL) {
@@ -4666,6 +4445,133 @@ chunk *vs_vol_get_chunk(volume *vol, s32 vol_start[static 3], s32 chunk_dims[sta
         }
     }
     return ret;
+}
+
+ChunkLoadState* vs_vol_get_chunk_start(volume* vol, s32 vol_start[static 3], s32 chunk_dims[static 3]) {
+    // Validate alignment with block sizes
+    for (int i = 0; i < 3; i++) {
+        if (vol_start[i] % vol->metadata.chunks[i] != 0 ||
+            chunk_dims[i] % vol->metadata.chunks[i] != 0) {
+            LOG_ERROR("Indices must be multiple of block size");
+            return NULL;
+        }
+    }
+
+    ChunkLoadState* state = malloc(sizeof(ChunkLoadState));
+    state->vol = vol;
+    memcpy(state->vol_start, vol_start, sizeof(s32) * 3);
+    memcpy(state->chunk_dims, chunk_dims, sizeof(s32) * 3);
+    state->ret = vs_chunk_new(chunk_dims);
+
+    state->zstart = vol_start[0] / vol->metadata.chunks[0];
+    state->ystart = vol_start[1] / vol->metadata.chunks[1];
+    state->xstart = vol_start[2] / vol->metadata.chunks[2];
+    state->zend = (vol_start[0] + chunk_dims[0]-1) / vol->metadata.chunks[0];
+    state->yend = (vol_start[1] + chunk_dims[1]-1) / vol->metadata.chunks[1];
+    state->xend = (vol_start[2] + chunk_dims[2]-1) / vol->metadata.chunks[2];
+
+    state->z = state->zstart;
+    state->y = state->ystart;
+    state->x = state->xstart;
+    state->downloading = false;
+    state->download = NULL;
+
+    return state;
+}
+
+
+static void vs_process_chunk(ChunkLoadState* state, chunk* c) {
+    s32 src_start[3] = {
+        MAX(0, state->vol_start[0] - state->z * state->vol->metadata.chunks[0]),
+        MAX(0, state->vol_start[1] - state->y * state->vol->metadata.chunks[1]),
+        MAX(0, state->vol_start[2] - state->x * state->vol->metadata.chunks[2])
+    };
+
+    s32 dest_start[3] = {
+        state->z * state->vol->metadata.chunks[0] - state->vol_start[0],
+        state->y * state->vol->metadata.chunks[1] - state->vol_start[1],
+        state->x * state->vol->metadata.chunks[2] - state->vol_start[2]
+    };
+
+    s32 copy_dims[3] = {
+        MIN(state->vol->metadata.chunks[0] - src_start[0], state->chunk_dims[0] - dest_start[0]),
+        MIN(state->vol->metadata.chunks[1] - src_start[1], state->chunk_dims[1] - dest_start[1]),
+        MIN(state->vol->metadata.chunks[2] - src_start[2], state->chunk_dims[2] - dest_start[2])
+    };
+
+    vs_chunk_graft(state->ret, c, src_start, dest_start, copy_dims);
+}
+
+
+bool vs_vol_get_chunk_poll(ChunkLoadState* state, chunk** out_chunk) {
+    if (!state->downloading) {
+        // Find next block to process
+        while (state->z <= state->zend) {
+            while (state->y <= state->yend) {
+                while (state->x <= state->xend) {
+                    char blockpath[1024] = {'\0'};
+                    snprintf(blockpath, 1023, "%s/%d/%d/%d",
+                            state->vol->cache_dir, state->z, state->y, state->x);
+
+                    if (vs__path_exists(blockpath)) {
+                        // Read from disk
+                        chunk* c = vs_zarr_read_chunk(blockpath, state->vol->metadata);
+                        if (c) {
+                            vs_process_chunk(state, c);
+                            vs_chunk_free(c);
+                        }
+                    } else {
+                        // Start download
+                        char url[1024] = {'\0'};
+                        snprintf(url, 1023, "%s/%d/%d/%d",
+                                state->vol->url, state->z, state->y, state->x);
+                        state->download = vs_download_start(url);
+                        state->downloading = true;
+                        return false;
+                    }
+                    state->x++;
+                    if (!state->downloading) continue;
+                    return false;
+                }
+                state->x = state->xstart;
+                state->y++;
+            }
+            state->y = state->ystart;
+            state->z++;
+        }
+
+        // All done
+        *out_chunk = state->ret;
+        free(state);
+        return true;
+    }
+
+    // Check download progress
+    void* buffer;
+    long size;
+    if (vs_download_poll(state->download, &buffer, &size)) {
+        state->downloading = false;
+
+        if (buffer) {
+            // Save downloaded block
+            char blockpath[1024] = {'\0'};
+            snprintf(blockpath, 1023, "%s/%d/%d/%d",
+                    state->vol->cache_dir, state->z, state->y, state->x);
+            chunk* c = vs_zarr_decompress_chunk(size,buffer, state->vol->metadata);
+            free(buffer);
+
+            if (c) {
+                vs_zarr_write_chunk(blockpath, state->vol->metadata, c);
+                vs_process_chunk(state, c);
+                vs_chunk_free(c);
+            }
+        }
+
+        state->x++;
+        return false;
+    }
+
+    return false;
 }
 
 
@@ -4768,6 +4674,14 @@ int vs_zarr_parse_metadata(const char *json_string, zarr_metadata *metadata) {
         }
     }
 
+    json_object *dimension_separator;
+    if (json_object_object_get_ex(root, "dimension_separator", &dimension_separator)) {
+        const char *dimension_separator_str = json_object_get_string(dimension_separator);
+        if (dimension_separator_str && dimension_separator_str[0]) {
+            metadata->dimension_separator = dimension_separator_str[0];
+        }
+    }
+
     json_object *format_value;
     if (json_object_object_get_ex(root, "zarr_format", &format_value)) {
         metadata->zarr_format = json_object_get_int(format_value);
@@ -4851,7 +4765,7 @@ chunk* vs_zarr_decompress_chunk(long size, void* compressed_data, zarr_metadata 
         decompressed_data = compressed_data;
         decompressed_size = size;
     } else {
-        decompressed_data = malloc(z * y * x * dtype_size);
+        decompressed_data = malloc(z * y * x * dtype_size*2);
         decompressed_size = blosc2_decompress(compressed_data, size, decompressed_data, z * y * x * dtype_size);
         if (decompressed_size < 0) {
             LOG_ERROR("Blosc2 decompression failed: %d\n", decompressed_size);
@@ -4886,13 +4800,17 @@ int vs_zarr_write_chunk(char *path, zarr_metadata metadata, chunk* c) {
         LOG_ERROR("failed to mkdirs to %s",dirname);
         return 1;
     }
-    void* compressed_buf;
+    void* compressed_buf = NULL;
     int len = vs_zarr_compress_chunk(c,metadata,&compressed_buf);
     if (len <= 0) {
         //TODO: len == 0 is probably an error, right?
         return 1;
     }
     FILE* fp = fopen(path, "wb");
+    if (fp == NULL) {
+        LOG_ERROR("failed to open %s",path);
+        return 1;
+    }
     fwrite(compressed_buf,1,len,fp);
     LOG_INFO("wrote chunk to %s",path);
     fclose(fp);
@@ -5008,6 +4926,194 @@ slice *vs_tiff_to_slice(const char *tiffpath, int index) {
   return ret;
 }
 
+slice* vs_slice_extract(chunk* c, int index) {
+    if (index < 0 || index >= c->dims[0]) {
+        LOG_ERROR("index out of bounds");
+        return NULL;
+    }
+    slice* out = vs_slice_new((s32[2]){c->dims[1],c->dims[2]});
+    for (int y = 0; y < out->dims[0];y++) {
+        for (int x = 0; x < out->dims[1];x++) {
+            vs_slice_set(out,y,x,vs_chunk_get(c,index,y,x));
+        }
+    }
+    return out;
+}
+
+
+// Function to write a single PPM frame from the three chunks
+void vs_write_ppm_frame(FILE* fp, const chunk* r_chunk, const chunk* g_chunk,
+                    const chunk* b_chunk, int frame_idx) {
+    int width = r_chunk->dims[2];
+    int height = r_chunk->dims[1];
+    int frame_size = width * height;
+
+    // Write PPM header
+    fprintf(fp, "P6\n%d %d\n255\n", width, height);
+
+    // Allocate buffer for one frame
+    unsigned char* frame_data = (unsigned char*)malloc(width * height * 3);
+
+    // Calculate offsets for the current frame in the chunk data
+    int frame_offset = frame_idx * frame_size;
+
+    // Combine RGB channels and convert from float [0-1] to byte [0-255]
+    for (int i = 0; i < frame_size; i++) {
+        frame_data[i * 3 + 0] = (unsigned char)(r_chunk->data[frame_offset + i] * 255.0f);
+        frame_data[i * 3 + 1] = (unsigned char)(g_chunk->data[frame_offset + i] * 255.0f);
+        frame_data[i * 3 + 2] = (unsigned char)(b_chunk->data[frame_offset + i] * 255.0f);
+    }
+
+    // Write the frame data
+    fwrite(frame_data, sizeof(unsigned char), width * height * 3, fp);
+
+    free(frame_data);
+}
+
+// Function to convert chunks to video using FFmpeg
+void vs_chunks_to_video(const chunk* r_chunk, const chunk* g_chunk, const chunk* b_chunk,
+                    const char* output_filename, int fps) {
+    char command[256];
+
+    // Verify dimensions match
+    for (int i = 0; i < 3; i++) {
+        if (r_chunk->dims[i] != g_chunk->dims[i] || r_chunk->dims[i] != b_chunk->dims[i]) {
+            fprintf(stderr, "Error: Chunk dimensions don't match\n");
+            return;
+        }
+    }
+
+    int frames = r_chunk->dims[0];
+
+    // Create temporary directory for frames
+    system("mkdir -p temp_frames");
+
+    // Write each frame as a PPM file
+    for (int f = 0; f < frames; f++) {
+        char filename[64];
+        sprintf(filename, "temp_frames/frame_%d.ppm", f);
+        FILE* fp = fopen(filename, "wb");
+        if (!fp) {
+            fprintf(stderr, "Error: Cannot create frame file %s\n", filename);
+            return;
+        }
+
+        vs_write_ppm_frame(fp, r_chunk, g_chunk, b_chunk, f);
+        fclose(fp);
+    }
+
+    // Use FFmpeg to convert PPM frames to video
+    sprintf(command, "ffmpeg -y -framerate %d -i temp_frames/frame_%%d.ppm "
+            "-c:v libx264 -pix_fmt yuv420p %s", fps, output_filename);
+    system(command);
+
+    // Clean up temporary files
+    system("rm -rf temp_frames");
+}
+
+
+// BMP Header Structures
+#pragma pack(push, 1) // Ensure no padding
+typedef struct {
+    uint16_t bfType;
+    uint32_t bfSize;
+    uint16_t bfReserved1;
+    uint16_t bfReserved2;
+    uint32_t bfOffBits;
+} BMPFileHeader;
+
+typedef struct {
+    uint32_t biSize;
+    int32_t biWidth;
+    int32_t biHeight;
+    uint16_t biPlanes;
+    uint16_t biBitCount;
+    uint32_t biCompression;
+    uint32_t biSizeImage;
+    int32_t biXPelsPerMeter;
+    int32_t biYPelsPerMeter;
+    uint32_t biClrUsed;
+    uint32_t biClrImportant;
+} BMPInfoHeader;
+#pragma pack(pop)
+
+int vs_bmp_write(const char *filename, slice *image) {
+    FILE *file = fopen(filename, "wb");
+    if (!file) {
+        fprintf(stderr, "Failed to open file for writing: %s\n", filename);
+        return -1;
+    }
+
+    int width = image->dims[1];
+    int height = image->dims[0];
+
+    BMPFileHeader file_header;
+    BMPInfoHeader info_header;
+
+    // Calculate the size of each row including padding
+    int rowSize = (width + 3) & ~3; // Round up to the nearest multiple of 4
+    int imageSize = rowSize * height;
+
+    // BMP file header
+    file_header.bfType = 0x4D42; // 'BM'
+    file_header.bfOffBits = sizeof(BMPFileHeader) + sizeof(BMPInfoHeader) + 256 * 4; // File header + Info header + Palette
+    file_header.bfSize = file_header.bfOffBits + imageSize;
+    file_header.bfReserved1 = 0;
+    file_header.bfReserved2 = 0;
+
+    // BMP info header
+    info_header.biSize = sizeof(BMPInfoHeader);
+    info_header.biWidth = width;
+    info_header.biHeight = -height; // Negative height to indicate top-down row order
+    info_header.biPlanes = 1;
+    info_header.biBitCount = 8; // 8 bits per pixel (grayscale)
+    info_header.biCompression = 0;
+    info_header.biSizeImage = imageSize;
+    info_header.biXPelsPerMeter = 2835; // 72 DPI
+    info_header.biYPelsPerMeter = 2835; // 72 DPI
+    info_header.biClrUsed = 256;
+    info_header.biClrImportant = 256;
+
+    // Write BMP file header
+    fwrite(&file_header, sizeof(BMPFileHeader), 1, file);
+
+    // Write BMP info header
+    fwrite(&info_header, sizeof(BMPInfoHeader), 1, file);
+
+    // Write the grayscale palette (256 shades of gray)
+    for (int i = 0; i < 256; ++i) {
+        unsigned char color[4] = {i, i, i, 0}; // R, G, B, Reserved
+        fwrite(color, sizeof(unsigned char), 4, file);
+    }
+
+    // Allocate buffer for one row
+    unsigned char *row = (unsigned char *)malloc(rowSize);
+    if (!row) {
+        fprintf(stderr, "Memory allocation failed\n");
+        fclose(file);
+        return -1;
+    }
+
+    // Write the pixel data with padding, clamping values between 0 and 255
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            float pixel_value = vs_slice_get(image, y, x);
+            if (pixel_value < 0) pixel_value = 0;
+            if (pixel_value > 255) pixel_value = 255;
+            row[x] = (unsigned char)pixel_value;
+        }
+
+        // Clear padding bytes
+        memset(row + width, 0, rowSize - width);
+
+        // Write the padded row
+        fwrite(row, sizeof(unsigned char), rowSize, file);
+    }
+
+    free(row);
+    fclose(file);
+    return 0;
+}
 
 #endif // defined(VESUVIUS_IMPL)
 #endif // VESUVIUS_H
