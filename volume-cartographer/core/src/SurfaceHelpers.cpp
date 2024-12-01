@@ -5854,7 +5854,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                             surftrack_add_local(test_surf, p, data_th, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
                             
                             for(auto s : test_surf->overlapping)
-                                if (!data_th.has(s, p) && !local_surfs.count(s) && s != best_surf)
+                                if (/*!data_th.has(s, p) && !local_surfs.count(s) &&*/ s != best_surf)
                                     more_local_surfs.insert(s);
                         }
                         else if (erase_if_out)
