@@ -1,34 +1,12 @@
-#include <nlohmann/json.hpp>
-
-#include <xtensor/xarray.hpp>
-#include <xtensor/xaxis_slice_iterator.hpp>
-#include <xtensor/xio.hpp>
-#include <xtensor/xbuilder.hpp>
-#include <xtensor/xview.hpp>
-
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/filesystem/dataset.hxx"
-#include "z5/common.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-#include "z5/attributes.hxx"
-
-#include <opencv2/highgui.hpp>
-#include <opencv2/core.hpp>
-#include <opencv2/imgproc.hpp>
-
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Surface.hpp"
-#include "vc/core/io/PointSetIO.hpp"
-
-#include <unordered_map>
-#include <filesystem>
-#include <omp.h>
-
 #include "vc/core/types/ChunkedTensor.hpp"
 
-using shape = z5::types::ShapeType;
-using namespace xt::placeholders;
+#include "z5/factory.hxx"
+#include <nlohmann/json.hpp>
+
+#include <opencv2/highgui.hpp>
+
 namespace fs = std::filesystem;
 
 using json = nlohmann::json;
@@ -38,65 +16,16 @@ std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v) {
         out << '[';
         for(auto &v : v)
             out << v << ",";
-        out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
+        out << "\b]";
     }
     return out;
-}
-
-class MeasureLife
-{
-public:
-    MeasureLife(std::string msg)
-    {
-        std::cout << msg << std::flush;
-        start = std::chrono::high_resolution_clock::now();
-    }
-    ~MeasureLife()
-    {
-        auto end = std::chrono::high_resolution_clock::now();
-        std::cout << " took " << std::chrono::duration<double>(end-start).count() << " s" << std::endl;
-    }
-private:
-    std::chrono::time_point<std::chrono::high_resolution_clock> start;
-};
-
-std::string time_str()
-{
-    using namespace std::chrono;
-
-    // get current time
-    auto now = system_clock::now();
-
-    // get number of milliseconds for the current second
-    // (remainder after division into seconds)
-    auto ms = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
-
-    // convert to std::time_t in order to convert to std::tm (broken time)
-    auto timer = system_clock::to_time_t(now);
-
-    // convert to broken time
-    std::tm bt = *std::localtime(&timer);
-
-    std::ostringstream oss;
-
-    oss << std::put_time(&bt, "%Y%m%d%H%M%S"); // HH:MM:SS
-    oss << std::setfill('0') << std::setw(3) << ms.count();
-
-    return oss.str();
-}
-
-template <typename T, typename I>
-float get_val(I &interp, cv::Vec3d l) {
-    T v;
-    interp.Evaluate(l[2], l[1], l[0], &v);
-    return v;
 }
 
 int main(int argc, char *argv[])
 {
     if (argc != 6 && argc != 7) {
-        std::cout << "usage: " << argv[0] << " <zarr-volume> <output/ptn> <seg-path> <tgt-scale> <ome-zarr-group-idx>" << std::endl;
-        std::cout << "or: " << argv[0] << " <zarr-volume> <output/ptn> <seg-path> <tgt-scale> <ome-zarr-group-idx> <num-slices>" << std::endl;
+        std::cout << "usage: " << argv[0] << " <ome-arr-volume> <output> <seg-path> <tgt-scale> <ome-zarr-group-idx>" << std::endl;
+        std::cout << "or: " << argv[0] << " <ome-zarr-volume> <ptn> <seg-path> <tgt-scale> <ome-zarr-group-idx> <num-slices>" << std::endl;
         return EXIT_SUCCESS;
     }
 
@@ -135,7 +64,6 @@ int main(int argc, char *argv[])
     std::cout << "rendering size " << tgt_size << " at scale " << tgt_scale << std::endl;
     
     cv::Mat_<cv::Vec3f> points, normals;
-    // surf->gen(&points, &normals, {4000,2500}, nullptr, 1.0, {-tgt_size.width/2+13744,-tgt_size.height/2+11076,0});
     surf->gen(&points, &normals, tgt_size, nullptr, tgt_scale, {-tgt_size.width/2,-tgt_size.height/2,0});
 
     cv::Mat_<uint8_t> img;

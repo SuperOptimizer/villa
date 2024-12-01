@@ -299,21 +299,23 @@ VolumePkg::VolumePkg(const fs::path& fileLocation) : rootDir_{fileLocation}
 
     // Load volumes into volumes_
     for (const auto& entry : fs::directory_iterator(::VolsDir(rootDir_))) {
-        if (fs::is_directory(entry)) {
-            auto v = Volume::New(entry);
+        fs::path dirpath = fs::canonical(entry);
+        if (fs::is_directory(dirpath)) {
+            auto v = Volume::New(dirpath);
             volumes_.emplace(v->id(), v);
         }
     }
 
     // Load segmentations into the segmentations_
     for (const auto& entry : fs::directory_iterator(::SegsDir(rootDir_))) {
-        if (fs::is_directory(entry)) {
+        fs::path dirpath = fs::canonical(entry);
+        if (fs::is_directory(dirpath)) {
             try {
-                auto s = Segmentation::New(entry);
+                auto s = Segmentation::New(dirpath);
                 segmentations_.emplace(s->id(), s);
             }
             catch (const std::exception &exc) {
-                std::cout << "WARNING: some exception occured, skipping segment dir: " << entry.path() << std::endl;
+                std::cout << "WARNING: some exception occured, skipping segment dir: " << dirpath << std::endl;
                 std::cerr << exc.what();
             }
         }
@@ -328,8 +330,9 @@ VolumePkg::VolumePkg(const fs::path& fileLocation) : rootDir_{fileLocation}
 
     // Load Renders into the renders_
     for (const auto& entry : fs::directory_iterator(::RendDir(rootDir_))) {
-        if (fs::is_directory(entry)) {
-            auto r = Render::New(entry);
+        fs::path dirpath = fs::canonical(entry);
+        if (fs::is_directory(dirpath)) {
+            auto r = Render::New(dirpath);
             renders_.emplace(r->id(), r);
         }
     }
@@ -348,22 +351,6 @@ VolumePkg::VolumePkg(const fs::path& fileLocation) : rootDir_{fileLocation}
                 continue;
             }
             transforms_.emplace(ep.stem(), tfm);
-        }
-    }
-    
-    // Load Previews into previews_
-    for (const auto& d : ::PreviewDirs(rootDir_)) {
-        if (!fs::is_directory(d))
-            continue;
-        
-        for (const auto& entry : fs::recursive_directory_iterator(d)) {
-            if (Volume::checkDir(entry)) {
-                auto v = Volume::New(entry);
-                if (previews_.find(v->id()) == previews_.end())
-                    previews_[v->id()] = {};
-                    
-                previews_[v->id()].emplace(v->name(), v);
-            }
         }
     }
 }

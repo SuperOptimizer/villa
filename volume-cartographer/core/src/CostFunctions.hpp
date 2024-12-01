@@ -82,12 +82,12 @@ struct DistLoss {
 
         T dist = sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
 
-        if (dist <= 0) {
+        if (dist <= T(0)) {
             residual[0] = T(_w)*(d[0]*d[0] + d[1]*d[1] + d[2]*d[2] - T(1));
             // std::cout << "uhohh 3d" << std::endl;
         }
         else {
-            if (dist < _d)
+            if (dist < T(_d))
                 residual[0] = T(_w)*(T(_d)/dist - T(1));
             else
                 residual[0] = T(_w)*(dist/T(_d) - T(1));
@@ -127,12 +127,12 @@ struct DistLoss2D {
 
         T dist = sqrt(d[0]*d[0] + d[1]*d[1]);
 
-        if (dist <= 0) {
+        if (dist <= T(0)) {
             residual[0] = T(_w)*(d[0]*d[0] + d[1]*d[1] - T(1));
             std::cout << "uhohh" << std::endl;
         }
         else {
-            if (dist < _d)
+            if (dist < T(_d))
                 residual[0] = T(_w)*(T(_d)/(dist+T(1e-2)) - T(1));
             else
                 residual[0] = T(_w)*(dist/T(_d) - T(1));
@@ -237,7 +237,7 @@ struct StraightLoss2D {
         T l1 = sqrt(d1[0]*d1[0] + d1[1]*d1[1]);
         T l2 = sqrt(d2[0]*d2[0] + d2[1]*d2[1]);
 
-        if (l1 <= 0 || l2 <= 0) {
+        if (l1 <= T(0) || l2 <= T(0)) {
             residual[0] = T(_w)*((d1[0]*d1[0] + d1[1]*d1[1])*(d2[0]*d2[0] + d2[1]*d2[1]) - T(1));
             std::cout << "uhohh2" << std::endl;
             return true;
@@ -367,11 +367,12 @@ struct LinChkDistLoss {
     bool operator()(const T* const p, T* residual) const {
         T a = abs(p[0]-T(_p[0]));
         T b = abs(p[1]-T(_p[1]));
-        if (a > 0)
+        if (a > T(0))
             residual[0] = T(_w)*sqrt(a);
         else
             residual[0] = T(0);
-        if (b > 0)
+
+        if (b > T(0))
             residual[1] = T(_w)*sqrt(b);
         else
             residual[1] = T(0);
@@ -467,7 +468,7 @@ struct DistLossLoc3D {
 
         T dist = sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
 
-        if (dist < _d)
+        if (dist < T(_d))
             residual[0] = T(_w)*(T(_d)/dist - T(1));
         else
             residual[0] = T(_w)*(dist/T(_d) - T(1));
@@ -644,9 +645,9 @@ public:
     template <typename T> void Evaluate(const T &z, const T &y, const T &x, T *out) const
     {
         //FIXME linear interpolate along z
-        if (z < 0.0)
+        if (z < T(0))
             interp_planes[0].Evaluate(y, x, out);
-        else if (z >= _d-2)
+        else if (z >= T(_d-2))
             return interp_planes[_d-1].Evaluate(y, x, out);
         else {
             T m = z-floor(z);
@@ -770,9 +771,9 @@ public:
     template <typename V> void Evaluate(const V &z, const V &y, const V &x, V *out) const
     {
         //FIXME linear interpolate along z
-        if (z < 0.0)
+        if (z < V(0))
             interp_planes[0].Evaluate(y, x, out);
-        else if (z >= interp_planes.size())
+        else if (z >= V(interp_planes.size()))
             return interp_planes[interp_planes.size()-1].Evaluate(y, x, out);
         else {
             V m = z-floor(z);
@@ -886,7 +887,7 @@ struct AnchorLoss {
 
         v = v - T(1);
 
-        if (v < 0)
+        if (v < T(0))
             v = T(0);
 
         residual[0] = T(_w)*v*v;

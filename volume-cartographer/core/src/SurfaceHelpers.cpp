@@ -2679,8 +2679,8 @@ struct thresholdedDistance
 {
     enum {BORDER = 16};
     enum {CHUNK_SIZE = 64};
-    const std::string CHUNK_DIR = "/home/hendrik/.cache/vcchunksdist_16_64";
     enum {FILL_V = 0};
+    const std::string UNIQUE_ID_STRING = "dqk247q6vz_"+std::to_string(BORDER)+"_"+std::to_string(CHUNK_SIZE)+"_"+std::to_string(FILL_V);
     template <typename T, typename E> void compute(const T &large, T &small)
     {
         T outer = xt::empty<E>(large.shape());
@@ -2715,12 +2715,10 @@ struct thresholdedDistance
 
 float dist_th = 1.0;
 
-QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, float step)
+QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, int  stop_gen, float step, const std::string &cache_root)
 {
     ALifeTime f_timer("empty space tracing\n");
     DSReader reader = {ds,scale,cache};
-
-    int stop_gen = 100;
 
     //FIXME show and handle area edge!
     int w = 2*stop_gen+50;
@@ -2767,7 +2765,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
     thresholdedDistance compute;
 
-    Chunked3d<uint8_t,thresholdedDistance> proc_tensor(compute, ds, cache);
+    Chunked3d<uint8_t,thresholdedDistance> proc_tensor(compute, ds, cache, cache_root);
 
 
     passTroughComputor pass;
@@ -3267,64 +3265,17 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         gen_avg_cost.push_back(avg_cost/cost_count);
         gen_max_cost.push_back(max_cost);
 
-        printf("-> total done %d/ fringe: %d surf: %fmm^2\n", succ, fringe.size(), succ*step*step*0.008*0.008);
+        printf("-> total done %d/ fringe: %d surf: %fM vx^2\n", succ, fringe.size(), double(succ)*step*step/1e9);
 
-        timer_gen.unit = succ_gen*0.008*0.008*T*T;
-        timer_gen.unit_string = "mm^2";
+        timer_gen.unit = succ_gen*step*step;
+        timer_gen.unit_string = "vx^2";
         print_accessor_stats();
 
     }
     delete timer;
 
-    // loss_status = loss_status(used_area);
-    // cv::imwrite("loss_status.tif", loss_status);
-
-    // CeresGrid2DcvMat3f grid_coords({coords});
-    // ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> interp_coords(grid_coords);
-
     locs = locs(used_area);
     state = state(used_area);
-    // init_dist = init_dist(used_area);
-
-    // cv::imwrite("init_dist.tif", init_dist);
-    // cv::imwrite("state.tif", state);
-
-    // cv::Mat_<uint8_t> classification(locs.size(), 0);
-    // for(int j=0;j<locs.rows;j++)
-    //     for(int i=0;i<locs.cols;i++)
-    //         classification(j,i) = dbg_tensor(locs(j,i)[2],locs(j,i)[1],locs(j,i)[0]);
-    // cv::imwrite("class.tif", classification);
-
-    // cv::Mat_<uint8_t> dists(locs.size(), 0);
-    // for(int j=0;j<locs.rows;j++)
-    //     for(int i=0;i<locs.cols;i++)
-    //         dists(j,i) = proc_tensor(locs(j,i)[2],locs(j,i)[1],locs(j,i)[0]);
-    // cv::imwrite("dists.tif", dists);
-
-    // cv::Mat_<cv::Vec3f> points(locs.size(), cv::Vec3f(-1,-1,-1));
-    // cv::Mat_<float> dists(points.size(), 1000);
-    // for(int j=0;j<locs.rows;j++)
-    //     for(int i=0;i<locs.cols;i++) {
-    //         if (!loc_valid(state(j,i)))
-    //             continue;
-    //         cv::Vec3d l = locs(j,i);
-    //         double p[3];
-    //
-    //         interp_coords.Evaluate(l[1],l[0], p);
-    //         cv::Vec3f coord = {p[0],p[1],p[2]};
-    //         coord += (l[2]-z/2) * normal;
-    //         points(j,i) = coord;
-    //
-    //         double d;
-    //         interp.Evaluate<double>(l[2],l[1],l[0], &d);
-    //         dists(j,i) = d;
-    //     }
-
-
-    // cv::imwrite("phys_fail.tif", phys_fail*255);
-
-    // cv::imwrite("dists.tif", dists);
-    // points *= 1/reader.scale;
 
     double max_cost = 0;
     double avg_cost = 0;
@@ -3341,14 +3292,12 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         }
     avg_cost /= count;
 
-
-    // printf("generated approximate surface %fkvx^2\n", succ*step*step/1000000.0);
-    printf("generated approximate surface %fmm^2\n", succ*step*step*0.008*0.008);
+    printf("generated approximate surface %fvx^2\n", succ*step*step);
 
     QuadSurface *surf = new QuadSurface(locs, {1/T, 1/T});
 
     surf->meta = new nlohmann::json;
-    (*surf->meta)["area_cm"] = succ*step*step*0.008*0.008/100;
+    (*surf->meta)["area_vx2"] = succ*step*step;
     (*surf->meta)["max_cost"] = max_cost;
     (*surf->meta)["avg_cost"] = avg_cost;
     (*surf->meta)["max_gen"] = generation;
@@ -6013,7 +5962,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         //lets just see what happens
         if (update_mapping /*generation+1 != stop_gen && (generation % opt_map_every) == 0*/) {
             dbg_counter = generation;
-            optimize_surface_mapping_extr(data, state, points, used_area, step, src_step, {y0,x0}, closing_r, true);
+            optimize_surface_mapping(data, state, points, used_area, step, src_step, {y0,x0}, closing_r, true);
             last_succ_parametrization = loc_valid_count;
             //recalc fringe after surface optimization (which often shrinks the surf)
             fringe.clear();

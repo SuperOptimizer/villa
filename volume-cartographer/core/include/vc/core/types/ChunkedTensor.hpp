@@ -7,6 +7,7 @@
 
 #include <xtensor/xtensor.hpp>
 #include <xtensor/xadapt.hpp>
+#include <xtensor/xview.hpp>
 
 #include "z5/multiarray/xtensor_access.hxx"
 
@@ -16,27 +17,6 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/mman.h>
-
-// static std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v) {
-//     if ( !v.empty() ) {
-//         out << '[';
-//         for(auto &v : v)
-//             out << v << ",";
-//         out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
-//     }
-//     return out;
-// }
-//
-// template <size_t N>
-// static std::ostream& operator<< (std::ostream& out, const std::array<size_t,N> &v) {
-//     if ( !v.empty() ) {
-//         out << '[';
-//         for(auto &v : v)
-//             out << v << ",";
-//         out << "\b]"; // use ANSI backspace character '\b' to overwrite final ", "
-//     }
-//     return out;
-// }
 
 struct vec3i_hash {
     size_t operator()(cv::Vec3i p) const
@@ -55,8 +35,8 @@ struct passTroughComputor
 {
     enum {BORDER = 0};
     enum {CHUNK_SIZE = 32};
-    const std::string CHUNK_DIR = "";
     enum {FILL_V = 0};
+    const std::string UNIQUE_ID_STRING = "";
     template <typename T, typename E> void compute(const T &large, T &small)
     {
         int low = int(BORDER);
@@ -72,6 +52,13 @@ static uint64_t chunk_compute_total = 0;
 
 template <typename T, typename C> class Chunked3dAccessor;
 
+static std::string tmp_name_proc_thread()
+{
+    std::stringstream ss;
+    ss << "tmp_" << getpid() << "_" << std::this_thread::get_id();
+    return ss.str();
+}
+
 //chunked 3d tensor for on-demand computation from a zarr dataset ... could as some point be file backed ...
 template <typename T, typename C>
 class Chunked3d {
@@ -81,6 +68,62 @@ public:
     Chunked3d(C &compute_f, z5::Dataset *ds, ChunkCache *cache) : _compute_f(compute_f), _ds(ds), _cache(cache)
     {
         _border = compute_f.BORDER;
+    };
+    Chunked3d(C &compute_f, z5::Dataset *ds, ChunkCache *cache, const fs::path &cache_root) : _compute_f(compute_f), _ds(ds), _cache(cache)
+    {
+        _border = compute_f.BORDER;
+        
+        if (cache_root.empty())
+            return;
+
+        if (!_compute_f.UNIQUE_ID_STRING.size())
+            throw std::runtime_error("requested fs cache for compute function without identifier");        
+        
+        fs::path root = cache_root/_compute_f.UNIQUE_ID_STRING;
+        
+        fs::create_directories(root);
+        
+        //create cache dir while others are competing to do the same
+        for(int r=0;r<1000 && _cache_dir.empty();r++) {
+            std::set<std::string> paths;
+            for (auto const& entry : fs::directory_iterator(root))
+                if (fs::is_directory(entry) && fs::exists(entry.path()/"meta.json") && fs::is_regular_file(entry.path()/"meta.json")) {
+                    std::ifstream meta_f(entry.path()/"meta.json");
+                    nlohmann::json meta = nlohmann::json::parse(meta_f);
+                    fs::path src = fs::canonical(meta["dataset_source_path"]);
+                    if (src == fs::canonical(ds->path())) {
+                        _cache_dir = entry.path();
+                        break;
+                    }
+                }
+                
+            if (!_cache_dir.empty())
+                continue;
+            
+            //try generating our own cache dir atomically
+            fs::path tmp_dir = cache_root/tmp_name_proc_thread();
+            fs::create_directories(tmp_dir);
+            
+            nlohmann::json meta;
+            meta["dataset_source_path"] = fs::canonical(ds->path()).string();
+            std::ofstream o(tmp_dir/"meta.json");
+            o << std::setw(4) << meta << std::endl;
+            
+            fs::path tgt_path;
+            for(int i=0;i<1000;i++) {
+                tgt_path = root/std::to_string(i);
+                if (paths.count(tgt_path.string()))
+                    continue;
+                
+                fs::rename(tmp_dir, tgt_path);
+                _cache_dir = tgt_path;
+                break;
+            }
+        }
+        
+        if (_cache_dir.empty())
+            throw std::runtime_error("could not create cache dir - maybe too many caches in cache root (max 1000!)");
+        
     };
     size_t calc_off(const cv::Vec3i &p)
     {
@@ -134,7 +177,7 @@ public:
     {
         auto s = C::CHUNK_SIZE;
 
-        fs::path tgt_path = id_path(_compute_f.CHUNK_DIR, id);
+        fs::path tgt_path = id_path(_cache_dir, id);
         size_t len = s*s*s;
 
         if (fs::exists(tgt_path)) {
@@ -163,7 +206,7 @@ public:
         _mutex.lock();
         std::stringstream ss;
         ss << this << "_" << std::this_thread::get_id() << "_" << _tmp_counter++;
-        tmp_path = fs::path(_compute_f.CHUNK_DIR) / ss.str();
+        tmp_path = fs::path(_cache_dir) / ss.str();
         _mutex.unlock();
         int fd = open(tmp_path.string().c_str(), O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600);
         ftruncate(fd, len);
@@ -280,10 +323,10 @@ public:
 
     T *cache_chunk_safe(const cv::Vec3i &id)
     {
-        if (_compute_f.CHUNK_DIR.size())
-            return cache_chunk_safe_mmap(id);
-        else
+        if (_cache_dir.empty())
             return cache_chunk_safe_alloc(id);
+        else
+            return cache_chunk_safe_mmap(id);
     }
 
     T *cache_chunk(const cv::Vec3i &id) {
@@ -341,6 +384,7 @@ public:
     C &_compute_f;
     std::shared_mutex _mutex;
     uint64_t _tmp_counter = 0;
+    fs::path _cache_dir;
 };
 
 void print_accessor_stats();
@@ -469,9 +513,9 @@ public:
         }
         V fc[3] = { z - V(corner[0]), y - V(corner[1]), x - V(corner[2])};
         for(int i=0;i<3;i++) {
-            if (fc[i] < 0)
+            if (fc[i] < V(0))
                 fc[i] = V(0);
-            else if (fc[i] > 1)
+            else if (fc[i] > V(1))
                 fc[i] = V(1);
         }
 
@@ -528,7 +572,7 @@ bool loc_valid(const cv::Mat_<cv::Vec<T,C>> &m, const cv::Vec2d &l)
 }
 
 template<typename T, int C>
-//l is [y, x]!
+//l is [x, y]!
 bool loc_valid_xy(const cv::Mat_<cv::Vec<T,C>> &m, const cv::Vec2d &l)
 {
     return loc_valid(m, {l[1],l[0]});
