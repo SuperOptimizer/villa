@@ -4085,7 +4085,7 @@ std::string strint(int n, int width)
 int static dbg_counter = 0;
 float local_cost_inl_th = 0.2;
 int opt_map_every = 8;
-float same_surface_th = 2.0;
+float same_surface_th = 4.0;
 
 cv::Mat_<cv::Vec3d> surftrack_genpoints_extrapolate(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, cv::Rect used_area, float step, float src_step, bool inpaint = false)
 {
@@ -5803,7 +5803,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         float cost = local_cost(test_surf, p, data_th, state, points, step, src_step, &count, &straight_count);
                         state(p) = 0;
                         data_th.erase(test_surf, p);
-                        if (cost < 2*local_cost_inl_th && (ref_seed || (count >= 2 && straight_count >= 1))) {
+                        if (cost < local_cost_inl_th && (ref_seed || (count >= 2 && straight_count >= 1))) {
                             inliers_sum += count;
                             inliers_count++;
                         }
@@ -5848,13 +5848,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         int count = 0;
                         float cost = local_cost(test_surf, p, data_th, state, points, step, src_step, &count);
                         //FIXME opt then check all in extra again!
-                        if (cost < 4*local_cost_inl_th) {
+                        if (cost < local_cost_inl_th) {
                             data_th.surfs(p).insert(test_surf);
                             surftrack_add_local(test_surf, p, data_th, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
-                            
-                            for(auto s : test_surf->overlapping)
-                                if (!local_surfs.count(s) && s != best_surf)
-                                    more_local_surfs.insert(s);
                         }
                         else
                             data_th.erase(test_surf, p);
@@ -5877,7 +5873,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         }
                         int count = 0;
                         float cost = local_cost_destructive(test_surf, p, data_th, state, points, step, src_step, loc, &count);
-                        if (cost < 2*local_cost_inl_th) {
+                        if (cost < local_cost_inl_th) {
                             data_th.loc(test_surf, p) = {loc[1], loc[0]};
                             data_th.surfs(p).insert(test_surf);
                         };
