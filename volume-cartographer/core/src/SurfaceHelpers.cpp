@@ -5831,34 +5831,38 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 ceres::Problem problem;
                 surftrack_add_local(best_surf, p, data_th, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
                 
-                std::set<SurfaceMeta*> more_local_surfs;
+                std::set<SurfaceMeta*> more_local_surfs = local_surfs;
+                std::set<SurfaceMeta*> erase_surfs;
                 for(auto test_surf : local_surfs) {
+                    if (test_surf == best_surf)
+                        continue;
                     
-                    if (data_th.has(test_surf, p)) {
-                        surftrack_add_local(test_surf, p, data_th, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
-                    }
+                    // if (data_th.has(test_surf, p)) {
+                    //     surftrack_add_local(test_surf, p, data_th, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
+                    // }
                     
                     SurfacePointer *ptr = test_surf->surf()->pointer();
                     if (test_surf->surf()->pointTo(ptr, best_coord, same_surface_th, 4) <= same_surface_th) {
                         cv::Vec3f loc = test_surf->surf()->loc_raw(ptr);
-                        bool erase_if_out = false;
-                        if (!data_th.has(test_surf, p)) {
-                            erase_if_out = true;
-                            data_th.loc(test_surf, p) = {loc[1], loc[0]};
-                        }
+                        // bool erase_if_out = false;
+                        // if (!data_th.has(test_surf, p)) {
+                            // erase_if_out = true;
+                        data_th.loc(test_surf, p) = {loc[1], loc[0]};
+                        erase_surfs.insert(test_surf);
+                        // }
                         int count = 0;
                         float cost = local_cost(test_surf, p, data_th, state, points, step, src_step, &count);
                         //FIXME opt then check all in extra again!
                         if (cost < 2*local_cost_inl_th) {
-                            data_th.surfs(p).insert(test_surf);
+                            // data_th.surfs(p).insert(test_surf);
                             surftrack_add_local(test_surf, p, data_th, problem, state, points, step, src_step, SURF_LOSS | LOSS_ZLOC);
                             
                             for(auto s : test_surf->overlapping)
                                 if (/*!data_th.has(s, p) && !local_surfs.count(s) &&*/ s != best_surf)
                                     more_local_surfs.insert(s);
                         }
-                        else if (erase_if_out)
-                            data_th.erase(test_surf, p);
+                        // else if (erase_if_out)
+                        // data_th.erase(test_surf, p);
                     }
                 }
                 
@@ -5866,8 +5870,13 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 
                 ceres::Solve(options, &problem, &summary);
                 
+                for(auto s : erase_surfs)
+                    data_th.erase(s, p);
+                
                 //check for more agreeing surfs by checking agreeings surfs neigbors
                 for(auto test_surf : more_local_surfs) {
+                    if (data_th.has(test_surf, p))
+                        continue;
                     SurfacePointer *ptr = test_surf->surf()->pointer();
                     float res = test_surf->surf()->pointTo(ptr, best_coord, same_surface_th, 4);
                     if (res <= same_surface_th) {
