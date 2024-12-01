@@ -5787,6 +5787,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     best_surf = ref_surf;
                     best_loc = ref_loc;
                     best_ref_seed = ref_seed;
+                    data_th.erase(ref_surf, p);
                     break;
                 }
 
@@ -5815,6 +5816,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     best_loc = ref_loc;
                     best_ref_seed = ref_seed;
                 }
+                data_th.erase(ref_surf, p);
             }
 
             if ((best_inliers >= curr_best_inl_th || best_ref_seed) /*&& best_inliers >= local_surfs.size()/2*/) {
