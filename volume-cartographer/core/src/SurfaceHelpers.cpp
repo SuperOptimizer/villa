@@ -5285,18 +5285,18 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     cv::Mat_<cv::Vec3d> points_out(points.size(), {-1,-1,-1});
     cv::Mat_<uint8_t> state_out(state.size(), 0);
     cv::Mat_<uint8_t> support_count(state.size(), 0);
-    #pragma omp parallel for //FIXME ... data.surfs is also writing..
+#pragma omp parallel for //FIXME ... data.surfs is also writing..
     for(int j=used_area.y;j<used_area.br().y;j++)
         for(int i=used_area.x;i<used_area.br().x;i++)
             if (new_state(j,i) & STATE_VALID) {
                 // if (data_new.has(&sm, {j,i})) {
-                mutex.lock_shared();
+                // mutex.lock_shared();
                 cv::Vec2d l = data_inp.loc(&sm_inp ,{j,i});
                 int y = l[0];
                 int x = l[1];
                 l *= step;
                 if (loc_valid(points_hr, l)) {
-                    mutex.unlock();
+                    // mutex.unlock();
                     int src_loc_valid_count = 0;
                     if (state(y,x) & STATE_LOC_VALID)
                         src_loc_valid_count++;
@@ -5312,22 +5312,22 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                     // if (src_loc_valid_count < 3)
                     // continue;
                     
-                    mutex.lock();
+                    // mutex.lock();
                     //FIXME errors accumulate over time? regularly redo using inliers or use higher es
                     points_out(j, i) = interp_lin_2d(points_hr, l);
                     state_out(j, i) = STATE_LOC_VALID | STATE_COORD_VALID;
-                    mutex.unlock();
+                    // mutex.unlock();
                     
                     //FIXME jep - this is probably the issue (?)
                     // std::cout << cv::norm(points_out(j, i)-points_new(j,i)) << std::endl;
                     
-                    mutex.lock_shared();
+                    // mutex.lock_shared();
                     std::set<SurfaceMeta*> surfs;
                     surfs.insert(data.surfsC({y,x}).begin(), data.surfsC({y,x}).end());
                     surfs.insert(data.surfsC({y,x+1}).begin(), data.surfsC({y,x+1}).end());
                     surfs.insert(data.surfsC({y+1,x}).begin(), data.surfsC({y+1,x}).end());
                     surfs.insert(data.surfsC({y+1,x+1}).begin(), data.surfsC({y+1,x+1}).end());
-                    mutex.unlock();
+                    // mutex.unlock();
                     
                     for(auto &s : surfs) {
                         SurfacePointer *ptr = s->surf()->pointer();
@@ -5344,8 +5344,8 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                     // std::cout << cv::Vec2i(j,i) << " surfs " <<
                     // data_out.surfs({j,i}).size() << " in " << data.surfs({j,i}).size() << std::endl;
                 }
-                else
-                    mutex.unlock();
+                // else
+                    // mutex.unlock();
             }
                     
     // points = points_out;
@@ -5400,7 +5400,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 //                                             }
 //                                         }
 
-    for(int r=0;r<4;r++) {
+    for(int r=0;r<10;r++) {
         int added = 0;
 #pragma omp parallel for collapse(2) schedule(dynamic)
         for(int j=used_area.y;j<used_area.br().y-1;j++)
@@ -5433,7 +5433,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                             cost = local_cost_destructive(test_surf, {j,i}, data_out, state_out, points_out, step, src_step, loc_3d, &count, &straight_count);
                             mutex.unlock();
                             
-                            if (cost > local_cost_inl_th || straight_count < 1 || count < 2)
+                            if (cost > local_cost_inl_th /*|| straight_count < 1 || count < 2*/)
                                 continue;
                             
                             mutex.lock();
