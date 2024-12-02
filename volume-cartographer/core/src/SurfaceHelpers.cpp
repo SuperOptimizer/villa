@@ -5331,7 +5331,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                     
                     for(auto &s : surfs) {
                         SurfacePointer *ptr = s->surf()->pointer();
-                        float res = s->surf()->pointTo(ptr, points_out(j, i), same_surface_th, 4);
+                        float res = s->surf()->pointTo(ptr, points_out(j, i), same_surface_th, 10);
                         // std::cout << cv::Vec2i(j,i) << " res " << res << std::endl;
                         if (res <= same_surface_th) {
                             mutex.lock();
@@ -5361,7 +5361,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                 for (auto s : surf_src) {
                     int count;
                     float cost = local_cost(s, {j,i}, data_out, state_out, points_out, step, src_step, &count);
-                    if (cost >= 4.0*local_cost_inl_th || count < 1) {
+                    if (cost >= local_cost_inl_th /*|| count < 1*/) {
                         data_out.erase(s, {j,i});
                         data_out.eraseSurf(s, {j,i});
                     }
@@ -5422,7 +5422,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                             mutex.unlock();
                             
                             SurfacePointer *ptr = test_surf->surf()->pointer();
-                            if (test_surf->surf()->pointTo(ptr, points_out(j, i), same_surface_th, 4) > same_surface_th)
+                            if (test_surf->surf()->pointTo(ptr, points_out(j, i), same_surface_th, 10) > same_surface_th)
                                 continue;
                             
                             int count = 0;
