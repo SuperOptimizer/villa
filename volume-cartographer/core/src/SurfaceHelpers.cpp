@@ -2713,7 +2713,7 @@ struct thresholdedDistance
 
 };
 
-float dist_th = 1.0;
+float dist_th = 1.5;
 
 QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f origin, int  stop_gen, float step, const std::string &cache_root)
 {
@@ -2907,8 +2907,6 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
     int max_local_opt_r = 4;
 
-    omp_set_num_threads(1);
-
     std::vector<float> gen_max_cost;
     std::vector<float> gen_avg_cost;
     
@@ -2952,6 +2950,9 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         fringe.resize(0);
 
         std::cout << "cands " << cands.size() << std::endl;
+        
+        if (generation % 10 == 0)
+            curr_ref_min = std::min(curr_ref_min, 5);
 
         // if (!cands.size())
             // continue;
@@ -3027,7 +3028,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                             ref_count2++;
                         }
 
-                if (ref_count < 2 || ref_count+0.2*rec_ref_sum < curr_ref_min /*|| (generation > 3 && ref_count2 < 14)*/) {
+                if (ref_count < 2 || ref_count+0.35*rec_ref_sum < curr_ref_min /*|| (generation > 3 && ref_count2 < 14)*/) {
                     state(p) &= ~STATE_PROCESSING;
 #pragma omp critical
                     rest_ps.push_back(p);
@@ -3055,7 +3056,8 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 //                             best_ref_l = ref_l;
 //                         }
 //                     }
-                    locs(p) = locs(best_l)+cv::Vec3d((rand()%1000)/10000.0-0.05,(rand()%1000)/10000.0-0.05,(rand()%1000)/10000.0-0.05);
+                cv::Vec3d init = locs(best_l)+cv::Vec3d((rand()%1000)/10000.0-0.05,(rand()%1000)/10000.0-0.05,(rand()%1000)/10000.0-0.05);
+                locs(p) = init;
                 // }
 
 
@@ -3069,6 +3071,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                 //FIXME need to handle the edge of the input definition!!
                 ceres::Solver::Summary summary;
                 ceres::Solve(options, &problem, &summary);
+                // std::cout << summary.FullReport() << "\n";
 
                 double loss1 = summary.final_cost;
 
@@ -3094,6 +3097,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                 }
 
                 cv::Vec3d phys_only_loc = locs(p);
+                // locs(p) = init;
 
                 gen_space_loss(problem, p, state, locs, proc_tensor);
 
@@ -3110,6 +3114,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
                 ceres::Solve(options, &problem, &summary);
                 // std::cout << summary.BriefReport() << "\n";
+                // std::cout << summary.FullReport() << "\n";
                 // local_optimization(1, p, state, locs, interp, proc_tensor, Ts, true);
                 
                 // cv::Vec3d phys_only_loc = locs(p);
