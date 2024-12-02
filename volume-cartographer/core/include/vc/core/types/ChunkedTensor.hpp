@@ -88,6 +88,7 @@ public:
             std::set<std::string> paths;
             for (auto const& entry : fs::directory_iterator(root))
                 if (fs::is_directory(entry) && fs::exists(entry.path()/"meta.json") && fs::is_regular_file(entry.path()/"meta.json")) {
+                    paths.insert(entry.path());
                     std::ifstream meta_f(entry.path()/"meta.json");
                     nlohmann::json meta = nlohmann::json::parse(meta_f);
                     fs::path src = fs::canonical(meta["dataset_source_path"]);
@@ -114,8 +115,12 @@ public:
                 tgt_path = root/std::to_string(i);
                 if (paths.count(tgt_path.string()))
                     continue;
-                
-                fs::rename(tmp_dir, tgt_path);
+                try {
+                    fs::rename(tmp_dir, tgt_path);
+                }
+                catch (fs::filesystem_error){
+                    continue;
+                }
                 _cache_dir = tgt_path;
                 break;
             }
