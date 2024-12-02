@@ -292,6 +292,7 @@ int main(int argc, char *argv[])
         (*surf->meta)["seed_overlap"] = count_overlap;
     std::string uuid = name_prefix + time_str();
     fs::path seg_dir = tgt_dir / uuid;
+    std::cout << "saving " << seg_dir << std::endl;
     surf->save(seg_dir, uuid);
 
     SurfaceMeta current;
