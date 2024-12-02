@@ -3074,26 +3074,26 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
                 // std::cout << loss1 << std::endl;
 
-                // if (loss1 > phys_fail_th) {
-                //     cv::Vec3d best_loc = locs(p);
-                //     double best_loss = loss1;
-                //     for (int n=0;n<100;n++) {
-                //         int range = step*10;
-                //         locs(p) = avg + cv::Vec3d((rand()%(range*2))-range,(rand()%(range*2))-range,(rand()%(range*2))-range);
-                //         ceres::Solve(options, &problem, &summary);
-                //         loss1 = summary.final_cost;
-                //         if (loss1 < best_loss) {
-                //             best_loss = loss1;
-                //             best_loc = locs(p);
-                //         }
-                //         if (loss1 < phys_fail_th)
-                //             break;
-                //     }
-                //     loss1 = best_loss;
-                //     locs(p) = best_loc;
-                // }
+                if (loss1 > phys_fail_th) {
+                    cv::Vec3d best_loc = locs(p);
+                    double best_loss = loss1;
+                    for (int n=0;n<100;n++) {
+                        int range = step*10;
+                        locs(p) = avg + cv::Vec3d((rand()%(range*2))-range,(rand()%(range*2))-range,(rand()%(range*2))-range);
+                        ceres::Solve(options, &problem, &summary);
+                        loss1 = summary.final_cost;
+                        if (loss1 < best_loss) {
+                            best_loss = loss1;
+                            best_loc = locs(p);
+                        }
+                        if (loss1 < phys_fail_th)
+                            break;
+                    }
+                    loss1 = best_loss;
+                    locs(p) = best_loc;
+                }
 
-                // cv::Vec3d phys_only_loc = locs(p);
+                cv::Vec3d phys_only_loc = locs(p);
 
                 gen_space_loss(problem, p, state, locs, proc_tensor);
 
@@ -3112,7 +3112,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                 // std::cout << summary.BriefReport() << "\n";
                 // local_optimization(1, p, state, locs, interp, proc_tensor, Ts, true);
                 
-                cv::Vec3d phys_only_loc = locs(p);
+                // cv::Vec3d phys_only_loc = locs(p);
                 double dist;
                 //check steps
                 interp.Evaluate(locs(p)[2],locs(p)[1],locs(p)[0], &dist);
@@ -3303,7 +3303,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         //     }
 
         cv::Rect used_plus = {used_area.x-8,used_area.y-8,used_area.width+16,used_area.height+16};
-        // area_wrap_phy_losses_closing_list(used_plus, big_problem, generation/2, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added, global_opt, true);
+        // area_wrap_phy_losses_closing_list(used_plus, big_problem, generation/2, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added, global_opt, false);
         // area_wrap_phy_losses_closing_list(used_plus, big_problem, generation/2, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added, global_opt, false);
         // add_phy_losses_closing_list(big_problem, 20, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added, global_opt);
         for(auto &p : added) {
