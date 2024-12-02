@@ -2790,7 +2790,7 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
     float Ts = step*reader.scale;
 
     int r = 1;
-    int r2 = 3;
+    int r2 = 2;
 
 
     cv::Mat_<cv::Vec3d> a1(size);
@@ -2911,6 +2911,9 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
     std::vector<float> gen_max_cost;
     std::vector<float> gen_avg_cost;
+    
+    int ref_max = 6;
+    int curr_ref_min = ref_max;
 
     while (fringe.size()) {
         bool global_opt = generation <= 20;
@@ -2945,13 +2948,13 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                     cands.push_back(p+n);
                 }
         }
-        printf("gen %d processing %d fringe cands (total done %d fringe: %d\n", generation, cands.size(), succ, fringe.size());
+        printf("gen %d processing %d fringe cands (total done %d fringe: %d)\n", generation, cands.size(), succ, fringe.size());
         fringe.resize(0);
 
         std::cout << "cands " << cands.size() << std::endl;
 
-        if (!cands.size())
-            continue;
+        // if (!cands.size())
+            // continue;
 
         // auto rng = std::default_random_engine {};
         // std::shuffle(std::begin(cands), std::end(cands), rng);
@@ -2984,26 +2987,47 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 //
 //                 std::cout << "threads active: " << parallism << std::endl;
 
-                if (state(p) & STATE_LOC_VALID)
+                if (state(p) & (STATE_LOC_VALID | STATE_COORD_VALID))
                     continue;
 
                 int ref_count = 0;
                 cv::Vec3d avg = {0,0,0};
+                std::vector<cv::Vec2i> srcs;
                 for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,locs.rows-1);oy++)
                     for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,locs.cols-1);ox++)
                         if (state(oy,ox) & STATE_LOC_VALID) {
                             ref_count++;
                             avg += locs(oy,ox);
+                            srcs.push_back({oy,ox});
                         }
+                        
+                cv::Vec2i best_l = srcs[0];
+                int best_ref_l = -1;
+                int rec_ref_sum = 0;
+                for(cv::Vec2i l : srcs) {
+                    int ref_l = 0;
+                    for(int oy=std::max(l[0]-r,0);oy<=std::min(l[0]+r,locs.rows-1);oy++)
+                        for(int ox=std::max(l[1]-r,0);ox<=std::min(l[1]+r,locs.cols-1);ox++)
+                            if (state(oy,ox) & STATE_LOC_VALID)
+                                ref_l++;
+                    
+                    rec_ref_sum += ref_l;
+                    
+                    if (ref_l > best_ref_l) {
+                        best_l = l;
+                        best_ref_l = ref_l;
+                    }
+                }
 
                 int ref_count2 = 0;
                 for(int oy=std::max(p[0]-r2,0);oy<=std::min(p[0]+r2,locs.rows-1);oy++)
                     for(int ox=std::max(p[1]-r2,0);ox<=std::min(p[1]+r2,locs.cols-1);ox++)
-                        if (state(oy,ox) & (STATE_LOC_VALID | STATE_COORD_VALID)) {
+                        // if (state(oy,ox) & (STATE_LOC_VALID | STATE_COORD_VALID)) {
+                        if (state(oy,ox) & STATE_LOC_VALID) {
                             ref_count2++;
                         }
 
-                if (ref_count < 2 /*|| (generation > 3 && ref_count2 < 14)*/) {
+                if (ref_count < 2 || ref_count+0.2*rec_ref_sum < curr_ref_min /*|| (generation > 3 && ref_count2 < 14)*/) {
                     state(p) &= ~STATE_PROCESSING;
 #pragma omp critical
                     rest_ps.push_back(p);
@@ -3011,7 +3035,28 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                 }
 
                 avg /= ref_count;
-                locs(p) = avg;
+                // locs(p) = avg;
+                
+                // auto rng = std::default_random_engine {};
+                // std::shuffle(std::begin(srcs), std::end(srcs), rng);
+                // locs(p) = srcs[0]+cv::Vec3d(0.1,0.1,0.1);
+                // {
+//                     cv::Vec2i best_l = srcs[0];
+//                     int best_ref_l = -1;
+//                     for(cv::Vec2i l : srcs) {
+//                         int ref_l = 0;
+//                         for(int oy=std::max(l[0]-r,0);oy<=std::min(l[0]+r,locs.rows-1);oy++)
+//                             for(int ox=std::max(l[1]-r,0);ox<=std::min(l[1]+r,locs.cols-1);ox++)
+//                                 if (state(oy,ox) & STATE_LOC_VALID)
+//                                     ref_l++;
+//                         
+//                         if (ref_l > best_ref_l) {
+//                             best_l = l;
+//                             best_ref_l = ref_l;
+//                         }
+//                     }
+                    locs(p) = locs(best_l)+cv::Vec3d((rand()%1000)/10000.0-0.05,(rand()%1000)/10000.0-0.05,(rand()%1000)/10000.0-0.05);
+                // }
 
 
                 //TODO don't reinit if we are running on exist cood!
@@ -3029,26 +3074,26 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
                 // std::cout << loss1 << std::endl;
 
-                if (loss1 > phys_fail_th) {
-                    cv::Vec3d best_loc = locs(p);
-                    double best_loss = loss1;
-                    for (int n=0;n<100;n++) {
-                        int range = step*10;
-                        locs(p) = avg + cv::Vec3d((rand()%(range*2))-range,(rand()%(range*2))-range,(rand()%(range*2))-range);
-                        ceres::Solve(options, &problem, &summary);
-                        loss1 = summary.final_cost;
-                        if (loss1 < best_loss) {
-                            best_loss = loss1;
-                            best_loc = locs(p);
-                        }
-                        if (loss1 < phys_fail_th)
-                            break;
-                    }
-                    loss1 = best_loss;
-                    locs(p) = best_loc;
-                }
+                // if (loss1 > phys_fail_th) {
+                //     cv::Vec3d best_loc = locs(p);
+                //     double best_loss = loss1;
+                //     for (int n=0;n<100;n++) {
+                //         int range = step*10;
+                //         locs(p) = avg + cv::Vec3d((rand()%(range*2))-range,(rand()%(range*2))-range,(rand()%(range*2))-range);
+                //         ceres::Solve(options, &problem, &summary);
+                //         loss1 = summary.final_cost;
+                //         if (loss1 < best_loss) {
+                //             best_loss = loss1;
+                //             best_loc = locs(p);
+                //         }
+                //         if (loss1 < phys_fail_th)
+                //             break;
+                //     }
+                //     loss1 = best_loss;
+                //     locs(p) = best_loc;
+                // }
 
-                cv::Vec3d phys_only_loc = locs(p);
+                // cv::Vec3d phys_only_loc = locs(p);
 
                 gen_space_loss(problem, p, state, locs, proc_tensor);
 
@@ -3066,7 +3111,8 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                 ceres::Solve(options, &problem, &summary);
                 // std::cout << summary.BriefReport() << "\n";
                 // local_optimization(1, p, state, locs, interp, proc_tensor, Ts, true);
-
+                
+                cv::Vec3d phys_only_loc = locs(p);
                 double dist;
                 //check steps
                 interp.Evaluate(locs(p)[2],locs(p)[1],locs(p)[0], &dist);
@@ -3094,6 +3140,12 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
 
                 //FIXME revisit dists after (every?) iteration?
                 if (dist >= dist_th || summary.final_cost >= 0.1) {
+                    // if (ref_count <= 5) {
+                    //     locs(p) = {-1,-1};
+                    //     state(p) = 0;
+                    //     continue;
+                    // }
+                    
                     locs(p) = phys_only_loc;
                     state(p) = STATE_COORD_VALID;
                     if (global_opt) {
@@ -3135,14 +3187,33 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
                             used_area = used_area | cv::Rect(p[1],p[0],1,1);
                         }
                     }
-                }
+                    
 #pragma omp critical
-                {
-                    fringe.push_back(p);
-                    succ_gen_ps.push_back(p);
+                    {
+                        fringe.push_back(p);
+                        succ_gen_ps.push_back(p);
+                    }
                 }
+// #pragma omp critical
+//                 {
+//                     succ_gen_ps.push_back(p);
+//                 }
             }
         }
+        
+        if (!fringe.size() && curr_ref_min > 2) {
+            curr_ref_min--;
+            std::cout << used_area << std::endl;
+            for(int j=used_area.y;j<=used_area.br().y;j++)
+                for(int i=used_area.x;i<=used_area.br().y;i++) {
+                    if (state(j, i) & STATE_LOC_VALID)
+                        fringe.push_back({j,i});
+                }
+            std::cout << "new limit " << curr_ref_min << " " << fringe.size() << std::endl;
+        }
+        else if (fringe.size())
+            curr_ref_min = ref_max;
+        
 
         for(auto p: fringe)
             if (locs(p)[0] == -1)
@@ -3232,8 +3303,8 @@ QuadSurface *empty_space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCa
         //     }
 
         cv::Rect used_plus = {used_area.x-8,used_area.y-8,used_area.width+16,used_area.height+16};
+        // area_wrap_phy_losses_closing_list(used_plus, big_problem, generation/2, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added, global_opt, true);
         // area_wrap_phy_losses_closing_list(used_plus, big_problem, generation/2, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added, global_opt, false);
-        area_wrap_phy_losses_closing_list(used_plus, big_problem, generation/2, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added, global_opt, false);
         // add_phy_losses_closing_list(big_problem, 20, state, locs, a1,a2,a3,a4, loss_status, rest_ps, Ts, phys_fail_th, interp_global, proc_tensor, added, global_opt);
         for(auto &p : added) {
             // succ_gen_ps.push_back(p);
