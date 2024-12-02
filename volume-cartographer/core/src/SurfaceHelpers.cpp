@@ -3588,7 +3588,7 @@ int add_surftrack_straightloss(SurfaceMeta *sm, const cv::Vec2i &p, const cv::Ve
     return 1;
 }
 
-int add_surftrack_straightloss_3D(const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<cv::Vec3d> &points ,ceres::Problem &problem, const cv::Mat_<uint8_t> &state, int flags = 0, ceres::ResidualBlockId *res = nullptr, float w = 2.0)
+int add_surftrack_straightloss_3D(const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<cv::Vec3d> &points ,ceres::Problem &problem, const cv::Mat_<uint8_t> &state, int flags = 0, ceres::ResidualBlockId *res = nullptr, float w = 4.0)
 {
     if ((state(p+o1) & (STATE_LOC_VALID|STATE_COORD_VALID)) == 0)
         return 0;
@@ -5089,7 +5089,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     options.linear_solver_type = ceres::SPARSE_SCHUR;
     options.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
     options.minimizer_progress_to_stdout = false;
-    options.max_num_iterations = 1000;
+    options.max_num_iterations = 10000;
     options.num_threads = omp_get_max_threads();
     
     for(int j=used_area.y;j<used_area.br().y;j++)
@@ -5400,7 +5400,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 //                                             }
 //                                         }
 
-    for(int r=0;r<10;r++) {
+    for(int r=0;r<20;r++) {
         int added = 0;
 #pragma omp parallel for collapse(2) schedule(dynamic)
         for(int j=used_area.y;j<used_area.br().y-1;j++)
@@ -5413,35 +5413,36 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                         mutex.unlock();
                         
                         
-                        for(auto test_surf : surf_cands) {
-                            mutex.lock_shared();
-                            if (data_out.has(test_surf, {j,i})) {
-                                mutex.unlock();
-                                continue;
-                            }
+                    for(auto test_surf : surf_cands) {
+                        mutex.lock_shared();
+                        if (data_out.has(test_surf, {j,i})) {
                             mutex.unlock();
-                            
-                            SurfacePointer *ptr = test_surf->surf()->pointer();
-                            if (test_surf->surf()->pointTo(ptr, points_out(j, i), same_surface_th, 10) > same_surface_th)
-                                continue;
-                            
-                            int count = 0;
-                            cv::Vec3f loc_3d = test_surf->surf()->loc_raw(ptr);
-                            int straight_count = 0;
-                            float cost;
-                            mutex.lock();
-                            cost = local_cost_destructive(test_surf, {j,i}, data_out, state_out, points_out, step, src_step, loc_3d, &count, &straight_count);
-                            mutex.unlock();
-                            
-                            if (cost > local_cost_inl_th /*|| straight_count < 1 || count < 2*/)
-                                continue;
-                            
-                            mutex.lock();
-                            added++;
-                            data_out.surfs({j,i}).insert(test_surf);
-                            data_out.loc(test_surf, {j,i}) = {loc_3d[1], loc_3d[0]};
-                            mutex.unlock();
+                            continue;
                         }
+                        mutex.unlock();
+                        
+                        SurfacePointer *ptr = test_surf->surf()->pointer();
+                        if (test_surf->surf()->pointTo(ptr, points_out(j, i), same_surface_th, 10) > same_surface_th)
+                            continue;
+                        
+                        int count = 0;
+                        cv::Vec3f loc_3d = test_surf->surf()->loc_raw(ptr);
+                        int straight_count = 0;
+                        float cost;
+                        mutex.lock();
+                        cost = local_cost_destructive(test_surf, {j,i}, data_out, state_out, points_out, step, src_step, loc_3d, &count, &straight_count);
+                        mutex.unlock();
+                        
+                        if (cost > local_cost_inl_th /*|| straight_count < 1 || count < 2*/)
+                            continue;
+                        
+                        mutex.lock();
+#pragma omp atomic
+                        added++;
+                        data_out.surfs({j,i}).insert(test_surf);
+                        data_out.loc(test_surf, {j,i}) = {loc_3d[1], loc_3d[0]};
+                        mutex.unlock();
+                    }
                 }
         std::cout << "added " << added << std::endl;
     }
@@ -6014,8 +6015,10 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             dbg_counter = generation;
             optimize_surface_mapping(data, state, points, used_area, step, src_step, {y0,x0}, closing_r, true);
             
-            for(int i=0;i<omp_get_max_threads();i++)
+            for(int i=0;i<omp_get_max_threads();i++) {
                 data_ths[i] = data;
+                added_points_threads[i].resize(0);
+            }
             
             last_succ_parametrization = loc_valid_count;
             //recalc fringe after surface optimization (which often shrinks the surf)
