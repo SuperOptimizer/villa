@@ -1,6 +1,7 @@
 ### Julian Schilliger - ThaumatoAnakalyptor - Vesuvius Challenge 2024
 
 import numpy as np
+from numba import njit
 from tqdm import tqdm
 import pickle
 import glob
@@ -31,6 +32,74 @@ import sys
 ### C++ speed up Random Walks
 sys.path.append('ThaumatoAnakalyptor/sheet_generation/build')
 import sheet_generation
+
+global centroid_method
+
+@njit
+def numba_mean_axis0(X):
+    """
+    Compute the mean of a 2D array along axis 0 manually for Numba compatibility.
+    """
+    n_rows, n_cols = X.shape
+    mean_values = np.zeros(n_cols, dtype=X.dtype)
+    
+    for col in range(n_cols):
+        col_sum = 0.0
+        for row in range(n_rows):
+            col_sum += X[row, col]
+        mean_values[col] = col_sum / n_rows
+    
+    return mean_values
+
+@njit
+def numba_norm(arr, axis=1):
+    """
+    Custom implementation of np.linalg.norm for Numba, supporting axis argument.
+    Computes the Euclidean norm along the specified axis.
+    """
+    if axis == 1:
+        # Calculate the norm along rows (for 2D array)
+        return np.sqrt(np.sum(arr ** 2, axis=1))
+    elif axis == 0:
+        # Calculate the norm along columns (for 2D array)
+        return np.sqrt(np.sum(arr ** 2, axis=0))
+    else:
+        raise ValueError("Unsupported axis. Use 0 or 1.")
+    
+@njit
+def geometric_median_(X, eps=1e-5):
+    """
+    Compute the geometric median of a set of points using Weiszfeld's algorithm,
+    avoiding unsupported NumPy features in Numba.
+    """
+    # Manually compute mean along axis 0
+    y = numba_mean_axis0(X)
+    
+    while True:
+        # Compute distances (norms) from all points to the current median estimate
+        D = numba_norm(X - y, axis=1)
+        non_zeros = (D != 0)
+        
+        if not non_zeros.any():
+            return y
+        
+        D_inv = 1 / D[non_zeros]
+        T = np.sum(X[non_zeros] * D_inv[:, None], axis=0) / np.sum(D_inv)
+        
+        if numba_norm(y - T, axis=0) < eps:
+            return T
+        
+        y = T
+
+def closest_to_geometric_median(X):
+    """
+    Compute the closest point to geometric median in the original pointset
+    """
+    y = geometric_median_(X)
+    D_T = numba_norm(X - y, axis=1)
+    min_idx = np.argmin(D_T)
+    closest_point = X[min_idx]
+    return closest_point
 
 def unit_vector(vector):
     """ Returns the unit vector of the vector.  """
@@ -587,11 +656,11 @@ def process_same_block(main_block_patches_list, overlapp_threshold, umbilicus_di
                 continue
             (score_, k_, valid_), anchor_angle1, anchor_angle2 = score_same_block_patches(main_block_patches_list[i], main_block_patches_list[j], overlapp_threshold, umbilicus_distance)
             if score_ > 0.0:
-                score_switching_sheets_.append((main_block_patches_list[i]['ids'][0], main_block_patches_list[j]['ids'][0], score_, k_, anchor_angle1, anchor_angle2, np.exp(np.mean(np.log(main_block_patches_list[i]["points"]), axis=0)), np.exp(np.mean(np.log(main_block_patches_list[j]["points"]), axis=0)), valid_))
+                score_switching_sheets_.append((main_block_patches_list[i]['ids'][0], main_block_patches_list[j]['ids'][0], score_, k_, anchor_angle1, anchor_angle2, centroid_method(main_block_patches_list[i]["points"]), centroid_method(main_block_patches_list[j]["points"]), valid_))
 
             # Add bad edges
             if valid_:
-                score_bad_edges.append((main_block_patches_list[i]['ids'][0], main_block_patches_list[j]['ids'][0], 1.0, 0.0, anchor_angle1, anchor_angle2, np.exp(np.mean(np.log(main_block_patches_list[i]["points"]), axis=0)), np.exp(np.mean(np.log(main_block_patches_list[j]["points"]), axis=0))))
+                score_bad_edges.append((main_block_patches_list[i]['ids'][0], main_block_patches_list[j]['ids'][0], 1.0, 0.0, anchor_angle1, anchor_angle2, centroid_method(main_block_patches_list[i]["points"]), centroid_method(main_block_patches_list[j]["points"])))
 
         # filter and only take the scores closest to the main patch (smallest scores) for each k in +1, -1
         direction1_scores = [score for score in score_switching_sheets_ if score[3] > 0.0]
@@ -650,8 +719,8 @@ def process_block(args):
     umbilicus_func = lambda z: umbilicus_xz_at_y(umbilicus_data, z)
     def umbilicus_distance(patch1, patch2):
         # Geometric mean
-        geo1 = np.exp(np.mean(np.log(patch1["points"]), axis=0))
-        geo2 = np.exp(np.mean(np.log(patch2["points"]), axis=0))
+        geo1 = centroid_method(patch1["points"])
+        geo2 = centroid_method(patch2["points"])
         assert geo1.shape[0] == 3, "Points must be 3D."
         def d_(patch_point):
             umbilicus_point = umbilicus_func(patch_point[1])
@@ -672,7 +741,7 @@ def process_block(args):
 
     patches_centroids = {}
     for patch in main_block_patches_list:
-        patches_centroids[tuple(patch["ids"][0])] = np.exp(np.mean(np.log(patch["points"]), axis=0))
+        patches_centroids[tuple(patch["ids"][0])] = centroid_method(patch["points"])
 
     # Extract block's integer ID
     block_id = [int(i) for i in file_path.split('/')[-1].split('.')[0].split("_")]
@@ -703,7 +772,7 @@ def process_block(args):
                 patches_list_ = [main_block_patch, surrounding_block_patch]
                 score_ = score_other_block_patches(patches_list_, 0, 1, overlapp_threshold) # score, anchor_angle1, anchor_angle2
                 if score_[0] > overlapp_threshold["final_score_min"]:
-                    score_sheets_patch.append((main_block_patch['ids'][0], surrounding_block_patch['ids'][0], score_[0], None, score_[1], score_[2], np.mean(main_block_patch["points"], axis=0), np.mean(surrounding_block_patch["points"], axis=0)))
+                    score_sheets_patch.append((main_block_patch['ids'][0], surrounding_block_patch['ids'][0], score_[0], None, score_[1], score_[2], centroid_method(main_block_patch["points"]), centroid_method(surrounding_block_patch["points"])))
 
             # Find the best score for each main block patch
             if len(score_sheets_patch) > 0:
@@ -729,45 +798,47 @@ def worker_build_GT(args):
     filename, umbilicus_path = args
     nodes_winding_alignment = []
 
-    if filename.endswith(".tar"):
+    def process_ply_files(ply_files):
+        # Process each .ply file
+        for i, ply_file_path in enumerate(ply_files):
+            ply_file = os.path.basename(ply_file_path)
+            ids = tuple([*map(int, filename.split(".")[-2].split("/")[-1].split("_"))]+[int(ply_file.split(".")[-2].split("_")[-1])])
+            ids = (int(ids[0]), int(ids[1]), int(ids[2]), int(ids[3]))
+
+            # 3D instance pointcloud
+            vertices1 = o3d.io.read_point_cloud(ply_file_path)
+            # to numpy
+            vertices1 = np.asarray(vertices1.points)
+            # adjust coordinate frame
+            vertices1 = scale_points(vertices1, 4.0, axis_offset=-500)
+            vertices1_spelufo = vertices1 + 500
+            vertices1, _ = shuffling_points_axis(vertices1, vertices1, [2, 0, 1]) # Scan Coordinate System
+            winding_angles1 = calculate_winding_angle_pointcloud_instance(vertices1, gt_splitter) # instance winding angles. # Takes Scan coordinate system
+
+            # align winding angles
+            winding_angle_difference, winding_angles2, scene2, mesh2, percentage_valid = align_winding_angles(vertices1_spelufo, winding_angles1, mesh_gt_stuff, umbilicus_path, 15, gt_splitter, debug=False) # aling to GT mesh per point. # takes spelufo coordinate system
+            if percentage_valid > 0.5:
+                best_alignment = find_best_alignment(winding_angle_difference) # best alignment to a wrap
+                # Adjust winding angle of graph nodes
+                nodes_winding_alignment.append((ids, best_alignment))
+            elif i == 0:
+                # Check if too far away from GT Mesh
+                winding_angle_difference, winding_angles2, scene2, mesh2, percentage_valid = align_winding_angles(vertices1_spelufo, winding_angles1, mesh_gt_stuff, umbilicus_path, 210, gt_splitter) # aling to GT mesh per point. # takes spelufo coordinate system
+                # Still 0 percent -> no patch in this subvolume is valid
+                if percentage_valid == 0.0:
+                    break
+                
+    if os.path.isfile(filename):
         # Handle .tar files
-        if os.path.isfile(filename):
+        if filename.endswith(".tar"):
             with tarfile.open(filename, 'r') as archive, tempfile.TemporaryDirectory() as temp_dir:
                 # Extract all .ply files at once
-                ply_files = [m for m in archive.getmembers() if m.name.endswith(".ply")]
                 archive.extractall(path=temp_dir, members=archive.getmembers())
-
-                # Process each .ply file
-                for i, ply_member in enumerate(ply_files):
-                    ply_file_path = os.path.join(temp_dir, ply_member.name)
-                    ply_file = ply_member.name
-                    ids = tuple([*map(int, filename.split(".")[-2].split("/")[-1].split("_"))]+[int(ply_file.split(".")[-2].split("_")[-1])])
-                    ids = (int(ids[0]), int(ids[1]), int(ids[2]), int(ids[3]))
-
-                    # Process the .ply file (example processing)
-                    vertices1 = o3d.io.read_point_cloud(ply_file_path)
-                    vertices1 = np.asarray(vertices1.points)
-                    vertices1 = scale_points(vertices1, 4.0, axis_offset=-500)
-                    vertices1_spelufo = vertices1 + 500
-                    vertices1, _ = shuffling_points_axis(vertices1, vertices1, [2, 0, 1])
-                    winding_angles1 = calculate_winding_angle_pointcloud_instance(vertices1, gt_splitter)
-
-                    winding_angle_difference, winding_angles2, scene2, mesh2, percentage_valid = align_winding_angles(
-                        vertices1_spelufo, winding_angles1, mesh_gt_stuff, umbilicus_path, 15, gt_splitter, debug=False
-                    )
-                    if percentage_valid > 0.5:
-                        best_alignment = find_best_alignment(winding_angle_difference)
-                        nodes_winding_alignment.append((ids, best_alignment))
-                    elif i == 0:
-                        winding_angle_difference, winding_angles2, scene2, mesh2, percentage_valid = align_winding_angles(
-                            vertices1_spelufo, winding_angles1, mesh_gt_stuff, umbilicus_path, 210, gt_splitter
-                        )
-                        if percentage_valid == 0.0:
-                            break
+                ply_files = [os.path.join(temp_dir, m.name) for m in archive.getmembers() if m.name.endswith(".ply")]
+                process_ply_files(ply_files)
                         
-    elif filename.endswith(".7z"):
         # Handle .7z files
-        if os.path.isfile(filename):
+        elif filename.endswith(".7z"):
             with py7zr.SevenZipFile(filename, 'r') as archive, tempfile.TemporaryDirectory() as temp_dir:
                 archive.extractall(path=temp_dir)
                 # List all extracted .ply files
@@ -776,33 +847,7 @@ def worker_build_GT(args):
                     for root, _, files in os.walk(temp_dir)
                     for file in files if file.endswith(".ply")
                 ]
-
-                # Process each .ply file
-                for i, ply_file_path in enumerate(ply_files):
-                    ply_file = os.path.basename(ply_file_path)
-                    ids = tuple([*map(int, filename.split(".")[-2].split("/")[-1].split("_"))]+[int(ply_file.split(".")[-2].split("_")[-1])])
-                    ids = (int(ids[0]), int(ids[1]), int(ids[2]), int(ids[3]))
-
-                    # Process the .ply file (example processing)
-                    vertices1 = o3d.io.read_point_cloud(ply_file_path)
-                    vertices1 = np.asarray(vertices1.points)
-                    vertices1 = scale_points(vertices1, 4.0, axis_offset=-500)
-                    vertices1_spelufo = vertices1 + 500
-                    vertices1, _ = shuffling_points_axis(vertices1, vertices1, [2, 0, 1])
-                    winding_angles1 = calculate_winding_angle_pointcloud_instance(vertices1, gt_splitter)
-
-                    winding_angle_difference, winding_angles2, scene2, mesh2, percentage_valid = align_winding_angles(
-                        vertices1_spelufo, winding_angles1, mesh_gt_stuff, umbilicus_path, 15, gt_splitter, debug=False
-                    )
-                    if percentage_valid > 0.5:
-                        best_alignment = find_best_alignment(winding_angle_difference)
-                        nodes_winding_alignment.append((ids, best_alignment))
-                    elif i == 0:
-                        winding_angle_difference, winding_angles2, scene2, mesh2, percentage_valid = align_winding_angles(
-                            vertices1_spelufo, winding_angles1, mesh_gt_stuff, umbilicus_path, 210, gt_splitter
-                        )
-                        if percentage_valid == 0.0:
-                            break
+                process_ply_files(ply_files)
 
     return nodes_winding_alignment
     
@@ -1706,6 +1751,7 @@ def random_walks():
     parser.add_argument('--gt_mesh_file', type=str, help='Ground truth mesh file', default=None)
     parser.add_argument('--continue_from', type=int, help='Continue from a certain point in the graph', default=-2)
     parser.add_argument('--update_edges', help='Update edges', action='store_true')
+    parser.add_argument('--centroid_method', type=str, help='Method to calculate patch centroid', default="geo_mean")
 
     # Take arguments back over
     args = parser.parse_args()
@@ -1743,6 +1789,17 @@ def random_walks():
     overlapp_threshold["min_steps"] = min_steps
     overlapp_threshold["min_end_steps"] = min_end_steps
     overlapp_threshold["pyramid_up_nr_average"] = args.pyramid_up_nr_average
+
+    # set centroid method
+    global centroid_method
+    if args.centroid_method == "geo_mean":
+        centroid_method = lambda x: np.exp(np.mean(np.log(x), axis=0))
+    elif args.centroid_method == "mean":
+        centroid_method = lambda x: np.mean(x, axis=0)
+    elif args.centroid_method == "geo_median":
+        centroid_method = closest_to_geometric_median
+    else:
+        raise ValueError(f"Centroid method {args.centroid_method} not supported.")
 
     if args.create_graph:
         save_path = os.path.dirname(path) + f"/{start_point[0]}_{start_point[1]}_{start_point[2]}/" + path.split("/")[-1]
