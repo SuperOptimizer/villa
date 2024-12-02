@@ -84,6 +84,7 @@ int main(int argc, char *argv[])
     float step_size = params.value("step_size", 20);
     int search_effort = params.value("search_effort", 10);
     int generations = params.value("generations", 100);
+    int thread_limit = params.value("thread_limit", 0);
 
     float voxelsize = json::parse(std::ifstream(vol_path/"meta.json"))["voxelsize"];
     
@@ -273,7 +274,8 @@ int main(int argc, char *argv[])
         }
     }
 
-    omp_set_num_threads(1);
+    if (thread_limit)
+        omp_set_num_threads(thread_limit);
 
     QuadSurface *surf = empty_space_tracing_quad_phys(ds.get(), 1.0, &chunk_cache, origin, generations, step_size, cache_root);
 
