@@ -5666,9 +5666,16 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     cv::Rect used_area_hr = {used_area.x*step, used_area.y*step, used_area.width*step, used_area.height*step};
 
     SurfTrackerData data;
+    
+    cv::Vec2i seed_loc = {seed_points.rows/2, seed_points.cols/2};
+    
+    while (seed_points(seed_loc)[0] == -1) {
+        seed_loc = {rand() % seed_points.rows, rand() % seed_points.cols };
+        std::cout << "try loc" << seed_loc << std::endl;
+    }
 
     //start in the center
-    data.loc(seed,{y0,x0}) = {seed_points.rows/2, seed_points.cols/2 };
+    data.loc(seed,{y0,x0}) = {seed_loc[0], seed_loc[1] };
     // data.loc(seed,{y0,x0+1}) = {seed_points.rows/2, seed_points.cols/2+step };
     // data.loc(seed,{y0+1,x0}) = {seed_points.rows/2+step, seed_points.cols/2 };
     // data.loc(seed,{y0+1,x0+1}) = {seed_points.rows/2+step, seed_points.cols/2+step };
