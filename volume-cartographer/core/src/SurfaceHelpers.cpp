@@ -4039,8 +4039,10 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_hr(SurfTrackerData &data, cv::Mat_<uint8
                             cv::Vec2f l0 = (1-fx)*l00 + fx*l01;
                             cv::Vec2f l1 = (1-fx)*l10 + fx*l11;
                             cv::Vec2f l = (1-fy)*l0 + fy*l1;
-                            points_hr(j*step+sy,i*step+sx) += data.lookup_int_loc(sm,l);
-                            counts_hr(j*step+sy,i*step+sx) += 1;
+                            if (loc_valid(sm->surf()->rawPoints(), l)) {
+                                points_hr(j*step+sy,i*step+sx) += data.lookup_int_loc(sm,l);
+                                counts_hr(j*step+sy,i*step+sx) += 1;
+                            }
                         }
                 }
             }
