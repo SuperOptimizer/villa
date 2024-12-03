@@ -333,9 +333,11 @@ class Graph:
         self.edges = {}  # Stores edges with update matrices and certainty factors
         self.nodes = {}  # Stores node beliefs and fixed status
 
-    def add_node(self, node, centroid, winding_angle=None):
+    def add_node(self, node, centroid, winding_angle=None, winding_angle_gt=None):
         node = tuple(int(node[i]) for i in range(4))
         self.nodes[node] = {'centroid': centroid, "winding_angle": winding_angle}
+        if not winding_angle_gt is None:
+            self.nodes[node]['winding_angle_gt'] = winding_angle_gt
 
     def compute_node_edges(self, verbose=True):
         """
@@ -851,6 +853,9 @@ def worker_build_GT(args):
 
     return nodes_winding_alignment
     
+def init_worker_build_graph(centroid_method_):
+    global centroid_method
+    centroid_method = centroid_method_
 
 class ScrollGraph(Graph):
     def __init__(self, overlapp_threshold, umbilicus_path):
@@ -1207,6 +1212,7 @@ class ScrollGraph(Graph):
                     print(f"Node {node_id} not found in graph.")
         print(f"Adjusted winding angles for {count_adjusted_nodes_windings} nodes.")
 
+    
     def build_graph(self, path_instances, start_point, num_processes=4, prune_unconnected=False, start_fresh=True, gt_mesh_file=None, continue_from=0, update_edges=False):
         #from original coordinates to instance coordinates
         start_block, patch_id = (0, 0, 0), 0
@@ -1219,7 +1225,7 @@ class ScrollGraph(Graph):
             print(f"Found {len(blocks_files)} blocks.")
             print("Building graph...")
             # Create a pool of worker processes
-            with Pool(num_processes) as pool:
+            with Pool(num_processes, initializer=init_worker_build_graph, initargs=(centroid_method,)) as pool:
                 # Map the process_block function to each file
                 zipped_args = list(zip(blocks_files, [path_instances] * len(blocks_files), [self.overlapp_threshold] * len(blocks_files), [self.umbilicus_data] * len(blocks_files)))
                 results = list(tqdm(pool.imap(process_block, zipped_args), total=len(zipped_args)))
