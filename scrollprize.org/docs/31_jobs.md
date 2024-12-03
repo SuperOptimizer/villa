@@ -38,3 +38,6 @@ hide_table_of_contents: true
 
 
 # Jobs
+
+We are laser focused on our mission of reading the Herculaneum scrolls and are always interested in talking.
+If you think you would be a good fit, please reach out to team@scrollprize.org.
