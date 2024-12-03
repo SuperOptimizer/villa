@@ -5478,12 +5478,20 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 //                                             }
 //                                         }
 
-    for(int r=0;r<20;r++) {
-        int added = 0;
+    cv::Mat_<uint8_t> fringe(state.size());
+    cv::Mat_<uint8_t> fringe_next(state.size(), 1);
+    int added = 1;
+    for(int r=0;r<30 && added;r++) {
+        ALifeTime timer("add iteration");
+        
+        fringe_next.copyTo(fringe);
+        fringe_next.setTo(0);
+        
+        added = 0;
 #pragma omp parallel for collapse(2) schedule(dynamic)
         for(int j=used_area.y;j<used_area.br().y-1;j++)
             for(int i=used_area.x;i<used_area.br().x-1;i++)
-                if (state_out(j,i) & STATE_LOC_VALID) {
+                if (state_out(j,i) & STATE_LOC_VALID && (fringe(j, i) || fringe_next(j, i))) {
                     mutex.lock_shared();
                     std::set<SurfaceMeta*> surf_cands = data_out.surfs({j,i});
                     for(auto s : data_out.surfs({j,i}))
@@ -5520,6 +5528,10 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                         data_out.surfs({j,i}).insert(test_surf);
                         data_out.loc(test_surf, {j,i}) = {loc_3d[1], loc_3d[0]};
                         mutex.unlock();
+                        
+                        for(int y=j-2;y<=j+2;y++)
+                            for(int x=i-2;x<=i+2;x++)
+                                fringe_next(y,x) = 1;
                     }
                 }
         std::cout << "added " << added << std::endl;
