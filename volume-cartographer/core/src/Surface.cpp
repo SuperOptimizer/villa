@@ -285,7 +285,7 @@ bool QuadSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
     return _bounds.contains({p[0],p[1]});
 }
 
-static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
+static inline cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
 {
     int x = p[0];
     int y = p[1];
@@ -341,10 +341,11 @@ cv::Vec3f QuadSurface::normal(SurfacePointer *ptr, const cv::Vec3f &offset)
     return grid_normal(_points, p);
 }
 
-static float sdist(const cv::Vec3f &a, const cv::Vec3f &b)
+static inline float sdist(const cv::Vec3f &a, const cv::Vec3f &b)
 {
     cv::Vec3f d = a-b;
-    return d.dot(d);
+    // return d.dot(d);
+    return d[0]*d[0] + d[1]*d[1] + d[2]*d[2];
 }
 
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
@@ -507,7 +508,7 @@ float QuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th, 
     float min_mul = std::min(0.1*_points.cols/_scale[0],0.1*_points.rows/_scale[1]);
     cv::Vec2f step_large = {min_mul*_scale[0],min_mul*_scale[1]};
 
-    float dist = search_min_loc(_points, loc, _out, tgt, step_small, _scale[0]*0.01);
+    float dist = search_min_loc(_points, loc, _out, tgt, step_small, _scale[0]*0.1);
     
     if (dist < th && dist >= 0) {
         tgt_ptr->loc = cv::Vec3f(loc[0],loc[1],0) - cv::Vec3f(_center[0]*_scale[0],_center[1]*_scale[1],0);
@@ -523,9 +524,10 @@ float QuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th, 
     for(int r=0;r<max_iters;r++) {
         loc = {1 + (rand() % _points.cols-3), 1 + (rand() % _points.rows-3)};
         
-        float dist = search_min_loc(_points, loc, _out, tgt, step_large, _scale[0]*0.01);
+        float dist = search_min_loc(_points, loc, _out, tgt, step_large, _scale[0]*0.1);
         
         if (dist < th && dist >= 0) {
+            dist = search_min_loc(_points, loc, _out, tgt, step_small, _scale[0]*0.1);
             tgt_ptr->loc = cv::Vec3f(loc[0],loc[1],0) - cv::Vec3f(_center[0]*_scale[0],_center[1]*_scale[1],0);
             return dist;
         } else if (dist >= 0 && dist < min_dist) {
