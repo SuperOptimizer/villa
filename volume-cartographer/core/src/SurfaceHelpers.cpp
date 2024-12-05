@@ -6080,7 +6080,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         // surftrack_add_extr_inliers(data, state, points, used_area, step, src_step);
             
 
-        if (generation % 50 == 0 || update_mapping || generation < 10) {
+        if (generation % 4 == 0 || update_mapping /*|| generation < 10*/) {
             {
             cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, src_step);
             QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
