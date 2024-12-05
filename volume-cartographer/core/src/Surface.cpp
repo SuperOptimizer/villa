@@ -495,6 +495,58 @@ static float search_min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, c
 }
 
 //search the surface point that is closest to th tgt coord
+template <typename E>
+float _pointTo(cv::Vec2f &loc, const cv::Mat_<E> &points, const cv::Vec3f &tgt, float th, int max_iters, float scale)
+{
+    loc = cv::Vec2f(points.cols/2,points.rows/2);
+    cv::Vec3f _out;
+    
+    cv::Vec2f step_small = {std::max(1.0f,scale),std::max(1.0f,scale)};
+    float min_mul = std::min(0.1*points.cols/scale,0.1*points.rows/scale);
+    cv::Vec2f step_large = {min_mul*scale,min_mul*scale};
+    
+    float dist = search_min_loc(points, loc, _out, tgt, step_small, scale*0.1);
+    
+    if (dist < th && dist >= 0) {
+        return dist;
+    }
+    
+    cv::Vec2f min_loc = loc;
+    float min_dist = dist;
+    if (min_dist < 0)
+        min_dist = 10*(points.cols/scale+points.rows/scale);
+    
+    //FIXME is this excessive?
+    int r_full = 0;
+    for(int r=0;r<10*max_iters && r_full < max_iters;r++) {
+        //FIXME skipn invalid init locs!
+        loc = {1 + (rand() % points.cols-3), 1 + (rand() % points.rows-3)};
+        
+        if (points(loc[1],loc[0])[0] == -1)
+            continue;
+        
+        r_full++;
+        
+        float dist = search_min_loc(points, loc, _out, tgt, step_large, scale*0.1);
+        
+        if (dist < th && dist >= 0) {
+            dist = search_min_loc(points, loc, _out, tgt, step_small, scale*0.1);
+            return dist;
+        } else if (dist >= 0 && dist < min_dist) {
+            min_loc = loc;
+            min_dist = dist;
+        }
+    }
+
+    return min_dist;
+}
+
+float pointTo(cv::Vec2f &loc, const cv::Mat_<cv::Vec3d> points, const cv::Vec3f &tgt, float th, int max_iters, float scale)
+{
+    return _pointTo(loc, points, tgt, th, max_iters, scale);
+}
+
+//search the surface point that is closest to th tgt coord
 float QuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th, int max_iters)
 {
     TrivialSurfacePointer *tgt_ptr = dynamic_cast<TrivialSurfacePointer*>(ptr);
@@ -507,7 +559,7 @@ float QuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th, 
     float min_mul = std::min(0.1*_points.cols/_scale[0],0.1*_points.rows/_scale[1]);
     cv::Vec2f step_large = {min_mul*_scale[0],min_mul*_scale[1]};
 
-    float dist = search_min_loc(_points, loc, _out, tgt, step_small, _scale[0]*0.01);
+    float dist = search_min_loc(_points, loc, _out, tgt, step_small, _scale[0]*0.1);
     
     if (dist < th && dist >= 0) {
         tgt_ptr->loc = cv::Vec3f(loc[0],loc[1],0) - cv::Vec3f(_center[0]*_scale[0],_center[1]*_scale[1],0);
@@ -519,13 +571,19 @@ float QuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th, 
     if (min_dist < 0)
         min_dist = 10*(_points.cols/_scale[0]+_points.rows/_scale[1]);
     
-    //FIXME is this excessive?
-    for(int r=0;r<max_iters;r++) {
-        loc = {1 + (rand() % _points.cols-3), 1 + (rand() % _points.rows-3)};
+    int r_full = 0;
+    for(int r=0;r<10*max_iters && r_full < max_iters;r++) {
+        loc = {1 + (rand() % (_points.cols-3)), 1 + (rand() % (_points.rows-3))};
         
-        float dist = search_min_loc(_points, loc, _out, tgt, step_large, _scale[0]*0.01);
+        if (_points(loc[1],loc[0])[0] == -1)
+            continue;
+        
+        r_full++;
+        
+        float dist = search_min_loc(_points, loc, _out, tgt, step_large, _scale[0]*0.1);
         
         if (dist < th && dist >= 0) {
+            dist = search_min_loc(_points, loc, _out, tgt, step_small, _scale[0]*0.1);
             tgt_ptr->loc = cv::Vec3f(loc[0],loc[1],0) - cv::Vec3f(_center[0]*_scale[0],_center[1]*_scale[1],0);
             return dist;
         } else if (dist >= 0 && dist < min_dist) {
