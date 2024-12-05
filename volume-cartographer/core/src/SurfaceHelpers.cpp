@@ -5907,15 +5907,25 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 data_th.erase(ref_surf, p);
             }
 
+            if (points(p)[0] != -1)
+                throw std::runtime_error("oops");
+            
             if (best_inliers >= curr_best_inl_th || best_ref_seed)
             {
                 cv::Vec2f tmp_loc_;
-                float dist = pointTo(tmp_loc_, points, best_coord, same_surface_th, 100, 1.0/(step*src_step));
+                cv::Rect used_th = used_area;
+                float dist = pointTo(tmp_loc_, points(used_th), best_coord, same_surface_th, 100, 1.0/(step*src_step));
+                tmp_loc_ += cv::Vec2f(used_th.x,used_th.y);
                 if (dist <= same_surface_th) {
-                    std::cout << "skip duplicate" << dist <<  best_coord << state(tmp_loc_[1],tmp_loc_[0]) << " " << state(tmp_loc_[1]+1,tmp_loc_[0]) << " " << state(tmp_loc_[1],tmp_loc_[0]+1) << " " << state(tmp_loc_[1]+1,tmp_loc_[0]+1) << " " << std::endl;
+                    int state_sum = state(tmp_loc_[1],tmp_loc_[0]) + state(tmp_loc_[1]+1,tmp_loc_[0]) + state(tmp_loc_[1],tmp_loc_[0]+1) + state(tmp_loc_[1]+1,tmp_loc_[0]+1);
+                    std::cout << "skip duplicate" << dist <<  best_coord << int(state(tmp_loc_[1],tmp_loc_[0])) << " " << int(state(tmp_loc_[1]+1,tmp_loc_[0])) << " " << int(state(tmp_loc_[1],tmp_loc_[0]+1)) << " " << int(state(tmp_loc_[1]+1,tmp_loc_[0]+1)) << " " << std::endl;
                     best_inliers = -1;
                     best_ref_seed = false;
+                    if (!state_sum)
+                        throw std::runtime_error("this should not have any location?!");
                 }
+                // else
+                    // std::cout << "adding " << p << best_coord << dist << std::endl;
             }
             
             if (best_inliers >= curr_best_inl_th || best_ref_seed) {
