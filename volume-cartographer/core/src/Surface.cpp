@@ -520,8 +520,15 @@ float _pointTo(cv::Vec2f &loc, const cv::Mat_<E> &points, const cv::Vec3f &tgt, 
         min_dist = 10*(points.cols/scale+points.rows/scale);
     
     //FIXME is this excessive?
-    for(int r=0;r<max_iters;r++) {
+    int r_full = 0;
+    for(int r=0;r<10*max_iters && r_full < max_iters;r++) {
+        //FIXME skipn invalid init locs!
         loc = {1 + (rand() % points.cols-3), 1 + (rand() % points.rows-3)};
+        
+        if (points(loc[1],loc[0])[0] == -1)
+            continue;
+        
+        r_full++;
         
         float dist = search_min_loc(points, loc, _out, tgt, step_large, scale*0.1);
         
@@ -567,10 +574,15 @@ float QuadSurface::pointTo(SurfacePointer *ptr, const cv::Vec3f &tgt, float th, 
     if (min_dist < 0)
         min_dist = 10*(_points.cols/_scale[0]+_points.rows/_scale[1]);
     
-    //FIXME is this excessive?
-    for(int r=0;r<max_iters;r++) {
-        loc = {1 + (rand() % _points.cols-3), 1 + (rand() % _points.rows-3)};
+    int r_full = 0;
+    for(int r=0;r<10*max_iters && r_full < max_iters;r++) {
+        loc = {1 + (rand() % (_points.cols-3)), 1 + (rand() % (_points.rows-3))};
         
+        if (_points(loc[1],loc[0])[0] == -1)
+            continue;
+        
+        r_full++;
+
         float dist = search_min_loc(_points, loc, _out, tgt, step_large, _scale[0]*0.1);
         
         if (dist < th && dist >= 0) {
