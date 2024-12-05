@@ -64,13 +64,20 @@ int main(int argc, char *argv[])
     std::cout << "rendering size " << tgt_size << " at scale " << tgt_scale << std::endl;
     
     cv::Mat_<cv::Vec3f> points, normals;
-    surf->gen(&points, &normals, tgt_size, nullptr, tgt_scale, {-tgt_size.width/2,-tgt_size.height/2,0});
+    
+    bool slice_gen = false;
+    
+    if (tgt_size.width >= 10000)
+        slice_gen = true;
+    else
+        surf->gen(&points, &normals, tgt_size, nullptr, tgt_scale, {-tgt_size.width/2,-tgt_size.height/2,0});
 
     cv::Mat_<uint8_t> img;
 
     float ds_scale = pow(2,-group_idx);
-    if (group_idx)
+    if (group_idx && !slice_gen) {
         points *= ds_scale;
+    }
 
     if (num_slices == 1) {
         readInterpolated3D(img, ds.get(), points, &chunk_cache);
@@ -80,11 +87,23 @@ int main(int argc, char *argv[])
         char buf[1024];
         for(int i=0;i<num_slices;i++) {
             float off = i-num_slices/2;
-            readInterpolated3D(img, ds.get(), points+off*normals*ds_scale, &chunk_cache);
+            if (slice_gen) {
+                img.create(tgt_size);
+                for(int x=0;x<tgt_size.width;x+=1024) {
+                    int w = std::min(tgt_size.width-x, 1024);
+                    surf->gen(&points, &normals, {w,tgt_size.height}, nullptr, tgt_scale, {-tgt_size.width/2+x,-tgt_size.height/2,0});
+                    cv::Mat_<uint8_t> slice;
+                    readInterpolated3D(slice, ds.get(), points*ds_scale+off*normals*ds_scale, &chunk_cache);
+                    slice.copyTo(img(cv::Rect(x,0,w,tgt_size.height)));
+                }
+            }
+                
+            else {
+                readInterpolated3D(img, ds.get(), points+off*ds_scale*normals, &chunk_cache);
+            }
             snprintf(buf, 1024, tgt_ptn, i);
             cv::imwrite(buf, img);
         }
-            
     }
 
 
