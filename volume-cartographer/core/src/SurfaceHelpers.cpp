@@ -5917,7 +5917,18 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 data_th.erase(ref_surf, p);
             }
 
-            if ((best_inliers >= curr_best_inl_th || best_ref_seed) /*&& best_inliers >= local_surfs.size()/2*/) {
+            if (best_inliers >= curr_best_inl_th || best_ref_seed)
+            {
+                cv::Vec2f tmp_loc_;
+                float dist = pointTo(tmp_loc_, points, best_coord, same_surface_th, 100, 1.0/(step*src_step));
+                if (dist <= same_surface_th) {
+                    std::cout << "skip duplicate" << dist <<  best_coord << std::endl;
+                    best_inliers = -1;
+                    best_ref_seed = false;
+                }
+            }
+            
+            if (best_inliers >= curr_best_inl_th || best_ref_seed) {
                 if (best_coord[0] == -1)
                     throw std::runtime_error("WTF1");
                 
