@@ -5646,7 +5646,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     
     cv::Rect save_bounds_inv(closing_r+5,closing_r+5,h-10,w-closing_r-10);
 
-    int x0 = w/2;
+    int x0 = h/2;
     int y0 = h/2;
     int r = 1;
     
