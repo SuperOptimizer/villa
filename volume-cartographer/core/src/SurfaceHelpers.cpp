@@ -5618,20 +5618,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
     cv::Mat_<cv::Vec3f> seed_points = seed->surf()->rawPoints();
 
-//     cv::Mat_<uint8_t> counts(seed_points.size(), 0);
-// #pragma omp parallel for
-//     for(int j=0;j<counts.rows;j++)
-//         for(int i=0;i<counts.rows;i++)
-//             for(auto &sm : seed->overlapping)
-//                 if (seed_points(j,i)[0] != -1) {
-//                     SurfacePointer *ptr = sm->surf()->pointer();
-//                     float dist = sm->surf()->pointTo(ptr, seed_points(j,i), 2.0, 4);
-//                     if (dist <= 2.0)
-//                         counts(j,i)++;
-//                     std::cout << dist << " " << j << " " << i << std::endl;
-//                 }
-//     cv::imwrite("counts.tif", counts);
-
     //FIXME shouldn change start of opt but does?! (32-good, 64 bad, 50 good?)
     int stop_gen = 10000;
     int closing_r = 20;
