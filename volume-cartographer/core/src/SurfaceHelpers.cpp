@@ -5413,6 +5413,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
             if (static_bounds.contains(cv::Vec2i(i,j))) {
                 points_out(j, i) = points(j, i);
                 state_out(j, i) = state_out(j, i);
+                //FIXME copy surfs and locs
             }
             else if (new_state(j,i) & STATE_VALID) {
                 // if (data_new.has(&sm, {j,i})) {
@@ -5636,6 +5637,29 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 //     float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, float init_step, float min_step)
 // }
 
+
+void vis_surfcount(const std::string &fn, const SurfTrackerData &data, cv::Size size)
+{
+    cv::Mat_<uint16_t> vis(size, 0);
+    
+    for(auto &it : data._surfs) {
+        vis(it.first) = it.second.size();
+    }
+    
+    cv::imwrite(fn, vis);
+}
+
+void vis_loccount(const std::string &fn, const SurfTrackerData &data, cv::Size size)
+{
+    cv::Mat_<uint16_t> vis(size, 0);
+    
+    for(auto &it : data._data) {
+        vis(it.first.second)++;
+    }
+    
+    cv::imwrite(fn, vis);
+}
+
 QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMeta*> &surfs_v, float step)
 {
     std::unordered_map<std::string,SurfaceMeta*> surfs;
@@ -5806,6 +5830,11 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             std::cout << "go with cands " << cands.size() << " inl_th " << curr_best_inl_th << std::endl;
 
             OmpThreadPointCol threadcol(3, cands);
+            
+            cv::Mat_<uint16_t> tries1(size, 0);
+            cv::Mat_<uint16_t> tries2(size, 0);
+            cv::Mat_<uint16_t> tries3(size, 0);
+            cv::Mat_<uint16_t> tries4(size, 0);
 
             std::shared_mutex mutex;
             int best_inliers_gen = 0;
@@ -5824,7 +5853,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 throw std::runtime_error("oops");
 
             std::set<SurfaceMeta*> local_surfs = {seed};
-
             
             mutex.lock_shared();
             SurfTrackerData &data_th = data_ths[omp_get_thread_num()];
@@ -5876,7 +5904,10 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     continue;
 
                 avg /= ref_count;
-
+                
+#pragma omp critical
+                tries1(p)++;
+                
                 data_th.loc(ref_surf,p) = avg + cv::Vec2d((rand() % 1000)/500.0-1, (rand() % 1000)/500.0-1);
 
                 ceres::Problem problem;
@@ -5896,7 +5927,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
                 if (!data_th.valid_int(ref_surf,p))
                     fail = true;
-
+                
                 cv::Vec3d coord;
 
                 if (!fail) {
@@ -5909,6 +5940,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     data_th.erase(ref_surf, p);
                     continue;
                 }
+                //we aready loose most here if we do multiple grows ...
+#pragma omp critical
+                tries2(p)++;
 
                 state(p) = 0;
                 
@@ -5925,6 +5959,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     data_th.erase(ref_surf, p);
                     break;
                 }
+                
+#pragma omp critical
+                tries3(p)++;
 
                 for(auto test_surf : local_surfs) {
                     SurfacePointer *ptr = test_surf->surf()->pointer();
@@ -5950,6 +5987,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     best_surf = ref_surf;
                     best_loc = ref_loc;
                     best_ref_seed = ref_seed;
+#pragma omp critical
+                    tries4(p)++;
                 }
                 data_th.erase(ref_surf, p);
             }
@@ -6070,6 +6109,11 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             }
         }
         
+        cv::imwrite("tries1"+std::to_string(generation)+".tif", tries1);
+        cv::imwrite("tries2"+std::to_string(generation)+".tif", tries2);
+        cv::imwrite("tries3"+std::to_string(generation)+".tif", tries3);
+        cv::imwrite("tries4"+std::to_string(generation)+".tif", tries4);
+        
         if (!fringe.size()) {
             if (curr_best_inl_th > 10)
                 curr_best_inl_th -= 4;
@@ -6170,17 +6214,32 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         if (update_mapping /*generation+1 != stop_gen && (generation % opt_map_every) == 0*/) {
             dbg_counter = generation;
             SurfTrackerData opt_data;
-            copy(data, opt_data, active_bounds & used_area);
+            cv::Rect all(0,0,w, h);
+            // copy(data, opt_data, active_bounds & used_area);
+            copy(data, opt_data, all);
             cv::Mat_<uint8_t> opt_state = state.clone();
             cv::Mat_<cv::Vec3d> opt_points = points.clone();
-            optimize_surface_mapping(opt_data, opt_state, opt_points, active_bounds & used_area, static_bounds, step, src_step, {y0,x0}, closing_r, true);
-            cv::Rect active_only(static_bounds.br().x,0,active_bounds.br().x-static_bounds.br().x,h);
+            cv::imwrite("state_pre"+std::to_string(generation)+".tif", state);
+            vis_surfcount("surfs_pre"+std::to_string(generation)+".tif", data, size);
+            vis_loccount("locs_pre"+std::to_string(generation)+".tif", data, size);
+            // optimize_surface_mapping(opt_data, opt_state, opt_points, active_bounds & used_area, static_bounds, step, src_step, {y0,x0}, closing_r, true);
+//             optimize_surface_mapping(opt_data, opt_state, opt_points, all, static_bounds, step, src_step, {y0,x0}, closing_r, true);
+//             // cv::Rect active_only(static_bounds.br().x,0,active_bounds.br().x-static_bounds.br().x,h);
+//             cv::Rect active_only = all;
+//             
+//             std::cout << "copying from active area" << active_only << (active_bounds & used_area) << state.size() << std::endl;
+//             
+//             copy(opt_data, data, active_only);
+//             opt_points(active_only).copyTo(points(active_only));
+//             opt_state(active_only).copyTo(state(active_only));
             
-            std::cout << "copying from active area" << active_only << state.size() << std::endl;
             
-            copy(opt_data, data, active_only);
-            opt_points(active_only).copyTo(points(active_only));
-            opt_state(active_only).copyTo(state(active_only));
+            optimize_surface_mapping(data, state, points, used_area, cv::Rect(0,0,0,0), step, src_step, {y0,x0}, closing_r, true);
+            
+            
+            vis_surfcount("surfspost"+std::to_string(generation)+".tif", data, size);
+            cv::imwrite("state_post"+std::to_string(generation)+".tif", state);
+            vis_loccount("locs_post"+std::to_string(generation)+".tif", data, size);
             
             for(int i=0;i<omp_get_max_threads();i++) {
                 data_ths[i] = data;
