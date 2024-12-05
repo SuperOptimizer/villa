@@ -285,20 +285,21 @@ bool QuadSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
     return _bounds.contains({p[0],p[1]});
 }
 
-static inline cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
+template <typename E>
+static inline E at_int(const cv::Mat_<E> &points, cv::Vec2f p)
 {
     int x = p[0];
     int y = p[1];
     float fx = p[0]-x;
     float fy = p[1]-y;
     
-    cv::Vec3f p00 = points(y,x);
-    cv::Vec3f p01 = points(y,x+1);
-    cv::Vec3f p10 = points(y+1,x);
-    cv::Vec3f p11 = points(y+1,x+1);
+    E p00 = points(y,x);
+    E p01 = points(y,x+1);
+    E p10 = points(y+1,x);
+    E p11 = points(y+1,x+1);
     
-    cv::Vec3f p0 = (1-fx)*p00 + fx*p01;
-    cv::Vec3f p1 = (1-fx)*p10 + fx*p11;
+    E p0 = (1-fx)*p00 + fx*p01;
+    E p1 = (1-fx)*p10 + fx*p11;
     
     return (1-fy)*p0 + fy*p1;
 }
@@ -443,7 +444,8 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
     return best;
 }
 
-static float search_min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt, cv::Vec2f init_step, float min_step_x)
+template <typename E>
+static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt, cv::Vec2f init_step, float min_step_x)
 {
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
     if (!boundary.contains({loc[0],loc[1]})) {
@@ -452,7 +454,7 @@ static float search_min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, c
     }
     
     bool changed = true;
-    cv::Vec3f val = at_int(points, loc);
+    E val = at_int(points, loc);
     out = val;
     float best = sdist(val, tgt);
     float res;
@@ -493,6 +495,51 @@ static float search_min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, c
     }
 
     return sqrt(best);
+}
+
+//search the surface point that is closest to th tgt coord
+template <typename E>
+float _pointTo(cv::Vec2f &loc, const cv::Mat_<E> &points, const cv::Vec3f &tgt, float th, int max_iters, float scale)
+{
+    loc = cv::Vec2f(points.cols/2,points.rows/2);
+    cv::Vec3f _out;
+    
+    cv::Vec2f step_small = {std::max(1.0f,scale),std::max(1.0f,scale)};
+    float min_mul = std::min(0.1*points.cols/scale,0.1*points.rows/scale);
+    cv::Vec2f step_large = {min_mul*scale,min_mul*scale};
+    
+    float dist = search_min_loc(points, loc, _out, tgt, step_small, scale*0.1);
+    
+    if (dist < th && dist >= 0) {
+        return dist;
+    }
+    
+    cv::Vec2f min_loc = loc;
+    float min_dist = dist;
+    if (min_dist < 0)
+        min_dist = 10*(points.cols/scale+points.rows/scale);
+    
+    //FIXME is this excessive?
+    for(int r=0;r<max_iters;r++) {
+        loc = {1 + (rand() % points.cols-3), 1 + (rand() % points.rows-3)};
+        
+        float dist = search_min_loc(points, loc, _out, tgt, step_large, scale*0.1);
+        
+        if (dist < th && dist >= 0) {
+            dist = search_min_loc(points, loc, _out, tgt, step_small, scale*0.1);
+            return dist;
+        } else if (dist >= 0 && dist < min_dist) {
+            min_loc = loc;
+            min_dist = dist;
+        }
+    }
+
+    return min_dist;
+}
+
+float pointTo(cv::Vec2f &loc, const cv::Mat_<cv::Vec3d> points, const cv::Vec3f &tgt, float th, int max_iters, float scale)
+{
+    return _pointTo(loc, points, tgt, th, max_iters, scale);
 }
 
 //search the surface point that is closest to th tgt coord
