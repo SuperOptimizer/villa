@@ -351,13 +351,13 @@ void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds, const cv::Mat_<
         cv::Vec4i last_idx = {-1,-1,-1,-1};
         std::shared_ptr<xt::xarray<uint8_t>> chunk_ref;
         xt::xarray<uint8_t> *chunk = nullptr;
-#pragma omp for
+#pragma omp for schedule(guided,1)
         for(size_t y = 0;y<h;y++) {
             if (w*h > 10000000)
 #pragma omp critical
             {
                 done++;
-                if (done % 1000000)
+                if (done % 100 == 0)
                     std::cout << "done: " << double(done)/h*100 << "%" << std::endl;
             }
             
