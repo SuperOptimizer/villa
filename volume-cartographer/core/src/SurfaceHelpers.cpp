@@ -2679,7 +2679,8 @@ struct thresholdedDistance
     enum {BORDER = 16};
     enum {CHUNK_SIZE = 64};
     enum {FILL_V = 0};
-    const std::string UNIQUE_ID_STRING = "dqk247q6vz_"+std::to_string(BORDER)+"_"+std::to_string(CHUNK_SIZE)+"_"+std::to_string(FILL_V);
+    enum {TH = 170};
+    const std::string UNIQUE_ID_STRING = "dqk247q6vz_"+std::to_string(BORDER)+"_"+std::to_string(CHUNK_SIZE)+"_"+std::to_string(FILL_V)+"_"+std::to_string(TH);
     template <typename T, typename E> void compute(const T &large, T &small)
     {
         T outer = xt::empty<E>(large.shape());
@@ -2693,7 +2694,7 @@ struct thresholdedDistance
         for(int z=0;z<s;z++)
             for(int y=0;y<s;y++)
                 for(int x=0;x<s;x++)
-                    if (large(z,y,x) < 50)
+                    if (large(z,y,x) < TH)
                         outer(z,y,x) = magic;
         else {
             good_count++;
