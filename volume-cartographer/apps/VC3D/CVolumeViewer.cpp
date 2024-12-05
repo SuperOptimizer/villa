@@ -128,7 +128,7 @@ void CVolumeViewer::onCursorMove(QPointF scene_loc)
         cursor = new POI;
     
     cv::Vec3f p, n;
-    scene2vol(p, n, _surf, _surf_name, _surf_col, scene_loc, _vis_center, _ds_scale);
+    scene2vol(p, n, _surf, _surf_name, _surf_col, scene_loc, _vis_center, _scale);
     cursor->p = p;
     
     _surf_col->setPOI("cursor", cursor);
@@ -391,13 +391,13 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
         float dist = -1;
         if (slice_plane) {            
             dist = slice_plane->pointDist(poi->p);
-            sp = slice_plane->project(poi->p, 1.0, _ds_scale);
+            sp = slice_plane->project(poi->p, 1.0, _scale);
         }
         else if (_surf_name == "segmentation" && crop)
         {
             SurfacePointer *ptr = crop->pointer();
             dist = crop->pointTo(ptr, poi->p, 2.0);
-            sp = crop->loc(ptr)*_ds_scale ;//+ cv::Vec3f(_vis_center[0],_vis_center[1],0);
+            sp = crop->loc(ptr)*_scale ;//+ cv::Vec3f(_vis_center[0],_vis_center[1],0);
         }
         
         if (!_cursor) {
