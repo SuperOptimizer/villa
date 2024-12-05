@@ -6062,7 +6062,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 if (state(j,i) & STATE_LOC_VALID)
                     loc_valid_count++;
         
-        cv::imwrite("state"+std::to_string(generation)+".tif", state);
+        // cv::imwrite("state"+std::to_string(generation)+".tif", state);
         
         bool update_mapping = (succ >= 1000 && (loc_valid_count-last_succ_parametrization) >= std::max(100.0, 0.3*last_succ_parametrization));
         if (!fringe.size() && final_opts) {
