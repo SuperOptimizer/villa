@@ -42,6 +42,7 @@ hide_table_of_contents: true
 We are laser focused on our mission of reading the Herculaneum scrolls and are always interested in talking.
 If you think you would be a good fit, please reach out to team@scrollprize.org.
 
+***
 
 ## Annotation Specialist 
 
@@ -83,6 +84,6 @@ Not only will you unroll ancient scrolls and be the first human to lay eyes on t
 ### To Apply
 Send your resume, cover letter, and examples of relevant projects to ben@scrollprize.org. Include "Annotation Specialist" in the subject line.
 
-
+***
 
 
