@@ -4163,7 +4163,7 @@ std::string strint(int n, int width)
 int static dbg_counter = 0;
 float local_cost_inl_th = 0.2;
 int opt_map_every = 8;
-float same_surface_th = 4.0;
+float same_surface_th = 2.0;
 
 cv::Mat_<cv::Vec3d> surftrack_genpoints_extrapolate(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, cv::Rect used_area, float step, float src_step, bool inpaint = false)
 {
