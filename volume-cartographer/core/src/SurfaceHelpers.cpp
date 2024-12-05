@@ -3562,6 +3562,41 @@ public:
     cv::Vec2i seed_loc;
 };
 
+void copy(const SurfTrackerData &src, SurfTrackerData &tgt, const cv::Rect &roi_)
+{
+    cv::Rect roi(roi_.y,roi_.x,roi_.height,roi_.width);
+    
+    {
+        auto it = tgt._data.begin();
+        while (it != tgt._data.end()) {
+            if (roi.contains(it->first.second))
+                it = tgt._data.erase(it);
+            else
+                it++;
+        }
+    }
+    
+    {
+        auto it = tgt._surfs.begin();
+        while (it != tgt._surfs.end()) {
+            if (roi.contains(it->first))
+                it = tgt._surfs.erase(it);
+            else
+                it++;
+        }
+    }
+    
+    for(auto &it : src._data)
+        if (roi.contains(it.first.second))
+            tgt._data[it.first] = it.second;
+    for(auto &it : src._surfs)
+        if (roi.contains(it.first))
+            tgt._surfs[it.first] = it.second;
+    
+    tgt.seed_loc = src.seed_loc;
+    tgt.seed_coord = src.seed_coord;
+}
+
 int add_surftrack_distloss(SurfaceMeta *sm, const cv::Vec2i &p, const cv::Vec2i &off, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, float unit, int flags = 0, ceres::ResidualBlockId *res = nullptr, float w = 1.0)
 {
     if ((state(p) & STATE_LOC_VALID) == 0 || !data.has(sm, p))
@@ -5147,9 +5182,9 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
 //TODO just (fixed) downweighting of areas where distances are more off?
 //TODO sample adjustment factors just like the actual 3d coords are sampled from a precomputed set?
 //this is basically just a reparametrization!
-void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, cv::Rect used_area, float step, float src_step, const cv::Vec2i &seed, int closing_r, bool keep_inpainted = false)
+void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, cv::Rect used_area, cv::Rect static_bounds, float step, float src_step, const cv::Vec2i &seed, int closing_r, bool keep_inpainted = false)
 {
-    std::cout << "optimizing surface" << std::endl;
+    std::cout << "optimizing surface" << state.size() << used_area << static_bounds << std::endl;
     cv::Mat_<cv::Vec3d> points_new = points.clone();
     SurfaceMeta sm;
     sm._surf = new QuadSurface(points, {1,1});
@@ -5316,6 +5351,14 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     //             if (problem.HasParameterBlock(&points_new(j,i)[0]))
     //                 problem.SetParameterBlockConstant(&points_new(j,i)[0]);
     //         }
+    for(int j=used_area.y;j<used_area.br().y;j++)
+        for(int i=used_area.x;i<used_area.br().x;i++)
+            if (static_bounds.contains(cv::Vec2i(i,j))) {
+                if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0]))
+                    problem.SetParameterBlockConstant(&data_inp.loc(&sm_inp, {j,i})[0]);
+                if (problem.HasParameterBlock(&points_new(j, i)[0]))
+                    problem.SetParameterBlockConstant(&points_new(j, i)[0]);                    
+            }
     
     // options.max_num_iterations = 100;
     ceres::Solve(options, &problem, &summary);
@@ -5367,7 +5410,11 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 #pragma omp parallel for //FIXME ... data.surfs is also writing..
     for(int j=used_area.y;j<used_area.br().y;j++)
         for(int i=used_area.x;i<used_area.br().x;i++)
-            if (new_state(j,i) & STATE_VALID) {
+            if (static_bounds.contains(cv::Vec2i(i,j))) {
+                points_out(j, i) = points(j, i);
+                state_out(j, i) = state_out(j, i);
+            }
+            else if (new_state(j,i) & STATE_VALID) {
                 // if (data_new.has(&sm, {j,i})) {
                 // mutex.lock_shared();
                 cv::Vec2d l = data_inp.loc(&sm_inp ,{j,i});
@@ -5619,19 +5666,18 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
     cv::Mat_<cv::Vec3f> seed_points = seed->surf()->rawPoints();
 
-    //FIXME shouldn change start of opt but does?! (32-good, 64 bad, 50 good?)
     int stop_gen = 10000;
-    int closing_r = 20;
-    int size_gen = 500;
-    // int w = size_gen*2*1.1+5+2*closing_r+200;
-    // int h = size_gen*2*1.1+5+2*closing_r;
+    int closing_r = 5; //FIXME dont forget to reset!
+
     //1k ~ 1cm
-    int w = 7500/src_step/step*2+10+2*closing_r;
-    int h = 15000/src_step/step*2+10+2*closing_r;
-    cv::Size  size = {w,h};
+    int sliding_w = 1000/src_step/step*2;
+    int w = 2000/src_step/step*2+10+2*closing_r;
+    int h = 2000/src_step/step*2+10+2*closing_r;
+    cv::Size size = {w,h};
     cv::Rect bounds(0,0,w-1,h-1);
-    
-    cv::Rect save_bounds_inv(closing_r+5,closing_r+5,h-10,w-closing_r-10);
+    cv::Rect save_bounds_inv(closing_r+5,closing_r+5,h-closing_r-10,w-closing_r-10);
+    cv::Rect active_bounds(closing_r+5,closing_r+5,w-closing_r-10,h-closing_r-10);
+    cv::Rect static_bounds(0,0,0,h);
 
     int x0 = h/2;
     int y0 = h/2;
@@ -5718,7 +5764,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 200;
     
-    int final_opts = 5;
+    int final_opts_max = 1;
+    int final_opts = final_opts_max;
     
     int loc_valid_count = 0;
     int succ = 0;
@@ -5914,11 +5961,12 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             {
                 cv::Vec2f tmp_loc_;
                 cv::Rect used_th = used_area;
-                float dist = pointTo(tmp_loc_, points(used_th), best_coord, same_surface_th, 100, 1.0/(step*src_step));
+                //FIXME why does this miss duplicates? 
+                float dist = pointTo(tmp_loc_, points(used_th), best_coord, same_surface_th, 1000, 1.0/(step*src_step));
                 tmp_loc_ += cv::Vec2f(used_th.x,used_th.y);
                 if (dist <= same_surface_th) {
                     int state_sum = state(tmp_loc_[1],tmp_loc_[0]) + state(tmp_loc_[1]+1,tmp_loc_[0]) + state(tmp_loc_[1],tmp_loc_[0]+1) + state(tmp_loc_[1]+1,tmp_loc_[0]+1);
-                    std::cout << "skip duplicate" << dist <<  best_coord << int(state(tmp_loc_[1],tmp_loc_[0])) << " " << int(state(tmp_loc_[1]+1,tmp_loc_[0])) << " " << int(state(tmp_loc_[1],tmp_loc_[0]+1)) << " " << int(state(tmp_loc_[1]+1,tmp_loc_[0]+1)) << " " << std::endl;
+                    // std::cout << "skip duplicate" << dist <<  best_coord << int(state(tmp_loc_[1],tmp_loc_[0])) << " " << int(state(tmp_loc_[1]+1,tmp_loc_[0])) << " " << int(state(tmp_loc_[1],tmp_loc_[0]+1)) << " " << int(state(tmp_loc_[1]+1,tmp_loc_[0]+1)) << " " << std::endl;
                     best_inliers = -1;
                     best_ref_seed = false;
                     if (!state_sum)
@@ -6121,7 +6169,18 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         //lets just see what happens
         if (update_mapping /*generation+1 != stop_gen && (generation % opt_map_every) == 0*/) {
             dbg_counter = generation;
-            optimize_surface_mapping(data, state, points, used_area, step, src_step, {y0,x0}, closing_r, true);
+            SurfTrackerData opt_data;
+            copy(data, opt_data, active_bounds & used_area);
+            cv::Mat_<uint8_t> opt_state = state.clone();
+            cv::Mat_<cv::Vec3d> opt_points = points.clone();
+            optimize_surface_mapping(opt_data, opt_state, opt_points, active_bounds & used_area, static_bounds, step, src_step, {y0,x0}, closing_r, true);
+            cv::Rect active_only(static_bounds.br().x,0,active_bounds.br().x-static_bounds.br().x,h);
+            
+            std::cout << "copying from active area" << active_only << state.size() << std::endl;
+            
+            copy(opt_data, data, active_only);
+            opt_points(active_only).copyTo(points(active_only));
+            opt_state(active_only).copyTo(state(active_only));
             
             for(int i=0;i<omp_get_max_threads();i++) {
                 data_ths[i] = data;
@@ -6155,6 +6214,41 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         }
 
         printf("gen %d processing %d fringe cands (total done %d fringe: %d) area %f mm^2\n", generation, cands.size(), succ, fringe.size(),loc_valid_count*0.008*0.008*src_step*src_step*step*step);
+        
+        //continue expansion
+        if (!fringe.size() && w < 85000)
+        {
+            std::cout << "expanding by " << sliding_w << std::endl;
+            
+            std::cout << size << bounds << save_bounds_inv << used_area << active_bounds << (used_area & active_bounds) << static_bounds << std::endl;
+            final_opts = final_opts_max;
+            w += sliding_w;
+            size = {w,h};
+            bounds = {0,0,w-1,h-1};
+            save_bounds_inv = {closing_r+5,closing_r+5,h-closing_r-10,w-closing_r-10};
+
+            cv::Mat_<cv::Vec3d> old_points = points;
+            points = cv::Mat_<cv::Vec3d>(size, {-1,-1,-1});
+            old_points.copyTo(points(cv::Rect(0,0,old_points.cols,h)));
+            
+            cv::Mat_<uint8_t> old_state = state;
+            state = cv::Mat_<uint8_t>(size, 0);
+            old_state.copyTo(state(cv::Rect(0,0,old_state.cols,h)));
+
+            int overlap = 5;
+            active_bounds = {w-sliding_w-2*closing_r-10-overlap,closing_r+5,sliding_w+2*closing_r+10+overlap,h-closing_r-10};
+            static_bounds = {0,0,w-sliding_w-2*closing_r-10,h};
+            
+            std::cout << size << bounds << save_bounds_inv << used_area << active_bounds << (used_area & active_bounds) << static_bounds << std::endl;
+            fringe.clear();
+            curr_best_inl_th = 20;
+            for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
+                for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
+                    //FIXME WTF why isn't this working?!'
+                    if (state(j,i) & STATE_LOC_VALID)
+                        fringe.insert(cv::Vec2i(j,i));
+        }
+        
         if (!fringe.size())
             break;
 
