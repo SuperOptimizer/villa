@@ -5542,7 +5542,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 #pragma omp parallel for
     for(int j=used_area.y;j<used_area.br().y-1;j++)
         for(int i=used_area.x;i<used_area.br().x-1;i++)
-            if (state_out(j,i) & STATE_VALID) {
+            if (state_out(j,i) & STATE_LOC_VALID) {
                 // std::cout << cv::Vec2i(j,i) << " surfs " << data_out.surfs({j,i}).size() << std::endl;
                 if (data_out.surfs({j,i}).size() < 1 /*&& support_count(j,i) < 4*/) {
                     state_out(j,i) = 0;
@@ -5771,6 +5771,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
             if (state(p) & STATE_LOC_VALID)
                 continue;
+            
+            if (points(p)[0] != -1)
+                throw std::runtime_error("oops");
 
             std::set<SurfaceMeta*> local_surfs = {seed};
 
@@ -5908,7 +5911,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 cv::Vec2f tmp_loc_;
                 float dist = pointTo(tmp_loc_, points, best_coord, same_surface_th, 100, 1.0/(step*src_step));
                 if (dist <= same_surface_th) {
-                    std::cout << "skip duplicate" << dist <<  best_coord << std::endl;
+                    std::cout << "skip duplicate" << dist <<  best_coord << state(tmp_loc_[1],tmp_loc_[0]) << " " << state(tmp_loc_[1]+1,tmp_loc_[0]) << " " << state(tmp_loc_[1],tmp_loc_[0]+1) << " " << state(tmp_loc_[1]+1,tmp_loc_[0]+1) << " " << std::endl;
                     best_inliers = -1;
                     best_ref_seed = false;
                 }
