@@ -60,7 +60,7 @@ Auxiliary files are also provided with each segment. These include: UV coordinat
 The UV coordinates define a flattened representation of the segment by storing the flattened UV positions of each vertex in the OBJ mesh. This flattening can be achieved using algorithms such as SLIM, LSCM, and ABF.
 
 <div className="flex w-[100%]">
-    <div className="w-[100%] mb-2 mr-2"><img src="/img/data/mesh2surfvol.webp" className="w-[100%]"/><figcaption className="mt-0">A meshed segment prior to flattening.</figcaption></div>
+    <div className="w-[100%] mb-2 mr-2"><img src="/img/data/mesh.webp" className="w-[100%]"/><figcaption className="mt-0">A meshed segment prior to flattening.</figcaption></div>
 </div>
 
 **Surface volume** - `layers` directory
@@ -68,7 +68,7 @@ The UV coordinates define a flattened representation of the segment by storing t
 A surface volume is a flattened subvolume with the segment as the center layer. The surface volume is formed by extracting CT voxels both above and below the segment, guided by the surface normal vector in XYZ. Each new layer is one voxel above or below the segment. Our standard surface volume size is 32 layers in front and behind of the segment layer, 65 layers in total. This stack of layers extracts the segment so it can be inspected near the written surface for ink.
 
 <div className="flex w-[100%]">
-    <div className="w-[100%] mb-2 mr-2"><img src="/img/data/mesh2surfvol.webp" className="w-[100%]"/><figcaption className="mt-0">A surface volume created by flattening the region around a segment.</figcaption></div>
+    <div className="w-[100%] mb-2 mr-2"><img src="/img/data/mesh2sv.webp" className="w-[100%]"/><figcaption className="mt-0">A surface volume created by flattening the region around a segment.</figcaption></div>
 </div>
 
 <figure className="max-w-[600px]">
@@ -81,7 +81,7 @@ A surface volume is a flattened subvolume with the segment as the center layer. 
 The composite texture image is a 2D image created by applying a max filter over a specified number of layers above and below the segment map.
 
 <div className="flex w-[100%]">
-  <div className="w-[100%] mb-2 mr-2"><img src="/img/data/ML-ink-detection.webp" className="w-[100%]"/><figcaption className="mt-0">Machine learning ink detection models finding a Pi.</figcaption></div>
+  <div className="w-[100%] mb-2 mr-2"><img src="/img/data/20231210121321.webp" className="w-[100%]"/><figcaption className="mt-0">Composite texture image of segment [20231210121321](https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/20231210121321/20231210121321.tif) from PHerc. Paris 4 (Scroll 1).</figcaption></div>
 </div>
 
 Our Segmentation Team has been mapping select regions of the scrolls. The community has made this a significantly more automated process with improved tools, but it still involves considerable human input. 
