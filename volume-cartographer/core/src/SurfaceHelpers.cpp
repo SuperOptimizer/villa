@@ -6220,12 +6220,12 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         //lets just see what happens
         if (update_mapping /*generation+1 != stop_gen && (generation % opt_map_every) == 0*/) {
             dbg_counter = generation;
-            // SurfTrackerData opt_data;
-            // cv::Rect all(0,0,w, h);
+            SurfTrackerData opt_data = data;
+            cv::Rect all(0,0,w, h);
             // copy(data, opt_data, active_bounds & used_area);
             // copy(data, opt_data, all);
-            // cv::Mat_<uint8_t> opt_state = state.clone();
-            // cv::Mat_<cv::Vec3d> opt_points = points.clone();
+            cv::Mat_<uint8_t> opt_state = state.clone();
+            cv::Mat_<cv::Vec3d> opt_points = points.clone();
             cv::imwrite("state_pre"+std::to_string(generation)+".tif", state);
             vis_surfcount("surfs_pre"+std::to_string(generation)+".tif", data, size);
             vis_loccount("locs_pre"+std::to_string(generation)+".tif", data, size);
@@ -6238,9 +6238,19 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //             
             
             
-            optimize_surface_mapping(data,state, points, used_area, static_bounds, step, src_step, {y0,x0}, closing_r, true);
+            // optimize_surface_mapping(data,state, points, used_area, static_bounds, step, src_step, {y0,x0}, closing_r, true);
             // optimize_surface_mapping(data,state, points, used_area, cv::Rect(0,0,0,0), step, src_step, {y0,x0}, closing_r, true);
+            cv::Rect active = active_bounds & used_area;
+            optimize_surface_mapping(opt_data, opt_state, opt_points, active, static_bounds, step, src_step, {y0,x0}, closing_r, true);
             // optimize_surface_mapping(opt_data, opt_state, opt_points, used_area, static_bounds, step, src_step, {y0,x0}, closing_r, true);
+            
+            copy(opt_data, data, active);
+            opt_points(active).copyTo(points(active));
+            opt_state(active).copyTo(state(active));
+            
+            // copy(opt_data, data, all);
+            // opt_points(all).copyTo(points(all));
+            // opt_state(all).copyTo(state(all));
             
             // copy(opt_data, data, active_only);
             // opt_points(active_only).copyTo(points(active_only));
