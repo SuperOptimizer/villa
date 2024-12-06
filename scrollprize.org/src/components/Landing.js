@@ -776,7 +776,7 @@ const team = {
       href: "https://hum.byu.edu/directory/roger-macfarlane",
     },
   ],
-  papyrology2024: [
+  papyrology: [
     {
       name: "Federica Nicolardi (Coordinator)",
       title: "Assistant Professor of Papyrology, University of Naples Federico II",
@@ -813,7 +813,7 @@ const team = {
       href: "https://salerno.academia.edu/RossellaVilla",
     },
   ],
-  papyrology2023: [
+  papyrologyAdvisors: [
     {
       name: "Daniel Delattre",
       title: "Emeritus Research Director and Papyrologist, CNRS and IRHT",
@@ -1633,17 +1633,17 @@ export function Landing() {
                   </div>
                   <div className="flex-1 flex-col lg:gap-0 gap-2 mt-8 min-w-[100%] md:min-w-[50%] pr-4 lg:pr-12">
                     <h3 className="text-3xl font-black tracking-tighter text=[--ifm-color-primary]">
-                      2024 Papyrology Team
+                      Papyrology: Reviewers
                     </h3>
-                    {team.papyrology2024.map((t, i) => (
+                    {team.papyrology.map((t, i) => (
                       <Link link={t} key={i} />
                     ))}
                   </div>
                   <div className="flex-1 flex-col lg:gap-0 gap-2 mt-8 min-w-[100%] md:min-w-[50%] pr-4 lg:pr-12">
                     <h3 className="text-3xl font-black tracking-tighter text=[--ifm-color-primary]">
-                      2023 Papyrology Team
+                      Papyrology: Advisors/2023 Reviewers
                     </h3>
-                    {team.papyrology2023.map((t, i) => (
+                    {team.papyrologyAdvisors.map((t, i) => (
                       <Link link={t} key={i} />
                     ))}
                   </div>
