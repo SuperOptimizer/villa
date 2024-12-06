@@ -5698,19 +5698,19 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     cv::Mat_<cv::Vec3f> seed_points = seed->surf()->rawPoints();
 
     int stop_gen = 10000;
-    int closing_r = 5; //FIXME dont forget to reset!
+    int closing_r = 20; //FIXME dont forget to reset!
 
     //1k ~ 1cm
-    int sliding_w = 500/src_step/step*2;
-    int w = 1000/src_step/step*2+10+2*closing_r;
-    int h = 1000/src_step/step*2+10+2*closing_r;
+    int sliding_w = 1000/src_step/step*2;
+    int w = 2000/src_step/step*2+10+2*closing_r;
+    int h = 15000/src_step/step*2+10+2*closing_r;
     cv::Size size = {w,h};
     cv::Rect bounds(0,0,w-1,h-1);
     cv::Rect save_bounds_inv(closing_r+5,closing_r+5,h-closing_r-10,w-closing_r-10);
     cv::Rect active_bounds(closing_r+5,closing_r+5,w-closing_r-10,h-closing_r-10);
     cv::Rect static_bounds(0,0,0,h);
 
-    int x0 = h/2;
+    int x0 = w/2;
     int y0 = h/2;
     int r = 1;
     
@@ -5795,7 +5795,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 200;
     
-    int final_opts_max = 1;
+    int final_opts_max = 3;
     int final_opts = final_opts_max;
     
     int loc_valid_count = 0;
@@ -5837,11 +5837,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             std::cout << "go with cands " << cands.size() << " inl_th " << curr_best_inl_th << std::endl;
 
             OmpThreadPointCol threadcol(3, cands);
-            
-            cv::Mat_<uint16_t> tries1(size, 0);
-            cv::Mat_<uint16_t> tries2(size, 0);
-            cv::Mat_<uint16_t> tries3(size, 0);
-            cv::Mat_<uint16_t> tries4(size, 0);
 
             std::shared_mutex mutex;
             int best_inliers_gen = 0;
@@ -5912,9 +5907,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
                 avg /= ref_count;
                 
-#pragma omp critical
-                tries1(p)++;
-                
                 data_th.loc(ref_surf,p) = avg + cv::Vec2d((rand() % 1000)/500.0-1, (rand() % 1000)/500.0-1);
 
                 ceres::Problem problem;
@@ -5947,9 +5939,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     data_th.erase(ref_surf, p);
                     continue;
                 }
-                //we aready loose most here if we do multiple grows ...
-#pragma omp critical
-                tries2(p)++;
 
                 state(p) = 0;
                 
@@ -5966,9 +5955,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     data_th.erase(ref_surf, p);
                     break;
                 }
-                
-#pragma omp critical
-                tries3(p)++;
 
                 for(auto test_surf : local_surfs) {
                     SurfacePointer *ptr = test_surf->surf()->pointer();
@@ -5994,8 +5980,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     best_surf = ref_surf;
                     best_loc = ref_loc;
                     best_ref_seed = ref_seed;
-#pragma omp critical
-                    tries4(p)++;
                 }
                 data_th.erase(ref_surf, p);
             }
@@ -6115,11 +6099,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 best_inliers_gen = std::max(best_inliers_gen, best_inliers);
             }
         }
-        
-        cv::imwrite("tries1"+std::to_string(generation)+".tif", tries1);
-        cv::imwrite("tries2"+std::to_string(generation)+".tif", tries2);
-        cv::imwrite("tries3"+std::to_string(generation)+".tif", tries3);
-        cv::imwrite("tries4"+std::to_string(generation)+".tif", tries4);
         
         if (!fringe.size()) {
             if (curr_best_inl_th > 10)
