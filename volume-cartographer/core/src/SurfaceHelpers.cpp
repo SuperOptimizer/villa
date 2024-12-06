@@ -3593,8 +3593,8 @@ void copy(const SurfTrackerData &src, SurfTrackerData &tgt, const cv::Rect &roi_
         if (roi.contains(it.first))
             tgt._surfs[it.first] = it.second;
     
-    tgt.seed_loc = src.seed_loc;
-    tgt.seed_coord = src.seed_coord;
+    // tgt.seed_loc = src.seed_loc;
+    // tgt.seed_coord = src.seed_coord;
 }
 
 int add_surftrack_distloss(SurfaceMeta *sm, const cv::Vec2i &p, const cv::Vec2i &off, SurfTrackerData &data, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, float unit, int flags = 0, ceres::ResidualBlockId *res = nullptr, float w = 1.0)
@@ -5412,8 +5412,13 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
         for(int i=used_area.x;i<used_area.br().x;i++)
             if (static_bounds.contains(cv::Vec2i(i,j))) {
                 points_out(j, i) = points(j, i);
-                state_out(j, i) = state_out(j, i);
+                state_out(j, i) = state(j, i);
                 //FIXME copy surfs and locs
+                mutex.lock();
+                data_out.surfs({j,i}) = data.surfsC({j,i});
+                for(auto &s : data_out.surfs({j,i}))
+                    data_out.loc(s, {j,i}) = data.loc(s, {j,i});
+                mutex.unlock();
             }
             else if (new_state(j,i) & STATE_VALID) {
                 // if (data_new.has(&sm, {j,i})) {
@@ -5483,7 +5488,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     //now filter by consistency
     for(int j=used_area.y;j<used_area.br().y-1;j++)
         for(int i=used_area.x;i<used_area.br().x-1;i++)
-            if (state_out(j,i) & STATE_VALID) {
+            if (!static_bounds.contains(cv::Vec2i(i,j)) && state_out(j,i) & STATE_VALID) {
                 std::set<SurfaceMeta*> surf_src = data_out.surfs({j,i});
                 for (auto s : surf_src) {
                     int count;
@@ -5540,7 +5545,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 #pragma omp parallel for collapse(2) schedule(dynamic)
         for(int j=used_area.y;j<used_area.br().y-1;j++)
             for(int i=used_area.x;i<used_area.br().x-1;i++)
-                if (state_out(j,i) & STATE_LOC_VALID && (fringe(j, i) || fringe_next(j, i))) {
+                if (!static_bounds.contains(cv::Vec2i(i,j)) && state_out(j,i) & STATE_LOC_VALID && (fringe(j, i) || fringe_next(j, i))) {
                     mutex.lock_shared();
                     std::set<SurfaceMeta*> surf_cands = data_out.surfs({j,i});
                     for(auto s : data_out.surfs({j,i}))
@@ -5591,16 +5596,18 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
 #pragma omp parallel for
     for(int j=used_area.y;j<used_area.br().y-1;j++)
         for(int i=used_area.x;i<used_area.br().x-1;i++)
-            if (state_out(j,i) & STATE_LOC_VALID) {
-                // std::cout << cv::Vec2i(j,i) << " surfs " << data_out.surfs({j,i}).size() << std::endl;
-                if (data_out.surfs({j,i}).size() < 1 /*&& support_count(j,i) < 4*/) {
+            if (!static_bounds.contains(cv::Vec2i(i,j))) {
+                if (state_out(j,i) & STATE_LOC_VALID) {
+                    // std::cout << cv::Vec2i(j,i) << " surfs " << data_out.surfs({j,i}).size() << std::endl;
+                    if (data_out.surfs({j,i}).size() < 1 /*&& support_count(j,i) < 4*/) {
+                        state_out(j,i) = 0;
+                        points_out(j, i) = {-1,-1,-1};
+                    }
+                }
+                else {
                     state_out(j,i) = 0;
                     points_out(j, i) = {-1,-1,-1};
                 }
-            }
-            else {
-                state_out(j,i) = 0;
-                points_out(j, i) = {-1,-1,-1};
             }
             
     points = points_out;
@@ -5694,9 +5701,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     int closing_r = 5; //FIXME dont forget to reset!
 
     //1k ~ 1cm
-    int sliding_w = 1000/src_step/step*2;
-    int w = 2000/src_step/step*2+10+2*closing_r;
-    int h = 2000/src_step/step*2+10+2*closing_r;
+    int sliding_w = 500/src_step/step*2;
+    int w = 1000/src_step/step*2+10+2*closing_r;
+    int h = 1000/src_step/step*2+10+2*closing_r;
     cv::Size size = {w,h};
     cv::Rect bounds(0,0,w-1,h-1);
     cv::Rect save_bounds_inv(closing_r+5,closing_r+5,h-closing_r-10,w-closing_r-10);
@@ -6213,12 +6220,12 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         //lets just see what happens
         if (update_mapping /*generation+1 != stop_gen && (generation % opt_map_every) == 0*/) {
             dbg_counter = generation;
-            SurfTrackerData opt_data;
-            cv::Rect all(0,0,w, h);
+            // SurfTrackerData opt_data;
+            // cv::Rect all(0,0,w, h);
             // copy(data, opt_data, active_bounds & used_area);
-            copy(data, opt_data, all);
-            cv::Mat_<uint8_t> opt_state = state.clone();
-            cv::Mat_<cv::Vec3d> opt_points = points.clone();
+            // copy(data, opt_data, all);
+            // cv::Mat_<uint8_t> opt_state = state.clone();
+            // cv::Mat_<cv::Vec3d> opt_points = points.clone();
             cv::imwrite("state_pre"+std::to_string(generation)+".tif", state);
             vis_surfcount("surfs_pre"+std::to_string(generation)+".tif", data, size);
             vis_loccount("locs_pre"+std::to_string(generation)+".tif", data, size);
@@ -6231,11 +6238,13 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 //             
             
             
-            optimize_surface_mapping(opt_data, opt_state, opt_points, used_area, cv::Rect(0,0,0,0), step, src_step, {y0,x0}, closing_r, true);
+            optimize_surface_mapping(data,state, points, used_area, static_bounds, step, src_step, {y0,x0}, closing_r, true);
+            // optimize_surface_mapping(data,state, points, used_area, cv::Rect(0,0,0,0), step, src_step, {y0,x0}, closing_r, true);
+            // optimize_surface_mapping(opt_data, opt_state, opt_points, used_area, static_bounds, step, src_step, {y0,x0}, closing_r, true);
             
-            copy(opt_data, data, active_only);
-            opt_points(active_only).copyTo(points(active_only));
-            opt_state(active_only).copyTo(state(active_only));
+            // copy(opt_data, data, active_only);
+            // opt_points(active_only).copyTo(points(active_only));
+            // opt_state(active_only).copyTo(state(active_only));
             
             vis_surfcount("surfspost"+std::to_string(generation)+".tif", data, size);
             cv::imwrite("state_post"+std::to_string(generation)+".tif", state);
