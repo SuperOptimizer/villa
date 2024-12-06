@@ -36,7 +36,11 @@ hide_table_of_contents: true
   />
 </head>
 
-Segmentation involves mapping sheets of papyrus inside a 3D X-ray scroll volume or fragment volume. 
+**Where are the segments?** Segments are separated by [scroll](https://dl.ash2txt.org/full-scrolls/) on our data server. Navigate to the /*.volpkg/paths directory (eg., [/full-scrolls/Scroll1/PHercParis4.volpkg/paths/](https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/)).
+
+**What are segments?** Read on:
+
+A segment is a mapped section of the written surface inside the scroll. The scrolls have a complex interior structure because they were crumpled and charred by the weight and heat of volcanic debris. Many different tools and techniques have been employed to map the intricate 3D shapes of these papyrus sheets ([Segmentation Tutorial](tutorial3)).
 
 <figure className="max-w-[500px]">
   <video autoPlay playsInline muted controls className="w-[100%] rounded-xl" poster="/img/tutorials/vc-extrapolation2.webp">
@@ -45,16 +49,26 @@ Segmentation involves mapping sheets of papyrus inside a 3D X-ray scroll volume 
   <figcaption className="mt-0">Illustration of Volume Cartographer with an algorithm extrapolating in 3D.</figcaption>
 </figure>
 
-The resulting 3D structure is called a “mesh”, capturing the complex shape of the papyrus sheet.
+The geometric mapping data is stored in various file formats depending on the mapping tool used (e.g., VC generates pointset files).
 
-<div className="flex flex-wrap max-w-[500px]">
-  <div className="w-[100%] max-w-[400px] mb-4"><div className="overflow-hidden mb-2"><img loading="eager" src="/img/data/segmentation-animation.webp" className="w-[100%] mt-[-30px] mb-[-50px]"/></div><figcaption className="mt-[-6px]">Some segment meshes from Scroll 1.</figcaption></div>
-</div>
+Ultimately, all mapping data is converted into a mesh, commonly stored in OBJ format. The mesh, together with the original scan volume, defines the segment.
 
-The mesh is used to isolate and extract a thin "surface volume" of the mapped papyrus surface in micro-CT. The surface volume is flattened into a stack of 65 image files (layers), where 32.tif is nominally the papyrus surface. 64.tif is “atop” of the surface and 00.tif is “below”.
+Auxiliary files are also provided with each segment. These include: UV coordinates from segment flattening, surface volume, and composite image.
+
+**UV coordinates** - `<id>.obj`
+
+The UV coordinates define a flattened representation of the segment by storing the flattened UV positions of each vertex in the OBJ mesh. This flattening can be achieved using algorithms such as SLIM, LSCM, and ABF.
 
 <div className="flex w-[100%]">
-    <div className="w-[100%] mb-2 mr-2"><img src="/img/data/mesh2surfvol.webp" className="w-[100%]"/><figcaption className="mt-0">A flattened surface volume is produced starting from a mesh.</figcaption></div>
+    <div className="w-[100%] mb-2 mr-2"><img src="/img/data/mesh2surfvol.webp" className="w-[100%]"/><figcaption className="mt-0">A meshed segment prior to flattening.</figcaption></div>
+</div>
+
+**Surface volume** - `layers` directory
+
+A surface volume is a flattened subvolume with the segment as the center layer. The surface volume is formed by extracting CT voxels both above and below the segment, guided by the surface normal vector in XYZ. Each new layer is one voxel above or below the segment. Our standard surface volume size is 32 layers in front and behind of the segment layer, 65 layers in total. This stack of layers extracts the segment so it can be inspected near the written surface for ink.
+
+<div className="flex w-[100%]">
+    <div className="w-[100%] mb-2 mr-2"><img src="/img/data/mesh2surfvol.webp" className="w-[100%]"/><figcaption className="mt-0">A surface volume created by flattening the region around a segment.</figcaption></div>
 </div>
 
 <figure className="max-w-[600px]">
@@ -62,7 +76,9 @@ The mesh is used to isolate and extract a thin "surface volume" of the mapped pa
   <figcaption className="mt-0">Scrubbing through layers of the surface volume of segment <a href="https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/20230827161846/layers/">20230827161846</a>.</figcaption>
 </figure>
 
-The flattened surface volume can be used directly to look for ink, either by visual inspection or with machine learning tools.
+**Composite image** - `<id>.tif` or `composite.jpg`
+
+The composite texture image is a 2D image created by applying a max filter over a specified number of layers above and below the segment map.
 
 <div className="flex w-[100%]">
   <div className="w-[100%] mb-2 mr-2"><img src="/img/data/ML-ink-detection.webp" className="w-[100%]"/><figcaption className="mt-0">Machine learning ink detection models finding a Pi.</figcaption></div>
@@ -74,10 +90,6 @@ Our Segmentation Team has been mapping select regions of the scrolls. The commun
   <div className="w-[100%] mb-2 mr-2"><img src="/img/data/segment_areas.webp" className="w-[100%]"/><figcaption className="mt-0">Total segment area created over time by our team and community.</figcaption></div>
 </div>
 
-You can view the meshes of our Scroll 1 segments in [Volume Viewer](https://github.com/tomhsiao1260/vc-whiteboard/tree/demo-3) (hosted [here](http://37.19.207.113:5174)) and [Segment Viewer](https://github.com/tomhsiao1260/segment-viewer) (hosted [here](http://37.19.207.113:5173)).
-
-For more technical details about how the segmentation team operates, check out this doc: [The Segmenter’s Guide to Volume Cartographer](https://docs.google.com/document/d/11B9Gy1gJRye_NQHphwbIxINvactUchJJsJOJi1FKrgI/edit?usp=sharing).
-
 ## Data format
 
 You can find all segment data on the [data server](https://dl.ash2txt.org/) in the [`/full-scrolls/`](https://dl.ash2txt.org/full-scrolls/) folder.
@@ -86,15 +98,25 @@ You can find all segment data on the [data server](https://dl.ash2txt.org/) in t
 * **Scroll 2 (PHerc. Paris. 3):** [`/full-scrolls/Scroll2/PHercParis3.volpkg/paths/`](https://dl.ash2txt.org/full-scrolls/Scroll2/PHercParis3.volpkg/paths/)
 * **Scroll 3 (PHerc. 332):** [`/full-scrolls/Scroll3/PHerc332.volpkg/paths/`](https://dl.ash2txt.org/full-scrolls/Scroll3/PHerc332.volpkg/paths/)
 * **Scroll 4 (PHerc. 1667):** [`/full-scrolls/Scroll4/PHerc1667.volpkg/paths/`](https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/paths/)
+* **Scroll 5 (PHerc. 172):** [`/full-scrolls/Scroll5/PHerc172.volpkg/paths/`](https://dl.ash2txt.org/full-scrolls/Scroll5/PHerc172.volpkg/paths/)
 
 There are many different types of files provided in each `paths/<id>/` folder:
-* `meta.json`: Metadata of the segment.
-* `layers/{00-64}.tif`: Surface volume of 65 layers.
-  * This is most useful for detecting ink.
-* `<id>.tif`: Texture of the surrounding voxels (the maximum of a few of the surrounding layers).
-* `<id>.obj`: Mesh of the segment.
-* `<id>_points.obj`: Pointcloud.
-* `<id>.ppm`: Per-pixel map, a custom data format mapping points between the surface volume and the original 3D volume of the scroll.
+* `<id>.obj`: Mesh of the segment (see above)
+  * `<id>.mtl`: Information about `<id>.obj`
+* `layers/{00-64}.tif`: Surface volume of 65 layers (see above)
+* `<id>.tif` or `composite.jpg`: Texture of the surrounding voxels
+* `<id>_prediction*.png`: Ink prediction for the segment
+
+* `meta.json`: Metadata of the segment
 * `pointset.vcps`: Pointset of a segment. More information [here](https://www.kaggle.com/code/kglspl/simple-vcps-parser)
+* `pointset.vcano`: Information about the pointset, such as which slices were annotated
+* `<id>_points.obj`: Pointcloud
+* `<id>.ppm`: Per-pixel map, a custom data format mapping points between the surface volume and the original 3D volume of the scroll
+* `<id>_cellmap.tif`: Maps each pixel to its corresponding mesh triangle
+* `<id>_mask.png`: Mask of the flattened segment
+* `<id>_flat_mask.png`: Mask of the flattened segment
+* `<id>_flat.png`: Mask of the flattened segment
+* `<id>_flat_0.png`: Mask of the flattened segment
+* `energies_flatboi.txt`: Minimization of the distortion energy
 * `author.txt`: Name of the author of the segment.
 * `area_cm2.txt`: Total surface area, in cm<sup>2</sup>.
