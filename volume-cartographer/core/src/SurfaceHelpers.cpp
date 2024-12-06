@@ -6224,18 +6224,18 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             vis_loccount("locs_pre"+std::to_string(generation)+".tif", data, size);
             // optimize_surface_mapping(opt_data, opt_state, opt_points, active_bounds & used_area, static_bounds, step, src_step, {y0,x0}, closing_r, true);
 //             optimize_surface_mapping(opt_data, opt_state, opt_points, all, static_bounds, step, src_step, {y0,x0}, closing_r, true);
-//             // cv::Rect active_only(static_bounds.br().x,0,active_bounds.br().x-static_bounds.br().x,h);
+            cv::Rect active_only(static_bounds.br().x,0,active_bounds.br().x-static_bounds.br().x,h);
 //             cv::Rect active_only = all;
 //             
 //             std::cout << "copying from active area" << active_only << (active_bounds & used_area) << state.size() << std::endl;
 //             
-//             copy(opt_data, data, active_only);
-//             opt_points(active_only).copyTo(points(active_only));
-//             opt_state(active_only).copyTo(state(active_only));
             
             
-            optimize_surface_mapping(data, state, points, used_area, cv::Rect(0,0,0,0), step, src_step, {y0,x0}, closing_r, true);
+            optimize_surface_mapping(opt_data, opt_state, opt_points, used_area, cv::Rect(0,0,0,0), step, src_step, {y0,x0}, closing_r, true);
             
+            copy(opt_data, data, active_only);
+            opt_points(active_only).copyTo(points(active_only));
+            opt_state(active_only).copyTo(state(active_only));
             
             vis_surfcount("surfspost"+std::to_string(generation)+".tif", data, size);
             cv::imwrite("state_post"+std::to_string(generation)+".tif", state);
