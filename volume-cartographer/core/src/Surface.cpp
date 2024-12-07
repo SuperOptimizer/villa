@@ -497,6 +497,70 @@ static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f
     return sqrt(best);
 }
 
+static float dot_s(const cv::Vec3f &p)
+{
+    return p[0]*p[0] + p[1]*p[1] + p[2]*p[2];
+}
+
+template <typename E>
+float ldist(const E &p, const cv::Vec3f &tgt_o, const cv::Vec3f &tgt_v)
+{
+    return cv::norm((p-tgt_o).cross(p-tgt_o-tgt_v))/cv::norm(tgt_v);
+}
+
+template <typename E>
+static float search_min_line(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt_o, cv::Vec3f tgt_v, cv::Vec2f init_step, float min_step_x)
+{
+    cv::Rect boundary(1,1,points.cols-2,points.rows-2);
+    if (!boundary.contains({loc[0],loc[1]})) {
+        out = {-1,-1,-1};
+        return -1;
+    }
+    
+    bool changed = true;
+    E val = at_int(points, loc);
+    out = val;
+    float best = ldist(val, tgt_o, tgt_v);
+    float res;
+    
+    //TODO check maybe add more search patterns, compare motion estimatino for video compression, x264/x265, ...
+    std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
+    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
+    cv::Vec2f step = init_step;
+    
+    while (changed) {
+        changed = false;
+        
+        for(auto &off : search) {
+            cv::Vec2f cand = loc+mul(off,step);
+            
+            //just skip if out of bounds
+            if (!boundary.contains({cand[0],cand[1]}))
+                continue;
+                
+                val = at_int(points, cand);
+                res = ldist(val, tgt_o, tgt_v);
+                if (res < best) {
+                    changed = true;
+                    best = res;
+                    loc = cand;
+                    out = val;
+                }
+        }
+        
+        if (changed)
+            continue;
+        
+        step *= 0.5;
+        changed = true;
+        
+        if (step[0] < min_step_x)
+            break;
+    }
+    
+    return best;
+}
+
 //search the surface point that is closest to th tgt coord
 template <typename E>
 float _pointTo(cv::Vec2f &loc, const cv::Mat_<E> &points, const cv::Vec3f &tgt, float th, int max_iters, float scale)

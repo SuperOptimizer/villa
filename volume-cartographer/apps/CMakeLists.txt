@@ -256,6 +256,14 @@ target_link_libraries(vc_tifxyz2obj
     VC::surface
 )
 
+add_executable(vc_tifxyz_winding src/vc_tifxyz_winding.cpp)
+target_link_libraries(vc_tifxyz_winding
+    nlohmann_json::nlohmann_json
+    opencv_highgui
+    VC::slicing
+    VC::surface
+)
+
 ## experiements for flattening ##
 # add_executable(vc_zarralphacomp src/ZarrAlphaComp.cpp)
 # target_link_libraries(vc_zarralphacomp

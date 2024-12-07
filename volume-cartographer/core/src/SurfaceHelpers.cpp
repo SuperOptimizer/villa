@@ -3868,7 +3868,7 @@ int surftrack_add_local(SurfaceMeta *sm, const cv::Vec2i p, SurfTrackerData &dat
     
     // std::cout << "add z loc loss!" << std::endl;
     if (flags & LOSS_ZLOC)
-        problem.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(sm->surf()->rawPoints(), data.seed_coord[2] + (p[0]-data.seed_loc[0])*step*src_step, z_loc_loss_w), new ceres::HuberLoss(1.0), &data.loc(sm, p)[0]);
+        problem.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(sm->surf()->rawPoints(), data.seed_coord[2] - (p[0]-data.seed_loc[0])*step*src_step, z_loc_loss_w), new ceres::HuberLoss(1.0), &data.loc(sm, p)[0]);
 
     if (flags & SURF_LOSS) {
         count += add_surftrack_surfloss(sm, p, data, problem, state, points, step);
@@ -4777,7 +4777,7 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
         for(int i=used_area.x;i<used_area.br().x;i++) {
             fix_points_z++;
             if (problem.HasParameterBlock(&data_new.loc(&sm, {j,i})[0]))
-                problem.AddResidualBlock(ZLocationLoss<cv::Vec3d>::Create(points_new, data_new.seed_coord[2] + (j-data.seed_loc[0])*step*src_step, z_loc_loss_w), new ceres::HuberLoss(1.0), &data_new.loc(&sm, {j,i})[0]);
+                problem.AddResidualBlock(ZLocationLoss<cv::Vec3d>::Create(points_new, data_new.seed_coord[2] - (j-data.seed_loc[0])*step*src_step, z_loc_loss_w), new ceres::HuberLoss(1.0), &data_new.loc(&sm, {j,i})[0]);
                 // problem.AddResidualBlock(ZLocationLoss::Create(points_new, data_inp.seed_coord[2] + (j-data_inp.seed_loc[0])*step*src_step, z_loc_loss_w), new ceres::HuberLoss(1.0), &data.loc(&sm_inp, {j,i})[0]);
         }
 
@@ -5328,7 +5328,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
         for(int i=used_area.x;i<used_area.br().x;i++) {
             fix_points_z++;
             if (problem.HasParameterBlock(&data_inp.loc(&sm_inp, {j,i})[0]))
-                problem.AddResidualBlock(ZLocationLoss<cv::Vec3d>::Create(points_new, data_inp.seed_coord[2] + (j-data.seed_loc[0])*step*src_step, z_loc_loss_w), new ceres::HuberLoss(1.0), &data_inp.loc(&sm_inp, {j,i})[0]);
+                problem.AddResidualBlock(ZLocationLoss<cv::Vec3d>::Create(points_new, data_inp.seed_coord[2] - (j-data.seed_loc[0])*step*src_step, z_loc_loss_w), new ceres::HuberLoss(1.0), &data_inp.loc(&sm_inp, {j,i})[0]);
                 // problem.AddResidualBlock(ZLocationLoss::Create(points_new, data_inp.seed_coord[2] + (j-data_inp.seed_loc[0])*step*src_step, z_loc_loss_w), new ceres::HuberLoss(1.0), &data.loc(&sm_inp, {j,i})[0]);
         }
         
@@ -5795,7 +5795,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 200;
     
-    int final_opts_max = 3;
+    int final_opts_max = 2;
     int final_opts = final_opts_max;
     
     int loc_valid_count = 0;
@@ -5820,17 +5820,17 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 if ((state(p) & STATE_LOC_VALID) == 0)
                     continue;
 
-                for(auto n : neighs)
-                    if (save_bounds_inv.contains(p+n)
-                        && (state(p+n) & STATE_PROCESSING) == 0
-                        && (state(p+n) & STATE_LOC_VALID) == 0)
+                for(auto n : neighs) {
+                    cv::Vec2i pn = p+n;
+                    if (save_bounds_inv.contains(pn)
+                    // if (active_bounds.contains({pn[1],pn[0]})
+                        && (state(pn) & STATE_PROCESSING) == 0
+                        && (state(pn) & STATE_LOC_VALID) == 0)
                     {
-                        state(p+n) |= STATE_PROCESSING;
-                        cands.insert(p+n);
+                        state(pn) |= STATE_PROCESSING;
+                        cands.insert(pn);
                     }
-                    // else if (!save_bounds_inv.contains(p+n)) {
-                    //     std::cout << "touching border at " << p+n << std::endl;
-                    // }
+                }
             }
             fringe.clear();
 
@@ -5908,6 +5908,14 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 avg /= ref_count;
                 
                 data_th.loc(ref_surf,p) = avg + cv::Vec2d((rand() % 1000)/500.0-1, (rand() % 1000)/500.0-1);
+                
+                if (generation <= 1) {
+                    if (p[1] > x0)
+                        data_th.loc(ref_surf,p) = avg + cv::Vec2d(10*step, 1);
+                    else if (p[1] < x0)
+                        data_th.loc(ref_surf,p) = avg + cv::Vec2d(-10*step,-1);
+                }
+                    
 
                 ceres::Problem problem;
 
@@ -6089,8 +6097,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 //just try again some other time
                 state(p) = 0;
                 points(p) = {-1,-1,-1};
-#pragma omp critical
-                best_inliers_gen = std::max(best_inliers_gen, best_inliers);
             }
             else {
                 state(p) = 0;
@@ -6108,8 +6114,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             if (best_inliers_gen >= 2)
                 curr_best_inl_th = std::min(curr_best_inl_th, best_inliers_gen);
             if (curr_best_inl_th >= 2) {
-                for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
-                    for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
+                cv::Rect active = active_bounds & used_area;
+                for(int j=active.y-2;j<=active.br().y+2;j++)
+                    for(int i=active.x-2;i<=active.br().x+2;i++)
                         //FIXME WTF why isn't this working?!'
                         if (state(j,i) & STATE_LOC_VALID)
                                 fringe.insert(cv::Vec2i(j,i));
@@ -6159,7 +6166,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             update_mapping = true;
         }
         
-        // update_mapping = false;
+        update_mapping = false;
         
         // if (update_mapping)
         // {
@@ -6172,7 +6179,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         // surftrack_add_extr_inliers(data, state, points, used_area, step, src_step);
             
 
-        if (generation % 4 == 0 || update_mapping /*|| generation < 10*/) {
+        if (generation % 50 == 0 || update_mapping /*|| generation < 10*/) {
             {
             cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, src_step);
             QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
@@ -6205,12 +6212,12 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             // copy(data, opt_data, all);
             cv::Mat_<uint8_t> opt_state = state.clone();
             cv::Mat_<cv::Vec3d> opt_points = points.clone();
-            cv::imwrite("state_pre"+std::to_string(generation)+".tif", state);
-            vis_surfcount("surfs_pre"+std::to_string(generation)+".tif", data, size);
-            vis_loccount("locs_pre"+std::to_string(generation)+".tif", data, size);
+            // cv::imwrite("state_pre"+std::to_string(generation)+".tif", state);
+            // vis_surfcount("surfs_pre"+std::to_string(generation)+".tif", data, size);
+            // vis_loccount("locs_pre"+std::to_string(generation)+".tif", data, size);
             // optimize_surface_mapping(opt_data, opt_state, opt_points, active_bounds & used_area, static_bounds, step, src_step, {y0,x0}, closing_r, true);
 //             optimize_surface_mapping(opt_data, opt_state, opt_points, all, static_bounds, step, src_step, {y0,x0}, closing_r, true);
-            cv::Rect active_only(static_bounds.br().x,0,active_bounds.br().x-static_bounds.br().x,h);
+            // cv::Rect active_only(static_bounds.br().x,0,active_bounds.br().x-static_bounds.br().x,h);
 //             cv::Rect active_only = all;
 //             
 //             std::cout << "copying from active area" << active_only << (active_bounds & used_area) << state.size() << std::endl;
@@ -6235,9 +6242,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             // opt_points(active_only).copyTo(points(active_only));
             // opt_state(active_only).copyTo(state(active_only));
             
-            vis_surfcount("surfspost"+std::to_string(generation)+".tif", data, size);
-            cv::imwrite("state_post"+std::to_string(generation)+".tif", state);
-            vis_loccount("locs_post"+std::to_string(generation)+".tif", data, size);
+            // vis_surfcount("surfspost"+std::to_string(generation)+".tif", data, size);
+            // cv::imwrite("state_post"+std::to_string(generation)+".tif", state);
+            // vis_loccount("locs_post"+std::to_string(generation)+".tif", data, size);
             
             for(int i=0;i<omp_get_max_threads();i++) {
                 data_ths[i] = data;
@@ -6248,8 +6255,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             //recalc fringe after surface optimization (which often shrinks the surf)
             fringe.clear();
             curr_best_inl_th = 20;
-            for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
-                for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
+            for(int j=active.y-2;j<=active.br().y+2;j++)
+                for(int i=active.x-2;i<=active.br().x+2;i++)
                     //FIXME WTF why isn't this working?!'
                     if (state(j,i) & STATE_LOC_VALID)
                         fringe.insert(cv::Vec2i(j,i));
@@ -6295,12 +6302,14 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             int overlap = 5;
             active_bounds = {w-sliding_w-2*closing_r-10-overlap,closing_r+5,sliding_w+2*closing_r+10+overlap,h-closing_r-10};
             static_bounds = {0,0,w-sliding_w-2*closing_r-10,h};
-            
+
+            cv::Rect active = active_bounds & used_area;
+
             std::cout << size << bounds << save_bounds_inv << used_area << active_bounds << (used_area & active_bounds) << static_bounds << std::endl;
             fringe.clear();
             curr_best_inl_th = 20;
-            for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
-                for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
+            for(int j=active.y-2;j<=active.br().y+2;j++)
+                for(int i=active.x-2;i<=active.br().x+2;i++)
                     //FIXME WTF why isn't this working?!'
                     if (state(j,i) & STATE_LOC_VALID)
                         fringe.insert(cv::Vec2i(j,i));
