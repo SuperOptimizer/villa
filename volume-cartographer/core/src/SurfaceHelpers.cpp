@@ -6111,9 +6111,9 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 curr_best_inl_th -= 4;
             else
                 curr_best_inl_th -= 1;
-            if (best_inliers_gen >= 2)
+            if (best_inliers_gen >= 6)
                 curr_best_inl_th = std::min(curr_best_inl_th, best_inliers_gen);
-            if (curr_best_inl_th >= 2) {
+            if (curr_best_inl_th >= 6) {
                 cv::Rect active = active_bounds & used_area;
                 for(int j=active.y-2;j<=active.br().y+2;j++)
                     for(int i=active.x-2;i<=active.br().x+2;i++)
