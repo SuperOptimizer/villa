@@ -270,7 +270,7 @@ int main(int argc, char *argv[])
                 int x1 = iv[n].second[0];
                 int x2 = iv[n+1].second[0];
                 float dist = x2-x1;
-                std::cout << dist << std::endl;
+                // std::cout << dist << std::endl;
                 wind_dists_x[x1/100].push_back(dist);
                 wind_dists_x[x2/100].push_back(dist);
             }
@@ -279,10 +279,16 @@ int main(int argc, char *argv[])
     for(auto &dists : wind_dists_x)
         std::sort(dists.begin(), dists.end());
     
+    std::vector<int> wind_x_ref;
+    
     std::cout << "final out " << wind_dists_x.size() << std::endl;
     for(auto &dists : wind_dists_x)
-        if (dists.size())
+        if (dists.size()) {
+            wind_x_ref.push_back(dists[dists.size()/2]);
             std::cout << dists[dists.size()/2] << std::endl;
+        }
+    
+    wind_x_ref.push_back(wind_x_ref.back());
     
     return EXIT_SUCCESS;
 }
