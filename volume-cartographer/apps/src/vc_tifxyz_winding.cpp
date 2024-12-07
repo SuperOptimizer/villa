@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <opencv2/highgui.hpp>
+#include <opencv2/imgproc.hpp>
 
 namespace fs = std::filesystem;
 
@@ -105,6 +106,76 @@ float line_off(const E &p, const cv::Vec3f &tgt_o, const cv::Vec3f &tgt_v)
     return (tgt_o-p).dot(tgt_v)/dot_s(tgt_v);
 }
 
+using IntersectVec = std::vector<std::pair<float,cv::Vec2f>>;
+
+IntersectVec getIntersects(const cv::Vec2i &seed, const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &step)
+{
+    cv::Vec3f o = points(seed[1],seed[0]);
+    cv::Vec3f n = grid_normal(points, {seed[0],seed[1],seed[2]});
+    std::vector<cv::Vec2f> locs = {seed};
+    for(int i=0;i<1000;i++)
+    {
+        cv::Vec2f loc = {rand() % points.cols, seed[1] -50 + (rand() % 100)};
+        cv::Vec3f res;
+        float dist = search_min_line(points, loc, res, o, n, step, 0.01);
+        
+        if (dist > 2 || dist < 0)
+            continue;
+        
+        // std::cout << dist << res << loc << std::endl;
+        
+        bool found = false;
+        for(auto l : locs) {
+            if (cv::norm(loc, l) <= 2) {
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            locs.push_back(loc);
+    }
+
+    IntersectVec dist_locs;
+    for(auto l : locs)
+        dist_locs.push_back({line_off(at_int(points,l),o,n), l});
+    // std::sort(dist_locs.begin(), dist_locs.end(), [](auto a, auto b) {return a.first > b.first; });
+    std::sort(dist_locs.begin(), dist_locs.end(), [](auto a, auto b) {return a.second[0] > b.second[0]; });
+    
+    //we could have two groups (other part of the scroll), in that case the x locations should be between the ones of the first group!
+
+    bool two_halves = false;
+    for(int i=1;i<dist_locs.size()-1;i++)
+        if (abs(dist_locs[i-1].first - dist_locs[i+1].first) < std::min(abs(dist_locs[i-1].first - dist_locs[i].first),abs(dist_locs[i].first - dist_locs[i+1].first))) {
+            two_halves = true;
+        }
+
+    if (!two_halves)
+        return dist_locs;
+
+    IntersectVec a, b;
+    std::sort(dist_locs.begin(), dist_locs.end(), [](auto a, auto b) {return a.first < b.first; });
+    a.push_back(dist_locs[0]);
+    b.push_back(dist_locs.back());
+    dist_locs.erase(dist_locs.begin());
+    dist_locs.erase(dist_locs.begin()+dist_locs.size()-1);
+    
+    bool seed_in_a = (a[0].first <= 0.01);
+    
+    for(auto pair : dist_locs)
+        if (abs(pair.first - a.back().first) < abs(pair.first - b.back().first)) {
+            a.push_back(pair);
+            if (pair.first <= 0.01)
+                seed_in_a = true;
+        }
+        else
+            b.push_back(pair);        
+    
+    if (seed_in_a)
+        return a;
+    else
+        return b;
+}
+
 int main(int argc, char *argv[])
 {
     if (argc != 3) {
@@ -128,42 +199,27 @@ int main(int argc, char *argv[])
     
     cv::Mat_<cv::Vec3b> img(points.size(), 0);
     
-    cv::Vec2i seed = {1145, 168};
-    cv::Vec3f o = points(seed[1],seed[0]);
-    cv::Vec3f n = grid_normal(points, {seed[0],seed[1],seed[2]});
-    std::vector<cv::Vec2f> locs = {seed};
-    for(int i=0;i<1000;i++)
-    {
-        cv::Vec2f loc = {rand() % points.cols, seed[1] -50 + (rand() % 100)};
-        cv::Vec3f res;
-        float dist = search_min_line(points, loc, res, o, n, surf->_scale, 0.001);
-        
-        if (dist > 2 || dist < 0)
-            continue;
-        
-        // std::cout << dist << res << loc << std::endl;
-        
-        bool found = false;
-        for(auto l : locs) {
-            if (cv::norm(loc, l) <= 2) {
-                found = true;
-                break;
-            }
+    // cv::Vec2i seed = {1145, 168};
+    
+    std::vector<IntersectVec> intersects;
+    
+    for(int i=0;i<100;i++) {
+        cv::Vec2i seed = {rand() % points.cols, rand() % points.rows};
+        while (points(seed[1],seed[0])[0] == -1)
+            seed = {rand() % 500, rand() % points.rows};
+        intersects.push_back(getIntersects(seed, points, surf->_scale));
+    }
+    
+    // for(auto pair : intersects) {
+    //     std::cout << pair.first << pair.second << std::endl;
+    // }
+    
+    for(auto &iv : intersects) {
+        cv::Vec3b col = {50+rand() % 155,50+rand() % 155,50+rand() % 155};
+        for(auto &pair : iv) {
+            // img(pair.second[1],pair.second[0]) = col;
+            cv::circle(img, cv::Point(pair.second), 3, col, -1);
         }
-        if (!found)
-            locs.push_back(loc);
-    }
-    for(auto l : locs) {
-        img(l[1],l[0]) = {255,255,255};
-    }
-    
-    std::vector<std::pair<float,cv::Vec2f>> dist_locs;
-    for(auto l : locs)
-        dist_locs.push_back({line_off(at_int(points,l),o,n), l});
-    std::sort(dist_locs.begin(), dist_locs.end(), [](auto a, auto b) {return a.first > b.first; });
-    
-    for(auto pair : dist_locs) {
-        std::cout << pair.first << pair.second << std::endl;
     }
     cv::imwrite("dbg.tif", img);
     
