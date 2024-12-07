@@ -99,6 +99,12 @@ static float search_min_line(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3
     return best;
 }
 
+template <typename E>
+float line_off(const E &p, const cv::Vec3f &tgt_o, const cv::Vec3f &tgt_v)
+{
+    return (tgt_o-p).dot(tgt_v)/dot_s(tgt_v);
+}
+
 int main(int argc, char *argv[])
 {
     if (argc != 3) {
@@ -125,7 +131,7 @@ int main(int argc, char *argv[])
     cv::Vec2i seed = {1145, 168};
     cv::Vec3f o = points(seed[1],seed[0]);
     cv::Vec3f n = grid_normal(points, {seed[0],seed[1],seed[2]});
-    std::vector<cv::Vec2f> locs;
+    std::vector<cv::Vec2f> locs = {seed};
     for(int i=0;i<1000;i++)
     {
         cv::Vec2f loc = {rand() % points.cols, seed[1] -50 + (rand() % 100)};
@@ -148,10 +154,17 @@ int main(int argc, char *argv[])
             locs.push_back(loc);
     }
     for(auto l : locs) {
-        std::cout << l << std::endl;
         img(l[1],l[0]) = {255,255,255};
     }
     
+    std::vector<std::pair<float,cv::Vec2f>> dist_locs;
+    for(auto l : locs)
+        dist_locs.push_back({line_off(at_int(points,l),o,n), l});
+    std::sort(dist_locs.begin(), dist_locs.end(), [](auto a, auto b) {return a.first > b.first; });
+    
+    for(auto pair : dist_locs) {
+        std::cout << pair.first << pair.second << std::endl;
+    }
     cv::imwrite("dbg.tif", img);
     
     return EXIT_SUCCESS;
