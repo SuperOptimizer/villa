@@ -282,7 +282,7 @@ int main(int argc, char *argv[])
     std::cout << "final out " << wind_dists_x.size() << std::endl;
     for(auto &dists : wind_dists_x)
         if (dists.size())
-            std::cout << dists[dists.size()/10] << std::endl;
+            std::cout << dists[dists.size()/2] << std::endl;
     
     return EXIT_SUCCESS;
 }
