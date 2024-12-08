@@ -370,6 +370,10 @@ int main(int argc, char *argv[])
         for(int j=1;j<winding.rows-1;j++)
             for(int i=1;i<winding.cols-1;i++) {
                 cv::Vec2i p = {j,i};
+                
+                if (points(p)[0] == -1)
+                    continue;
+                
                 float w = wind_w(p);
                 float sum = winding(p)*w;
                 for(auto n : neighs) {
@@ -377,6 +381,23 @@ int main(int argc, char *argv[])
                     
                     if (!bounds_inv.contains(pn))
                         continue;
+                    
+                    if (points(pn)[0] == -1)
+                        continue;
+                    
+                    int dist = std::max(abs(n[1]),abs(n[0]));
+                    if (dist > 1)
+                    {
+                        bool skip = false;
+                        cv::Vec2i step = n/dist;
+                        for(int s=1;s<dist;s++)
+                            if (points(p+step*s)[0] == -1) {
+                                skip = true;
+                                break;
+                            }
+                        if (skip)
+                            continue;
+                    }
                     
                     sum += (winding(pn)-float(n[1])/wind_x_ref[pn[1]/100])*wind_w(pn);
                     w += wind_w(pn);
