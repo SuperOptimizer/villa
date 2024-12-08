@@ -146,7 +146,11 @@ IntersectVec getIntersects(const cv::Vec2i &seed, const cv::Mat_<cv::Vec3f> &poi
     IntersectVec dist_locs;
     for(auto l : locs)
         dist_locs.push_back({line_off(at_int(points,l),o,n), l});
-    // std::sort(dist_locs.begin(), dist_locs.end(), [](auto a, auto b) {return a.first > b.first; });
+    
+    //just sort by normal position and let median take care of the rest
+    // std::sort(dist_locs.begin(), dist_locs.end(), [](auto a, auto b) {return a.first < b.first; });
+    // return dist_locs;    
+    
     std::sort(dist_locs.begin(), dist_locs.end(), [](auto a, auto b) {return a.second[0] > b.second[0]; });
     
     //we could have two groups (other part of the scroll), in that case the x locations should be between the ones of the first group!
@@ -308,14 +312,21 @@ int main(int argc, char *argv[])
         wind_cols.push_back(col);
     }
     
-    for(int n=0;n<100;n++) {
+    int wind_iters = 200;
+    int ramp_start = 100;
+    int ramp_end = 150;
+    for(int n=0;n<wind_iters;n++) {
         winding(seed) = 0;
         wind_w(seed) = 1;
         
         cv::Mat_<float> winding_out = winding.clone();
         cv::Mat_<float> wind_w_out = wind_w.clone();
         
-        std::cout << "seed " << seed << std::endl;
+        // std::cout << "seed " << seed << std::endl;
+        
+        float rough_w = 1.0;
+        if (n >= ramp_start)
+            rough_w = 1-std::min((n-ramp_start)/double(ramp_end-ramp_start), 1.0);
         
         for(auto &iv : intersects) {
             //FIXME make it go both ways!
@@ -366,12 +377,19 @@ int main(int argc, char *argv[])
             // break;
         }
         
-        winding_out.copyTo(winding);
-        wind_w_out.copyTo(wind_w);
+        if (rough_w == 1.0) {
+            winding_out.copyTo(winding);
+            wind_w_out.copyTo(wind_w);
+        }
+        else {
+            std::cout << "w " << rough_w << std::endl;
+            winding = winding_out*rough_w + winding*(1-rough_w);
+            wind_w = wind_w_out*rough_w + wind_w*(1-rough_w);
+        }
         
         cv::Rect bounds_inv(0,0,points.rows-1,points.cols-1);
         
-        std::vector<cv::Vec2i> neighs = {{0,-1},{0,1},{1,0},{-1,0},{1,1},{-1,1},{1,-1},{-1,-1},{-4,0},{0,-4},{0,4},{4,0},{-4,0},{-16,0},{0,-16},{0,16},{16,0},{-16,0}};
+        std::vector<cv::Vec2i> neighs = {{0,-1},{0,1},{1,0},{-1,0},{1,1},{-1,1},{1,-1},{-1,-1},{0,-4},{0,4},{4,0},{-4,0},{0,-16},{0,16},{16,0},{-16,0}};
 #pragma omp parallel for
         for(int j=1;j<winding.rows-1;j++)
             for(int i=1;i<winding.cols-1;i++) {
@@ -405,8 +423,13 @@ int main(int argc, char *argv[])
                             continue;
                     }
                     
-                    sum += (winding(pn)-float(n[1])/wind_x_ref[pn[1]/100])*wind_w(pn);
-                    w += wind_w(pn);
+                    float mul = 1.0;
+                    if (rough_w != 1.0 && dist > 1) {
+                        mul = rough_w/dist;
+                    }
+                    
+                    sum += (winding(pn)-float(n[1])/wind_x_ref[pn[1]/100])*wind_w(pn)*mul;
+                    w += wind_w(pn)*mul;
                 }
                 if (w != 0) {
                     winding_out(p) = sum/w;
@@ -418,7 +441,7 @@ int main(int argc, char *argv[])
         wind_w_out.copyTo(wind_w);
             
     
-        if (n % 10 == 0 || n == 99) {
+        if (n % 10 == 0 || n == wind_iters) {
             cv::imwrite("wind_w.tif", wind_w);
             std::cout << "finished it " << n << std::endl;
             
