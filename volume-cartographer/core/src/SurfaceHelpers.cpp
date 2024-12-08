@@ -5697,7 +5697,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
     cv::Mat_<cv::Vec3f> seed_points = seed->surf()->rawPoints();
 
-    int stop_gen = 10000;
+    int stop_gen = 50000;
     int closing_r = 20; //FIXME dont forget to reset!
 
     //1k ~ 1cm
@@ -6166,7 +6166,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             update_mapping = true;
         }
         
-        update_mapping = false;
+        // update_mapping = false;
         
         // if (update_mapping)
         // {
