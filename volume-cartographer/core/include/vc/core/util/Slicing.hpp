@@ -66,3 +66,34 @@ cv::Mat_<cv::Vec3f> smooth_vc_segmentation(const cv::Mat_<cv::Vec3f> &points);
 cv::Mat_<cv::Vec3f> vc_segmentation_calc_normals(const cv::Mat_<cv::Vec3f> &points);
 void vc_segmentation_scales(cv::Mat_<cv::Vec3f> points, double &sx, double &sy);
 cv::Vec3f grid_normal(const cv::Mat_<cv::Vec3f> &points, const cv::Vec3f &loc);
+
+template<typename T, int C>
+//l is [y, x]!
+bool loc_valid(const cv::Mat_<cv::Vec<T,C>> &m, const cv::Vec2d &l)
+{
+    if (l[0] == -1)
+        return false;
+    
+    cv::Rect bounds = {0, 0, m.rows-2,m.cols-2};
+    cv::Vec2i li = {floor(l[0]),floor(l[1])};
+    
+    if (!bounds.contains(li))
+        return false;
+    
+    if (m(li[0],li[1])[0] == -1)
+        return false;
+    if (m(li[0]+1,li[1])[0] == -1)
+        return false;
+    if (m(li[0],li[1]+1)[0] == -1)
+        return false;
+    if (m(li[0]+1,li[1]+1)[0] == -1)
+        return false;
+    return true;
+}
+
+template<typename T, int C>
+//l is [x, y]!
+bool loc_valid_xy(const cv::Mat_<cv::Vec<T,C>> &m, const cv::Vec2d &l)
+{
+    return loc_valid(m, {l[1],l[0]});
+}
