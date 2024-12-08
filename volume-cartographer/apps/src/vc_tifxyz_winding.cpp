@@ -109,10 +109,14 @@ float line_off(const E &p, const cv::Vec3f &tgt_o, const cv::Vec3f &tgt_v)
 
 using IntersectVec = std::vector<std::pair<float,cv::Vec2f>>;
 
+float surf_th = 0.5;
+
 IntersectVec getIntersects(const cv::Vec2i &seed, const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &step)
 {
     cv::Vec3f o = points(seed[1],seed[0]);
     cv::Vec3f n = grid_normal(points, {seed[0],seed[1],seed[2]});
+    if (std::isnan(n[0]))
+        return {};
     std::vector<cv::Vec2f> locs = {seed};
     for(int i=0;i<1000;i++)
     {
@@ -120,7 +124,7 @@ IntersectVec getIntersects(const cv::Vec2i &seed, const cv::Mat_<cv::Vec3f> &poi
         cv::Vec3f res;
         float dist = search_min_line(points, loc, res, o, n, step, 0.01);
         
-        if (dist > 2 || dist < 0)
+        if (dist > 0.5 || dist < 0)
             continue;
         
         if (!loc_valid_xy(points,loc))
@@ -130,7 +134,7 @@ IntersectVec getIntersects(const cv::Vec2i &seed, const cv::Mat_<cv::Vec3f> &poi
         
         bool found = false;
         for(auto l : locs) {
-            if (cv::norm(loc, l) <= 2) {
+            if (cv::norm(loc, l) <= 4) {
                 found = true;
                 break;
             }
@@ -315,6 +319,8 @@ int main(int argc, char *argv[])
         
         for(auto &iv : intersects) {
             //FIXME make it go both ways!
+            if (iv.size() < 4)
+                continue;
             for(int n=0;n<iv.size()-1;n++) {
                 int x1 = iv[n].second[0];
                 int x2 = iv[n+1].second[0];
@@ -411,22 +417,37 @@ int main(int argc, char *argv[])
         winding_out.copyTo(winding);
         wind_w_out.copyTo(wind_w);
             
-        cv::imwrite("wind_w.tif", wind_w);
-        std::cout << "finished it " << n << std::endl;
-        
-        cv::Mat_<cv::Vec3b> vis(points.size(), {0,0,0});
-        for(int j=1;j<winding.rows-1;j++)
-            for(int i=1;i<winding.cols-1;i++)
-                if (wind_w(j,i)) {
-                    int w_num = std::min(std::max(int(winding(j,i)*2+200),0),398);
-                    float f = winding(j,i)*2+100 - int(winding(j,i)*2+100);
-                    vis(j,i) = wind_cols[w_num]*(1-f)+wind_cols[w_num+1]*f;
+    
+        if (n % 10 == 0 || n == 99) {
+            cv::imwrite("wind_w.tif", wind_w);
+            std::cout << "finished it " << n << std::endl;
+            
+            cv::Mat_<cv::Vec3b> vis(points.size(), {0,0,0});
+            cv::Mat_<float> winding_err(points.size());
+#pragma omp parallel for
+            for(int j=0;j<winding.rows;j++)
+                for(int i=0;i<winding.cols;i++) {
+                    if (wind_w(j,i)) {
+                        int w_num = std::min(std::max(int(winding(j,i)*2+200),0),398);
+                        float f = winding(j,i)*2+100 - int(winding(j,i)*2+100);
+                        vis(j,i) = wind_cols[w_num]*(1-f)+wind_cols[w_num+1]*f;
+                    }
                 }
-        cv::imwrite("winding"+std::to_string(n)+".tif", winding);
-        cv::imwrite("wind_vis"+std::to_string(n)+".tif", vis);
-        cv::imwrite("winding.tif", winding);
-        cv::imwrite("wind_vis.tif", vis);
-        
+#pragma omp parallel for
+            for(int j=0;j<winding.rows;j++)
+                for(int i=0;i<winding.cols-1;i++) {
+                    if (wind_w(j,i) && wind_w(j,i+1)) {
+                        float wind_g = winding(j,i+1) - winding(j,i);
+                        wind_g = wind_g * wind_x_ref[i/100];
+                        winding_err(j,i) = abs(1-wind_g);
+                    }
+                }
+            cv::imwrite("winding"+std::to_string(n)+".tif", winding);
+            cv::imwrite("wind_vis"+std::to_string(n)+".tif", vis);
+            cv::imwrite("winding.tif", winding);
+            cv::imwrite("wind_vis.tif", vis);
+            cv::imwrite("wind_err.tif", winding_err);
+        }
         
     }
     
