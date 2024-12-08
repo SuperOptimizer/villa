@@ -287,8 +287,127 @@ int main(int argc, char *argv[])
             wind_x_ref.push_back(dists[dists.size()/2]);
             std::cout << dists[dists.size()/2] << std::endl;
         }
+        else
+            wind_x_ref.push_back(wind_x_ref.back());
     
-    wind_x_ref.push_back(wind_x_ref.back());
+    cv::Mat_<float> winding(points.size(), 0);
+    cv::Mat_<float> wind_w(points.size(), 0);
+    
+    cv::Vec2i seed = {intersects[0][0].second[1],intersects[0][0].second[0]};
+    
+    std::vector<cv::Vec3b> wind_cols;
+    for(int i=0;i<400;i++) {
+        cv::Vec3b col = {50+rand() % 127,50+rand() % 127,50+rand() % 127};
+        col[rand()%3] = 192+rand()%63;
+        if (i%2 == 0)
+            col *= 0.5;
+        wind_cols.push_back(col);
+    }
+    
+    for(int n=0;n<100;n++) {
+        winding(seed) = 0;
+        wind_w(seed) = 1;
+        
+        cv::Mat_<float> winding_out = winding.clone();
+        cv::Mat_<float> wind_w_out = wind_w.clone();
+        
+        std::cout << "seed " << seed << std::endl;
+        
+        for(auto &iv : intersects) {
+            //FIXME make it go both ways!
+            for(int n=0;n<iv.size()-1;n++) {
+                int x1 = iv[n].second[0];
+                int x2 = iv[n+1].second[0];
+                
+                cv::Vec2i p1i = {iv[n].second[1],iv[n].second[0]};
+                cv::Vec2i p2i = {iv[n+1].second[1],iv[n+1].second[0]};
+                
+                int ref_x = wind_x_ref[(x1+x2)/100];
+                
+                // std::cout << abs(x2-x1 - ref_x) << " " << x2-x1 << " vs " << ref_x << " wot " << x1 << " " << x2 << p1i << p2i << std::endl;
+                
+                if (abs(x2-x1 - ref_x) > ref_x/3)
+                    continue;
+                
+                if (wind_w(p1i) == 0 && wind_w(p2i) == 0) {
+                    // std::cout << "both 0" << std::endl;
+                    continue;
+                }
+                
+                // std::cout << "go" << std::endl;
+                
+                if (wind_w(p2i) == 0) {
+                    wind_w(p2i) = wind_w(p1i);
+                    winding(p2i) = winding(p1i)+1;
+                    wind_w_out(p2i) = wind_w(p1i);
+                    winding_out(p2i) = winding(p1i)+1;
+                }
+                else if (wind_w(p1i) == 0) {
+                    wind_w(p1i) = wind_w(p2i);
+                    winding(p1i) = winding(p2i)-1;
+                    wind_w_out(p1i) = wind_w(p2i);
+                    winding_out(p1i) = winding(p2i)-1;
+                }
+                else {
+                    float avg_wind = (wind_w(p1i)*winding(p1i) + wind_w(p2i)*(winding(p2i)-1))/(wind_w(p1i)+wind_w(p2i));
+                    winding_out(p1i) = avg_wind;
+                    winding_out(p2i) = avg_wind+1;
+                    float avg_w = (wind_w(p1i)*wind_w(p1i) + wind_w(p2i)*wind_w(p2i))/(wind_w(p1i)+wind_w(p2i));
+                    wind_w_out(p1i) = avg_w;
+                    wind_w_out(p2i) = avg_w;
+                }
+            }
+            // break;
+        }
+        
+        winding_out.copyTo(winding);
+        wind_w_out.copyTo(wind_w);
+        
+        cv::Rect bounds_inv(0,0,points.rows-1,points.cols-1);
+        
+        std::vector<cv::Vec2i> neighs = {{0,-1},{0,1},{1,0},{-1,0},{1,1},{-1,1},{1,-1},{-1,-1},{-4,0},{0,-4},{0,4},{4,0},{-4,0},{-16,0},{0,-16},{0,16},{16,0},{-16,0}};
+#pragma omp parallel for
+        for(int j=1;j<winding.rows-1;j++)
+            for(int i=1;i<winding.cols-1;i++) {
+                cv::Vec2i p = {j,i};
+                float w = wind_w(p);
+                float sum = winding(p)*w;
+                for(auto n : neighs) {
+                    cv::Vec2i pn = p + n;
+                    
+                    if (!bounds_inv.contains(pn))
+                        continue;
+                    
+                    sum += (winding(pn)-float(n[1])/wind_x_ref[pn[1]/100])*wind_w(pn);
+                    w += wind_w(pn);
+                }
+                if (w != 0) {
+                    winding_out(p) = sum/w;
+                    wind_w_out(p) = 1;
+                }
+            }
+            
+        winding_out.copyTo(winding);
+        wind_w_out.copyTo(wind_w);
+            
+        cv::imwrite("wind_w.tif", wind_w);
+        std::cout << "finished it " << n << std::endl;
+        
+        cv::Mat_<cv::Vec3b> vis(points.size(), {0,0,0});
+        for(int j=1;j<winding.rows-1;j++)
+            for(int i=1;i<winding.cols-1;i++)
+                if (wind_w(j,i)) {
+                    int w_num = std::min(std::max(int(winding(j,i)*2+200),0),398);
+                    float f = winding(j,i)*2+100 - int(winding(j,i)*2+100);
+                    vis(j,i) = wind_cols[w_num]*(1-f)+wind_cols[w_num+1]*f;
+                }
+        cv::imwrite("winding"+std::to_string(n)+".tif", winding);
+        cv::imwrite("wind_vis"+std::to_string(n)+".tif", vis);
+        cv::imwrite("winding.tif", winding);
+        cv::imwrite("wind_vis.tif", vis);
+        
+        
+    }
     
     return EXIT_SUCCESS;
 }
