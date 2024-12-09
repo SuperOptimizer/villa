@@ -1036,12 +1036,12 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
     return out;
 }
 
-bool loc_valid(int state)
+static bool loc_valid(int state)
 {
     return state & STATE_LOC_VALID;
 }
 
-bool coord_valid(int state)
+static bool coord_valid(int state)
 {
     return (state & STATE_COORD_VALID) || (state & STATE_LOC_VALID);
 }

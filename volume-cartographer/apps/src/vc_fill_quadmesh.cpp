@@ -304,6 +304,16 @@ int gen_dist_loss_fill(ceres::Problem &problem, const cv::Vec2i &p, const cv::Ve
     return 1;
 }
 
+static bool loc_valid(int state)
+{
+    return state & STATE_LOC_VALID;
+}
+
+static bool coord_valid(int state)
+{
+    return (state & STATE_COORD_VALID) || (state & STATE_LOC_VALID);
+}
+
 //gen straigt loss given point and 3 offsets
 int gen_straight_loss2(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, bool optimize_all, float w)
 {
@@ -481,7 +491,9 @@ int main(int argc, char *argv[])
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 10000;
     
-    std::vector<cv::Vec2d> neighs = {{0,-1},{-1,-1},{1,-1}};
+    std::vector<cv::Vec2d> neighs = {{0,-1},{-1,-1},{1,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2}};
+    
+    cv::Mat_<float> surf_dist(points.size(), 0);
     
     for(int i=bbox.x+2;i<bbox.br().x;i++) {
         std::cout << "proc row " << i << std::endl;
@@ -515,17 +527,23 @@ int main(int argc, char *argv[])
                 // std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
                 
                 if (loc_valid(points, locs(p)))
-                    std::cout << sqrt(summary.final_cost/summary.num_residuals) << " "<< cv::norm(points(p)-at_int(points, {locs(p)[1],locs(p)[0]})) << std::endl;
+                    std::cout << sqrt(summary.final_cost/summary.num_residuals) << " "<< cv::norm(cv::Vec3f(points(p))-at_int(points_in, {locs(p)[1],locs(p)[0]})) << std::endl;
                 else
                     std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
             }
-//             if (summary.final_cost/summary.num_residuals >= 1.0*1.0 || (loc_valid(points, locs(p)) && cv::norm(points(p)-at_int(points, {locs(p)[1],locs(p)[0]})) > 2.0)) {
-//                 ceres::Problem problem;
-//                 create_centered_losses(problem, p, state, points_in, points, locs, step, 0);
-//                 // create_centered_losses(problem, p, state, points_in, points, locs, step, 0);
-//                 
-//                 ceres::Solve(options, &problem, &summary);
-//             }
+            
+            if (loc_valid(points_in, locs(p)))
+                surf_dist(p) = cv::norm(cv::Vec3f(points(p))-at_int(points_in, {locs(p)[1],locs(p)[0]}));
+            else
+                surf_dist(p) = -1;
+            
+            if (surf_dist(p) > 10 || surf_dist(p) < 0) {
+                ceres::Problem problem;
+                create_centered_losses(problem, p, state, points_in, points, locs, step, 0);
+                // create_centered_losses(problem, p, state, points_in, points, locs, step, 0);
+                
+                ceres::Solve(options, &problem, &summary);
+            }
             
             continue;
             
@@ -575,6 +593,7 @@ int main(int argc, char *argv[])
     std::vector<cv::Mat> chs;
     cv::split(points, chs);
     
+    cv::imwrite("surf_dist.tif",surf_dist);
     cv::imwrite("newx.tif",chs[0]);
     cv::imwrite("fail.tif",fail_code);
     cv::imwrite("winding_out.tif",winding+1);
