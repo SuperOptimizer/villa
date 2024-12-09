@@ -264,6 +264,15 @@ target_link_libraries(vc_tifxyz_winding
     VC::surface
 )
 
+add_executable(vc_fill_quadmesh src/vc_fill_quadmesh.cpp)
+target_link_libraries(vc_fill_quadmesh
+    nlohmann_json::nlohmann_json
+    opencv_highgui
+    VC::slicing
+    VC::surface
+    ceres
+)
+
 ## experiements for flattening ##
 # add_executable(vc_zarralphacomp src/ZarrAlphaComp.cpp)
 # target_link_libraries(vc_zarralphacomp
