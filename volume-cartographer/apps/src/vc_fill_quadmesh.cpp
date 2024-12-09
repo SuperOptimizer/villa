@@ -456,7 +456,7 @@ int main(int argc, char *argv[])
         for(int j=bbox.y;j<bbox.br().y;j++) {
             cv::Vec2i p = {j,i};
             
-            // locs(p) = locs(j,i-1)+cv::Vec2d(0,step);
+            locs(p) = locs(j,i-1)+cv::Vec2d(0,step);
             points(p) = points(j,i-1)+cv::Vec3d(0.1,0.1,0.1);
             winding(p) = winding(j,i-1)+1/200.0;
             
