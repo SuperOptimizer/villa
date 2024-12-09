@@ -277,8 +277,8 @@ int gen_surfloss(const cv::Vec2i p, ceres::Problem &problem, const cv::Mat_<uint
     if ((state(p) & STATE_LOC_VALID) == 0)
         return 0;
     
-    // problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::HuberLoss(1.0), &points(p)[0], &locs(p)[0]);
-    problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::TukeyLoss(2.0), &points(p)[0], &locs(p)[0]);
+    problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::HuberLoss(1.0), &points(p)[0], &locs(p)[0]);
+    // problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::TukeyLoss(2.0), &points(p)[0], &locs(p)[0]);
     // problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), nullptr, &points(p)[0], &locs(p)[0]);
 
     return 1;
@@ -304,8 +304,8 @@ int gen_dist_loss_fill(ceres::Problem &problem, const cv::Vec2i &p, const cv::Ve
     return 1;
 }
 
-static float dist_w = 0.02;
-static float straight_w = 0.001;
+static float dist_w = 2.0;
+static float straight_w = 0.1;
 static float surf_w = 0.1;
 
 int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
@@ -484,13 +484,13 @@ int main(int argc, char *argv[])
             
             {
                 ceres::Problem problem;
-                // create_centered_losses(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
-                create_centered_losses(problem, p, state, points_in, points, locs, step, 0);
+                create_centered_losses(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+                // create_centered_losses(problem, p, state, points_in, points, locs, step, 0);
                 
                 ceres::Solver::Summary summary;
                 ceres::Solve(options, &problem, &summary);
                 // std::cout << summary.BriefReport() << "\n";
-                // std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
+                std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
             }
             
             continue;
