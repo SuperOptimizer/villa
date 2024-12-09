@@ -5,10 +5,9 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/video/tracking.hpp>
 
-#include "CostFunctions.hpp"
-
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Surface.hpp"
+#include "vc/core/util/SurfaceModeling.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
 
 
@@ -92,42 +91,43 @@ private:
     std::chrono::time_point<std::chrono::high_resolution_clock> start;
 };
 
-static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
-{
-    int x = p[0];
-    int y = p[1];
-    float fx = p[0]-x;
-    float fy = p[1]-y;
-    
-    cv::Vec3f p00 = points(y,x);
-    cv::Vec3f p01 = points(y,x+1);
-    cv::Vec3f p10 = points(y+1,x);
-    cv::Vec3f p11 = points(y+1,x+1);
-    
-    cv::Vec3f p0 = (1-fx)*p00 + fx*p01;
-    cv::Vec3f p1 = (1-fx)*p10 + fx*p11;
-    
-    return (1-fy)*p0 + fy*p1;
-}
+// static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
+// {
+//     int x = p[0];
+//     int y = p[1];
+//     float fx = p[0]-x;
+//     float fy = p[1]-y;
+//     
+//     cv::Vec3f p00 = points(y,x);
+//     cv::Vec3f p01 = points(y,x+1);
+//     cv::Vec3f p10 = points(y+1,x);
+//     cv::Vec3f p11 = points(y+1,x+1);
+//     
+//     cv::Vec3f p0 = (1-fx)*p00 + fx*p01;
+//     cv::Vec3f p1 = (1-fx)*p10 + fx*p11;
+//     
+//     return (1-fy)*p0 + fy*p1;
+// }
+// 
+// static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2d p)
+// {
+//     int x = p[0];
+//     int y = p[1];
+//     float fx = p[0]-x;
+//     float fy = p[1]-y;
+// 
+//     cv::Vec3f p00 = points(y,x);
+//     cv::Vec3f p01 = points(y,x+1);
+//     cv::Vec3f p10 = points(y+1,x);
+//     cv::Vec3f p11 = points(y+1,x+1);
+// 
+//     cv::Vec3f p0 = (1-fx)*p00 + fx*p01;
+//     cv::Vec3f p1 = (1-fx)*p10 + fx*p11;
+// 
+//     return (1-fy)*p0 + fy*p1;
+// }
 
-static cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, cv::Vec2d p)
-{
-    int x = p[0];
-    int y = p[1];
-    float fx = p[0]-x;
-    float fy = p[1]-y;
-
-    cv::Vec3f p00 = points(y,x);
-    cv::Vec3f p01 = points(y,x+1);
-    cv::Vec3f p10 = points(y+1,x);
-    cv::Vec3f p11 = points(y+1,x+1);
-
-    cv::Vec3f p0 = (1-fx)*p00 + fx*p01;
-    cv::Vec3f p1 = (1-fx)*p10 + fx*p11;
-
-    return (1-fy)*p0 + fy*p1;
-}
-
+//FIXME are we shure we call the right non-convertinv at_int!!!
 static cv::Vec3f at_int_inv(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f p)
 {
     int x = p[1];
@@ -1036,21 +1036,6 @@ cv::Mat_<cv::Vec3f> derive_regular_region_largesteps(const cv::Mat_<cv::Vec3f> &
     return out;
 }
 
-#define OPTIMIZE_ALL 1
-#define SURF_LOSS 2
-#define SPACE_LOSS 2 //SURF and SPACE are never used together
-#define LOSS_3D_INDIRECT 4
-#define LOSS_ZLOC 8
-#define FLAG_GEN0 16
-#define LOSS_ON_SURF 32
-
-#define STATE_UNUSED 0
-#define STATE_LOC_VALID 1
-#define STATE_PROCESSING 2
-#define STATE_COORD_VALID 4
-#define STATE_FAIL 8
-#define STATE_PHYS_ONLY 16
-
 bool loc_valid(int state)
 {
     return state & STATE_LOC_VALID;
@@ -1062,7 +1047,7 @@ bool coord_valid(int state)
 }
 
 //gen straigt loss given point and 3 offsets
-int gen_straight_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, bool optimize_all, float w = 0.5)
+int gen_straight_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, bool optimize_all, float w)
 {
     if (!coord_valid(state(p+o1)))
         return 0;
@@ -1086,7 +1071,7 @@ int gen_straight_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec
 }
 
 //gen straigt loss given point and 3 offsets
-int gen_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, float unit, bool optimize_all, ceres::ResidualBlockId *res, float w = 1.0)
+int gen_dist_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, float unit, bool optimize_all, ceres::ResidualBlockId *res, float w)
 {
     if (!coord_valid(state(p)))
         return 0;
@@ -2054,7 +2039,7 @@ int gen_anchor_loss(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i
     return 1;
 }
 
-float space_trace_dist_w = 1.0;
+static float space_trace_dist_w = 1.0;
 
 //create all valid losses for this point
 template <typename I, typename T, typename C>

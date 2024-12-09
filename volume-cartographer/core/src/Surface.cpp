@@ -285,24 +285,24 @@ bool QuadSurface::valid(SurfacePointer *ptr, const cv::Vec3f &offset)
     return _bounds.contains({p[0],p[1]});
 }
 
-template <typename E>
-static inline E at_int(const cv::Mat_<E> &points, cv::Vec2f p)
-{
-    int x = p[0];
-    int y = p[1];
-    float fx = p[0]-x;
-    float fy = p[1]-y;
-    
-    E p00 = points(y,x);
-    E p01 = points(y,x+1);
-    E p10 = points(y+1,x);
-    E p11 = points(y+1,x+1);
-    
-    E p0 = (1-fx)*p00 + fx*p01;
-    E p1 = (1-fx)*p10 + fx*p11;
-    
-    return (1-fy)*p0 + fy*p1;
-}
+// template <typename E>
+// static inline E at_int(const cv::Mat_<E> &points, cv::Vec2f p)
+// {
+//     int x = p[0];
+//     int y = p[1];
+//     float fx = p[0]-x;
+//     float fy = p[1]-y;
+//     
+//     E p00 = points(y,x);
+//     E p01 = points(y,x+1);
+//     E p10 = points(y+1,x);
+//     E p11 = points(y+1,x+1);
+//     
+//     E p0 = (1-fx)*p00 + fx*p01;
+//     E p1 = (1-fx)*p10 + fx*p11;
+//     
+//     return (1-fy)*p0 + fy*p1;
+// }
 
 cv::Vec3f QuadSurface::coord(SurfacePointer *ptr, const cv::Vec3f &offset)
 {

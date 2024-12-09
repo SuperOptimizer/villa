@@ -294,7 +294,7 @@ struct SurfaceLoss {
 // ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> interp(grid);
 
 
-double  val(const double &v) { return v; }
+static double  val(const double &v) { return v; }
 template <typename JetT>
 double  val(const JetT &v) { return v.a; }
 
