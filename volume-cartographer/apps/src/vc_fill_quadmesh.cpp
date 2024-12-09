@@ -278,13 +278,34 @@ int gen_surfloss(const cv::Vec2i p, ceres::Problem &problem, const cv::Mat_<uint
         return 0;
     
     problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::HuberLoss(1.0), &points(p)[0], &locs(p)[0]);
+    // problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), nullptr, &points(p)[0], &locs(p)[0]);
 
     return 1;
 }
 
-static float dist_w = 0.1;
-static float straight_w = 0.1;
-static float surf_w = 0.01;
+//gen straigt loss given point and 3 offsets
+int gen_dist_loss_fill(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, float unit, bool optimize_all, ceres::ResidualBlockId *res, float w)
+{
+    if ((state(p) & (STATE_LOC_VALID|STATE_COORD_VALID)) == 0)
+        return 0;
+    if ((state(p+off) & (STATE_LOC_VALID|STATE_COORD_VALID)) == 0)
+        return 0;
+    
+    ceres::ResidualBlockId tmp = problem.AddResidualBlock(DistLoss::Create(unit*cv::norm(off),w), new ceres::HuberLoss(1.0), &dpoints(p)[0], &dpoints(p+off)[0]);
+    // ceres::ResidualBlockId tmp = problem.AddResidualBlock(DistLoss::Create(unit*cv::norm(off),w), nullptr, &dpoints(p)[0], &dpoints(p+off)[0]);
+    
+    if (res)
+        *res = tmp;
+    
+    if (!optimize_all)
+        problem.SetParameterBlockConstant(&dpoints(p+off)[0]);
+    
+    return 1;
+}
+
+static float dist_w = 1.0;
+static float straight_w = 1.0;
+static float surf_w = 0.1;
 
 int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
 {
@@ -304,28 +325,36 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     //furtehr and diag!
     count += gen_straight_loss(problem, p, {-2,-2},{-1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     count += gen_straight_loss(problem, p, {2,-2},{1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    
     count += gen_straight_loss(problem, p, {0,-4},{0,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    count += gen_straight_loss(problem, p, {2,-4},{1,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    count += gen_straight_loss(problem, p, {-2,-4},{-1,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    
+    count += gen_straight_loss(problem, p, {0,-8},{0,-4},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    count += gen_straight_loss(problem, p, {4,-8},{2,-4},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    count += gen_straight_loss(problem, p, {-4,-8},{-2,-4},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     
     //direct neighboars
-    count += gen_dist_loss(problem, p, {0,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {0,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     // count += gen_dist_loss(problem, p, {0,1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     // count += gen_dist_loss(problem, p, {-1,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     // count += gen_dist_loss(problem, p, {1,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     
     //diagonal neighbors
-    count += gen_dist_loss(problem, p, {1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     // count += gen_dist_loss(problem, p, {-1,1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     // count += gen_dist_loss(problem, p, {1,1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    count += gen_dist_loss(problem, p, {-1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {-1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     
     //far left
-    count += gen_dist_loss(problem, p, {0,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    count += gen_dist_loss(problem, p, {1,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    count += gen_dist_loss(problem, p, {-1,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    count += gen_dist_loss(problem, p, {2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    count += gen_dist_loss(problem, p, {-2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {0,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {1,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {-1,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {-2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     
-    gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
+    if (flags & LOSS_ON_SURF)
+        gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
 
     return count;
 }
@@ -349,19 +378,23 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
     
-    cv::Mat_<float> winding = cv::imread(wind_path, cv::IMREAD_UNCHANGED);
+    cv::Mat_<float> winding_in = cv::imread(wind_path, cv::IMREAD_UNCHANGED);
     cv::Mat_<cv::Vec3f> points_in = surf->rawPoints();
 
     cv::Mat_<uint8_t> state(points_in.size(), 0);
     cv::Mat_<cv::Vec3d> points(points_in.size(), {-1,-1,-1});
-    cv::Mat_<cv::Vec2d> locs(points_in.size(),{-1,-1,1});
+    cv::Mat_<cv::Vec2d> locs(points_in.size(), {-1,-1});
+    cv::Mat_<float> winding(points_in.size(), NAN);
     
-    cv::Rect bbox(294,34,50,364);
+    cv::Mat_<uint8_t> fail_code(points_in.size(), 0);
+    
+    cv::Rect bbox(294,34,200,364);
     
     float step = 20;
     
     cv::Rect first_col = {bbox.x,bbox.y,2,bbox.height};
     points_in(first_col).copyTo(points(first_col));
+    winding_in(first_col).copyTo(winding(first_col));
     
     std::cout << first_col.tl() << first_col.br() << std::endl;
     
@@ -387,6 +420,7 @@ int main(int argc, char *argv[])
             
             locs(p) = locs(j,i-1)+cv::Vec2d(0,step);
             points(p) = points(j,i-1)+cv::Vec3d(0.1,0.1,0.1);
+            winding(p) = winding(j,i-1);
             
             for(auto n :neighs) {
                 cv::Vec2d cand = cv::Vec2d(p)+n+cv::Vec2d(0,step);
@@ -398,15 +432,71 @@ int main(int argc, char *argv[])
             }
             
             
-            state(p) = STATE_LOC_VALID;
+            state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
             
-            ceres::Problem problem;
-            create_centered_losses(problem, p, state, points_in, points, locs, step);
+            {
+                ceres::Problem problem;
+                // create_centered_losses(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+                create_centered_losses(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+                
+                ceres::Solver::Summary summary;
+                ceres::Solve(options, &problem, &summary);
+                // std::cout << summary.BriefReport() << "\n";
+                // std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
+            }
             
-            ceres::Solver::Summary summary;
-            ceres::Solve(options, &problem, &summary);
-            // std::cout << summary.BriefReport() << "\n";
-            // std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
+            cv::Vec2f loc = {locs(p)[1], locs(p)[0]};
+            
+            float res;
+            for(int r=0;r<10;r++) {
+                
+                //FIXME pointot alt which includes winding number! 
+                //test random inits for pointto!
+                res = pointTo(loc, points_in, points(p), 2.0, 1000, surf->_scale[0]);
+                loc = {loc[1], loc[0]};
+                
+                if (res < 0)
+                    continue;
+            
+                if (res > 100)
+                    continue;
+                
+                if (abs(winding_in(loc[0],loc[1]) - winding(p)) < 0.3)
+                    break;
+            }
+            
+            if (res < 0) {
+                fail_code(p) = 1;
+                continue;
+            }
+            
+            if (res >= 10) {
+                fail_code(p) = 2;
+                continue;
+            }
+            
+            if (abs(winding_in(loc[0],loc[1]) - winding(p)) >= 0.3) {
+                fail_code(p) = 3;
+                continue;
+            }
+            
+            locs(p) = loc;
+            
+            // std::cout << res << std::endl;
+            
+            {
+                ceres::Problem problem;
+                // create_centered_losses(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+                create_centered_losses(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+                
+                ceres::Solver::Summary summary;
+                ceres::Solve(options, &problem, &summary);
+                // std::cout << summary.BriefReport() << "\n";
+                // std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
+            }
+            
+            if (loc_valid(points,locs(p)))
+                winding(p) = winding_in(loc[0],loc[1]);
         }
     }
     
@@ -414,6 +504,8 @@ int main(int argc, char *argv[])
     cv::split(points, chs);
     
     cv::imwrite("newx.tif",chs[0]);
+    cv::imwrite("fail.tif",fail_code);
+    cv::imwrite("winding_out.tif",winding);
     
     QuadSurface *surf_full = new QuadSurface(points(bbox), surf->_scale);
     
