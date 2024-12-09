@@ -58,7 +58,7 @@ A good fit comes down to personality as much as skill sets. Maybe you have stron
 
 This is not a programming position, and the majority of your time will be spent in the trenches annotating papyrus. However, this is geometry research, so experience writing code, beta-testing and debugging software, algorithm development, graphics, general data science, visual art and other creative skills will all be of great benefit. 
 
-This is a full-time position (30+ hours/week). 
+This is a full-time position (30+ hours/week). Pay rate up to 40USD per hour.
 
 #### Key Responsibilities
 - Master several techniques for annotating X-ray CT scans of scrolls with evolving software
