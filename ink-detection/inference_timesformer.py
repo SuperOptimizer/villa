@@ -8,7 +8,7 @@ class InferenceArgumentParser(Tap):
     segment_path:str='./eval_scrolls'
     model_path:str= 'outputs/vesuvius/pretraining_all/vesuvius-models/valid_20230827161847_0_fr_i3depoch=7.ckpt'
     out_path:str=""
-    stride: int = 2
+    stride: int = 32
     start_idx:int=15
     workers: int = 4
     batch_size: int = 64
@@ -16,6 +16,7 @@ class InferenceArgumentParser(Tap):
     reverse:int=0
     device:str='cuda'
     gpus:int=1
+    model_compile:bool=True
 args = InferenceArgumentParser().parse_args()
 
 # Generate a string "0,1,2,...,args.gpus-1"
@@ -58,36 +59,13 @@ def gkern(kernlen=21, nsig=3):
     return kern2d/kern2d.sum()
 
 class CFG:
-    # ============== comp exp name =============
-    comp_name = 'vesuvius'
 
-    # comp_dir_path = './'
-    comp_dir_path = './'
-    comp_folder_name = './'
-    comp_dataset_path = f'./'
-    
-    exp_name = 'pretraining_all'
     # ============== model cfg =============
     in_chans = 26 # 65
     encoder_depth=5
     # ============== training cfg =============
     size = 64
     tile_size = 64
-    stride = tile_size // 3
-
-    train_batch_size = 256 # 32
-    valid_batch_size = 256
-    use_amp = True
-
-    scheduler = 'GradualWarmupSchedulerV2'
-    epochs = 50 # 30
-
-    # adamW warmupあり
-    warmup_factor = 10
-    # lr = 1e-4 / warmup_factor
-    lr = 1e-4 / warmup_factor
-    min_lr = 1e-6
-    num_workers = 16 * args.gpus
     seed = 42
     # ============== augmentation =============
     valid_aug_list = [
@@ -164,8 +142,8 @@ def get_img_splits(fragment_id,s,e,rotation=0):
         print("aborted reading fragment", fragment_id, e)
         return None
 
-    x1_list = list(range(0, image.shape[1]-CFG.tile_size+1, CFG.stride))
-    y1_list = list(range(0, image.shape[0]-CFG.tile_size+1, CFG.stride))
+    x1_list = list(range(0, image.shape[1]-CFG.tile_size+1, args.stride))
+    y1_list = list(range(0, image.shape[0]-CFG.tile_size+1, args.stride))
     for y1 in y1_list:
         for x1 in x1_list:
             y2 = y1 + CFG.tile_size
@@ -183,9 +161,9 @@ def get_img_splits(fragment_id,s,e,rotation=0):
     ]))
 
     test_loader = DataLoader(test_dataset,
-                              batch_size=CFG.valid_batch_size,
+                              batch_size=args.batch_size,
                               shuffle=False,
-                              num_workers=CFG.num_workers, pin_memory=(args.gpus==1), drop_last=False,
+                              num_workers=args.workers, pin_memory=(args.gpus==1), drop_last=False,
                               )
     return test_loader, np.stack(xyxys),(image.shape[0],image.shape[1]),fragment_mask
 
@@ -245,67 +223,7 @@ class RegressionPLModel(pl.LightningModule):
         x = self.backbone(torch.permute(x, (0, 2, 1,3,4)))
         x=x.view(-1,1,4,4)        
         return x
-    def training_step(self, batch, batch_idx):
-        x, y = batch
-        outputs = self(x)
-        loss1 = self.loss_func(outputs, y)
-        if torch.isnan(loss1):
-            print("Loss nan encountered")
-        self.log("train/Arcface_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True)
-        return {"loss": loss1}
 
-    def validation_step(self, batch, batch_idx):
-        x,y,xyxys= batch
-        batch_size = x.size(0)
-        outputs = self(x)
-        loss1 = self.loss_func(outputs, y)
-        y_preds = torch.sigmoid(outputs).to('cpu')
-        for i, (x1, y1, x2, y2) in enumerate(xyxys):
-            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=16,mode='bilinear').squeeze(0).squeeze(0).numpy()
-            self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
-
-        self.log("val/MSE_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True)
-        return {"loss": loss1}
-    
-    def configure_optimizers(self):
-
-        optimizer = AdamW(filter(lambda p: p.requires_grad, self.parameters()), lr=CFG.lr)
-    
-        scheduler = get_scheduler(CFG, optimizer)
-        return [optimizer],[scheduler]
-
-class GradualWarmupSchedulerV2(GradualWarmupScheduler):
-    """
-    https://www.kaggle.com/code/underwearfitting/single-fold-training-of-resnet200d-lb0-965
-    """
-    def __init__(self, optimizer, multiplier, total_epoch, after_scheduler=None):
-        super(GradualWarmupSchedulerV2, self).__init__(
-            optimizer, multiplier, total_epoch, after_scheduler)
-
-    def get_lr(self):
-        if self.last_epoch > self.total_epoch:
-            if self.after_scheduler:
-                if not self.finished:
-                    self.after_scheduler.base_lrs = [
-                        base_lr * self.multiplier for base_lr in self.base_lrs]
-                    self.finished = True
-                return self.after_scheduler.get_lr()
-            return [base_lr * self.multiplier for base_lr in self.base_lrs]
-        if self.multiplier == 1.0:
-            return [base_lr * (float(self.last_epoch) / self.total_epoch) for base_lr in self.base_lrs]
-        else:
-            return [base_lr * ((self.multiplier - 1.) * self.last_epoch / self.total_epoch + 1.) for base_lr in self.base_lrs]
-
-def get_scheduler(cfg, optimizer):
-    scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, 10, eta_min=1e-6)
-    scheduler = GradualWarmupSchedulerV2(
-        optimizer, multiplier=1.0, total_epoch=1, after_scheduler=scheduler_cosine)
-
-    return scheduler
-
-def scheduler_step(scheduler, avg_val_loss, epoch):
-    scheduler.step(epoch)
 
 def predict_fn(test_loader, model, device, test_xyxys, pred_shape):
     mask_pred = np.zeros(pred_shape)
@@ -346,6 +264,8 @@ import gc
 if __name__ == "__main__":
     # Loading the model
     model = RegressionPLModel.load_from_checkpoint(args.model_path, strict=False)
+    if args.model_compile:
+        model=torch.compile(model)
     if args.gpus > 1:
         model = DataParallel(model)  # Wrap model with DataParallel for multi-GPU
     model.to(device)
