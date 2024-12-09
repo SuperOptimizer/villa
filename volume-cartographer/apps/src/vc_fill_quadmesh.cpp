@@ -277,14 +277,14 @@ int gen_surfloss(const cv::Vec2i p, ceres::Problem &problem, const cv::Mat_<uint
     if ((state(p) & STATE_LOC_VALID) == 0)
         return 0;
     
-    problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), nullptr, &points(p)[0], &locs(p)[0]);
+    problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::HuberLoss(1.0), &points(p)[0], &locs(p)[0]);
 
     return 1;
 }
 
-static float dist_w = 0.5;
+static float dist_w = 0.1;
 static float straight_w = 2.0;
-static float surf_w = 0.1;
+static float surf_w = 0.01;
 
 int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
 {
@@ -372,14 +372,27 @@ int main(int argc, char *argv[])
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 10000;
     
+    std::vector<cv::Vec2d> neighs = {{0,-1},{-1,-1},{1,-1}};
+    
     for(int i=bbox.x+2;i<bbox.br().x;i++) {
         std::cout << "proc row " << i << std::endl;
 #pragma omp parallel for
         for(int j=bbox.y;j<bbox.br().y;j++) {
             cv::Vec2i p = {j,i};
-            points(p) = points(j,i-1)+cv::Vec3d(0.1,0.1,0.1);
             
             locs(p) = locs(j,i-1)+cv::Vec2d(0,step);
+            points(p) = points(j,i-1)+cv::Vec3d(0.1,0.1,0.1);
+            
+            for(auto n :neighs) {
+                cv::Vec2d cand = cv::Vec2d(p)+n+cv::Vec2d(0,step);
+                if (loc_valid(points_in,cand)) {
+                    locs(p) = cand;
+                    points(p) = at_int(points_in, {cand[1],cand[0]});
+                    break;
+                }
+            }
+            
+            
             state(p) = STATE_LOC_VALID;
             
             ceres::Problem problem;
@@ -388,6 +401,7 @@ int main(int argc, char *argv[])
             ceres::Solver::Summary summary;
             ceres::Solve(options, &problem, &summary);
             // std::cout << summary.BriefReport() << "\n";
+            // std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
         }
     }
     
