@@ -359,6 +359,41 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     return count;
 }
 
+float find_loc_wind(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &winding, const cv::Vec3f &tgt, float th)
+{
+    float best_res = -1;
+    for(int r=0;r<1000;r++) {
+        cv::Vec2f cand = loc;
+        
+        if (r)
+            cand = {rand() % points.cols, rand() % points.rows};
+        
+        if (abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
+            continue;
+        
+        cv::Vec3f out_;
+        float res = min_loc(points, cand, out_, {tgt}, {0}, nullptr, 4.0, 0.01);
+        
+        if (res < 0)
+            continue;
+        
+        if (abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
+            continue;
+        
+        if (res < th) {
+            loc = cand;
+            return res;
+        }
+        
+        if (best_res == -1 || res < best_res) {
+            loc = cand;
+            best_res = res;
+        }
+    }
+    
+    return best_res;
+}
+
 int main(int argc, char *argv[])
 {
     if (argc != 3) {
@@ -388,13 +423,16 @@ int main(int argc, char *argv[])
     
     cv::Mat_<uint8_t> fail_code(points_in.size(), 0);
     
-    cv::Rect bbox(294,34,200,364);
+    // cv::Rect bbox(294,34,200,364);
+    cv::Rect bbox(294,34+250,50,114);
     
     float step = 20;
     
     cv::Rect first_col = {bbox.x,bbox.y,2,bbox.height};
     points_in(first_col).copyTo(points(first_col));
     winding_in(first_col).copyTo(winding(first_col));
+    
+    std::cout << winding_in(bbox.y, bbox.x) << std::endl;
     
     std::cout << first_col.tl() << first_col.br() << std::endl;
     
@@ -418,9 +456,9 @@ int main(int argc, char *argv[])
         for(int j=bbox.y;j<bbox.br().y;j++) {
             cv::Vec2i p = {j,i};
             
-            locs(p) = locs(j,i-1)+cv::Vec2d(0,step);
+            // locs(p) = locs(j,i-1)+cv::Vec2d(0,step);
             points(p) = points(j,i-1)+cv::Vec3d(0.1,0.1,0.1);
-            winding(p) = winding(j,i-1);
+            winding(p) = winding(j,i-1)+1/200.0;
             
             for(auto n :neighs) {
                 cv::Vec2d cand = cv::Vec2d(p)+n+cv::Vec2d(0,step);
@@ -436,8 +474,8 @@ int main(int argc, char *argv[])
             
             {
                 ceres::Problem problem;
-                // create_centered_losses(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
                 create_centered_losses(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+                // create_centered_losses(problem, p, state, points_in, points, locs, step, 0);
                 
                 ceres::Solver::Summary summary;
                 ceres::Solve(options, &problem, &summary);
@@ -445,42 +483,29 @@ int main(int argc, char *argv[])
                 // std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
             }
             
-            cv::Vec2f loc = {locs(p)[1], locs(p)[0]};
-            
-            float res;
-            for(int r=0;r<10;r++) {
-                
-                //FIXME pointot alt which includes winding number! 
-                //test random inits for pointto!
-                res = pointTo(loc, points_in, points(p), 2.0, 1000, surf->_scale[0]);
-                loc = {loc[1], loc[0]};
-                
-                if (res < 0)
-                    continue;
-            
-                if (res > 100)
-                    continue;
-                
-                if (abs(winding_in(loc[0],loc[1]) - winding(p)) < 0.3)
-                    break;
-            }
-            
-            if (res < 0) {
-                fail_code(p) = 1;
-                continue;
-            }
-            
-            if (res >= 10) {
-                fail_code(p) = 2;
-                continue;
-            }
-            
-            if (abs(winding_in(loc[0],loc[1]) - winding(p)) >= 0.3) {
-                fail_code(p) = 3;
-                continue;
-            }
-            
-            locs(p) = loc;
+//             cv::Vec2f loc = {locs(p)[1], locs(p)[0]};
+//             
+//             float res = find_loc_wind(loc, winding(p), points_in, winding_in, points(p), 2.0);
+//             loc = {loc[1], loc[0]};
+//             
+//             // std::cout << res << std::endl;
+//             
+//             if (res < 0) {
+//                 fail_code(p) = 1;
+//                 continue;
+//             }
+//             
+//             if (res >= 100) {
+//                 fail_code(p) = 2;
+//                 continue;
+//             }
+//             
+//             if (abs(winding_in(loc[0],loc[1]) - winding(p)) >= 0.3) {
+//                 fail_code(p) = 3;
+//                 continue;
+//             }
+//             
+//             locs(p) = loc;
             
             // std::cout << res << std::endl;
             
@@ -496,7 +521,7 @@ int main(int argc, char *argv[])
             }
             
             if (loc_valid(points,locs(p)))
-                winding(p) = winding_in(loc[0],loc[1]);
+                winding(p) = winding_in(locs(p)[0],locs(p)[1]);
         }
     }
     
@@ -505,7 +530,7 @@ int main(int argc, char *argv[])
     
     cv::imwrite("newx.tif",chs[0]);
     cv::imwrite("fail.tif",fail_code);
-    cv::imwrite("winding_out.tif",winding);
+    cv::imwrite("winding_out.tif",winding+1);
     
     QuadSurface *surf_full = new QuadSurface(points(bbox), surf->_scale);
     
