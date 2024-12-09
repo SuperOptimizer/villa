@@ -283,7 +283,7 @@ int gen_surfloss(const cv::Vec2i p, ceres::Problem &problem, const cv::Mat_<uint
 }
 
 static float dist_w = 0.1;
-static float straight_w = 2.0;
+static float straight_w = 0.1;
 static float surf_w = 0.01;
 
 int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
@@ -300,6 +300,11 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     // count += gen_straight_loss(problem, p, {-2,0},{-1,0},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     // count += gen_straight_loss(problem, p, {-1,0},{0,0},{1,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     // count += gen_straight_loss(problem, p, {0,0},{1,0},{2,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    
+    //furtehr and diag!
+    count += gen_straight_loss(problem, p, {-2,-2},{-1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    count += gen_straight_loss(problem, p, {2,-2},{1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    count += gen_straight_loss(problem, p, {0,-4},{0,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     
     //direct neighboars
     count += gen_dist_loss(problem, p, {0,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
