@@ -605,10 +605,16 @@ float _pointTo(cv::Vec2f &loc, const cv::Mat_<E> &points, const cv::Vec3f &tgt, 
         }
     }
 
+    loc = min_loc;
     return min_dist;
 }
 
-float pointTo(cv::Vec2f &loc, const cv::Mat_<cv::Vec3d> points, const cv::Vec3f &tgt, float th, int max_iters, float scale)
+float pointTo(cv::Vec2f &loc, const cv::Mat_<cv::Vec3d> &points, const cv::Vec3f &tgt, float th, int max_iters, float scale)
+{
+    return _pointTo(loc, points, tgt, th, max_iters, scale);
+}
+
+float pointTo(cv::Vec2f &loc, const cv::Mat_<cv::Vec3f> &points, const cv::Vec3f &tgt, float th, int max_iters, float scale)
 {
     return _pointTo(loc, points, tgt, th, max_iters, scale);
 }

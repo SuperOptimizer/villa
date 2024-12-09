@@ -199,16 +199,16 @@ struct StraightLoss {
         d1[0] = b[0] - a[0];
         d1[1] = b[1] - a[1];
         d1[2] = b[2] - a[2];
-
+        
         d2[0] = c[0] - b[0];
         d2[1] = c[1] - b[1];
         d2[2] = c[2] - b[2];
-
+        
         T l1 = sqrt(d1[0]*d1[0] + d1[1]*d1[1] + d1[2]*d1[2]);
         T l2 = sqrt(d2[0]*d2[0] + d2[1]*d2[1] + d2[2]*d2[2]);
-
+        
         T dot = (d1[0]*d2[0] + d1[1]*d2[1] + d1[2]*d2[2])/(l1*l2);
-
+        
         residual[0] = T(_w)*(T(1)-dot);
 
         return true;
@@ -219,6 +219,31 @@ struct StraightLoss {
     static ceres::CostFunction* Create(float w = 1.0)
     {
         return new ceres::AutoDiffCostFunction<StraightLoss, 1, 3, 3, 3>(new StraightLoss(w));
+    }
+};
+
+//cost functions for physical paper
+struct StraightLoss2 {
+    StraightLoss2(float w) : _w(w) {};
+    template <typename T>
+    bool operator()(const T* const a, const T* const b, const T* const c, T* residual) const {
+        T avg[3];
+        avg[0] = (a[0]+c[0])*T(0.5);
+        avg[1] = (a[1]+c[1])*T(0.5);
+        avg[2] = (a[2]+c[2])*T(0.5);
+        
+        residual[0] = T(_w)*(b[0]-avg[0]);
+        residual[1] = T(_w)*(b[1]-avg[1]);
+        residual[2] = T(_w)*(b[2]-avg[2]);
+        
+        return true;
+    }
+    
+    float _w;
+    
+    static ceres::CostFunction* Create(float w = 1.0)
+    {
+        return new ceres::AutoDiffCostFunction<StraightLoss2, 3, 3, 3, 3>(new StraightLoss2(w));
     }
 };
 

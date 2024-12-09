@@ -304,8 +304,32 @@ int gen_dist_loss_fill(ceres::Problem &problem, const cv::Vec2i &p, const cv::Ve
     return 1;
 }
 
-static float dist_w = 0.5;
-static float straight_w = 0.01;
+//gen straigt loss given point and 3 offsets
+int gen_straight_loss2(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, bool optimize_all, float w)
+{
+    if (!coord_valid(state(p+o1)))
+        return 0;
+    if (!coord_valid(state(p+o2)))
+        return 0;
+    if (!coord_valid(state(p+o3)))
+        return 0;
+    
+    problem.AddResidualBlock(StraightLoss2::Create(w), nullptr, &dpoints(p+o1)[0], &dpoints(p+o2)[0], &dpoints(p+o3)[0]);
+    
+    if (!optimize_all) {
+        if (o1 != cv::Vec2i(0,0))
+            problem.SetParameterBlockConstant(&dpoints(p+o1)[0]);
+        if (o2 != cv::Vec2i(0,0))
+            problem.SetParameterBlockConstant(&dpoints(p+o2)[0]);
+        if (o3 != cv::Vec2i(0,0))
+            problem.SetParameterBlockConstant(&dpoints(p+o3)[0]);
+    }
+    
+    return 1;
+}
+
+static float dist_w = 0.25;
+static float straight_w = 0.005;
 static float surf_w = 0.01;
 
 int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
@@ -314,49 +338,53 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     int count = 0;
     
     //horizontal
-    count += gen_straight_loss(problem, p, {0,-2},{0,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
-    // count += gen_straight_loss(problem, p, {0,-1},{0,0},{0,1}, state, points, flags & OPTIMIZE_ALL, straight_w);
-    // count += gen_straight_loss(problem, p, {0,0},{0,1},{0,2}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    count += gen_straight_loss2(problem, p, {0,-2},{0,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    // count += gen_straight_loss2(problem, p, {0,-1},{0,0},{0,1}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    // count += gen_straight_loss2(problem, p, {0,0},{0,1},{0,2}, state, points, flags & OPTIMIZE_ALL, straight_w);
     
     //vertical
-    // count += gen_straight_loss(problem, p, {-2,0},{-1,0},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
-    // count += gen_straight_loss(problem, p, {-1,0},{0,0},{1,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
-    // count += gen_straight_loss(problem, p, {0,0},{1,0},{2,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    // count += gen_straight_loss2(problem, p, {-2,0},{-1,0},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    // count += gen_straight_loss2(problem, p, {-1,0},{0,0},{1,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    // count += gen_straight_loss2(problem, p, {0,0},{1,0},{2,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     
     //further and diag!
-    count += gen_straight_loss(problem, p, {-2,-2},{-1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
-    count += gen_straight_loss(problem, p, {2,-2},{1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    count += gen_straight_loss2(problem, p, {-2,-2},{-1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+    count += gen_straight_loss2(problem, p, {2,-2},{1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
 //     
-//     count += gen_straight_loss(problem, p, {-4,-2},{-2,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.5*straight_w);
-//     count += gen_straight_loss(problem, p, {4,-2},{2,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.5*straight_w);
+    count += gen_straight_loss2(problem, p, {-4,-2},{-2,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.5*straight_w);
+    count += gen_straight_loss2(problem, p, {4,-2},{2,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.5*straight_w);
 //     
-    count += gen_straight_loss(problem, p, {0,-4},{0,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-    count += gen_straight_loss(problem, p, {2,-4},{1,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-    count += gen_straight_loss(problem, p, {-2,-4},{-1,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-    count += gen_straight_loss(problem, p, {4,-4},{2,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-    count += gen_straight_loss(problem, p, {-4,-4},{-2,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+    count += gen_straight_loss2(problem, p, {0,-4},{0,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+    count += gen_straight_loss2(problem, p, {2,-4},{1,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+    count += gen_straight_loss2(problem, p, {-2,-4},{-1,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+    count += gen_straight_loss2(problem, p, {4,-4},{2,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+    count += gen_straight_loss2(problem, p, {-4,-4},{-2,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
     
-//     count += gen_straight_loss(problem, p, {0,-6},{0,-3},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-//     count += gen_straight_loss(problem, p, {2,-6},{1,-3},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-//     count += gen_straight_loss(problem, p, {-2,-6},{-1,-3},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+//     count += gen_straight_loss2(problem, p, {0,-6},{0,-3},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+//     count += gen_straight_loss2(problem, p, {2,-6},{1,-3},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+//     count += gen_straight_loss2(problem, p, {-2,-6},{-1,-3},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
 //     
-//     count += gen_straight_loss(problem, p, {0,-8},{0,-4},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-//     count += gen_straight_loss(problem, p, {4,-8},{2,-4},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-//     count += gen_straight_loss(problem, p, {-4,-8},{-2,-4},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+//     count += gen_straight_loss2(problem, p, {0,-8},{0,-4},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+//     count += gen_straight_loss2(problem, p, {4,-8},{2,-4},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+//     count += gen_straight_loss2(problem, p, {-4,-8},{-2,-4},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
     
     //direct neighboars
     count += gen_dist_loss_fill(problem, p, {0,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     
     //diagonal neighbors
-    count += gen_dist_loss_fill(problem, p, {1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    count += gen_dist_loss_fill(problem, p, {-1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
+    count += gen_dist_loss_fill(problem, p, {-1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
+    
+    
+    count += gen_dist_loss_fill(problem, p, {2,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
+    count += gen_dist_loss_fill(problem, p, {-2,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
     
     //far left
-    count += gen_dist_loss_fill(problem, p, {0,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
-    count += gen_dist_loss_fill(problem, p, {1,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
-    count += gen_dist_loss_fill(problem, p, {-1,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
-    count += gen_dist_loss_fill(problem, p, {2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
-    count += gen_dist_loss_fill(problem, p, {-2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
+    count += gen_dist_loss_fill(problem, p, {0,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
+    count += gen_dist_loss_fill(problem, p, {1,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
+    count += gen_dist_loss_fill(problem, p, {-1,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
+    count += gen_dist_loss_fill(problem, p, {2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
+    count += gen_dist_loss_fill(problem, p, {-2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
     
     if (flags & LOSS_ON_SURF)
         gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
