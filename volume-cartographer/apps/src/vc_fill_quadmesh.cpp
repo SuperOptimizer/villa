@@ -292,8 +292,8 @@ int gen_dist_loss_fill(ceres::Problem &problem, const cv::Vec2i &p, const cv::Ve
     if ((state(p+off) & (STATE_LOC_VALID|STATE_COORD_VALID)) == 0)
         return 0;
     
-    ceres::ResidualBlockId tmp = problem.AddResidualBlock(DistLoss::Create(unit*cv::norm(off),w), new ceres::HuberLoss(1.0), &dpoints(p)[0], &dpoints(p+off)[0]);
-    // ceres::ResidualBlockId tmp = problem.AddResidualBlock(DistLoss::Create(unit*cv::norm(off),w), nullptr, &dpoints(p)[0], &dpoints(p+off)[0]);
+    // ceres::ResidualBlockId tmp = problem.AddResidualBlock(DistLoss::Create(unit*cv::norm(off),w), new ceres::HuberLoss(1.0), &dpoints(p)[0], &dpoints(p+off)[0]);
+    ceres::ResidualBlockId tmp = problem.AddResidualBlock(DistLoss::Create(unit*cv::norm(off),w), nullptr, &dpoints(p)[0], &dpoints(p+off)[0]);
     
     if (res)
         *res = tmp;
@@ -304,9 +304,9 @@ int gen_dist_loss_fill(ceres::Problem &problem, const cv::Vec2i &p, const cv::Ve
     return 1;
 }
 
-static float dist_w = 2.0;
-static float straight_w = 0.1;
-static float surf_w = 0.1;
+static float dist_w = 1.0;
+static float straight_w = 0.01;
+static float surf_w = 0.01;
 
 int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
 {
@@ -324,17 +324,17 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     // count += gen_straight_loss(problem, p, {0,0},{1,0},{2,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     
     //further and diag!
-    count += gen_straight_loss(problem, p, {-2,-2},{-1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.3*straight_w);
-    count += gen_straight_loss(problem, p, {2,-2},{1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.3*straight_w);
+    count += gen_straight_loss(problem, p, {-2,-2},{-1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+    count += gen_straight_loss(problem, p, {2,-2},{1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
 //     
 //     count += gen_straight_loss(problem, p, {-4,-2},{-2,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.5*straight_w);
 //     count += gen_straight_loss(problem, p, {4,-2},{2,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.5*straight_w);
 //     
     count += gen_straight_loss(problem, p, {0,-4},{0,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-    count += gen_straight_loss(problem, p, {2,-4},{1,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.3*straight_w);
-    count += gen_straight_loss(problem, p, {-2,-4},{-1,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.3*straight_w);
-    count += gen_straight_loss(problem, p, {4,-4},{2,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.3*straight_w);
-    count += gen_straight_loss(problem, p, {-4,-4},{-2,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.3*straight_w);
+    count += gen_straight_loss(problem, p, {2,-4},{1,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+    count += gen_straight_loss(problem, p, {-2,-4},{-1,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+    count += gen_straight_loss(problem, p, {4,-4},{2,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+    count += gen_straight_loss(problem, p, {-4,-4},{-2,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
     
 //     count += gen_straight_loss(problem, p, {0,-6},{0,-3},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.5*straight_w);
 //     count += gen_straight_loss(problem, p, {2,-6},{1,-3},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.5*straight_w);
@@ -351,17 +351,17 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     // count += gen_dist_loss(problem, p, {1,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     
     //diagonal neighbors
-    count += gen_dist_loss_fill(problem, p, {1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
     // count += gen_dist_loss(problem, p, {-1,1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     // count += gen_dist_loss(problem, p, {1,1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    count += gen_dist_loss_fill(problem, p, {-1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {-1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
     
     //far left
-    count += gen_dist_loss_fill(problem, p, {0,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
-    count += gen_dist_loss_fill(problem, p, {1,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
-    count += gen_dist_loss_fill(problem, p, {-1,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
-    count += gen_dist_loss_fill(problem, p, {2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
-    count += gen_dist_loss_fill(problem, p, {-2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
+    count += gen_dist_loss_fill(problem, p, {0,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
+    count += gen_dist_loss_fill(problem, p, {1,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
+    count += gen_dist_loss_fill(problem, p, {-1,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
+    count += gen_dist_loss_fill(problem, p, {2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
+    count += gen_dist_loss_fill(problem, p, {-2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
     
     if (flags & LOSS_ON_SURF)
         gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
@@ -462,7 +462,7 @@ int main(int argc, char *argv[])
     
     for(int i=bbox.x+2;i<bbox.br().x;i++) {
         std::cout << "proc row " << i << std::endl;
-#pragma omp parallel for
+// #pragma omp parallel for
         for(int j=bbox.y;j<bbox.br().y;j++) {
             cv::Vec2i p = {j,i};
             
@@ -477,21 +477,32 @@ int main(int argc, char *argv[])
                     points(p) = at_int(points_in, {cand[1],cand[0]});
                     break;
                 }
-            }
-            
+            }            
             
             state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
             
+            ceres::Solver::Summary summary;
             {
                 ceres::Problem problem;
                 create_centered_losses(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
                 // create_centered_losses(problem, p, state, points_in, points, locs, step, 0);
                 
-                ceres::Solver::Summary summary;
                 ceres::Solve(options, &problem, &summary);
-                // std::cout << summary.BriefReport() << "\n";
-                std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
+                std::cout << summary.BriefReport() << "\n";
+                // std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
+                
+                if (loc_valid(points, locs(p)))
+                    std::cout << sqrt(summary.final_cost/summary.num_residuals) << " "<< cv::norm(points(p)-at_int(points, {locs(p)[1],locs(p)[0]})) << std::endl;
+                else
+                    std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
             }
+//             if (summary.final_cost/summary.num_residuals >= 1.0*1.0 || (loc_valid(points, locs(p)) && cv::norm(points(p)-at_int(points, {locs(p)[1],locs(p)[0]})) > 2.0)) {
+//                 ceres::Problem problem;
+//                 create_centered_losses(problem, p, state, points_in, points, locs, step, 0);
+//                 // create_centered_losses(problem, p, state, points_in, points, locs, step, 0);
+//                 
+//                 ceres::Solve(options, &problem, &summary);
+//             }
             
             continue;
             
