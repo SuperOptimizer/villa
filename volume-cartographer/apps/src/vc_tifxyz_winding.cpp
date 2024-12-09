@@ -18,25 +18,6 @@ static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
     return{a[0]*b[0],a[1]*b[1]};
 }
 
-template <typename E>
-static inline E at_int(const cv::Mat_<E> &points, cv::Vec2f p)
-{
-    int x = p[0];
-    int y = p[1];
-    float fx = p[0]-x;
-    float fy = p[1]-y;
-    
-    E p00 = points(y,x);
-    E p01 = points(y,x+1);
-    E p10 = points(y+1,x);
-    E p11 = points(y+1,x+1);
-    
-    E p0 = (1-fx)*p00 + fx*p01;
-    E p1 = (1-fx)*p10 + fx*p11;
-    
-    return (1-fy)*p0 + fy*p1;
-}
-
 static float dot_s(const cv::Vec3f &p)
 {
     return p[0]*p[0] + p[1]*p[1] + p[2]*p[2];
@@ -209,6 +190,87 @@ IntersectVec getIntersects(const cv::Vec2i &seed, const cv::Mat_<cv::Vec3f> &poi
     return dist_locs;
 }
 
+//l is [y, x]!
+bool loc_valid_nan(const cv::Mat_<float> &m, const cv::Vec2d &l)
+{
+    if (std::isnan(l[0]))
+        return false;
+    
+    cv::Rect bounds = {0, 0, m.rows-2,m.cols-2};
+    cv::Vec2i li = {floor(l[0]),floor(l[1])};
+    
+    if (!bounds.contains(li))
+        return false;
+    
+    if (std::isnan(m(li[0],li[1])))
+        return false;
+    if (std::isnan(m(li[0]+1,li[1])))
+        return false;
+    if (std::isnan(m(li[0],li[1]+1)))
+        return false;
+    if (std::isnan(m(li[0]+1,li[1]+1)))
+        return false;
+    return true;
+}
+
+bool loc_valid_nan_xy(const cv::Mat_<float> &m, const cv::Vec2d &l)
+{
+    return loc_valid_nan(m, {l[1],l[0]});
+}
+
+float find_wind_x(cv::Mat_<float> &winding, cv::Vec2f &loc, float tgt_wind)
+{
+    if (!loc_valid_nan_xy(winding, loc))
+        return -1;
+    
+    float best_diff = abs(at_int(winding,loc)-tgt_wind);
+    
+    std::vector<cv::Vec2f> neighs = {{1,0},{-1,0}};
+    
+    float step = 16.0;
+    bool updated = true;
+    while (updated)
+    {
+        updated = false;
+        for (auto n : neighs) {
+            cv::Vec2f cand = loc + step*n;
+            if (!loc_valid_nan_xy(winding, cand))
+                continue;
+            float diff = abs(at_int(winding,cand)-tgt_wind);
+            if (diff < best_diff) {
+                best_diff = diff;
+                loc = cand;
+                updated = true;
+                break;
+            }
+        }
+        
+        if (!updated) {
+            if (step <= 0.001)
+                break;
+            step /= 2;
+            updated = true;
+        }
+    }
+
+    return best_diff;
+}
+
+std::string time_str()
+{
+    using namespace std::chrono;
+    auto now = system_clock::now();
+    auto ms = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
+    auto timer = system_clock::to_time_t(now);
+    std::tm bt = *std::localtime(&timer);
+    
+    std::ostringstream oss;
+    oss << std::put_time(&bt, "%Y%m%d%H%M%S");
+    oss << std::setfill('0') << std::setw(3) << ms.count();
+    
+    return oss.str();
+}
+
 int main(int argc, char *argv[])
 {
     if (argc != 3) {
@@ -229,6 +291,7 @@ int main(int argc, char *argv[])
     }
 
     cv::Mat_<cv::Vec3f> points = surf->rawPoints();
+    // points = points(cv::Rect(0,0,800,points.rows));
     
     cv::Mat_<cv::Vec3b> img(points.size(), 0);
     
@@ -473,6 +536,51 @@ int main(int argc, char *argv[])
         }
         
     }
+    
+    for(int j=0;j<winding.rows;j++)
+        for(int i=0;i<winding.cols;i++)
+            if (wind_w(j,i) == 0)
+                winding(j,i) = NAN;
+
+    cv::Mat_<cv::Vec3f> out(points.size(), {-1,-1,-1});
+    double curr_wind = -2;
+    for(int i=0;i<winding.cols-1;i++) {
+#pragma omp parallel for
+        for(int j=0;j<winding.rows;j++) {
+            float diff = -1;
+            cv::Vec2f loc(i,j);
+            bool succ = false;
+            for(int r=0;r<100;r++) {
+                diff = find_wind_x(winding, loc, curr_wind);
+                if (diff >= 0 && diff <= 0.1) {
+                    succ = true;
+                    break;
+                }
+                loc = {rand() % points.cols,j};
+            }
+            
+            if (succ) {
+                // std::cout << loc << cv::Vec2i(i, j) << points.size() << std::endl;
+                out(j,i) = at_int(points, loc);
+            }
+        }
+        //FIXME inaccurate, also do median by winding number?
+        curr_wind += 1.0/wind_x_ref[i/100];
+    }
+    
+    std::vector<cv::Mat> chs;
+    cv::split(out, chs);
+    
+    cv::imwrite("newx.tif",chs[0]);
+    
+    QuadSurface *surf_full = new QuadSurface(out, surf->_scale);
+    
+    fs::path tgt_dir = "/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/";
+    std::string name_prefix = "testing_fill_";
+    std::string uuid = name_prefix + time_str();
+    fs::path seg_dir = tgt_dir / uuid;
+    std::cout << "saving " << seg_dir << std::endl;
+    surf_full->save(seg_dir, uuid);
     
     return EXIT_SUCCESS;
 }
