@@ -344,6 +344,9 @@ static float surf_w = 0.01;
 
 int create_centered_losses_left(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
 {
+    if (state(p) & STATE_LOC_VALID == 0)
+        return 0;
+    
     //generate losses for point p
     int count = 0;
     
@@ -404,6 +407,9 @@ int create_centered_losses_left(ceres::Problem &problem, const cv::Vec2i &p, cv:
 
 int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
 {
+    if (state(p) & STATE_LOC_VALID == 0)
+        return 0;
+
     //generate losses for point p
     int count = 0;
     
@@ -494,8 +500,9 @@ int main(int argc, char *argv[])
     
     cv::Mat_<uint8_t> fail_code(points_in.size(), 0);
     
-    cv::Rect bbox(294,34,500,364);
+    // cv::Rect bbox(294,34,1000,364);
     // cv::Rect bbox(294,34+250,200,114);
+    cv::Rect bbox(333,20,1000,410);
     
     float step = 20;
     
@@ -509,8 +516,10 @@ int main(int argc, char *argv[])
     
     for(int j=first_col.y;j<first_col.br().y;j++)
         for(int i=first_col.x;i<first_col.br().x;i++) {
+            if (points_in(j,i)[0] == -1)
+                continue;
             locs(j,i) = {j,i};
-            state(j,i) = STATE_LOC_VALID;
+            state(j,i) = STATE_LOC_VALID | STATE_COORD_VALID;
         }
     
     ceres::Solver::Options options;
@@ -523,18 +532,18 @@ int main(int argc, char *argv[])
     ceres::Solver::Options options_col;
     // options.linear_solver_type = ceres::DENSE_QR;
     options_col.linear_solver_type = ceres::SPARSE_SCHUR;
+    options_col.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
     options_col.minimizer_progress_to_stdout = false;
     options_col.max_num_iterations = 10000;
     
     std::vector<cv::Vec2d> neighs = {{0,-1},{-1,-1},{1,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2}};
     
     cv::Mat_<float> surf_dist(points.size(), 0);
-    
-    ceres::Problem *problem1 = new ceres::Problem;
-    ceres::Problem *problem2 = new ceres::Problem;
+
     for(int i=bbox.x+2;i<bbox.br().x;i++) {
         std::cout << "proc row " << i << std::endl;
-// #pragma omp parallel for
+        ceres::Problem problem_col;
+#pragma omp parallel for
         for(int j=bbox.y;j<bbox.br().y;j++) {
             cv::Vec2i p = {j,i};
             
@@ -585,8 +594,9 @@ int main(int argc, char *argv[])
 //                 create_centered_losses(*problem2, p, state, points_in, points, locs, step, 0);
 //             }
 //             else {
-                create_centered_losses(*problem1, p, state, points_in, points, locs, step, LOSS_ON_SURF);
-                create_centered_losses(*problem2, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+                // create_centered_losses(problem_col, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+                // create_centered_losses(problem_col, p+cv::Vec2i(0,-1), state, points_in, points, locs, step, LOSS_ON_SURF);
+                // create_centered_losses_left(problem_col, p, state, points_in, points, locs, step, LOSS_ON_SURF);
             // }
             
             continue;
@@ -633,25 +643,36 @@ int main(int argc, char *argv[])
                 winding(p) = winding_in(locs(p)[0],locs(p)[1]);
         }
         
-        for(int x=i-1;x<=i;x++)
+        for(int j=bbox.y;j<bbox.br().y;j++) {
+            cv::Vec2i p = {j,i};
+            
+            create_centered_losses(problem_col, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+            create_centered_losses(problem_col, p+cv::Vec2i(0,-1), state, points_in, points, locs, step, LOSS_ON_SURF);
+            create_centered_losses(problem_col, p+cv::Vec2i(0,-2), state, points_in, points, locs, step, LOSS_ON_SURF);
+            create_centered_losses_left(problem_col, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+        }
+        
+        for(int x=i-2;x<=i;x++)
             for(int j=bbox.y;j<bbox.br().y;j++) {
                 cv::Vec2i p = {j,x};
 
-                if (problem2->HasParameterBlock(&locs(p)[0]))
-                    problem2->SetParameterBlockVariable(&locs(p)[0]);
-                if (problem2->HasParameterBlock(&points(p)[0]))
-                    problem2->SetParameterBlockVariable(&points(p)[0]);
+                if (problem_col.HasParameterBlock(&locs(p)[0]))
+                    problem_col.SetParameterBlockVariable(&locs(p)[0]);
+                if (problem_col.HasParameterBlock(&points(p)[0]))
+                    problem_col.SetParameterBlockVariable(&points(p)[0]);
             }
             
         ceres::Solver::Summary summary;
-        ceres::Solve(options_col, problem2, &summary);
+        ceres::Solve(options_col, &problem_col, &summary);
         
         std::cout << summary.FullReport() << std::endl;
         // std::cout << summary.BriefReport() << std::endl;
         
-        delete problem1;
-        problem1 = problem2;
-        problem2 = new ceres::Problem;
+        if (i % 10 == 0) {
+            std::vector<cv::Mat> chs;
+            cv::split(points, chs);
+            cv::imwrite("newx.tif",chs[0]);
+        }
     }
     
     std::vector<cv::Mat> chs;
