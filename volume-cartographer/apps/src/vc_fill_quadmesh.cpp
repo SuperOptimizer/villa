@@ -502,7 +502,9 @@ int main(int argc, char *argv[])
     
     // cv::Rect bbox(294,34,1000,364);
     // cv::Rect bbox(294,34+250,200,114);
-    cv::Rect bbox(333,20,1000,410);
+    // cv::Rect bbox(333,20,1000,410);
+    
+    cv::Rect bbox(333,10,1000,700);
     
     float step = 20;
     
@@ -516,8 +518,8 @@ int main(int argc, char *argv[])
     
     for(int j=first_col.y;j<first_col.br().y;j++)
         for(int i=first_col.x;i<first_col.br().x;i++) {
-            if (points_in(j,i)[0] == -1)
-                continue;
+            // if (points_in(j,i)[0] == -1)
+                // continue;
             locs(j,i) = {j,i};
             state(j,i) = STATE_LOC_VALID | STATE_COORD_VALID;
         }
@@ -535,6 +537,33 @@ int main(int argc, char *argv[])
     options_col.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
     options_col.minimizer_progress_to_stdout = false;
     options_col.max_num_iterations = 10000;
+    
+    {
+        ceres::Problem problem_init;
+        for(int j=first_col.y;j<first_col.br().y;j++)
+            for(int i=first_col.x;i<first_col.br().x;i++)
+                if (points_in(j,i)[0] == -1) {
+                    points(j, i) = {rand()%1000,rand()%1000,rand()%1000};
+                    create_centered_losses(problem_init, {j,i}, state, points_in, points, locs, step, 0);
+                }
+                
+
+        for(int j=first_col.y;j<first_col.br().y;j++)
+            for(int i=first_col.x;i<first_col.br().x;i++)
+                if (points_in(j,i)[0] == -1) {
+                    points(j, i) = {rand()%1000,rand()%1000,rand()%1000};
+                    cv::Vec2i p = {j,i};
+                    if (problem_init.HasParameterBlock(&locs(p)[0]))
+                        problem_init.SetParameterBlockVariable(&locs(p)[0]);
+                    if (problem_init.HasParameterBlock(&points(p)[0]))
+                        problem_init.SetParameterBlockVariable(&points(p)[0]);
+                }
+                    
+        
+        ceres::Solver::Summary summary;
+        ceres::Solve(options_col, &problem_init, &summary);
+        std::cout << summary.FullReport() << std::endl;
+    }
     
     std::vector<cv::Vec2d> neighs = {{0,-1},{-1,-1},{1,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2}};
     
