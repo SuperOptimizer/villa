@@ -55,5 +55,5 @@ Volumetric instance segmentation labels.
 
 This dataset contains a subset of Scroll 1, chunked into 256x256x256 cubes.
 For each cube, the original scroll volume data and the instance segmentation data are provided (each in `.nrrd` format).
-- [README](https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/seg-volumetric-labels/README.txt)
+- [README](https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumetric-instance-labels/README.txt)
 - [.zip download](https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumetric-instance-labels/instance-labels-harmonized.zip) (1.4 GB)
