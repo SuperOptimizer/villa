@@ -44,16 +44,18 @@ Here are some organized datasets suited for particular tasks or subproblems.
 Largely, these curate the segmentation efforts of our team and community.
 Click one of the datasets to find a download along with more information.
 
-## [`cubes`](https://dl.ash2txt.org) - Volumetric Instance Segmentation Labels
+## `volumetric-instances`
+
+Volumetric instance segmentation labels.
 
 <div className="mb-4">
-  <img src="/img/data/datasets/cubes.webp" className="w-[60%]"/>
+  <img src="/img/data/datasets/volumetric-instances.webp" className="w-[60%]"/>
   <figcaption className="mt-[-6px]">Two annotated cubes, with volumetric labels representing papyrus sheet instances.</figcaption>
 </div>
 
 These are volumetric instance segmentations.
 
-More information: [`cubes` dataset](https://github.com).
+More information: [`volumetric-instances` dataset](https://github.com).
 
 * [ ] Add brief description above.
 * [ ] Add villa script that creates a .zip file (containing the README and the data)
