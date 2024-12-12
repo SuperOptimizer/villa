@@ -44,20 +44,16 @@ Here are some organized datasets suited for particular tasks or subproblems.
 Largely, these curate the segmentation efforts of our team and community.
 Click one of the datasets to find a download along with more information.
 
-## `volumetric-instances`
+## `volumetric-instance-labels`
 
 Volumetric instance segmentation labels.
 
 <div className="mb-4">
-  <img src="/img/data/datasets/volumetric-instances.webp" className="w-[60%]"/>
+  <img src="/img/data/datasets/volumetric-instance-labels.webp" className="w-[60%]"/>
   <figcaption className="mt-[-6px]">Two annotated cubes, with volumetric labels representing papyrus sheet instances.</figcaption>
 </div>
 
-These are volumetric instance segmentations.
-
-More information: [`volumetric-instances` dataset](https://github.com).
-
-* [ ] Add brief description above.
-* [ ] Add villa script that creates a .zip file (containing the README and the data)
-* [ ] Run script on data server to create .zip on dl.ash2txt.org
-* [ ] Link to the .zip file in the README
+This dataset contains a subset of Scroll 1, chunked into 256x256x256 cubes.
+For each cube, the original scroll volume data and the instance segmentation data are provided (each in `.nrrd` format).
+- [README](https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/seg-volumetric-labels/README.txt)
+- [.zip download](https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumetric-instance-labels/instance-labels-harmonized.zip) (1.4 GB)
