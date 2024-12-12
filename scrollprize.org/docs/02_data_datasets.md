@@ -50,3 +50,9 @@ Largely this curates the segmentation efforts of our team and community.
 </div>
 
 These are volumetric instance segmentations.
+
+* [ ] Add brief description above.
+* [ ] Add README (or at least stub) in villa/datasets
+* [ ] Add villa script that creates a .zip file (containing the README and the data)
+* [ ] Run script on data server to create .zip on dl.ash2txt.org
+* [ ] Link to the .zip file in the README
