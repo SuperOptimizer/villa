@@ -36,11 +36,63 @@ hide_table_of_contents: true
   />
 </head>
 
-Since the Vesuvius Challenge launched in March 2023, we have awarded **$1,378,500** in prizes!
+Since the Vesuvius Challenge launched in March 2023, we have awarded **$1,397,000** in prizes!
 
 In 2023, the $850,000 Grand Prize [made history](grandprize) by revealing text from inside a rolled Herculaneum scroll for the first time.
 
 This page lists all the prizes awarded so far:
+
+### $18,500 Open Source (October, 2024)
+
+**Goal:** Increase the probability we read 90% of four scrolls in 2024.<br/>
+**Announcement:** <a href="https://scrollprize.substack.com/p/new-tools-to-use-with-new-scroll">Blog post</a>
+
+<div className="flex flex-row flex-wrap">
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1079907750265499772/1301027968830931038">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Segmentation models</span>: Sean Johnson / @sean (bruniss)</div>
+    <img src="/img/progress/202410/fibers.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1301139262422646926">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Optimizing surface models</span>: Hendrik Schilling / @waldkauz</div>
+    <img src="/img/progress/202410/surfaces.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1290364437836075231/1290364437836075231">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Surface mesh refinement</span>: Hendrik Schilling / @waldkauz</div>
+    <img src="/img/progress/202410/mesh_refinement.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/SuperOptimizer/volcano">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">C library</span>: Forrest McDonald / @verditelabs</div>
+    <img src="/img/progress/202410/volcano.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/jrudolph/vesuvius-gui">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Zarr support in vesuvius-gui</span>: Johannes Rudolph / @jrudolph</div>
+    <img src="/img/progress/202410/gui.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://drive.google.com/drive/folders/1My6RH0-V_4DUYPieyg6aUHbCXMx6bhvE">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Self-supervised pretraining for ink detection</span>: Jorge García-Carrasco / @jgcarrasco</div>
+    <img src="/img/progress/202410/plot.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1294185795221065802">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Interactive segmentation improvements in Volume Cartographer</span>: Hendrik Schilling / @waldkauz</div>
+    <img src="/img/progress/202410/interactive.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/WillStevens/scrollreading/blob/main/report3.pdf">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Segmentation toolkit improvements</span>: William Stevens / @Will Stevens</div>
+    <img src="/img/progress/202410/holes.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/JamesDarby345/Umbilicus_Maker/tree/main">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Umbilicus Maker</span>: James Darby / @james darby</div>
+    <img src="/img/progress/202410/umbilicus.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/JamesDarby345/Volumetric_Instance_to_Mesh/wiki/Isomap-manifold-non%E2%80%90self%E2%80%90intersecting-surface-meshes-in-high-curvature-regions">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Meshing high curvature segmentations</span>: James Darby / @james darby</div>
+    <img src="/img/progress/202410/meshing.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1301795732541411328">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Visualization canvas</span>: Yao Hsiao / @Yao Hsiao, Dalufishe / @Dalufish</div>
+    <img src="/img/progress/202410/film.gif"/>
+  </a>
+</div>
 
 ### $48,500 Open Source (September, 2024)
 
