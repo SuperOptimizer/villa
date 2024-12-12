@@ -55,6 +55,7 @@ const sidebars = {
         { type: 'doc', id: 'data_scrolls' },
         { type: 'doc', id: 'data_fragments' },
         { type: 'doc', id: 'data_segments' },
+        { type: 'doc', id: 'data_datasets' },
       ],
     },
     {
