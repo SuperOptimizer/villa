@@ -742,8 +742,8 @@ class Cube:
                 array, _ = nrrd.read(url)
             else:
                 if self.cache:
-                    # Extract the relevant path after "instance-annotated-cubes"
-                    path_after_finished_cubes = url.split('instance-annotated-cubes/')[1]
+                    # Extract the relevant path after "instance-labels"
+                    path_after_finished_cubes = url.split('instance-labels/')[1]
                     # Extract the directory structure and the filename
                     dir_structure, filename = os.path.split(path_after_finished_cubes)
 

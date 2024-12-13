@@ -112,7 +112,7 @@ def list_files() -> Dict:
     This function reads the updated 'scrolls.yaml' file and returns its contents as a dictionary.
 
     To update the files run:
-    update_list("https://dl.ash2txt.org/other/dev/", "https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/seg-volumetric-labels/instance-annotated-cubes/")
+    update_list("https://dl.ash2txt.org/other/dev/", "https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumetric-instance-labels/instance-labels/")
     
     Returns
     -------
@@ -132,7 +132,7 @@ def list_cubes() -> Dict:
     This function reads the updated 'cubes.yaml' file and returns its contents as a dictionary.
 
     To update the files run:
-    update_list("https://dl.ash2txt.org/other/dev/", "https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/seg-volumetric-labels/instance-annotated-cubes/")
+    update_list("https://dl.ash2txt.org/other/dev/", "https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumetric-instance-labels/instance-labels/")
 
     Returns
     -------
