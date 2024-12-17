@@ -492,35 +492,47 @@ int main(int argc, char *argv[])
     
     cv::Mat_<float> winding_in = cv::imread(wind_path, cv::IMREAD_UNCHANGED);
     cv::Mat_<cv::Vec3f> points_in = surf->rawPoints();
-
-    cv::Mat_<uint8_t> state(points_in.size(), 0);
-    cv::Mat_<cv::Vec3d> points(points_in.size(), {-1,-1,-1});
-    cv::Mat_<cv::Vec2d> locs(points_in.size(), {-1,-1});
-    cv::Mat_<float> winding(points_in.size(), NAN);
     
-    cv::Mat_<uint8_t> fail_code(points_in.size(), 0);
+    cv::Rect bbox_src(10,290,400,430);
+    
+    float src_step = 20;
+    int trace_mul = 5;
+    float step = src_step*trace_mul;
+    
+    cv::Size size = {points_in.cols/trace_mul, points_in.rows/trace_mul};
+    cv::Rect bbox = {bbox_src.x/trace_mul, bbox_src.y/trace_mul, bbox_src.width/trace_mul, bbox_src.height/trace_mul};
+
+    cv::Mat_<uint8_t> state(size, 0);
+    cv::Mat_<cv::Vec3d> points(size, {-1,-1,-1});
+    cv::Mat_<cv::Vec2d> locs(size, {-1,-1});
+    cv::Mat_<float> winding(size, NAN);
+    
+    cv::Mat_<uint8_t> fail_code(size, 0);
     
     // cv::Rect bbox(294,34,1000,364);
     // cv::Rect bbox(294,34+250,200,114);
     // cv::Rect bbox(333,20,1000,410);
     
-    cv::Rect bbox(333,10,1000,700);
+    //large
+    // cv::Rect bbox(333,10,1000,700);
     
-    float step = 20;
+    
     
     cv::Rect first_col = {bbox.x,bbox.y,2,bbox.height};
-    points_in(first_col).copyTo(points(first_col));
-    winding_in(first_col).copyTo(winding(first_col));
+    // points_in(first_col).copyTo(points(first_col));
+    // winding_in(first_col).copyTo(winding(first_col));
     
-    std::cout << winding_in(bbox.y, bbox.x) << std::endl;
+    // std::cout << winding_in(bbox.y, bbox.x) << std::endl;
     
     std::cout << first_col.tl() << first_col.br() << std::endl;
     
     for(int j=first_col.y;j<first_col.br().y;j++)
         for(int i=first_col.x;i<first_col.br().x;i++) {
+            points(j,i) = points_in(j*trace_mul, i*trace_mul);
+            winding(j,i) = winding_in(j*trace_mul, i*trace_mul);
             // if (points_in(j,i)[0] == -1)
                 // continue;
-            locs(j,i) = {j,i};
+            locs(j,i) = {j*trace_mul,i*trace_mul};
             state(j,i) = STATE_LOC_VALID | STATE_COORD_VALID;
         }
     
@@ -542,7 +554,7 @@ int main(int argc, char *argv[])
         ceres::Problem problem_init;
         for(int j=first_col.y;j<first_col.br().y;j++)
             for(int i=first_col.x;i<first_col.br().x;i++)
-                if (points_in(j,i)[0] == -1) {
+                if (points_in(j*trace_mul,i*trace_mul)[0] == -1) {
                     points(j, i) = {rand()%1000,rand()%1000,rand()%1000};
                     create_centered_losses(problem_init, {j,i}, state, points_in, points, locs, step, 0);
                 }
@@ -550,7 +562,7 @@ int main(int argc, char *argv[])
 
         for(int j=first_col.y;j<first_col.br().y;j++)
             for(int i=first_col.x;i<first_col.br().x;i++)
-                if (points_in(j,i)[0] == -1) {
+                if (points_in(j*trace_mul,i*trace_mul)[0] == -1) {
                     points(j, i) = {rand()%1000,rand()%1000,rand()%1000};
                     cv::Vec2i p = {j,i};
                     if (problem_init.HasParameterBlock(&locs(p)[0]))
@@ -565,7 +577,7 @@ int main(int argc, char *argv[])
         std::cout << summary.FullReport() << std::endl;
     }
     
-    std::vector<cv::Vec2d> neighs = {{0,-1},{-1,-1},{1,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2}};
+    std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2}};
     
     cv::Mat_<float> surf_dist(points.size(), 0);
 
@@ -578,16 +590,17 @@ int main(int argc, char *argv[])
             
             locs(p) = locs(j,i-1)+cv::Vec2d(0,1/step);
             points(p) = points(j,i-1)+cv::Vec3d(0.1,0.1,0.1);
-            winding(p) = winding(j,i-1)+1/200.0;
+            winding(p) = winding(j,i-1)+1/200.0*trace_mul;
             
+            //FIXME
             for(auto n :neighs) {
-                cv::Vec2d cand = cv::Vec2d(p)+n+cv::Vec2d(0,1/step);
+                cv::Vec2d cand = locs(p+n)+cv::Vec2d(0,1/step);
                 if (loc_valid(points_in,cand)) {
                     locs(p) = cand;
                     points(p) = at_int(points_in, {cand[1],cand[0]});
                     break;
                 }
-            }            
+            }
             
             state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
             
@@ -630,46 +643,46 @@ int main(int argc, char *argv[])
             
             continue;
             
-            cv::Vec2f loc = {locs(p)[1], locs(p)[0]};
-             
-            //FIXME try multipl locs and keep the best ...
-            float res = find_loc_wind(loc, winding(p), points_in, winding_in, points(p), 2.0);
-            loc = {loc[1], loc[0]};
-            
-            // std::cout << res << std::endl;
-            
-            if (res < 0) {
-                fail_code(p) = 1;
-                continue;
-            }
-            
-            if (res >= 10) {
-                fail_code(p) = 2;
-                continue;
-            }
-            
-            if (abs(winding_in(loc[0],loc[1]) - winding(p)) >= 0.3) {
-                fail_code(p) = 3;
-                continue;
-            }
-            
-            locs(p) = loc;
-            
-            // std::cout << res << std::endl;
-            
-            {
-                ceres::Problem problem;
-                // create_centered_losses(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
-                create_centered_losses(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
-                
-                ceres::Solver::Summary summary;
-                ceres::Solve(options, &problem, &summary);
-                // std::cout << summary.BriefReport() << "\n";
-                // std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
-            }
-            
-            if (loc_valid(points,locs(p)))
-                winding(p) = winding_in(locs(p)[0],locs(p)[1]);
+//             /*cv::Vec2f loc = {locs(p)[1], locs(p)[0]};
+//              
+//             //FIXME try multipl locs and keep the best ...
+//             float res = find_loc_wind(loc, winding(p), points_in, winding_in, points(p), 2.0);
+//             loc = {loc[1], loc[0]};
+//             
+//             // std::cout << res << std::endl;
+//             
+//             if (res < 0) {
+//                 fail_code(p) = 1;
+//                 continue;
+//             }
+//             
+//             if (res >= 10) {
+//                 fail_code(p) = 2;
+//                 continue;
+//             }
+//             
+//             if (abs(winding_in(loc[0],loc[1]) - winding(p)) >= 0.3) {
+//                 fail_code(p) = 3;
+//                 continue;
+//             }
+//             
+//             locs(p) = loc;
+//             
+//             // std::cout << res << std::endl;
+//             
+//             {
+//                 ceres::Problem problem;
+//                 // create_centered_losses(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+//                 create_centered_losses(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+//                 
+//                 ceres::Solver::Summary summary;
+//                 ceres::Solve(options, &problem, &summary);
+//                 // std::cout << summary.BriefReport() << "\n";
+//                 // std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
+//             }
+//             
+//             if (loc_valid(points,locs(p)))
+//                 winding(p) = winding_in(locs(p)[0],locs(p)[1]);*/
         }
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
@@ -702,17 +715,32 @@ int main(int argc, char *argv[])
             cv::split(points, chs);
             cv::imwrite("newx.tif",chs[0]);
         }
+        
+        for(int x=std::max(i-2,bbox.x+2);x<=i;x++)
+            for(int j=bbox.y;j<bbox.br().y;j++) {
+                if (!loc_valid(points_in,locs(j,x)))
+                    locs(j,x) = {-1,-1};
+            }
     }
     
+    {
     std::vector<cv::Mat> chs;
     cv::split(points, chs);
+    cv::imwrite("newx.tif",chs[0]);
+    }
     
     cv::imwrite("surf_dist.tif",surf_dist);
-    cv::imwrite("newx.tif",chs[0]);
     cv::imwrite("fail.tif",fail_code);
     cv::imwrite("winding_out.tif",winding+1);
     
-    QuadSurface *surf_full = new QuadSurface(points(bbox), surf->_scale);
+    {
+        std::vector<cv::Mat> chs;
+        cv::split(locs, chs);
+        cv::imwrite("locx.tif",chs[0]);
+        cv::imwrite("locy.tif",chs[1]);
+    }
+    
+    QuadSurface *surf_full = new QuadSurface(points(bbox), surf->_scale/trace_mul);
     
     fs::path tgt_dir = "/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/";
     std::string name_prefix = "testing_fill_";
