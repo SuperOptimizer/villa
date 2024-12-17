@@ -517,8 +517,9 @@ int main(int argc, char *argv[])
     // cv::Rect bbox(333,10,1000,700);
     
     
+    int opt_w = 4;
     
-    cv::Rect first_col = {bbox.x,bbox.y,2,bbox.height};
+    cv::Rect first_col = {bbox.x,bbox.y,opt_w,bbox.height};
     // points_in(first_col).copyTo(points(first_col));
     // winding_in(first_col).copyTo(winding(first_col));
     
@@ -577,11 +578,13 @@ int main(int argc, char *argv[])
         std::cout << summary.FullReport() << std::endl;
     }
     
-    std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2}};
+    std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{-2,-1},{2,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2},{-3,-2},{3,-2},{-4,-2},{4,-2}};
+    // std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2}};
+    
     
     cv::Mat_<float> surf_dist(points.size(), 0);
 
-    for(int i=bbox.x+2;i<bbox.br().x;i++) {
+    for(int i=bbox.x+opt_w;i<bbox.br().x;i++) {
         std::cout << "proc row " << i << std::endl;
         ceres::Problem problem_col;
 #pragma omp parallel for
@@ -689,12 +692,12 @@ int main(int argc, char *argv[])
             cv::Vec2i p = {j,i};
             
             create_centered_losses(problem_col, p, state, points_in, points, locs, step, LOSS_ON_SURF);
-            create_centered_losses(problem_col, p+cv::Vec2i(0,-1), state, points_in, points, locs, step, LOSS_ON_SURF);
-            create_centered_losses(problem_col, p+cv::Vec2i(0,-2), state, points_in, points, locs, step, LOSS_ON_SURF);
+            for(int o=1;o<=opt_w;o++)
+                create_centered_losses(problem_col, p+cv::Vec2i(0,-o), state, points_in, points, locs, step, LOSS_ON_SURF);
             create_centered_losses_left(problem_col, p, state, points_in, points, locs, step, LOSS_ON_SURF);
         }
         
-        for(int x=i-2;x<=i;x++)
+        for(int x=i-opt_w;x<=i;x++)
             for(int j=bbox.y;j<bbox.br().y;j++) {
                 cv::Vec2i p = {j,x};
 
@@ -716,7 +719,7 @@ int main(int argc, char *argv[])
             cv::imwrite("newx.tif",chs[0]);
         }
         
-        for(int x=std::max(i-2,bbox.x+2);x<=i;x++)
+        for(int x=std::max(i-opt_w,bbox.x+opt_w);x<=i;x++)
             for(int j=bbox.y;j<bbox.br().y;j++) {
                 if (!loc_valid(points_in,locs(j,x)))
                     locs(j,x) = {-1,-1};
