@@ -14,6 +14,12 @@ namespace fs = std::filesystem;
 
 using json = nlohmann::json;
 
+
+static float dist_w = 0.5;
+static float straight_w = 0.01;
+static float surf_w = 0.01;
+float z_loc_loss_w = 0.001;
+
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
     return{a[0]*b[0],a[1]*b[1]};
@@ -338,10 +344,6 @@ int gen_straight_loss2(ceres::Problem &problem, const cv::Vec2i &p, const cv::Ve
     return 1;
 }
 
-static float dist_w = 0.25;
-static float straight_w = 0.005;
-static float surf_w = 0.01;
-
 int create_centered_losses_left(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
 {
     if (state(p) & STATE_LOC_VALID == 0)
@@ -493,7 +495,7 @@ int main(int argc, char *argv[])
     cv::Mat_<float> winding_in = cv::imread(wind_path, cv::IMREAD_UNCHANGED);
     cv::Mat_<cv::Vec3f> points_in = surf->rawPoints();
     
-    cv::Rect bbox_src(10,290,400,430);
+    cv::Rect bbox_src(10,290,1000,430);
     
     float src_step = 20;
     int trace_mul = 5;
@@ -551,6 +553,9 @@ int main(int argc, char *argv[])
     options_col.minimizer_progress_to_stdout = false;
     options_col.max_num_iterations = 10000;
     
+    cv::Vec3f seed_coord = {-1,-1,-1};
+    cv::Vec2f seed_loc = {-1,-1};
+    
     {
         ceres::Problem problem_init;
         for(int j=first_col.y;j<first_col.br().y;j++)
@@ -558,6 +563,10 @@ int main(int argc, char *argv[])
                 if (points_in(j*trace_mul,i*trace_mul)[0] == -1) {
                     points(j, i) = {rand()%1000,rand()%1000,rand()%1000};
                     create_centered_losses(problem_init, {j,i}, state, points_in, points, locs, step, 0);
+                }
+                else if (seed_loc[0] == -1) {
+                    seed_loc = {j,i};
+                    seed_coord = points_in(j*trace_mul,i*trace_mul);
                 }
                 
 
@@ -695,6 +704,8 @@ int main(int argc, char *argv[])
             for(int o=1;o<=opt_w;o++)
                 create_centered_losses(problem_col, p+cv::Vec2i(0,-o), state, points_in, points, locs, step, LOSS_ON_SURF);
             create_centered_losses_left(problem_col, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+            
+            problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), new ceres::HuberLoss(1.0), &locs(p)[0]);
         }
         
         for(int x=i-opt_w;x<=i;x++)
