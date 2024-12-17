@@ -18,7 +18,8 @@ using json = nlohmann::json;
 static float dist_w = 0.5;
 static float straight_w = 0.01;
 static float surf_w = 0.01;
-float z_loc_loss_w = 0.05;
+static float z_loc_loss_w = 0.05;
+static float wind_w = 1000.0;
 
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
@@ -473,6 +474,90 @@ float find_loc_wind(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3f> &p
     return sqrt(best_res);
 }
 
+template<typename T, typename E>
+void interp_lin_2d(const cv::Mat_<E> &m, T y, T x, T *v) {
+    if (y < 0)
+        y = T(0);
+    if (y > m.rows-2)
+        y = T(m.rows-2);
+    
+    if (x < 0)
+        x = T(0);
+    if (x > m.cols-2)
+        x = T(m.cols-2);
+    
+    int yi = val(y);
+    int xi = val(x);
+    
+    T fx = x - T(xi);
+    T fy = y - T(yi);
+    
+    E c00 = m(yi,xi);
+    E c01 = m(yi,xi+1);
+    E c10 = m(yi+1,xi);
+    E c11 = m(yi+1,xi+1);
+    
+    T c0 = (T(1)-fx)*T(c00) + fx*T(c01);
+    T c1 = (T(1)-fx)*T(c10) + fx*T(c11);
+    v[0] = (T(1)-fy)*c0 + fy*c1;
+}
+
+static bool loc_valid(const cv::Mat_<float> &m, const cv::Vec2d &l)
+{
+    if (l[0] == -1)
+        return false;
+    
+    cv::Rect bounds = {0, 0, m.rows-2,m.cols-2};
+    cv::Vec2i li = {floor(l[0]),floor(l[1])};
+    
+    if (!bounds.contains(li))
+        return false;
+    
+    if (std::isnan(m(li[0],li[1])))
+        return false;
+    if (std::isnan(m(li[0]+1,li[1])))
+        return false;
+    if (std::isnan(m(li[0],li[1]+1)))
+        return false;
+    if (std::isnan(m(li[0]+1,li[1]+1)))
+        return false;
+    return true;
+}
+
+template<typename E>
+//cost functions for physical paper
+struct Interp2DLoss {
+    //NOTE we expect loc to be [y, x]
+    Interp2DLoss(const cv::Mat_<E> &m, E tgt, float w) : _m(m), _w(w), _tgt(tgt) {};
+    template <typename T>
+    bool operator()(const T* const l, T* residual) const {
+        T v[3];
+        
+        if (!loc_valid(_m, {val(l[0]), val(l[1])})) {
+            residual[0] = T(0);
+            return true;
+        }
+        
+        interp_lin_2d(_m, l[0], l[1], v);
+        
+        residual[0] = T(_w)*(v[0] - T(_tgt));
+        
+        return true;
+    }
+    
+    const cv::Mat_<E> &_m;
+    float _w;
+    E _tgt;
+    
+    static ceres::CostFunction* Create(const cv::Mat_<E> &m, E tgt, float w = 1.0)
+    {
+        return new ceres::AutoDiffCostFunction<Interp2DLoss, 1, 2>(new Interp2DLoss(m, tgt, w));
+    }
+    
+};
+
+float wind_th = 0.1;
+
 int main(int argc, char *argv[])
 {
     if (argc != 3) {
@@ -556,6 +641,10 @@ int main(int argc, char *argv[])
     cv::Vec3f seed_coord = {-1,-1,-1};
     cv::Vec2f seed_loc = {-1,-1};
     
+    std::vector<float> avg_wind(size.width);
+    std::vector<int> wind_counts(size.width);
+    std::vector<float> tgt_wind(size.width);
+    
     {
         ceres::Problem problem_init;
         for(int j=first_col.y;j<first_col.br().y;j++)
@@ -564,11 +653,24 @@ int main(int argc, char *argv[])
                     points(j, i) = {rand()%1000,rand()%1000,rand()%1000};
                     create_centered_losses(problem_init, {j,i}, state, points_in, points, locs, step, 0);
                 }
-                else if (seed_loc[0] == -1) {
-                    seed_loc = {j,i};
-                    seed_coord = points_in(j*trace_mul,i*trace_mul);
+                else {
+                    avg_wind[i] += winding_in(j*trace_mul,i*trace_mul);
+                    wind_counts[i]++;
+
+                    if (seed_loc[0] == -1) {
+                        seed_loc = {j,i};
+                        seed_coord = points_in(j*trace_mul,i*trace_mul);
+                    }
                 }
-                
+
+        for(int i=first_col.x;i<first_col.br().x;i++) {
+            std::cout << "init wind col " << i << " " << avg_wind[i] / wind_counts[i] << " " << wind_counts[i] << std::endl;
+            avg_wind[i] /= wind_counts[i];
+            wind_counts[i] = 1;
+        }
+        
+        for(int i=bbox.x;i<bbox.x+opt_w;i++)
+            tgt_wind[i] = avg_wind[i];                
 
         for(int j=first_col.y;j<first_col.br().y;j++)
             for(int i=first_col.x;i<first_col.br().x;i++)
@@ -594,6 +696,10 @@ int main(int argc, char *argv[])
     cv::Mat_<float> surf_dist(points.size(), 0);
 
     for(int i=bbox.x+opt_w;i<bbox.br().x;i++) {
+        tgt_wind[i] = 2*avg_wind[i-1]-avg_wind[i-2];
+        
+        std::cout << "wind tgt: " << tgt_wind[i] << " " << avg_wind[i-1] << " " << avg_wind[i-2] << std::endl;
+        
         std::cout << "proc row " << i << std::endl;
         ceres::Problem problem_col;
 #pragma omp parallel for
@@ -602,7 +708,6 @@ int main(int argc, char *argv[])
             
             locs(p) = locs(j,i-1)+cv::Vec2d(0,1/step);
             points(p) = points(j,i-1)+cv::Vec3d(0.1,0.1,0.1);
-            winding(p) = winding(j,i-1)+1/200.0*trace_mul;
             
             //FIXME
             for(auto n :neighs) {
@@ -620,6 +725,8 @@ int main(int argc, char *argv[])
             {
                 ceres::Problem problem;
                 create_centered_losses_left(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+                problem.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i], wind_w), nullptr, &locs(p)[0]);
+                
                 // create_centered_losses(problem, p, state, points_in, points, locs, step, 0);
                 
                 ceres::Solve(options, &problem, &summary);
@@ -700,12 +807,14 @@ int main(int argc, char *argv[])
         for(int j=bbox.y;j<bbox.br().y;j++) {
             cv::Vec2i p = {j,i};
             
-            create_centered_losses(problem_col, p, state, points_in, points, locs, step, LOSS_ON_SURF);
-            for(int o=1;o<=opt_w;o++)
+            for(int o=0;o<=opt_w;o++)
                 create_centered_losses(problem_col, p+cv::Vec2i(0,-o), state, points_in, points, locs, step, LOSS_ON_SURF);
             create_centered_losses_left(problem_col, p, state, points_in, points, locs, step, LOSS_ON_SURF);
             
             problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
+            
+            for(int o=0;o<opt_w;o++)
+                problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i-o], wind_w), nullptr, &locs(p+cv::Vec2i(0,-o))[0]);
         }
         
         for(int x=i-opt_w;x<=i;x++)
@@ -721,8 +830,8 @@ int main(int argc, char *argv[])
         ceres::Solver::Summary summary;
         ceres::Solve(options_col, &problem_col, &summary);
         
-        std::cout << summary.FullReport() << std::endl;
-        // std::cout << summary.BriefReport() << std::endl;
+        // std::cout << summary.FullReport() << std::endl;
+        std::cout << summary.BriefReport() << std::endl;
         
         if (i % 10 == 0) {
             std::vector<cv::Mat> chs;
@@ -732,13 +841,37 @@ int main(int argc, char *argv[])
             cv::imwrite("winding_out.tif",winding+3);
         }
         
+        //TODO do something with the winding if its off (e.g. rerun and ignor?)
+        
+        avg_wind[i] = 0;
+        wind_counts[i] = 0;
         for(int x=std::max(i-opt_w,bbox.x+opt_w);x<=i;x++)
             for(int j=bbox.y;j<bbox.br().y;j++) {
-                if (!loc_valid(points_in,locs(j,x)))
+                if (!loc_valid(points_in,locs(j,x))) {
                     locs(j,x) = {-1,-1};
-                else
+                    winding(j, x) = NAN;
+                }
+                else {
                     winding(j, x) = at_int(winding_in, {locs(j,x)[1],locs(j,x)[0]});
+                    
+                    if (x == i) {
+                        if (abs(winding(j, x)-tgt_wind[i]) <= wind_th) {
+                            avg_wind[i] += winding(j, x);
+                            wind_counts[i] ++;
+                        }
+                    }
+                }
             }
+            
+        if (!wind_counts[i]) {
+            std::cout << "stopping as zero valid locations found!";
+            break;
+        }
+
+        avg_wind[i] /= wind_counts[i];
+        
+        std::cout << "avg wind number for col " << i << " : " << avg_wind[i] << " ( tgt was " << tgt_wind[i] << " ) using #" << wind_counts[i] << std::endl;
+        wind_counts[i] = 1;
     }
     
     {
