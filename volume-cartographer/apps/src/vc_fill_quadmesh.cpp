@@ -18,7 +18,7 @@ using json = nlohmann::json;
 static float dist_w = 0.5;
 static float straight_w = 0.01;
 static float surf_w = 0.01;
-float z_loc_loss_w = 0.001;
+float z_loc_loss_w = 0.05;
 
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
@@ -495,7 +495,7 @@ int main(int argc, char *argv[])
     cv::Mat_<float> winding_in = cv::imread(wind_path, cv::IMREAD_UNCHANGED);
     cv::Mat_<cv::Vec3f> points_in = surf->rawPoints();
     
-    cv::Rect bbox_src(10,290,1000,430);
+    cv::Rect bbox_src(10,10,4000,710);
     
     float src_step = 20;
     int trace_mul = 5;
@@ -705,7 +705,7 @@ int main(int argc, char *argv[])
                 create_centered_losses(problem_col, p+cv::Vec2i(0,-o), state, points_in, points, locs, step, LOSS_ON_SURF);
             create_centered_losses_left(problem_col, p, state, points_in, points, locs, step, LOSS_ON_SURF);
             
-            problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), new ceres::HuberLoss(1.0), &locs(p)[0]);
+            problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
         }
         
         for(int x=i-opt_w;x<=i;x++)
@@ -728,12 +728,16 @@ int main(int argc, char *argv[])
             std::vector<cv::Mat> chs;
             cv::split(points, chs);
             cv::imwrite("newx.tif",chs[0]);
+            cv::imwrite("surf_dist.tif",surf_dist);
+            cv::imwrite("winding_out.tif",winding+3);
         }
         
         for(int x=std::max(i-opt_w,bbox.x+opt_w);x<=i;x++)
             for(int j=bbox.y;j<bbox.br().y;j++) {
                 if (!loc_valid(points_in,locs(j,x)))
                     locs(j,x) = {-1,-1};
+                else
+                    winding(j, x) = at_int(winding_in, {locs(j,x)[1],locs(j,x)[0]});
             }
     }
     
@@ -745,7 +749,7 @@ int main(int argc, char *argv[])
     
     cv::imwrite("surf_dist.tif",surf_dist);
     cv::imwrite("fail.tif",fail_code);
-    cv::imwrite("winding_out.tif",winding+1);
+    cv::imwrite("winding_out.tif",winding+3);
     
     {
         std::vector<cv::Mat> chs;
