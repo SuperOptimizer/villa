@@ -882,42 +882,46 @@ void CWindow::onEditMaskPressed(void)
     //FIXME if mask already exists just open it!
     
     cv::Mat_<cv::Vec3f> points = _surf->rawPoints();
-    
-    cv::Mat_<uint8_t> img;
-    cv::Mat_<uint8_t> mask;
-    //TODO make this aim for some target size instead of a hardcoded decision
-    if (points.cols >= 4000) {
-        readInterpolated3D(img, currentVolume->zarrDataset(2), points*0.25, chunk_cache);
-        
-        mask.create(img.size());
-        
-        for(int j=0;j<img.rows;j++)
-            for(int i=0;i<img.cols;i++)
-                if (points(j,i)[0] == -1)
-                    mask(j,i) = 0;
-        else
-            mask(j,i) = 255;
-    }
-    else
-    {
-        cv::Mat_<cv::Vec3f> scaled;
-        cv::resize(points, scaled, {0,0}, 1/_surf->_scale[0], 1/_surf->_scale[1], cv::INTER_CUBIC);
-        
-        readInterpolated3D(img, currentVolume->zarrDataset(0), scaled, chunk_cache);
-        cv::resize(img, img, {0,0}, 0.25, 0.25, cv::INTER_CUBIC);
-        
-        mask.create(img.size());
-        
-        for(int j=0;j<img.rows;j++)
-            for(int i=0;i<img.cols;i++)
-                if (points(j*4*_surf->_scale[1],i*4*_surf->_scale[0])[0] == -1)
-                    mask(j,i) = 0;
-        else
-            mask(j,i) = 255;
-    }
+
     fs::path path = _surf->path/"mask.tif";
     
-    std::vector<cv::Mat> layers = {mask, img};
-    imwritemulti(path, layers);
+    if (!fs::exists(path)) {
+        cv::Mat_<uint8_t> img;
+        cv::Mat_<uint8_t> mask;
+        //TODO make this aim for some target size instead of a hardcoded decision
+        if (points.cols >= 4000) {
+            readInterpolated3D(img, currentVolume->zarrDataset(2), points*0.25, chunk_cache);
+            
+            mask.create(img.size());
+            
+            for(int j=0;j<img.rows;j++)
+                for(int i=0;i<img.cols;i++)
+                    if (points(j,i)[0] == -1)
+                        mask(j,i) = 0;
+            else
+                mask(j,i) = 255;
+        }
+        else
+        {
+            cv::Mat_<cv::Vec3f> scaled;
+            cv::resize(points, scaled, {0,0}, 1/_surf->_scale[0], 1/_surf->_scale[1], cv::INTER_CUBIC);
+            
+            readInterpolated3D(img, currentVolume->zarrDataset(0), scaled, chunk_cache);
+            cv::resize(img, img, {0,0}, 0.25, 0.25, cv::INTER_CUBIC);
+            
+            mask.create(img.size());
+            
+            for(int j=0;j<img.rows;j++)
+                for(int i=0;i<img.cols;i++)
+                    if (points(j*4*_surf->_scale[1],i*4*_surf->_scale[0])[0] == -1)
+                        mask(j,i) = 0;
+            else
+                mask(j,i) = 255;
+        }
+        
+        std::vector<cv::Mat> layers = {mask, img};
+        imwritemulti(path, layers);
+    }
+    
     QDesktopServices::openUrl(QUrl::fromLocalFile(path.string().c_str()));
 }
