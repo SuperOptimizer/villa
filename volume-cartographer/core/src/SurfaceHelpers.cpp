@@ -6138,25 +6138,25 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         fringe.insert(cv::Vec2i(j,i));
         }
         
-        // if (!fringe.size()) {
-        //     if (curr_best_inl_th > 10)
-        //         curr_best_inl_th -= 4;
-        //     else
-        //         curr_best_inl_th -= 1;
-        //     if (best_inliers_gen >= 10)
-        //         curr_best_inl_th = std::min(curr_best_inl_th, best_inliers_gen);
-        //     if (curr_best_inl_th >= 10) {
-        //         cv::Rect active = active_bounds & used_area;
-        //         for(int j=active.y-2;j<=active.br().y+2;j++)
-        //             for(int i=active.x-2;i<=active.br().x+2;i++)
-        //                 //FIXME WTF why isn't this working?!'
-        //                 if (state(j,i) & STATE_LOC_VALID)
-        //                         fringe.insert(cv::Vec2i(j,i));
-        //     }
-        //     // std::cout << "next inl th " << curr_best_inl_th << " " << fringe.size() << used_area << " wtf " << (int)state(y0,x0) <<  std::endl;
-        // }
-        // else
-        //     curr_best_inl_th = 20;
+        if (!fringe.size()) {
+            if (curr_best_inl_th > 10)
+                curr_best_inl_th -= 5;
+            else
+                curr_best_inl_th -= 1;
+            if (best_inliers_gen >= 10)
+                curr_best_inl_th = std::min(curr_best_inl_th, best_inliers_gen);
+            if (curr_best_inl_th >= 10) {
+                cv::Rect active = active_bounds & used_area;
+                for(int j=active.y-2;j<=active.br().y+2;j++)
+                    for(int i=active.x-2;i<=active.br().x+2;i++)
+                        //FIXME WTF why isn't this working?!'
+                        if (state(j,i) & STATE_LOC_VALID)
+                                fringe.insert(cv::Vec2i(j,i));
+            }
+            // std::cout << "next inl th " << curr_best_inl_th << " " << fringe.size() << used_area << " wtf " << (int)state(y0,x0) <<  std::endl;
+        }
+        else
+            curr_best_inl_th = 20;
 
         //FIXME stupid hack for some bad growth ... should find something more generic and find out why its diverging!
         //FIXME do this after mapping opt!
