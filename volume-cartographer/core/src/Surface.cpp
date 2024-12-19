@@ -1598,23 +1598,28 @@ QuadSurface *load_quad_from_tifxyz(const std::string &path)
 
     cv::Vec2f scale = {metadata["scale"][0].get<float>(), metadata["scale"][1].get<float>()};
 
-    QuadSurface *surf = new QuadSurface(points, scale);
-    
-    surf->path = path;
-    surf->meta = new nlohmann::json(metadata);
-    
+    for(int j=0;j<points.rows;j++)
+        for(int i=0;i<points.cols;i++)
+            //TODO fix this in the patch gen, also check bounds here in general!
+            if (points(j,i)[2] <= 0) {
+                points(j,i) = {-1,-1,-1};
+            }
+            
     if (fs::exists(path+"/mask.tif")) {
         std::vector<cv::Mat> layers;
         cv::imreadmulti(path+"/mask.tif", layers, cv::IMREAD_GRAYSCALE);
         cv::Mat_<uint8_t> mask = layers[0];
-        cv::Mat_<cv::Vec3f> points = surf->rawPoints();
         cv::resize(mask, mask, points.size(), cv::INTER_NEAREST);
         for(int j=0;j<points.rows;j++)
             for(int i=0;i<points.cols;i++)
                 if (!mask(j,i))
                     points(j,i) = {-1,-1,-1};
-        surf->setRawPoints(points);
     }
+    
+    QuadSurface *surf = new QuadSurface(points, scale);
+    
+    surf->path = path;
+    surf->meta = new nlohmann::json(metadata);
     
     return surf;
 }
