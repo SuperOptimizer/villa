@@ -4199,7 +4199,6 @@ std::string strint(int n, int width)
 
 int static dbg_counter = 0;
 float local_cost_inl_th = 0.2;
-int opt_map_every = 8;
 float same_surface_th = 2.0;
 
 cv::Mat_<cv::Vec3d> surftrack_genpoints_extrapolate(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, cv::Rect used_area, float step, float src_step, bool inpaint = false)
@@ -6117,15 +6116,19 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             cv::Mat_<cv::Vec3d> points_orig = points.clone();
             state.setTo(0);
             points.setTo(cv::Vec3d(-1,-1,-1));
-            for(int j=used_area.y;j<=used_area.br().y;j++)
-                for(int i=used_area.x;i<=used_area.br().x;i++)
+            cv::Rect new_used_area = used_area;
+            for(int j=used_area.y;j<=used_area.br().y+1;j++)
+                for(int i=used_area.x;i<=used_area.br().x+1;i++)
                     if (state_orig(j, i)) {
                         int nx = x0+x0-i;
                         int ny = y0+y0-j;
                         state(ny, nx) = state_orig(j, i);
                         points(ny, nx) = points_orig(j, i);
-                        used_area = used_area | cv::Rect(nx,ny,1,1);
+                        new_used_area = new_used_area | cv::Rect(nx,ny,1,1);
                     }
+                    
+            used_area = new_used_area;
+            used_area_hr = {used_area.x*step, used_area.y*step, used_area.width*step, used_area.height*step};
             
             fringe.clear();
             for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
@@ -6157,30 +6160,30 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
         //FIXME stupid hack for some bad growth ... should find something more generic and find out why its diverging!
         //FIXME do this after mapping opt!
-        if (false /*generation > 10 && (generation % 2) == 0*/)
-        {
-            cv::Mat_<uint8_t> masked;
-            bitwise_and(state, (uint8_t)STATE_LOC_VALID, masked);
-
-            cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
-
-            cv::erode(masked, masked, m, {-1,-1}, 1);
-            cv::dilate(masked, masked, m, {-1,-1}, 1);
-
-            for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
-                for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
-                    //FIXME WTF why isn't this working?!'
-                    if (state(j,i) & STATE_LOC_VALID && ((masked(j,i) & STATE_LOC_VALID) == 0)) {
-                        state(j, i) = 0;
-                        std::set<SurfaceMeta*> surf_src = data.surfs({j,i});
-                        for(auto &s : surf_src) {
-                            data.erase(s, {j,i});
-                            data.eraseSurf(s, {j,i});
-                            points(j,i) = {-1,-1,-1};
-                        }
-                    }
-        }
-        
+//         if (false /*generation > 10 && (generation % 2) == 0*/)
+//         {
+//             cv::Mat_<uint8_t> masked;
+//             bitwise_and(state, (uint8_t)STATE_LOC_VALID, masked);
+// 
+//             cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
+// 
+//             cv::erode(masked, masked, m, {-1,-1}, 1);
+//             cv::dilate(masked, masked, m, {-1,-1}, 1);
+// 
+//             for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
+//                 for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
+//                     //FIXME WTF why isn't this working?!'
+//                     if (state(j,i) & STATE_LOC_VALID && ((masked(j,i) & STATE_LOC_VALID) == 0)) {
+//                         state(j, i) = 0;
+//                         std::set<SurfaceMeta*> surf_src = data.surfs({j,i});
+//                         for(auto &s : surf_src) {
+//                             data.erase(s, {j,i});
+//                             data.eraseSurf(s, {j,i});
+//                             points(j,i) = {-1,-1,-1};
+//                         }
+//                     }
+//         }
+//         
         loc_valid_count = 0;
         for(int j=used_area.y;j<used_area.br().y-1;j++)
             for(int i=used_area.x;i<used_area.br().x-1;i++)
