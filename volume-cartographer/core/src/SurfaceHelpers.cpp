@@ -3538,6 +3538,22 @@ public:
                 return {-1,-1,-1};
         }
     }
+    void flip_x(int x0, int y0)
+    {
+        std::cout << " src sizes " << _data.size() << " " << _surfs.size() << std::endl;
+        SurfTrackerData old = *this;
+        _data.clear();
+        _res_blocks.clear();
+        _surfs.clear();
+        
+        for(auto &it : old._data)
+            _data[{it.first.first,{y0+y0-it.first.second[0],x0+x0-it.first.second[1]}}] = it.second;
+        
+        for(auto &it : old._surfs)
+            _surfs[{y0+y0-it.first[0],x0+x0-it.first[1]}] = it.second;
+        
+        std::cout << " fliped sizes " << _data.size() << " " << _surfs.size() << std::endl;
+    }
 // protected:
     std::unordered_map<SurfPoint,cv::Vec2d,SurfPoint_hash> _data;
     std::unordered_map<resId_t,ceres::ResidualBlockId,resId_hash> _res_blocks;
@@ -5652,10 +5668,17 @@ void vis_loccount(const std::string &fn, const SurfTrackerData &data, cv::Size s
     cv::imwrite(fn, vis);
 }
 
-QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMeta*> &surfs_v, float step)
+QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMeta*> &surfs_v, const nlohmann::json &params)
 {
+    bool flip_x = params.value("flip_x", 0);
+    int global_steps_per_window = params.value("global_steps_per_window", 0);
+    
+    std::cout << "global_steps_per_window: " << global_steps_per_window << std::endl;
+    std::cout << "flip_x: " << flip_x << std::endl;
+    
     std::unordered_map<std::string,SurfaceMeta*> surfs;
-    float src_step = 20;
+    float src_step = params.value("src_step", 20);
+    float step = params.value("step", 10);
     
     std::cout << "total surf count " << surfs_v.size() << std::endl;
 
@@ -5780,8 +5803,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 200;
     
-    int final_opts_max = 2;
-    int final_opts = final_opts_max;
+    int final_opts = global_steps_per_window;
     
     int loc_valid_count = 0;
     int succ = 0;
@@ -5893,14 +5915,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 avg /= ref_count;
                 
                 data_th.loc(ref_surf,p) = avg + cv::Vec2d((rand() % 1000)/500.0-1, (rand() % 1000)/500.0-1);
-                
-                if (generation <= 1) {
-                    if (p[1] > x0)
-                        data_th.loc(ref_surf,p) = avg + cv::Vec2d(10*step, 1);
-                    else if (p[1] < x0)
-                        data_th.loc(ref_surf,p) = avg + cv::Vec2d(-10*step,-1);
-                }
-                    
 
                 ceres::Problem problem;
 
@@ -5980,24 +5994,24 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             if (points(p)[0] != -1)
                 throw std::runtime_error("oops");
             
-            if (best_inliers >= curr_best_inl_th || best_ref_seed)
-            {
-                cv::Vec2f tmp_loc_;
-                cv::Rect used_th = used_area;
-                //FIXME why does this miss duplicates? 
-                float dist = pointTo(tmp_loc_, points(used_th), best_coord, same_surface_th, 1000, 1.0/(step*src_step));
-                tmp_loc_ += cv::Vec2f(used_th.x,used_th.y);
-                if (dist <= same_surface_th) {
-                    int state_sum = state(tmp_loc_[1],tmp_loc_[0]) + state(tmp_loc_[1]+1,tmp_loc_[0]) + state(tmp_loc_[1],tmp_loc_[0]+1) + state(tmp_loc_[1]+1,tmp_loc_[0]+1);
-                    // std::cout << "skip duplicate" << dist <<  best_coord << int(state(tmp_loc_[1],tmp_loc_[0])) << " " << int(state(tmp_loc_[1]+1,tmp_loc_[0])) << " " << int(state(tmp_loc_[1],tmp_loc_[0]+1)) << " " << int(state(tmp_loc_[1]+1,tmp_loc_[0]+1)) << " " << std::endl;
-                    best_inliers = -1;
-                    best_ref_seed = false;
-                    if (!state_sum)
-                        throw std::runtime_error("this should not have any location?!");
-                }
-                // else
-                    // std::cout << "adding " << p << best_coord << dist << std::endl;
-            }
+            // // if (best_inliers >= curr_best_inl_th || best_ref_seed)
+            // // {
+            // //     cv::Vec2f tmp_loc_;
+            // //     cv::Rect used_th = used_area;
+            // //     //FIXME why does this miss duplicates? 
+            // //     float dist = pointTo(tmp_loc_, points(used_th), best_coord, same_surface_th, 1000, 1.0/(step*src_step));
+            // //     tmp_loc_ += cv::Vec2f(used_th.x,used_th.y);
+            // //     if (dist <= same_surface_th) {
+            // //         int state_sum = state(tmp_loc_[1],tmp_loc_[0]) + state(tmp_loc_[1]+1,tmp_loc_[0]) + state(tmp_loc_[1],tmp_loc_[0]+1) + state(tmp_loc_[1]+1,tmp_loc_[0]+1);
+            // //         // std::cout << "skip duplicate" << dist <<  best_coord << int(state(tmp_loc_[1],tmp_loc_[0])) << " " << int(state(tmp_loc_[1]+1,tmp_loc_[0])) << " " << int(state(tmp_loc_[1],tmp_loc_[0]+1)) << " " << int(state(tmp_loc_[1]+1,tmp_loc_[0]+1)) << " " << std::endl;
+            // //         best_inliers = -1;
+            // //         best_ref_seed = false;
+            // //         if (!state_sum)
+            // //             throw std::runtime_error("this should not have any location?!");
+            // //     }
+            // //     // else
+            // //         // std::cout << "adding " << p << best_coord << dist << std::endl;
+            // // }
             
             if (best_inliers >= curr_best_inl_th || best_ref_seed) {
                 if (best_coord[0] == -1)
@@ -6091,14 +6105,44 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             }
         }
         
+        if (generation == 1 && flip_x) {
+            data.flip_x(x0, y0);
+            
+            for(int i=0;i<omp_get_max_threads();i++) {
+                data_ths[i] = data;
+                added_points_threads[i].clear();
+            }
+
+            cv::Mat_<uint8_t> state_orig = state.clone();
+            cv::Mat_<cv::Vec3d> points_orig = points.clone();
+            state.setTo(0);
+            points.setTo(cv::Vec3d(-1,-1,-1));
+            for(int j=used_area.y;j<=used_area.br().y;j++)
+                for(int i=used_area.x;i<=used_area.br().x;i++)
+                    if (state_orig(j, i)) {
+                        int nx = x0+x0-i;
+                        int ny = y0+y0-j;
+                        state(ny, nx) = state_orig(j, i);
+                        points(ny, nx) = points_orig(j, i);
+                        used_area = used_area | cv::Rect(nx,ny,1,1);
+                    }
+            
+            fringe.clear();
+            for(int j=used_area.y-2;j<=used_area.br().y+2;j++)
+                for(int i=used_area.x-2;i<=used_area.br().x+2;i++)
+                    //FIXME WTF why isn't this working?!'
+                    if (state(j,i) & STATE_LOC_VALID)
+                        fringe.insert(cv::Vec2i(j,i));
+        }
+        
         if (!fringe.size()) {
             if (curr_best_inl_th > 10)
                 curr_best_inl_th -= 4;
             else
                 curr_best_inl_th -= 1;
-            if (best_inliers_gen >= 6)
+            if (best_inliers_gen >= 2)
                 curr_best_inl_th = std::min(curr_best_inl_th, best_inliers_gen);
-            if (curr_best_inl_th >= 6) {
+            if (curr_best_inl_th >= 2) {
                 cv::Rect active = active_bounds & used_area;
                 for(int j=active.y-2;j<=active.br().y+2;j++)
                     for(int i=active.x-2;i<=active.br().x+2;i++)
@@ -6151,7 +6195,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             update_mapping = true;
         }
         
-        // update_mapping = false;
+        if (!global_steps_per_window)
+            update_mapping = false;
         
         // if (update_mapping)
         // {
@@ -6270,7 +6315,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             std::cout << "expanding by " << sliding_w << std::endl;
             
             std::cout << size << bounds << save_bounds_inv << used_area << active_bounds << (used_area & active_bounds) << static_bounds << std::endl;
-            final_opts = final_opts_max;
+            final_opts = global_steps_per_window;
             w += sliding_w;
             size = {w,h};
             bounds = {0,0,w-1,h-1};
