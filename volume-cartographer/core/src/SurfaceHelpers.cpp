@@ -3538,7 +3538,7 @@ public:
                 return {-1,-1,-1};
         }
     }
-    void flip_x(int x0, int y0)
+    void flip_x(int x0)
     {
         std::cout << " src sizes " << _data.size() << " " << _surfs.size() << std::endl;
         SurfTrackerData old = *this;
@@ -3547,10 +3547,10 @@ public:
         _surfs.clear();
         
         for(auto &it : old._data)
-            _data[{it.first.first,{y0+y0-it.first.second[0],x0+x0-it.first.second[1]}}] = it.second;
+            _data[{it.first.first,{it.first.second[0],x0+x0-it.first.second[1]}}] = it.second;
         
         for(auto &it : old._surfs)
-            _surfs[{y0+y0-it.first[0],x0+x0-it.first[1]}] = it.second;
+            _surfs[{it.first[0],x0+x0-it.first[1]}] = it.second;
         
         std::cout << " fliped sizes " << _data.size() << " " << _surfs.size() << std::endl;
     }
@@ -6105,7 +6105,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         }
         
         if (generation == 1 && flip_x) {
-            data.flip_x(x0, y0);
+            data.flip_x(x0);
             
             for(int i=0;i<omp_get_max_threads();i++) {
                 data_ths[i] = data;
@@ -6121,7 +6121,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 for(int i=used_area.x;i<=used_area.br().x+1;i++)
                     if (state_orig(j, i)) {
                         int nx = x0+x0-i;
-                        int ny = y0+y0-j;
+                        int ny = j;
                         state(ny, nx) = state_orig(j, i);
                         points(ny, nx) = points_orig(j, i);
                         new_used_area = new_used_area | cv::Rect(nx,ny,1,1);
