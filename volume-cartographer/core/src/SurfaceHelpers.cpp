@@ -5204,7 +5204,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     options.linear_solver_type = ceres::SPARSE_SCHUR;
     options.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
     options.minimizer_progress_to_stdout = false;
-    options.max_num_iterations = 10000;
+    options.max_num_iterations = 100;
     options.num_threads = omp_get_max_threads();
     
     for(int j=used_area.y;j<used_area.br().y;j++)
@@ -5361,7 +5361,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
                     problem.SetParameterBlockConstant(&points_new(j, i)[0]);                    
             }
     
-    // options.max_num_iterations = 100;
+    options.max_num_iterations = 1000;
     ceres::Solve(options, &problem, &summary);
     std::cout << summary.FullReport() << std::endl;
     std::cout << "rms " << sqrt(summary.final_cost/summary.num_residual_blocks) << " count " << summary.num_residual_blocks << std::endl;
@@ -5994,24 +5994,24 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             if (points(p)[0] != -1)
                 throw std::runtime_error("oops");
             
-            // // if (best_inliers >= curr_best_inl_th || best_ref_seed)
-            // // {
-            // //     cv::Vec2f tmp_loc_;
-            // //     cv::Rect used_th = used_area;
-            // //     //FIXME why does this miss duplicates? 
-            // //     float dist = pointTo(tmp_loc_, points(used_th), best_coord, same_surface_th, 1000, 1.0/(step*src_step));
-            // //     tmp_loc_ += cv::Vec2f(used_th.x,used_th.y);
-            // //     if (dist <= same_surface_th) {
-            // //         int state_sum = state(tmp_loc_[1],tmp_loc_[0]) + state(tmp_loc_[1]+1,tmp_loc_[0]) + state(tmp_loc_[1],tmp_loc_[0]+1) + state(tmp_loc_[1]+1,tmp_loc_[0]+1);
-            // //         // std::cout << "skip duplicate" << dist <<  best_coord << int(state(tmp_loc_[1],tmp_loc_[0])) << " " << int(state(tmp_loc_[1]+1,tmp_loc_[0])) << " " << int(state(tmp_loc_[1],tmp_loc_[0]+1)) << " " << int(state(tmp_loc_[1]+1,tmp_loc_[0]+1)) << " " << std::endl;
-            // //         best_inliers = -1;
-            // //         best_ref_seed = false;
-            // //         if (!state_sum)
-            // //             throw std::runtime_error("this should not have any location?!");
-            // //     }
-            // //     // else
-            // //         // std::cout << "adding " << p << best_coord << dist << std::endl;
-            // // }
+            if (best_inliers >= curr_best_inl_th || best_ref_seed)
+            {
+                cv::Vec2f tmp_loc_;
+                cv::Rect used_th = used_area;
+                //FIXME why does this miss duplicates? 
+                float dist = pointTo(tmp_loc_, points(used_th), best_coord, same_surface_th, 1000, 1.0/(step*src_step));
+                tmp_loc_ += cv::Vec2f(used_th.x,used_th.y);
+                if (dist <= same_surface_th) {
+                    int state_sum = state(tmp_loc_[1],tmp_loc_[0]) + state(tmp_loc_[1]+1,tmp_loc_[0]) + state(tmp_loc_[1],tmp_loc_[0]+1) + state(tmp_loc_[1]+1,tmp_loc_[0]+1);
+                    // std::cout << "skip duplicate" << dist <<  best_coord << int(state(tmp_loc_[1],tmp_loc_[0])) << " " << int(state(tmp_loc_[1]+1,tmp_loc_[0])) << " " << int(state(tmp_loc_[1],tmp_loc_[0]+1)) << " " << int(state(tmp_loc_[1]+1,tmp_loc_[0]+1)) << " " << std::endl;
+                    best_inliers = -1;
+                    best_ref_seed = false;
+                    if (!state_sum)
+                        throw std::runtime_error("this should not have any location?!");
+                }
+                // else
+                    // std::cout << "adding " << p << best_coord << dist << std::endl;
+            }
             
             if (best_inliers >= curr_best_inl_th || best_ref_seed) {
                 if (best_coord[0] == -1)
@@ -6135,25 +6135,25 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         fringe.insert(cv::Vec2i(j,i));
         }
         
-        if (!fringe.size()) {
-            if (curr_best_inl_th > 10)
-                curr_best_inl_th -= 4;
-            else
-                curr_best_inl_th -= 1;
-            if (best_inliers_gen >= 2)
-                curr_best_inl_th = std::min(curr_best_inl_th, best_inliers_gen);
-            if (curr_best_inl_th >= 2) {
-                cv::Rect active = active_bounds & used_area;
-                for(int j=active.y-2;j<=active.br().y+2;j++)
-                    for(int i=active.x-2;i<=active.br().x+2;i++)
-                        //FIXME WTF why isn't this working?!'
-                        if (state(j,i) & STATE_LOC_VALID)
-                                fringe.insert(cv::Vec2i(j,i));
-            }
-            // std::cout << "next inl th " << curr_best_inl_th << " " << fringe.size() << used_area << " wtf " << (int)state(y0,x0) <<  std::endl;
-        }
-        else
-            curr_best_inl_th = 20;
+        // if (!fringe.size()) {
+        //     if (curr_best_inl_th > 10)
+        //         curr_best_inl_th -= 4;
+        //     else
+        //         curr_best_inl_th -= 1;
+        //     if (best_inliers_gen >= 10)
+        //         curr_best_inl_th = std::min(curr_best_inl_th, best_inliers_gen);
+        //     if (curr_best_inl_th >= 10) {
+        //         cv::Rect active = active_bounds & used_area;
+        //         for(int j=active.y-2;j<=active.br().y+2;j++)
+        //             for(int i=active.x-2;i<=active.br().x+2;i++)
+        //                 //FIXME WTF why isn't this working?!'
+        //                 if (state(j,i) & STATE_LOC_VALID)
+        //                         fringe.insert(cv::Vec2i(j,i));
+        //     }
+        //     // std::cout << "next inl th " << curr_best_inl_th << " " << fringe.size() << used_area << " wtf " << (int)state(y0,x0) <<  std::endl;
+        // }
+        // else
+        //     curr_best_inl_th = 20;
 
         //FIXME stupid hack for some bad growth ... should find something more generic and find out why its diverging!
         //FIXME do this after mapping opt!
