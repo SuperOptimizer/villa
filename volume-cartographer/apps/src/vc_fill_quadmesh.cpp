@@ -16,7 +16,7 @@ using json = nlohmann::json;
 
 
 static float dist_w = 0.5;
-static float straight_w = 0.01;
+static float straight_w = 0.1;
 static float surf_w = 0.1;
 static float z_loc_loss_w = 0.05;
 static float wind_w = 1000.0;
@@ -580,10 +580,12 @@ int main(int argc, char *argv[])
     cv::Mat_<float> winding_in = cv::imread(wind_path, cv::IMREAD_UNCHANGED);
     cv::Mat_<cv::Vec3f> points_in = surf->rawPoints();
     
-    cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
+    // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
+    // cv::Rect bbox_src(10,60,points_in.cols-20,240);
+    cv::Rect bbox_src(80,110,points_in.cols-100,80);
     
     float src_step = 20;
-    int trace_mul = 5;
+    int trace_mul = 1;
     float step = src_step*trace_mul;
     
     cv::Size size = {points_in.cols/trace_mul, points_in.rows/trace_mul};
@@ -604,7 +606,7 @@ int main(int argc, char *argv[])
     // cv::Rect bbox(333,10,1000,700);
     
     
-    int opt_w = 4;
+    int opt_w = 2;
     
     cv::Rect first_col = {bbox.x,bbox.y,opt_w,bbox.height};
     // points_in(first_col).copyTo(points(first_col));
@@ -686,7 +688,7 @@ int main(int argc, char *argv[])
         
         ceres::Solver::Summary summary;
         ceres::Solve(options_col, &problem_init, &summary);
-        std::cout << summary.FullReport() << std::endl;
+        std::cout << summary.BriefReport() << std::endl;
     }
     
     std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{-2,-1},{2,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2},{-3,-2},{3,-2},{-4,-2},{4,-2}};
@@ -811,13 +813,17 @@ int main(int argc, char *argv[])
                 create_centered_losses(problem_col, p+cv::Vec2i(0,-o), state, points_in, points, locs, step, LOSS_ON_SURF);
             create_centered_losses_left(problem_col, p, state, points_in, points, locs, step, LOSS_ON_SURF);
             
-            problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
+            // for(int o=0;o<=opt_w;o++)
+                // create_centered_losses(problem_col, p+cv::Vec2i(0,-o), state, points_in, points, locs, step, 0);
+            // create_centered_losses_left(problem_col, p, state, points_in, points, locs, step, 0);
+            
+            // problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
             
             for(int o=0;o<opt_w;o++)
                 problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i-o], wind_w), nullptr, &locs(p+cv::Vec2i(0,-o))[0]);
         }
         
-        for(int x=i-opt_w;x<=i;x++)
+        for(int x=i-opt_w+1;x<=i;x++)
             for(int j=bbox.y;j<bbox.br().y;j++) {
                 cv::Vec2i p = {j,x};
 
