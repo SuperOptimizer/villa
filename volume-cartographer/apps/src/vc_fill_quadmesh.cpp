@@ -17,7 +17,7 @@ using json = nlohmann::json;
 
 static float dist_w = 0.5;
 static float straight_w = 0.01;
-static float surf_w = 0.01;
+static float surf_w = 0.1;
 static float z_loc_loss_w = 0.05;
 static float wind_w = 1000.0;
 
@@ -580,7 +580,7 @@ int main(int argc, char *argv[])
     cv::Mat_<float> winding_in = cv::imread(wind_path, cv::IMREAD_UNCHANGED);
     cv::Mat_<cv::Vec3f> points_in = surf->rawPoints();
     
-    cv::Rect bbox_src(10,10,4000,710);
+    cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
     
     float src_step = 20;
     int trace_mul = 5;
