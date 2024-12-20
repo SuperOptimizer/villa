@@ -99,9 +99,10 @@ IntersectVec getIntersects(const cv::Vec2i &seed, const cv::Mat_<cv::Vec3f> &poi
     if (std::isnan(n[0]))
         return {};
     std::vector<cv::Vec2f> locs = {seed};
+    uint32_t sr = seed[1];
     for(int i=0;i<1000;i++)
     {
-        cv::Vec2f loc = {rand() % points.cols, seed[1] - 50 + (rand() % 100)};
+        cv::Vec2f loc = {rand_r(&sr) % points.cols, seed[1] - 50 + (rand_r(&sr) % 100)};
         cv::Vec3f res;
         float dist = search_min_line(points, loc, res, o, n, step, 0.01);
         
@@ -273,8 +274,9 @@ std::string time_str()
 
 int main(int argc, char *argv[])
 {
-    if (argc != 3) {
+    if (argc != 3 && argc != 7) {
         std::cout << "usage: " << argv[0] << " <tiffxyz> <out>" << std::endl;
+        std::cout << "or: " << argv[0] << " <tiffxyz> <out> <cropx> <cropy> <cropyw> <croph>" << std::endl;
         return EXIT_SUCCESS;
     }
     
@@ -291,7 +293,9 @@ int main(int argc, char *argv[])
     }
 
     cv::Mat_<cv::Vec3f> points = surf->rawPoints();
-    // points = points(cv::Rect(0,0,800,points.rows));
+    
+    if (argc == 7)
+        points = points(cv::Rect(atoi(argv[3]),atoi(argv[4]),atoi(argv[5]),atoi(argv[6])));
     
     cv::Mat_<cv::Vec3b> img(points.size(), 0);
     
@@ -324,10 +328,10 @@ int main(int argc, char *argv[])
         cv::Vec3b col = {50+rand() % 155,50+rand() % 155,50+rand() % 155};
         for(auto &pair : iv) {
             // img(pair.second[1],pair.second[0]) = col;
-            std::cout << pair.first << pair.second << std::endl;
+            // std::cout << pair.first << pair.second << std::endl;
             cv::circle(img, cv::Point(pair.second), 3, col, -1);
         }
-        std::cout << std::endl;
+        // std::cout << std::endl;
     }
     cv::imwrite("dbg.tif", img);
     
@@ -350,16 +354,28 @@ int main(int argc, char *argv[])
     for(auto &dists : wind_dists_x)
         std::sort(dists.begin(), dists.end());
     
-    std::vector<int> wind_x_ref;
+    std::vector<int> wind_x_ref(wind_dists_x.size());
     
     std::cout << "final out " << wind_dists_x.size() << std::endl;
-    for(auto &dists : wind_dists_x)
+    int last = 0;
+    int first = 0;
+    for(int i=0;i<wind_dists_x.size();i++) {
+        std::vector<int> &dists = wind_dists_x[i];
+
         if (dists.size()) {
-            wind_x_ref.push_back(dists[dists.size()/2]);
-            std::cout << dists[dists.size()/2] << std::endl;
+            last = dists[dists.size()/2];
+            if (!first) {
+                first = last;
+                for (int j=0;j<i;j++)
+                    wind_x_ref[j] = first;
+            }
         }
-        else
-            wind_x_ref.push_back(wind_x_ref.back());
+        wind_x_ref[i] = last;
+    }
+    
+    for(auto w : wind_x_ref)
+        std::cout << "wind x step: " << w << std::endl;
+    // std::cout << dists[dists.size()/2] << std::endl;
     
     cv::Mat_<float> winding(points.size(), 0);
     cv::Mat_<float> wind_w(points.size(), 0);
@@ -375,21 +391,24 @@ int main(int argc, char *argv[])
         wind_cols.push_back(col);
     }
     
-    int wind_iters = 200;
-    int ramp_start = 100;
-    int ramp_end = 150;
-    for(int n=0;n<wind_iters;n++) {
+    int ramp = 50;
+    bool expanded = true;
+    int it = 0;
+    while (expanded || ramp >= -50) {
         winding(seed) = 0;
         wind_w(seed) = 1;
+        
+        if (!expanded)
+            ramp--;
+        
+        expanded = false;
+        
+        it++;
         
         cv::Mat_<float> winding_out = winding.clone();
         cv::Mat_<float> wind_w_out = wind_w.clone();
         
-        // std::cout << "seed " << seed << std::endl;
-        
-        float rough_w = 1.0;
-        if (n >= ramp_start)
-            rough_w = 1-std::min((n-ramp_start)/double(ramp_end-ramp_start), 1.0);
+        float rough_w = std::max(0.0, ramp/50.0);
         
         for(auto &iv : intersects) {
             //FIXME make it go both ways!
@@ -417,12 +436,14 @@ int main(int argc, char *argv[])
                 // std::cout << "go" << std::endl;
                 
                 if (wind_w(p2i) == 0) {
+                    expanded = true;
                     wind_w(p2i) = wind_w(p1i);
                     winding(p2i) = winding(p1i)+1;
                     wind_w_out(p2i) = wind_w(p1i);
                     winding_out(p2i) = winding(p1i)+1;
                 }
                 else if (wind_w(p1i) == 0) {
+                    expanded = true;
                     wind_w(p1i) = wind_w(p2i);
                     winding(p1i) = winding(p2i)-1;
                     wind_w_out(p1i) = wind_w(p2i);
@@ -445,7 +466,7 @@ int main(int argc, char *argv[])
             wind_w_out.copyTo(wind_w);
         }
         else {
-            std::cout << "w " << rough_w << std::endl;
+            // std::cout << "w " << rough_w << std::endl;
             winding = winding_out*rough_w + winding*(1-rough_w);
             wind_w = wind_w_out*rough_w + wind_w*(1-rough_w);
         }
@@ -495,6 +516,8 @@ int main(int argc, char *argv[])
                     w += wind_w(pn)*mul;
                 }
                 if (w != 0) {
+                    if (wind_w_out(p) == 0.0)
+                        expanded = true;
                     winding_out(p) = sum/w;
                     wind_w_out(p) = 1;
                 }
@@ -503,10 +526,9 @@ int main(int argc, char *argv[])
         winding_out.copyTo(winding);
         wind_w_out.copyTo(wind_w);
             
-    
-        if (n % 10 == 0 || n == wind_iters) {
+        if (it % 50 == 0 || ramp == -50) {
             cv::imwrite("wind_w.tif", wind_w);
-            std::cout << "finished it " << n << std::endl;
+            std::cout << "finished it " << it << std::endl;
             
             cv::Mat_<cv::Vec3b> vis(points.size(), {0,0,0});
             cv::Mat_<float> winding_err(points.size());
@@ -528,13 +550,15 @@ int main(int argc, char *argv[])
                         winding_err(j,i) = abs(1-wind_g);
                     }
                 }
-            cv::imwrite("winding"+std::to_string(n)+".tif", winding);
-            cv::imwrite("wind_vis"+std::to_string(n)+".tif", vis);
+            // cv::imwrite("winding"+std::to_string(n)+".tif", winding);
+            // cv::imwrite("wind_vis"+std::to_string(n)+".tif", vis);
             cv::imwrite("winding.tif", winding);
             cv::imwrite("wind_vis.tif", vis);
             cv::imwrite("wind_err.tif", winding_err);
         }
         
+        if (ramp == -50)
+            break;
     }
     
     for(int j=0;j<winding.rows;j++)
@@ -545,6 +569,7 @@ int main(int argc, char *argv[])
     cv::Mat_<cv::Vec3f> out(points.size(), {-1,-1,-1});
     double curr_wind = -2;
     for(int i=0;i<winding.cols-1;i++) {
+        // std::cout << "final out gen " << i << std::endl;
 #pragma omp parallel for
         for(int j=0;j<winding.rows;j++) {
             float diff = -1;
