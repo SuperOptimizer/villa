@@ -6150,8 +6150,6 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         int inl_lower_bound_b = 2;
         int inl_lower_bound = inl_lower_bound_reg;
         
-        std::cout << "at right border : " << at_right_border << std::endl;
-        
         if (!at_right_border && curr_best_inl_th <= inl_lower_bound)
             inl_lower_bound = inl_lower_bound_b;
         
