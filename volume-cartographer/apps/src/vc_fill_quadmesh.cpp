@@ -18,7 +18,7 @@ using json = nlohmann::json;
 static float dist_w = 1.0;
 static float straight_w = 0.02;
 static float surf_w = 0.1;
-static float z_loc_loss_w = 0.05;
+static float z_loc_loss_w = 0.002;
 static float wind_w = 10.0;
 
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
@@ -582,7 +582,7 @@ int main(int argc, char *argv[])
     
     // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
     // cv::Rect bbox_src(10,60,points_in.cols-20,240);
-    cv::Rect bbox_src(80,110,400,80);
+    cv::Rect bbox_src(80,110,1000,80);
     
     float src_step = 20;
     int trace_mul = 1;
@@ -817,7 +817,7 @@ int main(int argc, char *argv[])
                 // create_centered_losses(problem_col, p+cv::Vec2i(0,-o), state, points_in, points, locs, step, 0);
             // create_centered_losses_left(problem_col, p, state, points_in, points, locs, step, 0);
             
-            // problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
+            problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
             
             for(int o=0;o<opt_w;o++)
                 problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i-o], wind_w), nullptr, &locs(p+cv::Vec2i(0,-o))[0]);
