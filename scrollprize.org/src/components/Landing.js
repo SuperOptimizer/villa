@@ -1382,11 +1382,11 @@ export function Landing() {
                 </h1>
                 <p className="max-w-lg md:text-xl text-lg font-medium mb-8 !leading-[110%] tracking-tight">
                   <span className=" opacity-80 md:opacity-60">
-                    The Vesuvius Challenge is a machine learning and computer
-                    vision competition that has{" "}
+                    Vesuvius Challenge is a machine learning, computer
+                    vision, and geometry competition that is{" "}
                   </span>
                   <span className="opacity-100">
-                    <a href="grandprize">broken through</a> with the Herculaneum scrolls & awarded
+                    <a href="grandprize">reading</a> the Herculaneum scrolls & has awarded
                     over $1,000,000 in prizes.
                   </span>
                   <br /> <br />
