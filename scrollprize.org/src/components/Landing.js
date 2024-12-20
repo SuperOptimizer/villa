@@ -444,7 +444,7 @@ const sponsors = [
   },
   {
     name: "Tobi Lutke",
-    amount: 50000,
+    amount: 75000,
     href: "https://twitter.com/tobi",
     image: "/img/landing/Tobi Lutke.webp",
   },
