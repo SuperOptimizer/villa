@@ -561,51 +561,5 @@ int main(int argc, char *argv[])
             break;
     }
     
-    for(int j=0;j<winding.rows;j++)
-        for(int i=0;i<winding.cols;i++)
-            if (wind_w(j,i) == 0)
-                winding(j,i) = NAN;
-
-    cv::Mat_<cv::Vec3f> out(points.size(), {-1,-1,-1});
-    double curr_wind = -2;
-    for(int i=0;i<winding.cols-1;i++) {
-        // std::cout << "final out gen " << i << std::endl;
-#pragma omp parallel for
-        for(int j=0;j<winding.rows;j++) {
-            float diff = -1;
-            cv::Vec2f loc(i,j);
-            bool succ = false;
-            for(int r=0;r<100;r++) {
-                diff = find_wind_x(winding, loc, curr_wind);
-                if (diff >= 0 && diff <= 0.1) {
-                    succ = true;
-                    break;
-                }
-                loc = {rand() % points.cols,j};
-            }
-            
-            if (succ) {
-                // std::cout << loc << cv::Vec2i(i, j) << points.size() << std::endl;
-                out(j,i) = at_int(points, loc);
-            }
-        }
-        //FIXME inaccurate, also do median by winding number?
-        curr_wind += 1.0/wind_x_ref[i/100];
-    }
-    
-    std::vector<cv::Mat> chs;
-    cv::split(out, chs);
-    
-    cv::imwrite("newx.tif",chs[0]);
-    
-    QuadSurface *surf_full = new QuadSurface(out, surf->_scale);
-    
-    fs::path tgt_dir = "/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/";
-    std::string name_prefix = "testing_fill_";
-    std::string uuid = name_prefix + time_str();
-    fs::path seg_dir = tgt_dir / uuid;
-    std::cout << "saving " << seg_dir << std::endl;
-    surf_full->save(seg_dir, uuid);
-    
     return EXIT_SUCCESS;
 }
