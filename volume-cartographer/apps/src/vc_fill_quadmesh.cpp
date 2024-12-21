@@ -795,10 +795,10 @@ int main(int argc, char *argv[])
             }
             
             //FIXME initial solve does not look good? add z error?
-            if (loc_valid(points_in, locs(p)))
-                surf_dist(p) = cv::norm(cv::Vec3f(points(p))-at_int(points_in, {locs(p)[1],locs(p)[0]}));
-            else
-                surf_dist(p) = -1;
+            // if (loc_valid(points_in, locs(p)))
+            //     surf_dist(p) = cv::norm(cv::Vec3f(points(p))-at_int(points_in, {locs(p)[1],locs(p)[0]}));
+            // else
+            //     surf_dist(p) = -1;
             
 //             if (surf_dist(p) > 10 || surf_dist(p) < 0) {
 //                 ceres::Problem problem;
@@ -941,7 +941,7 @@ int main(int argc, char *argv[])
         }
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
-            for(int o=std::max(bbox.x,i-inpaint_back_range);o<i-opt_w;o++)
+            for(int o=std::max(bbox.x,i-inpaint_back_range);o<=i;o++)
                 if (!loc_valid(state(j,o)) && coord_valid(state(j, o)))
                     if (problem_col.HasParameterBlock(&points(j,o)[0]))
                         problem_col.SetParameterBlockVariable(&points(j,o)[0]);
@@ -997,6 +997,13 @@ int main(int argc, char *argv[])
         wind_counts[i] = 0;
         for(int x=std::max(i-opt_w,bbox.x+opt_w);x<=i;x++)
             for(int j=bbox.y;j<bbox.br().y;j++) {
+                cv::Vec2i p = {j,x};
+                
+                if (loc_valid(points_in, locs(p)))
+                    surf_dist(p) = cv::norm(cv::Vec3f(points(p))-at_int(points_in, {locs(p)[1],locs(p)[0]}));
+                else
+                    surf_dist(p) = -1;
+                
                 if (!loc_valid(points_in,locs(j,x))) {
                     locs(j,x) = {-1,-1};
                     winding(j, x) = NAN;
