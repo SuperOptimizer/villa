@@ -21,7 +21,7 @@ static float surf_w = 0.1;
 static float z_loc_loss_w = 0.002;
 static float wind_w = 10.0;
 
-int inpaint_back_range = 100;
+int inpaint_back_range = 20;
 
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
@@ -627,7 +627,7 @@ int main(int argc, char *argv[])
     // cv::Rect bbox_src(10,60,points_in.cols-20,240);
     // cv::Rect bbox_src(80,110,1000,80);
     // cv::Rect bbox_src(64,50,1000,160);
-    cv::Rect bbox_src(10,10,2000,points_in.rows-20);
+    cv::Rect bbox_src(10,10,500,points_in.rows-20);
     
     float src_step = 20;
     int trace_mul = 1;
@@ -716,7 +716,8 @@ int main(int argc, char *argv[])
     ceres::Solver::Options options_col;
     // options.linear_solver_type = ceres::DENSE_QR;
     options_col.linear_solver_type = ceres::SPARSE_SCHUR;
-    options_col.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
+    // options_col.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
+    options_col.num_threads = 32;
     options_col.minimizer_progress_to_stdout = false;
     options_col.max_num_iterations = 10000;
     
@@ -1023,6 +1024,7 @@ int main(int argc, char *argv[])
 //                 }
 //             }
             
+        std::cout << "start solve with blocks " << problem_col.NumResidualBlocks() << std::endl;
         ceres::Solver::Summary summary;
         ceres::Solve(options_col, &problem_col, &summary);
         
