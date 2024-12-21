@@ -19,7 +19,7 @@ static int trace_mul = 5;
 static float dist_w = 0.3*trace_mul;
 static float straight_w = 0.02/sqrt(trace_mul);
 static float surf_w = 0.1/trace_mul;
-static float z_loc_loss_w = 0.0005;///sqrt(trace_mul);
+static float z_loc_loss_w = 0.0005*trace_mul;///sqrt(trace_mul);
 static float wind_w = 10.0;///sqrt(trace_mul);
 
 int inpaint_back_range = 40;
@@ -632,7 +632,8 @@ int main(int argc, char *argv[])
     // cv::Rect bbox_src(10,60,points_in.cols-20,240);
     // cv::Rect bbox_src(80,110,1000,80);
     // cv::Rect bbox_src(64,50,1000,160);
-    cv::Rect bbox_src(10,10,4000,points_in.rows-20);
+    // cv::Rect bbox_src(10,10,4000,points_in.rows-20);
+    cv::Rect bbox_src(1870,10,4000,points_in.rows-20);
     
     float src_step = 20;
     float step = src_step*trace_mul;
