@@ -15,10 +15,10 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 
-static float dist_w = 1.0;
+static float dist_w = 0.1;
 static float straight_w = 0.02;
 static float surf_w = 0.1;
-static float z_loc_loss_w = 0.002;
+static float z_loc_loss_w = 0.0002;
 static float wind_w = 10.0;
 
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
