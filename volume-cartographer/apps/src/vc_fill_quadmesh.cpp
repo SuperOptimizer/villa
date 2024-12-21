@@ -975,11 +975,10 @@ int main(int argc, char *argv[])
                     problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i-o], wind_w), nullptr, &locs(p+cv::Vec2i(0,-o))[0]);
         }
         
-        for(int j=bbox.y;j<bbox.br().y;j++) {
+        for(int j=bbox.y;j<bbox.br().y;j++)
             for(int o=std::max(bbox.x,i-inpaint_back_range);o<i-opt_w;o++)
                 if (!loc_valid(state(j,o)) && coord_valid(state(j, o)))
-                create_centered_losses(problem_col, state_inpaint(j, o), state_inpaint, points_in, points, locs, step, 0);
-        }
+                    create_centered_losses(problem_col, {j, o}, state_inpaint, points_in, points, locs, step, 0);
         
         //FIXME check for params outside used range because added by create_centered_losses?
         
