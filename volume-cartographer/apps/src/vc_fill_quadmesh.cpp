@@ -627,7 +627,7 @@ int main(int argc, char *argv[])
     // cv::Rect bbox_src(10,60,points_in.cols-20,240);
     // cv::Rect bbox_src(80,110,1000,80);
     // cv::Rect bbox_src(64,50,1000,160);
-    cv::Rect bbox_src(10,10,500,points_in.rows-20);
+    cv::Rect bbox_src(10,10,2000,points_in.rows-20);
     
     float src_step = 20;
     int trace_mul = 1;
@@ -785,7 +785,7 @@ int main(int argc, char *argv[])
         std::cout << "proc col " << i << std::endl;
         ceres::Problem problem_col;
 #pragma omp parallel for
-        for(int j=std::max(bbox.y,last_miny-10);j<std::min(bbox.br().y,last_maxy+10+1);j++) {
+        for(int j=std::max(bbox.y,last_miny-2);j<std::min(bbox.br().y,last_maxy+2+1);j++) {
             cv::Vec2i p = {j,i};
             
             locs(p) = {-1,-1}; //locs(j,i-1)+cv::Vec2d(0,1/step);
@@ -795,15 +795,12 @@ int main(int argc, char *argv[])
             
             //FIXME
             for(auto n : neighs) {
-                cv::Vec2d cand = locs(p+n) ;//+ cv::Vec2d(0,1/step);
+                cv::Vec2d cand = locs(p+n) + cv::Vec2d(0,1/step);
                 if (loc_valid(points_in,cand)) {
                     state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
                     locs(p) = cand;
-                    // points(p) = at_int(points_in, {cand[1],cand[0]})+cv::Vec3f(((j+i)%10)*0.01, ((j+i+1)%10)*0.01,((j+i+2)%10)*0.01);
-                    points(p) = at_int(points_in, {cand[1],cand[0]});
-                    if (!loc_valid(state(p+cv::Vec2i(0,-1))))
-#pragma omp critical
-                        std::cout << "init from n " << p << n << points(p) << std::endl;
+                    points(p) = at_int(points_in, {cand[1],cand[0]})+cv::Vec3f(((j+i)%10)*0.01, ((j+i+1)%10)*0.01,((j+i+2)%10)*0.01);
+                    // points(p) = at_int(points_in, {cand[1],cand[0]});
                     break;
                 }
                 if (!state(p) && coord_valid(state(p+n))) {
@@ -919,7 +916,7 @@ int main(int argc, char *argv[])
         cv::Mat_<uint8_t> mask;
         bitwise_and(state, (uint8_t)STATE_LOC_VALID, mask);
         cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
-        cv::dilate(mask, mask, m, {-1,-1}, 5);
+        cv::dilate(mask, mask, m, {-1,-1}, 20);
         
         //also fill the mask in y dir
         for(int x=std::max(bbox.x,i-opt_w);x<=i;x++) {
@@ -939,7 +936,7 @@ int main(int argc, char *argv[])
         }
         
         for(int j=0;j<state_inpaint.rows;j++)
-            for(int x=first_col.x;x<i;x++) {
+            for(int x=first_col.x;x<=i;x++) {
                 state_inpaint(j,x) = 0;
                 if (loc_valid(state(j,x))) {
                     if (points(j,x)[0] == -1)
@@ -984,39 +981,48 @@ int main(int argc, char *argv[])
                 create_centered_losses(problem_col, state_inpaint(j, o), state_inpaint, points_in, points, locs, step, 0);
         }
         
+        //FIXME check for params outside used range because added by create_centered_losses?
+        
         for(int j=bbox.y;j<bbox.br().y;j++) {
-            for(int o=std::max(bbox.x,i-inpaint_back_range-2);o<=i;o++) {
+            for(int o=std::max(bbox.x,i-inpaint_back_range);o<=i;o++) {
                 if (problem_col.HasParameterBlock(&locs(j, o)[0]))
-                    problem_col.SetParameterBlockConstant(&locs(j, o)[0]);
+                    problem_col.SetParameterBlockVariable(&locs(j, o)[0]);
                 if (problem_col.HasParameterBlock(&points(j, o)[0]))
-                    problem_col.SetParameterBlockConstant(&points(j, o)[0]);
+                    problem_col.SetParameterBlockVariable(&points(j, o)[0]);
             }
         }
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
-            for(int o=std::max(bbox.x,i-inpaint_back_range);o<=i;o++)
-                if (!loc_valid(state(j,o)) && coord_valid(state(j, o)))
+            for(int o=std::max(bbox.x,i-inpaint_back_range-2);o<=i-inpaint_back_range;o++)
+                if (loc_valid(state(j, o)))
                     if (problem_col.HasParameterBlock(&points(j,o)[0]))
-                        problem_col.SetParameterBlockVariable(&points(j,o)[0]);
+                        problem_col.SetParameterBlockConstant(&points(j,o)[0]);
         }
         
-        for(int x=i-opt_w+1;x<=i;x++)
-            for(int j=bbox.y;j<bbox.br().y;j++) {
-                cv::Vec2i p = {j,x};
-                
-                if (loc_valid(state_inpaint(j,x))) {
-                    if (problem_col.HasParameterBlock(&locs(p)[0]))
-                        problem_col.SetParameterBlockConstant(&locs(p)[0]);
-                    if (problem_col.HasParameterBlock(&points(p)[0]))
-                        problem_col.SetParameterBlockConstant(&points(p)[0]);
-                }
-                else {
-                    if (problem_col.HasParameterBlock(&locs(p)[0]))
-                        problem_col.SetParameterBlockVariable(&locs(p)[0]);
-                    if (problem_col.HasParameterBlock(&points(p)[0]))
-                        problem_col.SetParameterBlockVariable(&points(p)[0]);
-                }
-            }
+        for(int j=bbox.y;j<bbox.br().y;j++) {
+            for(int o=std::max(bbox.x,i-inpaint_back_range-2);o<=i;o++)
+                if (loc_valid(state(j, o)))
+                    if (problem_col.HasParameterBlock(&points(j,o)[0]))
+                        problem_col.SetParameterBlockConstant(&points(j,o)[0]);
+        }
+        
+//         for(int x=i-opt_w+1;x<=i;x++)
+//             for(int j=bbox.y;j<bbox.br().y;j++) {
+//                 cv::Vec2i p = {j,x};
+//                 
+//                 if (loc_valid(state_inpaint(j,x))) {
+//                     if (problem_col.HasParameterBlock(&locs(p)[0]))
+//                         problem_col.SetParameterBlockConstant(&locs(p)[0]);
+//                     if (problem_col.HasParameterBlock(&points(p)[0]))
+//                         problem_col.SetParameterBlockConstant(&points(p)[0]);
+//                 }
+//                 else {
+//                     if (problem_col.HasParameterBlock(&locs(p)[0]))
+//                         problem_col.SetParameterBlockVariable(&locs(p)[0]);
+//                     if (problem_col.HasParameterBlock(&points(p)[0]))
+//                         problem_col.SetParameterBlockVariable(&points(p)[0]);
+//                 }
+//             }
             
         ceres::Solver::Summary summary;
         ceres::Solve(options_col, &problem_col, &summary);
@@ -1091,9 +1097,9 @@ int main(int argc, char *argv[])
             cv::imwrite("newz.tif",chs[2](bbox));
             cv::imwrite("surf_dist.tif",surf_dist(bbox));
             cv::imwrite("winding_out.tif",winding(bbox)+3);
-            cv::imwrite("state.tif",state(bbox)*20);
+            cv::imwrite("state.tif",state*20);
             cv::imwrite("state_inpaint.tif",state_inpaint(bbox)*20);
-            cv::imwrite("init_state.tif",init_state(bbox)*20);
+            cv::imwrite("init_state.tif",init_state*20);
         }
             
         if (!wind_counts[i]) {
