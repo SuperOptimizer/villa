@@ -20,7 +20,7 @@ static float dist_w = 0.3*trace_mul;
 static float straight_w = 0.02/sqrt(trace_mul);
 static float surf_w = 0.1/trace_mul;
 static float z_loc_loss_w = 0.0005*trace_mul;///sqrt(trace_mul);
-static float wind_w = 10.0;///sqrt(trace_mul);
+static float wind_w = 100.0;///sqrt(trace_mul);
 
 int inpaint_back_range = 40;
 
@@ -604,7 +604,7 @@ struct Interp2DLoss {
     
 };
 
-float wind_th = 0.1;
+float wind_th = 1.0;
 
 int main(int argc, char *argv[])
 {
@@ -1060,6 +1060,7 @@ int main(int argc, char *argv[])
         
         avg_wind[i] = 0;
         wind_counts[i] = 0;
+        float min_w = 0, max_w = 0;
         for(int x=std::max(i-opt_w,bbox.x+opt_w);x<=i;x++)
             for(int j=bbox.y;j<bbox.br().y;j++) {
                 cv::Vec2i p = {j,x};
@@ -1082,6 +1083,8 @@ int main(int argc, char *argv[])
                             avg_wind[i] += winding(j, x);
                             wind_counts[i] ++;
                         }
+                        min_w = std::min(min_w,winding(j, x)-tgt_wind[i]);
+                        max_w = std::max(max_w,winding(j, x)-tgt_wind[i]);
                     }
                 }
 
@@ -1096,7 +1099,7 @@ int main(int argc, char *argv[])
                 }
             }
             
-        if (i % 10 == 0) {
+        if (i % 10 == 0 || !wind_counts[i] || i == bbox.br().x-1) {
             std::vector<cv::Mat> chs;
             cv::split(points, chs);
             cv::imwrite("newx.tif",chs[0](bbox));
@@ -1115,7 +1118,7 @@ int main(int argc, char *argv[])
 
         avg_wind[i] /= wind_counts[i];
         
-        std::cout << "avg wind number for col " << i << " : " << avg_wind[i] << " ( tgt was " << tgt_wind[i] << " ) using #" << wind_counts[i] << std::endl;
+        std::cout << "avg wind number for col " << i << " : " << avg_wind[i] << " ( tgt was " << tgt_wind[i] << " ) using #" << wind_counts[i]  << " spread " << max_w << " - " << max_w << std::endl;
         wind_counts[i] = 1;
     }
     
