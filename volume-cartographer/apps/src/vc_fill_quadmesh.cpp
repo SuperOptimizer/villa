@@ -890,17 +890,35 @@ int main(int argc, char *argv[])
                     problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i-o], wind_w), nullptr, &locs(p+cv::Vec2i(0,-o))[0]);
         }
         
+        for(int j=bbox.y;j<bbox.br().y;j++) {
+            for(int o=std::max(bbox.x,i-20);o<i-opt_w;o++)
+                if (!loc_valid(state(j,o)) && coord_valid(state(j, o)))
+                create_centered_losses(problem_col, state_inpaint(j, o), state_inpaint, points_in, points, locs, step, 0);
+        }
+        
+        for(int j=bbox.y;j<bbox.br().y;j++) {
+            for(int o=std::max(bbox.x,i-20);o<i-opt_w;o++)
+                if (!loc_valid(state(j,o)) && coord_valid(state(j, o)))
+                    if (problem_col.HasParameterBlock(&points(j,o)[0]))
+                        problem_col.SetParameterBlockVariable(&points(j,o)[0]);
+        }
+        
         for(int x=i-opt_w+1;x<=i;x++)
             for(int j=bbox.y;j<bbox.br().y;j++) {
                 cv::Vec2i p = {j,x};
                 
-                if (loc_valid(state_inpaint(j,x)))
-                    continue;
-
-                if (problem_col.HasParameterBlock(&locs(p)[0]))
-                    problem_col.SetParameterBlockVariable(&locs(p)[0]);
-                if (problem_col.HasParameterBlock(&points(p)[0]))
-                    problem_col.SetParameterBlockVariable(&points(p)[0]);
+                if (loc_valid(state_inpaint(j,x))) {
+                    if (problem_col.HasParameterBlock(&locs(p)[0]))
+                        problem_col.SetParameterBlockConstant(&locs(p)[0]);
+                    if (problem_col.HasParameterBlock(&points(p)[0]))
+                        problem_col.SetParameterBlockConstant(&points(p)[0]);
+                }
+                else {
+                    if (problem_col.HasParameterBlock(&locs(p)[0]))
+                        problem_col.SetParameterBlockVariable(&locs(p)[0]);
+                    if (problem_col.HasParameterBlock(&points(p)[0]))
+                        problem_col.SetParameterBlockVariable(&points(p)[0]);
+                }
             }
             
         ceres::Solver::Summary summary;
