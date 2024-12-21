@@ -765,11 +765,11 @@ int main(int argc, char *argv[])
                 if (loc_valid(points_in,cand)) {
                     state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
                     locs(p) = cand;
-                    points(p) = at_int(points_in, {cand[1],cand[0]});
+                    points(p) = at_int(points_in, {cand[1],cand[0]})+cv::Vec3f(((j+i)%10)*0.01, ((j+i+1)%10)*0.01,((j+i+2)%10)*0.01);;
                     break;
                 }
                 if (coord_valid(state(p+n))) {
-                    points(p) = points(p+n);
+                    points(p) = points(p+n)+cv::Vec3d(((j+i)%10)*0.01, ((j+i+1)%10)*0.01,((j+i+2)%10)*0.01);
                     state(p) = STATE_COORD_VALID;
                 }
             }
