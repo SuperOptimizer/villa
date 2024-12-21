@@ -487,14 +487,15 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     return count;
 }
 
-float find_loc_wind(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &winding, const cv::Vec3f &tgt, float th)
+float find_loc_wind_slow(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &winding, const cv::Vec3f &tgt, float th)
 {
     float best_res = -1;
+    uint32_t sr = loc[0]+loc[1];
     for(int r=0;r<100;r++) {
         cv::Vec2f cand = loc;
         
         if (r)
-            cand = {rand() % points.cols, rand() % points.rows};
+            cand = {rand_r(&sr) % points.cols, rand_r(&sr) % points.rows};
         
         if (abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
             continue;
@@ -520,6 +521,108 @@ float find_loc_wind(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3f> &p
     }
     
     return sqrt(best_res);
+}
+
+static float sdist(const cv::Vec3f &a, const cv::Vec3f &b)
+{
+    cv::Vec3f d = a-b;
+    return d.dot(d);
+}
+
+float min_loc_wind(const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &winding, cv::Vec2f &loc, cv::Vec3f &out, float tgt_wind, const cv::Vec3f &tgt, float init_step, float min_step)
+{
+    if (!loc_valid(points, {loc[1],loc[0]})) {
+        out = {-1,-1,-1};
+        return -1;
+    }
+    
+    bool changed = true;
+    cv::Vec3f val = at_int(points, loc);
+    out = val;
+    float best = abs(at_int(winding, loc)-tgt_wind)*10 + sdist(val,tgt);
+    float res;
+    
+    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
+    std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
+    float step = init_step;
+    
+    
+    
+    while (changed) {
+        changed = false;
+        
+        for(auto &off : search) {
+            cv::Vec2f cand = loc+off*step;
+            
+            if (!loc_valid(points, {cand[1],cand[0]})) {
+                continue;
+            }
+            
+            val = at_int(points, cand);
+            // std::cout << "at" << cand << val << std::endl;
+            res = abs(at_int(winding, cand)-tgt_wind)*10;
+            res += sdist(val,tgt);
+            if (res < best) {
+                // std::cout << res << val << step << cand << "\n";
+                changed = true;
+                best = res;
+                loc = cand;
+                out = val;
+            }
+            // else
+            // std::cout << "(" << res << val << step << cand << "\n";
+        }
+        
+        if (changed)
+            continue;
+        
+        step *= 0.5;
+        changed = true;
+        
+        if (step < min_step)
+            break;
+    }
+    
+    // std::cout << "best" << best << out << "\n" <<  std::endl;
+    return best;
+}
+
+float find_loc_wind(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &winding, const cv::Vec3f &tgt, float th)
+{
+    float best_res = -1;
+    uint32_t sr = loc[0]+loc[1];
+    for(int r=0,full_r=0;r<1000,full_r<10000;full_r++) {
+        cv::Vec2f cand = loc;
+        
+        if (full_r || !loc_valid_nan_xy(winding, cand))
+            cand = {rand_r(&sr) % points.cols, rand_r(&sr) % points.rows};
+        
+        if (abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
+            continue;
+        
+        r++;
+        
+        cv::Vec3f out_;
+        float res = min_loc_wind(points, winding, cand, out_, tgt_wind, tgt, 4.0, 0.001);
+        
+        if (res < 0)
+            continue;
+        
+        if (abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
+            continue;
+        
+        if (res < th) {
+            loc = cand;
+            return res;
+        }
+        
+        if (best_res == -1 || res < best_res) {
+            loc = cand;
+            best_res = res;
+        }
+    }
+    
+    return best_res;
 }
 
 template<typename T, typename E>
@@ -628,12 +731,12 @@ int main(int argc, char *argv[])
     cv::Mat_<float> winding_in = cv::imread(wind_path, cv::IMREAD_UNCHANGED);
     cv::Mat_<cv::Vec3f> points_in = surf->rawPoints();
     
-    // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
+    cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
     // cv::Rect bbox_src(10,60,points_in.cols-20,240);
     // cv::Rect bbox_src(80,110,1000,80);
     // cv::Rect bbox_src(64,50,1000,160);
     // cv::Rect bbox_src(10,10,4000,points_in.rows-20);
-    cv::Rect bbox_src(1870,10,4000,points_in.rows-20);
+    // cv::Rect bbox_src(1870,10,4000,points_in.rows-20);
     
     float src_step = 20;
     float step = src_step*trace_mul;
@@ -790,7 +893,7 @@ int main(int argc, char *argv[])
         
         std::cout << "proc col " << i << std::endl;
         ceres::Problem problem_col;
-#pragma omp parallel for
+// #pragma omp parallel for
         for(int j=std::max(bbox.y,last_miny-2);j<std::min(bbox.br().y,last_maxy+2+1);j++) {
             cv::Vec2i p = {j,i};
             
@@ -817,6 +920,11 @@ int main(int argc, char *argv[])
             
             init_state(p) = state(p);
             
+            if (points(p)[0] == -1) {
+                // std::cout << "OOPS" << std::endl;
+                continue;
+            }
+            
             ceres::Solver::Summary summary;
             {
                 ceres::Problem problem;
@@ -834,6 +942,25 @@ int main(int argc, char *argv[])
                 //     std::cout << sqrt(summary.final_cost/summary.num_residuals) << " "<< cv::norm(cv::Vec3f(points(p))-at_int(points_in, {locs(p)[1],locs(p)[0]})) << std::endl;
                 // else
                 //     std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
+            }
+            
+            if (points(p)[0] == -1) {
+                std::cout << "OOPS2" << std::endl;
+                continue;
+            }
+            
+            if (!loc_valid(points_in, locs(p))) {
+                cv::Vec2f loc = {0,0};
+                float res = find_loc_wind(loc, tgt_wind[i], points_in, winding_in, points(p), 10.0);
+                loc = {loc[1],loc[0]};
+                // std::cout << "check " << res << loc << points_in.size << std::endl;
+                if (res >= 0 &&
+                    cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= 100
+                    && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= 0.3) {
+                    locs(p) = loc;
+                    state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
+                    std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
+                }
             }
             
             //FIXME initial solve does not look good? add z error?
