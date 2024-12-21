@@ -595,8 +595,8 @@ int main(int argc, char *argv[])
     // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
     // cv::Rect bbox_src(10,60,points_in.cols-20,240);
     // cv::Rect bbox_src(80,110,1000,80);
-    cv::Rect bbox_src(64,50,1000,160);
-    // cv::Rect bbox_src(10,10,1000,points_in.rows-20);
+    // cv::Rect bbox_src(64,50,1000,160);
+    cv::Rect bbox_src(10,10,1000,points_in.rows-20);
     
     float src_step = 20;
     int trace_mul = 1;
@@ -631,15 +631,44 @@ int main(int argc, char *argv[])
     
     std::cout << first_col.tl() << first_col.br() << std::endl;
     
-    for(int j=first_col.y;j<first_col.br().y;j++)
-        for(int i=first_col.x;i<first_col.br().x;i++) {
+    //also fill the mask in y dir
+    // for(int x=first_col.x;x<i;x++) {
+    //     for(int j=0;j<state_inpaint.rows;j++) {
+    //         if (mask(j,x)) {
+    //             col_first = std::min(col_first, j);
+    //             col_last = std::max(col_first, j);
+    //         }
+    //     }
+    // }
+    
+    for(int i=first_col.x;i<first_col.br().x;i++) {
+        int col_first = first_col.height;
+        int col_last = -1;
+        for(int j=first_col.y;j<first_col.br().y;j++) {            
+            if (points_in(j*trace_mul,i*trace_mul)[0] != -1) {
+                col_first = std::min(col_first, j);
+                col_last = std::max(col_first, j);
+            }
+        }
+        
+        std::cout << " i " << col_first << " " << col_last << std::endl;
+        
+        for(int j=col_first;j<col_last;j++) {
             points(j,i) = points_in(j*trace_mul, i*trace_mul);
             winding(j,i) = winding_in(j*trace_mul, i*trace_mul);
-            // if (points_in(j,i)[0] == -1)
-                // continue;
-            locs(j,i) = {j*trace_mul,i*trace_mul};
-            state(j,i) = STATE_LOC_VALID | STATE_COORD_VALID;
+            if (points(j,i)[0] != -1) {
+                state(j,i) = STATE_LOC_VALID | STATE_COORD_VALID;
+                locs(j,i) = {j*trace_mul,i*trace_mul};
+            }
+            else {
+                points(j, i) = {rand()%1000,rand()%1000,rand()%1000};
+                state(j,i) = STATE_COORD_VALID;
+            }
+                
         }
+    }
+    
+    cv::imwrite("state.tif", state*20);
     
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_QR;
@@ -666,19 +695,17 @@ int main(int argc, char *argv[])
         ceres::Problem problem_init;
         for(int j=first_col.y;j<first_col.br().y;j++)
             for(int i=first_col.x;i<first_col.br().x;i++)
-                if (points_in(j*trace_mul,i*trace_mul)[0] == -1) {
-                    points(j, i) = {rand()%1000,rand()%1000,rand()%1000};
-                    create_centered_losses(problem_init, {j,i}, state, points_in, points, locs, step, 0);
-                }
-                else {
+                if (loc_valid(state(j,i))) {
                     avg_wind[i] += winding_in(j*trace_mul,i*trace_mul);
                     wind_counts[i]++;
-
+                    
                     if (seed_loc[0] == -1) {
                         seed_loc = {j,i};
                         seed_coord = points_in(j*trace_mul,i*trace_mul);
                     }
                 }
+                else if (state(j,i))
+                    create_centered_losses(problem_init, {j,i}, state, points_in, points, locs, step, 0);
 
         for(int i=first_col.x;i<first_col.br().x;i++) {
             std::cout << "init wind col " << i << " " << avg_wind[i] / wind_counts[i] << " " << wind_counts[i] << std::endl;
@@ -690,15 +717,17 @@ int main(int argc, char *argv[])
             tgt_wind[i] = avg_wind[i];                
 
         for(int j=first_col.y;j<first_col.br().y;j++)
-            for(int i=first_col.x;i<first_col.br().x;i++)
-                if (points_in(j*trace_mul,i*trace_mul)[0] == -1) {
-                    points(j, i) = {rand()%1000,rand()%1000,rand()%1000};
-                    cv::Vec2i p = {j,i};
+            for(int i=first_col.x;i<first_col.br().x;i++) {
+                cv::Vec2i p = {j,i};
+                if (!loc_valid(state(p)) && coord_valid(state(p))) {
+                // if (points_in(j*trace_mul,i*trace_mul)[0] == -1) {
+                    // points(j, i) = {rand()%1000,rand()%1000,rand()%1000};
                     if (problem_init.HasParameterBlock(&locs(p)[0]))
                         problem_init.SetParameterBlockVariable(&locs(p)[0]);
                     if (problem_init.HasParameterBlock(&points(p)[0]))
                         problem_init.SetParameterBlockVariable(&points(p)[0]);
                 }
+            }
                     
         
         ceres::Solver::Summary summary;
@@ -763,6 +792,7 @@ int main(int argc, char *argv[])
                 //     std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
             }
             
+            //FIXME initial solve does not look good? add z error?
             if (loc_valid(points_in, locs(p)))
                 surf_dist(p) = cv::norm(cv::Vec3f(points(p))-at_int(points_in, {locs(p)[1],locs(p)[0]}));
             else
