@@ -347,7 +347,7 @@ int gen_straight_loss2(ceres::Problem &problem, const cv::Vec2i &p, const cv::Ve
 
 int create_centered_losses_left(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
 {
-    if (state(p) & STATE_LOC_VALID == 0)
+    if (!coord_valid(state(p)))
         return 0;
     
     //generate losses for point p
@@ -410,7 +410,7 @@ int create_centered_losses_left(ceres::Problem &problem, const cv::Vec2i &p, cv:
 
 int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
 {
-    if (state(p) & STATE_LOC_VALID == 0)
+    if (!coord_valid(state(p)))
         return 0;
 
     //generate losses for point p
@@ -582,7 +582,9 @@ int main(int argc, char *argv[])
     
     // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
     // cv::Rect bbox_src(10,60,points_in.cols-20,240);
-    cv::Rect bbox_src(80,110,1000,80);
+    // cv::Rect bbox_src(80,110,1000,80);
+    cv::Rect bbox_src(64,50,1000,160);
+    // cv::Rect bbox_src(10,10,1000,points_in.rows-20);
     
     float src_step = 20;
     int trace_mul = 1;
@@ -592,6 +594,7 @@ int main(int argc, char *argv[])
     cv::Rect bbox = {bbox_src.x/trace_mul, bbox_src.y/trace_mul, bbox_src.width/trace_mul, bbox_src.height/trace_mul};
 
     cv::Mat_<uint8_t> state(size, 0);
+    cv::Mat_<uint8_t> init_state(size, 0);
     cv::Mat_<cv::Vec3d> points(size, {-1,-1,-1});
     cv::Mat_<cv::Vec2d> locs(size, {-1,-1});
     cv::Mat_<float> winding(size, NAN);
@@ -606,7 +609,7 @@ int main(int argc, char *argv[])
     // cv::Rect bbox(333,10,1000,700);
     
     
-    int opt_w = 2;
+    int opt_w = 4;
     
     cv::Rect first_col = {bbox.x,bbox.y,opt_w,bbox.height};
     // points_in(first_col).copyTo(points(first_col));
@@ -708,20 +711,27 @@ int main(int argc, char *argv[])
         for(int j=bbox.y;j<bbox.br().y;j++) {
             cv::Vec2i p = {j,i};
             
-            locs(p) = locs(j,i-1)+cv::Vec2d(0,1/step);
-            points(p) = points(j,i-1)+cv::Vec3d(0.1,0.1,0.1);
+            locs(p) = {-1,-1}; //locs(j,i-1)+cv::Vec2d(0,1/step);
+            points(p) = {-1,-1, -1}; //points(j,i-1)+cv::Vec3d(0.1,0.1,0.1);
+            
+            state(p) = 0;
             
             //FIXME
             for(auto n :neighs) {
                 cv::Vec2d cand = locs(p+n)+cv::Vec2d(0,1/step);
                 if (loc_valid(points_in,cand)) {
+                    state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
                     locs(p) = cand;
                     points(p) = at_int(points_in, {cand[1],cand[0]});
                     break;
                 }
+                if (coord_valid(state(p+n))) {
+                    points(p) = points(p+n);
+                    state(p) = STATE_COORD_VALID;
+                }
             }
             
-            state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
+            init_state(p) = state(p);
             
             ceres::Solver::Summary summary;
             {
@@ -809,23 +819,83 @@ int main(int argc, char *argv[])
         for(int j=bbox.y;j<bbox.br().y;j++) {
             cv::Vec2i p = {j,i};
             
+            for(int o=0;o<=opt_w;o++) {
+                cv::Vec2i po = {j,i-o};
+                // state(p) = 0;
+                if (!loc_valid(points_in,locs(po))) {
+                    state(p) &= ~STATE_LOC_VALID;
+                    // points(po) = at_int(points_in,{locs(po)[1],locs(po)[0]});
+                    // state(p) = STATE_COORD_VALID | STATE_LOC_VALID;
+                }
+            }
+        }
+        
+        cv::Mat_<uint8_t> state_inpaint = state.clone();
+        cv::Mat_<uint8_t> mask;
+        bitwise_and(state, (uint8_t)STATE_LOC_VALID, mask);
+        cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
+        cv::dilate(mask, mask, m, {-1,-1}, 20);
+        
+        //also fill the mask in y dir
+        for(int x=first_col.x;x<i;x++) {
+            int col_first = first_col.height;
+            int col_last = -1;
+            for(int j=0;j<state_inpaint.rows;j++) {
+                if (mask(j,x)) {
+                    col_first = std::min(col_first, j);
+                    col_last = std::max(col_first, j);
+                }
+            }
+            for(int j=col_first;j<col_first;j++)
+                mask(j,x) = 1;
+        }
+        
+        for(int j=0;j<state_inpaint.rows;j++)
+            for(int x=first_col.x;x<i;x++) {
+                state_inpaint(j,x) = 0;
+                if (loc_valid(state(j,x))) {
+                    if (points(j,x)[0] == -1)
+                        throw std::runtime_error("need points 3!");
+                    state_inpaint(j,x) = STATE_COORD_VALID | STATE_LOC_VALID;
+                }
+                else if (mask(j,x)) {
+                    // std::cout << "inpaint only! " << cv::Vec2i(x,j) << std::endl;
+                    if (points(j,x)[0] != -1)
+                        state_inpaint(j,x) = STATE_COORD_VALID;
+                    // else {
+                        //FIXME still not sure shy this happens?
+                        // std::cout << "no valid coord! " << cv::Vec2i(x,j) << std::endl;
+                        // state_inpaint(j,x) = STATE_COORD_VALID;
+                        // points(j, x) = {rand() % 100 +1,rand() % 100 +1,rand() % 100 +1 };
+                    // }
+                }
+            }
+        
+        for(int j=bbox.y;j<bbox.br().y;j++) {
+            cv::Vec2i p = {j,i};
+            
             for(int o=0;o<=opt_w;o++)
-                create_centered_losses(problem_col, p+cv::Vec2i(0,-o), state, points_in, points, locs, step, LOSS_ON_SURF);
-            create_centered_losses_left(problem_col, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+                create_centered_losses(problem_col, p+cv::Vec2i(0,-o), state_inpaint, points_in, points, locs, step, LOSS_ON_SURF);
+            // create_centered_losses_left(problem_col, p, state_inpaint, points_in, points, locs, step, LOSS_ON_SURF);
             
             // for(int o=0;o<=opt_w;o++)
                 // create_centered_losses(problem_col, p+cv::Vec2i(0,-o), state, points_in, points, locs, step, 0);
             // create_centered_losses_left(problem_col, p, state, points_in, points, locs, step, 0);
             
-            problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
+            if (state_inpaint(p) & STATE_LOC_VALID)
+                problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
             
             for(int o=0;o<opt_w;o++)
-                problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i-o], wind_w), nullptr, &locs(p+cv::Vec2i(0,-o))[0]);
+                if (state_inpaint(j,i-o) & STATE_LOC_VALID)
+                    problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i-o], wind_w), nullptr, &locs(p+cv::Vec2i(0,-o))[0]);
         }
         
         for(int x=i-opt_w+1;x<=i;x++)
             for(int j=bbox.y;j<bbox.br().y;j++) {
                 cv::Vec2i p = {j,x};
+                
+                if (loc_valid(state_inpaint(j,x)))
+                    continue;
 
                 if (problem_col.HasParameterBlock(&locs(p)[0]))
                     problem_col.SetParameterBlockVariable(&locs(p)[0]);
@@ -839,15 +909,27 @@ int main(int argc, char *argv[])
         // std::cout << summary.FullReport() << std::endl;
         std::cout << summary.BriefReport() << std::endl;
         
-        if (i % 10 == 0) {
-            std::vector<cv::Mat> chs;
-            cv::split(points, chs);
-            cv::imwrite("newx.tif",chs[0]);
-            cv::imwrite("surf_dist.tif",surf_dist);
-            cv::imwrite("winding_out.tif",winding+3);
-        }
+        for(int x=i-opt_w+1;x<=i;x++)
+            for(int j=bbox.y;j<bbox.br().y;j++) {
+                cv::Vec2i p = {j,x};
+
+                if (problem_col.HasParameterBlock(&locs(p)[0]))
+                    problem_col.SetParameterBlockVariable(&locs(p)[0]);
+                if (problem_col.HasParameterBlock(&points(p)[0]))
+                    problem_col.SetParameterBlockVariable(&points(p)[0]);
+            }
+            
+            
+        ceres::Solve(options_col, &problem_col, &summary);
+        
+        // std::cout << summary.FullReport() << std::endl;
+        std::cout << summary.BriefReport() << std::endl;
         
         //TODO do something with the winding if its off (e.g. rerun and ignor?)
+        
+        if (i % 10 == 0) {
+            cv::imwrite("state_inpaint_pref.tif",state_inpaint(bbox)*20);
+        }
         
         avg_wind[i] = 0;
         wind_counts[i] = 0;
@@ -856,6 +938,7 @@ int main(int argc, char *argv[])
                 if (!loc_valid(points_in,locs(j,x))) {
                     locs(j,x) = {-1,-1};
                     winding(j, x) = NAN;
+                    state_inpaint(j,x) &= ~STATE_LOC_VALID;
                 }
                 else {
                     winding(j, x) = at_int(winding_in, {locs(j,x)[1],locs(j,x)[0]});
@@ -867,7 +950,28 @@ int main(int argc, char *argv[])
                         }
                     }
                 }
+
+                if (!coord_valid(state_inpaint(j,x))) {
+                    points(j,x) = {-1,-1,-1};
+                    state(j,x) = 0;
+                }
+                else {
+                    state(j,x) = state_inpaint(j, x);
+                    if (points(j,x)[0] == -1)
+                        throw std::runtime_error("need points 2!");
+                }
             }
+            
+        if (i % 10 == 0) {
+            std::vector<cv::Mat> chs;
+            cv::split(points, chs);
+            cv::imwrite("newx.tif",chs[0](bbox));
+            cv::imwrite("surf_dist.tif",surf_dist(bbox));
+            cv::imwrite("winding_out.tif",winding(bbox)+3);
+            cv::imwrite("state.tif",state(bbox)*20);
+            cv::imwrite("state_inpaint.tif",state_inpaint(bbox)*20);
+            cv::imwrite("init_state.tif",init_state(bbox)*20);
+        }
             
         if (!wind_counts[i]) {
             std::cout << "stopping as zero valid locations found!";
