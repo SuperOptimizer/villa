@@ -334,6 +334,7 @@ int gen_straight_loss2(ceres::Problem &problem, const cv::Vec2i &p, const cv::Ve
         return 0;
     
     problem.AddResidualBlock(StraightLoss2::Create(w), nullptr, &dpoints(p+o1)[0], &dpoints(p+o2)[0], &dpoints(p+o3)[0]);
+    // problem.AddResidualBlock(StraightLoss2::Create(w), new ceres::CauchyLoss(1.0), &dpoints(p+o1)[0], &dpoints(p+o2)[0], &dpoints(p+o3)[0]);
     
     if (!optimize_all) {
         if (o1 != cv::Vec2i(0,0))
@@ -347,7 +348,7 @@ int gen_straight_loss2(ceres::Problem &problem, const cv::Vec2i &p, const cv::Ve
     return 1;
 }
 
-int create_centered_losses_left(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
+int create_centered_losses_left_large(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
 {
     if (!coord_valid(state(p)))
         return 0;
@@ -407,6 +408,34 @@ int create_centered_losses_left(ceres::Problem &problem, const cv::Vec2i &p, cv:
     if (flags & LOSS_ON_SURF)
         gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
 
+    return count;
+}
+
+int create_centered_losses_left(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
+{
+    if (!coord_valid(state(p)))
+        return 0;
+    
+    //generate losses for point p
+    int count = 0;
+    
+    //horizontal
+    count += gen_straight_loss2(problem, p, {0,-2},{0,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    
+    //further and diag!
+    count += gen_straight_loss2(problem, p, {-2,-2},{-1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+    count += gen_straight_loss2(problem, p, {2,-2},{1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
+    
+    //direct neighboars
+    count += gen_dist_loss_fill(problem, p, {0,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    
+    //diagonal neighbors
+    count += gen_dist_loss_fill(problem, p, {1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
+    count += gen_dist_loss_fill(problem, p, {-1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
+    
+    if (flags & LOSS_ON_SURF)
+        gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
+    
     return count;
 }
 
@@ -781,6 +810,7 @@ int main(int argc, char *argv[])
                 ceres::Problem problem;
                 create_centered_losses_left(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
                 problem.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i], wind_w), nullptr, &locs(p)[0]);
+                problem.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
                 
                 // create_centered_losses(problem, p, state, points_in, points, locs, step, 0);
                 
@@ -878,10 +908,10 @@ int main(int argc, char *argv[])
         cv::Mat_<uint8_t> mask;
         bitwise_and(state, (uint8_t)STATE_LOC_VALID, mask);
         cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
-        cv::dilate(mask, mask, m, {-1,-1}, 20);
+        // cv::dilate(mask, mask, m, {-1,-1}, 20);
         
         //also fill the mask in y dir
-        for(int x=first_col.x;x<i;x++) {
+        for(int x=std::max(bbox.x,i-opt_w);x<=i;x++) {
             int col_first = first_col.height;
             int col_last = -1;
             for(int j=0;j<state_inpaint.rows;j++) {
@@ -890,7 +920,7 @@ int main(int argc, char *argv[])
                     col_last = std::max(col_first, j);
                 }
             }
-            for(int j=col_first;j<col_first;j++)
+            for(int j=col_first;j<col_last;j++)
                 mask(j,x) = 1;
         }
         
@@ -938,6 +968,15 @@ int main(int argc, char *argv[])
             for(int o=std::max(bbox.x,i-inpaint_back_range);o<i-opt_w;o++)
                 if (!loc_valid(state(j,o)) && coord_valid(state(j, o)))
                 create_centered_losses(problem_col, state_inpaint(j, o), state_inpaint, points_in, points, locs, step, 0);
+        }
+        
+        for(int j=bbox.y;j<bbox.br().y;j++) {
+            for(int o=std::max(bbox.x,i-inpaint_back_range-2);o<=i;o++) {
+                if (problem_col.HasParameterBlock(&locs(j, o)[0]))
+                    problem_col.SetParameterBlockConstant(&locs(j, o)[0]);
+                if (problem_col.HasParameterBlock(&points(j, o)[0]))
+                    problem_col.SetParameterBlockConstant(&points(j, o)[0]);
+            }
         }
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
