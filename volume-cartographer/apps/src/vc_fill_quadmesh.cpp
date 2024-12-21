@@ -14,14 +14,15 @@ namespace fs = std::filesystem;
 
 using json = nlohmann::json;
 
+static int trace_mul = 5;
 
-static float dist_w = 0.3;
-static float straight_w = 0.02;
-static float surf_w = 0.1;
-static float z_loc_loss_w = 0.0005;
-static float wind_w = 10.0;
+static float dist_w = 0.3*trace_mul;
+static float straight_w = 0.02/sqrt(trace_mul);
+static float surf_w = 0.1/trace_mul;
+static float z_loc_loss_w = 0.0005;///sqrt(trace_mul);
+static float wind_w = 10.0;///sqrt(trace_mul);
 
-int inpaint_back_range = 20;
+int inpaint_back_range = 40;
 
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
@@ -476,6 +477,10 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     count += gen_dist_loss_fill(problem, p, {-1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     count += gen_dist_loss_fill(problem, p, {-1,1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     
+    //+1
+    count += gen_dist_loss_fill(problem, p, {-2,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {2,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    
     if (flags & LOSS_ON_SURF)
         gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
     
@@ -627,10 +632,9 @@ int main(int argc, char *argv[])
     // cv::Rect bbox_src(10,60,points_in.cols-20,240);
     // cv::Rect bbox_src(80,110,1000,80);
     // cv::Rect bbox_src(64,50,1000,160);
-    cv::Rect bbox_src(10,10,2000,points_in.rows-20);
+    cv::Rect bbox_src(10,10,4000,points_in.rows-20);
     
     float src_step = 20;
-    int trace_mul = 1;
     float step = src_step*trace_mul;
     
     cv::Size size = {points_in.cols/trace_mul, points_in.rows/trace_mul};
@@ -917,7 +921,7 @@ int main(int argc, char *argv[])
         cv::Mat_<uint8_t> mask;
         bitwise_and(state, (uint8_t)STATE_LOC_VALID, mask);
         cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
-        cv::dilate(mask, mask, m, {-1,-1}, 20);
+        cv::dilate(mask, mask, m, {-1,-1}, 20/trace_mul);
         
         //also fill the mask in y dir
         for(int x=std::max(bbox.x,i-opt_w);x<=i;x++) {
