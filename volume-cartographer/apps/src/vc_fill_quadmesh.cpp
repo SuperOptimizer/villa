@@ -15,11 +15,13 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 
-static float dist_w = 0.1;
+static float dist_w = 0.3;
 static float straight_w = 0.02;
 static float surf_w = 0.1;
 static float z_loc_loss_w = 0.0002;
 static float wind_w = 10.0;
+
+int inpaint_back_range = 100;
 
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
@@ -596,7 +598,7 @@ int main(int argc, char *argv[])
     // cv::Rect bbox_src(10,60,points_in.cols-20,240);
     // cv::Rect bbox_src(80,110,1000,80);
     // cv::Rect bbox_src(64,50,1000,160);
-    cv::Rect bbox_src(10,10,1000,points_in.rows-20);
+    cv::Rect bbox_src(10,10,500,points_in.rows-20);
     
     float src_step = 20;
     int trace_mul = 1;
@@ -933,13 +935,13 @@ int main(int argc, char *argv[])
         }
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
-            for(int o=std::max(bbox.x,i-20);o<i-opt_w;o++)
+            for(int o=std::max(bbox.x,i-inpaint_back_range);o<i-opt_w;o++)
                 if (!loc_valid(state(j,o)) && coord_valid(state(j, o)))
                 create_centered_losses(problem_col, state_inpaint(j, o), state_inpaint, points_in, points, locs, step, 0);
         }
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
-            for(int o=std::max(bbox.x,i-20);o<i-opt_w;o++)
+            for(int o=std::max(bbox.x,i-inpaint_back_range);o<i-opt_w;o++)
                 if (!loc_valid(state(j,o)) && coord_valid(state(j, o)))
                     if (problem_col.HasParameterBlock(&points(j,o)[0]))
                         problem_col.SetParameterBlockVariable(&points(j,o)[0]);
@@ -1026,6 +1028,7 @@ int main(int argc, char *argv[])
             std::vector<cv::Mat> chs;
             cv::split(points, chs);
             cv::imwrite("newx.tif",chs[0](bbox));
+            cv::imwrite("newz.tif",chs[2](bbox));
             cv::imwrite("surf_dist.tif",surf_dist(bbox));
             cv::imwrite("winding_out.tif",winding(bbox)+3);
             cv::imwrite("state.tif",state(bbox)*20);
