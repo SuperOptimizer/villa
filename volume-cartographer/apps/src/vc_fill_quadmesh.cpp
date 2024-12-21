@@ -672,6 +672,8 @@ int main(int argc, char *argv[])
     //     }
     // }
     
+    int last_miny, last_maxy;
+    
     for(int i=first_col.x;i<first_col.br().x;i++) {
         int col_first = first_col.height;
         int col_last = -1;
@@ -684,7 +686,10 @@ int main(int argc, char *argv[])
         
         std::cout << " i " << col_first << " " << col_last << std::endl;
         
-        for(int j=col_first;j<col_last;j++) {
+        last_miny = col_first;
+        last_maxy = col_last;
+        
+        for(int j=col_first;j<=col_last;j++) {
             points(j,i) = points_in(j*trace_mul, i*trace_mul);
             winding(j,i) = winding_in(j*trace_mul, i*trace_mul);
             if (points(j,i)[0] != -1) {
@@ -777,10 +782,10 @@ int main(int argc, char *argv[])
         
         std::cout << "wind tgt: " << tgt_wind[i] << " " << avg_wind[i-1] << " " << avg_wind[i-2] << std::endl;
         
-        std::cout << "proc row " << i << std::endl;
+        std::cout << "proc col " << i << std::endl;
         ceres::Problem problem_col;
 #pragma omp parallel for
-        for(int j=bbox.y;j<bbox.br().y;j++) {
+        for(int j=std::max(bbox.y,last_miny-10);j<std::min(bbox.br().y,last_maxy+10+1);j++) {
             cv::Vec2i p = {j,i};
             
             locs(p) = {-1,-1}; //locs(j,i-1)+cv::Vec2d(0,1/step);
@@ -789,15 +794,19 @@ int main(int argc, char *argv[])
             state(p) = 0;
             
             //FIXME
-            for(auto n :neighs) {
-                cv::Vec2d cand = locs(p+n)+cv::Vec2d(0,1/step);
+            for(auto n : neighs) {
+                cv::Vec2d cand = locs(p+n) ;//+ cv::Vec2d(0,1/step);
                 if (loc_valid(points_in,cand)) {
                     state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
                     locs(p) = cand;
-                    points(p) = at_int(points_in, {cand[1],cand[0]})+cv::Vec3f(((j+i)%10)*0.01, ((j+i+1)%10)*0.01,((j+i+2)%10)*0.01);;
+                    // points(p) = at_int(points_in, {cand[1],cand[0]})+cv::Vec3f(((j+i)%10)*0.01, ((j+i+1)%10)*0.01,((j+i+2)%10)*0.01);
+                    points(p) = at_int(points_in, {cand[1],cand[0]});
+                    if (!loc_valid(state(p+cv::Vec2i(0,-1))))
+#pragma omp critical
+                        std::cout << "init from n " << p << n << points(p) << std::endl;
                     break;
                 }
-                if (coord_valid(state(p+n))) {
+                if (!state(p) && coord_valid(state(p+n))) {
                     points(p) = points(p+n)+cv::Vec3d(((j+i)%10)*0.01, ((j+i+1)%10)*0.01,((j+i+2)%10)*0.01);
                     state(p) = STATE_COORD_VALID;
                 }
@@ -897,7 +906,9 @@ int main(int argc, char *argv[])
                 cv::Vec2i po = {j,i-o};
                 // state(p) = 0;
                 if (!loc_valid(points_in,locs(po))) {
-                    state(p) &= ~STATE_LOC_VALID;
+                    state(po) &= ~STATE_LOC_VALID;
+                    
+                    locs(po) = {-1,-1};
                     // points(po) = at_int(points_in,{locs(po)[1],locs(po)[0]});
                     // state(p) = STATE_COORD_VALID | STATE_LOC_VALID;
                 }
@@ -908,7 +919,7 @@ int main(int argc, char *argv[])
         cv::Mat_<uint8_t> mask;
         bitwise_and(state, (uint8_t)STATE_LOC_VALID, mask);
         cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
-        // cv::dilate(mask, mask, m, {-1,-1}, 20);
+        cv::dilate(mask, mask, m, {-1,-1}, 5);
         
         //also fill the mask in y dir
         for(int x=std::max(bbox.x,i-opt_w);x<=i;x++) {
@@ -920,8 +931,11 @@ int main(int argc, char *argv[])
                     col_last = std::max(col_first, j);
                 }
             }
-            for(int j=col_first;j<col_last;j++)
+            for(int j=col_first;j<=col_last;j++)
                 mask(j,x) = 1;
+            
+            last_miny = col_first;
+            last_maxy = col_last;
         }
         
         for(int j=0;j<state_inpaint.rows;j++)
