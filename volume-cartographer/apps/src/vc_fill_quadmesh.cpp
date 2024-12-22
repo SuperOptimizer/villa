@@ -286,7 +286,7 @@ std::string time_str()
     return oss.str();
 }
 
-int gen_surfloss(const cv::Vec2i p, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float w = 0.1)
+int gen_surfloss(const cv::Vec2i p, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float w = 0.1, int flags = 0)
 {
     if ((state(p) & STATE_LOC_VALID) == 0)
         return 0;
@@ -752,32 +752,37 @@ int find_neighbors(cv::Mat_<cv::Vec3f> const &points, cv::Mat_<float> const &win
 
 int main(int argc, char *argv[])
 {
-    if (argc != 3) {
-        std::cout << "usage: " << argv[0] << " <tiffxyz> <winding>" << std::endl;
+    if (argc != 4 && (argc-1) % 3 != 0)  {
+        std::cout << "usage: " << argv[0] << " <tiffxyz> <winding> <weight> ..." << std::endl;
+        std::cout << "  multiple triplets of <tiffxyz> <winding> <weight> can be used for a joint optimization" << std::endl;
         return EXIT_SUCCESS;
     }
     
-    fs::path seg_path = argv[1];
-    fs::path wind_path = argv[2];
+    std::vector<QuadSurface*> surfs;
+    std::vector<cv::Mat_<cv::Vec3f>> surf_points;
+    std::vector<cv::Mat_<float>> winds;
+    std::vector<float> weights;
     
-    QuadSurface *surf = nullptr;
-    try {
-        surf = load_quad_from_tifxyz(seg_path);
-    }
-    catch (...) {
-        std::cout << "error when loading: " << seg_path << std::endl;
-        return EXIT_FAILURE;
+    for(int n=0;n<argc/3;n++) {        
+        QuadSurface *surf = load_quad_from_tifxyz(argv[n*3+1]);
+        
+        cv::Mat_<float> wind = cv::imread(argv[n*3+2], cv::IMREAD_UNCHANGED);
+        
+        surfs.push_back(surf);
+        winds.push_back(wind);
+        surf_points.push_back(surf->rawPoints());
+        weights.push_back(atof(argv[n*3+3]));
     }
     
-    cv::Mat_<float> winding_in = cv::imread(wind_path, cv::IMREAD_UNCHANGED);
-    cv::Mat_<cv::Vec3f> points_in = surf->rawPoints();
+    cv::Mat_<cv::Vec3f> points_in = surfs[0]->rawPoints();
+    cv::Mat_<float> winding_in = winds[0];
     
     cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
     // cv::Rect bbox_src(10,60,points_in.cols-20,240);
     // cv::Rect bbox_src(80,110,1000,80);
     // cv::Rect bbox_src(64,50,1000,160);
     // cv::Rect bbox_src(10,10,4000,points_in.rows-20);
-    // cv::Rect bbox_src(1870,10,4000,points_in.rows-20);
+    // cv::Rect bbox_src(10,10,100,points_in.rows-20);
     
     float src_step = 20;
     float step = src_step*trace_mul;
@@ -948,6 +953,20 @@ int main(int argc, char *argv[])
                 
                 ceres::Solve(options, &problem, &summary);
             }
+            
+            if (!loc_valid(points_in, locs(p))) {
+                cv::Vec2f loc = {0,0};
+                float res = find_loc_wind(loc, tgt_wind[i], points_in, winding_in, points(p), 10.0);
+                loc = {loc[1],loc[0]};
+                if (res >= 0 &&
+                    cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= 100
+                    && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= 0.3) {
+                        locs(p) = loc;
+                        state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
+                        // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
+                    }
+            }
+                    
 
 //             std::vector<cv::Vec2d> locs_layers;
 //             std::vector<int> idxs_layers;
@@ -1022,11 +1041,35 @@ int main(int argc, char *argv[])
                 }
             }
         
+        std::vector<cv::Vec2d> add_locs;
+        std::vector<cv::Vec2i> add_ps;
+        std::vector<int> add_idxs;
+        
+        
         for(int j=bbox.y;j<bbox.br().y;j++) {
             cv::Vec2i p = {j,i};
             
-            for(int o=0;o<=opt_w;o++)
-                create_centered_losses(problem_col, p+cv::Vec2i(0,-o), state_inpaint, points_in, points, locs, step, LOSS_ON_SURF);
+            for(int o=0;o<=opt_w;o++) {
+                cv::Vec2i po = {j,i-o};
+                create_centered_losses(problem_col, po, state_inpaint, points_in, points, locs, step, LOSS_ON_SURF);
+                
+                if (surfs.size() > 1 && coord_valid(state_inpaint(po)))
+                    for(int s=1;s<surfs.size();s++)
+                    {
+                        cv::Vec2f loc = {0,0};
+                        float res = find_loc_wind(loc, tgt_wind[i], surf_points[s], winds[s], points(po), 10.0);
+                        loc = {loc[1],loc[0]};
+                        if (res >= 0 &&
+                            cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(po))) <= 100
+                            && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= 0.3) {
+                                add_locs.push_back(loc);
+                                add_idxs.push_back(s);
+                                add_ps.push_back(po);
+                        // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
+                            }
+                    }
+                
+            }
             
             if (state_inpaint(p) & STATE_LOC_VALID)
                 problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
@@ -1034,6 +1077,12 @@ int main(int argc, char *argv[])
             for(int o=0;o<opt_w;o++)
                 if (state_inpaint(j,i-o) & STATE_LOC_VALID)
                     problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i-o], wind_w), nullptr, &locs(p+cv::Vec2i(0,-o))[0]);
+        }
+        
+        for(int n=0;n<add_locs.size();n++) {
+            int idx = add_idxs[n];
+            problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]/weights[0]), new ceres::HuberLoss(1.0), &points(add_ps[n])[0], &add_locs[n][0]);
+            problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[idx], tgt_wind[add_ps[n][1]], wind_w), nullptr,  &add_locs[n][0]);
         }
         
         for(int j=bbox.y;j<bbox.br().y;j++)
