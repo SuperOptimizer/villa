@@ -728,6 +728,28 @@ static void write_ply(std::string path, const std::vector<cv::Vec3f> &points)
         ply << p[0] << " " << p[1] << " " << p[2] << "\n";
 }
 
+int find_neighbors(cv::Mat_<cv::Vec3f> const &points, cv::Mat_<float> const &winding, const cv::Vec3f &ref_point, float ref_wind, std::vector<cv::Vec2d> &locs_out, std::vector<int> &wind_idx_out)
+{
+    for(int wf=-layer_reg_range;wf<=layer_reg_range;wf++) {
+        cv::Vec2f loc = {0,0};
+        float layer_tgt_w = ref_wind + wf;
+        float res = find_loc_wind(loc, layer_tgt_w, points, winding, ref_point, 10.0);
+        loc = {loc[1],loc[0]};
+        cv::Vec3f found_p = at_int(points, {loc[1],loc[0]});
+        float found_wind = at_int(winding, {loc[1],loc[0]});
+        if (res >= 0 &&
+            cv::norm(found_p - ref_point) <= layer_reg_range_vx
+            && abs(found_wind - layer_tgt_w) <= 0.3)
+        {
+            locs_out.push_back(loc);
+            wind_idx_out.push_back(wf);
+            // std::cout << "potential neighbor at dist " << cv::norm(at_int(points, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << at_int(winding_in, {loc[1],loc[0]}) << " " << layer_tgt_w << std::endl;
+        }
+    }
+    
+    return locs_out.size();
+}
+
 int main(int argc, char *argv[])
 {
     if (argc != 3) {
@@ -926,52 +948,24 @@ int main(int argc, char *argv[])
                 
                 ceres::Solve(options, &problem, &summary);
             }
-            
-            if (!loc_valid(points_in, locs(p))) {
-                cv::Vec2f loc = {0,0};
-                float res = find_loc_wind(loc, tgt_wind[i], points_in, winding_in, points(p), 10.0);
-                loc = {loc[1],loc[0]};
-                if (res >= 0 &&
-                    cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= 100
-                    && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= 0.3) {
-                    locs(p) = loc;
-                    state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
-                    // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
-                }
-            }
-            
-            //estimate neighbor positions, for now only for known surface to test with GT
-            cv::Vec3f ref_p = points(p);
-                if (loc_valid(points_in, locs(p)))
-                    ref_p = at_int(points_in, {locs(p)[1],locs(p)[0]});
 
-            for(int wf=-layer_reg_range;wf<=layer_reg_range;wf++) {
-                cv::Vec2f loc = {0,0};
-                float layer_tgt_w = tgt_wind[i] + wf;
-                float res = find_loc_wind(loc, layer_tgt_w, points_in, winding_in, points(p), 10.0);
-                loc = {loc[1],loc[0]};
-                if (res >= 0 &&
-                    cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= layer_reg_range_vx
-                    && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - layer_tgt_w) <= 0.3)
-                {
-                    // std::cout << "potential neighbor at dist " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << at_int(winding_in, {loc[1],loc[0]}) << " " << layer_tgt_w << std::endl;
-                    if (loc_valid(points_in, locs(p)))
+            std::vector<cv::Vec2d> locs_layers;
+            std::vector<int> idxs_layers;
+            find_neighbors(points_in, winding_in, points(p), tgt_wind[i], locs_layers, idxs_layers);
+            
+            if (loc_valid(points_in, locs(p)))
 #pragma omp critical
-                        layer_neighs.push_back(at_int(points_in, {loc[1],loc[0]}));
-                    else
+                for(auto & l : locs_layers)
+                    layer_neighs.push_back(at_int(points_in, {l[1],l[0]}));
+            else
 #pragma omp critical
-                        layer_neighs_inp.push_back(at_int(points_in, {loc[1],loc[0]}));
-                }
-            }
+                for(auto & l : locs_layers)
+                    layer_neighs_inp.push_back(at_int(points_in, {l[1],l[0]}));
         }
         
         if (i % 10 == 0) {
             write_ply("col_layer_neighs.ply", layer_neighs);
             write_ply("col_layer_neighs_inp.ply", layer_neighs_inp);
-            // write_ply("col_layer_neighs"+std::to_string(i)+".ply", layer_neighs);
-            // write_ply("col_layer_neighs_inp"+std::to_string(i)+".ply", layer_neighs_inp);
-            // layer_neighs.resize(0);
-            // layer_neighs_inp.resize(0);
         }
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
