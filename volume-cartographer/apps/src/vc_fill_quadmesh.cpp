@@ -1131,8 +1131,8 @@ int main(int argc, char *argv[])
                         float res = find_loc_wind(loc, tgt_wind[i], surf_points[s], winds[s], points(po), 10.0);
                         loc = {loc[1],loc[0]};
                         if (res >= 0 &&
-                            cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(po))) <= 100
-                            && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= 0.3)
+                            cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) <= 100
+                            && cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i]) <= 0.3)
 #pragma omp critical
                             {
                                 add_locs.push_back(loc);
