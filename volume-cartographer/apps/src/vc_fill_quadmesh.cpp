@@ -14,19 +14,18 @@ namespace fs = std::filesystem;
 
 using json = nlohmann::json;
 
-static int trace_mul = 1;
-
-static float dist_w = 0.3;
-static float straight_w = 0.02;
-static float surf_w = 0.1;
-static float z_loc_loss_w = 0.0005;
-static float wind_w = 100.0;
-float wind_th = 0.3;
+static int trace_mul;
+static float dist_w;
+static float straight_w;
+static float surf_w;
+static float z_loc_loss_w;
+static float wind_w;
+static float wind_th;
+static int inpaint_back_range;
 
 static int layer_reg_range = 15;
 static float layer_reg_range_vx = 500.0;
 
-int inpaint_back_range = 40;
 
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
@@ -752,8 +751,8 @@ int find_neighbors(cv::Mat_<cv::Vec3f> const &points, cv::Mat_<float> const &win
 
 int main(int argc, char *argv[])
 {
-    if (argc != 4 && (argc-1) % 3 != 0)  {
-        std::cout << "usage: " << argv[0] << " <tiffxyz> <winding> <weight> ..." << std::endl;
+    if (argc != 5 && (argc-2) % 3 != 0)  {
+        std::cout << "usage: " << argv[0] << " <params.json> <tiffxyz> <winding> <weight> ..." << std::endl;
         std::cout << "  multiple triplets of <tiffxyz> <winding> <weight> can be used for a joint optimization" << std::endl;
         return EXIT_SUCCESS;
     }
@@ -762,16 +761,28 @@ int main(int argc, char *argv[])
     std::vector<cv::Mat_<cv::Vec3f>> surf_points;
     std::vector<cv::Mat_<float>> winds;
     std::vector<float> weights;
+
+    std::ifstream params_f(argv[1]);
+    json params = json::parse(params_f);
+    
+    trace_mul = params.value("trace_mul", 1);
+    dist_w = params.value("dist_w", 0.3);
+    straight_w = params.value("straight_w", 0.02);
+    surf_w = params.value("surf_w", 0.1);
+    z_loc_loss_w = params.value("z_loc_loss_w", 0.0005);
+    wind_w = params.value("wind_w", 100.0);
+    wind_th = params.value("wind_th", 0.3);
+    inpaint_back_range = params.value("inpaint_back_range", 40);
     
     for(int n=0;n<argc/3;n++) {        
-        QuadSurface *surf = load_quad_from_tifxyz(argv[n*3+1]);
+        QuadSurface *surf = load_quad_from_tifxyz(argv[n*3+2]);
         
-        cv::Mat_<float> wind = cv::imread(argv[n*3+2], cv::IMREAD_UNCHANGED);
+        cv::Mat_<float> wind = cv::imread(argv[n*3+3], cv::IMREAD_UNCHANGED);
         
         surfs.push_back(surf);
         winds.push_back(wind);
         surf_points.push_back(surf->rawPoints());
-        weights.push_back(atof(argv[n*3+3]));
+        weights.push_back(atof(argv[n*3+4]));
     }
     
     cv::Mat_<cv::Vec3f> points_in = surfs[0]->rawPoints();
