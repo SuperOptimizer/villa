@@ -22,7 +22,7 @@ static float z_loc_loss_w;
 static float wind_w;
 static float wind_th;
 static int inpaint_back_range;
-static int far_dist = 2;
+static int far_dist = 1;
 
 static int layer_reg_range = 15;
 static float layer_reg_range_vx = 500.0;
@@ -291,9 +291,9 @@ int gen_surfloss(const cv::Vec2i p, ceres::Problem &problem, const cv::Mat_<uint
     if ((state(p) & STATE_LOC_VALID) == 0)
         return 0;
     
-    // problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::HuberLoss(1.0), &points(p)[0], &locs(p)[0]);
+    problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::HuberLoss(1.0), &points(p)[0], &locs(p)[0]);
     // problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::TukeyLoss(2.0), &points(p)[0], &locs(p)[0]);
-    problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), nullptr, &points(p)[0], &locs(p)[0]);
+    // problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), nullptr, &points(p)[0], &locs(p)[0]);
 
     return 1;
 }
@@ -462,7 +462,7 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     count += gen_straight_loss2(problem, p, {-1,0},{0,0},{1,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     //far dist
     if (far_dist != 1)
-        count += gen_straight_loss2(problem, p, {-far_dist,0},{0,0},{far_dist,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+        count += gen_straight_loss2(problem, p, {-far_dist,0},{0,0},{far_dist,0}, state, points, flags & OPTIMIZE_ALL, 10*straight_w);
     // count += gen_straight_loss2(problem, p, {0,0},{1,0},{2,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     
     //diag
@@ -486,8 +486,8 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     
     //+1
     if (far_dist != 1) {
-        count += gen_dist_loss_fill(problem, p, {-far_dist,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-        count += gen_dist_loss_fill(problem, p, {far_dist,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+        count += gen_dist_loss_fill(problem, p, {-far_dist,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 10*dist_w);
+        count += gen_dist_loss_fill(problem, p, {far_dist,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 10*dist_w);
     }
     
     if (flags & LOSS_ON_SURF)
@@ -788,7 +788,7 @@ int main(int argc, char *argv[])
     int opt_w_short = params.value("opt_w", 4);
     
     int opt_w = opt_w_short;
-    int large_opt_w = 16;
+    int large_opt_w = 32;
     int large_opt_every = 8;
     
     std::cout << "running with surf w " << surf_w << std::endl;
@@ -808,11 +808,7 @@ int main(int argc, char *argv[])
     cv::Mat_<float> winding_in = winds[0];
     
     // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
-    // cv::Rect bbox_src(10,60,points_in.cols-20,240);
-    // cv::Rect bbox_src(80,110,1000,80);
-    // cv::Rect bbox_src(64,50,1000,160);
-    cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
-    // cv::Rect bbox_src(105,10,2000,points_in.rows-20);
+    cv::Rect bbox_src(3000,10,points_in.cols-10-3000,points_in.rows-20);
     
     float src_step = 20;
     float step = src_step*trace_mul;
@@ -1029,25 +1025,25 @@ int main(int argc, char *argv[])
             
             //FIXME ok so just adding other surfs is bad
             if (!loc_valid(points_in, locs(p))) {
-                bool valid_neigh = false;
-                std::vector<cv::Vec2i> direct_neighs = {{0,-1},{-1,-1},{1,-1}};
-                for (auto n : direct_neighs)
-                    if (loc_valid(state(p+n)))
-                        valid_neigh = true;
-                
-                if (valid_neigh) {
+//                 bool valid_neigh = false;
+//                 std::vector<cv::Vec2i> direct_neighs = {{0,-1},{-1,-1},{1,-1}};
+//                 for (auto n : direct_neighs)
+//                     if (loc_valid(state(p+n)))
+//                         valid_neigh = true;
+//                 
+//                 if (valid_neigh) {
                     cv::Vec2f loc = {0,0};
                     float res = find_loc_wind(loc, tgt_wind[i], points_in, winding_in, points(p), 10.0, false);
                     loc = {loc[1],loc[0]};
                     if (res >= 0 &&
-                        cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= 10
+                        cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= 20
                         && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= 0.3) {
                             locs(p) = loc;
                             //FIXME check tHIS AGAIN
                             state(p) = STATE_COORD_VALID | STATE_LOC_VALID;
                             // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
                         }
-                }
+                // }
             }
                     
 
@@ -1086,7 +1082,7 @@ int main(int argc, char *argv[])
         cv::Mat_<uint8_t> mask;
         bitwise_and(state, (uint8_t)STATE_LOC_VALID, mask);
         cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
-        cv::dilate(mask, mask, m, {-1,-1}, 20/trace_mul);
+        cv::dilate(mask, mask, m, {-1,-1}, 40/trace_mul);
         
         //also fill the mask in y dir
         for(int x=std::max(bbox.x,i-opt_w);x<=i;x++) {
