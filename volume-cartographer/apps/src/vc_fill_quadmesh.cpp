@@ -752,33 +752,9 @@ int main(int argc, char *argv[])
     
     cv::Mat_<uint8_t> fail_code(size, 0);
     
-    // cv::Rect bbox(294,34,1000,364);
-    // cv::Rect bbox(294,34+250,200,114);
-    // cv::Rect bbox(333,20,1000,410);
-    
-    //large
-    // cv::Rect bbox(333,10,1000,700);
-    
-    
     int opt_w = 4;
     
     cv::Rect first_col = {bbox.x,bbox.y,opt_w,bbox.height};
-    // points_in(first_col).copyTo(points(first_col));
-    // winding_in(first_col).copyTo(winding(first_col));
-    
-    // std::cout << winding_in(bbox.y, bbox.x) << std::endl;
-    
-    std::cout << first_col.tl() << first_col.br() << std::endl;
-    
-    //also fill the mask in y dir
-    // for(int x=first_col.x;x<i;x++) {
-    //     for(int j=0;j<state_inpaint.rows;j++) {
-    //         if (mask(j,x)) {
-    //             col_first = std::min(col_first, j);
-    //             col_last = std::max(col_first, j);
-    //         }
-    //     }
-    // }
     
     int last_miny, last_maxy;
     
@@ -865,8 +841,6 @@ int main(int argc, char *argv[])
             for(int i=first_col.x;i<first_col.br().x;i++) {
                 cv::Vec2i p = {j,i};
                 if (!loc_valid(state(p)) && coord_valid(state(p))) {
-                // if (points_in(j*trace_mul,i*trace_mul)[0] == -1) {
-                    // points(j, i) = {rand()%1000,rand()%1000,rand()%1000};
                     if (problem_init.HasParameterBlock(&locs(p)[0]))
                         problem_init.SetParameterBlockVariable(&locs(p)[0]);
                     if (problem_init.HasParameterBlock(&points(p)[0]))
@@ -881,8 +855,6 @@ int main(int argc, char *argv[])
     }
     
     std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{-2,-1},{2,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2},{-3,-2},{3,-2},{-4,-2},{4,-2}};
-    // std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2}};
-    
     
     cv::Mat_<float> surf_dist(points.size(), 0);
 
@@ -897,8 +869,8 @@ int main(int argc, char *argv[])
         for(int j=std::max(bbox.y,last_miny-2);j<std::min(bbox.br().y,last_maxy+2+1);j++) {
             cv::Vec2i p = {j,i};
             
-            locs(p) = {-1,-1}; //locs(j,i-1)+cv::Vec2d(0,1/step);
-            points(p) = {-1,-1, -1}; //points(j,i-1)+cv::Vec3d(0.1,0.1,0.1);
+            locs(p) = {-1,-1};
+            points(p) = {-1,-1, -1};
             
             state(p) = 0;
             
@@ -909,7 +881,6 @@ int main(int argc, char *argv[])
                     state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
                     locs(p) = cand;
                     points(p) = at_int(points_in, {cand[1],cand[0]})+cv::Vec3f(((j+i)%10)*0.01, ((j+i+1)%10)*0.01,((j+i+2)%10)*0.01);
-                    // points(p) = at_int(points_in, {cand[1],cand[0]});
                     break;
                 }
                 if (!state(p) && coord_valid(state(p+n))) {
@@ -920,113 +891,32 @@ int main(int argc, char *argv[])
             
             init_state(p) = state(p);
             
-            if (points(p)[0] == -1) {
-                // std::cout << "OOPS" << std::endl;
+            if (points(p)[0] == -1)
                 continue;
-            }
             
-            ceres::Solver::Summary summary;
+            if (points(p)[0] != -1)
             {
+                ceres::Solver::Summary summary;
                 ceres::Problem problem;
-                create_centered_losses_left(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+                create_centered_losses_left_large(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
                 problem.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i], wind_w), nullptr, &locs(p)[0]);
                 problem.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
                 
-                // create_centered_losses(problem, p, state, points_in, points, locs, step, 0);
-                
                 ceres::Solve(options, &problem, &summary);
-                // std::cout << summary.BriefReport() << "\n";
-                // std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
-                
-                // if (loc_valid(points, locs(p)))
-                //     std::cout << sqrt(summary.final_cost/summary.num_residuals) << " "<< cv::norm(cv::Vec3f(points(p))-at_int(points_in, {locs(p)[1],locs(p)[0]})) << std::endl;
-                // else
-                //     std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
-            }
-            
-            if (points(p)[0] == -1) {
-                std::cout << "OOPS2" << std::endl;
-                continue;
             }
             
             if (!loc_valid(points_in, locs(p))) {
                 cv::Vec2f loc = {0,0};
                 float res = find_loc_wind(loc, tgt_wind[i], points_in, winding_in, points(p), 10.0);
                 loc = {loc[1],loc[0]};
-                // std::cout << "check " << res << loc << points_in.size << std::endl;
                 if (res >= 0 &&
                     cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= 100
                     && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= 0.3) {
                     locs(p) = loc;
                     state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
-                    std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
+                    // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
                 }
             }
-            
-            //FIXME initial solve does not look good? add z error?
-            // if (loc_valid(points_in, locs(p)))
-            //     surf_dist(p) = cv::norm(cv::Vec3f(points(p))-at_int(points_in, {locs(p)[1],locs(p)[0]}));
-            // else
-            //     surf_dist(p) = -1;
-            
-//             if (surf_dist(p) > 10 || surf_dist(p) < 0) {
-//                 ceres::Problem problem;
-//                 create_centered_losses(problem, p, state, points_in, points, locs, step, 0);
-//                 // create_centered_losses(problem, p, state, points_in, points, locs, step, 0);
-//                 
-//                 ceres::Solve(options, &problem, &summary);
-//                 
-//                 create_centered_losses(*problem1, p, state, points_in, points, locs, step, 0);
-//                 create_centered_losses(*problem2, p, state, points_in, points, locs, step, 0);
-//             }
-//             else {
-                // create_centered_losses(problem_col, p, state, points_in, points, locs, step, LOSS_ON_SURF);
-                // create_centered_losses(problem_col, p+cv::Vec2i(0,-1), state, points_in, points, locs, step, LOSS_ON_SURF);
-                // create_centered_losses_left(problem_col, p, state, points_in, points, locs, step, LOSS_ON_SURF);
-            // }
-            
-            continue;
-            
-//             /*cv::Vec2f loc = {locs(p)[1], locs(p)[0]};
-//              
-//             //FIXME try multipl locs and keep the best ...
-//             float res = find_loc_wind(loc, winding(p), points_in, winding_in, points(p), 2.0);
-//             loc = {loc[1], loc[0]};
-//             
-//             // std::cout << res << std::endl;
-//             
-//             if (res < 0) {
-//                 fail_code(p) = 1;
-//                 continue;
-//             }
-//             
-//             if (res >= 10) {
-//                 fail_code(p) = 2;
-//                 continue;
-//             }
-//             
-//             if (abs(winding_in(loc[0],loc[1]) - winding(p)) >= 0.3) {
-//                 fail_code(p) = 3;
-//                 continue;
-//             }
-//             
-//             locs(p) = loc;
-//             
-//             // std::cout << res << std::endl;
-//             
-//             {
-//                 ceres::Problem problem;
-//                 // create_centered_losses(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
-//                 create_centered_losses(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
-//                 
-//                 ceres::Solver::Summary summary;
-//                 ceres::Solve(options, &problem, &summary);
-//                 // std::cout << summary.BriefReport() << "\n";
-//                 // std::cout << sqrt(summary.final_cost/summary.num_residuals) << std::endl;
-//             }
-//             
-//             if (loc_valid(points,locs(p)))
-//                 winding(p) = winding_in(locs(p)[0],locs(p)[1]);*/
         }
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
@@ -1034,13 +924,9 @@ int main(int argc, char *argv[])
             
             for(int o=0;o<=opt_w;o++) {
                 cv::Vec2i po = {j,i-o};
-                // state(p) = 0;
                 if (!loc_valid(points_in,locs(po))) {
                     state(po) &= ~STATE_LOC_VALID;
-                    
                     locs(po) = {-1,-1};
-                    // points(po) = at_int(points_in,{locs(po)[1],locs(po)[0]});
-                    // state(p) = STATE_COORD_VALID | STATE_LOC_VALID;
                 }
             }
         }
@@ -1081,10 +967,8 @@ int main(int argc, char *argv[])
                     if (points(j,x)[0] != -1)
                         state_inpaint(j,x) = STATE_COORD_VALID;
                     // else {
-                        //FIXME still not sure shy this happens?
+                        //TODO still not sure shy this happens? is it still happening?
                         // std::cout << "no valid coord! " << cv::Vec2i(x,j) << std::endl;
-                        // state_inpaint(j,x) = STATE_COORD_VALID;
-                        // points(j, x) = {rand() % 100 +1,rand() % 100 +1,rand() % 100 +1 };
                     // }
                 }
             }
@@ -1094,11 +978,6 @@ int main(int argc, char *argv[])
             
             for(int o=0;o<=opt_w;o++)
                 create_centered_losses(problem_col, p+cv::Vec2i(0,-o), state_inpaint, points_in, points, locs, step, LOSS_ON_SURF);
-            // create_centered_losses_left(problem_col, p, state_inpaint, points_in, points, locs, step, LOSS_ON_SURF);
-            
-            // for(int o=0;o<=opt_w;o++)
-                // create_centered_losses(problem_col, p+cv::Vec2i(0,-o), state, points_in, points, locs, step, 0);
-            // create_centered_losses_left(problem_col, p, state, points_in, points, locs, step, 0);
             
             if (state_inpaint(p) & STATE_LOC_VALID)
                 problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
@@ -1112,8 +991,6 @@ int main(int argc, char *argv[])
             for(int o=std::max(bbox.x,i-inpaint_back_range);o<i-opt_w;o++)
                 if (!loc_valid(state(j,o)) && coord_valid(state(j, o)))
                     create_centered_losses(problem_col, {j, o}, state_inpaint, points_in, points, locs, step, 0);
-        
-        //FIXME check for params outside used range because added by create_centered_losses?
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
             for(int o=std::max(bbox.x,i-inpaint_back_range);o<=i;o++) {
@@ -1137,24 +1014,6 @@ int main(int argc, char *argv[])
                     if (problem_col.HasParameterBlock(&points(j,o)[0]))
                         problem_col.SetParameterBlockConstant(&points(j,o)[0]);
         }
-        
-//         for(int x=i-opt_w+1;x<=i;x++)
-//             for(int j=bbox.y;j<bbox.br().y;j++) {
-//                 cv::Vec2i p = {j,x};
-//                 
-//                 if (loc_valid(state_inpaint(j,x))) {
-//                     if (problem_col.HasParameterBlock(&locs(p)[0]))
-//                         problem_col.SetParameterBlockConstant(&locs(p)[0]);
-//                     if (problem_col.HasParameterBlock(&points(p)[0]))
-//                         problem_col.SetParameterBlockConstant(&points(p)[0]);
-//                 }
-//                 else {
-//                     if (problem_col.HasParameterBlock(&locs(p)[0]))
-//                         problem_col.SetParameterBlockVariable(&locs(p)[0]);
-//                     if (problem_col.HasParameterBlock(&points(p)[0]))
-//                         problem_col.SetParameterBlockVariable(&points(p)[0]);
-//                 }
-//             }
             
         std::cout << "start solve with blocks " << problem_col.NumResidualBlocks() << std::endl;
         ceres::Solver::Summary summary;
@@ -1178,8 +1037,6 @@ int main(int argc, char *argv[])
         
         // std::cout << summary.FullReport() << std::endl;
         std::cout << summary.BriefReport() << std::endl;
-        
-        //TODO do something with the winding if its off (e.g. rerun and ignor?)
         
         if (i % 10 == 0) {
             cv::imwrite("state_inpaint_pref.tif",state_inpaint(bbox)*20);
