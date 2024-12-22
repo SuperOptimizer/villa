@@ -22,6 +22,7 @@ static float z_loc_loss_w;
 static float wind_w;
 static float wind_th;
 static int inpaint_back_range;
+static int far_dist = 5;
 
 static int layer_reg_range = 15;
 static float layer_reg_range_vx = 500.0;
@@ -459,6 +460,8 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     //vertical
     // count += gen_straight_loss2(problem, p, {-2,0},{-1,0},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     count += gen_straight_loss2(problem, p, {-1,0},{0,0},{1,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    //far dist
+    count += gen_straight_loss2(problem, p, {-2*trace_mul,0},{0,0},{2*trace_mul,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     // count += gen_straight_loss2(problem, p, {0,0},{1,0},{2,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     
     //diag
@@ -481,8 +484,8 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     count += gen_dist_loss_fill(problem, p, {-1,1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     
     //+1
-    count += gen_dist_loss_fill(problem, p, {-2,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    count += gen_dist_loss_fill(problem, p, {2,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {-2*trace_mul,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {2*trace_mul,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     
     if (flags & LOSS_ON_SURF)
         gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
@@ -773,6 +776,9 @@ int main(int argc, char *argv[])
     wind_w = params.value("wind_w", 100.0);
     wind_th = params.value("wind_th", 0.3);
     inpaint_back_range = params.value("inpaint_back_range", 40);
+    int opt_w = params.value("opt_w", 4);
+    
+    std::cout << "running with surf w " << surf_w << std::endl;
     
     for(int n=0;n<argc/3;n++) {        
         QuadSurface *surf = load_quad_from_tifxyz(argv[n*3+2]);
@@ -793,7 +799,7 @@ int main(int argc, char *argv[])
     // cv::Rect bbox_src(80,110,1000,80);
     // cv::Rect bbox_src(64,50,1000,160);
     // cv::Rect bbox_src(10,10,4000,points_in.rows-20);
-    cv::Rect bbox_src(10,10,500,points_in.rows-20);
+    cv::Rect bbox_src(10,10,1500,300);
     
     float src_step = 20;
     float step = src_step*trace_mul;
@@ -808,8 +814,6 @@ int main(int argc, char *argv[])
     cv::Mat_<float> winding(size, NAN);
     
     cv::Mat_<uint8_t> fail_code(size, 0);
-    
-    int opt_w = 4;
     
     cv::Rect first_col = {bbox.x,bbox.y,opt_w,bbox.height};
     
@@ -1103,7 +1107,7 @@ int main(int argc, char *argv[])
         
         for(int n=0;n<add_locs.size();n++) {
             int idx = add_idxs[n];
-            problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]/weights[0]), new ceres::HuberLoss(1.0), &points(add_ps[n])[0], &add_locs[n][0]);
+            problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), new ceres::HuberLoss(1.0), &points(add_ps[n])[0], &add_locs[n][0]);
             problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[idx], tgt_wind[add_ps[n][1]], wind_w), nullptr,  &add_locs[n][0]);
         }
         
