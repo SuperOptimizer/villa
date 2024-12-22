@@ -1172,7 +1172,7 @@ int main(int argc, char *argv[])
         cv::imwrite("locy.tif",chs[1]);
     }
     
-    QuadSurface *surf_full = new QuadSurface(points(bbox), surf->_scale/trace_mul);
+    QuadSurface *surf_full = new QuadSurface(points(bbox), surfs[0]->_scale/trace_mul);
     
     fs::path tgt_dir = "/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/";
     std::string name_prefix = "testing_fill_";
@@ -1180,6 +1180,13 @@ int main(int argc, char *argv[])
     fs::path seg_dir = tgt_dir / uuid;
     std::cout << "saving " << seg_dir << std::endl;
     surf_full->save(seg_dir, uuid);
+    
+    cv::Mat_<float> winding_ideal(winding.size(), NAN);
+    for(int i=0;i<tgt_wind.size();i++)
+        winding_ideal(cv::Rect(i,0,1,winding.rows)).setTo(tgt_wind[i]);
+
+    cv::imwrite(seg_dir/"winding_exact.tif",winding);
+    cv::imwrite(seg_dir/"winding.tif",winding_ideal);
     
     return EXIT_SUCCESS;
 }
