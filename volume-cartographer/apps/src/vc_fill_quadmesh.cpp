@@ -961,8 +961,8 @@ int main(int argc, char *argv[])
         
     }
     
-    // std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{-2,-1},{2,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2},{-3,-2},{3,-2},{-4,-2},{4,-2}};
-    std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1}};
+    std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{-2,-1},{2,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2},{-3,-2},{3,-2},{-4,-2},{4,-2}};
+    // std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1}};
     
     cv::Mat_<float> surf_dist(points.size(), 0);
     
@@ -1111,6 +1111,7 @@ int main(int argc, char *argv[])
                     if (points(j,x)[0] != -1)
                         state_inpaint(j,x) = STATE_COORD_VALID;
                     else {
+                        state_inpaint(j,x) = 0;
                         //TODO still not sure shy this happens? is it still happening?
                         std::cout << "no valid coord! " << cv::Vec2i(x,j) << std::endl;
                     }
