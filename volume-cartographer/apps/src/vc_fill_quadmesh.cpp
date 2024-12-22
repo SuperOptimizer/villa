@@ -14,13 +14,13 @@ namespace fs = std::filesystem;
 
 using json = nlohmann::json;
 
-static int trace_mul = 5;
+static int trace_mul = 1;
 
-static float dist_w = 0.3*trace_mul;
-static float straight_w = 0.02/sqrt(trace_mul);
-static float surf_w = 0.1/trace_mul;
-static float z_loc_loss_w = 0.0005*trace_mul;///sqrt(trace_mul);
-static float wind_w = 100.0;///sqrt(trace_mul);
+static float dist_w = 0.3;
+static float straight_w = 0.02;
+static float surf_w = 0.1;
+static float z_loc_loss_w = 0.0005;
+static float wind_w = 100.0;
 float wind_th = 0.3;
 
 static int layer_reg_range = 15;
@@ -777,12 +777,12 @@ int main(int argc, char *argv[])
     cv::Mat_<cv::Vec3f> points_in = surfs[0]->rawPoints();
     cv::Mat_<float> winding_in = winds[0];
     
-    cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
+    // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
     // cv::Rect bbox_src(10,60,points_in.cols-20,240);
     // cv::Rect bbox_src(80,110,1000,80);
     // cv::Rect bbox_src(64,50,1000,160);
     // cv::Rect bbox_src(10,10,4000,points_in.rows-20);
-    // cv::Rect bbox_src(10,10,100,points_in.rows-20);
+    cv::Rect bbox_src(10,10,500,points_in.rows-20);
     
     float src_step = 20;
     float step = src_step*trace_mul;
@@ -846,7 +846,7 @@ int main(int argc, char *argv[])
     ceres::Solver::Options options_col;
     // options.linear_solver_type = ceres::DENSE_QR;
     options_col.linear_solver_type = ceres::SPARSE_SCHUR;
-    // options_col.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
+    options_col.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
     options_col.num_threads = 32;
     options_col.minimizer_progress_to_stdout = false;
     options_col.max_num_iterations = 10000;
@@ -1051,7 +1051,9 @@ int main(int argc, char *argv[])
             
             for(int o=0;o<=opt_w;o++) {
                 cv::Vec2i po = {j,i-o};
-                create_centered_losses(problem_col, po, state_inpaint, points_in, points, locs, step, LOSS_ON_SURF);
+                create_centered_losses(problem_col, po, state_inpaint, points_in, points, locs, step, 0);
+                
+                gen_surfloss(po, problem_col, state_inpaint, points_in, points, locs, surf_w*weights[0]);
                 
                 if (surfs.size() > 1 && coord_valid(state_inpaint(po)))
                     for(int s=1;s<surfs.size();s++)
