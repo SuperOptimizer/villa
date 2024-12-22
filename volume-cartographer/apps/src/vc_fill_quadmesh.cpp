@@ -779,7 +779,11 @@ int main(int argc, char *argv[])
     wind_w = params.value("wind_w", 100.0);
     wind_th = params.value("wind_th", 0.3);
     inpaint_back_range = params.value("inpaint_back_range", 40);
-    int opt_w = params.value("opt_w", 4);
+    int opt_w_short = params.value("opt_w", 4);
+    
+    int opt_w = opt_w_short;
+    int large_opt_w = 16;
+    int large_opt_every = 8;
     
     std::cout << "running with surf w " << surf_w << std::endl;
     
@@ -801,8 +805,8 @@ int main(int argc, char *argv[])
     // cv::Rect bbox_src(10,60,points_in.cols-20,240);
     // cv::Rect bbox_src(80,110,1000,80);
     // cv::Rect bbox_src(64,50,1000,160);
-    // cv::Rect bbox_src(10,10,4000,points_in.rows-20);
-    cv::Rect bbox_src(105,10,2000,points_in.rows-20);
+    cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
+    // cv::Rect bbox_src(105,10,2000,points_in.rows-20);
     
     float src_step = 20;
     float step = src_step*trace_mul;
@@ -965,6 +969,11 @@ int main(int argc, char *argv[])
     // std::vector<cv::Vec3f> layer_neighs, layer_neighs_inp;
     
     for(int i=bbox.x+opt_w;i<bbox.br().x;i++) {
+        if (i % large_opt_every == 0 && i-bbox.x > large_opt_w)
+            opt_w = large_opt_w;
+        else
+            opt_w = opt_w_short;
+        
         tgt_wind[i] = 2*avg_wind[i-1]-avg_wind[i-2];
         
         std::cout << "wind tgt: " << tgt_wind[i] << " " << avg_wind[i-1] << " " << avg_wind[i-2] << std::endl;
@@ -1012,19 +1021,27 @@ int main(int argc, char *argv[])
                 ceres::Solve(options, &problem, &summary);
             }
             
-            if (!loc_valid(points_in, locs(p))) {
-                cv::Vec2f loc = {0,0};
-                float res = find_loc_wind(loc, tgt_wind[i], points_in, winding_in, points(p), 10.0);
-                loc = {loc[1],loc[0]};
-                if (res >= 0 &&
-                    cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= 100
-                    && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= 0.3) {
-                        locs(p) = loc;
-                        //FIXME ok here is I think the only point we go wrong - maybe do this ONLY if we have a valid neighbor from last it!
-                        state(p) = STATE_COORD_VALID;// | STATE_LOC_VALID;
-                        // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
-                    }
-            }
+            //FIXME ok so just adding other surfs is bad
+//             if (!loc_valid(points_in, locs(p))) {
+//                 bool valid_neigh = false;
+//                 for (auto n : neighs)
+//                     if (loc_valid(state(p+n)))
+//                         valid_neigh = true;
+//                 
+//                 if (valid_neigh) {
+//                     cv::Vec2f loc = {0,0};
+//                     float res = find_loc_wind(loc, tgt_wind[i], points_in, winding_in, points(p), 10.0);
+//                     loc = {loc[1],loc[0]};
+//                     if (res >= 0 &&
+//                         cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= 100
+//                         && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= 0.3) {
+//                             locs(p) = loc;
+//                             //FIXME check tHIS AGAIN
+//                             state(p) = STATE_COORD_VALID | STATE_LOC_VALID;
+//                             // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
+//                         }
+//                 }
+//             }
                     
 
 //             std::vector<cv::Vec2d> locs_layers;
@@ -1087,7 +1104,6 @@ int main(int argc, char *argv[])
                 if (loc_valid(state(j,x))) {
                     if (points(j,x)[0] == -1)
                         throw std::runtime_error("need points 3!");
-                    //FIXME do not add this ever?
                     state_inpaint(j,x) = STATE_COORD_VALID | STATE_LOC_VALID;
                 }
                 else if (mask(j,x)) {
