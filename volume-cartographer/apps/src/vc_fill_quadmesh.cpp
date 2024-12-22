@@ -1071,7 +1071,7 @@ int main(int argc, char *argv[])
             
             for(int o=0;o<opt_w;o++)
                 if (state_inpaint(j,i-o) & STATE_LOC_VALID)
-                    problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i-o], wind_w), nullptr, &locs(p+cv::Vec2i(0,-o))[0]);
+                    problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding_in, tgt_wind[i-o], wind_w), nullptr, &locs(p+cv::Vec2i(0,-o))[0]);
         }
         
         std::vector<cv::Vec2d> add_locs;
