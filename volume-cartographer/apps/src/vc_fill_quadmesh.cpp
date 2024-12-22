@@ -538,7 +538,7 @@ static float sdist(const cv::Vec3f &a, const cv::Vec3f &b)
     return d.dot(d);
 }
 
-float min_loc_wind(const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &winding, cv::Vec2f &loc, cv::Vec3f &out, float tgt_wind, const cv::Vec3f &tgt, float init_step, float min_step)
+float min_loc_wind(const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &winding, cv::Vec2f &loc, cv::Vec3f &out, float tgt_wind, const cv::Vec3f &tgt, float init_step, float min_step, bool avoid_edges = true)
 {
     if (!loc_valid(points, {loc[1],loc[0]})) {
         out = {-1,-1,-1};
@@ -564,7 +564,13 @@ float min_loc_wind(const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &win
             cv::Vec2f cand = loc+off*step;
             
             if (!loc_valid(points, {cand[1],cand[0]})) {
-                continue;
+                if (avoid_edges)
+                    continue;
+                else if (step < min_step*2) 
+                {
+                    out = {-1,-1,-1};
+                    return -1;
+                }
             }
             
             val = at_int(points, cand);
@@ -596,7 +602,7 @@ float min_loc_wind(const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &win
     return best;
 }
 
-float find_loc_wind(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &winding, const cv::Vec3f &tgt, float th)
+float find_loc_wind(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &winding, const cv::Vec3f &tgt, float th, bool avoid_edges = true)
 {
     float best_res = -1;
     uint32_t sr = loc[0]+loc[1];
@@ -612,7 +618,7 @@ float find_loc_wind(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3f> &p
         r++;
         
         cv::Vec3f out_;
-        float res = min_loc_wind(points, winding, cand, out_, tgt_wind, tgt, 4.0, 0.001);
+        float res = min_loc_wind(points, winding, cand, out_, tgt_wind, tgt, 4.0, 0.001, avoid_edges);
         
         if (res < 0)
             continue;
@@ -1022,26 +1028,27 @@ int main(int argc, char *argv[])
             }
             
             //FIXME ok so just adding other surfs is bad
-//             if (!loc_valid(points_in, locs(p))) {
-//                 bool valid_neigh = false;
-//                 for (auto n : neighs)
-//                     if (loc_valid(state(p+n)))
-//                         valid_neigh = true;
-//                 
-//                 if (valid_neigh) {
-//                     cv::Vec2f loc = {0,0};
-//                     float res = find_loc_wind(loc, tgt_wind[i], points_in, winding_in, points(p), 10.0);
-//                     loc = {loc[1],loc[0]};
-//                     if (res >= 0 &&
-//                         cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= 100
-//                         && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= 0.3) {
-//                             locs(p) = loc;
-//                             //FIXME check tHIS AGAIN
-//                             state(p) = STATE_COORD_VALID | STATE_LOC_VALID;
-//                             // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
-//                         }
-//                 }
-//             }
+            if (!loc_valid(points_in, locs(p))) {
+                bool valid_neigh = false;
+                std::vector<cv::Vec2i> direct_neighs = {{0,-1},{-1,-1},{1,-1}};
+                for (auto n : direct_neighs)
+                    if (loc_valid(state(p+n)))
+                        valid_neigh = true;
+                
+                if (valid_neigh) {
+                    cv::Vec2f loc = {0,0};
+                    float res = find_loc_wind(loc, tgt_wind[i], points_in, winding_in, points(p), 10.0, false);
+                    loc = {loc[1],loc[0]};
+                    if (res >= 0 &&
+                        cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= 10
+                        && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= 0.3) {
+                            locs(p) = loc;
+                            //FIXME check tHIS AGAIN
+                            state(p) = STATE_COORD_VALID | STATE_LOC_VALID;
+                            // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
+                        }
+                }
+            }
                     
 
 //             std::vector<cv::Vec2d> locs_layers;
@@ -1113,7 +1120,7 @@ int main(int argc, char *argv[])
                     else {
                         state_inpaint(j,x) = 0;
                         //TODO still not sure shy this happens? is it still happening?
-                        std::cout << "no valid coord! " << cv::Vec2i(x,j) << std::endl;
+                        // std::cout << "no valid coord! " << cv::Vec2i(x,j) << std::endl;
                     }
                 }
             }
