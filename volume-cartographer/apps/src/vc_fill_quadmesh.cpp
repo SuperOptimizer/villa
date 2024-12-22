@@ -1088,7 +1088,7 @@ int main(int argc, char *argv[])
             for(int j=0;j<state_inpaint.rows;j++) {
                 if (mask(j,x)) {
                     col_first = std::min(col_first, j);
-                    col_last = std::max(col_first, j);
+                    col_last = std::max(col_last, j);
                 }
             }
             for(int j=col_first;j<=col_last;j++)
@@ -1100,7 +1100,7 @@ int main(int argc, char *argv[])
         
         for(int j=0;j<state_inpaint.rows;j++)
             for(int x=first_col.x;x<=i;x++) {
-                state_inpaint(j,x) = 0;
+                // state_inpaint(j,x) = 0;
                 if (loc_valid(state(j,x))) {
                     if (points(j,x)[0] == -1)
                         throw std::runtime_error("need points 3!");
@@ -1110,10 +1110,10 @@ int main(int argc, char *argv[])
                     // std::cout << "inpaint only! " << cv::Vec2i(x,j) << std::endl;
                     if (points(j,x)[0] != -1)
                         state_inpaint(j,x) = STATE_COORD_VALID;
-                    // else {
+                    else {
                         //TODO still not sure shy this happens? is it still happening?
-                        // std::cout << "no valid coord! " << cv::Vec2i(x,j) << std::endl;
-                    // }
+                        std::cout << "no valid coord! " << cv::Vec2i(x,j) << std::endl;
+                    }
                 }
             }
             
