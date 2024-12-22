@@ -335,7 +335,9 @@ int main(int argc, char *argv[])
     }
     cv::imwrite("dbg.tif", img);
     
-    std::vector<std::vector<int>> wind_dists_x(points.cols/100+1);
+    int wind_sd = 400;
+    
+    std::vector<std::vector<int>> wind_dists_x(points.cols/wind_sd+1);
     
     std::cout << "x size " << wind_dists_x.size() << std::endl;
     
@@ -346,8 +348,8 @@ int main(int argc, char *argv[])
                 int x2 = iv[n+1].second[0];
                 float dist = x2-x1;
                 // std::cout << dist << std::endl;
-                wind_dists_x[x1/100].push_back(dist);
-                wind_dists_x[x2/100].push_back(dist);
+                wind_dists_x[x1/wind_sd].push_back(dist);
+                wind_dists_x[x2/wind_sd].push_back(dist);
             }
     }
     
@@ -421,7 +423,7 @@ int main(int argc, char *argv[])
                 cv::Vec2i p1i = {iv[n].second[1],iv[n].second[0]};
                 cv::Vec2i p2i = {iv[n+1].second[1],iv[n+1].second[0]};
                 
-                int ref_x = wind_x_ref[(x1+x2)/100];
+                int ref_x = wind_x_ref[(x1+x2)/wind_sd];
                 
                 // std::cout << abs(x2-x1 - ref_x) << " " << x2-x1 << " vs " << ref_x << " wot " << x1 << " " << x2 << p1i << p2i << std::endl;
                 
@@ -512,7 +514,7 @@ int main(int argc, char *argv[])
                         mul = rough_w/dist;
                     }
                     
-                    sum += (winding(pn)-float(n[1])/wind_x_ref[pn[1]/100])*wind_w(pn)*mul;
+                    sum += (winding(pn)-float(n[1])/wind_x_ref[pn[1]/wind_sd])*wind_w(pn)*mul;
                     w += wind_w(pn)*mul;
                 }
                 if (w != 0) {
@@ -546,7 +548,7 @@ int main(int argc, char *argv[])
                 for(int i=0;i<winding.cols-1;i++) {
                     if (wind_w(j,i) && wind_w(j,i+1)) {
                         float wind_g = winding(j,i+1) - winding(j,i);
-                        wind_g = wind_g * wind_x_ref[i/100];
+                        wind_g = wind_g * wind_x_ref[i/wind_sd];
                         winding_err(j,i) = abs(1-wind_g);
                     }
                 }
