@@ -67,7 +67,7 @@ int main(int argc, char *argv[])
     
     bool slice_gen = false;
     
-    if (tgt_size.width >= 10000)
+    if (tgt_size.width >= 10000 && num_slices > 1)
         slice_gen = true;
     else
         surf->gen(&points, &normals, tgt_size, nullptr, tgt_scale, {-tgt_size.width/2,-tgt_size.height/2,0});
