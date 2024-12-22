@@ -899,7 +899,7 @@ int main(int argc, char *argv[])
     
     cv::Mat_<float> surf_dist(points.size(), 0);
     
-    std::vector<cv::Vec3f> layer_neighs, layer_neighs_inp;
+    // std::vector<cv::Vec3f> layer_neighs, layer_neighs_inp;
     
     for(int i=bbox.x+opt_w;i<bbox.br().x;i++) {
         tgt_wind[i] = 2*avg_wind[i-1]-avg_wind[i-2];
@@ -949,24 +949,24 @@ int main(int argc, char *argv[])
                 ceres::Solve(options, &problem, &summary);
             }
 
-            std::vector<cv::Vec2d> locs_layers;
-            std::vector<int> idxs_layers;
-            find_neighbors(points_in, winding_in, points(p), tgt_wind[i], locs_layers, idxs_layers);
-            
-            if (loc_valid(points_in, locs(p)))
-#pragma omp critical
-                for(auto & l : locs_layers)
-                    layer_neighs.push_back(at_int(points_in, {l[1],l[0]}));
-            else
-#pragma omp critical
-                for(auto & l : locs_layers)
-                    layer_neighs_inp.push_back(at_int(points_in, {l[1],l[0]}));
+//             std::vector<cv::Vec2d> locs_layers;
+//             std::vector<int> idxs_layers;
+//             find_neighbors(points_in, winding_in, points(p), tgt_wind[i], locs_layers, idxs_layers);
+//             
+//             if (loc_valid(points_in, locs(p)))
+// #pragma omp critical
+//                 for(auto & l : locs_layers)
+//                     layer_neighs.push_back(at_int(points_in, {l[1],l[0]}));
+//             else
+// #pragma omp critical
+//                 for(auto & l : locs_layers)
+//                     layer_neighs_inp.push_back(at_int(points_in, {l[1],l[0]}));
         }
         
-        if (i % 10 == 0) {
-            write_ply("col_layer_neighs.ply", layer_neighs);
-            write_ply("col_layer_neighs_inp.ply", layer_neighs_inp);
-        }
+        // if (i % 10 == 0) {
+        //     write_ply("col_layer_neighs.ply", layer_neighs);
+        //     write_ply("col_layer_neighs_inp.ply", layer_neighs_inp);
+        // }
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
             cv::Vec2i p = {j,i};
