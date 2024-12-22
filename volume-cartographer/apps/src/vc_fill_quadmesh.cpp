@@ -21,6 +21,10 @@ static float straight_w = 0.02/sqrt(trace_mul);
 static float surf_w = 0.1/trace_mul;
 static float z_loc_loss_w = 0.0005*trace_mul;///sqrt(trace_mul);
 static float wind_w = 100.0;///sqrt(trace_mul);
+float wind_th = 0.3;
+
+static int layer_reg_range = 15;
+static float layer_reg_range_vx = 500.0;
 
 int inpaint_back_range = 40;
 
@@ -707,7 +711,22 @@ struct Interp2DLoss {
     
 };
 
-float wind_th = 1.0;
+static void write_ply(std::string path, const std::vector<cv::Vec3f> &points)
+{
+    std::cout << "ply " << points.size() << std::endl; 
+    std::ofstream ply;
+    ply.open(path);
+    
+    ply << "ply\nformat ascii 1.0\n";
+    ply << "element vertex " << points.size() << "\n";
+    ply << "property float x\n";
+    ply << "property float y\n";
+    ply << "property float z\n";
+    ply << "end_header\n";
+    
+    for(auto p : points)
+        ply << p[0] << " " << p[1] << " " << p[2] << "\n";
+}
 
 int main(int argc, char *argv[])
 {
@@ -857,15 +876,18 @@ int main(int argc, char *argv[])
     std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{-2,-1},{2,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2},{-3,-2},{3,-2},{-4,-2},{4,-2}};
     
     cv::Mat_<float> surf_dist(points.size(), 0);
-
+    
+    std::vector<cv::Vec3f> layer_neighs, layer_neighs_inp;
+    
     for(int i=bbox.x+opt_w;i<bbox.br().x;i++) {
         tgt_wind[i] = 2*avg_wind[i-1]-avg_wind[i-2];
         
         std::cout << "wind tgt: " << tgt_wind[i] << " " << avg_wind[i-1] << " " << avg_wind[i-2] << std::endl;
         
+        
         std::cout << "proc col " << i << std::endl;
         ceres::Problem problem_col;
-// #pragma omp parallel for
+#pragma omp parallel for
         for(int j=std::max(bbox.y,last_miny-2);j<std::min(bbox.br().y,last_maxy+2+1);j++) {
             cv::Vec2i p = {j,i};
             
@@ -917,6 +939,39 @@ int main(int argc, char *argv[])
                     // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
                 }
             }
+            
+            //estimate neighbor positions, for now only for known surface to test with GT
+            cv::Vec3f ref_p = points(p);
+                if (loc_valid(points_in, locs(p)))
+                    ref_p = at_int(points_in, {locs(p)[1],locs(p)[0]});
+
+            for(int wf=-layer_reg_range;wf<=layer_reg_range;wf++) {
+                cv::Vec2f loc = {0,0};
+                float layer_tgt_w = tgt_wind[i] + wf;
+                float res = find_loc_wind(loc, layer_tgt_w, points_in, winding_in, points(p), 10.0);
+                loc = {loc[1],loc[0]};
+                if (res >= 0 &&
+                    cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= layer_reg_range_vx
+                    && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - layer_tgt_w) <= 0.3)
+                {
+                    // std::cout << "potential neighbor at dist " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << at_int(winding_in, {loc[1],loc[0]}) << " " << layer_tgt_w << std::endl;
+                    if (loc_valid(points_in, locs(p)))
+#pragma omp critical
+                        layer_neighs.push_back(at_int(points_in, {loc[1],loc[0]}));
+                    else
+#pragma omp critical
+                        layer_neighs_inp.push_back(at_int(points_in, {loc[1],loc[0]}));
+                }
+            }
+        }
+        
+        if (i % 10 == 0) {
+            write_ply("col_layer_neighs.ply", layer_neighs);
+            write_ply("col_layer_neighs_inp.ply", layer_neighs_inp);
+            // write_ply("col_layer_neighs"+std::to_string(i)+".ply", layer_neighs);
+            // write_ply("col_layer_neighs_inp"+std::to_string(i)+".ply", layer_neighs_inp);
+            // layer_neighs.resize(0);
+            // layer_neighs_inp.resize(0);
         }
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
