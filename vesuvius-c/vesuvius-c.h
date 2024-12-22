@@ -437,50 +437,49 @@ slice *vs_tiff_to_slice(const char *tiffpath, int index);
 int vs_slice_fill(slice *slice, volume *vol, int start[static 2], int axis);
 int vs_chunk_fill(chunk *chunk, volume *vol, int start[static 3]);
 
-#ifdef VESUVIUS_IMPL
 
 // Private APIs
 // - These are not exported and are only meant to be used within vesuvius-c.h itself
 
 // utils
-static void vs__trim(char* str);
-static void vs__skip_line(FILE *fp);
-static bool vs__str_starts_with(const char* str, const char* prefix);
-static int vs__mkdir_p(const char* path);
-static bool vs__path_exists(const char *path);
-static void vs__print_backtrace(void);
-static void vs__print_assert_details(const char* expr, const char* file, int line, const char* func);
-static void vs__assert_fail_with_backtrace(const char* expr, const char* file, int line, const char* func);
+void vs__trim(char* str);
+void vs__skip_line(FILE *fp);
+bool vs__str_starts_with(const char* str, const char* prefix);
+int vs__mkdir_p(const char* path);
+bool vs__path_exists(const char *path);
+void vs__print_backtrace(void);
+void vs__print_assert_details(const char* expr, const char* file, int line, const char* func);
+void vs__assert_fail_with_backtrace(const char* expr, const char* file, int line, const char* func);
 
 //log
-static void vs__log_msg(vs__log_level_e level, const char* file, const char* func, int line, const char* fmt, ...);
+void vs__log_msg(vs__log_level_e level, const char* file, const char* func, int line, const char* fmt, ...);
 
 //chamfer
-static f32 vs__squared_distance(const f32* p1, const f32* p2);
-static f32 vs__min_distance_to_set(const f32* point, const f32* point_set, s32 set_size);
+f32 vs__squared_distance(const f32* p1, const f32* p2);
+f32 vs__min_distance_to_set(const f32* point, const f32* point_set, s32 set_size);
 
 //curl
-static size_t vs__write_callback(void *contents, size_t size, size_t nmemb, void *userp);
+size_t vs__write_callback(void *contents, size_t size, size_t nmemb, void *userp);
 
 //histogram
-static s32 vs__get_bin_index(const histogram* hist, f32 value);
-static f32 vs__get_slice_value(const f32* data, s32 y, s32 x, s32 dimx);
-static f32 vs__get_chunk_value(const f32* data, s32 z, s32 y, s32 x, s32 dimy, s32 dimx);
+s32 vs__get_bin_index(const histogram* hist, f32 value);
+f32 vs__get_slice_value(const f32* data, s32 y, s32 x, s32 dimx);
+f32 vs__get_chunk_value(const f32* data, s32 z, s32 y, s32 x, s32 dimy, s32 dimx);
 
 // math
-static float vs__maxfloat(float a, float b);
-static float vs__minfloat(float a, float b);
-static float vs__avgfloat(float *data, int len);
-static chunk *vs__create_box_kernel(s32 size);
-static chunk* vs__convolve3d(chunk* input, chunk* kernel);
+float vs__maxfloat(float a, float b);
+float vs__minfloat(float a, float b);
+float vs__avgfloat(float *data, int len);
+chunk *vs__create_box_kernel(s32 size);
+chunk* vs__convolve3d(chunk* input, chunk* kernel);
 
 // mesh
-static void vs__interpolate_vertex(f32 isovalue,
+void vs__interpolate_vertex(f32 isovalue,
                                     f32 v1, f32 v2,
                                     f32 x1, f32 y1, f32 z1,
                                     f32 x2, f32 y2, f32 z2,
                                     f32* out_x, f32* out_y, f32* out_z);
-static void vs__process_cube(const f32* values,
+void vs__process_cube(const f32* values,
                         s32 x, s32 y, s32 z,
                         s32 dimx, s32 dimy, s32 dimz,
                         f32 isovalue,
@@ -489,39 +488,42 @@ static void vs__process_cube(const f32* values,
                         s32* indices,
                         s32* vertex_count,
                         s32* index_count);
-static f32 vs__get_value(const f32* values, s32 x, s32 y, s32 z, s32 dimx, s32 dimy, s32 dimz);
+f32 vs__get_value(const f32* values, s32 x, s32 y, s32 z, s32 dimx, s32 dimy, s32 dimz);
 
 //nrrd
-static int vs__nrrd_parse_sizes(char* value, nrrd* nrrd);
-static int vs__nrrd_parse_space_directions(char* value, nrrd* nrrd);
-static int vs__nrrd_parse_space_origin(char* value, nrrd* nrrd);
-static size_t vs__nrrd_get_type_size(const char* type);
-static int vs__nrrd_read_raw_data(FILE* fp, nrrd* nrrd);
-static int vs__nrrd_read_gzip_data(FILE* fp, nrrd* nrrd);
+int vs__nrrd_parse_sizes(char* value, nrrd* nrrd);
+int vs__nrrd_parse_space_directions(char* value, nrrd* nrrd);
+int vs__nrrd_parse_space_origin(char* value, nrrd* nrrd);
+size_t vs__nrrd_get_type_size(const char* type);
+int vs__nrrd_read_raw_data(FILE* fp, nrrd* nrrd);
+int vs__nrrd_read_gzip_data(FILE* fp, nrrd* nrrd);
 
 //ppm
-static void vs__skip_whitespace_and_comments(FILE* fp);
-static bool vs__ppm_read_header(FILE* fp, ppm_type* type, u32* width, u32* height, u8* max_val);
+void vs__skip_whitespace_and_comments(FILE* fp);
+bool vs__ppm_read_header(FILE* fp, ppm_type* type, u32* width, u32* height, u8* max_val);
 
 //tiff
-static uint32_t vs__tiff_read_bytes(FILE* fp, int count, int littleEndian);
-static void vs__tiff_read_string(FILE* fp, char* str, uint32_t offset, uint32_t count, long currentPos);
-static float vs__tiff_read_rational(FILE* fp, uint32_t offset, int littleEndian, long currentPos);
-static void vs__tiff_read_ifd_entry(FILE* fp, DirectoryInfo* dir, int littleEndian, long ifdStart);
-static bool vs__tiff_validate_directory(DirectoryInfo* dir, TiffImage* img);
-static void vs__tiff_write_bytes(FILE* fp, uint32_t value, int count, int littleEndian);
-static void vs__tiff_write_string(FILE* fp, const char* str, uint32_t offset);
-static void vs__tiff_write_rational(FILE* fp, float value, uint32_t offset, int littleEndian);
-static void vs__tiff_current_date_time(char* dateTime);
-static uint32_t vs__tiff_write_ifd_entry(FILE* fp, uint16_t tag, uint16_t type, uint32_t count, uint32_t value, int littleEndian);
+uint32_t vs__tiff_read_bytes(FILE* fp, int count, int littleEndian);
+void vs__tiff_read_string(FILE* fp, char* str, uint32_t offset, uint32_t count, long currentPos);
+float vs__tiff_read_rational(FILE* fp, uint32_t offset, int littleEndian, long currentPos);
+void vs__tiff_read_ifd_entry(FILE* fp, DirectoryInfo* dir, int littleEndian, long ifdStart);
+bool vs__tiff_validate_directory(DirectoryInfo* dir, TiffImage* img);
+void vs__tiff_write_bytes(FILE* fp, uint32_t value, int count, int littleEndian);
+void vs__tiff_write_string(FILE* fp, const char* str, uint32_t offset);
+void vs__tiff_write_rational(FILE* fp, float value, uint32_t offset, int littleEndian);
+void vs__tiff_current_date_time(char* dateTime);
+uint32_t vs__tiff_write_ifd_entry(FILE* fp, uint16_t tag, uint16_t type, uint32_t count, uint32_t value, int littleEndian);
 
 //vcps
-static int vs__vcps_read_binary_data(FILE* fp, void* out_data, const char* src_type, const char* dst_type, size_t count);
-static int vs__vcps_write_binary_data(FILE* fp, const void* data, const char* src_type, const char* dst_type, size_t count);
+int vs__vcps_read_binary_data(FILE* fp, void* out_data, const char* src_type, const char* dst_type, size_t count);
+int vs__vcps_write_binary_data(FILE* fp, const void* data, const char* src_type, const char* dst_type, size_t count);
 
 //zarr
-static void vs__json_parse_int32_array(json_object *array_obj, int32_t output[3]);
-static void vs__log_msg(vs__log_level_e level, const char* file, const char* func, int line, const char* fmt, ...) {
+void vs__json_parse_int32_array(json_object *array_obj, int32_t output[3]);
+
+#ifdef VESUVIUS_IMPL
+
+void vs__log_msg(vs__log_level_e level, const char* file, const char* func, int line, const char* fmt, ...) {
 
     static const char* level_strings[] = {
         "INFO",
@@ -547,7 +549,7 @@ static void vs__log_msg(vs__log_level_e level, const char* file, const char* fun
 }
 
 
-static void vs__trim(char* str) {
+void vs__trim(char* str) {
   char* end;
   while(isspace(*str)) str++;
   if(*str == 0) return;
@@ -556,11 +558,11 @@ static void vs__trim(char* str) {
   end[1] = '\0';
 }
 
-static bool vs__str_starts_with(const char* str, const char* prefix) {
+bool vs__str_starts_with(const char* str, const char* prefix) {
   return strncmp(str, prefix, strlen(prefix)) == 0;
 }
 
-static int vs__mkdir_p(const char* path) {
+int vs__mkdir_p(const char* path) {
     char tmp[1024];
     char* p = NULL;
     size_t len;
@@ -619,11 +621,11 @@ static int vs__mkdir_p(const char* path) {
     return (status == 0 || errno == EEXIST) ? 0 : 1;
 }
 
-static bool vs__path_exists(const char *path) {
+bool vs__path_exists(const char *path) {
     return access(path, F_OK) == 0 ? true : false;
 }
 
-static char* vs__basename(const char* path) {
+char* vs__basename(const char* path) {
     if (path == NULL) {
         return NULL;
     }
@@ -676,7 +678,7 @@ static char* vs__basename(const char* path) {
     return result;
 }
 
-static char* vs__filename(const char* path) {
+char* vs__filename(const char* path) {
     if (path == NULL) {
         return NULL;
     }
@@ -706,7 +708,7 @@ static char* vs__filename(const char* path) {
 }
 
 
-static void vs__print_backtrace(void) {
+void vs__print_backtrace(void) {
 #if defined(__linux__) || defined(__GLIBC__)
 
     void *stack_frames[64];
@@ -735,14 +737,14 @@ static void vs__print_backtrace(void) {
 #endif
 }
 
-static void vs__print_assert_details(const char* expr, const char* file, int line, const char* func) {
+void vs__print_assert_details(const char* expr, const char* file, int line, const char* func) {
     fprintf(stderr, "\nAssertion failed!\n");
     fprintf(stderr, "Expression: %s\n", expr);
     fprintf(stderr, "Location  : %s:%d\n", file, line);
     fprintf(stderr, "Function  : %s\n", func);
 }
 
-static void vs__assert_fail_with_backtrace(const char* expr, const char* file, int line, const char* func) {
+void vs__assert_fail_with_backtrace(const char* expr, const char* file, int line, const char* func) {
     vs__print_assert_details(expr, file, line, func);
     vs__print_backtrace();
     abort();
@@ -750,7 +752,7 @@ static void vs__assert_fail_with_backtrace(const char* expr, const char* file, i
 
 // chamfer
 
-static f32 vs__squared_distance(const f32* p1, const f32* p2) {
+f32 vs__squared_distance(const f32* p1, const f32* p2) {
   f32 dz = p1[0] - p2[0];
   f32 dy = p1[1] - p2[1];
   f32 dx = p1[2] - p2[2];
@@ -758,7 +760,7 @@ static f32 vs__squared_distance(const f32* p1, const f32* p2) {
 }
 
 
-static f32 vs__min_distance_to_set(const f32* point, const f32* point_set, s32 set_size) {
+f32 vs__min_distance_to_set(const f32* point, const f32* point_set, s32 set_size) {
   f32 min_dist = FLT_MAX;
 
   for (s32 i = 0; i < set_size; i++) {
@@ -786,7 +788,7 @@ f32 vs_chamfer_distance(const f32* set1, s32 size1, const f32* set2, s32 size2) 
 }
 
 //curl
-static size_t vs__write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+size_t vs__write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t realsize = size * nmemb;
     DownloadBuffer *mem = userp;
 
@@ -943,7 +945,7 @@ void vs_histogram_free(histogram *hist) {
 }
 
 
-static s32 vs__get_bin_index(const histogram* hist, f32 value) {
+s32 vs__get_bin_index(const histogram* hist, f32 value) {
     if (value <= hist->min_value) return 0;
     if (value >= hist->max_value) return hist->num_bins - 1;
 
@@ -1012,11 +1014,11 @@ histogram* vs_chunk_histogram(const f32* data,
     return hist;
 }
 
-static f32 vs__get_slice_value(const f32* data, s32 y, s32 x, s32 dimx) {
+f32 vs__get_slice_value(const f32* data, s32 y, s32 x, s32 dimx) {
     return data[y * dimx + x];
 }
 
-static f32 vs__get_chunk_value(const f32* data, s32 z, s32 y, s32 x,
+f32 vs__get_chunk_value(const f32* data, s32 z, s32 y, s32 x,
                                   s32 dimy, s32 dimx) {
     return data[z * (dimy * dimx) + y * dimx + x];
 }
@@ -1094,9 +1096,9 @@ hist_stats vs_calculate_histogram_stats(const histogram *hist) {
 //   - increasing X means looking farther right in a slice
 
 
-static float vs__maxfloat(float a, float b) { return a > b ? a : b; }
-static float vs__minfloat(float a, float b) { return a < b ? a : b; }
-static float vs__avgfloat(float *data, int len) {
+float vs__maxfloat(float a, float b) { return a > b ? a : b; }
+float vs__minfloat(float a, float b) { return a < b ? a : b; }
+float vs__avgfloat(float *data, int len) {
   double sum = 0.0;
   for (int i = 0; i < len; i++) sum += data[i];
   return sum / len;
@@ -1515,7 +1517,7 @@ chunk *vs_sumpool(chunk *inchunk, s32 kernel, s32 stride) {
 }
 
 
-static chunk *vs__create_box_kernel(s32 size) {
+chunk *vs__create_box_kernel(s32 size) {
   int dims[3] = {size,size,size};
   chunk* kernel = vs_chunk_new(dims);
   float value = 1.0f / (size * size * size);
@@ -1525,7 +1527,7 @@ static chunk *vs__create_box_kernel(s32 size) {
   return kernel;
 }
 
-static chunk* vs__convolve3d(chunk* input, chunk* kernel) {
+chunk* vs__convolve3d(chunk* input, chunk* kernel) {
 
   s32 dims[3] = {input->dims[0], input->dims[1], input->dims[2]};
 
@@ -2035,7 +2037,7 @@ void vs_mesh_scale(mesh *m, f32 scale_z, f32 scale_y, f32 scale_x) {
     }
 }
 
-static void vs__interpolate_vertex_and_value(f32 isovalue,
+void vs__interpolate_vertex_and_value(f32 isovalue,
                                     f32 v1, f32 v2,
                                     f32 x1, f32 y1, f32 z1,
                                     f32 x2, f32 y2, f32 z2,
@@ -2071,12 +2073,12 @@ static void vs__interpolate_vertex_and_value(f32 isovalue,
     *out_value = v1;
 }
 
-static f32 vs__get_value(const f32* values, s32 x, s32 y, s32 z,
+f32 vs__get_value(const f32* values, s32 x, s32 y, s32 z,
                             s32 dimx, s32 dimy, s32 dimz) {
     return values[z * (dimx * dimy) + y * dimx + x];
 }
 
-static void vs__process_cube(const f32* values,
+void vs__process_cube(const f32* values,
                         s32 x, s32 y, s32 z,
                         s32 dimx, s32 dimy, s32 dimz,
                         f32 isovalue,
@@ -2629,7 +2631,7 @@ int vs_colorize(const f32* grayscale, rgb* colors, s32 vertex_count, f32 min, f3
 }
 
 // nrrd
-static int vs__nrrd_parse_sizes(char* value, nrrd* nrrd) {
+int vs__nrrd_parse_sizes(char* value, nrrd* nrrd) {
     char* token = strtok(value, " ");
     s32 i = 0;
     while (token != NULL && i < nrrd->dimension) {
@@ -2644,7 +2646,7 @@ static int vs__nrrd_parse_sizes(char* value, nrrd* nrrd) {
     return (i == nrrd->dimension) ? 0 : 1;
 }
 
-static int vs__nrrd_parse_space_directions(char* value, nrrd* nrrd) {
+int vs__nrrd_parse_space_directions(char* value, nrrd* nrrd) {
     char* token = strtok(value, ") (");
     s32 i = 0;
     while (token != NULL && i < nrrd->dimension) {
@@ -2667,7 +2669,7 @@ static int vs__nrrd_parse_space_directions(char* value, nrrd* nrrd) {
     return 0;
 }
 
-static int vs__nrrd_parse_space_origin(char* value, nrrd* nrrd) {
+int vs__nrrd_parse_space_origin(char* value, nrrd* nrrd) {
     value++; // Skip first '('
     value[strlen(value)-1] = '\0'; // Remove last ')'
 
@@ -2681,7 +2683,7 @@ static int vs__nrrd_parse_space_origin(char* value, nrrd* nrrd) {
     return 0;
 }
 
-static size_t vs__nrrd_get_type_size(const char* type) {
+size_t vs__nrrd_get_type_size(const char* type) {
     if (strcmp(type, "uint8") == 0 || strcmp(type, "uchar") == 0) return 1;
     if (strcmp(type, "uint16") == 0) return 2;
     if (strcmp(type, "uint32") == 0) return 4;
@@ -2690,7 +2692,7 @@ static size_t vs__nrrd_get_type_size(const char* type) {
     return 0;
 }
 
-static int vs__nrrd_read_raw_data(FILE* fp, nrrd* nrrd) {
+int vs__nrrd_read_raw_data(FILE* fp, nrrd* nrrd) {
     size_t bytes_read = fread(nrrd->data, 1, nrrd->data_size, fp);
     if (bytes_read != nrrd->data_size) {
         LOG_ERROR("Failed to read data: expected %zu bytes, got %zu",
@@ -2700,7 +2702,7 @@ static int vs__nrrd_read_raw_data(FILE* fp, nrrd* nrrd) {
     return 0;
 }
 
-static int vs__nrrd_read_gzip_data(FILE* fp, nrrd* nrrd) {
+int vs__nrrd_read_gzip_data(FILE* fp, nrrd* nrrd) {
     LOG_ERROR("reading compressed data is not supported yet for nrrd\n");
     return 1;
     #if 0
@@ -3339,7 +3341,7 @@ void vs_ppm_free(ppm* img) {
     }
 }
 
-static void vs__skip_whitespace_and_comments(FILE* fp) {
+void vs__skip_whitespace_and_comments(FILE* fp) {
     int c;
     while ((c = fgetc(fp)) != EOF) {
         if (c == '#') {
@@ -3352,7 +3354,7 @@ static void vs__skip_whitespace_and_comments(FILE* fp) {
     }
 }
 
-static bool vs__ppm_read_header(FILE* fp, ppm_type* type, u32* width, u32* height, u8* max_val) {
+bool vs__ppm_read_header(FILE* fp, ppm_type* type, u32* width, u32* height, u8* max_val) {
     char magic[3];
 
     if (fgets(magic, sizeof(magic), fp) == NULL) {
@@ -3492,7 +3494,7 @@ void vs_ppm_get_pixel(const ppm* img, u32 x, u32 y, u8* r, u8* g, u8* b) {
 }
 
 // tiff
-static uint32_t vs__tiff_read_bytes(FILE* fp, int count, int littleEndian) {
+uint32_t vs__tiff_read_bytes(FILE* fp, int count, int littleEndian) {
     uint32_t value = 0;
     uint8_t byte;
 
@@ -3511,7 +3513,7 @@ static uint32_t vs__tiff_read_bytes(FILE* fp, int count, int littleEndian) {
     return value;
 }
 
-static void vs__tiff_read_string(FILE* fp, char* str, uint32_t offset, uint32_t count, long currentPos) {
+void vs__tiff_read_string(FILE* fp, char* str, uint32_t offset, uint32_t count, long currentPos) {
     long savedPos = ftell(fp);
     fseek(fp, offset, SEEK_SET);
     fread(str, 1, count - 1, fp);
@@ -3519,7 +3521,7 @@ static void vs__tiff_read_string(FILE* fp, char* str, uint32_t offset, uint32_t 
     fseek(fp, savedPos, SEEK_SET);
 }
 
-static float vs__tiff_read_rational(FILE* fp, uint32_t offset, int littleEndian, long currentPos) {
+float vs__tiff_read_rational(FILE* fp, uint32_t offset, int littleEndian, long currentPos) {
     long savedPos = ftell(fp);
     fseek(fp, offset, SEEK_SET);
     uint32_t numerator = vs__tiff_read_bytes(fp, 4, littleEndian);
@@ -3528,7 +3530,7 @@ static float vs__tiff_read_rational(FILE* fp, uint32_t offset, int littleEndian,
     return denominator ? (float)numerator / denominator : 0.0f;
 }
 
-static void vs__tiff_read_ifd_entry(FILE* fp, DirectoryInfo* dir, int littleEndian, long ifdStart) {
+void vs__tiff_read_ifd_entry(FILE* fp, DirectoryInfo* dir, int littleEndian, long ifdStart) {
     uint16_t tag = vs__tiff_read_bytes(fp, 2, littleEndian);
     uint16_t type = vs__tiff_read_bytes(fp, 2, littleEndian);
     uint32_t count = vs__tiff_read_bytes(fp, 4, littleEndian);
@@ -3597,7 +3599,7 @@ static void vs__tiff_read_ifd_entry(FILE* fp, DirectoryInfo* dir, int littleEndi
     }
 }
 
-static bool vs__tiff_validate_directory(DirectoryInfo* dir, TiffImage* img) {
+bool vs__tiff_validate_directory(DirectoryInfo* dir, TiffImage* img) {
     if (dir->width == 0 || dir->height == 0) {
         snprintf(img->errorMsg, sizeof(img->errorMsg), "Invalid dimensions");
         return false;
@@ -3910,7 +3912,7 @@ uint8_t vs_tiff_pixel8(const uint8_t* buffer, int y, int x, int width) {
 }
 
 
-static void vs__tiff_write_bytes(FILE* fp, uint32_t value, int count, int littleEndian) {
+void vs__tiff_write_bytes(FILE* fp, uint32_t value, int count, int littleEndian) {
     if (littleEndian) {
         for (int i = 0; i < count; i++) {
             uint8_t byte = (value >> (i * 8)) & 0xFF;
@@ -3924,13 +3926,13 @@ static void vs__tiff_write_bytes(FILE* fp, uint32_t value, int count, int little
     }
 }
 
-static void vs__tiff_write_string(FILE* fp, const char* str, uint32_t offset) {
+void vs__tiff_write_string(FILE* fp, const char* str, uint32_t offset) {
     fseek(fp, offset, SEEK_SET);
     size_t len = strlen(str);
     fwrite(str, 1, len + 1, fp);  // Include null terminator
 }
 
-static void vs__tiff_write_rational(FILE* fp, float value, uint32_t offset, int littleEndian) {
+void vs__tiff_write_rational(FILE* fp, float value, uint32_t offset, int littleEndian) {
     fseek(fp, offset, SEEK_SET);
     uint32_t numerator = (uint32_t)(value * 1000);
     uint32_t denominator = 1000;
@@ -3938,7 +3940,7 @@ static void vs__tiff_write_rational(FILE* fp, float value, uint32_t offset, int 
     vs__tiff_write_bytes(fp, denominator, 4, littleEndian);
 }
 
-static void vs__tiff_current_date_time(char* dateTime) {
+void vs__tiff_current_date_time(char* dateTime) {
     time_t now;
     struct tm* timeinfo;
     time(&now);
@@ -3946,7 +3948,7 @@ static void vs__tiff_current_date_time(char* dateTime) {
     strftime(dateTime, 20, "%Y:%m:%d %H:%M:%S", timeinfo);
 }
 
-static uint32_t vs__tiff_write_ifd_entry(FILE* fp, uint16_t tag, uint16_t type, uint32_t count,
+uint32_t vs__tiff_write_ifd_entry(FILE* fp, uint16_t tag, uint16_t type, uint32_t count,
                              uint32_t value, int littleEndian) {
     vs__tiff_write_bytes(fp, tag, 2, littleEndian);
     vs__tiff_write_bytes(fp, type, 2, littleEndian);
@@ -4097,7 +4099,7 @@ TiffImage* vs_tiff_create(uint32_t width, uint32_t height, uint16_t depth,
 
 // vcps
 
-static int vs__vcps_read_binary_data(FILE* fp, void* out_data, const char* src_type, const char* dst_type, size_t count) {
+int vs__vcps_read_binary_data(FILE* fp, void* out_data, const char* src_type, const char* dst_type, size_t count) {
     // Fast path: types match, direct read
     if (strcmp(src_type, dst_type) == 0) {
         size_t element_size = strcmp(src_type, "float") == 0 ? sizeof(f32) : sizeof(f64);
@@ -4137,7 +4139,7 @@ static int vs__vcps_read_binary_data(FILE* fp, void* out_data, const char* src_t
     return 1;
 }
 
-static int vs__vcps_write_binary_data(FILE* fp, const void* data, const char* src_type, const char* dst_type, size_t count) {
+int vs__vcps_write_binary_data(FILE* fp, const void* data, const char* src_type, const char* dst_type, size_t count) {
     // Fast path: types match, direct write
     if (strcmp(src_type, dst_type) == 0) {
         size_t element_size = strcmp(src_type, "float") == 0 ? sizeof(f32) : sizeof(f64);
@@ -4286,9 +4288,12 @@ volume *vs_vol_new(char *cache_dir, char *url) {
 
 
   if (cache_dir != NULL) {
-    if (vs__mkdir_p(cache_dir)) {
-      LOG_ERROR("Could not mkdir %s",cache_dir);
-      return NULL;
+    if (vs__path_exists(cache_dir)) {
+        LOG_INFO("cache dir exists, not making");
+    }
+    else if (vs__mkdir_p(cache_dir)) {
+      LOG_WARN("Could not mkdir %s. MAybe it already exists?",cache_dir);
+      //return NULL;
     }
   }
 
@@ -4299,6 +4304,7 @@ volume *vs_vol_new(char *cache_dir, char *url) {
     LOG_INFO("trying to read .zarray from %s",zarray_url);
     if (vs_download(zarray_url, &zarray_buf) <= 0) {
       LOG_ERROR("could not download .zarray file!");
+      free(zarray_buf);
       return NULL;
     }
   }
@@ -4307,6 +4313,8 @@ volume *vs_vol_new(char *cache_dir, char *url) {
     LOG_ERROR("failed to parse .zarray");
     return NULL;
   }
+
+
 
   strncpy(ret->url,url,sizeof(ret->url));
   strncpy(ret->cache_dir,cache_dir,sizeof(ret->cache_dir));
@@ -4480,7 +4488,7 @@ ChunkLoadState* vs_vol_get_chunk_start(volume* vol, s32 vol_start[static 3], s32
 }
 
 
-static void vs_process_chunk(ChunkLoadState* state, chunk* c) {
+void vs_process_chunk(ChunkLoadState* state, chunk* c) {
     s32 src_start[3] = {
         MAX(0, state->vol_start[0] - state->z * state->vol->metadata.chunks[0]),
         MAX(0, state->vol_start[1] - state->y * state->vol->metadata.chunks[1]),
@@ -4593,7 +4601,7 @@ chunk* vs_zarr_fetch_block(char* url, zarr_metadata metadata) {
   return mychunk;
 }
 
-static void vs__json_parse_int32_array(json_object *array_obj, int32_t output[3]) {
+void vs__json_parse_int32_array(json_object *array_obj, int32_t output[3]) {
     size_t array_len = json_object_array_length(array_obj);
     for (size_t i = 0; i < 3 && i < array_len; i++) {
         json_object *element = json_object_array_get_idx(array_obj, i);
@@ -4680,6 +4688,9 @@ int vs_zarr_parse_metadata(const char *json_string, zarr_metadata *metadata) {
         if (dimension_separator_str && dimension_separator_str[0]) {
             metadata->dimension_separator = dimension_separator_str[0];
         }
+    } else {
+        //TODO: is this right?
+        metadata->dimension_separator = '.';
     }
 
     json_object *format_value;
@@ -4732,6 +4743,10 @@ zarr_metadata vs_zarr_parse_zarray(char *path) {
 chunk* vs_zarr_read_chunk(char* path, zarr_metadata metadata) {
 
     FILE* fp = fopen(path, "rb");
+    if (fp == NULL) {
+        LOG_WARN("failed to open chunk at %s",path);
+        return NULL;
+    }
     fseek(fp, 0, SEEK_END);
     long size = ftell(fp);
     fseek(fp, 0, SEEK_SET);
