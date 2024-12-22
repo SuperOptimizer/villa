@@ -22,7 +22,7 @@ static float z_loc_loss_w;
 static float wind_w;
 static float wind_th;
 static int inpaint_back_range;
-static int far_dist = 1;
+static int far_dist = 2;
 
 static int layer_reg_range = 15;
 static float layer_reg_range_vx = 500.0;
@@ -291,9 +291,9 @@ int gen_surfloss(const cv::Vec2i p, ceres::Problem &problem, const cv::Mat_<uint
     if ((state(p) & STATE_LOC_VALID) == 0)
         return 0;
     
-    problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::HuberLoss(1.0), &points(p)[0], &locs(p)[0]);
+    // problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::HuberLoss(1.0), &points(p)[0], &locs(p)[0]);
     // problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::TukeyLoss(2.0), &points(p)[0], &locs(p)[0]);
-    // problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), nullptr, &points(p)[0], &locs(p)[0]);
+    problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), nullptr, &points(p)[0], &locs(p)[0]);
 
     return 1;
 }
@@ -461,7 +461,8 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     // count += gen_straight_loss2(problem, p, {-2,0},{-1,0},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     count += gen_straight_loss2(problem, p, {-1,0},{0,0},{1,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     //far dist
-    // count += gen_straight_loss2(problem, p, {-2*far_dist,0},{0,0},{2*far_dist,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
+    if (far_dist != 1)
+        count += gen_straight_loss2(problem, p, {-far_dist,0},{0,0},{far_dist,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     // count += gen_straight_loss2(problem, p, {0,0},{1,0},{2,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     
     //diag
@@ -484,8 +485,10 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     count += gen_dist_loss_fill(problem, p, {-1,1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     
     //+1
-    // count += gen_dist_loss_fill(problem, p, {-2*far_dist,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    // count += gen_dist_loss_fill(problem, p, {2*far_dist,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    if (far_dist != 1) {
+        count += gen_dist_loss_fill(problem, p, {-far_dist,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+        count += gen_dist_loss_fill(problem, p, {far_dist,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    }
     
     if (flags & LOSS_ON_SURF)
         gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
