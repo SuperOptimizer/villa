@@ -6,5 +6,6 @@
     "z_loc_loss_w" : 0.0005,
     "wind_w" : 100.0,
     "wind_th" : 0.3,
-    "inpaint_back_range" : 40
+    "inpaint_back_range" : 40,
+    "opt_w" : 4
 }
