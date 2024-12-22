@@ -1040,12 +1040,7 @@ int main(int argc, char *argv[])
                     // }
                 }
             }
-        
-        std::vector<cv::Vec2d> add_locs;
-        std::vector<cv::Vec2i> add_ps;
-        std::vector<int> add_idxs;
-        
-        
+            
         for(int j=bbox.y;j<bbox.br().y;j++) {
             cv::Vec2i p = {j,i};
             
@@ -1054,23 +1049,6 @@ int main(int argc, char *argv[])
                 create_centered_losses(problem_col, po, state_inpaint, points_in, points, locs, step, 0);
                 
                 gen_surfloss(po, problem_col, state_inpaint, points_in, points, locs, surf_w*weights[0]);
-                
-                if (surfs.size() > 1 && coord_valid(state_inpaint(po)))
-                    for(int s=1;s<surfs.size();s++)
-                    {
-                        cv::Vec2f loc = {0,0};
-                        float res = find_loc_wind(loc, tgt_wind[i], surf_points[s], winds[s], points(po), 10.0);
-                        loc = {loc[1],loc[0]};
-                        if (res >= 0 &&
-                            cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(po))) <= 100
-                            && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= 0.3) {
-                                add_locs.push_back(loc);
-                                add_idxs.push_back(s);
-                                add_ps.push_back(po);
-                        // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
-                            }
-                    }
-                
             }
             
             if (state_inpaint(p) & STATE_LOC_VALID)
@@ -1079,6 +1057,37 @@ int main(int argc, char *argv[])
             for(int o=0;o<opt_w;o++)
                 if (state_inpaint(j,i-o) & STATE_LOC_VALID)
                     problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i-o], wind_w), nullptr, &locs(p+cv::Vec2i(0,-o))[0]);
+        }
+        
+        std::vector<cv::Vec2d> add_locs;
+        std::vector<cv::Vec2i> add_ps;
+        std::vector<int> add_idxs;
+        
+        
+#pragma omp parallel
+        for(int j=bbox.y;j<bbox.br().y;j++) {
+            cv::Vec2i p = {j,i};
+            
+            for(int o=0;o<=opt_w;o++) {
+                cv::Vec2i po = {j,i-o};
+                if (surfs.size() > 1 && coord_valid(state_inpaint(po)))
+                    for(int s=1;s<surfs.size();s++)
+                    {
+                        cv::Vec2f loc = {0,0};
+                        float res = find_loc_wind(loc, tgt_wind[i], surf_points[s], winds[s], points(po), 10.0);
+                        loc = {loc[1],loc[0]};
+                        if (res >= 0 &&
+                            cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(po))) <= 100
+                            && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= 0.3)
+#pragma omp critical
+                            {
+                                add_locs.push_back(loc);
+                                add_idxs.push_back(s);
+                                add_ps.push_back(po);
+                            }
+                    }
+                
+            }
         }
         
         for(int n=0;n<add_locs.size();n++) {
