@@ -799,7 +799,7 @@ int main(int argc, char *argv[])
     // cv::Rect bbox_src(80,110,1000,80);
     // cv::Rect bbox_src(64,50,1000,160);
     // cv::Rect bbox_src(10,10,4000,points_in.rows-20);
-    cv::Rect bbox_src(10,10,1500,300);
+    cv::Rect bbox_src(102,10,2000,points_in.rows-20);
     
     float src_step = 20;
     float step = src_step*trace_mul;
@@ -827,6 +827,10 @@ int main(int argc, char *argv[])
                 col_first = std::min(col_first, j);
                 col_last = std::max(col_first, j);
             }
+            else
+                //for now only take the first contiguous block!
+                if (col_first != first_col.height)
+                    break;
         }
         
         std::cout << " i " << col_first << " " << col_last << std::endl;
@@ -842,7 +846,10 @@ int main(int argc, char *argv[])
                 locs(j,i) = {j*trace_mul,i*trace_mul};
             }
             else {
-                points(j, i) = {rand()%1000,rand()%1000,rand()%1000};
+                if (points(j-1,i)[0] != -1) 
+                    points(j, i) = points(j-1,i) + cv::Vec3d(0.1,0.1,0.1);
+                else
+                    points(j, i) = {rand()%1000,rand()%1000,rand()%1000};
                 state(j,i) = STATE_COORD_VALID;
             }
                 
@@ -867,7 +874,7 @@ int main(int argc, char *argv[])
     options_col.max_num_iterations = 10000;
     
     cv::Vec3f seed_coord = {-1,-1,-1};
-    cv::Vec2f seed_loc = {-1,-1};
+    cv::Vec2i seed_loc = {-1,-1};
     
     std::vector<float> avg_wind(size.width);
     std::vector<int> wind_counts(size.width);
@@ -876,18 +883,19 @@ int main(int argc, char *argv[])
     {
         ceres::Problem problem_init;
         for(int j=first_col.y;j<first_col.br().y;j++)
-            for(int i=first_col.x;i<first_col.br().x;i++)
+            for(int i=first_col.x;i<first_col.br().x;i++) {
+                create_centered_losses(problem_init, {j,i}, state, points_in, points, locs, step, 0);
+
                 if (loc_valid(state(j,i))) {
                     avg_wind[i] += winding_in(j*trace_mul,i*trace_mul);
                     wind_counts[i]++;
-                    
+
                     if (seed_loc[0] == -1) {
                         seed_loc = {j,i};
                         seed_coord = points_in(j*trace_mul,i*trace_mul);
                     }
                 }
-                else if (state(j,i))
-                    create_centered_losses(problem_init, {j,i}, state, points_in, points, locs, step, 0);
+            }
 
         for(int i=first_col.x;i<first_col.br().x;i++) {
             std::cout << "init wind col " << i << " " << avg_wind[i] / wind_counts[i] << " " << wind_counts[i] << std::endl;
@@ -907,12 +915,43 @@ int main(int argc, char *argv[])
                     if (problem_init.HasParameterBlock(&points(p)[0]))
                         problem_init.SetParameterBlockVariable(&points(p)[0]);
                 }
+                else {
+                    if (problem_init.HasParameterBlock(&locs(p)[0]))
+                        problem_init.SetParameterBlockConstant(&locs(p)[0]);
+                    if (problem_init.HasParameterBlock(&points(p)[0]))
+                        problem_init.SetParameterBlockConstant(&points(p)[0]);
+                }
+                    
             }
                     
         
         ceres::Solver::Summary summary;
-        ceres::Solve(options_col, &problem_init, &summary);
-        std::cout << summary.BriefReport() << std::endl;
+        // ceres::Solve(options_col, &problem_init, &summary);
+        // std::cout << summary.BriefReport() << std::endl;
+        
+        for(int j=first_col.y;j<first_col.br().y;j++) {
+            for(int i=first_col.x;i<first_col.br().x;i++) {
+                if (problem_init.HasParameterBlock(&locs(j,i)[0]))
+                    problem_init.SetParameterBlockVariable(&locs(j,i)[0]);
+                if (problem_init.HasParameterBlock(&points(j,i)[0]))
+                    problem_init.SetParameterBlockVariable(&points(j,i)[0]);
+                }
+            }
+
+        for(int j=first_col.y;j<first_col.br().y;j++)
+            for(int i=first_col.x;i<first_col.br().x;i++) {
+                if (loc_valid(state(j,i))) {
+                    problem_init.AddResidualBlock(Interp2DLoss<float>::Create(winding_in, avg_wind[i], wind_w), nullptr, &locs(j,i)[0]);
+                    problem_init.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(j,i)[0]);
+                }
+            }
+            
+        problem_init.SetParameterBlockConstant(&points(seed_loc)[0]);
+        problem_init.SetParameterBlockConstant(&locs(seed_loc)[0]);
+        
+        // ceres::Solve(options_col, &problem_init, &summary);
+        // std::cout << summary.BriefReport() << std::endl;
+        
     }
     
     std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{-2,-1},{2,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2},{-3,-2},{3,-2},{-4,-2},{4,-2}};
