@@ -377,6 +377,9 @@ int create_centered_losses_left_large(ceres::Problem &problem, const cv::Vec2i &
     
     count += gen_straight_loss2(problem, p, {-4,-2},{-2,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.5*straight_w);
     count += gen_straight_loss2(problem, p, {4,-2},{2,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.5*straight_w);
+    
+    count += gen_straight_loss2(problem, p, {-6,-2},{-2,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.5*straight_w);
+    count += gen_straight_loss2(problem, p, {6,-2},{3,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.5*straight_w);
 //     
     count += gen_straight_loss2(problem, p, {0,-4},{0,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
     count += gen_straight_loss2(problem, p, {2,-4},{1,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
@@ -402,6 +405,8 @@ int create_centered_losses_left_large(ceres::Problem &problem, const cv::Vec2i &
     
     count += gen_dist_loss_fill(problem, p, {2,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
     count += gen_dist_loss_fill(problem, p, {-2,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
+    count += gen_dist_loss_fill(problem, p, {4,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
+    count += gen_dist_loss_fill(problem, p, {-4,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
     
     //far left
     count += gen_dist_loss_fill(problem, p, {0,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.5*dist_w);
@@ -498,16 +503,16 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     
     
     //+1
-    count += gen_dist_loss_fill(problem, p, {-5,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    count += gen_dist_loss_fill(problem, p, {5,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    count += gen_dist_loss_fill(problem, p, {0,-5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    count += gen_dist_loss_fill(problem, p, {0,5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    
-    
-    count += gen_dist_loss_fill(problem, p, {5,-5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    count += gen_dist_loss_fill(problem, p, {5,5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    count += gen_dist_loss_fill(problem, p, {-5,-5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    count += gen_dist_loss_fill(problem, p, {-5,5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+//     count += gen_dist_loss_fill(problem, p, {-5,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+//     count += gen_dist_loss_fill(problem, p, {5,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+//     count += gen_dist_loss_fill(problem, p, {0,-5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+//     count += gen_dist_loss_fill(problem, p, {0,5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+//     
+//     
+//     count += gen_dist_loss_fill(problem, p, {5,-5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+//     count += gen_dist_loss_fill(problem, p, {5,5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+//     count += gen_dist_loss_fill(problem, p, {-5,-5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+//     count += gen_dist_loss_fill(problem, p, {-5,5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     
     if (flags & LOSS_ON_SURF)
         gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
@@ -808,7 +813,7 @@ int main(int argc, char *argv[])
     
     int opt_w = opt_w_short;
     int large_opt_w = 32;
-    int large_opt_every = 8;
+    int large_opt_every = 100000;
     
     for(int n=0;n<argc/3;n++) {        
         QuadSurface *surf = load_quad_from_tifxyz(argv[n*3+2]);
@@ -825,7 +830,7 @@ int main(int argc, char *argv[])
     cv::Mat_<float> winding_in = winds[0].clone();
     
     // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
-    cv::Rect bbox_src(2760,10,100*5,points_in.rows-20);
+    cv::Rect bbox_src(2760,10,2000,points_in.rows-20);
     // cv::Rect bbox_src(2760,10,40*5,points_in.rows-20);
     
     float src_step = 20;
@@ -855,7 +860,7 @@ int main(int argc, char *argv[])
         for(int j=first_col.y;j<first_col.br().y;j++) {            
             if (points_in(j*trace_mul,i*trace_mul)[0] != -1) {
                 col_first = std::min(col_first, j);
-                col_last = std::max(col_first, j);
+                col_last = std::max(col_last, j);
             }
             else
                 //for now only take the first contiguous block!
@@ -1133,21 +1138,29 @@ int main(int argc, char *argv[])
         
         for(int j=0;j<state_inpaint.rows;j++)
             for(int x=first_col.x;x<=i;x++) {
-                // state_inpaint(j,x) = 0;
                 if (loc_valid(state(j,x))) {
                     if (points(j,x)[0] == -1)
                         throw std::runtime_error("need points 3!");
                     state_inpaint(j,x) = STATE_COORD_VALID | STATE_LOC_VALID;
                 }
-                else if (mask(j,x)) {
+                else if (mask(j,x) && coord_valid(state(j,x))) {
                     // std::cout << "inpaint only! " << cv::Vec2i(x,j) << std::endl;
-                    if (points(j,x)[0] != -1)
+                    if (points(j,x)[0] != -1) {
                         state_inpaint(j,x) = STATE_COORD_VALID;
+                        locs(j,x) = {-1,-1};
+                    }
                     else {
                         state_inpaint(j,x) = 0;
+                        points(j,x) = {-1,-1,-1};
+                        locs(j,x) = {-1,-1};
                         //TODO still not sure shy this happens? is it still happening?
                         // std::cout << "no valid coord! " << cv::Vec2i(x,j) << std::endl;
                     }
+                }
+                else {
+                    state_inpaint(j,x) = 0;
+                    points(j,x) = {-1,-1,-1};
+                    locs(j,x) = {-1,-1};
                 }
             }
             

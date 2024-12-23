@@ -6146,7 +6146,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         fringe.insert(cv::Vec2i(j,i));
         }
         
-        int inl_lower_bound_reg = 10;
+        int inl_lower_bound_reg = 6;
         int inl_lower_bound_b = 2;
         int inl_lower_bound = inl_lower_bound_reg;
         
