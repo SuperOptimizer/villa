@@ -807,8 +807,8 @@ int main(int argc, char *argv[])
     cv::Mat_<cv::Vec3f> points_in = surfs[0]->rawPoints();
     cv::Mat_<float> winding_in = winds[0].clone();
     
-    cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
-    // cv::Rect bbox_src(3000,10,points_in.cols-10-3000,points_in.rows-20);
+    // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
+    cv::Rect bbox_src(5000,10,points_in.cols-10-5000,points_in.rows-20);
     
     float src_step = 20;
     float step = src_step*trace_mul;
@@ -1082,7 +1082,7 @@ int main(int argc, char *argv[])
         cv::Mat_<uint8_t> mask;
         bitwise_and(state, (uint8_t)STATE_LOC_VALID, mask);
         cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
-        cv::dilate(mask, mask, m, {-1,-1}, 40/trace_mul);
+        cv::dilate(mask, mask, m, {-1,-1}, 80/trace_mul);
         
         //also fill the mask in y dir
         for(int x=std::max(bbox.x,i-opt_w);x<=i;x++) {
