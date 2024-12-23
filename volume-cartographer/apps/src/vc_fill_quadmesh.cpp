@@ -1130,8 +1130,8 @@ int main(int argc, char *argv[])
         
     }
     
-    std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{-2,-1},{2,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2},{-3,-2},{3,-2},{-4,-2},{4,-2}};
-    // std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1}};
+    // std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{-2,-1},{2,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2},{-3,-2},{3,-2},{-4,-2},{4,-2}};
+    std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1}};
     
     cv::Mat_<float> surf_dist(points.size(), 0);
     
@@ -1238,6 +1238,9 @@ int main(int argc, char *argv[])
 //                     layer_neighs_inp.push_back(at_int(points_in, {l[1],l[0]}));
         }
         
+        last_miny--;
+        last_maxy++;
+        
         // if (i % 10 == 0) {
         //     write_ply("col_layer_neighs.ply", layer_neighs);
         //     write_ply("col_layer_neighs_inp.ply", layer_neighs_inp);
@@ -1274,15 +1277,21 @@ int main(int argc, char *argv[])
 //             for(int j=col_first;j<=col_last;j++)
 //                 mask(j,x) = 1;
 //             
-//             last_miny = col_first;
-//             last_maxy = col_last;
+//             if (x == i) {
+//                 last_miny = std::max(last_miny-1, col_first);
+//                 last_maxy = std::min(last_maxy+1, col_last);
+//             }
 //         }
 //         
 //         //FIXME where do we add not yet used points?
 //         for(int j=0;j<state_inpaint.rows;j++)
-//             for(int x=first_col.x;x<=i;x++)
-//                 if (!mask(j,x) && coord_valid(state(j,x)))
+//             for(int x=std::max(bbox.x,i-opt_w);x<=i;x++)
+//                 if (!mask(j,x) && coord_valid(state(j,x))) {
 //                     state(j,x) = 0;
+//                     state_inpaint(j,x) = 0;
+//                     points(j,x) = {-1,-1, -1};
+//                     //TODO should we also reset all surf locs?
+//                 }
                     
         
         //FIXME check everwrite better with multi-surf!
@@ -1390,14 +1399,16 @@ int main(int argc, char *argv[])
             //FIXME THESE POINTS ARE HANDLED AS INPAINT AREA IN LATER STEPS!!!
             problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), nullptr, &points(p)[0], &surf_locs[idx](p)[0]);
             problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[idx], tgt_wind[p[1]], wind_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
-            problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(surf_points[idx], seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
+            // problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(surf_points[idx], seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
         }
         
         //FIXME add centerd losses whe
         for(int j=bbox.y;j<bbox.br().y;j++)
             for(int o=std::max(bbox.x,i-inpaint_back_range);o<=i;o++)
-                if (coord_valid(state(j, o)))
+                if (coord_valid(state(j, o))) {
                     create_centered_losses(problem_col, {j, o}, state_inpaint, points_in, points, locs, step, 0);
+                    problem_col.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(j,o)[0]);
+                }
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
             for(int o=std::max(bbox.x,i-inpaint_back_range);o<=i;o++) {
