@@ -793,8 +793,6 @@ int main(int argc, char *argv[])
     int large_opt_w = 32;
     int large_opt_every = 8;
     
-    std::cout << "running with surf w " << surf_w << std::endl;
-    
     for(int n=0;n<argc/3;n++) {        
         QuadSurface *surf = load_quad_from_tifxyz(argv[n*3+2]);
         
@@ -807,10 +805,10 @@ int main(int argc, char *argv[])
     }
     
     cv::Mat_<cv::Vec3f> points_in = surfs[0]->rawPoints();
-    cv::Mat_<float> winding_in = winds[0];
+    cv::Mat_<float> winding_in = winds[0].clone();
     
-    // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
-    cv::Rect bbox_src(3000,10,points_in.cols-10-3000,points_in.rows-20);
+    cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
+    // cv::Rect bbox_src(3000,10,points_in.cols-10-3000,points_in.rows-20);
     
     float src_step = 20;
     float step = src_step*trace_mul;
@@ -1146,24 +1144,22 @@ int main(int argc, char *argv[])
         std::vector<int> add_idxs;
         
         
-#pragma omp parallel
+#pragma omp parallel for
         for(int j=bbox.y;j<bbox.br().y;j++) {
-            cv::Vec2i p = {j,i};
-            
             for(int o=0;o<=opt_w;o++) {
                 cv::Vec2i po = {j,i-o};
                 if (surfs.size() > 1 && coord_valid(state_inpaint(po)))
                     for(int s=1;s<surfs.size();s++)
                     {
                         cv::Vec2f loc = {0,0};
-                        float res = find_loc_wind(loc, tgt_wind[i], surf_points[s], winds[s], points(po), 10.0);
+                        float res = find_loc_wind(loc, tgt_wind[i-o], surf_points[s], winds[s], points(po), 1.0, false);
                         loc = {loc[1],loc[0]};
                         if (res >= 0 &&
-                            cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) <= 20
-                            && cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i]) <= 0.01)
+                            cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) <= 1
+                            && cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) <= 0.1)
 #pragma omp critical
                             {
-                                std::cout << "adding " << cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) << " " << cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
+                                std::cout << "adding " << cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) << " " << cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) << at_int(surf_points[s], {loc[1],loc[0]}) << loc << po << " " << s << std::endl;
                                 add_locs.push_back(loc);
                                 add_idxs.push_back(s);
                                 add_ps.push_back(po);
@@ -1175,8 +1171,8 @@ int main(int argc, char *argv[])
         
         for(int n=0;n<add_locs.size();n++) {
             int idx = add_idxs[n];
-            // problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), new ceres::HuberLoss(1.0), &points(add_ps[n])[0], &add_locs[n][0]);
-            problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), nullptr, &points(add_ps[n])[0], &add_locs[n][0]);
+            problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), new ceres::HuberLoss(1.0), &points(add_ps[n])[0], &add_locs[n][0]);
+            // problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), nullptr, &points(add_ps[n])[0], &add_locs[n][0]);
             problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[idx], tgt_wind[add_ps[n][1]], wind_w), nullptr,  &add_locs[n][0]);
         }
         
