@@ -929,6 +929,40 @@ int main(int argc, char *argv[])
         weights.push_back(atof(argv[n*3+4]));
     }
     
+    //
+    if (surfs.size() > 1) {
+        for(int i=1;i<surfs.size();i++) {
+            //try to find random matches between the surfaces, always coming from surf 0 for now
+            std::vector<float> offsets;
+            
+            for(int r=0;r<1000;r++) {
+                cv::Vec2i p = {rand() % surf_points[0].rows, rand() % surf_points[0].cols};
+                if (surf_points[0](p)[0] == -1)
+                    continue;
+                
+                
+                SurfacePointer *ptr = surfs[i]->pointer();
+                float res = surfs[i]->pointTo(ptr, surf_points[0](p), 2.0);
+                
+                if (res < 0 || res >= 2)
+                    continue;
+                
+                cv::Vec3f loc = surfs[i]->loc_raw(ptr);
+                
+                // std::cout << loc << std::endl;
+                // std::cout << winds[0](p) - at_int(winds[i], {loc[0],loc[1]}) << std::endl;
+                offsets.push_back(winds[0](p) - at_int(winds[i], {loc[0],loc[1]}));
+            }
+            
+            std::sort(offsets.begin(), offsets.end());
+            std::cout << "off 0.1 " << offsets[offsets.size()*0.1] << std::endl;
+            std::cout << "off 0.5 " << offsets[offsets.size()*0.5] << std::endl;
+            std::cout << "off 0.9 " << offsets[offsets.size()*0.9] << std::endl;
+            
+            winds[i] += offsets[offsets.size()*0.5];
+        }
+    }
+    
     cv::Mat_<cv::Vec3f> points_in = surfs[0]->rawPoints();
     cv::Mat_<float> winding_in = winds[0].clone();
     
@@ -1305,7 +1339,7 @@ int main(int argc, char *argv[])
                             && cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) <= wind_th)
 #pragma omp critical
                             {
-                                std::cout << "adding " << cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) << " " << cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) << at_int(surf_points[s], {loc[1],loc[0]}) << loc << po << " " << s << std::endl;
+                                // std::cout << "adding " << cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) << " " << cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) << at_int(surf_points[s], {loc[1],loc[0]}) << loc << po << " " << s << std::endl;
                                 add_locs.push_back(loc);
                                 add_idxs.push_back(s);
                                 add_ps.push_back(po);
