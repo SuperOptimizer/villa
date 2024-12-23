@@ -291,9 +291,9 @@ int gen_surfloss(const cv::Vec2i p, ceres::Problem &problem, const cv::Mat_<uint
     if ((state(p) & STATE_LOC_VALID) == 0)
         return 0;
     
-    problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::HuberLoss(1.0), &points(p)[0], &locs(p)[0]);
+    // problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::HuberLoss(1.0), &points(p)[0], &locs(p)[0]);
     // problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::TukeyLoss(2.0), &points(p)[0], &locs(p)[0]);
-    // problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), nullptr, &points(p)[0], &locs(p)[0]);
+    problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), nullptr, &points(p)[0], &locs(p)[0]);
 
     return 1;
 }
@@ -485,12 +485,16 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     count += gen_dist_loss_fill(problem, p, {-1,1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     
     //+1
-    // if (far_dist != 1) {
-    //     count += gen_dist_loss_fill(problem, p, {-2,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    //     count += gen_dist_loss_fill(problem, p, {2,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    //     count += gen_dist_loss_fill(problem, p, {-3,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    //     count += gen_dist_loss_fill(problem, p, {3,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    // }
+    count += gen_dist_loss_fill(problem, p, {-2,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {2,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {0,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {0,2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    
+    
+    count += gen_dist_loss_fill(problem, p, {2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {2,2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {-2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
+    count += gen_dist_loss_fill(problem, p, {-2,2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     
     if (flags & LOSS_ON_SURF)
         gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
@@ -808,7 +812,8 @@ int main(int argc, char *argv[])
     cv::Mat_<float> winding_in = winds[0].clone();
     
     // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
-    cv::Rect bbox_src(5000,10,points_in.cols-10-5000,points_in.rows-20);
+    cv::Rect bbox_src(2760,10,points_in.cols-10-2760,points_in.rows-20);
+    // cv::Rect bbox_src(2760,10,40*5,points_in.rows-20);
     
     float src_step = 20;
     float step = src_step*trace_mul;
@@ -821,12 +826,15 @@ int main(int argc, char *argv[])
     cv::Mat_<cv::Vec3d> points(size, {-1,-1,-1});
     cv::Mat_<cv::Vec2d> locs(size, {-1,-1});
     cv::Mat_<float> winding(size, NAN);
+    cv::Mat_<float> init_errs(size, -1);
     
     cv::Mat_<uint8_t> fail_code(size, 0);
     
     cv::Rect first_col = {bbox.x,bbox.y,opt_w,bbox.height};
     
     int last_miny, last_maxy;
+    
+    //FIXME use joint first col for whole start?
     
     for(int i=first_col.x;i<first_col.br().x;i++) {
         int col_first = first_col.height;
@@ -970,6 +978,8 @@ int main(int argc, char *argv[])
     
     // std::vector<cv::Vec3f> layer_neighs, layer_neighs_inp;
     
+    int runaways = 0;
+    
     for(int i=bbox.x+opt_w;i<bbox.br().x;i++) {
         if (i % large_opt_every == 0 && i-bbox.x > large_opt_w)
             opt_w = large_opt_w;
@@ -1012,39 +1022,46 @@ int main(int argc, char *argv[])
             if (points(p)[0] == -1)
                 continue;
             
-            if (points(p)[0] != -1)
+            //TODO check wind!cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= wind_th
+            
             {
                 ceres::Solver::Summary summary;
                 ceres::Problem problem;
-                create_centered_losses_left_large(problem, p, state, points_in, points, locs, step, LOSS_ON_SURF);
+                create_centered_losses_left_large(problem, p, state, points_in, points, locs, step, 0);
                 problem.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i], wind_w), nullptr, &locs(p)[0]);
                 problem.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
                 
                 ceres::Solve(options, &problem, &summary);
+                
+                init_errs(p) = sqrt(summary.final_cost/summary.num_residual_blocks);
             }
             
-            //FIXME ok so just adding other surfs is bad
-            if (!loc_valid(points_in, locs(p))) {
-//                 bool valid_neigh = false;
-//                 std::vector<cv::Vec2i> direct_neighs = {{0,-1},{-1,-1},{1,-1}};
-//                 for (auto n : direct_neighs)
-//                     if (loc_valid(state(p+n)))
-//                         valid_neigh = true;
-//                 
-//                 if (valid_neigh) {
-                    cv::Vec2f loc = {0,0};
-                    float res = find_loc_wind(loc, tgt_wind[i], points_in, winding_in, points(p), 10.0, false);
-                    loc = {loc[1],loc[0]};
-                    if (res >= 0 &&
-                        cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= 10
-                        && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= 0.1) {
-                            locs(p) = loc;
-                            //FIXME check tHIS AGAIN
-                            state(p) = STATE_COORD_VALID | STATE_LOC_VALID;
-                            // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
-                        }
-                // }
+            if (std::abs(at_int(winding_in, {locs(p)[1],locs(p)[0]}) - tgt_wind[i]) > wind_th) {
+                state(p) &= ~STATE_LOC_VALID;
+                locs(p) = {-1,-1};
             }
+            
+            //TODO running this unconditionally should not break anything!
+//             if (!loc_valid(points_in, locs(p))) {
+// //                 bool valid_neigh = false;
+// //                 std::vector<cv::Vec2i> direct_neighs = {{0,-1},{-1,-1},{1,-1}};
+// //                 for (auto n : direct_neighs)
+// //                     if (loc_valid(state(p+n)))
+// //                         valid_neigh = true;
+// //                 
+// //                 if (valid_neigh) {
+//                     cv::Vec2f loc = {0,0};
+//                     float res = find_loc_wind(loc, tgt_wind[i], points_in, winding_in, points(p), 10.0, false);
+//                     loc = {loc[1],loc[0]};
+//                     if (res >= 0 &&
+//                         cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= 10
+//                         && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= wind_th) {
+//                             locs(p) = loc;
+//                             state(p) = STATE_COORD_VALID | STATE_LOC_VALID;
+//                             // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
+//                         }
+//                 // }
+//             }
                     
 
 //             std::vector<cv::Vec2d> locs_layers;
@@ -1071,7 +1088,7 @@ int main(int argc, char *argv[])
             
             for(int o=0;o<=opt_w;o++) {
                 cv::Vec2i po = {j,i-o};
-                if (!loc_valid(points_in,locs(po))) {
+                if (!loc_valid(points_in,locs(po)) || std::abs(at_int(winding_in, {locs(po)[1],locs(po)[0]}) - tgt_wind[i-o]) > wind_th) {
                     state(po) &= ~STATE_LOC_VALID;
                     locs(po) = {-1,-1};
                 }
@@ -1136,7 +1153,7 @@ int main(int argc, char *argv[])
             
             for(int o=0;o<opt_w;o++)
                 if (state_inpaint(j,i-o) & STATE_LOC_VALID)
-                    problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding_in, tgt_wind[i-o], wind_w), nullptr, &locs(p+cv::Vec2i(0,-o))[0]);
+                    problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding_in, tgt_wind[i-o], wind_w), nullptr, &locs(j,i-o)[0]);
         }
         
         std::vector<cv::Vec2d> add_locs;
@@ -1156,7 +1173,7 @@ int main(int argc, char *argv[])
                         loc = {loc[1],loc[0]};
                         if (res >= 0 &&
                             cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) <= 1
-                            && cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) <= 0.1)
+                            && cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) <= wind_th)
 #pragma omp critical
                             {
                                 std::cout << "adding " << cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) << " " << cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) << at_int(surf_points[s], {loc[1],loc[0]}) << loc << po << " " << s << std::endl;
@@ -1171,8 +1188,8 @@ int main(int argc, char *argv[])
         
         for(int n=0;n<add_locs.size();n++) {
             int idx = add_idxs[n];
-            problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), new ceres::HuberLoss(1.0), &points(add_ps[n])[0], &add_locs[n][0]);
-            // problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), nullptr, &points(add_ps[n])[0], &add_locs[n][0]);
+            // problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), new ceres::HuberLoss(1.0), &points(add_ps[n])[0], &add_locs[n][0]);
+            problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), nullptr, &points(add_ps[n])[0], &add_locs[n][0]);
             problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[idx], tgt_wind[add_ps[n][1]], wind_w), nullptr,  &add_locs[n][0]);
         }
         
@@ -1230,11 +1247,11 @@ int main(int argc, char *argv[])
         if (i % 10 == 0) {
             cv::imwrite("state_inpaint_pref.tif",state_inpaint(bbox)*20);
         }
-        
-        avg_wind[i] = 0;
-        wind_counts[i] = 0;
+
         float min_w = 0, max_w = 0;
-        for(int x=std::max(i-opt_w,bbox.x+opt_w);x<=i;x++)
+        for(int x=std::max(i-opt_w,bbox.x+opt_w);x<=i;x++) {
+            avg_wind[x] = 0;
+            wind_counts[x] = 0;
             for(int j=bbox.y;j<bbox.br().y;j++) {
                 cv::Vec2i p = {j,x};
                 
@@ -1251,14 +1268,15 @@ int main(int argc, char *argv[])
                 else {
                     winding(j, x) = at_int(winding_in, {locs(j,x)[1],locs(j,x)[0]});
                     
-                    if (x == i) {
-                        if (abs(winding(j, x)-tgt_wind[i]) <= wind_th) {
-                            avg_wind[i] += winding(j, x);
-                            wind_counts[i] ++;
-                        }
-                        min_w = std::min(min_w,winding(j, x)-tgt_wind[i]);
-                        max_w = std::max(max_w,winding(j, x)-tgt_wind[i]);
+                    if (abs(winding(j, x)-tgt_wind[x]) <= wind_th) {
+                        avg_wind[x] += winding(j, x);
+                        wind_counts[x] ++;
                     }
+                    else
+                        runaways++;
+                    
+                    min_w = std::min(min_w,winding(j, x)-tgt_wind[x]);
+                    max_w = std::max(max_w,winding(j, x)-tgt_wind[x]);
                 }
 
                 if (!coord_valid(state_inpaint(j,x))) {
@@ -1271,8 +1289,20 @@ int main(int argc, char *argv[])
                         throw std::runtime_error("need points 2!");
                 }
             }
+            if (wind_counts[x])
+                avg_wind[x] /= wind_counts[x];
+            else
+                throw std::runtime_error("zero winds for col "+std::to_string(x));
+        }
             
-        if (i % 10 == 0 || !wind_counts[i] || i == bbox.br().x-1) {
+            
+        bool stop = false;
+        if (avg_wind[i-1] < avg_wind[i-2] - wind_th/2) {
+            stop = true;
+            std::cout << "stopping wind is wrong! " << avg_wind[i-2] << " " << avg_wind[i-1]  << std::endl;
+        }
+            
+        if (i % 10 == 0 || !wind_counts[i] || i == bbox.br().x-1 || stop) {
             std::vector<cv::Mat> chs;
             cv::split(points, chs);
             cv::imwrite("newx.tif",chs[0](bbox));
@@ -1282,16 +1312,19 @@ int main(int argc, char *argv[])
             cv::imwrite("state.tif",state*20);
             cv::imwrite("state_inpaint.tif",state_inpaint(bbox)*20);
             cv::imwrite("init_state.tif",init_state*20);
+            cv::imwrite("init_errs.tif",init_errs(bbox));
         }
             
         if (!wind_counts[i]) {
             std::cout << "stopping as zero valid locations found!";
             break;
         }
-
-        avg_wind[i] /= wind_counts[i];
         
-        std::cout << "avg wind number for col " << i << " : " << avg_wind[i] << " ( tgt was " << tgt_wind[i] << " ) using #" << wind_counts[i]  << " spread " << max_w << " - " << max_w << std::endl;
+        if (stop)
+            break;
+        
+        
+        std::cout << "avg wind number for col " << i << " : " << avg_wind[i] << " ( tgt was " << tgt_wind[i] << " ) using #" << wind_counts[i]  << " spread " << min_w << " - " << max_w << " runaway: " << runaways << std::endl;
         wind_counts[i] = 1;
     }
     
