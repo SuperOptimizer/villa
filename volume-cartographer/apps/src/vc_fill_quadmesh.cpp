@@ -524,22 +524,26 @@ float find_loc_wind_slow(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3
 {
     float best_res = -1;
     uint32_t sr = loc[0]+loc[1];
-    for(int r=0;r<100;r++) {
+    for(int r=0;r<1000;r++) {
         cv::Vec2f cand = loc;
         
         if (r)
             cand = {rand_r(&sr) % points.cols, rand_r(&sr) % points.rows};
         
-        if (abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
+        // std::cout << "cand " << cand << winding(cand[1],cand[0]) << " " << tgt_wind << std::endl;
+        
+        if (std::isnan(winding(cand[1],cand[0])) || abs(winding(cand[1],cand[0])-tgt_wind) > 0.5)
             continue;
         
         cv::Vec3f out_;
         float res = min_loc(points, cand, out_, {tgt}, {0}, nullptr, 4.0, 0.01);
         
+        // std::cout << res << std::endl;
+        
         if (res < 0)
             continue;
         
-        if (abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
+        if (std::isnan(winding(cand[1],cand[0])) || abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
             continue;
         
         if (res < th) {
@@ -785,6 +789,105 @@ int find_neighbors(cv::Mat_<cv::Vec3f> const &points, cv::Mat_<float> const &win
     return locs_out.size();
 }
 
+
+cv::Mat_<cv::Vec3f> points_hr_grounding(const cv::Mat_<uint8_t> &state, std::vector<float> tgt_wind, const cv::Mat_<float> &winding, const cv::Mat_<cv::Vec3f> &points_tgt_in, const cv::Mat_<cv::Vec3f> &points_src, int step)
+{
+    cv::Mat_<cv::Vec3f> points_hr(points_tgt_in.rows*step, points_tgt_in.cols*step, {0,0,0});
+    cv::Mat_<int> counts_hr(points_tgt_in.rows*step, points_tgt_in.cols*step, 0);
+    
+    cv::Mat_<cv::Vec3f> points_tgt = points_tgt_in.clone();
+
+    for(int j=0;j<points_tgt.rows-1;j++)
+        for(int i=0;i<points_tgt.cols-1;i++) {
+            if (points_tgt(j,i)[0] == -1)
+                continue;
+            if (points_tgt(j,i+1)[0] == -1)
+                continue;
+            if (points_tgt(j+1,i)[0] == -1)
+                continue;
+            if (points_tgt(j+1,i+1)[0] == -1)
+                continue;
+            
+            // std::cout << "try find corners" << std::endl;
+            
+            cv::Vec2f l00, l01, l10, l11;
+            
+            float hr_th = 20.0;
+            float res;
+            cv::Vec3f out_;
+
+            res = find_loc_wind_slow(l00, tgt_wind[i], points_src, winding, points_tgt(j,i), hr_th*hr_th);
+            if (res < 0 || res > hr_th*hr_th)
+                continue;
+
+            l01 = l00;
+            res = min_loc(points_src, l01, out_, {points_tgt(j,i+1)}, {0}, nullptr, 1.0, 0.01);
+            if (res < 0 || res > hr_th*hr_th)
+                continue;
+            l10 = l00;
+            res = min_loc(points_src, l10, out_, {points_tgt(j+1,i)}, {0}, nullptr, 1.0, 0.01);
+            if (res < 0 || res > hr_th*hr_th)
+                continue;
+            l11 = l00;
+            res = min_loc(points_src, l11, out_, {points_tgt(j+1,i+1)}, {0}, nullptr, 1.0, 0.01);
+            if (res < 0 || res > hr_th*hr_th)
+                continue;
+            
+            //FIXME should also re-use already found corners for interpolation!
+            points_tgt(j, i) = at_int(points_src, l00);
+            points_tgt(j, i+1) = at_int(points_src, l01);
+            points_tgt(j+1, i) = at_int(points_src, l10);
+            points_tgt(j+1, i+1) = at_int(points_src, l11);
+            
+            l00 = {l00[1],l00[0]};
+            l01 = {l01[1],l01[0]};
+            l10 = {l10[1],l10[0]};
+            l11 = {l11[1],l11[0]};
+            
+            
+            // std::cout << "succ!" << res << cv::Vec2i(i,j) << l00 << l01 << points_tgt(j,i) << std::endl;
+            
+            for(int sy=0;sy<=step;sy++)
+                for(int sx=0;sx<=step;sx++) {
+                    float fx = float(sx)/step;
+                    float fy = float(sy)/step;
+                    cv::Vec2f l0 = (1-fx)*l00 + fx*l01;
+                    cv::Vec2f l1 = (1-fx)*l10 + fx*l11;
+                    cv::Vec2f l = (1-fy)*l0 + fy*l1;
+                    // std::cout << l << at_int(points_src, {l[1],l[0]}) << std::endl;
+                    points_hr(j*step+sy,i*step+sx) += at_int(points_src, {l[1],l[0]});
+                    counts_hr(j*step+sy,i*step+sx) += 1;
+                }
+        }
+
+        for(int j=0;j<points_tgt.rows-1;j++)
+            for(int i=0;i<points_tgt.cols-1;i++) {
+                if (!counts_hr(j*step+1,i*step+1)) {
+                    for(int sy=0;sy<=step;sy++)
+                        for(int sx=0;sx<=step;sx++) {
+                            float fx = float(sx)/step;
+                            float fy = float(sy)/step;
+                            cv::Vec3f c0 = (1-fx)*points_tgt(j,i) + fx*points_tgt(j,i+1);
+                            cv::Vec3f c1 = (1-fx)*points_tgt(j+1,i) + fx*points_tgt(j+1,i+1);
+                            cv::Vec3f c = (1-fy)*c0 + fy*c1;
+                            // std::cout << l << at_int(points_src, {l[1],l[0]}) << std::endl;
+                            points_hr(j*step+sy,i*step+sx) += c;
+                            counts_hr(j*step+sy,i*step+sx) += 1;
+                        }
+                    }
+            }
+
+#pragma omp parallel for
+    for(int j=0;j<points_hr.rows;j++)
+        for(int i=0;i<points_hr.cols;i++)
+            if (counts_hr(j,i))
+                points_hr(j,i) /= counts_hr(j,i);
+    else
+        points_hr(j,i) = {-1,-1,-1};
+    
+    return points_hr;
+}
+
 int main(int argc, char *argv[])
 {
     if (argc != 5 && (argc-2) % 3 != 0)  {
@@ -829,8 +932,8 @@ int main(int argc, char *argv[])
     cv::Mat_<cv::Vec3f> points_in = surfs[0]->rawPoints();
     cv::Mat_<float> winding_in = winds[0].clone();
     
-    // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
-    cv::Rect bbox_src(2760,10,2000,points_in.rows-20);
+    cv::Rect bbox_src(10,10,1500,points_in.rows-20);
+    // cv::Rect bbox_src(2760,10,1000,points_in.rows-20);
     // cv::Rect bbox_src(2760,10,40*5,points_in.rows-20);
     
     float src_step = 20;
@@ -1371,21 +1474,33 @@ int main(int argc, char *argv[])
         cv::imwrite("locy.tif",chs[1]);
     }
     
-    QuadSurface *surf_full = new QuadSurface(points(bbox), surfs[0]->_scale/trace_mul);
-    
-    fs::path tgt_dir = "/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/";
-    std::string name_prefix = "testing_fill_";
-    std::string uuid = name_prefix + time_str();
-    fs::path seg_dir = tgt_dir / uuid;
-    std::cout << "saving " << seg_dir << std::endl;
-    surf_full->save(seg_dir, uuid);
-    
-    cv::Mat_<float> winding_ideal(winding.size(), NAN);
-    for(int i=0;i<tgt_wind.size();i++)
-        winding_ideal(cv::Rect(i,0,1,winding.rows)).setTo(tgt_wind[i]);
+    {
+        QuadSurface *surf_full = new QuadSurface(points(bbox), surfs[0]->_scale/trace_mul);
+        fs::path tgt_dir = "/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/";
+        std::string name_prefix = "testing_fill_";
+        std::string uuid = name_prefix + time_str();
+        fs::path seg_dir = tgt_dir / uuid;
+        std::cout << "saving " << seg_dir << std::endl;
+        surf_full->save(seg_dir, uuid);
+        
+        cv::Mat_<float> winding_ideal(winding.size(), NAN);
+        for(int i=0;i<tgt_wind.size();i++)
+            winding_ideal(cv::Rect(i,0,1,winding.rows)).setTo(tgt_wind[i]);
 
-    cv::imwrite(seg_dir/"winding_exact.tif",winding);
-    cv::imwrite(seg_dir/"winding.tif",winding_ideal);
+        cv::imwrite(seg_dir/"winding_exact.tif",winding);
+        cv::imwrite(seg_dir/"winding.tif",winding_ideal);
+    }
+    
+    {
+        cv::Mat_<cv::Vec3f> points_hr = points_hr_grounding(state, tgt_wind, winding_in, points, points_in, trace_mul);
+        QuadSurface *surf_hr = new QuadSurface(points_hr, surfs[0]->_scale);
+        fs::path tgt_dir = "/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/";
+        std::string name_prefix = "testing_fill_hr_";
+        std::string uuid = name_prefix + time_str();
+        fs::path seg_dir = tgt_dir / uuid;
+        std::cout << "saving " << seg_dir << std::endl;
+        surf_hr->save(seg_dir, uuid);
+    }
     
     return EXIT_SUCCESS;
 }
