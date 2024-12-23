@@ -901,6 +901,7 @@ int main(int argc, char *argv[])
     std::vector<cv::Mat_<float>> winds;
     std::vector<cv::Mat_<uint8_t>> supports;
     std::vector<float> weights;
+    std::vector<cv::Mat_<cv::Vec2d>> surf_locs;
 
     std::ifstream params_f(argv[1]);
     json params = json::parse(params_f);
@@ -929,6 +930,7 @@ int main(int argc, char *argv[])
         surf_points.push_back(surf->rawPoints());
         weights.push_back(atof(argv[n*3+4]));
         supports.push_back(cv::Mat_<uint8_t>(winds[0].size(), 0));
+        surf_locs.push_back(cv::Mat_<cv::Vec2d>(winds[0].size(), {-1,-1}));
     }
     
     //
@@ -1321,7 +1323,7 @@ int main(int argc, char *argv[])
                     problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding_in, tgt_wind[i-o], wind_w), nullptr, &locs(j,i-o)[0]);
         }
         
-        std::vector<cv::Vec2d> add_locs;
+        // std::vector<cv::Vec2d> add_locs;
         std::vector<cv::Vec2i> add_ps;
         std::vector<int> add_idxs;
         
@@ -1341,8 +1343,9 @@ int main(int argc, char *argv[])
                             && cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) <= wind_th)
 #pragma omp critical
                             {
-                                std::cout << "adding " << cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) << " " << cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) << at_int(surf_points[s], {loc[1],loc[0]}) << loc << po << " " << s << std::endl;
-                                add_locs.push_back(loc);
+                                // std::cout << "adding " << cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) << " " << cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) << at_int(surf_points[s], {loc[1],loc[0]}) << loc << po << " " << s << std::endl;
+                                // add_locs.push_back(loc);
+                                surf_locs[s](po) = loc;
                                 add_idxs.push_back(s);
                                 add_ps.push_back(po);
                                 supports[s](po) = 1;
@@ -1354,12 +1357,12 @@ int main(int argc, char *argv[])
             }
         }
         
-        for(int n=0;n<add_locs.size();n++) {
+        for(int n=0;n<add_idxs.size();n++) {
             int idx = add_idxs[n];
-            // problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), new ceres::HuberLoss(1.0), &points(add_ps[n])[0], &add_locs[n][0]);
-            problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), nullptr, &points(add_ps[n])[0], &add_locs[n][0]);
-            problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[idx], tgt_wind[add_ps[n][1]], wind_w), nullptr,  &add_locs[n][0]);
-            problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(surf_points[idx], seed_coord[2] - (add_ps[n][0]-seed_loc[0])*step, z_loc_loss_w*weights[idx]), nullptr, &add_locs[n][0]);
+            cv::Vec2i p = add_ps[n];
+            problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), nullptr, &points(p)[0], &surf_locs[idx](p)[0]);
+            // problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[idx], tgt_wind[p[1]], wind_w), nullptr, &surf_locs[idx](p)[0]);
+            // problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(surf_points[idx], seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
         }
         
         for(int j=bbox.y;j<bbox.br().y;j++)
@@ -1457,6 +1460,16 @@ int main(int argc, char *argv[])
                     if (points(j,x)[0] == -1)
                         throw std::runtime_error("need points 2!");
                 }
+                
+//                 for (int s=0;s<surfs.size();s++) {
+//                     if (supports[s](p)) {
+//                         if (!loc_valid(supports[s](p)))
+//                         if (supports[s](p) && abs(winding(j, x)-tgt_wind[x]) <= wind_th) {
+//                             winding(j, x) = at_int(winding_in, {locs(j,x)[1],locs(j,x)[0]});
+//                             
+//                         }
+//                     }
+//                 }
             }
             if (wind_counts[x])
                 avg_wind[x] /= wind_counts[x];
