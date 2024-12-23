@@ -899,6 +899,7 @@ int main(int argc, char *argv[])
     std::vector<QuadSurface*> surfs;
     std::vector<cv::Mat_<cv::Vec3f>> surf_points;
     std::vector<cv::Mat_<float>> winds;
+    std::vector<cv::Mat_<uint8_t>> supports;
     std::vector<float> weights;
 
     std::ifstream params_f(argv[1]);
@@ -927,6 +928,7 @@ int main(int argc, char *argv[])
         winds.push_back(wind);
         surf_points.push_back(surf->rawPoints());
         weights.push_back(atof(argv[n*3+4]));
+        supports.push_back(cv::Mat_<uint8_t>(winds[0].size(), 0));
     }
     
     //
@@ -966,7 +968,7 @@ int main(int argc, char *argv[])
     cv::Mat_<cv::Vec3f> points_in = surfs[0]->rawPoints();
     cv::Mat_<float> winding_in = winds[0].clone();
     
-    cv::Rect bbox_src(10,10,1500,points_in.rows-20);
+    cv::Rect bbox_src(3300,10,1000,points_in.rows-20);
     // cv::Rect bbox_src(2760,10,1000,points_in.rows-20);
     // cv::Rect bbox_src(2760,10,40*5,points_in.rows-20);
     
@@ -1335,15 +1337,18 @@ int main(int argc, char *argv[])
                         float res = find_loc_wind(loc, tgt_wind[i-o], surf_points[s], winds[s], points(po), 1.0, false);
                         loc = {loc[1],loc[0]};
                         if (res >= 0 &&
-                            cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) <= 1
+                            cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) <= 100
                             && cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) <= wind_th)
 #pragma omp critical
                             {
-                                // std::cout << "adding " << cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) << " " << cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) << at_int(surf_points[s], {loc[1],loc[0]}) << loc << po << " " << s << std::endl;
+                                std::cout << "adding " << cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) << " " << cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) << at_int(surf_points[s], {loc[1],loc[0]}) << loc << po << " " << s << std::endl;
                                 add_locs.push_back(loc);
                                 add_idxs.push_back(s);
                                 add_ps.push_back(po);
+                                supports[s](po) = 1;
                             }
+                        else
+                            supports[s](po) = 0;
                     }
                 
             }
@@ -1354,6 +1359,7 @@ int main(int argc, char *argv[])
             // problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), new ceres::HuberLoss(1.0), &points(add_ps[n])[0], &add_locs[n][0]);
             problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), nullptr, &points(add_ps[n])[0], &add_locs[n][0]);
             problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[idx], tgt_wind[add_ps[n][1]], wind_w), nullptr,  &add_locs[n][0]);
+            problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(surf_points[idx], seed_coord[2] - (add_ps[n][0]-seed_loc[0])*step, z_loc_loss_w*weights[idx]), nullptr, &add_locs[n][0]);
         }
         
         for(int j=bbox.y;j<bbox.br().y;j++)
@@ -1476,6 +1482,10 @@ int main(int argc, char *argv[])
             cv::imwrite("state_inpaint.tif",state_inpaint(bbox)*20);
             cv::imwrite("init_state.tif",init_state*20);
             cv::imwrite("init_errs.tif",init_errs(bbox));
+            
+            for(int s=0;s<supports.size();s++)
+                cv::imwrite("supports"+std::to_string(s)+".tif",supports[s](bbox)*255);
+                
         }
             
         if (!wind_counts[i]) {
