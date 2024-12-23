@@ -1061,13 +1061,13 @@ int main(int argc, char *argv[])
             
             //TODO running this unconditionally should not break anything!
             if (!loc_valid(points_in, locs(p))) {
-                bool valid_neigh = false;
-                std::vector<cv::Vec2i> direct_neighs = {{0,-1},{-1,-1},{1,-1}};
-                for (auto n : direct_neighs)
-                    if (loc_valid(state(p+n)))
-                        valid_neigh = true;
+                // bool valid_neigh = false;
+                // std::vector<cv::Vec2i> direct_neighs = {{0,-1},{-1,-1},{1,-1}};
+                // for (auto n : direct_neighs)
+                //     if (loc_valid(state(p+n)))
+                //         valid_neigh = true;
                 
-                if (valid_neigh) {
+                // if (valid_neigh) {
                     cv::Vec2f loc = {0,0};
                     float res = find_loc_wind(loc, tgt_wind[i], points_in, winding_in, points(p), 10.0, false);
                     loc = {loc[1],loc[0]};
@@ -1076,9 +1076,9 @@ int main(int argc, char *argv[])
                         && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= wind_th) {
                             locs(p) = loc;
                             state(p) = STATE_COORD_VALID | STATE_LOC_VALID;
-                            std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
+                            // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
                         }
-                }
+                // }
             }
                     
 
