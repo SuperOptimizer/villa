@@ -918,7 +918,7 @@ int main(int argc, char *argv[])
     
     int opt_w = opt_w_short;
     int large_opt_w = 32;
-    int large_opt_every = 8;
+    int large_opt_every = 100000;
     
     for(int n=0;n<argc/3;n++) {
         QuadSurface *surf = load_quad_from_tifxyz(argv[n*3+2]);
@@ -1163,7 +1163,7 @@ int main(int argc, char *argv[])
             
             //FIXME
             for(auto n : neighs) {
-                cv::Vec2d cand = locs(p+n) + cv::Vec2d(0,1/step);
+                // cv::Vec2d cand = locs(p+n) + cv::Vec2d(0,1/step);
                 // if (loc_valid(points_in,cand) && loc_valid(state(p+n))) {
                 //     state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
                 //     locs(p) = cand;
@@ -1173,10 +1173,11 @@ int main(int argc, char *argv[])
                 if (!state(p) && coord_valid(state(p+n))) {
                     points(p) = points(p+n)+cv::Vec3d(((j+i)%10)*0.01, ((j+i+1)%10)*0.01,((j+i+2)%10)*0.01);
                     state(p) = STATE_COORD_VALID;
+                    break;
                 }
             }
             
-            init_state(p) = state(p);
+            // init_state(p) = state(p);
             
             if (points(p)[0] == -1)
                 continue;
@@ -1195,32 +1196,32 @@ int main(int argc, char *argv[])
                 init_errs(p) = sqrt(summary.final_cost/summary.num_residual_blocks);
             }
             
-            if (!loc_valid(winding_in, locs(p)) || std::abs(at_int(winding_in, {locs(p)[1],locs(p)[0]}) - tgt_wind[i]) > wind_th) {
-                state(p) &= ~STATE_LOC_VALID;
-                locs(p) = {-1,-1};
-            }
+            // if (!loc_valid(winding_in, locs(p)) || std::abs(at_int(winding_in, {locs(p)[1],locs(p)[0]}) - tgt_wind[i]) > wind_th) {
+            //     state(p) &= ~STATE_LOC_VALID;
+            //     locs(p) = {-1,-1};
+            // }
             
             //TODO running this unconditionally should not break anything!
-            if (!loc_valid(points_in, locs(p))) {
-                // bool valid_neigh = false;
-                // std::vector<cv::Vec2i> direct_neighs = {{0,-1},{-1,-1},{1,-1}};
-                // for (auto n : direct_neighs)
-                //     if (loc_valid(state(p+n)))
-                //         valid_neigh = true;
-                
-                // if (valid_neigh) {
-                    cv::Vec2f loc = {0,0};
-                    float res = find_loc_wind(loc, tgt_wind[i], points_in, winding_in, points(p), 10.0, false);
-                    loc = {loc[1],loc[0]};
-                    if (res >= 0 &&
-                        cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= 100
-                        && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= wind_th) {
-                            locs(p) = loc;
-                            state(p) = STATE_COORD_VALID | STATE_LOC_VALID;
-                            // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
-                        }
-                // }
-            }
+// //             if (!loc_valid(points_in, locs(p))) {
+// //                 // bool valid_neigh = false;
+// //                 // std::vector<cv::Vec2i> direct_neighs = {{0,-1},{-1,-1},{1,-1}};
+// //                 // for (auto n : direct_neighs)
+// //                 //     if (loc_valid(state(p+n)))
+// //                 //         valid_neigh = true;
+// //                 
+// //                 // if (valid_neigh) {
+// //                     cv::Vec2f loc = {0,0};
+// //                     float res = find_loc_wind(loc, tgt_wind[i], points_in, winding_in, points(p), 10.0, false);
+// //                     loc = {loc[1],loc[0]};
+// //                     if (res >= 0 &&
+// //                         cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= 100
+// //                         && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= wind_th) {
+// //                             locs(p) = loc;
+// //                             state(p) = STATE_COORD_VALID | STATE_LOC_VALID;
+// //                             // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
+// //                         }
+// //                 // }
+// //             }
                     
 
 //             std::vector<cv::Vec2d> locs_layers;
@@ -1242,99 +1243,111 @@ int main(int argc, char *argv[])
         //     write_ply("col_layer_neighs_inp.ply", layer_neighs_inp);
         // }
         
-        for(int j=bbox.y;j<bbox.br().y;j++) {
-            cv::Vec2i p = {j,i};
-            
-            for(int o=0;o<=opt_w;o++) {
-                cv::Vec2i po = {j,i-o};
-                if (!loc_valid(points_in,locs(po)) || std::abs(at_int(winding_in, {locs(po)[1],locs(po)[0]}) - tgt_wind[i-o]) > wind_th) {
-                    state(po) &= ~STATE_LOC_VALID;
-                    locs(po) = {-1,-1};
-                }
-            }
-        }
+// //         for(int j=bbox.y;j<bbox.br().y;j++) {
+// //             cv::Vec2i p = {j,i};
+// //             
+// //             for(int o=0;o<=opt_w;o++) {
+// //                 cv::Vec2i po = {j,i-o};
+// //                 if (!loc_valid(points_in,locs(po)) || std::abs(at_int(winding_in, {locs(po)[1],locs(po)[0]}) - tgt_wind[i-o]) > wind_th) {
+// //                     state(po) &= ~STATE_LOC_VALID;
+// //                     locs(po) = {-1,-1};
+// //                 }
+// //             }
+// //         }
         
         cv::Mat_<uint8_t> state_inpaint = state.clone();
-        cv::Mat_<uint8_t> mask;
-        bitwise_and(state, (uint8_t)STATE_LOC_VALID, mask);
-        cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
-        cv::dilate(mask, mask, m, {-1,-1}, 80/trace_mul);
-        
-        //also fill the mask in y dir
-        for(int x=std::max(bbox.x,i-opt_w);x<=i;x++) {
-            int col_first = first_col.height;
-            int col_last = -1;
-            for(int j=0;j<state_inpaint.rows;j++) {
-                if (mask(j,x)) {
-                    col_first = std::min(col_first, j);
-                    col_last = std::max(col_last, j);
-                }
-            }
-            for(int j=col_first;j<=col_last;j++)
-                mask(j,x) = 1;
-            
-            last_miny = col_first;
-            last_maxy = col_last;
-        }
+//         cv::Mat_<uint8_t> mask;
+//         bitwise_and(state, (uint8_t)STATE_LOC_VALID, mask);
+//         cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
+//         cv::dilate(mask, mask, m, {-1,-1}, 80/trace_mul);
+//         
+//         //also fill the mask in y dir
+//         for(int x=std::max(bbox.x,i-opt_w);x<=i;x++) {
+//             int col_first = first_col.height;
+//             int col_last = -1;
+//             for(int j=0;j<state_inpaint.rows;j++) {
+//                 if (mask(j,x)) {
+//                     col_first = std::min(col_first, j);
+//                     col_last = std::max(col_last, j);
+//                 }
+//             }
+//             for(int j=col_first;j<=col_last;j++)
+//                 mask(j,x) = 1;
+//             
+//             last_miny = col_first;
+//             last_maxy = col_last;
+//         }
+//         
+//         //FIXME where do we add not yet used points?
+//         for(int j=0;j<state_inpaint.rows;j++)
+//             for(int x=first_col.x;x<=i;x++)
+//                 if (!mask(j,x) && coord_valid(state(j,x)))
+//                     state(j,x) = 0;
+                    
         
         //FIXME check everwrite better with multi-surf!
-        for(int j=0;j<state_inpaint.rows;j++)
-            for(int x=first_col.x;x<=i;x++) {
-                if (loc_valid(state(j,x))) {
-                    if (points(j,x)[0] == -1)
-                        throw std::runtime_error("need points 3!");
-                    state_inpaint(j,x) = STATE_COORD_VALID | STATE_LOC_VALID;
-                }
-                else if (mask(j,x) && coord_valid(state(j,x))) {
-                    // std::cout << "inpaint only! " << cv::Vec2i(x,j) << std::endl;
-                    if (points(j,x)[0] != -1) {
-                        state_inpaint(j,x) = STATE_COORD_VALID;
-                        locs(j,x) = {-1,-1};
-                    }
-                    else {
-                        state_inpaint(j,x) = 0;
-                        points(j,x) = {-1,-1,-1};
-                        locs(j,x) = {-1,-1};
-                        //TODO still not sure shy this happens? is it still happening?
-                        // std::cout << "no valid coord! " << cv::Vec2i(x,j) << std::endl;
-                    }
-                }
-                else {
-                    state_inpaint(j,x) = 0;
-                    points(j,x) = {-1,-1,-1};
-                    locs(j,x) = {-1,-1};
-                }
-            }
+        // for(int j=0;j<state_inpaint.rows;j++)
+        //     for(int x=first_col.x;x<=i;x++) {
+        //         if (loc_valid(state(j,x))) {
+        //             if (points(j,x)[0] == -1)
+        //                 throw std::runtime_error("need points 3!");
+        //             state_inpaint(j,x) = STATE_COORD_VALID | STATE_LOC_VALID;
+        //         }
+        //         else if (mask(j,x) && coord_valid(state(j,x))) {
+        //             // std::cout << "inpaint only! " << cv::Vec2i(x,j) << std::endl;
+        //             if (points(j,x)[0] != -1) {
+        //                 state_inpaint(j,x) = STATE_COORD_VALID;
+        //                 locs(j,x) = {-1,-1};
+        //             }
+        //             else {
+        //                 state_inpaint(j,x) = 0;
+        //                 points(j,x) = {-1,-1,-1};
+        //                 locs(j,x) = {-1,-1};
+        //                 //TODO still not sure shy this happens? is it still happening?
+        //                 // std::cout << "no valid coord! " << cv::Vec2i(x,j) << std::endl;
+        //             }
+        //         }
+        //         else {
+        //             state_inpaint(j,x) = 0;
+        //             points(j,x) = {-1,-1,-1};
+        //             locs(j,x) = {-1,-1};
+        //         }
+        //     }
             
-        for(int j=bbox.y;j<bbox.br().y;j++) {
-            cv::Vec2i p = {j,i};
-            
-            for(int o=0;o<=opt_w;o++) {
-                cv::Vec2i po = {j,i-o};
-                create_centered_losses(problem_col, po, state_inpaint, points_in, points, locs, step, 0);
-                
-                gen_surfloss(po, problem_col, state_inpaint, points_in, points, locs, surf_w*weights[0]);
-            }
-            
-            if (state_inpaint(p) & STATE_LOC_VALID)
-                problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
-            
-            for(int o=0;o<opt_w;o++)
-                if (state_inpaint(j,i-o) & STATE_LOC_VALID)
-                    problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding_in, tgt_wind[i-o], wind_w), nullptr, &locs(j,i-o)[0]);
-        }
+//         for(int j=bbox.y;j<bbox.br().y;j++) {
+//             cv::Vec2i p = {j,i};
+//             
+//             for(int o=0;o<=opt_w;o++) {
+//                 cv::Vec2i po = {j,i-o};
+//                 create_centered_losses(problem_col, po, state_inpaint, points_in, points, locs, step, 0);
+//                 
+//                 // gen_surfloss(po, problem_col, state_inpaint, points_in, points, locs, surf_w*weights[0]);
+//             }
+//             
+// //             if (state_inpaint(p) & STATE_LOC_VALID)
+// //                 problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
+// //             
+// //             for(int o=0;o<opt_w;o++)
+// //                 if (state_inpaint(j,i-o) & STATE_LOC_VALID)
+// //                     problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding_in, tgt_wind[i-o], wind_w), nullptr, &locs(j,i-o)[0]);
+//         }
         
         // std::vector<cv::Vec2d> add_locs;
         std::vector<cv::Vec2i> add_ps;
         std::vector<int> add_idxs;
         
         
+        //FIXME re-use existing locs if there!
 #pragma omp parallel for
         for(int j=bbox.y;j<bbox.br().y;j++) {
             for(int o=0;o<=opt_w;o++) {
+                //only add in area where we also inpaint
+                if (!coord_valid(state(j,i-o)))
+                    continue;
+                
                 cv::Vec2i po = {j,i-o};
-                if (surfs.size() > 1 && coord_valid(state_inpaint(po)))
-                    for(int s=1;s<surfs.size();s++)
+                // if (surfs.size() > 1 && coord_valid(state_inpaint(po)))
+                    for(int s=0;s<surfs.size();s++)
                     {
                         cv::Vec2f loc = {0,0};
                         float res = find_loc_wind(loc, tgt_wind[i-o], surf_points[s], winds[s], points(po), 1.0, false);
@@ -1358,18 +1371,32 @@ int main(int argc, char *argv[])
             }
         }
         
+        for(int j=bbox.y;j<bbox.br().y;j++)
+            for(int o=0;o<=opt_w;o++) {
+                cv::Vec2i po = {j,i-o};
+
+                int sup_count = 0;
+                for(int s=0;s<surfs.size();s++)
+                    sup_count += supports[s](po);
+                if (sup_count)
+                    state(po) = STATE_LOC_VALID | STATE_COORD_VALID;
+                else
+                    state(po) &= ~STATE_LOC_VALID;
+            }
+        
         for(int n=0;n<add_idxs.size();n++) {
             int idx = add_idxs[n];
             cv::Vec2i p = add_ps[n];
             //FIXME THESE POINTS ARE HANDLED AS INPAINT AREA IN LATER STEPS!!!
             problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), nullptr, &points(p)[0], &surf_locs[idx](p)[0]);
             problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[idx], tgt_wind[p[1]], wind_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
-            // problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(surf_points[idx], seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
+            problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(surf_points[idx], seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
         }
         
+        //FIXME add centerd losses whe
         for(int j=bbox.y;j<bbox.br().y;j++)
-            for(int o=std::max(bbox.x,i-inpaint_back_range);o<i-opt_w;o++)
-                if (!loc_valid(state(j,o)) && coord_valid(state(j, o)))
+            for(int o=std::max(bbox.x,i-inpaint_back_range);o<=i;o++)
+                if (coord_valid(state(j, o)))
                     create_centered_losses(problem_col, {j, o}, state_inpaint, points_in, points, locs, step, 0);
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
@@ -1422,65 +1449,95 @@ int main(int argc, char *argv[])
             cv::imwrite("state_inpaint_pref.tif",state_inpaint(bbox)*20);
         }
 
+        bool stop = false;
         float min_w = 0, max_w = 0;
-        for(int x=std::max(i-opt_w,bbox.x+opt_w);x<=i;x++) {
+        for(int x=std::max(i-opt_w,bbox.x);x<=i;x++) {
+//             avg_wind[x] = 0;
+//             wind_counts[x] = 0;
+//             for(int j=bbox.y;j<bbox.br().y;j++) {
+//                 cv::Vec2i p = {j,x};
+//                 
+//                 if (loc_valid(points_in, locs(p)))
+//                     surf_dist(p) = cv::norm(cv::Vec3f(points(p))-at_int(points_in, {locs(p)[1],locs(p)[0]}));
+//                 else
+//                     surf_dist(p) = -1;
+//                 
+//                 if (!loc_valid(points_in,locs(j,x))) {
+//                     locs(j,x) = {-1,-1};
+//                     winding(j, x) = NAN;
+//                     state_inpaint(j,x) &= ~STATE_LOC_VALID;
+//                 }
+//                 else {
+//                     winding(j, x) = at_int(winding_in, {locs(j,x)[1],locs(j,x)[0]});
+//                     
+//                     if (abs(winding(j, x)-tgt_wind[x]) <= wind_th) {
+//                         avg_wind[x] += winding(j, x);
+//                         wind_counts[x] ++;
+//                     }
+//                     else
+//                         runaways++;
+//                     
+//                     min_w = std::min(min_w,winding(j, x)-tgt_wind[x]);
+//                     max_w = std::max(max_w,winding(j, x)-tgt_wind[x]);
+//                 }
+// 
+//                 if (!coord_valid(state_inpaint(j,x))) {
+//                     points(j,x) = {-1,-1,-1};
+//                     state(j,x) = 0;
+//                 }
+//                 else {
+//                     state(j,x) = state_inpaint(j, x);
+//                     if (points(j,x)[0] == -1)
+//                         throw std::runtime_error("need points 2!");
+//                 }
+            
+            //FIXME do this but check for tboht suport and loc valid!
+//             for(int j=bbox.y;j<bbox.br().y;j++)
+//                 for(int o=0;o<=opt_w;o++) {
+//                     cv::Vec2i po = {j,i-o};
+//                     
+//                     int sup_count = 0;
+//                     for(int s=0;s<surfs.size();s++)
+//                         sup_count += supports[s](po);
+//                     if (sup_count)
+//                         state(po) = STATE_LOC_VALID;
+//                     else
+//                         state(po) &= ~STATE_LOC_VALID;
+//                 }
+            
             avg_wind[x] = 0;
             wind_counts[x] = 0;
             for(int j=bbox.y;j<bbox.br().y;j++) {
+                
                 cv::Vec2i p = {j,x};
-                
-                if (loc_valid(points_in, locs(p)))
-                    surf_dist(p) = cv::norm(cv::Vec3f(points(p))-at_int(points_in, {locs(p)[1],locs(p)[0]}));
-                else
-                    surf_dist(p) = -1;
-                
-                if (!loc_valid(points_in,locs(j,x))) {
-                    locs(j,x) = {-1,-1};
-                    winding(j, x) = NAN;
-                    state_inpaint(j,x) &= ~STATE_LOC_VALID;
-                }
-                else {
-                    winding(j, x) = at_int(winding_in, {locs(j,x)[1],locs(j,x)[0]});
-                    
-                    if (abs(winding(j, x)-tgt_wind[x]) <= wind_th) {
-                        avg_wind[x] += winding(j, x);
-                        wind_counts[x] ++;
+                for (int s=0;s<surfs.size();s++) {
+                    if (supports[s](p)) {
+                        if (loc_valid(surf_points[s], surf_locs[s](p))) {
+                            if (abs(at_int(winds[s], {surf_locs[s](p)[1],surf_locs[s](p)[0]}) - tgt_wind[x]) <= wind_th) {
+                                //FIXME check wind + support + loc avlid
+                                avg_wind[x] += at_int(winds[s], {surf_locs[s](p)[1],surf_locs[s](p)[0]});
+                                wind_counts[x]++;
+                                // std::cout << "got wind " << x << std::endl;
+                                
+                            }
+                            else
+                                std::cout << "wind th " << abs(at_int(winds[s], {surf_locs[s](p)[1],surf_locs[s](p)[0]}) - tgt_wind[x]) << " " << at_int(winds[s], {surf_locs[s](p)[1],surf_locs[s](p)[0]}) << tgt_wind[x] << " " << std::endl;
+                        }
+                        else
+                        {
+                            std::cout << "lost a point! " << p << " " << s << " " << surf_locs[s](p) << std::endl;
+                        }
                     }
-                    else
-                        runaways++;
-                    
-                    min_w = std::min(min_w,winding(j, x)-tgt_wind[x]);
-                    max_w = std::max(max_w,winding(j, x)-tgt_wind[x]);
                 }
-
-                if (!coord_valid(state_inpaint(j,x))) {
-                    points(j,x) = {-1,-1,-1};
-                    state(j,x) = 0;
-                }
-                else {
-                    state(j,x) = state_inpaint(j, x);
-                    if (points(j,x)[0] == -1)
-                        throw std::runtime_error("need points 2!");
-                }
-                
-//                 for (int s=0;s<surfs.size();s++) {
-//                     if (supports[s](p)) {
-//                         if (!loc_valid(supports[s](p)))
-//                         if (supports[s](p) && abs(winding(j, x)-tgt_wind[x]) <= wind_th) {
-//                             winding(j, x) = at_int(winding_in, {locs(j,x)[1],locs(j,x)[0]});
-//                             
-//                         }
-//                     }
-//                 }
             }
+            std::cout << "wcount " << x << " " << wind_counts[x] << std::endl;
             if (wind_counts[x])
                 avg_wind[x] /= wind_counts[x];
-            else
-                throw std::runtime_error("zero winds for col "+std::to_string(x));
+            else {
+                stop = true;
+            }
         }
             
-            
-        bool stop = false;
         if (avg_wind[i-1] < avg_wind[i-2] - wind_th/2) {
             stop = true;
             std::cout << "stopping wind is wrong! " << avg_wind[i-2] << " " << avg_wind[i-1]  << std::endl;
@@ -1504,7 +1561,7 @@ int main(int argc, char *argv[])
         }
             
         if (!wind_counts[i]) {
-            std::cout << "stopping as zero valid locations found!";
+            std::cout << "stopping as zero valid locations found!" << i << std::endl;
             break;
         }
         
