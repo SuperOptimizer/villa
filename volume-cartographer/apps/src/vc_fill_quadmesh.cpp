@@ -813,9 +813,9 @@ int main(int argc, char *argv[])
     
     int opt_w = opt_w_short;
     int large_opt_w = 32;
-    int large_opt_every = 100000;
+    int large_opt_every = 8;
     
-    for(int n=0;n<argc/3;n++) {        
+    for(int n=0;n<argc/3;n++) {
         QuadSurface *surf = load_quad_from_tifxyz(argv[n*3+2]);
         
         cv::Mat_<float> wind = cv::imread(argv[n*3+3], cv::IMREAD_UNCHANGED);
