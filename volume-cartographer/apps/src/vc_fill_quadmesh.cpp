@@ -1277,6 +1277,7 @@ int main(int argc, char *argv[])
             last_maxy = col_last;
         }
         
+        //FIXME check everwrite better with multi-surf!
         for(int j=0;j<state_inpaint.rows;j++)
             for(int x=first_col.x;x<=i;x++) {
                 if (loc_valid(state(j,x))) {
@@ -1360,8 +1361,9 @@ int main(int argc, char *argv[])
         for(int n=0;n<add_idxs.size();n++) {
             int idx = add_idxs[n];
             cv::Vec2i p = add_ps[n];
+            //FIXME THESE POINTS ARE HANDLED AS INPAINT AREA IN LATER STEPS!!!
             problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), nullptr, &points(p)[0], &surf_locs[idx](p)[0]);
-            // problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[idx], tgt_wind[p[1]], wind_w), nullptr, &surf_locs[idx](p)[0]);
+            problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[idx], tgt_wind[p[1]], wind_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
             // problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(surf_points[idx], seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
         }
         
