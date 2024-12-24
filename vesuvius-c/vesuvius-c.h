@@ -4780,7 +4780,7 @@ chunk* vs_zarr_decompress_chunk(long size, void* compressed_data, zarr_metadata 
         decompressed_data = compressed_data;
         decompressed_size = size;
     } else {
-        decompressed_data = malloc(z * y * x * dtype_size*2);
+        decompressed_data = malloc(z * y * x * dtype_size*4);
         decompressed_size = blosc2_decompress(compressed_data, size, decompressed_data, z * y * x * dtype_size);
         if (decompressed_size < 0) {
             LOG_ERROR("Blosc2 decompression failed: %d\n", decompressed_size);
