@@ -970,7 +970,7 @@ int main(int argc, char *argv[])
     cv::Mat_<cv::Vec3f> points_in = surfs[0]->rawPoints();
     cv::Mat_<float> winding_in = winds[0].clone();
     
-    cv::Rect bbox_src(3300,10,1000,points_in.rows-20);
+    cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
     // cv::Rect bbox_src(2760,10,1000,points_in.rows-20);
     // cv::Rect bbox_src(2760,10,40*5,points_in.rows-20);
     
@@ -1130,8 +1130,17 @@ int main(int argc, char *argv[])
         
     }
     
+    int expand_rate = 2;
+    int shrink_inv_rate = 2;
+    int dilate = 20;
+    
+    int lower_bound = last_miny;
+    int upper_bound = last_maxy;
+    int lower_loc = lower_bound;
+    int upper_loc = upper_bound;
+    
     // std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{-2,-1},{2,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2},{-3,-2},{3,-2},{-4,-2},{4,-2}};
-    std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1}};
+    std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{-2,-1},{2,-1}};
     
     cv::Mat_<float> surf_dist(points.size(), 0);
     
@@ -1149,11 +1158,20 @@ int main(int argc, char *argv[])
         
         std::cout << "wind tgt: " << tgt_wind[i] << " " << avg_wind[i-1] << " " << avg_wind[i-2] << std::endl;
         
+        if (lower_bound > lower_loc-dilate)
+            lower_bound = std::max(lower_loc-dilate,lower_bound-expand_rate);
+        else if (lower_bound < lower_loc-dilate)
+            lower_bound = std::min(lower_loc-dilate,lower_bound + (i % shrink_inv_rate));
+            
+        if (upper_bound < upper_loc+dilate)
+            upper_bound = std::min(upper_loc+dilate,upper_bound+expand_rate);
+        else if (upper_bound > upper_loc+dilate)
+            upper_bound = std::max(upper_loc+dilate,upper_bound - (i % shrink_inv_rate));
         
         std::cout << "proc col " << i << std::endl;
         ceres::Problem problem_col;
 #pragma omp parallel for
-        for(int j=std::max(bbox.y,last_miny-2);j<std::min(bbox.br().y,last_maxy+2+1);j++) {
+        for(int j=std::max(bbox.y,lower_bound);j<std::min(bbox.br().y,upper_bound+1);j++) {
             cv::Vec2i p = {j,i};
             
             locs(p) = {-1,-1};
@@ -1465,6 +1483,8 @@ int main(int argc, char *argv[])
 
         bool stop = false;
         float min_w = 0, max_w = 0;
+        lower_loc = bbox.br().x+1;
+        upper_loc = -1;
         for(int x=std::max(i-opt_w,bbox.x);x<=i;x++) {
 //             avg_wind[x] = 0;
 //             wind_counts[x] = 0;
@@ -1531,6 +1551,11 @@ int main(int argc, char *argv[])
                                 //FIXME check wind + support + loc avlid
                                 avg_wind[x] += at_int(winds[s], {surf_locs[s](p)[1],surf_locs[s](p)[0]});
                                 wind_counts[x]++;
+                                if (i == x) {
+                                    upper_loc = std::max(upper_loc, j);
+                                    lower_loc = std::min(lower_loc, j);
+                                }
+                                    
                                 // std::cout << "got wind " << x << std::endl;
                                 
                             }
