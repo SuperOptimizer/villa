@@ -63,7 +63,7 @@ For each cube, the original scroll volume data and the instance segmentation dat
 Data related to the Grand Prize (GP) region from `Scroll1`. The dataset includes volumes and meshes associated to manual segmentation of surfaces. We also provide predictions from Machine Learning [models](https://dl.ash2txt.org/ml-models/) that aim to segment the medial surface of the papyrus sheet.
 
 <div className="mb-4"> <img src="/img/data/datasets/gp_predictions.webp" className="w-[60%]" alt="ML Predictions for GP region"/> <figcaption className="mt-[-6px]">Machine learning predictions for medial surface segmentation in the GP Banner Region.</figcaption> </div>
-<div className="mb-4"> <img src="/img/data/datasets/gp_mesh.webp" className="w-[60%]" alt="GP Mesh Visualization"/> <figcaption className="mt-[-6px]">Visualization of a mesh for the Grand Prize Banner region.</figcaption> </div>
+<div className="mb-4"> <img src="/img/data/datasets/gp_mesh.webp" className="w-[20%]" alt="GP Mesh Visualization"/> <figcaption className="mt-[-6px]">Visualization of a mesh for the Grand Prize Banner region.</figcaption> </div>
 
 - [README](https://dl.ash2txt.org/datasets/GrandPrizeBannerRegion/README.txt)
 - [gp_meshes.7z](https://dl.ash2txt.org/datasets/GrandPrizeBannerRegion/gp_meshes.7z) (288 MB)
