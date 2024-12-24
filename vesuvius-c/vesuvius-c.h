@@ -38,6 +38,7 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <time.h>
+#include <sys/stat.h>
 
 #include <curl/curl.h>
 #include <blosc2.h>
@@ -4741,6 +4742,17 @@ zarr_metadata vs_zarr_parse_zarray(char *path) {
 }
 
 chunk* vs_zarr_read_chunk(char* path, zarr_metadata metadata) {
+    struct stat path_stat;
+
+    if (stat(path, &path_stat) != 0) {
+        LOG_WARN("%s does not exist or is not accessible", path);
+        return NULL;
+    }
+
+    if (!S_ISREG(path_stat.st_mode)) {
+        LOG_WARN("path is not a regular file: %s", path);
+        return NULL;
+    }
 
     FILE* fp = fopen(path, "rb");
     if (fp == NULL) {
@@ -4752,6 +4764,7 @@ chunk* vs_zarr_read_chunk(char* path, zarr_metadata metadata) {
     fseek(fp, 0, SEEK_SET);
     u8* compressed_data = malloc(size);
     fread(compressed_data,1,size,fp);
+    fclose(fp);
 
     chunk* ret= vs_zarr_decompress_chunk(size, compressed_data, metadata);
     free(compressed_data);
