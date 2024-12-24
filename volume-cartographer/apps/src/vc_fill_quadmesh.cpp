@@ -970,9 +970,9 @@ int main(int argc, char *argv[])
     cv::Mat_<cv::Vec3f> points_in = surfs[0]->rawPoints();
     cv::Mat_<float> winding_in = winds[0].clone();
     
-    cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
-    // cv::Rect bbox_src(2760,10,1000,points_in.rows-20);
-    // cv::Rect bbox_src(2760,10,40*5,points_in.rows-20);
+    // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
+    // cv::Rect bbox_src(50,10,points_in.cols-10-50,points_in.rows-20);
+    cv::Rect bbox_src(3300,10,1000,points_in.rows-20);
     
     float src_step = 20;
     float step = src_step*trace_mul;
@@ -1426,7 +1426,7 @@ int main(int argc, char *argv[])
                 if (coord_valid(state(j, o))) {
                     float w_mul = 1.0;
                     if (!coord_valid(state(j, o)))
-                        w_mul = 0.6;
+                        w_mul = 0.3;
                     create_centered_losses(problem_col, {j, o}, state_inpaint, points_in, points, locs, step, 0, w_mul);
                     problem_col.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(j,o)[0]);
                 }
