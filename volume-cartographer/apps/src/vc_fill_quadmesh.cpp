@@ -888,6 +888,17 @@ cv::Mat_<cv::Vec3f> points_hr_grounding(const cv::Mat_<uint8_t> &state, std::vec
     return points_hr;
 }
 
+template <typename E> cv::Mat_<E> pad(const cv::Mat_<E> &src, int amount, const E &val)
+{
+    cv::Mat_<E> m(src.rows+2*amount, src.cols+2*amount, val);
+    
+    src.copyTo(m(cv::Rect(amount, amount, src.cols, src.rows)));
+    
+    std::cout << "pad " << src.size() << m.size() << std::endl;
+    
+    return m;
+}
+
 int main(int argc, char *argv[])
 {
     if (argc != 5 && (argc-2) % 3 != 0)  {
@@ -967,12 +978,17 @@ int main(int argc, char *argv[])
         }
     }
     
-    cv::Mat_<cv::Vec3f> points_in = surfs[0]->rawPoints();
+    for(int s=0;s<surf_points.size();s++) {
+        surf_points[s] = pad(surf_points[s], 20, {-1,-1,-1});
+        winds[s] = pad(winds[s], 20, NAN);
+    }
+    
+    cv::Mat_<cv::Vec3f> points_in = surf_points[0];
     cv::Mat_<float> winding_in = winds[0].clone();
     
     // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
-    // cv::Rect bbox_src(50,10,points_in.cols-10-50,points_in.rows-20);
-    cv::Rect bbox_src(3300,10,1000,points_in.rows-20);
+    cv::Rect bbox_src(70,10,points_in.cols-10-70,points_in.rows-20);
+    // cv::Rect bbox_src(3300,10,1000,points_in.rows-20);
     
     float src_step = 20;
     float step = src_step*trace_mul;
@@ -1374,7 +1390,7 @@ int main(int argc, char *argv[])
                 
                 cv::Vec2i po = {j,i-o};
                 // if (surfs.size() > 1 && coord_valid(state_inpaint(po)))
-                    for(int s=0;s<surfs.size();s++)
+                    for(int s=0;s<surf_points.size();s++)
                     {
                         cv::Vec2f loc = {0,0};
                         float res = find_loc_wind(loc, tgt_wind[i-o], surf_points[s], winds[s], points(po), 1.0, false);
@@ -1403,7 +1419,7 @@ int main(int argc, char *argv[])
                 cv::Vec2i po = {j,i-o};
 
                 int sup_count = 0;
-                for(int s=0;s<surfs.size();s++)
+                for(int s=0;s<surf_points.size();s++)
                     sup_count += supports[s](po);
                 if (sup_count)
                     state(po) = STATE_LOC_VALID | STATE_COORD_VALID;
@@ -1544,7 +1560,7 @@ int main(int argc, char *argv[])
             for(int j=bbox.y;j<bbox.br().y;j++) {
                 
                 cv::Vec2i p = {j,x};
-                for (int s=0;s<surfs.size();s++) {
+                for (int s=0;s<surf_points.size();s++) {
                     if (supports[s](p)) {
                         if (loc_valid(surf_points[s], surf_locs[s](p))) {
                             if (abs(at_int(winds[s], {surf_locs[s](p)[1],surf_locs[s](p)[0]}) - tgt_wind[x]) <= wind_th) {
