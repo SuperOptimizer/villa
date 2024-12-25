@@ -13,6 +13,7 @@ except RuntimeError:
     pass
 
 import glob
+import shutil
 import vesuvius
 from vesuvius import Volume
 import dask.array as da
@@ -572,7 +573,7 @@ class MeshDataset(Dataset):
         print(f"Loading mesh from {path}")
         with tempfile.NamedTemporaryFile(suffix=".obj") as temp_file:
             temp_path = temp_file.name
-            os.system(f"cp {path} {temp_path}")
+            shutil.copy(path, temp_path)
             mesh = o3d.io.read_triangle_mesh(temp_path)
         print(f"Loaded mesh from {path}")
 
@@ -1168,7 +1169,7 @@ def ppm_and_texture(
 
     model = torch.compile(model)
 
-    # Now create the MyPredictionWriter callback outside the dataset
+    # Now create the SegmentWriter callback outside the dataset
     # so it won't be pickled with the dataset
     write_path = os.path.join(dataset.output_path, "layers")
     writer = SegmentWriter(
