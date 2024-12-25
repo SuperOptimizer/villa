@@ -5678,6 +5678,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
     std::unordered_map<std::string,SurfaceMeta*> surfs;
     float src_step = params.value("src_step", 20);
     float step = params.value("step", 10);
+    int max_width = params.value("max_width", 80000);
     
     std::cout << "total surf count " << surfs_v.size() << std::endl;
 
@@ -6146,7 +6147,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                         fringe.insert(cv::Vec2i(j,i));
         }
         
-        int inl_lower_bound_reg = 6;
+        int inl_lower_bound_reg = 10;
         int inl_lower_bound_b = 2;
         int inl_lower_bound = inl_lower_bound_reg;
         
@@ -6324,7 +6325,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         printf("gen %d processing %d fringe cands (total done %d fringe: %d) area %f mm^2 best th: %d\n", generation, cands.size(), succ, fringe.size(),loc_valid_count*0.008*0.008*src_step*src_step*step*step, best_inliers_gen);
         
         //continue expansion
-        if (!fringe.size() && w < 85000)
+        if (!fringe.size() && w < max_width/step)
         {
             at_right_border = false;
             std::cout << "expanding by " << sliding_w << std::endl;
