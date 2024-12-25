@@ -766,7 +766,7 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals,
     
     coords->create(size);
     
-    std::vector<cv::Vec2f> dst = {{0,0},{w,0},{0,h}};
+    std::vector<cv::Vec2f> dst = {{0,0},{w+1,0},{0,h+1}};
     cv::Vec2f off2d = {upper_left_actual[0],upper_left_actual[1]};
     std::vector<cv::Vec2f> src = {off2d,off2d+cv::Vec2f(w*_scale[0]/scale,0),off2d+cv::Vec2f(0,h*_scale[1]/scale)};
     
