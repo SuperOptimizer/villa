@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='scroll_renderer',
-    version='0.0.1',
+    version='0.0.2',
     packages=find_packages(),
     install_requires=[
         'numpy',
@@ -22,6 +22,8 @@ setup(
         'pytorch-lightning',
         'open3d',
         'libigl',
+        'vesuvius',
+        'psutil'
     ],
     entry_points={
         'console_scripts': [
