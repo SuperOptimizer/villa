@@ -23,9 +23,9 @@ std::ostream& operator<< (std::ostream& out, const xt::svector<size_t> &v) {
 
 int main(int argc, char *argv[])
 {
-    if (argc != 6 && argc != 7) {
+    if (argc != 6 && argc != 7 && argc != 11) {
         std::cout << "usage: " << argv[0] << " <ome-arr-volume> <output> <seg-path> <tgt-scale> <ome-zarr-group-idx>" << std::endl;
-        std::cout << "or: " << argv[0] << " <ome-zarr-volume> <ptn> <seg-path> <tgt-scale> <ome-zarr-group-idx> <num-slices>" << std::endl;
+        std::cout << "or: " << argv[0] << " <ome-zarr-volume> <ptn> <seg-path> <tgt-scale> <ome-zarr-group-idx> <num-slices> <crop-x> <crop-y> <crop-w> <crop-h>" << std::endl;
         return EXIT_SUCCESS;
     }
 
@@ -36,7 +36,7 @@ int main(int argc, char *argv[])
     int group_idx = atoi(argv[5]);
     
     int num_slices = 1;
-    if (argc == 7)
+    if (argc == 7 || argc == 11)
         num_slices = atoi(argv[6]);
 
     z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
@@ -57,11 +57,20 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
     
-    cv::Size tgt_size = surf->rawPoints().size();
-    tgt_size.width *= tgt_scale/surf->_scale[0];
-    tgt_size.height *= tgt_scale/surf->_scale[1];
+    cv::Size full_size = surf->rawPoints().size();
+    full_size.width *= tgt_scale/surf->_scale[0];
+    full_size.height *= tgt_scale/surf->_scale[1];
     
-    std::cout << "rendering size " << tgt_size << " at scale " << tgt_scale << std::endl;
+    cv::Size tgt_size = full_size;
+    cv::Rect crop = {0,0,tgt_size.width, tgt_size.height};
+    
+    if (argc == 11) {
+        crop = {atoi(argv[7]),atoi(argv[8]),atoi(argv[9]),atoi(argv[10])};
+        tgt_size = crop.size();
+    }
+        
+    
+    std::cout << "rendering size " << tgt_size << " at scale " << tgt_scale << " crop " << crop << std::endl;
     
     cv::Mat_<cv::Vec3f> points, normals;
     
@@ -70,7 +79,7 @@ int main(int argc, char *argv[])
     if (tgt_size.width >= 10000 && num_slices > 1)
         slice_gen = true;
     else
-        surf->gen(&points, &normals, tgt_size, nullptr, tgt_scale, {-tgt_size.width/2,-tgt_size.height/2,0});
+        surf->gen(&points, &normals, tgt_size, nullptr, tgt_scale, {-full_size.width/2+crop.x,-full_size.height/2+crop.y,0});
 
     cv::Mat_<uint8_t> img;
 
@@ -89,15 +98,14 @@ int main(int argc, char *argv[])
             float off = i-num_slices/2;
             if (slice_gen) {
                 img.create(tgt_size);
-                for(int x=0;x<tgt_size.width;x+=1024) {
-                    int w = std::min(tgt_size.width-x, 1024);
-                    surf->gen(&points, &normals, {w,tgt_size.height}, nullptr, tgt_scale, {-tgt_size.width/2+x,-tgt_size.height/2,0});
+                for(int x=crop.x;x<crop.x+crop.width;x+=1024) {
+                    int w = std::min(tgt_size.width+crop.x-x, 1024);
+                    surf->gen(&points, &normals, {w,crop.height}, nullptr, tgt_scale, {-full_size.width/2+x,-full_size.height/2+crop.y,0});
                     cv::Mat_<uint8_t> slice;
                     readInterpolated3D(slice, ds.get(), points*ds_scale+off*normals*ds_scale, &chunk_cache);
-                    slice.copyTo(img(cv::Rect(x,0,w,tgt_size.height)));
+                    slice.copyTo(img(cv::Rect(x,crop.y,w,crop.height)));
                 }
             }
-                
             else {
                 readInterpolated3D(img, ds.get(), points+off*ds_scale*normals, &chunk_cache);
             }
