@@ -18,10 +18,11 @@ It is recommended to run this package in a Conda environment to manage dependenc
    cd scroll_renderer
    ```
 
-2. Install the package in editable mode:
+2. Install the package in editable mode and accept `vesuvius` terms:
 
    ```bash
    pip install -e .
+   vesuvius.accept_terms --yes
    ```
 
 ## Commands
@@ -50,13 +51,18 @@ The package provides command-line utilities for working with mesh files. For mor
    mesh_to_surface 20241025062044_intermediate_mesh_flatboi.obj /mnt/localdisk/scrolls/Scroll5 --r 32
    ```
 
+   You can also render without having a scroll volume locally (works only with canonical `vesuvius` scrolls):
+   ```bash
+   mesh_to_surface 20241025062044_intermediate_mesh_flatboi.obj Scroll5 --r 32 --remote
+   ```
+
    - First argument: Path to the flattened mesh file.
-   - Second argument: Scroll volume, can be zarr, tifstack or grid cells.
+   - Second argument: Scroll volume, can be zarr, tifstack or grid cells. It can also be a canonical `vesuvius` scroll, like `Scroll1`
    - `--r`: Half number of layers in the surface volume besides the center (e.g., `32` will give 65 layers, the middle +- 32).
    - `--triangle_batch`: Choose how many triangles to process per batch, default `5000`
    - `--max_side_triangle`: Choose the max length of the side of a triangle when creating dataset, default `10`
    - `--nr_workers`: Choose nr workers to load the dataset
-   - `--prefetch_factor`: Choose the prefetch factor, default `2`
+   - `--remote`: Add this flag to fetch the scroll data from the data server using the `vesuvius` package.
 
 For additional options and usage information, use `--help` with any command (e.g., `slim_uv --help` or `mesh_to_surface --help`).
 
