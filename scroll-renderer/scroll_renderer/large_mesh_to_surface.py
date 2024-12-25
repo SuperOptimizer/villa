@@ -18,7 +18,6 @@ def main():
     parser.add_argument('--display', action='store_true')
     parser.add_argument('--remote', action='store_true')
     parser.add_argument('--nr_workers', type=int, default=None)
-    parser.add_argument('--prefetch_factor', type=int, default=2)
     parser.add_argument('--start', type=int, default=0)
     parser.add_argument('--end', type=int, default=None)
 
@@ -52,7 +51,6 @@ def main():
             "--gpus", str(args.gpus),
             "--r", str(args.r),
             "--format", args.format,
-            "--prefetch_factor", str(args.prefetch_factor)
         ]
         if args.display:
             command.append("--display")
