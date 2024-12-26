@@ -2667,7 +2667,7 @@ struct thresholdedDistance
     enum {FILL_V = 0};
     enum {TH = 170};
     const std::string UNIQUE_ID_STRING = "dqk247q6vz_"+std::to_string(BORDER)+"_"+std::to_string(CHUNK_SIZE)+"_"+std::to_string(FILL_V)+"_"+std::to_string(TH);
-    template <typename T, typename E> void compute(const T &large, T &small)
+    template <typename T, typename E> void compute(const T &large, T &small, const cv::Vec3i &offset_large)
     {
         T outer = xt::empty<E>(large.shape());
 
