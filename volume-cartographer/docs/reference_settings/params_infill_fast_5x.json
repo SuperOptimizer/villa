@@ -3,7 +3,7 @@
     "dist_w" : 1.5,
     "straight_w" : 0.005,
     "surf_w" : 0.05,
-    "z_loc_loss_w" : 0.0025,
+    "z_loc_loss_w" : 0.001,
     "wind_w" : 1.0,
     "wind_th" : 0.5,
     "inpaint_back_range" : 40,
