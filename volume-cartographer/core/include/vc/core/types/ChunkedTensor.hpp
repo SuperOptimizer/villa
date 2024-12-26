@@ -37,7 +37,7 @@ struct passTroughComputor
     enum {CHUNK_SIZE = 32};
     enum {FILL_V = 0};
     const std::string UNIQUE_ID_STRING = "";
-    template <typename T, typename E> void compute(const T &large, T &small)
+    template <typename T, typename E> void compute(const T &large, T &small, const cv::Vec3i &offset_large)
     {
         int low = int(BORDER);
         int high = int(BORDER)+int(CHUNK_SIZE);
@@ -69,6 +69,11 @@ public:
     {
         _border = compute_f.BORDER;
     };
+    ~Chunked3d()
+    {
+        if (!_persistent)
+            remove_all(_cache_dir);
+    };
     Chunked3d(C &compute_f, z5::Dataset *ds, ChunkCache *cache, const fs::path &cache_root) : _compute_f(compute_f), _ds(ds), _cache(cache)
     {
         _border = compute_f.BORDER;
@@ -83,46 +88,56 @@ public:
         
         fs::create_directories(root);
         
+        if (!_ds)
+            _persistent = false;
+        
         //create cache dir while others are competing to do the same
         for(int r=0;r<1000 && _cache_dir.empty();r++) {
             std::set<std::string> paths;
-            for (auto const& entry : fs::directory_iterator(root))
-                if (fs::is_directory(entry) && fs::exists(entry.path()/"meta.json") && fs::is_regular_file(entry.path()/"meta.json")) {
-                    paths.insert(entry.path());
-                    std::ifstream meta_f(entry.path()/"meta.json");
-                    nlohmann::json meta = nlohmann::json::parse(meta_f);
-                    fs::path src = fs::canonical(meta["dataset_source_path"]);
-                    if (src == fs::canonical(ds->path())) {
-                        _cache_dir = entry.path();
-                        break;
+            if (_persistent) {
+                for (auto const& entry : fs::directory_iterator(root))
+                    if (fs::is_directory(entry) && fs::exists(entry.path()/"meta.json") && fs::is_regular_file(entry.path()/"meta.json")) {
+                        paths.insert(entry.path());
+                        std::ifstream meta_f(entry.path()/"meta.json");
+                        nlohmann::json meta = nlohmann::json::parse(meta_f);
+                        fs::path src = fs::canonical(meta["dataset_source_path"]);
+                        if (src == fs::canonical(ds->path())) {
+                            _cache_dir = entry.path();
+                            break;
+                        }
                     }
-                }
                 
-            if (!_cache_dir.empty())
-                continue;
+                if (!_cache_dir.empty())
+                    continue;
+            }
             
             //try generating our own cache dir atomically
             fs::path tmp_dir = cache_root/tmp_name_proc_thread();
             fs::create_directories(tmp_dir);
             
-            nlohmann::json meta;
-            meta["dataset_source_path"] = fs::canonical(ds->path()).string();
-            std::ofstream o(tmp_dir/"meta.json");
-            o << std::setw(4) << meta << std::endl;
-            
-            fs::path tgt_path;
-            for(int i=0;i<1000;i++) {
-                tgt_path = root/std::to_string(i);
-                if (paths.count(tgt_path.string()))
-                    continue;
-                try {
-                    fs::rename(tmp_dir, tgt_path);
+            if (_persistent) {
+                nlohmann::json meta;
+                meta["dataset_source_path"] = fs::canonical(ds->path()).string();
+                std::ofstream o(tmp_dir/"meta.json");
+                o << std::setw(4) << meta << std::endl;
+                
+                fs::path tgt_path;
+                for(int i=0;i<1000;i++) {
+                    tgt_path = root/std::to_string(i);
+                    if (paths.count(tgt_path.string()))
+                        continue;
+                    try {
+                        fs::rename(tmp_dir, tgt_path);
+                    }
+                    catch (fs::filesystem_error){
+                        continue;
+                    }
+                    _cache_dir = tgt_path;
+                    break;
                 }
-                catch (fs::filesystem_error){
-                    continue;
-                }
-                _cache_dir = tgt_path;
-                break;
+            }
+            else {
+                _cache_dir = tmp_dir;
             }
         }
         
@@ -184,10 +199,11 @@ public:
 
         fs::path tgt_path = id_path(_cache_dir, id);
         size_t len = s*s*s;
+        size_t len_bytes = len*sizeof(T);
 
         if (fs::exists(tgt_path)) {
             int fd = open(tgt_path.string().c_str(), O_RDWR);
-            T *chunk = (T*)mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+            T *chunk = (T*)mmap(NULL, len_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
             close(fd);
 
             _mutex.lock();
@@ -197,7 +213,7 @@ public:
             else {
 #pragma omp atomic
                 chunk_compute_collisions++;
-                munmap(chunk, len);
+                munmap(chunk, len_bytes);
                 chunk = _chunks[id];
             }
 #pragma omp atomic
@@ -214,23 +230,25 @@ public:
         tmp_path = fs::path(_cache_dir) / ss.str();
         _mutex.unlock();
         int fd = open(tmp_path.string().c_str(), O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600);
-        ftruncate(fd, len);
-        T *chunk = (T*)mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        ftruncate(fd, len_bytes);
+        T *chunk = (T*)mmap(NULL, len_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         close(fd);
-
-
-        CHUNKT small = xt::empty<T>({s,s,s});
-        CHUNKT large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
-        large = xt::full_like(large, C::FILL_V);
-
+        
         cv::Vec3i offset =
         {id[0]*s-_border,
             id[1]*s-_border,
             id[2]*s-_border};
 
-        readArea3D(large, offset, _ds, _cache);
+        CHUNKT small = xt::empty<T>({s,s,s});
+        CHUNKT large;
+        if (_ds) {
+            large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
+            large = xt::full_like(large, C::FILL_V);
 
-        _compute_f.template compute<CHUNKT,T>(large, small);
+            readArea3D(large, offset, _ds, _cache);
+        }
+
+        _compute_f.template compute<CHUNKT,T>(large, small, offset);
 
         for(int i=0;i<len;i++)
             chunk[i] = (&small(0,0,0))[i];
@@ -246,7 +264,7 @@ public:
         else {
 #pragma omp atomic
             chunk_compute_collisions++;
-            munmap(chunk, len);
+            munmap(chunk, len_bytes);
             unlink(tmp_path.string().c_str());
             chunk = _chunks[id];
         }
@@ -261,37 +279,41 @@ public:
     T *cache_chunk_safe_alloc(const cv::Vec3i &id)
     {
         auto s = C::CHUNK_SIZE;
-        CHUNKT large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
-        large = xt::full_like(large, C::FILL_V);
         CHUNKT small = xt::empty<T>({s,s,s});
 
         cv::Vec3i offset =
         {id[0]*s-_border,
             id[1]*s-_border,
             id[2]*s-_border};
-
+            
+        CHUNKT large;
+        if (_ds) {
+            large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
+            large = xt::full_like(large, C::FILL_V);
+            
             readArea3D(large, offset, _ds, _cache);
+        }
 
-            _compute_f.template compute<CHUNKT,T>(large, small);
+        _compute_f.template compute<CHUNKT,T>(large, small, offset);
 
-            T *chunk = nullptr;
+        T *chunk = nullptr;
 
-            _mutex.lock();
-            if (!_chunks.count(id)) {
-                chunk = (T*)malloc(s*s*s);
-                memcpy(chunk, &small(0,0,0), s*s*s);
-                _chunks[id] = chunk;
-            }
-            else {
+        _mutex.lock();
+        if (!_chunks.count(id)) {
+            chunk = (T*)malloc(s*s*s*sizeof(T));
+            memcpy(chunk, &small(0,0,0), s*s*s*sizeof(T));
+            _chunks[id] = chunk;
+        }
+        else {
 #pragma omp atomic
-                chunk_compute_collisions++;
-                chunk = _chunks[id];
-            }
+            chunk_compute_collisions++;
+            chunk = _chunks[id];
+        }
 #pragma omp atomic
-            chunk_compute_total++;
-            _mutex.unlock();
+        chunk_compute_total++;
+        _mutex.unlock();
 
-            return chunk;
+        return chunk;
     }
 
     // T *cache_chunk_safe_alloc(const cv::Vec3i &id)
@@ -390,6 +412,7 @@ public:
     std::shared_mutex _mutex;
     uint64_t _tmp_counter = 0;
     fs::path _cache_dir;
+    bool _persistent = true;
 };
 
 void print_accessor_stats();
