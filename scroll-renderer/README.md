@@ -23,8 +23,9 @@ You can also install the package in editable mode:
 2. Clone the repository and navigate to the project directory, install and accept `vesuvius` terms:
 
    ```bash
-   git clone https://github.com/your-repo/scroll_renderer.git
-   cd scroll_renderer
+   https://github.com/ScrollPrize/villa.git
+   cd villa
+   cd scroll-renderer
    pip install -e .
    vesuvius.accept_terms --yes
    ```

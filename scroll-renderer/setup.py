@@ -9,7 +9,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name='scroll_renderer',
-    version='0.0.2a',
+    version='0.0.2b',
     packages=find_packages(),
     install_requires=[
         'numpy',
