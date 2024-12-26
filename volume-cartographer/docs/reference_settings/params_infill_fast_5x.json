@@ -7,5 +7,6 @@
     "wind_w" : 1.0,
     "wind_th" : 0.5,
     "inpaint_back_range" : 40,
-    "opt_w" : 4
+    "opt_w" : 4,
+    "cache_root" : "/mnt/scratch/cache/vc_chunkedtensorcache"
 }
