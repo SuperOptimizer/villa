@@ -11,16 +11,20 @@ It is recommended to run this package in a Conda environment to manage dependenc
 
 ## Installation
 
-1. Clone the repository and navigate to the project directory:
+2. Install with pip and accept `vesuvius` terms:
+
+   ```bash
+   pip install scroll-renderer
+   vesuvius.accept_terms --yes
+   ```
+
+You can also install the package in editable mode:
+
+2. Clone the repository and navigate to the project directory, install and accept `vesuvius` terms:
 
    ```bash
    git clone https://github.com/your-repo/scroll_renderer.git
    cd scroll_renderer
-   ```
-
-2. Install the package in editable mode and accept `vesuvius` terms:
-
-   ```bash
    pip install -e .
    vesuvius.accept_terms --yes
    ```

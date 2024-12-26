@@ -3,9 +3,13 @@
 
 from setuptools import setup, find_packages
 
+
+with open("README.md", "r", encoding="utf-8") as fh:
+    long_description = fh.read()
+
 setup(
     name='scroll_renderer',
-    version='0.0.2',
+    version='0.0.2a',
     packages=find_packages(),
     install_requires=[
         'numpy',
@@ -35,8 +39,18 @@ setup(
     },
     author='Vesuvius Challenge Team',
     author_email='team@scrollprize.org',
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    url='https://github.com/ScrollPrize/villa',
     description='A package for flattening and rendering 3D meshes of segments of the Herculaneum Papyri.',
     classifiers=[
         'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.11',
+        'License :: OSI Approved :: MIT License',
+        'Operating System :: OS Independent',
+        'Intended Audience :: Developers',
+        'Intended Audience :: Science/Research',
+        'Topic :: Software Development :: Libraries',
+        'Topic :: Scientific/Engineering',
     ],
 )
