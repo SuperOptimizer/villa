@@ -903,8 +903,8 @@ template <typename E> cv::Mat_<E> pad(const cv::Mat_<E> &src, int amount, const 
 class diffuseWindings3D
 {
 public:
-    enum {BORDER = 16};
-    enum {CHUNK_SIZE = 16};
+    enum {BORDER = 32};
+    enum {CHUNK_SIZE = 32};
     enum {FILL_V = 0};
     int SD;
     std::string UNIQUE_ID_STRING;
@@ -1208,41 +1208,41 @@ int main(int argc, char *argv[])
     diffuseWindings3D compute(winds, surf_points, wind_vol_sd);
     Chunked3d<float,diffuseWindings3D> wind_tensor(compute, nullptr, nullptr, params["cache_root"]); 
 
-    cv::Mat_<float> wind_dbg(1400/wind_vol_sd,1920/wind_vol_sd, NAN);
-    
-    for(int j=0;j<wind_dbg.rows;j++)
-        for(int i=0;i<wind_dbg.cols;i++) {
-            wind_dbg(j,i) = wind_tensor(6300/wind_vol_sd,j+2520/wind_vol_sd,i+2280/wind_vol_sd);
-        }
-
-    
-    std::vector<cv::Vec3b> wind_cols;
-    for(int i=0;i<400;i++) {
-        cv::Vec3b col = {50+rand() % 127,50+rand() % 127,50+rand() % 127};
-        col[rand()%3] = 192+rand()%63;
-        if (i%2 == 0)
-            col *= 0.5;
-        wind_cols.push_back(col);
-    }
-    
-    cv::Mat_<cv::Vec3b> wind_vis(wind_dbg.size(), {0,0,0});
-    for(int j=0;j<wind_dbg.rows;j++)
-        for(int i=0;i<wind_dbg.cols;i++) {
-            int w_num = std::min(std::max(int(wind_dbg(j,i)*2+200),0),398);
-            float f = wind_dbg(j,i)*2+100 - int(wind_dbg(j,i)*2+100);
-            wind_vis(j,i) = wind_cols[w_num]*(1-f)+wind_cols[w_num+1]*f;
-        }
-        
-    cv::imwrite("wind_inp.tif", wind_dbg);
-    cv::imwrite("wind_inp_vis.tif", wind_vis);
-    cv::imwrite("divergence.tif", compute._src_divergence[0]);
-    
-    return EXIT_SUCCESS;
+// //     cv::Mat_<float> wind_dbg(1400/wind_vol_sd,1920/wind_vol_sd, NAN);
+// //     
+// //     for(int j=0;j<wind_dbg.rows;j++)
+// //         for(int i=0;i<wind_dbg.cols;i++) {
+// //             wind_dbg(j,i) = wind_tensor(6300/wind_vol_sd,j+2520/wind_vol_sd,i+3000/wind_vol_sd);
+// //         }
+// // 
+// //     
+// //     std::vector<cv::Vec3b> wind_cols;
+// //     for(int i=0;i<400;i++) {
+// //         cv::Vec3b col = {50+rand() % 127,50+rand() % 127,50+rand() % 127};
+// //         col[rand()%3] = 192+rand()%63;
+// //         if (i%2 == 0)
+// //             col *= 0.5;
+// //         wind_cols.push_back(col);
+// //     }
+// //     
+// //     cv::Mat_<cv::Vec3b> wind_vis(wind_dbg.size(), {0,0,0});
+// //     for(int j=0;j<wind_dbg.rows;j++)
+// //         for(int i=0;i<wind_dbg.cols;i++) {
+// //             int w_num = std::min(std::max(int(wind_dbg(j,i)*2+200),0),398);
+// //             float f = wind_dbg(j,i)*2+100 - int(wind_dbg(j,i)*2+100);
+// //             wind_vis(j,i) = wind_cols[w_num]*(1-f)+wind_cols[w_num+1]*f;
+// //         }
+// //         
+// //     cv::imwrite("wind_inp.tif", wind_dbg);
+// //     cv::imwrite("wind_inp_vis.tif", wind_vis);
+// //     cv::imwrite("divergence.tif", compute._src_divergence[0]);
+// //     
+// //     return EXIT_SUCCESS;
     
     
     // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
     // cv::Rect bbox_src(70,10,points_in.cols-10-70,points_in.rows-20);
-    cv::Rect bbox_src(70,10,300,points_in.rows-20);
+    cv::Rect bbox_src(70,10,1000,points_in.rows-20);
     // cv::Rect bbox_src(3300,10,1000,points_in.rows-20);
     
     float src_step = 20;
@@ -1477,7 +1477,7 @@ int main(int argc, char *argv[])
                 ceres::Solver::Summary summary;
                 ceres::Problem problem;
                 create_centered_losses_left_large(problem, p, state, points_in, points, locs, step, 0);
-                // problem.AddResidualBlock(WindLoss3D<diffuseWindings3D>::Create(wind_tensor, tgt_wind[i], 1.0/wind_vol_sd, wind3d_w), nullptr, &locs(p)[0]);
+                problem.AddResidualBlock(WindLoss3D<diffuseWindings3D>::Create(wind_tensor, tgt_wind[i], 1.0/wind_vol_sd, wind3d_w), nullptr, &locs(p)[0]);
                 // problem.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i], wind_w), nullptr, &locs(p)[0]);
                 // problem.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
                 
@@ -1689,7 +1689,7 @@ int main(int argc, char *argv[])
             //FIXME THESE POINTS ARE HANDLED AS INPAINT AREA IN LATER STEPS!!!
             problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), nullptr, &points(p)[0], &surf_locs[idx](p)[0]);
             problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[idx], tgt_wind[p[1]], wind_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
-            // problem_col.AddResidualBlock(WindLoss3D<diffuseWindings3D>::Create(wind_tensor, tgt_wind[p[1]], 1.0/wind_vol_sd, wind3d_w), nullptr, &points(p)[0]);
+            problem_col.AddResidualBlock(WindLoss3D<diffuseWindings3D>::Create(wind_tensor, tgt_wind[p[1]], 1.0/wind_vol_sd, wind3d_w), nullptr, &points(p)[0]);
             // problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(surf_points[idx], seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
         }
         
@@ -1702,7 +1702,7 @@ int main(int argc, char *argv[])
                         w_mul = 0.3;
                     create_centered_losses(problem_col, {j, o}, state_inpaint, points_in, points, locs, step, 0, w_mul);
                     problem_col.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(j,o)[0]);
-                    // problem_col.AddResidualBlock(WindLoss3D<diffuseWindings3D>::Create(wind_tensor, tgt_wind[o], 1.0/wind_vol_sd, wind3d_w), nullptr, &points(j,o)[0]);
+                    problem_col.AddResidualBlock(WindLoss3D<diffuseWindings3D>::Create(wind_tensor, tgt_wind[o], 1.0/wind_vol_sd, wind3d_w), nullptr, &points(j,o)[0]);
                 }
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
