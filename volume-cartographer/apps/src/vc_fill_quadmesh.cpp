@@ -902,38 +902,53 @@ template <typename E> cv::Mat_<E> pad(const cv::Mat_<E> &src, int amount, const 
 class diffuseWindings3D
 {
 public:
-    enum {BORDER = 0};
-    enum {CHUNK_SIZE = 64};
+    enum {BORDER = 32};
+    enum {CHUNK_SIZE = 32};
     enum {FILL_V = 0};
     enum {SD = 4};
     const std::string UNIQUE_ID_STRING = "qt8m2n1tdy_"+std::to_string(BORDER)+"_"+std::to_string(CHUNK_SIZE)+"_"+std::to_string(FILL_V)+"_"+std::to_string(SD);
     std::vector<cv::Mat_<float>> _winds;
     std::vector<cv::Mat_<cv::Vec3f>> _points;
+    std::vector<cv::Mat_<float>> _src_divergence;
     
     diffuseWindings3D(const std::vector<cv::Mat_<float>> &winds, const std::vector<cv::Mat_<cv::Vec3f>> &points) : _winds(winds), _points(points)
     {
-        for(auto &m : _points) {
-            cv::Mat_<cv::Vec3f> dup = m.clone();
-            dup.forEach([](cv::Vec3f &p, const int * position) -> void {
-                if (p[0] == -1)
-                    p = {NAN,NAN,NAN};
-            });
-            cv::resize(dup, m, {0,0}, 4, 4);
-        }
-        for(auto &m : _winds) {
-            cv::resize(m, m, {0,0}, 4, 4);
+        for(auto &m : _points)
+            m = m.clone();
+        for(auto &m : _winds)
+            m = m.clone();
+        
+        for(int s=0;s<_points.size();s++) {
+            for(int j=0;j<_points[s].rows;j++)
+                for(int i=0;i<_points[s].cols;i++)
+                    if (_points[s](j,i)[0] == -1 || std::isnan(_winds[s](j,i)) || _winds[s](j,i) == 0.0) {
+                        _points[s](j,i) = {NAN,NAN,NAN};
+                        _winds[s](j,i) = NAN;
+                    }
+                    
+            cv::resize(_points[s], _points[s], {0,0}, 4, 4);
+            cv::resize(_winds[s], _winds[s], {0,0}, 4, 4);
+            _src_divergence.push_back(cv::Mat_<float>(_winds[s].size(), 0));
         }
     };
     
     template <typename T, typename E> void compute(const T &large, T &small, const cv::Vec3i &offset_large)
     {
-        T winds_large = xt::empty<E>({CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER});
-        winds_large.fill(NAN);
+        T winds_src = xt::empty<E>({CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER});
+        winds_src.fill(0);
+        T ws_src = xt::empty<E>({CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER});
+        ws_src.fill(0);
+        
+        
+        T src_x = xt::empty<E>({CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER});
+        src_x.fill(-1);
+        T src_y = xt::empty<E>({CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER});
+        src_y.fill(-1);
 
         std::cout << "compute chunk" << offset_large << std::endl;
         
         for(int s=0;s<_points.size();s++)
-#pragma omp parallel for collapse(2)
+#pragma omp parallel for schedule(dynamic)
             for(int j=0;j<_points[s].rows;j++)
                 for(int i=0;i<_points[s].cols;i++) {
                     cv::Vec3i p = _points[s](j,i)/SD;
@@ -959,13 +974,76 @@ public:
                     if (!inside)
                         continue;
                             
-                    winds_large(p[0]-offset_large[0], p[1]-offset_large[1], p[2]-offset_large[2]) = _winds[s](j,i);
+                    winds_src(p[0]-offset_large[0], p[1]-offset_large[1], p[2]-offset_large[2]) = _winds[s](j,i);
+                    ws_src(p[0]-offset_large[0], p[1]-offset_large[1], p[2]-offset_large[2]) = 1;
+                    src_x(p[0]-offset_large[0], p[1]-offset_large[1], p[2]-offset_large[2]) = i;
+                    src_y(p[0]-offset_large[0], p[1]-offset_large[1], p[2]-offset_large[2]) = j;
                 }
+        
+        T winds_to = winds_src;
+        T ws_to = ws_src;
+        int s = CHUNK_SIZE+2*BORDER;
+        
+        for(int r=1;r<=BORDER;r++) {
+            
+            // std::cout << "inp " << r << " " << offset_large << std::endl;
+            
+            T winds_from = winds_to;
+            T ws_from = ws_to;
+            
+            winds_to = winds_src;
+            ws_to = ws_src;
+            // std::cout << "run " << r << " " << offset_large << std::endl;
+    
+#pragma omp parallel for collapse(2) schedule(dynamic)
+            for(int z=r;z<s-r;z++)
+                for(int y=r;y<s-r;y++)
+                    for(int x=r;x<s-r;x++) {
+                        float weight_sum = 0;
+                        float wind_sum = 0;
+                        // if (ws_src(z,y,x) > 0) {
+                        //     if (winds_from(z,y,x) > 0) {
+                        //         //FIXME muliplt surfaces!
+                        //         std::cout << src_y(z,y,x) << " " << src_x(z,y,x) << std::abs(winds_src(z,y,x)-winds_from(z,y,x)) << std::endl;
+                        //         _src_divergence[0](src_y(z,y,x),src_x(z,y,x)) = std::abs(winds_src(z,y,x)-winds_from(z,y,x));
+                        //     }
+                        //     continue;
+                        // }
+                        // std::cout << "go " << cv::Vec3i(x,y,z) << std::endl;
+                        // for(int oz=z-1;oz<=z+1;oz++)
+                        //     for(int oy=y-1;oy<=y+1;oy++)
+                        //         for(int ox=x-1;ox<=x+1;ox++) {
+                        //             float w = ws_from(oz,oy,ox);
+                        //             wind_sum += w*winds_from(oz,oy,ox);
+                        //             weight_sum += w;
+                        //         }
+                        cv::Vec3i p = {z,y,x};
+                        for(int d=0;d<3;d++)
+                            for(int o=-1;o<=1;o++)
+                            {
+                                cv::Vec3i op = p;
+                                op[d] += o;
+                                float w = ws_from(op[0],op[1],op[2]);
+                                wind_sum += w*winds_from(op[0],op[1],op[2]);
+                                weight_sum += w;
+                            }
+                        if (weight_sum > 0) {
+                            if (ws_src(z,y,x) > 0) {
+                                    //FIXME muliplt surfaces!
+                                    _src_divergence[0](src_y(z,y,x),src_x(z,y,x)) = std::abs(winds_src(z,y,x)-wind_sum/weight_sum);
+                            }
+                            else {
+                                winds_to(z,y,x) = wind_sum/weight_sum;
+                                ws_to(z,y,x) = 1;
+                            }
+                        }
+                    }
+        }
         
         int low = int(BORDER);
         int high = int(BORDER)+int(CHUNK_SIZE);
         
-        auto crop_winds = view(winds_large, xt::range(low,high),xt::range(low,high),xt::range(low,high));
+        auto crop_winds = view(winds_to, xt::range(low,high),xt::range(low,high),xt::range(low,high));
         
         small = crop_winds;
     }
@@ -1051,10 +1129,10 @@ int main(int argc, char *argv[])
         }
     }
     
-    for(int s=0;s<surf_points.size();s++) {
-        surf_points[s] = pad(surf_points[s], 20, {-1,-1,-1});
-        winds[s] = pad(winds[s], 20, NAN);
-    }
+    // for(int s=0;s<surf_points.size();s++) {
+    //     surf_points[s] = pad(surf_points[s], 20, {-1,-1,-1});
+    //     winds[s] = pad(winds[s], 20, NAN);
+    // }
     
     cv::Mat_<cv::Vec3f> points_in = surf_points[0];
     cv::Mat_<float> winding_in = winds[0].clone();
@@ -1075,40 +1153,29 @@ int main(int argc, char *argv[])
         for(int i=0;i<wind_dbg.cols;i++) {
             wind_dbg(j,i) = proc_tensor(1250,j+500,i+700);
         }
+
     
-//     cv::Vec3i offset_large = {5000,2000,3000};
-//     cv::Vec3i offset_size = {1,2000,3000};
-//     for(int s=0;s<surf_points.size();s++)
-// #pragma omp parallel for collapse(2)
-//         for(int j=0;j<surf_points[s].rows;j++)
-//             for(int i=0;i<surf_points[s].cols;i++) {
-//                 cv::Vec3i p = surf_points[s](j,i);
-//                     
-//                 if (p[0] == -1)
-//                     continue;
-//                 
-//                 p = {p[2],p[1],p[0]};
-//                 
-//                 // std::cout << p << offset_large << std::endl;
-//                 
-//                 bool inside = true;
-//                 for(int d=0;d<3;d++)
-//                 if (p[d] < offset_large[d]) {
-//                     inside = false;
-//                     break;
-//                 }
-//                 else if (p[d] >= offset_large[d]+offset_size[d]){
-//                     inside = false;
-//                     break;
-//                 }
-//                     
-//                 if (!inside)
-//                     continue;
-// 
-//                 wind_dbg(p[1]-offset_large[1],p[2]-offset_large[2]) = winds[s](j,i);
-//             }
+    std::vector<cv::Vec3b> wind_cols;
+    for(int i=0;i<400;i++) {
+        cv::Vec3b col = {50+rand() % 127,50+rand() % 127,50+rand() % 127};
+        col[rand()%3] = 192+rand()%63;
+        if (i%2 == 0)
+            col *= 0.5;
+        wind_cols.push_back(col);
+    }
     
+    cv::Mat_<cv::Vec3b> wind_vis(wind_dbg.size(), {0,0,0});
+    for(int j=0;j<wind_dbg.rows;j++)
+        for(int i=0;i<wind_dbg.cols;i++) {
+            int w_num = std::min(std::max(int(wind_dbg(j,i)*2+200),0),398);
+            float f = wind_dbg(j,i)*2+100 - int(wind_dbg(j,i)*2+100);
+            wind_vis(j,i) = wind_cols[w_num]*(1-f)+wind_cols[w_num+1]*f;
+        }
+        
     cv::imwrite("wind_inp.tif", wind_dbg);
+    cv::imwrite("wind_inp_vis.tif", wind_vis);
+    cv::imwrite("divergence.tif", compute._src_divergence[0]);
+    
     return EXIT_SUCCESS;
     
     
