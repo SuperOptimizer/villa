@@ -78,6 +78,9 @@ public:
     {
         _border = compute_f.BORDER;
         
+        if (_ds)
+            _shape = {_ds->shape()[0],_ds->shape()[1],_ds->shape()[2]};
+        
         if (cache_root.empty())
             return;
 
@@ -398,10 +401,9 @@ public:
 
         return chunk;
     }
-
-    auto shape()
-    {
-        return _ds->shape();
+    
+    std::vector<int> shape() {
+        return _shape;
     }
 
     std::unordered_map<cv::Vec3i,T*,vec3i_hash> _chunks;
@@ -413,6 +415,7 @@ public:
     uint64_t _tmp_counter = 0;
     fs::path _cache_dir;
     bool _persistent = true;
+    std::vector<int> _shape;
 };
 
 void print_accessor_stats();
@@ -461,7 +464,7 @@ public:
     }
 
     T& safe_at(const cv::Vec3i &p)
-    {
+    {        
         auto s = C::CHUNK_SIZE;
 
         if (_corner[0] == -1)
@@ -526,7 +529,7 @@ class CachedChunked3dInterpolator
 public:
     CachedChunked3dInterpolator(Chunked3d<T,C> &t) : _a(t)
     {
-        _shape = {t.shape()[0], t.shape()[1], t.shape()[2]};
+        _shape = t.shape();
     };
 
     Chunked3dAccessor<T,C> _a;
@@ -537,7 +540,8 @@ public:
         cv::Vec3i corner = {floor(f[0]),floor(f[1]),floor(f[2])};
         for(int i=0;i<3;i++) {
             corner[i] = std::max(corner[i], 0);
-            corner[i] = std::min(corner[i], _shape[i]-2);
+            if (_shape.size())
+                corner[i] = std::min(corner[i], _shape[i]-2);
         }
         V fc[3] = { z - V(corner[0]), y - V(corner[1]), x - V(corner[2])};
         for(int i=0;i<3;i++) {
@@ -572,5 +576,5 @@ public:
     template< typename JetT>
     double  val(const JetT &v) const { return v.a; }
     // static template <typename E> lin_int(E &loc, int max, )
-    cv::Vec3i _shape;
+    std::vector<int> _shape;
 };

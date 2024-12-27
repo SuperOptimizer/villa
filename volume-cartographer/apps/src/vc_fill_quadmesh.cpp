@@ -26,7 +26,8 @@ static int inpaint_back_range;
 
 static int layer_reg_range = 15;
 static float layer_reg_range_vx = 500.0;
-
+static float wind3d_w = 0.1;
+static float wind_vol_sd = 4;
 
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
@@ -902,17 +903,21 @@ template <typename E> cv::Mat_<E> pad(const cv::Mat_<E> &src, int amount, const 
 class diffuseWindings3D
 {
 public:
-    enum {BORDER = 32};
-    enum {CHUNK_SIZE = 32};
+    enum {BORDER = 16};
+    enum {CHUNK_SIZE = 16};
     enum {FILL_V = 0};
-    enum {SD = 4};
-    const std::string UNIQUE_ID_STRING = "qt8m2n1tdy_"+std::to_string(BORDER)+"_"+std::to_string(CHUNK_SIZE)+"_"+std::to_string(FILL_V)+"_"+std::to_string(SD);
+    int SD;
+    std::string UNIQUE_ID_STRING;
     std::vector<cv::Mat_<float>> _winds;
     std::vector<cv::Mat_<cv::Vec3f>> _points;
     std::vector<cv::Mat_<float>> _src_divergence;
+    float _min_w = 1000000;
+    float _max_w = -1000000;
     
-    diffuseWindings3D(const std::vector<cv::Mat_<float>> &winds, const std::vector<cv::Mat_<cv::Vec3f>> &points) : _winds(winds), _points(points)
+    diffuseWindings3D(const std::vector<cv::Mat_<float>> &winds, const std::vector<cv::Mat_<cv::Vec3f>> &points, int sd_) : _winds(winds), _points(points), SD(sd_)
     {
+        UNIQUE_ID_STRING = "qt8m2n1tdy_"+std::to_string(BORDER)+"_"+std::to_string(CHUNK_SIZE)+"_"+std::to_string(FILL_V)+"_"+std::to_string(SD);
+        
         for(auto &m : _points)
             m = m.clone();
         for(auto &m : _winds)
@@ -925,11 +930,17 @@ public:
                         _points[s](j,i) = {NAN,NAN,NAN};
                         _winds[s](j,i) = NAN;
                     }
+                    else {
+                        _min_w = std::min(_min_w, _winds[s](j,i));
+                        _max_w = std::max(_max_w, _winds[s](j,i));
+                    }
                     
             cv::resize(_points[s], _points[s], {0,0}, 4, 4);
             cv::resize(_winds[s], _winds[s], {0,0}, 4, 4);
             _src_divergence.push_back(cv::Mat_<float>(_winds[s].size(), 0));
         }
+        
+        std::cout << "min/max winding " << _min_w << " " << _max_w << std::endl;
     };
     
     template <typename T, typename E> void compute(const T &large, T &small, const cv::Vec3i &offset_large)
@@ -979,21 +990,33 @@ public:
                     src_x(p[0]-offset_large[0], p[1]-offset_large[1], p[2]-offset_large[2]) = i;
                     src_y(p[0]-offset_large[0], p[1]-offset_large[1], p[2]-offset_large[2]) = j;
                 }
-        
+                
         T winds_to = winds_src;
         T ws_to = ws_src;
         int s = CHUNK_SIZE+2*BORDER;
         
-        for(int r=1;r<=BORDER;r++) {
-            
-            // std::cout << "inp " << r << " " << offset_large << std::endl;
-            
+        int range = 3;
+        
+        //first run, at list iter set an "outside" value
+        //TODO get this from a pre run at significantly lower res?
+        int dec_step = BORDER/range;
+        for(int rt=0;rt<=BORDER+dec_step;rt++) {
+            if (rt == dec_step)
+                range = 1;
+
+            int r = range;
             T winds_from = winds_to;
             T ws_from = ws_to;
             
+            if (rt == dec_step+1) {
+                winds_from = winds_src;
+                ws_from = ws_src;
+            }
+            
+            
             winds_to = winds_src;
             ws_to = ws_src;
-            // std::cout << "run " << r << " " << offset_large << std::endl;
+            
     
 #pragma omp parallel for collapse(2) schedule(dynamic)
             for(int z=r;z<s-r;z++)
@@ -1010,29 +1033,41 @@ public:
                         //     continue;
                         // }
                         // std::cout << "go " << cv::Vec3i(x,y,z) << std::endl;
-                        // for(int oz=z-1;oz<=z+1;oz++)
-                        //     for(int oy=y-1;oy<=y+1;oy++)
-                        //         for(int ox=x-1;ox<=x+1;ox++) {
-                        //             float w = ws_from(oz,oy,ox);
-                        //             wind_sum += w*winds_from(oz,oy,ox);
-                        //             weight_sum += w;
-                        //         }
-                        cv::Vec3i p = {z,y,x};
-                        for(int d=0;d<3;d++)
-                            for(int o=-1;o<=1;o++)
-                            {
-                                cv::Vec3i op = p;
-                                op[d] += o;
-                                float w = ws_from(op[0],op[1],op[2]);
-                                wind_sum += w*winds_from(op[0],op[1],op[2]);
-                                weight_sum += w;
-                            }
+                        for(int oz=-range;oz<=range;oz++)
+                            for(int oy=-range;oy<=range;oy++)
+                                for(int ox=-range;ox<=range;ox++) {
+                                    float w = ws_from(z+oz,y+oy,x+ox)/(1+abs(ox)+abs(oy)+abs(oz));
+                                    wind_sum += w*winds_from(z+oz,y+oy,x+ox);
+                                    weight_sum += w;
+                                }
+                        // cv::Vec3i p = {z,y,x};
+                        // for(int d=0;d<3;d++)
+                        //     for(int o=range;o<=range;o++)
+                        //     {
+                        //         cv::Vec3i op = p;
+                        //         op[d] += o;
+                        //         float w = ws_from(op[0],op[1],op[2]);
+                        //         wind_sum += w*winds_from(op[0],op[1],op[2]);
+                        //         weight_sum += w;
+                        //     }
                         if (weight_sum > 0) {
                             if (ws_src(z,y,x) > 0) {
-                                    //FIXME muliplt surfaces!
+                                    //FIXME muliple surfaces!
+                                if (src_x(z,y,x) != -1)
                                     _src_divergence[0](src_y(z,y,x),src_x(z,y,x)) = std::abs(winds_src(z,y,x)-wind_sum/weight_sum);
                             }
                             else {
+                                if (rt == dec_step && ws_from(z,y,x) == 0) {
+                                    float val = wind_sum/weight_sum;
+                                    if (val < 0.5*(_min_w+_max_w))
+                                        val = _min_w-1;
+                                    else
+                                        val = _max_w+1;
+                                    winds_to(z,y,x) = val;
+                                    ws_to(z,y,x) = 1;
+                                    winds_src(z,y,x) = val;
+                                    ws_src(z,y,x) = 1;
+                                }
                                 winds_to(z,y,x) = wind_sum/weight_sum;
                                 ws_to(z,y,x) = 1;
                             }
@@ -1046,6 +1081,32 @@ public:
         auto crop_winds = view(winds_to, xt::range(low,high),xt::range(low,high),xt::range(low,high));
         
         small = crop_winds;
+    }
+    
+};
+
+template <typename C>
+struct WindLoss3D {
+    WindLoss3D(Chunked3d<float,C> &wind_vol, float tgt, float scale, float w) : _interpolator(std::make_unique<CachedChunked3dInterpolator<float,C>>(wind_vol)), _tgt(tgt), _scale(scale), _w(w) {};
+    template <typename T>
+    bool operator()(const T* const l, T* residual) const {
+        T v;
+        
+        _interpolator->template Evaluate<T>(T(_scale)*l[2], T(_scale)*l[1], T(_scale)*l[0], &v);
+        
+        residual[0] = T(_w)*(v-T(_tgt));
+        
+        return true;
+    }
+    
+    float _w;
+    float _tgt;
+    float _scale;
+    std::unique_ptr<CachedChunked3dInterpolator<float,C>> _interpolator;
+
+    static ceres::CostFunction* Create(Chunked3d<float,C> &wind_vol, float tgt, float scale, float w = 1.0)
+    {
+        return new ceres::AutoDiffCostFunction<WindLoss3D<C>, 1, 3>(new WindLoss3D<C>(wind_vol, tgt, scale, w));
     }
     
 };
@@ -1144,14 +1205,14 @@ int main(int argc, char *argv[])
     
     std::cout << params["cache_root"] << std::endl;
     
-    diffuseWindings3D compute(winds, surf_points);
-    Chunked3d<float,diffuseWindings3D> proc_tensor(compute, nullptr, nullptr, params["cache_root"]); 
-    
-    cv::Mat_<float> wind_dbg(500,500, NAN);
+    diffuseWindings3D compute(winds, surf_points, wind_vol_sd);
+    Chunked3d<float,diffuseWindings3D> wind_tensor(compute, nullptr, nullptr, params["cache_root"]); 
+
+    cv::Mat_<float> wind_dbg(1400/wind_vol_sd,1920/wind_vol_sd, NAN);
     
     for(int j=0;j<wind_dbg.rows;j++)
         for(int i=0;i<wind_dbg.cols;i++) {
-            wind_dbg(j,i) = proc_tensor(1250,j+500,i+700);
+            wind_dbg(j,i) = wind_tensor(6300/wind_vol_sd,j+2520/wind_vol_sd,i+2280/wind_vol_sd);
         }
 
     
@@ -1180,7 +1241,8 @@ int main(int argc, char *argv[])
     
     
     // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
-    cv::Rect bbox_src(70,10,points_in.cols-10-70,points_in.rows-20);
+    // cv::Rect bbox_src(70,10,points_in.cols-10-70,points_in.rows-20);
+    cv::Rect bbox_src(70,10,300,points_in.rows-20);
     // cv::Rect bbox_src(3300,10,1000,points_in.rows-20);
     
     float src_step = 20;
@@ -1379,7 +1441,7 @@ int main(int argc, char *argv[])
         
         std::cout << "proc col " << i << std::endl;
         ceres::Problem problem_col;
-#pragma omp parallel for
+// #pragma omp parallel for
         for(int j=std::max(bbox.y,lower_bound);j<std::min(bbox.br().y,upper_bound+1);j++) {
             cv::Vec2i p = {j,i};
             
@@ -1415,6 +1477,7 @@ int main(int argc, char *argv[])
                 ceres::Solver::Summary summary;
                 ceres::Problem problem;
                 create_centered_losses_left_large(problem, p, state, points_in, points, locs, step, 0);
+                // problem.AddResidualBlock(WindLoss3D<diffuseWindings3D>::Create(wind_tensor, tgt_wind[i], 1.0/wind_vol_sd, wind3d_w), nullptr, &locs(p)[0]);
                 // problem.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i], wind_w), nullptr, &locs(p)[0]);
                 // problem.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
                 
@@ -1626,6 +1689,7 @@ int main(int argc, char *argv[])
             //FIXME THESE POINTS ARE HANDLED AS INPAINT AREA IN LATER STEPS!!!
             problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), nullptr, &points(p)[0], &surf_locs[idx](p)[0]);
             problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[idx], tgt_wind[p[1]], wind_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
+            // problem_col.AddResidualBlock(WindLoss3D<diffuseWindings3D>::Create(wind_tensor, tgt_wind[p[1]], 1.0/wind_vol_sd, wind3d_w), nullptr, &points(p)[0]);
             // problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(surf_points[idx], seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
         }
         
@@ -1638,6 +1702,7 @@ int main(int argc, char *argv[])
                         w_mul = 0.3;
                     create_centered_losses(problem_col, {j, o}, state_inpaint, points_in, points, locs, step, 0, w_mul);
                     problem_col.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(j,o)[0]);
+                    // problem_col.AddResidualBlock(WindLoss3D<diffuseWindings3D>::Create(wind_tensor, tgt_wind[o], 1.0/wind_vol_sd, wind3d_w), nullptr, &points(j,o)[0]);
                 }
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
@@ -1864,6 +1929,9 @@ int main(int argc, char *argv[])
         std::cout << "saving " << seg_dir << std::endl;
         surf_hr->save(seg_dir, uuid);
     }
+    
+    
+    cv::imwrite("divergence.tif", compute._src_divergence[0]);
     
     return EXIT_SUCCESS;
 }
