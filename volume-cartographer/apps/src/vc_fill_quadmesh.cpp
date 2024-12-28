@@ -1151,10 +1151,17 @@ int main(int argc, char *argv[])
         QuadSurface *surf = load_quad_from_tifxyz(argv[n*3+2]);
         
         cv::Mat_<float> wind = cv::imread(argv[n*3+3], cv::IMREAD_UNCHANGED);
+                    
+        cv::Mat_<cv::Vec3f> points = surf->rawPoints();
+        
+        for(int j=0;j<wind.rows;j++)
+            for(int i=0;i<wind.cols;i++)
+                if (points(j,i)[0] == -1)
+                    wind(j,i) = NAN;
         
         surfs.push_back(surf);
         winds.push_back(wind);
-        surf_points.push_back(surf->rawPoints());
+        surf_points.push_back(points);
         weights.push_back(atof(argv[n*3+4]));
         supports.push_back(cv::Mat_<uint8_t>(winds[0].size(), 0));
         surf_locs.push_back(cv::Mat_<cv::Vec2d>(winds[0].size(), {-1,-1}));
