@@ -384,7 +384,7 @@ int gen_normal_loss_fill(ceres::Problem &problem, const cv::Vec2i &p, const cv::
     if ((state(p+off) & (STATE_LOC_VALID|STATE_COORD_VALID)) == 0)
         return 0;
     
-    ceres::ResidualBlockId tmp = problem.AddResidualBlock(SampledZNormalLoss<cv::Vec3f>::Create(normals,tgt_wind_x,mul_z,w), nullptr, &points(p)[0], &points(p+off)[0]);
+    ceres::ResidualBlockId tmp = problem.AddResidualBlock(SampledZNormalLoss<cv::Vec3f>::Create(normals,tgt_wind_x,mul_z,w), new ceres::CauchyLoss(1.0), &points(p)[0], &points(p+off)[0]);
     
     if (res)
         *res = tmp;
@@ -420,7 +420,7 @@ int gen_straight_loss2(ceres::Problem &problem, const cv::Vec2i &p, const cv::Ve
     return 1;
 }
 
-int create_centered_losses_left_large(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
+int create_centered_losses_left_large(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, cv::Mat_<cv::Vec3f> &normals, float tgt_wind_x, float mul_z, float unit, int flags = 0)
 {
     if (!coord_valid(state(p)))
         return 0;
@@ -484,10 +484,18 @@ int create_centered_losses_left_large(ceres::Problem &problem, const cv::Vec2i &
     
     if (flags & LOSS_ON_SURF)
         gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
+    
+    
+    if (flags & LOSS_ON_NORMALS) {
+        count += gen_normal_loss_fill(problem, p, {0,-1}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
+        count += gen_normal_loss_fill(problem, p, {0,1}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
+        count += gen_normal_loss_fill(problem, p, {1,0}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
+        count += gen_normal_loss_fill(problem, p, {-1,0}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
+    }
 
     return count;
 }
-
+/*
 int create_centered_losses_left(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
 {
     if (!coord_valid(state(p)))
@@ -514,7 +522,7 @@ int create_centered_losses_left(ceres::Problem &problem, const cv::Vec2i &p, cv:
         gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
     
     return count;
-}
+}*/
 
 int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, cv::Mat_<cv::Vec3f> &normals, float tgt_wind_x, float mul_z, float unit, int flags = 0, float w_mul = 1.0)
 {
@@ -1425,9 +1433,12 @@ int main(int argc, char *argv[])
         normals_w_in = normals_w_out;
     }
     
+    
     normals = normals_in;
     normals_w = normals_w_in;
     
+    cv::GaussianBlur(normals,  normals, {3,3}, 0);
+
     cv::Mat_<cv::Vec3b> normcol;
     normals.convertTo(normcol, CV_8U, 255);
     cv::imwrite("normals.tif", normcol);
@@ -1710,7 +1721,7 @@ int main(int argc, char *argv[])
             {
                 ceres::Solver::Summary summary;
                 ceres::Problem problem;
-                create_centered_losses_left_large(problem, p, state, points_in, points, locs, step, 0);
+                create_centered_losses_left_large(problem, p, state, points_in, points, locs, normals, tgt_wind_x_i, mul_z, step, 0);
                 // problem.AddResidualBlock(WindLoss3D<diffuseWindings3D>::Create(wind_tensor, tgt_wind[i], 1.0/wind_vol_sd, wind3d_w), nullptr, &locs(p)[0]);
                 // problem.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i], wind_w), nullptr, &locs(p)[0]);
                 // problem.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
