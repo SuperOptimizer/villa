@@ -65,13 +65,13 @@ struct DistLoss {
         //FIXME where are invalid coords coming from?
         if (a[0] == -1 && a[1] == -1 && a[2] == -1) {
             residual[0] = T(0);
-            std::cout << "invalidn CORNER" << std::endl;
+            std::cout << "invalid DistLoss CORNER" << std::endl;
             return true;
         }
         //FIXME where are invalid coords coming from?
         if (b[0] == -1 && b[1] == -1 && b[2] == -1) {
             residual[0] = T(0);
-            std::cout << "invalidn CORNER" << std::endl;
+            std::cout << "invalid DistLoss CORNER" << std::endl;
             return true;
         }
 
