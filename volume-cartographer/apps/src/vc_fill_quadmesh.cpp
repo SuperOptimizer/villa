@@ -485,7 +485,6 @@ int create_centered_losses_left_large(ceres::Problem &problem, const cv::Vec2i &
     if (flags & LOSS_ON_SURF)
         gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
     
-    
     if (flags & LOSS_ON_NORMALS) {
         count += gen_normal_loss_fill(problem, p, {0,-1}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
         count += gen_normal_loss_fill(problem, p, {1,-1}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
@@ -1280,7 +1279,8 @@ int main(int argc, char *argv[])
         }
     }
     
-    int pad_amount = 20;
+    int margin = 4*trace_mul;
+    int pad_amount = margin;
     
     for(int s=0;s<surf_points.size();s++) {
         surf_points[s] = pad(surf_points[s], pad_amount, {-1,-1,-1});
@@ -1485,14 +1485,18 @@ int main(int argc, char *argv[])
     
     // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
     
-    int margin = 10;
+    //safety margin so we don't acces out of mat points
     
-    cv::Rect bbox_src(70,margin+pad_amount,points_in.cols-margin-70,points_in.rows-2*margin-pad_amount);
+    cv::Rect bbox_src(margin,margin,points_in.cols-2*margin,points_in.rows-2*margin);
     // cv::Rect bbox_src(50,10,1000,points_in.rows-20);
     // cv::Rect bbox_src(3300,10,1000,points_in.rows-20);
     
     float src_step = 20;
     float step = src_step*trace_mul;
+    
+    //needs to be large enough!
+    int init_w = std::max(opt_w, margin);
+    // int init_w = opt_w;
     
     cv::Size size = {points_in.cols/trace_mul, points_in.rows/trace_mul};
     cv::Rect bbox_init = {bbox_src.x/trace_mul, bbox_src.y/trace_mul, bbox_src.width/trace_mul, bbox_src.height/trace_mul};
@@ -1501,43 +1505,45 @@ int main(int argc, char *argv[])
     cv::Mat_<uint8_t> state(size, 0);
     cv::Mat_<uint8_t> init_state(size, 0);
     cv::Mat_<cv::Vec3d> points(size, {-1,-1,-1});
-    cv::Mat_<cv::Vec2d> locs(size, {-1,-1});
+    // cv::Mat_<cv::Vec2d> locs(size, {-1,-1});
     cv::Mat_<float> winding(size, NAN);
     cv::Mat_<float> init_errs(size, -1);
     
     cv::Mat_<uint8_t> fail_code(size, 0);
     
-    cv::Rect first_col = {bbox_init.x,bbox_init.y,opt_w,bbox_init.height};
+    cv::Rect first_col = {bbox_init.x,bbox_init.y,init_w,bbox_init.height};
     
     int last_miny, last_maxy;
     
     //FIXME use joint first col for whole start?
     
+    int col_first = first_col.height;
+    int col_last = -1;
     for(int i=first_col.x;i<first_col.br().x;i++) {
-        int col_first = first_col.height;
-        int col_last = -1;
         for(int j=first_col.y;j<first_col.br().y;j++) {            
             if (points_in(j*trace_mul,i*trace_mul)[0] != -1) {
                 col_first = std::min(col_first, j);
                 col_last = std::max(col_last, j);
             }
-            else
+            // else
                 //for now only take the first contiguous block!
-                if (col_first != first_col.height)
-                    break;
+                // if (col_first != first_col.height)
+                    // break;
         }
-        
-        std::cout << " i " << i << " " << col_first << " " << col_last << std::endl;
-        
-        last_miny = col_first;
-        last_maxy = col_last;
-        
+    }
+    
+    std::cout << " init y range" << col_first << " " << col_last << std::endl;
+
+    last_miny = col_first;
+    last_maxy = col_last;
+    
+    for(int i=first_col.x;i<first_col.br().x;i++) {
         for(int j=col_first;j<=col_last;j++) {
             points(j,i) = points_in(j*trace_mul, i*trace_mul);
             winding(j,i) = winding_in(j*trace_mul, i*trace_mul);
             if (points(j,i)[0] != -1) {
                 state(j,i) = STATE_LOC_VALID | STATE_COORD_VALID;
-                locs(j,i) = {j*trace_mul,i*trace_mul};
+                surf_locs[0](j,i) = {j*trace_mul,i*trace_mul};
             }
             else {
                 if (points(j-1,i)[0] != -1) 
@@ -1546,7 +1552,6 @@ int main(int argc, char *argv[])
                     points(j, i) = {rand()%1000,rand()%1000,rand()%1000};
                 state(j,i) = STATE_COORD_VALID;
             }
-                
         }
     }
     
@@ -1577,8 +1582,8 @@ int main(int argc, char *argv[])
         ceres::Problem problem_init;
         for(int j=first_col.y;j<first_col.br().y;j++)
             for(int i=first_col.x;i<first_col.br().x;i++) {
-                //FIXME FIX INIT
-                create_centered_losses(problem_init, {j,i}, state, points_in, points, locs, normals, -1, -1, step, 0);
+                create_centered_losses(problem_init, {j,i}, state, points_in, points, surf_locs[0], normals, -1, -1, step, LOSS_ON_SURF);
+                
 
                 if (loc_valid(state(j,i))) {
                     avg_wind[i] += winding_in(j*trace_mul,i*trace_mul);
@@ -1597,21 +1602,30 @@ int main(int argc, char *argv[])
             wind_counts[i] = 1;
         }
         
-        for(int i=bbox_init.x;i<bbox_init.x+opt_w;i++)
-            tgt_wind[i] = avg_wind[i];                
+        for(int i=bbox_init.x;i<bbox_init.br().x;i++)
+            tgt_wind[i] = avg_wind[i];              
+        
+        for(int j=first_col.y;j<first_col.br().y;j++)
+            for(int i=first_col.x;i<first_col.br().x;i++) {
+                // problem_init.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, 0.1*z_loc_loss_w), nullptr, &points(j,i)[0]);
+                if (loc_valid(state(j,i))) {
+                    problem_init.AddResidualBlock(Interp2DLoss<float>::Create(winding_in, avg_wind[i], wind_w), nullptr, &surf_locs[0](j,i)[0]);
+                    // problem_init.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(j,i)[0]);
+                }
+            }
 
         for(int j=first_col.y;j<first_col.br().y;j++)
             for(int i=first_col.x;i<first_col.br().x;i++) {
                 cv::Vec2i p = {j,i};
                 if (!loc_valid(state(p)) && coord_valid(state(p))) {
-                    if (problem_init.HasParameterBlock(&locs(p)[0]))
-                        problem_init.SetParameterBlockVariable(&locs(p)[0]);
+                    if (problem_init.HasParameterBlock(&surf_locs[0](p)[0]))
+                        problem_init.SetParameterBlockVariable(&surf_locs[0](p)[0]);
                     if (problem_init.HasParameterBlock(&points(p)[0]))
                         problem_init.SetParameterBlockVariable(&points(p)[0]);
                 }
                 else {
-                    if (problem_init.HasParameterBlock(&locs(p)[0]))
-                        problem_init.SetParameterBlockConstant(&locs(p)[0]);
+                    if (problem_init.HasParameterBlock(&surf_locs[0](p)[0]))
+                        problem_init.SetParameterBlockConstant(&surf_locs[0](p)[0]);
                     if (problem_init.HasParameterBlock(&points(p)[0]))
                         problem_init.SetParameterBlockConstant(&points(p)[0]);
                 }
@@ -1620,31 +1634,23 @@ int main(int argc, char *argv[])
                     
         
         ceres::Solver::Summary summary;
-        // ceres::Solve(options_col, &problem_init, &summary);
-        // std::cout << summary.BriefReport() << std::endl;
+        ceres::Solve(options_col, &problem_init, &summary);
+        std::cout << summary.BriefReport() << std::endl;
         
         for(int j=first_col.y;j<first_col.br().y;j++) {
             for(int i=first_col.x;i<first_col.br().x;i++) {
-                if (problem_init.HasParameterBlock(&locs(j,i)[0]))
-                    problem_init.SetParameterBlockVariable(&locs(j,i)[0]);
+                if (problem_init.HasParameterBlock(&surf_locs[0](j,i)[0]))
+                    problem_init.SetParameterBlockVariable(&surf_locs[0](j,i)[0]);
                 if (problem_init.HasParameterBlock(&points(j,i)[0]))
                     problem_init.SetParameterBlockVariable(&points(j,i)[0]);
                 }
             }
-
-        for(int j=first_col.y;j<first_col.br().y;j++)
-            for(int i=first_col.x;i<first_col.br().x;i++) {
-                if (loc_valid(state(j,i))) {
-                    problem_init.AddResidualBlock(Interp2DLoss<float>::Create(winding_in, avg_wind[i], wind_w), nullptr, &locs(j,i)[0]);
-                    problem_init.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(j,i)[0]);
-                }
-            }
             
         problem_init.SetParameterBlockConstant(&points(seed_loc)[0]);
-        problem_init.SetParameterBlockConstant(&locs(seed_loc)[0]);
+        problem_init.SetParameterBlockConstant(&surf_locs[0](seed_loc)[0]);
         
-        // ceres::Solve(options_col, &problem_init, &summary);
-        // std::cout << summary.BriefReport() << std::endl;
+        ceres::Solve(options_col, &problem_init, &summary);
+        std::cout << summary.BriefReport() << std::endl;
         
     }
     
@@ -1666,7 +1672,7 @@ int main(int argc, char *argv[])
     
     int runaways = 0;
     
-    for(int i=bbox.x+opt_w;i<bbox.br().x;i++) {
+    for(int i=bbox.x+init_w;i<bbox.br().x;i++) {
         if (i % large_opt_every == 0 && i-bbox.x > large_opt_w)
             opt_w = large_opt_w;
         else
@@ -1693,10 +1699,8 @@ int main(int argc, char *argv[])
 // #pragma omp parallel for
         for(int j=std::max(bbox.y,lower_bound);j<std::min(bbox.br().y,upper_bound+1);j++) {
             cv::Vec2i p = {j,i};
-            
-            locs(p) = {-1,-1};
+
             points(p) = {-1,-1, -1};
-            
             state(p) = 0;
             
             //FIXME
@@ -1725,8 +1729,9 @@ int main(int argc, char *argv[])
             {
                 ceres::Solver::Summary summary;
                 ceres::Problem problem;
-                create_centered_losses_left_large(problem, p, state, points_in, points, locs, normals, tgt_wind_x_i, mul_z, step, 0);
-                problem.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(j,i)[0]);
+                cv::Mat_<cv::Vec2d> dummy_;
+                create_centered_losses_left_large(problem, p, state, points_in, points, dummy_, normals, tgt_wind_x_i, mul_z, step, 0);
+                problem.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(p)[0]);
                 
                 
                 ceres::Solve(options, &problem, &summary);
@@ -1737,7 +1742,8 @@ int main(int argc, char *argv[])
             {
                 ceres::Solver::Summary summary;
                 ceres::Problem problem;
-                create_centered_losses_left_large(problem, p, state, points_in, points, locs, normals, tgt_wind_x_i, mul_z, step, LOSS_ON_NORMALS);
+                cv::Mat_<cv::Vec2d> dummy_;
+                create_centered_losses_left_large(problem, p, state, points_in, points, dummy_, normals, tgt_wind_x_i, mul_z, step, LOSS_ON_NORMALS);
                 problem.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(j,i)[0]);
                 
                 
@@ -1787,6 +1793,8 @@ int main(int argc, char *argv[])
 //                 for(auto & l : locs_layers)
 //                     layer_neighs_inp.push_back(at_int(points_in, {l[1],l[0]}));
         }
+        
+        std::cout << "init col done " << std::endl;
         
         last_miny--;
         last_maxy++;
@@ -1961,15 +1969,14 @@ int main(int argc, char *argv[])
                     // if (!loc_valid(state(j, o)))
                         // w_mul = 0.3;
                     float tgt_wind_x_o = (tgt_wind[o]-_min_w)/(_max_w-_min_w)*1000;
-                    create_centered_losses(problem_col, {j, o}, state_inpaint, points_in, points, locs, normals, tgt_wind_x_o, mul_z, step, LOSS_ON_NORMALS, w_mul);
+                    cv::Mat_<cv::Vec2d> dummy_;
+                    create_centered_losses(problem_col, {j, o}, state_inpaint, points_in, points, dummy_, normals, tgt_wind_x_o, mul_z, step, LOSS_ON_NORMALS, w_mul);
                     problem_col.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(j,o)[0]);
                     // problem_col.AddResidualBlock(WindLoss3D<diffuseWindings3D>::Create(wind_tensor, tgt_wind[o], 1.0/wind_vol_sd, wind3d_w), nullptr, &points(j,o)[0]);
                 }
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
             for(int o=std::max(bbox.x,i-inpaint_back_range);o<=i;o++) {
-                if (problem_col.HasParameterBlock(&locs(j, o)[0]))
-                    problem_col.SetParameterBlockVariable(&locs(j, o)[0]);
                 if (problem_col.HasParameterBlock(&points(j, o)[0]))
                     problem_col.SetParameterBlockVariable(&points(j, o)[0]);
             }
@@ -1999,9 +2006,6 @@ int main(int argc, char *argv[])
         for(int x=i-opt_w+1;x<=i;x++)
             for(int j=bbox.y;j<bbox.br().y;j++) {
                 cv::Vec2i p = {j,x};
-
-                if (problem_col.HasParameterBlock(&locs(p)[0]))
-                    problem_col.SetParameterBlockVariable(&locs(p)[0]);
                 if (problem_col.HasParameterBlock(&points(p)[0]))
                     problem_col.SetParameterBlockVariable(&points(p)[0]);
             }
@@ -2148,6 +2152,7 @@ int main(int argc, char *argv[])
         
         std::cout << "avg wind number for col " << i << " : " << avg_wind[i] << " ( tgt was " << tgt_wind[i] << " ) using #" << wind_counts[i]  << " spread " << min_w << " - " << max_w << " runaway: " << runaways << std::endl;
         wind_counts[i] = 1;
+
     }
     
     {
@@ -2160,12 +2165,12 @@ int main(int argc, char *argv[])
     cv::imwrite("fail.tif",fail_code);
     cv::imwrite("winding_out.tif",winding+3);
     
-    {
-        std::vector<cv::Mat> chs;
-        cv::split(locs, chs);
-        cv::imwrite("locx.tif",chs[0]);
-        cv::imwrite("locy.tif",chs[1]);
-    }
+    // {
+    //     std::vector<cv::Mat> chs;
+    //     cv::split(locs, chs);
+    //     cv::imwrite("locx.tif",chs[0]);
+    //     cv::imwrite("locy.tif",chs[1]);
+    // }
     
     {
         QuadSurface *surf_full = new QuadSurface(points(bbox), surfs[0]->_scale/trace_mul);
