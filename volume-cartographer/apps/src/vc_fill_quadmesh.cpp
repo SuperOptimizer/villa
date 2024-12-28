@@ -1280,7 +1280,7 @@ int main(int argc, char *argv[])
     }
     
     int margin = 4*trace_mul;
-    int pad_amount = margin;
+    int pad_amount = margin+20;
     
     for(int s=0;s<surf_points.size();s++) {
         surf_points[s] = pad(surf_points[s], pad_amount, {-1,-1,-1});
@@ -1738,19 +1738,20 @@ int main(int argc, char *argv[])
                 
                 init_errs(p) = sqrt(summary.final_cost/summary.num_residual_blocks);
             }
-            
-            {
-                ceres::Solver::Summary summary;
-                ceres::Problem problem;
-                cv::Mat_<cv::Vec2d> dummy_;
-                create_centered_losses_left_large(problem, p, state, points_in, points, dummy_, normals, tgt_wind_x_i, mul_z, step, LOSS_ON_NORMALS);
-                problem.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(j,i)[0]);
-                
-                
-                ceres::Solve(options, &problem, &summary);
-                
-                init_errs(p) = sqrt(summary.final_cost/summary.num_residual_blocks);
-            }
+
+//NOTE commented out because it has a tendency (on nearly 180° bends) to just go straight, need to resolve that ambiguity first!
+//             {
+//                 ceres::Solver::Summary summary;
+//                 ceres::Problem problem;
+//                 cv::Mat_<cv::Vec2d> dummy_;
+//                 create_centered_losses_left_large(problem, p, state, points_in, points, dummy_, normals, tgt_wind_x_i, mul_z, step, LOSS_ON_NORMALS);
+//                 problem.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(j,i)[0]);
+//                 
+//                 
+//                 ceres::Solve(options, &problem, &summary);
+//                 
+//                 init_errs(p) = sqrt(summary.final_cost/summary.num_residual_blocks);
+//             }
             
             // if (!loc_valid(winding_in, locs(p)) || std::abs(at_int(winding_in, {locs(p)[1],locs(p)[0]}) - tgt_wind[i]) > wind_th) {
             //     state(p) &= ~STATE_LOC_VALID;
