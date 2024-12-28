@@ -974,7 +974,7 @@ template <typename E> cv::Mat_<E> pad(const cv::Mat_<E> &src, int amount, const 
 {
     cv::Mat_<E> m(src.rows+2*amount, src.cols+2*amount, val);
     
-    src.copyTo(m(cv::Rect(amount, amount, src.cols, src.rows)));
+    src.copyTo(m(cv::Rect(0, amount, src.cols, src.rows)));
     
     std::cout << "pad " << src.size() << m.size() << std::endl;
     
@@ -1244,8 +1244,6 @@ int main(int argc, char *argv[])
         winds.push_back(wind);
         surf_points.push_back(points);
         weights.push_back(atof(argv[n*3+4]));
-        supports.push_back(cv::Mat_<uint8_t>(winds[0].size(), 0));
-        surf_locs.push_back(cv::Mat_<cv::Vec2d>(winds[0].size(), {-1,-1}));
     }
     
     //
@@ -1282,10 +1280,14 @@ int main(int argc, char *argv[])
         }
     }
     
-    // for(int s=0;s<surf_points.size();s++) {
-    //     surf_points[s] = pad(surf_points[s], 20, {-1,-1,-1});
-    //     winds[s] = pad(winds[s], 20, NAN);
-    // }
+    int pad_amount = 100;
+    
+    for(int s=0;s<surf_points.size();s++) {
+        surf_points[s] = pad(surf_points[s], pad_amount, {-1,-1,-1});
+        winds[s] = pad(winds[s], pad_amount, NAN);
+        supports.push_back(cv::Mat_<uint8_t>(winds[0].size(), 0));
+        surf_locs.push_back(cv::Mat_<cv::Vec2d>(winds[0].size(), {-1,-1}));
+    }
     
     cv::Mat_<cv::Vec3f> points_in = surf_points[0];
     cv::Mat_<float> winding_in = winds[0].clone();
@@ -1482,7 +1484,7 @@ int main(int argc, char *argv[])
     
     
     // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
-    cv::Rect bbox_src(70,10,points_in.cols-10-70,points_in.rows-20);
+    cv::Rect bbox_src(70,10+pad_amount,points_in.cols-10-70,points_in.rows-20-pad_amount);
     // cv::Rect bbox_src(50,10,1000,points_in.rows-20);
     // cv::Rect bbox_src(3300,10,1000,points_in.rows-20);
     
@@ -1567,7 +1569,6 @@ int main(int argc, char *argv[])
     std::vector<float> avg_wind(size.width);
     std::vector<int> wind_counts(size.width);
     std::vector<float> tgt_wind(size.width);
-    
     {
         ceres::Problem problem_init;
         for(int j=first_col.y;j<first_col.br().y;j++)
