@@ -1280,7 +1280,7 @@ int main(int argc, char *argv[])
         }
     }
     
-    int pad_amount = 100;
+    int pad_amount = 20;
     
     for(int s=0;s<surf_points.size();s++) {
         surf_points[s] = pad(surf_points[s], pad_amount, {-1,-1,-1});
@@ -1484,7 +1484,10 @@ int main(int argc, char *argv[])
     
     
     // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
-    cv::Rect bbox_src(70,10+pad_amount,points_in.cols-10-70,points_in.rows-20-pad_amount);
+    
+    int margin = 10;
+    
+    cv::Rect bbox_src(70,margin+pad_amount,points_in.cols-margin-70,points_in.rows-2*margin-pad_amount);
     // cv::Rect bbox_src(50,10,1000,points_in.rows-20);
     // cv::Rect bbox_src(3300,10,1000,points_in.rows-20);
     
@@ -1492,7 +1495,8 @@ int main(int argc, char *argv[])
     float step = src_step*trace_mul;
     
     cv::Size size = {points_in.cols/trace_mul, points_in.rows/trace_mul};
-    cv::Rect bbox = {bbox_src.x/trace_mul, bbox_src.y/trace_mul, bbox_src.width/trace_mul, bbox_src.height/trace_mul};
+    cv::Rect bbox_init = {bbox_src.x/trace_mul, bbox_src.y/trace_mul, bbox_src.width/trace_mul, bbox_src.height/trace_mul};
+    cv::Rect bbox = {bbox_src.x/trace_mul, margin/trace_mul, bbox_src.width/trace_mul, (points_in.rows-2*margin)/trace_mul};
 
     cv::Mat_<uint8_t> state(size, 0);
     cv::Mat_<uint8_t> init_state(size, 0);
@@ -1503,7 +1507,7 @@ int main(int argc, char *argv[])
     
     cv::Mat_<uint8_t> fail_code(size, 0);
     
-    cv::Rect first_col = {bbox.x,bbox.y,opt_w,bbox.height};
+    cv::Rect first_col = {bbox_init.x,bbox_init.y,opt_w,bbox_init.height};
     
     int last_miny, last_maxy;
     
@@ -1593,7 +1597,7 @@ int main(int argc, char *argv[])
             wind_counts[i] = 1;
         }
         
-        for(int i=bbox.x;i<bbox.x+opt_w;i++)
+        for(int i=bbox_init.x;i<bbox_init.x+opt_w;i++)
             tgt_wind[i] = avg_wind[i];                
 
         for(int j=first_col.y;j<first_col.br().y;j++)
@@ -1722,9 +1726,20 @@ int main(int argc, char *argv[])
                 ceres::Solver::Summary summary;
                 ceres::Problem problem;
                 create_centered_losses_left_large(problem, p, state, points_in, points, locs, normals, tgt_wind_x_i, mul_z, step, 0);
-                // problem.AddResidualBlock(WindLoss3D<diffuseWindings3D>::Create(wind_tensor, tgt_wind[i], 1.0/wind_vol_sd, wind3d_w), nullptr, &locs(p)[0]);
-                // problem.AddResidualBlock(Interp2DLoss<float>::Create(winding, tgt_wind[i], wind_w), nullptr, &locs(p)[0]);
-                // problem.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
+                problem.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(j,i)[0]);
+                
+                
+                ceres::Solve(options, &problem, &summary);
+                
+                init_errs(p) = sqrt(summary.final_cost/summary.num_residual_blocks);
+            }
+            
+            {
+                ceres::Solver::Summary summary;
+                ceres::Problem problem;
+                create_centered_losses_left_large(problem, p, state, points_in, points, locs, normals, tgt_wind_x_i, mul_z, step, LOSS_ON_NORMALS);
+                problem.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(j,i)[0]);
+                
                 
                 ceres::Solve(options, &problem, &summary);
                 
@@ -2002,7 +2017,7 @@ int main(int argc, char *argv[])
         }
 
         bool stop = false;
-        float min_w = 0, max_w = 0;
+        float min_w = 1000, max_w = -1000;
         lower_loc = bbox.br().x+1;
         upper_loc = -1;
         for(int x=std::max(i-opt_w,bbox.x);x<=i;x++) {
@@ -2069,11 +2084,15 @@ int main(int argc, char *argv[])
                         if (loc_valid(surf_points[s], surf_locs[s](p))) {
                             if (abs(at_int(winds[s], {surf_locs[s](p)[1],surf_locs[s](p)[0]}) - tgt_wind[x]) <= wind_th) {
                                 //FIXME check wind + support + loc avlid
-                                avg_wind[x] += at_int(winds[s], {surf_locs[s](p)[1],surf_locs[s](p)[0]});
+                                float int_w = at_int(winds[s], {surf_locs[s](p)[1],surf_locs[s](p)[0]});
+                                avg_wind[x] += int_w;
                                 wind_counts[x]++;
                                 if (i == x) {
                                     upper_loc = std::max(upper_loc, j);
                                     lower_loc = std::min(lower_loc, j);
+                                    
+                                    min_w = std::min(int_w-tgt_wind[x], min_w);
+                                    max_w = std::max(int_w-tgt_wind[x], max_w);
                                 }
                                     
                                 // std::cout << "got wind " << x << std::endl;
