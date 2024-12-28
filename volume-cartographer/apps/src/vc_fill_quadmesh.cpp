@@ -488,9 +488,8 @@ int create_centered_losses_left_large(ceres::Problem &problem, const cv::Vec2i &
     
     if (flags & LOSS_ON_NORMALS) {
         count += gen_normal_loss_fill(problem, p, {0,-1}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
-        count += gen_normal_loss_fill(problem, p, {0,1}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
-        count += gen_normal_loss_fill(problem, p, {1,0}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
-        count += gen_normal_loss_fill(problem, p, {-1,0}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
+        count += gen_normal_loss_fill(problem, p, {1,-1}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
+        count += gen_normal_loss_fill(problem, p, {-1,-1}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
     }
 
     return count;
@@ -1483,8 +1482,8 @@ int main(int argc, char *argv[])
     
     
     // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
-    // cv::Rect bbox_src(70,10,points_in.cols-10-70,points_in.rows-20);
-    cv::Rect bbox_src(70,10,1000,points_in.rows-20);
+    cv::Rect bbox_src(70,10,points_in.cols-10-70,points_in.rows-20);
+    // cv::Rect bbox_src(50,10,1000,points_in.rows-20);
     // cv::Rect bbox_src(3300,10,1000,points_in.rows-20);
     
     float src_step = 20;
@@ -1943,8 +1942,8 @@ int main(int argc, char *argv[])
             for(int o=std::max(bbox.x,i-inpaint_back_range);o<=i;o++)
                 if (coord_valid(state(j, o))) {
                     float w_mul = 1.0;
-                    if (!coord_valid(state(j, o)))
-                        w_mul = 0.3;
+                    // if (!loc_valid(state(j, o)))
+                        // w_mul = 0.3;
                     float tgt_wind_x_o = (tgt_wind[o]-_min_w)/(_max_w-_min_w)*1000;
                     create_centered_losses(problem_col, {j, o}, state_inpaint, points_in, points, locs, normals, tgt_wind_x_o, mul_z, step, LOSS_ON_NORMALS, w_mul);
                     problem_col.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(j,o)[0]);
