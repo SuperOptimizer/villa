@@ -9,6 +9,7 @@
 #define LOSS_ZLOC 8
 #define FLAG_GEN0 16
 #define LOSS_ON_SURF 32
+#define LOSS_ON_NORMALS 64
 
 #define STATE_UNUSED 0
 #define STATE_LOC_VALID 1

@@ -29,6 +29,8 @@ static float layer_reg_range_vx = 500.0;
 static float wind3d_w = 0.1;
 static float wind_vol_sd = 4;
 
+static float normal_w = 1.0;
+
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
     return{a[0]*b[0],a[1]*b[1]};
@@ -329,6 +331,70 @@ static bool coord_valid(int state)
     return (state & STATE_COORD_VALID) || (state & STATE_LOC_VALID);
 }
 
+template <typename E>
+struct SampledZNormalLoss {
+    SampledZNormalLoss(const cv::Mat_<E> &normals, float normal_loc_x, float mul_z, float w) : _normals(normals), _normal_loc_x(normal_loc_x), _mul_z(mul_z), _w(w) {};
+    template <typename T>
+    //p1 is the central point, p2 a neighboring point to calculate a direction against p1
+    bool operator()(const T* const p1, const T* const p2, T* residual) const {        
+        if (!loc_valid(_normals, {val(p1[2])*_mul_z, _normal_loc_x})) {
+            residual[0] = T(0);
+            return true;
+        }
+        
+        T n[3];
+        interp_lin_2d(_normals, p1[2]*T(_mul_z), T(_normal_loc_x), n);
+        
+        T v[3];
+        v[0] = p2[0]-p1[0];
+        v[1] = p2[1]-p1[1];
+        v[2] = p2[2]-p1[2];
+        
+        T dot;
+        dot = v[0]*n[0] + v[1]*n[1] + v[2]*n[2];
+        
+        T la = sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+        T lb = sqrt(n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
+        
+        if (la <= 0 || lb <= 0) {
+            residual[0] = T(0);
+            return true;
+        }
+        
+        residual[0] = T(_w)*dot/(la*lb);
+        
+        return true;
+    }
+    
+    const cv::Mat_<E> &_normals;
+    float _normal_loc_x, _mul_z, _w;
+    
+    static ceres::CostFunction* Create(const cv::Mat_<E> &normals, float normal_loc_x, float mul_z, float w = 1.0)
+    {
+        return new ceres::AutoDiffCostFunction<SampledZNormalLoss, 1, 3, 3>(new SampledZNormalLoss(normals, normal_loc_x, mul_z, w));
+    }
+    
+};
+
+//gen straigt loss given point and 3 offsets
+int gen_normal_loss_fill(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec3f> &normals, float tgt_wind_x, float mul_z, bool optimize_all, ceres::ResidualBlockId *res, float w)
+{
+    if ((state(p) & (STATE_LOC_VALID|STATE_COORD_VALID)) == 0)
+        return 0;
+    if ((state(p+off) & (STATE_LOC_VALID|STATE_COORD_VALID)) == 0)
+        return 0;
+    
+    ceres::ResidualBlockId tmp = problem.AddResidualBlock(SampledZNormalLoss<cv::Vec3f>::Create(normals,tgt_wind_x,mul_z,w), nullptr, &points(p)[0], &points(p+off)[0]);
+    
+    if (res)
+        *res = tmp;
+    
+    if (!optimize_all)
+        problem.SetParameterBlockConstant(&points(p+off)[0]);
+    
+    return 1;
+}
+
 //gen straigt loss given point and 3 offsets
 int gen_straight_loss2(ceres::Problem &problem, const cv::Vec2i &p, const cv::Vec2i &o1, const cv::Vec2i &o2, const cv::Vec2i &o3, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &dpoints, bool optimize_all, float w)
 {
@@ -450,7 +516,7 @@ int create_centered_losses_left(ceres::Problem &problem, const cv::Vec2i &p, cv:
     return count;
 }
 
-int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0, float w_mul = 1.0)
+int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, cv::Mat_<cv::Vec3f> &normals, float tgt_wind_x, float mul_z, float unit, int flags = 0, float w_mul = 1.0)
 {
     if (!coord_valid(state(p)))
         return 0;
@@ -517,6 +583,14 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     
     if (flags & LOSS_ON_SURF)
         gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
+    
+    
+    if (flags & LOSS_ON_NORMALS) {
+        count += gen_normal_loss_fill(problem, p, {0,-1}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
+        count += gen_normal_loss_fill(problem, p, {0,1}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
+        count += gen_normal_loss_fill(problem, p, {1,0}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
+        count += gen_normal_loss_fill(problem, p, {-1,0}, state, points, normals, tgt_wind_x, mul_z, flags & OPTIMIZE_ALL, nullptr, normal_w);
+    }
     
     return count;
 }
@@ -1228,7 +1302,7 @@ int main(int argc, char *argv[])
                     _min_w = std::min(_min_w, winds[s](j,i));
                     _max_w = std::max(_max_w, winds[s](j,i));
                 }
-                    
+    float mul_z = 1000.0/15000;
     
     cv::Mat_<cv::Vec3f> normals(cv::Size(1000,1000), 0);
     cv::Mat_<float> normals_w(cv::Size(1000,1000), 0);
@@ -1241,7 +1315,7 @@ int main(int argc, char *argv[])
             if (std::isnan(n[0]))
                 continue;
             
-            int zi = p[2]/15000*1000;
+            int zi = p[2]*mul_z;
             int wi = (winds[0](j,i)-_min_w)/(_max_w-_min_w)*1000;
             normals(zi, wi) += n;
             normals_w(zi, wi) ++;
@@ -1359,7 +1433,7 @@ int main(int argc, char *argv[])
     cv::imwrite("normals.tif", normcol);
     cv::imwrite("normals_w.tif", normals_w);
         
-    return EXIT_SUCCESS;
+    // return EXIT_SUCCESS;
     
     
     // diffuseWindings3D compute(winds, surf_points, wind_vol_sd);
@@ -1488,7 +1562,8 @@ int main(int argc, char *argv[])
         ceres::Problem problem_init;
         for(int j=first_col.y;j<first_col.br().y;j++)
             for(int i=first_col.x;i<first_col.br().x;i++) {
-                create_centered_losses(problem_init, {j,i}, state, points_in, points, locs, step, 0);
+                //FIXME FIX INIT
+                create_centered_losses(problem_init, {j,i}, state, points_in, points, locs, normals, -1, -1, step, 0);
 
                 if (loc_valid(state(j,i))) {
                     avg_wind[i] += winding_in(j*trace_mul,i*trace_mul);
@@ -1583,6 +1658,8 @@ int main(int argc, char *argv[])
             opt_w = opt_w_short;
         
         tgt_wind[i] = 2*avg_wind[i-1]-avg_wind[i-2];
+        
+        float tgt_wind_x_i = (tgt_wind[i]-_min_w)/(_max_w-_min_w)*1000;
         
         std::cout << "wind tgt: " << tgt_wind[i] << " " << avg_wind[i-1] << " " << avg_wind[i-2] << std::endl;
         
@@ -1857,7 +1934,8 @@ int main(int argc, char *argv[])
                     float w_mul = 1.0;
                     if (!coord_valid(state(j, o)))
                         w_mul = 0.3;
-                    create_centered_losses(problem_col, {j, o}, state_inpaint, points_in, points, locs, step, 0, w_mul);
+                    float tgt_wind_x_o = (tgt_wind[o]-_min_w)/(_max_w-_min_w)*1000;
+                    create_centered_losses(problem_col, {j, o}, state_inpaint, points_in, points, locs, normals, tgt_wind_x_o, mul_z, step, LOSS_ON_NORMALS, w_mul);
                     problem_col.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(j,o)[0]);
                     // problem_col.AddResidualBlock(WindLoss3D<diffuseWindings3D>::Create(wind_tensor, tgt_wind[o], 1.0/wind_vol_sd, wind3d_w), nullptr, &points(j,o)[0]);
                 }
