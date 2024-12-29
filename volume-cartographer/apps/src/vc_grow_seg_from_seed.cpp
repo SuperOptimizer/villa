@@ -44,6 +44,39 @@ float get_val(I &interp, cv::Vec3d l) {
     return v;
 }
 
+bool check_existing_segments(const fs::path& tgt_dir, const cv::Vec3d& origin, 
+                           const std::string& name_prefix, int search_effort) {
+    for (const auto& entry : fs::directory_iterator(tgt_dir)) {
+        if (!fs::is_directory(entry)) {
+            continue;
+        }
+
+        std::string name = entry.path().filename();
+        if (name.compare(0, name_prefix.size(), name_prefix)) {
+            continue;
+        }
+
+        fs::path meta_fn = entry.path() / "meta.json";
+        if (!fs::exists(meta_fn)) {
+            continue;
+        }
+
+        std::ifstream meta_f(meta_fn);
+        json meta = json::parse(meta_f);
+
+        if (!meta.count("bbox") || meta.value("format","NONE") != "tifxyz") {
+            continue;
+        }
+
+        SurfaceMeta other(entry.path(), meta);
+        if (contains(other, origin, search_effort)) {
+            std::cout << "Found overlapping segment at location: " << entry.path() << std::endl;
+            return true;
+        }
+    }
+    return false;
+}
+
 int main(int argc, char *argv[])
 {
     if (argc != 7 && argc != 4) {
@@ -60,7 +93,7 @@ int main(int argc, char *argv[])
     json params = json::parse(params_f);
 
     z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset ds_handle(group, "0", json::parse(std::ifstream(vol_path/"0/.zarray")).value<std::string>("dimension_separator","."));
+    z5::filesystem::handle::Dataset ds_handle(group, "0", json::parse(std::ifstream(vol_path/"0/.zarray")).value<>("dimension_separator","."));
     std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
 
     std::cout << "zarr dataset size for scale group 0 " << ds->shape() << std::endl;
@@ -157,10 +190,7 @@ int main(int argc, char *argv[])
             int w = points.cols;
             int h = points.rows;
 
-            // cv::Mat_<uint8_t> searchvis(points.size(), 0);
-
             bool found = false;
-            // int fcount = 0;
             for (int r=0;r<10;r++) {
                 if ((rand() % 2) == 0)
                 {
@@ -190,18 +220,14 @@ int main(int argc, char *argv[])
                     for(int i=0;i<std::min(w/2/abs(searchdir[1]),h/2/abs(searchdir[0]));i++,p+=searchdir) {
                         found = true;
                         cv::Vec2i p_eval = p;
-                        // searchvis(p_eval) = 127;
                         for(int r=0;r<5;r++) {
                             cv::Vec2i p_eval = p+r*searchdir;
                             if (points(p_eval)[0] == -1 ||get_val<double,CachedChunked3dInterpolator<uint8_t,passTroughComputor>>(interpolator, points(p_eval)) < 128) {
                                 found = false;
                                 break;
                             }
-                            // else
-                                // searchvis(p_eval) = 255;;
                         }
                         if (found) {
-                            // fcount++;
                             cv::Vec2i p_eval = p+2*searchdir;
                             origin = points(p_eval);
                             break;
@@ -226,26 +252,26 @@ int main(int argc, char *argv[])
                 break;
         }
 
-        // cv::imwrite("searchvis.tif", searchvis);
-
         std::cout << "found potential overlapping starting seed" << origin << "with overlap " << count_overlap << std::endl;
     }
     else {
         if (argc == 7) {
             mode = "explicit_seed";
-            origin = {atof(argv[4]),atof(argv[5]),atof(argv[6])};
+            origin = {atof(argv[4]), atof(argv[5]), atof(argv[6])};
             double v;
             interpolator.Evaluate(origin[2], origin[1], origin[0], &v);
-            std::cout << "seed location value is " << v << std::endl;
+            std::cout << "seed location " << origin << " value is " << v << std::endl;
         }
-        else
-        {
+        else {
             mode = "random_seed";
             int count = 0;
             bool succ = false;
-            while(!succ) {
-                origin = {128 + (rand() % (ds->shape(2)-384)), 128 + (rand() % (ds->shape(1)-384)), 128 + (rand() % (ds->shape(0)-384))};
-                // origin[2] = 6500 + (rand() % 2000) - 1000;
+            int max_attempts = 1000;
+            
+            while(count < max_attempts && !succ) {
+                origin = {128 + (rand() % (ds->shape(2)-384)), 
+                         128 + (rand() % (ds->shape(1)-384)), 
+                         128 + (rand() % (ds->shape(0)-384))};
 
                 count++;
                 auto chunk_id = chunk_size;
@@ -256,7 +282,9 @@ int main(int argc, char *argv[])
                 if (!ds->chunkExists(chunk_id))
                     continue;
 
-                cv::Vec3d dir = {(rand() % 1024) - 512,(rand() % 1024) - 512,(rand() % 1024) - 512};
+                cv::Vec3d dir = {(rand() % 1024) - 512,
+                                (rand() % 1024) - 512,
+                                (rand() % 1024) - 512};
                 cv::normalize(dir, dir);
 
                 for(int i=0;i<128;i++) {
@@ -264,12 +292,20 @@ int main(int argc, char *argv[])
                     cv::Vec3d p = origin + i*dir;
                     interpolator.Evaluate(p[2], p[1], p[0], &v);
                     if (v >= 128) {
+                        if (check_existing_segments(tgt_dir, p, name_prefix, search_effort))
+                            continue;
                         succ = true;
                         origin = p;
-                        std::cout << "try " << count << " seed " << origin << " value is " << v << std::endl;
+                        std::cout << "Found seed location " << origin << " value: " << v << std::endl;
                         break;
                     }
                 }
+            }
+
+            if (!succ) {
+                std::cout << "ERROR: Could not find valid non-overlapping seed location after " 
+                        << max_attempts << " attempts" << std::endl;
+                return EXIT_SUCCESS;
             }
         }
     }
@@ -352,9 +388,7 @@ int main(int argc, char *argv[])
                     std::ofstream touch_you(overlap_other/current.name());
                 }
             }
-
-
-
-
     }
+    
+    return EXIT_SUCCESS;
 }
