@@ -30,6 +30,7 @@ static float wind3d_w = 0.1;
 static float wind_vol_sd = 4;
 
 static float normal_w = 0.3;
+static float multilayer_w = 0.5;
 
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
@@ -848,9 +849,11 @@ static void write_ply(std::string path, const std::vector<cv::Vec3f> &points)
         ply << p[0] << " " << p[1] << " " << p[2] << "\n";
 }
 
-int find_neighbors(cv::Mat_<cv::Vec3f> const &points, cv::Mat_<float> const &winding, const cv::Vec3f &ref_point, float ref_wind, std::vector<cv::Vec2d> &locs_out, std::vector<int> &wind_idx_out)
+int find_neighbors(cv::Mat_<cv::Vec3f> const &points, cv::Mat_<float> const &winding, const cv::Vec3f &ref_point, float ref_wind, std::vector<cv::Vec2d> &locs_lower, std::vector<cv::Vec2d> &locs_higher, std::vector<int> &wind_idx_lower, std::vector<int> &wind_idx_higher)
 {
     for(int wf=-layer_reg_range;wf<=layer_reg_range;wf++) {
+        if (wf == 0)
+            continue;
         cv::Vec2f loc = {0,0};
         float layer_tgt_w = ref_wind + wf;
         float res = find_loc_wind(loc, layer_tgt_w, points, winding, ref_point, 10.0);
@@ -859,15 +862,21 @@ int find_neighbors(cv::Mat_<cv::Vec3f> const &points, cv::Mat_<float> const &win
         float found_wind = at_int(winding, {loc[1],loc[0]});
         if (res >= 0 &&
             cv::norm(found_p - ref_point) <= layer_reg_range_vx
-            && abs(found_wind - layer_tgt_w) <= 0.3)
+            && abs(found_wind - layer_tgt_w) <= wind_th)
         {
-            locs_out.push_back(loc);
-            wind_idx_out.push_back(wf);
+            if (wf < 0) {
+                wind_idx_lower.push_back(wf);
+                locs_lower.push_back(loc);
+            }
+            else {
+                wind_idx_higher.push_back(wf);
+                locs_higher.push_back(loc);
+            }
             // std::cout << "potential neighbor at dist " << cv::norm(at_int(points, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << at_int(winding_in, {loc[1],loc[0]}) << " " << layer_tgt_w << std::endl;
         }
     }
     
-    return locs_out.size();
+    return locs_lower.size()+locs_higher.size();
 }
 
 
@@ -1191,6 +1200,94 @@ struct WindLoss3D {
     
 };
 
+//multi-layer loss: given set of locs and winding idxs as well as one tgt point (with idx)
+//every point should be interpolated from its neighbors
+struct MultiLayerLoss {
+    MultiLayerLoss(const cv::Mat_<cv::Vec3f> &m, std::vector<int> w_idxs, int res_count, float w) : _m(m), _w_idxs(w_idxs), _res_count(res_count), _w(w) {};
+    template <typename T>
+    bool operator()(T const* const* parameters, T* residuals) const {
+         T const *point = parameters[0];
+        
+        T interp[3*_w_idxs.size()];
+        
+        std::vector<bool> valids;
+        for(int i=0;i<_w_idxs.size();i++) {
+            if (_w_idxs[i] == 0) {
+                for(int c=0;c<3;c++)
+                    interp[3*i + c] = point[c];
+                valids.push_back(true);
+            }
+            else if (loc_valid(_m, {val(parameters[i+1][0]),val(parameters[i+1][1])})) {
+                valids.push_back(true);
+                interp_lin_2d(_m, parameters[i+1][0], parameters[i+1][1], interp+3*i);
+            }
+            else
+                valids.push_back(false);
+        }
+        
+        int res_counter = 0;
+        for(int i1=0;i1<_w_idxs.size()-2 && res_counter<_res_count;i1++)
+            for(int i2=i1+1;i2<_w_idxs.size()-1 && res_counter<_res_count;i2++)
+                for(int i3=i2+1;i3<_w_idxs.size() && res_counter<_res_count;i3++,res_counter++)
+                    if (valids[i1] && valids[i2] && valids[i3]) {
+                        float w2 = (_w_idxs[i2]-_w_idxs[i1])/(_w_idxs[i3]-_w_idxs[i1]);
+                        float w1 = 1-w1;
+                        T avg[3];
+                        for(int c=0;c<3;c++) {
+                            avg[c] = T(w1) * interp[3*i1+c] + T(w2) * interp[3*i3+c];
+                        }
+                        
+                        for(int c=0;c<3;c++)
+                            residuals[9*res_counter+c] = T(_w)*(avg[c]-interp[3*i2+c]);
+                        
+                        
+// #pragma omp critical
+                            // std::cout << "succ " << i1 << " " << i2 << " " << i3 << " " << residuals[9*res_counter+0]  << " " << residuals[9*res_counter+1]  << " " << residuals[9*res_counter+2] << std::endl;
+                        
+                        //minimize dist loss
+                        for(int c=0;c<3;c++)
+                            residuals[9*res_counter+3+c] = T(_w*0.1)*(interp[3*i1+c]-interp[3*i2+c]);
+                        for(int c=0;c<3;c++)
+                            residuals[9*res_counter+6+c] = T(_w*0.1)*(interp[3*i2+c]-interp[3*i3+c]);
+                    }
+                    else {
+// #pragma omp critical
+                        // std::cout << "fail " << valids[i1] <<  valids[i2] <<  valids[i3] << i1 << " " << i2 << " " << i3 << cv::Vec2d(val(parameters[i1+1][0]),val(parameters[i1+1][1])) << cv::Vec2d(val(parameters[i2+1][0]),val(parameters[i2+1][1])) << cv::Vec2d(val(parameters[i3+1][0]),val(parameters[i3+1][1])) <<  std::endl;
+                        for(int c=0;c<9;c++)
+                            residuals[9*res_counter+c] = T(0);
+                }
+        
+        //TODO assert res count match?
+        return true;
+    }
+    
+    const cv::Mat_<cv::Vec3f> _m;
+    std::vector<int> _w_idxs;
+    int _res_count;
+    float _w;
+    
+    //first param is tgt point, rest is 2d locs
+    static void add(ceres::Problem &problem, std::vector<double*> &params, const cv::Mat_<cv::Vec3f> &m, std::vector<int> w_idxs, int res_count, float w)
+    {
+        if (w_idxs.size()+1 != params.size())
+            throw std::runtime_error("unexpected param vector size");
+        
+        MultiLayerLoss *loss_f = new MultiLayerLoss(m, w_idxs, res_count, w);
+        ceres::DynamicCostFunction *cost = new ceres::DynamicAutoDiffCostFunction<MultiLayerLoss, 4>(loss_f);
+        
+        cost->SetNumResiduals(res_count*9);
+        cost->AddParameterBlock(3);
+        for(int i=0;i<w_idxs.size();i++)
+            cost->AddParameterBlock(2);
+        
+        double res[9*res_count];
+        loss_f->operator()(&params[0], res);
+        
+        problem.AddResidualBlock(cost, nullptr, params);
+    }
+    
+};
+
 int modulo(int x,int n){
     return (x % n + n) % n;
 }
@@ -1503,8 +1600,8 @@ int main(int argc, char *argv[])
     
     int start_offset = 0;        
     
-    cv::Rect bbox_src(std::max(margin,start_offset),margin,points_in.cols-std::max(margin,start_offset)-margin,points_in.rows-2*margin);
-    // cv::Rect bbox_src(std::max(margin,start_offset),margin,1500,points_in.rows-2*margin);
+    // cv::Rect bbox_src(std::max(margin,start_offset),margin,points_in.cols-std::max(margin,start_offset)-margin,points_in.rows-2*margin);
+    cv::Rect bbox_src(std::max(margin,start_offset),margin,500,points_in.rows-2*margin);
     
     float src_step = 20;
     float step = src_step*trace_mul;
@@ -1519,6 +1616,7 @@ int main(int argc, char *argv[])
 
     cv::Mat_<uint8_t> state(size, 0);
     cv::Mat_<uint8_t> init_state(size, 0);
+    cv::Mat_<uint8_t> multilayer_state(size, 0);
     cv::Mat_<cv::Vec3d> points(size, {-1,-1,-1});
     // cv::Mat_<cv::Vec2d> locs(size, {-1,-1});
     cv::Mat_<float> winding(size, NAN);
@@ -1956,6 +2054,7 @@ int main(int argc, char *argv[])
             }
         }
         
+        //adjust state according to support counts
         for(int j=bbox.y;j<bbox.br().y;j++)
             for(int o=0;o<=opt_w;o++) {
                 cv::Vec2i po = {j,i-o};
@@ -1968,6 +2067,81 @@ int main(int argc, char *argv[])
                 else
                     state(po) &= ~STATE_LOC_VALID;
             }
+
+        int layer_loc_count = 0;
+        std::vector<cv::Vec2d> alllocs_layers(100000);
+        cv::Vec2d nop_loc = {-1,-1};
+
+        //add multi-layer supervision
+        for(int j=bbox.y;j<bbox.br().y;j++)
+            for(int o=std::max(bbox.x+opt_w,i-opt_w);o<=i;o++) {
+                multilayer_state(j, o) = 0;
+
+                if (!coord_valid(state(j,o)))
+                    continue;
+                
+                if (loc_valid(state(j,o)))
+                    continue;
+                
+                if (layer_loc_count >= alllocs_layers.size())
+                    break;
+                
+                std::vector<int> w_idxs;
+                std::vector<double*> params;
+                int ref_idx;
+                
+                std::vector<cv::Vec2d> locs_lower, locs_higher;
+                std::vector<int> idxs_lower;
+                std::vector<int> idxs_higher;
+
+                //FIXME multi layer search?!
+                int neigh_count = find_neighbors(points_in, winding_in, points(j,o), tgt_wind[o], locs_lower, locs_higher, idxs_lower, idxs_higher);
+                int zero_idx = -1;
+                
+                if (neigh_count < 2)
+                    continue;
+                
+                int count_lower = idxs_lower.size();
+                int count_higher = idxs_higher.size();
+
+                if (count_lower < 1)
+                    count_higher = 2-count_lower;
+                else if (count_higher < 1)
+                    count_lower = 2-count_higher;
+                
+                if (count_lower+count_higher < 2)
+                    continue;
+                
+                params.push_back(&points(j,o)[0]);
+                
+                for(int n=idxs_lower.size()-count_lower;n<idxs_lower.size();n++) {
+                    w_idxs.push_back(idxs_lower[n]);
+                    alllocs_layers[layer_loc_count] = locs_lower[n];
+                    params.push_back(&alllocs_layers[layer_loc_count][0]);
+                    problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[0], tgt_wind[o], multilayer_w*wind_w), nullptr, &alllocs_layers[layer_loc_count][0]);
+                    layer_loc_count++;
+                }
+
+                w_idxs.push_back(0);
+                params.push_back(&nop_loc[0]);
+
+                for(int n=0;n<count_higher;n++) {
+                    w_idxs.push_back(idxs_higher[n]);
+                    alllocs_layers[layer_loc_count] = locs_higher[n];
+                    params.push_back(&alllocs_layers[layer_loc_count][0]);
+                    problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[0], tgt_wind[o], multilayer_w*wind_w), nullptr, &alllocs_layers[layer_loc_count][0]);
+                    layer_loc_count++;
+                }
+                
+                // for(auto *ptr : params)
+                    // std::cout << ptr[0] << " " << ptr[1] << std::endl;
+                
+                MultiLayerLoss::add(problem_col, params, points_in, w_idxs, 1, multilayer_w*surf_w);
+                
+                multilayer_state(j, o) = 255;
+            }
+            
+        std::cout << "added multi layer losses " << layer_loc_count/4 << std::endl;
         
         for(int n=0;n<add_idxs.size();n++) {
             int idx = add_idxs[n];
@@ -1984,8 +2158,8 @@ int main(int argc, char *argv[])
             for(int o=std::max(bbox.x,i-inpaint_back_range);o<=i;o++)
                 if (coord_valid(state(j, o))) {
                     float w_mul = 1.0;
-                    if (!loc_valid(state(j, o)))
-                        w_mul = 0.6;
+                    // if (!loc_valid(state(j, o)))
+                        // w_mul = 0.6;
                     float tgt_wind_x_o = (tgt_wind[o]-_min_w)/(_max_w-_min_w)*1000;
                     cv::Mat_<cv::Vec2d> dummy_;
                     create_centered_losses(problem_col, {j, o}, state_inpaint, points_in, points, dummy_, normals, tgt_wind_x_o, mul_z, step, LOSS_ON_NORMALS, w_mul);
@@ -2033,10 +2207,6 @@ int main(int argc, char *argv[])
         
         // std::cout << summary.FullReport() << std::endl;
         std::cout << summary.BriefReport() << std::endl;
-        
-        if (i % 10 == 0) {
-            cv::imwrite("state_inpaint_pref.tif",state_inpaint(bbox)*20);
-        }
 
         bool stop = false;
         float min_w = 1000, max_w = -1000;
@@ -2153,6 +2323,7 @@ int main(int argc, char *argv[])
             cv::imwrite("state_inpaint.tif",state_inpaint(bbox)*20);
             cv::imwrite("init_state.tif",init_state*20);
             cv::imwrite("init_errs.tif",init_errs(bbox));
+            cv::imwrite("multilayer_state.tif",multilayer_state(bbox));
             
             for(int s=0;s<supports.size();s++)
                 cv::imwrite("supports"+std::to_string(s)+".tif",supports[s](bbox)*255);
