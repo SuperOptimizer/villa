@@ -29,7 +29,7 @@ static float layer_reg_range_vx = 500.0;
 static float wind3d_w = 0.1;
 static float wind_vol_sd = 4;
 
-static float normal_w = 1.0;
+static float normal_w = 0.3;
 
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
@@ -1250,6 +1250,7 @@ int main(int argc, char *argv[])
         for(int i=1;i<surfs.size();i++) {
             //try to find random matches between the surfaces, always coming from surf 0 for now
             std::vector<float> offsets;
+            std::vector<float> offsets_rev;
             
             for(int r=0;r<1000;r++) {
                 cv::Vec2i p = {rand() % surf_points[0].rows, rand() % surf_points[0].cols};
@@ -1268,14 +1269,27 @@ int main(int argc, char *argv[])
                 // std::cout << loc << std::endl;
                 // std::cout << winds[0](p) - at_int(winds[i], {loc[0],loc[1]}) << std::endl;
                 offsets.push_back(winds[0](p) - at_int(winds[i], {loc[0],loc[1]}));
+                offsets_rev.push_back(winds[0](p) + at_int(winds[i], {loc[0],loc[1]}));
             }
             
             std::sort(offsets.begin(), offsets.end());
+            std::sort(offsets_rev.begin(), offsets_rev.end());
             std::cout << "off 0.1 " << offsets[offsets.size()*0.1] << std::endl;
             std::cout << "off 0.5 " << offsets[offsets.size()*0.5] << std::endl;
             std::cout << "off 0.9 " << offsets[offsets.size()*0.9] << std::endl;
+            float div_fw = std::abs(offsets[offsets.size()*0.9] - offsets[offsets.size()*0.1]);
             
-            winds[i] += offsets[offsets.size()*0.5];
+            
+            std::cout << "off_rev 0.1 " << offsets_rev[offsets_rev.size()*0.1] << std::endl;
+            std::cout << "off_rev 0.5 " << offsets_rev[offsets_rev.size()*0.5] << std::endl;
+            std::cout << "off_rev 0.9 " << offsets_rev[offsets_rev.size()*0.9] << std::endl;
+            float div_bw = std::abs(offsets_rev[offsets.size()*0.9] - offsets_rev[offsets.size()*0.1]);
+            
+            
+            if (div_fw < div_bw)
+                winds[i] += offsets[offsets.size()*0.5];
+            else
+                winds[i] = -winds[i] + offsets_rev[offsets_rev.size()*0.5];
         }
     }
     
@@ -1487,7 +1501,9 @@ int main(int argc, char *argv[])
     
     //safety margin so we don't acces out of mat points
     
-    cv::Rect bbox_src(margin,margin,points_in.cols-2*margin,points_in.rows-2*margin);
+    int start_offset = 0;
+    
+    cv::Rect bbox_src(std::max(margin,start_offset),margin,points_in.cols-std::max(margin,start_offset)-margin,points_in.rows-2*margin);
     // cv::Rect bbox_src(50,10,1000,points_in.rows-20);
     // cv::Rect bbox_src(3300,10,1000,points_in.rows-20);
     
