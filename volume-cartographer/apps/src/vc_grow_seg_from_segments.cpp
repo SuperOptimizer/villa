@@ -162,8 +162,9 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
 
     (*surf->meta)["source"] = "vc_grow_seg_from_segments";
+    (*surf->meta)["vc_grow_seg_from_segments_params"] = params;
     // std::string uuid = "testing_auto_surf_trace" + std::string("_opt_int_64%6_") + time_str();
-    std::string uuid = "testing_auto_surf_trace";;
+    std::string uuid = "auto_surf_trace_";
     fs::path seg_dir = tgt_dir / uuid;
     surf->save(seg_dir, uuid);
 
