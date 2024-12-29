@@ -2,8 +2,8 @@ option(VC_BUILD_JSON "Build in-source JSON library" on)
 if(VC_BUILD_JSON)
     FetchContent_Declare(
         json
-        URL https://github.com/nlohmann/json/archive/v3.11.3.tar.gz
         DOWNLOAD_EXTRACT_TIMESTAMP ON
+        URL https://github.com/nlohmann/json/archive/v3.11.3.tar.gz
     )
 
     FetchContent_GetProperties(json)

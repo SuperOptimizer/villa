@@ -75,6 +75,7 @@ if (${VC_INSTALL_APPS})
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Programs
     )
 
+    #FIXME make it work on qt 6.2
     qt_generate_deploy_app_script(
         TARGET ${target}
         OUTPUT_SCRIPT canny_gui_deploy_script

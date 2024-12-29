@@ -356,7 +356,7 @@ struct SampledZNormalLoss {
         T la = sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
         T lb = sqrt(n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
         
-        if (la <= 0 || lb <= 0) {
+        if (la <= 0.0 || lb <= 0.0) {
             residual[0] = T(0);
             return true;
         }
@@ -751,14 +751,14 @@ float find_loc_wind(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3f> &p
 
 template<typename T, typename E>
 void interp_lin_2d(const cv::Mat_<E> &m, T y, T x, T *v) {
-    if (y < 0)
+    if (val(y) < 0)
         y = T(0);
-    if (y > m.rows-2)
+    if (val(y) > m.rows-2)
         y = T(m.rows-2);
     
-    if (x < 0)
+    if (val(x) < 0)
         x = T(0);
-    if (x > m.cols-2)
+    if (val(x) > m.cols-2)
         x = T(m.cols-2);
     
     int yi = val(y);
@@ -1567,7 +1567,9 @@ int main(int argc, char *argv[])
     ceres::Solver::Options options_col;
     // options.linear_solver_type = ceres::DENSE_QR;
     options_col.linear_solver_type = ceres::SPARSE_SCHUR;
+#ifdef VC_USE_CUDA_SPARSE
     options_col.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
+#endif
     options_col.num_threads = 32;
     options_col.minimizer_progress_to_stdout = false;
     options_col.max_num_iterations = 10000;

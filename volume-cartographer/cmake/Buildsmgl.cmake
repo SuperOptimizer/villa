@@ -1,9 +1,9 @@
 FetchContent_Declare(
     smgl
-    GIT_REPOSITORY https://gitlab.com/educelab/smgl.git
-    GIT_TAG v0.10.1
+    GIT_REPOSITORY https://github.com/hendrikschilling/smgl.git
+    GIT_TAG main
     CMAKE_CACHE_ARGS
-        -DSMGL_BUILD_JSON:BOOL=ON
+        -DSMGL_BUILD_JSON:BOOL=OFF
         -DSMGL_USE_BOOSTFS:BOOL=ON
         -DSMGL_BUILD_TESTS:BOOL=OFF
         -DSMGL_BUILD_DOCS:BOOL=OFF
@@ -11,7 +11,7 @@ FetchContent_Declare(
 
 FetchContent_GetProperties(smgl)
 if(NOT smgl_POPULATED)
-    set(SMGL_BUILD_JSON ON CACHE INTERNAL "")
+    set(SMGL_BUILD_JSON OFF CACHE INTERNAL "")
     set(SMGL_USE_BOOSTFS ${VC_USE_BOOSTFS} CACHE INTERNAL "")
     set(SMGL_BUILD_TESTS OFF CACHE INTERNAL "")
     set(SMGL_BUILD_DOCS OFF CACHE INTERNAL "")

@@ -158,35 +158,6 @@ target_link_libraries(vc_volpkg_explorer
     ${VC_FS_LIB}
 )
 
-## vc_imgtozarr ##
-add_executable(vc_imgtozarr src/ImgToZarr.cpp)
-target_link_libraries(vc_imgtozarr
-    nlohmann_json::nlohmann_json
-    z5
-    opencv_highgui
-    JPEGXL::jxl
-    JPEGXL::jxl_threads
-)
-set_property(TARGET vc_imgtozarr PROPERTY CXX_STANDARD 20)
-
-## zarrextract ##
-# add_executable(vc_zarrextract src/ZarrExtract.cpp)
-# target_link_libraries(vc_zarrextract
-#     nlohmann_json::nlohmann_json
-#     z5
-#     opencv_highgui
-#     VC::slicing
-# )
-
-## vc_zarrrender ##
-# add_executable(vc_zarrrender src/ZarrRender.cpp)
-# target_link_libraries(vc_zarrrender
-#     nlohmann_json::nlohmann_json
-#     z5
-#     opencv_highgui
-#     VC::slicing
-# )
-
 # vc_zarrrendersurface ##
 add_executable(vc_zarrrendersurface src/ZarrRenderSurface.cpp)
 target_link_libraries(vc_zarrrendersurface
@@ -196,14 +167,6 @@ target_link_libraries(vc_zarrrendersurface
     VC::slicing
     VC::surface
 )
-
-# add_executable(vc_chunked_compute src/TestChunkedCompute.cpp)
-# target_link_libraries(vc_chunked_compute
-#     z5
-#     opencv_core
-#     VC::slicing
-#     VC::surface
-# )
 
 add_executable(vc_render_video src/vc_render_video.cpp)
 target_link_libraries(vc_render_video
@@ -223,7 +186,6 @@ target_link_libraries(vc_render_tifxyz
 
 add_executable(vc_objrefine src/ObjAlphaCompRefinement.cpp)
 target_link_libraries(vc_objrefine
-    nlohmann_json::nlohmann_json
     z5
     opencv_highgui
     VC::slicing
@@ -232,7 +194,6 @@ target_link_libraries(vc_objrefine
 
 add_executable(vc_grow_seg_from_seed src/vc_grow_seg_from_seed.cpp)
 target_link_libraries(vc_grow_seg_from_seed
-    nlohmann_json::nlohmann_json
     z5
     opencv_highgui
     VC::slicing
@@ -241,7 +202,6 @@ target_link_libraries(vc_grow_seg_from_seed
 
 add_executable(vc_grow_seg_from_segments src/vc_grow_seg_from_segments.cpp)
 target_link_libraries(vc_grow_seg_from_segments
-    nlohmann_json::nlohmann_json
     z5
     opencv_highgui
     VC::slicing
@@ -250,7 +210,6 @@ target_link_libraries(vc_grow_seg_from_segments
 
 add_executable(vc_tifxyz2obj src/vc_tifxyz2obj.cpp)
 target_link_libraries(vc_tifxyz2obj
-    nlohmann_json::nlohmann_json
     opencv_highgui
     VC::slicing
     VC::surface
@@ -258,7 +217,6 @@ target_link_libraries(vc_tifxyz2obj
 
 add_executable(vc_tifxyz_winding src/vc_tifxyz_winding.cpp)
 target_link_libraries(vc_tifxyz_winding
-    nlohmann_json::nlohmann_json
     opencv_highgui
     VC::slicing
     VC::surface
@@ -266,7 +224,6 @@ target_link_libraries(vc_tifxyz_winding
 
 add_executable(vc_fill_quadmesh src/vc_fill_quadmesh.cpp)
 target_link_libraries(vc_fill_quadmesh
-    nlohmann_json::nlohmann_json
     opencv_highgui
     VC::slicing
     VC::surface

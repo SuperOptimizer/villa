@@ -4610,7 +4610,9 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
     ceres::Solver::Summary summary;
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::SPARSE_SCHUR;
+#ifdef VC_USE_CUDA_SPARSE
     options.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
+#endif
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 10000;
     options.num_threads = omp_get_max_threads();
@@ -5201,7 +5203,9 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     ceres::Solver::Summary summary;
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::SPARSE_SCHUR;
+#ifdef VC_USE_CUDA_SPARSE
     options.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
+#endif
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 100;
     options.num_threads = omp_get_max_threads();

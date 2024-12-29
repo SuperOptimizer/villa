@@ -122,7 +122,7 @@ int main(int argc, char *argv[])
     const char *vol_path = argv[1];
     std::string group_name = "0";
     z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset ds_handle(group, group_name, nlohmann::json::parse(std::ifstream(std::filesystem::path(vol_path)/group_name/".zarray")).value<>("dimension_separator","."));
+    z5::filesystem::handle::Dataset ds_handle(group, group_name, nlohmann::json::parse(std::ifstream(std::filesystem::path(vol_path)/group_name/".zarray")).value<std::string>("dimension_separator","."));
     std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
 
     // std::cout << ds.get()->shape() << std::endl;

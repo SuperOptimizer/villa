@@ -9,6 +9,11 @@
 
 #include "cubic_interpolation_acc.h"
 
+
+static double  val(const double &v) { return v; }
+template <typename JetT>
+double  val(const JetT &v) { return v.a; }
+
 struct CeresGrid2DcvMat3f {
     enum { DATA_DIMENSION = 3 };
     void GetValue(int row, int col, double* f) const
@@ -63,13 +68,13 @@ struct DistLoss {
     template <typename T>
     bool operator()(const T* const a, const T* const b, T* residual) const {
         //FIXME where are invalid coords coming from?
-        if (a[0] == -1 && a[1] == -1 && a[2] == -1) {
+        if (val(a[0]) == -1 && val(a[1]) == -1 && val(a[2]) == -1) {
             residual[0] = T(0);
             std::cout << "invalid DistLoss CORNER" << std::endl;
             return true;
         }
         //FIXME where are invalid coords coming from?
-        if (b[0] == -1 && b[1] == -1 && b[2] == -1) {
+        if (val(b[0]) == -1 && val(b[1]) == -1 && val(b[2]) == -1) {
             residual[0] = T(0);
             std::cout << "invalid DistLoss CORNER" << std::endl;
             return true;
@@ -110,12 +115,12 @@ struct DistLoss2D {
     DistLoss2D(float dist, float w) : _d(dist), _w(w) {};
     template <typename T>
     bool operator()(const T* const a, const T* const b, T* residual) const {
-        if (a[0] == -1 && a[1] == -1 && a[2] == -1) {
+        if (val(a[0]) == -1 && val(a[1]) == -1 && val(a[2]) == -1) {
             residual[0] = T(0);
             std::cout << "invalid CORNER" << std::endl;
             return true;
         }
-        if (b[0] == -1 && b[1] == -1 && b[2] == -1) {
+        if (val(b[0]) == -1 && val(b[1]) == -1 && val(b[2]) == -1) {
             residual[0] = T(0);
             std::cout << "invalid CORNER" << std::endl;
             return true;
@@ -317,11 +322,6 @@ struct SurfaceLoss {
 
 // CeresGrid2DcvMat3f grid({points});
 // ceres::BiCubicInterpolator<CeresGrid2DcvMat3f> interp(grid);
-
-
-static double  val(const double &v) { return v; }
-template <typename JetT>
-double  val(const JetT &v) { return v.a; }
 
 
 template<typename T, typename E, int C>

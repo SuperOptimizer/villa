@@ -13,7 +13,7 @@ OpsSettings::OpsSettings(QWidget* parent)
     _box = this->findChild<QGroupBox*>("groupBox");
     _enable = this->findChild<QCheckBox*>("chkEnableLayer");
 
-    connect(_enable, &QCheckBox::checkStateChanged, this, &OpsSettings::onEnabledChanged);
+    connect(_enable, &QCheckBox::stateChanged, this, &OpsSettings::onEnabledChanged);
 }
 
 OpsSettings::~OpsSettings() { delete ui; }

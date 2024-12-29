@@ -148,8 +148,6 @@ target_link_libraries(vc_core
         z5
     PRIVATE
         TIFF::TIFF
-        JPEGXL::jxl
-        JPEGXL::jxl_threads
         OpenMP::OpenMP_CXX
 )
 

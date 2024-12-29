@@ -6,12 +6,14 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#ifdef VC_HAVE_JXL
 #include <jxl/codestream_header.h>
 #include <jxl/decode.h>
 #include <jxl/decode_cxx.h>
 #include <jxl/resizable_parallel_runner.h>
 #include <jxl/resizable_parallel_runner_cxx.h>
 #include <jxl/types.h>
+#endif
 
 #include "vc/core/io/TIFFIO.hpp"
 
@@ -288,6 +290,7 @@ void throw_run_path(const fs::path &path, const std::string msg)
     throw std::runtime_error(msg + " for " + path.string());
 }
 
+#ifdef VC_HAVE_JXL
 cv::Mat read_jxl(const fs::path &path)
 {
     //adapted from https://github.com/libjxl/libjxl/blob/main/examples/decode_oneshot.cc
@@ -362,6 +365,7 @@ cv::Mat read_jxl(const fs::path &path)
         }
     }
 }
+#endif
 
 std::ostream& operator<< (std::ostream& out, const xt::xarray<uint8_t>::shape_type &v) {
     if ( !v.empty() ) {
@@ -392,10 +396,12 @@ auto Volume::load_slice_(int index) const -> cv::Mat
         } catch (std::runtime_error) {
         }
     }
+#ifdef VC_HAVE_JXL
     else if (slicePath.extension() == ".jxl") {
         mat = read_jxl(slicePath);
         mat.convertTo(mat, CV_16UC1, 257);
     }
+#endif
     else {
         mat = cv::imread(slicePath, cv::IMREAD_UNCHANGED);
     }
