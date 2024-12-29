@@ -6232,6 +6232,8 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             {
             cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, src_step);
             QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
+            dbg_surf->meta = new nlohmann::json;
+            (*dbg_surf->meta)["vc_grow_seg_from_segments_params"] = params;
             std::string uuid = "z_dbg_gen_"+strint(generation, 5);
             dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
             delete dbg_surf;
