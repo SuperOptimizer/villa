@@ -30,7 +30,6 @@ static float wind3d_w = 0.1;
 static float wind_vol_sd = 4;
 
 static float normal_w = 0.3;
-static float multilayer_w = 0.5;
 
 static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 {
@@ -105,108 +104,6 @@ template <typename E>
 float line_off(const E &p, const cv::Vec3f &tgt_o, const cv::Vec3f &tgt_v)
 {
     return (tgt_o-p).dot(tgt_v)/dot_s(tgt_v);
-}
-
-using IntersectVec = std::vector<std::pair<float,cv::Vec2f>>;
-
-float surf_th = 0.5;
-
-IntersectVec getIntersects(const cv::Vec2i &seed, const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &step)
-{
-    cv::Vec3f o = points(seed[1],seed[0]);
-    cv::Vec3f n = grid_normal(points, {seed[0],seed[1],seed[2]});
-    if (std::isnan(n[0]))
-        return {};
-    std::vector<cv::Vec2f> locs = {seed};
-    for(int i=0;i<1000;i++)
-    {
-        cv::Vec2f loc = {rand() % points.cols, seed[1] - 50 + (rand() % 100)};
-        cv::Vec3f res;
-        float dist = search_min_line(points, loc, res, o, n, step, 0.01);
-        
-        if (dist > 0.5 || dist < 0)
-            continue;
-        
-        if (!loc_valid_xy(points,loc))
-            continue;
-        
-        // std::cout << dist << res << loc << std::endl;
-        
-        bool found = false;
-        for(auto l : locs) {
-            if (cv::norm(loc, l) <= 4) {
-                found = true;
-                break;
-            }
-        }
-        if (!found)
-            locs.push_back(loc);
-    }
-
-    IntersectVec dist_locs;
-    for(auto l : locs)
-        dist_locs.push_back({line_off(at_int(points,l),o,n), l});
-    
-    //just sort by normal position and let median take care of the rest
-    // std::sort(dist_locs.begin(), dist_locs.end(), [](auto a, auto b) {return a.first < b.first; });
-    // return dist_locs;    
-    
-    std::sort(dist_locs.begin(), dist_locs.end(), [](auto a, auto b) {return a.second[0] > b.second[0]; });
-    
-    //we could have two groups (other part of the scroll), in that case the x locations should be between the ones of the first group!
-
-    // for(auto p : dist_locs)
-        // std::cout << p.first << p.second << std::endl;
-    
-    bool two_halves = false;
-    for(int i=1;i<dist_locs.size()-1;i++) 
-        if (abs(dist_locs[i-1].first - dist_locs[i+1].first) < std::min(abs(dist_locs[i-1].first - dist_locs[i].first),abs(dist_locs[i].first - dist_locs[i+1].first))) {
-            two_halves = true;
-        }
-        
-    // std::cout << "two " << two_halves << std::endl;
-    
-    if (!two_halves) {
-        std::sort(dist_locs.begin(), dist_locs.end(), [](auto a, auto b) {return a.second[0] < b.second[0]; });
-        // std::cout << std::endl;
-        return dist_locs;
-    }
-
-    IntersectVec a, b;
-    std::sort(dist_locs.begin(), dist_locs.end(), [](auto a, auto b) {return a.first < b.first; });
-    a.push_back(dist_locs[0]);
-    b.push_back(dist_locs.back());
-    dist_locs.erase(dist_locs.begin());
-    dist_locs.erase(dist_locs.begin()+dist_locs.size()-1);
-    
-    bool seed_in_a = (a.back().first == 0.01);
-    
-    for(auto pair : dist_locs) {
-        // std::cout << pair.first << std::endl;
-        if (abs(pair.first - a.back().first) < abs(pair.first - b.back().first)) {
-            a.push_back(pair);
-            if (pair.first == 0.01)
-                seed_in_a = true;
-        }
-        else
-            b.push_back(pair);
-    }
-    
-    // std::cout << "seed " << seed_in_a << std::endl;
-//     
-    if (seed_in_a) {
-        dist_locs = a;
-    }
-    else
-        dist_locs = b;
-    
-    std::sort(dist_locs.begin(), dist_locs.end(), [](auto a, auto b) {return a.second[0] < b.second[0]; });
-    // std::cout << "out" << std::endl;
-    // for(auto p : dist_locs)
-        // std::cout << p.first << p.second << std::endl;
-        
-    // std::cout << std::endl;
-    return dist_locs;
 }
 
 //l is [y, x]!
@@ -294,9 +191,7 @@ int gen_surfloss(const cv::Vec2i p, ceres::Problem &problem, const cv::Mat_<uint
 {
     if ((state(p) & STATE_LOC_VALID) == 0)
         return 0;
-    
-    // problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::HuberLoss(1.0), &points(p)[0], &locs(p)[0]);
-    // problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), new ceres::TukeyLoss(2.0), &points(p)[0], &locs(p)[0]);
+
     problem.AddResidualBlock(SurfaceLossD::Create(points_in, w), nullptr, &points(p)[0], &locs(p)[0]);
 
     return 1;
@@ -310,7 +205,6 @@ int gen_dist_loss_fill(ceres::Problem &problem, const cv::Vec2i &p, const cv::Ve
     if ((state(p+off) & (STATE_LOC_VALID|STATE_COORD_VALID)) == 0)
         return 0;
     
-    // ceres::ResidualBlockId tmp = problem.AddResidualBlock(DistLoss::Create(unit*cv::norm(off),w), new ceres::HuberLoss(1.0), &dpoints(p)[0], &dpoints(p+off)[0]);
     ceres::ResidualBlockId tmp = problem.AddResidualBlock(DistLoss::Create(unit*cv::norm(off),w), nullptr, &dpoints(p)[0], &dpoints(p+off)[0]);
     
     if (res)
@@ -431,13 +325,6 @@ int create_centered_losses_left_large(ceres::Problem &problem, const cv::Vec2i &
     
     //horizontal
     count += gen_straight_loss2(problem, p, {0,-2},{0,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
-    // count += gen_straight_loss2(problem, p, {0,-1},{0,0},{0,1}, state, points, flags & OPTIMIZE_ALL, straight_w);
-    // count += gen_straight_loss2(problem, p, {0,0},{0,1},{0,2}, state, points, flags & OPTIMIZE_ALL, straight_w);
-    
-    //vertical
-    // count += gen_straight_loss2(problem, p, {-2,0},{-1,0},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
-    // count += gen_straight_loss2(problem, p, {-1,0},{0,0},{1,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
-    // count += gen_straight_loss2(problem, p, {0,0},{1,0},{2,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     
     //further and diag!
     count += gen_straight_loss2(problem, p, {-2,-2},{-1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
@@ -448,20 +335,12 @@ int create_centered_losses_left_large(ceres::Problem &problem, const cv::Vec2i &
     
     count += gen_straight_loss2(problem, p, {-6,-2},{-2,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.5*straight_w);
     count += gen_straight_loss2(problem, p, {6,-2},{3,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.5*straight_w);
-//     
+  
     count += gen_straight_loss2(problem, p, {0,-4},{0,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
     count += gen_straight_loss2(problem, p, {2,-4},{1,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
     count += gen_straight_loss2(problem, p, {-2,-4},{-1,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
     count += gen_straight_loss2(problem, p, {4,-4},{2,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
     count += gen_straight_loss2(problem, p, {-4,-4},{-2,-2},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-    
-//     count += gen_straight_loss2(problem, p, {0,-6},{0,-3},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-//     count += gen_straight_loss2(problem, p, {2,-6},{1,-3},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-//     count += gen_straight_loss2(problem, p, {-2,-6},{-1,-3},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-//     
-//     count += gen_straight_loss2(problem, p, {0,-8},{0,-4},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-//     count += gen_straight_loss2(problem, p, {4,-8},{2,-4},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-//     count += gen_straight_loss2(problem, p, {-4,-8},{-2,-4},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
     
     //direct neighboars
     count += gen_dist_loss_fill(problem, p, {0,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
@@ -494,34 +373,6 @@ int create_centered_losses_left_large(ceres::Problem &problem, const cv::Vec2i &
 
     return count;
 }
-/*
-int create_centered_losses_left(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float unit, int flags = 0)
-{
-    if (!coord_valid(state(p)))
-        return 0;
-    
-    //generate losses for point p
-    int count = 0;
-    
-    //horizontal
-    count += gen_straight_loss2(problem, p, {0,-2},{0,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
-    
-    //further and diag!
-    count += gen_straight_loss2(problem, p, {-2,-2},{-1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-    count += gen_straight_loss2(problem, p, {2,-2},{1,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, 0.7*straight_w);
-    
-    //direct neighboars
-    count += gen_dist_loss_fill(problem, p, {0,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-    
-    //diagonal neighbors
-    count += gen_dist_loss_fill(problem, p, {1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
-    count += gen_dist_loss_fill(problem, p, {-1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, 0.7*dist_w);
-    
-    if (flags & LOSS_ON_SURF)
-        gen_surfloss(p, problem, state, points_in, points, locs, surf_w);
-    
-    return count;
-}*/
 
 int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, cv::Mat_<cv::Vec3f> &normals, float tgt_wind_x, float mul_z, float unit, int flags = 0, float w_mul = 1.0)
 {
@@ -532,17 +383,10 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     int count = 0;
     
     //horizontal
-    // count += gen_straight_loss2(problem, p, {0,-2},{0,-1},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     count += gen_straight_loss2(problem, p, {0,-1},{0,0},{0,1}, state, points, flags & OPTIMIZE_ALL, straight_w*w_mul);
-    // count += gen_straight_loss2(problem, p, {0,0},{0,1},{0,2}, state, points, flags & OPTIMIZE_ALL, straight_w);
     
     //vertical
-    // count += gen_straight_loss2(problem, p, {-2,0},{-1,0},{0,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     count += gen_straight_loss2(problem, p, {-1,0},{0,0},{1,0}, state, points, flags & OPTIMIZE_ALL, straight_w*w_mul);
-    //far dist
-    // if (far_dist != 1)
-        // count += gen_straight_loss2(problem, p, {-far_dist,0},{0,0},{far_dist,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
-    // count += gen_straight_loss2(problem, p, {0,0},{1,0},{2,0}, state, points, flags & OPTIMIZE_ALL, straight_w);
     
     //diag
     count += gen_straight_loss2(problem, p, {-1,-1},{0,0},{1,1}, state, points, flags & OPTIMIZE_ALL, straight_w*w_mul);
@@ -563,30 +407,18 @@ int create_centered_losses(ceres::Problem &problem, const cv::Vec2i &p, cv::Mat_
     count += gen_dist_loss_fill(problem, p, {-1,-1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w*w_mul);
     count += gen_dist_loss_fill(problem, p, {-1,1}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w*w_mul);
     
-    //+1
+    //+2
     count += gen_dist_loss_fill(problem, p, {-2,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w*w_mul);
     count += gen_dist_loss_fill(problem, p, {2,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w*w_mul);
     count += gen_dist_loss_fill(problem, p, {0,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w*w_mul);
     count += gen_dist_loss_fill(problem, p, {0,2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w*w_mul);
     
-    
+    //+2 diag
     count += gen_dist_loss_fill(problem, p, {2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w*w_mul);
     count += gen_dist_loss_fill(problem, p, {2,2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w*w_mul);
     count += gen_dist_loss_fill(problem, p, {-2,-2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w*w_mul);
     count += gen_dist_loss_fill(problem, p, {-2,2}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w*w_mul);
     
-    
-    //+1
-//     count += gen_dist_loss_fill(problem, p, {-5,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-//     count += gen_dist_loss_fill(problem, p, {5,0}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-//     count += gen_dist_loss_fill(problem, p, {0,-5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-//     count += gen_dist_loss_fill(problem, p, {0,5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-//     
-//     
-//     count += gen_dist_loss_fill(problem, p, {5,-5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-//     count += gen_dist_loss_fill(problem, p, {5,5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-//     count += gen_dist_loss_fill(problem, p, {-5,-5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
-//     count += gen_dist_loss_fill(problem, p, {-5,5}, state, points, unit, flags & OPTIMIZE_ALL, nullptr, dist_w);
     
     if (flags & LOSS_ON_SURF)
         gen_surfloss(p, problem, state, points_in, points, locs, surf_w*w_mul);
@@ -612,15 +444,11 @@ float find_loc_wind_slow(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3
         if (r)
             cand = {rand_r(&sr) % points.cols, rand_r(&sr) % points.rows};
         
-        // std::cout << "cand " << cand << winding(cand[1],cand[0]) << " " << tgt_wind << std::endl;
-        
         if (std::isnan(winding(cand[1],cand[0])) || abs(winding(cand[1],cand[0])-tgt_wind) > 0.5)
             continue;
         
         cv::Vec3f out_;
         float res = min_loc(points, cand, out_, {tgt}, {0}, nullptr, 4.0, 0.01);
-        
-        // std::cout << res << std::endl;
         
         if (res < 0)
             continue;
@@ -661,7 +489,6 @@ float min_loc_wind(const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &win
     float best = abs(at_int(winding, loc)-tgt_wind)*10 + sdist(val,tgt);
     float res;
     
-    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
     std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
     float step = init_step;
     
@@ -688,14 +515,11 @@ float min_loc_wind(const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &win
             res = abs(at_int(winding, cand)-tgt_wind)*10;
             res += sdist(val,tgt);
             if (res < best) {
-                // std::cout << res << val << step << cand << "\n";
                 changed = true;
                 best = res;
                 loc = cand;
                 out = val;
             }
-            // else
-            // std::cout << "(" << res << val << step << cand << "\n";
         }
         
         if (changed)
@@ -708,7 +532,6 @@ float min_loc_wind(const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &win
             break;
     }
     
-    // std::cout << "best" << best << out << "\n" <<  std::endl;
     return best;
 }
 
@@ -832,54 +655,6 @@ struct Interp2DLoss {
     
 };
 
-static void write_ply(std::string path, const std::vector<cv::Vec3f> &points)
-{
-    std::cout << "ply " << points.size() << std::endl; 
-    std::ofstream ply;
-    ply.open(path);
-    
-    ply << "ply\nformat ascii 1.0\n";
-    ply << "element vertex " << points.size() << "\n";
-    ply << "property float x\n";
-    ply << "property float y\n";
-    ply << "property float z\n";
-    ply << "end_header\n";
-    
-    for(auto p : points)
-        ply << p[0] << " " << p[1] << " " << p[2] << "\n";
-}
-
-int find_neighbors(cv::Mat_<cv::Vec3f> const &points, cv::Mat_<float> const &winding, const cv::Vec3f &ref_point, float ref_wind, std::vector<cv::Vec2d> &locs_lower, std::vector<cv::Vec2d> &locs_higher, std::vector<int> &wind_idx_lower, std::vector<int> &wind_idx_higher)
-{
-    for(int wf=-layer_reg_range;wf<=layer_reg_range;wf++) {
-        if (wf == 0)
-            continue;
-        cv::Vec2f loc = {0,0};
-        float layer_tgt_w = ref_wind + wf;
-        float res = find_loc_wind(loc, layer_tgt_w, points, winding, ref_point, 10.0);
-        loc = {loc[1],loc[0]};
-        cv::Vec3f found_p = at_int(points, {loc[1],loc[0]});
-        float found_wind = at_int(winding, {loc[1],loc[0]});
-        if (res >= 0 &&
-            cv::norm(found_p - ref_point) <= layer_reg_range_vx
-            && abs(found_wind - layer_tgt_w) <= wind_th)
-        {
-            if (wf < 0) {
-                wind_idx_lower.push_back(wf);
-                locs_lower.push_back(loc);
-            }
-            else {
-                wind_idx_higher.push_back(wf);
-                locs_higher.push_back(loc);
-            }
-            // std::cout << "potential neighbor at dist " << cv::norm(at_int(points, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << at_int(winding_in, {loc[1],loc[0]}) << " " << layer_tgt_w << std::endl;
-        }
-    }
-    
-    return locs_lower.size()+locs_higher.size();
-}
-
-
 cv::Mat_<cv::Vec3f> points_hr_grounding(const cv::Mat_<uint8_t> &state, std::vector<float> tgt_wind, const cv::Mat_<float> &winding, const cv::Mat_<cv::Vec3f> &points_tgt_in, const cv::Mat_<cv::Vec3f> &points_src, int step)
 {
     cv::Mat_<cv::Vec3f> points_hr(points_tgt_in.rows*step, points_tgt_in.cols*step, {0,0,0});
@@ -897,8 +672,6 @@ cv::Mat_<cv::Vec3f> points_hr_grounding(const cv::Mat_<uint8_t> &state, std::vec
                 continue;
             if (points_tgt(j+1,i+1)[0] == -1)
                 continue;
-            
-            // std::cout << "try find corners" << std::endl;
             
             cv::Vec2f l00, l01, l10, l11;
             
@@ -989,309 +762,6 @@ template <typename E> cv::Mat_<E> pad(const cv::Mat_<E> &src, int amount, const 
     return m;
 }
 
-class diffuseWindings3D
-{
-public:
-    enum {BORDER = 32};
-    enum {CHUNK_SIZE = 32};
-    enum {FILL_V = 0};
-    int SD;
-    std::string UNIQUE_ID_STRING;
-    std::vector<cv::Mat_<float>> _winds;
-    std::vector<cv::Mat_<cv::Vec3f>> _points;
-    std::vector<cv::Mat_<float>> _src_divergence;
-    float _min_w = 1000000;
-    float _max_w = -1000000;
-    
-    diffuseWindings3D(const std::vector<cv::Mat_<float>> &winds, const std::vector<cv::Mat_<cv::Vec3f>> &points, int sd_) : _winds(winds), _points(points), SD(sd_)
-    {
-        UNIQUE_ID_STRING = "qt8m2n1tdy_"+std::to_string(BORDER)+"_"+std::to_string(CHUNK_SIZE)+"_"+std::to_string(FILL_V)+"_"+std::to_string(SD);
-        
-        for(auto &m : _points)
-            m = m.clone();
-        for(auto &m : _winds)
-            m = m.clone();
-        
-        for(int s=0;s<_points.size();s++) {
-            for(int j=0;j<_points[s].rows;j++)
-                for(int i=0;i<_points[s].cols;i++)
-                    if (_points[s](j,i)[0] == -1 || std::isnan(_winds[s](j,i)) || _winds[s](j,i) == 0.0) {
-                        _points[s](j,i) = {NAN,NAN,NAN};
-                        _winds[s](j,i) = NAN;
-                    }
-                    else {
-                        _min_w = std::min(_min_w, _winds[s](j,i));
-                        _max_w = std::max(_max_w, _winds[s](j,i));
-                    }
-                    
-            cv::resize(_points[s], _points[s], {0,0}, 4, 4);
-            cv::resize(_winds[s], _winds[s], {0,0}, 4, 4);
-            _src_divergence.push_back(cv::Mat_<float>(_winds[s].size(), 0));
-        }
-        
-        std::cout << "min/max winding " << _min_w << " " << _max_w << std::endl;
-    };
-    
-    template <typename T, typename E> void compute(const T &large, T &small, const cv::Vec3i &offset_large)
-    {
-        T winds_src = xt::empty<E>({CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER});
-        winds_src.fill(0);
-        T ws_src = xt::empty<E>({CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER});
-        ws_src.fill(0);
-        
-        
-        T src_x = xt::empty<E>({CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER});
-        src_x.fill(-1);
-        T src_y = xt::empty<E>({CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER,CHUNK_SIZE+2*BORDER});
-        src_y.fill(-1);
-
-        std::cout << "compute chunk" << offset_large << std::endl;
-        
-        for(int s=0;s<_points.size();s++)
-#pragma omp parallel for schedule(dynamic)
-            for(int j=0;j<_points[s].rows;j++)
-                for(int i=0;i<_points[s].cols;i++) {
-                    cv::Vec3i p = _points[s](j,i)/SD;
-                    
-                    if (std::isnan(p[0]))
-                        continue;
-                    
-                    p = {p[2],p[1],p[0]};
-                    
-                    // std::cout << p << offset_large << std::endl;
-                    
-                    bool inside = true;
-                    for(int d=0;d<3;d++)
-                        if (p[d] < offset_large[d]) {
-                            inside = false;
-                            break;
-                        }
-                        else if (p[d] >= offset_large[d]+CHUNK_SIZE+2*BORDER){
-                            inside = false;
-                            break;
-                        }
-                        
-                    if (!inside)
-                        continue;
-                            
-                    winds_src(p[0]-offset_large[0], p[1]-offset_large[1], p[2]-offset_large[2]) = _winds[s](j,i);
-                    ws_src(p[0]-offset_large[0], p[1]-offset_large[1], p[2]-offset_large[2]) = 1;
-                    src_x(p[0]-offset_large[0], p[1]-offset_large[1], p[2]-offset_large[2]) = i;
-                    src_y(p[0]-offset_large[0], p[1]-offset_large[1], p[2]-offset_large[2]) = j;
-                }
-                
-        T winds_to = winds_src;
-        T ws_to = ws_src;
-        int s = CHUNK_SIZE+2*BORDER;
-        
-        int range = 3;
-        
-        //first run, at list iter set an "outside" value
-        //TODO get this from a pre run at significantly lower res?
-        int dec_step = BORDER/range;
-        for(int rt=0;rt<=BORDER+dec_step;rt++) {
-            if (rt == dec_step)
-                range = 1;
-
-            int r = range;
-            T winds_from = winds_to;
-            T ws_from = ws_to;
-            
-            if (rt == dec_step+1) {
-                winds_from = winds_src;
-                ws_from = ws_src;
-            }
-            
-            
-            winds_to = winds_src;
-            ws_to = ws_src;
-            
-    
-#pragma omp parallel for collapse(2) schedule(dynamic)
-            for(int z=r;z<s-r;z++)
-                for(int y=r;y<s-r;y++)
-                    for(int x=r;x<s-r;x++) {
-                        float weight_sum = 0;
-                        float wind_sum = 0;
-                        // if (ws_src(z,y,x) > 0) {
-                        //     if (winds_from(z,y,x) > 0) {
-                        //         //FIXME muliplt surfaces!
-                        //         std::cout << src_y(z,y,x) << " " << src_x(z,y,x) << std::abs(winds_src(z,y,x)-winds_from(z,y,x)) << std::endl;
-                        //         _src_divergence[0](src_y(z,y,x),src_x(z,y,x)) = std::abs(winds_src(z,y,x)-winds_from(z,y,x));
-                        //     }
-                        //     continue;
-                        // }
-                        // std::cout << "go " << cv::Vec3i(x,y,z) << std::endl;
-                        for(int oz=-range;oz<=range;oz++)
-                            for(int oy=-range;oy<=range;oy++)
-                                for(int ox=-range;ox<=range;ox++) {
-                                    float w = ws_from(z+oz,y+oy,x+ox)/(1+abs(ox)+abs(oy)+abs(oz));
-                                    wind_sum += w*winds_from(z+oz,y+oy,x+ox);
-                                    weight_sum += w;
-                                }
-                        // cv::Vec3i p = {z,y,x};
-                        // for(int d=0;d<3;d++)
-                        //     for(int o=range;o<=range;o++)
-                        //     {
-                        //         cv::Vec3i op = p;
-                        //         op[d] += o;
-                        //         float w = ws_from(op[0],op[1],op[2]);
-                        //         wind_sum += w*winds_from(op[0],op[1],op[2]);
-                        //         weight_sum += w;
-                        //     }
-                        if (weight_sum > 0) {
-                            if (ws_src(z,y,x) > 0) {
-                                    //FIXME muliple surfaces!
-                                if (src_x(z,y,x) != -1)
-                                    _src_divergence[0](src_y(z,y,x),src_x(z,y,x)) = std::abs(winds_src(z,y,x)-wind_sum/weight_sum);
-                            }
-                            else {
-                                if (rt == dec_step && ws_from(z,y,x) == 0) {
-                                    float val = wind_sum/weight_sum;
-                                    if (val < 0.5*(_min_w+_max_w))
-                                        val = _min_w-1;
-                                    else
-                                        val = _max_w+1;
-                                    winds_to(z,y,x) = val;
-                                    ws_to(z,y,x) = 1;
-                                    winds_src(z,y,x) = val;
-                                    ws_src(z,y,x) = 1;
-                                }
-                                winds_to(z,y,x) = wind_sum/weight_sum;
-                                ws_to(z,y,x) = 1;
-                            }
-                        }
-                    }
-        }
-        
-        int low = int(BORDER);
-        int high = int(BORDER)+int(CHUNK_SIZE);
-        
-        auto crop_winds = view(winds_to, xt::range(low,high),xt::range(low,high),xt::range(low,high));
-        
-        small = crop_winds;
-    }
-    
-};
-
-template <typename C>
-struct WindLoss3D {
-    WindLoss3D(Chunked3d<float,C> &wind_vol, float tgt, float scale, float w) : _interpolator(std::make_unique<CachedChunked3dInterpolator<float,C>>(wind_vol)), _tgt(tgt), _scale(scale), _w(w) {};
-    template <typename T>
-    bool operator()(const T* const l, T* residual) const {
-        T v;
-        
-        _interpolator->template Evaluate<T>(T(_scale)*l[2], T(_scale)*l[1], T(_scale)*l[0], &v);
-        
-        residual[0] = T(_w)*(v-T(_tgt));
-        
-        return true;
-    }
-    
-    float _w;
-    float _tgt;
-    float _scale;
-    std::unique_ptr<CachedChunked3dInterpolator<float,C>> _interpolator;
-
-    static ceres::CostFunction* Create(Chunked3d<float,C> &wind_vol, float tgt, float scale, float w = 1.0)
-    {
-        return new ceres::AutoDiffCostFunction<WindLoss3D<C>, 1, 3>(new WindLoss3D<C>(wind_vol, tgt, scale, w));
-    }
-    
-};
-
-//multi-layer loss: given set of locs and winding idxs as well as one tgt point (with idx)
-//every point should be interpolated from its neighbors
-struct MultiLayerLoss {
-    MultiLayerLoss(const cv::Mat_<cv::Vec3f> &m, std::vector<int> w_idxs, int res_count, float w) : _m(m), _w_idxs(w_idxs), _res_count(res_count), _w(w) {};
-    template <typename T>
-    bool operator()(T const* const* parameters, T* residuals) const {
-         T const *point = parameters[0];
-        
-        T interp[3*_w_idxs.size()];
-        
-        std::vector<bool> valids;
-        for(int i=0;i<_w_idxs.size();i++) {
-            if (_w_idxs[i] == 0) {
-                for(int c=0;c<3;c++)
-                    interp[3*i + c] = point[c];
-                valids.push_back(true);
-            }
-            else if (loc_valid(_m, {val(parameters[i+1][0]),val(parameters[i+1][1])})) {
-                valids.push_back(true);
-                interp_lin_2d(_m, parameters[i+1][0], parameters[i+1][1], interp+3*i);
-            }
-            else
-                valids.push_back(false);
-        }
-        
-        int res_counter = 0;
-        for(int i1=0;i1<_w_idxs.size()-2 && res_counter<_res_count;i1++)
-            for(int i2=i1+1;i2<_w_idxs.size()-1 && res_counter<_res_count;i2++)
-                for(int i3=i2+1;i3<_w_idxs.size() && res_counter<_res_count;i3++,res_counter++)
-                    if (valids[i1] && valids[i2] && valids[i3]) {
-                        float w2 = (_w_idxs[i2]-_w_idxs[i1])/(_w_idxs[i3]-_w_idxs[i1]);
-                        float w1 = 1-w1;
-                        T avg[3];
-                        for(int c=0;c<3;c++) {
-                            avg[c] = T(w1) * interp[3*i1+c] + T(w2) * interp[3*i3+c];
-                        }
-                        
-                        for(int c=0;c<3;c++)
-                            residuals[9*res_counter+c] = T(_w)*(avg[c]-interp[3*i2+c]);
-                        
-                        
-// #pragma omp critical
-                            // std::cout << "succ " << i1 << " " << i2 << " " << i3 << " " << residuals[9*res_counter+0]  << " " << residuals[9*res_counter+1]  << " " << residuals[9*res_counter+2] << std::endl;
-                        
-                        //minimize dist loss
-                        for(int c=0;c<3;c++)
-                            residuals[9*res_counter+3+c] = T(_w*0.1)*(interp[3*i1+c]-interp[3*i2+c]);
-                        for(int c=0;c<3;c++)
-                            residuals[9*res_counter+6+c] = T(_w*0.1)*(interp[3*i2+c]-interp[3*i3+c]);
-                    }
-                    else {
-// #pragma omp critical
-                        // std::cout << "fail " << valids[i1] <<  valids[i2] <<  valids[i3] << i1 << " " << i2 << " " << i3 << cv::Vec2d(val(parameters[i1+1][0]),val(parameters[i1+1][1])) << cv::Vec2d(val(parameters[i2+1][0]),val(parameters[i2+1][1])) << cv::Vec2d(val(parameters[i3+1][0]),val(parameters[i3+1][1])) <<  std::endl;
-                        for(int c=0;c<9;c++)
-                            residuals[9*res_counter+c] = T(0);
-                }
-        
-        //TODO assert res count match?
-        return true;
-    }
-    
-    const cv::Mat_<cv::Vec3f> _m;
-    std::vector<int> _w_idxs;
-    int _res_count;
-    float _w;
-    
-    //first param is tgt point, rest is 2d locs
-    static void add(ceres::Problem &problem, std::vector<double*> &params, const cv::Mat_<cv::Vec3f> &m, std::vector<int> w_idxs, int res_count, float w)
-    {
-        if (w_idxs.size()+1 != params.size())
-            throw std::runtime_error("unexpected param vector size");
-        
-        MultiLayerLoss *loss_f = new MultiLayerLoss(m, w_idxs, res_count, w);
-        ceres::DynamicCostFunction *cost = new ceres::DynamicAutoDiffCostFunction<MultiLayerLoss, 4>(loss_f);
-        
-        cost->SetNumResiduals(res_count*9);
-        cost->AddParameterBlock(3);
-        for(int i=0;i<w_idxs.size();i++)
-            cost->AddParameterBlock(2);
-        
-        double res[9*res_count];
-        loss_f->operator()(&params[0], res);
-        
-        problem.AddResidualBlock(cost, nullptr, params);
-    }
-    
-};
-
-int modulo(int x,int n){
-    return (x % n + n) % n;
-}
-
 int main(int argc, char *argv[])
 {
     if (argc != 5 && (argc-2) % 3 != 0)  {
@@ -1321,7 +791,7 @@ int main(int argc, char *argv[])
     int opt_w_short = params.value("opt_w", 4);
     
     int opt_w = opt_w_short;
-    int large_opt_w = 32;
+    int large_opt_w = 16;
     int large_opt_every = 8;
     
     for(int n=0;n<argc/3;n++) {
@@ -1342,7 +812,6 @@ int main(int argc, char *argv[])
         weights.push_back(atof(argv[n*3+4]));
     }
     
-    //
     if (surfs.size() > 1) {
         for(int i=1;i<surfs.size();i++) {
             //try to find random matches between the surfaces, always coming from surf 0 for now
@@ -1362,9 +831,7 @@ int main(int argc, char *argv[])
                     continue;
                 
                 cv::Vec3f loc = surfs[i]->loc_raw(ptr);
-                
-                // std::cout << loc << std::endl;
-                // std::cout << winds[0](p) - at_int(winds[i], {loc[0],loc[1]}) << std::endl;
+
                 offsets.push_back(winds[0](p) - at_int(winds[i], {loc[0],loc[1]}));
                 offsets_rev.push_back(winds[0](p) + at_int(winds[i], {loc[0],loc[1]}));
             }
@@ -1390,6 +857,7 @@ int main(int argc, char *argv[])
         }
     }
     
+    //safety margin so we don't acces out of mat points
     int margin = 4*trace_mul;
     int pad_amount = margin+20;
     
@@ -1555,60 +1023,17 @@ int main(int argc, char *argv[])
     normals.convertTo(normcol, CV_8U, 255);
     cv::imwrite("normals.tif", normcol);
     cv::imwrite("normals_w.tif", normals_w);
-        
-    // return EXIT_SUCCESS;
-    
-    
-    // diffuseWindings3D compute(winds, surf_points, wind_vol_sd);
-    // Chunked3d<float,diffuseWindings3D> wind_tensor(compute, nullptr, nullptr, params["cache_root"]); 
-
-// //     cv::Mat_<float> wind_dbg(1400/wind_vol_sd,1920/wind_vol_sd, NAN);
-// //     
-// //     for(int j=0;j<wind_dbg.rows;j++)
-// //         for(int i=0;i<wind_dbg.cols;i++) {
-// //             wind_dbg(j,i) = wind_tensor(6300/wind_vol_sd,j+2520/wind_vol_sd,i+3000/wind_vol_sd);
-// //         }
-// // 
-// //     
-// //     std::vector<cv::Vec3b> wind_cols;
-// //     for(int i=0;i<400;i++) {
-// //         cv::Vec3b col = {50+rand() % 127,50+rand() % 127,50+rand() % 127};
-// //         col[rand()%3] = 192+rand()%63;
-// //         if (i%2 == 0)
-// //             col *= 0.5;
-// //         wind_cols.push_back(col);
-// //     }
-// //     
-// //     cv::Mat_<cv::Vec3b> wind_vis(wind_dbg.size(), {0,0,0});
-// //     for(int j=0;j<wind_dbg.rows;j++)
-// //         for(int i=0;i<wind_dbg.cols;i++) {
-// //             int w_num = std::min(std::max(int(wind_dbg(j,i)*2+200),0),398);
-// //             float f = wind_dbg(j,i)*2+100 - int(wind_dbg(j,i)*2+100);
-// //             wind_vis(j,i) = wind_cols[w_num]*(1-f)+wind_cols[w_num+1]*f;
-// //         }
-// //         
-// //     cv::imwrite("wind_inp.tif", wind_dbg);
-// //     cv::imwrite("wind_inp_vis.tif", wind_vis);
-// //     cv::imwrite("divergence.tif", compute._src_divergence[0]);
-// //     
-// //     return EXIT_SUCCESS;
-    
-    
-    // cv::Rect bbox_src(10,10,points_in.cols-20,points_in.rows-20);
-    
-    //safety margin so we don't acces out of mat points
     
     int start_offset = 0;        
     
-    // cv::Rect bbox_src(std::max(margin,start_offset),margin,points_in.cols-std::max(margin,start_offset)-margin,points_in.rows-2*margin);
-    cv::Rect bbox_src(std::max(margin,start_offset),margin,500,points_in.rows-2*margin);
+    cv::Rect bbox_src(std::max(margin,start_offset),margin,points_in.cols-std::max(margin,start_offset)-margin,points_in.rows-2*margin);
+    // cv::Rect bbox_src(std::max(margin,start_offset),margin,500,points_in.rows-2*margin);
     
     float src_step = 20;
     float step = src_step*trace_mul;
     
     //needs to be large enough!
     int init_w = std::max(opt_w, margin);
-    // int init_w = opt_w;
     
     cv::Size size = {points_in.cols/trace_mul, points_in.rows/trace_mul};
     cv::Rect bbox_init = {bbox_src.x/trace_mul, bbox_src.y/trace_mul, bbox_src.width/trace_mul, bbox_src.height/trace_mul};
@@ -1616,9 +1041,7 @@ int main(int argc, char *argv[])
 
     cv::Mat_<uint8_t> state(size, 0);
     cv::Mat_<uint8_t> init_state(size, 0);
-    cv::Mat_<uint8_t> multilayer_state(size, 0);
     cv::Mat_<cv::Vec3d> points(size, {-1,-1,-1});
-    // cv::Mat_<cv::Vec2d> locs(size, {-1,-1});
     cv::Mat_<float> winding(size, NAN);
     cv::Mat_<float> init_errs(size, -1);
     
@@ -1638,10 +1061,6 @@ int main(int argc, char *argv[])
                 col_first = std::min(col_first, j);
                 col_last = std::max(col_last, j);
             }
-            // else
-                //for now only take the first contiguous block!
-                // if (col_first != first_col.height)
-                    // break;
         }
     }
     
@@ -1678,7 +1097,6 @@ int main(int argc, char *argv[])
     
     
     ceres::Solver::Options options_col;
-    // options.linear_solver_type = ceres::DENSE_QR;
     options_col.linear_solver_type = ceres::SPARSE_SCHUR;
 #ifdef VC_USE_CUDA_SPARSE
     options_col.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
@@ -1722,10 +1140,8 @@ int main(int argc, char *argv[])
         
         for(int j=first_col.y;j<first_col.br().y;j++)
             for(int i=first_col.x;i<first_col.br().x;i++) {
-                // problem_init.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, 0.1*z_loc_loss_w), nullptr, &points(j,i)[0]);
                 if (loc_valid(state(j,i))) {
                     problem_init.AddResidualBlock(Interp2DLoss<float>::Create(winding_in, avg_wind[i], wind_w), nullptr, &surf_locs[0](j,i)[0]);
-                    // problem_init.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(j,i)[0]);
                 }
             }
 
@@ -1746,7 +1162,6 @@ int main(int argc, char *argv[])
                 }
                     
             }
-                    
         
         ceres::Solver::Summary summary;
         ceres::Solve(options_col, &problem_init, &summary);
@@ -1778,14 +1193,9 @@ int main(int argc, char *argv[])
     int lower_loc = lower_bound;
     int upper_loc = upper_bound;
     
-    // std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{-2,-1},{2,-1},{2,-2},{1,-2},{0,-2},{-1,-2},{-2,-2},{-3,-2},{3,-2},{-4,-2},{4,-2}};
     std::vector<cv::Vec2i> neighs = {{0,-1},{-1,-1},{1,-1},{-2,-1},{2,-1}};
     
     cv::Mat_<float> surf_dist(points.size(), 0);
-    
-    // std::vector<cv::Vec3f> layer_neighs, layer_neighs_inp;
-    
-    int runaways = 0;
     
     for(int i=bbox.x+init_w;i<bbox.br().x;i++) {
         if (i % large_opt_every == 0 && i-bbox.x > large_opt_w)
@@ -1811,7 +1221,7 @@ int main(int argc, char *argv[])
         
         std::cout << "proc col " << i << std::endl;
         ceres::Problem problem_col;
-// #pragma omp parallel for
+#pragma omp parallel for
         for(int j=std::max(bbox.y,lower_bound);j<std::min(bbox.br().y,upper_bound+1);j++) {
             cv::Vec2i p = {j,i};
 
@@ -1820,13 +1230,6 @@ int main(int argc, char *argv[])
             
             //FIXME
             for(auto n : neighs) {
-                // cv::Vec2d cand = locs(p+n) + cv::Vec2d(0,1/step);
-                // if (loc_valid(points_in,cand) && loc_valid(state(p+n))) {
-                //     state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
-                //     locs(p) = cand;
-                //     points(p) = at_int(points_in, {cand[1],cand[0]})+cv::Vec3f(((j+i)%10)*0.01, ((j+i+1)%10)*0.01,((j+i+2)%10)*0.01);
-                //     break;
-                // }
                 if (!state(p) && coord_valid(state(p+n))) {
                     points(p) = points(p+n)+cv::Vec3d(((j+i)%10)*0.01, ((j+i+1)%10)*0.01,((j+i+2)%10)*0.01);
                     state(p) = STATE_COORD_VALID;
@@ -1834,193 +1237,30 @@ int main(int argc, char *argv[])
                 }
             }
             
-            // init_state(p) = state(p);
-            
             if (points(p)[0] == -1)
                 continue;
-            
-            //TODO check wind!cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= wind_th
-            
-            {
-                ceres::Solver::Summary summary;
-                ceres::Problem problem;
-                cv::Mat_<cv::Vec2d> dummy_;
-                create_centered_losses_left_large(problem, p, state, points_in, points, dummy_, normals, tgt_wind_x_i, mul_z, step, 0);
-                problem.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(p)[0]);
-                
-                
-                ceres::Solve(options, &problem, &summary);
-                
-                init_errs(p) = sqrt(summary.final_cost/summary.num_residual_blocks);
-            }
 
-//NOTE commented out because it has a tendency (on nearly 180° bends) to just go straight, need to resolve that ambiguity first!
-//             {
-//                 ceres::Solver::Summary summary;
-//                 ceres::Problem problem;
-//                 cv::Mat_<cv::Vec2d> dummy_;
-//                 create_centered_losses_left_large(problem, p, state, points_in, points, dummy_, normals, tgt_wind_x_i, mul_z, step, LOSS_ON_NORMALS);
-//                 problem.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(j,i)[0]);
-//                 
-//                 
-//                 ceres::Solve(options, &problem, &summary);
-//                 
-//                 init_errs(p) = sqrt(summary.final_cost/summary.num_residual_blocks);
-//             }
+            ceres::Solver::Summary summary;
+            ceres::Problem problem;
+            cv::Mat_<cv::Vec2d> dummy_;
+            create_centered_losses_left_large(problem, p, state, points_in, points, dummy_, normals, tgt_wind_x_i, mul_z, step, 0);
+            problem.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(p)[0]);
             
-            // if (!loc_valid(winding_in, locs(p)) || std::abs(at_int(winding_in, {locs(p)[1],locs(p)[0]}) - tgt_wind[i]) > wind_th) {
-            //     state(p) &= ~STATE_LOC_VALID;
-            //     locs(p) = {-1,-1};
-            // }
             
-            //TODO running this unconditionally should not break anything!
-// //             if (!loc_valid(points_in, locs(p))) {
-// //                 // bool valid_neigh = false;
-// //                 // std::vector<cv::Vec2i> direct_neighs = {{0,-1},{-1,-1},{1,-1}};
-// //                 // for (auto n : direct_neighs)
-// //                 //     if (loc_valid(state(p+n)))
-// //                 //         valid_neigh = true;
-// //                 
-// //                 // if (valid_neigh) {
-// //                     cv::Vec2f loc = {0,0};
-// //                     float res = find_loc_wind(loc, tgt_wind[i], points_in, winding_in, points(p), 10.0, false);
-// //                     loc = {loc[1],loc[0]};
-// //                     if (res >= 0 &&
-// //                         cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) <= 100
-// //                         && cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) <= wind_th) {
-// //                             locs(p) = loc;
-// //                             state(p) = STATE_COORD_VALID | STATE_LOC_VALID;
-// //                             // std::cout << res << " " << cv::norm(at_int(points_in, {loc[1],loc[0]}) - cv::Vec3f(points(p))) << " " << cv::norm(at_int(winding_in, {loc[1],loc[0]}) - tgt_wind[i]) << std::endl;
-// //                         }
-// //                 // }
-// //             }
-                    
-
-//             std::vector<cv::Vec2d> locs_layers;
-//             std::vector<int> idxs_layers;
-//             find_neighbors(points_in, winding_in, points(p), tgt_wind[i], locs_layers, idxs_layers);
-//             
-//             if (loc_valid(points_in, locs(p)))
-// #pragma omp critical
-//                 for(auto & l : locs_layers)
-//                     layer_neighs.push_back(at_int(points_in, {l[1],l[0]}));
-//             else
-// #pragma omp critical
-//                 for(auto & l : locs_layers)
-//                     layer_neighs_inp.push_back(at_int(points_in, {l[1],l[0]}));
+            ceres::Solve(options, &problem, &summary);
+            
+            init_errs(p) = sqrt(summary.final_cost/summary.num_residual_blocks);
         }
         
         std::cout << "init col done " << std::endl;
         
         last_miny--;
         last_maxy++;
-        
-        // if (i % 10 == 0) {
-        //     write_ply("col_layer_neighs.ply", layer_neighs);
-        //     write_ply("col_layer_neighs_inp.ply", layer_neighs_inp);
-        // }
-        
-// //         for(int j=bbox.y;j<bbox.br().y;j++) {
-// //             cv::Vec2i p = {j,i};
-// //             
-// //             for(int o=0;o<=opt_w;o++) {
-// //                 cv::Vec2i po = {j,i-o};
-// //                 if (!loc_valid(points_in,locs(po)) || std::abs(at_int(winding_in, {locs(po)[1],locs(po)[0]}) - tgt_wind[i-o]) > wind_th) {
-// //                     state(po) &= ~STATE_LOC_VALID;
-// //                     locs(po) = {-1,-1};
-// //                 }
-// //             }
-// //         }
-        
-        cv::Mat_<uint8_t> state_inpaint = state.clone();
-//         cv::Mat_<uint8_t> mask;
-//         bitwise_and(state, (uint8_t)STATE_LOC_VALID, mask);
-//         cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
-//         cv::dilate(mask, mask, m, {-1,-1}, 80/trace_mul);
-//         
-//         //also fill the mask in y dir
-//         for(int x=std::max(bbox.x,i-opt_w);x<=i;x++) {
-//             int col_first = first_col.height;
-//             int col_last = -1;
-//             for(int j=0;j<state_inpaint.rows;j++) {
-//                 if (mask(j,x)) {
-//                     col_first = std::min(col_first, j);
-//                     col_last = std::max(col_last, j);
-//                 }
-//             }
-//             for(int j=col_first;j<=col_last;j++)
-//                 mask(j,x) = 1;
-//             
-//             if (x == i) {
-//                 last_miny = std::max(last_miny-1, col_first);
-//                 last_maxy = std::min(last_maxy+1, col_last);
-//             }
-//         }
-//         
-//         //FIXME where do we add not yet used points?
-//         for(int j=0;j<state_inpaint.rows;j++)
-//             for(int x=std::max(bbox.x,i-opt_w);x<=i;x++)
-//                 if (!mask(j,x) && coord_valid(state(j,x))) {
-//                     state(j,x) = 0;
-//                     state_inpaint(j,x) = 0;
-//                     points(j,x) = {-1,-1, -1};
-//                     //TODO should we also reset all surf locs?
-//                 }
-                    
-        
-        //FIXME check everwrite better with multi-surf!
-        // for(int j=0;j<state_inpaint.rows;j++)
-        //     for(int x=first_col.x;x<=i;x++) {
-        //         if (loc_valid(state(j,x))) {
-        //             if (points(j,x)[0] == -1)
-        //                 throw std::runtime_error("need points 3!");
-        //             state_inpaint(j,x) = STATE_COORD_VALID | STATE_LOC_VALID;
-        //         }
-        //         else if (mask(j,x) && coord_valid(state(j,x))) {
-        //             // std::cout << "inpaint only! " << cv::Vec2i(x,j) << std::endl;
-        //             if (points(j,x)[0] != -1) {
-        //                 state_inpaint(j,x) = STATE_COORD_VALID;
-        //                 locs(j,x) = {-1,-1};
-        //             }
-        //             else {
-        //                 state_inpaint(j,x) = 0;
-        //                 points(j,x) = {-1,-1,-1};
-        //                 locs(j,x) = {-1,-1};
-        //                 //TODO still not sure shy this happens? is it still happening?
-        //                 // std::cout << "no valid coord! " << cv::Vec2i(x,j) << std::endl;
-        //             }
-        //         }
-        //         else {
-        //             state_inpaint(j,x) = 0;
-        //             points(j,x) = {-1,-1,-1};
-        //             locs(j,x) = {-1,-1};
-        //         }
-        //     }
-            
-//         for(int j=bbox.y;j<bbox.br().y;j++) {
-//             cv::Vec2i p = {j,i};
-//             
-//             for(int o=0;o<=opt_w;o++) {
-//                 cv::Vec2i po = {j,i-o};
-//                 create_centered_losses(problem_col, po, state_inpaint, points_in, points, locs, step, 0);
-//                 
-//                 // gen_surfloss(po, problem_col, state_inpaint, points_in, points, locs, surf_w*weights[0]);
-//             }
-//             
-// //             if (state_inpaint(p) & STATE_LOC_VALID)
-// //                 problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(points_in, seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w), nullptr, &locs(p)[0]);
-// //             
-// //             for(int o=0;o<opt_w;o++)
-// //                 if (state_inpaint(j,i-o) & STATE_LOC_VALID)
-// //                     problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winding_in, tgt_wind[i-o], wind_w), nullptr, &locs(j,i-o)[0]);
-//         }
-        
-        // std::vector<cv::Vec2d> add_locs;
+
         std::vector<cv::Vec2i> add_ps;
         std::vector<int> add_idxs;
         
-        
-        //FIXME re-use existing locs if there!
+        //TODO re-use existing locs if there!
 #pragma omp parallel for
         for(int j=bbox.y;j<bbox.br().y;j++) {
             for(int o=0;o<=opt_w;o++) {
@@ -2029,27 +1269,24 @@ int main(int argc, char *argv[])
                     continue;
                 
                 cv::Vec2i po = {j,i-o};
-                // if (surfs.size() > 1 && coord_valid(state_inpaint(po)))
-                    for(int s=0;s<surf_points.size();s++)
-                    {
-                        cv::Vec2f loc = {0,0};
-                        float res = find_loc_wind(loc, tgt_wind[i-o], surf_points[s], winds[s], points(po), 1.0, false);
-                        loc = {loc[1],loc[0]};
-                        if (res >= 0 &&
-                            cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) <= 100
-                            && cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) <= wind_th)
+                for(int s=0;s<surf_points.size();s++)
+                {
+                    cv::Vec2f loc = {0,0};
+                    float res = find_loc_wind(loc, tgt_wind[i-o], surf_points[s], winds[s], points(po), 1.0, false);
+                    loc = {loc[1],loc[0]};
+                    if (res >= 0 &&
+                        cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) <= 100
+                        && cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) <= wind_th)
 #pragma omp critical
-                            {
-                                // std::cout << "adding " << cv::norm(at_int(surf_points[s], {loc[1],loc[0]}) - cv::Vec3f(points(po))) << " " << cv::norm(at_int(winds[s], {loc[1],loc[0]}) - tgt_wind[i-o]) << at_int(surf_points[s], {loc[1],loc[0]}) << loc << po << " " << s << std::endl;
-                                // add_locs.push_back(loc);
-                                surf_locs[s](po) = loc;
-                                add_idxs.push_back(s);
-                                add_ps.push_back(po);
-                                supports[s](po) = 1;
-                            }
-                        else
-                            supports[s](po) = 0;
-                    }
+                        {
+                            surf_locs[s](po) = loc;
+                            add_idxs.push_back(s);
+                            add_ps.push_back(po);
+                            supports[s](po) = 1;
+                        }
+                    else
+                        supports[s](po) = 0;
+                }
                 
             }
         }
@@ -2067,104 +1304,22 @@ int main(int argc, char *argv[])
                 else
                     state(po) &= ~STATE_LOC_VALID;
             }
-
-        int layer_loc_count = 0;
-        std::vector<cv::Vec2d> alllocs_layers(100000);
-        cv::Vec2d nop_loc = {-1,-1};
-
-        //add multi-layer supervision
-        for(int j=bbox.y;j<bbox.br().y;j++)
-            for(int o=std::max(bbox.x+opt_w,i-opt_w);o<=i;o++) {
-                multilayer_state(j, o) = 0;
-
-                if (!coord_valid(state(j,o)))
-                    continue;
-                
-                if (loc_valid(state(j,o)))
-                    continue;
-                
-                if (layer_loc_count >= alllocs_layers.size())
-                    break;
-                
-                std::vector<int> w_idxs;
-                std::vector<double*> params;
-                int ref_idx;
-                
-                std::vector<cv::Vec2d> locs_lower, locs_higher;
-                std::vector<int> idxs_lower;
-                std::vector<int> idxs_higher;
-
-                //FIXME multi layer search?!
-                int neigh_count = find_neighbors(points_in, winding_in, points(j,o), tgt_wind[o], locs_lower, locs_higher, idxs_lower, idxs_higher);
-                int zero_idx = -1;
-                
-                if (neigh_count < 2)
-                    continue;
-                
-                int count_lower = idxs_lower.size();
-                int count_higher = idxs_higher.size();
-
-                if (count_lower < 1)
-                    count_higher = 2-count_lower;
-                else if (count_higher < 1)
-                    count_lower = 2-count_higher;
-                
-                if (count_lower+count_higher < 2)
-                    continue;
-                
-                params.push_back(&points(j,o)[0]);
-                
-                for(int n=idxs_lower.size()-count_lower;n<idxs_lower.size();n++) {
-                    w_idxs.push_back(idxs_lower[n]);
-                    alllocs_layers[layer_loc_count] = locs_lower[n];
-                    params.push_back(&alllocs_layers[layer_loc_count][0]);
-                    problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[0], tgt_wind[o], multilayer_w*wind_w), nullptr, &alllocs_layers[layer_loc_count][0]);
-                    layer_loc_count++;
-                }
-
-                w_idxs.push_back(0);
-                params.push_back(&nop_loc[0]);
-
-                for(int n=0;n<count_higher;n++) {
-                    w_idxs.push_back(idxs_higher[n]);
-                    alllocs_layers[layer_loc_count] = locs_higher[n];
-                    params.push_back(&alllocs_layers[layer_loc_count][0]);
-                    problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[0], tgt_wind[o], multilayer_w*wind_w), nullptr, &alllocs_layers[layer_loc_count][0]);
-                    layer_loc_count++;
-                }
-                
-                // for(auto *ptr : params)
-                    // std::cout << ptr[0] << " " << ptr[1] << std::endl;
-                
-                MultiLayerLoss::add(problem_col, params, points_in, w_idxs, 1, multilayer_w*surf_w);
-                
-                multilayer_state(j, o) = 255;
-            }
-            
-        std::cout << "added multi layer losses " << layer_loc_count/4 << std::endl;
         
         for(int n=0;n<add_idxs.size();n++) {
             int idx = add_idxs[n];
             cv::Vec2i p = add_ps[n];
-            //FIXME THESE POINTS ARE HANDLED AS INPAINT AREA IN LATER STEPS!!!
             problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), nullptr, &points(p)[0], &surf_locs[idx](p)[0]);
             problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[idx], tgt_wind[p[1]], wind_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
-            // problem_col.AddResidualBlock(WindLoss3D<diffuseWindings3D>::Create(wind_tensor, tgt_wind[p[1]], 1.0/wind_vol_sd, wind3d_w), nullptr, &points(p)[0]);
-            // problem_col.AddResidualBlock(ZLocationLoss<cv::Vec3f>::Create(surf_points[idx], seed_coord[2] - (p[0]-seed_loc[0])*step, z_loc_loss_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
         }
         
-        //FIXME add centerd losses whe
         for(int j=bbox.y;j<bbox.br().y;j++)
             for(int o=std::max(bbox.x,i-inpaint_back_range);o<=i;o++)
                 if (coord_valid(state(j, o))) {
-                    float w_mul = 1.0;
-                    // if (!loc_valid(state(j, o)))
-                        // w_mul = 0.6;
+                    float zw = sqrt(float(inpaint_back_range-(i-o))/inpaint_back_range);
                     float tgt_wind_x_o = (tgt_wind[o]-_min_w)/(_max_w-_min_w)*1000;
                     cv::Mat_<cv::Vec2d> dummy_;
-                    create_centered_losses(problem_col, {j, o}, state_inpaint, points_in, points, dummy_, normals, tgt_wind_x_o, mul_z, step, LOSS_ON_NORMALS, w_mul);
-                    problem_col.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, z_loc_loss_w), nullptr, &points(j,o)[0]);
-                    // problem_col.AddResidualBlock(WindLoss3D<diffuseWindings3D>::Create(wind_tensor, tgt_wind[o], 1.0/wind_vol_sd, wind3d_w), nullptr, &points(j,o)[0]);
+                    create_centered_losses(problem_col, {j, o}, state, points_in, points, dummy_, normals, tgt_wind_x_o, mul_z, step, LOSS_ON_NORMALS);
+                    problem_col.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, zw*z_loc_loss_w), nullptr, &points(j,o)[0]);
                 }
         
         for(int j=bbox.y;j<bbox.br().y;j++) {
@@ -2192,7 +1347,6 @@ int main(int argc, char *argv[])
         ceres::Solver::Summary summary;
         ceres::Solve(options_col, &problem_col, &summary);
         
-        // std::cout << summary.FullReport() << std::endl;
         std::cout << summary.BriefReport() << std::endl;
         
         for(int x=i-opt_w+1;x<=i;x++)
@@ -2205,7 +1359,6 @@ int main(int argc, char *argv[])
             
         ceres::Solve(options_col, &problem_col, &summary);
         
-        // std::cout << summary.FullReport() << std::endl;
         std::cout << summary.BriefReport() << std::endl;
 
         bool stop = false;
@@ -2213,59 +1366,6 @@ int main(int argc, char *argv[])
         lower_loc = bbox.br().x+1;
         upper_loc = -1;
         for(int x=std::max(i-opt_w,bbox.x);x<=i;x++) {
-//             avg_wind[x] = 0;
-//             wind_counts[x] = 0;
-//             for(int j=bbox.y;j<bbox.br().y;j++) {
-//                 cv::Vec2i p = {j,x};
-//                 
-//                 if (loc_valid(points_in, locs(p)))
-//                     surf_dist(p) = cv::norm(cv::Vec3f(points(p))-at_int(points_in, {locs(p)[1],locs(p)[0]}));
-//                 else
-//                     surf_dist(p) = -1;
-//                 
-//                 if (!loc_valid(points_in,locs(j,x))) {
-//                     locs(j,x) = {-1,-1};
-//                     winding(j, x) = NAN;
-//                     state_inpaint(j,x) &= ~STATE_LOC_VALID;
-//                 }
-//                 else {
-//                     winding(j, x) = at_int(winding_in, {locs(j,x)[1],locs(j,x)[0]});
-//                     
-//                     if (abs(winding(j, x)-tgt_wind[x]) <= wind_th) {
-//                         avg_wind[x] += winding(j, x);
-//                         wind_counts[x] ++;
-//                     }
-//                     else
-//                         runaways++;
-//                     
-//                     min_w = std::min(min_w,winding(j, x)-tgt_wind[x]);
-//                     max_w = std::max(max_w,winding(j, x)-tgt_wind[x]);
-//                 }
-// 
-//                 if (!coord_valid(state_inpaint(j,x))) {
-//                     points(j,x) = {-1,-1,-1};
-//                     state(j,x) = 0;
-//                 }
-//                 else {
-//                     state(j,x) = state_inpaint(j, x);
-//                     if (points(j,x)[0] == -1)
-//                         throw std::runtime_error("need points 2!");
-//                 }
-            
-            //FIXME do this but check for tboht suport and loc valid!
-//             for(int j=bbox.y;j<bbox.br().y;j++)
-//                 for(int o=0;o<=opt_w;o++) {
-//                     cv::Vec2i po = {j,i-o};
-//                     
-//                     int sup_count = 0;
-//                     for(int s=0;s<surfs.size();s++)
-//                         sup_count += supports[s](po);
-//                     if (sup_count)
-//                         state(po) = STATE_LOC_VALID;
-//                     else
-//                         state(po) &= ~STATE_LOC_VALID;
-//                 }
-            
             avg_wind[x] = 0;
             wind_counts[x] = 0;
             for(int j=bbox.y;j<bbox.br().y;j++) {
@@ -2286,8 +1386,6 @@ int main(int argc, char *argv[])
                                     min_w = std::min(int_w-tgt_wind[x], min_w);
                                     max_w = std::max(int_w-tgt_wind[x], max_w);
                                 }
-                                    
-                                // std::cout << "got wind " << x << std::endl;
                                 
                             }
                             else
@@ -2317,17 +1415,12 @@ int main(int argc, char *argv[])
             cv::split(points, chs);
             cv::imwrite("newx.tif",chs[0](bbox));
             cv::imwrite("newz.tif",chs[2](bbox));
-            cv::imwrite("surf_dist.tif",surf_dist(bbox));
             cv::imwrite("winding_out.tif",winding(bbox)+3);
             cv::imwrite("state.tif",state*20);
-            cv::imwrite("state_inpaint.tif",state_inpaint(bbox)*20);
-            cv::imwrite("init_state.tif",init_state*20);
             cv::imwrite("init_errs.tif",init_errs(bbox));
-            cv::imwrite("multilayer_state.tif",multilayer_state(bbox));
             
             for(int s=0;s<supports.size();s++)
                 cv::imwrite("supports"+std::to_string(s)+".tif",supports[s](bbox)*255);
-                
         }
             
         if (!wind_counts[i]) {
@@ -2339,27 +1432,10 @@ int main(int argc, char *argv[])
             break;
         
         
-        std::cout << "avg wind number for col " << i << " : " << avg_wind[i] << " ( tgt was " << tgt_wind[i] << " ) using #" << wind_counts[i]  << " spread " << min_w << " - " << max_w << " runaway: " << runaways << std::endl;
+        std::cout << "avg wind number for col " << i << " : " << avg_wind[i] << " ( tgt was " << tgt_wind[i] << " ) using #" << wind_counts[i]  << " spread " << min_w << " - " << max_w << std::endl;
         wind_counts[i] = 1;
 
     }
-    
-    {
-    std::vector<cv::Mat> chs;
-    cv::split(points, chs);
-    cv::imwrite("newx.tif",chs[0]);
-    }
-    
-    cv::imwrite("surf_dist.tif",surf_dist);
-    cv::imwrite("fail.tif",fail_code);
-    cv::imwrite("winding_out.tif",winding+3);
-    
-    // {
-    //     std::vector<cv::Mat> chs;
-    //     cv::split(locs, chs);
-    //     cv::imwrite("locx.tif",chs[0]);
-    //     cv::imwrite("locy.tif",chs[1]);
-    // }
     
     {
         QuadSurface *surf_full = new QuadSurface(points(bbox), surfs[0]->_scale/trace_mul);
@@ -2392,9 +1468,6 @@ int main(int argc, char *argv[])
         std::cout << "saving " << seg_dir << std::endl;
         surf_hr->save(seg_dir, uuid);
     }
-    
-    
-    // cv::imwrite("divergence.tif", compute._src_divergence[0]);
     
     return EXIT_SUCCESS;
 }
