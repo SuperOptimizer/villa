@@ -119,13 +119,9 @@ int ChunkCache::groupIdx(std::string name)
 void ChunkCache::put(cv::Vec4i idx, xt::xarray<uint8_t> *ar)
 {
     if (_stored >= _size) {
-        //stores (idx,generation)
         using KP = std::pair<cv::Vec4i, uint64_t>;
         std::vector<KP> gen_list(_gen_store.begin(), _gen_store.end());
         std::sort(gen_list.begin(), gen_list.end(), [](KP &a, KP &b){ return a.second < b.second; });
-        // uint64_t _del_min;
-        // uint64_t _del_max;
-        // int del_count = 0;
         for(auto it : gen_list) {
             std::shared_ptr<xt::xarray<uint8_t>> ar = _store[it.first];
             //TODO we could remove this with lower probability so we dont store infiniteyl empty blocks but also keep more of them as they are cheap
@@ -136,15 +132,6 @@ void ChunkCache::put(cv::Vec4i idx, xt::xarray<uint8_t> *ar)
             
                 _store.erase(it.first);
                 _gen_store.erase(it.first);
-                // if (del_count) {
-                //     _del_min = std::min(it.first, _del_min);
-                //     _del_max = std::max(it.first, _del_max);
-                // }
-                // else {
-                //     _del_min = it.first;
-                //     _del_max = it.first;
-                // }
-                // del_count++;
             }
 
             //we delete 10% of cache content to amortize sorting costs
@@ -152,7 +139,6 @@ void ChunkCache::put(cv::Vec4i idx, xt::xarray<uint8_t> *ar)
                 break;
             }
         }
-        // printf("cache reduce done %f deleted %d from %lu - %lu off %d\n",float(_stored)/1024/1024, del_count, _del_min, _del_max, gen_list.size());
     }
 
     if (ar) {
@@ -187,15 +173,10 @@ void readArea3D(xt::xtensor<uint8_t,3,xt::layout_type::column_major> &out, const
         to[i] = std::min(int(ds->shape(i)),to[i]);
     }
 
-    // std::cout << ds->shape() << std::endl;
-
-// #pragma omp parallel
     {
         cv::Vec4i last_idx = {-1,-1,-1,-1};
         std::shared_ptr<xt::xarray<uint8_t>> chunk_ref;
         xt::xarray<uint8_t> *chunk = nullptr;
-// #pragma omp for collapse(3)
-        //FIXME go through in chunk!
         for(size_t z = offset_valid[0];z<to[0];z++)
             for(size_t y = offset_valid[1];y<to[1];y++)
                 for(size_t x = offset_valid[2];x<to[2];x++) {
@@ -229,8 +210,6 @@ void readArea3D(xt::xtensor<uint8_t,3,xt::layout_type::column_major> &out, const
                         int lz = z-iz*chunksize[0];
                         int ly = y-iy*chunksize[1];
                         int lx = x-ix*chunksize[2];
-
-                        // std::cout << cv::Vec3i({z-offset[0], y-offset[1], x-offset[3]}) << out.shape() << cv::Vec3i({to[0]-offset[0], to[1]-offset[1], to[2]-offset[2]}) << std::endl;
                         out(z-offset[0], y-offset[1], x-offset[2]) = chunk->operator()(lz,ly,lx);
                     }
             }
@@ -270,15 +249,6 @@ bool ChunkCache::has(cv::Vec4i idx)
 {
     return _store.count(idx);
 }
-
-// void readInterpolated3D_a2(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords, ChunkCache *cache);
-// void readInterpolated3D_a2_trilin(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords, ChunkCache *cache);
-
-//NOTE depending on request this might load a lot (the whole array) into RAM
-// template <typename T> void readInterpolated3D(T out, z5::Dataset *ds, const xt::xarray<float> &coords)
-// void readInterpolated3D(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords, ChunkCache *cache) {
-//     readInterpolated3D_a2_trilin(out, ds, coords, cache);
-// }
 
 //WARNING x,y,z order swapped for coords - its swapped in assign&use, so is fine but naming is wrong!
 void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache *cache)
@@ -343,8 +313,7 @@ void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds, const cv::Mat_<
     };
     
     size_t done = 0;
-    
-    //TODO could iterate all dims e.g. could have z or more ... (maybe just flatten ... so we only have z at most)
+
 #pragma omp parallel
     {
 
@@ -461,178 +430,6 @@ void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds, const cv::Mat_<
     }
 }
 
-//algorithm 2: do interpolation on basis of individual chunks, with trilinear interpolation
-//NOTE on the edge of empty chunks we may falsely retrieve zeros in up to 1 voxel distance!
-// void readInterpolated3D_a2_trilin(xt::xarray<uint8_t> &out, z5::Dataset *ds, const xt::xarray<float> &coords, ChunkCache *cache)
-// {
-//     auto out_shape = coords.shape();
-//     out_shape.back() = 1;
-//     out = xt::zeros<uint8_t>(out_shape);
-//
-//     ChunkCache local_cache(1e9);
-//
-//     if (!cache) {
-//         std::cout << "WARNING should use a shared chunk cache!" << std::endl;
-//         cache = &local_cache;
-//     }
-//
-//     //FIXME assert dims
-//     //FIXME based on key math we should check bounds here using volume and chunk size
-//     uint64_t key_base = cache->groupIdx(ds->path());
-//
-//     int xdim = coords.shape().size()-2;
-//     int ydim = coords.shape().size()-3;
-//
-//     auto cw = ds->chunking().blockShape()[0];
-//     auto ch = ds->chunking().blockShape()[1];
-//     auto cd = ds->chunking().blockShape()[2];
-//
-//     auto retrieve_single_value_cached = [&cw,&ch,&cd,&cache,&key_base,&ds](int ox, int oy, int oz) -> uint8_t
-//     {
-//         std::shared_ptr<xt::xarray<uint8_t>> chunk_ref;
-//         xt::xarray<uint8_t> *chunk = nullptr;
-//
-//         int ix = int(ox)/cw;
-//         int iy = int(oy)/ch;
-//         int iz = int(oz)/cd;
-//
-//         uint64_t key = key_base ^ uint64_t(ix) ^ (uint64_t(iy)<<16) ^ (uint64_t(iz)<<32);
-//
-//         cache->mutex.lock();
-//
-//         if (!cache->has(key)) {
-//             cache->mutex.unlock();
-//             chunk = z5::multiarray::readChunk<uint8_t>(*ds, {size_t(ix),size_t(iy),size_t(iz)});
-//             cache->mutex.lock();
-//             cache->put(key, chunk);
-//             chunk_ref = cache->get(key);
-//         }
-//         else {
-//             chunk_ref = cache->get(key);
-//             chunk = chunk_ref.get();
-//         }
-//         cache->mutex.unlock();
-//
-//         if (!chunk)
-//             return 0;
-//
-//         int lx = ox-ix*cw;
-//         int ly = oy-iy*ch;
-//         int lz = oz-iz*cd;
-//
-//         return chunk->operator()(lx,ly,lz);
-//     };
-//
-//
-//     //FIXME need to iterate all dims e.g. could have z or more ... (maybe just flatten ... so we only have z at most)
-//     //the whole loop is 0.29s of 0.75s (if threaded)
-//     // #pragma omp parallel for schedule(dynamic, 512) collapse(2)
-//     //FIXME collapse? keep chunk_ref per tread!
-// #pragma omp parallel for
-//     for(size_t y = 0;y<coords.shape(ydim);y++) {
-//         // xt::xarray<uint16_t> last_id;
-//         uint64_t last_key = -1;
-//         std::shared_ptr<xt::xarray<uint8_t>> chunk_ref;
-//         xt::xarray<uint8_t> *chunk = nullptr;
-//         for(size_t x = 0;x<coords.shape(xdim);x++) {
-//             float ox = coords(y,x,0);
-//             float oy = coords(y,x,1);
-//             float oz = coords(y,x,2);
-//
-//             if (ox < 0 || oy < 0 || oz < 0)
-//                 continue;
-//
-//             int ix = int(ox)/cw;
-//             int iy = int(oy)/ch;
-//             int iz = int(oz)/cd;
-//
-//             uint64_t key = key_base ^ uint64_t(ix) ^ (uint64_t(iy)<<16) ^ (uint64_t(iz)<<32);
-//
-//             if (key != last_key) {
-//
-//                 last_key = key;
-//
-//                 cache->mutex.lock();
-//
-//                 if (!cache->has(key)) {
-//                     cache->mutex.unlock();
-//                     chunk = z5::multiarray::readChunk<uint8_t>(*ds, {size_t(ix),size_t(iy),size_t(iz)});
-//                     cache->mutex.lock();
-//                     cache->put(key, chunk);
-//                     chunk_ref = cache->get(key);
-//                 }
-//                 else {
-//                     chunk_ref = cache->get(key);
-//                     chunk = chunk_ref.get();
-//                 }
-//                 cache->mutex.unlock();
-//             }
-//
-//             if (chunk) {
-//                 int lx = ox-ix*cw;
-//                 int ly = oy-iy*ch;
-//                 int lz = oz-iz*cd;
-//
-//                 float c000 = chunk->operator()(lx,ly,lz);
-//                 float c100;
-//                 float c010;
-//                 float c110;
-//                 float c001;
-//                 float c101;
-//                 float c011;
-//                 float c111;
-//
-//                 //FIXME implement single chunk get?
-//                 if (lx+1 >= cw || ly+1 >= ch || lz+1 >= cd) {
-//                     if (lx+1>=cw)
-//                         c100 = retrieve_single_value_cached(ox+1,oy,oz);
-//                     else
-//                         c100 = chunk->operator()(lx+1,ly,lz);
-//
-//                     if (ly+1 >= ch)
-//                         c010 = retrieve_single_value_cached(ox,oy+1,oz);
-//                     else
-//                         c010 = chunk->operator()(lx,ly+1,lz);
-//                     if (lz+1 >= cd)
-//                         c001 = retrieve_single_value_cached(ox,oy,oz+1);
-//                     else
-//                         c001 = chunk->operator()(lx,ly,lz+1);
-//
-//                     c110 = retrieve_single_value_cached(ox+1,oy+1,oz);
-//                     c101 = retrieve_single_value_cached(ox+1,oy,oz+1);
-//                     c011 = retrieve_single_value_cached(ox,oy+1,oz+1);
-//                     c111 = retrieve_single_value_cached(ox+1,oy+1,oz+1);
-//                 }
-//                 else {
-//                     c100 = chunk->operator()(lx+1,ly,lz);
-//                     c010 = chunk->operator()(lx,ly+1,lz);
-//                     c110 = chunk->operator()(lx+1,ly+1,lz);
-//                     c001 = chunk->operator()(lx,ly,lz+1);
-//                     c101 = chunk->operator()(lx+1,ly,lz+1);
-//                     c011 = chunk->operator()(lx,ly+1,lz+1);
-//                     c111 = chunk->operator()(lx+1,ly+1,lz+1);
-//                 }
-//
-//                 float fx = ox-int(ox);
-//                 float fy = oy-int(oy);
-//                 float fz = oz-int(oz);
-//
-//                 float c00 = (1-fz)*c000 + fz*c001;
-//                 float c01 = (1-fz)*c010 + fz*c011;
-//                 float c10 = (1-fz)*c100 + fz*c101;
-//                 float c11 = (1-fz)*c110 + fz*c111;
-//
-//                 float c0 = (1-fy)*c00 + fy*c01;
-//                 float c1 = (1-fy)*c10 + fy*c11;
-//
-//                 float c = (1-fx)*c0 + fx*c1;
-//
-//                 out(y,x,0) = c;
-//             }
-//         }
-//     }
-// }
-
 //somehow opencvs functions are pretty slow 
 static inline cv::Vec3f normed(const cv::Vec3f v)
 {
@@ -702,7 +499,6 @@ static float sdist(const cv::Vec3f &a, const cv::Vec3f &b)
 
 static void min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt, bool z_search = true)
 {
-    // std::cout << "start minlo" << loc << std::endl;
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
     if (!boundary.contains({loc[0],loc[1]})) {
         out = {-1,-1,-1};
@@ -792,7 +588,6 @@ cv::Mat_<cv::Vec3f> smooth_vc_segmentation(const cv::Mat_<cv::Vec3f> &points)
     #pragma omp parallel for
     for(int j=1;j<points.rows;j++)
         for(int i=1;i<points.cols-1;i++) {
-            // min_loc(points, {i,j}, out(j,i), {out(j,i)[0],out(j,i)[1],out(j,i)[2]});
             cv::Vec2f loc = {i,j};
             min_loc(points, loc, out(j,i), blur(j,i), false);
         }
