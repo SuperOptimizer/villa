@@ -22,12 +22,6 @@ static float z_loc_loss_w;
 static float wind_w;
 static float wind_th;
 static int inpaint_back_range;
-// static int far_dist = 2;
-
-static int layer_reg_range = 15;
-static float layer_reg_range_vx = 500.0;
-static float wind3d_w = 0.1;
-static float wind_vol_sd = 4;
 
 static float normal_w = 0.3;
 
@@ -791,7 +785,7 @@ int main(int argc, char *argv[])
     int opt_w_short = params.value("opt_w", 4);
     
     int opt_w = opt_w_short;
-    int large_opt_w = 16;
+    int large_opt_w = 32;
     int large_opt_every = 8;
     
     for(int n=0;n<argc/3;n++) {
@@ -870,15 +864,7 @@ int main(int argc, char *argv[])
     
     cv::Mat_<cv::Vec3f> points_in = surf_points[0];
     cv::Mat_<float> winding_in = winds[0].clone();
-    
-    if (!params.contains("cache_root")) {
-        std::cout << "need cache_root, via .json parameters" << std::endl;
-        return EXIT_FAILURE;
-    }
-    
-    std::cout << params["cache_root"] << std::endl;
-    
-    
+
     float _min_w = 1000000;
     float _max_w = -1000000;
     
@@ -890,24 +876,45 @@ int main(int argc, char *argv[])
                     _min_w = std::min(_min_w, winds[s](j,i));
                     _max_w = std::max(_max_w, winds[s](j,i));
                 }
+                
+    //FIXME remove hardcoded limit on Z
     float mul_z = 1000.0/15000;
     
-    cv::Mat_<cv::Vec3f> normals(cv::Size(1000,1000), 0);
-    cv::Mat_<float> normals_w(cv::Size(1000,1000), 0);
-    for(int j=0;j<surf_points[0].rows;j++)
-        for(int i=0;i<surf_points[0].cols;i++) {
-            if (surf_points[0](j, i)[0] == -1)
-                continue;
-            cv::Vec3f n = grid_normal(surf_points[0], {i,j,0});
-            cv::Vec3f p = surf_points[0](j,i);
-            if (std::isnan(n[0]))
-                continue;
+    int num_winds = std::ceil(_max_w) - std::floor(_min_w);
+    
+    int nw_step = 50;
+    
+    cv::Mat_<cv::Vec3f> normals(cv::Size(nw_step*num_winds, 1000), 0);
+    cv::Mat_<float> normals_w(cv::Size(nw_step*num_winds,1000), 0);
+    for(int s=0;s<1;s++) { //TODO winding number is too inaccurate - we could use the normals to refine it (but for now we just use the first trace)
+        normals.setTo(0);
+        normals_w.setTo(0);
+        for(int j=0;j<surf_points[s].rows;j++)
+            for(int i=0;i<surf_points[s].cols;i++) {
+                if (surf_points[s](j, i)[0] == -1)
+                    continue;
+                cv::Vec3f n = grid_normal(surf_points[s], {i,j,0});
+                cv::Vec3f p = surf_points[s](j,i);
+                if (std::isnan(n[0]))
+                    continue;
+                
+                int zi = p[2]*mul_z;
+                int wi = (winds[s](j,i)-_min_w)/num_winds*normals.cols;
+                normals(zi, wi) += n;
+                normals_w(zi, wi) ++;
+            }
             
-            int zi = p[2]*mul_z;
-            int wi = (winds[0](j,i)-_min_w)/(_max_w-_min_w)*1000;
-            normals(zi, wi) += n;
-            normals_w(zi, wi) ++;
-        }
+//             for(int j=0;j<normals.rows;j++)
+//                 for(int i=0;i<normals.cols;i++)
+//                     if (normals_w(j,i) > 0) {
+//                         normals(j,i) /= normals_w(j,i);
+//                         normals_w(j,i) = 1;
+//                     }
+//             
+//         cv::Mat_<cv::Vec3b> normcol;
+//         normals.convertTo(normcol, CV_8U, 255);
+//         cv::imwrite("init_normals"+std::to_string(s)+".tif", normcol);
+    }
         
     for(int j=0;j<normals.rows;j++)
         for(int i=0;i<normals.cols;i++)
@@ -919,9 +926,8 @@ int main(int argc, char *argv[])
     cv::Mat_<cv::Vec3f> normals_in = normals.clone();
     cv::Mat_<float> normals_w_in = normals_w.clone();
     
-    int nw_step = 1000/(_max_w-_min_w);
     std::cout << "wind_step " << nw_step << std::endl;
-    for(int r=0;r<50;r++) {
+    for(int r=0;r<50+num_winds;r++) {
         cv::Mat_<cv::Vec3f> normals_out(normals.size(), 0);
         cv::Mat_<float> normals_w_out(normals.size(), 0);
         
@@ -930,8 +936,8 @@ int main(int argc, char *argv[])
         cv::imwrite("normals"+std::to_string(r)+".tif", normcol);
         
         if (r < 20) {
-            for(int j=0;j<1000;j++)
-                for(int i=0;i<1000-nw_step;i++) {
+            for(int j=0;j<normals.rows;j++)
+                for(int i=0;i<normals.cols-nw_step;i++) {
                     if (normals_w_in(j,i) && normals_w_in(j,i+nw_step)) {
                         cv::Vec3f avg = normals_in(j,i) + normals_in(j,i+nw_step);
                         avg *= 0.5;
@@ -950,8 +956,8 @@ int main(int argc, char *argv[])
                     }
                 }
             
-            for(int j=0;j<1000;j++)
-                for(int i=0;i<1000;i++)
+            for(int j=0;j<normals.rows;j++)
+                for(int i=0;i<normals.cols;i++)
                     if (normals_w(j,i)) {
                         normals_out(j,i) = normals(j,i);
                         normals_w_out(j,i) = 1;
@@ -967,8 +973,8 @@ int main(int argc, char *argv[])
             normals_w_out.setTo(0);
         }
         
-        for(int j=0;j<1000-1;j++)
-            for(int i=0;i<1000-1;i++)
+        for(int j=0;j<normals.rows-1;j++)
+            for(int i=0;i<normals.cols-1;i++)
                 for (int oy=0;oy<=1;oy++)
                     for (int ox=0;ox<=1;ox++) {
                         if (ox == oy)
@@ -998,8 +1004,8 @@ int main(int argc, char *argv[])
                         }
                     }
             
-        for(int j=0;j<1000;j++)
-            for(int i=0;i<1000;i++)
+        for(int j=0;j<normals.rows;j++)
+            for(int i=0;i<normals.cols;i++)
                 if (normals_w(j,i)) {
                     normals_out(j,i) = normals(j,i);
                     normals_w_out(j,i) = 1;
@@ -1013,7 +1019,6 @@ int main(int argc, char *argv[])
         normals_w_in = normals_w_out;
     }
     
-    
     normals = normals_in;
     normals_w = normals_w_in;
     
@@ -1022,12 +1027,10 @@ int main(int argc, char *argv[])
     cv::Mat_<cv::Vec3b> normcol;
     normals.convertTo(normcol, CV_8U, 255);
     cv::imwrite("normals.tif", normcol);
-    cv::imwrite("normals_w.tif", normals_w);
     
     int start_offset = 0;        
     
     cv::Rect bbox_src(std::max(margin,start_offset),margin,points_in.cols-std::max(margin,start_offset)-margin,points_in.rows-2*margin);
-    // cv::Rect bbox_src(std::max(margin,start_offset),margin,500,points_in.rows-2*margin);
     
     float src_step = 20;
     float step = src_step*trace_mul;
@@ -1050,8 +1053,6 @@ int main(int argc, char *argv[])
     cv::Rect first_col = {bbox_init.x,bbox_init.y,init_w,bbox_init.height};
     
     int last_miny, last_maxy;
-    
-    //FIXME use joint first col for whole start?
     
     int col_first = first_col.height;
     int col_last = -1;
@@ -1205,7 +1206,7 @@ int main(int argc, char *argv[])
         
         tgt_wind[i] = 2*avg_wind[i-1]-avg_wind[i-2];
         
-        float tgt_wind_x_i = (tgt_wind[i]-_min_w)/(_max_w-_min_w)*1000;
+        float tgt_wind_x_i = (tgt_wind[i]-_min_w)/num_winds*normals.cols;
         
         std::cout << "wind tgt: " << tgt_wind[i] << " " << avg_wind[i-1] << " " << avg_wind[i-2] << std::endl;
         
@@ -1316,7 +1317,7 @@ int main(int argc, char *argv[])
             for(int o=std::max(bbox.x,i-inpaint_back_range);o<=i;o++)
                 if (coord_valid(state(j, o))) {
                     float zw = sqrt(float(inpaint_back_range-(i-o))/inpaint_back_range);
-                    float tgt_wind_x_o = (tgt_wind[o]-_min_w)/(_max_w-_min_w)*1000;
+                    float tgt_wind_x_o = (tgt_wind[o]-_min_w)/num_winds*normals.cols;
                     cv::Mat_<cv::Vec2d> dummy_;
                     create_centered_losses(problem_col, {j, o}, state, points_in, points, dummy_, normals, tgt_wind_x_o, mul_z, step, LOSS_ON_NORMALS);
                     problem_col.AddResidualBlock(ZCoordLoss::Create(seed_coord[2] - (j-seed_loc[0])*step, zw*z_loc_loss_w), nullptr, &points(j,o)[0]);
