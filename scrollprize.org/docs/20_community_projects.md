@@ -134,6 +134,9 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
     - automatic patch generation pipeline: vc_grow_seg_from_seed, vc_render_tifxyz, vc_tifxyz2obj: [thread](https://discord.com/channels/1079907749569237093/1312490723001499808)
     - segment tagging, segment masking, POIs, segment filters (all/filter by focus point/filter by POIs), display intersections scaling to thousands of segments [message](https://discord.com/channels/1079907749569237093/1286341523570688121/1312537855846907974)
 
+- [vesuvius-render](https://github.com/jrudolph/vesuvius-gui?tab=readme-ov-file#vesuvius-render) by Johannes Rudolph:
+    - Fast self-contained CPU-based rendering of segments from obj files downloading data on-the-fly.
+
 ### 📦 Materials
 
 #### 🌟 Highlighted
