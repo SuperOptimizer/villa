@@ -4374,7 +4374,7 @@ cv::Mat_<cv::Vec3d> surftrack_genpoints_extrapolate(SurfTrackerData &data, cv::M
 //     
 //         QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
 //         std::string uuid = "sub_surf_"+std::to_string(uintptr_t(sm));
-//         dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+//         dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/uuid, uuid);
 //         delete dbg_surf;
     }
 #pragma omp parallel for
@@ -4593,7 +4593,7 @@ void surftrack_add_extr_inliers(SurfTrackerData &data, cv::Mat_<uint8_t> &state,
 //TODO just (fixed) downweighting of areas where distances are more off?
 //TODO sample adjustment factors just like the actual 3d coords are sampled from a precomputed set?
 //this is basically just a reparametrization!
-void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, cv::Rect used_area, float step, float src_step, const cv::Vec2i &seed, int closing_r, bool keep_inpainted = false)
+void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, cv::Rect used_area, float step, float src_step, const cv::Vec2i &seed, int closing_r, bool keep_inpainted = false, const std::filesystem::path& tgt_dir = std::filesystem::path())
 {    
     std::cout << "optimizing surface" << std::endl;
     // cv::Mat_<cv::Vec3d> points_new = points.clone();
@@ -4642,7 +4642,7 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
         cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_hr(data_new, new_state, points_new, used_area, step, src_step);
         QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_points_extr_hr";
-        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        dbg_surf->save(tgt_dir / uuid, uuid);
         delete dbg_surf;
     }
     
@@ -4701,7 +4701,7 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
         cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_hr(data_new, new_state, points_new, used_area, step, src_step, true);
         QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_inp_pre";
-        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        dbg_surf->save(tgt_dir/ uuid, uuid);
         delete dbg_surf;
     }
     
@@ -4825,21 +4825,21 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
         cv::Mat_<cv::Vec3d> points_hr_inp = surftrack_genpoints_extrapolate(data_new, new_state, points_new, used_area, step, src_step, true);
         QuadSurface *dbg_surf = new QuadSurface(points_hr_inp(used_area_hr), {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_inp_opt";
-        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        dbg_surf->save(tgt_dir / uuid, uuid);
         delete dbg_surf;
     }
     
     cv::Mat_<cv::Vec3d> points_opt_hr = surftrack_genpoints_extrapolate(data_new, new_state, points_new, used_area, step, src_step);
     QuadSurface *dbg_surf = new QuadSurface(points_opt_hr(used_area_hr), {1/src_step,1/src_step});
     std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_opt_hr_extr";
-    dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+    dbg_surf->save(tgt_dir / uuid, uuid);
     delete dbg_surf;
     
     // cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_extrapolate(data, new_state, points_inpainted, used_area, step, src_step);
     // {
     // QuadSurface *dbg_surf = new QuadSurface(points_extr(used_area), {1/src_step,1/src_step});
     // std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_points_opt";
-    // dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+    // dbg_surf->save(tgt_dir / uuid, uuid);
     // delete dbg_surf;
     // }
 
@@ -4952,14 +4952,14 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
         cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_hr(data_out, state_out, points_out, used_area, step, src_step);
         QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s1_inp";
-        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        dbg_surf->save(tgt_dir / uuid, uuid);
         delete dbg_surf;
     }
     {
         cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_extrapolate(data_out, state_out, points_out, used_area, step, src_step);
         QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s1_inp_extr";
-        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        dbg_surf->save(tgt_dir / uuid, uuid);
         delete dbg_surf;
     }
     
@@ -4969,14 +4969,14 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
 //         cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_hr(data_out, state_out, points_out, used_area, step, src_step);
 //         QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
 //         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s1.5_inp";
-//         dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+//         dbg_surf->save(tgt_dir / uuid, uuid);
 //         delete dbg_surf;
 //     }
 //     {
 //         cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_extrapolate(data_out, state_out, points_out, used_area, step, src_step);
 //         QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
 //         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s1.5_inp_extr";
-//         dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+//         dbg_surf->save(tgt_dir / uuid, uuid);
 //         delete dbg_surf;
 //     }
     
@@ -5004,14 +5004,14 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
         cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_hr(data_out, state_out, points_out, used_area, step, src_step);
         QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s2_inp";
-        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        dbg_surf->save(tgt_dir / uuid, uuid);
         delete dbg_surf;
     }
     {
         cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_extrapolate(data_out, state_out, points_out, used_area, step, src_step);
         QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s2_inp_extr";
-        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        dbg_surf->save(tgt_dir / uuid, uuid);
         delete dbg_surf;
     }
 
@@ -5101,14 +5101,14 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
         cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_hr(data_out, state_out, points_out, used_area, step, src_step);
         QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s3_inp";
-        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        dbg_surf->save(tgt_dir / uuid, uuid);
         delete dbg_surf;
     }
     // {
     //     cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_extrapolate(data_out, state_out, points_out, used_area, step, src_step);
     //     QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
     //     std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s3_inp_extr";
-    //     dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+    //     dbg_surf->save(tgt_dir / uuid, uuid);
     //     delete dbg_surf;
     // }
 
@@ -5132,14 +5132,14 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
         cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_hr(data_out, state_out, points_out, used_area, step, src_step);
         QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s4_inp";
-        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        dbg_surf->save(tgt_dir / uuid, uuid);
         delete dbg_surf;
     }
     // {
     //     cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_extrapolate(data_out, state_out, points_out, used_area, step, src_step);
     //     QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
     //     std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s4_inp_extr";
-    //     dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+    //     dbg_surf->save(tgt_dir / uuid, uuid);
     //     delete dbg_surf;
     // }
         // surftrack_add_extr_inliers(data_out, state_out, points_out, used_area, step, src_step);
@@ -5147,14 +5147,14 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
         //     cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_hr(data_out, state_out, points_out, used_area, step, src_step);
         //     QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
         //     std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s5_inp";
-        //     dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        //     dbg_surf->save(tgt_dir / uuid, uuid);
         //     delete dbg_surf;
         // }
         // {
         //     cv::Mat_<cv::Vec3d> points_dbg = surftrack_genpoints_extrapolate(data_out, state_out, points_out, used_area, step, src_step);
         //     QuadSurface *dbg_surf = new QuadSurface(points_dbg(used_area_hr), {1/src_step,1/src_step});
         //     std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_s5_inp_extr";
-        //     dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        //     dbg_surf->save(tgt_dir / uuid, uuid);
         //     delete dbg_surf;
         // }
 
@@ -5168,7 +5168,7 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
         cv::Mat_<cv::Vec3d> points_hr_inp = surftrack_genpoints_hr(data, state, points, used_area, step, src_step, true);
         QuadSurface *dbg_surf = new QuadSurface(points_hr_inp(used_area_hr), {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_opt_inp_hr";
-        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        dbg_surf->save(tgt_dir / uuid, uuid);
         delete dbg_surf;
     }
     
@@ -5184,7 +5184,7 @@ void optimize_surface_mapping_extr(SurfTrackerData &data, cv::Mat_<uint8_t> &sta
 //TODO just (fixed) downweighting of areas where distances are more off?
 //TODO sample adjustment factors just like the actual 3d coords are sampled from a precomputed set?
 //this is basically just a reparametrization!
-void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, cv::Rect used_area, cv::Rect static_bounds, float step, float src_step, const cv::Vec2i &seed, int closing_r, bool keep_inpainted = false)
+void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &points, cv::Rect used_area, cv::Rect static_bounds, float step, float src_step, const cv::Vec2i &seed, int closing_r, bool keep_inpainted = false, const std::filesystem::path& tgt_dir = std::filesystem::path())
 {
     std::cout << "optimizing surface" << state.size() << used_area << static_bounds << std::endl;
     cv::Mat_<cv::Vec3d> points_new = points.clone();
@@ -5386,7 +5386,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
         cv::Mat_<cv::Vec3d> points_hr_inp = surftrack_genpoints_hr(data, new_state, points_inpainted, used_area, step, src_step, true);
         QuadSurface *dbg_surf = new QuadSurface(points_hr_inp(used_area_hr), {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_inp_hr";
-        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        dbg_surf->save(tgt_dir / uuid, uuid);
         delete dbg_surf;
     }
             
@@ -5394,7 +5394,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
     // {
     // QuadSurface *dbg_surf = new QuadSurface(points_new(used_area), {1/src_step,1/src_step});
     // std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_points_opt";
-    // dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+    // dbg_surf->save(tgt_dir / uuid, uuid);
     // delete dbg_surf;
     // }
     
@@ -5624,7 +5624,7 @@ void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &state, c
         cv::Mat_<cv::Vec3d> points_hr_inp = surftrack_genpoints_hr(data, state, points, used_area, step, src_step, true);
         QuadSurface *dbg_surf = new QuadSurface(points_hr_inp(used_area_hr), {1/src_step,1/src_step});
         std::string uuid = "z_dbg_gen_"+strint(dbg_counter, 5)+"_opt_inp_hr";
-        dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        dbg_surf->save(tgt_dir / uuid, uuid);
         delete dbg_surf;
     }
             
@@ -5675,9 +5675,11 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 {
     bool flip_x = params.value("flip_x", 0);
     int global_steps_per_window = params.value("global_steps_per_window", 0);
-    
+
+
     std::cout << "global_steps_per_window: " << global_steps_per_window << std::endl;
     std::cout << "flip_x: " << flip_x << std::endl;
+    std::filesystem::path tgt_dir = params["tgt_dir"];
     
     std::unordered_map<std::string,SurfaceMeta*> surfs;
     float src_step = params.value("src_step", 20);
@@ -6222,7 +6224,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         //     cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, src_step);
         //     QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
         //     std::string uuid = "z_dbg_gen_"+strint(generation, 5)+"a_pre_fill";
-        //     dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+        //     dbg_surf->save(tgt_dir / uuid, uuid);
         //     delete dbg_surf;
         // }
         // surftrack_add_extr_inliers(data, state, points, used_area, step, src_step);
@@ -6233,14 +6235,14 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, src_step);
             QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
             std::string uuid = "z_dbg_gen_"+strint(generation, 5);
-            dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+            dbg_surf->save(tgt_dir / uuid, uuid);
             delete dbg_surf;
             }
             // {
             //     cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_extrapolate(data, state, points, used_area, step, src_step);
             //     QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
             //     std::string uuid = "z_dbg_gen_"+strint(generation, 5)+"_extr";
-            //     dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+            //     dbg_surf->save(tgt_dir / uuid, uuid);
             //     delete dbg_surf;
             // }
         }
@@ -6276,7 +6278,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             // optimize_surface_mapping(data,state, points, used_area, static_bounds, step, src_step, {y0,x0}, closing_r, true);
             // optimize_surface_mapping(data,state, points, used_area, cv::Rect(0,0,0,0), step, src_step, {y0,x0}, closing_r, true);
             cv::Rect active = active_bounds & used_area;
-            optimize_surface_mapping(opt_data, opt_state, opt_points, active, static_bounds, step, src_step, {y0,x0}, closing_r, true);
+            optimize_surface_mapping(opt_data, opt_state, opt_points, active, static_bounds, step, src_step, {y0,x0}, closing_r, true, tgt_dir);
             // optimize_surface_mapping(opt_data, opt_state, opt_points, used_area, static_bounds, step, src_step, {y0,x0}, closing_r, true);
             
             copy(opt_data, data, active);
@@ -6313,14 +6315,14 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
             // {
             // QuadSurface *dbg_surf = new QuadSurface(points, {1/src_step/step,1/src_step/step});
             // std::string uuid = "z_dbg_gen_"+strint(generation, 5)+"_opt_lr";
-            // dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+            // dbg_surf->save(tgt_dir / uuid, uuid);
             // delete dbg_surf;
             // }
             {
                 cv::Mat_<cv::Vec3d> points_hr = surftrack_genpoints_hr(data, state, points, used_area, step, src_step);
                 QuadSurface *dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
                 std::string uuid = "z_dbg_gen_"+strint(generation, 5)+"_opt_hr";
-                dbg_surf->save("/home/hendrik/data/ml_datasets/vesuvius/manual_wget/dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/paths/"+uuid, uuid);
+                dbg_surf->save(tgt_dir / uuid, uuid);
                 delete dbg_surf;
             }
 
