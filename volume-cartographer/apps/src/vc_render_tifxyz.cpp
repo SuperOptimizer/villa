@@ -45,7 +45,10 @@ int main(int argc, char *argv[])
 
     std::cout << "zarr dataset size for scale group " << group_idx << ds->shape() << std::endl;
     std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
-
+    std::cout << "saving output to " << tgt_ptn << std::endl;
+    fs::path output_path(tgt_ptn);
+    fs::create_directories(output_path.parent_path());
+    
     ChunkCache chunk_cache(10e9);
 
     QuadSurface *surf = nullptr;
