@@ -274,9 +274,9 @@ std::string time_str()
 
 int main(int argc, char *argv[])
 {
-    if (argc != 3 && argc != 7) {
-        std::cout << "usage: " << argv[0] << " <tiffxyz> <out>" << std::endl;
-        std::cout << "or: " << argv[0] << " <tiffxyz> <out> <cropx> <cropy> <cropyw> <croph>" << std::endl;
+    if (argc != 2 && argc != 6) {
+        std::cout << "usage: " << argv[0] << " <tiffxyz>" << std::endl;
+        std::cout << "or: " << argv[0] << " <tiffxyz> <cropx> <cropy> <cropyw> <croph>" << std::endl;
         return EXIT_SUCCESS;
     }
     
@@ -294,8 +294,8 @@ int main(int argc, char *argv[])
 
     cv::Mat_<cv::Vec3f> points = surf->rawPoints();
     
-    if (argc == 7)
-        points = points(cv::Rect(atoi(argv[3]),atoi(argv[4]),atoi(argv[5]),atoi(argv[6])));
+    if (argc == 6)
+        points = points(cv::Rect(atoi(argv[2]),atoi(argv[3]),atoi(argv[4]),atoi(argv[5])));
     
     cv::Mat_<cv::Vec3b> img(points.size(), 0);
     
