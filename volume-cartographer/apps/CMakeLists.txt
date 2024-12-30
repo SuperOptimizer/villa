@@ -158,16 +158,6 @@ target_link_libraries(vc_volpkg_explorer
     ${VC_FS_LIB}
 )
 
-# vc_zarrrendersurface ##
-add_executable(vc_zarrrendersurface src/ZarrRenderSurface.cpp)
-target_link_libraries(vc_zarrrendersurface
-    nlohmann_json::nlohmann_json
-    z5
-    opencv_highgui
-    VC::slicing
-    VC::surface
-)
-
 add_executable(vc_render_video src/vc_render_video.cpp)
 target_link_libraries(vc_render_video
     z5
