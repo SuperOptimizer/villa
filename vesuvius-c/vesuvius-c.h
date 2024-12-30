@@ -4745,18 +4745,18 @@ chunk* vs_zarr_read_chunk(char* path, zarr_metadata metadata) {
     struct stat path_stat;
 
     if (stat(path, &path_stat) != 0) {
-        LOG_WARN("%s does not exist or is not accessible", path);
+        //LOG_WARN("%s does not exist or is not accessible", path);
         return NULL;
     }
 
     if (!S_ISREG(path_stat.st_mode)) {
-        LOG_WARN("path is not a regular file: %s", path);
+        //LOG_WARN("path is not a regular file: %s", path);
         return NULL;
     }
 
     FILE* fp = fopen(path, "rb");
     if (fp == NULL) {
-        LOG_WARN("failed to open chunk at %s",path);
+        //LOG_WARN("failed to open chunk at %s",path);
         return NULL;
     }
     fseek(fp, 0, SEEK_END);
