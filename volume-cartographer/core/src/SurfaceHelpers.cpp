@@ -336,7 +336,6 @@ static float min_loc2(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec
 
 static float min_loc_dbgd(const cv::Mat_<cv::Vec3f> &points, cv::Vec2d &loc, cv::Vec3d &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, cv::Vec2d init_step, float min_step_f, const std::vector<float> &ws = {}, bool robust_edge = false, const cv::Mat_<float> &used = cv::Mat())
 {
-    // std::cout << "start minlo" << loc << std::endl;
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
     if (!boundary.contains({loc[0],loc[1]})) {
         out = {-1,-1,-1};
@@ -358,12 +357,7 @@ static float min_loc_dbgd(const cv::Mat_<cv::Vec3f> &points, cv::Vec2d &loc, cv:
 
     //TODO add more search patterns, compare motion estimatino for video compression, x264/x265, ...
     std::vector<cv::Vec2d> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
-    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
     cv::Vec2d step = init_step;
-
-
-    // std::cout << "init " << best << tgts[0] << val << loc << "\n";
-
 
     while (changed) {
         changed = false;
@@ -384,7 +378,6 @@ static float min_loc_dbgd(const cv::Mat_<cv::Vec3f> &points, cv::Vec2d &loc, cv:
 
 
             val = at_int(points, cand);
-            // std::cout << "at" << cand << val << std::endl;
             res = tdist_sum(val, tgts, tds, ws);
             if (!used.empty())
                 res += atf_int(used, loc)*100.0;
@@ -393,14 +386,11 @@ static float min_loc_dbgd(const cv::Mat_<cv::Vec3f> &points, cv::Vec2d &loc, cv:
                 res += d*d;
             }
             if (res < best) {
-                // std::cout << res << val << step << cand << "\n";
                 changed = true;
                 best = res;
                 loc = cand;
                 out = val;
             }
-            // else
-            // std::cout << "(" << res << val << step << cand << "\n";
         }
 
         if (changed)
@@ -413,7 +403,6 @@ static float min_loc_dbgd(const cv::Mat_<cv::Vec3f> &points, cv::Vec2d &loc, cv:
             break;
     }
 
-    // std::cout << "best" << best << out << "\n" <<  std::endl;
     return sqrt(best/tgts.size());
 }
 
@@ -559,9 +548,6 @@ void freeze_inner_params(ceres::Problem &problem, int edge_dist, cv::Mat_<uint8_
 
     cv::distanceTransform(masked, dist, cv::DIST_L1, cv::DIST_MASK_3);
 
-
-    // cv::imwrite("dists.tif",dist);
-
     for(int j=0;j<dist.rows;j++)
         for(int i=0;i<dist.cols;i++) {
             if (dist(j,i) >= edge_dist && !loss_mask(7, {j,i}, {0,0}, loss_status)) {
@@ -629,106 +615,6 @@ uint8_t max_d_ign(uint8_t a, uint8_t b)
     if (b == 255)
         return a;
     return std::max(a,b);
-}
-
-//can't decide between C++ tensor libs, xtensor wasn't great and few algos supported anyways...
-template <typename T>
-class StupidTensor
-{
-public:
-    StupidTensor() {};
-    template <typename O> StupidTensor(const StupidTensor<O> &other) { create(other.planes[0].size(), other.planes.size()); };
-    StupidTensor(const cv::Size &size, int d) { create(size, d); };
-    void create(const cv::Size &size, int d)
-    {
-        planes.resize(d);
-        for(auto &p : planes)
-            p.create(size);
-    }
-    void setTo(const T &v)
-    {
-        for(auto &p : planes)
-            p.setTo(v);
-    }
-    template <typename O> void convertTo(O &out, int code) const
-    {
-        out.create(planes[0].size(), planes.size());
-        for(int z=0;z<planes.size();z++)
-            planes[z].convertTo(out.planes[z], code);
-    }
-    T &at(int z, int y, int x) { return planes[z](y,x); }
-    T &operator()(int z, int y, int x) { return at(z,y,x); }
-    std::vector<cv::Mat_<T>> planes;
-};
-
-using st_u = StupidTensor<uint8_t>;
-using st_f = StupidTensor<cv::Vec<float,1>>;
-using st_1u = StupidTensor<cv::Vec<uint8_t,1>>;
-using st_3f = StupidTensor<cv::Vec3f>;
-
-void distanceTransform(const st_1u &src, st_1u &dist, int steps)
-{
-    st_1u a;
-    st_1u b(src);
-
-    for(auto m : src.planes)
-        a.planes.push_back(m.clone());
-
-    src.convertTo(a, CV_8UC1);
-
-    st_1u *p1 = &a;
-    st_1u *p2 = &b;
-
-    int w = src.planes[0].cols;
-    int h = src.planes[0].rows;
-    int d = src.planes.size();
-
-#pragma omp parallel for
-    for(int k=0;k<d;k++)
-        for(int j=0;j<h;j++)
-            for(int i=0;i<w;i++)
-                if (p1->at(k,j,i)[0] != 0)
-                    p1->at(k,j,i)[0] = 255;
-
-    int n_set = 1;
-    for(int n=0;n<steps;n++) {
-        std::cout << "step " << n << " of " << steps << std::endl;
-        n_set = 0;
-#pragma omp parallel for
-        for(int k=0;k<d;k++)
-            for(int j=0;j<h;j++)
-                for(int i=0;i<w;i++) {
-                    uint8_t dist = p1->at(k,j,i)[0];
-                    if (dist == 255) {
-                        n_set++;
-                        if (k) dist = max_d_ign(dist, p1->at(k-1,j,i)[0]);
-                        if (k < d-1) dist = max_d_ign(dist, p1->at(k+1,j,i)[0]);
-                        if (j) dist = max_d_ign(dist, p1->at(k,j-1,i)[0]);
-                        if (j < h-1) dist = max_d_ign(dist, p1->at(k,j+1,i)[0]);
-                        if (i) dist = max_d_ign(dist, p1->at(k,j,i-1)[0]);
-                        if (i < w-1) dist = max_d_ign(dist, p1->at(k,j,i+1)[0]);
-                        if (dist != 255)
-                            p2->at(k,j,i) = dist+1;
-                        else
-                            p2->at(k,j,i) = dist;
-                    }
-                    else
-                        p2->at(k,j,i) = dist;
-
-                }
-        st_1u *tmp = p1;
-        p1 = p2;
-        p2 = tmp;
-    }
-
-    dist = *p1;
-
-#pragma omp parallel for
-    for(int k=0;k<d;k++)
-        for(int j=0;j<h;j++)
-            for(int i=0;i<w;i++)
-                if (dist.at(k,j,i)[0] == 255)
-                    dist.at(k,j,i)[0] = steps;
 }
 
 template <typename T, typename C>
@@ -836,15 +722,6 @@ int conditional_anchor_loss(int bit, const cv::Vec2i &p, const cv::Vec2i &off, d
     return set;
 };
 
-// template <typename I>
-// int conditional_spaceline_loss_slow(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, ceres::Problem &problem, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, const I &interp, int steps)
-// {
-//     int set = 0;
-//     if (!loss_mask(bit, p, off, loss_status))
-//         set = set_loss_mask(bit, p, off, loss_status, gen_space_line_loss_slow(problem, p, off, state, loc, interp, steps));
-//     return set;
-// };
-
 //create only missing losses so we can optimize the whole problem
 template <typename I, typename T, typename C>
 int emptytrace_create_missing_centered_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &loss_status, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &loc, cv::Mat_<cv::Vec3d> &a1, cv::Mat_<cv::Vec3d> &a2, cv::Mat_<cv::Vec3d> &a3, cv::Mat_<cv::Vec3d> &a4, const I &interp, Chunked3d<T,C> &t, float unit, int flags = SPACE_LOSS | OPTIMIZE_ALL)
@@ -932,8 +809,6 @@ float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &stat
     options.minimizer_progress_to_stdout = false;
     options.max_num_iterations = 10000;
     options.function_tolerance = 1e-4;
-    // options.num_threads = 1;
-    // options.num_threads = omp_get_max_threads();
 
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
@@ -943,165 +818,6 @@ float local_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &stat
 
     return sqrt(summary.final_cost/summary.num_residual_blocks);
 }
-
-//optimize within a radius, setting edge points to constant
-template <typename I, typename T, typename C>
-float local_inpaint_optimization(int radius, const cv::Vec2i &p, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, cv::Mat_<cv::Vec3d> &a1, cv::Mat_<cv::Vec3d> &a2, cv::Mat_<cv::Vec3d> &a3, cv::Mat_<cv::Vec3d> &a4, const I &interp, Chunked3d<T,C> &t, float unit, bool quiet = false)
-{
-    ceres::Problem problem;
-    //FIXME I think this could be way faster!
-    cv::Mat_<uint16_t> loss_status(state.size());
-
-    int r_outer = radius+3;
-
-    for(int oy=std::max(p[0]-r_outer,0);oy<=std::min(p[0]+r_outer,locs.rows-1);oy++)
-        for(int ox=std::max(p[1]-r_outer,0);ox<=std::min(p[1]+r_outer,locs.cols-1);ox++)
-            loss_status(oy,ox) = 0;
-
-    for(int oy=std::max(p[0]-radius,0);oy<=std::min(p[0]+radius,locs.rows-1);oy++)
-        for(int ox=std::max(p[1]-radius,0);ox<=std::min(p[1]+radius,locs.cols-1);ox++) {
-            cv::Vec2i op = {oy, ox};
-            if (cv::norm(p-op) <= radius)
-                emptytrace_create_missing_centered_losses(problem, loss_status, op, state, locs, a1,a2,a3,a4, interp, t, unit);
-        }
-        for(int oy=std::max(p[0]-r_outer,0);oy<=std::min(p[0]+r_outer,locs.rows-1);oy++)
-            for(int ox=std::max(p[1]-r_outer,0);ox<=std::min(p[1]+r_outer,locs.cols-1);ox++) {
-                cv::Vec2i op = {oy, ox};
-                if ((cv::norm(p-op) > radius || (state(op) & STATE_LOC_VALID)) && problem.HasParameterBlock(&locs(op)[0]))
-                    problem.SetParameterBlockConstant(&locs(op)[0]);
-            }
-
-
-        ceres::Solver::Options options;
-        options.linear_solver_type = ceres::SPARSE_SCHUR;
-        options.minimizer_progress_to_stdout = false;
-        options.max_num_iterations = 10000;
-        options.function_tolerance = 1e-4;
-        // options.num_threads = 1;
-        // options.num_threads = omp_get_max_threads();
-
-        ceres::Solver::Summary summary;
-        ceres::Solve(options, &problem, &summary);
-
-        if (!quiet)
-            std::cout << "local solve radius" << radius << " " << summary.BriefReport() << std::endl;
-
-    return sqrt(summary.final_cost/summary.num_residual_blocks);
-}
-
-
-//use closing operation to add inner points, TODO should probably also implement fringe based extension ...
-template <typename I, typename T, typename C>
-void add_phy_losses_closing(ceres::Problem &big_problem, int radius, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, cv::Mat_<cv::Vec3d> &a1, cv::Mat_<cv::Vec3d> &a2, cv::Mat_<cv::Vec3d> &a3, cv::Mat_<cv::Vec3d> &a4, cv::Mat_<uint16_t> &loss_status, const std::vector<cv::Vec2i> &cands, float unit, float phys_fail_th, const
-I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added)
-{
-    cv::Mat_<float> dist(state.size());
-
-    cv::Mat_<uint8_t> masked;
-    bitwise_and(state, (uint8_t)STATE_LOC_VALID, masked);
-
-    cv::Mat m = cv::getStructuringElement(cv::MORPH_RECT, {3,3});
-
-    cv::dilate(masked, masked, m, {-1,-1}, radius);
-    cv::erode(masked, masked, m, {-1,-1}, radius);
-
-    int r2 = 1;
-
-    cv::Mat_<cv::Vec3d> _empty;
-
-    //FIXME use fringe-like approach for better ordering!
-    for(int j=0;j<locs.rows;j++)
-        for(int i=0;i<locs.cols;i++) {
-            cv::Vec2i p = {j,i};
-            if (!masked(p))
-                continue;
-
-            // if (state(p) & (STATE_COORD_VALID | STATE_LOC_VALID)) {
-            //     //just fill in ... should not be necessary?
-            //     emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, _empty, _empty, _empty, _empty, interp, t, unit, OPTIMIZE_ALL);
-            //     continue;
-            // }
-
-            if ((state(p) & (STATE_COORD_VALID | STATE_LOC_VALID)) == 0) {
-                int ref_count = 0;
-                cv::Vec3d avg = {0,0,0};
-                for(int oy=std::max(p[0]-r2,0);oy<=std::min(p[0]+r2,locs.rows-1);oy++)
-                    for(int ox=std::max(p[1]-r2,0);ox<=std::min(p[1]+r2,locs.cols-1);ox++)
-                        if (state(oy,ox) & STATE_COORD_VALID) {
-                            avg += locs(oy,ox);
-                            ref_count++;
-                        }
-                avg /= ref_count;
-
-                if (ref_count < 2)
-                    continue;
-
-                locs(p) = avg;
-                state(p) |= STATE_COORD_VALID;
-
-                ceres::Problem problem;
-
-                int local_loss_count = emptytrace_create_centered_losses(problem, p, state, locs, interp, t, unit);
-
-                ceres::Solver::Options options;
-                options.linear_solver_type = ceres::DENSE_QR;
-                options.max_num_iterations = 1000;
-                // options.num_threads = 1;
-                // options.num_threads = omp_get_max_threads();
-                ceres::Solver::Summary summary;
-                ceres::Solve(options, &problem, &summary);
-
-                // local_inpaint_optimization(4, p, state, locs, a1, a2, a3, a4, interp, t, unit);
-
-                //
-                // double loss1 = summary.final_cost;
-
-                // std::cout << loss1 << std::endl;
-
-                // if (loss1 > phys_fail_th) {
-                //     float err = 0;
-                //     for(int range = 1; range<=16;range++) {
-                //         err = local_optimization(range, p, state, locs, a1, a2, a3, a4, interp, t, unit);
-                //         if (err <= phys_fail_th)
-                //             break;
-                //     }
-                //
-                //     if (err > phys_fail_th)
-                //         std::cout << std::endl << "WARNING WARNING WARNING" << std::endl << "fix phys inpaint init! " << loss1 << std::endl << std::endl;
-                // }
-/*
-                if (loss1 > phys_fail_th) {
-                    std::cout << "fix phys inpaint init! " << loss1 << std::endl;
-                }
-                else*/
-                emptytrace_create_missing_centered_losses(big_problem, loss_status, p, state, locs, _empty, _empty, _empty, _empty, interp, t, unit, OPTIMIZE_ALL);
-                added.push_back(p);
-            }
-
-    }
-}
-// template <typename I, typename T, typename C>
-// void area_wrap_phy_losses_closing_list(const cv::Rect &roi, ceres::Problem &big_problem, int radius, cv::Mat_<uint8_t> &state, cv::Mat_<cv::Vec3d> &locs, cv::Mat_<cv::Vec3d> &a1, cv::Mat_<cv::Vec3d> &a2, cv::Mat_<cv::Vec3d> &a3, cv::Mat_<cv::Vec3d> &a4, cv::Mat_<uint16_t> &loss_status, std::vector<cv::Vec2i> cands, float unit, float phys_fail_th, const I &interp, Chunked3d<T,C> &t, std::vector<cv::Vec2i> &added, bool global_opt, bool use_area)
-// {
-//     for(auto &p : cands)
-//         p -= cv::Vec2i(roi.y,roi.x);
-// 
-//     std::vector<cv::Vec2i> tmp_added;
-// 
-//     cv::Mat_<uint8_t> state_view = state(roi);
-//     cv::Mat_<cv::Vec3d> locs_view = locs(roi);
-//     cv::Mat_<cv::Vec3d> a1_view = a1(roi);
-//     cv::Mat_<cv::Vec3d> a2_view = a2(roi);
-//     cv::Mat_<cv::Vec3d> a3_view = a3(roi);
-//     cv::Mat_<cv::Vec3d> a4_view = a4(roi);
-//     cv::Mat_<uint16_t> loss_status_view = loss_status(roi);
-// 
-//     add_phy_losses_closing_list(big_problem, radius, state_view, locs_view, a1_view, a2_view, a3_view, a4_view, loss_status_view, cands, unit, phys_fail_th, interp, t, tmp_added, global_opt, use_area);
-// 
-//     for(auto &p : tmp_added)
-//         added.push_back(p+cv::Vec2i(roi.y,roi.x));
-// }
-
 
 static float min_dist(const cv::Vec2i &p, const std::vector<cv::Vec2i> &list)
 {
@@ -1327,8 +1043,8 @@ QuadSurface *space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *c
     cv::Mat_<float> init_dist(size,0);
     cv::Mat_<uint16_t> loss_status(cv::Size(w,h),0);
 
-    cv::Vec3f vx = {1,0,0} ;//vx_from_orig_norm(origin, normal);
-    cv::Vec3f vy = {0,1,0} ;//vy_from_orig_norm(origin, normal);
+    cv::Vec3f vx = {1,0,0};
+    cv::Vec3f vy = {0,1,0};
 
     cv::Rect used_area(x0,y0,2,2);
     //these are locations in the local volume!
@@ -1434,19 +1150,10 @@ QuadSurface *space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *c
         if (generation % 10 == 0)
             curr_ref_min = std::min(curr_ref_min, 5);
 
-        // if (!cands.size())
-            // continue;
-
-        // auto rng = std::default_random_engine {};
-        // std::shuffle(std::begin(cands), std::end(cands), rng);
-
         int succ_gen = 0;
         std::vector<cv::Vec2i> succ_gen_ps;
 
         std::vector<cv::Vec2i> thread_ps(omp_get_max_threads());
-
-        // for(auto &p : thread_ps)
-            // p = {-1,-1};
 
         OmpThreadPointCol cands_threadcol(max_local_opt_r*2+1, cands);
 
@@ -1458,15 +1165,6 @@ QuadSurface *space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *c
                 cv::Vec2i p = cands_threadcol.next();
                 if (p[0] == -1)
                     break;
-
-
-//                 int parallism = 0;
-// #pragma omp critical
-//                 for(auto &o : thread_ps)
-//                     if (o[0] != -1)
-//                         parallism++;
-//
-//                 std::cout << "threads active: " << parallism << std::endl;
 
                 if (state(p) & (STATE_LOC_VALID | STATE_COORD_VALID))
                     continue;
@@ -1516,46 +1214,18 @@ QuadSurface *space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *c
                 }
 
                 avg /= ref_count;
-                // locs(p) = avg;
-                
-                // auto rng = std::default_random_engine {};
-                // std::shuffle(std::begin(srcs), std::end(srcs), rng);
-                // locs(p) = srcs[0]+cv::Vec3d(0.1,0.1,0.1);
-                // {
-//                     cv::Vec2i best_l = srcs[0];
-//                     int best_ref_l = -1;
-//                     for(cv::Vec2i l : srcs) {
-//                         int ref_l = 0;
-//                         for(int oy=std::max(l[0]-r,0);oy<=std::min(l[0]+r,locs.rows-1);oy++)
-//                             for(int ox=std::max(l[1]-r,0);ox<=std::min(l[1]+r,locs.cols-1);ox++)
-//                                 if (state(oy,ox) & STATE_LOC_VALID)
-//                                     ref_l++;
-//                         
-//                         if (ref_l > best_ref_l) {
-//                             best_l = l;
-//                             best_ref_l = ref_l;
-//                         }
-//                     }
                 cv::Vec3d init = locs(best_l)+cv::Vec3d((rand()%1000)/10000.0-0.05,(rand()%1000)/10000.0-0.05,(rand()%1000)/10000.0-0.05);
                 locs(p) = init;
-                // }
-
-
-                //TODO don't reinit if we are running on exist cood!
 
                 ceres::Problem problem;
 
                 state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
                 int local_loss_count = emptytrace_create_centered_losses(problem, p, state, locs, interp, proc_tensor, Ts);
 
-                //FIXME need to handle the edge of the input definition!!
                 ceres::Solver::Summary summary;
                 ceres::Solve(options, &problem, &summary);
-                // std::cout << summary.FullReport() << "\n";
 
                 double loss1 = summary.final_cost;
-
-                // std::cout << loss1 << std::endl;
 
                 if (loss1 > phys_fail_th) {
                     cv::Vec3d best_loc = locs(p);
@@ -1681,8 +1351,6 @@ QuadSurface *space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *c
             if (locs(p)[0] == -1)
                 std::cout << "impossible!" << p << cv::Vec2i(y0,x0) << std::endl;
 
-        std::vector<cv::Vec2i> added;
-
         if (generation >= 3) {
             options_big.max_num_iterations = 10;
         }
@@ -1724,9 +1392,6 @@ QuadSurface *space_tracing_quad_phys(z5::Dataset *ds, float scale, ChunkCache *c
         }
 
         cv::Rect used_plus = {used_area.x-8,used_area.y-8,used_area.width+16,used_area.height+16};
-        for(auto &p : added) {
-            fringe.push_back(p);
-        }
 
         if (generation > 10 && global_opt) {
             cv::Mat_<cv::Vec2d> _empty;
