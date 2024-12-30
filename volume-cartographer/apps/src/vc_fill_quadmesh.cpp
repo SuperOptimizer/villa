@@ -931,10 +931,6 @@ int main(int argc, char *argv[])
         cv::Mat_<cv::Vec3f> normals_out(normals.size(), 0);
         cv::Mat_<float> normals_w_out(normals.size(), 0);
         
-        cv::Mat_<cv::Vec3b> normcol;
-        normals_in.convertTo(normcol, CV_8U, 255);
-        cv::imwrite("normals"+std::to_string(r)+".tif", normcol);
-        
         if (r < 20) {
             for(int j=0;j<normals.rows;j++)
                 for(int i=0;i<normals.cols-nw_step;i++) {
