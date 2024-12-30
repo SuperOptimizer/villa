@@ -313,7 +313,7 @@ int main(int argc, char *argv[])
     if (thread_limit)
         omp_set_num_threads(thread_limit);
 
-    QuadSurface *surf = empty_space_tracing_quad_phys(ds.get(), 1.0, &chunk_cache, origin, generations, step_size, cache_root);
+    QuadSurface *surf = space_tracing_quad_phys(ds.get(), 1.0, &chunk_cache, origin, generations, step_size, cache_root);
 
     double area_cm2 = (*surf->meta)["area_vx2"].get<double>()*voxelsize*voxelsize/1e8;
     if (area_cm2 < min_area_cm)
