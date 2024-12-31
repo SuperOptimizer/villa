@@ -393,6 +393,7 @@ template <typename T, typename C>
 struct SpaceLineLossAcc {
     SpaceLineLossAcc(Chunked3d<T,C> &t, int steps, float w) : _steps(steps), _w(w)
     {
+        _interpolator.resize(_steps-1);
         for(int i=1;i<_steps;i++)
             _interpolator[i-1].reset(new CachedChunked3dInterpolator<T,C>(t));
     };
