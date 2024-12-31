@@ -133,6 +133,12 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
     - non-destructive large scale interactive segment viewing and editing [thread](https://discord.com/channels/1079907749569237093/1294185795221065802)
     - automatic patch generation pipeline: vc_grow_seg_from_seed, vc_render_tifxyz, vc_tifxyz2obj: [thread](https://discord.com/channels/1079907749569237093/1312490723001499808)
     - segment tagging, segment masking, POIs, segment filters (all/filter by focus point/filter by POIs), display intersections scaling to thousands of segments [message](https://discord.com/channels/1079907749569237093/1286341523570688121/1312537855846907974)
+    - low memory tiled rendering to enable GP-sized an full scroll rendering https://github.com/hendrikschilling/volume-cartographer/blob/dev-zarr/apps/src/vc_render_tifxyz.cpp
+    - large segment tracing based on patch consensus: vc_grow_seg_from_segments, as documented in the [FASP submission](https://github.com/hendrikschilling/FASP?tab=readme-ov-file#vc_grow_seg_from_segments)
+    - consistent winding number estimation by winding number diffusion: [vc_tifxyz_winding](https://github.com/hendrikschilling/FASP?tab=readme-ov-file#51-winding-number-assignment)
+    - segment fusion & inpainting: [vc_fill_quadmesh](https://github.com/hendrikschilling/FASP?tab=readme-ov-file#vc_fill_quadmesh)
+
+- [fast and low memory inference for the GP ink detection](https://discord.com/channels/1079907749569237093/1315006782191570975) 1/5 the memory consumption and 20x the speed compared to the baseline GP ink detection for large segments to allow GP and full scroll size ink detection and fast preview.
 
 - [vesuvius-render](https://github.com/jrudolph/vesuvius-gui?tab=readme-ov-file#vesuvius-render) by Johannes Rudolph:
     - Fast self-contained CPU-based rendering of segments from obj files downloading data on-the-fly.
