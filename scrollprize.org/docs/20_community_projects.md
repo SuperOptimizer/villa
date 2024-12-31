@@ -140,6 +140,9 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 
 - [fast and low memory inference for the GP ink detection](https://discord.com/channels/1079907749569237093/1315006782191570975) 1/5 the memory consumption and 20x the speed compared to the baseline GP ink detection for large segments to allow GP and full scroll size ink detection and fast preview.
 
+- [vesuvius-render](https://github.com/jrudolph/vesuvius-gui?tab=readme-ov-file#vesuvius-render) by Johannes Rudolph:
+    - Fast self-contained CPU-based rendering of segments from obj files downloading data on-the-fly.
+
 ### 📦 Materials
 
 #### 🌟 Highlighted
@@ -227,6 +230,8 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 - [Grand Prize Winner Ink Detection model](https://github.com/younader/Vesuvius-Grandprize-Winner) by Youssef Nader, Luke Farritor and Julian Schilliger
 
 #### ⚙️ Tools
+
+- [ScrollMAE](https://github.com/jgcarrasco/ScrollMAE) by Jorge García. Contains the necessary code to pretrain a 3D ResNet on unlabeled data and then finetune it to perform ink detection.
 
 - [Unsupervised Ink Detection with DINO](https://github.com/jgcarrasco/dino-ink-detection) by Jorge García. Contains experiments related to detecting ink without labels, including a Colab notebook.
 

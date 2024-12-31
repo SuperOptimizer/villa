@@ -107,6 +107,7 @@ int testmesher() {
   printf("%s\n", __FUNCTION__);
   int ret = 0;
   float* vertices = NULL;
+  float* graycolors = NULL;
   int* indices = NULL;
   volume* vol = vs_vol_new(TEST_CACHEDIR, TEST_ZARR_URL);
   chunk* mychunk;
@@ -121,10 +122,10 @@ int testmesher() {
   if (rescaled == NULL) { ret = 1; goto cleanup; }
 
   int vertex_count, indices_count;
-  ret = vs_march_cubes(rescaled->data, rescaled->dims[0], rescaled->dims[1], rescaled->dims[2], 0.5f, &vertices,
+  ret = vs_march_cubes(rescaled->data, rescaled->dims[0], rescaled->dims[1], rescaled->dims[2], 0.5f, &vertices, &graycolors,
                         &indices, &vertex_count, &indices_count);
   if (ret != 0) { ret = 1; goto cleanup; }
-  ret = vs_ply_write("mymesh.ply", vertices,NULL, indices, vertex_count, indices_count);
+  ret = vs_ply_write("mymesh.ply", vertices,NULL, NULL,indices, vertex_count, indices_count);
   if (ret != 0) { ret = 1; goto cleanup; }
 
   cleanup:
@@ -228,6 +229,7 @@ int testchamfer() {
   int ret = 0;
   printf("%s\n", __FUNCTION__);
   float *vertices1 = NULL, *vertices2 = NULL;
+  float *graycolors1 = NULL, *graycolors2 = NULL;
   int *indices1 = NULL, *indices2 = NULL;
   int vertex_count1, vertex_count2;
   int index_count1, index_count2;
@@ -235,7 +237,7 @@ int testchamfer() {
   volume* vol = vs_vol_new(TEST_CACHEDIR, TEST_ZARR_URL);
   chunk* mychunk = vs_vol_get_chunk(vol, (s32[3]){2048,2048,2048},(s32[3]){128,128,128});
 
-  ret = vs_march_cubes(mychunk->data, mychunk->dims[0], mychunk->dims[1], mychunk->dims[2], 128.0f, &vertices1,
+  ret = vs_march_cubes(mychunk->data, mychunk->dims[0], mychunk->dims[1], mychunk->dims[2], 128.0f, &vertices1, &graycolors1,
                           &indices1, &vertex_count1, &index_count1);
   if (ret != 0) { ret = 1; goto cleanup; }
 
@@ -244,7 +246,7 @@ int testchamfer() {
   if ((mychunk = vs_vol_get_chunk(vol, (s32[3]){2048+64,2048+64,2048+64},(s32[3]){64,64,64}))== NULL) {
     ret = 1; goto cleanup;
   }
-  ret = vs_march_cubes(mychunk->data, mychunk->dims[0], mychunk->dims[1], mychunk->dims[2], 128.0f, &vertices2,
+  ret = vs_march_cubes(mychunk->data, mychunk->dims[0], mychunk->dims[1], mychunk->dims[2], 128.0f, &vertices2, &graycolors2,
                             &indices2, &vertex_count2, &index_count2);
   if (ret != 0) { ret = 1; goto cleanup; }
 
@@ -273,6 +275,7 @@ int testvol() {
   int *indices = NULL;
   int vertex_count;
   int index_count;
+  float* graycolors = NULL;
 
   chunk* mychunk = NULL;
 
@@ -282,7 +285,7 @@ int testvol() {
       ret = 1; goto cleanup;
     }
 
-    ret = vs_march_cubes(mychunk->data, mychunk->dims[0], mychunk->dims[1], mychunk->dims[2], 128.0f, &vertices,
+    ret = vs_march_cubes(mychunk->data, mychunk->dims[0], mychunk->dims[1], mychunk->dims[2], 128.0f, &vertices, &graycolors,
                               &indices, &vertex_count, &index_count);
 
     if (ret != 0) {
@@ -292,7 +295,7 @@ int testvol() {
     char out_filename[1024] = {'\0'};
     sprintf(out_filename,"mymesh%d.ply",sz);
 
-    ret = vs_ply_write(out_filename, vertices,NULL, indices, vertex_count, index_count);
+    ret = vs_ply_write(out_filename, vertices,NULL, NULL, indices, vertex_count, index_count);
     if (ret != 0) {
       ret = 1; goto cleanup;
     }

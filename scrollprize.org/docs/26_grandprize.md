@@ -137,7 +137,7 @@ Congratulations to Youssef, Luke, and Julian. You are the well-deserved winners 
 Of the remaining submissions, the scores from our team of papyrologists identify a three-way tie for runner up. These entries show remarkably similar readability to each other, but still stand out from the rest by being significantly more readable. Congratulations to the following teams, each taking home $50,000!
 
 <div className="mb-4">
-  <a target="_blank" href="/img/grandprize/sq_text_wbb.wbp"><img src="/img/grandprize/sq_text_wbb-smaller.webp" className="w-[100%]"/></a>
+  <a target="_blank" href="/img/grandprize/sq_text_wbb.webp"><img src="/img/grandprize/sq_text_wbb-smaller.webp" className="w-[100%]"/></a>
   <figcaption className="mt-[-6px]">Shao-Qian Mah. <a href="https://github.com/SQMah/Vesuvius-Grand-Prize-Submission/">GitHub</a></figcaption>
 </div>
 

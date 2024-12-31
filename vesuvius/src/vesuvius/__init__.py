@@ -44,11 +44,11 @@ if is_aws_ec2_instance():
         except Exception as e:
             print(f"Could not update the local file paths: {e}")
             try:
-                update_list("https://dl.ash2txt.org/other/dev/", "https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/seg-volumetric-labels/instance-annotated-cubes/")
+                update_list("https://dl.ash2txt.org/other/dev/", "https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumetric-instance-labels/instance-labels/")
             except:
                 print("Could not update the remote file paths.")
 else:
     try:
-        update_list("https://dl.ash2txt.org/other/dev/", "https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/seg-volumetric-labels/instance-annotated-cubes/")
+        update_list("https://dl.ash2txt.org/other/dev/", "https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumetric-instance-labels/instance-labels/")
     except:
         print("Could not update the remote file paths.")
