@@ -225,6 +225,8 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 
 #### ⚙️ Tools
 
+- [ScrollMAE](https://github.com/jgcarrasco/ScrollMAE) by Jorge García. Contains the necessary code to pretrain a 3D ResNet on unlabeled data and then finetune it to perform ink detection.
+
 - [Unsupervised Ink Detection with DINO](https://github.com/jgcarrasco/dino-ink-detection) by Jorge García. Contains experiments related to detecting ink without labels, including a Colab notebook.
 
 - [Vesuvius GP+](https://github.com/jaredlandau/Vesuvius-Grandprize-Winner-Plus) by Jared Landau. Updated version of the Grand Prize Ink Detection script with extra features.
