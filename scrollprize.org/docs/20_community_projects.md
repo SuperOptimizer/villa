@@ -263,7 +263,7 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 
 #### 📦 Materials
 
-- [Ink Labels](https://discord.com/channels/1079907749569237093/1223849912467460116). Nicola Bodill produced more accurate labels for ink detection based on the prediction of the Grand Prize winner model
+- [Scroll 1 Ink Labels](https://discord.com/channels/1079907749569237093/1223849912467460116). Nicola Bodill produced more accurate labels for ink detection based on the prediction of the Grand Prize winner model
 
 - [Scroll 4 predictions](https://dl.ash2txt.org/community-uploads/luke/youssef_uploads/scroll_4/). Youssef Nader produced some predictions on Scroll 4 from his Grand prize winner model. No sure trace of ink yet
 
@@ -273,6 +273,8 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 
 - [Ink Generator]
 (https://github.com/StewartSethA/VesuviusInkGenerator) by Seth Stewart, ink volume sample patches generated using gradient ascent
+
+- [Scroll 5 Ink Labels](https://github.com/Bodillium/Herculaneum-Scroll-Labels) by Nicola Bodill. Early ink labels for Scroll 5.
 
 #### 📝 Reports
 
