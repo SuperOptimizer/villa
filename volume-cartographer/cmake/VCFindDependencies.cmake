@@ -1,12 +1,6 @@
 ########
 # Core #
 ########
-### Use VC Prebuilt Libs ###
-# Built using vc-deps
-option(VC_PREBUILT_LIBS "Link against prebuilt dependencies" off)
-if (VC_PREBUILT_LIBS)
-    list(APPEND CMAKE_PREFIX_PATH ${PROJECT_SOURCE_DIR}/vc-deps/deps)
-endif()
 
 ### Filesystem ###
 find_package(Filesystem)
@@ -42,21 +36,6 @@ if((VC_BUILD_APPS OR VC_BUILD_UTILS) AND VC_BUILD_GUI)
      
 endif()
 
-### ITK ###
-set(VC_ITK_COMPONENTS
-    ITKCommon
-    ITKMesh
-    ITKQuadEdgeMesh
-    ITKTransform
-    ITKIOTransformBase
-    ITKIOTransformInsightLegacy
-)
-find_package(ITK 4.10 COMPONENTS ${VC_ITK_COMPONENTS} QUIET REQUIRED)
-include(${ITK_USE_FILE})
-
-### VTK ###
-find_package(VTK 9 QUIET REQUIRED)
-
 option(VC_WITH_CUDA_SPARSE "use cudss" ON)
 if (VC_WITH_CUDA_SPARSE)
     add_definitions(-DVC_USE_CUDA_SPARSE=1)
@@ -64,9 +43,6 @@ endif()
 
 #ceres-solver
 find_package(Ceres REQUIRED)
-
-### ACVD ###
-include(BuildACVD)
 
 ### Z5 ###
 include(BuildZ5)
@@ -90,59 +66,14 @@ find_package(xtensor REQUIRED)
 
 find_package(OpenMP REQUIRED)
 
-### libtiff ###
-find_package(TIFF 4.0 REQUIRED)
-
 ### spdlog ###
 find_package(spdlog 1.4.2 CONFIG REQUIRED)
 
-### OpenABF ###
-include(BuildOpenABF)
-
 ### Modern JSON ###
 include(BuildJSON)
-
-### bvh ###
-include(Buildbvh)
-
-### smgl ###
-include(Buildsmgl)
 
 ### Boost and indicators (for app use only)
 if(VC_BUILD_APPS OR VC_BUILD_UTILS)
     find_package(Boost 1.58 REQUIRED COMPONENTS system program_options)
     include(BuildIndicators)
-endif()
-
-
-############
-# Optional #
-############
-
-### gtest ###
-if(VC_BUILD_TESTS)
-    FetchContent_Declare(
-        googletest
-        GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG        v1.14.0
-        CMAKE_CACHE_ARGS
-            -DINSTALL_GTEST:BOOL=OFF
-    )
-
-    FetchContent_GetProperties(googletest)
-    if(NOT googletest_POPULATED)
-        set(INSTALL_GTEST OFF CACHE BOOL OFF FORCE)
-        FetchContent_Populate(googletest)
-        add_subdirectory(${googletest_SOURCE_DIR} ${googletest_BINARY_DIR} EXCLUDE_FROM_ALL)
-    endif()
-endif()
-
-# Python bindings
-if(VC_BUILD_PYTHON_BINDINGS)
-    find_package(pybind11 REQUIRED)
-endif()
-
-### macOS security framework ###
-if(APPLE AND VC_BUILD_APPS AND VC_BUILD_GUI)
-    find_library(OSXSecurity Security)
 endif()

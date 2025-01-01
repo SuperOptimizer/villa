@@ -10,7 +10,7 @@ string(TIMESTAMP VC_VERSION_TWEAK "%s")
 set(VC_VERSION ${VC_VERSION}.${VC_VERSION_TWEAK})
 endif()
 
-project(VC VERSION ${VC_VERSION})
+project(VC3D VERSION ${VC_VERSION})
 
 set(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin)
 set(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR}/lib)
@@ -30,15 +30,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS on)
 option(VC_BUILD_APPS     "Compile VC core programs"    on)
 option(VC_BUILD_GUI      "Compile GUI programs"        on)
 option(VC_BUILD_UTILS    "Compile VC utility programs" on)
-option(VC_BUILD_EXAMPLES "Compile VC example programs" off)
-option(VC_BUILD_TESTS    "Compile VC test programs"    off)
-option(VC_BUILD_PYTHON_BINDINGS "Build Python bindings." off)
 
 # Choose what to install
 option(VC_INSTALL_APPS      "Install VC core programs"    on)
 option(VC_INSTALL_LIBS      "Install VC libraries"        on)
 option(VC_INSTALL_UTILS     "Install VC utility programs" on)
-option(VC_INSTALL_PYTHON_BINDINGS "Install Python bindings." off)
 
 # Some helpful constants to be used in subprojects.
 include(VCConstants)
@@ -71,10 +67,6 @@ add_subdirectory(core)
 if (VC_BUILD_TESTS)
     add_subdirectory(testing)
 endif()
-add_subdirectory(meshing)
-add_subdirectory(segmentation)
-add_subdirectory(texturing)
-add_subdirectory(graph)
 
 # App support library
 if(VC_BUILD_APPS OR VC_BUILD_UTILS)
@@ -87,14 +79,8 @@ if (VC_BUILD_APPS)
 endif()
 
 ## VC Utility apps ##
-if (VC_BUILD_UTILS)
-    add_subdirectory(utils)
-endif()
 
 ## VC Example Apps ##
-if (VC_BUILD_EXAMPLES)
-    add_subdirectory(examples)
-endif()
 
 ## VC Documentation
 find_package(Doxygen OPTIONAL_COMPONENTS dot)

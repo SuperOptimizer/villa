@@ -19,8 +19,6 @@
 
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/Debug.hpp"
-#include "vc/segmentation/ChainSegmentationAlgorithm.hpp"
-#include "vc/segmentation/lrps/FittedCurve.hpp"
 
 #include <thread>
 #include <condition_variable>
@@ -469,30 +467,6 @@ struct SegmentationStruct {
         }
     }
 
-    inline void MergeChangedCurveIntoPointCloud(int sliceIndex)
-    {
-        // Check if we have a buffered changed curve for this index. If not exit.
-        auto it = fIntersectionsChanged.find(sliceIndex);
-        if (it == fIntersectionsChanged.end())
-            return;
-
-        volcart::Segmentation::PointSet ps(fMasterCloud.width());
-        cv::Vec3d tempPt;
-        std::vector<cv::Vec3d> row;
-        for (size_t i = 0; i < it->second.GetPointsNum(); ++i) {
-            tempPt[0] = it->second.GetPoint(i)[0];
-            tempPt[1] = it->second.GetPoint(i)[1];
-            tempPt[2] = it->second.GetSliceIndex();
-            row.push_back(tempPt);
-        }
-
-        // Resample points so they are evenly spaced
-        volcart::segmentation::FittedCurve evenlyStartingCurve(row, sliceIndex);
-        row = evenlyStartingCurve.evenlySpacePoints();
-
-        ps.pushRow(row);
-        MergePointSetIntoPointCloud(ps);
-    }
 
     inline volcart::Segmentation::AnnotationSet CreateInitialAnnotationSet(int startSlice, int height, int width)
     {

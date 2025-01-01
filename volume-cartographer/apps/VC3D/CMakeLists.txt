@@ -67,8 +67,6 @@ target_link_libraries(${target}
     VC::core
     VC::slicing
     VC::surface
-    VC::meshing
-    VC::segmentation
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets

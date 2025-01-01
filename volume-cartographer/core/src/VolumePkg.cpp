@@ -55,8 +55,6 @@ inline void keep(const fs::path& dir)
     }
 }
 
-const std::set<std::string> supportedSegmentFileExtensions = {".vcps",".obj"};
-
 ////// Upgrade functions //////
 auto VolpkgV3ToV4(const Metadata& meta) -> Metadata
 {
@@ -320,39 +318,6 @@ VolumePkg::VolumePkg(const fs::path& fileLocation) : rootDir_{fileLocation}
             }
         }
     }
-
-    // Load segmentations into the segmentations_
-    for (const auto& entry : fs::recursive_directory_iterator(::SegsDir(rootDir_))) {
-        if (fs::is_regular_file(entry) && supportedSegmentFileExtensions.count(entry.path().extension())) {
-            segmentation_files_.push_back(entry.path());
-        }
-    }
-
-    // Load Renders into the renders_
-    for (const auto& entry : fs::directory_iterator(::RendDir(rootDir_))) {
-        fs::path dirpath = fs::canonical(entry);
-        if (fs::is_directory(dirpath)) {
-            auto r = Render::New(dirpath);
-            renders_.emplace(r->id(), r);
-        }
-    }
-
-    // Load the transform files into transforms_
-    for (const auto& entry : fs::directory_iterator(::TfmDir(rootDir_))) {
-        auto ep = entry.path();
-        if (fs::is_regular_file(entry) and ep.extension() == ".json") {
-            Transform3D::Pointer tfm;
-            try {
-                tfm = Transform3D::Load(ep);
-            } catch (const std::exception& e) {
-                Logger()->warn(
-                    "Failed to load transform \"{}\". {}",
-                    ep.filename().string(), e.what());
-                continue;
-            }
-            transforms_.emplace(ep.stem(), tfm);
-        }
-    }
 }
 
 auto VolumePkg::New(fs::path fileLocation, int version) -> VolumePkg::Pointer
@@ -408,15 +373,6 @@ auto VolumePkg::numberOfVolumes() const -> std::size_t
     return volumes_.size();
 }
 
-auto VolumePkg::numberOfPreviews(const Volume::Identifier &id) const -> std::size_t
-{
-    auto preview_map = previews_.find(id);
-    if (preview_map == previews_.end())
-        return 0;
-    
-    return preview_map->second.size();
-}
-
 auto VolumePkg::volumeIDs() const -> std::vector<Volume::Identifier>
 {
     std::vector<Volume::Identifier> ids;
@@ -430,18 +386,6 @@ auto VolumePkg::volumeNames() const -> std::vector<std::string>
 {
     std::vector<Volume::Identifier> names;
     for (const auto& v : volumes_) {
-        names.emplace_back(v.second->name());
-    }
-    return names;
-}
-
-auto VolumePkg::previewNames(const Volume::Identifier &id) const -> std::vector<std::string>
-{
-    std::vector<std::string> names;
-    auto vol_previes = previews_.find(id);
-    if (vol_previes == previews_.end())
-        return names;
-    for (const auto& v : vol_previes->second) {
         names.emplace_back(v.second->name());
     }
     return names;
@@ -503,11 +447,6 @@ auto VolumePkg::volume(const Volume::Identifier& id) -> Volume::Pointer
     return volumes_.at(id);
 }
 
-auto VolumePkg::preview(const Volume::Identifier& vol_id, const Volume::Identifier& preview_name) -> Volume::Pointer
-{
-    return previews_.at(vol_id).at(preview_name);
-}
-
 // SEGMENTATION FUNCTIONS //
 auto VolumePkg::hasSegmentations() const -> bool
 {
@@ -552,265 +491,6 @@ auto VolumePkg::segmentationNames() const -> std::vector<std::string>
         names.emplace_back(s.second->name());
     }
     return names;
-}
-
-// Make a new folder inside the volume package to house everything for this
-// segmentation and push back the new segmentation into our vector of
-// segmentations_
-auto VolumePkg::newSegmentation(std::string name) -> Segmentation::Pointer
-{
-    // Generate a uuid
-    auto uuid = DateTime();
-
-    // Get dir name if not specified
-    if (name.empty()) {
-        name = uuid;
-    }
-
-    // Make the volume directory
-    auto segDir = ::SegsDir(rootDir_) / uuid;
-    if (!fs::exists(segDir)) {
-        fs::create_directory(segDir);
-    } else {
-        throw std::runtime_error("Segmentation directory already exists");
-    }
-
-    // Make the Segmentation
-    auto r =
-        segmentations_.emplace(uuid, Segmentation::New(segDir, uuid, name));
-    if (!r.second) {
-        auto msg = "Segmentation already exists with ID " + uuid;
-        throw std::runtime_error(msg);
-    }
-
-    // Return the Segmentation Pointer
-    return r.first->second;
-}
-
-auto VolumePkg::removeSegmentation(const Segmentation::Identifier& id) -> bool
-{
-    if (id.size() == 0)
-        return false;
-
-    // Remove the volume directory
-    auto segDir = ::SegsDir(rootDir_) / id;
-    if (!fs::exists(segDir)) {
-        throw std::runtime_error("Segmentation directory does not exist for ID " + id);
-    } else {
-        return fs::remove_all(segDir);
-    }
-}
-
-// RENDER FUNCTIONS //
-auto VolumePkg::hasRenders() const -> bool { return !renders_.empty(); }
-auto VolumePkg::numberOfRenders() const -> std::size_t
-{
-    return renders_.size();
-}
-auto VolumePkg::render(const Render::Identifier& id) const
-    -> const Render::Pointer
-{
-    return renders_.at(id);
-}
-auto VolumePkg::render(const Render::Identifier& id) -> Render::Pointer
-{
-    return renders_.at(id);
-}
-
-auto VolumePkg::renderIDs() const -> std::vector<Render::Identifier>
-{
-    std::vector<Render::Identifier> ids;
-    for (const auto& r : renders_) {
-        ids.emplace_back(r.first);
-    }
-    return ids;
-}
-
-auto VolumePkg::renderNames() const -> std::vector<std::string>
-{
-    std::vector<std::string> names;
-    for (const auto& r : renders_) {
-        names.emplace_back(r.second->name());
-    }
-    return names;
-}
-
-// Make a new folder inside the volume package to house everything for this
-// Render and push back the new render into our vector of renders_
-auto VolumePkg::newRender(std::string name) -> Render::Pointer
-{
-    // Generate a uuid
-    auto uuid = DateTime();
-    while (renders_.count(uuid) > 0) {
-        uuid = DateTime();
-    }
-
-    // Get dir name if not specified
-    if (name.empty()) {
-        name = uuid;
-    }
-
-    // Make the render directory
-    auto renDir = ::RendDir(rootDir_) / uuid;
-    if (!fs::exists(renDir)) {
-        fs::create_directory(renDir);
-    } else {
-        throw std::runtime_error("Render directory already exists");
-    }
-
-    // Make the Render
-    auto r = renders_.emplace(uuid, Render::New(renDir, uuid, name));
-    if (!r.second) {
-        auto msg = "Render already exists with ID " + uuid;
-        throw std::runtime_error(msg);
-    }
-
-    // Return the Render Pointer
-    return r.first->second;
-}
-
-auto VolumePkg::hasTransforms() const -> bool
-{
-    return not transforms_.empty();
-}
-
-auto VolumePkg::hasTransform(Volume::Identifier id) const -> bool
-{
-    // Don't allow empty IDs
-    if (id.empty()) {
-        throw std::invalid_argument("Transform ID is empty");
-    }
-
-    // Remove the star for inverse transforms
-    auto findInverse = id.back() == '*';
-    if (findInverse) {
-        id.pop_back();
-    }
-
-    // Find the forward transform
-    auto found = transforms_.count(id) > 0;
-
-    // See if this transform can be inverted
-    if (found and findInverse) {
-        found = transforms_.at(id)->invertible();
-    }
-
-    return found;
-}
-
-auto VolumePkg::addTransform(const Transform3D::Pointer& transform)
-    -> Transform3D::Identifier
-{
-    // Make sure the transform has a source and target
-    if (transform->source().empty()) {
-        throw std::invalid_argument("Transform is missing source");
-    }
-    if (transform->target().empty()) {
-        throw std::invalid_argument("Transform is missing target");
-    }
-
-    // Make sure we have a transforms directory
-    if (not fs::exists(::TfmDir(rootDir_))) {
-        Logger()->debug("Creating transforms directory");
-        fs::create_directory(::TfmDir(rootDir_));
-    }
-
-    // Generate a uuid
-    auto uuid = DateTime();
-    auto tfmPath = ::TfmDir(rootDir_) / (uuid + ".json");
-    while (fs::exists(tfmPath) or transforms_.count(uuid) > 0) {
-        uuid = DateTime();
-        tfmPath = tfmPath.replace_filename(uuid + ".json");
-    }
-
-    // Add to the internal ID map
-    auto r = transforms_.insert({uuid, transform});
-    if (!r.second) {
-        auto msg = "Transform already exists with id " + uuid;
-        throw std::runtime_error(msg);
-    }
-
-    // Write to disk
-    Transform3D::Save(tfmPath, transform);
-
-    return uuid;
-}
-
-void VolumePkg::setTransform(
-    const Transform3D::Identifier& id, const Transform3D::Pointer& transform)
-{
-    // Don't allow empty IDs
-    if (id.empty()) {
-        throw std::invalid_argument("Transform ID is empty");
-    }
-
-    // See if the
-    if (transforms_.count(id) == 0) {
-        throw std::range_error("Transform " + id + " does not exist");
-    }
-
-    // update the map
-    transforms_[id] = transform;
-    // update on disk
-    auto tfmPath = ::TfmDir(rootDir_) / id;
-    tfmPath = tfmPath.replace_extension("json");
-    Transform3D::Save(tfmPath, transform);
-}
-
-auto VolumePkg::transform(Transform3D::Identifier id) -> Transform3D::Pointer
-{
-    // Don't allow empty IDs
-    if (id.empty()) {
-        throw std::invalid_argument("Transform ID is empty");
-    }
-
-    // Remove the star for inverse transforms
-    auto getInverse = id.back() == '*';
-    if (getInverse) {
-        id.pop_back();
-    }
-
-    // Find the forward transform
-    auto tfm = transforms_.at(id);
-
-    // Invert if requested
-    if (getInverse) {
-        if (tfm->invertible()) {
-            tfm = transforms_.at(id)->invert();
-        } else {
-            throw std::invalid_argument("Transform is not invertible: " + id);
-        }
-    }
-
-    return tfm;
-}
-
-auto VolumePkg::transform(
-    const Volume::Identifier& src, const Volume::Identifier& tgt)
-    -> std::vector<std::pair<Transform3D::Identifier, Transform3D::Pointer>>
-{
-    std::vector<std::pair<Transform3D::Identifier, Transform3D::Pointer>> tfms;
-    for (const auto& [id, tfm] : transforms_) {
-        if (tfm->source() == src and tfm->target() == tgt) {
-            tfms.emplace_back(id, tfm);
-        } else if (
-            tfm->invertible() and tfm->source() == tgt and
-            tfm->target() == src) {
-            auto idI = id + "*";
-            tfms.emplace_back(idI, tfm->invert());
-        }
-    }
-
-    return tfms;
-}
-
-auto VolumePkg::transformIDs() const -> std::vector<Transform3D::Identifier>
-{
-    std::vector<Transform3D::Identifier> keys;
-    std::transform(
-        transforms_.begin(), transforms_.end(), std::back_inserter(keys),
-        [](const auto& p) { return p.first; });
-    return keys;
 }
 
 auto VolumePkg::InitConfig(const Dictionary& dict, int version) -> Metadata

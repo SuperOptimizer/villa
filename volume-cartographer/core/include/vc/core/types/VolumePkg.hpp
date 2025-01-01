@@ -8,9 +8,7 @@
 
 #include "vc/core/filesystem.hpp"
 #include "vc/core/types/Metadata.hpp"
-#include "vc/core/types/Render.hpp"
 #include "vc/core/types/Segmentation.hpp"
-#include "vc/core/types/Transforms.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkgVersion.hpp"
 
@@ -151,18 +149,12 @@ public:
 
     /** @brief Get the number of Volumes */
     auto numberOfVolumes() const -> std::size_t;
-    
-    /** @brief Get the number of Previews for Volume id */
-    auto numberOfPreviews(const Volume::Identifier &id) const -> std::size_t;
 
     /** @brief Get the list of volume IDs */
     [[nodiscard]] auto volumeIDs() const -> std::vector<Volume::Identifier>;
 
     /** @brief Get the list of volumes names */
     [[nodiscard]] auto volumeNames() const -> std::vector<std::string>;
-    
-    /** @brief Get the list of preview names */
-    [[nodiscard]] auto previewNames(const Volume::Identifier &id) const -> std::vector<std::string>;
 
     /**
      * @brief Add a new Volume to the VolumePkg
@@ -184,9 +176,6 @@ public:
 
     /** @copydoc VolumePkg::volume(const Volume::Identifier&) const */
     auto volume(const Volume::Identifier& id) -> Volume::Pointer;
-    
-    auto preview(const Volume::Identifier& vol_id, const Volume::Identifier& preview_name) -> Volume::Pointer;
-    /**@}*/
 
     /** @name Segmentation Data */
     /**@{*/
@@ -203,21 +192,6 @@ public:
     /** @brief Get the list of Segmentation names */
     [[nodiscard]] auto segmentationNames() const -> std::vector<std::string>;
 
-    /**
-     * @brief Creates a new segmentation.
-     *
-     * Populates the .volpkg file with a new segmentation directory and adds the
-     * ID to the internal list of segmentations.
-     * @return Identifier name of the new segmentation
-     */
-    auto newSegmentation(std::string name = "") -> Segmentation::Pointer;
-
-    /**
-     * @brief Removes an existing segmentation.
-     * @return Indicates if removal was successful
-     */
-    auto removeSegmentation(const Segmentation::Identifier& id) -> bool;
-
     /** @brief Get a Segmentation by uuid */
     [[nodiscard]] auto segmentation(const Segmentation::Identifier& id) const
         -> const Segmentation::Pointer;
@@ -230,41 +204,6 @@ public:
         -> Segmentation::Pointer;
     /**@}*/
 
-    /** @name Render Data */
-    /**@{*/
-    /** @brief Return whether there are Renders */
-    auto hasRenders() const -> bool;
-
-    /** @brief Get the number of Renders */
-    auto numberOfRenders() const -> std::size_t;
-
-    /** @brief Get the list of Render IDs */
-    [[nodiscard]] auto renderIDs() const -> std::vector<Render::Identifier>;
-
-    /** @brief Get the list of Render names */
-    [[nodiscard]] auto renderNames() const -> std::vector<std::string>;
-
-    /**
-     * @brief Creates a new Render.
-     *
-     * Populates the .volpkg file with a new Render directory and adds the ID to
-     * the internal list of Renders.
-     */
-    auto newRender(std::string name = "") -> Render::Pointer;
-
-    /** @brief Get a Render by uuid */
-    [[nodiscard]] auto render(const Render::Identifier& id) const
-        -> const Render::Pointer;
-
-    /** @copydoc VolumePkg::render(const Render::Identifier&) const */
-    auto render(const Render::Identifier& id) -> Render::Pointer;
-    /**@}*/
-
-    /** @name Transform Data */
-    /**@{*/
-    /** @brief Return whether there are transforms in the VolumePkg */
-    [[nodiscard]] auto hasTransforms() const -> bool;
-
     /**
      * @brief Return whether a transform with the given identifier is in the
      * VolumePkg
@@ -272,39 +211,6 @@ public:
      * If the provided identifier ends with "*", additionally checks if the
      * transform can be inverted.
      */
-
-    [[nodiscard]] auto hasTransform(Volume::Identifier id) const -> bool;
-
-    /** @brief Add a transform to the VolPkg */
-    auto addTransform(const Transform3D::Pointer& transform)
-        -> Transform3D::Identifier;
-
-    /** @brief Replace an existing transform */
-    void setTransform(
-        const Transform3D::Identifier& id,
-        const Transform3D::Pointer& transform);
-
-    /**
-     * @brief Get a transform by ID
-     *
-     * If the provided identifier ends with "*", returns the inverse transform.
-     */
-    auto transform(Transform3D::Identifier id) -> Transform3D::Pointer;
-
-    /**
-     * @brief Get a list of transforms which map from a source volume to a
-     * target volume
-     *
-     * The list also includes inverse transforms which satisfy the mapping.
-     */
-    auto transform(const Volume::Identifier& src, const Volume::Identifier& tgt)
-        -> std::vector<
-            std::pair<Transform3D::Identifier, Transform3D::Pointer>>;
-
-    /** @brief Get the list of transform IDs */
-    [[nodiscard]] auto transformIDs() const
-        -> std::vector<Transform3D::Identifier>;
-    /**@}*/
 
     /** Utility function for updating VolumePkgs */
     static void Upgrade(
@@ -321,12 +227,6 @@ private:
     std::map<Volume::Identifier, Volume::Pointer> volumes_;
     /** The list of all Segmentations in the VolumePkg. */
     std::map<Segmentation::Identifier, Segmentation::Pointer> segmentations_;
-    /** The list of all Renders in the VolumePkg. */
-    std::map<Render::Identifier, Render::Pointer> renders_;
-    /** The list of Transforms in the VolumePkg */
-    std::map<Transform3D::Identifier, Transform3D::Pointer> transforms_;
-    /** The list of Previews/Scales in the VolumePkg vol-id -> preview name -> volume */
-    std::map<Volume::Identifier, std::map<std::string, Volume::Pointer>> previews_;
     std::vector<filesystem::path> segmentation_files_;
 
     /**

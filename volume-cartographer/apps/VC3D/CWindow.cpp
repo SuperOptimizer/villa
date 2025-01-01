@@ -22,17 +22,17 @@
 #include "vc/core/types/Exceptions.hpp"
 #include "vc/core/util/Iteration.hpp"
 #include "vc/core/util/Logging.hpp"
-#include "vc/meshing/OrderedPointSetMesher.hpp"
-#include "vc/segmentation/LocalResliceParticleSim.hpp"
-#include "vc/segmentation/OpticalFlowSegmentation.hpp"
+#include "vc/core/types/Volume.hpp"
+#include "vc/core/types/VolumePkg.hpp"
 
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/Slicing.hpp"
 
 namespace vc = volcart;
-namespace vcs = volcart::segmentation;
 using namespace ChaoVis;
 using qga = QGuiApplication;
+namespace fs = std::filesystem;
+
 
 // Constructor
 CWindow::CWindow() :

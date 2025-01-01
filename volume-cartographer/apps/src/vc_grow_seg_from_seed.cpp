@@ -93,7 +93,7 @@ int main(int argc, char *argv[])
     json params = json::parse(params_f);
 
     z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset ds_handle(group, "0", json::parse(std::ifstream(vol_path/"0/.zarray")).value<>("dimension_separator","."));
+    z5::filesystem::handle::Dataset ds_handle(group, "0", json::parse(std::ifstream(vol_path/"0/.zarray")).value<std::string>("dimension_separator","."));
     std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
 
     std::cout << "zarr dataset size for scale group 0 " << ds->shape() << std::endl;

@@ -6,17 +6,6 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
-#ifdef VC_HAVE_JXL
-#include <jxl/codestream_header.h>
-#include <jxl/decode.h>
-#include <jxl/decode_cxx.h>
-#include <jxl/resizable_parallel_runner.h>
-#include <jxl/resizable_parallel_runner_cxx.h>
-#include <jxl/types.h>
-#endif
-
-#include "vc/core/io/TIFFIO.hpp"
-
 #include "z5/attributes.hxx"
 #include "z5/dataset.hxx"
 #include "z5/filesystem/handle.hxx"
@@ -32,7 +21,6 @@
 #include "xtensor/xarray.hpp"
 
 namespace fs = volcart::filesystem;
-namespace tio = volcart::tiffio;
 
 using namespace volcart;
 
@@ -88,7 +76,7 @@ void Volume::zarrOpen()
     
     //FIXME hardcoded assumption that groups correspond to power-2 scaledowns ...
     for(auto name : groups) {
-        z5::filesystem::handle::Dataset ds_handle(group, name, nlohmann::json::parse(std::ifstream(path_/name/".zarray")).value<>("dimension_separator","."));
+        z5::filesystem::handle::Dataset ds_handle(group, name, nlohmann::json::parse(std::ifstream(path_/name/".zarray")).value<std::string>("dimension_separator","."));
 
         zarrDs_.push_back(z5::filesystem::openDataset(ds_handle));
         if (zarrDs_.back()->getDtype() != z5::types::Datatype::uint8)
@@ -161,211 +149,10 @@ auto Volume::isInBounds(const cv::Vec3d& v) const -> bool
     return isInBounds(v(0), v(1), v(2));
 }
 
-auto Volume::getSlicePath(int index) const -> fs::path
-{
-    if (metadata_.hasKey("img_ptn")) {
-        char buf[64];
-        snprintf(buf,64,metadata_.get<std::string>("img_ptn").c_str(), index);
-        
-        return path_ / buf;
-    }
-    else {
-        std::stringstream ss;
-        ss << std::setw(numSliceCharacters_) << std::setfill('0') << index
-        << ".tif";
-        return path_ / ss.str();
-    }
-}
-
-auto Volume::getSliceData(int index) const -> cv::Mat
-{
-    if (cacheSlices_ && !isZarr) {
-        return cache_slice_(index);
-    }
-    return load_slice_(index);
-}
-
-auto Volume::getSliceDataCopy(int index) const -> cv::Mat
-{
-    return getSliceData(index).clone();
-}
-
-auto Volume::getSliceDataRect(int index, cv::Rect rect) const -> cv::Mat
-{
-    auto whole_img = getSliceData(index);
-    std::shared_lock<std::shared_mutex> lock(cache_mutex_);
-    return whole_img(rect);
-}
-
-auto Volume::getSliceDataRectCopy(int index, cv::Rect rect) const -> cv::Mat
-{
-    auto whole_img = getSliceData(index);
-    std::shared_lock<std::shared_mutex> lock(cache_mutex_);
-    return whole_img(rect).clone();
-}
-
-void Volume::setSliceData(int index, const cv::Mat& slice, bool compress)
-{
-    if (isZarr)
-        throw std::runtime_error("setSliceData() not supported for zarr volumes");
-    
-    auto slicePath = getSlicePath(index);
-    tio::WriteTIFF(
-        slicePath.string(), slice,
-        (compress) ? tiffio::Compression::LZW : tiffio::Compression::NONE);
-}
-
-auto Volume::intensityAt(int x, int y, int z) const -> std::uint16_t
-{
-    // clang-format off
-    if (x < 0 || x >= sliceWidth() ||
-        y < 0 || y >= sliceHeight() ||
-        z < 0 || z >= numSlices()) {
-        return 0;
-    }
-    // clang-format on
-    return getSliceData(z).at<std::uint16_t>(y, x);
-}
-
-// Trilinear Interpolation
-// From: https://en.wikipedia.org/wiki/Trilinear_interpolation
-auto Volume::interpolateAt(double x, double y, double z) const -> std::uint16_t
-{
-    // insert safety net
-    if (!isInBounds(x, y, z)) {
-        return 0;
-    }
-
-    double intPart;
-    double dx = std::modf(x, &intPart);
-    auto x0 = static_cast<int>(intPart);
-    int x1 = x0 + 1;
-    double dy = std::modf(y, &intPart);
-    auto y0 = static_cast<int>(intPart);
-    int y1 = y0 + 1;
-    double dz = std::modf(z, &intPart);
-    auto z0 = static_cast<int>(intPart);
-    int z1 = z0 + 1;
-
-    auto c00 =
-        intensityAt(x0, y0, z0) * (1 - dx) + intensityAt(x1, y0, z0) * dx;
-    auto c10 =
-        intensityAt(x0, y1, z0) * (1 - dx) + intensityAt(x1, y0, z0) * dx;
-    auto c01 =
-        intensityAt(x0, y0, z1) * (1 - dx) + intensityAt(x1, y0, z1) * dx;
-    auto c11 =
-        intensityAt(x0, y1, z1) * (1 - dx) + intensityAt(x1, y1, z1) * dx;
-
-    auto c0 = c00 * (1 - dy) + c10 * dy;
-    auto c1 = c01 * (1 - dy) + c11 * dy;
-
-    auto c = c0 * (1 - dz) + c1 * dz;
-    return static_cast<std::uint16_t>(cvRound(c));
-}
-
-auto Volume::reslice(
-    const cv::Vec3d& center,
-    const cv::Vec3d& xvec,
-    const cv::Vec3d& yvec,
-    int width,
-    int height) const -> Reslice
-{
-    auto xnorm = cv::normalize(xvec);
-    auto ynorm = cv::normalize(yvec);
-    auto origin = center - ((width / 2) * xnorm + (height / 2) * ynorm);
-
-    cv::Mat m(height, width, CV_16UC1);
-    for (int h = 0; h < height; ++h) {
-        for (int w = 0; w < width; ++w) {
-            m.at<std::uint16_t>(h, w) =
-                interpolateAt(origin + (h * ynorm) + (w * xnorm));
-        }
-    }
-
-    return Reslice(m, origin, xnorm, ynorm);
-}
-
 void throw_run_path(const fs::path &path, const std::string msg)
 {
     throw std::runtime_error(msg + " for " + path.string());
 }
-
-#ifdef VC_HAVE_JXL
-cv::Mat read_jxl(const fs::path &path)
-{
-    //adapted from https://github.com/libjxl/libjxl/blob/main/examples/decode_oneshot.cc
-    
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    std::streamsize file_size = file.tellg();
-    file.seekg(0, std::ios::beg);
-    
-    std::vector<char> data(file_size);
-    if (!file.read(data.data(), file_size))
-        throw_run_path(path, "read error");
-    
-    
-    size_t w, h;
-    cv::Mat_<uint8_t> img;
-    
-    // Multi-threaded parallel runner.
-    auto runner = JxlResizableParallelRunnerMake(nullptr);
-    auto dec = JxlDecoderMake(nullptr);
-    
-    if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec.get(), JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING | JXL_DEC_FULL_IMAGE))
-        throw_run_path(path, "JxlDecoderSubscribeEvents Error");
-        
-    if (JXL_DEC_SUCCESS != JxlDecoderSetParallelRunner(dec.get(), JxlResizableParallelRunner, runner.get()))
-        throw_run_path(path, "JxlDecoderSetParallelRunner failed");
-            
-    JxlBasicInfo info;
-    JxlPixelFormat format = {1, JXL_TYPE_UINT8, JXL_NATIVE_ENDIAN, 0};
-    //FIXME check format in the file and keep that?
-            
-    JxlDecoderSetInput(dec.get(), (uint8_t*)&data[0], file_size);
-    JxlDecoderCloseInput(dec.get());
-            
-    for (;;) {
-        JxlDecoderStatus status = JxlDecoderProcessInput(dec.get());
-        
-        if (status == JXL_DEC_ERROR)
-            throw_run_path(path, "Decoder error\n");
-        else if (status == JXL_DEC_NEED_MORE_INPUT)
-            throw_run_path(path, "Error, already provided all input");
-        else if (status == JXL_DEC_BASIC_INFO) {
-            if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec.get(), &info))
-                throw_run_path(path, "JxlDecoderGetBasicInfo failed");
-            w = info.xsize;
-            h = info.ysize;
-            JxlResizableParallelRunnerSetThreads(runner.get(), JxlResizableParallelRunnerSuggestThreads(info.xsize, info.ysize));
-        } else if (status == JXL_DEC_COLOR_ENCODING) {
-            std::cout << "Ignoring jxl ICC profile" << "\n";
-        } else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
-            size_t buffer_size;
-            if (JXL_DEC_SUCCESS != JxlDecoderImageOutBufferSize(dec.get(), &format, &buffer_size))
-                throw_run_path(path, "JxlDecoderImageOutBufferSize failed");
-            
-            if (buffer_size != w * h)
-                throw_run_path(path, "Invalid Buffer size");
-
-            img.create(h, w);
-            void* pixels_buffer = static_cast<void*>(img.ptr(0));
-            if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutBuffer(dec.get(), &format, pixels_buffer, buffer_size))
-                throw_run_path(path, "JxlDecoderSetImageOutBuffer failed\n");
-
-        } else if (status == JXL_DEC_FULL_IMAGE) {
-            // Nothing to do. Do not yet return. If the image is an animation, more
-            // full frames may be decoded. This example only keeps the last one.
-        } else if (status == JXL_DEC_SUCCESS) {
-            // All decoding successfully finished.
-            // It's not required to call JxlDecoderReleaseInput(dec.get()) here since
-            // the decoder will be destroyed.
-            return img;
-        } else {
-            std::runtime_error("Unknown decoder Error");
-        }
-    }
-}
-#endif
 
 std::ostream& operator<< (std::ostream& out, const xt::xarray<uint8_t>::shape_type &v) {
     if ( !v.empty() ) {
@@ -375,83 +162,6 @@ std::ostream& operator<< (std::ostream& out, const xt::xarray<uint8_t>::shape_ty
         out << "\b\b]"; // use two ANSI backspace characters '\b' to overwrite final ", "
     }
     return out;
-}
-
-auto Volume::load_slice_(int index) const -> cv::Mat
-{
-    {
-        std::unique_lock<std::shared_mutex> lock(print_mutex_);
-        std::cout << "Requested to load slice " << index << std::endl;
-    }
-    
-    if (isZarr) {
-        throw std::runtime_error("load_slice_ called with zarr - if this is VC - launch VC3D to load zarr volumes");
-    }
-    
-    auto slicePath = getSlicePath(index);
-    cv::Mat mat;
-    if (slicePath.extension() == ".tif") {
-        try {
-            mat = tio::ReadTIFF(slicePath.string());
-        } catch (std::runtime_error) {
-        }
-    }
-#ifdef VC_HAVE_JXL
-    else if (slicePath.extension() == ".jxl") {
-        mat = read_jxl(slicePath);
-        mat.convertTo(mat, CV_16UC1, 257);
-    }
-#endif
-    else {
-        mat = cv::imread(slicePath, cv::IMREAD_UNCHANGED);
-    }
-    
-    if (!mat.empty() && (mat.size().width != sliceWidth() || mat.size().height != sliceHeight()))
-    {
-        cv::resize(mat, mat, cv::Size(sliceWidth(),sliceHeight()), 0,0, cv::INTER_CUBIC);
-    }
-    return mat;
-}
-
-auto Volume::cache_slice_(int index) const -> cv::Mat
-{
-    // Check if the slice is in the cache.
-    {
-        std::shared_lock<std::shared_mutex> lock(cache_mutex_);
-        if (cache_->contains(index)) {
-            return cache_->get(index);
-        }
-    }
-
-    {
-        // Get the lock for this slice.
-        auto& mutex = slice_mutexes_[index];
-
-        // If the slice is not in the cache, get exclusive access to this slice's mutex.
-        std::unique_lock<std::mutex> lock(mutex);
-        // Check again to ensure the slice has not been added to the cache while waiting for the lock.
-        {
-            std::shared_lock<std::shared_mutex> lock(cache_mutex_);
-            if (cache_->contains(index)) {
-                return cache_->get(index);
-            }
-        }
-        // Load the slice and add it to the cache.
-        {
-            auto slice = load_slice_(index);
-            std::unique_lock<std::shared_mutex> lock(cache_mutex_);
-            cache_->put(index, slice);
-            return slice;
-        }
-    }
-
-}
-
-
-void Volume::cachePurge() const 
-{
-    std::unique_lock<std::shared_mutex> lock(cache_mutex_);
-    cache_->purge();
 }
 
 z5::Dataset *Volume::zarrDataset(int level)
