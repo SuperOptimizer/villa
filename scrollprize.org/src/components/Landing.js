@@ -1391,7 +1391,7 @@ export function Landing() {
                   </span>
                   <br /> <br />
                   <span className=" opacity-80 md:opacity-60">
-                    We're still going. 2024's challenge is to go from reading a few passages to entire scrolls.
+                    We're still going. The challenge is now to go from reading a few passages to entire scrolls.
                   </span>
                 </p>
               </div>
