@@ -428,7 +428,7 @@ Note: This flip in the scanning convention must be accounted for in any renderin
 
 ### What happened to the people when Mount Vesuvius erupted? 😢
 
-We recommend starting with the only surviving eyewitness account: [Pliny the Younger, Letters 6.16 and 6.20](http://www.u.arizona.edu/~afutrell/404b/web%20rdgs/pliny%20on%20vesuvius.htm).
+We recommend starting with the only surviving eyewitness account: [Pliny the Younger, Letters 6.16 and 6.20](https://www.yorku.ca/pswarney/2100/pliny-6-16-20.htm).
 
 The story of the eruption of Mount Vesuvius has captured imaginations for centuries. The cities of Pompeii and Herculaneum are unique in how well they were preserved. A great introduction to this story is [A Timeline of Pompeii](https://www.youtube.com/watch?v=nwB8sBHZzQc).
 
