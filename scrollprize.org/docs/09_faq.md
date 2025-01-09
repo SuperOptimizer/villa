@@ -44,26 +44,22 @@ import TOCInline from '@theme/TOCInline';
 
 ---
 
-### What is the Vesuvius Challenge?
+### What is Vesuvius Challenge?
 
-The Vesuvius Challenge is a machine learning and computer vision competition to read the Herculaneum scrolls.
+Vesuvius Challenge is a machine learning, computer vision, and geometry competition to read the Herculaneum scrolls.
 The scrolls were buried and carbonized by the eruption of Mount Vesuvius in 79 AD.
 After their discovery in the 1750s, some were opened physically, mostly destroying them but revealing some Greek philosophy and Latin works.
 
 A few hundred scrolls were excavated that were never opened, and remain rolled up with their contents sealed away.
 Our community is building methods to read these scrolls using micro-CT and an algorithmic pipeline using machine learning and computer vision.
 
-In 2023 we awarded over $1,000,000 in prizes and broke through, revealing complete passages of Greek philosophy from the inside of a closed Herculaneum scroll for the first time.
+We've awarded over $1,000,000 in prizes and broken through, revealing complete passages of Greek philosophy from the inside of a closed Herculaneum scroll for the first time.
 Now we are continuing - we want to go from reading 5% of one scroll to reading multiple complete scrolls.
 Join us to win prizes and be a part of history!
 
 ### What dates do I need to know?
 
-* **March 15, 2023** - The Vesuvius Challenge is launched.
-* **February 5, 2024**
-  * [2023 Grand Prize](grandprize) awarded for recovering complete passages from inside a Herculaneum scroll.
-  * Stage 2 is launched with [new prizes](2024_prizes).
-* **December 31, 2024** - [2024 prizes](2024_prizes) deadline!
+The [2024 prize](2024_prizes) deadlines closed on **December 31, 2024**, and we are now 
 
 ### How can I learn more about Herculaneum, the scrolls, and this research effort?
 
@@ -454,7 +450,7 @@ The story of the eruption of Mount Vesuvius has captured imaginations for centur
 
 ### Why did you decide to start this project?
 
-Nat read [24 Hours in Ancient Rome](https://www.amazon.com/24-Hours-Ancient-Rome-People-ebook/dp/B0758BFFFX) during the 2020 COVID lockdown. He fell into an internet rabbit hole that ended up with him reaching out to Dr. Seales two years later to see how he could help speed up the reading of the Herculaneum Papyri. They came up with the idea of the Vesuvius Challenge. Daniel was intrigued by this idea and decided to co-sponsor it with Nat.
+Nat read [24 Hours in Ancient Rome](https://www.amazon.com/24-Hours-Ancient-Rome-People-ebook/dp/B0758BFFFX) during the 2020 COVID lockdown. He fell into an internet rabbit hole that ended up with him reaching out to Dr. Seales two years later to see how he could help speed up the reading of the Herculaneum Papyri. They came up with the idea of Vesuvius Challenge. Daniel was intrigued by this idea and decided to co-sponsor it with Nat.
 
 ### I have a lot of money! Can I help sponsor this?
 
@@ -462,7 +458,7 @@ Vesuvius Challenge Inc. is a 501c3 non-profit organization that was formed solel
 
 If you want to contribute money to support our operational costs or to increase the prize amounts, please <a href="mailto:nat@nat.org">get in touch</a>!
 
-### I’m a journalist and I would like to interview someone from the Vesuvius Challenge!
+### I’m a journalist and I would like to interview someone from Vesuvius Challenge!
 
 Please email press@scrollprize.org.
 

@@ -71,7 +71,7 @@ As you will read in the [tutorials](/tutorial), advanced tools and techniques ex
 - Finding the ink. The ink used in the Herculaneum scrolls is [radiolucent](https://en.wikipedia.org/wiki/Radiodensity), making it difficult to see in the scans. Recently, Dr. Seales's team has trained a machine learning model which can detect the ink from subtle patterns in the 3D X-rays. This works in the fragments, but these models are not yet perfect and will probably need to be improved to work at the scale of an entire scroll.
 - Putting it all together. Applying the ink detection models to the segmented scroll has not yet been successfully demonstrated.
 
-Based on the [landmark results](https://arxiv.org/abs/2304.02084) that Dr. Seales and his team have recently produced, we believe that it is possible to read the Herculaneum scrolls using the [scans](/data) that we already have and the tools and tecniques that they have developed. And that is the Vesuvius Challenge!
+Based on the [landmark results](https://arxiv.org/abs/2304.02084) that Dr. Seales and his team have recently produced, we believe that it is possible to read the Herculaneum scrolls using the [scans](/data) that we already have and the tools and techniques that they have developed. And that is Vesuvius Challenge!
 
 The Grand Prize deadline is 11:59pm Pacific, December 31st, 2023.
 
