@@ -60,7 +60,7 @@ hide_table_of_contents: true
 
 ## Vesuvius Challenge – Stage Four
 
-* The final stage of the Vesuvius Challenge is inspiring the continued excavation of the Villa dei Papiri, and recovering in full the only surviving library from the ancient world. It is a near-certainty that there are more scrolls waiting for us in the dirt. Perhaps just a few, but there could be thousands of them.
+* The final stage of Vesuvius Challenge is inspiring the continued excavation of the Villa dei Papiri, and recovering in full the only surviving library from the ancient world. It is a near-certainty that there are more scrolls waiting for us in the dirt. Perhaps just a few, but there could be thousands of them.
 * Excavation is very expensive, but we expect this to be largely a political effort. Our hope is that the output of stages two and three above – previously unseen books from antiquity – will catalyze the will necessary to begin digging. If it does not, however, we will do whatever we can to make it happen.
 
 ## Costs

@@ -36,7 +36,7 @@ hide_table_of_contents: true
   />
 </head>
 
-Since the Vesuvius Challenge launched in March 2023, we have awarded **$1,397,000** in prizes!
+Since Vesuvius Challenge launched in March 2023, we have awarded **$1,397,000** in prizes!
 
 In 2023, the $850,000 Grand Prize [made history](grandprize) by revealing text from inside a rolled Herculaneum scroll for the first time.
 
