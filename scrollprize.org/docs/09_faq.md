@@ -59,11 +59,40 @@ Join us to win prizes and be a part of history!
 
 ### What dates do I need to know?
 
-The [2024 prize](2024_prizes) deadlines closed on **December 31, 2024**, and we are now 
+The [2024 prize](2024_prizes) deadlines closed on **December 31, 2024**, and we are now evaluating the submissions and preparing the next stages. [Join the community](get_started#1-join-the-community) to stay tuned!
 
-### How can I learn more about Herculaneum, the scrolls, and this research effort?
+### What's the historical background of Herculaneum and the scrolls?
 
-We have an [overview page](background) for that! For a deep dive:
+We have a [background page](background) for that!
+
+### Where can I read the texts Vesuvius Challenge has uncovered?
+
+Here are the scholarly publications so far resulting from Vesuvius Challenge:
+
+* [Revealing Text from a Still-rolled Herculaneum Papyrus Scroll (PHerc. Paris. 4)](https://www.iris.unina.it/handle/11588/959427) (2023 First Letters results)
+* [The final columns of PHerc.Paris. 4 revealed through virtual unwrapping](https://www.iris.unina.it/handle/11588/985203) (2023 Grand Prize results)
+
+Also of interest:
+
+* [Vesuvius Challenge 2023 Grand Prize awarded](grandprize)
+
+### What about other texts from the physically opened Herculaneum scrolls?
+
+Most are by Philodemus. This is a list of English translations we have found so far:
+
+* [Philodemus: On Anger. (2020), David Armstrong & Michael McOsker. SBL. ISBN 1628372699](https://en.wikipedia.org/wiki/Special:BookSources/1628372699)
+* [Philodemus: On Death. (2009), W. Benjamin Henry. SBL. ISBN 1-58983-446-1](https://en.wikipedia.org/wiki/Special:BookSources/1-58983-446-1)
+* [Philodemus: On Frank Criticism. (1998), David Konstan, Diskin Clay, Clarence, E. Glad. SBL. ISBN 1-58983-292-2](https://en.wikipedia.org/wiki/Special:BookSources/1-58983-292-2)
+* [Philodemus, On Piety, Part 1. (1996). Critical Text with Commentary by Dirk Obbink. Oxford University Press. ISBN 0-19-815008-3](https://en.wikipedia.org/wiki/Special:BookSources/0-19-815008-3)
+* [Philodemus, On Poems, Book 1. (2001). Edited with Introduction, Translation, and Commentary by Richard Janko. Oxford University Press. ISBN 0-19-815041-5](https://en.wikipedia.org/wiki/Special:BookSources/0-19-815041-5)
+* [Philodemus, On Poems, Book 2, with the fragments of Heracleodorus and Pausimachus. (2020). Edited with Introduction, Translation, and Commentary by Richard Janko. Oxford University Press. ISBN 9780198835080](https://en.wikipedia.org/wiki/Special:BookSources/9780198835080)
+* [Philodemus, On Poems, Books 3-4, with the Fragments of Aristotle, On Poets. (2010). Edited with Introduction, Translation, and Commentary by Richard Janko. Oxford University Press. ISBN 0-19-957207-0](https://en.wikipedia.org/wiki/Special:BookSources/0-19-957207-0)
+* [Philodemus, On Property Management. (2013), Voula Tsouna. SBL. ISBN 1-58983-667-7](https://en.wikipedia.org/wiki/Special:BookSources/1-58983-667-7)
+* [Philodemus, On Rhetoric Books 1 and 2: Translation and Exegetical Essays. (2005). Clive Chandler (editor). Routledge. ISBN 0-415-97611-1](https://en.wikipedia.org/wiki/Special:BookSources/0-415-97611-1)
+* [David Sider, (1997), The Epigrams of Philodemos. Introduction, Text, and Commentary. Oxford University Press. ISBN 0-19-509982-6](https://en.wikipedia.org/wiki/Special:BookSources/0-19-509982-6)
+* Philodemus: On Methods of Inference. 2nd edition. (1978). Phillip Howard De Lacy, Estelle Allen De Lacy. Bibliopolis.
+
+### Where can I find more background on this effort?
 
 #### Academic papers
 
@@ -74,7 +103,6 @@ We have an [overview page](background) for that! For a deep dive:
 * [From invisibility to readability: Recovering the ink of Herculaneum](https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0215775&type=printable)
 * [From damage to discovery via virtual unwrapping: Reading the scroll from En-Gedi](https://www.science.org/doi/10.1126/sciadv.1601247)
 * [Reading the Invisible Library: A Retrospective](/img/faq/retro.pdf) (history preprint)
-* [Revealing Text from a Still-rolled Herculaneum Papyrus Scroll (PHerc. Paris. 4)](https://scholar.google.com/citations?view_op=view_citation&hl=en&user=NG2aWmYAAAAJ&citation_for_view=NG2aWmYAAAAJ:_FxGoFyzp5QC) (Vesuvius Challenge First Letters results)
 
 For a comprehensive overview of the field, see [this list by EduceLab](https://educelab.gitlab.io/publications/bibtex-refs/).
 
@@ -120,22 +148,6 @@ Here are some other excellent books we recommend:
 * [The UnXplained](https://www.imdb.com/title/tt20234948/)
 * Great article by [Smithsonian Magazine](https://www.smithsonianmag.com/history/buried-ash-vesuvius-scrolls-are-being-read-new-xray-technique-180969358/)
 * More articles and videos on [this page](https://www2.cs.uky.edu/dri/news/)
-
-#### Translations of opened scrolls
-
-Most are by Philodemus. This is a list of English translations we have found so far:
-
-* [Philodemus: On Anger. (2020), David Armstrong & Michael McOsker. SBL. ISBN 1628372699](https://en.wikipedia.org/wiki/Special:BookSources/1628372699)
-* [Philodemus: On Death. (2009), W. Benjamin Henry. SBL. ISBN 1-58983-446-1](https://en.wikipedia.org/wiki/Special:BookSources/1-58983-446-1)
-* [Philodemus: On Frank Criticism. (1998), David Konstan, Diskin Clay, Clarence, E. Glad. SBL. ISBN 1-58983-292-2](https://en.wikipedia.org/wiki/Special:BookSources/1-58983-292-2)
-* [Philodemus, On Piety, Part 1. (1996). Critical Text with Commentary by Dirk Obbink. Oxford University Press. ISBN 0-19-815008-3](https://en.wikipedia.org/wiki/Special:BookSources/0-19-815008-3)
-* [Philodemus, On Poems, Book 1. (2001). Edited with Introduction, Translation, and Commentary by Richard Janko. Oxford University Press. ISBN 0-19-815041-5](https://en.wikipedia.org/wiki/Special:BookSources/0-19-815041-5)
-* [Philodemus, On Poems, Book 2, with the fragments of Heracleodorus and Pausimachus. (2020). Edited with Introduction, Translation, and Commentary by Richard Janko. Oxford University Press. ISBN 9780198835080](https://en.wikipedia.org/wiki/Special:BookSources/9780198835080)
-* [Philodemus, On Poems, Books 3-4, with the Fragments of Aristotle, On Poets. (2010). Edited with Introduction, Translation, and Commentary by Richard Janko. Oxford University Press. ISBN 0-19-957207-0](https://en.wikipedia.org/wiki/Special:BookSources/0-19-957207-0)
-* [Philodemus, On Property Management. (2013), Voula Tsouna. SBL. ISBN 1-58983-667-7](https://en.wikipedia.org/wiki/Special:BookSources/1-58983-667-7)
-* [Philodemus, On Rhetoric Books 1 and 2: Translation and Exegetical Essays. (2005). Clive Chandler (editor). Routledge. ISBN 0-415-97611-1](https://en.wikipedia.org/wiki/Special:BookSources/0-415-97611-1)
-* [David Sider, (1997), The Epigrams of Philodemos. Introduction, Text, and Commentary. Oxford University Press. ISBN 0-19-509982-6](https://en.wikipedia.org/wiki/Special:BookSources/0-19-509982-6)
-* Philodemus: On Methods of Inference. 2nd edition. (1978). Phillip Howard De Lacy, Estelle Allen De Lacy. Bibliopolis.
 
 ### What if I would like to contribute, but don’t have time to compete for the Grand Prize?
 
