@@ -85,7 +85,7 @@ ENV XDG_RUNTIME_DIR=/workspace
 
 RUN cd /
 
-RUN apt-get update && apt-get install -y python3-pyqt5
+RUN apt-get update && apt-get install -y python3-pyqt5 libopencv-dev
 
 # print the current working directory
 RUN pwd

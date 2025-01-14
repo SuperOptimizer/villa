@@ -10,16 +10,28 @@ from copy import deepcopy
 from tqdm import tqdm
 import os
 from datetime import datetime
+import tempfile
+from heapq import heappush, heappop
 
 import sys
 sys.path.append('ThaumatoAnakalyptor/sheet_generation/build')
 import meshing_utils
 
 class MeshSplitter:
-    def __init__(self, mesh_path, umbilicus_path, scale_factor=1.0):
+    def __init__(self, mesh_path, umbilicus_path, scale_factor=1.0, use_tempfile=False):
         # Load mesh
         self.mesh_path = mesh_path
-        self.mesh = o3d.io.read_triangle_mesh(mesh_path)
+        # copy mesh to tempfile
+        if use_tempfile:
+            with tempfile.NamedTemporaryFile(suffix=".obj") as temp_file:
+                # copy mesh to tempfile
+                temp_path = temp_file.name
+                # os copy
+                os.system(f"cp {self.mesh_path} {temp_path}")
+                # load mesh
+                self.mesh = o3d.io.read_triangle_mesh(temp_path, print_progress=True)
+        else:
+            self.mesh = o3d.io.read_triangle_mesh(self.mesh_path, print_progress=True)
         self.vertices_np = np.asarray(self.mesh.vertices).copy()  # Create a copy of the vertices as a NumPy array
         self.visited_vertices = set()
 
@@ -61,8 +73,20 @@ class MeshSplitter:
         elif angle_diff < -pi:
             angle_diff += 2 * pi
         return angle_diff*180/pi
+    
+    def angle_between_vertices(self, v1, v2, use_carthesian=False, v1_angle=None):
+        if use_carthesian:
+            return self.angle_between_vertices_carthesian(v1, v2, v1_angle)
+        else:
+            return self.angle_between_vertices_umbilicus(v1, v2)
 
-    def angle_between_vertices(self, v1, v2):
+    def angle_between_vertices_carthesian(self, v1, v2, v1_angle):
+        dx1 = v1[0] - v2[0]
+        dy1 = v1[1] - v2[1]
+        angle1 = atan2(dy1, dx1)
+        return self.normalize_angle_diff(angle1 - (v1_angle%360.0))
+
+    def angle_between_vertices_umbilicus(self, v1, v2):
         z1 = v1[2]
         umbilicus_xy1 = self.interpolate_umbilicus([z1])
         dx1 = v1[0] - umbilicus_xy1[0][0]
@@ -121,26 +145,30 @@ class MeshSplitter:
         adjacent = self.adjacency_list[int(vertex_idx)]
         return adjacent
 
-    def compute_uv_with_bfs(self, start_vertex_idx):
+    def compute_uv_with_bfs(self, start_vertex_idx, use_carthesian=False):
         # check
         index_c, count_c, area_c = self.mesh.cluster_connected_triangles()
         print(f"Found {len(area_c)} clusters.")
 
-        bfs_queue = deque()
+        priority_queue = []  # Priority queue (heap)
         processing = set()
         uv_coordinates = {}
 
         # Set the start vertex and angle
-        start_index_angle = self.angle_between_vertices(np.array([0.0, 0.0, 0.0]), self.vertices_np[start_vertex_idx])
-        bfs_queue.append((start_vertex_idx, start_index_angle))
+        start_index_angle = self.angle_between_vertices(np.array([0.0, 0.0, 0.0]), self.vertices_np[start_vertex_idx], use_carthesian=use_carthesian, v1_angle=0.0)
+        # bfs_queue.append((start_vertex_idx, start_index_angle))
+        # Add the start vertex to the priority queue with negative distance (to create a max-heap). order on distance, first use vertices that are not intersecting with the umbilicus
+        heappush(priority_queue, (0.0, (start_index_angle, start_vertex_idx)))
 
         i = 0
         # tqdm progress bar
         pbar = tqdm(total=self.vertices_np.shape[0], desc="BFS Angle Calculation Progress")
-        while bfs_queue:
+        while priority_queue:
             pbar.update(1)
             i += 1
-            vertex_idx, current_angle = bfs_queue.popleft()
+            # vertex_idx, current_angle = bfs_queue.popleft()
+            # Extract the vertex with the largest angle (smallest negative value)
+            _, (current_angle, vertex_idx) = heappop(priority_queue)
             
             if vertex_idx in self.visited_vertices:
                 continue
@@ -162,8 +190,10 @@ class MeshSplitter:
 
                 if next_vertex_idx in processing:
                     continue
-                angle_diff = self.angle_between_vertices(self.vertices_np[vertex_idx], self.vertices_np[next_vertex_idx])
-                bfs_queue.append((next_vertex_idx, current_angle + angle_diff))
+                angle_diff = self.angle_between_vertices(self.vertices_np[vertex_idx], self.vertices_np[next_vertex_idx], use_carthesian=use_carthesian, v1_angle=current_angle)
+                # bfs_queue.append((next_vertex_idx, current_angle + angle_diff))
+                neighbor_angle = current_angle + angle_diff
+                heappush(priority_queue, (-distance, (neighbor_angle, next_vertex_idx)))  # Add to heap with negative distance for max heap on distance
                 processing.add(next_vertex_idx)
 
         pbar.close()
