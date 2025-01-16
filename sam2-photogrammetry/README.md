@@ -4,7 +4,7 @@ This repository is a fork of [SAM 2](https://github.com/facebookresearch/sam2), 
 
 ## Requirements
 Before proceeding, please install SAM 2.1 as indicated in the original repository. The original README is included after this section for reference. Follow the instructions under [Installation](#installation) below.
-In particular, we recommend first installing CUDA, then creating a conda environment with python=3.12 (`conda create -n sam2-photo`), then pip installing pytorch using the pip install instructions found [here](https://pytorch.org/) (`conda activate sam2-photo`, `pip3 install torch torchvision torchaudio`), and finally installing SAM with `pip install -e .[notebooks]`.
+In particular, we recommend first installing CUDA, then creating a conda environment with python=3.12 (`conda create -n sam2-photo python=3.12`), then pip installing pytorch using the pip install instructions found [here](https://pytorch.org/) (`conda activate sam2-photo`, `pip3 install torch torchvision torchaudio`), and finally installing SAM with `pip install -e .[notebooks]`.
 
 ### Checkpoint Details
 A checkpoint (`checkpoints/photo_t_2000.torch`) was obtained by fine-tuning the prompt encoder and the mask decoder of SAM 2.1 on a dataset of scroll/mask image pairs. The fine-tuning was carried out using the `train.py` script located in the main folder of this repository.
