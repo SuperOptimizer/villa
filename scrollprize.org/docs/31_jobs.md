@@ -40,11 +40,15 @@ hide_table_of_contents: true
 # Jobs
 
 We are laser focused on our mission of reading the Herculaneum scrolls and are always interested in talking.
-If you think you would be a good fit, please reach out to team@scrollprize.org.
+If you can help us achieve this goal, please reach out to jobs@scrollprize.org.
+In addition, we are hiring for the specific roles listed below.
 
 ***
+
 ## Platform Engineer
+
 The Vesuvius Challenge platform team builds the tools that make researchers and contestants more productive. This includes libraries, visualizations, annotation tools, and data organization & accessibility.
+
 #### Overview
 Vesuvius Challenge produces and maintains multi-terabyte CT scans of ancient scrolls, with the goal of multiplying this dataset significantly in the coming year. We serve this data to a technical community around the world, and also support an in-house research team.
 
@@ -71,7 +75,13 @@ Presently, data is generated and organized on an ad hoc basis, and requires tedi
 - Experienced in C++ and/or Python
 - Experienced building web frontends
 
+#### To Apply
+Send your resume, cover letter, and examples of relevant projects to jobs@scrollprize.org. Include "Platform Engineer" in the subject line.
+
+***
+
 ## Computer Vision and Geometry Applied Researcher
+
 The Vesuvius Challenge applied researchers advance the frontier of the most promising research directions from our community, to keep making continuous progress on the most promising research avenues in virtual unrolling and related problems.
 
 #### Overview
@@ -96,6 +106,10 @@ We process volumetric CT data of scrolls, and are working to solve a challenging
 - Generalist/excited to pursue flexible directions
 - Previous research experience in a related domain (PhD-level, but PhD not required)
 
+#### To Apply
+Send your resume, cover letter, and examples of relevant projects to jobs@scrollprize.org. Include "Applied Researcher" in the subject line.
+
+***
 
 ## Annotation Specialist 
 
