@@ -104,7 +104,7 @@ His team also scanned and photographed detached scroll fragments bearing visible
   <figcaption className="mt-0">Training a machine learning model on the ground truth data from the detached fragments. From Stephen Parsons’ <a href="https://uknowledge.uky.edu/cs_etds/138/">PhD dissertation</a>.</figcaption>
 </figure>
 
-Professor Seales’ graduate student, Stephen Parsons, worked on detecting ink from the CT-scans using machine learning models and <a href="tutorial4">found success with the detached fragments</a>. That success caught the eye of tech entrepreneurs Nat Friedman and Daniel Gross, who started the Vesuvius Challenge to accelerate this progress. They launched an open competition March of 2023, and — alongside a $700,000 Grand Prize — awarded several smaller prizes for the development of open source tools and techniques.
+Professor Seales’ graduate student, Stephen Parsons, worked on detecting ink from the CT-scans using machine learning models and <a href="tutorial4">found success with the detached fragments</a>. That success caught the eye of tech entrepreneurs Nat Friedman and Daniel Gross, who started Vesuvius Challenge to accelerate this progress. They launched an open competition March of 2023, and — alongside a $700,000 Grand Prize — awarded several smaller prizes for the development of open source tools and techniques.
 
 Early in the summer, a small team of annotators (the “segmentation team”) joined our effort. They began <a href="tutorial3">mapping the 3D structure of the scroll</a> using tools initially built by EduceLab and improved by our community. By July we had segmented and “virtually flattened” hundreds of cm2 of papyrus.
 
@@ -135,7 +135,7 @@ Casey was the first person in 2,000 years to find ink — and a letter — insid
 
 ### Luke Farritor’s model
 
-After this discovery, several contestants looked for more crackle, but it seemed quite rare. Luke Farritor, a college student and SpaceX summer intern working at Starbase, had heard about the Vesuvius Challenge from Dwarkesh Patel’s <a href="https://www.youtube.com/watch?v=qcvMjoJdck4">podcast interview</a> with Nat.
+After this discovery, several contestants looked for more crackle, but it seemed quite rare. Luke Farritor, a college student and SpaceX summer intern working at Starbase, had heard about Vesuvius Challenge from Dwarkesh Patel’s <a href="https://www.youtube.com/watch?v=qcvMjoJdck4">podcast interview</a> with Nat.
 
 He saw Casey’s crackle pattern being discussed in the Discord, and began spending his evenings and late nights training a machine learning model on the crackle pattern. With each new crackle found, the model improved, revealing more crackle in the scroll — a cycle of discovery and refinement.
 

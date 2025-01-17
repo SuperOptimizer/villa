@@ -81,7 +81,7 @@ const stories = ({ unrollVideo, mlVideo, xrayVideo }) => [
           Virtual unwrapping has since emerged as a growing field with multiple
           successes. Their work went on to show the elusive carbon ink of
           the Herculaneum scrolls can also be detected using X-ray tomography,
-          laying the foundation for the Vesuvius Challenge.
+          laying the foundation for Vesuvius Challenge.
         </div>
         <video
           // autoPlay
@@ -111,7 +111,7 @@ const stories = ({ unrollVideo, mlVideo, xrayVideo }) => [
     description: (
       <>
         <div className="max-w-3xl mb-8">
-          The Vesuvius Challenge was launched in March 2023 to bring the world
+          Vesuvius Challenge was launched in March 2023 to bring the world
           together to read the Herculaneum scrolls. Along with smaller
           progress prizes, a Grand Prize was issued for the first team to
           recover 4 passages of 140 characters from a Herculaneum scroll.
@@ -1391,7 +1391,7 @@ export function Landing() {
                   </span>
                   <br /> <br />
                   <span className=" opacity-80 md:opacity-60">
-                    We're still going. 2024's challenge is to go from reading a few passages to entire scrolls.
+                    We're still going. The challenge is now to go from reading a few passages to entire scrolls.
                   </span>
                 </p>
               </div>
