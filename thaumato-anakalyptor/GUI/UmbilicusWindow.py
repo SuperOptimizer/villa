@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (QMainWindow, QAction, QVBoxLayout,
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QImage, QPixmap, QKeyEvent, QPainter, QPen, QBrush, QIcon
 import tifffile
+import zarr
 import numpy as np
 import os
 
@@ -32,6 +33,8 @@ class UmbilicusWindow(QMainWindow):
         self.scale_factor = scale_factor
         self.currentIndex = 0
         self.incrementing=True
+        self.zarr_volume = None
+        self.index_old = -1
         self.construct_images()
         self.points = {}  # Dictionary to store points as {index: (x, y)}
         self.initUI()
@@ -102,10 +105,17 @@ class UmbilicusWindow(QMainWindow):
         self.loadImage(self.currentIndex)
 
     def construct_images(self):
-        tifs = [f for f in os.listdir(self.imagePath) if f.endswith('.tif')]
         self.images = {}
-        for tif in tifs:
-            self.images[int(tif[:-4])] = tif
+        if self.imagePath.endswith('.zarr'):
+            # ome-zarr volume
+            self.zarr_volume = zarr.open(self.imagePath)
+            self.zarr_volume = self.zarr_volume[0]
+            for i in range(len(self.zarr_volume)):
+                self.images[i] = f"zarr z-slice {i}"
+        else:
+            tifs = [f for f in os.listdir(self.imagePath) if f.endswith('.tif')]
+            for tif in tifs:
+                self.images[int(tif[:-4])] = tif
 
     def showHelp(self):
         helpText = "ThaumatoAnakalyptor Help\n\n" \
@@ -125,11 +135,18 @@ class UmbilicusWindow(QMainWindow):
         index *= self.scale_factor
 
         if index in self.images:
-            imagePath = os.path.join(self.imagePath, self.images[index])
-
-            # Use tifffile to read the TIFF image
-            with tifffile.TiffFile(imagePath) as tif:
-                image_array = tif.asarray()
+            if self.index_old != index:
+                if self.zarr_volume is not None:
+                    image_array = self.zarr_volume[index]
+                else:
+                    imagePath = os.path.join(self.imagePath, self.images[index])
+                    # Use tifffile to read the TIFF image
+                    with tifffile.TiffFile(imagePath) as tif:
+                        image_array = tif.asarray()
+                self.image = image_array
+                self.index_old = index
+            else:
+                image_array = self.image
 
             # print(f"Loaded image {imagePath} at index {index} with shape {image_array.shape} and dtype {image_array.dtype}")
 

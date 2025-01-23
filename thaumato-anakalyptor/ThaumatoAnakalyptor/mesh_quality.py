@@ -334,11 +334,6 @@ def calculate_vertices_error(vertices1, winding_angles1, winding_angles2, triang
     print(f"The mean distance of the overlapping Input Mesh vertices to the Ground Truth Mesh is {mean_distance}")
     print(f"The standard deviation of the overlapping Input Mesh vertice distance to the Ground Truth Mesh is {std_distance}")
 
-def calculate_overlapping(secondary_vertices, winding_angles_secondary, winding_angles_primary, triangles_primary, scene_primary, default_splitter):
-    optimizable_direction1, optimizable_distance1 = find_closest_triangles_same_winding(secondary_vertices, winding_angles_secondary, winding_angles_primary, triangles_primary, scene_primary, default_splitter)
-    overlapping_vertices_secondary_mask = optimizable_distance1 < 10
-    return overlapping_vertices_secondary_mask
-
 def generate_colored_mask_png(triangle_ids, colors, uvs, image_size, path):
     uvs = (uvs * image_size).astype(np.int32)
     mask = np.zeros((*image_size[::-1], 3), dtype=np.uint8)
@@ -388,7 +383,7 @@ def distance_color(distance, distance_threshold):
     intensity = abs(distance) / distance_threshold
     color = intensity * color
     if intensity > 1.0:
-        color = np.array([0.5, 0.5, 0.5])
+        color = np.array([0.5, 0.5, 0.5]) # grey
     return color
 
 def triangle_mask_area(triangles, vertices, mask):
@@ -426,9 +421,9 @@ def show_winding_angle_relationship(base_path, umbilicus_path, mesh_path1, mesh_
     image2_path = os.path.join(base_path, "winding_angles2.png")
 
     # calculate the winding angles
-    fresh_start = True
+    fresh_start = False # run compute function before, no need to recalculate
     mesh1_splitter = MeshSplitter(mesh_path1, umbilicus_path, use_tempfile=True)
-    if fresh_start:
+    if fresh_start or not os.path.exists(os.path.join(base_path, "development1.pkl")):
         mesh1_splitter.compute_uv_with_bfs(0, use_carthesian=False) # precomputation of the winding angles of the gt mesh
         # make dirs
         os.makedirs(base_path, exist_ok=True)
@@ -445,7 +440,7 @@ def show_winding_angle_relationship(base_path, umbilicus_path, mesh_path1, mesh_
     print("Done generating winding angle images")
 
     mesh2_splitter = MeshSplitter(mesh_path2, umbilicus_path, use_tempfile=True)
-    if False: # already computed in function compute()
+    if fresh_start or not os.path.exists(os.path.join(base_path, "development2.pkl")): # already computed in function compute()
         mesh2_splitter.compute_uv_with_bfs(0, use_carthesian=False) # precomputation of the winding angles of the gt mesh
         # make dirs
         os.makedirs(base_path, exist_ok=True)
@@ -481,7 +476,7 @@ def show_winding_angle_relationship(base_path, umbilicus_path, mesh_path1, mesh_
     mask_same_winding2 = np.abs(winding_angles2[vertices_ids2] - winding_angles1[triangles1[:, 0]]) < 90
     area_good = triangle_mask_area(triangles1, vertices1, mask_same_winding2)
     area_total = mesh1.get_surface_area()
-    print(f"Area of good mesh2 surface in mesh1: {area_good} / {area_total} = {area_good / area_total}")
+    print(f"Area of good mesh2 surface in mesh1: {area_good} / {area_total} = {area_good / area_total}") # GP as GT, FASP related to this
     # for each triangle pick first vertice and relate to vertice of other mesh
     triangles_id1, distances_v2_to_mesh1 = find_closest_triangles_signed_distance(mesh2_triangle_points, scene1, mesh1_splitter)
     triangles_id1 = np.array(triangles_id1)
@@ -514,49 +509,9 @@ def show_winding_angle_relationship(base_path, umbilicus_path, mesh_path1, mesh_
     generate_colored_mask_png(range(len(uvs2)), colors2, uvs2, img2_size, image2_path)
     print("Done generating distance images")
 
-def mesh_quality(mesh_path1, mesh_path2, umbilicus_path, max_distance, output_dir, distance_threshold=100):
-    print(f"Calculating the quality of mesh {mesh_path1} with respect to ground truth mesh {mesh_path2} ...")
-    mesh1_splitter = MeshSplitter(mesh_path1, umbilicus_path)
-    mesh1_splitter.compute_uv_with_bfs(0) # precomputation of the winding angles of the mesh
-    gt_splitter = MeshSplitter(mesh_path2, umbilicus_path)
-    gt_splitter.compute_uv_with_bfs(0) # precomputation of the winding angles of the gt mesh
-
-    fresh_start = True
-    if fresh_start:
-        mesh1, vertices1, _, _ = load_mesh_vertices(mesh_path1)
-        winding_angles1 = calculate_winding_angle(mesh_path1, mesh1_splitter)
-        mesh2_stuff = load_mesh_vertices(mesh_path2)
-        winding_angle_difference, winding_angles2, scene2, mesh2, percentage_valid = align_winding_angles(vertices1, winding_angles1, mesh2_stuff, umbilicus_path, max_distance, gt_splitter)
-        best_alignment = find_best_alignment(winding_angle_difference)
-        print(f"Best alignment: {best_alignment}")
-
-        # pickle save 
-        os.makedirs(output_dir, exist_ok=True)
-        with open(os.path.join(output_dir, "development.pkl"), "wb") as f:
-            pickle.dump((winding_angle_difference, winding_angles1, winding_angles2, best_alignment), f)
-    else:
-        with open(os.path.join(output_dir, "development.pkl"), "rb") as f:
-            winding_angle_difference, winding_angles1, winding_angles2, best_alignment = pickle.load(f)
-
-            mesh1, _, _, _ = load_mesh_vertices(mesh_path1)
-            mesh2, _, _, scene2 = load_mesh_vertices(mesh_path2)
-
-    # Adjust the winding angles of the second mesh to have the same winding angle base as the first mesh
-    print(f"Best alignment: {best_alignment}")
-    winding_angles2 -= best_alignment
-
-    print("Mesh 1 min max winding angle: ", np.min(winding_angles1), np.max(winding_angles1))
-    print("Mesh 2 min max winding angle: ", np.min(winding_angles2), np.max(winding_angles2))
-
-    primary_vertices = np.asarray(mesh1.vertices)
-    secondary_triangles = np.asarray(mesh2.triangles)
-    # Iteratively refine vertices positions of both meshes in the overlapping region
-    calculate_vertices_error(primary_vertices, winding_angles1, winding_angles2, secondary_triangles, scene2, mesh1_splitter, distance_threshold=distance_threshold)
-
-def compute(base_path, input_mesh, input_raw_pointcloud, input_instance_pointcloud, mesh_path2, umbilicus_path, max_distance, distance_threshold):
-    fresh_start = True
+def compute(base_path, input_mesh, input_raw_pointcloud, input_instance_pointcloud, mesh_path2, umbilicus_path, max_distance, distance_threshold, fresh_start=True):
     gt_splitter = MeshSplitter(mesh_path2, umbilicus_path, use_tempfile=True)
-    if fresh_start:
+    if fresh_start or not os.path.exists(os.path.join(base_path, "development2.pkl")):
         gt_splitter.compute_uv_with_bfs(0) # precomputation of the winding angles of the gt mesh
         # make dirs
         os.makedirs(base_path, exist_ok=True)
@@ -597,7 +552,15 @@ def compute(base_path, input_mesh, input_raw_pointcloud, input_instance_pointclo
         # mesh
         mesh1, vertices1, _, _ = load_mesh_vertices(input_mesh)
         mesh1_splitter = MeshSplitter(input_mesh, umbilicus_path, use_tempfile=True)
-        mesh1_splitter.compute_uv_with_bfs(0) # precomputation of the winding angles of the mesh
+        if fresh_start or not os.path.exists(os.path.join(base_path, "development1.pkl")):
+            mesh1_splitter.compute_uv_with_bfs(0) # precomputation of the winding angles of the mesh
+            # make dirs
+            os.makedirs(base_path, exist_ok=True)
+            with open(os.path.join(base_path, "development1.pkl"), "wb") as f:
+                pickle.dump(mesh1_splitter.vertices_np, f)
+        else:
+            with open(os.path.join(base_path, "development1.pkl"), "rb") as f:
+                mesh1_splitter.vertices_np = pickle.load(f)
         winding_angles1 = calculate_winding_angle(mesh1_splitter)
 
     # align winding angles
@@ -616,8 +579,6 @@ def compute(base_path, input_mesh, input_raw_pointcloud, input_instance_pointclo
     # Iteratively refine vertices positions of both meshes in the overlapping region
     calculate_vertices_error(vertices1, winding_angles1, winding_angles2, secondary_triangles, scene2, gt_splitter, distance_threshold=distance_threshold)
 
-    # mesh_quality(mesh_path1, mesh_path2, umbilicus_path, max_distance, output_dir)
-
 def main():
     # Parse arguments
     parser = argparse.ArgumentParser(description="Calculate the Quality statistic of a 3D mesh and a Ground Truth 3D Mesh.")
@@ -626,9 +587,10 @@ def main():
     parser.add_argument("--input_instance_pointcloud", type=str, help="Path to the 3D raw pointcloud input data (.ply)", default=None)
     parser.add_argument("--gt_mesh", type=str, help="Path to the 3D input mesh (.obj)")
     parser.add_argument("--umbilicus_path", type=str, help="Path to the 3D point cloud directory (containing .ply)")
-    parser.add_argument("--max_distance", type=float, help="Maximum distance for a point to be considered part of the mesh", default=10)
-    parser.add_argument("--distance_threshold", type=float, help="Distance threshold for overlapping vertices", default=100)
+    parser.add_argument("--max_distance", type=float, help="Maximum distance for a point to be considered part of the mesh", default=float("inf"))
+    parser.add_argument("--distance_threshold", type=float, help="Distance threshold for overlapping vertices", default=30)
     parser.add_argument("--output_dir", type=str, help="Output directory for the mesh quality statistics", default="./")
+    parser.add_argument("--reuse_winding_calculation", action="store_true", help="Start from scratch and compute the winding angles", default=False)
 
     args = parser.parse_args()
     print(f"args: {args}")
@@ -637,8 +599,6 @@ def main():
     assert int(args.input_mesh is not None) + int(args.input_raw_pointcloud is not None) + int(args.input_instance_pointcloud is not None) == 1, "Exactly one input must be not None"
 
     # Compute the 3D mask with labels
-    compute(args.output_dir, args.input_mesh, args.input_raw_pointcloud, args.input_instance_pointcloud, args.gt_mesh, args.umbilicus_path, args.max_distance, args.distance_threshold)
-
     if args.input_mesh is not None:
         # Show winding angle relationship
         show_winding_angle_relationship(args.output_dir, args.umbilicus_path, args.input_mesh, args.gt_mesh, args.max_distance, args.distance_threshold)

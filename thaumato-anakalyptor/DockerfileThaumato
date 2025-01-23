@@ -130,6 +130,9 @@ libarchive-dev \
 libtbb-dev  \
 libopencv-dev
 
+RUN pip uninstall opencv-python-headless opencv-python -y
+RUN pip install opencv-python
+
 # build C++ ThaumatoAnakalyptor code with the submodules
 RUN git clone --recurse-submodules https://github.com/schillij95/ThaumatoAnakalyptor /ThaumatoAnakalyptor_temp
 RUN mkdir -p /workspace

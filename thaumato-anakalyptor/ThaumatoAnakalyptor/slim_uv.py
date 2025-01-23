@@ -42,7 +42,7 @@ class Flatboi:
         self.um = um
         self.downsample = downsample
         if downsample:
-            obj_path = self.downsample_mesh()
+            obj_path = self.downsample_mesh(0.15)
         self.read_mesh(obj_path)
         self.filter_mesh()
         

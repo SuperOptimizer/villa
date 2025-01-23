@@ -10,6 +10,7 @@ from .surface_detection import surface_detection
 
 import numpy as np
 import tifffile
+import zarr
 import tqdm
 from PIL import Image
 import open3d as o3d
@@ -51,7 +52,38 @@ def cleanup_temp_files(directory):
     else:
         print("No leftover .temp files found.")
 
-def load_grid(path_template, cords, grid_block_size=500, cell_block_size=500, uint8=True):
+def load_grid(path_template, zarr_volume, cords, grid_block_size=500, cell_block_size=500, uint8=True):
+    if path_template.endswith('.zarr'):
+        return load_grid_zarr(zarr_volume, cords, grid_block_size=grid_block_size, cell_block_size=cell_block_size, uint8=uint8)
+    else:
+        return load_grid_tiff(path_template, cords, grid_block_size=grid_block_size, cell_block_size=cell_block_size, uint8=uint8)
+
+def load_grid_zarr(zarr_volume, cords, grid_block_size=500, cell_block_size=500, uint8=True):
+    # make grid_block_size an array with 3 elements
+    if isinstance(grid_block_size, int):
+        grid_block_size = np.array([grid_block_size, grid_block_size, grid_block_size])
+    
+    grid_index_ = np.asarray(cords)[[2, 0, 1]] # swap axis for zar indexing. z y x (grid cell input is y x z)
+    grid_index = grid_index_ + cell_block_size # Spelufo Julia language offset in indexing starting from 1
+    grid_index_end = grid_index + grid_block_size
+    # clip to 0 - zarr volume size
+    grid_index = np.clip(grid_index, 0, None)
+    grid_index = np.minimum(grid_index, np.array(zarr_volume.shape))
+    grid_index_end = np.clip(grid_index_end, 0, None)
+    grid_index_end = np.minimum(grid_index_end, np.array(zarr_volume.shape))
+
+    # to int
+    grid_index = grid_index.astype(int)
+    grid_index_end = grid_index_end.astype(int)
+    grid_block = zarr_volume[grid_index[0]:grid_index[0]+grid_block_size[0], grid_index[1]:grid_index[1]+grid_block_size[0], grid_index[2]:grid_index[2]+grid_block_size[0]]
+
+    if uint8:
+        grid_block = np.uint8(grid_block)
+    else:
+        grid_block = np.uint16(grid_block)
+    return grid_block
+
+def load_grid_tiff(path_template, cords, grid_block_size=500, cell_block_size=500, uint8=True):
     """
     path_template: Template for the path to load individual grid files
     cords: Tuple (x, y, z) representing the corner coordinates of the grid block
@@ -432,6 +464,8 @@ class MyPredictionWriter(BasePredictionWriter):
 
 class GridDataset(Dataset):
     def __init__(self, pointcloud_base, start_block, path_template, save_template_v, save_template_r, umbilicus_points, umbilicus_points_old, grid_block_size=200, recompute=False, fix_umbilicus=False, maximum_distance=-1):
+        if not hasattr(self, 'zarr_volume'):
+            self.zarr_volume = None
         self.grid_block_size = grid_block_size
         self.path_template = path_template
         self.umbilicus_points = umbilicus_points
@@ -551,7 +585,7 @@ class GridDataset(Dataset):
         padding = 50
         corner_coords_padded = np.array(corner_coords) - padding
         grid_block_size_padded = self.grid_block_size + 2 * padding
-        block = load_grid(self.path_template, corner_coords_padded, grid_block_size=grid_block_size_padded)
+        block = load_grid(self.path_template, self.zarr_volume, corner_coords_padded, grid_block_size=grid_block_size_padded)
         reference_vector = self.get_reference_vector(corner_coords)
         
         # Convert NumPy arrays to PyTorch tensors
@@ -559,6 +593,67 @@ class GridDataset(Dataset):
         reference_vector_tensor = torch.from_numpy(reference_vector).to(dtype=torch.float16)
         
         return block_tensor, reference_vector_tensor, corner_coords, self.grid_block_size, padding
+    
+class ZarrDataset(GridDataset):
+    def __init__(self, pointcloud_base, start_block, path_template, save_template_v, save_template_r, umbilicus_points, umbilicus_points_old, grid_block_size=200, recompute=False, fix_umbilicus=False, maximum_distance=-1):
+        self.zarr_volume = zarr.open(path_template, mode='r')
+        self.zarr_volume = self.zarr_volume[0]
+        super().__init__(pointcloud_base, start_block, path_template, save_template_v, save_template_r, umbilicus_points, umbilicus_points_old, grid_block_size=grid_block_size, recompute=recompute, fix_umbilicus=fix_umbilicus, maximum_distance=maximum_distance)
+
+    def blocks_to_compute(self, start_coord, computed_blocks, umbilicus_points, umbilicus_points_old, path_template, grid_block_size, recompute, fix_umbilicus, maximum_distance):
+        print("Using zarr dataset")
+
+        all_corner_coords = set() # Set containing all the corner coords that need to be placed into processing/processed set.
+        all_corner_coords.add(start_coord) # Add the start coord to the set of all corner coords
+        blocks_to_process = set() # Blocks that need to be processed
+        blocks_processed = set() # Set to hold the blocks that do not need to be processed. Either have been processed or don't need to be processed.
+
+        z_height = self.zarr_volume.shape[0]
+        y_height = self.zarr_volume.shape[1]
+        x_height = self.zarr_volume.shape[2]
+        
+        while len(all_corner_coords) > 0:
+            corner_coords = all_corner_coords.pop()
+
+            if fix_umbilicus:
+                fix_umbilicus_indicator = fix_umbilicus_recompute(corner_coords, grid_block_size, umbilicus_points, umbilicus_points_old)
+            else:
+                fix_umbilicus_indicator = False
+            recompute = recompute or fix_umbilicus_indicator
+
+            previously_computed = corner_coords in computed_blocks
+            if previously_computed and (not recompute): # Block was already computed and is valid
+                blocks_processed.add(corner_coords)
+            else: # Recompute if wasn't computed or recompute flag is set
+                if corner_coords[0] < -500 or corner_coords[1] < -500 or corner_coords[2] < -500 or corner_coords[0] + grid_block_size - 500 > y_height or corner_coords[1] + grid_block_size - 500 > x_height or corner_coords[2] + grid_block_size - 500 > z_height:
+                    blocks_processed.add(corner_coords)
+                    # Outside of the scroll, don't add neighbors
+                    continue
+                # this next check comes after the empty check, else under certain umbilicus distances, there might be an infinite loop
+                skip_computation_flag = skip_computation_block(corner_coords, grid_block_size, umbilicus_points, maximum_distance=maximum_distance)
+                if skip_computation_flag:
+                    # Block not needed in processing
+                    blocks_processed.add(corner_coords)
+                else:
+                    # Otherwise add corner coords to the blocks that need processing
+                    blocks_to_process.add(corner_coords)
+                
+            # Compute neighboring blocks
+            for dx in [-grid_block_size, 0, grid_block_size]:
+                for dy in [-grid_block_size, 0, grid_block_size]:
+                    for dz in [-grid_block_size, 0, grid_block_size]:
+                        if dx == 0 and dy == 0 and dz == 0:
+                            continue
+                        if abs(dx) + abs(dy) + abs(dz) > grid_block_size:
+                            continue
+                        neighbor_coords = (corner_coords[0] + dx, corner_coords[1] + dy, corner_coords[2] + dz)
+                        
+                        # Add the neighbor to the list of blocks to process if it hasn't been processed yet
+                        if (neighbor_coords not in blocks_processed) and (neighbor_coords not in blocks_to_process) and (neighbor_coords not in all_corner_coords):
+                            all_corner_coords.add(neighbor_coords)
+
+        print(f"Found {len(blocks_to_process)} blocks to process. And {len(blocks_processed)} blocks already processed.")
+        return blocks_to_process, blocks_processed
     
 # Custom collation function
 def custom_collate_fn(batches):
@@ -620,7 +715,10 @@ class PointCloudModel(pl.LightningModule):
         return (points_r_tensors, normals_r_tensors), (points_v_tensors, normals_v_tensors), corner_coordss
     
 def grid_inference(pointcloud_base, start_block, path_template, save_template_v, save_template_r, umbilicus_points, umbilicus_points_old, grid_block_size=200, recompute=False, fix_umbilicus=False, maximum_distance=-1, batch_size=1):
-    dataset = GridDataset(pointcloud_base, start_block, path_template, save_template_v, save_template_r, umbilicus_points, umbilicus_points_old, grid_block_size=grid_block_size, recompute=recompute, fix_umbilicus=fix_umbilicus, maximum_distance=maximum_distance)
+    if path_template.endswith(".zarr"):
+        dataset = ZarrDataset(pointcloud_base, start_block, path_template, save_template_v, save_template_r, umbilicus_points, umbilicus_points_old, grid_block_size=grid_block_size, recompute=recompute, fix_umbilicus=fix_umbilicus, maximum_distance=maximum_distance)
+    else:
+        dataset = GridDataset(pointcloud_base, start_block, path_template, save_template_v, save_template_r, umbilicus_points, umbilicus_points_old, grid_block_size=grid_block_size, recompute=recompute, fix_umbilicus=fix_umbilicus, maximum_distance=maximum_distance)
     num_threads = multiprocessing.cpu_count() // int(1.5 * int(CFG['GPUs']))
     num_treads_for_gpus = 5
     num_workers = min(num_threads, num_treads_for_gpus)
@@ -664,15 +762,19 @@ def compute(disk_load_save, base_path, volume_subpath, pointcloud_subpath, maxim
     save_template_r = path_template.replace(".tif", ".ply").replace(volume_subpath, pointcloud_subpath_recto).replace(disk_load_save[0], disk_load_save[1])
     save_template_v = path_template.replace(".tif", ".ply").replace(volume_subpath, pointcloud_subpath_verso).replace(disk_load_save[0], disk_load_save[1])
 
-    umbilicus_path = os.path.join(src_dir, "umbilicus.txt")
+    if src_dir.endswith(".zarr"):
+        path_template = src_dir
+
+    umbilicus_path = os.path.join(os.path.dirname(src_dir), "umbilicus.txt")
     save_umbilicus_path = umbilicus_path.replace(".txt", ".ply").replace(disk_load_save[0], disk_load_save[1])
-    save_umbilicus_path = save_umbilicus_path.replace(volume_subpath, pointcloud_subpath)
+    save_umbilicus_path = save_umbilicus_path.replace(os.path.dirname(volume_subpath), pointcloud_subpath)
 
     # Copy umbilicus.txt to pointcloud_subpath dir
     umbilicus_copy_path = os.path.dirname(save_umbilicus_path)
     #directory of umbilicus_copy_path directory
     umbilicus_copy_path = os.path.dirname(umbilicus_copy_path) + "/umbilicus.txt"
     os.makedirs(os.path.dirname(umbilicus_copy_path), exist_ok=True)
+    print(f"Copying umbilicus.txt from {umbilicus_path} to {umbilicus_copy_path}")
     os.system("cp " + umbilicus_path + " " + umbilicus_copy_path)
 
     # Usage
