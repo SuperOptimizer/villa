@@ -32,6 +32,9 @@ def process_directory_recursively(root_dir, quality=100):
     :param quality:    JPEG quality (1–100)
     """
     for current_dir, subdirs, files in os.walk(root_dir):
+        if "corrupted" in current_dir.lower().split(os.sep):
+            continue
+
         # Collect all RAW files in this directory
         raw_files = [
             f for f in files

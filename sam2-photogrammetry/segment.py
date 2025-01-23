@@ -70,11 +70,11 @@ def extract_digits(filename_stem):
 
 def find_jpg_enhanced_dirs(root_dir: Path):
     """
-    Recursively search `root_dir` for all folders named 'JPG_Enhanced'.
+    Recursively search `root_dir` for all folders named 'JPGEnhanced'.
     Returns a list of Path objects.
     """
     # We look for any directory named "JPG_Enhanced" underneath `root_dir`
-    return [p for p in root_dir.rglob('*') if p.is_dir() and p.name == "JPG_Enhanced"]
+    return [p for p in root_dir.rglob('*') if p.is_dir() and p.name == "JPGEnhanced"]
 
 
 def process_video_dir(video_dir: Path, mask_generator, predictor):
@@ -150,7 +150,7 @@ def process_video_dir(video_dir: Path, mask_generator, predictor):
         }
 
     # Create output Masks folder (sibling to `video_dir`)
-    mask_output_dir = video_dir.parent / "Masks_new"
+    mask_output_dir = video_dir.parent / "Masks"
     mask_output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save masks for each frame
@@ -179,7 +179,7 @@ def process_video_dir(video_dir: Path, mask_generator, predictor):
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(
-        description="Process multiple scroll/orientation folders containing JPG_Enhanced subfolders."
+        description="Process multiple scroll/orientation folders containing JPGEnhanced subfolders."
     )
     parser.add_argument(
         "--root_dir",
@@ -270,10 +270,10 @@ def main():
     # Find all JPG_Enhanced subfolders
     jpg_enhanced_dirs = find_jpg_enhanced_dirs(root_dir)
     if not jpg_enhanced_dirs:
-        print("No 'JPG_Enhanced' folders found under root_dir. Exiting.")
+        print("No 'JPGEnhanced' folders found under root_dir. Exiting.")
         return
 
-    # Process each JPG_Enhanced folder
+    # Process each JPGEnhanced folder
     for jpg_enhanced_dir in jpg_enhanced_dirs:
         print(f"\nProcessing folder: {jpg_enhanced_dir}")
         process_video_dir(
