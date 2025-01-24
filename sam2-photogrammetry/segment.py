@@ -77,12 +77,40 @@ def find_jpg_enhanced_dirs(root_dir: Path):
     return [p for p in root_dir.rglob('*') if p.is_dir() and p.name == "JPGEnhanced"]
 
 
-def process_video_dir(video_dir: Path, mask_generator, predictor):
+def process_video_dir(video_dir: Path, mask_generator, predictor, recompute=False):
     """
     For a given folder `video_dir` containing frames (JPG/JPEG),
     run the video segmentation pipeline and save the results in a
-    sibling 'Masks_new' folder (i.e., at the same level as `video_dir`).
+    sibling 'Masks' folder (i.e., at the same level as `video_dir`).
+
+    If all masks corresponding to the JPG files are found in the 'Masks' folder
+    and `recompute` is False, this function will skip processing.
     """
+
+    # Gather frame names (Path objects)
+    frame_files = [
+        f for f in video_dir.iterdir()
+        if f.suffix.lower() in [".jpg", ".jpeg"]
+    ]
+    # Sort frames by integer value of the filename (assuming <frame_index>.jpg)
+    frame_files.sort(key=lambda f: extract_digits(f.stem))
+
+    if not frame_files:
+        print(f"No JPG files found in {video_dir}, skipping...")
+        return
+
+    # Check if all corresponding masks exist, and skip if so (unless recompute=True)
+    mask_output_dir = video_dir.parent / "Masks"
+    all_masks_exist = True
+    for frame_file in frame_files:
+        mask_filename = f"{frame_file.stem}_mask.png"
+        if not (mask_output_dir / mask_filename).exists():
+            all_masks_exist = False
+            break
+
+    if all_masks_exist and not recompute:
+        print(f"All masks for {video_dir} are present. Skipping segmentation.")
+        return
 
     # Generate a colormap from matplotlib (use 'jet', 'viridis', etc.)
     colormap = plt.get_cmap("tab10")  # or "viridis", "plasma", "jet", etc.
@@ -92,20 +120,6 @@ def process_video_dir(video_dir: Path, mask_generator, predictor):
 
     # Pad the palette to 256 entries (since tab10 has only 10 colors)
     palette = np.tile(palette, 25)[:768]
-
-    # Gather frame names (Path objects)
-    frame_files = [
-        f for f in video_dir.iterdir()
-        if f.suffix.lower() in [".jpg", ".jpeg"]
-    ]
-
-    # Sort frames by integer value of the filename (assuming <frame_index>.jpg)
-    # If some files are not pure integers, this will raise a ValueError.
-    frame_files.sort(key=lambda f: extract_digits(f.stem))
-
-    if not frame_files:
-        print(f"No JPG files found in {video_dir}, skipping...")
-        return
 
     # Load one frame to generate initial masks using the automatic mask generator
     frame_idx = 0
@@ -133,7 +147,7 @@ def process_video_dir(video_dir: Path, mask_generator, predictor):
     ann_frame_idx = 0
 
     # Add each mask except the last (assuming last is the bright background)
-    for ann_obj_id in range(max(len(masks) - 1,1)):
+    for ann_obj_id in range(max(len(masks) - 1, 1)):
         _, _, _, = predictor.add_new_mask(
             inference_state=inference_state,
             frame_idx=ann_frame_idx,
@@ -150,7 +164,6 @@ def process_video_dir(video_dir: Path, mask_generator, predictor):
         }
 
     # Create output Masks folder (sibling to `video_dir`)
-    mask_output_dir = video_dir.parent / "Masks"
     mask_output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save masks for each frame
@@ -164,7 +177,6 @@ def process_video_dir(video_dir: Path, mask_generator, predictor):
         # If we have segmentation data for this frame, set the segment IDs
         if out_frame_idx in video_segments:
             for obj_id, out_mask in video_segments[out_frame_idx].items():
-                #print(obj_id, out_mask[0])
                 mask[out_mask[0]] = obj_id
 
         # Save mask as <filename>_mask.png
@@ -173,7 +185,6 @@ def process_video_dir(video_dir: Path, mask_generator, predictor):
         mask_path = mask_output_dir / mask_filename
 
         save_segmented_mask(mask, mask_path)
-        
 
 
 def main():
@@ -204,6 +215,12 @@ def main():
         type=str,
         default="./checkpoints/photo_t_2000.torch",
         help="Relative or absolute path to the photo_t checkpoint for partial model weights."
+    )
+    # New argument: if set, force recomputation
+    parser.add_argument(
+        "--recompute",
+        action="store_true",
+        help="Recompute all masks even if they already exist."
     )
 
     args = parser.parse_args()
@@ -279,7 +296,8 @@ def main():
         process_video_dir(
             video_dir=jpg_enhanced_dir,
             mask_generator=mask_generator,
-            predictor=predictor
+            predictor=predictor,
+            recompute=args.recompute
         )
 
 
