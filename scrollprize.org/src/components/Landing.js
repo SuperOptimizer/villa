@@ -1381,7 +1381,7 @@ export function Landing() {
                   </span>
                 </h1>
                 <p className="max-w-lg md:text-xl text-lg font-medium mb-8 !leading-[110%] tracking-tight">
-                  <span className=" opacity-80 md:opacity-60">
+                  <span className="opacity-80 md:opacity-60">
                     Vesuvius Challenge is a machine learning, computer
                     vision, and geometry competition that is{" "}
                   </span>
@@ -1390,8 +1390,11 @@ export function Landing() {
                     over $1,000,000 in prizes.
                   </span>
                   <br /> <br />
-                  <span className=" opacity-80 md:opacity-60">
-                    We're still going. The challenge is now to go from reading a few passages to entire scrolls.
+                  <span className="opacity-80 md:opacity-60">
+                    We're still going. The challenge is now to go from reading a few passages to entire scrolls.&nbsp;
+                  </span>
+                  <span className="opacity-100">
+                    <a href="jobs">We're hiring!</a>
                   </span>
                 </p>
               </div>
