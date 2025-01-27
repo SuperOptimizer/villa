@@ -44,6 +44,26 @@ Here are some organized datasets suited for particular tasks or subproblems.
 Largely, these curate the segmentation efforts of our team and community.
 Click one of the datasets to find a download along with more information.
 
+## `fiber-skeletons`
+
+A dataset of manually annotated papyrus fibers - the individual strands that make up a papyrus sheet.
+
+<div className="flex flex-wrap mb-4">
+  <div className="w-[55%] mr-4 mb-2">
+    <img src="/img/data/datasets/skeleton-labeled-fibers.gif" className="w-[100%]"/>
+    <figcaption className="mt-[-6px]">Fiber labels inside a scroll cube.</figcaption>
+  </div>
+  <div className="w-[34%]">
+    <img src="/img/data/datasets/fibers-color.webp" className="w-[100%]"/>
+    <figcaption className="mt-[-6px]">Another view of fiber skeletons.</figcaption>
+    </div>
+</div>
+
+Cubes of size 256^3 or 512^3 were selected from within the scroll, and inside each cube, every papyrus fiber was traced and labeled.
+The fibers have been converted to a volumetric/voxelized representation to be used as inputs to machine learning or other methods that expect 3D image data.
+- [README](https://dl.ash2txt.org/datasets/fiber-skeletons/README.txt)
+- [.zip download](https://dl.ash2txt.org/datasets/fiber-skeletons/fiber-skeletons.zip) (422 MB)
+
 ## `volumetric-instance-labels`
 
 Volumetric instance segmentation labels.
@@ -82,6 +102,3 @@ We also provide predictions from machine learning [models](https://dl.ash2txt.or
 - [gp_tifstack.7z](https://dl.ash2txt.org/datasets/grand-prize-banner-region/volumes/gp_tifstack.7z) (389.9 GB)
 - [gp_legendary-medial-surfaces.7z](https://dl.ash2txt.org/datasets/grand-prize-banner-region/predictions/gp_legendary-medial-cubes.7z) (5.8 GB)
 - [gp_legendary-medial-surfaces-softmax.7z](https://dl.ash2txt.org/datasets/grand-prize-banner-region/predictions/gp_legendary-medial-cubes-softmax.7z) (146.8 GB)
-
-
-
