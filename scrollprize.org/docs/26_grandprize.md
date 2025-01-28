@@ -92,7 +92,7 @@ We received many excellent submissions for the Vesuvius Challenge Grand Prize, s
 
 We presented these submissions to the review team, and they were met with widespread amazement. We spent the month of January carefully reviewing all submissions. Our team of eminent papyrologists worked day and night to review 15 columns of text in anonymized submissions, while the technical team audited and reproduced the submitted code and methods.
 
-There was one submission that stood out clearly from the rest. Working independently, each member of our team of papyrologists recovered more text from this submission than any other. Remarkably, the entry achieved the criteria we set when announcing the Vesuvius Challenge in March: 4 passages of 140 characters each, with at least 85% of characters recoverable. This was not a given: most of us on the organizing team assigned a less than 30% probability of success when we announced these criteria! And in addition, the submission includes another 11 (!) columns of text — more than 2000 characters total.
+There was one submission that stood out clearly from the rest. Working independently, each member of our team of papyrologists recovered more text from this submission than any other. Remarkably, the entry achieved the criteria we set when announcing Vesuvius Challenge in March: 4 passages of 140 characters each, with at least 85% of characters recoverable. This was not a given: most of us on the organizing team assigned a less than 30% probability of success when we announced these criteria! And in addition, the submission includes another 11 (!) columns of text — more than 2000 characters total.
 
 The results of this review were clear and unanimous: the Vesuvius Challenge Grand Prize of $700,000 is awarded to a team of three for their excellent submission. Congratulations to **Youssef Nader, Luke Farritor, and Julian Schilliger**!
 
@@ -103,7 +103,7 @@ The results of this review were clear and unanimous: the Vesuvius Challenge Gran
   <div className="w-[45%] sm:w-[31%]"><img src="/img/grandprize/julian-smaller.webp" className="w-[100%]"/><figcaption className="mt-[-6px]">Julian Schilliger</figcaption></div>
 </div>
 
-All three winning team members have been strong community contributors since the very beginning of the Vesuvius Challenge. You may remember Youssef. He is the Egyptian PhD student in Berlin who was able to read a few columns of text back in October, winning the second-place [First Letters Prize](firstletters). His results back then were particularly clear and readable, which made him the natural lead for the team that formed.
+All three winning team members have been strong community contributors since the very beginning of Vesuvius Challenge. You may remember Youssef. He is the Egyptian PhD student in Berlin who was able to read a few columns of text back in October, winning the second-place [First Letters Prize](firstletters). His results back then were particularly clear and readable, which made him the natural lead for the team that formed.
 
 You might remember Luke as well: he is the 21-year-old college student and SpaceX intern from Nebraska, who was the first person in history to read an entire word from the inside of a Herculaneum scroll (ΠΟΡΦΥΡΑϹ, “purple”). This won him the first-place First Letters Prize, a few weeks before Youssef’s results.
 
@@ -354,7 +354,7 @@ After the success of the First Letters Prize, the Grand Prize seemed within reac
 
 ## What did it take?
 
-With the Vesuvius Challenge, we hope not only to solve the problem of reading the Herculaneum Papyri, but also to inspire similar projects. For that, it’s helpful to know what has contributed to our success in 2023. Here are some things we believe were important:
+With Vesuvius Challenge, we hope not only to solve the problem of reading the Herculaneum Papyri, but also to inspire similar projects. For that, it’s helpful to know what has contributed to our success in 2023. Here are some things we believe were important:
 
 1. **An inspiring goal and a clear target.** There are many worthy causes in the world, so it helps that our goal is unusual for a computing competition. It drew more press and donations early on, it attracted an intrinsically motivated community, and it increased our probability of success to begin with (emerging research area => a higher marginal utility of dollars spent). We’d love to see more projects that are “out there,” for exactly these reasons!
 
@@ -408,7 +408,7 @@ With the Vesuvius Challenge, we hope not only to solve the problem of reading th
 
 When we started the competition, most of us estimated that we had a less than 30% probability of success within the year. At that point, no letters had yet been discovered inside of a scroll. On top of that, the scrolls had barely been segmented at all. We had doubt as to whether the project could succeed, especially by the deadline we set. Was the ink signal present? Were the scans high-resolution enough? Could the techniques used to identify ink in the fragments be transferred into a scroll? None of this was known at the time. But we knew it was worth trying!
 
-In Stage 1 of the Vesuvius Challenge, we answered all of these questions, extracting 15 columns of never-before-seen text from inside a lump of carbon. We now have proven techniques for virtually unrolling the papyrus scroll and recognizing ink using machine learning.
+In Stage 1 of Vesuvius Challenge, we answered all of these questions, extracting 15 columns of never-before-seen text from inside a lump of carbon. We now have proven techniques for virtually unrolling the papyrus scroll and recognizing ink using machine learning.
 
 ### Vesuvius Challenge Stage 2
 

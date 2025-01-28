@@ -36,11 +36,51 @@ hide_table_of_contents: true
   />
 </head>
 
-Since the Vesuvius Challenge launched in March 2023, we have awarded **$1,397,000** in prizes!
+Since Vesuvius Challenge launched in March 2023, we have awarded **$1,426,000** in prizes!
 
 In 2023, the $850,000 Grand Prize [made history](grandprize) by revealing text from inside a rolled Herculaneum scroll for the first time.
 
 This page lists all the prizes awarded so far:
+
+### $29,000 Open Source (November, 2024)
+
+**Goal:** Increase the probability we read 90% of four scrolls in 2024.<br/>
+**Announcement:** <a href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes">Blog post</a>
+
+<div className="flex flex-row flex-wrap">
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1312490723001499808">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$10,000</div><span className="font-bold">Segment patch generation</span>: Hendrik Schilling / @waldkauz</div>
+    <img src="/img/progress/202411/patches.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1312615268270342184/1312615268270342184">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$10,000</div><span className="font-bold">vesuvius-c library</span>: Forrest McDonald / @verditelabs</div>
+    <img src="/img/progress/202411/christmas.gif"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/tomhsiao1260/field-based-visualization?tab=readme-ov-file">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Electric potential scroll flattening</span>: Yao Hsiao / @Yao Hsiao, Dalufishe / @Dalufish</div>
+    <img src="/img/progress/202411/potential.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1312691096169484398/1312691096169484398">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Various datasets</span>: Sean Johnson / @sean (bruniss), Hendrik Schilling / @waldkauz</div>
+    <img src="/img/progress/202411/patches2.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/mvrcii/phalanx?tab=readme-ov-file">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">phalanx</span>: Marcel Roth</div>
+    <img src="/img/progress/202411/phalanx.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/JamesDarby345/labels_2D_to_3D/tree/main?tab=readme-ov-file">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">2D -> 3D labeling tool</span>: James Darby / @james darby</div>
+    <img src="/img/progress/202411/fibers.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/KhartesViewer/scroll2zarr/blob/main/README.md#user-guide-for-zarr_to_ome">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">zarr_to_ome script</span>: Chuck / @khartes_chuck</div>
+    <img src="/img/progress/202411/khartes.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1079907750265499772/1307007350086959104">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">New segment in title region</span>: Elian Rafael Dal Prá / @err, Sean Johnson / @sean (bruniss)</div>
+    <img src="/img/progress/202411/scroll1_title.webp"/>
+  </a>
+</div>
 
 ### $18,500 Open Source (October, 2024)
 
