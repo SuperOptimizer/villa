@@ -36,11 +36,59 @@ hide_table_of_contents: true
   />
 </head>
 
-Since Vesuvius Challenge launched in March 2023, we have awarded **$1,426,000** in prizes!
+import Admonition from '@theme/Admonition';
 
-In 2023, the $850,000 Grand Prize [made history](grandprize) by revealing text from inside a rolled Herculaneum scroll for the first time.
+<Admonition type="info" icon="🎉" title="More Prizes Coming Soon">
+  We are absorbing the amazing work done in 2024 and will announce the next round of prizes shortly!
+</Admonition>
+
+Vesuvius Challenge has awarded **$1,439,500** in prizes!
 
 This page lists all the prizes awarded so far:
+
+### $13,500 Open Source (December, 2024)
+
+**Goal:** Increase the probability we read 90% of four scrolls in 2024.<br/>
+**Announcement:** <a href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes-ee5">Blog post</a>
+
+<div className="flex flex-row flex-wrap">
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/tspersonalgithub/december_2024_progress_submission">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Volumetric segmentation model</span>: Tim Skinner / @Tim S, Lachlan Parker, John Skinner</div>
+    <img src="/img/progress/202412/instances.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/Bodillium/Herculaneum-Scroll-Labels">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Ink labels</span>: Nicola Bodill / @polytrope</div>
+    <img src="/img/progress/202412/inklabels.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://docs.google.com/document/d/1tMHUAsGEfHNDRNeUVjNMR1RHOLeFQmiMulIIbV0iWXQ/edit?usp=sharing">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$2,500</div><span className="font-bold">Interactive mesh refinement</span>: James Darby / @james darby</div>
+    <img src="/img/progress/202412/refining.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/jrudolph/vesuvius-gui?tab=readme-ov-file#vesuvius-render">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">vesuvius-render</span>: Johannes Rudolph / @jrudolph</div>
+    <img src="/img/progress/202412/render.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1312623336739831878/1323487224293101568">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Electric field-based flattening</span>: Yao Hsiao / @Yao Hsiao, Dalufishe / @Dalufish</div>
+    <img src="/img/progress/202412/flattening.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/KhartesViewer/khartes/blob/khartes3d-beta/overlays.md">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Data overlays in Khartes</span>: Chuck / @khartes_chuck</div>
+    <img src="/img/progress/202412/overlay.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1315006782191570975">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Optimized ink detection</span>: Hendrik Schilling / @waldkauz</div>
+    <img src="/img/progress/202412/ink_samples_dist.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://discord.com/channels/1079907749569237093/1079907750265499772/1323439459018211338">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Supervoxel-based segmentation methods</span>: Forrest McDonald / @verditelabs</div>
+    <img src="/img/progress/202412/super.gif"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/WillStevens/scrollreading/blob/main/report4.pdf">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$1,000</div><span className="font-bold">Segmentation tools</span>: William Stevens / @Will Stevens</div>
+    <img src="/img/progress/202412/filling.webp"/>
+  </a>
+</div>
 
 ### $29,000 Open Source (November, 2024)
 

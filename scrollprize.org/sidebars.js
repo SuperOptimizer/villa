@@ -38,9 +38,8 @@ const sidebars = {
     {
       type: 'category',
       label: 'Competition',
-      link: { type: 'doc', id: '28_2024_prizes' },
+      link: { type: 'doc', id: 'winners' },
       items: [
-        { type: 'doc', id: '28_2024_prizes' },
         { type: 'doc', id: 'winners' },
         { type: 'doc', id: 'community_projects' },
       ],
