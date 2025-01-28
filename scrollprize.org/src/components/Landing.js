@@ -1882,7 +1882,7 @@ export function Landing() {
                         <ChallengeBox
                             title="Ink Detection"
                             linkText="Find a Letter"
-                            href="/master_plan/ink_detection"
+                            href="/tutorial5"
                             imageSrc={<BeforeAfter
                                 beforeImage="/img/ink/51002_crop/prediction.jpg"
                                 afterImage="/img/ink/51002_crop/32.jpg"  />}
@@ -1907,7 +1907,7 @@ export function Landing() {
                         <ChallengeBox
                             title="Representation"
                             linkText="Scan the Surface"
-                            href="/master_plan/surface_representation"
+                            href="/tutorial2"
                             imageSrc={<BeforeAfter
                                 beforeImage="/img/data/rep_raw_10037.png"
                                 afterImage="/img/data/rep_norms_10037.png"  />}
@@ -1930,7 +1930,7 @@ export function Landing() {
                         <ChallengeBox
                             title="Meshing and Reconstruction"
                             linkText="Chart the Path"
-                            href="/master_plan/meshing"
+                            href="/tutorial4"
                             imageSrc={<BeforeAfter
                                 beforeImage="/img/data/patches.png"
                                 afterImage="/img/data/raw_pred.png"  />}
