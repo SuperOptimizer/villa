@@ -669,6 +669,11 @@ const team = {
       href: "https://www2.cs.uky.edu/dri/stephen-parsons/",
     },
     {
+      name: "Sean Johnson",
+      title: "Technical Community Manager",
+      href: "https://github.com/bruniss",
+    },
+    {
       name: "Julian Schilliger",
       title: "Software Engineer",
       href: "https://www.linkedin.com/in/julian-schilliger-963b21294/",
