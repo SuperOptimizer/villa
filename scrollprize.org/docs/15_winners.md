@@ -42,9 +42,25 @@ import Admonition from '@theme/Admonition';
   We are absorbing the amazing work done in 2024 and will announce the next round of prizes shortly!
 </Admonition>
 
-Vesuvius Challenge has awarded **$1,439,500** in prizes!
+Vesuvius Challenge has awarded **$1,499,500** in prizes!
 
 This page lists all the prizes awarded so far:
+
+### $60,000 First Automated Segmentation
+
+**Goal:** Reproduce the 2023 Grand Prize segmentation result, but faster.<br/>
+**Announcement:** <a href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation">Blog post</a>
+
+<div className="flex flex-row flex-wrap">
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/hendrikschilling/FASP">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$30,000</div><span className="font-bold">Special recognition</span>: Hendrik Schilling / @waldkauz, Sean Johnson / @sean (bruniss)</div>
+    <img src="/img/progress/202412/patches2.webp"/>
+  </a>
+  <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://docs.google.com/document/d/1ZOIqtG7IbgaW4moWmjYCIeBsyQRNoonQe_KtAnQp8gw/view">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">$30,000</div><span className="font-bold">Special recognition</span>: Paul Henderson / @pmh47</div>
+    <img src="/img/progress/202412/henderson.webp"/>
+  </a>
+</div>
 
 ### $13,500 Open Source (December, 2024)
 
