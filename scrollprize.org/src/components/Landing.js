@@ -1703,7 +1703,79 @@ export function Landing() {
                     </div>
                   </div>
                 </a>
-                
+
+                    <div className="flex-wrap z-10 pt-5">
+                      {/*<p className="text-center pt-10 text-xl text-orange-600 pt-0.5">*/}
+                      {/*  <b className="">CHOOSE YOUR PATH!</b>*/}
+                      {/*</p>*/}
+                      <div>
+                        {/*<div className="grid grid-cols-3 gap-4">*/}
+                        {/*  <ChallengeBox*/}
+                        {/*      title="Ink Detection"*/}
+                        {/*      linkText="Find a Letter"*/}
+                        {/*      href="/master_plan/ink_detection"*/}
+                        {/*      imageSrc="/img/grandprize/youssef_text_wbb_third.jpg"*/}
+                        {/*      imagePosition="top"*/}
+                        {/*  >*/}
+                        {/*    <div>*/}
+                        {/*    </div>*/}
+                        {/*    <p className="">*/}
+                        {/*      We have functional Ink Detection in just two of our current scrolls. Is the ink fundamentally different in others? Is the papyrus surface?*/}
+                        {/*      We're not yet sure. We are certain though that if it ever existed, it can be detected.*/}
+                        {/*    </p>*/}
+                        {/*    /!*<p className="pb-5">*!/*/}
+                        {/*    /!*  If you have a knack for pattern finding and lack the skills in machine learning or software development, this might be perfect for you!*!/*/}
+                        {/*    /!*  The first ink in a still rolled Herculaneum scroll was found by eye alone!*!/*/}
+                        {/*    /!*</p>*!/*/}
+                        {/*    <p className="pt-16">*/}
+                        {/*      Related Skills: Image Annotation, Computer Vision, Machine Learning, Pattern Detection*/}
+                        {/*    </p>*/}
+
+                        {/*  </ChallengeBox>*/}
+
+                        {/*  <ChallengeBox*/}
+                        {/*      title="Representation"*/}
+                        {/*      linkText="Scan the Surface"*/}
+                        {/*      href="/master_plan/surface_representation"*/}
+                        {/*      imageSrc="/img/segmentation/surface_rep.jpg"*/}
+                        {/*      imagePosition="top"*/}
+                        {/*  >*/}
+                        {/*    <p className="">*/}
+                        {/*      Crushed under the weight of pyroclastic flow and debris, the scroll surface is remarkably damaged. Tracing the path of a single sheet*/}
+                        {/*      as it curves through these damaged scrolls is nearly impossible in the raw scan data.*/}
+                        {/*    </p>*/}
+                        {/*    /!*<p className="pb-5">*!/*/}
+                        {/*    /!*  Progress has been made in this step through 3D UNet based semantic segmentation and point cloud representation*!/*/}
+                        {/*    /!*  through edge gradient detection. Opportunities for improvement here through improving current methods, instance segmentation*!/*/}
+                        {/*    /!*  or other geometric representations*!/*/}
+                        {/*    /!*</p>*!/*/}
+                        {/*    <p className=" pt-16">*/}
+                        {/*      Related Skills: Image Annotation, Computer Vision, Machine Learning, nD Array Manipulation, Medical Imaging*/}
+                        {/*    </p>*/}
+                        {/*  </ChallengeBox>*/}
+
+                        {/*  <ChallengeBox*/}
+                        {/*      title="Meshing and Reconstruction"*/}
+                        {/*      linkText="Chart the Path"*/}
+                        {/*      href="/master_plan/meshing"*/}
+                        {/*      imageSrc="/img/progress/patches.jpg"*/}
+                        {/*      imagePosition="top"*/}
+                        {/*  >*/}
+                        {/*    <p className="pb-14">*/}
+                        {/*      A better represented surface alone does not make an unrolled scroll. We need methods to better map these surfaces, combine them where necessary,*/}
+                        {/*      and extract them to be flattened into readable sheets of papyrus.*/}
+                        {/*    </p>*/}
+                        {/*    /!*<p className="">*!/*/}
+                        {/*    /!*  Current methods have been been largely structured as optimization or graph problems*!/*/}
+                        {/*    /!*  around connecting disconnecting patches or fitting surfaces within some geometric constraints.*!/*/}
+                        {/*    /!*</p>*!/*/}
+                        {/*    <p className="">*/}
+                        {/*      Related Skills: Computer Vision, Machine Learning, Geometry Processing, Optimization*/}
+                        {/*    </p>*/}
+                        {/*  </ChallengeBox>*/}
+                        {/*</div>*/}
+                      </div>
+
                       <div>
                         <div className="grid grid-cols-1">
                         <ChallengeBox
@@ -1776,122 +1848,51 @@ export function Landing() {
                     </div>
               </div>
               <div
-                    className="mt-2 pt-2 pb-0  relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf]"
-                    style={{
-                      height: "100%",
-                      boxShadow:
-                          "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
-                    }}
-                >
-                  <h3 className="text-2xl text-white p-3 pb-3 text-center">
-                    What's in the Way
-                  </h3>
-                  <div className="grid grid-cols-4 gap-5 px-6 pb-3">
-                    <div className="relative px-3">
-                      <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
-                      <b className="block mb-2">Accurate Surface Representations</b>
-                      <p className="text-sm">
-                       We lack the accuracy to make the meshing step as simple as it could be.
-                      </p>
-                    </div>
+                  className="mt-2 pt-2 pb-0  relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf]"
+                  style={{
+                    height: "100%",
+                    boxShadow:
+                        "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
+                  }}
+              >
+                <h3 className="text-2xl text-white p-3 pb-3 text-center">
+                  What's in the Way
+                </h3>
+                <div className="grid grid-cols-4 gap-5 px-6 pb-3">
+                  <div className="relative px-3">
+                    <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
+                    <b className="block mb-2">Accurate Surface Representations</b>
+                    <p className="text-sm">
+                      We lack the accuracy to make the meshing step as simple as it could be.
+                    </p>
+                  </div>
 
-                    <div className="relative px-3">
-                      <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
-                      <b className="block mb-2">Generalizable Ink Detection</b>
-                      <p className="text-sm">
-                        Ink has been found in two scrolls, but remains elusive in our other scrolls.
-                      </p>
-                    </div>
+                  <div className="relative px-3">
+                    <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
+                    <b className="block mb-2">Generalizable Ink Detection</b>
+                    <p className="text-sm">
+                      Ink has been found in two scrolls, but remains elusive in our other scrolls.
+                    </p>
+                  </div>
 
-                    <div className="relative px-3">
-                      <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
-                      <b className="block mb-2">Annotations</b>
-                      <p className="text-sm">
-                       We need an abundance of high-quality annotations.
-                      </p>
+                  <div className="relative px-3">
+                    <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
+                    <b className="block mb-2">Annotations</b>
+                    <p className="text-sm">
+                      We need an abundance of high-quality annotations.
+                    </p>
 
-                    </div>
-                    <div className="px-3">
-                      <b className="block mb-2">Robust Meshing</b>
-                      <p className="text-sm">
-                        Methods that function where Surface Representation is unreliable are needed.
-                      </p>
-                    </div>
+                  </div>
+                  <div className="px-3">
+                    <b className="block mb-2">Robust Meshing</b>
+                    <p className="text-sm">
+                      Methods that function where Surface Representation is unreliable are needed.
+                    </p>
                   </div>
                 </div>
-                    <div className="flex-wrap z-10 pt-5">
-                      {/*<p className="text-center pt-10 text-xl text-orange-600 pt-0.5">*/}
-                      {/*  <b className="">CHOOSE YOUR PATH!</b>*/}
-                      {/*</p>*/}
-                      <div>
-                        {/*<div className="grid grid-cols-3 gap-4">*/}
-                        {/*  <ChallengeBox*/}
-                        {/*      title="Ink Detection"*/}
-                        {/*      linkText="Find a Letter"*/}
-                        {/*      href="/master_plan/ink_detection"*/}
-                        {/*      imageSrc="/img/grandprize/youssef_text_wbb_third.jpg"*/}
-                        {/*      imagePosition="top"*/}
-                        {/*  >*/}
-                        {/*    <div>*/}
-                        {/*    </div>*/}
-                        {/*    <p className="">*/}
-                        {/*      We have functional Ink Detection in just two of our current scrolls. Is the ink fundamentally different in others? Is the papyrus surface?*/}
-                        {/*      We're not yet sure. We are certain though that if it ever existed, it can be detected.*/}
-                        {/*    </p>*/}
-                        {/*    /!*<p className="pb-5">*!/*/}
-                        {/*    /!*  If you have a knack for pattern finding and lack the skills in machine learning or software development, this might be perfect for you!*!/*/}
-                        {/*    /!*  The first ink in a still rolled Herculaneum scroll was found by eye alone!*!/*/}
-                        {/*    /!*</p>*!/*/}
-                        {/*    <p className="pt-16">*/}
-                        {/*      Related Skills: Image Annotation, Computer Vision, Machine Learning, Pattern Detection*/}
-                        {/*    </p>*/}
-
-                        {/*  </ChallengeBox>*/}
-
-                        {/*  <ChallengeBox*/}
-                        {/*      title="Representation"*/}
-                        {/*      linkText="Scan the Surface"*/}
-                        {/*      href="/master_plan/surface_representation"*/}
-                        {/*      imageSrc="/img/segmentation/surface_rep.jpg"*/}
-                        {/*      imagePosition="top"*/}
-                        {/*  >*/}
-                        {/*    <p className="">*/}
-                        {/*      Crushed under the weight of pyroclastic flow and debris, the scroll surface is remarkably damaged. Tracing the path of a single sheet*/}
-                        {/*      as it curves through these damaged scrolls is nearly impossible in the raw scan data.*/}
-                        {/*    </p>*/}
-                        {/*    /!*<p className="pb-5">*!/*/}
-                        {/*    /!*  Progress has been made in this step through 3D UNet based semantic segmentation and point cloud representation*!/*/}
-                        {/*    /!*  through edge gradient detection. Opportunities for improvement here through improving current methods, instance segmentation*!/*/}
-                        {/*    /!*  or other geometric representations*!/*/}
-                        {/*    /!*</p>*!/*/}
-                        {/*    <p className=" pt-16">*/}
-                        {/*      Related Skills: Image Annotation, Computer Vision, Machine Learning, nD Array Manipulation, Medical Imaging*/}
-                        {/*    </p>*/}
-                        {/*  </ChallengeBox>*/}
-
-                        {/*  <ChallengeBox*/}
-                        {/*      title="Meshing and Reconstruction"*/}
-                        {/*      linkText="Chart the Path"*/}
-                        {/*      href="/master_plan/meshing"*/}
-                        {/*      imageSrc="/img/progress/patches.jpg"*/}
-                        {/*      imagePosition="top"*/}
-                        {/*  >*/}
-                        {/*    <p className="pb-14">*/}
-                        {/*      A better represented surface alone does not make an unrolled scroll. We need methods to better map these surfaces, combine them where necessary,*/}
-                        {/*      and extract them to be flattened into readable sheets of papyrus.*/}
-                        {/*    </p>*/}
-                        {/*    /!*<p className="">*!/*/}
-                        {/*    /!*  Current methods have been been largely structured as optimization or graph problems*!/*/}
-                        {/*    /!*  around connecting disconnecting patches or fitting surfaces within some geometric constraints.*!/*/}
-                        {/*    /!*</p>*!/*/}
-                        {/*    <p className="">*/}
-                        {/*      Related Skills: Computer Vision, Machine Learning, Geometry Processing, Optimization*/}
-                        {/*    </p>*/}
-                        {/*  </ChallengeBox>*/}
-                        {/*</div>*/}
-                      </div>
+              </div>
               <div>
-                <h3>Current Intitatives</h3>
+                <h3 className="py-8">Current Intitatives</h3>
 
               </div>
               <div className="">
