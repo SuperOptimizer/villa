@@ -1677,13 +1677,13 @@ export function Landing() {
 
               <div className="grid grid-cols-2 md:grid-cols-1 gap-4 items-start max-w-8xl">
                 <div className="">
-                  {/*<h2 className="text-center pt-2">*/}
-                  {/*  What's Happening:*/}
+                  {/*<h2 className="text-right pt-2 mr-12">*/}
+                  {/*  What's Happening*/}
                   {/*</h2>*/}
 
                 </div>
                 <div className="flex gap-4 max-w-9xl">
-                  <div className="w-30 flex-shrink-0">
+                  <div className="w-60">
                     <a
                         className="cursor-pointer group hover:no-underline"
                         href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
