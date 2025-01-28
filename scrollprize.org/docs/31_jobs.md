@@ -36,12 +36,19 @@ hide_table_of_contents: true
   />
 </head>
 
+import TOCInline from '@theme/TOCInline';
 
 # Jobs
 
 We are laser focused on our mission of reading the Herculaneum scrolls and are always interested in talking.
 If you can help us achieve this goal, please reach out to jobs@scrollprize.org.
 In addition, we are hiring for the specific roles listed below.
+
+***
+
+<TOCInline
+  toc={toc}
+/>
 
 ***
 
