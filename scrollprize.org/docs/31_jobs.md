@@ -45,6 +45,37 @@ In addition, we are hiring for the specific roles listed below.
 
 ***
 
+## Synchrotron Tomography Reconstruction Expert
+
+The Vesuvius Challenge platform team builds the tools that make researchers and contestants more productive. This includes libraries, visualizations, annotation tools, and data organization & accessibility.
+
+#### Overview
+At the Vesuvius Challenge we aim to scan the full collection of Herculaneum papyri found - and yet to be found - thus far. This includes hundreds of scrolls, whose images need to be acquired at beamline synchrotron facilities and reconstructed via computer tomography.
+
+We need help in scanning and reconstructing the images of the scrolls. Specifically, we seek a Synchrotron Tomography Reconstruction Expert to develop and maintain a robust, high-throughput, and facility-agnostic 3D reconstruction pipeline. The expert will integrate open-source toolkits with in-house automation scripts to streamline data processing—from raw projections through phase retrieval to final reconstructions.
+
+#### Responsibilities include:
+- Develop and optimize an automated pipeline for X-ray tomography reconstruction (including phase contrast imaging) using open-source libraries
+- Run the pipeline to reconstruct the images of hundreds of Herculaneum papyri in a short time-frame
+- Ensure synchrotron/beamline-invariant compatibility: adapt metadata and geometry definitions from multiple facilities into a uniform pipeline
+- Collaborate with beamline scientists and domain experts to validate reconstruction quality and optimize parameters (e.g., phase retrieval, artifact correction, center-of-rotation finding)
+- Integrate HPC and GPU acceleration
+- Deploy and maintain the pipeline on cloud infrastructure
+- Participate in scan sessions to ensure the acquisition of high-quality data
+- Write comprehensive documentation and provide user training/support both for internal researchers and our online community
+
+#### Ideal qualifications:
+- Direct synchrotron beamline experience
+- MSc or PhD in Experimental Physics, Applied Mathematics, CS or a related field
+- Experience with tomography software frameworks
+- Experience in scientific computing, HPC, and/or GPU programming
+- Exposure to cloud computing
+
+#### To Apply
+Send your resume, cover letter, and examples of relevant projects to jobs@scrollprize.org. Include "Reconstruction Expert" in the subject line.
+
+***
+
 ## Platform Engineer
 
 The Vesuvius Challenge platform team builds the tools that make researchers and contestants more productive. This includes libraries, visualizations, annotation tools, and data organization & accessibility.
