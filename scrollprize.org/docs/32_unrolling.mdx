@@ -31,11 +31,11 @@ The image data of the Herculaneum scrolls (PHerc 172) look like this:
     width="100%" height="600">
 </iframe>
 
-It's a mess! The papyrus layers, that survived a volcanic eruption and were buried under lava and mud for centuries, are carbonized, damaged, frayed and, most importantly, still wrapped!
+It's a mess! The scrolls, that survived a volcanic eruption and were buried under lava and mud for centuries, are carbonized, damaged, frayed and, most importantly, still wrapped!
 
 To read a scroll, we first need to unroll it... **virtually**!
 
-If in the chaotic 3D image you are looking at you could isolate a contiguous part of the papyrus sheet, you could then fit a 2-manifold (or an orientable genus-0 developable surface) to it and find a bidimensional isometric parametrization [^1] that defines a base on top of it.
+If in the chaotic 3D image you are looking at you could isolate a contiguous part of the papyrus sheet, you could then fit a 2-manifold (or an orientable genus-0 developable surface) to it and find a bidimensional isometric parametrization[^1] that defines a base on top of it.
 
 The 2-manifold is commonly represented as a non-watertight triangular mesh. When rendered in the coordinate frame given by its base, the surface looks automatically flat if the found parametrization is obtained with an isometric map from 3D to 2D, i.e. locally preserving distances, shapes, and angles.
 
@@ -89,7 +89,7 @@ Let us delve into the details of how the current state-of-the-art methods work:
 ### Spiral Fitting
 
 **(Overview)**  
-This method leverages the idea that the scroll, in its original form, was a 2D spiral with approximate cylindrical symmetry. Once flattened, the papyrus sheet is nearly rectangular, with locally perpendicular fibers. The approach attempts to find the transformation that deformed this canonical spiral into the observed data.
+This method leverages the idea that the scroll, in its original form, was a 2D spiral extruded in a 3D shape with approximate cylindrical symmetry. Once flattened, the papyrus sheet is nearly rectangular, with locally perpendicular fibers. The approach attempts to find the transformation that deformed this canonical spiral into the observed data.
 
 <div className="mb-4">
   <img src="/img/virtual-unrolling/spiral.jpg" className="w-[70%]"/>
@@ -98,7 +98,7 @@ This method leverages the idea that the scroll, in its original form, was a 2D s
 
 #### Intermediate Representations
 
-The method extracts useful intermediate representations from the raw 3D images using machine learning–based semantic segmentation, more specifically nnUNet [^2], to isolate characteristic features that can be used in the fitting step.
+The method extracts useful intermediate representations from the raw 3D images using machine learning–based semantic segmentation, more specifically nnUNet[^2], to isolate characteristic features that can be used in the fitting step.
 
 
 Specifically, the extracted intermediate representations are:
@@ -149,7 +149,7 @@ For more information, visit [this repository](https://github.com/pmh47/spiral-fi
 Surface Tracer recognizes that, physically, the papyrus sheet is relatively continuous and should not bend abruptly from one point to the next. Instead of a global approach, it grows a surface mesh **locally** by “tracing” the sheet.
 
 #### Intermediate Representation
-As with Spiral Fitting, a semantic segmentation of the surface sheet is obtained using nnUNet [^2]. The predictions may contain fake mergers, holes, and other errors, but they focus on identifying likely surface voxels.
+As with Spiral Fitting, a semantic segmentation of the surface sheet is obtained using nnUNet[^2]. The predictions may contain fake mergers, holes, and other errors, but they focus on identifying likely surface voxels.
 
 <div className="mb-4">
   <img src="/img/virtual-unrolling/surface-predictions.jpg" className="w-[70%]"/>
@@ -260,7 +260,9 @@ All three methods—**Spiral Fitting**, **Surface Tracer**, and **Thaumato Anaka
 - **Surface Tracer** **locally** expands a mesh from patches, carefully balancing data fidelity and smoothness.
 - **Thaumato Anakalyptor** focuses on a **point-cloud** extraction and **local** segmentation strategy, which it then stitches into a global mesh.
 
-Despite these advances, the problem is still unsolved. We need your help to virtual unroll the Herculaneum scrolls.
+Despite these advances, the problem is still unsolved. No method so far manages to perfectly fit the wanted surface to the data.
+The most common error is **sheet switching**, i.e. when the fitted surface jumps a winding, resulting in a distorted, non realistic shape.
+We need your help to virtual unroll the Herculaneum scrolls.
 
 ---
 ## References
