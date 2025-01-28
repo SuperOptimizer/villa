@@ -40,6 +40,7 @@ if __name__ == "__main__":
             obj_paths.extend(obj_path_)
     # sort the obj_paths
     obj_paths.sort()
+    obj_paths = obj_paths[::-1]
     if args.end is not None:
         obj_paths = obj_paths[args.start:args.end]
     else:
@@ -65,3 +66,5 @@ if __name__ == "__main__":
         # Running the command
         process_rendering = subprocess.Popen(command)
         process_rendering.wait()
+
+# python3 -m ThaumatoAnakalyptor.large_mesh_to_surface --input_mesh /scroll_pcs/1352_3600_5007/point_cloud_colorized_verso_subvolume_blocks/windowed_mesh_20250121085101 --scroll /scroll.volpkg/volumes/20241024131838.zarr --cut_size 20000 --display --start 15

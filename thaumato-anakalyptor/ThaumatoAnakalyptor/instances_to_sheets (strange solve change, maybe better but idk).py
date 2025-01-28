@@ -716,23 +716,13 @@ def surface_overlapp_tiles_complete(patches_list, i, j, overlap_tiles):
 
     assert count_overlap1 == count_overlap2, f"Overlap counts are not equal: {count_overlap1} {count_overlap2}"
     
-    # # Calculate the overlap percentage
+    # Calculate the overlap percentage
     overlapp_percentage1 = 1.0 * count_overlap1 / (count_overlap1 + count_non_overlap1 + 0.00001)
     overlapp_percentage2 = 1.0 * count_overlap2 / (count_overlap2 + count_non_overlap2 + 0.00001)
 
-    # overlap = (count_overlap1+count_overlap2)/2
-    # non_overlap = (count_non_overlap1+count_non_overlap2)/2
-    # overlapp_percentage = (overlapp_percentage1+overlapp_percentage2)/2
-
-    # Take the larger overlap percentage
-    if overlapp_percentage1 < overlapp_percentage2:
-        overlap = count_overlap1
-        overlapp_percentage = overlapp_percentage1
-        non_overlap = count_non_overlap1
-    else:
-        overlap = count_overlap2
-        overlapp_percentage = overlapp_percentage2
-        non_overlap = count_non_overlap2
+    overlap = (count_overlap1+count_overlap2)/2
+    non_overlap = (count_non_overlap1+count_non_overlap2)/2
+    overlapp_percentage = (overlapp_percentage1+overlapp_percentage2)/2
     
     return overlapp_percentage, overlap, non_overlap, None, 0.0
 
@@ -753,9 +743,9 @@ def overlapp_score(i, j, patches_list, overlapp_threshold={"score_threshold": 0.
     nrp = min(max(overlapp_threshold["nr_points_min"], overlap), overlapp_threshold["nr_points_max"]) / (overlapp_threshold["nr_points_min"])
     nrp_factor = np.log(np.log(nrp) + 1.0) + 1.0
 
-    p = 1.0 - overlapp_percentage
-    score = 1.0 - (min_points_factor**0.5) * p
-    # score = overlapp_percentage
+    # p = 1.0 - overlapp_percentage
+    # score = 1.0 - (min_points_factor**0.5) * p
+    score = overlapp_percentage
 
     if score >= overlapp_threshold["score_threshold"]:
         score = ((score - overlapp_threshold["score_threshold"])/ (1 - overlapp_threshold["score_threshold"])) ** 2

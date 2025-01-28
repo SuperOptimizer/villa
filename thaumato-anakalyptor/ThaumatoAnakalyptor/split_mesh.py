@@ -12,6 +12,9 @@ import os
 from datetime import datetime
 import tempfile
 from heapq import heappush, heappop
+from PIL import Image
+# This disables the decompression bomb protection in Pillow
+Image.MAX_IMAGE_PIXELS = None
 
 import sys
 sys.path.append('ThaumatoAnakalyptor/sheet_generation/build')
@@ -372,6 +375,8 @@ class MeshSplitter:
         # split the mesh based on the vertices_np and split_width
         min_u = np.min(self.vertices_np[:, 0])
         max_u = np.max(self.vertices_np[:, 0])
+        min_v = np.min(vertices[:, 2])
+        max_v = np.max(vertices[:, 2])
         mesh_paths = []
         window_start = min_u
         while window_start < max_u:
@@ -401,6 +406,10 @@ class MeshSplitter:
             os.makedirs(os.path.dirname(path_window), exist_ok=True)
             # Save the mesh to an .obj file
             o3d.io.write_triangle_mesh(path_window, cut_mesh)
+            # Generate white image of 
+            uv_image = Image.new('L', (int(np.ceil(max_u-min_u)), int(np.ceil(max_v-min_v))), color=255)  # 255 for white background, 0 for black
+            uv_image.save(path_window[:-4] + "_cylindrical.png")
+            print(f"Saved windowed mesh to {path_window}")
             window_start = window_end
         
         return mesh_paths, stamp
