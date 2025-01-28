@@ -1646,20 +1646,14 @@ export function Landing() {
                 </h1>
                 <p className="max-w-xl md:text-xl text-lg font-medium mb-1 !leading-[110%] tracking-tight">
                   <span className="">
-                    <span className="text-5xl text-orange-600 ">Vesuvius Challenge</span> is a machine learning, computer
-                    vision, and geometry competition founded with the goal of reading the Herculaneum Scrolls.
+                    <span className="text-5xl text-orange-600 pr-3">Vesuvius Challenge</span> <span className="opacity-80">is a machine learning, computer
+                    vision, and geometry competition founded with the goal of reading the Herculaneum Scrolls.</span>
                   </span>
-                  <p className="text-orange-600 opacity-100 pt-8 font-bold">In 2023
-                    <span className="text-white font-medium"> we uncovered the first letters ever found in a still-rolled Herculaneum scroll. 13 Columns of
-                  text not seen in 2000 years.
-                  </span>
+                  <p className="">
+                    <p className="pt-5">So far, we've uncovered the first letters seen in a still-rolled Herculaneum scroll. Then we found text in another scroll, and spent the last year refining and automating these processes, awarding
+                      nearly $1,500,000 in prizes along the way.
+                    </p>
                   </p>
-                  <p className="text-orange-600 font-bold"> In 2024 <span className="text-white">we discovered text in second Herculaneum scroll and advanced the automation of these methods. </span>
-                  </p>
-                  <p className="pt-6">
-                    We're Still Going. Join us in 2025 and unlock the secrets of this ancient library.
-                  </p>
-
                   <p
                       className="text-3xl md:text-6xl drop-shadow-lg pt-6 pb-8"
                       style={{
@@ -1678,31 +1672,138 @@ export function Landing() {
                       Make History.&nbsp;
                     </span>
                   </p>
-                  <a href="#our-story" className="group no-underline text-white" >
-                  <AnimatedArrow text="Read Full Story " />
-                  </a>
                 </p>
               </div>
+
               <div className="grid grid-cols-2 md:grid-cols-1 gap-4 items-start max-w-8xl">
-                <a
-                  className="cursor-pointer group hover:no-underline"
-                  href="/get_started"
-                >
-                  <div
-                    className="max-w-8xl relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
-                    style={{
-                      boxShadow:
-                        "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
-                    }}
-                  >
-                    <div className="flex flex-col py-4 md:py-5 px-5 md:px-7 ">
-                        <p className="text-center">
-                        </p>
+                <div className="">
+                  {/*<h2 className="text-center pt-2">*/}
+                  {/*  What's Happening:*/}
+                  {/*</h2>*/}
 
+                </div>
+                <div className="flex gap-4 max-w-9xl">
+                  <div className="w-30 flex-shrink-0">
+                    <a
+                        className="cursor-pointer group hover:no-underline"
+                        href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
+                    >
+                      <div
+                          className="h-28 relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
+                          style={{
+                            boxShadow:
+                                "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
+                          }}
+                      >
+                        <div className="flex flex-col py-4 md:py-5 px-5 md:px-7 h-12">
+                          <h3 className="text-l md:text-2xl text-white mt-0 mb-1 tracking-tighter !leading-[90%] flex-grow pb-3">
+                            Get Started
+                          </h3>
+                          <AnimatedArrow text="$1M+ already awarded" />
 
-                    </div>
+                        </div>
+                      </div>
+                    </a>
                   </div>
-                </a>
+                  <div className="flex-1 grid grid-cols-3 gap-4" >
+                    <a
+                        className="cursor-pointer group hover:no-underline"
+                        href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
+                    >
+                      <div
+                          className="h-28 relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
+                          style={{
+                            boxShadow:
+                                "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
+                          }}
+                      >
+                        <div>
+
+                        </div>
+                        <div className="flex flex-col py-4 md:py-5 px-5 md:px-7 h-12">
+                          <h3 className="text-l md:text-2xl text-white mt-0 mb-1 tracking-tighter !leading-[90%] flex-grow">
+                            $60,000 Awarded for FASP Submissions!
+                          </h3>
+                          <p>
+                            We're closer than ever to solving this thing!
+                          </p>
+                          <div className="pt-7">
+                            <AnimatedArrow text="Read the post" />
+                          </div>
+
+                        </div>
+                        <img
+                            className=""
+                            src=""
+                        />
+                      </div>
+                    </a>
+                    <a
+                        className="cursor-pointer group hover:no-underline"
+                        href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes-ee5"
+                    >
+                      <div
+                          className="h-28 relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
+                          style={{
+                            boxShadow:
+                                "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
+                          }}
+                      >
+                        <div>
+
+                        </div>
+                        <div className="flex flex-col py-4 md:py-5 px-5 md:px-7 h-12">
+                          <h3 className="text-l md:text-2xl text-white mt-0 mb-1 tracking-tighter !leading-[90%] flex-grow">
+                            December Progress Prizes
+                          </h3>
+                          <p>
+                            01/22/2025
+                          </p>
+                          <div className="pt-7">
+                            <AnimatedArrow text="Read the post" />
+                          </div>
+
+                        </div>
+                        <img
+                            className=""
+                            src=""
+                        />
+                      </div>
+                    </a>
+                    <a
+                        className="cursor-pointer group hover:no-underline"
+                        href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes"
+                    >
+                      <div
+                          className="relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
+                          style={{
+                            height: "100%",
+                            boxShadow:
+                                "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
+                          }}
+                      >
+                        <div className="h-12 flex flex-col py-4 md:py-5 px-5 md:px-7 z-10">
+                          <h3 className="text-l md:text-2xl text-white mt-0 mb-1 tracking-tighter !leading-[90%] flex-grow">
+                            November Progress Prizes
+                          </h3>
+                          <p>
+                            01/30/2025
+                          </p>
+                          <div className="pt-6">
+                            <AnimatedArrow text="Watch the Video" />
+                          </div>
+                        </div>
+                        <img
+                            className="absolute top-[50px] right-0 max-w-[190px]"
+                            src="/img/landing/fragment.webp"
+                        />
+                      </div>
+                    </a>
+                  </div>
+
+                  </div>
+
+
 
                     <div className="flex-wrap z-10 pt-5">
                       {/*<p className="text-center pt-10 text-xl text-orange-600 pt-0.5">*/}
@@ -1783,8 +1884,8 @@ export function Landing() {
                             linkText="Find a Letter"
                             href="/master_plan/ink_detection"
                             imageSrc={<BeforeAfter
-                                beforeImage="/img/ink/51002_crop/32.jpg"
-                                afterImage="/img/ink/51002_crop/prediction.jpg"  />}
+                                beforeImage="/img/ink/51002_crop/prediction.jpg"
+                                afterImage="/img/ink/51002_crop/32.jpg"  />}
                             imagePosition="right"
                         >
                           <div>
@@ -1807,7 +1908,9 @@ export function Landing() {
                             title="Representation"
                             linkText="Scan the Surface"
                             href="/master_plan/surface_representation"
-                            imageSrc="/img/segmentation/surface_rep.jpg"
+                            imageSrc={<BeforeAfter
+                                beforeImage="/img/data/rep_raw_10037.png"
+                                afterImage="/img/data/rep_norms_10037.png"  />}
                             imagePosition="right"
                         >
                           <p className="">
@@ -1828,7 +1931,10 @@ export function Landing() {
                             title="Meshing and Reconstruction"
                             linkText="Chart the Path"
                             href="/master_plan/meshing"
-                            imageSrc="/img/progress/patches.jpg"
+                            imageSrc={<BeforeAfter
+                                beforeImage="/img/data/patches.png"
+                                afterImage="/img/data/raw_pred.png"  />}
+                            imagePosition="right"
                             imagePosition="right"
                         >
                           <p className="pb-5">
@@ -1855,7 +1961,7 @@ export function Landing() {
                         "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
                   }}
               >
-                <h3 className="text-2xl text-white p-3 pb-3 text-center">
+                <h3 className="text-2xl text-white pt-2 pb-3 text-center">
                   What's in the Way
                 </h3>
                 <div className="grid grid-cols-4 gap-5 px-6 pb-3">
@@ -1891,79 +1997,7 @@ export function Landing() {
                   </div>
                 </div>
               </div>
-              <div>
-                <h3 className="py-8">Current Intitatives</h3>
 
-              </div>
-              <div className="">
-                <h2 className="text-center pt-5">
-                  What's Happening:
-                </h2>
-
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 auto-rows-fr items-stretch gap-5 max-w-9xl">
-                <a
-                    className="cursor-pointer group hover:no-underline"
-                    href="/get_started"
-                >
-                  <div
-                      className="relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
-                      style={{
-                        boxShadow:
-                            "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
-                      }}
-                  >
-                  <div>
-
-                  </div>
-                    <div className="flex flex-col py-4 md:py-5 px-5 md:px-7 h-12">
-                      <h3 className="text-l md:text-2xl text-white mt-0 mb-1 tracking-tighter !leading-[90%] flex-grow">
-                        We're Scanning 100 Scrolls This Year
-                      </h3>
-                      <p>
-                        01/22/2025
-                      </p>
-                      <div className="pt-7">
-                        <AnimatedArrow text="Read the post" />
-                      </div>
-
-                    </div>
-                    <img
-                        className=""
-                        src="/img/landing/grand-prize-preview.webp"
-                    />
-                  </div>
-                </a>
-                <a
-                    className="cursor-pointer group hover:no-underline"
-                    href="/master_plan"
-                >
-                  <div
-                      className="relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
-                      style={{
-                        height: "100%",
-                        boxShadow:
-                            "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
-                      }}
-                  >
-                    <div className="h-12 flex flex-col py-4 md:py-5 px-5 md:px-7 z-10">
-                      <h3 className="text-l md:text-2xl text-white mt-0 mb-1 tracking-tighter !leading-[90%] flex-grow">
-                        This Week in the Challenge
-                      </h3>
-                      <p>
-                        01/30/2025
-                      </p>
-                      <div className="pt-6">
-                        <AnimatedArrow text="Watch the Video" />
-                      </div>
-                    </div>
-                    <img
-                        className="absolute top-[50px] right-0 max-w-[190px]"
-                        src="/img/landing/fragment.webp"
-                    />
-                  </div>
-                </a>
-              </div>
               <div className="pt-8 mb-4">
                 <p className="max-w-lg md:text-xl text-lg font-medium mb-8 !leading-[110%] tracking-tight">
                   <span id="our-story" className=" opacity-80 md:opacity-60">
