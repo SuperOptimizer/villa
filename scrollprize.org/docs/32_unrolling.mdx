@@ -201,9 +201,9 @@ More information [here](https://github.com/hendrikschilling/FASP).
 Thaumato Anakalyptor focuses on extracting a dense point cloud of the scroll surface by thresholding gradient-like features, then clustering those points locally to form continuous patches, which are finally stitched into a global surface.
 
 #### Intermediate Representation
-The raw data is first blurred with a box filter. Then a surface-like point cloud is extracted by thresholding on both first and second derivatives via Sobel filters. This approach loosely resembles a 3D Canny-edge filter [^3], though it lacks some refined steps like Gaussian averaging, Non-Maximum Suppression and hysteresis thresholding.
+The raw data is first blurred with a box filter. Then a surface-like point cloud is extracted by thresholding on both first and second derivatives via Sobel filters. This approach loosely resembles a 3D Canny-edge filter [^3], though it lacks some refined steps like Gaussian averaging, non-maximum suppression and hysteresis thresholding.
 
-A limitation is that compressed regions may yield lower point-cloud density, cross-fiber edges can be falsely extracted, along as scan artifacts (beam hardening) can be mistakenly detected as false surfaces.
+A limitation is that compressed regions may yield lower point-cloud density, cross-fiber edges can be falsely extracted, and scan artifacts (e.g. beam hardening effect) can be mistakenly detected as false surfaces. Nevertheless, based on visual inspection, the point clouds appear to decently represent the intended sheet surfaces.
 
 <div className="mb-4">
   <img src="/img/virtual-unrolling/thaumato-ir.png" className="w-[70%]"/>
