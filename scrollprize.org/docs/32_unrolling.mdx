@@ -54,7 +54,7 @@ By rendering the mesh in 2D and observing the now-flattened papyrus sheet, faint
 
 ## The Open Question
 
-Virtual unrolling is essential to read the scrolls, but far from trivial
+Virtual unrolling is essential to read the scrolls, but far from trivial.
 
 The open question that has been puzzling our community for more than one year, and Dr. Seales’ research for over twenty-five years, is the following:
 
@@ -173,7 +173,7 @@ $$
 where:
 - $d(\mathbf{x}_{new}, \mathcal{S})$ measures how well the new point sits on the surface predictions,
 - $\|\mathbf{x}_{new} - \mathbf{x}_{\text{fringe}}\|$ prevents large jumps,
-- $B(\mathbf{x}_{new}, M_{\text{current}})$ measures how adding the new point affects the mesh’s local curvature (flatness).
+- $B(\mathbf{x}_{new}, M_{\text{current}})$ measures how adding the new point affects the mesh local curvature (flatness).
 
 Every *n* iterations, the mesh is smoothed to better approximate a developable surface. Because growing a single mesh is slow, multiple patches are grown in parallel and then merged via a consensus algorithm.
 
@@ -211,7 +211,7 @@ A limitation is that compressed regions may yield lower point-cloud density, cro
 </div>
 
 #### Geometry Processing
-The resulting point cloud is divided into overlapping chunks. Within each chunk, machine learning instance segmentation (i.e., Mask3D [^4]) clusters the points into patches belonging to different wraps of the scroll. The cluster instances are then mapped to a graph where possibly adjacent instances are linked by edges $e$ with weights $w(e)$. The instances are then stitched together by solving a global connectivity graph problem that assigns consistent “winding angles” around the scroll umbilicus to each patch, forming a single coherent mesh, and correcting segmentation errors.
+The resulting point cloud is divided into overlapping chunks. Within each chunk, machine learning instance segmentation (i.e., Mask3D[^4]) clusters the points into patches belonging to different wraps of the scroll. The cluster instances are then mapped to a graph where possibly adjacent instances are nodes $n \in N$ linked by edges $e \in E$ with weights $w(e) \in \mathbb{R}$. The instances are then stitched together by solving a global connectivity graph problem that assigns consistent “winding angles” around the scroll umbilicus to each patch, forming a single coherent mesh, and correcting segmentation errors.
 
 Mathematically, Thaumato Anakalyptor seeks to find a winding angle assignment function $ f: N \rightarrow \mathbb{R} $, where $N$ are the nodes in the graph and $f(n)$ is a winding angle.
 
@@ -232,7 +232,7 @@ c((n_0, n_1)) =
 $$
 
 with $k$ being the observed winding angle difference.
-The optimization looks for a the assignment with the least number of wrongly estimated edge winding angle differences.
+The optimization looks for the assignment with the least number of wrongly estimated edge winding angle differences.
 
 <figure>
   <iframe src="/vid/graph_solver.mp4" width="600" height="400" allow="autoplay; encrypted-media" allowFullScreen></iframe>
