@@ -36,30 +36,29 @@ It's a mess! The scrolls, that survived a volcanic eruption and were buried unde
 
 To read a scroll, we first need to unroll it... **virtually**!
 
-If in the chaotic 3D image you are looking at you could isolate a contiguous part of the papyrus sheet, you could then fit a 2-manifold (or an orientable genus-0 developable surface) to it and find a bidimensional isometric parametrization[^1] that defines a base on top of it.
+If, within the chaotic 3D image you are observing, you can isolate a contiguous region of the papyrus sheet, you can approximate it with a 2-manifold—specifically, an orientable genus-0 developable surface. This allows you to construct a bidimensional isometric parametrization[^1] on the manifold, thereby defining a local basis.
 
-The 2-manifold is commonly represented as a non-watertight triangular mesh. When rendered in the coordinate frame given by its base, the surface looks automatically flat if the found parametrization is obtained with an isometric map from 3D to 2D, i.e. locally preserving distances, shapes, and angles.
+The 2-manifold is typically represented as a non-watertight triangular mesh. When rendered in the coordinate frame established by its local basis, the surface appears flat, provided that the parametrization is derived from an isometric mapping from 3D to 2D. In this case, local distances, shapes, and angles are preserved, ensuring geometric fidelity in the transformation.
 
 <div className="mb-4">
   <img src="/img/virtual-unrolling/s5-segment.png" className="w-[60%]"/>
   <figcaption className="mt-[-6px]">A triangular mesh in 3D space.</figcaption>
 </div>
 
-A triangular mesh can represent part of the papyrus surface in 3D.
-
 <BeforeAfter
   beforeImage="https://dl.ash2txt.org/full-scrolls/Scroll5/PHerc172.volpkg/paths/20241108120732/composite.jpg"
   afterImage="https://dl.ash2txt.org/full-scrolls/Scroll5/PHerc172.volpkg/paths/20241108120732/20241108120732_prediction_rotated_0_layer_17.png"
 />
 
-The same mesh rendered in 2D. Faint letters appear.  
+By rendering the mesh in 2D and observing the now-flattened papyrus sheet, faint letters begin to emerge — appearing as brighter regions in the figure. These weak ink traces are captured by machine learning, that can enhance their visibility and improve text recovery.
 
-When the 3D mesh is rendered in 2D, faint letters begin to appear. Machine learning can enhance the visibility of the text.
+## The Open Question
 
+Virtual unrolling is essential to read the scrolls, but far from trivial
 
-The open problem that has been puzzling our community for more than one year, and Dr. Seales’ research for over twenty-five years, has an extremely easy statement:
+The open question that has been puzzling our community for more than one year, and Dr. Seales’ research for over twenty-five years, is the following:
 
-> **Find an automated way to isolate the 2-manifold that represents the rolled scroll in the 3D images.**
+> **Can we find an automated way to isolate the 2-manifold that represents the rolled scroll in the 3D images?**
 
 We were awarding \$100k to anyone that could solve this problem by the end of 2024. The prize was left unclaimed.
 
