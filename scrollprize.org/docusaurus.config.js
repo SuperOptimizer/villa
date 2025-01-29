@@ -19,9 +19,6 @@ const config = {
   },
   themes: ["@docusaurus/theme-mermaid"],
 
-  // Even if you don't use internalization, you can use this field to set useful
-  // metadata like html lang. For example, if your site is Chinese, you may want
-  // to replace "en" with "zh-Hans".
   i18n: {
     defaultLocale: "en",
     locales: ["en"],
@@ -37,8 +34,18 @@ const config = {
           sidebarPath: require.resolve("./sidebars.js"),
           sidebarCollapsible: false,
           breadcrumbs: false,
-          // Remove this to remove the "edit this page" links.
           editUrl: "https://github.com/ScrollPrize/villa/tree/main/scrollprize.org",
+          remarkPlugins: [
+            require("remark-math"), // Enable LaTeX syntax
+          ],
+          rehypePlugins: [
+            [
+              require("rehype-katex"),
+              {
+                strict: false,
+              },
+            ],
+          ],
         },
         blog: false,
         theme: {
@@ -105,7 +112,7 @@ const config = {
             items: [
               {
                 label: 'Jobs',
-                to: '/jobs', // Adjust the path if needed
+                to: '/jobs', 
               },
             ],
           },
@@ -113,13 +120,11 @@ const config = {
         copyright: `Copyright © ${new Date().getFullYear()} Vesuvius Challenge.`,
       },
       metadata: [
-        // Primary Meta Tags
         {
           name: "description",
           content:
             "A $1,000,000+ machine learning and computer vision competition",
         },
-        // Open Graph / Facebook
         {
           property: "og:type",
           content: "website",
@@ -140,7 +145,6 @@ const config = {
           property: "og:image",
           content: "https://scrollprize.org/img/social/opengraph.jpg",
         },
-        // Twitter
         {
           property: "twitter:card",
           content: "summary_large_image",
@@ -178,7 +182,6 @@ const config = {
       return {
         name: "docusaurus-tailwindcss",
         configurePostCss(postcssOptions) {
-          // Appends TailwindCSS and AutoPrefixer.
           postcssOptions.plugins.push(require("tailwindcss"));
           if (process.env.NODE_ENV !== "development") {
             postcssOptions.plugins.push(require("autoprefixer"));

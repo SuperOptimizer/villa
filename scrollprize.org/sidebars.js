@@ -32,6 +32,7 @@ const sidebars = {
       link: { type: 'doc', id: 'landing' },
       items: [
         { type: 'doc', id: 'get_started' },
+        { type: 'doc', id: 'unrolling' },
         { type: 'doc', id: 'master_plan' },
       ]
     },
