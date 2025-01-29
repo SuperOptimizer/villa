@@ -7,6 +7,7 @@ import BeforeAfter from '@site/src/components/BeforeAfter';
 import Head from '@docusaurus/Head';
 
 <Head>
+  <html data-theme="dark" />
   <meta name="description" content="A $1,000,000+ machine learning and computer vision competition" />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://scrollprize.org" />
@@ -20,7 +21,7 @@ import Head from '@docusaurus/Head';
   <meta property="twitter:image" content="https://scrollprize.org/img/social/opengraph.jpg" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.13.11/dist/katex.min.css" />
   <script src="https://cdn.jsdelivr.net/npm/katex@0.13.11/dist/katex.min.js" async></script>
-  <script src="https://cdn.jsdelivr.net/npm/katex@0.13.11/dist/contrib/auto-render.min.js" async defer onload="renderMathInElement(document.body);"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.13.11/dist/contrib/auto-render.min.js" async defer></script>
 </Head>
 
 # Virtual Unrolling
@@ -122,7 +123,7 @@ For example, by an abuse of notation:
 
 $$
 \min_{\mathbf{u}(\mathbf{x})} \Bigg[
-  \int_{\Omega} \underbrace{\big\| (\mathcal{S}_0(\mathbf{x}) + \mathbf{u}(\mathbf{x})) - \mathcal{S}(\mathbf{x}) \big\|^2}_{\text{data fidelity}}
+  \int_{\Omega} d\Omega \underbrace{\big\| (\mathcal{S}_0(\mathbf{x}) + \mathbf{u}(\mathbf{x})) - \mathcal{S}(\mathbf{x}) \big\|^2}_{\text{data fidelity}}
   + \underbrace{\lambda R(\mathbf{u}, \mathcal{F}_v, \mathcal{F}_h)}_{\text{fiber base regularization}}
 \Bigg]
 $$
@@ -178,7 +179,7 @@ where:
 Every *n* iterations, the mesh is smoothed to better approximate a developable surface. Because growing a single mesh is slow, multiple patches are grown in parallel and then merged via a consensus algorithm.
 
 <figure>
-  <iframe src="/vid/big_patch.mp4" width="600" height="400" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+  <iframe src="/vid/big_patch.mp4" width="600" height="400" allow="autoplay; encrypted-media" allowFullScreen></iframe>
   <figcaption>The surface tracer in action.</figcaption>
 </figure>
 
@@ -211,9 +212,9 @@ A limitation is that compressed regions may yield lower point-cloud density, cro
 </div>
 
 #### Geometry Processing
-The resulting point cloud is divided into overlapping chunks. Within each chunk, machine learning instance segmentation (i.e., Mask3D [^4]) clusters the points into patches belonging to different wraps of the scroll. The cluster instances are then mapped to a graph where possibly adjacent instances are linked by edges. The instances are then stitched together by solving a global connectivity graph problem that assigns consistent “winding angles” around the scroll umbilicus to each patch, forming a single coherent mesh, and correcting segmentation errors.
+The resulting point cloud is divided into overlapping chunks. Within each chunk, machine learning instance segmentation (i.e., Mask3D [^4]) clusters the points into patches belonging to different wraps of the scroll. The cluster instances are then mapped to a graph where possibly adjacent instances are linked by edges $e$ with weights $w(e)$. The instances are then stitched together by solving a global connectivity graph problem that assigns consistent “winding angles” around the scroll umbilicus to each patch, forming a single coherent mesh, and correcting segmentation errors.
 
-Mathematically, Thaumato Anakalyptor seeks to find a winding angle assignment function $ f: N \rightarrow \mathbb{R} $, where $N$ are the nodes in the graph and $f(node)$ is a winding angle.
+Mathematically, Thaumato Anakalyptor seeks to find a winding angle assignment function $ f: N \rightarrow \mathbb{R} $, where $N$ are the nodes in the graph and $f(n)$ is a winding angle.
 
 Ideally, a solution could be:
 
@@ -231,9 +232,11 @@ c((n_0, n_1)) =
 \end{cases}
 $$
 
-which translates to the least number of wrongly estimated edge winding angle differences.
+with $k$ being the observed winding angle difference.
+The optimization looks for a the assignment with the least number of wrongly estimated edge winding angle differences.
+
 <figure>
-  <iframe src="/vid/graph_solver.mp4" width="600" height="400" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+  <iframe src="/vid/graph_solver.mp4" width="600" height="400" allow="autoplay; encrypted-media" allowFullScreen></iframe>
   <figcaption>Example run of the graph solver on Scroll 1 (PHerc Paris 4). Each sheet is visible as a separate line in the image. Colored lines are sheets belonging to the Grand Prize Banner. Every point in a line is a single clustered patch.</figcaption>
 </figure>
 
