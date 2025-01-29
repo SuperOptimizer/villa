@@ -26,13 +26,9 @@ import subprocess
 import signal
 import numpy as np
 import open3d as o3d
+import zarr 
 
 from ThaumatoAnakalyptor.sheet_to_mesh import umbilicus_xy_at_z
-
-# import computation functions
-from ThaumatoAnakalyptor.generate_half_sized_grid import compute as compute_grid_cells
-from ThaumatoAnakalyptor.grid_to_pointcloud import compute as compute_pointcloud
-from ThaumatoAnakalyptor.instances_to_graph import compute as compute_stitch_sheet
 
 class GraphicsView(QGraphicsView):
     def __init__(self, scene, parent=None):
@@ -79,6 +75,7 @@ class ThaumatoAnakalyptor(QMainWindow):
         self.isSelectingStartingPoint = False
         self.display_points = False
         self.points = []
+        self.points_pc = None
         self.loadConfig()
         self.initUI()
         # set icon
@@ -107,8 +104,11 @@ class ThaumatoAnakalyptor(QMainWindow):
         left_panel.setFrameStyle(QFrame.StyledPanel)
 
         # Check and load TIFF files
-        self.tifImages = self.loadTifImages(self.Config.get("downsampled_2d_tiffs", ""))
+        self.tifImages = self.loadImages(self.Config.get("original_2d_tiffs", ""))
+        self.zarr_volume = None
         self.currentTifIndex = 0
+        self.image_array = None
+        self.old_index = -1
 
         # Setup left panel with QGraphicsView
         self.tifScene = QGraphicsScene(self)
@@ -123,7 +123,7 @@ class ThaumatoAnakalyptor(QMainWindow):
         left_panel.setLayout(left_panel_layout)
 
         # Load the first TIFF image
-        self.loadTifImage(self.currentTifIndex)
+        self.loadSlice(self.currentTifIndex)
         self.tifView.fitInView(self.tifScene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
         # Right Panel setup with a Scroll Area
@@ -152,9 +152,15 @@ class ThaumatoAnakalyptor(QMainWindow):
         config.triggered.connect(self.openConfigWindow)
 
 
-    def loadTifImages(self, path):
+    def loadImages(self, path):
         if path and os.path.exists(path):
-            return sorted([f for f in os.listdir(path) if f.endswith('.tif')])
+            if path.endswith(".zarr"):
+                # ome-zarr volume
+                self.zarr_volume = zarr.open(path)
+                self.zarr_volume = self.zarr_volume[0]
+                return [*range(self.zarr_volume.shape[0])]
+            else:
+                return sorted([f for f in os.listdir(path) if f.endswith('.tif')])
         return []
 
     def setupTifNavigation(self, layout):
@@ -184,7 +190,7 @@ class ThaumatoAnakalyptor(QMainWindow):
         # Add the navigation layout to the main layout
         layout.addLayout(navigationLayout)
 
-    def loadTifImage(self, index):
+    def loadSlice(self, index):
         umbilicus_path = os.path.join(self.Config.get("downsampled_2d_tiffs", ""), "umbilicus.txt")
         if os.path.exists(umbilicus_path):
             self.points = []
@@ -197,11 +203,16 @@ class ThaumatoAnakalyptor(QMainWindow):
                 self.points = np.array(self.points)
 
         if 0 <= index < len(self.tifImages):
-            imagePath = os.path.join(self.Config.get("downsampled_2d_tiffs", ""), self.tifImages[index])
+            if self.old_index != index:
+                volume = self.Config.get("original_2d_tiffs", None)
+                if volume is not None and volume.endswith(".zarr"):
+                    image_array = self.loadZarrImage(index)
+                else:
+                    image_array = self.loadTifImage(index)
+                self.image_array = image_array
+            else:
+                image_array = self.image_array
 
-            # Use tifffile to read the TIFF image
-            with tifffile.TiffFile(imagePath) as tif:
-                image_array = tif.asarray()
 
             # print(f"Loaded image {imagePath} at index {index} with shape {image_array.shape} and dtype {image_array.dtype}")
 
@@ -256,10 +267,14 @@ class ThaumatoAnakalyptor(QMainWindow):
                 size_image = size_display / self.tifView.transform().m11()
                 self.tifScene.addEllipse(x - size_image / 2, y - size_image / 2, size_image, size_image, QPen(Qt.green), QBrush(Qt.green))
 
-            if self.display_points:
+            if self.display_points: 
                 # Draw Pointclouds from .ply files
-                self.draw_pointcloud()
+                self.draw_pointcloud(index)
+            else:
+                # Clear the points
+                self.points_pc = None
             
+            self.old_index = index
         else:
             print(f"Index {index} out of range")
             # white placeholder image
@@ -268,40 +283,59 @@ class ThaumatoAnakalyptor(QMainWindow):
             self.tifScene.clear()
             self.tifScene.addPixmap(pixmap)
 
-    def draw_pointcloud(self):
-        # Find all .ply files in the directory
-        pointcloud_path = os.path.join(self.Config["surface_points_path"], "point_cloud_verso")
-        ply_files = [f for f in os.listdir(pointcloud_path) if f.endswith('.ply')]
-        adjusted_tiff_index = 500 + self.currentTifIndex
-        z_index_cell = adjusted_tiff_index // 200
-        # pad to 6 digits
-        z_index_cell_string = str(z_index_cell).zfill(3)
-        # filter all cell_yxz_*_{z_index_cell_string}_*.ply files
-        ply_files = [f for f in ply_files if f.split("_")[4] == z_index_cell_string+".ply"]
-        points = []
-        nr_valid_points = 0
-        for ply_file in ply_files:
-            # load the ply files
-            pcd = o3d.io.read_point_cloud(os.path.join(pointcloud_path, ply_file))
-            points_pcd = np.array(pcd.points)
-            # find the points in the cell that are +- 1 in z away from the current z index
-            valid_points = points_pcd[np.where(np.abs(points_pcd[:, 1] - adjusted_tiff_index) <= 1)]
-            nr_valid_points += len(valid_points)
-            points.append(valid_points)
+    def loadZarrImage(self, index):
+        if self.zarr_volume is None:
+            # ome-zarr volume
+            self.zarr_volume = zarr.open(self.Config.get("original_2d_tiffs", "r"))
+            self.zarr_volume = self.zarr_volume[0]
+
+        image_array = self.zarr_volume[index]
+        return image_array
+
+    def loadTifImage(self, index):
+        imagePath = os.path.join(self.Config.get("downsampled_2d_tiffs", ""), self.tifImages[index])
+
+        # Use tifffile to read the TIFF image
+        with tifffile.TiffFile(imagePath) as tif:
+            image_array = tif.asarray()
+        
+        return image_array
+
+    def draw_pointcloud(self, index):
+        if index != self.old_index or self.points_pc is None:
+            # Find all .ply files in the directory
+            pointcloud_path = os.path.join(self.Config["surface_points_path"], "point_cloud_verso")
+            ply_files = [f for f in os.listdir(pointcloud_path) if f.endswith('.ply')]
+            adjusted_tiff_index = 500 + self.currentTifIndex
+            z_index_cell = adjusted_tiff_index // 200
+            # pad to 6 digits
+            z_index_cell_string = str(z_index_cell).zfill(3)
+            # filter all cell_yxz_*_{z_index_cell_string}_*.ply files
+            ply_files = [f for f in ply_files if f.split("_")[4] == z_index_cell_string+".ply"]
+            self.points_pc = []
+            nr_valid_points = 0
+            for ply_file in ply_files:
+                # load the ply files
+                pcd = o3d.io.read_point_cloud(os.path.join(pointcloud_path, ply_file))
+                points_pcd = np.array(pcd.points)
+                # find the points in the cell that are +- 1 in z away from the current z index
+                valid_points = points_pcd[np.where(np.abs(points_pcd[:, 1] - adjusted_tiff_index) <= 1)]
+                nr_valid_points += len(valid_points)
+                self.points_pc.append(valid_points)
 
         # Draw the points
-        for pointcloud in points:
+        for pointcloud in self.points_pc:
             for point in pointcloud:
                 y, z, x = point
                 self.tifScene.addEllipse(x-500, y-500, 2, 2, QPen(Qt.blue), QBrush(Qt.blue))
 
     def jumpToTifIndex(self):
         index = int(self.indexBox.text())
-        self.loadTifImage(index)
+        self.loadSlice(index)
 
     def toggleDisplayPoints(self):
         self.display_points = self.displayPointsCheckbox.isChecked()
-        self.loadTifImage(self.currentTifIndex)
+        self.loadSlice(self.currentTifIndex)
 
     def onTifMousePress(self, event):
         # print(f"Clicked position in image coordinates: ({int(scenePos.x())}, {int(scenePos.y())}, {self.currentTifIndex})")
@@ -313,7 +347,7 @@ class ThaumatoAnakalyptor(QMainWindow):
             self.yField.setText(str(int(scenePos.y())))
             self.zField.setText(str(self.currentTifIndex))
 
-            self.loadTifImage(self.currentTifIndex)
+            self.loadSlice(self.currentTifIndex)
 
     def incrementIndex(self):
         self.incrementing = True
@@ -331,7 +365,7 @@ class ThaumatoAnakalyptor(QMainWindow):
             self.incrementIndex()
         elif event.key() == Qt.Key_A:
             self.decrementIndex()
-        self.loadTifImage(self.currentTifIndex)
+        self.loadSlice(self.currentTifIndex)
 
     def openConfigWindow(self):
         self.configWindow = ConfigWindow(self)
@@ -753,16 +787,6 @@ class ThaumatoAnakalyptor(QMainWindow):
 
         # Connect the signal to the slot method
         self.stitchSheetComputationDone.connect(self.onStitchSheetComputationDone)
-
-    def stitchSheetComputation(self, overlapp_threshold, start_point, path, recompute, stop_event):
-        try:
-            # Compute
-            compute_stitch_sheet(overlapp_threshold, start_point=start_point, path=path, recompute=recompute, stop_event=stop_event)
-
-        except Exception as e:
-            print(f"Error in computation: {e}")
-        # Emit the signal on completion
-        self.stitchSheetComputationDone.emit()
 
     def stitchSheetScriptComputation(self, overlapp_threshold, start_point, path, recompute, stop_event):
         try:

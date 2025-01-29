@@ -3,6 +3,9 @@
 import open3d as o3d
 import igl
 import numpy as np
+import cv2
+from PIL import Image
+Image.MAX_IMAGE_PIXELS = None
 from scipy.spatial import KDTree
 from scipy.cluster.hierarchy import fcluster, linkage
 import argparse
@@ -98,6 +101,48 @@ def find_closest_triangles(points, scene):
     distances = np.linalg.norm(points_on_triangle - points, axis=-1)
     triangles_id = ans['primitive_ids'].numpy()
     return triangles_id, distances
+
+def find_closest_triangles_signed_distance(points, scene, default_splitter):
+    """
+    Find the closest triangles and compute the signed distances for a set of points.
+
+    Args:
+        points (np.ndarray): Array of points to query (N x 3).
+        scene: Open3D scene object for closest point queries.
+        default_splitter: Object providing the interpolate_umbilicus method.
+
+    Returns:
+        triangles_id (np.ndarray): IDs of the closest triangles for each point.
+        distances (np.ndarray): Euclidean distances to the closest surface points.
+        sign (np.ndarray): Signed distance values.
+    """
+    # Compute umbilicus point for normal optimization
+    umbilicus_xy1_x, umbilicus_xy1_y, umbilicus_xy1_z = default_splitter.interpolate_umbilicus(points[:, 1] - 500)
+    umbilicus_xy1 = np.stack([umbilicus_xy1_y, umbilicus_xy1_z, umbilicus_xy1_x], axis=-1) + 500
+
+    # Calculate optimizable normals
+    optimizable_normals = points - umbilicus_xy1
+
+    # Normalize the normals
+    optimizable_normals = optimizable_normals / np.linalg.norm(optimizable_normals, axis=-1)[:, None]
+
+    # Query the closest triangles and points
+    query_points = o3d.core.Tensor(points, dtype=o3d.core.Dtype.Float32)
+    ans = scene.compute_closest_points(query_points)
+    points_on_triangle = ans['points'].numpy()
+    triangles_id = ans['primitive_ids'].numpy()
+
+    # Compute Euclidean distances
+    distances = np.linalg.norm(points_on_triangle - points, axis=-1)
+
+    # Compute the signed distance
+    vectors_to_closest = points_on_triangle - points  # Vector from points to closest surface points
+    dot_products = np.sum(vectors_to_closest * optimizable_normals, axis=-1)  # Dot product with normal
+    sign = np.sign(dot_products)  # Determine sign of distance
+
+    signed_distances = distances * sign  # Apply sign to distances
+
+    return triangles_id, signed_distances
 
 def find_closest_triangles_same_winding(vertices1, winding_angles1, winding_angles2, triangles2, scene2, default_splitter):
     # optimizeable normal = umbilicus point - vertex
@@ -195,7 +240,6 @@ def find_closest_triangles_same_winding(vertices1, winding_angles1, winding_angl
     print("end list_intersections")
     return directions, np.array(distances)
 
-
 def winding_difference(vertex1, angle1, vertex2, angle2, default_splitter):
     # Calculate the angle between two vertices
     angle_dif = default_splitter.angle_between_vertices(vertex1[[2, 0, 1]] - 500, vertex2[[2, 0, 1]] - 500)
@@ -236,7 +280,7 @@ def align_winding_angles(vertices1, winding_angles1, mesh2_stuff, umbilicus_path
 
     # Make statistic about the winding differences in the closest vertices
     winding_angle_difference = {}
-    for i in range(len(closest_indices2)):
+    for i in tqdm(range(len(closest_indices2)), desc="Winding angle difference"):
         vertex2 = vertices2[closest_indices2[i]]
         angle2 = winding_angles2[closest_indices2[i]]
         vertex1 = clostest_vertices1[i]
@@ -277,6 +321,7 @@ def calculate_vertices_error(vertices1, winding_angles1, winding_angles2, triang
     overlapping_directions = directions1[overlap_mask]
     
     signed_distances = overlapping_directions * overlapping_distances
+    mean_absolute_distance = np.mean(np.abs(signed_distances))
     mean_distance = np.mean(signed_distances)
     std_distance = signed_distances - mean_distance
     std_distance = np.sqrt(std_distance * std_distance)
@@ -285,66 +330,195 @@ def calculate_vertices_error(vertices1, winding_angles1, winding_angles2, triang
     # Output Mesh Quality stats:
     print(f"The Mesh Quality is:")
     print(f"{100 * overlap_percentage:3}% of the vertices of the Input Mesh is overlapping with the Ground Truth Mesh.")
+    print(f"The mean absolute distance of the overlapping Input Mesh vertices to the Ground Truth Mesh is {mean_absolute_distance}")
     print(f"The mean distance of the overlapping Input Mesh vertices to the Ground Truth Mesh is {mean_distance}")
     print(f"The standard deviation of the overlapping Input Mesh vertice distance to the Ground Truth Mesh is {std_distance}")
 
-def calculate_overlapping(secondary_vertices, winding_angles_secondary, winding_angles_primary, triangles_primary, scene_primary, default_splitter):
-    optimizable_direction1, optimizable_distance1 = find_closest_triangles_same_winding(secondary_vertices, winding_angles_secondary, winding_angles_primary, triangles_primary, scene_primary, default_splitter)
-    overlapping_vertices_secondary_mask = optimizable_distance1 < 10
-    return overlapping_vertices_secondary_mask
+def generate_colored_mask_png(triangle_ids, colors, uvs, image_size, path):
+    uvs = (uvs * image_size).astype(np.int32)
+    mask = np.zeros((*image_size[::-1], 3), dtype=np.uint8)
+    colors = (colors * 255).astype(np.uint8)
+    # color = np.array([255,255,255], dtype=np.uint8)
+    for i, triangle_id in tqdm(enumerate(triangle_ids), desc="Generating colored mask"):
+        uv = uvs[triangle_id]
+        color = tuple(int(c) for c in colors[i])
+        # triangle = triangle.astype(np.int32)
+        cv2.fillPoly(mask, [uv], color)
+        # try:
+        # except:
+        #     pass
+    mask = mask[::-1, :, :]
+    # downscale by 10x
+    mask = cv2.resize(mask, (image_size[0] // 10, image_size[1] // 10), interpolation=cv2.INTER_NEAREST)
+    cv2.imwrite(path, mask)
 
-def mesh_quality(mesh_path1, mesh_path2, umbilicus_path, max_distance, output_dir, distance_threshold=100):
-    print(f"Calculating the quality of mesh {mesh_path1} with respect to ground truth mesh {mesh_path2} ...")
-    mesh1_splitter = MeshSplitter(mesh_path1, umbilicus_path)
-    mesh1_splitter.compute_uv_with_bfs(0) # precomputation of the winding angles of the mesh
-    gt_splitter = MeshSplitter(mesh_path2, umbilicus_path)
-    gt_splitter.compute_uv_with_bfs(0) # precomputation of the winding angles of the gt mesh
-
-    fresh_start = True
-    if fresh_start:
-        mesh1, vertices1, _, _ = load_mesh_vertices(mesh_path1)
-        winding_angles1 = calculate_winding_angle(mesh_path1, mesh1_splitter)
-        mesh2_stuff = load_mesh_vertices(mesh_path2)
-        winding_angle_difference, winding_angles2, scene2, mesh2, percentage_valid = align_winding_angles(vertices1, winding_angles1, mesh2_stuff, umbilicus_path, max_distance, gt_splitter)
-        best_alignment = find_best_alignment(winding_angle_difference)
-        print(f"Best alignment: {best_alignment}")
-
-        # pickle save 
-        os.makedirs(output_dir, exist_ok=True)
-        with open(os.path.join(output_dir, "development.pkl"), "wb") as f:
-            pickle.dump((winding_angle_difference, winding_angles1, winding_angles2, best_alignment), f)
+def winding_angle_color(winding_angle):
+    # generates interpolated color between r g b based on winding angle. each 360 degrees have a different color
+    # 0 -> red, 360 -> green, 720 -> blue
+    turn = winding_angle /  360.0
+    rgb_cycle = np.floor(turn / 3.0)
+    positive_adjusted_turn = turn - 3.0 * rgb_cycle
+    interpolation_color = positive_adjusted_turn - int(positive_adjusted_turn)
+    color = np.zeros(3)
+    if positive_adjusted_turn < 0.0:
+        print(f"Positive adjusted turn is below 0: {positive_adjusted_turn}")
+    elif positive_adjusted_turn < 1.0:
+        color = np.array([1.0 - interpolation_color, interpolation_color, 0.0])
+    elif positive_adjusted_turn < 2.0:
+        color = np.array([0.0, 1.0 - interpolation_color, interpolation_color])
+    elif positive_adjusted_turn < 3.0:
+        color = np.array([interpolation_color, 0.0, 1.0 - interpolation_color])
     else:
-        with open(os.path.join(output_dir, "development.pkl"), "rb") as f:
-            winding_angle_difference, winding_angles1, winding_angles2, best_alignment = pickle.load(f)
+        print(f"Positive adjusted turn is above 3: {positive_adjusted_turn}")
+    return color
 
-            mesh1, _, _, _ = load_mesh_vertices(mesh_path1)
-            mesh2, _, _, scene2 = load_mesh_vertices(mesh_path2)
+def distance_color(distance, distance_threshold):
+    # generates color based on distance
+    # positive -> red, negative -> green. intensity based on distance. grey if over threshold
+    color = np.zeros(3)
+    if distance < 0:
+        color = np.array([0.0, 1.0, 0.0])
+    else:
+        color = np.array([1.0, 0.0, 0.0])
+    intensity = abs(distance) / distance_threshold
+    color = intensity * color
+    if intensity > 1.0:
+        color = np.array([0.5, 0.5, 0.5]) # grey
+    return color
 
-    # Adjust the winding angles of the second mesh to have the same winding angle base as the first mesh
+def triangle_mask_area(triangles, vertices, mask):
+    # calculates the area of the mask in the mesh
+    selected_triangles = triangles[mask]
+    # open3d mesh
+    mesh = o3d.geometry.TriangleMesh()
+    mesh.vertices = o3d.utility.Vector3dVector(vertices)
+    mesh.triangles = o3d.utility.Vector3iVector(selected_triangles)
+    # calculate the area
+    area = mesh.get_surface_area()
+    return area
+
+def show_winding_angle_relationship(base_path, umbilicus_path, mesh_path1, mesh_path2, max_distance, distance_threshold=100):
+    # load the image sizes
+    image_path1 = mesh_path1.replace(".obj", ".png")
+    image_path2 = mesh_path2.replace(".obj", ".png")
+    # get uvs image sizes
+    with Image.open(image_path1) as img:
+        # Get dimensions
+        img1_size = img.size[:2]
+    with Image.open(image_path2) as img:
+        # Get dimensions
+        img2_size = img.size[:2]
+
+    # load the meshes
+    mesh1, vertices1, triangles1, scene1 = load_mesh_vertices(mesh_path1)
+    uvs1 = np.asarray(mesh1.triangle_uvs).reshape(-1, 3, 2)
+    mesh2, vertices2, triangles2, scene2 = load_mesh_vertices(mesh_path2)
+    uvs2 = np.asarray(mesh2.triangle_uvs).reshape(-1, 3, 2)
+
+    generate_colored_mask_png(range(len(uvs1)), np.ones((len(uvs1), 3), dtype=np.uint8), uvs1, img1_size, os.path.join(base_path, "mask_test.png"))
+    # generate a winding angle assignment to flattening image
+    image1_path = os.path.join(base_path, "winding_angles1.png")
+    image2_path = os.path.join(base_path, "winding_angles2.png")
+
+    # calculate the winding angles
+    fresh_start = False # run compute function before, no need to recalculate
+    mesh1_splitter = MeshSplitter(mesh_path1, umbilicus_path, use_tempfile=True)
+    if fresh_start or not os.path.exists(os.path.join(base_path, "development1.pkl")):
+        mesh1_splitter.compute_uv_with_bfs(0, use_carthesian=False) # precomputation of the winding angles of the gt mesh
+        # make dirs
+        os.makedirs(base_path, exist_ok=True)
+        with open(os.path.join(base_path, "development1.pkl"), "wb") as f:
+            pickle.dump(mesh1_splitter.vertices_np, f)
+    else:
+        with open(os.path.join(base_path, "development1.pkl"), "rb") as f:
+            mesh1_splitter.vertices_np = pickle.load(f)
+    winding_angles1 = calculate_winding_angle(mesh1_splitter)
+    # find color of winding angles
+    colors1 = np.array([winding_angle_color(winding_angle) for winding_angle in winding_angles1])
+    print("Generating winding angle images")
+    generate_colored_mask_png(range(len(uvs1)), colors1[triangles1[:, 0]], uvs1, img1_size, image1_path)
+    print("Done generating winding angle images")
+
+    mesh2_splitter = MeshSplitter(mesh_path2, umbilicus_path, use_tempfile=True)
+    if fresh_start or not os.path.exists(os.path.join(base_path, "development2.pkl")): # already computed in function compute()
+        mesh2_splitter.compute_uv_with_bfs(0, use_carthesian=False) # precomputation of the winding angles of the gt mesh
+        # make dirs
+        os.makedirs(base_path, exist_ok=True)
+        with open(os.path.join(base_path, "development2.pkl"), "wb") as f:
+            pickle.dump(mesh2_splitter.vertices_np, f)
+    else:
+        with open(os.path.join(base_path, "development2.pkl"), "rb") as f:
+            mesh2_splitter.vertices_np = pickle.load(f)
+    winding_angles2 = calculate_winding_angle(mesh2_splitter)
+
+    # align winding angles
+    winding_angle_difference, winding_angles2, scene2, mesh2, percentage_valid = align_winding_angles(vertices1, winding_angles1, (mesh2, vertices2, triangles2, scene2), umbilicus_path, max_distance, mesh2_splitter)
+    best_alignment = find_best_alignment(winding_angle_difference)
     print(f"Best alignment: {best_alignment}")
-    winding_angles2 -= best_alignment
+    # Adjust the winding angles of the second mesh to have the same winding angle base as the first mesh
+    winding_angles2 += best_alignment
 
-    print("Mesh 1 min max winding angle: ", np.min(winding_angles1), np.max(winding_angles1))
-    print("Mesh 2 min max winding angle: ", np.min(winding_angles2), np.max(winding_angles2))
+    # find color of winding angles
+    colors2 = np.array([winding_angle_color(winding_angle) for winding_angle in winding_angles2])
+    print("Generating winding angle images")
+    generate_colored_mask_png(range(len(uvs2)), colors2[triangles2[:, 0]], uvs2, img2_size, image2_path)
+    print("Done generating winding angle images")
 
-    primary_vertices = np.asarray(mesh1.vertices)
-    secondary_triangles = np.asarray(mesh2.triangles)
-    # Iteratively refine vertices positions of both meshes in the overlapping region
-    calculate_vertices_error(primary_vertices, winding_angles1, winding_angles2, secondary_triangles, scene2, mesh1_splitter, distance_threshold=distance_threshold)
+    # Creates a image of the flattened meshes where the winding angles are shown as colored triangles
+    # also creates an image where the distance to the proper winding is show. green/red and intensity for direction and distance, grey if over threshold
+    # for each triangle pick first vertice and relate to vertice of other mesh
+    mesh1_triangle_points = vertices1[triangles1[:, 0]]
+    mesh2_triangle_points = vertices2[triangles2[:, 0]]
+    triangles_id2, distances_v1_to_mesh2 = find_closest_triangles_signed_distance(mesh1_triangle_points, scene2, mesh1_splitter)
+    triangles_id2 = np.array(triangles_id2)
+    # find vertice in triangles by id
+    vertices_ids2 = triangles2[triangles_id2][:, 0]
+    mask_same_winding2 = np.abs(winding_angles2[vertices_ids2] - winding_angles1[triangles1[:, 0]]) < 90
+    area_good = triangle_mask_area(triangles1, vertices1, mask_same_winding2)
+    area_total = mesh1.get_surface_area()
+    print(f"Area of good mesh2 surface in mesh1: {area_good} / {area_total} = {area_good / area_total}") # GP as GT, FASP related to this
+    # for each triangle pick first vertice and relate to vertice of other mesh
+    triangles_id1, distances_v2_to_mesh1 = find_closest_triangles_signed_distance(mesh2_triangle_points, scene1, mesh1_splitter)
+    triangles_id1 = np.array(triangles_id1)
+    # find vertice in triangles by id
+    vertices_ids1 = triangles1[triangles_id1][:, 0]
+    mask_same_winding1 = np.abs(winding_angles1[vertices_ids1] - winding_angles2[triangles2[:, 0]]) < 90
+    area_good = triangle_mask_area(triangles2, vertices2, mask_same_winding1)
+    area_total = mesh2.get_surface_area()
+    print(f"Area of good mesh1 surface in mesh2: {area_good} / {area_total} = {area_good / area_total}")
+    
+    image1_path = os.path.join(base_path, "winding_angles_related1.png")
+    image2_path = os.path.join(base_path, "winding_angles_related2.png")
+    print("Generating related winding angle images")
+    generate_colored_mask_png(range(len(uvs1)), colors2[vertices_ids2], uvs1, img1_size, image1_path)
+    generate_colored_mask_png(range(len(uvs2)), colors1[vertices_ids1], uvs2, img2_size, image2_path)
+    print("Done generating related winding angle images")
+    image1_path = os.path.join(base_path, "winding_angles_masked_related1.png")
+    image2_path = os.path.join(base_path, "winding_angles_masked_related2.png")
+    print("Generating masked related winding angle images")
+    generate_colored_mask_png(np.array(range(len(uvs1)))[mask_same_winding2], colors2[vertices_ids2][mask_same_winding2], uvs1, img1_size, image1_path)
+    generate_colored_mask_png(np.array(range(len(uvs2)))[mask_same_winding1], colors1[vertices_ids1][mask_same_winding1], uvs2, img2_size, image2_path)
+    print("Done generating masked related winding angle images")
+    # find color of distances
+    colors1 = np.array([distance_color(distance, distance_threshold) for distance in distances_v1_to_mesh2])
+    colors2 = np.array([distance_color(distance, distance_threshold) for distance in distances_v2_to_mesh1])
+    image1_path = os.path.join(base_path, "distance1.png")
+    image2_path = os.path.join(base_path, "distance2.png")
+    print("Generating distance images")
+    generate_colored_mask_png(range(len(uvs1)), colors1, uvs1, img1_size, image1_path)
+    generate_colored_mask_png(range(len(uvs2)), colors2, uvs2, img2_size, image2_path)
+    print("Done generating distance images")
 
-def compute(input_mesh, input_raw_pointcloud, input_instance_pointcloud, mesh_path2, umbilicus_path, max_distance, distance_threshold):
-    output_dir = os.path.dirname(mesh_path2) + "_quality"
-
-    fresh_start = True
-    gt_splitter = MeshSplitter(mesh_path2, umbilicus_path)
-    if fresh_start:
+def compute(base_path, input_mesh, input_raw_pointcloud, input_instance_pointcloud, mesh_path2, umbilicus_path, max_distance, distance_threshold, fresh_start=True):
+    gt_splitter = MeshSplitter(mesh_path2, umbilicus_path, use_tempfile=True)
+    if fresh_start or not os.path.exists(os.path.join(base_path, "development2.pkl")):
         gt_splitter.compute_uv_with_bfs(0) # precomputation of the winding angles of the gt mesh
         # make dirs
-        os.makedirs(output_dir, exist_ok=True)
-        with open(os.path.join(output_dir, "development.pkl"), "wb") as f:
+        os.makedirs(base_path, exist_ok=True)
+        with open(os.path.join(base_path, "development2.pkl"), "wb") as f:
             pickle.dump(gt_splitter.vertices_np, f)
     else:
-        with open(os.path.join(output_dir, "development.pkl"), "rb") as f:
+        with open(os.path.join(base_path, "development2.pkl"), "rb") as f:
             gt_splitter.vertices_np = pickle.load(f)
 
     # load input data, get winding angles 1
@@ -377,8 +551,16 @@ def compute(input_mesh, input_raw_pointcloud, input_instance_pointcloud, mesh_pa
     else:
         # mesh
         mesh1, vertices1, _, _ = load_mesh_vertices(input_mesh)
-        mesh1_splitter = MeshSplitter(input_mesh, umbilicus_path)
-        mesh1_splitter.compute_uv_with_bfs(0) # precomputation of the winding angles of the mesh
+        mesh1_splitter = MeshSplitter(input_mesh, umbilicus_path, use_tempfile=True)
+        if fresh_start or not os.path.exists(os.path.join(base_path, "development1.pkl")):
+            mesh1_splitter.compute_uv_with_bfs(0) # precomputation of the winding angles of the mesh
+            # make dirs
+            os.makedirs(base_path, exist_ok=True)
+            with open(os.path.join(base_path, "development1.pkl"), "wb") as f:
+                pickle.dump(mesh1_splitter.vertices_np, f)
+        else:
+            with open(os.path.join(base_path, "development1.pkl"), "rb") as f:
+                mesh1_splitter.vertices_np = pickle.load(f)
         winding_angles1 = calculate_winding_angle(mesh1_splitter)
 
     # align winding angles
@@ -397,8 +579,6 @@ def compute(input_mesh, input_raw_pointcloud, input_instance_pointcloud, mesh_pa
     # Iteratively refine vertices positions of both meshes in the overlapping region
     calculate_vertices_error(vertices1, winding_angles1, winding_angles2, secondary_triangles, scene2, gt_splitter, distance_threshold=distance_threshold)
 
-    # mesh_quality(mesh_path1, mesh_path2, umbilicus_path, max_distance, output_dir)
-
 def main():
     # Parse arguments
     parser = argparse.ArgumentParser(description="Calculate the Quality statistic of a 3D mesh and a Ground Truth 3D Mesh.")
@@ -407,8 +587,10 @@ def main():
     parser.add_argument("--input_instance_pointcloud", type=str, help="Path to the 3D raw pointcloud input data (.ply)", default=None)
     parser.add_argument("--gt_mesh", type=str, help="Path to the 3D input mesh (.obj)")
     parser.add_argument("--umbilicus_path", type=str, help="Path to the 3D point cloud directory (containing .ply)")
-    parser.add_argument("--max_distance", type=float, help="Maximum distance for a point to be considered part of the mesh", default=1)
-    parser.add_argument("--distance_threshold", type=float, help="Distance threshold for overlapping vertices", default=100)
+    parser.add_argument("--max_distance", type=float, help="Maximum distance for a point to be considered part of the mesh", default=float("inf"))
+    parser.add_argument("--distance_threshold", type=float, help="Distance threshold for overlapping vertices", default=30)
+    parser.add_argument("--output_dir", type=str, help="Output directory for the mesh quality statistics", default="./")
+    parser.add_argument("--reuse_winding_calculation", action="store_true", help="Start from scratch and compute the winding angles", default=False)
 
     args = parser.parse_args()
     print(f"args: {args}")
@@ -417,7 +599,9 @@ def main():
     assert int(args.input_mesh is not None) + int(args.input_raw_pointcloud is not None) + int(args.input_instance_pointcloud is not None) == 1, "Exactly one input must be not None"
 
     # Compute the 3D mask with labels
-    compute(args.input_mesh, args.input_raw_pointcloud, args.input_instance_pointcloud, args.gt_mesh, args.umbilicus_path, args.max_distance, args.distance_threshold)
+    if args.input_mesh is not None:
+        # Show winding angle relationship
+        show_winding_angle_relationship(args.output_dir, args.umbilicus_path, args.input_mesh, args.gt_mesh, args.max_distance, args.distance_threshold)
 
 if __name__ == "__main__":
     main()

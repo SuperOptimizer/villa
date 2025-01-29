@@ -20,7 +20,7 @@ This will generate the graph_problem executable in the build directory.
 ## Run the Executable
 
 bash:
-./graph_problem
+python3 graph_solve.py ARGS
 
 The example.cpp holds a clean template.
 main.cpp contains the current solution based loosely on Believe Propagation.

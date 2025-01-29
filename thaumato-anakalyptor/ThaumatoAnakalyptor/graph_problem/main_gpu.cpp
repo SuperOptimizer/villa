@@ -1,6 +1,7 @@
 /*
 Julian Schilliger 2024 ThaumatoAnakalyptor
 */
+
 #include "solve_gpu.h"
 #include <opencv2/opencv.hpp>
 #include <iostream>
@@ -19,119 +20,6 @@ Julian Schilliger 2024 ThaumatoAnakalyptor
 #include <numeric>
 
 namespace fs = std::filesystem;
-
-std::pair<std::vector<Node>, float> load_graph_from_binary(const std::string &file_name, bool clip_z = false, float z_min = 0.0f, float z_max = 0.0f, float same_winding_factor = 1.0f, bool fix_same_block_edges = false) {
-    std::vector<Node> graph;
-    std::ifstream infile(file_name, std::ios::binary);
-
-    if (!infile.is_open()) {
-        std::cerr << "Error opening file." << std::endl;
-        return std::make_pair(graph, 0.0f);
-    }
-
-    // Read the number of nodes
-    unsigned int num_nodes;
-    infile.read(reinterpret_cast<char*>(&num_nodes), sizeof(unsigned int));
-    std::cout << "Number of nodes in graph: " << num_nodes << std::endl;
-
-    // Prepare the graph with empty nodes
-    graph.resize(num_nodes);
-
-    // Read each node's winding angle and other attributes
-    for (unsigned int i = 0; i < num_nodes; ++i) {
-        infile.read(reinterpret_cast<char*>(&graph[i].z), sizeof(float));
-        infile.read(reinterpret_cast<char*>(&graph[i].f_init), sizeof(float));
-        infile.read(reinterpret_cast<char*>(&graph[i].gt), sizeof(bool));
-        infile.read(reinterpret_cast<char*>(&graph[i].gt_f_star), sizeof(float));
-        graph[i].f_tilde = graph[i].f_init;
-        graph[i].f_star = graph[i].f_init;
-        graph[i].deleted = false;
-        graph[i].fixed = false;
-    }
-    std::cout << "Nodes loaded successfully." << std::endl;
-
-    int count_same_block_edges = 0;
-
-    // Read the adjacency list and edges for each node
-    for (unsigned int i = 0; i < num_nodes; ++i) {
-        unsigned int node_id;
-        infile.read(reinterpret_cast<char*>(&node_id), sizeof(unsigned int));
-
-        unsigned int num_edges;
-        infile.read(reinterpret_cast<char*>(&num_edges), sizeof(unsigned int));
-
-        // Allocate memory for edges in the node
-        graph[node_id].edges = new Edge[num_edges];
-        graph[node_id].num_edges = num_edges;
-
-        for (unsigned int j = 0; j < num_edges; ++j) {
-            Edge& edge = graph[node_id].edges[j];
-            infile.read(reinterpret_cast<char*>(&edge.target_node), sizeof(unsigned int));
-            infile.read(reinterpret_cast<char*>(&edge.certainty), sizeof(float));
-            
-            // Set the certainty factored value
-            edge.certainty_factored = edge.certainty;
-
-            infile.read(reinterpret_cast<char*>(&edge.k), sizeof(float));
-            infile.read(reinterpret_cast<char*>(&edge.same_block), sizeof(bool));
-            edge.fixed = false;  // Default initialization
-
-            // Clip Z coordinates if required
-            if (clip_z) {
-                if (graph[edge.target_node].z < z_min || graph[edge.target_node].z > z_max) {
-                    graph[edge.target_node].deleted = true;
-                    continue;
-                }
-                if (graph[node_id].z < z_min || graph[node_id].z > z_max) {
-                    graph[node_id].deleted = true;
-                    continue;
-                }
-            }
-
-            // Fix edges between nodes in the same block if needed
-            if (fix_same_block_edges) {
-                if (std::abs(edge.k) > 180) {
-                    edge.same_block = true;
-                }
-            }
-
-            // Apply same winding factor if necessary
-            if (edge.same_block) {
-                edge.certainty *= same_winding_factor;
-                edge.certainty_factored *= same_winding_factor;
-                count_same_block_edges++;
-                if (std::abs(edge.k) > 450) {
-                    std::cout << "Edge with k > 450: " << edge.k << std::endl;
-                }
-                if (std::abs(edge.k) < 180) {
-                    std::cout << "Edge with k < 180: " << edge.k << std::endl;
-                }
-            }
-        }
-    }
-
-    std::cout << "Same block edges: " << count_same_block_edges << std::endl;
-    std::cout << "Graph loaded successfully." << std::endl;
-
-    // Find the largest certainty value for display
-    float max_certainty = 0;
-    for (const auto& node : graph) {
-        if (node.deleted) continue;
-        for (int j = 0; j < node.num_edges; ++j) {
-            const Edge& edge = node.edges[j];
-            if (edge.certainty > max_certainty) {
-                max_certainty = edge.certainty;
-            }
-        }
-    }
-
-    std::cout << "Max Certainty: " << max_certainty << std::endl;
-
-    infile.close();
-    // Return the graph and the max certainty value
-    return std::make_pair(graph, max_certainty);
-}
-
 
 void save_graph_to_binary(const std::string& file_name, const std::vector<Node>& graph) {
     std::ofstream outfile(file_name, std::ios::binary);
@@ -152,6 +40,175 @@ void save_graph_to_binary(const std::string& file_name, const std::vector<Node>&
     }
 
     outfile.close();
+}
+
+void append_reverse_edges(std::vector<Node>& graph) {
+    // Temporary list to store the reverse edges we need to add
+    std::vector<std::pair<size_t, Edge>> reverse_edges;
+
+    // Iterate over each node to collect reverse edges
+    for (size_t node_idx = 0; node_idx < graph.size(); ++node_idx) {
+        Node& node = graph[node_idx];
+
+        // Skip deleted nodes
+        if (node.deleted) continue;
+
+        // Iterate over each edge of the current node
+        for (size_t i = 0; i < node.num_edges; ++i) {
+            Edge& edge = node.edges[i];
+            size_t target_idx = edge.target_node;
+
+            // Skip if the target node is deleted
+            if (graph[target_idx].deleted) continue;
+
+            // Create a reverse edge with -k as the edge weight and copy all other fields
+            Edge reverse_edge = edge;
+            reverse_edge.target_node = node_idx;  // Reverse the direction
+            reverse_edge.k = -edge.k;             // Reverse the k value
+
+            // Store the reverse edge in the list to add later
+            reverse_edges.emplace_back(target_idx, reverse_edge);
+        }
+    }
+
+    // Append all collected reverse edges to their respective nodes
+    for (const auto& [target_idx, reverse_edge] : reverse_edges) {
+        Node& target_node = graph[target_idx];
+
+        // Expand the edges array for the target node
+        Edge* new_edges = new Edge[target_node.num_edges + 1];
+        std::copy(target_node.edges, target_node.edges + target_node.num_edges, new_edges);
+
+        // Add the new reverse edge
+        new_edges[target_node.num_edges] = reverse_edge;
+        target_node.num_edges++;
+
+        // Free the old edges array and assign the new one
+        delete[] target_node.edges;
+        target_node.edges = new_edges;
+    }
+}
+
+std::vector<Node> cloneGraph(const std::vector<Node>& graph) {
+    // Create a new graph with the same size as the original
+    std::vector<Node> clonedGraph(graph.size());
+
+    // Copy nodes
+    for (size_t i = 0; i < graph.size(); ++i) {
+        const Node& origNode = graph[i];
+        Node& clonedNode = clonedGraph[i];
+
+        // Copy node attributes
+        clonedNode.z = origNode.z;
+        clonedNode.f_init = origNode.f_init;
+        clonedNode.f_tilde = origNode.f_tilde;
+        clonedNode.f_star = origNode.f_star;
+        clonedNode.gt = origNode.gt;
+        clonedNode.gt_f_star = origNode.gt_f_star;
+        clonedNode.deleted = origNode.deleted;
+        clonedNode.fixed = origNode.fixed;
+        clonedNode.fold = origNode.fold;
+
+        // Allocate and copy edges if they exist
+        if (origNode.num_edges > 0) {
+            clonedNode.num_edges = origNode.num_edges;
+            clonedNode.edges = new Edge[origNode.num_edges];  // Allocate raw array
+
+            for (int j = 0; j < origNode.num_edges; ++j) {
+                clonedNode.edges[j] = origNode.edges[j];  // Copy each edge
+            }
+        } else {
+            clonedNode.num_edges = 0;
+            clonedNode.edges = nullptr;
+        }
+    }
+
+    return clonedGraph;
+}
+
+void free_graph(std::vector<Node>& graph) {
+    for (auto& node : graph) {
+        delete[] node.edges;  // Free the dynamic array of edges
+        node.edges = nullptr; // Set pointer to nullptr to avoid dangling pointers
+        node.num_edges = 0;   // Optionally reset edge count
+    }
+}
+
+void calculate_and_normalize_edge_certainties(const std::vector<Node>& graph, int num_buckets=1000) {
+    float min_f_init = -180.0f;
+    float max_f_init = 180.0f;
+    float bucket_size = (max_f_init - min_f_init) / num_buckets;
+
+    // Single histogram for all edges
+    std::vector<int> hist_all_edges(num_buckets, 0);
+
+    // Step 1: Populate histogram based on f_init values of nodes connected by edges
+    for (const auto& node : graph) {
+        if (node.deleted) {
+            continue;
+        }
+        for (int j = 0; j < node.num_edges; ++j) {
+            const Edge& edge = node.edges[j];
+            if (graph[edge.target_node].deleted) {
+                continue;
+            }
+
+            // Bin source node's f_init value
+            int source_bucket = static_cast<int>((node.f_init - min_f_init) / bucket_size);
+            source_bucket = std::max(0, std::min(num_buckets - 1, source_bucket));
+
+            // Bin target node's f_init value
+            int target_bucket = static_cast<int>((graph[edge.target_node].f_init - min_f_init) / bucket_size);
+            target_bucket = std::max(0, std::min(num_buckets - 1, target_bucket));
+
+            // Increment counts in the histogram for both nodes
+            hist_all_edges[source_bucket]++;
+            hist_all_edges[target_bucket]++;
+        }
+    }
+
+    // Step 2: Compute initial normalization factors (inverse of bin counts)
+    std::vector<float> norm_factors(num_buckets, 1.0f);
+    for (int i = 0; i < num_buckets; ++i) {
+        if (hist_all_edges[i] > 0) {
+            norm_factors[i] = 1.0f / hist_all_edges[i];
+        }
+    }
+
+    // Step 3: Adjust normalization factors to ensure the mean is 1
+    float mean_factor = std::accumulate(norm_factors.begin(), norm_factors.end(), 0.0f) / num_buckets;
+    if (mean_factor != 0) {
+        for (float& factor : norm_factors) {
+            factor /= mean_factor;
+        }
+    }
+
+    // Step 4: Save each edge's certainty normalization factor
+    for (auto& node : graph) {
+        if (node.deleted) {
+            continue;
+        }
+        for (int j = 0; j < node.num_edges; ++j) {
+            Edge& edge = node.edges[j];
+            if (graph[edge.target_node].deleted) {
+                continue;
+            }
+
+            // Bin source and target f_init values
+            int source_bucket = static_cast<int>((node.f_init - min_f_init) / bucket_size);
+            source_bucket = std::max(0, std::min(num_buckets - 1, source_bucket));
+
+            int target_bucket = static_cast<int>((graph[edge.target_node].f_init - min_f_init) / bucket_size);
+            target_bucket = std::max(0, std::min(num_buckets - 1, target_bucket));
+
+            // Get the average normalization factor for the edge
+            float norm_factor = (norm_factors[source_bucket] + norm_factors[target_bucket]) / 2.0f;
+
+            // Save the factor to the edge's certainty_factor property
+            edge.certainty_factor = norm_factor;
+            edge.certainty = edge.certainty * norm_factor;
+        }
+    }
 }
 
 void set_z_range_graph(std::vector<Node>& graph, float z_min, float z_max) {
@@ -229,6 +286,8 @@ void find_largest_connected_component(std::vector<Node>& graph) {
         in_largest_component[node_index] = true;
     }
 
+    std::cout << "Size of largest connected component: " << largest_component.size() << std::endl;
+
     size_t remaining_nodes = 0;
     for (size_t i = 0; i < num_nodes; ++i) {
         if (!in_largest_component[i]) {
@@ -240,6 +299,202 @@ void find_largest_connected_component(std::vector<Node>& graph) {
     }
     std::cout << "Remaining nodes: " << remaining_nodes << " out of " << initial_non_deleted << " initial non deleted nodes, of total edge: " << num_nodes << std::endl;
 }
+
+void remove_low_degree_nodes(std::vector<Node>& graph, int deg) {
+    int initial_nodes = 0;
+    int deleted_nodes = 0;
+    int remaining_nodes = 0;
+    for (auto& node : graph) {
+        if (!node.deleted) {
+            initial_nodes++;
+        }
+        if (node.num_edges <= deg) {
+            if(!node.deleted) {
+                node.deleted = true;
+                deleted_nodes++;
+            }
+        }
+        else if (!node.deleted) {
+            remaining_nodes++;
+        }
+    }
+    std::cout << "Removing low degree nodes. Initial nodes: " << initial_nodes << ", deleted nodes: " << deleted_nodes << ", remaining nodes: " << remaining_nodes << std::endl;
+}
+
+using EdgeWithCertaintyV2 = std::tuple<float, size_t, size_t, float>;  // {k_delta, source_node, target_node, k}
+
+// Union-Find (Disjoint Set Union) structure to track connected components
+struct UnionFind {
+    std::vector<size_t> parent, rank;
+
+    UnionFind(size_t n) : parent(n), rank(n, 0) {
+        for (size_t i = 0; i < n; ++i) {
+            parent[i] = i;
+        }
+    }
+
+    size_t find(size_t u) {
+        if (parent[u] != u) {
+            parent[u] = find(parent[u]);
+        }
+        return parent[u];
+    }
+
+    void unite(size_t u, size_t v) {
+        size_t root_u = find(u);
+        size_t root_v = find(v);
+        if (root_u != root_v) {
+            if (rank[root_u] < rank[root_v]) {
+                parent[root_u] = root_v;
+            } else if (rank[root_u] > rank[root_v]) {
+                parent[root_v] = root_u;
+            } else {
+                parent[root_v] = root_u;
+                rank[root_u]++;
+            }
+        }
+    }
+};
+
+void prim_mst_assign_f_star_v2(size_t start_node, std::vector<Node>& graph, float scale) {
+    size_t num_nodes = graph.size();
+    std::vector<size_t> parent(num_nodes, 0);
+    std::vector<bool> valid(num_nodes, false);
+    std::vector<float> k_values(num_nodes, 0.0);
+
+    // Count all the edges
+    size_t total_edges = 0;
+    for (size_t node = 0; node < num_nodes; ++node) {
+        if (graph[node].deleted) {
+            continue;
+        }
+        for (size_t i = 0; i < graph[node].num_edges; ++i) {
+            const Edge& edge = graph[node].edges[i];
+            size_t v = edge.target_node;
+            if (!graph[v].deleted) {
+                total_edges++;
+            }
+        }
+    }
+    
+    // Priority queue to collect edges and sort by k delta
+    std::vector<EdgeWithCertaintyV2> edge_list(total_edges);
+    std::cout << "Total edges: " << total_edges << std::endl;
+
+    // Collect all the edges
+    size_t edge_index = 0;
+    for (size_t node = 0; node < num_nodes; ++node) {
+        if (graph[node].deleted) {
+            continue;
+        }
+        for (size_t i = 0; i < graph[node].num_edges; ++i) {
+            const Edge& edge = graph[node].edges[i];
+            size_t v = edge.target_node;
+            if (!graph[v].deleted) {
+                float k_delta = std::abs(scale * (graph[v].f_tilde - graph[node].f_tilde) - edge.k);
+                if (edge.same_block) {
+                    k_delta += 90.0f;
+                }
+                if (edge.fixed && edge.certainty > 0.0f) {
+                    k_delta = -1.0f;
+                }
+                edge_list[edge_index++] = {k_delta, node, v, edge.k};
+            }
+        }
+    }
+
+    std::cout << "Edge list size: " << edge_list.size() << std::endl;
+
+    // Sort edges by k_delta in ascending order
+    std::sort(edge_list.begin(), edge_list.end());
+
+    // List to store edges in the MST
+    std::vector<EdgeWithCertaintyV2> mst_edges;
+    UnionFind uf(num_nodes);
+
+    // Process the edges to create an MST
+    for (size_t i = 0; i < edge_list.size(); ++i) {
+        auto [k_delta, u, v, k] = edge_list[i];
+
+        // Use union-find to check if u and v are in the same component
+        if (uf.find(u) != uf.find(v)) {
+            // Add the edge to the MST list
+            mst_edges.push_back({k_delta, u, v, k});
+
+            // Unite the two nodes
+            uf.unite(u, v);
+        }
+    }
+
+    // Create children structures to store each node's children and their k_values
+    std::vector<std::vector<size_t>> children(num_nodes);
+    std::vector<std::vector<float>> children_k_values(num_nodes);
+    for (const auto& [k_delta, u, v, k] : mst_edges) {
+        children[u].push_back(v);
+        children_k_values[u].push_back(k);
+        children[v].push_back(u);
+        children_k_values[v].push_back(-k);
+    }
+
+    // Traverse the MST to assign f_star values (DFS style traversal)
+    std::stack<size_t> stack;
+    std::vector<bool> visited_mst(num_nodes, false);
+    stack.push(start_node);
+
+    // Set f_star for the root node (start_node)
+    graph[start_node].f_tilde = graph[start_node].f_init;
+    graph[start_node].f_star = graph[start_node].f_init;
+
+    int traversed_nodes = 0;
+    while (!stack.empty()) {
+        size_t current = stack.top();
+        stack.pop();
+
+        if (graph[current].deleted) {
+            std::cerr << "Error: Node " << current << " is marked as deleted." << std::endl;
+            continue;
+        }
+
+        // Mark the current node as visited
+        visited_mst[current] = true;
+        traversed_nodes++;
+
+        for (size_t i = 0; i < children[current].size(); ++i) {
+            size_t child = children[current][i];
+            if (graph[child].deleted) {
+                std::cerr << "Error: Child node " << child << " is marked as deleted." << std::endl;
+                continue;
+            }
+            if (visited_mst[child]) {
+                // std::cout << "Cycle detected in MST traversal for node " << child << "." << std::endl;
+                continue;
+            }
+
+            // Calculate the f_star for the child node
+            float k = children_k_values[current][i];
+            graph[child].f_star = closest_valid_winding_angle(graph[child].f_init, graph[current].f_tilde + k);
+            // graph[child].f_star = closest_valid_winding_angle(graph[child].f_init, graph[child].f_star);
+
+            graph[child].f_tilde = graph[child].f_star;
+
+            // Print debug information
+            // std::cout << "Node " << current << " -> Child " << child << " with k = " << k << ", f_star = " << graph[child].f_star << " current f_tilde = " << graph[current].f_tilde << std::endl;
+
+            // Push child onto the stack for further processing
+            stack.push(child);
+        }
+    }
+
+    std::cout << "Traversed nodes: " << traversed_nodes << " out of " << num_nodes << std::endl;
+
+    // Check if all nodes have been visited
+    for (size_t i = 0; i < num_nodes; ++i) {
+        if (valid[i] && !visited_mst[i]) {
+            std::cerr << "Node " << i << " was not visited during MST traversal." << std::endl;
+        }
+    }
+}
+
 
 using EdgeWithCertainty = std::pair<float, int>;  // {certainty, target_node}
 
@@ -278,6 +533,11 @@ void prim_mst_assign_f_star(size_t start_node, std::vector<Node>& graph, float s
 
             // Calculate k_delta (difference between BP solution and estimated k from the graph)
             float k_delta = std::abs(scale * (graph[v].f_tilde - graph[u].f_tilde) - edge.k);
+            // Penalize same block edges
+            if (edge.same_block) {
+                k_delta += 90.0f;
+            }
+            // Select fixed edges with certainty > 0.0
             if (edge.fixed && edge.certainty > 0.0f) {
                 k_delta = -1.0f;
             }
@@ -310,6 +570,7 @@ void prim_mst_assign_f_star(size_t start_node, std::vector<Node>& graph, float s
 
     // Traverse the MST to assign f_star values (DFS style traversal)
     std::stack<size_t> stack;
+    std::vector<bool> visited_mst(num_nodes, false);
     stack.push(start_node);
 
     while (!stack.empty()) {
@@ -320,9 +581,16 @@ void prim_mst_assign_f_star(size_t start_node, std::vector<Node>& graph, float s
             continue;
         }
 
+        // Mark the current node as visited
+        visited_mst[current] = true;
+
         for (size_t i = 0; i < children[current].size(); ++i) {
             size_t child = children[current][i];
             if (graph[child].deleted) {
+                continue;
+            }
+            if (visited_mst[child]) {
+                std::cout << "Cycle detected in MST traversal." << std::endl;
                 continue;
             }
 
@@ -335,6 +603,12 @@ void prim_mst_assign_f_star(size_t start_node, std::vector<Node>& graph, float s
 
             // Push child onto the stack for further processing
             stack.push(child);
+        }
+    }
+    // Check if all nodes have been visited
+    for (size_t i = 0; i < num_nodes; ++i) {
+        if (valid[i] && !visited_mst[i]) {
+            std::cerr << "Node " << i << " was not visited during MST traversal." << std::endl;
         }
     }
 }
@@ -359,7 +633,7 @@ void assign_winding_angles(std::vector<Node>& graph, float scale) {
     }
 
     // Perform MST to assign f_star values
-    prim_mst_assign_f_star(start_node, graph, scale);
+    prim_mst_assign_f_star_v2(start_node, graph, scale);
 
     // check the winding angles on f_star
     for (size_t i = 0; i < num_nodes; ++i) {
@@ -510,6 +784,17 @@ std::tuple<float, float, float, float, float, float> computeErrorStats(const std
         const Node& node_i = graph[idx_i];
         const Node& node_j = graph[idx_j];
 
+        if (node_i.deleted || node_j.deleted) {
+            continue; // Skip deleted nodes
+        }
+
+        if (node_i.f_init <= -90.0f && node_i.f_init >= -140.0f) { // gt assignment bug most probably. disregard
+            continue;
+        }
+        if (node_j.f_init <= -90.0f && node_j.f_init >= -140.0f) { // gt assignment bug most probably. disregard
+            continue;
+        }
+
         // Compute the distance1 (ground truth distances)
         float dist1 = node_i.gt_f_star - node_j.gt_f_star;
 
@@ -575,6 +860,11 @@ std::vector<size_t> bfsExpand(const std::vector<Node>& graph, size_t seed_idx, s
         // Explore neighbors (edges) of the current node
         for (int j = 0; j < graph[current_idx].num_edges; ++j) {
             const Edge& edge = graph[current_idx].edges[j];
+            // Check if edge is "active" in the graph
+            float edge_fit = std::abs(graph[current_idx].f_star + edge.k - graph[edge.target_node].f_star);
+            if (edge_fit > 180.0f) {
+                continue;
+            }
             if (!visited[edge.target_node] && !graph[edge.target_node].deleted && !edge.same_block) {
                 visited[edge.target_node] = true;
                 node_queue.push({edge.target_node, current_breadth + 1});  // Push neighbor with incremented breadth level
@@ -610,6 +900,13 @@ std::tuple<float, float, float, float, float, float> computeLocalizedError(const
             if (patch_idx == seed_idx) continue;  // Skip the seed node itself
 
             const Node& patch_node = graph[patch_idx];
+
+            if (seed_node.f_init <= -90.0f && seed_node.f_init >= -140.0f) { // gt assignment bug most probably. disregard
+                continue;
+            }
+            if (patch_node.f_init <= -90.0f && patch_node.f_init >= -140.0f) { // gt assignment bug most probably. disregard
+                continue;
+            }
 
             // Compute the distance1 (ground truth distances)
             float dist1 = seed_node.gt_f_star - patch_node.gt_f_star;
@@ -718,7 +1015,7 @@ bool is_edge_valid(const std::vector<Node>& graph, const Edge& edge, const Node&
         valid = std::abs(diff - edge.k) < 360 * threshold;
     }
     else if (!edge.same_block) {
-        valid = std::abs(diff - edge.k) < 360 * threshold;
+        valid = std::abs(diff - edge.k) < 360 / 2 * threshold;
     }
     return valid;
 }
@@ -802,6 +1099,14 @@ std::vector<float> generate_spring_constants(float start_value, int steps) {
     }
 
     // Ensure the final value is exactly 1
+    // spring_constants.push_back(1.0f);
+    // spring_constants.push_back(1.0f);
+    // last spring constant from list
+    // spring_constants.push_back(spring_constants[spring_constants.size() - 1]);
+    // spring_constants.push_back(spring_constants[spring_constants.size() - 1]);
+    // spring_constants.push_back(spring_constants[spring_constants.size() - 1]);
+    spring_constants.push_back(1.0f);
+    spring_constants.push_back(1.0f);
     spring_constants.push_back(1.0f);
 
     return spring_constants;
@@ -821,10 +1126,21 @@ std::vector<size_t> get_valid_indices(const std::vector<Node>& graph) {
     return valid_indices;
 }
 
-std::vector<size_t> get_valid_gt_indices(const std::vector<Node>& graph) {
+std::vector<size_t> get_valid_gt_indices(const std::vector<Node>& graph, int fix_windings = 0) {
+    // Get the min and max f_star using ground truth values
+    float f_min = min_f_star(graph, true);
+    float f_max = max_f_star(graph, true);
+
+    // Fix windings based on the number of windings to fix
+    float start_winding = f_max - 360.0f * std::abs(fix_windings);
+    float end_winding = f_min + 360.0f * std::abs(fix_windings);
+
     std::vector<size_t> valid_gt_indices;
     size_t num_valid_nodes = 0;
     for (size_t i = 0; i < graph.size(); ++i) {
+        if (graph[i].gt_f_star > start_winding || graph[i].gt_f_star < end_winding) {
+            continue;
+        }
         if (!graph[i].deleted && graph[i].gt) {
             valid_gt_indices.push_back(i);
             num_valid_nodes++;
@@ -834,8 +1150,554 @@ std::vector<size_t> get_valid_gt_indices(const std::vector<Node>& graph) {
     return valid_gt_indices;
 }
 
+std::pair<int, int> count_good_bad_edges(const Node& node, float test_f_star, const std::vector<Node>& graph) {
+    int good_edges_count = 0;
+    int bad_edges_count = 0;
+
+    for (size_t i = 0; i < node.num_edges; ++i) {
+        const Edge& edge = node.edges[i];
+        float n2n1 = graph[edge.target_node].f_star - test_f_star;
+        
+        // Determine if the edge is in the right direction
+        bool right_direction = (n2n1 > 0 && edge.k > 0) || (n2n1 < 0 && edge.k < 0) || (n2n1 == 0 && edge.k == 0);
+        
+        if (right_direction) {
+            good_edges_count++;
+        } else {
+            bad_edges_count++;
+        }
+    }
+
+    return {good_edges_count, bad_edges_count};
+}
+
+void optimize_f_star_for_good_edges(std::vector<Node>& graph) {
+    while (true) {
+        int count_updated_nodes = 0;
+        for (Node& node : graph) {
+            // Skip deleted nodes
+            if (node.deleted || node.num_edges == 0) continue;
+
+            auto [right_direction_count, wrong_direction_count] = count_good_bad_edges(node, node.f_star, graph);
+
+            // Step 1: Count right and wrong direction edges
+            for (size_t i = 0; i < node.num_edges; ++i) {
+                Edge& edge = node.edges[i];
+                float n2n1 = graph[edge.target_node].f_star - node.f_star;
+                bool right_direction = (n2n1 > 0 && edge.k > 0) || (n2n1 < 0 && edge.k < 0);
+
+                if (right_direction) {
+                    right_direction_count++;
+                } else {
+                    wrong_direction_count++;
+                }
+            }
+            
+            // Step 2: Gather and sort target `f_star` values
+            std::vector<float> target_f_stars;
+            for (size_t i = 0; i < node.num_edges; ++i) {
+                target_f_stars.push_back(graph[node.edges[i].target_node].f_star);
+            }
+            std::sort(target_f_stars.begin(), target_f_stars.end());
+
+            // Step 3: Try placing `f_star` between each consecutive pair to maximize good edges
+            float best_f_star = node.f_star;
+            int max_good_edges = right_direction_count;
+
+            for (size_t i = -1; i < target_f_stars.size(); ++i) {
+                float test_f_star;
+                if (i == -1) {
+                    test_f_star = target_f_stars[0] - 10.0f;
+                } else if (i == target_f_stars.size() - 1) {
+                    test_f_star = target_f_stars[i] + 10.0f;
+                } else {
+                    test_f_star = (target_f_stars[i] + target_f_stars[i + 1]) / 2.0f;
+                }
+
+                auto [test_good_edges, test_bad_edges] = count_good_bad_edges(node, test_f_star, graph);
+
+                // Check if this configuration improves the good edge count
+                if (test_good_edges > max_good_edges) {
+                    max_good_edges = test_good_edges;
+                    best_f_star = test_f_star;
+                }
+            }
+
+            // Step 4: Update `f_star` if an improvement was found
+            if (max_good_edges > right_direction_count) {
+                // std::cout << "Updating node f_star from " << node.f_star << " to " << best_f_star << " to increase good edge count from " << right_direction_count << " to " << max_good_edges << std::endl;
+                node.f_star = best_f_star;
+                count_updated_nodes++;
+            }
+        }
+
+        // Break if no nodes were updated
+        if (count_updated_nodes == 0) {
+            break;
+        }
+        else {
+            std::cout << "Updated " << count_updated_nodes << " nodes." << std::endl;
+        }
+    }
+}
+
+size_t find_valid_start_node(std::vector<Node>& graph) {
+    size_t start_node = 0;
+    bool found_start_node = false;
+    for (size_t i = 0; i < graph.size(); ++i) {
+        if (!graph[i].deleted) {
+            start_node = i;
+            found_start_node = true;
+            break;
+        }
+    }
+
+    if (!found_start_node) {
+        std::cerr << "No non-deleted nodes found in the graph." << std::endl;
+    }
+
+    return start_node;
+}
+
+void deleted_wrong_direction_edges(std::vector<Node>& graph) {
+    int deleted_edges = 0;
+    for (auto& node : graph) {
+        if (node.deleted || node.num_edges == 0) {
+            continue;
+        }
+
+        int edges_before = node.num_edges;
+        int valid_edge_count = 0;
+
+        // Create a temporary array to store valid edges
+        Edge* valid_edges = new Edge[edges_before];
+
+        // Copy valid edges to the temporary array
+        for (int j = 0; j < edges_before; ++j) {
+            const Edge& edge = node.edges[j];
+
+            // Skip deleted nodes
+            if (graph[edge.target_node].deleted) {
+                continue;
+            }
+
+            float n2n1 = graph[edge.target_node].f_star - node.f_star;
+            float k = edge.k;
+            bool right_direction = (n2n1 > 0.0f && k > 0.0f) || (n2n1 < 0.0f && k < 0.0f) || (n2n1 == 0.0f && k == 0.0f); // hacky way to check if edge is in the right direction
+
+            if (right_direction) {
+                // Edge is valid and should be kept
+                valid_edges[valid_edge_count] = edge;
+                valid_edge_count++;
+            } else {
+                // Edge is invalid and should be erased
+                deleted_edges++;
+            }
+        }
+
+        // Free the old edges array
+        delete[] node.edges;
+
+        // If there are valid edges, update the node's edges and count
+        if (valid_edge_count > 0) {
+            node.edges = new Edge[valid_edge_count];
+            std::copy(valid_edges, valid_edges + valid_edge_count, node.edges);
+            node.num_edges = valid_edge_count;
+        } else {
+            // If no valid edges remain, reset the edges
+            node.edges = nullptr;
+            node.num_edges = 0;
+        }
+
+        // Free the temporary valid_edges array
+        delete[] valid_edges;
+    }
+
+    std::cout << "Deleted edges with wrong direction: " << deleted_edges << std::endl;
+}
+
+void bfs_with_f_star_update(std::vector<Node>& graph, size_t start_node) {
+    std::vector<bool> visited(graph.size(), false);
+    std::vector<bool> fixed(graph.size(), false);
+    std::vector<size_t> active_nodes;
+    bool updates_occurred = true;
+    int total_updates = 0;
+
+    // Initialize start node
+    visited[start_node] = true;
+    graph[start_node].f_star = graph[start_node].f_init;
+    active_nodes.push_back(start_node);
+
+    float max_f_star = 0.0f;
+    float min_f_star = 0.0f;
+    float old_max_f_star = 0.0f;
+    float old_min_f_star = 0.0f;
+
+    int old_positive_updates = 0;
+    int old_negative_updates = 0;
+
+    // Loop until no updates occur in an entire cycle (positive + negative)
+    while (updates_occurred) {
+        std::cout << "New cycle." << std::endl;
+        updates_occurred = false;
+
+        // First iteration for positive `k` values
+        int positive_updates = 0;
+        size_t active_index = 0;
+        while (active_index < active_nodes.size()) {
+            size_t current = active_nodes[active_index];
+            active_index++;
+            if (graph[current].deleted) continue;
+
+            for (size_t i = 0; i < graph[current].num_edges; ++i) {
+                Edge& edge = graph[current].edges[i];
+
+                // Not usable on the very outside, but might help inside the scroll?
+                // if (edge.same_block) {
+                //     continue;
+                // }
+
+                size_t target = edge.target_node;
+
+                if (graph[target].deleted || edge.k < 0) continue;  // Skip negative `k` edges for this phase
+
+                // Calculate the proposed f_star for the target node
+                float proposed_f_star = graph[current].f_star + edge.k;
+                float proposed_f_star_discrepancy = roundf((proposed_f_star - graph[target].f_init) / 360.0f) * 360.0f;
+                proposed_f_star = graph[target].f_init + proposed_f_star_discrepancy;
+
+                // Update conditions for positive `k`
+                if (!fixed[target] && (!visited[target] || proposed_f_star > graph[target].f_star)) {
+                    if (!visited[target]) {
+                        visited[target] = true;
+                        active_nodes.push_back(target);
+                    }
+                    graph[target].f_star = proposed_f_star;
+                    updates_occurred = true;
+                    positive_updates++;
+                    if (proposed_f_star > max_f_star) {
+                        max_f_star = proposed_f_star;
+                    }
+                    if (proposed_f_star < min_f_star) {
+                        min_f_star = proposed_f_star;
+                    }
+                }
+            }
+        }
+
+        for (size_t i = 0; i < graph.size(); ++i) {
+            fixed[i] = visited[i];
+        }
+
+        std::cout << "Positive updates: " << positive_updates << std::endl;
+
+        // Second iteration for negative `k` values
+        int negative_updates = 0;
+        active_index = 0;
+        while (active_index < active_nodes.size()) {
+            size_t current = active_nodes[active_index];
+            active_index++;
+            if (graph[current].deleted) continue;
+
+            for (size_t i = 0; i < graph[current].num_edges; ++i) {
+                Edge& edge = graph[current].edges[i];
+
+                // Not usable on the very outside, but might help inside the scroll?
+                // if (edge.same_block) {
+                //     continue;
+                // }
+
+                size_t target = edge.target_node;
+
+                if (graph[target].deleted || edge.k >= 0) continue;  // Skip positive `k` edges for this phase
+
+                // Calculate the proposed f_star for the target node
+                float proposed_f_star = graph[current].f_star + edge.k;
+                float proposed_f_star_discrepancy = roundf((proposed_f_star - graph[target].f_init) / 360.0f) * 360.0f;
+                proposed_f_star = graph[target].f_init + proposed_f_star_discrepancy;
+
+                // Update conditions for negative `k`
+                if (!fixed[target] && (!visited[target] || proposed_f_star < graph[target].f_star)) {
+                    if (!visited[target]) {
+                        visited[target] = true;
+                        active_nodes.push_back(target);
+                    }
+                    graph[target].f_star = proposed_f_star;
+                    updates_occurred = true;
+                    negative_updates++;
+                    if (proposed_f_star > max_f_star) {
+                        max_f_star = proposed_f_star;
+                    }
+                    if (proposed_f_star < min_f_star) {
+                        min_f_star = proposed_f_star;
+                    }
+                }
+            }
+        }
+
+        for (size_t i = 0; i < graph.size(); ++i) {
+            fixed[i] = visited[i];
+        }
+
+        std::cout << "Negative updates: " << negative_updates << std::endl;
+
+        // Track total updates
+        total_updates += positive_updates + negative_updates;
+
+        // Print the number of updates for each direction
+        std::cout << "Positive updates: " << positive_updates << ", Negative updates: " << negative_updates << std::endl;
+        std::cout << "Max f_star: " << max_f_star << ", Min f_star: " << min_f_star << std::endl;
+
+        // If no updates occurred in both phases, stop
+        if (positive_updates == 0 && negative_updates == 0) {
+            updates_occurred = false;
+        }
+        // Escape if we are stuck in a loop but mostly finished
+        if (positive_updates == old_positive_updates && negative_updates == old_negative_updates && max_f_star == old_max_f_star && min_f_star == old_min_f_star) {
+            std::cout << "Stuck in a loop. Exiting." << std::endl;
+            break;
+        }
+        old_positive_updates = positive_updates;
+        old_negative_updates = negative_updates;
+        old_max_f_star = max_f_star;
+        old_min_f_star = min_f_star;
+    }
+
+    // Delete non-visited nodes
+    for (size_t i = 0; i < graph.size(); ++i) {
+        if (!visited[i]) {
+            graph[i].deleted = true;
+        }
+    }
+
+    // Print total updates made throughout the process
+    std::cout << "Total updates: " << total_updates << std::endl;
+}
+
+float trilinear_interpolation(float x, float y, float z, float c000, float c100, float c010, float c110, float c001, float c101, float c011, float c111) {
+    float x0 = 1.0f - x;
+    float y0 = 1.0f - y;
+    float z0 = 1.0f - z;
+    
+    float c00 = c000 * x0 + c100 * x;
+    float c01 = c001 * x0 + c101 * x;
+    float c10 = c010 * x0 + c110 * x;
+    float c11 = c011 * x0 + c111 * x;
+
+    float c0 = c00 * y0 + c10 * y;
+    float c1 = c01 * y0 + c11 * y;
+
+    return c0 * z0 + c1 * z;
+}
+
+float optimize_iron_scroll(std::vector<Node>& graph, int iterations) {
+    // "iron" scroll to have "flat"/parallel sheets in the f_init, f_star, z 3d space
+    float error_eps = 50.0f;
+    float learning_rate = 1.0f;
+
+    float total_error = 0.0f;
+    int s_init = 30; // proper divisor of 360
+    int s_star = 1080;
+    int s_z = 100;
+    float init_juggle = s_init / 2.0f;
+    for (int iteration = 0; iteration < iterations; iteration++) {
+        std::cout << "Iteration: " << iteration << std::endl;
+        total_error = 0.0f;
+        // Set up the meshgrid
+        int min_f_init = std::numeric_limits<int>::max();
+        int max_f_init = std::numeric_limits<int>::min();
+        int min_f_star = std::numeric_limits<int>::max();
+        int max_f_star = std::numeric_limits<int>::min();
+        int min_z = std::numeric_limits<int>::max();
+        int max_z = std::numeric_limits<int>::min();
+        for (const auto& node : graph) {
+            if (node.deleted) {
+                continue;
+            }
+            min_f_init = std::min(min_f_init, static_cast<int>(node.f_init));
+            max_f_init = std::max(max_f_init, static_cast<int>(node.f_init));
+            min_f_star = std::min(min_f_star, static_cast<int>(node.f_star));
+            max_f_star = std::max(max_f_star, static_cast<int>(node.f_star));
+            min_z = std::min(min_z, static_cast<int>(node.z));
+            max_z = std::max(max_z, static_cast<int>(node.z));
+        }
+        // Jiggle init value for smoother convergence
+        if (iteration % 2 == 1) {
+            min_f_init += init_juggle;
+            min_f_star += s_star / 2;
+            min_z += s_z / 2;
+        }
+
+        // Cast meshgrid over 3D space of size s
+        int size_f_init = 360 / s_init - 1;
+        int size_f_star = (max_f_star - min_f_star + 1) / s_star + 2;
+        int size_z = (max_z - min_z + 1) / s_z + 2;
+
+        std::cout << "Meshgrid size: " << size_f_init << " x " << size_f_star << " x " << size_z << std::endl;
+
+        std::vector<std::vector<std::vector<std::vector<float>>>> meshgrid(size_f_init, std::vector<std::vector<std::vector<float>>>(size_f_star, std::vector<std::vector<float>>(size_z, std::vector<float>(0, 0.0f))));
+
+        // For all nodes, calculate error a and store in the right mesh grid
+        for (const auto& node : graph) {
+            if (node.deleted) {
+                continue;
+            }
+            // Iterate over all edges
+            for (size_t i = 0; i < node.num_edges; ++i) {
+                const Edge& edge = node.edges[i];
+                // Only use other block edges
+                // Error a = target f star - node f star - (target f init - node f init)
+                float f_init_dist = graph[edge.target_node].f_init - node.f_init;
+                // Adjust f init dist to take the circular natur of the scroll into consideration. 
+                if (edge.k < 0 && f_init_dist > 0) {
+                    f_init_dist -= 360;
+                }
+                if (edge.k > 0 && f_init_dist < 0) {
+                    f_init_dist += 360;
+                }
+                if (edge.same_block) {
+                    if (edge.k > 0) {
+                        f_init_dist += 360;
+                    }
+                    if (edge.k < 0) {
+                        f_init_dist -= 360;
+                    }
+                }
+                // if (std::abs(f_init_dist + 360) < std::abs(f_init_dist)) {
+                //     f_init_dist += 360;
+                // }
+                // if (std::abs(f_init_dist - 360) < std::abs(f_init_dist)) {
+                //     f_init_dist -= 360;
+                // }
+                float error_a = graph[edge.target_node].f_star - node.f_star - f_init_dist;
+                // take sign of error_a and set to 1/-1
+                if (std::abs(error_a) > error_eps) {
+                    error_a = error_eps * ((error_a > 0) - (error_a < 0));
+                }
+                // Store error a in the right mesh grid
+                int init_index = (static_cast<int>(node.f_init) - min_f_init) / s_init;
+                if (init_index > size_f_init - 1) {
+                    init_index = 0;
+                }
+                if (init_index < 0) {
+                    init_index = size_f_init - 1;
+                }
+                int star_index = (static_cast<int>(node.f_star) - min_f_star) / s_star;
+                int z_index = (static_cast<int>(node.z) - min_z) / s_z;
+                meshgrid[init_index][star_index][z_index].push_back(error_a);
+            }
+        }
+
+        std::cout << "Meshgrid filled." << std::endl;
+        
+        // for each mesh grid calculate adjustment x
+        std::vector<std::vector<std::vector<float>>> meshgrid_adjustments(size_f_init, std::vector<std::vector<float>>(size_f_star, std::vector<float>(size_z, 0.0f)));
+        for (int i = 0; i < size_f_init; i++) {
+            for (int j = 0; j < size_f_star; j++) {
+                for (int k = 0; k < size_z; k++) {
+                    if (meshgrid[i][j][k].empty()) {
+                        continue;
+                    }
+                    // Calculate adjustment x
+                    float sum_error_a = std::accumulate(meshgrid[i][j][k].begin(), meshgrid[i][j][k].end(), 0.0f);
+                    float mean_error_a = sum_error_a / meshgrid[i][j][k].size();
+                    total_error += std::abs(mean_error_a); // update total error
+                    
+                    float adjustment_x = mean_error_a;
+                    // update each meshgrid point with learning_rate * x in f_star direction
+                    meshgrid_adjustments[i][j][k] = learning_rate * adjustment_x;
+                }
+            }
+        }
+        // total_error /= (size_f_init * size_f_star * size_z); // Mean absolute error
+
+        std::cout << "Total error: " << total_error << std::endl;
+
+        // TODO: optional sanity checks for not inverting any part of the meshgrid
+
+        // Elastic deformation of the meshgrid to make it flat with trilinear interpolation
+        for (size_t i = 0; i < graph.size(); ++i) {
+            Node& node = graph[i];
+            if (node.deleted) {
+                continue;
+            }
+            // Calculate the adjustment x for the node with trilinear interpolation
+            float x = (node.f_init - min_f_init) / s_init - 0.5f;
+            float y = (node.f_star - min_f_star) / s_star - 0.5f;
+            float z = (node.z - min_z) / s_z - 0.5f;
+            if (x < 0) {
+                x += size_f_init;
+            }
+            if (y < 0) {
+                y = 0;
+            }
+            if (z < 0) {
+                z = 0;
+            }
+            int init_index = static_cast<int>(x);
+            if (init_index > size_f_init - 1) {
+                init_index = size_f_init - 1;
+            }
+            int init_index1 = (init_index + 1) % size_f_init;
+            int star_index = static_cast<int>(y);
+            int z_index = static_cast<int>(z);
+            float adjustment_000 = meshgrid_adjustments[init_index][star_index][z_index];
+            float adjustment_100 = meshgrid_adjustments[init_index1][star_index][z_index];
+            float adjustment_010 = meshgrid_adjustments[init_index][star_index + 1][z_index];
+            float adjustment_110 = meshgrid_adjustments[init_index1][star_index + 1][z_index];
+            float adjustment_001 = meshgrid_adjustments[init_index][star_index][z_index + 1];
+            float adjustment_101 = meshgrid_adjustments[init_index1][star_index][z_index + 1];
+            float adjustment_011 = meshgrid_adjustments[init_index][star_index + 1][z_index + 1];
+            float adjustment_111 = meshgrid_adjustments[init_index1][star_index + 1][z_index + 1];
+            float adjustment_x = trilinear_interpolation(x-init_index, y-star_index, z-z_index, adjustment_000, adjustment_100, adjustment_010, adjustment_110, adjustment_001, adjustment_101, adjustment_011, adjustment_111);
+
+            // Update the node f_star with the adjustment x
+            node.f_star += adjustment_x;
+        }
+
+        // Print the total error
+        std::cout << "Iteration: " << iteration << ", Total Error: " << total_error << std::endl;
+    }
+
+    // return mean abs x as error
+    return total_error;
+}
+
+void solve_topological(std::vector<Node>& graph) {
+    std::cout << "Solving topological." << std::endl;
+    // optimize_f_star_for_good_edges(graph);
+    std::cout << "Removing invalid edges." << std::endl;
+    calculate_histogram_k(graph, "histogram_k_initial.png");
+    calculate_histogram_edges(graph, "histogram_edges_intial.png");
+    calculate_histogram(graph, "histogram_nodes_initial.png");
+    // Remove wrong direction edges
+    deleted_wrong_direction_edges(graph);
+    std::cout << "Finding largest connected component." << std::endl;
+    calculate_histogram_edges(graph, "histogram_edges_deleted.png");
+    // Find largest connected component
+    find_largest_connected_component(graph);
+    std::cout << "Assigning winding angles." << std::endl;
+
+    // append_reverse_edges(graph);
+
+    // Assign winding angles
+    bfs_with_f_star_update(graph, find_valid_start_node(graph));
+
+    std::cout << "Done solving topological." << std::endl;
+
+    // Validity checks
+    // store only the valid indices to speed up the loop
+    std::vector<size_t> valid_indices = get_valid_indices(graph);
+    std::vector<size_t> valid_gt_indices = get_valid_gt_indices(graph, 10);
+
+    // Print the error statistics
+    auto [mean, min, q1, median, q3, max] = computeErrorStats(graph, valid_gt_indices);
+    auto [mean_local, min_local, q1_local, median_local, q3_local, max_local] = computeLocalizedError(graph, valid_gt_indices, 100, 187); // 187 patches breath = radius of 30cm local area covered. 
+    std::cout << "After final assigning winding angles with Prim MST. Mean Error to GT: " << mean << ", Min: " << min << ", Q1: " << q1 << ", Median: " << median << ", Q3: " << q3 << ", Max: " << max << " | Localized Error: " << mean_local << ", Min: " << min_local << ", Q1: " << q1_local << ", Median: " << median_local << ", Q3: " << q3_local << ", Max: " << max_local << std::endl;
+}
+
 // This is an example of a solve function that takes the graph and parameters as input
-void solve(std::vector<Node>& graph, argparse::ArgumentParser* program, int num_iterations = 10000) {
+void solve(std::vector<Node>& graph, argparse::ArgumentParser* program, int num_iterations = 10000, bool adjust_lowest_only = false) {
     // Default values for parameters
     int estimated_windings = 0;
     float spring_constant = 2.0f;
@@ -886,52 +1748,67 @@ void solve(std::vector<Node>& graph, argparse::ArgumentParser* program, int num_
     // Create a new histogram directory
     fs::create_directory(histogram_dir);
 
+    // Delete the existing winding angles directory if it exists
+    if (fs::exists("winding_angles")) {
+        fs::remove_all("winding_angles");
+    }
+    // Create a new histogram directory
+    fs::create_directory("winding_angles");
+
+    // Delete the existing winding angles directory if it exists
+    if (fs::exists("side")) {
+        fs::remove_all("side");
+    }
+    // Create a new histogram directory
+    fs::create_directory("side");
+
     // Generate spring constants starting from 5.0 with 12 steps
-    std::vector<float> spring_constants = generate_spring_constants(spring_constant, steps);
+    // std::vector<float> spring_constants = generate_spring_constants(spring_constant, steps);
+    std::vector<float> spring_constants = {2.0f, 8.0f, 1.0f, 2.0f, 1.0f, 1.0f};
 
     // Calculate the number of digits needed for padding
     int max_index_digits = static_cast<int>(std::log10(spring_constants.size())) + 1;
     int max_iter_digits = static_cast<int>(std::log10(num_iterations - 1)) + 1;
 
     // store only the valid indices to speed up the loop
-    std::vector<size_t> valid_indices;
-    std::vector<size_t> valid_gt_indices;
+    std::vector<size_t> valid_indices = get_valid_indices(graph);
+    std::vector<size_t> valid_gt_indices = get_valid_gt_indices(graph, 10);
 
-    float invalid_edge_threshold = 3.5f;
+    float invalid_edge_threshold = 1.5f;
 
     int edges_deletion_round = 0;
     while (true) {
-        // store only the valid indices to speed up the loop
-        valid_indices = get_valid_indices(graph);
-        valid_gt_indices = get_valid_gt_indices(graph);
         // Do 2 rounds of edge deletion
-        if (edges_deletion_round > 8 || invalid_edge_threshold <= 0.05) {
+        if (edges_deletion_round > 0 || invalid_edge_threshold <= 0.05) {
             // Do last of updates with 3x times iterations and spring constant 1.0
             num_iterations = num_iterations * 3;
             spring_constant = 1.0f;
 
             break;
         }
-        solve_gpu_session(graph, edges_deletion_round, video_mode, max_index_digits, max_iter_digits, num_iterations, o, spring_factor, steps, spring_constants, valid_indices, iterations_factor, o_factor, estimated_windings, histogram_dir);
-        // After first edge deletion round remove the invalid edges
-        if (edges_deletion_round >= 0) {
-            // Remove edges with too much difference between f_star and k
-            remove_invalid_edges(graph, invalid_edge_threshold);
-        }
+        solve_gpu_session(graph, edges_deletion_round, video_mode, max_index_digits, max_iter_digits, num_iterations, o, spring_factor, steps, spring_constants, valid_indices, iterations_factor, o_factor, estimated_windings, histogram_dir, adjust_lowest_only);
+        std::cout << "After solving with spring constant: " << spring_constant << ", Iterations: " << num_iterations << std::endl;
+        // // After first edge deletion round remove the invalid edges
+        // if (edges_deletion_round >= 0) {
+        //     // Remove edges with too much difference between f_star and k
+        //     remove_invalid_edges(graph, invalid_edge_threshold);
+        // }
+        std::cout << "After removing invalid edges with threshold: " << invalid_edge_threshold << std::endl;
         find_largest_connected_component(graph);
+        std::cout << "After finding largest connected component." << std::endl;
         // Update the valid indices
         valid_indices = get_valid_indices(graph);
         valid_gt_indices = get_valid_gt_indices(graph);
         
         // Reduce the threshold by 20% each time
         invalid_edge_threshold *= 0.7f;
-        invalid_edge_threshold -= 0.1f;
+        invalid_edge_threshold -= 0.01f;
         if (invalid_edge_threshold < 0.30) {
             invalid_edge_threshold = 0.30;
         }
         std::cout << "Reducing invalid edges threshold to: " << invalid_edge_threshold << std::endl;
-        // Assign winding angles again after removing invalid edges
-        float scale = calculate_scale(graph, estimated_windings);
+        // // Assign winding angles again after removing invalid edges
+        // float scale = calculate_scale(graph, estimated_windings);
         
         // // Detect folds
         // if (edges_deletion_round == 0) {
@@ -940,7 +1817,18 @@ void solve(std::vector<Node>& graph, argparse::ArgumentParser* program, int num_
         // }
 
         // Assign winding angles again after removing invalid edges
-        assign_winding_angles(graph, scale);
+        // assign_winding_angles(graph, scale);
+        // check the winding angles on f_star
+        // for (size_t i = 0; i < graph.size(); ++i) {
+        //     if (graph[i].deleted) {
+        //         continue;
+        //     }
+        //     closest_valid_winding_angle(graph[i].f_init, graph[i].f_star);
+        // }
+
+        // store only the valid indices to speed up the loop
+        valid_indices = get_valid_indices(graph);
+        valid_gt_indices = get_valid_gt_indices(graph, 10);
         
         // Print the error statistics
         auto [mean, min, q1, median, q3, max] = computeErrorStats(graph, valid_gt_indices);
@@ -952,21 +1840,21 @@ void solve(std::vector<Node>& graph, argparse::ArgumentParser* program, int num_
 
         edges_deletion_round++;
     }
-    // Assign winding angles to the graph
-    float scale = calculate_scale(graph, estimated_windings);
-    assign_winding_angles(graph, scale);
+    // // Assign winding angles to the graph
+    // float scale = calculate_scale(graph, estimated_windings);
+    // // assign_winding_angles(graph, scale);
+    // // check the winding angles on f_star
+    // for (size_t i = 0; i < graph.size(); ++i) {
+    //     if (graph[i].deleted) {
+    //         continue;
+    //     }
+    //     closest_valid_winding_angle(graph[i].f_init, graph[i].f_star);
+    // }
 
     // Print the error statistics
     auto [mean, min, q1, median, q3, max] = computeErrorStats(graph, valid_gt_indices);
     auto [mean_local, min_local, q1_local, median_local, q3_local, max_local] = computeLocalizedError(graph, valid_gt_indices, 100, 187); // 187 patches breath = radius of 30cm local area covered. 
     std::cout << "After final assigning winding angles with Prim MST. Mean Error to GT: " << mean << ", Min: " << min << ", Q1: " << q1 << ", Median: " << median << ", Q3: " << q3 << ", Max: " << max << " | Localized Error: " << mean_local << ", Min: " << min_local << ", Q1: " << q1_local << ", Median: " << median_local << ", Q3: " << q3_local << ", Max: " << max_local << std::endl;
-
-    if (video_mode) {
-        // Calculate final histogram after all iterations
-        calculate_histogram(graph, "final_histogram.png");
-        // After generating all histograms, create a final video from the images
-        create_video_from_histograms(histogram_dir, "winding_angle_histogram.avi", 10);
-    }
 }
 
 void invert_winding_direction_graph(std::vector<Node>& graph) {
@@ -989,7 +1877,7 @@ void auto_winding_direction(std::vector<Node>& graph, argparse::ArgumentParser* 
     std::cout << "Auto Winding Direction" << std::endl;
     
     // Make a copy of the graph
-    std::vector<Node> auto_graph = graph;
+    std::vector<Node> auto_graph = cloneGraph(graph);
     // min max z values of graph
     float z_min = std::numeric_limits<float>::max();
     float z_max = std::numeric_limits<float>::min();
@@ -1008,7 +1896,7 @@ void auto_winding_direction(std::vector<Node>& graph, argparse::ArgumentParser* 
     // set z range: middle +- 250
     set_z_range_graph(auto_graph, middle_z - 250.0f, middle_z + 250.0f); // speedup the winding direction computation
     
-    std::vector<Node> auto_graph_other_block = auto_graph;
+    std::vector<Node> auto_graph_other_block = cloneGraph(auto_graph);
     invert_winding_direction_graph(auto_graph_other_block); // build inverted other block graph
 
     // solve
@@ -1016,8 +1904,8 @@ void auto_winding_direction(std::vector<Node>& graph, argparse::ArgumentParser* 
     if (auto_num_iterations == -1) {
         auto_num_iterations = program->get<int>("--num_iterations");
     }
-    solve(auto_graph_other_block, program, auto_num_iterations);
     solve(auto_graph, program, auto_num_iterations);
+    solve(auto_graph_other_block, program, auto_num_iterations);
 
     // Exact matching score
     float exact_score = exact_matching_score(auto_graph);
@@ -1111,6 +1999,10 @@ void auto_winding_direction(std::vector<Node>& graph, argparse::ArgumentParser* 
     else {
         std::cout << "Standard winding direction has highest score. Not inverting the winding direction." << std::endl;
     }
+
+    //Free auto graphs
+    free_graph(auto_graph);
+    free_graph(auto_graph_other_block);
 }
 
 void construct_ground_truth_graph(std::vector<Node>& graph) {
@@ -1231,11 +2123,11 @@ int main(int argc, char** argv) {
     float o = 2.0f;
     float iterations_factor = 2.0f;
     float o_factor = 0.25f;
-    float spring_factor = 6.0f;
+    float spring_factor = 10.0f;
     int steps = 5;
     int z_min = -2147483648;
     int z_max = 2147483647;
-    float same_winding_factor = 1.0f;
+    float same_winding_factor = 0.10f;
 
     // Add command-line arguments for graph input and output
     program.add_argument("--input_graph")
@@ -1374,19 +2266,24 @@ int main(int argc, char** argv) {
     std::string input_graph_file = program.get<std::string>("--input_graph");
     auto [graph, max_certainty] = load_graph_from_binary(input_graph_file, true, (static_cast<float>(program.get<int>("--z_min")) + 500) / 4, (static_cast<float>(program.get<int>("--z_max")) + 500) / 4, same_winding_factor, program.get<bool>("--fix_same_block_edges"));
 
+    // calculate_and_normalize_edge_certainties(graph, 720);
+
+    calculate_histogram_edges(graph, "histogram_edges_start.png");
+    std::cout << "Initial Graph Size: " << graph.size() << std::endl;
+
     // invert graph
     if (program.get<bool>("--invert")) {
         std::cout << "Inverting the winding direction of the graph" << std::endl;
         invert_winding_direction_graph(graph);
     }
 
-    // Calculate the exact matching loss
-    float exact_score = exact_matching_score(graph);
-    std::cout << "Exact Matching Score: " << exact_score << std::endl;
+    // // Calculate the exact matching loss
+    // float exact_score = exact_matching_score(graph);
+    // std::cout << "Exact Matching Score: " << exact_score << std::endl;
 
-    // Calculate the approximate matching loss
-    float approx_loss = approximate_matching_loss(graph, 1.0f);
-    std::cout << "Approximate Matching Loss: " << approx_loss << std::endl;
+    // // Calculate the approximate matching loss
+    // float approx_loss = approximate_matching_loss(graph, 1.0f);
+    // std::cout << "Approximate Matching Loss: " << approx_loss << std::endl;
 
     // Calculate and display the histogram of f_star values
     // calculate_histogram(graph);
@@ -1397,14 +2294,97 @@ int main(int argc, char** argv) {
         construct_ground_truth_graph(graph);
     }
     else {
+        // Remove nodes with degree lower than deg
+        // remove_low_degree_nodes(graph, 2);
+        find_largest_connected_component(graph);
+
         // Automatically determing winding direction
         if (program.get<bool>("--auto")) {
             auto_winding_direction(graph, &program);
         }
         // Solve the problem using a solve function
-        fix_gt_parts(graph, {6000}, -10, 10.0f * max_certainty, program.get<bool>("--fix_all_gt"));
+        // fix_gt_parts(graph, {6000}, -10, 10.0f * max_certainty, program.get<bool>("--fix_all_gt"));
         num_iterations = program.get<int>("--num_iterations");
-        solve(graph, &program, num_iterations);
+        if (true) {
+            solve(graph, &program, num_iterations);
+
+            // Save complete graph computation to a binary file
+            saveGraph(graph, "graph_iterations_solution.bin");
+        }
+        else {
+            // Load graph from binary file
+            graph = loadGraph("graph_iterations_solution.bin");
+        }
+
+        // // Remove start and end 5% of scroll, run solver again
+        // {
+        //     float min_f_star_value = min_f_star(graph);
+        //     float max_f_star_value = max_f_star(graph);
+        //     // Delete lowest and highest 5% of f_star values
+        //     float lowest_f_star = min_f_star_value + 0.05f * (max_f_star_value - min_f_star_value);
+        //     float highest_f_star = max_f_star_value - 0.05f * (max_f_star_value - min_f_star_value);
+        //     for (size_t i = 0; i < graph.size(); ++i) {
+        //         if (graph[i].f_star < lowest_f_star || graph[i].f_star > highest_f_star) {
+        //             graph[i].deleted = true;
+        //         }
+        //         graph[i].f_tilde = graph[i].f_init;
+        //         graph[i].f_star = graph[i].f_init;
+        //     }
+
+        //     int count_good = 0;
+        //     int count_bad = 0;
+        //     // Increase certainty of top 3 edges per node
+        //     for (size_t i = 0; i < graph.size(); ++i) {
+        //         if (graph[i].deleted) {
+        //             continue;
+        //         }
+        //         if (graph[i].num_edges < 6) {
+        //             continue;
+        //         }
+                
+        //         for (size_t j = 0; j < graph[i].num_edges; ++j) {
+        //             if (graph[graph[i].edges[j].target_node].deleted) {
+        //                 continue;
+        //             }
+        //             if (!graph[i].edges[j].same_block) {
+        //                 continue;
+        //             }
+                    
+        //             Edge& edge = graph[i].edges[j];
+        //             float dir1 = graph[edge.target_node].f_star - graph[i].f_star;
+        //             float threshold = 1.0f;
+        //             if (dir1 * edge.k < 0.0f) {
+        //                 if (std::abs(dir1) > threshold) {
+        //                     edge.certainty = 0.0f;
+        //                     if (edge.gt_edge) {
+        //                         if (edge.good_edge) {
+        //                             count_bad++;
+        //                         }
+        //                         else {
+        //                             count_good++;
+        //                         }
+        //                     }
+        //                 // Delete nodes
+        //                 graph[i].deleted = true;
+        //                 graph[edge.target_node].deleted = true;
+        //                 }
+        //             }
+        //         }
+                
+        //     }
+        //     std::cout << "Deleted edges of very close nodes Good: " << count_good << ", Bad: " << count_bad << std::endl;
+
+        //     solve(graph, &program, num_iterations);
+        // }
+
+        create_ply_pointcloud(graph, "initial_pointcloud.ply");
+        create_ply_pointcloud_side(graph, "initial_side_pointcloud.ply");
+        // optimize_iron_scroll(graph, 150);
+        // solve(graph, &program, num_iterations, true);
+        // plot_nodes(graph, "final_nodes_plot.png");
+        // create_ply_pointcloud(graph, "final_pointcloud.ply");
+        // Finish the graph with topological sort
+        // solve_topological(graph);
     }
 
     // print the min and max f_star values
@@ -1416,12 +2396,21 @@ int main(int argc, char** argv) {
     save_graph_to_binary(output_graph_file, graph);
 
     // Calculate the exact matching loss
-    float exact_score2 = exact_matching_score(graph);
-    std::cout << "Exact Matching Score: " << exact_score2 << std::endl;
+    // float exact_score2 = exact_matching_score(graph);
+    // std::cout << "Exact Matching Score: " << exact_score2 << std::endl;
 
-    // Calculate the approximate matching loss
-    float approx_loss2 = approximate_matching_loss(graph, 1.0f);
-    std::cout << "Approximate Matching Loss: " << approx_loss2 << std::endl;
+    // // Calculate the approximate matching loss
+    // float approx_loss2 = approximate_matching_loss(graph, 1.0f);
+    // std::cout << "Approximate Matching Loss: " << approx_loss2 << std::endl;
+    create_video_from_histograms("winding_angles", "winding_angles_plot.avi", 20);
+    create_video_from_histograms("side", "sides_plot.avi", 20);
+    if (program.get<bool>("--video")) {
+        // Calculate final histogram after all iterations
+        calculate_histogram(graph, "final_histogram.png");
+        // After generating all histograms, create a final video from the images
+        create_video_from_histograms("histogram", "winding_angle_histogram.avi", 60);
+        create_video_from_histograms("winding_angles", "winding_angle_histogram.avi", 60);
+    }
 
     return 0;
 }
