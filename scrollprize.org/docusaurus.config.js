@@ -198,6 +198,10 @@ const config = {
             to: "https://donate.stripe.com/aEUg101vt9eN8gM144",
             from: "/donate",
           },
+          {
+            to: "/villa_model",
+            from: "/lego",
+          }
         ],
       },
     ],
