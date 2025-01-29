@@ -117,16 +117,17 @@ These representations are not free from mistakes (e.g., fake mergers or false po
 
 Given surface predictions $\mathcal{S}$, vertical papyrus fibers $\mathcal{F}_v$, horizontal papyrus fibers $\mathcal{F}_h$, and a canonical non-deformed spiral $\mathcal{S}_0$, the goal is to find a **3D diffeomorphism**, i.e. a differentiable and invertible transformation from $\mathcal{S}_0$ to $\mathcal{S}$.
 
-We can represent this transformation as an **integrable, parametrized flow field** $\mathbf{u}(\mathbf{x})$ in the full 3D volume. The canonical spiral $\mathcal{S}_0$ is displaced by the flow vectors $\mathbf{u}$. To find the best flow field, we minimize a global objective that aligns the deformed canonical surface to the intermediate representation while enforcing fiber directions. For example, by an abuse of notation:
+We can represent this transformation as an **integrable, parametrized flow field** $\mathbf{u}(\mathbf{x})$ in the full 3D volume. The canonical spiral $\mathcal{S}_0$ is displaced by the flow vectors $\mathbf{u}$. To find the best flow field, we minimize a global objective that aligns the deformed canonical surface to the intermediate representation while enforcing fiber directions.
+For example, by an abuse of notation:
 
 $$
 \min_{\mathbf{u}(\mathbf{x})} \Bigg[
-  \int_{\Omega} \underbrace{\big\| \mathcal{S}_0(\mathbf{x}) + \mathbf{u}(\mathbf{x}) - \mathcal{S}(\mathbf{x}) \big\|^2}_{\text{data fidelity}}
+  \int_{\Omega} \underbrace{\big\| (\mathcal{S}_0(\mathbf{x}) + \mathbf{u}(\mathbf{x})) - \mathcal{S}(\mathbf{x}) \big\|^2}_{\text{data fidelity}}
   + \underbrace{\lambda R(\mathbf{u}, \mathcal{F}_v, \mathcal{F}_h)}_{\text{fiber base regularization}}
 \Bigg]
 $$
 
-where $\Omega$ is the domain in the 3D volume, and $R(\mathbf{u}, \mathcal{F}_v, \mathcal{F}_h)$ enforces that vertical/horizontal fibers in $\mathcal{S}$ match up properly when flattened.
+where $\mathcal{S}_0(\mathbf{x}) + \mathbf{u}(\mathbf{x})$ represents the canonical spiral displaced by the flow field, $\Omega$ is the domain in the 3D volume, and $R(\mathbf{u}, \mathcal{F}_v, \mathcal{F}_h)$ enforces that vertical/horizontal fibers in $\mathcal{S}$ match up properly when flattened.
 
 #### First Automated Segmentation Prize Submission
 Spiral fitting was submitted by Prof Paul Henderson for the First Automated Segmentation Prize of 2024.
