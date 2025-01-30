@@ -36,7 +36,18 @@ hide_table_of_contents: true
   />
 </head>
 
-<!-- <div style={{ width: "80%", aspectRatio: 2/1 }}>
+We commissioned a model of the Villa dei Papiri, made using LEGO® bricks, designed by [Belle-Ve Bricks](https://bellevebricks.com/)!
+You can find the build instructions here:
+
+* [Download build instructions (.pdf)](https://drive.google.com/file/d/11m_LRqZzh0_N5NoFPSnkQpeIMDKH_Jcc/view?usp=sharing)
+
+Here are some bonuses:
+
+* [3D model (.dae)](https://drive.google.com/file/d/1M66Mth8BBaEA9vDFZzyP3PuU8_TpxJIy/view?usp=drive_link)
+* [CAD file (.ldr)](https://drive.google.com/file/d/19mWyPmxUkGZDcNYq97MesiavrAZVZQA4/view?usp=drive_link)
+
+3D model viewer and some renders below:
+<div style={{ width: "90%", aspectRatio: 2/1 }}>
     <iframe
     title="New swiftXR Project"
     frameborder="0"
@@ -50,15 +61,52 @@ hide_table_of_contents: true
     height="100%"
     src="https://stone-moat.swiftxr.app">
     </iframe>
-</div> -->
-
-We commissioned a model of the Villa dei Papiri, made using LEGO® bricks.
-
-Click here to download building instructions: [Villa dei Papiri Instructions.pdf](https://drive.google.com/file/d/11m_LRqZzh0_N5NoFPSnkQpeIMDKH_Jcc/view?usp=sharing)
-
-<div className="mb-4">
-  <img src="/img/villa-model/build.gif" className="w-[60%]"/>
-  <figcaption className="mt-[-6px]">Building the Villa dei Papiri in LEGO® bricks.</figcaption>
 </div>
 
-Model design by [Belle-Ve Bricks](https://bellevebricks.com/)!
+<div className="mb-4">
+  <img src="/img/villa-model/build.gif" className="w-[80%]"/>
+</div>
+
+<div className="mb-4">
+  <img src="/img/villa-model/render0.jpeg" className="w-[90%]"/>
+</div>
+
+<div className="mb-4">
+  <img src="/img/villa-model/render1.jpeg" className="w-[90%]"/>
+</div>
+
+<div className="mb-4">
+  <img src="/img/villa-model/render2.jpeg" className="w-[90%]"/>
+</div>
+
+<div className="mb-4">
+  <img src="/img/villa-model/render3.jpeg" className="w-[90%]"/>
+</div>
+
+<div className="mb-4">
+  <img src="/img/villa-model/render4.jpeg" className="w-[90%]"/>
+</div>
+
+<div className="mb-4">
+  <img src="/img/villa-model/render5.jpeg" className="w-[90%]"/>
+</div>
+
+<div className="mb-4">
+  <img src="/img/villa-model/render6.jpeg" className="w-[90%]"/>
+</div>
+
+<div className="mb-4">
+  <img src="/img/villa-model/render7.jpeg" className="w-[90%]"/>
+</div>
+
+<div className="mb-4">
+  <img src="/img/villa-model/render8.jpeg" className="w-[90%]"/>
+</div>
+
+<div className="mb-4">
+  <img src="/img/villa-model/render9.jpeg" className="w-[90%]"/>
+</div>
+
+<div className="mb-4">
+  <img src="/img/villa-model/render10.jpeg" className="w-[90%]"/>
+</div>
