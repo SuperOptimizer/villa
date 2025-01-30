@@ -30,7 +30,7 @@ def convert_raw_to_jpg(args):
         img = Image.fromarray(rgb)
 
         # Save JPG without metadata first
-        img.save(output_path, "jpeg", quality=quality)
+        img.save(output_path, "jpeg", subsampling=0, quality=quality)
 
         # Copy metadata from RAW to JPG using ExifTool
         copy_exif_metadata(input_path, output_path)
