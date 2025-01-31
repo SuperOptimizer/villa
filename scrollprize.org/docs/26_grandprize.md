@@ -63,7 +63,7 @@ In the 18th century the scrolls were discovered. Hundreds of them are now stored
   <div className="w-[45%]"><img src="/img/grandprize/unrolled-orig.webp" className="w-[100%]"/><figcaption className="mt-[-6px]">Result of an attempt to physically unroll a scroll.</figcaption></div>
 </div>
 
-On March 15th, 2023, Nat Friedman, Daniel Gross, and Brent Seales launched the <a href="https://scrollprize.org">Vesuvius Challenge</a> to answer this question. Scrolls from the Institut de France were imaged at the Diamond Light Source particle accelerator near Oxford. We released these high-resolution CT scans of the scrolls, and we offered more than $1M in prizes, put forward by many generous donors.
+On March 15th, 2023, Nat Friedman, Daniel Gross, and Brent Seales launched the <a href="https://scrollprize.org">Vesuvius Challenge</a> to answer this question. Scrolls from the Institut de France were imaged at the Diamond Light Source particle accelerator near Oxford. We released these high-resolution CT scans of the scrolls, and we offered more than \$1M in prizes, put forward by many generous donors.
 
 <div className="flex flex-wrap mb-4">
   <div className="w-[41%] mr-4 mb-2"><img src="/img/grandprize/seth-diamond.webp" className="w-[100%]"/><figcaption className="mt-[-6px]">Seth Parker <a href="https://scrollprize.substack.com/p/new-scans-of-herculaneum-papyri-at">scanning</a> a scroll at the <a href="https://www.diamond.ac.uk/">Diamond Light Source</a> particle accelerator.</figcaption></div>
@@ -94,7 +94,7 @@ We presented these submissions to the review team, and they were met with widesp
 
 There was one submission that stood out clearly from the rest. Working independently, each member of our team of papyrologists recovered more text from this submission than any other. Remarkably, the entry achieved the criteria we set when announcing Vesuvius Challenge in March: 4 passages of 140 characters each, with at least 85% of characters recoverable. This was not a given: most of us on the organizing team assigned a less than 30% probability of success when we announced these criteria! And in addition, the submission includes another 11 (!) columns of text — more than 2000 characters total.
 
-The results of this review were clear and unanimous: the Vesuvius Challenge Grand Prize of $700,000 is awarded to a team of three for their excellent submission. Congratulations to **Youssef Nader, Luke Farritor, and Julian Schilliger**!
+The results of this review were clear and unanimous: the Vesuvius Challenge Grand Prize of \$700,000 is awarded to a team of three for their excellent submission. Congratulations to **Youssef Nader, Luke Farritor, and Julian Schilliger**!
 
 
 <div className="flex flex-wrap mb-4">
@@ -134,7 +134,7 @@ Congratulations to Youssef, Luke, and Julian. You are the well-deserved winners 
 
 ## Runners up
 
-Of the remaining submissions, the scores from our team of papyrologists identify a three-way tie for runner up. These entries show remarkably similar readability to each other, but still stand out from the rest by being significantly more readable. Congratulations to the following teams, each taking home $50,000!
+Of the remaining submissions, the scores from our team of papyrologists identify a three-way tie for runner up. These entries show remarkably similar readability to each other, but still stand out from the rest by being significantly more readable. Congratulations to the following teams, each taking home \$50,000!
 
 <div className="mb-4">
   <a target="_blank" href="/img/grandprize/sq_text_wbb.webp"><img src="/img/grandprize/sq_text_wbb-smaller.webp" className="w-[100%]"/></a>
@@ -371,7 +371,7 @@ With Vesuvius Challenge, we hope not only to solve the problem of reading the He
 
 3. **Blending competition and cooperation.** A Grand Prize on its own would suffer from information “hoarding”: no one would share their intermediate work, because others could take it and use it to beat them to the finish line. Without information sharing, the probability of a single team solving all the puzzle pieces to win the Grand Prize would be dramatically lower.
 
-<div className="ml-8 mb-4">Instead, we blended competition and cooperation by adding <a href="/winners">“progress prizes”</a> along the way. These were smaller prizes (often in the $1,000-10,000 range) every ~2 months. To win a progress prize, you had to publish your code or research as open source, thereby benefiting the entire community.</div>
+<div className="ml-8 mb-4">Instead, we blended competition and cooperation by adding <a href="/winners">“progress prizes”</a> along the way. These were smaller prizes (often in the \$1,000-10,000 range) every ~2 months. To win a progress prize, you had to publish your code or research as open source, thereby benefiting the entire community.</div>
 
 <div className="mb-4 ml-8">
   <img src="/img/grandprize/winners1.webp" className="w-[100%]"/>
@@ -416,7 +416,7 @@ In 2023 we got from 0% to 5% of a scroll. In 2024 our goal is to go from 5% of o
 
 The primary goal for 2024 is to read 90% of the scrolls, and **we will issue the 2024 Grand Prize to the first team that is able to do this**. More details on the exact grand prize judging criteria will be available in March.
 
-The bottleneck to achieve this milestone is the process of tracing the surface of the papyrus inside the scroll. Today this is extremely manual. It cost us more than $100 per square centimeter in manual labor to produce the text we can read today. At this price, it would cost hundreds of millions or maybe even billions of dollars to segment all of the scrolls. While improvements to our segmentation tools have increased our efficiency, it is still far too manual and expensive. What we need is automation.
+The bottleneck to achieve this milestone is the process of tracing the surface of the papyrus inside the scroll. Today this is extremely manual. It cost us more than \$100 per square centimeter in manual labor to produce the text we can read today. At this price, it would cost hundreds of millions or maybe even billions of dollars to segment all of the scrolls. While improvements to our segmentation tools have increased our efficiency, it is still far too manual and expensive. What we need is automation.
 
 And so our primary goal for stage 2 is to perfect autosegmentation. Done right, this will also allow us to read the most challenging regions within the scroll – areas where the scroll was heavily compressed, cracked, delaminated, or otherwise damaged – which in many cases our current tools cannot even penetrate.
 

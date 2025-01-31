@@ -42,7 +42,7 @@ class Flatboi:
         self.um = um
         self.downsample = downsample
         if downsample:
-            obj_path = self.downsample_mesh()
+            obj_path = self.downsample_mesh(0.15)
         self.read_mesh(obj_path)
         self.filter_mesh()
         
@@ -67,10 +67,11 @@ class Flatboi:
         
         # Filter UVs by mapping them to the selected triangles
         original_uvs = np.asarray(mesh.triangle_uvs).reshape(-1, 3, 2)
-        filtered_uvs = original_uvs[triangles_to_keep].reshape(-1, 2)
-        
-        # Set the filtered UVs to the new mesh
-        mesh_filtered.triangle_uvs = o3d.utility.Vector2dVector(filtered_uvs)
+        if original_uvs.size > 0:
+            filtered_uvs = original_uvs[triangles_to_keep].reshape(-1, 2)
+            
+            # Set the filtered UVs to the new mesh
+            mesh_filtered.triangle_uvs = o3d.utility.Vector2dVector(filtered_uvs)
         
         return mesh_filtered
     
@@ -269,6 +270,30 @@ class Flatboi:
         uv = igl.harmonic(self.vertices, self.triangles, bnd, bnd_uv, 1)
         return bnd, bnd_uv, uv
     
+    def arap_solver_ic(self, uv):
+        # jiggle the uv and vertices a little bit randomly to counteract numerical issues
+        uv += np.random.rand(*uv.shape) * 0.0001
+        vertices_jiggled = self.vertices.copy() + np.random.rand(*self.vertices.shape) * 0.0001
+
+        arap = igl.ARAP(vertices_jiggled, self.triangles, 2, np.zeros(0))
+        print("ARAP")
+        success = False
+        for i in tqdm(range(11), desc="ARAP"):
+            uva = arap.solve(np.zeros((0, 0)), uv)
+            # Check for numerical issues in uv
+            if np.any(np.isnan(uva)):
+                print(f"Numerical issue: NaN values encountered in uv at iteration {i}")
+                break
+            elif np.any(np.isinf(uva)):
+                print(f"Numerical issue: Infinite values encountered in uv at iteration {i}")
+                break
+            success = True
+            uv = uva
+        if not success:
+            print("Fallback to harmonic arap")
+            _, _, uv = self.arap_ic()
+        return uv
+    
     def arap_ic(self):
         bnd = self.generate_boundary()
         bnd_uv = igl.map_vertices_to_circle(self.vertices, bnd)
@@ -278,6 +303,8 @@ class Flatboi:
         for i in tqdm(range(10), desc="ARAP"):
             uv = arap.solve(np.zeros((0, 0)), uv)
         uva = arap.solve(np.zeros((0, 0)), uv)
+
+        uva = self.arap_solver_ic(uva)
 
         bc = np.zeros((bnd.shape[0],2), dtype=np.float64)
         for i in tqdm(range(bnd.shape[0])):
@@ -314,30 +341,6 @@ class Flatboi:
             bnd_uv[i] = uv[bnd[i]]
 
         return bnd, bnd_uv, uv
-    
-    def arap_solver_ic(self, uv):
-        # jiggle the uv and vertices a little bit randomly to counteract numerical issues
-        uv += np.random.rand(*uv.shape) * 0.0001
-        vertices_jiggled = self.vertices.copy() + np.random.rand(*self.vertices.shape) * 0.0001
-
-        arap = igl.ARAP(vertices_jiggled, self.triangles, 2, np.zeros(0))
-        print("ARAP")
-        success = False
-        for i in tqdm(range(11), desc="ARAP"):
-            uva = arap.solve(np.zeros((0, 0)), uv)
-            # Check for numerical issues in uv
-            if np.any(np.isnan(uva)):
-                print(f"Numerical issue: NaN values encountered in uv at iteration {i}")
-                break
-            elif np.any(np.isinf(uva)):
-                print(f"Numerical issue: Infinite values encountered in uv at iteration {i}")
-                break
-            success = True
-            uv = uva
-        if not success:
-            print("Fallback to harmonic arap")
-            _, _, uv = self.arap_ic()
-        return uv
     
     def ordered_ic(self):
         uv = np.zeros((self.vertices.shape[0], 2), dtype=np.float64)
@@ -399,7 +402,7 @@ class Flatboi:
             new_energy = slim.energy()
             energies[iteration+1] = new_energy
             iteration += 1
-            print(f"{temp_energy:.3f} {new_energy:.3f}")
+            print(f"{temp_energy:.5f} {new_energy:.5f}")
             if new_energy >= float("inf") or new_energy == float("nan") or np.isnan(new_energy) or np.isinf(new_energy):
                 converged = False
                 break

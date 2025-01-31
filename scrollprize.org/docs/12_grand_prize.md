@@ -37,7 +37,7 @@ hide_table_of_contents: true
 </head>
 
 
-The $700,000 Grand Prize will go to the first team to read four passages of text from the inside of the two intact scrolls. We also have prizes for second place ($100,000) and third place ($50,000). More details on the qualifying criteria are available [here](#qualifying-criteria).
+The \$700,000 Grand Prize will go to the first team to read four passages of text from the inside of the two intact scrolls. We also have prizes for second place (\$100,000) and third place (\$50,000). More details on the qualifying criteria are available [here](#qualifying-criteria).
 
 Here are the scrolls in question:
 
@@ -89,9 +89,9 @@ If no team meets the criteria by the deadline, we reserve the right to award the
 
 <div>Prizes are awarded in the order that qualifying submisisons are made:</div>
 
-- 1st place: $700,000
-- 2nd place: $100,000
-- 3rd place: $50,000
+- 1st place: \$700,000
+- 2nd place: \$100,000
+- 3rd place: \$50,000
 
 To qualify for the Grand Prize, you must have registered at the time you downloaded the data. The registration form can be found on the [data page](/data).
 
