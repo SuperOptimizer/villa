@@ -106,7 +106,3 @@ Here are some bonuses:
 <div className="mb-4">
   <img src="/img/villa-model/render9.jpeg" className="w-[90%]"/>
 </div>
-
-<div className="mb-4">
-  <img src="/img/villa-model/render10.jpeg" className="w-[90%]"/>
-</div>
