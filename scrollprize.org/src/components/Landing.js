@@ -1916,7 +1916,7 @@ export function Landing() {
                           <p className="">
                             Crushed under the weight of pyroclastic flow and debris, the scroll surface is remarkably damaged. Tracing the path of a single sheet
                             as it curves through these damaged scrolls is nearly impossible in the raw scan data. We've made progress in this realm through machine learning based Semantic
-                            Segmentation methods but more progress is needed! The better this performs the easier our meshing step becomes. 
+                            Segmentation methods but more progress is needed! The better this performs the easier our meshing step becomes.
                           </p>
                           {/*<p className="pb-5">*/}
                           {/*  Progress has been made in this step through 3D UNet based semantic segmentation and point cloud representation*/}
