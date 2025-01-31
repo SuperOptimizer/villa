@@ -1646,7 +1646,7 @@ export function Landing() {
                 </h1>
                 <p className="max-w-xl md:text-xl text-lg font-medium mb-1 !leading-[110%] tracking-tight">
                   <span className="">
-                    <span className="text-5xl text-orange-600 pr-3">Vesuvius Challenge</span> <span className="opacity-80">is a machine learning, computer
+                    <span className="text-5xl text-orange-600 pr-3 pl-0">Vesuvius Challenge</span> <span className="opacity-80">is a machine learning, computer
                     vision, and geometry competition founded with the goal of reading the Herculaneum Scrolls.</span>
                   </span>
                   <p className="">
@@ -1655,7 +1655,7 @@ export function Landing() {
                     </p>
                   </p>
                   <p
-                      className="text-3xl md:text-6xl drop-shadow-lg pt-6 pb-8"
+                      className="text-3xl md:text-6xl drop-shadow-lg pt-6 pb-0"
                       style={{
                         background:
                             "radial-gradient(53.44% 245.78% at 13.64% 46.56%, #F5653F 0%, #D53A17 100%)",
@@ -1686,7 +1686,7 @@ export function Landing() {
                   <div className="w-60">
                     <a
                         className="cursor-pointer group hover:no-underline"
-                        href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
+                        href="/get_started"
                     >
                       <div
                           className="h-28 relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
@@ -1699,7 +1699,7 @@ export function Landing() {
                           <h3 className="text-l md:text-2xl text-white mt-0 mb-1 tracking-tighter !leading-[90%] flex-grow pb-3">
                             Get Started
                           </h3>
-                          <AnimatedArrow text="$1M+ already awarded" />
+                          <AnimatedArrow text="$1.5M+ already awarded" />
 
                         </div>
                       </div>
@@ -1724,8 +1724,8 @@ export function Landing() {
                           <h3 className="text-l md:text-2xl text-white mt-0 mb-1 tracking-tighter !leading-[90%] flex-grow">
                             $60,000 Awarded for FASP Submissions!
                           </h3>
-                          <p>
-                            We're closer than ever to solving this thing!
+                          <p className="text-sm">
+                            1/24/2025
                           </p>
                           <div className="pt-7">
                             <AnimatedArrow text="Read the post" />
@@ -1756,8 +1756,8 @@ export function Landing() {
                           <h3 className="text-l md:text-2xl text-white mt-0 mb-1 tracking-tighter !leading-[90%] flex-grow">
                             December Progress Prizes
                           </h3>
-                          <p>
-                            01/22/2025
+                          <p className="text-sm">
+                            01/23/2025
                           </p>
                           <div className="pt-7">
                             <AnimatedArrow text="Read the post" />
@@ -1786,8 +1786,8 @@ export function Landing() {
                           <h3 className="text-l md:text-2xl text-white mt-0 mb-1 tracking-tighter !leading-[90%] flex-grow">
                             November Progress Prizes
                           </h3>
-                          <p>
-                            01/30/2025
+                          <p className="text-sm">
+                            01/22/2025
                           </p>
                           <div className="pt-6">
                             <AnimatedArrow text="Watch the Video" />
@@ -1805,7 +1805,7 @@ export function Landing() {
 
 
 
-                    <div className="flex-wrap z-10 pt-5">
+                    <div className="flex-wrap z-10 pt-1">
                       {/*<p className="text-center pt-10 text-xl text-orange-600 pt-0.5">*/}
                       {/*  <b className="">CHOOSE YOUR PATH!</b>*/}
                       {/*</p>*/}
@@ -1915,7 +1915,8 @@ export function Landing() {
                         >
                           <p className="">
                             Crushed under the weight of pyroclastic flow and debris, the scroll surface is remarkably damaged. Tracing the path of a single sheet
-                            as it curves through these damaged scrolls is nearly impossible in the raw scan data.
+                            as it curves through these damaged scrolls is nearly impossible in the raw scan data. We've made progress in this realm through machine learning based Semantic
+                            Segmentation methods but more progress is needed! The better this performs the easier our meshing step becomes. 
                           </p>
                           {/*<p className="pb-5">*/}
                           {/*  Progress has been made in this step through 3D UNet based semantic segmentation and point cloud representation*/}
@@ -1962,7 +1963,7 @@ export function Landing() {
                   }}
               >
                 <h3 className="text-2xl text-white pt-2 pb-3 text-center">
-                  What's in the Way
+                  What We're Building Towards
                 </h3>
                 <div className="grid grid-cols-4 gap-5 px-6 pb-3">
                   <div className="relative px-3">
@@ -1983,7 +1984,7 @@ export function Landing() {
 
                   <div className="relative px-3">
                     <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
-                    <b className="block mb-2">Annotations</b>
+                    <b className="block mb-2">High Quality Annotations</b>
                     <p className="text-sm">
                       We need an abundance of high-quality annotations.
                     </p>
