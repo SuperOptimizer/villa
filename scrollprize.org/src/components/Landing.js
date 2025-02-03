@@ -1371,147 +1371,150 @@ const LargeAnimatedArrow = ({ text, button }) => (
     />
   </div>
 );
+
 const ChallengeBox = ({
-  title,
-  children,
-  linkText,
-  href,
-  imageSrc,
-  imagePosition = 'right',
-}) => {
-  // Image on TOP
-  if (imagePosition === 'top') {
+                        title,
+                        children,
+                        linkText,
+                        href,
+                        imageSrc,
+                        imagePosition = "right",
+                      }) => {
+  // When imagePosition is "top"
+  if (imagePosition === "top") {
     return (
-      <div className="w-full flex flex-col bg-[#131114bf] p-5 rounded-xl justify-between border border-[#FFFFFF20] border-solid">
-        {/* Image container with fixed height */}
-        <div className="h-48 mb-4">
-          {imageSrc && (
-            <img
-              src={imageSrc}
-              alt="Scroll representation"
-              className="rounded-lg w-full h-full object-cover"
-            />
-          )}
-        </div>
-
-        {/* Title container with fixed height */}
-        <div className="h-12 flex items-center">
-          <h2 className="text-white text-2xl font-bold">{title}</h2>
-        </div>
-
-        {/* Divider */}
-        <div className="h-px bg-[#FFFFFF20] mb-4" />
-
-        {/* Content */}
-        <div className="flex-grow">
-          {children}
-        </div>
-
-        {/* Link */}
-        <a
-          href={href}
-          className="justify-center group cursor-pointer hover:no-underline mt-4 block"
-        >
-          <div className="group-hover:-translate-y-2 transition-transform ease-in-out duration-300">
-            <LargeAnimatedArrow text={linkText} />
-          </div>
-        </a>
-      </div>
-    );
-  }
-
-  // Image on BOTTOM
-  if (imagePosition === 'bottom') {
-    return (
-      <div className="w-full flex flex-col gap-1 bg-[#131114bf] p-5 mb-5 rounded-xl justify-between border border-[#FFFFFF20] border-solid">
-        <b className="text-white text-2xl block mb-3">{title}</b>
-        <div className="h-px bg-[#FFFFFF20] mb-4" />
-        {children}
-        <a
-          href={href}
-          className="mt-auto group cursor-pointer hover:no-underline"
-        >
-          <div className="transform group-hover:-translate-y-2 transition-transform ease-in-out duration-300">
-            <LargeAnimatedArrow text={linkText} />
-          </div>
-        </a>
-        {imageSrc && (
-          <img
-            src={imageSrc}
-            alt="Scroll representation"
-            className="rounded-lg mt-4"
-          />
-        )}
-      </div>
-    );
-  }
-
-  // Image on LEFT
-  if (imagePosition === 'left') {
-    return (
-      <div className="w-full flex flex-col gap-1 bg-[#131114bf] p-5 mb-5 rounded-xl justify-between border border-[#FFFFFF20] border-solid">
-        <div className="grid grid-cols-2 gap-4 w-full">
-          <div>
+        <div className="w-full flex flex-col bg-[#131114bf] p-5 rounded-xl justify-between border border-[#FFFFFF20]">
+          {/* Responsive image container:
+            On mobile, height is natural; on md+ screens, fixed height */}
+          <div className="mb-4 md:h-48">
             {imageSrc && (
-              <img
-                src={imageSrc}
-                alt="Scroll representation"
-                className="rounded-lg"
-              />
+                // If imageSrc is a string, render an <img>; otherwise assume it’s a component
+                typeof imageSrc === "string" ? (
+                    <img
+                        src={imageSrc}
+                        alt="Scroll representation"
+                        className="rounded-lg w-full h-full object-cover"
+                    />
+                ) : (
+                    <div className="w-full">{imageSrc}</div>
+                )
             )}
           </div>
-          <div className="flex flex-col">
-            <b className="text-white text-2xl block mb-3">{title}</b>
-            <div className="h-px bg-[#FFFFFF20] mb-4" />
-            {children}
-            <a
-              href={href}
-              className="mt-auto group cursor-pointer hover:no-underline"
-            >
-              <div className="transform group-hover:-translate-y-2 transition-transform ease-in-out duration-300">
-                <LargeAnimatedArrow text={linkText} />
-              </div>
-            </a>
+          {/* Title */}
+          <div className="h-12 flex items-center">
+            <h2 className="text-white text-2xl font-bold">{title}</h2>
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Default: Image on RIGHT
-  return (
-
-    <div className="w-full flex flex-col gap-1 bg-[#131114bf] p-5 mb-5 rounded-xl justify-between border border-[#FFFFFF20] border-solid">
-      <div className="grid grid-cols-2 gap-4 w-full">
-        <div className="flex flex-col">
-          <b className="text-white text-2xl block mb-3">{title}</b>
+          {/* Divider */}
           <div className="h-px bg-[#FFFFFF20] mb-4" />
-          {children}
-          <a href={href} className="mt-auto group cursor-pointer hover:no-underline">
-            <div className="transform group-hover:-translate-y-2 transition-transform ease-in-out duration-300">
+          {/* Content */}
+          <div className="flex-grow">{children}</div>
+          {/* Link */}
+          <a href={href} className="mt-4 block group">
+            <div className="group-hover:-translate-y-2 transition-transform ease-in-out duration-300">
               <LargeAnimatedArrow text={linkText} />
             </div>
           </a>
         </div>
-        <div>
+    );
+  }
+
+  // When imagePosition is "bottom"
+  if (imagePosition === "bottom") {
+    return (
+        <div className="w-full flex flex-col bg-[#131114bf] p-5 mb-5 rounded-xl justify-between border border-[#FFFFFF20]">
+          <b className="text-white text-2xl mb-3">{title}</b>
+          <div className="h-px bg-[#FFFFFF20] mb-4" />
+          {children}
+          <a href={href} className="mt-auto group">
+            <div className="group-hover:-translate-y-2 transition-transform ease-in-out duration-300">
+              <LargeAnimatedArrow text={linkText} />
+            </div>
+          </a>
           {imageSrc && (
-            typeof imageSrc === 'string'
-              ? (
-                <img
-                  src={imageSrc}
-                  alt="Scroll representation"
-                  className="rounded-lg"
-                />
-              ) : (
-                // If imageSrc is already a React element (e.g. <BeforeAfter />), render it.
-                imageSrc
-              )
+              <div className="mt-4 w-full">
+                {typeof imageSrc === "string" ? (
+                    <img
+                        src={imageSrc}
+                        alt="Scroll representation"
+                        className="rounded-lg w-full h-auto"
+                    />
+                ) : (
+                    <div className="w-full">{imageSrc}</div>
+                )}
+              </div>
           )}
         </div>
+    );
+  }
+
+  // When imagePosition is "left"
+  if (imagePosition === "left") {
+    return (
+        <div className="w-full flex flex-col bg-[#131114bf] p-5 mb-5 rounded-xl justify-between border border-[#FFFFFF20]">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="w-full">
+              {imageSrc && (
+                  typeof imageSrc === "string" ? (
+                      <img
+                          src={imageSrc}
+                          alt="Scroll representation"
+                          className="rounded-lg w-full h-auto"
+                      />
+                  ) : (
+                      <div className="w-full">{imageSrc}</div>
+                  )
+              )}
+            </div>
+            <div className="flex flex-col">
+              <b className="text-white text-2xl mb-3">{title}</b>
+              <div className="h-px bg-[#FFFFFF20] mb-4" />
+              {children}
+              <a href={href} className="mt-auto group">
+                <div className="group-hover:-translate-y-2 transition-transform ease-in-out duration-300">
+                  <LargeAnimatedArrow text={linkText} />
+                </div>
+              </a>
+            </div>
+          </div>
+        </div>
+    );
+  }
+
+  // Default layout: imagePosition "right"
+  // On mobile: single-column grid with the image on top;
+  // On md+ screens: two columns with text on the left and image on the right.
+  return (
+      <div className="w-full flex flex-col bg-[#131114bf] p-5 mb-5 rounded-xl justify-between border border-[#FFFFFF20]">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Text and Link Container */}
+          <div className="order-2 md:order-1 flex flex-col">
+            <b className="text-white text-2xl mb-3">{title}</b>
+            <div className="h-px bg-[#FFFFFF20] mb-4" />
+            {children}
+            <a href={href} className="mt-auto group">
+              <div className="group-hover:-translate-y-2 transition-transform ease-in-out duration-300">
+                <LargeAnimatedArrow text={linkText} />
+              </div>
+            </a>
+          </div>
+          {/* Image Container */}
+          <div className="order-1 md:order-2">
+            {imageSrc && (
+                <div className="w-full">
+                  {typeof imageSrc === "string" ? (
+                      <img
+                          src={imageSrc}
+                          alt="Scroll representation"
+                          className="rounded-lg w-full h-auto"
+                      />
+                  ) : (
+                      <div className="w-full">{imageSrc}</div>
+                  )}
+                </div>
+            )}
+          </div>
+        </div>
       </div>
-
-
-    </div>
   );
 };
 
@@ -1642,133 +1645,213 @@ export function Landing() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-1 gap-4 items-start max-w-8xl">
+              <div className="grid items-start max-w-8xl">
                 <div className="">
                   {/*<h2 className="text-right pt-2 mr-12">*/}
                   {/*  What's Happening*/}
                   {/*</h2>*/}
 
                 </div>
-                <div className="flex gap-4 max-w-9xl">
-                  <div className="w-60">
+                {/* MOBILE LAYOUT – visible on screens below md */}
+                <div className="grid grid-cols-2 gap-4 max-w-9xl pb-3 md:hidden">
+                  {/* Card 1: Get Started */}
+                  <div className="w-full">
+                    <a className="cursor-pointer group hover:no-underline" href="/get_started">
+                      <div
+                          className="h-auto relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
+                          style={{
+                            boxShadow:
+                                "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
+                          }}
+                      >
+                        <div className="flex flex-col py-3 px-4 h-32">
+                          <h3 className="text-base sm:text-lg text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow pb-2">
+                            Get Started
+                          </h3>
+                          <p className="text-sm">$1.5 million in prizes already awarded!</p>
+                          <div className="pt-2"></div>
+                        </div>
+                      </div>
+                    </a>
+                  </div>
+
+                  {/* Card 2 */}
+                  <div className="w-full">
                     <a
-                      className="cursor-pointer group hover:no-underline"
-                      href="/get_started"
+                        className="cursor-pointer group hover:no-underline"
+                        href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
                     >
                       <div
-                        className="h-28 relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
-                        style={{
-                          boxShadow:
-                            "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
-                        }}
+                          className="h-auto relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
+                          style={{
+                            boxShadow:
+                                "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
+                          }}
                       >
-                        <div className="flex flex-col py-4 md:py-5 px-5 md:px-7 h-12">
-                          <h3 className="text-l md:text-2xl text-white mt-0 mb-1 tracking-tighter !leading-[90%] flex-grow pb-3">
+                        <div className="flex flex-col py-3 px-4">
+                          <h3 className="text-base sm:text-lg text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
+                            $60,000 Awarded for FASP Submissions!
+                          </h3>
+                          <p className="text-xs">1/24/2025</p>
+                          {/* Remove the animated arrow; add a spacer if desired */}
+                          <div className="pt-2"></div>
+                        </div>
+                        <img className="w-full h-auto" src="" alt="" />
+                      </div>
+                    </a>
+                  </div>
+
+                  {/* Card 3 */}
+                  <div className="w-full">
+                    <a
+                        className="cursor-pointer group hover:no-underline"
+                        href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes-ee5"
+                    >
+                      <div
+                          className="h-auto relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
+                          style={{
+                            boxShadow:
+                                "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
+                          }}
+                      >
+                        <div className="flex flex-col py-3 px-4">
+                          <h3 className="text-base sm:text-lg text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
+                            December Progress Prizes
+                          </h3>
+                          <p className="text-xs">01/23/2025</p>
+                          <div className="pt-2"></div>
+                        </div>
+                        <img className="w-full h-auto" src="" alt="" />
+                      </div>
+                    </a>
+                  </div>
+
+                  {/* Card 4 */}
+                  <div className="w-full">
+                    <a
+                        className="cursor-pointer group hover:no-underline"
+                        href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes"
+                    >
+                      <div
+                          className="relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
+                          style={{
+                            boxShadow:
+                                "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
+                          }}
+                      >
+                        <div className="h-auto flex flex-col py-3 px-4 z-10">
+                          <h3 className="text-base sm:text-lg text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
+                            November Progress Prizes
+                          </h3>
+                          <p className="text-xs">01/22/2025</p>
+                          <div className="pt-2"></div>
+                        </div>
+                        <img
+                            className="absolute top-[50px] right-0 max-w-[190px] w-full h-auto object-contain"
+                            src="/img/landing/fragment.webp"
+                            alt=""
+                        />
+                      </div>
+                    </a>
+                  </div>
+                </div>
+
+                {/* DESKTOP LAYOUT – visible on md and above */}
+                <div className="hidden md:flex flex-row gap-4 max-w-9xl pb-3">
+                  {/* Left Card (Get Started) */}
+                  <div className="w-60">
+                    <a className="cursor-pointer group hover:no-underline" href="/get_started">
+                      <div
+                          className="h-auto md:h-28 relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
+                          style={{
+                            boxShadow:
+                                "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
+                          }}
+                      >
+                        <div className="flex flex-col py-4 md:py-2.5 px-5 md:px-5">
+                          <h3 className="text-xl md:text-xl text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow pb-3">
                             Get Started
                           </h3>
                           <AnimatedArrow text="$1.5M+ already awarded" />
-
                         </div>
                       </div>
                     </a>
                   </div>
-                  <div className="flex-1 grid grid-cols-3 gap-4" >
+
+                  {/* Right Cards (Grid) */}
+                  <div className="flex-1 grid grid-cols-3 gap-4">
+                    {/* First Right Card */}
                     <a
-                      className="cursor-pointer group hover:no-underline"
-                      href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
+                        className="cursor-pointer group hover:no-underline"
+                        href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
                     >
                       <div
-                        className="h-28 relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
-                        style={{
-                          boxShadow:
-                            "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
-                        }}
+                          className="h-auto md:h-28 relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
+                          style={{
+                            boxShadow:
+                                "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
+                          }}
                       >
-                        <div>
-
-                        </div>
-                        <div className="flex flex-col py-4 md:py-5 px-5 md:px-7 h-12">
-                          <h3 className="text-l md:text-2xl text-white mt-0 mb-1 tracking-tighter !leading-[90%] flex-grow">
+                        <div className="flex flex-col py-4 md:py-2.5 px-5 md:px-5">
+                          <h3 className="text-lg md:text-xl text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
                             $60,000 Awarded for FASP Submissions!
                           </h3>
-                          <p className="text-sm">
-                            1/24/2025
-                          </p>
-                          <div className="pt-7">
-                            <AnimatedArrow text="Read the post" />
-                          </div>
-
+                          <p className="text-sm">1/24/2025</p>
                         </div>
-                        <img
-                          className=""
-                          src=""
-                        />
+                        <img className="w-full h-auto" src="" alt="" />
                       </div>
                     </a>
+
+                    {/* Second Right Card */}
                     <a
-                      className="cursor-pointer group hover:no-underline"
-                      href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes-ee5"
+                        className="cursor-pointer group hover:no-underline"
+                        href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes-ee5"
                     >
                       <div
-                        className="h-28 relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
-                        style={{
-                          boxShadow:
-                            "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
-                        }}
+                          className="h-auto md:h-28 relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
+                          style={{
+                            boxShadow:
+                                "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
+                          }}
                       >
-                        <div>
-
-                        </div>
-                        <div className="flex flex-col py-4 md:py-5 px-5 md:px-7 h-12">
-                          <h3 className="text-l md:text-2xl text-white mt-0 mb-1 tracking-tighter !leading-[90%] flex-grow">
+                        <div className="flex flex-col py-4 md:py-2.5 px-5 md:px-5">
+                          <h3 className="text-lg md:text-xl text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
                             December Progress Prizes
                           </h3>
-                          <p className="text-sm">
-                            01/23/2025
-                          </p>
-                          <div className="pt-7">
-                            <AnimatedArrow text="Read the post" />
-                          </div>
-
+                          <p className="text-sm">01/23/2025</p>
                         </div>
-                        <img
-                          className=""
-                          src=""
-                        />
+                        <img className="w-full h-auto" src="" alt="" />
                       </div>
                     </a>
+
+                    {/* Third Right Card */}
                     <a
-                      className="cursor-pointer group hover:no-underline"
-                      href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes"
+                        className="cursor-pointer group hover:no-underline"
+                        href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes"
                     >
                       <div
-                        className="relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
-                        style={{
-                          height: "100%",
-                          boxShadow:
-                            "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
-                        }}
+                          className="relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
+                          style={{
+                            boxShadow:
+                                "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
+                          }}
                       >
-                        <div className="h-12 flex flex-col py-4 md:py-5 px-5 md:px-7 z-10">
-                          <h3 className="text-l md:text-2xl text-white mt-0 mb-1 tracking-tighter !leading-[90%] flex-grow">
+                        <div className="h-auto md:h-28 flex flex-col py-4 md:py-2.5 px-5 md:px-5 z-10 ">
+                          <h3 className="text-lg md:text-xl text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
                             November Progress Prizes
                           </h3>
-                          <p className="text-sm">
-                            01/22/2025
-                          </p>
-                          <div className="pt-6">
-                            <AnimatedArrow text="Watch the Video" />
-                          </div>
+                          <p className="text-sm">01/22/2025</p>
                         </div>
                         <img
-                          className="absolute top-[50px] right-0 max-w-[190px]"
-                          src="/img/landing/fragment.webp"
+                            className="absolute top-[50px] right-0 max-w-[190px] w-full h-auto object-contain"
+                            src="/img/landing/fragment.webp"
+                            alt=""
                         />
                       </div>
                     </a>
                   </div>
-
                 </div>
+
 
                 <div className="flex-wrap z-10 pt-1">
                   <div className="grid grid-cols-1">
@@ -1836,17 +1919,51 @@ export function Landing() {
                 </div>
               </div>
               <div
-                className="mt-2 pt-2 pb-0  relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf]"
-                style={{
-                  height: "100%",
-                  boxShadow:
-                    "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
-                }}
+                  className="mt-2 pt-2 pb-0 relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf]"
+                  style={{
+                    // Remove any fixed height to let the container size naturally.
+                    boxShadow:
+                        "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)"
+                  }}
               >
                 <h3 className="text-2xl text-white pt-2 pb-3 text-center">
                   What We're Building Towards
                 </h3>
-                <div className="grid grid-cols-4 gap-5 px-6 pb-3">
+
+                {/* Mobile Version: 2x2 Grid (visible on screens below md) */}
+                <div className="grid grid-cols-2 gap-4 px-6 pb-3 md:hidden">
+                  <div className="relative pr-3">
+                    <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
+                    <b className="block mb-2">Accurate Surface Representation</b>
+                    <p className="text-sm">
+                      We lack the accuracy to make the meshing step as simple as it could be.
+                    </p>
+                  </div>
+                  <div className="relative">
+
+                    <b className="block mb-2">Generalizable Ink Detection</b>
+                    <p className="text-sm">
+                      Ink has been found in two scrolls, but remains elusive in our other scrolls.
+                    </p>
+                  </div>
+                  <div className="relative">
+                    <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
+                    <b className="block mb-2">High Quality Annotations</b>
+                    <p className="text-sm">
+                      We need an abundance of high-quality annotations.
+                    </p>
+                  </div>
+                  <div className="relative">
+
+                    <b className="block mb-2">Robust Meshing</b>
+                    <p className="text-sm">
+                      Methods that function where Surface Representation is unreliable are needed.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Desktop Version: 4‑Column Grid (visible on md and up) */}
+                <div className="hidden md:grid grid-cols-4 gap-5 px-6 pb-3">
                   <div className="relative px-3">
                     <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
                     <b className="block mb-2">Accurate Surface Representations</b>
@@ -1854,7 +1971,6 @@ export function Landing() {
                       We lack the accuracy to make the meshing step as simple as it could be.
                     </p>
                   </div>
-
                   <div className="relative px-3">
                     <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
                     <b className="block mb-2">Generalizable Ink Detection</b>
@@ -1862,14 +1978,12 @@ export function Landing() {
                       Ink has been found in two scrolls, but remains elusive in our other scrolls.
                     </p>
                   </div>
-
                   <div className="relative px-3">
                     <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
                     <b className="block mb-2">High Quality Annotations</b>
                     <p className="text-sm">
                       We need an abundance of high-quality annotations.
                     </p>
-
                   </div>
                   <div className="px-3">
                     <b className="block mb-2">Robust Meshing</b>
@@ -1879,6 +1993,9 @@ export function Landing() {
                   </div>
                 </div>
               </div>
+
+
+
 
               <div className="pt-8 mb-4">
                 <p className="max-w-lg md:text-xl text-lg font-medium mb-8 !leading-[110%] tracking-tight">
