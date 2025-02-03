@@ -527,6 +527,15 @@ const sponsors = [
     image: ["/img/landing/collison1.webp", "/img/landing/collison2.webp"],
   },
   {
+    name: "Julia DeWahl & Dan Romero",
+    amount: 100000,
+    href: "https://twitter.com/natfriedman/status/1637959778558439425",
+    image: [
+      "/img/landing/Julia DeWahl.webp",
+      "/img/landing/Dan Romero.webp",
+    ],
+  },
+  {
     name: "Eugene Jhong",
     amount: 100000,
     href: "https://twitter.com/ejhong",
@@ -561,15 +570,6 @@ const sponsors = [
     amount: 50000,
     href: "https://ex.rs/",
     image: "/img/landing/Arthur Breitman.webp",
-  },
-  {
-    name: "Julia DeWahl & Dan Romero",
-    amount: 50000,
-    href: "https://twitter.com/natfriedman/status/1637959778558439425",
-    image: [
-      "/img/landing/Julia DeWahl.webp",
-      "/img/landing/Dan Romero.webp",
-    ],
   },
   {
     name: "Anonymous",
