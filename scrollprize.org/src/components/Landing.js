@@ -1596,7 +1596,7 @@ export function Landing() {
                   <div className="w-full">
                     <a
                       className="cursor-pointer group hover:no-underline"
-                      href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
+                      href="https://scrollprize.substack.com/p/exciting-news-from-scroll-5"
                     >
                       <div
                         className="h-auto relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
@@ -1607,7 +1607,7 @@ export function Landing() {
                       >
                         <div className="flex flex-col py-3 px-4">
                           <h3 className="text-base sm:text-lg text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
-                            $60,000 Awarded for FASP Submissions!
+                            Exciting News from Scroll 5! 
                           </h3>
                           <p className="text-xs">1/24/2025</p>
                           {/* Remove the animated arrow; add a spacer if desired */}
@@ -1622,7 +1622,7 @@ export function Landing() {
                   <div className="w-full">
                     <a
                       className="cursor-pointer group hover:no-underline"
-                      href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes-ee5"
+                      href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
                     >
                       <div
                         className="h-auto relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
@@ -1633,7 +1633,7 @@ export function Landing() {
                       >
                         <div className="flex flex-col py-3 px-4">
                           <h3 className="text-base sm:text-lg text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
-                            December Progress Prizes
+                           $60,000 Awarded for FASP Submissions!
                           </h3>
                           <p className="text-xs">01/23/2025</p>
                           <div className="pt-2"></div>
@@ -1647,7 +1647,7 @@ export function Landing() {
                   <div className="w-full">
                     <a
                       className="cursor-pointer group hover:no-underline"
-                      href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes"
+                      href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes-ee5"
                     >
                       <div
                         className="relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
@@ -1658,7 +1658,7 @@ export function Landing() {
                       >
                         <div className="h-auto flex flex-col py-3 px-4 z-10">
                           <h3 className="text-base sm:text-lg text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
-                            November Progress Prizes
+                            December Progress Prizes
                           </h3>
                           <p className="text-xs">01/22/2025</p>
                           <div className="pt-2"></div>
@@ -1700,6 +1700,28 @@ export function Landing() {
                   {/* First Right Card */}
                   <a
                     className="cursor-pointer group hover:no-underline"
+                    href="https://scrollprize.substack.com/p/exciting-news-from-scroll-5 "
+                  >
+                    <div
+                      className="h-auto md:h-28 relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
+                      style={{
+                        boxShadow:
+                          "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
+                      }}
+                    >
+                      <div className="flex flex-col py-4 md:py-2.5 px-5 md:px-5">
+                        <h3 className="text-lg md:text-xl text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
+                          Exciting News from Scroll 5!
+                        </h3>
+                        <p className="text-sm">2/05/2025</p>
+                      </div>
+                      <img className="w-full h-auto" src="" alt="" />
+                    </div>
+                  </a>
+
+                  {/* Second Right Card */}
+                  <a
+                    className="cursor-pointer group hover:no-underline"
                     href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
                   >
                     <div
@@ -1713,28 +1735,6 @@ export function Landing() {
                         <h3 className="text-lg md:text-xl text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
                           $60,000 Awarded for FASP Submissions!
                         </h3>
-                        <p className="text-sm">1/24/2025</p>
-                      </div>
-                      <img className="w-full h-auto" src="" alt="" />
-                    </div>
-                  </a>
-
-                  {/* Second Right Card */}
-                  <a
-                    className="cursor-pointer group hover:no-underline"
-                    href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes-ee5"
-                  >
-                    <div
-                      className="h-auto md:h-28 relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
-                      style={{
-                        boxShadow:
-                          "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
-                      }}
-                    >
-                      <div className="flex flex-col py-4 md:py-2.5 px-5 md:px-5">
-                        <h3 className="text-lg md:text-xl text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
-                          December Progress Prizes
-                        </h3>
                         <p className="text-sm">01/23/2025</p>
                       </div>
                       <img className="w-full h-auto" src="" alt="" />
@@ -1744,7 +1744,7 @@ export function Landing() {
                   {/* Third Right Card */}
                   <a
                     className="cursor-pointer group hover:no-underline"
-                    href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes"
+                    href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes-ee5"
                   >
                     <div
                       className="relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
@@ -1755,7 +1755,7 @@ export function Landing() {
                     >
                       <div className="h-auto md:h-28 flex flex-col py-4 md:py-2.5 px-5 md:px-5 z-10 ">
                         <h3 className="text-lg md:text-xl text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
-                          November Progress Prizes
+                          December Progress Prizes
                         </h3>
                         <p className="text-sm">01/22/2025</p>
                       </div>
