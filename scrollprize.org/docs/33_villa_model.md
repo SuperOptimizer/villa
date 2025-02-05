@@ -39,7 +39,7 @@ hide_table_of_contents: true
 We commissioned a model of the Villa dei Papiri, made using LEGO® bricks, designed by [Belle-Ve Bricks](https://bellevebricks.com/)!
 You can find the build instructions here:
 
-* [Download build instructions (.pdf)](https://drive.google.com/file/d/11m_LRqZzh0_N5NoFPSnkQpeIMDKH_Jcc/view?usp=sharing)
+* [Download build instructions (.pdf)](https://drive.google.com/file/d/1vIp-fIOYOh8ukCI6HSrSfBP-nAel7AII/view?usp=sharing)
 
 Here are some bonuses:
 
@@ -105,8 +105,4 @@ Here are some bonuses:
 
 <div className="mb-4">
   <img src="/img/villa-model/render9.jpeg" className="w-[90%]"/>
-</div>
-
-<div className="mb-4">
-  <img src="/img/villa-model/render10.jpeg" className="w-[90%]"/>
 </div>
