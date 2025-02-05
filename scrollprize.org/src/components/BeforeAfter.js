@@ -38,11 +38,11 @@ const BeforeAfter = ({ beforeImage, afterImage }) => {
   return (
     <div
       ref={containerRef}
-      className="h-80 rounded-xl relative inline-block overflow-hidden cursor-col-resize w-full max-w-4xl"
+      className="h-80 rounded-xl relative inline-block overflow-hidden cursor-col-resize w-full max-w-4xl select-none"
       onMouseDown={handleMouseDown}
       onTouchStart={handleMouseDown}
       style={{
-        userSelect: "none",
+        WebkitUserSelect: "none",
       }}
     >
       <img
