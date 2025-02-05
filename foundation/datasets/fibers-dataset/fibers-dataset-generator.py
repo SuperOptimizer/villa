@@ -9,8 +9,8 @@ import tifffile
 from scipy.ndimage import distance_transform_edt
 from tools import detect_vesselness
 from tqdm import tqdm
-import vesuvius
-from vesuvius import Volume
+# import vesuvius
+# from vesuvius import Volume
 
 def interpolate_adaptive(start_pos, end_pos, curvature_threshold=0.1, max_recursion=100):
     """Adaptive interpolation between two nodes based on curvature and resolution."""
