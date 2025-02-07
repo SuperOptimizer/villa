@@ -201,7 +201,11 @@ const config = {
           {
             to: "/villa_model",
             from: "/lego",
-          }
+          },
+          {
+            to: "/unwrapping",
+            from: "/unrolling",
+          },
         ],
       },
     ],

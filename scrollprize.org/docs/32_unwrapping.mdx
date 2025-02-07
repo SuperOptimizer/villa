@@ -1,5 +1,5 @@
 ---
-title: "Virtual Unrolling"
+title: "Virtual Unwrapping"
 hide_table_of_contents: true
 math: true
 ---
@@ -24,7 +24,7 @@ import Head from '@docusaurus/Head';
   <script src="https://cdn.jsdelivr.net/npm/katex@0.13.11/dist/contrib/auto-render.min.js" async defer></script>
 </Head>
 
-# Virtual Unrolling
+# Virtual Unwrapping
 
 The image data of the Herculaneum scrolls (PHerc 172) look like this:
 <iframe 
@@ -34,14 +34,14 @@ The image data of the Herculaneum scrolls (PHerc 172) look like this:
 
 It's a mess! The scrolls, that survived a volcanic eruption and were buried under lava and mud for centuries, are carbonized, damaged, frayed and, most importantly, still wrapped!
 
-To read a scroll, we first need to unroll it... **virtually**!
+To read a scroll, we first need to unwrap it... **virtually**!
 
 If, within the chaotic 3D image you are observing, you can isolate a contiguous region of the papyrus sheet, you can approximate it with a 2-manifold—specifically, an orientable genus-0 developable surface. This allows you to construct a bidimensional isometric parametrization[^1] on the manifold, thereby defining a local basis.
 
 The 2-manifold is typically represented as a non-watertight triangular mesh. When rendered in the coordinate frame established by its local basis, the surface appears flat, provided that the parametrization is derived from an isometric mapping from 3D to 2D. In this case, local distances, shapes, and angles are preserved, ensuring geometric fidelity in the transformation.
 
 <div className="mb-4">
-  <img src="/img/virtual-unrolling/s5-segment.png" className="w-[60%]"/>
+  <img src="/img/virtual-unwrapping/s5-segment.png" className="w-[60%]"/>
   <figcaption className="mt-[-6px]">A triangular mesh in 3D space.</figcaption>
 </div>
 
@@ -54,7 +54,7 @@ By rendering the mesh in 2D and observing the now-flattened papyrus sheet, faint
 
 ## The Open Question
 
-Virtual unrolling is essential to read the scrolls, but far from trivial.
+Virtual unwrapping is essential to read the scrolls, but far from trivial.
 
 The open question that has been puzzling our community for more than one year, and Dr. Seales’ research for over twenty-five years, is the following:
 
@@ -62,7 +62,7 @@ The open question that has been puzzling our community for more than one year, a
 
 We were awarding \$100k to anyone that could solve this problem by the end of 2024. The prize was left unclaimed.
 
-However, both the community and the team worked on three approaches that are currently the state-of-the-art in virtual unrolling attempts:
+However, both the community and the team worked on three approaches that are currently the state-of-the-art in virtual unwrapping attempts:
 - Spiral Fitting
 - Surface Tracer
 - Thaumato Anakalyptor
@@ -72,7 +72,7 @@ On a **very high level**, all three methods apply two major steps:
 2. Process this representation into a surface mesh (via either top-down or bottom-up strategies).
 
 <div className="mb-4">
-  <img src="/img/virtual-unrolling/ir.png" className="w-[70%]"/>
+  <img src="/img/virtual-unwrapping/ir.png" className="w-[70%]"/>
   <figcaption className="mt-[-6px]">Example of intermediate representations.</figcaption>
 </div>
 
@@ -92,7 +92,7 @@ Let us delve into the details of how the current state-of-the-art methods work.
 This method leverages the idea that the scroll, in its original form, was a 2D spiral extruded in a 3D shape with approximate cylindrical symmetry. Once flattened, the papyrus sheet is nearly rectangular, with locally perpendicular fibers. The approach attempts to find the transformation that deformed this canonical spiral into the observed data.
 
 <div className="mb-4">
-  <img src="/img/virtual-unrolling/spiral.jpg" className="w-[70%]"/>
+  <img src="/img/virtual-unwrapping/spiral.jpg" className="w-[70%]"/>
   <figcaption className="mt-[-6px]">An archimedean spiral in red, before (left) and after (right) being fit to the scroll surface predictions (in green).</figcaption>
 </div>
 
@@ -109,7 +109,7 @@ Specifically, the extracted intermediate representations are:
 These representations are not free from mistakes (e.g., fake mergers or false positives), but they still make the geometry easier to handle than raw data alone.
 
 <div className="mb-4">
-  <img src="/img/virtual-unrolling/fibers.png" className="w-[70%]"/>
+  <img src="/img/virtual-unwrapping/fibers.png" className="w-[70%]"/>
   <figcaption className="mt-[-6px]">Vertical fibers (red) and horizontal fibers (blue) highlighted in a papyrus fragment.</figcaption>
 </div>
 
@@ -134,8 +134,8 @@ Spiral fitting was submitted by Prof Paul Henderson for the First Automated Segm
 Although it did not meet the needed quality criteria to win, it was the most elegant solution according to the Vesuvius Challenge Team.
 
 <div className="mb-4">
-  <a href="/img/virtual-unrolling/fasp-spiral-fitting.jpg" target="_blank" rel="noopener noreferrer">
-    <img src="/img/virtual-unrolling/fasp-spiral-fitting.jpg" className="w-[70%] cursor-pointer" />
+  <a href="/img/virtual-unwrapping/fasp-spiral-fitting.jpg" target="_blank" rel="noopener noreferrer">
+    <img src="/img/virtual-unwrapping/fasp-spiral-fitting.jpg" className="w-[70%] cursor-pointer" />
   </a>
   <figcaption className="mt-[-6px]">FASP - Spiral Fitting submission (almost zero human input)</figcaption>
 </div>
@@ -153,7 +153,7 @@ Surface Tracer recognizes that, physically, the papyrus sheet is relatively cont
 As with Spiral Fitting, a semantic segmentation of the surface sheet is obtained using nnUNet[^2]. The predictions may contain fake mergers, holes, and other errors, but they focus on identifying likely surface voxels.
 
 <div className="mb-4">
-  <img src="/img/virtual-unrolling/surface-predictions.jpg" className="w-[70%]"/>
+  <img src="/img/virtual-unwrapping/surface-predictions.jpg" className="w-[70%]"/>
   <figcaption className="mt-[-6px]">Slice showing Machine Learning prediction of the surface.</figcaption>
 </div>
 
@@ -189,8 +189,8 @@ The surface tracer was submitted by Dr Hendrik Schilling and Sean Johnson for th
 Although it did not meet the needed quality criteria to win, it was very close to the target!
 
 <div className="mb-4">
-  <a href="/img/virtual-unrolling/fasp-surface-tracer.jpg" target="_blank" rel="noopener noreferrer">
-    <img src="/img/virtual-unrolling/fasp-surface-tracer.jpg" className="w-[70%] cursor-pointer" />
+  <a href="/img/virtual-unwrapping/fasp-surface-tracer.jpg" target="_blank" rel="noopener noreferrer">
+    <img src="/img/virtual-unwrapping/fasp-surface-tracer.jpg" className="w-[70%] cursor-pointer" />
   </a>
   <figcaption className="mt-[-6px]">FASP - Surface tracer submission (4 hours of human input)</figcaption>
 </div>
@@ -208,7 +208,7 @@ The raw data is first blurred with a box filter. Then a surface-like point cloud
 A limitation is that compressed regions may yield lower point-cloud density, cross-fiber edges can be falsely extracted, and scan artifacts (e.g. beam hardening effect) can be mistakenly detected as false surfaces. Nevertheless, based on visual inspection, the point clouds appear to decently represent the intended sheet surfaces.
 
 <div className="mb-4">
-  <img src="/img/virtual-unrolling/thaumato-ir.png" className="w-[70%]"/>
+  <img src="/img/virtual-unwrapping/thaumato-ir.png" className="w-[70%]"/>
   <figcaption className="mt-[-6px]">Slice showing surface point clouds (blue) in Scroll 5 (PHerc 172).</figcaption>
 </div>
 
@@ -244,13 +244,13 @@ The optimization looks for the assignment with the least number of wrongly estim
 #### 2023 Ink Detection Grand Prize - Additional Material
 An early version of Thaumato Anakalyptor, developed by Julian Schilliger, was included as additional material in the submission that won the 2023 Ink Detection Grand Prize.
 
-This is a recent (as of Juanuary 2025) virtual unrolling attempt with Thaumato Anakalyptor on Scroll 5 (PHerc 172).
+This is a recent (as of Juanuary 2025) virtual unwrapping attempt with Thaumato Anakalyptor on Scroll 5 (PHerc 172).
 
 <div className="mb-4">
-  <a href="/img/virtual-unrolling/thaumato-s5jan.jpg" target="_blank" rel="noopener noreferrer">
-    <img src="/img/virtual-unrolling/thaumato-s5jan.jpg" className="w-[70%] cursor-pointer" />
+  <a href="/img/virtual-unwrapping/thaumato-s5jan.jpg" target="_blank" rel="noopener noreferrer">
+    <img src="/img/virtual-unwrapping/thaumato-s5jan.jpg" className="w-[70%] cursor-pointer" />
   </a>
-  <figcaption className="mt-[-6px]">Virtual unrolling attempt with Thaumato Anakalyptor on Scroll 5 (almost zero human input).</figcaption>
+  <figcaption className="mt-[-6px]">Virtual unwrapping attempt with Thaumato Anakalyptor on Scroll 5 (almost zero human input).</figcaption>
 </div>
 
 
@@ -267,7 +267,7 @@ All three methods—**Spiral Fitting**, **Surface Tracer**, and **Thaumato Anaka
 
 Despite these advances, the problem is still unsolved. No method so far manages to perfectly fit the wanted surface to the data.
 The most common error is **sheet switching**, i.e. when the fitted surface jumps a winding, resulting in a distorted, non realistic shape.
-We need your help to virtual unroll the Herculaneum scrolls.
+We need your help to virtually unwrap the Herculaneum scrolls.
 
 ---
 ## References

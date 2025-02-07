@@ -155,7 +155,7 @@ These teams each brought to the table new approaches to the subtleties of ink la
 
 ## What does the scroll say?
 
-To date, our efforts have managed to unroll and read about 5% of the first scroll. Our eminent team of papyrologists has been hard at work and has achieved a preliminary transcription of all the revealed columns. We now know that this scroll is not a duplicate of an existing work; it contains never-before-seen text from antiquity. The papyrology team are preparing to deliver a comprehensive study as soon as they can. You all gave them a lot of work to do! Initial readings already provide glimpses into this philosophical text. From our scholars:
+To date, our efforts have managed to unwrap and read about 5% of the first scroll. Our eminent team of papyrologists has been hard at work and has achieved a preliminary transcription of all the revealed columns. We now know that this scroll is not a duplicate of an existing work; it contains never-before-seen text from antiquity. The papyrology team are preparing to deliver a comprehensive study as soon as they can. You all gave them a lot of work to do! Initial readings already provide glimpses into this philosophical text. From our scholars:
 
 <div className="ml-8 mb-4">The general subject of the text is pleasure, which, properly understood, is the highest good in Epicurean philosophy. In these two snippets from two consecutive columns of the scroll, the author is concerned with whether and how the availability of goods, such as food, can affect the pleasure which they provide.</div>
 
@@ -301,12 +301,12 @@ Machine learning models are infamous for “hallucinating”: making up text or 
   <figcaption className="mt-[-6px]">The models use small input/output windows. In some cases, the output is even only binary (“ink” vs “no ink”), as shown in this animation. This makes it extremely unlikely for the model to hallucinate shapes that look like letters.</figcaption>
 </figure>
 
-## How does the unrolling work?
+## How does the unwrapping work?
 
 <div>Roughly, virtual unwrapping works in <a href="tutorial">three steps:</a></div>
 
 1. **Scanning:** creating a 3D scan of a scroll or fragment using X-ray tomography.
-2. **Segmentation:** tracing the crumpled layers of the rolled papyrus in the 3D scan and then unrolling, or flattening, them.
+2. **Segmentation:** tracing the crumpled layers of the rolled papyrus in the 3D scan and then unwrapping, or flattening, them.
 3. **Ink Detection:** identifying the inked regions in the flattened segments using a machine learning model.
 
 These scrolls were scanned at Diamond Light Source, a particle accelerator near Oxford, England. The facility produces a parallel beam of X-rays at high flux, allowing for fast, accurate, and high-resolution imaging. The X-ray photos are turned into a 3D volume of voxels using tomographic reconstruction algorithms, resulting in a stack of slice images.
@@ -408,7 +408,7 @@ With Vesuvius Challenge, we hope not only to solve the problem of reading the He
 
 When we started the competition, most of us estimated that we had a less than 30% probability of success within the year. At that point, no letters had yet been discovered inside of a scroll. On top of that, the scrolls had barely been segmented at all. We had doubt as to whether the project could succeed, especially by the deadline we set. Was the ink signal present? Were the scans high-resolution enough? Could the techniques used to identify ink in the fragments be transferred into a scroll? None of this was known at the time. But we knew it was worth trying!
 
-In Stage 1 of Vesuvius Challenge, we answered all of these questions, extracting 15 columns of never-before-seen text from inside a lump of carbon. We now have proven techniques for virtually unrolling the papyrus scroll and recognizing ink using machine learning.
+In Stage 1 of Vesuvius Challenge, we answered all of these questions, extracting 15 columns of never-before-seen text from inside a lump of carbon. We now have proven techniques for virtually unwrapping the papyrus scroll and recognizing ink using machine learning.
 
 ### Vesuvius Challenge Stage 2
 

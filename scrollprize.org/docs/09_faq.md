@@ -67,6 +67,8 @@ We have a [background page](background) for that!
 
 ### Where can I read the texts Vesuvius Challenge has uncovered?
 
+Check out [these images](https://drive.google.com/drive/folders/1nnWR3ZMcUxJhp4SJYkV8-REwHsQT0fQb?usp=sharing) of some text we've so far revealed!
+
 Here are the scholarly publications so far resulting from Vesuvius Challenge:
 
 * [Revealing Text from a Still-rolled Herculaneum Papyrus Scroll (PHerc. Paris. 4)](https://www.iris.unina.it/handle/11588/959427) (2023 First Letters results)
