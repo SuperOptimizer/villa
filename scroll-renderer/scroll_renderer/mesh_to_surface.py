@@ -386,7 +386,10 @@ class MeshDataset(Dataset):
         stack_array = zarr.open(dirname, mode="r")
         print("Contents of the group:", list(stack_array.groups()))
         print("Arrays in the group:", list(stack_array.arrays()))
-        stack_array = stack_array[0]
+        try:
+            stack_array = stack_array[0] # if generated with julian's fork
+        except:
+            stack_array = stack_array['0'] # if generated with the original script
         print(f"zarr shape: {stack_array.shape}")
         return stack_array
 
