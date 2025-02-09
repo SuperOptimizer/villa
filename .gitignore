@@ -1,3 +1,4 @@
 **/.venv/
 /**/.idea/*
 .vscode/
+/segmentation/vc_proofreader/__pycache__
