@@ -3,8 +3,10 @@ dependencies = [
     "build123d @ git+https://github.com/gumyr/build123d",
     "bd_warehouse @ git+https://github.com/gumyr/bd_warehouse",
     "numpy",
+    "trimesh",
     "ocp-vscode",
     "meshlib",
+    "plotly",
 ]
 name = "scrollcase"
 version = "0.1.0"
