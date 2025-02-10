@@ -1,6 +1,6 @@
 openscad/
 data/
-scripts/
+scripts/scratch/
 
 .direnv/
 .envrc
