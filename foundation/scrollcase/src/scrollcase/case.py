@@ -1,6 +1,44 @@
+from dataclasses import dataclass
 from build123d import *
 import meshlib.mrmeshpy as mm
 import numpy as np
+
+@dataclass
+class ScrollCase:
+    scroll_height: float
+    scroll_radius: float
+    upper_margin: float = 20
+    lower_margin: float = 20
+    radial_margin: float = 4
+    lining_thickness: float = 2
+    scroll_offset: float = 2
+    case_thickness: float = 2
+    base_radius: float = 65
+    base_height: float = 10
+
+    @property
+    def lining_outer_radius(self):
+        return self.scroll_radius + self.scroll_offset + self.lining_thickness
+
+    @property
+    def cylinder_height(self):
+        return self.scroll_height + self.lower_margin + self.upper_margin
+
+    @property
+    def cylinder_inner_radius(self):
+        return self.lining_outer_radius + self.radial_margin
+
+    @property
+    def cylinder_outer_radius(self):
+        return self.lining_outer_radius + self.radial_margin + self.case_thickness
+
+    @property
+    def cylinder_bottom(self):
+        return -(self.lower_margin)
+
+    @property
+    def cap_bottom(self):
+        return self.cylinder_bottom - self.case_thickness
 
 
 def generic_mount_disc() -> Solid:
@@ -74,3 +112,72 @@ def honeycomb_cylinder(
     honey_cyl = cyl - all_hexes
 
     return honey_cyl
+
+def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
+    honeycomb = None
+    honeycomb = honeycomb_cylinder(
+        case.cylinder_inner_radius, case.cylinder_height, case.case_thickness, gap=3.0
+    )
+
+    with BuildPart(Location((0, 0, case.cylinder_bottom))) as case_part:
+        if honeycomb:
+            add(honeycomb)
+
+        # Bottom Cap
+        Cylinder(
+            case.cylinder_outer_radius,
+            case.case_thickness,
+            align=(Align.CENTER, Align.CENTER, Align.MAX),
+        )
+        # Top Cap
+        with Locations((0, 0, case.scroll_height + case.lower_margin + case.upper_margin)):
+            Cylinder(
+                case.cylinder_outer_radius,
+                case.case_thickness,
+                align=(Align.CENTER, Align.CENTER, Align.MIN),
+            )
+
+        # Parting rect
+        Box(
+            2 * (case.cylinder_outer_radius),
+            2 * case.case_thickness,
+            case.scroll_height + case.lower_margin + case.upper_margin,
+            align=(Align.CENTER, Align.CENTER, Align.MIN),
+        )
+
+        # Alignment rings
+        with Locations(
+            [
+                (0.0, 0.0, x)
+                for x in np.arange(case.lower_margin, case.cylinder_height, 50.0)
+            ]
+        ):
+            add(alignment_ring(case.cylinder_inner_radius))
+
+        split(bisect_by=Plane.XZ, keep=Keep.BOTH)
+
+
+    with BuildPart(Location((0, 0, case.cap_bottom))) as base_part:
+        cyl = Cylinder(
+            case.base_radius,
+            case.base_height,
+            align=(Align.CENTER, Align.CENTER, Align.MAX),
+        )
+
+        with BuildSketch(cyl.faces().sort_by()[0]) as sk1:
+            Rectangle(5, 5)
+            with Locations((0, -20)):
+                Text(f"{case.scroll_radius:.2f}Rx{case.scroll_height:.2f}Z", 10)
+        extrude(amount=-5, mode=Mode.SUBTRACT)
+
+    with BuildPart(mode=Mode.PRIVATE) as nubs:
+        with Locations((0, 0, -case.lower_margin / 2)):
+            with Locations((10, 0, 0)):
+                Box(4, 4, 4)
+            with Locations((-10, 0, 0)):
+                Box(4, 4, 4, rotation=(0, 45, 0))
+
+    left = case_part.solids()[0] + base_part.solids()[0] + nubs.solids()
+    right = case_part.solids()[1] - nubs.solids()
+
+    return left, right

@@ -222,7 +222,7 @@ def build_lining(
 
 def combine_case_lining(
     case_mesh: mm.Mesh,
-    cavity_mesh,
+    cavity_mesh: mm.Mesh,
     lining_mesh: mm.Mesh,
     voxel_size_diagonal_percent: float = 0.4,
 ):
