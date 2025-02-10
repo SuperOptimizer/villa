@@ -1,159 +1,159 @@
+#!/usr/bin/env python
 import os
 import re
+import argparse
 import numpy as np
-import zarr
-import tifffile
-import numcodecs
-from multiprocessing import Pool
-from tqdm import tqdm
+import imageio
 
+import dask
+from dask import delayed
+import dask.array as da
+from dask.distributed import Client, LocalCluster, progress
 
-# ---------------------------
-# Helper function to read one TIFF file.
-# ---------------------------
-def read_tiff(args):
-    """
-    Read a TIFF file and return its z index and image array.
-
-    Parameters:
-      args: tuple (filepath, z_index)
-
-    Returns:
-      (z_index, image_array)
-    """
-    filepath, z_index = args
-    # Read the image from file (adjust options as needed)
-    data = tifffile.imread(filepath)
-    return z_index, data
-
-
-# ---------------------------
-# Downsampling helper (nearest-neighbor)
-# ---------------------------
-def downsample_slice(slice_data, factor=2):
-    """
-    Downsample a 2D slice by taking every 'factor'-th pixel.
-    (This is a simple nearest–neighbor downsampling.)
-    """
-    return slice_data[::factor, ::factor]
-
-
-# ---------------------------
-# Main function to create the OME-Zarr volume
-# ---------------------------
 def main():
-    # ------------- SETTINGS -------------
-    # Folder containing your TIFF slices
-    tif_folder = "/mnt/raid_nvme/merged_s4"
-    # Where to write the output OME-Zarr volume (a directory path)
-    output_zarr = "/mnt/raid_nvme/merged_s4_obj.zarr"
-    # Number of resolution levels (level 0 is full resolution)
-    n_levels = 5
-    # Chunk size for all dimensions (z, y, x)
-    chunk_size = 128
-    # Define a compressor – here using Blosc with zstd (adjust parameters as needed)
-    compressor = numcodecs.Blosc(cname='zstd', clevel=5, shuffle=numcodecs.Blosc.SHUFFLE)
-    # ------------------------------------
-
-    # Get list of TIFF files in the folder (case-insensitive extensions)
-    tif_files = [f for f in os.listdir(tif_folder)
-                 if f.lower().endswith(('.tif', '.tiff'))]
-
-    # Use a regex to extract the first group of digits from each filename.
-    # (Assumes filenames like "4.tif" or "slice_4.tif".)
-    pattern = re.compile(r'(\d+)')
-    file_info = []  # list of tuples: (full_path, z_index)
-    z_indices_found = []
-
-    for f in tif_files:
-        m = pattern.search(f)
-        if m:
-            z_idx = int(m.group(1))
-            full_path = os.path.join(tif_folder, f)
-            file_info.append((full_path, z_idx))
-            z_indices_found.append(z_idx)
-
-    if not file_info:
-        raise ValueError("No TIFF files found with a numeric slice index in the filename.")
-
-    # Determine the overall z range.
-    min_z = min(z_indices_found)
-    max_z = max(z_indices_found)
-    total_slices = max_z + 1  # Assuming slices are numbered from 0 to max_z.
-
-    print(f"Found slices with z indices in range [{min_z}, {max_z}].")
-    print(f"Total slices in the full volume will be {total_slices} "
-          f"(missing slices will be filled with zeros).")
-
-    # Read one sample file to get the (y, x) shape.
-    sample_z, sample_img = file_info[0][1], tifffile.imread(file_info[0][0])
-    slice_shape = sample_img.shape  # assume 2D (y, x)
-    volume_shape = (total_slices,) + slice_shape  # (z, y, x)
-
-    # ---------------------------
-    # Create the root zarr group (as a directory store)
-    # ---------------------------
-    root = zarr.open(output_zarr, mode='w')
-
-    # Create level 0 (full resolution) dataset using the given chunk size.
-    ds0 = root.create_dataset(
-        "0", shape=volume_shape, chunks=(chunk_size, chunk_size, chunk_size),
-        compressor=compressor, dtype=sample_img.dtype, write_empty_chunks=False
-    )
-
-    # Fill the full volume with zeros so that missing slices (if any) are blank.
-    print("Initializing full-resolution dataset with zeros...")
-    ds0[:] = 0
-
-    # ---------------------------
-    # Use multiprocessing to read the TIFF files and insert them into the volume.
-    # ---------------------------
-    print("Reading TIFF slices and writing into the full-resolution volume (level 0)...")
-    with Pool() as pool:
-        # pool.imap_unordered will yield (z_index, data) tuples
-        for z_idx, data in tqdm(pool.imap_unordered(read_tiff, file_info), total=len(file_info)):
-            # Write the slice data to the correct z index.
-            ds0[z_idx, :, :] = data
-
-    # ---------------------------
-    # Generate downsampled resolution levels (levels 1 .. n_levels-1)
-    # ---------------------------
-    # For each new level we downsample the previous level by a factor of 2 in y and x.
-    previous_ds = ds0
-    previous_shape = volume_shape  # (z, y, x)
-
-    for level in range(1, n_levels):
-        # Compute new (y, x) dimensions (using nearest–neighbor: simply take every 2nd pixel)
-        new_y = (previous_shape[1] + 1) // 2
-        new_x = (previous_shape[2] + 1) // 2
-        new_shape = (previous_shape[0], new_y, new_x)
-
-        print(f"Creating resolution level {level} with shape {new_shape} ...")
-        ds_level = root.create_dataset(
-            str(level), shape=new_shape, chunks=(chunk_size, chunk_size, chunk_size),
-            compressor=compressor, dtype=sample_img.dtype
+    parser = argparse.ArgumentParser(
+        description=(
+            "Load image files (tif, tiff, jpg, png) from a folder into a 3D (or 4D) volume "
+            "based on the slice number extracted from each filename. If slices are missing, "
+            "the volume will be padded with blank (zero) slices so that the slice index matches "
+            "the filename number. Finally, the volume is written to a Zarr store."
         )
+    )
+    parser.add_argument(
+        "input_folder",
+        help="Path to the folder containing image files."
+    )
+    parser.add_argument(
+        "output_zarr",
+        help="Path (or directory) where the Zarr store will be created."
+    )
+    parser.add_argument(
+        "--chunks",
+        type=int,
+        default=None,
+        help=(
+            "Chunk size to be applied to the spatial dimensions. For a 3D volume (n_slices, H, W), "
+            "this will result in chunks of shape (1, chunks, chunks). For a 4D volume (n_slices, H, W, C), "
+            "the channel dimension is left intact (i.e. chunks of shape (1, chunks, chunks, -1))."
+        )
+    )
+    parser.add_argument(
+        "--memory-limit",
+        type=str,
+        default="auto",
+        help="Maximum memory for each Dask worker (e.g., '2GB' or '1024MB')."
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=None,
+        help="Number of Dask workers to launch. If not provided, Dask will use the default (usually one per CPU core)."
+    )
+    args = parser.parse_args()
 
-        # Downsample each slice in z.
-        for z in tqdm(range(new_shape[0]), desc=f"Downsampling level {level}"):
-            # Read one slice from the previous level and downsample it.
-            slice_prev = previous_ds[z, :, :]
-            ds_level[z, :, :] = downsample_slice(slice_prev, factor=2)
+    input_folder = args.input_folder
+    output_zarr = args.output_zarr
+    memory_limit = args.memory_limit
+    num_workers = args.num_workers
 
-        # Prepare for the next iteration.
-        previous_ds = ds_level
-        previous_shape = new_shape
+    # Define valid file extensions (case-insensitive)
+    valid_extensions = ('.tif', '.tiff', '.jpg', '.png')
 
-    # ---------------------------
-    # Write multiscale metadata for OME-Zarr (NGFF) compliance.
-    # ---------------------------
-    root.attrs["multiscales"] = [{
-        "version": "0.1",
-        "datasets": [{"path": str(l)} for l in range(n_levels)],
-        "type": "ngff"
-    }]
-    print("OME-Zarr multiscale volume created successfully.")
+    # List all files in the folder that have one of the valid extensions.
+    files = [
+        os.path.join(input_folder, f)
+        for f in os.listdir(input_folder)
+        if os.path.isfile(os.path.join(input_folder, f)) and f.lower().endswith(valid_extensions)
+    ]
 
+    if not files:
+        print(f"No valid image files found in folder: {input_folder}")
+        return
+
+    # Build a mapping from slice index to file.
+    # Using a regex to capture the last occurrence of digits before the extension.
+    index_to_file = {}
+    for file in files:
+        base = os.path.basename(file)
+        m = re.search(r'(\d+)(?!.*\d)', base)
+        if m:
+            idx = int(m.group(1))
+            if idx in index_to_file:
+                print(f"Warning: duplicate slice index {idx} found in file {file}; ignoring duplicate.")
+            else:
+                index_to_file[idx] = file
+        else:
+            print(f"Warning: no numeric slice index found in file {file}; skipping.")
+
+    if not index_to_file:
+        print("No files with numeric slice indices were found; exiting.")
+        return
+
+    # Determine the volume range.
+    max_index = max(index_to_file.keys())
+    total_slices = max_index + 1
+    print(f"Found slice indices: {sorted(index_to_file.keys())}")
+    print(f"Volume will have {total_slices} slices (indices 0 to {max_index}).")
+
+    # Load a sample file to determine the image shape and dtype.
+    sample_index = sorted(index_to_file.keys())[0]
+    sample_file = index_to_file[sample_index]
+    sample = imageio.imread(sample_file)
+    shape = sample.shape
+    dtype = sample.dtype
+    print(f"Sample image shape: {shape}, dtype: {dtype}")
+
+    # Build a list of lazy arrays for each slice.
+    lazy_arrays = []
+    for i in range(total_slices):
+        if i in index_to_file:
+            file = index_to_file[i]
+            # Create a delayed object to read the image.
+            lazy_im = delayed(imageio.imread)(file)
+        else:
+            # For missing slices, create a delayed object that returns an array of zeros.
+            lazy_im = delayed(np.zeros)(shape, dtype=dtype)
+        # Wrap the delayed object as a Dask array with the proper shape and dtype.
+        arr = da.from_delayed(lazy_im, shape=shape, dtype=dtype)
+        lazy_arrays.append(arr)
+
+    # Stack all slices along a new axis (the z-dimension).
+    volume = da.stack(lazy_arrays, axis=0)
+    print(f"Constructed volume shape: {volume.shape}")
+
+    # Optionally rechunk the volume using a more memory-efficient scheme.
+    if args.chunks is not None:
+        chunk_size = args.chunks
+        if len(shape) == 2:
+            # For 2D images: volume shape is (n_slices, H, W)
+            new_chunks = (1, chunk_size, chunk_size)
+        elif len(shape) == 3:
+            # For 3D images (e.g., RGB): volume shape is (n_slices, H, W, C)
+            new_chunks = (1, chunk_size, chunk_size, -1)  # Leave the channel dimension unchunked
+        else:
+            # Fallback: uniform chunking
+            new_chunks = (chunk_size,) * volume.ndim
+        print(f"Rechunking volume to chunks: {new_chunks}")
+        volume = volume.rechunk(new_chunks)
+
+    # Start a local Dask distributed cluster.
+    cluster = LocalCluster(n_workers=num_workers,
+                           threads_per_worker=2,
+                           memory_limit=memory_limit,
+                           local_directory="/mnt/raid_nvme/dask_scratch")
+    client = Client(cluster)
+    print("Dask client created:", client)
+    print("Dask dashboard available at:", client.dashboard_link)
+
+    # Write the volume to a Zarr store.
+    print(f"Writing volume to Zarr store at: {output_zarr}")
+    # Using compute=False builds a lazy graph.
+    write_graph = volume.to_zarr(output_zarr, overwrite=True, compute=False)
+    future = client.compute(write_graph)
+    progress(future)  # Shows a progress bar in the terminal.
+    client.gather(future)
+
+    print("Conversion complete.")
 
 if __name__ == "__main__":
     main()
