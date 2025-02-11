@@ -692,19 +692,14 @@ const team = {
       href: "https://youssefnader.com/",
     },
     {
-      name: "Ben Kyles",
+      name: "David Josey",
       title: "Segmentation Team Lead",
-      href: "https://twitter.com/ben_kyles",
+      href: "https://www.linkedin.com/in/davidsjosey/",
     },
     {
       name: "Adrionna Fey",
       title: "Segmentation Team Member",
       href: "https://twitter.com/Meadowsnax1",
-    },
-    {
-      name: "David Josey",
-      title: "Segmentation Team Member",
-      href: "https://www.linkedin.com/in/davidsjosey/",
     },
     {
       name: "Konrad Rosenberg",
@@ -1553,7 +1548,7 @@ export function Landing() {
                   </span>
                   <span className="opacity-80 md:opacity-60">&nbsp;Also:</span>
                   <span className="opacity-100">
-                    <a href="jobs">&nbsp;We're hiring!</a>
+                    <a href="jobs">&nbsp;we're hiring!</a>
                   </span>
                 </p>
               </div>
