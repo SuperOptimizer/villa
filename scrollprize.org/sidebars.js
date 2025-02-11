@@ -98,7 +98,8 @@ const sidebars = {
       type: 'link',
       label: 'Donate',
       href: 'https://donate.stripe.com/aEUg101vt9eN8gM144',
-    }
+    },
+    { type: 'doc', id: 'jobs' },
   ],
   archiveSidebar: [
     {
