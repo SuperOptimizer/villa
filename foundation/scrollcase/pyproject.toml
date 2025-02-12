@@ -47,6 +47,8 @@ select = [
 ignore = [
     "TRY003",  # Exception with string (vs. defining custom exception)
     "PLR2004", # Magic number
+    "SIM117",  # Multiple with statements
+    "F405",    # Star imports
 ]
 pydocstyle.convention = "google"
 
