@@ -1773,7 +1773,7 @@ export function Landing() {
                     <ChallengeBox
                       title="Open Problem: Representation"
                       linkText="Scan the Surface"
-                      href="/open_problem_rep"
+                      href="/unwrapping"
                       imageSrc={
                         <BeforeAfter
                           beforeImage="/img/data/rep_raw_10037.png"
