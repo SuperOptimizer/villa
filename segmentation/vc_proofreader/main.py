@@ -36,10 +36,12 @@ state = {
 }
 
 
-def generate_patch_coords(vol_shape, patch_size, sampling):
+def generate_patch_coords(vol_shape, patch_size, sampling, min_z=0):
     """
     Generate a list of top-left (or front-top-left) coordinates for patches.
     Works for 2D (shape (H, W)) or 3D (shape (D, H, W)) volumes.
+
+    For 3D volumes, only patches starting at a z-index >= min_z will be included.
     """
     coords = []
     if len(vol_shape) == 2:
@@ -48,9 +50,9 @@ def generate_patch_coords(vol_shape, patch_size, sampling):
             for j in range(0, W - patch_size + 1, patch_size):
                 coords.append((i, j))
     elif len(vol_shape) >= 3:
-        # Assume first three dimensions are spatial.
+        # Assume the first three dimensions are spatial.
         D, H, W = vol_shape[:3]
-        for z in range(0, D - patch_size + 1, patch_size):
+        for z in range(min_z, D - patch_size + 1, patch_size):
             for y in range(0, H - patch_size + 1, patch_size):
                 for x in range(0, W - patch_size + 1, patch_size):
                     coords.append((z, y, x))
@@ -59,6 +61,16 @@ def generate_patch_coords(vol_shape, patch_size, sampling):
     if sampling == 'random':
         np.random.shuffle(coords)
     return coords
+
+
+def find_closest_coord_index(old_coord, coords):
+    """
+    Given an old coordinate (tuple) and a list of new coordinates, find
+    the index in the new coordinate list that is closest (using Euclidean distance)
+    to the old coordinate.
+    """
+    distances = [np.linalg.norm(np.array(coord) - np.array(old_coord)) for coord in coords]
+    return int(np.argmin(distances))
 
 
 def extract_patch(volume, coord, patch_size):
@@ -97,9 +109,9 @@ def load_progress():
                 with open(state['progress_file'], "r") as f:
                     data = json.load(f)
                 state['progress_log'] = data.get("progress_log", [])
-                # Set current_index to the number of processed patches
+                # This value will be overridden later if a new patch grid is computed.
                 state['current_index'] = len(state['progress_log'])
-                print(f"Resuming from patch index {state['current_index']} as per progress file.")
+                print(f"Loaded progress file with {len(state['progress_log'])} entries.")
             except Exception as e:
                 print("Error loading progress:", e)
 
@@ -214,6 +226,7 @@ def save_current_patch():
 @magicgui(
     sampling={"choices": ["random", "sequence"]},
     min_label_percentage={"min": 0, "max": 100},
+    min_z={"widget_type": "SpinBox", "min": 0, "max": 999999},
 )
 def init_volume(
         image_zarr: str = config.get("image_zarr", ""),
@@ -224,6 +237,7 @@ def init_volume(
         save_progress: bool = config.get("save_progress", False),
         progress_file: str = config.get("progress_file", ""),
         min_label_percentage: int = config.get("min_label_percentage", 0),
+        min_z: int = 0,  # <-- New parameter: minimum z index from which to start patching (only for 3D)
         use_full_resolution: bool = False  # New checkbox parameter.
 ):
     """
@@ -335,11 +349,27 @@ def init_volume(
     state['patch_size'] = display_patch_size
 
     # Compute patch coordinates on the display volume.
-    vol_shape = display_shape
-    state['patch_coords'] = generate_patch_coords(vol_shape, display_patch_size, sampling)
+    vol_shape = display_shape  # 2D or 3D shape of the display volume.
+    new_patch_coords = generate_patch_coords(vol_shape, display_patch_size, sampling, min_z=min_z)
+    state['patch_coords'] = new_patch_coords
 
     # Attempt to load prior progress.
     load_progress()
+
+    # If a progress log exists, adjust the starting patch index based on the last processed coordinate.
+    if state['progress_log']:
+        old_coord = state['progress_log'][-1]['coords']
+        # Option 1: "Snap" the old coordinate to the new grid.
+        new_start_coord = tuple((c // display_patch_size) * display_patch_size for c in old_coord)
+        if new_start_coord in new_patch_coords:
+            new_index = new_patch_coords.index(new_start_coord)
+        else:
+            # Option 2: Use nearest neighbor.
+            new_index = find_closest_coord_index(old_coord, new_patch_coords)
+        state['current_index'] = new_index
+        print(f"Resuming from new patch index {new_index} (closest to old coordinate {old_coord}).")
+    else:
+        state['current_index'] = 0
 
     print(f"Loaded display volumes with shape {vol_shape}.")
     print(f"Found {len(state['patch_coords'])} patch positions using '{sampling}' sampling.")
@@ -359,7 +389,6 @@ def iter_pair(approved: bool):
     # Update the minimum label percentage from the current value in the init_volume widget.
     # This assumes that the init_volume widget is still available as a global variable.
     state['min_label_percentage'] = init_volume.min_label_percentage.value
-    state['patch_size'] = init_volume.display_patch_size.value
 
     # Update the pending entry from load_next_patch.
     if state['progress_log'] and state['progress_log'][-1]['status'] == "pending":
@@ -371,7 +400,6 @@ def iter_pair(approved: bool):
     load_next_patch()
     update_progress()
     iter_pair.approved.value = False
-
 
 
 @magicgui(call_button="previous pair")

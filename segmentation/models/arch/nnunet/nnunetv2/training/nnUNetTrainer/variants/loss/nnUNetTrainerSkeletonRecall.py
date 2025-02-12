@@ -29,7 +29,7 @@ from batchgeneratorsv2.transforms.nnunet.remove_connected_components import \
     RemoveRandomConnectedComponentFromOneHotEncodingTransform
 from batchgeneratorsv2.transforms.nnunet.seg_to_onehot import MoveSegAsOneHotToDataTransform
 from batchgeneratorsv2.transforms.noise.gaussian_blur import GaussianBlurTransform
-from batchgeneratorsv2.transforms.noise.extranoisetransforms import BlankRectangleTransform
+from batchgeneratorsv2.transforms.noise.extranoisetransforms import BlankRectangleTransform, SmearTransform
 from batchgeneratorsv2.transforms.spatial.low_resolution import SimulateLowResolutionTransform
 from batchgeneratorsv2.transforms.spatial.mirroring import MirrorTransform
 from batchgeneratorsv2.transforms.spatial.spatial import SpatialTransform
@@ -185,13 +185,13 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
                 patch_center_dist_from_border=0,
                 random_crop=False,
                 p_elastic_deform=.3,
-                p_rotation=0.4,
+                p_rotation=0.5,
                 rotation=rotation_for_DA,
                 p_scaling=0.2,
                 scaling=(0.7, 1.4),
                 p_synchronize_scaling_across_axes=1,
                 bg_style_seg_sampling=False,  # =, mode_seg='nearest'
-                elastic_deform_magnitude=(0.1, 0.40)
+                elastic_deform_magnitude=(10, 50)
             )
         )
 
@@ -200,9 +200,9 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
 
         transforms.append(RandomTransform(
             BlankRectangleTransform(
-                rectangle_size=((max(1, patch_size[0] // 10), patch_size[0] // 3),
-                                (max(1, patch_size[1] // 10), patch_size[1] // 3),
-                                (max(1, patch_size[2] // 10), patch_size[2] // 3)),
+                rectangle_size=((max(1, patch_size[0] // 6), patch_size[0] // 3),
+                                (max(1, patch_size[1] // 6), patch_size[1] // 3),
+                                (max(1, patch_size[2] // 6), patch_size[2] // 3)),
                 rectangle_value=np.mean,  # keeping the mean value
                 num_rectangles=(1, 5),  # same as original
                 force_square=False,  # same as original
@@ -212,21 +212,25 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
         ))
 
         transforms.append(RandomTransform(
+            SmearTransform(
+                shift=(5,0),
+                alpha=0.2,
+                num_prev_slices=3,
+                smear_axis=3
+            ), apply_probability=0.2
+        ))
+
+        transforms.append(RandomTransform(
             InhomogeneousSliceIlluminationTransform(
                 num_defects=(2, 5),  # Range for number of defects
-                defect_width=(5, 20),  # Range for defect width
-                mult_brightness_reduction_at_defect=(0.3, 0.7),  # Range for brightness reduction
+                defect_width=(25, 50),  # Range for defect width
+                mult_brightness_reduction_at_defect=(0.3, 1.5),  # Range for brightness reduction
                 base_p=(0.2, 0.4),  # Base probability range
                 base_red=(0.5, 0.9),  # Base reduction range
                 p_per_sample=1.0,  # Probability per sample
                 per_channel=True,  # Apply per channel
                 p_per_channel=0.5  # Probability per channel
             ), apply_probability=0.25
-        ))
-        transforms.append(RandomTransform(
-            TransposeAxesTransform(
-                allowed_axes = {0, 1, 2}
-        ), apply_probability=0.4
         ))
 
         transforms.append(RandomTransform(
@@ -246,14 +250,14 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
         ))
         transforms.append(RandomTransform(
             MultiplicativeBrightnessTransform(
-                multiplier_range=BGContrast((0.75, 1.5)),
+                multiplier_range=BGContrast((0.5, 1.5)),
                 synchronize_channels=False,
                 p_per_channel=1
             ), apply_probability=0.15
         ))
         transforms.append(RandomTransform(
             ContrastTransform(
-                contrast_range=BGContrast((0.75, 1.5)),
+                contrast_range=BGContrast((0.5, 1.5)),
                 preserve_range=True,
                 synchronize_channels=False,
                 p_per_channel=1
@@ -261,7 +265,7 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
         ))
         transforms.append(RandomTransform(
             SimulateLowResolutionTransform(
-                scale=(0.5, 1),
+                scale=(0.25, 1),
                 synchronize_channels=False,
                 synchronize_axes=True,
                 ignore_axes=ignore_axes,
@@ -333,7 +337,7 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
                 )
             )
 
-        transforms.append(SkeletonTransform(do_tube=True))
+        transforms.append(SkeletonTransform(do_tube=False))
 
         if regions is not None:
             # the ignore label must also be converted

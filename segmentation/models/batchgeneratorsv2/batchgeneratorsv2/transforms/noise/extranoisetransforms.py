@@ -1,7 +1,7 @@
 from typing import Union, Tuple, List, Callable
 import numpy as np
 import torch
-from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform
+from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform, ImageOnlyTransform
 
 class ColorFunctionExtractor:
     def __init__(self, rectangle_value):
@@ -180,3 +180,74 @@ class RicianNoiseTransform(BasicTransform):
 
     def _apply_to_regr_target(self, regr_target: torch.Tensor, **kwargs) -> torch.Tensor:
         return regr_target  # Don't apply noise to regression targets
+
+
+class SmearTransform(ImageOnlyTransform):
+    def __init__(self, shift=(10, 0), alpha=0.5, num_prev_slices=1, smear_axis=1):
+        """
+        Args:
+            shift : tuple of int
+                The (row_shift, col_shift) to apply to each previous slice (wrap-around is used).
+            alpha : float
+                Blending factor for the aggregated shifted slices (0 = no influence, 1 = full replacement).
+            num_prev_slices : int
+                The number of previous slices to aggregate and use for blending.
+            smear_axis : int
+                The spatial axis (in the full tensor) along which to apply the smear.
+                For an input image with shape (C, X, Y) or (C, X, Y, Z), spatial dimensions are indices 1,2,(3).
+                Default: 1 (i.e. the first spatial axis).
+        """
+        super().__init__()
+        self.shift = shift
+        self.alpha = alpha
+        self.num_prev_slices = num_prev_slices
+        self.smear_axis = smear_axis
+
+    def get_parameters(self, **data_dict) -> dict:
+        # No extra parameters are needed.
+        return {}
+
+    def _apply_to_image(self, img: torch.Tensor, **params) -> torch.Tensor:
+        # Ensure the image is on CPU and convert to numpy.
+        device = img.device
+        img_np = img.detach().cpu().numpy()
+        # We assume the input image has shape (C, ...) where the remaining dimensions are spatial.
+        C = img_np.shape[0]
+        spatial_shape = img_np.shape[1:]
+        num_spatial_dims = len(spatial_shape)
+        # Validate smear_axis: must be between 1 and number of spatial dimensions.
+        if not (1 <= self.smear_axis <= num_spatial_dims):
+            raise ValueError(f"smear_axis must be between 1 and {num_spatial_dims} for input with shape {img_np.shape}")
+        # For each channel, we want to operate on the corresponding spatial image.
+        # Since the channel dimension is separate, we adjust the smear axis to a "local" axis in the channel image.
+        # (For example, if smear_axis is 1 in the full tensor, then for the channel image it is 0.)
+        local_smear_axis = self.smear_axis - 1
+
+        transformed = np.copy(img_np)
+        for ch in range(C):
+            chan_img = img_np[ch]  # shape: spatial_shape (e.g., for a 3D image: (D, H, W))
+            # Proceed only if the size along the smear axis is greater than num_prev_slices.
+            if chan_img.shape[local_smear_axis] <= self.num_prev_slices:
+                continue
+
+            # To iterate easily along the smear axis, bring that axis to the front.
+            moved = np.moveaxis(chan_img, local_smear_axis, 0)  # shape: (N, ...) where N = size along smear axis
+            N = moved.shape[0]
+            # Iterate over slices starting from index num_prev_slices.
+            for i in range(self.num_prev_slices, N):
+                aggregated = np.zeros_like(moved[i], dtype=np.float32)
+                count = 0
+                for j in range(i - self.num_prev_slices, i):
+                    # Shift the previous slice by the given offset.
+                    shifted = np.roll(moved[j], shift=self.shift, axis=(0, 1))
+                    aggregated += shifted.astype(np.float32)
+                    count += 1
+                if count > 0:
+                    aggregated /= count
+                # Blend the aggregated slice with the current slice.
+                moved[i] = ((1 - self.alpha) * moved[i].astype(np.float32) + self.alpha * aggregated).astype(moved[i].dtype)
+            # Restore the original axis order.
+            transformed[ch] = np.moveaxis(moved, 0, local_smear_axis)
+        # Convert back to a torch tensor (preserving dtype and device).
+        out = torch.from_numpy(transformed).to(device)
+        return out
