@@ -693,17 +693,17 @@ const team = {
     },
     {
       name: "David Josey",
-      title: "Segmentation Team Lead",
+      title: "ML Annotation Team Lead",
       href: "https://www.linkedin.com/in/davidsjosey/",
     },
     {
       name: "Adrionna Fey",
-      title: "Segmentation Team Member",
+      title: "Annotation Team Member",
       href: "https://twitter.com/Meadowsnax1",
     },
     {
       name: "Konrad Rosenberg",
-      title: "Segmentation Team Member",
+      title: "Annotation Team Member",
       href: "https://twitter.com/germanicgems",
     },
     {
