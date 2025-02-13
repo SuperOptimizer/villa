@@ -18,8 +18,14 @@ const sidebars = {
       type: 'html',
       value: '<a class="navbar__brand custom-top-header" href="/"><div class="navbar__logo"><img src="/img/social/favicon-64x64.png" alt="Vesuvius Challenge Logo" class="themedImage_ToTc themedImage--dark_i4oU"></div><b class="navbar__title text--truncate">Vesuvius Challenge</b></a>'
     },
-    { type: 'doc', id: 'landing' },
     { type: 'doc', id: 'jobs' },
+  ],
+  villaModelSidebar: [
+    {
+      type: 'html',
+      value: '<a class="navbar__brand custom-top-header" href="/"><div class="navbar__logo"><img src="/img/social/favicon-64x64.png" alt="Vesuvius Challenge Logo" class="themedImage_ToTc themedImage--dark_i4oU"></div><b class="navbar__title text--truncate">Vesuvius Challenge</b></a>'
+    },
+    { type: 'doc', id: 'villa_model' },
   ],
   overviewSidebar: [
     {
@@ -32,7 +38,7 @@ const sidebars = {
       link: { type: 'doc', id: 'landing' },
       items: [
         { type: 'doc', id: 'get_started' },
-        { type: 'doc', id: 'unrolling' },
+        { type: 'doc', id: 'unwrapping' },
         { type: 'doc', id: 'master_plan' },
       ]
     },
@@ -92,7 +98,8 @@ const sidebars = {
       type: 'link',
       label: 'Donate',
       href: 'https://donate.stripe.com/aEUg101vt9eN8gM144',
-    }
+    },
+    { type: 'doc', id: 'jobs' },
   ],
   archiveSidebar: [
     {

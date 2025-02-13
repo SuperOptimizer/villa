@@ -13,8 +13,8 @@ from webknossos import Annotation
 
 from tools import detect_vesselness
 
-#import vesuvius
-#from vesuvius import Volume
+# import vesuvius
+# from vesuvius import Volume
 
 
 ############################################################
@@ -267,7 +267,6 @@ if __name__ == "__main__":
         view = volume.get_mag("1").get_view(absolute_bounding_box=bb)
         data = np.clip(view.read()[0].astype(np.float64)/257,0,255).astype(np.uint8)
         data = np.transpose(data, (2, 1, 0))
-
         tifffile.imwrite(images_filename, data)
 
     print("Done")

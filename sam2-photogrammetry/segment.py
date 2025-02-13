@@ -213,7 +213,7 @@ def main():
     parser.add_argument(
         "--photo_t_checkpoint",
         type=str,
-        default="./checkpoints/photo_t_2000.torch",
+        default="./checkpoints/photo2_t_5000.torch",
         help="Relative or absolute path to the photo_t checkpoint for partial model weights."
     )
     # New argument: if set, force recomputation

@@ -53,11 +53,11 @@ This page lists all the prizes awarded so far:
 
 <div className="flex flex-row flex-wrap">
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/hendrikschilling/FASP">
-    <div className="mb-4"><div className="text-sm font-bold text-gray-300">\$30,000</div><span className="font-bold">Special recognition</span>: Hendrik Schilling / @waldkauz, Sean Johnson / @sean (bruniss)</div>
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">\$30,000</div><span className="font-bold">Gold Aureus++</span>: Hendrik Schilling / @waldkauz, Sean Johnson / @sean (bruniss)</div>
     <img src="/img/progress/202412/patches2.webp"/>
   </a>
   <a className="max-w-[200px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://docs.google.com/document/d/1ZOIqtG7IbgaW4moWmjYCIeBsyQRNoonQe_KtAnQp8gw/view">
-    <div className="mb-4"><div className="text-sm font-bold text-gray-300">\$30,000</div><span className="font-bold">Special recognition</span>: Paul Henderson / @pmh47</div>
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">\$30,000</div><span className="font-bold">Gold Aureus++</span>: Paul Henderson / @pmh47</div>
     <img src="/img/progress/202412/henderson.webp"/>
   </a>
 </div>
