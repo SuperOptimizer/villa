@@ -55,6 +55,23 @@ Mesh processing involves the following steps:
 6. Split along YZ plane
 7. Remove overhangs
 
+### Mesh smoothing
+
+### `mesh_smooth_denoise`
+
+Denoise smoothing. Configure the `gamma` parameter to vary smoothing amount.
+
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/37858078-1245-4ca2-80db-0f13daa374d6" />
+
+### `mesh_smooth_shrink_expand`
+
+Smooth convexities/concavities by first shrinking/expanding the mesh and then expanding/shrinking back to the original value.
+
+Shown here with 2 mm offset:
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/f96841e0-b9b9-4156-9d65-cfd8d905c811" />
+
+
+
 ## Case construction
 
 Case as viewed in the OCP CAD Viewer:
@@ -63,7 +80,7 @@ Case as viewed in the OCP CAD Viewer:
 
 Enabling transparency to check clearances etc.:
 
-<img width="600" alt="image" src="https://github.com/user-attachments/assets/495dcffd-c353-496e-b086-b02d5a0bc729" />
+<img width="1000" alt="image" src="https://github.com/user-attachments/assets/495dcffd-c353-496e-b086-b02d5a0bc729" />
 
 ### Customizing the case
 
