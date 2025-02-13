@@ -1,13 +1,13 @@
+import logging
+import tempfile
 from dataclasses import dataclass
 from enum import Enum, auto
 from functools import partial
-import logging
-from os import PathLike
-import tempfile
 from typing import Callable, Optional
 
-import meshlib.mrmeshpy as mm
+import build123d as bd
 import meshlib.mrmeshnumpy as mn
+import meshlib.mrmeshpy as mm
 import numpy as np
 import trimesh
 
@@ -40,7 +40,7 @@ def _copy_meshlib(mesh: mm.Mesh):
     return copy
 
 
-def load_mesh(mesh_file: PathLike) -> mm.Mesh:
+def load_mesh(mesh_file: str) -> mm.Mesh:
     return mm.loadMesh(mesh_file)
 
 
@@ -154,9 +154,9 @@ class ScrollMesh:
 
     """
 
-    mesh_path: PathLike
+    mesh_path: str
     cylinder_axis_tol: float = 0.01
-    voxel_size_diagonal_percent: float = 0.04
+    voxel_size_diagonal_percent: float = 0.4
     simplify_max_error_diagonal_percent: float = 1
     target_scale_diagonal_mm: Optional[float] = None
     rotation_callback: Optional[Callable[[mm.Mesh], mm.Mesh]] = partial(
@@ -304,16 +304,34 @@ def build_lining(
     )
 
 
+def combine_brep_case_lining(
+    case: bd.Solid,
+    cavity_mesh: mm.Mesh,
+    lining_mesh: mm.Mesh,
+    voxel_size_diagonal_percent: float = 0.01,
+):
+    """Combine a BRep case mesh with a lining."""
+    with tempfile.NamedTemporaryFile(suffix=".stl") as temp_file:
+        bd.export_stl(case, temp_file.name)
+        case_mesh = load_mesh(temp_file.name)
+        return combine_case_lining(
+            case_mesh, cavity_mesh, lining_mesh, voxel_size_diagonal_percent
+        )
+
+
 def combine_case_lining(
     case_mesh: mm.Mesh,
     cavity_mesh: mm.Mesh,
     lining_mesh: mm.Mesh,
     voxel_size_diagonal_percent: float = 0.4,
 ):
+    "Combine a case mesh with a lining."
     voxel_size = (
         lining_mesh.computeBoundingBox().diagonal() * voxel_size_diagonal_percent / 100
     )
 
-    combined_mesh = mm.voxelBooleanSubtract(case_mesh, cavity_mesh, voxel_size)
-    combined_mesh = mm.voxelBooleanUnite(combined_mesh, lining_mesh, voxel_size)
-    return combined_mesh
+    combined_mesh = mm.boolean(case_mesh, cavity_mesh, mm.BooleanOperation.DifferenceAB)
+    combined_mesh = mm.boolean(
+        combined_mesh.mesh, lining_mesh, mm.BooleanOperation.Union
+    )
+    return combined_mesh.mesh
