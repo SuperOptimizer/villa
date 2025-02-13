@@ -46,14 +46,17 @@ logging.getLogger("scrollcase").setLevel(logging.DEBUG)
 
 ## Mesh processing
 
+See example `scripts/example_mesh_processing.ipynb`.
+
 Mesh processing involves the following steps:
 1. Optionally scale mesh to target size (for unscaled meshes)
 2. Simplify (decimate) mesh to a target error
 3. Fit the minimum bounding error
-4. Optimize rotation about the cylinder axis
-5. Offset by 2mm
-6. Split along YZ plane
-7. Remove overhangs
+4. (Optional) Optimize rotation about the cylinder axis
+5. (Optional) Smooth mesh
+6. Offset by 2mm
+7. Split along YZ plane
+8. Remove overhangs
 
 ### Mesh smoothing
 
@@ -68,6 +71,7 @@ Denoise smoothing. Configure the `gamma` parameter to vary smoothing amount.
 Smooth convexities/concavities by first shrinking/expanding the mesh and then expanding/shrinking back to the original value.
 
 Shown here with 2 mm offset:
+
 <img width="600" alt="image" src="https://github.com/user-attachments/assets/f96841e0-b9b9-4156-9d65-cfd8d905c811" />
 
 
