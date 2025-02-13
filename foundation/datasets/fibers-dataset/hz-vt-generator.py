@@ -13,8 +13,8 @@ from webknossos import Annotation
 
 from tools import detect_vesselness
 
-import vesuvius
-from vesuvius import Volume
+#import vesuvius
+#from vesuvius import Volume
 
 
 ############################################################
@@ -269,8 +269,8 @@ if __name__ == "__main__":
         data = data[0]  # take the first channel => shape (Z, Y, X)
         tifffile.imwrite(images_filename, data)
 
-    print("Done 1/2")
-
+    print("Done")
+    '''
     # 6) Load standardized volume from Vesuvius
     print("Loading standardized volume (using Vesuvius library)...")
     scroll_volume = Volume(f"Scroll{int(scroll_id[1:])}")
@@ -278,4 +278,4 @@ if __name__ == "__main__":
     # shape => (size, size, size)
     data_std = scroll_volume[z_start:z_start+size, y_start:y_start+size, x_start:x_start+size]
     tifffile.imwrite(images_filename_std, data_std)
-    print("Done 2/2")
+    print("Done 2/2")'''
