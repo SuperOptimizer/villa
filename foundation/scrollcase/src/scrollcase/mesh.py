@@ -84,12 +84,19 @@ def mesh_smooth_denoise(mesh: mm.Mesh, gamma: float = 20) -> mm.Mesh:
 
 
 def mesh_smooth_shrink_expand(
-    mesh: mm.Mesh, voxel_size: float, amount_mm: float = 2, shrink_first: bool = True
+    mesh: mm.Mesh,
+    voxel_size_diagonal_percent: float = 0.4,
+    amount_mm: float = 2,
+    shrink_first: bool = True,
 ):
     """Smooth a mesh with a shrink/expand operation.
 
     Shrinking first smoothes convexities, expanding first smoothes concavities.
     """
+    voxel_size = (
+        mesh.computeBoundingBox().diagonal() * voxel_size_diagonal_percent / 100
+    )
+
     mesh_smooth = _copy_meshlib(mesh)
     logger.info(f"Smoothing mesh with a shrink/expand offset of {amount_mm} mm")
     params = mm.OffsetParameters()
@@ -128,8 +135,8 @@ def rotate_about_2nd_principal(mesh: mm.Mesh, rotation_rad: float) -> mm.Mesh:
     principal_components = get_principal_components(mesh)
     rotated_mesh = _copy_meshlib(mesh)
 
-    # NOTE(akoen): Technically we should project the principal component
-    first_rot = np.arccos(np.dot(principal_components[1], [1, 0, 0]))
+    p2 = [*principal_components[1][:2], 0]
+    first_rot = np.arccos(np.dot(p2, [1, 0, 0]))
     rotated_mesh.transform(affine_rotation(first_rot + rotation_rad))
     return rotated_mesh
 
