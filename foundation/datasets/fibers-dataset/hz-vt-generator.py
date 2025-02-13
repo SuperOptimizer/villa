@@ -262,11 +262,12 @@ if __name__ == "__main__":
 
     with webknossos_context(url=WK_URL, token=TOKEN):
         ds = wk.Dataset.open_remote(dataset_name, ORGANIZATION_ID)
+
         volume = ds.get_layer("volume")
         view = volume.get_mag("1").get_view(absolute_bounding_box=bb)
-        data = np.clip(view.read()[0].astype(np.float64)/257, 0, 255).astype(np.uint8)
-        # data shape = (C, Z, Y, X) => we want (Z, Y, X)
-        data = data[0]  # take the first channel => shape (Z, Y, X)
+        data = np.clip(view.read()[0].astype(np.float64)/257,0,255).astype(np.uint8)
+        data = np.transpose(data, (2, 1, 0))
+
         tifffile.imwrite(images_filename, data)
 
     print("Done")
