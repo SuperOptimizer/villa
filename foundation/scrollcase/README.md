@@ -35,6 +35,26 @@ See `scripts/` directory.
 
 Simple case generation example at `scripts/example_basic_case.ipynb`.
 
+## Enable logging
+
+`scrollcase` uses the `logging` package for logs. Enable with:
+
+```python
+logging.basicConfig()  # Required in Jupyter to correctly set output stream
+logging.getLogger("scrollcase").setLevel(logging.DEBUG)
+```
+
+## Mesh processing
+
+Mesh processing involves the following steps:
+1. Optionally scale mesh to target size (for unscaled meshes)
+2. Simplify (decimate) mesh to a target error
+3. Fit the minimum bounding error
+4. Optimize rotation about the cylinder axis
+5. Offset by 2mm
+6. Split along YZ plane
+7. Remove overhangs
+
 ## Case construction
 
 Case as viewed in the OCP CAD Viewer:
@@ -45,7 +65,7 @@ Enabling transparency to check clearances etc.:
 
 <img width="600" alt="image" src="https://github.com/user-attachments/assets/495dcffd-c353-496e-b086-b02d5a0bc729" />
 
-## Customizing the case
+### Customizing the case
 
 The case is customized using the ScrollCase class:
 
