@@ -396,12 +396,12 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
         target = batch['target']
         skel = batch['skel']
 
-        import napari
-        viewer = napari.Viewer()
-        viewer.add_image(data[0].cpu().numpy(), name='data')
-        viewer.add_image(target[0][0].cpu().numpy(), name='target')
-        viewer.add_image(skel[0][0].cpu().numpy(), name='skel')
-        napari.run()
+        # import napari
+        # viewer = napari.Viewer()
+        # viewer.add_image(data[0].cpu().numpy(), name='data')
+        # viewer.add_image(target[0][0].cpu().numpy(), name='target')
+        # viewer.add_image(skel[0][0].cpu().numpy(), name='skel')
+        # napari.run()
 
         data = data.to(self.device, non_blocking=True)
         if isinstance(target, list):
