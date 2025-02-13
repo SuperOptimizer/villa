@@ -706,41 +706,6 @@ const team = {
       title: "Annotation Team Member",
       href: "https://twitter.com/germanicgems",
     },
-    {
-      name: "JP Posma",
-      title: "Technical Advisor, former Project Lead",
-      href: "https://janpaulposma.nl/",
-    },
-    {
-      name: "Daniel Havíř",
-      title: "Machine Learning Advisor",
-      href: "https://danielhavir.com/",
-    },
-    {
-      name: "Ian Janicki",
-      title: "Design Advisor",
-      href: "https://ianjanicki.com/",
-    },
-    {
-      name: "Chris Frangione",
-      title: "Prize Advisor",
-      href: "https://www.linkedin.com/in/chrisfrangione/",
-    },
-    {
-      name: "Garrett Ryan",
-      title: "Classics Advisor",
-      href: "https://toldinstone.com/",
-    },
-    {
-      name: "Dejan Gotić",
-      title: "3d Animator",
-      href: "https://www.instagram.com/dejangotic_constructology/",
-    },
-    {
-      name: "Jonny Hyman",
-      title: "2d Animator",
-      href: "https://jonnyhyman.com/",
-    },
   ],
   educe: [
     {
@@ -777,6 +742,48 @@ const team = {
       name: "Roger Macfarlane",
       title: "Professor of Classical Studies",
       href: "https://hum.byu.edu/directory/roger-macfarlane",
+    },
+  ],
+  alumni: [
+    {
+      name: "JP Posma",
+      title: "Project Lead",
+      href: "https://janpaulposma.nl/",
+    },
+    {
+      name: "Ben Kyles",
+      title: "Segmentation Team Lead",
+      href: "https://twitter.com/ben_kyles",
+    },
+    {
+      name: "Daniel Havíř",
+      title: "Machine Learning",
+      href: "https://danielhavir.com/",
+    },
+    {
+      name: "Ian Janicki",
+      title: "Design",
+      href: "https://ianjanicki.com/",
+    },
+    {
+      name: "Chris Frangione",
+      title: "Prizes",
+      href: "https://www.linkedin.com/in/chrisfrangione/",
+    },
+    {
+      name: "Garrett Ryan",
+      title: "Classics",
+      href: "https://toldinstone.com/",
+    },
+    {
+      name: "Dejan Gotić",
+      title: "3D Animator",
+      href: "https://www.instagram.com/dejangotic_constructology/",
+    },
+    {
+      name: "Jonny Hyman",
+      title: "2D Animator",
+      href: "https://jonnyhyman.com/",
     },
   ],
   papyrology: [
@@ -2108,6 +2115,14 @@ export function Landing() {
                       EduceLab Team
                     </h3>
                     {team.educe.map((t, i) => (
+                      <Link link={t} key={i} />
+                    ))}
+                  </div>
+                  <div className="flex-1 flex-col lg:gap-0 gap-2 mt-8 min-w-[100%] md:min-w-[50%] pr-4 lg:pr-12">
+                    <h3 className="text-3xl font-black tracking-tighter">
+                      Advisors & Alumni
+                    </h3>
+                    {team.alumni.map((t, i) => (
                       <Link link={t} key={i} />
                     ))}
                   </div>
