@@ -1,6 +1,8 @@
 import importlib
 
-__all__ = [ "case", "mesh"]
+from . import case, mesh
+
+__all__ = ["case", "mesh"]
 
 
 def __getattr__(name):
