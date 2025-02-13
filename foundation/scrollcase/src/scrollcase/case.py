@@ -32,6 +32,10 @@ class ScrollCase:
     nub_size_mm: float = 4
     nub_depth_mm: float = 1.5
     nub_margin_mm: float = 0.5
+    square_height_mm: float = 20
+    square_edge_fillet: float = 5
+    oring_width: float = 5
+    oring_depth: float = 2
 
     @property
     def lining_outer_radius(self):
@@ -54,8 +58,8 @@ class ScrollCase:
         return -(self.lower_margin_mm)
 
     @property
-    def cap_bottom(self):
-        return self.cylinder_bottom - self.case_thickness_mm
+    def square_loft_radius(self):
+        return max(self.mount_disc_diameter_mm / 2, self.cylinder_outer_radius)
 
 
 def alignment_ring(radius: float):
@@ -135,7 +139,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
         f"Constructing case with scroll radius: {case.scroll_radius_mm}, height: {case.scroll_height_mm}"
     )
 
-    # honeycomb = None
+    honeycomb = None
     honeycomb = honeycomb_cylinder(
         case.cylinder_inner_radius,
         case.cylinder_height,
@@ -146,22 +150,6 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
     with BuildPart(Location((0, 0, case.cylinder_bottom))) as case_part:
         if honeycomb:
             add(honeycomb)
-
-        # Bottom Cap
-        Cylinder(
-            case.cylinder_outer_radius,
-            case.case_thickness_mm,
-            align=(Align.CENTER, Align.CENTER, Align.MAX),
-        )
-        # Top Cap
-        with Locations(
-            (0, 0, case.scroll_height_mm + case.lower_margin_mm + case.upper_margin_mm)
-        ):
-            Cylinder(
-                case.cylinder_outer_radius,
-                case.case_thickness_mm,
-                align=(Align.CENTER, Align.CENTER, Align.MIN),
-            )
 
         # Parting rect
         Box(
@@ -185,9 +173,74 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
             ):
                 add(alignment_ring(case.cylinder_inner_radius))
 
+        # Top Cap
+        with BuildSketch(
+            Location((0, 0, case.scroll_height_mm + case.upper_margin_mm))
+        ) as l2:
+            r = Rectangle(2 * case.square_loft_radius, 2 * case.square_loft_radius)
+            fillet(r.vertices(), 20)
+
+        extrude(amount=case.square_height_mm)
+
+        with BuildSketch(
+            Location(
+                (
+                    0,
+                    0,
+                    case.scroll_height_mm
+                    + case.upper_margin_mm
+                    + case.square_height_mm / 2,
+                )
+            )
+        ):
+            Rectangle(
+                2 * case.square_loft_radius,
+                2 * case.square_loft_radius,
+            )
+            with BuildSketch(mode=Mode.SUBTRACT):
+                r = Rectangle(
+                    2 * case.square_loft_radius - 2 * case.oring_depth,
+                    2 * case.square_loft_radius - 2 * case.oring_depth,
+                    # mode=Mode.SUBTRACT,
+                )
+                fillet(r.vertices(), 20)
+
+        extrude(amount=case.oring_width / 2, both=True, mode=Mode.SUBTRACT)
+
+        # Bottom Cap
+
+        with BuildSketch(Location((0, 0, -case.lower_margin_mm))) as l2:
+            r = Rectangle(2 * case.square_loft_radius, 2 * case.square_loft_radius)
+            fillet(r.vertices(), 20)
+
+        extrude(amount=-case.square_height_mm)
+        with BuildSketch(
+            Location(
+                (
+                    0,
+                    0,
+                    -case.lower_margin_mm - case.square_height_mm / 2,
+                )
+            )
+        ):
+            Rectangle(
+                2 * case.square_loft_radius,
+                2 * case.square_loft_radius,
+            )
+            with BuildSketch(mode=Mode.SUBTRACT):
+                r = Rectangle(
+                    2 * case.square_loft_radius - 2 * case.oring_depth,
+                    2 * case.square_loft_radius - 2 * case.oring_depth,
+                )
+                fillet(r.vertices(), 20)
+
+        extrude(amount=-case.oring_width / 2, both=True, mode=Mode.SUBTRACT)
+
         split(bisect_by=Plane.XZ, keep=Keep.BOTH)
 
-    with BuildPart(Location((0, 0, case.cap_bottom))) as mount_disc:
+    with BuildPart(
+        Location((0, 0, -case.lower_margin_mm - case.square_height_mm))
+    ) as mount_disc:
         cyl = Cylinder(
             case.mount_disc_diameter_mm / 2,
             case.mount_disc_height_mm,
