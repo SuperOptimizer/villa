@@ -1,129 +1,126 @@
-from typing import Union, Tuple, List
-
 import torch
-from torch import nn
-import os
-from nnunetv2.training.loss.cldice import soft_cldice
+from torch import autocast
+from nnunetv2.training.nnUNetTrainer.variants.optimizer.nnUNetTrainerAdam import nnUNetTrainerAdam3en4
+
+from nnunetv2.training.loss.compound_losses import CL_and_DC_and_BCE_loss, CL_and_DC_and_CE_loss
+from nnunetv2.training.loss.dice import get_tp_fp_fn_tn, MemoryEfficientSoftDiceLoss
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
-from nnunetv2.training.loss.dice import MemoryEfficientSoftDiceLoss
+from nnunetv2.utilities.helpers import dummy_context
+from nnunetv2.utilities.label_handling.label_handling import determine_num_input_channels
+from torch.nn.parallel import DistributedDataParallel as DDP
+from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
+
+torch.autograd.set_detect_anomaly(True)
 
 
-class CustomTrainerEuler(nnUNetTrainer):
-    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
-                 device: torch.device = torch.device('cuda')):
-        """
-        Custom nnUNet trainer that uses CL_and_DC_and_BCE_loss
-        """
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+# We add our topological loss function to nnUnet
 
+class nnUNetTrainerEuler(nnUNetTrainerAdam3en4):
     def _build_loss(self):
-
-
-        loss = CL_and_DC_and_BCE_loss(
-            bce_kwargs={},
-            soft_dice_kwargs={
-                'batch_dice': self.configuration_manager.batch_dice,
-                'do_bg': True,
-                'smooth': 1e-5,
-                'ddp': self.is_ddp
-            },
-            use_ignore_label=self.label_manager.ignore_label is not None,
-            dice_class=MemoryEfficientSoftDiceLoss,
-            cldice_version="skel"  # You can modify this to use different versions
-        )
-
-        if self._do_i_compile():
-            loss.dc = torch.compile(loss.dc)
-
-        if self.enable_deep_supervision:
-            deep_supervision_scales = self._get_deep_supervision_scales()
-
-            # weights for deep supervision - same as original implementation
-            weights = [1 / (2 ** i) for i in range(len(deep_supervision_scales))]
-
-            if self.is_ddp and not self._do_i_compile():
-                weights[-1] = 1e-6
-            else:
-                weights[-1] = 0
-
-            weights = torch.tensor(weights) / torch.tensor(weights).sum()
-
-            from nnunetv2.training.loss.deep_supervision import DeepSupervisionWrapper
-            loss = DeepSupervisionWrapper(loss, weights)
-
+        if self.label_manager.has_regions:
+            loss = CL_and_DC_and_BCE_loss({},
+                                   {'batch_dice': self.configuration_manager.batch_dice,
+                                    'do_bg': True, 'smooth': 1e-5, 'ddp': self.is_ddp},
+                                   use_ignore_label=self.label_manager.ignore_label is not None,
+                                   dice_class=MemoryEfficientSoftDiceLoss, cldice_version="euler")
+        else:
+            loss = CL_and_DC_and_CE_loss({'batch_dice': self.configuration_manager.batch_dice,
+                                   'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, {},
+                                  ignore_label=self.label_manager.ignore_label,
+                                  dice_class=MemoryEfficientSoftDiceLoss, cldice_version="euler")
         return loss
 
+    def _get_deep_supervision_scales(self):
+        return None
 
-class CL_and_DC_and_BCE_loss(nn.Module):
-    def __init__(self, bce_kwargs, soft_dice_kwargs, weight_ce=1, weight_dice=1, use_ignore_label: bool = False,
-                 dice_class=MemoryEfficientSoftDiceLoss, cldice_version="euler"):
-        """
-        Combined loss that uses Binary Cross Entropy, Dice Loss, and Centerline Dice Loss.
-        DO NOT APPLY NONLINEARITY IN YOUR NETWORK!
-
-        Args:
-            bce_kwargs (dict): Arguments for BCEWithLogitsLoss
-            soft_dice_kwargs (dict): Arguments for Dice Loss
-            weight_ce (float): Weight for Cross Entropy loss
-            weight_dice (float): Weight for Dice loss
-            use_ignore_label (bool): Whether to use ignore label
-            dice_class: Class to use for Dice loss computation
-            cldice_version (str): Version of centerline dice to use ("legacy", "fast", "skel", "euler")
-        """
-        super().__init__()
-        if use_ignore_label:
-            bce_kwargs['reduction'] = 'none'
-
-        # Get weights from environment variables if set, otherwise use defaults
-        self.weight_ce = float(os.getenv('WEIGHT_CE', weight_ce))
-        self.weight_dice = float(os.getenv('WEIGHT_DICE', weight_dice))
-        self.weight_cl = float(os.getenv('WEIGHT_CL', 0.002))
-
-        self.use_ignore_label = use_ignore_label
-        self.ce = nn.BCEWithLogitsLoss(**bce_kwargs)
-        self.dc = dice_class(apply_nonlin=torch.sigmoid, **soft_dice_kwargs)
-
-        # Initialize appropriate centerline dice version
-        if cldice_version == "fast":
-            self.cl = soft_cldice()
-        elif cldice_version == "skel":
-            self.cl = soft_cldice()
-        elif cldice_version == "euler":
-            self.cl = soft_cldice(skel_strat="EulerCharacteristic")
+    def initialize(self):
+        if not self.was_initialized:
+            self.plans_manager = PlansManager(self.plans)
+            self.configuration_manager = self.plans_manager.get_configuration(self.configuration)
+            label_manager = self.plans_manager.get_label_manager(self.dataset_json)
 
 
-    def forward(self, net_output: torch.Tensor, target: torch.Tensor):
-        """
-        Forward pass of the loss function.
+            self.num_input_channels = determine_num_input_channels(self.plans_manager, self.configuration_manager,
+                                                                   self.dataset_json)
 
-        Args:
-            net_output (torch.Tensor): Network output logits
-            target (torch.Tensor): Ground truth target (one-hot encoded)
+            self.network = self.build_network_architecture(self.plans_manager, self.dataset_json,
+                                                           self.configuration_manager,
+                                                           self.num_input_channels,
+                                                           label_manager.num_segmentation_heads,
+                                                           enable_deep_supervision=False).to(self.device)
 
-        Returns:
-            torch.Tensor: Combined weighted loss
-        """
-        if self.use_ignore_label:
-            # target is one hot encoded here. invert it so that it is True wherever we can compute the loss
-            mask = (1 - target[:, -1:]).bool()
-            # remove ignore channel now that we have the mask
-            target_regions = torch.clone(target[:, :-1])
+            self.optimizer, self.lr_scheduler = self.configure_optimizers()
+            # if ddp, wrap in DDP wrapper
+            if self.is_ddp:
+                self.network = torch.nn.SyncBatchNorm.convert_sync_batchnorm(self.network)
+                self.network = DDP(self.network, device_ids=[self.local_rank])
+
+            self.loss = self._build_loss()
+            self.was_initialized = True
         else:
-            target_regions = target
+            raise RuntimeError("You have called self.initialize even though the trainer was already initialized. "
+                               "That should not happen.")
+
+    def set_deep_supervision_enabled(self, enabled: bool):
+        pass
+
+    def validation_step(self, batch: dict) -> dict:
+        data = batch['data']
+        target = batch['target']
+
+        data = data.to(self.device, non_blocking=True)
+        if isinstance(target, list):
+            target = [i.to(self.device, non_blocking=True) for i in target]
+        else:
+            target = target.to(self.device, non_blocking=True)
+
+        self.optimizer.zero_grad(set_to_none=True)
+
+        # Autocast is a little bitch.
+        # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
+        # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
+        # So autocast will only be active if we have a cuda device.
+        with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
+            output = self.network(data)
+            del data
+            l = self.loss(output, target)
+
+        # the following is needed for online evaluation. Fake dice (green line)
+        axes = [0] + list(range(2, output.ndim))
+
+        if self.label_manager.has_regions:
+            predicted_segmentation_onehot = (torch.sigmoid(output) > 0.5).long()
+        else:
+            # no need for softmax
+            output_seg = output.argmax(1)[:, None]
+            predicted_segmentation_onehot = torch.zeros(output.shape, device=output.device, dtype=torch.float32)
+            predicted_segmentation_onehot.scatter_(1, output_seg, 1)
+            del output_seg
+
+        if self.label_manager.has_ignore_label:
+            if not self.label_manager.has_regions:
+                mask = (target != self.label_manager.ignore_label).float()
+                # CAREFUL that you don't rely on target after this line!
+                target[target == self.label_manager.ignore_label] = 0
+            else:
+                mask = 1 - target[:, -1:]
+                # CAREFUL that you don't rely on target after this line!
+                target = target[:, :-1]
+        else:
             mask = None
 
-        # Calculate Dice loss
-        dc_loss = self.dc(net_output, target_regions, loss_mask=mask)
+        tp, fp, fn, _ = get_tp_fp_fn_tn(predicted_segmentation_onehot, target, axes=axes, mask=mask)
 
-        # Calculate BCE loss
-        if mask is not None:
-            ce_loss = (self.ce(net_output, target_regions) * mask).sum() / torch.clip(mask.sum(), min=1e-8)
-        else:
-            ce_loss = self.ce(net_output, target_regions)
+        tp_hard = tp.detach().cpu().numpy()
+        fp_hard = fp.detach().cpu().numpy()
+        fn_hard = fn.detach().cpu().numpy()
+        if not self.label_manager.has_regions:
+            # if we train with regions all segmentation heads predict some kind of foreground. In conventional
+            # (softmax training) there needs tobe one output for the background. We are not interested in the
+            # background Dice
+            # [1:] in order to remove background
+            tp_hard = tp_hard[1:]
+            fp_hard = fp_hard[1:]
+            fn_hard = fn_hard[1:]
 
-        # Calculate Centerline Dice loss
-        cl_loss = self.cl(y_pred=net_output, y_true=target)
-
-        # Combine losses with their respective weights
-        result = self.weight_ce * ce_loss + self.weight_dice * dc_loss + self.weight_cl * cl_loss
-        return result
+        return {'loss': l.detach().cpu().numpy(), 'tp_hard': tp_hard, 'fp_hard': fp_hard, 'fn_hard': fn_hard}

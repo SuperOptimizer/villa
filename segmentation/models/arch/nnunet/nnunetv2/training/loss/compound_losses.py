@@ -5,7 +5,6 @@ from nnunetv2.training.loss.robust_ce_loss import RobustCrossEntropyLoss, TopKLo
 from nnunetv2.training.loss.cldice import soft_cldice
 from nnunetv2.training.loss.cldice_legacy import soft_cldice as soft_cldice_legacy
 from nnunetv2.training.loss.cldice_fast import soft_cldice as soft_cldice_fast
-from nnunetv2.training.loss.rmi_loss import RMILoss
 from nnunetv2.utilities.helpers import softmax_helper_dim1
 from nnunetv2.utilities.nd_softmax import softmax_helper
 from nnunetv2.utilities.tensor_utilities import sum_tensor
