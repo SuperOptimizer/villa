@@ -169,9 +169,9 @@ As the challenges of autosegmentation and generalized ink detection become clear
 </details>
 
 **Improvements to existing graph solvers or implementation of different graph solver**
-Can include manual annotation or refinements, optimizing for minimal human input
-* Input: graph structured as described above
-* Output: graph with the winding angle assigned
+  * Input: graph structured as described above
+  * Output: graph with the winding angle assigned
+  * Can include manual annotation or refinements, optimizing for minimal human input
 
 **Graph meshing**
   * Result: Given a graph with attributes pointing to the underlying data, a triangulated obj mesh with UVs is returned 
@@ -195,20 +195,19 @@ Integrate the 2024 FASP submissions into the Vesuvius Python Library to enable m
 
 **VC3D Tracing / Seeding –**
 
-_vc_grow_seg_from_seed.cpp_ - > vesuvius.tracer.seed
+_[vc_grow_seg_from_seed.cpp](https://github.com/hendrikschilling/volume-cartographer/blob/dev-next/apps/src/vc_grow_seg_from_seed.cpp)_ - > vesuvius.tracer.seed
   * Input format: zarr array containing volumetric predictions, json or other config method for parameters
   * Output format: obj meshes or tifxyz quad meshes of patches, with required metadata for next steps
-  * [link](https://github.com/hendrikschilling/volume-cartographer/blob/dev-next/apps/src/vc_grow_seg_from_seed.cpp)
+  * Mode: Seed
 
-_vc_grow_seg_from_seed.cpp_ - > vesuvius.tracer.expand
+_[vc_grow_seg_from_seed.cpp](https://github.com/hendrikschilling/volume-cartographer/blob/dev-next/apps/src/vc_grow_seg_from_seed.cpp)_ - > vesuvius.tracer.expand
   * Input format: folder containing patches from seeds, json or other config method for parameters
   * Output format: obj meshes or tifxyz quad meshes of patches, with required metadata for next steps, including overlap markers
-  * [link](https://github.com/hendrikschilling/volume-cartographer/blob/dev-next/apps/src/vc_grow_seg_from_seed.cpp)
+  * Mode: Expand
 
-_vc_grow_seg_from_segs.cpp_  - > vesuvius.tracer.trace
+_[vc_grow_seg_from_segments.cpp](https://github.com/hendrikschilling/volume-cartographer/blob/dev-next/apps/src/vc_grow_seg_from_segments.cpp)_  - > vesuvius.tracer.trace
   * Input format: folder containing patches from seeds, source/target seed, json or other config method for parameters
   * Output format: obj mesh and/or tifxyz quadmesh
-  * [link](https://github.com/hendrikschilling/volume-cartographer/blob/dev-next/apps/src/vc_grow_seg_from_segments.cpp)
 
 <details class="implementation_details">
 <summary>Implementation Details</summary>
