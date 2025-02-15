@@ -1775,7 +1775,7 @@ export function Landing() {
                     <ChallengeBox
                       title="Open Problem: Representation"
                       linkText="Scan the Surface"
-                      href="/tutorial2"
+                      href="/unwrapping"
                       imageSrc={
                         <BeforeAfter
                           beforeImage="/img/data/rep_raw_10037.png"
@@ -1801,7 +1801,7 @@ export function Landing() {
                     <ChallengeBox
                       title="Open Problem: Meshing and Reconstruction"
                       linkText="Chart the Path"
-                      href="/tutorial4"
+                      href="/unwrapping"
                       imageSrc={
                         <BeforeAfter
                           beforeImage="/img/data/raw_pred.png"
