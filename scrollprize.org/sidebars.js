@@ -38,6 +38,7 @@ const sidebars = {
       link: { type: 'doc', id: 'landing' },
       items: [
         { type: 'doc', id: 'get_started' },
+        { type: 'doc', id: 'prizes' },
         { type: 'doc', id: 'unwrapping' },
         { type: 'doc', id: 'master_plan' },
       ]
