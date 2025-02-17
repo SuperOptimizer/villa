@@ -24,7 +24,9 @@ def convert_raw_to_jpg(args):
     try:
         # Read the RAW file
         with rawpy.imread(input_path) as raw:
-            rgb = raw.postprocess(use_camera_wb=True)
+            #rgb = raw.postprocess(use_camera_wb=True, highlight_mode=2, gamma=(1.4, 3.0), bright=0.95)
+            # highlight_mode=2, gamma=(0.8, 4.5), bright=1.10  darkens , highlight_mode=2, gamma=(3.5, 4.5), bright=1.10
+            rgb = raw.postprocess(use_camera_wb=True, highlight_mode=2, gamma=(3.5, 4.5), bright=1.10)
         
         # Convert to a PIL image
         img = Image.fromarray(rgb)
@@ -63,6 +65,9 @@ def process_directory_recursively(root_dir, quality=100, recompute=False):
     for current_dir, _, files in os.walk(root_dir):
         if "corrupted" in current_dir.lower().split(os.sep):
             continue
+        
+        #if "orientation2" in current_dir:
+        #    continue
 
         raw_files = [
             f for f in files if os.path.splitext(f.lower())[1] in VALID_RAW_EXTENSIONS
