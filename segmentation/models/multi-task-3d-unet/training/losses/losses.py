@@ -402,11 +402,6 @@ class DC_SkelREC_and_CE_loss(nn.Module):
         result = self.weight_ce * ce_loss + self.weight_dice * dc_loss + self.weight_srec * srec_loss
         return result
 
-
-import torch
-import torch.nn as nn
-
-
 class DC_and_BCE_loss(nn.Module):
     def __init__(
             self,
@@ -545,10 +540,6 @@ class DC_and_topk_loss(nn.Module):
 
         result = self.weight_ce * ce_loss + self.weight_dice * dc_loss
         return result
-
-
-from typing import Callable
-
 
 class SoftSkeletonRecallLoss(nn.Module):
     def __init__(self, apply_nonlin: Callable = None, batch_dice: bool = False, do_bg: bool = True, smooth: float = 1.,
