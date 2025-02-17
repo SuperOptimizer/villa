@@ -187,7 +187,7 @@ This is a full-time position (30+ hours/week). Pay rate up to 40USD per hour.
 Not only will you unwrap ancient scrolls and be the first human to lay eyes on the resulting text in two millennia, your efforts will directly contribute to automation of unwrapping, which is a key ingredient to help catalyze further excavation of Herculaneum and unearth the only remaining library from antiquity before it is too late! 
 
 #### To Apply
-Send your resume, cover letter, and examples of relevant projects to ben@scrollprize.org. Include "Annotation Specialist" in the subject line.
+Send your resume, cover letter, and examples of relevant projects to jobs@scrollprize.org. Include "Annotation Specialist" in the subject line.
 
 ***
 

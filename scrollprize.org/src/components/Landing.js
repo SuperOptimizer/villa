@@ -692,59 +692,19 @@ const team = {
       href: "https://youssefnader.com/",
     },
     {
-      name: "Ben Kyles",
-      title: "Segmentation Team Lead",
-      href: "https://twitter.com/ben_kyles",
-    },
-    {
-      name: "Adrionna Fey",
-      title: "Segmentation Team Member",
-      href: "https://twitter.com/Meadowsnax1",
-    },
-    {
       name: "David Josey",
-      title: "Segmentation Team Member",
+      title: "ML Annotation Team Lead",
       href: "https://www.linkedin.com/in/davidsjosey/",
     },
     {
+      name: "Adrionna Fey",
+      title: "Annotation Team Member",
+      href: "https://twitter.com/Meadowsnax1",
+    },
+    {
       name: "Konrad Rosenberg",
-      title: "Segmentation Team Member",
+      title: "Annotation Team Member",
       href: "https://twitter.com/germanicgems",
-    },
-    {
-      name: "JP Posma",
-      title: "Technical Advisor, former Project Lead",
-      href: "https://janpaulposma.nl/",
-    },
-    {
-      name: "Daniel Havíř",
-      title: "Machine Learning Advisor",
-      href: "https://danielhavir.com/",
-    },
-    {
-      name: "Ian Janicki",
-      title: "Design Advisor",
-      href: "https://ianjanicki.com/",
-    },
-    {
-      name: "Chris Frangione",
-      title: "Prize Advisor",
-      href: "https://www.linkedin.com/in/chrisfrangione/",
-    },
-    {
-      name: "Garrett Ryan",
-      title: "Classics Advisor",
-      href: "https://toldinstone.com/",
-    },
-    {
-      name: "Dejan Gotić",
-      title: "3d Animator",
-      href: "https://www.instagram.com/dejangotic_constructology/",
-    },
-    {
-      name: "Jonny Hyman",
-      title: "2d Animator",
-      href: "https://jonnyhyman.com/",
     },
   ],
   educe: [
@@ -782,6 +742,48 @@ const team = {
       name: "Roger Macfarlane",
       title: "Professor of Classical Studies",
       href: "https://hum.byu.edu/directory/roger-macfarlane",
+    },
+  ],
+  alumni: [
+    {
+      name: "JP Posma",
+      title: "Project Lead",
+      href: "https://janpaulposma.nl/",
+    },
+    {
+      name: "Ben Kyles",
+      title: "Segmentation Team Lead",
+      href: "https://twitter.com/ben_kyles",
+    },
+    {
+      name: "Daniel Havíř",
+      title: "Machine Learning",
+      href: "https://danielhavir.com/",
+    },
+    {
+      name: "Ian Janicki",
+      title: "Design",
+      href: "https://ianjanicki.com/",
+    },
+    {
+      name: "Chris Frangione",
+      title: "Prizes",
+      href: "https://www.linkedin.com/in/chrisfrangione/",
+    },
+    {
+      name: "Garrett Ryan",
+      title: "Classics",
+      href: "https://toldinstone.com/",
+    },
+    {
+      name: "Dejan Gotić",
+      title: "3D Animator",
+      href: "https://www.instagram.com/dejangotic_constructology/",
+    },
+    {
+      name: "Jonny Hyman",
+      title: "2D Animator",
+      href: "https://jonnyhyman.com/",
     },
   ],
   papyrology: [
@@ -1553,7 +1555,7 @@ export function Landing() {
                   </span>
                   <span className="opacity-80 md:opacity-60">&nbsp;Also:</span>
                   <span className="opacity-100">
-                    <a href="jobs">&nbsp;We're hiring!</a>
+                    <a href="jobs">&nbsp;we're hiring!</a>
                   </span>
                 </p>
               </div>
@@ -1596,7 +1598,7 @@ export function Landing() {
                   <div className="w-full">
                     <a
                       className="cursor-pointer group hover:no-underline"
-                      href="https://scrollprize.substack.com/p/exciting-news-from-scroll-5"
+                      href="/prizes"
                     >
                       <div
                         className="h-auto relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
@@ -1607,9 +1609,9 @@ export function Landing() {
                       >
                         <div className="flex flex-col py-3 px-4">
                           <h3 className="text-base sm:text-lg text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
-                            Exciting News from Scroll 5! 
+                            New Year, New Prizes!
                           </h3>
-                          <p className="text-xs">1/24/2025</p>
+                          <p className="text-xs">2/14/2025</p>
                           {/* Remove the animated arrow; add a spacer if desired */}
                           <div className="pt-2"></div>
                         </div>
@@ -1622,7 +1624,7 @@ export function Landing() {
                   <div className="w-full">
                     <a
                       className="cursor-pointer group hover:no-underline"
-                      href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
+                      href="https://scrollprize.substack.com/p/exciting-news-from-scroll-5"
                     >
                       <div
                         className="h-auto relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
@@ -1633,7 +1635,7 @@ export function Landing() {
                       >
                         <div className="flex flex-col py-3 px-4">
                           <h3 className="text-base sm:text-lg text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
-                           $60,000 Awarded for FASP Submissions!
+                            Exciting News from Scroll 5!
                           </h3>
                           <p className="text-xs">01/23/2025</p>
                           <div className="pt-2"></div>
@@ -1647,7 +1649,7 @@ export function Landing() {
                   <div className="w-full">
                     <a
                       className="cursor-pointer group hover:no-underline"
-                      href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes-ee5"
+                      href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
                     >
                       <div
                         className="relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
@@ -1658,7 +1660,7 @@ export function Landing() {
                       >
                         <div className="h-auto flex flex-col py-3 px-4 z-10">
                           <h3 className="text-base sm:text-lg text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
-                            December Progress Prizes
+                            $60,000 Awarded for FASP Submissions!
                           </h3>
                           <p className="text-xs">01/22/2025</p>
                           <div className="pt-2"></div>
@@ -1700,6 +1702,28 @@ export function Landing() {
                   {/* First Right Card */}
                   <a
                     className="cursor-pointer group hover:no-underline"
+                    href="/prizes"
+                  >
+                    <div
+                      className="h-auto md:h-28 relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
+                      style={{
+                        boxShadow:
+                          "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
+                      }}
+                    >
+                      <div className="flex flex-col py-4 md:py-2.5 px-5 md:px-5">
+                        <h3 className="text-lg md:text-xl text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
+                        New Year, New Prizes!
+                        </h3>
+                        <p className="text-sm">2/14/2025</p>
+                      </div>
+                      <img className="w-full h-auto" src="" alt="" />
+                    </div>
+                  </a>
+
+                  {/* Second Right Card */}
+                  <a
+                    className="cursor-pointer group hover:no-underline"
                     href="https://scrollprize.substack.com/p/exciting-news-from-scroll-5 "
                   >
                     <div
@@ -1719,32 +1743,10 @@ export function Landing() {
                     </div>
                   </a>
 
-                  {/* Second Right Card */}
-                  <a
-                    className="cursor-pointer group hover:no-underline"
-                    href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
-                  >
-                    <div
-                      className="h-auto md:h-28 relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
-                      style={{
-                        boxShadow:
-                          "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
-                      }}
-                    >
-                      <div className="flex flex-col py-4 md:py-2.5 px-5 md:px-5">
-                        <h3 className="text-lg md:text-xl text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
-                          $60,000 Awarded for FASP Submissions!
-                        </h3>
-                        <p className="text-sm">01/23/2025</p>
-                      </div>
-                      <img className="w-full h-auto" src="" alt="" />
-                    </div>
-                  </a>
-
                   {/* Third Right Card */}
                   <a
                     className="cursor-pointer group hover:no-underline"
-                    href="https://scrollprize.substack.com/p/vesuvius-challenge-progress-prizes-ee5"
+                    href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
                   >
                     <div
                       className="relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
@@ -1755,9 +1757,9 @@ export function Landing() {
                     >
                       <div className="h-auto md:h-28 flex flex-col py-4 md:py-2.5 px-5 md:px-5 z-10 ">
                         <h3 className="text-lg md:text-xl text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
-                          December Progress Prizes
+                          $60,000 Awarded for FASP Submissions!
                         </h3>
-                        <p className="text-sm">01/22/2025</p>
+                        <p className="text-sm">01/23/2025</p>
                       </div>
                       <img
                         className="absolute top-[50px] right-0 max-w-[190px] w-full h-auto object-contain"
@@ -1773,7 +1775,7 @@ export function Landing() {
                     <ChallengeBox
                       title="Open Problem: Representation"
                       linkText="Scan the Surface"
-                      href="/tutorial2"
+                      href="/unwrapping"
                       imageSrc={
                         <BeforeAfter
                           beforeImage="/img/data/rep_raw_10037.png"
@@ -1799,7 +1801,7 @@ export function Landing() {
                     <ChallengeBox
                       title="Open Problem: Meshing and Reconstruction"
                       linkText="Chart the Path"
-                      href="/tutorial4"
+                      href="/unwrapping"
                       imageSrc={
                         <BeforeAfter
                           beforeImage="/img/data/raw_pred.png"
@@ -2113,6 +2115,14 @@ export function Landing() {
                       EduceLab Team
                     </h3>
                     {team.educe.map((t, i) => (
+                      <Link link={t} key={i} />
+                    ))}
+                  </div>
+                  <div className="flex-1 flex-col lg:gap-0 gap-2 mt-8 min-w-[100%] md:min-w-[50%] pr-4 lg:pr-12">
+                    <h3 className="text-3xl font-black tracking-tighter">
+                      Advisors & Alumni
+                    </h3>
+                    {team.alumni.map((t, i) => (
                       <Link link={t} key={i} />
                     ))}
                   </div>
