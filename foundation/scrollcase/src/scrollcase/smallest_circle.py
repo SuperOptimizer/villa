@@ -1,7 +1,8 @@
 import numpy as np
 import random
 from typing import Tuple
-
+import sys
+sys.setrecursionlimit(1000000)
 
 def _is_in_circle(pt: np.ndarray, center: np.ndarray, radius: float) -> bool:
     """Check if point `pt` is inside or on the circle defined by (center, radius).
