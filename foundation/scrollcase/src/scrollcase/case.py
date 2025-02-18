@@ -10,14 +10,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ScrollCase:
+    # To be defined per-scroll
     scroll_height_mm: float
     scroll_radius_mm: float
+
     upper_margin_mm: float = 20
     lower_margin_mm: float = 20
     radial_margin_mm: float = 4
-    lining_thickness_mm: float = 2
+
     scroll_offset_mm: float = 2
-    case_thickness_mm: float = 2
+
+    lining_thickness_mm: float = 2
+    wall_thickness_mm: float = 2
+
     mount_disc_diameter_mm: float = 112.5
     mount_disc_height_mm: float = 12.5
     mount_disc_hole_depth_mm: float = 5.75
@@ -32,6 +37,7 @@ class ScrollCase:
     nub_size_mm: float = 4
     nub_depth_mm: float = 1.5
     nub_margin_mm: float = 0.5
+
     square_height_mm: float = 20
     square_edge_fillet: float = 5
     oring_width: float = 5
@@ -43,7 +49,13 @@ class ScrollCase:
 
     @property
     def cylinder_height(self):
-        return self.scroll_height_mm + self.lower_margin_mm + self.upper_margin_mm
+        return (
+            self.scroll_height_mm
+            + 2 * self.scroll_offset_mm
+            + 2 * self.lining_thickness_mm
+            + self.lower_margin_mm
+            + self.upper_margin_mm
+        )
 
     @property
     def cylinder_inner_radius(self):
@@ -51,7 +63,7 @@ class ScrollCase:
 
     @property
     def cylinder_outer_radius(self):
-        return self.lining_outer_radius + self.radial_margin_mm + self.case_thickness_mm
+        return self.cylinder_inner_radius + self.wall_thickness_mm
 
     @property
     def cylinder_bottom(self):
@@ -92,7 +104,7 @@ def honeycomb_cylinder(
         gap: Gap between cutouts. Defaults to 1.
 
     Returns:
-        Hhoneycomb cylinder.
+        Honeycomb cylinder.
     """
     # NOTE(akoen): This is not quite right since this assumes that the plane is flat,
     # which it is not.
@@ -143,7 +155,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
     honeycomb = honeycomb_cylinder(
         case.cylinder_inner_radius,
         case.cylinder_height,
-        case.case_thickness_mm,
+        case.wall_thickness_mm,
         gap=3.0,
     )
 
@@ -154,7 +166,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
         # Parting rect
         Box(
             2 * (case.cylinder_outer_radius),
-            2 * case.case_thickness_mm,
+            2 * case.wall_thickness_mm,
             case.scroll_height_mm + case.lower_margin_mm + case.upper_margin_mm,
             align=(Align.CENTER, Align.CENTER, Align.MIN),
         )
@@ -201,7 +213,6 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 r = Rectangle(
                     2 * case.square_loft_radius - 2 * case.oring_depth,
                     2 * case.square_loft_radius - 2 * case.oring_depth,
-                    # mode=Mode.SUBTRACT,
                 )
                 fillet(r.vertices(), 20)
 

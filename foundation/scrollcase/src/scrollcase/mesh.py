@@ -223,7 +223,7 @@ def build_lining(
 
     logger.debug(f"Simplified mesh: {count_vertices(mesh_scroll)} vertices")
 
-    # Fit minimum boundign cylinder
+    # Fit minimum bounding cylinder
     logger.info("Aligning mesh")
     points = np.array([(point.x, point.y, point.z) for point in mesh_scroll.points])
     rotation_mat, translation_mat, radius, height = alignment.fit_cylinder(
