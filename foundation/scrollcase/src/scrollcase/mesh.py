@@ -156,7 +156,7 @@ class ScrollMesh:
         target_scale_diagonal_mm: Target diagonal size of the mesh. Defaults to None.
         rotation_callback: Rotation callback that accepts a mesh and returns a mesh
         smoothing_callback: Smoothing callback that accepts a mesh and returns a mesh
-        smoothin_unite_with_original: Unite with the original after smoothing to ensure
+        smoothing_unite_with_original: Unite with the original after smoothing to ensure
         mesh does not get smaller.
 
     """

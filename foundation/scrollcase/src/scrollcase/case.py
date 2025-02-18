@@ -13,10 +13,12 @@ class ScrollCase:
     # To be defined per-scroll
     scroll_height_mm: float
     scroll_radius_mm: float
+    # Remaining params fixed across scrolls
 
-    upper_margin_mm: float = 20
-    lower_margin_mm: float = 20
-    radial_margin_mm: float = 4
+    # Margins beyond lining exterior
+    upper_margin_mm: float = 5
+    lower_margin_mm: float = 5
+    radial_margin_mm: float = 0.5
 
     scroll_offset_mm: float = 2
 
@@ -100,8 +102,8 @@ def honeycomb_cylinder(
         r: Cylinder minor radius.
         h: Cylinder height.
         t: Cylinder thickness.
-        nr: Number of radial cutouts. Defaults to 6.
-        gap: Gap between cutouts. Defaults to 1.
+        nr: Number of radial cutouts.
+        gap: Gap between cutouts.
 
     Returns:
         Honeycomb cylinder.
@@ -151,7 +153,6 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
         f"Constructing case with scroll radius: {case.scroll_radius_mm}, height: {case.scroll_height_mm}"
     )
 
-    honeycomb = None
     honeycomb = honeycomb_cylinder(
         case.cylinder_inner_radius,
         case.cylinder_height,
@@ -167,7 +168,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
         Box(
             2 * (case.cylinder_outer_radius),
             2 * case.wall_thickness_mm,
-            case.scroll_height_mm + case.lower_margin_mm + case.upper_margin_mm,
+            case.cylinder_height,
             align=(Align.CENTER, Align.CENTER, Align.MIN),
         )
 
