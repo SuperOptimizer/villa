@@ -10,50 +10,64 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ScrollCase:
-    # To be defined per-scroll
+    ### To be defined per scroll ###
     scroll_height_mm: float
     scroll_radius_mm: float
-    # Remaining params fixed across scrolls
 
-    # Margins beyond lining exterior
-    upper_margin_mm: float = 5
-    lower_margin_mm: float = 5
-    radial_margin_mm: float = 0.5
+    ### Remaining params fixed across scrolls ###
 
-    scroll_offset_mm: float = 2
-
+    # Gap/offset between scroll and lining wall interior
+    lining_offset_mm: float = 2
+    # Wall thicknesses
     lining_thickness_mm: float = 2
     wall_thickness_mm: float = 2
 
+    # Margins above and below scroll before caps
+    upper_margin_mm: float = 5
+    lower_margin_mm: float = 5
+
+    # Between lining exterior and cylinder wall interior
+    # Just enough space to not touch/create trap points for glass beads
+    # Otherwise want to minimize exterior diameter
+    radial_margin_mm: float = 0.5
+
+    # Mounting disc dimensions
     mount_disc_diameter_mm: float = 112.5
     mount_disc_height_mm: float = 12.5
     mount_disc_hole_depth_mm: float = 5.75
-    mount_disc_hole_diameter_mm = 6.8
+    mount_disc_hole_diameter_mm: float = 6.8
     mount_disc_box_height_mm: float = 7
     mount_disc_box_width_mm: float = 13.5
+
+    # Alignment ring spacing
     alignment_ring_spacing_mm: Optional[float] = (
-        50  # Relative to the base of the scroll
+        70  # Relative to the base of the scroll
     )
+
+    # Labels
     label_line_1: str = ""
     label_line_2: str = ""
+
+    # Alignment nubs
     nub_size_mm: float = 4
     nub_depth_mm: float = 1.5
     nub_margin_mm: float = 0.5
 
-    square_height_mm: float = 20
+    # Square caps
+    square_height_mm: float = 12.5
     square_edge_fillet: float = 5
-    oring_width: float = 5
+    oring_width: float = 4
     oring_depth: float = 2
 
     @property
     def lining_outer_radius(self):
-        return self.scroll_radius_mm + self.scroll_offset_mm + self.lining_thickness_mm
+        return self.scroll_radius_mm + self.lining_offset_mm + self.lining_thickness_mm
 
     @property
     def cylinder_height(self):
         return (
             self.scroll_height_mm
-            + 2 * self.scroll_offset_mm
+            + 2 * self.lining_offset_mm
             + 2 * self.lining_thickness_mm
             + self.lower_margin_mm
             + self.upper_margin_mm
