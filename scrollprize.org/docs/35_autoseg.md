@@ -41,19 +41,23 @@ This tutorial is meant as guide for running two of the methods discussed in the 
 
 Both of these methods have pros/cons detailed in the previous walkthrough in terms of current and future performance. Currently implemented, the primary benefit of the VC3D tracer solution is that the intermediate steps produce immediately usable partial segments, and the entire pipeline save ink detection is self-contained within the VC3D ecosystem. _If you are looking to simply produce exploratory segments for ink detection or other tasks, the tracer has the lowest "startup" time_. 
 
-Table of Contents
+### Table of Contents
 1. Sheet Tracing (VC3D)
    * [Installation](#installation)
    * [Prepare Data](#preparing-data)
    * [Seeding the Volume](#seeding)
    * [Expanding Seeds](#expanding-seeds) 
    * [Running a trace](#running-a-trace) 
-   * [Masking Errors](#masking-errors) 
-   * Winding Estimation 
-   * Inpainting
-   * Rendering 
+   * [Fixing Errors](#fixing-errors)
+   * [Inpainting](#inpainting)
+   * [Rendering](#rendering)
    * Ink Detection
 2. Spiral Fitting (TODO)
+
+## VC3D
+<div className="mb-4">
+  <img src="/img/segmentation/vc3d_gui.png" className="w-[85%]"/>
+</div>
 ___
 ## Installation 
 This guide will be written for Ubuntu 24.04, for other operating systems the details may vary slightly. Windows users may benefit from using Windows Subsystem For Linux(WSL2), and placing their volume data within the Linux filesystem. 
@@ -159,9 +163,9 @@ If you encounter errors that contain the phrase `nlohmann::json`, its likely you
   * [Scroll 5](https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s5/surfaces/s5_055_surfaces.7z) - Updated 10 Feb 2025
 ___
 ## Seeding the Volume
-The tracer operates by connecting overlapping patches based on a number of conditions. It chooses the initial candidates to connect based on patch overlap, and then uses some constraints defined within the cost functions to find the optimal patch to select. This step places our initial seeds, which are later expanded. The app that generates the seeds and the expanded patches is `vc_grow_seg_from_seed`.
+Much of this section borrows from Hendrik Schilling's repository [here](https://github.com/hendrikschilling/FASP), which also contains more detailed explanations of these processes. 
 
-The app operates by choosing a random point within the volume, creating a vector in a random direction, and then "stepping" along that vector, checking whether a patch exists in the location or not. If a patch does not exist, one is createad by calling the function `space_tracing_quad_phys`, which iteratively grows the quadmesh from this initial point. The quadmesh is a 2d grid which is populated with xyz coordinates as they are "approved" from the candidate list of available points. In this way a uv parameterization is obtained without a second "flattening" step. 
+The tracer operates by connecting overlapping patches based on a number of conditions. It chooses the initial candidates to connect based on patch overlap, and then uses some constraints defined within the cost functions to find the optimal patch to select. This step places our initial seeds, which are later expanded. The app that generates the seeds and the expanded patches is `vc_grow_seg_from_seed`.
 
 During the tracing , a euclidean distance transform is performed, and this is stored within a cache, defined in the json params. This can occupy a non-neglible amount of space, so ensure your disk has enough storage -- my Scroll 1 cache is 376gb. This (and each subsequent step) involves _a ton_ of disk i/o , so a very fast disk here is a good choice.
 
@@ -194,12 +198,11 @@ This will refresh every 1 second, and count the number of folders in your /paths
 You may need to run the seed command multiple times to get a sufficient number of seeds before proceeding to the next step.
 :::
 
-:::warning
-**SEEDS CREATED USING THE MODE "SEED" DO NOT CONTAIN OVERLAP INFORMATION AND ARE NOT USED BY THE TRACER. ENSURE THAT YOU ARE NOT RUNNING THIS SAME COMMAND IN THE NEXT STEP**
-:::
 ___
 ## Expanding Seeds
-
+:::warning
+**SEEDS CREATED USING THE MODE "SEED" DO NOT CONTAIN OVERLAP INFORMATION AND ARE NOT USED BY THE TRACER. ENSURE THAT YOUR PARAMS JSON 'MODE' KEY IS SET TO 'EXPANSION' FOR THIS STEP**
+:::
 In this step, each initial seed is visited in an attempt to generate overlapping patches. The new patches will grow out from these initial seeds, and should eventually populate the entire scroll volume. Expansions are generated until each patch has a minimum number of overlapping patches associated with it. Overlaps are marked by creating a symlinked file in the /auto_grown_xxxx/overlaps directory of the respective patch. Expansion mode uses a config json, which contains the following keys:
 ```json
 {
@@ -227,7 +230,7 @@ You may need to repeat this command, until the volume is densely seeded. The num
 </div>
 ___
 ## Running a Trace
-A "Trace" in the context of vc3d is essentially the same as a segmentation as we've come to know them. Much of this section is borrowed from Hendrik Schilling's repository [here](https://github.com/hendrikschilling/FASP). 
+A "Trace" in the context of vc3d is essentially the same as a segmentation as we've come to know them. 
 
 This step will finally create larger connected surfaces. The large surface tracer generates a single surface by tracing a "consensus" surface from the patches generated earlier. This processed can be influenced by annotating patches in several ways which allows to guide the tracer to avoid errors. Hence the process looks like this:
 
@@ -289,14 +292,19 @@ The tracer will generate debug/preview surface every 50 generations (labeled z_d
 
 **Check for errors**
 
-Using VC3D (you can directly generate the surfaces into a volpkg paths dir) the traced surfaces can be inspected for errors. Inspecting with a normal ome-zarr volume (to see fiber continuity) works well as does inspection using the predicted surface volumes. Also POIs can be used to mark points in one view and inspect it in another (add ctrl-click or ctrl-shift-click). The errors that need to be fixed are generally sheet jumps, were the surface jumps from one correct surface to another correct surface. Often these are visible by checking for gaps in the generated trace as a jump will normally not reconnect with the rest of the trace (cause its on another sheet). Then close to the bottleneck is normally where an error occurs. It is useful to go back in the generated debug surfaces to find the first time an error appears so as to annotate the root cause.
+Using the VC3D GUI, the traced surfaces can be inspected for errors. Inspecting with an ome-zarr volume containing the original scan data (to see fiber continuity) is suggested. You can switch your volume by selecting the drop-down below the segments.
+
+The errors that need to be fixed are generally sheet jumps, were the surface jumps from one correct surface to another correct surface. Often these are visible by checking for gaps in the generated trace as a jump will normally not reconnect with the rest of the trace. 
+
+Typically, the easiest method for fixing these is to locate where the sheet jump first occurs, and then ctrl+click on this location, filter segments by focus point, and then mask out the offending patches..
 
 <div className="mb-4">
-  <img src="/img/segmentation/sheet_jump.png" className="w-[100%]"/>
+  <img src="/img/segmentation/sheet_jump.jpg" className="w-[75%]"/>
   <figcaption className="mt-[-6px]">"Sheet Jump" in a patch".</figcaption>
 </div>
+___ 
 
-## Masking out error-prone regions
+## Fixing Errors
 
 VC3D allows to annotate patches as approved, defective, and to edit a patch mask which allows masking out areas of a patch that are problematic.
 
@@ -304,11 +312,11 @@ VC3D allows to annotate patches as approved, defective, and to edit a patch mask
   <img src="/img/segmentation/vc3d_annotation.jpg" className="w-[50%]"/>
 </div>
 
-**defective**
+**Defective**
 
 A patch can be marked as "defective" by checking the checkbox in the VC3D side panel. This is fast but not very useful as most patches have some good areas and also will have some amount of errors. Errors only matter if they fall at the same spot in multiple patches, so marking a whole patch as defective, which will the tracer ignore it completely is not necessary. **_Use sparingly, most patches contain at least some good data_**
 
-**approved**
+**Approved**
 
 Checking the approved checkbox will mark a patch as manually "approved" which means the tracer will consider mesh corners coming from such a patch as good without checking for other patches. it is important that such a patch is error free (which is not necessary when creating a mask to only remove a problem area without checking "approved"). If you must mark one approved, the following process can be used: 
 
@@ -318,7 +326,7 @@ Checking the approved checkbox will mark a patch as manually "approved" which me
 * ctrl-click to focus on a point on/between blue points to generate a second line, this way a whole grid of points is generated
 * use this grid as orientation to create a mask in GIMP
 
-**mask**
+**Masking**
 
 By clicking on the "edit segment mask" button a mask image will be generated and saved as .tif in the segments directory. Then the systems default application for the filetype .tif will be launched. It is recommended to use GIMP for this. The mask file is a multi-layer tif file where the lowest layer is the actual binary mask and the second layer is the rendered surface using the currently selected volume.
 
@@ -335,4 +343,70 @@ With this process a mask can be generated using less than 10 clicks
 <div className="mb-4">
   <img src="/img/segmentation/gimp_masking.jpg" className="w-[100%]"/>
 </div>
+___
 
+## Inpainting
+
+It is possible after the previous steps to simply render the trace and use it within downstream tasks. The traces at this stage however frequently contain holes and are not flattened as well as they could be. To improve the mesh, we can combine multiple traces and attempt to fill in the holes. 
+
+The traces to be combined should be error free, and one can mask out bad regions of these larger traces using the same masking process as we used on the patches.
+
+**Generating Winding Number Assignments**
+
+<div className="mb-4">
+  <img src="/img/segmentation/wind_vis.png" className="w-[100%]"/>
+</div>
+
+The first step in the fusion process is generating relative winding numbers of each trace by running:
+
+```bash
+OMP_WAIT_POLICY=PASSIVE OMP_NESTED=FALSE \
+vc_tifxyz_winding /path/to/trace
+```
+
+Which will generate some debug images and the two files "winding.tif" and "winding_vis.tif". Check the winding vis for errors, it should be a smooth continuous rainbow going from left to right, of you see discontinuities here, there were some errors in the trace that must be fixed. Mask those errors in the source trace and re-run winding estimation until it works, this should not generally be necessary.
+
+Copy the winding.tif and wind_vis.tif to the traces storage directory so its all in one place and ready for the next step. The winding estimation should take about 10s.
+
+**Trace Fusion and Inpainting**
+
+Once you have estimated winding assignments for all the traces you intend on fusing, you can run this command, with an arbitrary number of traces. Note that the first trace will be used as the seed an it will also define the size of the output trace and will generate normal constraints, so it should be the longest and most complete. The number after the trace is the weight of the trace when generating the surface, in all test a weight of 1.0 was used and for the submission this params.json.
+
+```bash
+OMP_WAIT_POLICY=PASSIVE OMP_NESTED=FALSE time nice \
+vc_fill_quadmesh params.json /path/to/trace1/ /path/to/trace1/winding.tif 1.0 /path/to/trace2/ /path/to/trace2/winding.tif 1.0
+```
+The params.json contains the following keys:
+```json
+{
+    "trace_mul" : 5,
+    "dist_w" : 1.5,
+    "straight_w" : 0.005,
+    "surf_w" : 0.05,
+    "z_loc_loss_w" : 0.002,
+    "wind_w" : 10.0,
+    "wind_th" : 0.5,
+    "inpaint_back_range" : 60,
+    "opt_w" : 4
+}
+```
+
+**Grounding and Upscaling**
+The output of this fusion process is a lower resolution than the source traces. To upscale it back to its source resolution, run the following command
+
+```bash
+vc_tiffxyz_upscale_grounding <infill-tiffxyz> <infill-winding> 5 /path/to/trace1/ /path/to/trace1/winding.tif ...
+```
+___
+
+## Rendering 
+Each stage of the seeding/expanding/tracing process uses the tifxyz format, and thus any output in these processes can be rendered by using the `vc_render_tifxyz`. To render your new trace, enter:
+```bash
+OMP_WAIT_POLICY=PASSIVE OMP_NESTED=FALSE time nice \
+vc_render_tifxyz /path/to/volume/ome-zarr /output/path/%02d.tif /path/to/trace 0.5 1 21
+```
+where 0.5 is the "scale" (the final output is scaled down to this percentage, 50% in the example), 1 is the source resolution group (in this case, 1 , or the second resolution of the ome-zarr), and 21 is the number of "layers" from the center slice we want, equally in positive and negative directions. This will generate 21 slices from our traditionally understood "layer 22" to "layer 43".
+
+:::tip
+For the TimeSFormer model, the "1" resolution performs only slightly worse than the full resolution, "0". The i3d first letters model however, performs much worse on downsampled data. For models of this type, it is suggested to render the full resolution. This requires processing 8x more data, and will render significantly slower.
+:::
