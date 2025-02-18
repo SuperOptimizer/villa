@@ -37,7 +37,7 @@ hide_table_of_contents: true
 </head>
 
 
-The $700,000 Grand Prize will go to the first team to read four passages of text from the inside of the two intact scrolls. We also have prizes for second place ($100,000) and third place ($50,000). More details on the qualifying criteria are available [here](#qualifying-criteria).
+The \$700,000 Grand Prize will go to the first team to read four passages of text from the inside of the two intact scrolls. We also have prizes for second place (\$100,000) and third place (\$50,000). More details on the qualifying criteria are available [here](#qualifying-criteria).
 
 Here are the scrolls in question:
 
@@ -71,7 +71,7 @@ As you will read in the [tutorials](/tutorial), advanced tools and techniques ex
 - Finding the ink. The ink used in the Herculaneum scrolls is [radiolucent](https://en.wikipedia.org/wiki/Radiodensity), making it difficult to see in the scans. Recently, Dr. Seales's team has trained a machine learning model which can detect the ink from subtle patterns in the 3D X-rays. This works in the fragments, but these models are not yet perfect and will probably need to be improved to work at the scale of an entire scroll.
 - Putting it all together. Applying the ink detection models to the segmented scroll has not yet been successfully demonstrated.
 
-Based on the [landmark results](https://arxiv.org/abs/2304.02084) that Dr. Seales and his team have recently produced, we believe that it is possible to read the Herculaneum scrolls using the [scans](/data) that we already have and the tools and tecniques that they have developed. And that is the Vesuvius Challenge!
+Based on the [landmark results](https://arxiv.org/abs/2304.02084) that Dr. Seales and his team have recently produced, we believe that it is possible to read the Herculaneum scrolls using the [scans](/data) that we already have and the tools and techniques that they have developed. And that is Vesuvius Challenge!
 
 The Grand Prize deadline is 11:59pm Pacific, December 31st, 2023.
 
@@ -89,9 +89,9 @@ If no team meets the criteria by the deadline, we reserve the right to award the
 
 <div>Prizes are awarded in the order that qualifying submisisons are made:</div>
 
-- 1st place: $700,000
-- 2nd place: $100,000
-- 3rd place: $50,000
+- 1st place: \$700,000
+- 2nd place: \$100,000
+- 3rd place: \$50,000
 
 To qualify for the Grand Prize, you must have registered at the time you downloaded the data. The registration form can be found on the [data page](/data).
 
@@ -101,7 +101,7 @@ We will work with the Grand Prize winners to verify their results, put them in a
 
 <div>If you have a qualifying result, submit it for consideration by sending an email to <a href="mailto:grandprize@scrollprize.org">grandprize@scrollprize.org</a> and provide the following:</div>
 
-* **Images.** Submissions must be in the form of images of the virtually unrolled papyrus, showing visible and legible text.
+* **Images.** Submissions must be in the form of images of the virtually unwrapped papyrus, showing visible and legible text.
     * Submit a single static image for each text region. Images must be generated programmatically, as direct outputs of CT data inputs, and should not contain manual annotations of characters or text.
     * Specify which scroll each image came from.
     * Specify where in the scroll they were found: include information about the position of the text vertically as well as radially within the scroll. One easy way to do this is to provide images showing the 3D position of the text surface inside the scroll.

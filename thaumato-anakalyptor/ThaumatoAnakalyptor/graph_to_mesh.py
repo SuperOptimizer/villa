@@ -290,6 +290,22 @@ class WalkToSheet():
         self.save_path = os.path.dirname(path) + f"/{start_point[0]}_{start_point[1]}_{start_point[2]}/" + path.split("/")[-1]
         self.lock = threading.Lock()
 
+    def find_minmax_winding_angle_z_range(self):
+        min_winding_angle = float('inf')
+        max_winding_angle = -float('inf')
+        z_min = float('inf')
+        z_max = -float('inf')
+        for node in self.graph.nodes:
+            if 'assigned_k' not in self.graph.nodes[node]:
+                continue
+            winding_angle = self.graph.nodes[node]['winding_angle']
+            min_winding_angle = min(min_winding_angle, winding_angle)
+            max_winding_angle = max(max_winding_angle, winding_angle)
+            z = node[1]
+            z_min = min(z_min, z)
+            z_max = max(z_max, z)
+        return min_winding_angle, max_winding_angle, z_min, z_max
+
     def build_points(self, z_range=None):
         # Building the pointcloud 4D (position) + 3D (Normal) + 3D (Color, randomness) representation of the graph
         points = []
@@ -302,10 +318,12 @@ class WalkToSheet():
                 continue
             winding_angle = self.graph.nodes[node]['winding_angle']
             block, patch_id = node[:3], node[3]
+            if block[1] < z_range[0] - 75 or block[1] > z_range[1] + 75:
+                continue
             patch_sheet_patch_info = (block, int(patch_id), winding_angle)
             sheet_infos.append(patch_sheet_patch_info)
         time_start = time.time()
-        print(sheet_infos)
+        # print(sheet_infos)
         points, normals, colors = pointcloud_processing.load_pointclouds(sheet_infos, self.path, z_range[0], z_range[1], True)
         print(f"Time to load pointclouds: {time.time() - time_start}")
         print(f"Shape of patch_points: {np.array(points).shape}")
@@ -831,10 +849,22 @@ class WalkToSheet():
     def ordered_pointset_to_3D(self, interpolated_ts, ordered_umbilicus_points, angle_vector):
         # go from interpolated t values to ordered pointset (3D points)
         interpolated_points = []
-        for i in range(len(interpolated_ts)):
+        print(f"Length of interpolated_ts: {len(interpolated_ts)}")
+        print(f"Length of ordered_umbilicus_points (should be same as other two, but since every entry is same it is okay that it didnt get angle clipped): {len(ordered_umbilicus_points)}") # Todo: clip as well when clipping away angles
+        print(f"Length of angle_vector: {len(angle_vector)}")
+        for i in tqdm(range(len(interpolated_ts)), desc="Converting to Scroll Thaumato carthesian 3D coordinates"):
             interpolated_points.append([])
+            # print(f"Length of interpolated_ts[i]: {len(interpolated_ts[i])}")
+            # print(f"Length of ordered_umbilicus_points[i]: {len(ordered_umbilicus_points[i])}")
+            # print(f"Shape ordered umbilicus points: {np.array(ordered_umbilicus_points[i]).shape}")
             for j in range(len(interpolated_ts[i])):
                 if interpolated_ts[i][j] is not None:
+                    # try:
+                    #     print(f"Shape o u p: {np.array(ordered_umbilicus_points[i][j]).shape}")
+                    #     print(f"Shape o a v: {np.array(angle_vector[i]).shape}")
+                    # except:
+                    #     pass
+                    # print(f"Shapes of ordered_umbilicus_points: {np.array(ordered_umbilicus_points[i][j]).shape}, {interpolated_ts[i][j].shape}, {np.array(angle_vector[i]).shape}")
                     interpolated_points[i].append(np.array(ordered_umbilicus_points[i][j]) + interpolated_ts[i][j] * np.array(angle_vector[i]))
                 else:
                     raise ValueError("Interpolated t is None")
@@ -1278,61 +1308,7 @@ class WalkToSheet():
         test_pointset_ply_path = os.path.join(test_folder, f"ordered_pointset_test_cpp.ply")
         self.pointcloud_from_ordered_pointset(pointset, os.path.join(self.save_path, test_pointset_ply_path))
            
-    def rolled_ordered_pointset(self, points, normals, continue_from=0, fragment=False, debug=False, angle_step=0.5, z_spacing=10, learning_rate=0.2, iterations=11, unfix_factor=2.5):
-        # some debugging visualization of seperate pointcloud windings
-        if debug:
-            # get winding angles
-            winding_angles = points[:, 3]
-
-            min_wind = np.min(winding_angles)
-            max_wind = np.max(winding_angles)
-            print(f"Min and max winding angles: {min_wind}, {max_wind}")
-
-            # remove test folder
-            test_folder = os.path.join(self.save_path, "test_winding_angles")
-            if os.path.exists(test_folder):
-                shutil.rmtree(test_folder)
-            os.makedirs(test_folder)
-            # test
-            for test_angle in range(int(min_wind), int(max_wind), 360):
-                if (test_angle // 360 % 20) > 2:
-                    continue
-                start_index, end_index = self.points_at_winding_angle(points, test_angle+180, max_angle_diff=180)
-                points_test = points[start_index:end_index]
-                colors_test = points_test[:,3]
-                points_test = points_test[:,:3]
-                normals_test = normals[start_index:end_index]
-                print(f"extracted {len(points_test)} points at {test_angle} degrees")
-                # save as ply
-                ordered_pointsets_test = [(points_test, normals_test)]
-                test_pointset_ply_path = os.path.join(test_folder, f"ordered_pointset_test_{test_angle}.ply")
-                try:
-                    self.pointcloud_from_ordered_pointset(ordered_pointsets_test, test_pointset_ply_path, color=colors_test)
-                except:
-                    print("Error saving test pointset")
-
-            # if debug:
-            #     # save complete pointcloud
-            #     complete_pointset_ply_path = os.path.join(test_folder, "complete_pointset.ply")
-            #     try:
-            #         self.pointcloud_from_ordered_pointset([(points, normals)], complete_pointset_ply_path, color=points[:,3])
-            #     except:
-            #         print("Error saving complete pointset")
-        
-        print("Using Cpp rolled_ordered_pointset")
-        # Set to false to load precomputed partial results during development
-        fresh_start = continue_from <= 2
-        if fresh_start:
-            result = pointcloud_processing.create_ordered_pointset(points, normals, self.graph.umbilicus_data, angleStep=float(angle_step), z_spacing=int(z_spacing), max_eucledian_distance=10) # named parameters for mesh detail level: float angleStep, int z_spacing, float max_eucledian_distance, bool verbose
-            # save result as pkl
-            result_pkl_path = os.path.join(self.save_path, "ordered_pointset.pkl")
-            with open(result_pkl_path, 'wb') as f:
-                pickle.dump(result, f)
-        else:
-            result_pkl_path = os.path.join(self.save_path, "ordered_pointset.pkl")
-            with open(result_pkl_path, 'rb') as f:
-                result = pickle.load(f)
-
+    def rolled_ordered_pointset(self, result, continue_from=0, fragment=False, angle_step=0.5, learning_rate=0.2, iterations=11, unfix_factor=2.5):
         print("length of result: ", len(result))
         ordered_pointset, ordered_normals, ordered_umbilicus_points, angle_vector = zip(*result)
         print("length of ordered_pointset: ", len(ordered_pointset))
@@ -1410,7 +1386,7 @@ class WalkToSheet():
                     #                                             learning_rate=0.1, iterations=7, error_val_d=0.0001, unfix_factor=5.0,
                     #                                             verbose=True)
                     interpolated_ts = self.optimize_adjacent_cpp(interpolated_ts, neighbours_dict, fixed_points, 
-                                                                learning_rate=0.2, iterations=11, error_val_d=0.0001, unfix_factor=2.5,
+                                                                learning_rate=0.2, iterations=iterations, error_val_d=0.0001, unfix_factor=unfix_factor,
                                                                 verbose=True)
                 else:
                     interpolated_ts = valid_ts
@@ -1625,54 +1601,146 @@ class WalkToSheet():
         split_mesh_paths, stamp = splitter.compute(split_width=split_width, fresh_start=fresh_start, stamp=stamp)
         # Return the paths to the split meshes
         return split_mesh_paths, stamp
+    
+    def load_pointcloud_to_raw_ordered_pointset(self, debug=False, continue_from=0, z_range=None, angle_step=1, z_spacing=10):
+        # retrieve min max approximate winding angles
+        approx_min_angle, approx_max_angle, approx_min_z, approx_max_z = self.find_minmax_winding_angle_z_range()
+        print(f"Approximate min and max winding angles: {approx_min_angle}, {approx_max_angle} with z range: {approx_min_z}, {approx_max_z}")
+        # adjust to desired z range
+        if z_range is not None:
+            approx_min_z = max(approx_min_z, z_range[0])
+            approx_max_z = min(approx_max_z, z_range[1])
+        approx_min_angle -= 360.0
+        approx_max_angle += 360.0
+        approx_min_z -= 50
+        approx_max_z += 50
+        print(f"Approximate min and max winding angles: {approx_min_angle}, {approx_max_angle} with z range: {approx_min_z}, {approx_max_z}")
+
+        # loop over build + ordered pointset creation for each z range step (with overlap in loaded pointclouds)
+        z_step = 50 * z_spacing
+        results = None
+        for step_index, z_start in enumerate(tqdm(range(approx_min_z, approx_max_z, z_step), desc="Z range steps")):
+            result_pkl_path = os.path.join(self.save_path, f"ordered_pointset_{step_index}.pkl")
+            z_end = z_start + z_step
+            z_range = (z_start - 60, z_end + 60)
+            print(f"z_range: {z_range}")
+
+            # Set to false to load precomputed partial results during development
+            start_fresh = continue_from <= 1
+            path_points = os.path.join(self.save_path, f"points_{step_index}.npz")
+            if start_fresh or not os.path.exists(path_points):
+                # Set to false to load precomputed partial results during development
+                start_fresh_build_points = continue_from <= 0 or not os.path.exists(path_points)
+                if start_fresh_build_points:
+                    # get points
+                    points, normals, colors = self.build_points(z_range=z_range)
+
+                    # Make directory if it doesn't exist
+                    os.makedirs(self.save_path, exist_ok=True)
+                    # Save as npz
+                    with open(path_points, 'wb') as f:
+                        np.savez(f, points=points, normals=normals, colors=colors)
+                else:
+                    # Open the npz file
+                    with open(path_points, 'rb') as f:
+                        npzfile = np.load(f)
+                        points = npzfile['points']
+                        normals = npzfile['normals']
+                        colors = npzfile['colors']
+
+                # Save as npz
+                with open(os.path.join(self.save_path, f"points_selected_{step_index}.npz"), 'wb') as f:
+                    np.savez(f, points=points, normals=normals)
+            else:
+                load_points = continue_from <= 2 or debug or not os.path.exists(result_pkl_path)
+                if load_points:
+                    # Open the npz file
+                    with open(os.path.join(self.save_path, f"points_selected_{step_index}.npz"), 'rb') as f:
+                        npzfile = np.load(f)
+                        points = npzfile['points']
+                        normals = npzfile['normals']
+                    print(f"Shape of points_originals_selected: {points.shape}")
+                else:
+                    points = None
+                    normals = None
+
+            # some debugging visualization of seperate pointcloud windings
+            if debug:
+                # get winding angles
+                winding_angles = points[:, 3]
+
+                min_wind = np.min(winding_angles)
+                max_wind = np.max(winding_angles)
+                print(f"Min and max winding angles: {min_wind}, {max_wind}")
+
+                # remove test folder
+                test_folder = os.path.join(self.save_path, "test_winding_angles")
+                if os.path.exists(test_folder):
+                    shutil.rmtree(test_folder)
+                os.makedirs(test_folder)
+                # test
+                for test_angle in range(int(min_wind), int(max_wind), 360):
+                    if (test_angle // 360 % 20) > 2:
+                        continue
+                    start_index, end_index = self.points_at_winding_angle(points, test_angle+180, max_angle_diff=180)
+                    points_test = points[start_index:end_index]
+                    colors_test = points_test[:,3]
+                    points_test = points_test[:,:3]
+                    normals_test = normals[start_index:end_index]
+                    print(f"extracted {len(points_test)} points at {test_angle} degrees")
+                    # save as ply
+                    ordered_pointsets_test = [(points_test, normals_test)]
+                    test_pointset_ply_path = os.path.join(test_folder, f"ordered_pointset_test_{test_angle}_{step_index}.ply")
+                    try:
+                        self.pointcloud_from_ordered_pointset(ordered_pointsets_test, test_pointset_ply_path, color=colors_test)
+                    except:
+                        print("Error saving test pointset")
+
+                # if debug:
+                #     # save complete pointcloud
+                #     complete_pointset_ply_path = os.path.join(test_folder, "complete_pointset.ply")
+                #     try:
+                #         self.pointcloud_from_ordered_pointset([(points, normals)], complete_pointset_ply_path, color=points[:,3])
+                #     except:
+                #         print("Error saving complete pointset")
+
+            print("Using Cpp rolled_ordered_pointset")
+            # Set to false to load precomputed partial results during development
+            fresh_start = continue_from <= 2
+            if fresh_start or not os.path.exists(result_pkl_path):
+                result = pointcloud_processing.create_ordered_pointset(points, normals, self.graph.umbilicus_data, angleStep=float(angle_step), z_spacing=int(z_spacing), max_eucledian_distance=10, min_z=z_start, max_z=z_end, min_wind=approx_min_angle, max_wind=approx_max_angle) # named parameters for mesh detail level: float angleStep, int z_spacing, float max_eucledian_distance, bool verbose
+                # save result as pkl
+                with open(result_pkl_path, 'wb') as f:
+                    pickle.dump(result, f)
+            else:
+                with open(result_pkl_path, 'rb') as f:
+                    result = pickle.load(f)
+
+            if results is None:
+                results = result
+            else:
+                # results shape: total num angle steps, "ordered_pointset, ordered_normals, ordered_umbilicus_points, angle_vector", z steps, "individual shape"
+                for i in range(len(result)): # angle steps
+                    for j in range(len(result[i])): # type of data
+                        if j == 3: # angle vector
+                            continue
+                        results[i][j].extend(result[i][j]) # extend the z steps
+            
+            # Get the size of the object in bytes
+            size_in_bytes = sys.getsizeof(results)
+            size_in_gbs = size_in_bytes / 1024 / 1024 / 1024
+            print(f"Size of results: {size_in_gbs} GBs")
+        
+        return results
 
     def unroll(self, fragment=False, debug=False, continue_from=0, z_range=None, angle_step=1, z_spacing=10, learning_rate=0.2, iterations=11, unfix_factor=2.5, downsample=False):
+        # Load the graph
+        result = self.load_pointcloud_to_raw_ordered_pointset(debug=debug, continue_from=continue_from, z_range=z_range, angle_step=angle_step, z_spacing=z_spacing)
 
-        # Set to false to load precomputed partial results during development
-        start_fresh = continue_from <= 1
-        if start_fresh: 
-            # Set to false to load precomputed partial results during development
-            start_fresh_build_points = continue_from <= 0
-            if start_fresh_build_points:
-                # get points
-                points, normals, colors = self.build_points(z_range=z_range)
-
-                # Make directory if it doesn't exist
-                os.makedirs(self.save_path, exist_ok=True)
-                # Save as npz
-                with open(os.path.join(self.save_path, "points.npz"), 'wb') as f:
-                    np.savez(f, points=points, normals=normals, colors=colors)
-            else:
-                # Open the npz file
-                with open(os.path.join(self.save_path, "points.npz"), 'rb') as f:
-                    npzfile = np.load(f)
-                    points = npzfile['points']
-                    normals = npzfile['normals']
-                    colors = npzfile['colors']
-
-            points_originals_selected = points
-            normals_originals_selected = normals
-
-            # Save as npz
-            with open(os.path.join(self.save_path, "points_selected.npz"), 'wb') as f:
-                np.savez(f, points=points_originals_selected, normals=normals_originals_selected)
-        else:
-            load_points = continue_from <= 2 or debug
-            if load_points:
-                # Open the npz file
-                with open(os.path.join(self.save_path, "points_selected.npz"), 'rb') as f:
-                    npzfile = np.load(f)
-                    points_originals_selected = npzfile['points']
-                    normals_originals_selected = npzfile['normals']
-                print(f"Shape of points_originals_selected: {points_originals_selected.shape}")
-            else:
-                points_originals_selected = None
-                normals_originals_selected = None
+        # get nodes
+        ordered_pointsets_s = self.rolled_ordered_pointset(result, angle_step=angle_step, continue_from=continue_from, fragment=fragment, learning_rate=learning_rate, iterations=iterations, unfix_factor=unfix_factor)
 
         pointset_ply_path = os.path.join(self.save_path, "ordered_pointset.ply")
-        # get nodes
-        ordered_pointsets_s = self.rolled_ordered_pointset(points_originals_selected, normals_originals_selected, angle_step=angle_step, continue_from=continue_from, fragment=fragment, debug=debug, z_spacing=z_spacing, learning_rate=learning_rate, iterations=iterations, unfix_factor=unfix_factor)
-
         self.pointcloud_from_ordered_pointset(ordered_pointsets_s[0], pointset_ply_path)
         stamp = None
         for i in range(len(ordered_pointsets_s)):
@@ -1700,12 +1768,12 @@ class WalkToSheet():
             #     for f_p in flat_ps:
             #         f_p.wait()
             #         print(f"Finished flattening mesh piece {f_p}.")
-        with ProcessPoolExecutor(max_workers=num_procs) as executor:
-            futures = {executor.submit(flatten_args, arg): arg for arg in args}
-            for future in as_completed(futures):
-                arg = futures[future]
-                print(f"Finished flattening mesh piece {arg}.")
-            print(f"Finished mesh piece {i+1} of {len(ordered_pointsets_s)}.")
+            with ProcessPoolExecutor(max_workers=num_procs) as executor:
+                futures = {executor.submit(flatten_args, arg): arg for arg in args}
+                for future in as_completed(futures):
+                    arg = futures[future]
+                    print(f"Finished flattening mesh piece {arg}.")
+                print(f"Finished mesh piece {i+1} of {len(ordered_pointsets_s)}.")
 
 if __name__ == '__main__':
     start_point = [3164, 3476, 3472]
@@ -1730,7 +1798,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     graph_path = os.path.join(os.path.dirname(args.path), args.graph)
-    if args.continue_from <= 2:
+    if True or args.continue_from <= 3:
         graph = load_graph(graph_path)
         min_z = min([graph.nodes[node]["centroid"][1] for node in graph.nodes])
         max_z = max([graph.nodes[node]["centroid"][1] for node in graph.nodes])
@@ -1755,3 +1823,4 @@ if __name__ == '__main__':
 
 # Example command: python3 -m ThaumatoAnakalyptor.graph_to_mesh --path /scroll.volpkg/working/scroll3_surface_points/point_cloud_colorized_verso_subvolume_blocks --graph /scroll.volpkg/working/scroll3_surface_points/1352_3600_5002/point_cloud_colorized_verso_subvolume_graph_BP_solved.pkl --start_point 1352 3600 5002 --debug
 # python3 -m ThaumatoAnakalyptor.graph_to_mesh --path /scroll2v2_surface_points/point_cloud_colorized_verso_subvolume_blocks --graph /scroll2v2_surface_points/1352_3600_5002/point_cloud_colorized_verso_subvolume_graph_BP_solved.pkl --start_point 1352 3600 5002
+# python3 -m ThaumatoAnakalyptor.graph_to_mesh --path /scroll_pcs/point_cloud_colorized_verso_subvolume_blocks --graph /scroll_pcs/1352_3600_5007/point_cloud_colorized_verso_subvolume_graph_BP_solved.pkl --start_point 1352 3600 5007 --downsample --angle_step 1.0 --z_spacing 5 --start_point 1352 3600 5007

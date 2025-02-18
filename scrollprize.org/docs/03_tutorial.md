@@ -41,7 +41,7 @@ import { TutorialsTop } from '@site/src/components/TutorialsTop';
 
 These tutorials share the best tools and techniques for virtually unwrapping and reading carbonized papyrus scrolls.
 
-We expect you will build on these techniques, improving the tools and models. But of course, you may have better ideas, and are free to approach the Vesuvius Challenge any way you think will work!
+We expect you will build on these techniques, improving the tools and models. But of course, you may have better ideas, and are free to approach Vesuvius Challenge any way you think will work!
 
 There are five steps in our process for reading a carbonized scroll:
 

@@ -45,7 +45,7 @@ import TabItem from '@theme/TabItem';
 
 The micro-CT scan converts the scroll into a volumetric grid of density measurements, providing a mathematical description with integer coordinates and average material densities in small adjacent cubes.
 
-<div className="flex w-[100%]">
+<div className="flex max-w-[400px]">
   <div className="w-[100%] mb-2 mr-2"><img src="/img/tutorials/rep_ash2vox.webp" className="w-[100%]"/><figcaption className="mt-0">Physical scroll to voxel representation</figcaption></div>
 </div>
 
@@ -68,7 +68,7 @@ There have been varying levels of success using each of these types of represent
 
 Traditional image processing techniques have mostly been intended to aid manual segmentation, either to make the papyrus easier to interpret or to help segmentation algorithms follow the surface better. Popular techniques include thresholding, noise reduction, various colourization schemes, edge detection, and skeletonization.
 
-<div className="flex w-[100%]">
+<div className="flex max-w-[400px]">
   <div className="w-[100%] mb-2 mr-2"><img src="/img/tutorials/rep_trad_voxel.webp" className="w-[100%]"/><figcaption className="mt-0">Voxel to voxel representations using traditional techniques.</figcaption></div>
 </div>
 
@@ -83,7 +83,7 @@ Most of these techniques have not been successful at improving segmentation.
 
 The goal of point clouds is to extract a limited but useful subset of information from the raw scan volume. In the point cloud representation, calculations select voxels that describe the surface of a sheet.
 
-<div className="flex w-[100%]">
+<div className="flex max-w-[400px]">
   <div className="w-[100%] mb-2 mr-2"><img src="/img/tutorials/rep_vox2pointcloud.webp" className="w-[100%]"/><figcaption className="mt-0">Transforming voxels into a point cloud representation.</figcaption></div>
 </div>
 
@@ -98,7 +98,7 @@ The fixed grid and density values are discarded, using traditional edge/surface 
 
 Volumetric segmentation involves mapping the exact 3D shape of the papyrus sheets, and annotating which voxels are papyrus and which belong to the same papyrus wrap vs adjacent wraps. The semantic mask assists in this process by labelling papyrus vs air.
 
-<div className="flex w-[100%]">
+<div className="flex max-w-[400px]">
   <div className="w-[100%] mb-2 mr-2"><img src="/img/tutorials/rep_semantic.webp" className="w-[100%]"/><figcaption className="mt-0">Binarizing papyrus and no papyrus</figcaption></div>
 </div>
 

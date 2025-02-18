@@ -101,6 +101,18 @@ def closest_to_geometric_median(X):
     closest_point = X[min_idx]
     return closest_point
 
+def centroid_method_mean(X):
+    """
+    Compute the centroid of a set of points using the mean.
+    """
+    return np.mean(X, axis=0)
+
+def centroid_method_geometric_mean(X):
+    """
+    Compute the centroid of a set of points using the geometric mean.
+    """
+    return np.exp(np.mean(np.log(C), axis=0))
+
 def unit_vector(vector):
     """ Returns the unit vector of the vector.  """
     return vector / np.linalg.norm(vector)
@@ -126,7 +138,7 @@ def angle_between(v1, v2=np.array([1, 0])):
     assert angle is not None, "Angle is None."
     return angle
 
-def surrounding_volumes(volume_id, volume_size=50):
+def surrounding_volumes(volume_id, overlapp_threshold, volume_size=50):
     """
     Returns the surrounding volumes of a volume
     """
@@ -138,6 +150,8 @@ def surrounding_volumes(volume_id, volume_size=50):
     surrounding_volumes[0] = (volume_id_x + vs, volume_id_y, volume_id_z)
     surrounding_volumes[1] = (volume_id_x, volume_id_y + vs, volume_id_z)
     surrounding_volumes[2] = (volume_id_x, volume_id_y, volume_id_z + vs)
+    # filter in sheet z range
+    surrounding_volumes = [volume for volume in surrounding_volumes if volume[1] >= overlapp_threshold["sheet_z_range"][0] and volume[1] <= overlapp_threshold["sheet_z_range"][1]]
     return surrounding_volumes
 
 def volumes_of_point(point, volume_size=50):
@@ -208,11 +222,13 @@ def build_patch(main_sheet_patch, subvolume_size, path, sample_ratio=1.0, align_
     x, y, z, id_ = patch_id
     anchor_normal = get_vector_mean(patch_normals)
     anchor_angle = alpha_angles(np.array([anchor_normal]))[0]
+    centroid = centroid_method(patch_points)
 
     additional_main_patch = {"ids": [patch_id],
                     "points": patch_points,
                     "normals": patch_normals,
                     "colors": patch_color,
+                    "centroid": centroid,
                     "anchor_points": [patch_points[0]], 
                     "anchor_normals": [anchor_normal],
                     "anchor_angles": [anchor_angle],
@@ -333,9 +349,11 @@ class Graph:
         self.edges = {}  # Stores edges with update matrices and certainty factors
         self.nodes = {}  # Stores node beliefs and fixed status
 
-    def add_node(self, node, centroid, winding_angle=None):
+    def add_node(self, node, centroid, winding_angle=None, winding_angle_gt=None):
         node = tuple(int(node[i]) for i in range(4))
         self.nodes[node] = {'centroid': centroid, "winding_angle": winding_angle}
+        if not winding_angle_gt is None:
+            self.nodes[node]['winding_angle_gt'] = winding_angle_gt
 
     def compute_node_edges(self, verbose=True):
         """
@@ -581,7 +599,7 @@ class Graph:
         else:
             return np.zeros(0)
 
-def score_same_block_patches(patch1, patch2, overlapp_threshold, umbilicus_distance):
+def score_same_block_patches(patch1, patch2, overlapp_threshold, umbilicus_distance, min_points_factor):
     """
     Calculate the score between two patches from the same block.
     """
@@ -605,10 +623,10 @@ def score_same_block_patches(patch1, patch2, overlapp_threshold, umbilicus_dista
     if orthogonal_d > overlapp_threshold["max_winding_switch_sheet_distance"]: # too far away
         valid = False
         score = -0.5
-    if patch1["points"].shape[0] < overlapp_threshold["min_points_winding_switch"] * overlapp_threshold["sample_ratio_score"]:
+    if patch1["points"].shape[0] < overlapp_threshold["min_points_winding_switch"] * overlapp_threshold["sample_ratio_score"] * min_points_factor:
         valid = False
         score = -0.5
-    if patch2["points"].shape[0] < overlapp_threshold["min_points_winding_switch"] * overlapp_threshold["sample_ratio_score"]:
+    if patch2["points"].shape[0] < overlapp_threshold["min_points_winding_switch"] * overlapp_threshold["sample_ratio_score"] * min_points_factor:
         valid = False
         score = -0.5
     if score_val <= 0.0: # too far away
@@ -629,7 +647,7 @@ def score_same_block_patches(patch1, patch2, overlapp_threshold, umbilicus_dista
 
     return (score, k, valid), patch1["anchor_angles"][0], patch2["anchor_angles"][0]
 
-def process_same_block(main_block_patches_list, overlapp_threshold, umbilicus_distance):
+def process_same_block(main_block_patches_list, overlapp_threshold, umbilicus_distance, patch_angle):
     def scores_cleaned(direction_scores):
         if len(direction_scores) == 0:
             return []
@@ -650,17 +668,26 @@ def process_same_block(main_block_patches_list, overlapp_threshold, umbilicus_di
     score_switching_sheets = []
     score_bad_edges = []
     for i in range(len(main_block_patches_list)):
+        angle = patch_angle(main_block_patches_list[i])
+        # find out if close to angle%90 == 0
+        # TODO: actually calculate this from the sheet configuration instead of approximating from the sheet position around the umbilicus
+        # angle = (patch_angle(patches_list[i]) + patch_angle(patches_list[j])) / 2.0 # approximation
+        right_angle = angle / 90.0 + 0.5
+        right_angle = right_angle - np.floor(right_angle) - 0.5
+        min_points_factor = 1.0
+        if abs(right_angle) < 0.333:
+            min_points_factor = 0.25
         score_switching_sheets_ = []
         for j in range(len(main_block_patches_list)):
             if i == j:
                 continue
-            (score_, k_, valid_), anchor_angle1, anchor_angle2 = score_same_block_patches(main_block_patches_list[i], main_block_patches_list[j], overlapp_threshold, umbilicus_distance)
+            (score_, k_, valid_), anchor_angle1, anchor_angle2 = score_same_block_patches(main_block_patches_list[i], main_block_patches_list[j], overlapp_threshold, umbilicus_distance, min_points_factor)
             if score_ > 0.0:
-                score_switching_sheets_.append((main_block_patches_list[i]['ids'][0], main_block_patches_list[j]['ids'][0], score_, k_, anchor_angle1, anchor_angle2, centroid_method(main_block_patches_list[i]["points"]), centroid_method(main_block_patches_list[j]["points"]), valid_))
+                score_switching_sheets_.append((main_block_patches_list[i]['ids'][0], main_block_patches_list[j]['ids'][0], score_, k_, anchor_angle1, anchor_angle2, main_block_patches_list[i]["centroid"], main_block_patches_list[j]["centroid"], valid_))
 
             # Add bad edges
             if valid_:
-                score_bad_edges.append((main_block_patches_list[i]['ids'][0], main_block_patches_list[j]['ids'][0], 1.0, 0.0, anchor_angle1, anchor_angle2, centroid_method(main_block_patches_list[i]["points"]), centroid_method(main_block_patches_list[j]["points"])))
+                score_bad_edges.append((main_block_patches_list[i]['ids'][0], main_block_patches_list[j]['ids'][0], 1.0, 0.0, anchor_angle1, anchor_angle2, main_block_patches_list[i]["centroid"], main_block_patches_list[j]["centroid"]))
 
         # filter and only take the scores closest to the main patch (smallest scores) for each k in +1, -1
         direction1_scores = [score for score in score_switching_sheets_ if score[3] > 0.0]
@@ -671,10 +698,19 @@ def process_same_block(main_block_patches_list, overlapp_threshold, umbilicus_di
         score_switching_sheets += score1 + score2
     return score_switching_sheets, score_bad_edges
 
-def score_other_block_patches(patches_list, i, j, overlapp_threshold):
+def score_other_block_patches(patches_list, i, j, overlapp_threshold, angle):
     """
     Calculate the score between two patches from different blocks.
     """
+    # find out if close to angle%90 == 0
+    # TODO: actually calculate this from the sheet configuration instead of approximating from the sheet position around the umbilicus
+    # angle = (patch_angle(patches_list[i]) + patch_angle(patches_list[j])) / 2.0 # approximation
+    right_angle = angle / 90.0 + 0.5
+    right_angle = right_angle - np.floor(right_angle) - 0.5
+    min_points_factor = 1.0
+    if abs(right_angle) < 0.333:
+        min_points_factor = 0.25
+    
     patch1 = patches_list[i]
     patch2 = patches_list[j]
     patches_list = [patch1, patch2]
@@ -692,11 +728,15 @@ def score_other_block_patches(patches_list, i, j, overlapp_threshold):
             patches_list[i]["overlap"][j] = overlap
             patches_list[i]["non_overlap"][j] = non_overlap
             patches_list[i]["points_overlap"][j] = points_overlap
-            score = overlapp_score(i, j, patches_list, overlapp_threshold=overlapp_threshold, sample_ratio=overlapp_threshold["sample_ratio_score"])
+            score = overlapp_score(i, j, patches_list, overlapp_threshold=overlapp_threshold, sample_ratio=overlapp_threshold["sample_ratio_score"], min_points_factor=min_points_factor)
 
-            if score <= 0.0:
+            if overlap < min_points_factor * overlapp_threshold["nr_points_min"] * overlapp_threshold["sample_ratio_score"] or overlap <= 0:
                 score = -1.0
-            elif patches_list[j]["points"].shape[0] < overlapp_threshold["min_patch_points"] * overlapp_threshold["sample_ratio_score"]:
+            elif score <= 0.0:
+                score = -1.0
+            elif patches_list[j]["points"].shape[0] < min_points_factor * overlapp_threshold["min_patch_points"] * overlapp_threshold["sample_ratio_score"]:
+                score = -1.0
+            elif patches_list[i]["points"].shape[0] < min_points_factor * overlapp_threshold["min_patch_points"] * overlapp_threshold["sample_ratio_score"]:
                 score = -1.0
             elif patches_list[i]["patch_prediction_scores"][0] < overlapp_threshold["min_prediction_threshold"] or patches_list[j]["patch_prediction_scores"][0] < overlapp_threshold["min_prediction_threshold"]:
                 score = -1.0
@@ -715,74 +755,90 @@ def process_block(args):
     """
     Worker function to process a single block.
     """
-    file_path, path_instances, overlapp_threshold, umbilicus_data = args
-    umbilicus_func = lambda z: umbilicus_xz_at_y(umbilicus_data, z)
-    def umbilicus_distance(patch1, patch2):
-        # Geometric mean
-        geo1 = centroid_method(patch1["points"])
-        geo2 = centroid_method(patch2["points"])
-        assert geo1.shape[0] == 3, "Points must be 3D."
-        def d_(patch_point):
-            umbilicus_point = umbilicus_func(patch_point[1])
-            patch_point_vec = patch_point - umbilicus_point
-            return np.linalg.norm(patch_point_vec), patch_point_vec
-        d1, pv1 = d_(geo1)
-        d2, pv2 = d_(geo2)
-        # Find ortoghonal distance between the two points
-        xv = pv1 * np.abs(d1 - d2) / d1
-        pv12 = pv2 - pv1
-        pv12_x = xv + pv12
-        ortogh_length = np.linalg.norm(pv12_x)
-        geo_d = np.linalg.norm(geo1 - geo2)
-        return d1 - d2, ortogh_length, geo_d
+    try:
+        file_path, path_instances, overlapp_threshold, umbilicus_data = args
+        umbilicus_func = lambda z: umbilicus_xz_at_y(umbilicus_data, z)
+        def umbilicus_distance(patch1, patch2):
+            # Geometric mean
+            geo1 = patch1["centroid"]
+            geo2 = patch2["centroid"]
+            assert geo1.shape[0] == 3, "Points must be 3D."
+            def d_(patch_point):
+                umbilicus_point = umbilicus_func(patch_point[1])
+                patch_point_vec = patch_point - umbilicus_point
+                return np.linalg.norm(patch_point_vec), patch_point_vec
+            d1, pv1 = d_(geo1)
+            d2, pv2 = d_(geo2)
+            # Find ortoghonal distance between the two points
+            xv = pv1 * np.abs(d1 - d2) / d1
+            pv12 = pv2 - pv1
+            pv12_x = xv + pv12
+            ortogh_length = np.linalg.norm(pv12_x)
+            geo_d = np.linalg.norm(geo1 - geo2)
+            return d1 - d2, ortogh_length, geo_d
+        
+        def patch_angle(patch1):
+            umbilicus_point = umbilicus_func(patch1["centroid"][1])[[0, 2]]
+            umbilicus_vector = umbilicus_point - patch1["centroid"][[0, 2]]
+            angle = angle_between(umbilicus_vector) * 180.0 / np.pi
+            return angle
 
-    file_name = ".".join(file_path.split(".")[:-1])
-    main_block_patches_list = subvolume_surface_patches_folder(file_name, sample_ratio=overlapp_threshold["sample_ratio_score"])
+        file_name = ".".join(file_path.split(".")[:-1])
+        main_block_patches_list = subvolume_surface_patches_folder(file_name, sample_ratio=overlapp_threshold["sample_ratio_score"])
 
-    patches_centroids = {}
-    for patch in main_block_patches_list:
-        patches_centroids[tuple(patch["ids"][0])] = centroid_method(patch["points"])
+        patches_centroids = {}
+        for patch in main_block_patches_list:
+            patches_centroids[tuple(patch["ids"][0])] = patch["centroid"]
 
-    # Extract block's integer ID
-    block_id = [int(i) for i in file_path.split('/')[-1].split('.')[0].split("_")]
-    block_id = np.array(block_id)
-    surrounding_ids = surrounding_volumes(block_id)
-    surrounding_blocks_patches_list = []
-    surrounding_blocks_patches_list_ = []
-    for surrounding_id in surrounding_ids:
-        volume_path = path_instances + f"{file_path.split('/')[0]}/{surrounding_id[0]:06}_{surrounding_id[1]:06}_{surrounding_id[2]:06}"
-        patches_temp = subvolume_surface_patches_folder(volume_path, sample_ratio=overlapp_threshold["sample_ratio_score"])
-        surrounding_blocks_patches_list.append(patches_temp)
-        surrounding_blocks_patches_list_.extend(patches_temp)
+        # Extract block's integer ID
+        block_id = [int(i) for i in file_path.split('/')[-1].split('.')[0].split("_")]
+        block_id = np.array(block_id)
+        surrounding_ids = surrounding_volumes(block_id, overlapp_threshold)
+        surrounding_blocks_patches_list = []
+        surrounding_blocks_patches_list_ = []
+        for surrounding_id in surrounding_ids:
+            volume_path = path_instances + f"{file_path.split('/')[0]}/{surrounding_id[0]:06}_{surrounding_id[1]:06}_{surrounding_id[2]:06}"
+            patches_temp = subvolume_surface_patches_folder(volume_path, sample_ratio=overlapp_threshold["sample_ratio_score"])
+            surrounding_blocks_patches_list.append(patches_temp)
+            surrounding_blocks_patches_list_.extend(patches_temp)
 
-    # Add the overlap base to the patches list that contains the points + normals + scores only before
-    patches_list = main_block_patches_list + surrounding_blocks_patches_list_
-    add_overlapp_entries_to_patches_list(patches_list)
-    subvolume = {"start": block_id - 50, "end": block_id + 50}
+        # Add the overlap base to the patches list that contains the points + normals + scores only before
+        patches_list = main_block_patches_list + surrounding_blocks_patches_list_
+        add_overlapp_entries_to_patches_list(patches_list)
+        subvolume = {"start": block_id - 25, "end": block_id + 75}
 
-    # Assign points to tiles
-    assign_points_to_tiles(patches_list, subvolume, tiling=3)
+        # Assign points to tiles
+        try:
+            assign_points_to_tiles(patches_list, subvolume, tiling=3)
+        except Exception as e:
+            print(e)
+            print("Error assigning points to tiles.")
+            return [], [], [], {}
 
-    # calculate scores between each main block patch and surrounding blocks patches
-    score_sheets = []
-    for i, main_block_patch in enumerate(main_block_patches_list):
-        for surrounding_blocks_patches in surrounding_blocks_patches_list:
-            score_sheets_patch = []
-            for j, surrounding_block_patch in enumerate(surrounding_blocks_patches):
-                patches_list_ = [main_block_patch, surrounding_block_patch]
-                score_ = score_other_block_patches(patches_list_, 0, 1, overlapp_threshold) # score, anchor_angle1, anchor_angle2
-                if score_[0] > overlapp_threshold["final_score_min"]:
-                    score_sheets_patch.append((main_block_patch['ids'][0], surrounding_block_patch['ids'][0], score_[0], None, score_[1], score_[2], centroid_method(main_block_patch["points"]), centroid_method(surrounding_block_patch["points"])))
+        # calculate scores between each main block patch and surrounding blocks patches
+        score_sheets = []
+        for i, main_block_patch in enumerate(main_block_patches_list):
+            angle = patch_angle(main_block_patch)
+            for surrounding_blocks_patches in surrounding_blocks_patches_list:
+                score_sheets_patch = []
+                for j, surrounding_block_patch in enumerate(surrounding_blocks_patches):
+                    patches_list_ = [main_block_patch, surrounding_block_patch]
+                    score_ = score_other_block_patches(patches_list_, 0, 1, overlapp_threshold, angle) # score, anchor_angle1, anchor_angle2
+                    if score_[0] > overlapp_threshold["final_score_min"]:
+                        score_sheets_patch.append((main_block_patch['ids'][0], surrounding_block_patch['ids'][0], score_[0], None, score_[1], score_[2], main_block_patch["centroid"], surrounding_block_patch["centroid"]))
 
-            # Find the best score for each main block patch
-            if len(score_sheets_patch) > 0:
-                score_sheets_patch = max(score_sheets_patch, key=lambda x: x[2])
-                score_sheets.append(score_sheets_patch)
-    
-    score_switching_sheets, score_bad_edges = process_same_block(main_block_patches_list, overlapp_threshold, umbilicus_distance)
+                # Find the best score for each main block patch
+                if len(score_sheets_patch) > 0:
+                    score_sheets_patch = max(score_sheets_patch, key=lambda x: x[2])
+                    score_sheets.append(score_sheets_patch)
+        
+        score_switching_sheets, score_bad_edges = process_same_block(main_block_patches_list, overlapp_threshold, umbilicus_distance, patch_angle)
 
-    # Process and return results...
-    return score_sheets, score_switching_sheets, score_bad_edges, patches_centroids
+        # Process and return results...
+        return score_sheets, score_switching_sheets, score_bad_edges, patches_centroids
+    except Exception as e:
+        print(f"function process_block (instances_to_graph.py) Error: {e}")
+        return [], [], [], {}
 
 def init_worker_build_GT(mesh_file, pointcloud_dir):
     """
@@ -851,6 +907,9 @@ def worker_build_GT(args):
 
     return nodes_winding_alignment
     
+def init_worker_build_graph(centroid_method_):
+    global centroid_method
+    centroid_method = centroid_method_
 
 class ScrollGraph(Graph):
     def __init__(self, overlapp_threshold, umbilicus_path):
@@ -1207,6 +1266,7 @@ class ScrollGraph(Graph):
                     print(f"Node {node_id} not found in graph.")
         print(f"Adjusted winding angles for {count_adjusted_nodes_windings} nodes.")
 
+    
     def build_graph(self, path_instances, start_point, num_processes=4, prune_unconnected=False, start_fresh=True, gt_mesh_file=None, continue_from=0, update_edges=False):
         #from original coordinates to instance coordinates
         start_block, patch_id = (0, 0, 0), 0
@@ -1216,10 +1276,12 @@ class ScrollGraph(Graph):
             blocks_tar_files = glob.glob(path_instances + '/*.tar')
             blocks_7z_files  = glob.glob(path_instances + '/*.7z')
             blocks_files = blocks_tar_files + blocks_7z_files
+            print(f"Found {len(blocks_files)} blocks before filtering.")
+            blocks_files = [block_file for block_file in blocks_files if int(block_file.split('/')[-1].split('.')[0].split("_")[1]) >= self.overlapp_threshold["sheet_z_range"][0] and int(block_file.split('/')[-1].split('.')[0].split("_")[1]) <= self.overlapp_threshold["sheet_z_range"][1]]
             print(f"Found {len(blocks_files)} blocks.")
             print("Building graph...")
             # Create a pool of worker processes
-            with Pool(num_processes) as pool:
+            with Pool(num_processes, initializer=init_worker_build_graph, initargs=(centroid_method,)) as pool:
                 # Map the process_block function to each file
                 zipped_args = list(zip(blocks_files, [path_instances] * len(blocks_files), [self.overlapp_threshold] * len(blocks_files), [self.umbilicus_data] * len(blocks_files)))
                 results = list(tqdm(pool.imap(process_block, zipped_args), total=len(zipped_args)))
@@ -1249,14 +1311,17 @@ class ScrollGraph(Graph):
                 for edge in tqdm(edges_keys, desc="Initializing nodes"):
                     nodes_from_edges.add(edge[0])
                     nodes_from_edges.add(edge[1])
-                for node in nodes_from_edges:
+                for node in tqdm(nodes_from_edges, desc="Adding nodes"):
                     try:
                         umbilicus_point = umbilicus_func(patches_centroids[node][1])[[0, 2]]
                         umbilicus_vector = umbilicus_point - patches_centroids[node][[0, 2]]
                         angle = angle_between(umbilicus_vector) * 180.0 / np.pi
                         self.add_node(node, patches_centroids[node], winding_angle=angle)
                     except:
-                        del self.edges[edge]
+                        try:
+                            del self.edges[edge]
+                        except:
+                            pass
 
             node_id = tuple((*start_block, patch_id))
             print(f"Start node: {node_id}, nr nodes: {len(self.nodes)}, nr edges: {len(self.edges)}")
@@ -1519,7 +1584,7 @@ def write_graph_to_binary(file_name, graph):
     nr_edges = 0
     # create adjacency list
     adj_list = {}
-    for edge in edges:
+    for edge in tqdm(edges, desc="Building adjacency list"):
         node1, node2 = edge
         node1_index = node_index_dict[node1]
         node2_index = node_index_dict[node2]
@@ -1543,7 +1608,7 @@ def write_graph_to_binary(file_name, graph):
     with open(file_name, 'wb') as f:
         # Write the number of nodes
         f.write(struct.pack('I', len(nodes)))
-        for node in nodes_list:
+        for node in tqdm(nodes_list, desc="Writing nodes"):
             # write the node z positioin as f
             f.write(struct.pack('f', float(nodes[node]['centroid'][1])))
             # write the node winding angle as f
@@ -1556,7 +1621,7 @@ def write_graph_to_binary(file_name, graph):
             else:
                 f.write(struct.pack('f', float(0.0)))
 
-        for node in adj_list:
+        for node in tqdm(adj_list, desc="Writing edges"):
             # Write the node ID
             f.write(struct.pack('I', node))
 
@@ -1573,6 +1638,8 @@ def write_graph_to_binary(file_name, graph):
                 f.write(struct.pack('f', k))
                 # Same block
                 f.write(struct.pack('?', same_block))
+
+    print(f"Graph written to binary file: {file_name}")
 
 def load_graph_winding_angle_from_binary(filename, graph):
     nodes = {}
@@ -1689,11 +1756,11 @@ def random_walks():
     start_point=[1650, 3300, 5000] # seg 1
     start_point=[1450, 3500, 5000] # seg 2
     start_point=[1350, 3600, 5000] # seg 3
-    start_point=[1352, 3600, 5002] # unsuded / pyramid random walk indicator
+    start_point=[1352, 3600, 5002] # unused / pyramid random walk indicator
     continue_segmentation = 0
-    overlapp_threshold = {"sample_ratio_score": 0.03, "display": False, "print_scores": True, "picked_scores_similarity": 0.7, "final_score_max": 1.5, "final_score_min": 0.0005, "score_threshold": 0.005, "fit_sheet": False, "cost_threshold": 17, "cost_percentile": 75, "cost_percentile_threshold": 14, 
+    overlapp_threshold = {"sample_ratio_score": 0.1, "display": False, "print_scores": True, "picked_scores_similarity": 0.7, "final_score_max": 1.5, "final_score_min": 0.0005, "score_threshold": 0.005, "fit_sheet": False, "cost_threshold": 17, "cost_percentile": 75, "cost_percentile_threshold": 14, 
                           "cost_sheet_distance_threshold": 4.0, "rounddown_best_score": 0.005,
-                          "cost_threshold_prediction": 2.5, "min_prediction_threshold": 0.15, "nr_points_min": 200.0, "nr_points_max": 4000.0, "min_patch_points": 300.0, 
+                          "cost_threshold_prediction": 2.5, "min_prediction_threshold": 0.15, "nr_points_min": 100.0, "nr_points_max": 2000.0, "min_patch_points": 140.0, 
                           "winding_angle_range": None, "multiple_instances_per_batch_factor": 1.0,
                           "epsilon": 1e-5, "angle_tolerance": 85, "max_threads": 30,
                           "min_points_winding_switch": 1000, "min_winding_switch_sheet_distance": 4, "max_winding_switch_sheet_distance": 7, "winding_switch_sheet_score_factor": 1.5, "winding_direction": 1.0,
@@ -1714,7 +1781,7 @@ def random_walks():
     min_end_steps = 16
     max_tries = 6
     max_unchanged_walks = 100 * max_nr_walks # 30 * max_nr_walks
-    recompute = 0
+    recompute = 1
     
     # Create an argument parser
     parser = argparse.ArgumentParser(description='Cut out ThaumatoAnakalyptor Papyrus Sheet. TAKE CARE TO SET THE "winding_direction" CORRECTLY!')
@@ -1751,7 +1818,7 @@ def random_walks():
     parser.add_argument('--gt_mesh_file', type=str, help='Ground truth mesh file', default=None)
     parser.add_argument('--continue_from', type=int, help='Continue from a certain point in the graph', default=-2)
     parser.add_argument('--update_edges', help='Update edges', action='store_true')
-    parser.add_argument('--centroid_method', type=str, help='Method to calculate patch centroid', default="geo_mean")
+    parser.add_argument('--centroid_method', type=str, help='Method to calculate patch centroid', default="mean") # tested, MUCH better than geometric_median
 
     # Take arguments back over
     args = parser.parse_args()
@@ -1766,7 +1833,7 @@ def random_walks():
     overlapp_threshold["final_score_min"] = args.final_score_min
     overlapp_threshold["rounddown_best_score"] = args.rounddown_best_score
     overlapp_threshold["winding_direction"] = args.winding_direction
-    overlapp_threshold["sheet_z_range"] = [z_range_ /(200.0 / 50.0) for z_range_ in args.sheet_z_range]
+    overlapp_threshold["sheet_z_range"] = [(z_range_ + 500) /(200.0 / 50.0) for z_range_ in args.sheet_z_range]
     overlapp_threshold["sheet_k_range"] = args.sheet_k_range
     start_point = args.starting_point
     continue_segmentation = bool(args.continue_segmentation)
@@ -1793,9 +1860,9 @@ def random_walks():
     # set centroid method
     global centroid_method
     if args.centroid_method == "geo_mean":
-        centroid_method = lambda x: np.exp(np.mean(np.log(x), axis=0))
+        centroid_method = centroid_method_geometric_mean
     elif args.centroid_method == "mean":
-        centroid_method = lambda x: np.mean(x, axis=0)
+        centroid_method = centroid_method_mean
     elif args.centroid_method == "geo_median":
         centroid_method = closest_to_geometric_median
     else:

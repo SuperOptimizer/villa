@@ -690,6 +690,11 @@ std::vector<size_t> bfsExpand(const std::vector<Node>& graph, size_t seed_idx, s
 
         // Explore neighbors (edges) of the current node
         for (const Edge& edge : graph[current_idx].edges) {
+            // Check if edge is "active" in the graph
+            float edge_fit = std::abs(graph[current_idx].f_star + edge.k - graph[edge.target_node].f_star);
+            if (edge_fit > 180.0f) {
+                continue;
+            }
             if (!visited[edge.target_node] && !graph[edge.target_node].deleted && !edge.same_block) {
                 visited[edge.target_node] = true;
                 node_queue.push({edge.target_node, current_breath + 1});  // Push neighbor with incremented breath level

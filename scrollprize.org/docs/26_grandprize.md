@@ -63,7 +63,7 @@ In the 18th century the scrolls were discovered. Hundreds of them are now stored
   <div className="w-[45%]"><img src="/img/grandprize/unrolled-orig.webp" className="w-[100%]"/><figcaption className="mt-[-6px]">Result of an attempt to physically unroll a scroll.</figcaption></div>
 </div>
 
-On March 15th, 2023, Nat Friedman, Daniel Gross, and Brent Seales launched the <a href="https://scrollprize.org">Vesuvius Challenge</a> to answer this question. Scrolls from the Institut de France were imaged at the Diamond Light Source particle accelerator near Oxford. We released these high-resolution CT scans of the scrolls, and we offered more than $1M in prizes, put forward by many generous donors.
+On March 15th, 2023, Nat Friedman, Daniel Gross, and Brent Seales launched the <a href="https://scrollprize.org">Vesuvius Challenge</a> to answer this question. Scrolls from the Institut de France were imaged at the Diamond Light Source particle accelerator near Oxford. We released these high-resolution CT scans of the scrolls, and we offered more than \$1M in prizes, put forward by many generous donors.
 
 <div className="flex flex-wrap mb-4">
   <div className="w-[41%] mr-4 mb-2"><img src="/img/grandprize/seth-diamond.webp" className="w-[100%]"/><figcaption className="mt-[-6px]">Seth Parker <a href="https://scrollprize.substack.com/p/new-scans-of-herculaneum-papyri-at">scanning</a> a scroll at the <a href="https://www.diamond.ac.uk/">Diamond Light Source</a> particle accelerator.</figcaption></div>
@@ -92,9 +92,9 @@ We received many excellent submissions for the Vesuvius Challenge Grand Prize, s
 
 We presented these submissions to the review team, and they were met with widespread amazement. We spent the month of January carefully reviewing all submissions. Our team of eminent papyrologists worked day and night to review 15 columns of text in anonymized submissions, while the technical team audited and reproduced the submitted code and methods.
 
-There was one submission that stood out clearly from the rest. Working independently, each member of our team of papyrologists recovered more text from this submission than any other. Remarkably, the entry achieved the criteria we set when announcing the Vesuvius Challenge in March: 4 passages of 140 characters each, with at least 85% of characters recoverable. This was not a given: most of us on the organizing team assigned a less than 30% probability of success when we announced these criteria! And in addition, the submission includes another 11 (!) columns of text — more than 2000 characters total.
+There was one submission that stood out clearly from the rest. Working independently, each member of our team of papyrologists recovered more text from this submission than any other. Remarkably, the entry achieved the criteria we set when announcing Vesuvius Challenge in March: 4 passages of 140 characters each, with at least 85% of characters recoverable. This was not a given: most of us on the organizing team assigned a less than 30% probability of success when we announced these criteria! And in addition, the submission includes another 11 (!) columns of text — more than 2000 characters total.
 
-The results of this review were clear and unanimous: the Vesuvius Challenge Grand Prize of $700,000 is awarded to a team of three for their excellent submission. Congratulations to **Youssef Nader, Luke Farritor, and Julian Schilliger**!
+The results of this review were clear and unanimous: the Vesuvius Challenge Grand Prize of \$700,000 is awarded to a team of three for their excellent submission. Congratulations to **Youssef Nader, Luke Farritor, and Julian Schilliger**!
 
 
 <div className="flex flex-wrap mb-4">
@@ -103,7 +103,7 @@ The results of this review were clear and unanimous: the Vesuvius Challenge Gran
   <div className="w-[45%] sm:w-[31%]"><img src="/img/grandprize/julian-smaller.webp" className="w-[100%]"/><figcaption className="mt-[-6px]">Julian Schilliger</figcaption></div>
 </div>
 
-All three winning team members have been strong community contributors since the very beginning of the Vesuvius Challenge. You may remember Youssef. He is the Egyptian PhD student in Berlin who was able to read a few columns of text back in October, winning the second-place [First Letters Prize](firstletters). His results back then were particularly clear and readable, which made him the natural lead for the team that formed.
+All three winning team members have been strong community contributors since the very beginning of Vesuvius Challenge. You may remember Youssef. He is the Egyptian PhD student in Berlin who was able to read a few columns of text back in October, winning the second-place [First Letters Prize](firstletters). His results back then were particularly clear and readable, which made him the natural lead for the team that formed.
 
 You might remember Luke as well: he is the 21-year-old college student and SpaceX intern from Nebraska, who was the first person in history to read an entire word from the inside of a Herculaneum scroll (ΠΟΡΦΥΡΑϹ, “purple”). This won him the first-place First Letters Prize, a few weeks before Youssef’s results.
 
@@ -134,10 +134,10 @@ Congratulations to Youssef, Luke, and Julian. You are the well-deserved winners 
 
 ## Runners up
 
-Of the remaining submissions, the scores from our team of papyrologists identify a three-way tie for runner up. These entries show remarkably similar readability to each other, but still stand out from the rest by being significantly more readable. Congratulations to the following teams, each taking home $50,000!
+Of the remaining submissions, the scores from our team of papyrologists identify a three-way tie for runner up. These entries show remarkably similar readability to each other, but still stand out from the rest by being significantly more readable. Congratulations to the following teams, each taking home \$50,000!
 
 <div className="mb-4">
-  <a target="_blank" href="/img/grandprize/sq_text_wbb.wbp"><img src="/img/grandprize/sq_text_wbb-smaller.webp" className="w-[100%]"/></a>
+  <a target="_blank" href="/img/grandprize/sq_text_wbb.webp"><img src="/img/grandprize/sq_text_wbb-smaller.webp" className="w-[100%]"/></a>
   <figcaption className="mt-[-6px]">Shao-Qian Mah. <a href="https://github.com/SQMah/Vesuvius-Grand-Prize-Submission/">GitHub</a></figcaption>
 </div>
 
@@ -155,7 +155,7 @@ These teams each brought to the table new approaches to the subtleties of ink la
 
 ## What does the scroll say?
 
-To date, our efforts have managed to unroll and read about 5% of the first scroll. Our eminent team of papyrologists has been hard at work and has achieved a preliminary transcription of all the revealed columns. We now know that this scroll is not a duplicate of an existing work; it contains never-before-seen text from antiquity. The papyrology team are preparing to deliver a comprehensive study as soon as they can. You all gave them a lot of work to do! Initial readings already provide glimpses into this philosophical text. From our scholars:
+To date, our efforts have managed to unwrap and read about 5% of the first scroll. Our eminent team of papyrologists has been hard at work and has achieved a preliminary transcription of all the revealed columns. We now know that this scroll is not a duplicate of an existing work; it contains never-before-seen text from antiquity. The papyrology team are preparing to deliver a comprehensive study as soon as they can. You all gave them a lot of work to do! Initial readings already provide glimpses into this philosophical text. From our scholars:
 
 <div className="ml-8 mb-4">The general subject of the text is pleasure, which, properly understood, is the highest good in Epicurean philosophy. In these two snippets from two consecutive columns of the scroll, the author is concerned with whether and how the availability of goods, such as food, can affect the pleasure which they provide.</div>
 
@@ -301,12 +301,12 @@ Machine learning models are infamous for “hallucinating”: making up text or 
   <figcaption className="mt-[-6px]">The models use small input/output windows. In some cases, the output is even only binary (“ink” vs “no ink”), as shown in this animation. This makes it extremely unlikely for the model to hallucinate shapes that look like letters.</figcaption>
 </figure>
 
-## How does the unrolling work?
+## How does the unwrapping work?
 
 <div>Roughly, virtual unwrapping works in <a href="tutorial">three steps:</a></div>
 
 1. **Scanning:** creating a 3D scan of a scroll or fragment using X-ray tomography.
-2. **Segmentation:** tracing the crumpled layers of the rolled papyrus in the 3D scan and then unrolling, or flattening, them.
+2. **Segmentation:** tracing the crumpled layers of the rolled papyrus in the 3D scan and then unwrapping, or flattening, them.
 3. **Ink Detection:** identifying the inked regions in the flattened segments using a machine learning model.
 
 These scrolls were scanned at Diamond Light Source, a particle accelerator near Oxford, England. The facility produces a parallel beam of X-rays at high flux, allowing for fast, accurate, and high-resolution imaging. The X-ray photos are turned into a 3D volume of voxels using tomographic reconstruction algorithms, resulting in a stack of slice images.
@@ -354,7 +354,7 @@ After the success of the First Letters Prize, the Grand Prize seemed within reac
 
 ## What did it take?
 
-With the Vesuvius Challenge, we hope not only to solve the problem of reading the Herculaneum Papyri, but also to inspire similar projects. For that, it’s helpful to know what has contributed to our success in 2023. Here are some things we believe were important:
+With Vesuvius Challenge, we hope not only to solve the problem of reading the Herculaneum Papyri, but also to inspire similar projects. For that, it’s helpful to know what has contributed to our success in 2023. Here are some things we believe were important:
 
 1. **An inspiring goal and a clear target.** There are many worthy causes in the world, so it helps that our goal is unusual for a computing competition. It drew more press and donations early on, it attracted an intrinsically motivated community, and it increased our probability of success to begin with (emerging research area => a higher marginal utility of dollars spent). We’d love to see more projects that are “out there,” for exactly these reasons!
 
@@ -371,7 +371,7 @@ With the Vesuvius Challenge, we hope not only to solve the problem of reading th
 
 3. **Blending competition and cooperation.** A Grand Prize on its own would suffer from information “hoarding”: no one would share their intermediate work, because others could take it and use it to beat them to the finish line. Without information sharing, the probability of a single team solving all the puzzle pieces to win the Grand Prize would be dramatically lower.
 
-<div className="ml-8 mb-4">Instead, we blended competition and cooperation by adding <a href="/winners">“progress prizes”</a> along the way. These were smaller prizes (often in the $1,000-10,000 range) every ~2 months. To win a progress prize, you had to publish your code or research as open source, thereby benefiting the entire community.</div>
+<div className="ml-8 mb-4">Instead, we blended competition and cooperation by adding <a href="/winners">“progress prizes”</a> along the way. These were smaller prizes (often in the \$1,000-10,000 range) every ~2 months. To win a progress prize, you had to publish your code or research as open source, thereby benefiting the entire community.</div>
 
 <div className="mb-4 ml-8">
   <img src="/img/grandprize/winners1.webp" className="w-[100%]"/>
@@ -408,7 +408,7 @@ With the Vesuvius Challenge, we hope not only to solve the problem of reading th
 
 When we started the competition, most of us estimated that we had a less than 30% probability of success within the year. At that point, no letters had yet been discovered inside of a scroll. On top of that, the scrolls had barely been segmented at all. We had doubt as to whether the project could succeed, especially by the deadline we set. Was the ink signal present? Were the scans high-resolution enough? Could the techniques used to identify ink in the fragments be transferred into a scroll? None of this was known at the time. But we knew it was worth trying!
 
-In Stage 1 of the Vesuvius Challenge, we answered all of these questions, extracting 15 columns of never-before-seen text from inside a lump of carbon. We now have proven techniques for virtually unrolling the papyrus scroll and recognizing ink using machine learning.
+In Stage 1 of Vesuvius Challenge, we answered all of these questions, extracting 15 columns of never-before-seen text from inside a lump of carbon. We now have proven techniques for virtually unwrapping the papyrus scroll and recognizing ink using machine learning.
 
 ### Vesuvius Challenge Stage 2
 
@@ -416,7 +416,7 @@ In 2023 we got from 0% to 5% of a scroll. In 2024 our goal is to go from 5% of o
 
 The primary goal for 2024 is to read 90% of the scrolls, and **we will issue the 2024 Grand Prize to the first team that is able to do this**. More details on the exact grand prize judging criteria will be available in March.
 
-The bottleneck to achieve this milestone is the process of tracing the surface of the papyrus inside the scroll. Today this is extremely manual. It cost us more than $100 per square centimeter in manual labor to produce the text we can read today. At this price, it would cost hundreds of millions or maybe even billions of dollars to segment all of the scrolls. While improvements to our segmentation tools have increased our efficiency, it is still far too manual and expensive. What we need is automation.
+The bottleneck to achieve this milestone is the process of tracing the surface of the papyrus inside the scroll. Today this is extremely manual. It cost us more than \$100 per square centimeter in manual labor to produce the text we can read today. At this price, it would cost hundreds of millions or maybe even billions of dollars to segment all of the scrolls. While improvements to our segmentation tools have increased our efficiency, it is still far too manual and expensive. What we need is automation.
 
 And so our primary goal for stage 2 is to perfect autosegmentation. Done right, this will also allow us to read the most challenging regions within the scroll – areas where the scroll was heavily compressed, cracked, delaminated, or otherwise damaged – which in many cases our current tools cannot even penetrate.
 

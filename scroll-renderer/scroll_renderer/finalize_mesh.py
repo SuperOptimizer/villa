@@ -2,6 +2,7 @@
 # integrated from ThaumatoAnakalyptor
 
 import open3d as o3d
+import shutil
 import numpy as np
 import argparse
 import os
@@ -17,14 +18,14 @@ def copy_obj(path: str, output_folder: str):
     obj_filename = os.path.basename(path)
     output_obj_path = os.path.join(output_folder, obj_filename)
     os.makedirs(output_folder, exist_ok=True)
-    os.system(f"cp {path} {output_obj_path}")
+    shutil.copy(path, output_obj_path)
     print(f"Copied {path} to {output_obj_path}")
 
     # Copy the texture image
     # png 
     path_png = path[:-4] + "_0.png"
     output_png_path = os.path.join(output_folder, obj_filename[:-4] + "_0.png")
-    os.system(f"cp {path_png} {output_png_path}")
+    shutil.copy(path_png, output_png_path)
     print(f"Copied {path_png} to {output_png_path}")
 
     return output_obj_path, output_png_path

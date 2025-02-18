@@ -67,6 +67,8 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 
 - [vesuvius-phalanx](https://github.com/mvrcii/phalanx): Python library / CLI for accessing Vesuvius data. Allows flexible access to volume and fragment scroll data. By Marcel Roth
 
+- [llfio-chunkloader](https://github.com/climbmax123/LLFIOCunkloadingTestingAndBenching): A Methode to access Data in chunks of (x,y,z) that is by lot faster and compute efficient than Zarr. (Written in C++ but it is possible to integrate in Python). 
+
 ## Segmentation
 
 ### 🌟 Highlighted
@@ -133,6 +135,15 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
     - non-destructive large scale interactive segment viewing and editing [thread](https://discord.com/channels/1079907749569237093/1294185795221065802)
     - automatic patch generation pipeline: vc_grow_seg_from_seed, vc_render_tifxyz, vc_tifxyz2obj: [thread](https://discord.com/channels/1079907749569237093/1312490723001499808)
     - segment tagging, segment masking, POIs, segment filters (all/filter by focus point/filter by POIs), display intersections scaling to thousands of segments [message](https://discord.com/channels/1079907749569237093/1286341523570688121/1312537855846907974)
+    - low memory tiled rendering to enable GP-sized an full scroll rendering https://github.com/hendrikschilling/volume-cartographer/blob/dev-zarr/apps/src/vc_render_tifxyz.cpp
+    - large segment tracing based on patch consensus: vc_grow_seg_from_segments, as documented in the [FASP submission](https://github.com/hendrikschilling/FASP?tab=readme-ov-file#vc_grow_seg_from_segments)
+    - consistent winding number estimation by winding number diffusion: [vc_tifxyz_winding](https://github.com/hendrikschilling/FASP?tab=readme-ov-file#51-winding-number-assignment)
+    - segment fusion & inpainting: [vc_fill_quadmesh](https://github.com/hendrikschilling/FASP?tab=readme-ov-file#vc_fill_quadmesh)
+
+- [fast and low memory inference for the GP ink detection](https://discord.com/channels/1079907749569237093/1315006782191570975) 1/5 the memory consumption and 20x the speed compared to the baseline GP ink detection for large segments to allow GP and full scroll size ink detection and fast preview.
+
+- [vesuvius-render](https://github.com/jrudolph/vesuvius-gui?tab=readme-ov-file#vesuvius-render) by Johannes Rudolph:
+    - Fast self-contained CPU-based rendering of segments from obj files downloading data on-the-fly.
 
 ### 📦 Materials
 
@@ -143,7 +154,13 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 
 - [Denoised and contrast enhanced volumes](https://discord.com/channels/1079907749569237093/1249316301273436320), download [here](https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumes_denoised_ce/), same path pattern for other scrolls.
 
+#### Scroll Surface Predictions
+- [Scroll 1, and 3 Surface Predictions](https://dl.ash2txt.org/community-uploads/bruniss/p2_submission/) by Sean Johnson
+- [Scroll 4 Surface Predictions](https://dl.ash2txt.org/community-uploads/bruniss/Fiber-and-Surface-Models/Predictions/s4/) by Sean Johnson
+- [Scroll Surface Prediction Repository and Writeup](https://github.com/bruniss/VC-Surface-Models) by Sean Johnson 
+
 #### 📜 Segments
+-[Large Autosegmentation of Scroll5](https://dl.ash2txt.org/community-uploads/bruniss/p2_submission/s5_initial_trace/) by Hendrik Schilling and Sean Johnson -- Unsupervised, many switches -- check readme.md
 
 - [Scroll 2 segments](https://discord.com/channels/1079907749569237093/1079907750265499772/1245553260362858577) by Sean Johnson
 
@@ -197,6 +214,7 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 #### 🌟 Highlighted
 
 - [3D (volumetric) Ink detection model](https://github.com/ryanchesler/3d-ink-detection) by Ryan Chesler. Ink detection model that works on full scroll data in 3D, without segmentation nor flattening.
+- [Volumetric Ink Detection for Scroll 1, 2, 3, 4](https://dl.ash2txt.org/community-uploads/bruniss/3d%20Ink%20/) by Sean Johnson
 
 #### ⚙️ Tools
 
@@ -221,6 +239,8 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 - [Grand Prize Winner Ink Detection model](https://github.com/younader/Vesuvius-Grandprize-Winner) by Youssef Nader, Luke Farritor and Julian Schilliger
 
 #### ⚙️ Tools
+
+- [ScrollMAE](https://github.com/jgcarrasco/ScrollMAE) by Jorge García. Contains the necessary code to pretrain a 3D ResNet on unlabeled data and then finetune it to perform ink detection.
 
 - [Unsupervised Ink Detection with DINO](https://github.com/jgcarrasco/dino-ink-detection) by Jorge García. Contains experiments related to detecting ink without labels, including a Colab notebook.
 
@@ -250,9 +270,10 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 
 - [Scroll pretraining](https://github.com/younader/VesuviusPretraining) by Youssef Nader. Youssef’s original idea for pretraining on the scrolls and finetuning on the fragments, which led him to winning the First Letters Prize.
 
+- [pre-trained DINOv2 models](https://github.com/SergeyPnev/dinov2-vesuvius) by Sergei Pnev. Self-supervised model pre-trained on scrolls 1-5 with predictions.
 #### 📦 Materials
 
-- [Ink Labels](https://discord.com/channels/1079907749569237093/1223849912467460116). Nicola Bodill produced more accurate labels for ink detection based on the prediction of the Grand Prize winner model
+- [Scroll 1 Ink Labels](https://discord.com/channels/1079907749569237093/1223849912467460116). Nicola Bodill produced more accurate labels for ink detection based on the prediction of the Grand Prize winner model
 
 - [Scroll 4 predictions](https://dl.ash2txt.org/community-uploads/luke/youssef_uploads/scroll_4/). Youssef Nader produced some predictions on Scroll 4 from his Grand prize winner model. No sure trace of ink yet
 
@@ -262,6 +283,8 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 
 - [Ink Generator]
 (https://github.com/StewartSethA/VesuviusInkGenerator) by Seth Stewart, ink volume sample patches generated using gradient ascent
+
+- [Scroll 5 Ink Labels](https://github.com/Bodillium/Herculaneum-Scroll-Labels) by Nicola Bodill. Early ink labels for Scroll 5.
 
 #### 📝 Reports
 

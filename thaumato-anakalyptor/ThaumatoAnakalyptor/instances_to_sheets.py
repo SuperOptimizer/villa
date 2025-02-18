@@ -536,12 +536,13 @@ def overlapping_tiles(patch1, patch2):
 
     overlapping_indices = []
     for index1 in indices1:
-        if patch1["tiles_points"][index1].shape[0] == 0:
+        if patch1["tiles_points"][index1].shape[0] <= 10:
             continue
         if index1 in indices2:
-            if patch2["tiles_points"][index1].shape[0] == 0:
+            if patch2["tiles_points"][index1].shape[0] <= 10:
                 continue
             overlapping_indices.append(index1)
+    assert len(overlapping_indices) <= 4, f"More than 4 overlapping tiles: {len(overlapping_indices)}"
 
     if len(overlapping_indices) == 0:
         return overlapping_indices
@@ -597,7 +598,7 @@ def compute_overlap_for_pair(args):
             angles_offset = None
         else:
             # Compute the surface overlap between the two patches
-            overlapp_percentage, overlap, non_overlap, points_overlap, angles_offset = surface_overlapp_tiles(patches_list, i, j, overlap_tiles, epsilon=epsilon, angle_tolerance=angle_tolerance)
+            overlapp_percentage, overlap, non_overlap, points_overlap, angles_offset = surface_overlapp_tiles_complete(patches_list, i, j, overlap_tiles)
 
         result_overlapps.append((i, j, overlapp_percentage, overlap, non_overlap, points_overlap, angles_offset))
     return result_overlapps
@@ -684,6 +685,57 @@ def surface_overlapp_tiles(patches_list, i, j, overlap_tiles, angle_tolerance=90
 
     return overlapp_percentage, overlap, non_overlap, unique_points, mean_angle2_adjusted
 
+def surface_overlapp_tiles_complete(patches_list, i, j, overlap_tiles):
+    """
+    Calculate the surface overlap between two point clouds.
+    Points have to be exactly on the same position to be considered the same.
+    """
+    patch1 = patches_list[i]
+    patch2 = patches_list[j]
+
+    count_overlap1 = 0
+    count_overlap2 = 0
+    count_non_overlap1 = 0
+    count_non_overlap2 = 0
+    for tile in overlap_tiles:
+        if tile in patch1["tiles_points"]: 
+            # Tile mask overlap
+            mask1 = patch1["tiles_overlap_mask"][tile][j]
+            mask_non_overlap1 = np.logical_not(mask1)
+            # Sum of overlapping points
+            count_overlap1 += np.sum(mask1)
+            count_non_overlap1 += np.sum(mask_non_overlap1)
+
+        if tile in patch2["tiles_points"]:
+            # Tile mask overlap
+            mask2 = patch2["tiles_overlap_mask"][tile][i]
+            mask_non_overlap2 = np.logical_not(mask2)
+            # Sum of overlapping points
+            count_overlap2 += np.sum(mask2)
+            count_non_overlap2 += np.sum(mask_non_overlap2)
+
+    assert count_overlap1 == count_overlap2, f"Overlap counts are not equal: {count_overlap1} {count_overlap2}"
+    
+    # # Calculate the overlap percentage
+    overlapp_percentage1 = 1.0 * count_overlap1 / (count_overlap1 + count_non_overlap1 + 0.00001)
+    overlapp_percentage2 = 1.0 * count_overlap2 / (count_overlap2 + count_non_overlap2 + 0.00001)
+
+    # overlap = (count_overlap1+count_overlap2)/2
+    # non_overlap = (count_non_overlap1+count_non_overlap2)/2
+    # overlapp_percentage = (overlapp_percentage1+overlapp_percentage2)/2
+
+    # Take the larger overlap percentage
+    if overlapp_percentage1 < overlapp_percentage2:
+        overlap = count_overlap1
+        overlapp_percentage = overlapp_percentage1
+        non_overlap = count_non_overlap1
+    else:
+        overlap = count_overlap2
+        overlapp_percentage = overlapp_percentage2
+        non_overlap = count_non_overlap2
+    
+    return overlapp_percentage, overlap, non_overlap, None, 0.0
+
 def find_patch_angle_range(offset, patch_normals2, angle_tolerance=90):
     mean_angle2 = 0.0 # angles of patch2 already zeroed when building the patch
     filter_angle_range2 = (mean_angle2 - angle_tolerance, mean_angle2 + angle_tolerance)
@@ -694,16 +746,18 @@ def find_patch_angle_range(offset, patch_normals2, angle_tolerance=90):
     
     return [filter_angle_range1], [filter_angle_range2], mean_angle2_adjusted
 
-def overlapp_score(i, j, patches_list, overlapp_threshold={"score_threshold": 0.25, "nr_points_min": 20.0, "nr_points_max": 500.0}, sample_ratio=0.1):
+def overlapp_score(i, j, patches_list, overlapp_threshold={"score_threshold": 0.25, "nr_points_min": 20.0, "nr_points_max": 500.0}, sample_ratio=0.1, min_points_factor=1.0):
     overlapp_percentage = patches_list[i]["overlapp_percentage"][j]
-    overlap = patches_list[i]["overlap"][j] / sample_ratio # Adjust for calculation based on total points
+    overlap = patches_list[i]["overlap"][j] / (min_points_factor * sample_ratio) # Adjust for calculation based on total points
 
     nrp = min(max(overlapp_threshold["nr_points_min"], overlap), overlapp_threshold["nr_points_max"]) / (overlapp_threshold["nr_points_min"])
     nrp_factor = np.log(np.log(nrp) + 1.0) + 1.0
 
-    score = overlapp_percentage
+    p = 1.0 - overlapp_percentage
+    score = 1.0 - (min_points_factor**0.5) * p
+    # score = overlapp_percentage
 
-    if score >= overlapp_threshold["score_threshold"] and overlap >= overlapp_threshold["nr_points_min"] and patches_list[i]["overlap"][j] > 0:
+    if score >= overlapp_threshold["score_threshold"]:
         score = ((score - overlapp_threshold["score_threshold"])/ (1 - overlapp_threshold["score_threshold"])) ** 2
         return score * nrp_factor
     else:
@@ -721,11 +775,16 @@ def assign_points_to_tiles(patches_list, subvolume, tiling=2):
     # Assign points to tiles
     for patch in patches_list:
         # Calculate tile indices
-        tile_indices = np.floor((patch["points"] - start) // tile_size).astype(int)
+        tile_indices_raw = (patch["points"] - start) / tile_size
+        tile_indices = np.floor(tile_indices_raw).astype(int)
         # assert all positive indices
         assert np.all(tile_indices >= 0), f"Tile indices should be positive, but is {tile_indices}"
+        # find indices that are larger than tiles_per_axis
+        mask_offending = np.any(tile_indices >= tiles_per_axis, axis=1)
+        assert np.all(tile_indices_raw <= tiles_per_axis), f"Tile indices should be less than tiles_per_axis, but is {tile_indices_raw[mask_offending][0]}"
         # for each unique index, add the points to the corresponding tile
         unique_indices = np.unique(tile_indices, axis=0)
+        assert unique_indices.shape[1] == 3, f"Unique indices should have 3 columns, but has {unique_indices.shape[1]}"
         patch["tiles"] = {}
         patch["tiles_overlap_mask"] = {}
         for tile_x in range(tiles_per_axis):

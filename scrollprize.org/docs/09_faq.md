@@ -44,30 +44,57 @@ import TOCInline from '@theme/TOCInline';
 
 ---
 
-### What is the Vesuvius Challenge?
+### What is Vesuvius Challenge?
 
-The Vesuvius Challenge is a machine learning and computer vision competition to read the Herculaneum scrolls.
+Vesuvius Challenge is a machine learning, computer vision, and geometry competition to read the Herculaneum scrolls.
 The scrolls were buried and carbonized by the eruption of Mount Vesuvius in 79 AD.
 After their discovery in the 1750s, some were opened physically, mostly destroying them but revealing some Greek philosophy and Latin works.
 
 A few hundred scrolls were excavated that were never opened, and remain rolled up with their contents sealed away.
 Our community is building methods to read these scrolls using micro-CT and an algorithmic pipeline using machine learning and computer vision.
 
-In 2023 we awarded over $1,000,000 in prizes and broke through, revealing complete passages of Greek philosophy from the inside of a closed Herculaneum scroll for the first time.
+We've awarded over \$1,000,000 in prizes and broken through, revealing complete passages of Greek philosophy from the inside of a closed Herculaneum scroll for the first time.
 Now we are continuing - we want to go from reading 5% of one scroll to reading multiple complete scrolls.
 Join us to win prizes and be a part of history!
 
 ### What dates do I need to know?
 
-* **March 15, 2023** - The Vesuvius Challenge is launched.
-* **February 5, 2024**
-  * [2023 Grand Prize](grandprize) awarded for recovering complete passages from inside a Herculaneum scroll.
-  * Stage 2 is launched with [new prizes](2024_prizes).
-* **December 31, 2024** - [2024 prizes](2024_prizes) deadline!
+The [2024 prize](2024_prizes) deadlines closed on **December 31, 2024**, and we are now evaluating the submissions and preparing the next stages. [Join the community](get_started#1-join-the-community) to stay tuned!
 
-### How can I learn more about Herculaneum, the scrolls, and this research effort?
+### What's the historical background of Herculaneum and the scrolls?
 
-We have an [overview page](background) for that! For a deep dive:
+We have a [background page](background) for that!
+
+### Where can I read the texts Vesuvius Challenge has uncovered?
+
+Check out [these images](https://drive.google.com/drive/folders/1nnWR3ZMcUxJhp4SJYkV8-REwHsQT0fQb?usp=sharing) of some text we've so far revealed!
+
+Here are the scholarly publications so far resulting from Vesuvius Challenge:
+
+* [Revealing Text from a Still-rolled Herculaneum Papyrus Scroll (PHerc. Paris. 4)](https://www.iris.unina.it/handle/11588/959427) (2023 First Letters results)
+* [The final columns of PHerc.Paris. 4 revealed through virtual unwrapping](https://www.iris.unina.it/handle/11588/985203) (2023 Grand Prize results)
+
+Also of interest:
+
+* [Vesuvius Challenge 2023 Grand Prize awarded](grandprize)
+
+### What about other texts from the physically opened Herculaneum scrolls?
+
+Most are by Philodemus. This is a list of English translations we have found so far:
+
+* [Philodemus: On Anger. (2020), David Armstrong & Michael McOsker. SBL. ISBN 1628372699](https://en.wikipedia.org/wiki/Special:BookSources/1628372699)
+* [Philodemus: On Death. (2009), W. Benjamin Henry. SBL. ISBN 1-58983-446-1](https://en.wikipedia.org/wiki/Special:BookSources/1-58983-446-1)
+* [Philodemus: On Frank Criticism. (1998), David Konstan, Diskin Clay, Clarence, E. Glad. SBL. ISBN 1-58983-292-2](https://en.wikipedia.org/wiki/Special:BookSources/1-58983-292-2)
+* [Philodemus, On Piety, Part 1. (1996). Critical Text with Commentary by Dirk Obbink. Oxford University Press. ISBN 0-19-815008-3](https://en.wikipedia.org/wiki/Special:BookSources/0-19-815008-3)
+* [Philodemus, On Poems, Book 1. (2001). Edited with Introduction, Translation, and Commentary by Richard Janko. Oxford University Press. ISBN 0-19-815041-5](https://en.wikipedia.org/wiki/Special:BookSources/0-19-815041-5)
+* [Philodemus, On Poems, Book 2, with the fragments of Heracleodorus and Pausimachus. (2020). Edited with Introduction, Translation, and Commentary by Richard Janko. Oxford University Press. ISBN 9780198835080](https://en.wikipedia.org/wiki/Special:BookSources/9780198835080)
+* [Philodemus, On Poems, Books 3-4, with the Fragments of Aristotle, On Poets. (2010). Edited with Introduction, Translation, and Commentary by Richard Janko. Oxford University Press. ISBN 0-19-957207-0](https://en.wikipedia.org/wiki/Special:BookSources/0-19-957207-0)
+* [Philodemus, On Property Management. (2013), Voula Tsouna. SBL. ISBN 1-58983-667-7](https://en.wikipedia.org/wiki/Special:BookSources/1-58983-667-7)
+* [Philodemus, On Rhetoric Books 1 and 2: Translation and Exegetical Essays. (2005). Clive Chandler (editor). Routledge. ISBN 0-415-97611-1](https://en.wikipedia.org/wiki/Special:BookSources/0-415-97611-1)
+* [David Sider, (1997), The Epigrams of Philodemos. Introduction, Text, and Commentary. Oxford University Press. ISBN 0-19-509982-6](https://en.wikipedia.org/wiki/Special:BookSources/0-19-509982-6)
+* Philodemus: On Methods of Inference. 2nd edition. (1978). Phillip Howard De Lacy, Estelle Allen De Lacy. Bibliopolis.
+
+### Where can I find more background on this effort?
 
 #### Academic papers
 
@@ -78,7 +105,6 @@ We have an [overview page](background) for that! For a deep dive:
 * [From invisibility to readability: Recovering the ink of Herculaneum](https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0215775&type=printable)
 * [From damage to discovery via virtual unwrapping: Reading the scroll from En-Gedi](https://www.science.org/doi/10.1126/sciadv.1601247)
 * [Reading the Invisible Library: A Retrospective](/img/faq/retro.pdf) (history preprint)
-* [Revealing Text from a Still-rolled Herculaneum Papyrus Scroll (PHerc. Paris. 4)](https://scholar.google.com/citations?view_op=view_citation&hl=en&user=NG2aWmYAAAAJ&citation_for_view=NG2aWmYAAAAJ:_FxGoFyzp5QC) (Vesuvius Challenge First Letters results)
 
 For a comprehensive overview of the field, see [this list by EduceLab](https://educelab.gitlab.io/publications/bibtex-refs/).
 
@@ -124,22 +150,6 @@ Here are some other excellent books we recommend:
 * [The UnXplained](https://www.imdb.com/title/tt20234948/)
 * Great article by [Smithsonian Magazine](https://www.smithsonianmag.com/history/buried-ash-vesuvius-scrolls-are-being-read-new-xray-technique-180969358/)
 * More articles and videos on [this page](https://www2.cs.uky.edu/dri/news/)
-
-#### Translations of opened scrolls
-
-Most are by Philodemus. This is a list of English translations we have found so far:
-
-* [Philodemus: On Anger. (2020), David Armstrong & Michael McOsker. SBL. ISBN 1628372699](https://en.wikipedia.org/wiki/Special:BookSources/1628372699)
-* [Philodemus: On Death. (2009), W. Benjamin Henry. SBL. ISBN 1-58983-446-1](https://en.wikipedia.org/wiki/Special:BookSources/1-58983-446-1)
-* [Philodemus: On Frank Criticism. (1998), David Konstan, Diskin Clay, Clarence, E. Glad. SBL. ISBN 1-58983-292-2](https://en.wikipedia.org/wiki/Special:BookSources/1-58983-292-2)
-* [Philodemus, On Piety, Part 1. (1996). Critical Text with Commentary by Dirk Obbink. Oxford University Press. ISBN 0-19-815008-3](https://en.wikipedia.org/wiki/Special:BookSources/0-19-815008-3)
-* [Philodemus, On Poems, Book 1. (2001). Edited with Introduction, Translation, and Commentary by Richard Janko. Oxford University Press. ISBN 0-19-815041-5](https://en.wikipedia.org/wiki/Special:BookSources/0-19-815041-5)
-* [Philodemus, On Poems, Book 2, with the fragments of Heracleodorus and Pausimachus. (2020). Edited with Introduction, Translation, and Commentary by Richard Janko. Oxford University Press. ISBN 9780198835080](https://en.wikipedia.org/wiki/Special:BookSources/9780198835080)
-* [Philodemus, On Poems, Books 3-4, with the Fragments of Aristotle, On Poets. (2010). Edited with Introduction, Translation, and Commentary by Richard Janko. Oxford University Press. ISBN 0-19-957207-0](https://en.wikipedia.org/wiki/Special:BookSources/0-19-957207-0)
-* [Philodemus, On Property Management. (2013), Voula Tsouna. SBL. ISBN 1-58983-667-7](https://en.wikipedia.org/wiki/Special:BookSources/1-58983-667-7)
-* [Philodemus, On Rhetoric Books 1 and 2: Translation and Exegetical Essays. (2005). Clive Chandler (editor). Routledge. ISBN 0-415-97611-1](https://en.wikipedia.org/wiki/Special:BookSources/0-415-97611-1)
-* [David Sider, (1997), The Epigrams of Philodemos. Introduction, Text, and Commentary. Oxford University Press. ISBN 0-19-509982-6](https://en.wikipedia.org/wiki/Special:BookSources/0-19-509982-6)
-* Philodemus: On Methods of Inference. 2nd edition. (1978). Phillip Howard De Lacy, Estelle Allen De Lacy. Bibliopolis.
 
 ### What if I would like to contribute, but don’t have time to compete for the Grand Prize?
 
@@ -428,7 +438,7 @@ Note: This flip in the scanning convention must be accounted for in any renderin
 
 ### What happened to the people when Mount Vesuvius erupted? 😢
 
-We recommend starting with the only surviving eyewitness account: [Pliny the Younger, Letters 6.16 and 6.20](http://www.u.arizona.edu/~afutrell/404b/web%20rdgs/pliny%20on%20vesuvius.htm).
+We recommend starting with the only surviving eyewitness account: [Pliny the Younger, Letters 6.16 and 6.20](https://www.yorku.ca/pswarney/2100/pliny-6-16-20.htm).
 
 The story of the eruption of Mount Vesuvius has captured imaginations for centuries. The cities of Pompeii and Herculaneum are unique in how well they were preserved. A great introduction to this story is [A Timeline of Pompeii](https://www.youtube.com/watch?v=nwB8sBHZzQc).
 
@@ -454,7 +464,7 @@ The story of the eruption of Mount Vesuvius has captured imaginations for centur
 
 ### Why did you decide to start this project?
 
-Nat read [24 Hours in Ancient Rome](https://www.amazon.com/24-Hours-Ancient-Rome-People-ebook/dp/B0758BFFFX) during the 2020 COVID lockdown. He fell into an internet rabbit hole that ended up with him reaching out to Dr. Seales two years later to see how he could help speed up the reading of the Herculaneum Papyri. They came up with the idea of the Vesuvius Challenge. Daniel was intrigued by this idea and decided to co-sponsor it with Nat.
+Nat read [24 Hours in Ancient Rome](https://www.amazon.com/24-Hours-Ancient-Rome-People-ebook/dp/B0758BFFFX) during the 2020 COVID lockdown. He fell into an internet rabbit hole that ended up with him reaching out to Dr. Seales two years later to see how he could help speed up the reading of the Herculaneum Papyri. They came up with the idea of Vesuvius Challenge. Daniel was intrigued by this idea and decided to co-sponsor it with Nat.
 
 ### I have a lot of money! Can I help sponsor this?
 
@@ -462,7 +472,7 @@ Vesuvius Challenge Inc. is a 501c3 non-profit organization that was formed solel
 
 If you want to contribute money to support our operational costs or to increase the prize amounts, please <a href="mailto:nat@nat.org">get in touch</a>!
 
-### I’m a journalist and I would like to interview someone from the Vesuvius Challenge!
+### I’m a journalist and I would like to interview someone from Vesuvius Challenge!
 
 Please email press@scrollprize.org.
 
