@@ -41,6 +41,10 @@ This tutorial is meant as guide for running two of the methods discussed in the 
 
 Both of these methods have pros/cons detailed in the previous walkthrough in terms of current and future performance. Currently implemented, the primary benefit of the VC3D tracer solution is that the intermediate steps produce immediately usable partial segments, and the entire pipeline save ink detection is self-contained within the VC3D ecosystem. _If you are looking to simply produce exploratory segments for ink detection or other tasks, the tracer has the lowest "startup" time_. 
 
+:::tip
+If you want to try out running traces only , and do not want to perform any of the seeding or expansion steps, you can download patches we have generated for some of the scrolls from the links in the [data section](#volume-data), place these in your paths directory, place the uint8 volumes and surface predictions in the volume directory, and skip to [running a trace](#running-a-trace)
+:::
+
 ### Table of Contents
 **[Sheet Tracing](#VC3D)**
    * [Installation](#installation)
@@ -143,10 +147,6 @@ The data should be placed within the volpkg of the respective scroll, in this fo
     ├── paths 
     └── config.json - REQUIRED!
 ```
-:::warning
-If you encounter errors that contain the phrase `nlohmann::json`, its likely you have entered your paths wrong, or forgot to include a meta.json! If you cannot view the zarr within the vc3d gui, you may be missing the `format:zarr` key!
-:::
-
 ### Volume Data
   * Scroll 1 
     * [Raw uint8]((https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s1/s1_uint8_ome.7z)) - In Progress
@@ -171,11 +171,6 @@ If you encounter errors that contain the phrase `nlohmann::json`, its likely you
     * [Surface Predictions](https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s5/surfaces/s5_055_surfaces.7z) - Updated 10 Feb 2025
     * [Patches](https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s5/s5_patches.7z) - Updated 09 Feb 2025
 
-**Surface Predictions**
-  * 
-  * 
-  * 
-
 [back to top](#table-of-contents)
 ___
 
@@ -185,10 +180,10 @@ If you are running these steps in a docker container that was started using `sud
 ```bash
 sudo chown -R username /path/to/folder
 ```
+If you encounter "json" errors, its likely you have entered your paths wrong, or forgot to include a meta.json! If you cannot view the zarr within the vc3d gui, you may be missing the `format:zarr` key!
 :::
-Much of this section borrows from Hendrik Schilling's repository [here](https://github.com/hendrikschilling/FASP), which also contains more detailed explanations of these processes. 
 
-If you want to try out running traces only , and do not want to perform any of the seeding or expansion steps, you can download patches we have generated for some of the scrolls from the links in the data section above, and simply place these in your paths directory.
+Much of this section borrows from Hendrik Schilling's repository [here](https://github.com/hendrikschilling/FASP), which also contains more detailed explanations of these processes.
 
 The tracer operates by connecting overlapping patches based on a number of conditions. It chooses the initial candidates to connect based on patch overlap, and then uses some constraints defined within the cost functions to find the optimal patch to select. This step places our initial seeds, which are later expanded. The app that generates the seeds and the expanded patches is `vc_grow_seg_from_seed`.
 
