@@ -20,6 +20,7 @@ Usage:
 
 import argparse
 import csv
+from functools import partial
 import logging
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -48,11 +49,10 @@ def pad_scroll_name(scroll_number: str) -> str:
 def process_scroll(padded_scroll: str, mesh_file: str, output_dir: str, config=None):
     """
     Process a single scroll:
-      1. Exports the original OBJ as an STL file.
-      2. Processes the mesh to build the lining.
-      3. Builds the scroll case.
-      4. Combines the case halves with the mesh lining.
-      5. Exports the combined STL files.
+      - Processes the mesh to build the lining.
+      - Builds the scroll case.
+      - Combines the case halves with the mesh lining.
+      - Exports the combined STL files.
 
     The configuration from the YAML file (if provided) is used to override default parameters for the scroll case.
 
@@ -60,13 +60,11 @@ def process_scroll(padded_scroll: str, mesh_file: str, output_dir: str, config=N
     """
     logger = logging.getLogger("stl_generator")
 
-    # 1. Export the original OBJ as an STL file.
-    original_mesh = mesh.load_mesh(mesh_file)
-    original_stl_path = os.path.join(output_dir, f"{padded_scroll}_scroll.stl")
-    mm.saveMesh(original_mesh, original_stl_path)
-
-    # 2. Process the mesh to build the lining.
-    scroll_mesh_params = mesh.ScrollMesh(mesh_file)
+    # Process the mesh to build the lining.
+    scroll_mesh_params = mesh.ScrollMesh(
+        mesh_file,
+        smoothing_callback=partial(mesh.mesh_smooth_denoise, gamma=20),
+    )
     (
         lining_mesh_pos,
         lining_mesh_neg,
@@ -77,13 +75,13 @@ def process_scroll(padded_scroll: str, mesh_file: str, output_dir: str, config=N
         height,
     ) = mesh.build_lining(scroll_mesh_params)
 
-    # 3. Build the scroll case.
+    # Build the scroll case.
     # Start with some default parameters.
     scroll_case_defaults = {
         "scroll_height_mm": height,
         "scroll_radius_mm": radius,
         "label_line_1": f"PHerc{padded_scroll}",
-        "alignment_ring_spacing_mm": height,
+        "label_line_2": "v1",
     }
     # If a YAML config was provided and contains "scroll_case", update the defaults.
     if config is not None and "scroll_case" in config:
@@ -92,7 +90,7 @@ def process_scroll(padded_scroll: str, mesh_file: str, output_dir: str, config=N
     scroll_case = case.ScrollCase(**scroll_case_defaults)
     case_left, case_right = case.build_case(scroll_case)
 
-    # 4. Combine the BRep case halves with the mesh lining.
+    # Combine the BRep case halves with the mesh lining.
     combined_mesh_right = mesh.combine_brep_case_lining(
         case_right, cavity_mesh_pos, lining_mesh_pos
     )
@@ -100,14 +98,20 @@ def process_scroll(padded_scroll: str, mesh_file: str, output_dir: str, config=N
         case_left, cavity_mesh_neg, lining_mesh_neg
     )
 
-    # 5. Export the combined STL files.
+    # Export the STL files.
+    scroll_stl_path = os.path.join(output_dir, f"{padded_scroll}_scroll.stl")
     right_stl_path = os.path.join(output_dir, f"{padded_scroll}_right.stl")
     left_stl_path = os.path.join(output_dir, f"{padded_scroll}_left.stl")
+    mm.saveMesh(mesh_scroll, scroll_stl_path)
     mm.saveMesh(combined_mesh_right, right_stl_path)
     mm.saveMesh(combined_mesh_left, left_stl_path)
 
     # Return padded_scroll, height, and diameter (2 * radius)
-    return padded_scroll, height, 2 * radius
+    return (
+        padded_scroll,
+        scroll_case.scroll_height_mm + 2 * scroll_case.lining_offset_mm,
+        2 * scroll_case.cylinder_outer_radius,
+    )
 
 
 def main():
