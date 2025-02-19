@@ -218,6 +218,18 @@ def build_lining(
 
     logger.debug(f"Simplified mesh: {count_vertices(mesh_scroll)} vertices")
 
+    # Smooth mesh
+    if (sc := mesh_params.smoothing_callback) is not None:
+        logger.info("Smoothing mesh")
+        mesh_scroll_smoothed = sc(mesh_scroll)
+        if mesh_params.smoothing_unite_with_original:
+            logger.info("Uniting smoothed mesh with original")
+            mesh_scroll = mm.voxelBooleanUnite(
+                mesh_scroll, mesh_scroll_smoothed, voxel_size
+            )
+        else:
+            mesh_scroll = mesh_scroll_smoothed
+
     # Fit minimum bounding cylinder
     logger.info("Aligning mesh")
     points = np.array([(point.x, point.y, point.z) for point in mesh_scroll.points])
@@ -231,16 +243,6 @@ def build_lining(
     # Optimize Rotation
     if mesh_params.rotation_callback is not None:
         mesh_scroll = mesh_params.rotation_callback(mesh_scroll)
-
-    # Smooth mesh
-    if (sc := mesh_params.smoothing_callback) is not None:
-        mesh_scroll_smoothed = sc(mesh_scroll)
-        if mesh_params.smoothing_unite_with_original:
-            mesh_scroll = mm.voxelBooleanUnite(
-                mesh_scroll, mesh_scroll_smoothed, voxel_size
-            )
-        else:
-            mesh_scroll = mesh_scroll_smoothed
 
     # Offset
     logger.info("Offsetting mesh")
