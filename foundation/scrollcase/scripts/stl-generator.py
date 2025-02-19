@@ -30,6 +30,7 @@ from tqdm import tqdm
 from scrollcase import mesh, case
 from meshlib import mrmeshpy as mm  # for saving STL files
 
+
 def pad_scroll_name(scroll_number: str) -> str:
     """
     Pads the numeric portion of the scroll number to 4 digits.
@@ -37,11 +38,12 @@ def pad_scroll_name(scroll_number: str) -> str:
     """
     if scroll_number and scroll_number[-1].isalpha():
         number_part = scroll_number[:-1]
-        letter_part = scroll_number[-1]
+        letter_part = scroll_number[-1].upper()
         padded = f"{int(number_part):04d}{letter_part}"
     else:
         padded = f"{int(scroll_number):04d}"
     return padded
+
 
 def process_scroll(padded_scroll: str, mesh_file: str, output_dir: str, config=None):
     """
@@ -51,9 +53,9 @@ def process_scroll(padded_scroll: str, mesh_file: str, output_dir: str, config=N
       3. Builds the scroll case.
       4. Combines the case halves with the mesh lining.
       5. Exports the combined STL files.
-    
+
     The configuration from the YAML file (if provided) is used to override default parameters for the scroll case.
-    
+
     Returns a tuple: (padded_scroll, height, diameter)
     """
     logger = logging.getLogger("stl_generator")
@@ -65,14 +67,15 @@ def process_scroll(padded_scroll: str, mesh_file: str, output_dir: str, config=N
 
     # 2. Process the mesh to build the lining.
     scroll_mesh_params = mesh.ScrollMesh(mesh_file)
-    (lining_mesh_pos,
-     lining_mesh_neg,
-     cavity_mesh_pos,
-     cavity_mesh_neg,
-     mesh_scroll,
-     radius,
-     height,
-     ) = mesh.build_lining(scroll_mesh_params)
+    (
+        lining_mesh_pos,
+        lining_mesh_neg,
+        cavity_mesh_pos,
+        cavity_mesh_neg,
+        mesh_scroll,
+        radius,
+        height,
+    ) = mesh.build_lining(scroll_mesh_params)
 
     # 3. Build the scroll case.
     # Start with some default parameters.
@@ -90,21 +93,29 @@ def process_scroll(padded_scroll: str, mesh_file: str, output_dir: str, config=N
     case_left, case_right = case.build_case(scroll_case)
 
     # 4. Combine the BRep case halves with the mesh lining.
-    combined_mesh_right = mesh.combine_brep_case_lining(case_right, cavity_mesh_pos, lining_mesh_pos)
-    combined_mesh_left  = mesh.combine_brep_case_lining(case_left,  cavity_mesh_neg, lining_mesh_neg)
+    combined_mesh_right = mesh.combine_brep_case_lining(
+        case_right, cavity_mesh_pos, lining_mesh_pos
+    )
+    combined_mesh_left = mesh.combine_brep_case_lining(
+        case_left, cavity_mesh_neg, lining_mesh_neg
+    )
 
     # 5. Export the combined STL files.
     right_stl_path = os.path.join(output_dir, f"{padded_scroll}_right.stl")
-    left_stl_path  = os.path.join(output_dir, f"{padded_scroll}_left.stl")
+    left_stl_path = os.path.join(output_dir, f"{padded_scroll}_left.stl")
     mm.saveMesh(combined_mesh_right, right_stl_path)
     mm.saveMesh(combined_mesh_left, left_stl_path)
 
     # Return padded_scroll, height, and diameter (2 * radius)
     return padded_scroll, height, 2 * radius
 
+
 def main():
     # Set up logging to only show errors
-    logging.basicConfig(level=logging.ERROR, format="%(asctime)s - %(processName)s - %(levelname)s - %(message)s")
+    logging.basicConfig(
+        level=logging.ERROR,
+        format="%(asctime)s - %(processName)s - %(levelname)s - %(message)s",
+    )
     logger = logging.getLogger("stl_generator")
 
     # Parse command-line arguments
@@ -146,7 +157,9 @@ def main():
             return
 
     # List subdirectories (each representing a scroll number)
-    subdirs = [d for d in os.listdir(input_root) if os.path.isdir(os.path.join(input_root, d))]
+    subdirs = [
+        d for d in os.listdir(input_root) if os.path.isdir(os.path.join(input_root, d))
+    ]
     if not subdirs:
         logger.error("No subdirectories found in the input root directory.")
         return
@@ -158,7 +171,9 @@ def main():
         subdir_path = os.path.join(input_root, scroll_number)
         mesh_file = os.path.join(subdir_path, f"{scroll_number}-registered.obj")
         if not os.path.exists(mesh_file):
-            logger.error(f"Mesh file not found for scroll '{scroll_number}': {mesh_file}. Skipping.")
+            logger.error(
+                f"Mesh file not found for scroll '{scroll_number}': {mesh_file}. Skipping."
+            )
             continue
 
         # Create output folder for this scroll case using the padded scroll name
@@ -175,7 +190,11 @@ def main():
             executor.submit(process_scroll, padded, mesh_file, out_dir, config): padded
             for padded, mesh_file, out_dir, config in tasks
         }
-        for future in tqdm(as_completed(future_to_scroll), total=len(future_to_scroll), desc="Processing scrolls"):
+        for future in tqdm(
+            as_completed(future_to_scroll),
+            total=len(future_to_scroll),
+            desc="Processing scrolls",
+        ):
             padded_scroll = future_to_scroll[future]
             try:
                 result = future.result()  # (padded_scroll, height, diameter)
@@ -193,6 +212,7 @@ def main():
                 writer.writerow([scroll_id, f"{height:.2f}", f"{diameter:.2f}"])
     except Exception as e:
         logger.error(f"Error writing CSV summary: {e}")
+
 
 if __name__ == "__main__":
     main()
