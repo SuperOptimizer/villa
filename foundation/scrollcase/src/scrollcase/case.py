@@ -12,9 +12,13 @@ logger = logging.getLogger(__name__)
 class ScrollCase:
     # Z=0 is the scroll bottom
 
-    # Scroll dimensions defined per-scroll (remaining params fixed across scrolls)
+    # Scroll dimensions defined per-scroll
     scroll_height_mm: float
     scroll_radius_mm: float
+
+    # Labels defined per-scroll (remaining params fixed across scrolls)
+    label_line_1: str = ""
+    label_line_2: str = ""
 
     # Gap/offset between scroll and lining wall interior
     lining_offset_mm: float = 2
@@ -42,10 +46,6 @@ class ScrollCase:
     # Alignment ring spacing (up from bottom of lining interior)
     alignment_ring_spacing_mm: Optional[float] = 100
     alignment_ring_width_mm: Optional[float] = 1.5
-
-    # Labels
-    label_line_1: str = ""
-    label_line_2: str = ""
 
     # Alignment nubs
     nub_size_mm: float = 4
@@ -211,8 +211,22 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
             r = Rectangle(2 * case.square_loft_radius, 2 * case.square_loft_radius)
             fillet(r.vertices(), case.square_edge_fillet)
 
-        extrude(amount=case.square_height_mm)
+        cap = extrude(amount=case.square_height_mm)
 
+        # Text
+        with BuildSketch(cap.faces().sort_by()[-1]):
+            with Locations((0, 40)):
+                Text(case.label_line_1, case.text_font_size)
+            with Locations((0, 30)):
+                Text(case.label_line_2, case.text_font_size)
+            with Locations((0, 20)):
+                Text(
+                    f"{case.cylinder_outer_radius * 2:.1f}D x {(case.scroll_height_mm + 2 * case.lining_offset_mm):.1f}H",
+                    case.text_font_size,
+                )
+        extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
+
+        # Top O-ring
         with BuildSketch(
             Location(
                 (
@@ -244,6 +258,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
 
         extrude(amount=-case.square_height_mm)
 
+        # Bottom O-ring
         with BuildSketch(
             Location(
                 (
@@ -268,6 +283,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
 
         split(bisect_by=Plane.XZ, keep=Keep.BOTH)
 
+    # Base
     with BuildPart(
         Location((0, 0, case.cylinder_bottom - case.square_height_mm))
     ) as mount_disc:
@@ -281,19 +297,6 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
         with BuildSketch(cyl.faces().sort_by()[0]):
             Rectangle(case.mount_disc_box_width_mm, case.mount_disc_box_width_mm)
         extrude(amount=-case.mount_disc_box_height_mm, mode=Mode.SUBTRACT)
-
-        # Text
-        with BuildSketch(cyl.faces().sort_by()[0]):
-            with Locations((0, 40)):
-                Text(case.label_line_1, case.text_font_size)
-            with Locations((0, 30)):
-                Text(case.label_line_2, case.text_font_size)
-            with Locations((0, 20)):
-                Text(
-                    f"{case.scroll_radius_mm * 2:.2f}Dx{case.scroll_height_mm:.2f}Z",
-                    case.text_font_size,
-                )
-        extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
 
         # Bolt holes
         with Locations(
@@ -315,6 +318,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 mode=Mode.SUBTRACT,
             )
 
+    # Alignment nubs
     with BuildPart(mode=Mode.PRIVATE) as nubs:
         with Locations((0, 0, case.cylinder_bottom - case.square_height_mm / 2)):
             with Locations(((case.cylinder_inner_radius / 2), 0, 0)):
@@ -356,6 +360,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                     align=(Align.CENTER, Align.MIN, Align.CENTER),
                 )
 
+    # Alignment nub hollows
     with BuildPart() as hollows:
         with Locations((0, 0, case.cylinder_bottom - case.square_height_mm / 2)):
             with Locations(((case.cylinder_inner_radius / 2), 0, 0)):
