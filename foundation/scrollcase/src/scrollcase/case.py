@@ -49,7 +49,7 @@ class ScrollCase:
 
     # Alignment nubs
     nub_size_mm: float = 4
-    nub_depth_mm: float = 1.5
+    nub_depth_mm: float = 2
     nub_margin_mm: float = 0.5
 
     # Square caps
@@ -316,15 +316,38 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
             )
 
     with BuildPart(mode=Mode.PRIVATE) as nubs:
-        with Locations((0, 0, -case.lower_margin_mm / 2)):
-            with Locations((10, 0, 0)):
+        with Locations((0, 0, case.cylinder_bottom - case.square_height_mm / 2)):
+            with Locations(((case.cylinder_inner_radius / 2), 0, 0)):
                 Box(
                     case.nub_size_mm,
                     case.nub_depth_mm,
                     case.nub_size_mm,
                     align=(Align.CENTER, Align.MIN, Align.CENTER),
                 )
-            with Locations((-10, 0, 0)):
+            with Locations((-(case.cylinder_inner_radius / 2), 0, 0)):
+                Box(
+                    case.nub_size_mm,
+                    case.nub_depth_mm,
+                    case.nub_size_mm,
+                    rotation=(0, 45, 0),
+                    align=(Align.CENTER, Align.MIN, Align.CENTER),
+                )
+
+        with Locations(
+            (
+                0,
+                0,
+                case.cylinder_bottom + case.cylinder_height + case.square_height_mm / 2,
+            )
+        ):
+            with Locations(((case.cylinder_inner_radius / 2), 0, 0)):
+                Box(
+                    case.nub_size_mm,
+                    case.nub_depth_mm,
+                    case.nub_size_mm,
+                    align=(Align.CENTER, Align.MIN, Align.CENTER),
+                )
+            with Locations((-(case.cylinder_inner_radius / 2), 0, 0)):
                 Box(
                     case.nub_size_mm,
                     case.nub_depth_mm,
@@ -334,15 +357,38 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 )
 
     with BuildPart() as hollows:
-        with Locations((0, 0, -case.lower_margin_mm / 2)):
-            with Locations((10, 0, 0)):
+        with Locations((0, 0, case.cylinder_bottom - case.square_height_mm / 2)):
+            with Locations(((case.cylinder_inner_radius / 2), 0, 0)):
                 Box(
                     case.nub_size_mm + 2 * case.nub_margin_mm,
                     case.nub_depth_mm,
                     case.nub_size_mm + 2 * case.nub_margin_mm,
                     align=(Align.CENTER, Align.MIN, Align.CENTER),
                 )
-            with Locations((-10, 0, 0)):
+            with Locations((-(case.cylinder_inner_radius / 2), 0, 0)):
+                Box(
+                    case.nub_size_mm + 2 * case.nub_margin_mm,
+                    case.nub_depth_mm,
+                    case.nub_size_mm + 2 * case.nub_margin_mm,
+                    rotation=(0, 45, 0),
+                    align=(Align.CENTER, Align.MIN, Align.CENTER),
+                )
+
+        with Locations(
+            (
+                0,
+                0,
+                case.cylinder_bottom + case.cylinder_height + case.square_height_mm / 2,
+            )
+        ):
+            with Locations(((case.cylinder_inner_radius / 2), 0, 0)):
+                Box(
+                    case.nub_size_mm + 2 * case.nub_margin_mm,
+                    case.nub_depth_mm,
+                    case.nub_size_mm + 2 * case.nub_margin_mm,
+                    align=(Align.CENTER, Align.MIN, Align.CENTER),
+                )
+            with Locations((-(case.cylinder_inner_radius / 2), 0, 0)):
                 Box(
                     case.nub_size_mm + 2 * case.nub_margin_mm,
                     case.nub_depth_mm,
