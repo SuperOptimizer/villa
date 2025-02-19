@@ -63,7 +63,7 @@ def process_scroll(padded_scroll: str, mesh_file: str, output_dir: str, config=N
     # Process the mesh to build the lining.
     scroll_mesh_params = mesh.ScrollMesh(
         mesh_file,
-        smoothing_callback=partial(mesh.mesh_smooth_denoise, gamma=20),
+        # smoothing_callback=partial(mesh.mesh_smooth_denoise, gamma=20),
     )
     (
         lining_mesh_pos,

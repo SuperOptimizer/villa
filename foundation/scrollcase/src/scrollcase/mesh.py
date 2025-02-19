@@ -211,10 +211,10 @@ def build_lining(
     logger.debug(f"Initial mesh: {count_vertices(mesh_scroll)} vertices")
 
     # Simplify mesh
-    decimate_settings = mm.DecimateSettings()
-    decimate_settings.maxError = mesh_params.simplify_max_error_diagonal_percent / 100
-    decimate_settings.packMesh = True
-    mm.decimateMesh(mesh_scroll, decimate_settings)
+    # decimate_settings = mm.DecimateSettings()
+    # decimate_settings.maxError = mesh_params.simplify_max_error_diagonal_percent / 100
+    # decimate_settings.packMesh = True
+    # mm.decimateMesh(mesh_scroll, decimate_settings)
 
     logger.debug(f"Simplified mesh: {count_vertices(mesh_scroll)} vertices")
 
