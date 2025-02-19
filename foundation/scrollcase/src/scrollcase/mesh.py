@@ -210,6 +210,12 @@ def build_lining(
 
     logger.debug(f"Initial mesh: {count_vertices(mesh_scroll)} vertices")
 
+    # Use only largest connected component
+    components = mm.getAllComponents(mesh_scroll)
+    logger.info(f"Input mesh has {len(components)} connected components")
+    largest_component = max(components, key=lambda c: c.count())
+    mesh_scroll = mesh_scroll.cloneRegion(largest_component)
+
     # Simplify mesh
     # decimate_settings = mm.DecimateSettings()
     # decimate_settings.maxError = mesh_params.simplify_max_error_diagonal_percent / 100
