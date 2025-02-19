@@ -44,13 +44,6 @@ def load_mesh(mesh_file: str) -> mm.Mesh:
     return mm.loadMesh(mesh_file)
 
 
-class RotationStrategy(Enum):
-    NONE = auto(), "No rotation"
-    SECOND_PRINCIPAL = auto(), "Split along second principal axis (wide)."
-    THIRD_PRINCIPAL = auto(), "Split along third principal axis."
-    DEG_45 = auto(), "45 degrees to principal axes."
-
-
 def affine_rotation(angle_rad: float) -> mm.AffineXf3f:
     """Affine rotation about Z axis."""
     rotation_mat = np.array(
