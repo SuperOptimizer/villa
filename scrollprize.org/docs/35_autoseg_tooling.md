@@ -1,7 +1,8 @@
 ---
-title: "Autosegmentation Tooling"
-sidebar_label: "Autosegmentation"
+title: "Tutorial: Autosegmentation Tooling"
+sidebar_label: "3. Segmentation Tooling"
 hide_table_of_contents: true
+id: Segmentation
 ---
 
 <head>

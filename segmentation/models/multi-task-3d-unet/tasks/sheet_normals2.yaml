@@ -52,12 +52,12 @@ inference_config:
   load_strict: false
   num_dataloader_workers: 2
   input_path: /mnt/raid_nvme/s5_test.zarr
-  input_format: zarr
+  # input_format: zarr
   output_path: /mnt/raid_nvme/s5_test_out.zarr
-  output_format: zarr
-  output_type: np.uint8
+  # output_format: zarr
+  # output_type: np.uint8
   overlap: 0.25
   output_targets:
     sheet:
       channels: 2
-      activation: sigmoid
+      activation: none

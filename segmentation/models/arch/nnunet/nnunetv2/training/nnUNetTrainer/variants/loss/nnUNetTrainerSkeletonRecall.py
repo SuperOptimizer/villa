@@ -191,7 +191,7 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
                 scaling=(0.7, 1.4),
                 p_synchronize_scaling_across_axes=1,
                 bg_style_seg_sampling=False,  # =, mode_seg='nearest'
-                elastic_deform_magnitude=(10, 50)
+                elastic_deform_magnitude=(25, 75)
             )
         )
 
@@ -217,7 +217,7 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
                 alpha=0.2,
                 num_prev_slices=3,
                 smear_axis=3
-            ), apply_probability=0.2
+            ), apply_probability=0.3
         ))
 
         transforms.append(RandomTransform(
@@ -230,7 +230,7 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
                 p_per_sample=1.0,  # Probability per sample
                 per_channel=True,  # Apply per channel
                 p_per_channel=0.5  # Probability per channel
-            ), apply_probability=0.25
+            ), apply_probability=0.4
         ))
 
         transforms.append(RandomTransform(
@@ -238,7 +238,7 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
                 noise_variance=(0, 0.15),
                 p_per_channel=1,
                 synchronize_channels=True
-            ), apply_probability=0.15
+            ), apply_probability=0.4
         ))
         transforms.append(RandomTransform(
             GaussianBlurTransform(
@@ -246,14 +246,14 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
                 synchronize_channels=False,
                 synchronize_axes=False,
                 p_per_channel=0.5, benchmark=True
-            ), apply_probability=0.2
+            ), apply_probability=0.4
         ))
         transforms.append(RandomTransform(
             MultiplicativeBrightnessTransform(
                 multiplier_range=BGContrast((0.5, 1.5)),
                 synchronize_channels=False,
                 p_per_channel=1
-            ), apply_probability=0.15
+            ), apply_probability=0.3
         ))
         transforms.append(RandomTransform(
             ContrastTransform(
@@ -261,7 +261,7 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
                 preserve_range=True,
                 synchronize_channels=False,
                 p_per_channel=1
-            ), apply_probability=0.15
+            ), apply_probability=0.3
         ))
         transforms.append(RandomTransform(
             SimulateLowResolutionTransform(
@@ -271,7 +271,7 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
                 ignore_axes=ignore_axes,
                 allowed_channels=None,
                 p_per_channel=0.5
-            ), apply_probability=0.25
+            ), apply_probability=0.4
         ))
         transforms.append(RandomTransform(
             GammaTransform(
@@ -280,7 +280,7 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
                 synchronize_channels=False,
                 p_per_channel=1,
                 p_retain_stats=1
-            ), apply_probability=0.1
+            ), apply_probability=0.2
         ))
         transforms.append(RandomTransform(
             GammaTransform(
@@ -289,7 +289,7 @@ class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
                 synchronize_channels=False,
                 p_per_channel=1,
                 p_retain_stats=1
-            ), apply_probability=0.3
+            ), apply_probability=0.4
         ))
         if mirror_axes is not None and len(mirror_axes) > 0:
             transforms.append(
