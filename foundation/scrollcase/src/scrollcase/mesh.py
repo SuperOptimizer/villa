@@ -44,13 +44,6 @@ def load_mesh(mesh_file: str) -> mm.Mesh:
     return mm.loadMesh(mesh_file)
 
 
-class RotationStrategy(Enum):
-    NONE = auto(), "No rotation"
-    SECOND_PRINCIPAL = auto(), "Split along second principal axis (wide)."
-    THIRD_PRINCIPAL = auto(), "Split along third principal axis."
-    DEG_45 = auto(), "45 degrees to principal axes."
-
-
 def affine_rotation(angle_rad: float) -> mm.AffineXf3f:
     """Affine rotation about Z axis."""
     rotation_mat = np.array(
@@ -91,7 +84,7 @@ def mesh_smooth_shrink_expand(
 ):
     """Smooth a mesh with a shrink/expand operation.
 
-    Shrinking first smoothes convexities, expanding first smoothes concavities.
+    Shrinking first smooths convexities, expanding first smooths concavities.
     """
     voxel_size = (
         mesh.computeBoundingBox().diagonal() * voxel_size_diagonal_percent / 100
@@ -129,7 +122,7 @@ def get_principal_components(mesh: mm.Mesh) -> np.ndarray:
 def rotate_about_2nd_principal(mesh: mm.Mesh, rotation_rad: float) -> mm.Mesh:
     """Rotate about second principal.
 
-    Rotate mesh so that 2nd principal component is rotatation_rad radians from the
+    Rotate mesh so that 2nd principal component is rotation_rad radians from the
     second (wide) principal component.
     """
     principal_components = get_principal_components(mesh)
@@ -156,7 +149,7 @@ class ScrollMesh:
         target_scale_diagonal_mm: Target diagonal size of the mesh. Defaults to None.
         rotation_callback: Rotation callback that accepts a mesh and returns a mesh
         smoothing_callback: Smoothing callback that accepts a mesh and returns a mesh
-        smoothin_unite_with_original: Unite with the original after smoothing to ensure
+        smoothing_unite_with_original: Unite with the original after smoothing to ensure
         mesh does not get smaller.
 
     """
@@ -165,6 +158,8 @@ class ScrollMesh:
     cylinder_axis_tol: float = 0.01
     voxel_size_diagonal_percent: float = 0.4
     simplify_max_error_diagonal_percent: float = 1
+    lining_offset_mm: float = 2
+    lining_thickness_mm: float = 2
     target_scale_diagonal_mm: Optional[float] = None
     rotation_callback: Optional[Callable[[mm.Mesh], mm.Mesh]] = partial(
         rotate_about_2nd_principal, rotation_rad=0
@@ -216,14 +211,26 @@ def build_lining(
     logger.debug(f"Initial mesh: {count_vertices(mesh_scroll)} vertices")
 
     # Simplify mesh
-    decimate_settings = mm.DecimateSettings()
-    decimate_settings.maxError = mesh_params.simplify_max_error_diagonal_percent / 100
-    decimate_settings.packMesh = True
-    mm.decimateMesh(mesh_scroll, decimate_settings)
+    # decimate_settings = mm.DecimateSettings()
+    # decimate_settings.maxError = mesh_params.simplify_max_error_diagonal_percent / 100
+    # decimate_settings.packMesh = True
+    # mm.decimateMesh(mesh_scroll, decimate_settings)
 
     logger.debug(f"Simplified mesh: {count_vertices(mesh_scroll)} vertices")
 
-    # Fit minimum boundign cylinder
+    # Smooth mesh
+    if (sc := mesh_params.smoothing_callback) is not None:
+        logger.info("Smoothing mesh")
+        mesh_scroll_smoothed = sc(mesh_scroll)
+        if mesh_params.smoothing_unite_with_original:
+            logger.info("Uniting smoothed mesh with original")
+            mesh_scroll = mm.voxelBooleanUnite(
+                mesh_scroll, mesh_scroll_smoothed, voxel_size
+            )
+        else:
+            mesh_scroll = mesh_scroll_smoothed
+
+    # Fit minimum bounding cylinder
     logger.info("Aligning mesh")
     points = np.array([(point.x, point.y, point.z) for point in mesh_scroll.points])
     rotation_mat, translation_mat, radius, height = alignment.fit_cylinder(
@@ -237,32 +244,22 @@ def build_lining(
     if mesh_params.rotation_callback is not None:
         mesh_scroll = mesh_params.rotation_callback(mesh_scroll)
 
-    # Smooth mesh
-    if (sc := mesh_params.smoothing_callback) is not None:
-        mesh_scroll_smoothed = sc(mesh_scroll)
-        if mesh_params.smoothing_unite_with_original:
-            mesh_scroll = mm.voxelBooleanUnite(
-                mesh_scroll, mesh_scroll_smoothed, voxel_size
-            )
-        else:
-            mesh_scroll = mesh_scroll_smoothed
-
-    # Offset 2mm
+    # Offset
     logger.info("Offsetting mesh")
     params = mm.OffsetParameters()
     params.voxelSize = voxel_size
-    mesh_offset_2mm = mm.offsetMesh(mesh_scroll, offset=2, params=params)  # type: ignore
+    offset_mesh = mm.offsetMesh(mesh_scroll, offset=mesh_params.lining_offset_mm, params=params)  # type: ignore
 
-    logger.debug(f"Offset mesh: {count_vertices(mesh_offset_2mm)} vertices")
+    logger.debug(f"Offset mesh: {count_vertices(offset_mesh)} vertices")
 
     # Split along YZ plane
     logger.info("Splitting mesh")
     cut_plane = mm.Plane3f(mm.Vector3f(0, 1, 0), 0)
     hole_edges_pos = mm.UndirectedEdgeBitSet()
     hole_edges_neg = mm.UndirectedEdgeBitSet()
-    split_mesh_pos = _copy_meshlib(mesh_offset_2mm)
+    split_mesh_pos = _copy_meshlib(offset_mesh)
     mm.trimWithPlane(split_mesh_pos, cut_plane, outCutEdges=hole_edges_pos)
-    split_mesh_neg = _copy_meshlib(mesh_offset_2mm)
+    split_mesh_neg = _copy_meshlib(offset_mesh)
     mm.trimWithPlane(split_mesh_neg, -cut_plane, outCutEdges=hole_edges_neg)
 
     logger.debug(f"Split mesh pos: {count_vertices(split_mesh_pos)} vertices")
@@ -280,8 +277,8 @@ def build_lining(
 
     # Build mesh
     logger.info("Building lining")
-    cavity_mesh_pos_offset = mm.offsetMesh(cavity_mesh_pos, offset=2, params=params)  # type: ignore
-    cavity_mesh_neg_offset = mm.offsetMesh(cavity_mesh_neg, offset=2, params=params)  # type: ignore
+    cavity_mesh_pos_offset = mm.offsetMesh(cavity_mesh_pos, offset=mesh_params.lining_thickness_mm, params=params)  # type: ignore
+    cavity_mesh_neg_offset = mm.offsetMesh(cavity_mesh_neg, offset=mesh_params.lining_thickness_mm, params=params)  # type: ignore
     mm.trimWithPlane(cavity_mesh_pos_offset, cut_plane, outCutEdges=hole_edges_pos)
     mm.trimWithPlane(cavity_mesh_neg_offset, -cut_plane, outCutEdges=hole_edges_neg)
 

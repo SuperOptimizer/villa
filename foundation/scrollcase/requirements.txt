@@ -2,3 +2,4 @@
 uv
 ipykernel
 nbconvert
+tqdm
