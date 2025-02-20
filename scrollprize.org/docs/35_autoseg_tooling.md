@@ -38,36 +38,33 @@ id: Segmentation
   />
 </head>
 
-This tutorial is meant as guide for running two of the methods discussed in the [autosegmentation walkthrough](/unwrapping). Both of these methods are in active development and as such the content of this page may become outdated. It is current as of 17 February 2024. 
+*Last updated: February 20, 2025*
 
-Both of these methods have pros/cons detailed in the previous walkthrough in terms of current and future performance. Currently implemented, the primary benefit of the VC3D tracer solution is that the intermediate steps produce immediately usable partial segments, and the entire pipeline save ink detection is self-contained within the VC3D ecosystem. _If you are looking to simply produce exploratory segments for ink detection or other tasks, the tracer has the lowest "startup" time_. 
+This tutorial is a guide for two of the methods discussed in the [autosegmentation overview](/unwrapping). Both of these methods are in active development and as such the content of this page may become outdated.
+
+Both of these methods have pros and cons detailed in the previous walkthrough, in terms of current and future performance. Currently implemented, the primary benefit of the VC3D tracer solution is that the intermediate steps produce immediately usable partial segments, and the entire pipeline save ink detection is self-contained within the VC3D ecosystem. *If you are looking to simply produce exploratory segments for ink detection or other tasks, the tracer has the lowest "startup" time.*
 
 :::tip
-If you want to try out running traces only , and do not want to perform any of the seeding or expansion steps, you can download patches we have generated for some of the scrolls from the links in the [data section](#volume-data), place these in your paths directory, place the uint8 volumes and surface predictions in the volume directory, and skip to [running a trace](#running-a-trace)
+If you want to try out running traces only, and do not want to perform any of the seeding or expansion steps, you can download patches we have generated for some of the scrolls from the links in the [data section](#volume-data), place these in your paths directory, place the uint8 volumes and surface predictions in the volume directory, and skip to [running a trace](#running-a-trace).
 :::
 
-### Table of Contents
-**[Sheet Tracing](#VC3D)**
-   * [Installation](#installation)
-   * [Preparing Data](#preparing-data)
-     * [Preprocessed Data](#volume-data)
-   * [Seeding the Volume](#seeding)
-   * [Expanding Seeds](#expanding-seeds) 
-   * [Running a trace](#running-a-trace) 
-   * [Fixing Errors](#fixing-errors)
-   * [Inpainting and Improving Flattening](#inpainting)
-   * [Rendering](#rendering)
-   * [Ink Detection](#ink-detection)
-   * [Common Issues](#common-issues)
+import TOCInline from '@theme/TOCInline';
 
-Spiral Fitting (TODO)
+**Table of Contents**
+<TOCInline
+  toc={toc}
+  maxHeadingLevel={4}
+/>
 
-## VC3D
+<!-- Spiral Fitting (TODO) -->
+
+## Sheet Tracing (VC3D)
 <div className="mb-4">
   <img src="/img/segmentation/vc3d_gui.png" className="w-[85%]"/>
 </div>
 ___
-## Installation 
+
+### Installation
 This guide will be written for Ubuntu 24.04, for other operating systems the details may vary slightly. Windows users may benefit from using Windows Subsystem For Linux(WSL2), and placing their volume data within the Linux filesystem. 
 
 **Install Docker Engine for Linux:**
@@ -116,7 +113,7 @@ bin/VC3D
 [back to top](#table-of-contents)
 ___
 
-## Preparing Data
+### Preparing Data
 VC3D requires a few changes to the data you may already have downloaded. All data must be in OME-Zarr format, of dtype uint8, and contain a meta.json file. To check if your zarr is in uint8 already, open a resolution group zarray file (located at /path/to.zarr/0/.zarray) look at the dtype field. "|u1" is uint8, and "|u2" is uint16. 
 
 The meta.json contains the following information. The only real change from a standard VC meta.json is the inclusion of the `format:"zarr"` key.
@@ -148,7 +145,7 @@ The data should be placed within the volpkg of the respective scroll, in this fo
     ├── paths 
     └── config.json - REQUIRED!
 ```
-### Volume Data
+#### Volume Data
   * Scroll 1 
     * [Raw uint8]((https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s1/s1_uint8_ome.7z)) - In Progress
     * [Standardized](https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumes_zarr_standardized/)
@@ -175,7 +172,7 @@ The data should be placed within the volpkg of the respective scroll, in this fo
 [back to top](#table-of-contents)
 ___
 
-## Seeding the Volume
+### Seeding the Volume
 :::warning
 If you are running these steps in a docker container that was started using `sudo`, the files generated during these steps will be owned by root. If you encounter write errors in subsequent steps, change the ownership of the folder by typing 
 ```bash
@@ -220,7 +217,7 @@ You may need to run the seed command multiple times to get a sufficient number o
 :::
 [back to top](#table-of-contents)
 ___
-## Expanding Seeds
+### Expanding Seeds
 :::warning
 Seeds created using the mode "seed" do not contain overlap information and are not used by the tracer. Ensure that your params json 'mode' key is set to 'expansion' for this step.
 :::
@@ -253,7 +250,7 @@ You may need to repeat this command, until the volume is densely seeded. The num
 [back to top](#table-of-contents)
 ___
 
-## Running a Trace
+### Running a Trace
 A "Trace" in the context of vc3d is essentially the same as a segmentation as we've come to know them. 
 
 This step will finally create larger connected surfaces. The large surface tracer generates a single surface by tracing a "consensus" surface from the patches generated earlier. This processed can be influenced by annotating patches in several ways which allows to guide the tracer to avoid errors. Hence the process looks like this:
@@ -330,7 +327,7 @@ Typically, the easiest method for fixing these is to locate where the sheet jump
 [back to top](#table-of-contents)
 ___ 
 
-## Fixing Errors
+### Fixing Errors
 
 VC3D allows to annotate patches as approved, defective, and to edit a patch mask which allows masking out areas of a patch that are problematic.
 
@@ -373,7 +370,7 @@ With this process a mask can be generated using less than 10 clicks
 [back to top](#table-of-contents)
 ___
 
-## Inpainting
+### Inpainting
 
 It is possible after the previous steps to simply render the trace and use it within downstream tasks. The traces at this stage however frequently contain holes and are not flattened as well as they could be. To improve the mesh, we can combine multiple traces and attempt to fill in the holes. 
 
@@ -428,7 +425,7 @@ vc_tiffxyz_upscale_grounding <infill-tiffxyz> <infill-winding> 5 /path/to/trace1
 [back to top](#table-of-contents)
 ___
 
-## Rendering 
+### Rendering
 Each stage of the seeding/expanding/tracing process uses the tifxyz format, and thus any output in these processes can be rendered by using the `vc_render_tifxyz`. To render your new trace, enter:
 ```bash
 OMP_WAIT_POLICY=PASSIVE OMP_NESTED=FALSE time nice \
@@ -443,7 +440,7 @@ For the TimeSFormer model, the "1" resolution performs only slightly worse than 
 [back to top](#table-of-contents)
 
 ___
-## Ink Detection
+### Ink Detection
 Ink detection on the produced segmentations is no different at this stage than it was on previous segments, although some of the segmentations generated by the tracer can be quite large. The [ink-detection](https://github.com/ScrollPrize/villa/tree/main/ink-detection) page of the villa monorepo contains the 2023 Grand-Prize model, with some recent updates. If you have difficulty loading large segmentations with this version, a fork exists which was used to generate the ink detections for @waldkauz and @bruniss 2024 year-end submission , documented [here](https://discord.com/channels/1079907749569237093/1315006782191570975). 
 
 <div className="mb-4">
@@ -454,7 +451,7 @@ Ink detection on the produced segmentations is no different at this stage than i
 [back to top](#table-of-contents)
 ___
 
-## Common Issues
+### Common Issues
 **When attempting to run one of these steps, you encounter "json" errors**
   * Fix: 99% of the time when this error is thrown, it is the result of an incorrect path in the command, or a missing meta.json file in the target volume. Check your paths.
 <div className="ml-8">
