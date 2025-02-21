@@ -44,7 +44,7 @@ class ScrollCase:
     mount_disc_box_width_mm: float = 13.5
 
     # Alignment ring spacing (up from bottom of lining interior)
-    alignment_ring_spacing_mm: Optional[float] = 100
+    alignment_ring_spacing_mm: Optional[float] = 98
     alignment_ring_width_mm: Optional[float] = 1.5
 
     # Alignment nubs
