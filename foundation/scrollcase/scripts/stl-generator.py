@@ -106,11 +106,15 @@ def process_scroll(padded_scroll: str, mesh_file: str, output_dir: str, config=N
     mm.saveMesh(combined_mesh_right, right_stl_path)
     mm.saveMesh(combined_mesh_left, left_stl_path)
 
-    # Return padded_scroll, height, and diameter (2 * radius)
+    # Return padded_scroll, height, and diameter
+    # Height includes the entire height of the lining interior to make sure scroll is captured,
+    # so is scroll_height + 2 * lining_offset.
+    # Diameter is the external diameter of the case cylinder to make sure the case is not
+    # outside the captured FOV for reconstruction.
     return (
         padded_scroll,
-        scroll_case.scroll_height_mm + 2 * scroll_case.lining_offset_mm,
-        2 * scroll_case.cylinder_outer_radius,
+        scroll_case.lining_interior_height,
+        scroll_case.cylinder_outer_diameter,
     )
 
 
