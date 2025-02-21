@@ -27,8 +27,8 @@ class ScrollCase:
     wall_thickness_mm: float = 2
 
     # Between lining exterior and top/bottom caps
-    upper_margin_mm: float = 5
-    lower_margin_mm: float = 5
+    upper_margin_mm: float = 3
+    lower_margin_mm: float = 3
 
     # Between lining exterior and cylinder wall interior
     # Just enough space to not touch/create trap points for glass beads
@@ -37,14 +37,14 @@ class ScrollCase:
 
     # Mounting disc dimensions
     mount_disc_diameter_mm: float = 112.5
-    mount_disc_height_mm: float = 12.5
+    mount_disc_height_mm: float = 10
     mount_disc_hole_depth_mm: float = 5.75
     mount_disc_hole_diameter_mm: float = 6.8
     mount_disc_box_height_mm: float = 7
     mount_disc_box_width_mm: float = 13.5
 
     # Alignment ring spacing (up from bottom of lining interior)
-    alignment_ring_spacing_mm: Optional[float] = 100
+    alignment_ring_spacing_mm: Optional[float] = 98
     alignment_ring_width_mm: Optional[float] = 1.5
 
     # Alignment nubs
@@ -53,9 +53,9 @@ class ScrollCase:
     nub_margin_mm: float = 0.5
 
     # Square caps
-    square_height_mm: float = 12.5
+    square_height_mm: float = 10
     square_edge_fillet: float = 20
-    oring_width: float = 4
+    oring_width: float = 3
     oring_depth: float = 2
 
     # Text properties
@@ -91,6 +91,14 @@ class ScrollCase:
     @property
     def square_loft_radius(self):
         return max(self.mount_disc_diameter_mm / 2, self.cylinder_outer_radius)
+
+    @property
+    def cylinder_outer_diameter(self):
+        return 2 * self.cylinder_outer_radius
+
+    @property
+    def lining_interior_height(self):
+        return 2 * self.lining_offset_mm + self.scroll_height_mm
 
 
 def alignment_ring(case: ScrollCase):
@@ -186,7 +194,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
 
         # Parting rect
         Box(
-            2 * (case.cylinder_outer_radius),
+            case.cylinder_outer_diameter,
             2 * case.wall_thickness_mm,
             case.cylinder_height,
             align=(Align.CENTER, Align.CENTER, Align.MIN),
@@ -217,11 +225,13 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
         with BuildSketch(cap.faces().sort_by()[-1]):
             with Locations((0, 40)):
                 Text(case.label_line_1, case.text_font_size)
-            with Locations((0, 30)):
+            with Locations((0, 40 - case.square_loft_radius)):
+                Text(case.label_line_1, case.text_font_size)
+            with Locations((0, 30 - case.square_loft_radius)):
                 Text(case.label_line_2, case.text_font_size)
-            with Locations((0, 20)):
+            with Locations((0, 20 - case.square_loft_radius)):
                 Text(
-                    f"{case.cylinder_outer_radius * 2:.1f}D x {(case.scroll_height_mm + 2 * case.lining_offset_mm):.1f}H",
+                    f"{case.cylinder_outer_diameter:.1f}D x {case.lining_interior_height:.1f}H",
                     case.text_font_size,
                 )
         extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
