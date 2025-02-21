@@ -4,7 +4,7 @@ stl-generator.py
 
 A script to generate and export final STL models for all scroll cases found in a given input root directory.
 Each subfolder in the input directory should be named as the scroll number and contain a file named
-   <scroll_number>-registered.obj
+   <scroll_number>-scaled.ply
 
 For each scroll, the script creates a subfolder (named using the padded scroll name) under the output root and saves:
    - <padded_scroll>_scroll.stl
@@ -173,7 +173,7 @@ def main():
     for scroll_number in subdirs:
         padded_scroll = pad_scroll_name(scroll_number)
         subdir_path = os.path.join(input_root, scroll_number)
-        mesh_file = os.path.join(subdir_path, f"{scroll_number}-registered.obj")
+        mesh_file = os.path.join(subdir_path, f"{scroll_number}-scaled.ply")
         if not os.path.exists(mesh_file):
             logger.error(
                 f"Mesh file not found for scroll '{scroll_number}': {mesh_file}. Skipping."
