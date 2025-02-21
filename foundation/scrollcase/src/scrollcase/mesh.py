@@ -168,6 +168,11 @@ class ScrollMesh:
     smoothing_unite_with_original: bool = True
 
 
+def assert_one_component(mesh: mm.Mesh):
+    components = mm.getAllComponents(mesh)
+    assert len(components) == 1
+
+
 def build_lining(
     mesh_params: ScrollMesh,
     *,
@@ -188,6 +193,9 @@ def build_lining(
     # Look at Meshlib GitHub "heal", "tunnel"
 
     mesh_scroll = load_mesh(mesh_params.mesh_path)
+
+    # Get the largest connected component
+    assert_one_component(mesh_scroll)
 
     # Optionally scale mesh
     if mesh_params.target_scale_diagonal_mm:
