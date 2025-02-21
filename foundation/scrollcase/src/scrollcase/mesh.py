@@ -157,7 +157,7 @@ class ScrollMesh:
     mesh_path: str
     cylinder_axis_tol: float = 0.01
     voxel_size_diagonal_percent: float = 0.4
-    simplify_max_error_diagonal_percent: float = 1
+    simplify_max_error_diagonal_percent: float = 2
     lining_offset_mm: float = 2
     lining_thickness_mm: float = 2
     target_scale_diagonal_mm: Optional[float] = None
@@ -219,10 +219,10 @@ def build_lining(
     logger.debug(f"Initial mesh: {count_vertices(mesh_scroll)} vertices")
 
     # Simplify mesh
-    # decimate_settings = mm.DecimateSettings()
-    # decimate_settings.maxError = mesh_params.simplify_max_error_diagonal_percent / 100
-    # decimate_settings.packMesh = True
-    # mm.decimateMesh(mesh_scroll, decimate_settings)
+    decimate_settings = mm.DecimateSettings()
+    decimate_settings.maxError = mesh_params.simplify_max_error_diagonal_percent / 100
+    decimate_settings.packMesh = True
+    mm.decimateMesh(mesh_scroll, decimate_settings)
 
     logger.debug(f"Simplified mesh: {count_vertices(mesh_scroll)} vertices")
 
