@@ -144,19 +144,19 @@ The data should be placed within the volpkg of the respective scroll, in this fo
 ```
 #### Volume Data
   * Scroll 1 
-    * [Raw uint8]((https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s1/s1_uint8_ome.7z)) - In Progress
+    * Raw uint8 not yet available, in progress.
     * [Standardized](https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumes_zarr_standardized/)
     * [Surface Predictions](https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s1/surfaces/full_scroll/050_entire_scroll1_ome.zarr.zip) - Updated 29 Dec 2024
     * [Patches](https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s1/s1_patches.7z) - Updated 02 Feb 2025
   * Scroll 2 - Not available
     * [Standardized](https://dl.ash2txt.org/full-scrolls/Scroll2/PHercParis3.volpkg/volumes_zarr_standardized/)
   * Scroll 3  
-    * [Raw uint8](https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s3/s3_uint8_ome.7z) - In progress
+    * Raw uint8 not yet available, in progress.
     * [Standardized](https://dl.ash2txt.org/full-scrolls/Scroll3/PHerc332.volpkg/volumes_zarr_standardized/)
     * [Surface Predictions](https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s3/surfaces/s3_multi-ensemble_ome.7z) - Updated 26 Jan 2025
     * [Patches](https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s3/s3_patches.7z) - Updated 06 Feb 2025
   * Scroll 4
-    * [Raw uint8](https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s4/s4_uint8_ome.7z) - In progress
+    * Raw uint8 not yet available, in progress.
     * Standardized not yet available, in progress.
     * [Surface Predictions](https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s4/surfaces/s4_multi-ensemble_ome.7z) - Updated 28 Jan 2025
     * [Patches](https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s4/s4_patches.7z) - Updated 01 Feb 2025
