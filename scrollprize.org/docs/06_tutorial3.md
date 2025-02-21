@@ -1,6 +1,6 @@
 ---
-title: "Tutorial 3: Segmentation and Flattening"
-sidebar_label: "3. Segmentation and Flattening"
+title: "Tutorial: Segmentation and Flattening"
+sidebar_label: "Segmentation and Flattening"
 hide_table_of_contents: true
 ---
 
