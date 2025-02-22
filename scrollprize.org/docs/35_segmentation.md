@@ -310,7 +310,7 @@ The tracer will generate a debug/preview surface every 50 generations (labeled z
 
 Using the VC3D GUI, the traced surfaces can be inspected for errors. Inspecting with an ome-zarr volume containing the original scan data (to see fiber continuity) is suggested. You can switch your volume by selecting the drop-down below the segments.
 
-The errors that need to be fixed are generally sheet jumps, were the surface jumps from one correct surface to another correct surface. Often these are visible by checking for gaps in the generated trace as a jump will normally not reconnect with the rest of the trace. 
+The errors that need to be fixed are generally sheet jumps, where the surface jumps from one correct surface to another correct surface. Often these are visible by checking for gaps in the generated trace as a jump will normally not reconnect with the rest of the trace. 
 
 Typically, the easiest method for fixing these is to locate where the sheet jump first occurs, and then ctrl+click on this location, filter segments by focus point, and then mask out the offending patches..
 
