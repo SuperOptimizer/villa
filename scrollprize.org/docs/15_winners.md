@@ -36,12 +36,6 @@ hide_table_of_contents: true
   />
 </head>
 
-import Admonition from '@theme/Admonition';
-
-<Admonition type="info" icon="🎉" title="More Prizes Coming Soon">
-  We are absorbing the amazing work done in 2024 and will announce the next round of prizes shortly!
-</Admonition>
-
 Vesuvius Challenge has awarded **\$1,499,500** in prizes!
 
 This page lists all the prizes awarded so far:

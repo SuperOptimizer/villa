@@ -1,6 +1,6 @@
 ---
-title: "Tutorial 2: Representation"
-sidebar_label: "2. Representation"
+title: "Tutorial: Representation"
+sidebar_label: "Representation"
 hide_table_of_contents: true
 ---
 

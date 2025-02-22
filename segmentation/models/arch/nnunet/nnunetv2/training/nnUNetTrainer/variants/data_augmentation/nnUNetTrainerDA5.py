@@ -106,7 +106,7 @@ class nnUNetTrainerDA5(nnUNetTrainer):
             SpatialTransform(
                 patch_size_spatial,
                 patch_center_dist_from_border=None,
-                do_elastic_deform=False,
+                do_elastic_deform=True,
                 do_rotation=True,
                 angle_x=rotation_for_DA,
                 angle_y=rotation_for_DA,
@@ -123,7 +123,7 @@ class nnUNetTrainerDA5(nnUNetTrainer):
                 random_crop=False,
                 p_el_per_sample=0.2,
                 p_scale_per_sample=0.2,
-                p_rot_per_sample=0.4,
+                p_rot_per_sample=0.6,
                 independent_scale_for_each_axis=True,
             )
         )

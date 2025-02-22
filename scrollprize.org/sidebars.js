@@ -74,8 +74,7 @@ const sidebars = {
       items: [
         { type: 'doc', id: 'tutorial1' },
         { type: 'doc', id: 'tutorial2' },
-        { type: 'doc', id: 'tutorial3' },
-        { type: 'doc', id: 'tutorial4' },
+        { type: 'doc', id: 'segmentation' },
         { type: 'doc', id: 'tutorial5' },
       ],
     },

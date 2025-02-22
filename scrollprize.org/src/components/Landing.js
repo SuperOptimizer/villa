@@ -1801,7 +1801,7 @@ export function Landing() {
                     <ChallengeBox
                       title="Open Problem: Meshing and Reconstruction"
                       linkText="Chart the Path"
-                      href="/unwrapping"
+                      href="/segmentation"
                       imageSrc={
                         <BeforeAfter
                           beforeImage="/img/data/raw_pred.png"
@@ -1815,6 +1815,8 @@ export function Landing() {
                         scroll make. We need methods to better map the surfaces,
                         stitch them where necessary, and extract them into
                         readable sheets of papyrus.
+
+                        For a primer on current autosegmentation methods and their progress, read the <a href="/unwrapping"> Virtual Unwrapping document.</a>
                       </p>
                       <p className=" pt-16">
                         Related skills: geometry processing, computer vision,
