@@ -348,7 +348,7 @@ Checking the approved checkbox will mark a patch as manually "approved" which me
 By clicking on the "edit segment mask" button a mask image will be generated and saved as .tif in the segments directory. Then the systems default application for the filetype .tif will be launched. It is recommended to use GIMP for this. The mask file is a multi-layer tif file where the lowest layer is the actual binary mask and the second layer is the rendered surface using the currently selected volume.
 
 * place one POI on one side of the jump and a second on the other.
-* select "filter by POIs" to get a list of patches who contain this sheet jump, this probably list about 5-20 patches
+* select "filter by POIs" to get a list of patches which contain this sheet jump, this probably list about 5-20 patches
 * press "edit segment mask"
 * GIMP will open an import dialog, the default settings are fine so just press import
 * click on the layer transparency to make the upper layer around 50% transparent
