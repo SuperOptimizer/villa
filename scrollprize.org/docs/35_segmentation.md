@@ -388,7 +388,7 @@ Copy the winding.tif and wind_vis.tif to the traces storage directory so it's al
 
 **Trace Fusion and Inpainting**
 
-Once you have estimated winding assignments for all the traces you intend on fusing, you can run this command, with an arbitrary number of traces. Note that the first trace will be used as the seed an it will also define the size of the output trace and will generate normal constraints, so it should be the longest and most complete. The number after the trace is the weight of the trace when generating the surface, in all test a weight of 1.0 was used and for the submission this params.json.
+Once you have estimated winding assignments for all the traces you intend on fusing, you can run this command with an arbitrary number of traces. Note that the first trace will be used as the seed and it will also define the size of the output trace and will generate normal constraints, so it should be the longest and most complete. The number after the trace is the weight of the trace when generating the surface, in all tests a weight of 1.0 was used and for the submission this params.json.
 
 ```bash
 OMP_WAIT_POLICY=PASSIVE OMP_NESTED=FALSE time nice \
