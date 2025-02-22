@@ -299,7 +299,7 @@ Begin the trace by typing:
 ```bash
 bin/vc_grow_seg_from_segments /mnt/raid_nvme/volpkgs/scroll3.volpkg/volumes/s3_multi_ensemble_ome.zarr /mnt/raid_nvme/volpkgs/scroll3.volpkg/paths /mnt/raid_nvme/volpkgs/scroll3.volpkg/paths/ /mnt/raid_nvme/volpkgs/scroll3.volpkg/params.json /mnt/raid_nvme/volpkgs/scroll3.volpkg/paths/auto_grown_20250211031737772
 ```
-The tracer will generate debug/preview surface every 50 generations (labeled z_dbg_gen...) and in the and save a final surface, both in the output dir. You can watch the trace grow by opening and closing vc3d to repulate the segments and selecting the highest number "dbg_gen" to view it in the 2d window in the top left. If the trace starts growing opposite of the direction you intended, change "flip_x" to the opposite of what you had set (for ex: true to false)
+The tracer will generate a debug/preview surface every 50 generations (labeled z_dbg_gen...) and in the end save a final surface, both in the output dir. You can watch the trace grow by opening and closing vc3d to repopulate the segments and selecting the highest number "dbg_gen" to view it in the 2d window in the top left. If the trace starts growing opposite of the direction you intended, change "flip_x" to the opposite of what you had set (for ex: true to false)
 
 <div className="mb-4">
   <img src="/img/segmentation/s3_sample_trace.png" className="w-[100%]"/>
