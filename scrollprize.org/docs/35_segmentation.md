@@ -331,7 +331,7 @@ VC3D allows to annotate patches as approved, defective, and to edit a patch mask
 
 **Defective**
 
-A patch can be marked as "defective" by checking the checkbox in the VC3D side panel. This is fast but not very useful as most patches have some good areas and also will have some amount of errors. Errors only matter if they fall at the same spot in multiple patches, so marking a whole patch as defective, which will the tracer ignore it completely is not necessary. **_Use sparingly, most patches contain at least some good data_**
+A patch can be marked as "defective" by checking the checkbox in the VC3D side panel. This is fast but not very useful as most patches have some good areas and also will have some amount of errors. Errors only matter if they fall at the same spot in multiple patches, so marking a whole patch as defective, which will make the tracer ignore it completely is not necessary. **_Use sparingly, most patches contain at least some good data_**
 
 **Approved**
 
