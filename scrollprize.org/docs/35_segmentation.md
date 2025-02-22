@@ -382,7 +382,7 @@ OMP_WAIT_POLICY=PASSIVE OMP_NESTED=FALSE \
 vc_tifxyz_winding /path/to/trace
 ```
 
-Which will generate some debug images and the two files "winding.tif" and "winding_vis.tif". Check the winding vis for errors, it should be a smooth continuous rainbow going from left to right, of you see discontinuities here, there were some errors in the trace that must be fixed. Mask those errors in the source trace and re-run winding estimation until it works, this should not generally be necessary.
+Which will generate some debug images and the two files "winding.tif" and "winding_vis.tif". Check the winding vis for errors, it should be a smooth continuous rainbow going from left to right. If you see discontinuities here, there were some errors in the trace that must be fixed. Mask those errors in the source trace and re-run winding estimation until it works. This should not generally be necessary.
 
 Copy the winding.tif and wind_vis.tif to the traces storage directory so its all in one place and ready for the next step. The winding estimation should take about 10s.
 
