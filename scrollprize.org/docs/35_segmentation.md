@@ -338,7 +338,7 @@ A patch can be marked as "defective" by checking the checkbox in the VC3D side p
 Checking the approved checkbox will mark a patch as manually "approved" which means the tracer will consider mesh corners coming from such a patch as good without checking for other patches. It is important that such a patch is error free (which is not necessary when creating a mask to only remove a problem area without checking "approved"). If you must mark one approved, the following process can be used: 
 
 * ctrl-click on a point in the area that shall be "correct".
-* follow along the two segment slices and place blue POIs every at an interval wherever you are sure the trace follows the correct sheet.
+* follow along the two segment slices and place blue POIs at an interval wherever you are sure the trace follows the correct sheet.
 * place red POIs where errors occur this process will place a "cross" of two lines which show the good/bad areas of the patch
 * ctrl-click to focus on a point on/between blue points to generate a second line, this way a whole grid of points is generated
 * use this grid as orientation to create a mask in GIMP
