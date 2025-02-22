@@ -291,7 +291,7 @@ The trace uses a config json with the following parameters:
 ```
 * flip_x determines the direction of the trace (it always grows to the right, but that can go to the inside or outside of the scroll, depending on seed location).
 * global steps per window: number of global optimization steps per moving window. The tracer operates in a moving window fashion, once the global optimization steps were run per window and no new corners were added the window is moved to the right and the process repeated. At the beginning use 0 global steps to get a fast and long trace and see if there are any coarse errors. Set to 0 to get a purely greedy but quite fast trace.
-* consensus_default_th: lowest number of inliers (patch "supports") required per corner to be considered an inlier. Note that a single well connected patch gives more than a single support to a corner (so this is not the number of surfaces). Maximum of 20 to get only well connected patches, minimum of 6 before there are lot of errors. For the submission values of 6 and 10 were used.
+* consensus_default_th: lowest number of inliers (patch "supports") required per corner to be considered an inlier. Note that a single well-connected patch gives more than a single support to a corner (so this is not the number of surfaces). Maximum of 20 to get only well-connected patches, minimum of 6 before there are a lot of errors. For the submission values of 6 and 10 were used.
 * consesus_limit_th: if we could otherwise not proceed go down to this number of required inliers, this will only be used if otherwise the trace would end.
 
 Begin the trace by typing:
