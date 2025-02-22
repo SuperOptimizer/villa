@@ -259,7 +259,7 @@ This step will finally create larger connected surfaces. The large surface trace
 Keep previous trace rounds around as the fusion step can later join multiple traces and problematic areas of a trace can be masked out. A mask can be generated for example with VC3D, or by using any 8-bit grayscale image with the same aspect ratio as one of the tiffxyz channels.
 
 **Locate a seed patch**
-The choice here is somewhat arbitrary, but the initial condition is important. You want a see here that does not skip sheets, and is of reasonable size.
+The choice here is somewhat arbitrary, but the initial condition is important. You want a seed here that does not skip sheets, and is of reasonable size.
 
 <div className="mb-4">
   <img src="/img/segmentation/s3_good_seed.png" className="w-[100%]"/>
