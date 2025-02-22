@@ -312,7 +312,7 @@ Using the VC3D GUI, the traced surfaces can be inspected for errors. Inspecting 
 
 The errors that need to be fixed are generally sheet jumps, where the surface jumps from one correct surface to another correct surface. Often these are visible by checking for gaps in the generated trace as a jump will normally not reconnect with the rest of the trace. 
 
-Typically, the easiest method for fixing these is to locate where the sheet jump first occurs, and then ctrl+click on this location, filter segments by focus point, and then mask out the offending patches..
+Typically, the easiest method for fixing these is to locate where the sheet jump first occurs, and then ctrl+click on this location, filter segments by focus point, and then mask out the offending patches.
 
 <div className="mb-4">
   <img src="/img/segmentation/sheet_jump.jpg" className="w-[75%]"/>
