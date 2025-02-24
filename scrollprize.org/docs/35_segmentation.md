@@ -259,7 +259,7 @@ This step will finally create larger connected surfaces. The large surface trace
 Keep previous trace rounds around as the fusion step can later join multiple traces and problematic areas of a trace can be masked out. A mask can be generated for example with VC3D, or by using any 8-bit grayscale image with the same aspect ratio as one of the tiffxyz channels.
 
 **Locate a seed patch**
-The choice here is somewhat arbitrary, but the initial condition is important. You want a see here that does not skip sheets, and is of reasonable size.
+The choice here is somewhat arbitrary, but the initial condition is important. You want a seed here that does not skip sheets, and is of reasonable size.
 
 <div className="mb-4">
   <img src="/img/segmentation/s3_good_seed.png" className="w-[100%]"/>
@@ -291,7 +291,7 @@ The trace uses a config json with the following parameters:
 ```
 * flip_x determines the direction of the trace (it always grows to the right, but that can go to the inside or outside of the scroll, depending on seed location).
 * global steps per window: number of global optimization steps per moving window. The tracer operates in a moving window fashion, once the global optimization steps were run per window and no new corners were added the window is moved to the right and the process repeated. At the beginning use 0 global steps to get a fast and long trace and see if there are any coarse errors. Set to 0 to get a purely greedy but quite fast trace.
-* consensus_default_th: lowest number of inliers (patch "supports") required per corner to be considered an inlier. Note that a single well connected patch gives more than a single support to a corner (so this is not the number of surfaces). Maximum of 20 to get only well connected patches, minimum of 6 before there are lot of errors. For the submission values of 6 and 10 were used.
+* consensus_default_th: lowest number of inliers (patch "supports") required per corner to be considered an inlier. Note that a single well-connected patch gives more than a single support to a corner (so this is not the number of surfaces). Maximum of 20 to get only well-connected patches, minimum of 6 before there are a lot of errors. For the submission values of 6 and 10 were used.
 * consesus_limit_th: if we could otherwise not proceed go down to this number of required inliers, this will only be used if otherwise the trace would end.
 
 Begin the trace by typing:
@@ -299,7 +299,7 @@ Begin the trace by typing:
 ```bash
 bin/vc_grow_seg_from_segments /mnt/raid_nvme/volpkgs/scroll3.volpkg/volumes/s3_multi_ensemble_ome.zarr /mnt/raid_nvme/volpkgs/scroll3.volpkg/paths /mnt/raid_nvme/volpkgs/scroll3.volpkg/paths/ /mnt/raid_nvme/volpkgs/scroll3.volpkg/params.json /mnt/raid_nvme/volpkgs/scroll3.volpkg/paths/auto_grown_20250211031737772
 ```
-The tracer will generate debug/preview surface every 50 generations (labeled z_dbg_gen...) and in the and save a final surface, both in the output dir. You can watch the trace grow by opening and closing vc3d to repulate the segments and selecting the highest number "dbg_gen" to view it in the 2d window in the top left. If the trace starts growing opposite of the direction you intended, change "flip_x" to the opposite of what you had set (for ex: true to false)
+The tracer will generate a debug/preview surface every 50 generations (labeled z_dbg_gen...) and in the end save a final surface, both in the output dir. You can watch the trace grow by opening and closing vc3d to repopulate the segments and selecting the highest number "dbg_gen" to view it in the 2d window in the top left. If the trace starts growing opposite of the direction you intended, change "flip_x" to the opposite of what you had set (for ex: true to false)
 
 <div className="mb-4">
   <img src="/img/segmentation/s3_sample_trace.png" className="w-[100%]"/>
@@ -310,9 +310,9 @@ The tracer will generate debug/preview surface every 50 generations (labeled z_d
 
 Using the VC3D GUI, the traced surfaces can be inspected for errors. Inspecting with an ome-zarr volume containing the original scan data (to see fiber continuity) is suggested. You can switch your volume by selecting the drop-down below the segments.
 
-The errors that need to be fixed are generally sheet jumps, were the surface jumps from one correct surface to another correct surface. Often these are visible by checking for gaps in the generated trace as a jump will normally not reconnect with the rest of the trace. 
+The errors that need to be fixed are generally sheet jumps, where the surface jumps from one correct surface to another correct surface. Often these are visible by checking for gaps in the generated trace as a jump will normally not reconnect with the rest of the trace. 
 
-Typically, the easiest method for fixing these is to locate where the sheet jump first occurs, and then ctrl+click on this location, filter segments by focus point, and then mask out the offending patches..
+Typically, the easiest method for fixing these is to locate where the sheet jump first occurs, and then ctrl+click on this location, filter segments by focus point, and then mask out the offending patches.
 
 <div className="mb-4">
   <img src="/img/segmentation/sheet_jump.jpg" className="w-[75%]"/>
@@ -331,15 +331,15 @@ VC3D allows to annotate patches as approved, defective, and to edit a patch mask
 
 **Defective**
 
-A patch can be marked as "defective" by checking the checkbox in the VC3D side panel. This is fast but not very useful as most patches have some good areas and also will have some amount of errors. Errors only matter if they fall at the same spot in multiple patches, so marking a whole patch as defective, which will the tracer ignore it completely is not necessary. **_Use sparingly, most patches contain at least some good data_**
+A patch can be marked as "defective" by checking the checkbox in the VC3D side panel. This is fast but not very useful as most patches have some good areas and also will have some amount of errors. Errors only matter if they fall at the same spot in multiple patches, so marking a whole patch as defective, which will make the tracer ignore it completely is not necessary. **_Use sparingly, most patches contain at least some good data_**
 
 **Approved**
 
-Checking the approved checkbox will mark a patch as manually "approved" which means the tracer will consider mesh corners coming from such a patch as good without checking for other patches. it is important that such a patch is error free (which is not necessary when creating a mask to only remove a problem area without checking "approved"). If you must mark one approved, the following process can be used: 
+Checking the approved checkbox will mark a patch as manually "approved" which means the tracer will consider mesh corners coming from such a patch as good without checking for other patches. It is important that such a patch is error free (which is not necessary when creating a mask to only remove a problem area without checking "approved"). If you must mark one approved, the following process can be used: 
 
 * ctrl-click on a point in the area that shall be "correct".
-* follow along the two segment slices and place blue POIs every at an interval wherever you are sure the trace follows the correct sheet.
-* place red POIs where errors occur this process will place a "cross" of two lines which show the good/bad areas of the patch
+* follow along the two segment slices and place blue POIs at an interval wherever you are sure the trace follows the correct sheet.
+* place red POIs where errors occur. This process will place a "cross" of two lines which show the good/bad areas of the patch
 * ctrl-click to focus on a point on/between blue points to generate a second line, this way a whole grid of points is generated
 * use this grid as orientation to create a mask in GIMP
 
@@ -348,7 +348,7 @@ Checking the approved checkbox will mark a patch as manually "approved" which me
 By clicking on the "edit segment mask" button a mask image will be generated and saved as .tif in the segments directory. Then the systems default application for the filetype .tif will be launched. It is recommended to use GIMP for this. The mask file is a multi-layer tif file where the lowest layer is the actual binary mask and the second layer is the rendered surface using the currently selected volume.
 
 * place one POI on one side of the jump and a second on the other.
-* select "filter by POIs" to get a list of patches who contain this sheet jump, this probably list about 5-20 patches
+* select "filter by POIs" to get a list of patches which contain this sheet jump, this probably list about 5-20 patches
 * press "edit segment mask"
 * GIMP will open an import dialog, the default settings are fine so just press import
 * click on the layer transparency to make the upper layer around 50% transparent
@@ -382,13 +382,13 @@ OMP_WAIT_POLICY=PASSIVE OMP_NESTED=FALSE \
 vc_tifxyz_winding /path/to/trace
 ```
 
-Which will generate some debug images and the two files "winding.tif" and "winding_vis.tif". Check the winding vis for errors, it should be a smooth continuous rainbow going from left to right, of you see discontinuities here, there were some errors in the trace that must be fixed. Mask those errors in the source trace and re-run winding estimation until it works, this should not generally be necessary.
+Which will generate some debug images and the two files "winding.tif" and "winding_vis.tif". Check the winding vis for errors, it should be a smooth continuous rainbow going from left to right. If you see discontinuities here, there were some errors in the trace that must be fixed. Mask those errors in the source trace and re-run winding estimation until it works. This should not generally be necessary.
 
-Copy the winding.tif and wind_vis.tif to the traces storage directory so its all in one place and ready for the next step. The winding estimation should take about 10s.
+Copy the winding.tif and wind_vis.tif to the traces storage directory so it's all in one place and ready for the next step. The winding estimation should take about 10s.
 
 **Trace Fusion and Inpainting**
 
-Once you have estimated winding assignments for all the traces you intend on fusing, you can run this command, with an arbitrary number of traces. Note that the first trace will be used as the seed an it will also define the size of the output trace and will generate normal constraints, so it should be the longest and most complete. The number after the trace is the weight of the trace when generating the surface, in all test a weight of 1.0 was used and for the submission this params.json.
+Once you have estimated winding assignments for all the traces you intend on fusing, you can run this command with an arbitrary number of traces. Note that the first trace will be used as the seed and it will also define the size of the output trace and will generate normal constraints, so it should be the longest and most complete. The number after the trace is the weight of the trace when generating the surface, in all tests a weight of 1.0 was used and for the submission this params.json.
 
 ```bash
 OMP_WAIT_POLICY=PASSIVE OMP_NESTED=FALSE time nice \
