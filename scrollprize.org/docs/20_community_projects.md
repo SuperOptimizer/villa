@@ -49,7 +49,7 @@ Some highlighted contributions are added to this repository as submodules.
 
 We keep this repository updated as much as we can, but research moves _fast_! 🏃💨
 
-For state-of-the-art updates join our [Discord server](https://discord.com/invite/V4fJhvtaQn) 💬⏰
+For state-of-the-art updates join our [Discord server](https://discord.com/invite/uTfNwwecCQ) 💬⏰
 
 ## 📊 Data access/visualization
 
