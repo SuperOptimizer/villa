@@ -153,7 +153,7 @@ Here are some other excellent books we recommend:
 
 ### What if I would like to contribute, but don’t have time to compete for the Grand Prize?
 
-* Join our [Discord](https://discord.gg/V4fJhvtaQn) to learn about current efforts and how you can pitch in.
+* Join our [Discord](https://discord.com/invite/uTfNwwecCQ) to learn about current efforts and how you can pitch in.
 * You can make smaller open source contributions, which would benefit the whole community. Everyone in the community will be grateful for your work, and you might even be able to win a prize - see those [already awarded](winners)!
 
 ### Can I share my progress on social media?
