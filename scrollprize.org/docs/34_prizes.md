@@ -1,7 +1,7 @@
 ---
 id: prizes
 title: "New Year, New Prizes"
-sidebar_label: "Prizes"
+sidebar_label: "2025 Prizes"
 hide_table_of_contents: true
 ---
 

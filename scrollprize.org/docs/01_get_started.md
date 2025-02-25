@@ -42,7 +42,7 @@ import Admonition from '@theme/Admonition';
 
 ### 1. Join the community
 
-Join our [Discord server](https://discord.gg/V4fJhvtaQn), subscribe to our [mailing list](https://scrollprize.substack.com), follow [@scrollprize](https://x.com/scrollprize) on X, and complete our [community survey](https://forms.gle/mtA3B4uQusVFTEDu9).
+Join our [Discord server](https://discord.com/invite/uTfNwwecCQ), subscribe to our [mailing list](https://scrollprize.substack.com), follow [@scrollprize](https://x.com/scrollprize) on X, and complete our [community survey](https://forms.gle/mtA3B4uQusVFTEDu9).
 
 ### 2. See a scroll
 
@@ -84,7 +84,7 @@ There are many great tools and resources that you can use and contribute to:
 
 For prototyping new ideas, we particularly recommend the [Python](https://github.com/ScrollPrize/villa/tree/main/vesuvius) and [C](https://github.com/ScrollPrize/villa/tree/main/vesuvius-c) libraries for easily working with scroll data.
 
-Reach out to our [Discord community](https://discord.gg/V4fJhvtaQn) and [team](mailto:team@scrollprize.org) with your questions!
+Reach out to our [Discord community](https://discord.com/invite/uTfNwwecCQ) and [team](mailto:team@scrollprize.org) with your questions!
 
 <!-- cloud image https://github.com/ScrollPrize/cloud-image -->
 <!-- cloud credits (link to form to apply for them) -->
