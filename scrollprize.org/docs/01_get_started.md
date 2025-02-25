@@ -63,7 +63,7 @@ There are currently two primary subproblems where we need your help:
 
 <Admonition type="info" icon="⚙️" title="Segmentation">
 * Prizes: [Progress Prizes](prizes#progress-prizes)
-* Starting point: [Virtual Unwrapping](unwrapping), [Segmentation tutorial](tutorial3), [Segmentation - a different approach](tutorial4)
+* Starting point: [Virtual Unwrapping](unwrapping), [Segmentation tutorial](segmentation), [Segmentation - a different approach](tutorial4)
 </Admonition>
 
 <Admonition type="info" icon="🖋️" title="Ink Detection">
