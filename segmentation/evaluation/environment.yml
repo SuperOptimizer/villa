@@ -1,0 +1,17 @@
+name: vc-evaluation
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.12
+  - pandas
+  - numpy
+  - tifffile
+  - wandb
+  - matplotlib
+  - seaborn
+  - pyyaml
+  - tqdm
+  - pytorch
+  - torchvision
+  - torchaudio

@@ -1,0 +1,10 @@
+labels_folder: "/home/giorgio/Documents/nnUNet_raw/Dataset006_skeleton-fibers/labelsTr"
+predictions_folder: "/home/giorgio/Documents/nnUNet_raw/Dataset006_skeleton-fibers/labelsTr"
+output_csv: "metrics.csv"
+output_folder: "/home/giorgio/Projects/villa-cases/segmentation/evaluation/output"
+wandb_project: "vesuvius-challenge-evaluation"
+run_name: "skeleton-fibers-mixed"
+metrics:
+  - type: "dice"
+    hyperparameters:
+      threshold: 0.5
