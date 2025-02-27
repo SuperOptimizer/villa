@@ -12,5 +12,5 @@ dependencies:
   - scikit-image
   - pip
   - pip:
-      - webknossos
+      - webknossos==0.16.2
       - vesuvius
