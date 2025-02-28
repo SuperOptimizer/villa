@@ -34,9 +34,12 @@ def compute_metrics(label: np.ndarray, prediction: np.ndarray, metrics_config: L
         metric_type: str = metric["type"]
         hyperparams: Dict[str, Any] = metric.get("hyperparameters", {})
         try:
-            mod = importlib.import_module(f"metrics.{metric_type}")
+            mod = __import__(f"metrics.{metric_type}", fromlist=["compute"])
             metric_value = mod.compute(label, prediction, **hyperparams)
-            results[metric_type] = float(metric_value)
+            if isinstance(metric_value, dict):
+                results.update(metric_value)
+            else:
+                results[metric_type] = float(metric_value)
         except ModuleNotFoundError:
             print(f"Module for metric '{metric_type}' not found in the metrics folder. Skipping.")
         except AttributeError:
@@ -127,14 +130,16 @@ def main(args: argparse.Namespace) -> None:
     print(f"Metrics saved to {output_csv_path}")
     
     stats_summary: Dict[str, float] = {}
-    metric_names = [m["type"] for m in metrics_config]
-    for metric in metric_names:
-        if metric in df.columns:
-            stats_summary.update(compute_statistics(df, metric))
+    # Compute statistics for every metric column (except "file")
+    for col in df.columns:
+        if col != "file":
+            stats_summary.update(compute_statistics(df, col))
     wandb.log(stats_summary)
     
-    for metric in metric_names:
-        log_histogram_for_metric(df, metric=metric, output_folder=str(output_folder_path))
+    # Log histograms for every metric column (except "file")
+    for col in df.columns:
+        if col != "file":
+            log_histogram_for_metric(df, metric=col, output_folder=str(output_folder_path))
     
     for metric in metrics_config:
         metric_type: str = metric["type"]
