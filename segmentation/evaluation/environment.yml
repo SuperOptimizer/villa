@@ -7,7 +7,7 @@ dependencies:
   - pandas
   - numpy
   - tifffile
-  - wandb
+  - wandb[media]
   - matplotlib
   - seaborn
   - pyyaml
@@ -15,3 +15,6 @@ dependencies:
   - pytorch
   - torchvision
   - torchaudio
+  - pip:
+      - kimimaro
+      - posix-ipc

@@ -18,7 +18,7 @@ Configure appropriately the configuration file in `configs/<configuration-of-eva
 Run the pipeline by providing the YAML config file:
 
 ```bash
-python evaluate.py --config configs/example-dice.yml
+python evaluate.py --config configs/example-mixed.yml
 ```
 
 ## Development
