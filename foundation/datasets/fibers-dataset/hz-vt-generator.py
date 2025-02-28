@@ -220,25 +220,25 @@ if __name__ == "__main__":
     print(f"Voxel grid complete. Shape: {voxel_grid.shape}")
 
     # 4) Write label volume
-    labels_filename_std = os.path.join(
-        labels_folder, f"{scroll_id}_{z_start:05d}_{y_start:05d}_{x_start:05d}_{size}_std.tif"
-    )
+    # labels_filename_std = os.path.join(
+    #     labels_folder, f"{scroll_id}_{z_start:05d}_{y_start:05d}_{x_start:05d}_{size}_std.tif"
+    # )
     labels_filename = os.path.join(
         labels_folder, f"{scroll_id}_{z_start:05d}_{y_start:05d}_{x_start:05d}_{size}.tif"
     )
-    print(f"Writing annotation to {labels_filename} and {labels_filename_std}...")
+    print(f"Writing annotation to {labels_filename}...") # and {labels_filename_std}...")
     tifffile.imwrite(labels_filename, voxel_grid)
-    tifffile.imwrite(labels_filename_std, voxel_grid)
+    # tifffile.imwrite(labels_filename_std, voxel_grid)
     print("Annotation wrote.")
 
     # 5) Load and write image chunk from WebKnossos
     images_filename = os.path.join(
         images_folder, f"{scroll_id}_{z_start:05d}_{y_start:05d}_{x_start:05d}_{size}_0000.tif"
     )
-    images_filename_std = os.path.join(
-        images_folder, f"{scroll_id}_{z_start:05d}_{y_start:05d}_{x_start:05d}_{size}_std_0000.tif"
-    )
-    print(f"Writing image chunk to {images_filename} and {images_filename_std}...")
+    # images_filename_std = os.path.join(
+    #     images_folder, f"{scroll_id}_{z_start:05d}_{y_start:05d}_{x_start:05d}_{size}_std_0000.tif"
+    # )
+    print(f"Writing image chunk to {images_filename}...")# and {images_filename_std}...")
 
     WK_URL = "http://dl.ash2txt.org:8080"
     with open("token.txt", "r") as file:
