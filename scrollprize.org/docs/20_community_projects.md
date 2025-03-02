@@ -67,7 +67,9 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 
 - [vesuvius-phalanx](https://github.com/mvrcii/phalanx): Python library / CLI for accessing Vesuvius data. Allows flexible access to volume and fragment scroll data. By Marcel Roth
 
-- [llfio-chunkloader](https://github.com/climbmax123/LLFIOCunkloadingTestingAndBenching): A Methode to access Data in chunks of (x,y,z) that is by lot faster and compute efficient than Zarr. (Written in C++ but it is possible to integrate in Python). 
+- [llfio-chunkloader](https://github.com/climbmax123/LLFIOCunkloadingTestingAndBenching): A Methode to access Data in chunks of (x,y,z) that is by lot faster and compute efficient than Zarr. (Written in C++ but it is possible to integrate in Python).
+
+- [preprocessed-data](https://github.com/usc-caisplusplus/scroll-data-preprocessing): Data preprocessing code and a fully processed version of the dataset in .zarr format to allow for faster training of ink detection models. 
 
 ## Segmentation
 
