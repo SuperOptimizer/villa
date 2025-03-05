@@ -692,6 +692,11 @@ const team = {
       href: "https://youssefnader.com/",
     },
     {
+      name: "Johannes Rudolph",
+      title: "Platform Engineer",
+      href: "https://blog.virtual-void.net/",
+    },
+    {
       name: "David Josey",
       title: "ML Annotation Team Lead",
       href: "https://www.linkedin.com/in/davidsjosey/",
