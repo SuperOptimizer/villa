@@ -819,7 +819,7 @@ const team = {
     {
       name: "Michael McOsker",
       title: "Researcher, University College London",
-      href: "https://www.ucl.ac.uk/classics/michael-mcosker",
+      href: "https://profiles.ucl.ac.uk/97051-michael-mcosker",
     },
     {
       name: "Claudio Vergara",
