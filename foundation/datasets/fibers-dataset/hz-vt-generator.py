@@ -4,6 +4,7 @@ import os
 import numpy as np
 from math import sqrt
 import tifffile
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 from scipy.ndimage import distance_transform_edt
 
@@ -110,11 +111,11 @@ def fill_volume_for_tree(tree, output_shape, origins=(0, 0, 0)):
 ############################################################
 # 4) (Optional) Expand + Vesselness
 ############################################################
-def expand_and_vesselness(binary_volume):
+def expand_and_vesselness(binary_volume, radius=3):
     # binary_volume: shape (Z, Y, X)
     binary_inverted = 1 - binary_volume
     edt = distance_transform_edt(binary_inverted)
-    expanded_structure = (edt <= 3).astype(np.uint8)
+    expanded_structure = (edt <= radius).astype(np.uint8)
     vessel = detect_vesselness(expanded_structure.astype(np.float32))
     combined = np.maximum(binary_volume, vessel)
     # Binning => threshold everything above 0 to 1
@@ -125,55 +126,78 @@ def expand_and_vesselness(binary_volume):
 
 
 ############################################################
-# 5) Main function: for each tree => fill => PCA => label
+# 5) Main function: process each tree individually and merge labels
 ############################################################
-def voxelize_skeleton(annotation, output_shape=(100, 100, 100), origins=(0, 0, 0)):
+def process_tree_worker(tree, output_shape, origins, radius):
     """
-    - For each 'tree', we fill a TEMP volume, then gather its voxel coords => PCA => orientation.
-    - We store it into separate volumes: vertical vs. horizontal.
-    - Optionally do expansions/vesselness on each.
-    - Finally merge them: vertical=1, horizontal=2, overlap=3.
-
-    Returns a final volume in shape (Z, Y, X).
+    Process a single tree: voxelize, apply expansion/vesselness,
+    perform PCA classification, and return contributions for horizontal and vertical.
     """
-    # We'll keep two volumes for final labeling
-    voxel_grid_vertical = np.zeros(output_shape, dtype=np.uint8)
-    voxel_grid_horizontal = np.zeros(output_shape, dtype=np.uint8)
+    temp_fiber = fill_volume_for_tree(tree, output_shape, origins)
+    processed_temp = expand_and_vesselness(temp_fiber, radius)
+    fiber_voxels = np.argwhere(processed_temp > 0)
+    orientation = classify_fiber_pca_on_voxels(fiber_voxels)
+    
+    # Initialize per-tree accumulators
+    accum_h = np.zeros(output_shape, dtype=np.uint16)
+    accum_v = np.zeros(output_shape, dtype=np.uint16)
+    if orientation == "vertical":
+        accum_v += processed_temp.astype(np.uint16)
+    else:
+        accum_h += processed_temp.astype(np.uint16)
+    return accum_h, accum_v
 
-    # Helper function: process a single tree
-    def process_tree(tree):
-        # 1) Fill a temporary volume for this tree
-        temp_fiber = fill_volume_for_tree(tree, output_shape, origins)  # shape (Z, Y, X)
-        # 2) Extract all voxel coords => (z,y,x) for PCA
-        fiber_voxels = np.argwhere(temp_fiber > 0)
-        # 3) Classify
-        orientation = classify_fiber_pca_on_voxels(fiber_voxels)  # "vertical"/"horizontal"
-        # 4) Merge into the appropriate volume
-        if orientation == "vertical":
-            np.maximum(voxel_grid_vertical, temp_fiber, out=voxel_grid_vertical)
-        else:
-            np.maximum(voxel_grid_horizontal, temp_fiber, out=voxel_grid_horizontal)
+def voxelize_skeleton(annotation, output_shape=(100, 100, 100), origins=(0, 0, 0), radius=3, n_workers=None):
+    """
+    Parallelized version of voxelize_skeleton.
 
-    # Process all groups and trees
-    for group in tqdm(annotation.skeleton.groups, desc="Groups"):
-        for tree in tqdm(group.trees, desc="Trees in groups"):
-            process_tree(tree)
+    Collect trees from both groups and the root level.
+    Each tree is processed in parallel and its horizontal/vertical contributions
+    are summed. Final labeling:
+      - Mixed horizontal & vertical => 3.
+      - Only horizontal: 1 if single tree, 4 if overlapping (>=2).
+      - Only vertical: 2 if single tree, 5 if overlapping (>=2).
+    """
+    # Collect all trees from groups and root level
+    all_trees = []
+    for group in annotation.skeleton.groups:
+        all_trees.extend(group.trees)
+    all_trees.extend(annotation.skeleton.trees)
+    
+    # Initialize accumulators
+    accum_horizontal = np.zeros(output_shape, dtype=np.uint8)
+    accum_vertical = np.zeros(output_shape, dtype=np.uint8)
+    
+    # Process trees in parallel
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(process_tree_worker, tree, output_shape, origins, radius): tree for tree in all_trees}
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Processing trees"):
+            h, v = future.result()
+            accum_horizontal += h
+            accum_vertical += v
 
-    # Process root-level trees
-    for tree in tqdm(annotation.skeleton.trees, desc="Trees in root"):
-        process_tree(tree)
+    # Merge results into final labeled volume
+    final_volume = np.zeros(output_shape, dtype=np.uint8)
+    
+    # Mixed contributions: both horizontal and vertical present => label 3
+    mask_mixed = (accum_horizontal > 0) & (accum_vertical > 0)
+    final_volume[mask_mixed] = 3
 
-    # Optionally do expansions + vesselness
-    vert_final = expand_and_vesselness(voxel_grid_vertical)
-    horz_final = expand_and_vesselness(voxel_grid_horizontal)
+    # Only horizontal contributions
+    mask_only_h = (accum_horizontal > 0) & (accum_vertical == 0)
+    mask_single_h = mask_only_h & (accum_horizontal == 1)
+    final_volume[mask_single_h] = 1
+    mask_overlap_h = mask_only_h & (accum_horizontal >= 2)
+    final_volume[mask_overlap_h] = 4
 
-    # Merge with sum => overlap = 3
-    vert_labeled = (vert_final > 0).astype(np.uint8) * 1
-    horz_labeled = (horz_final > 0).astype(np.uint8) * 2
-    merged = vert_labeled + horz_labeled
+    # Only vertical contributions
+    mask_only_v = (accum_vertical > 0) & (accum_horizontal == 0)
+    mask_single_v = mask_only_v & (accum_vertical == 1)
+    final_volume[mask_single_v] = 2
+    mask_overlap_v = mask_only_v & (accum_vertical >= 2)
+    final_volume[mask_overlap_v] = 5
 
-    # Final shape: (Z, Y, X)
-    return merged
+    return final_volume
 
 
 ############################################################
@@ -185,8 +209,11 @@ if __name__ == "__main__":
     )
     parser.add_argument("--nml_path", required=True, help="Path to the .nml file.")
     parser.add_argument("--output_folder", required=True, help="Output folder path.")
+    parser.add_argument("--radius", type=int, default=2, help="Radius for expansion")
+    parser.add_argument("--workers", type=int, default=None, help="Num of workers.")
     args = parser.parse_args()
 
+    assert 1 <= args.radius <= 4, "Radius should be between 1 and 4."
     # Create folder structure if needed
     labels_folder = os.path.join(args.output_folder, "labelsTr")
     images_folder = os.path.join(args.output_folder, "imagesTr")
@@ -211,11 +238,13 @@ if __name__ == "__main__":
     print(f"Starting coordinates: {z_start},{y_start},{x_start}. Chunk size: {size}")
 
     # 3) Voxelize with point-cloud-based PCA
-    print("Voxelizing skeleton fibers into volumes and computing orientation from the voxel cloud...")
+    print("Voxelizing skeleton fibers and computing orientation from individual trees...")
     voxel_grid = voxelize_skeleton(
         annotation,
         output_shape=(size, size, size),  # (Z, Y, X)
-        origins=(x_start, y_start, z_start)  # (X, Y, Z)
+        origins=(x_start, y_start, z_start),  # (X, Y, Z)
+        radius=args.radius,
+        n_workers=args.workers
     )
     print(f"Voxel grid complete. Shape: {voxel_grid.shape}")
 
