@@ -51,12 +51,12 @@ We’re awarding $200,000 to the first team to unwrap an entire scroll and produ
 <summary>Submission criteria and requirements</summary>
 
 1. **Segmentation**
-* Estimate the total surface area of the papyrus in the scroll, and compute the total surface area of the segmented mesh (in cm2)
-* The segmentation must cover 90% of the estimated scroll area.. Segments should be flattened and shown in 2D as if the scroll were unwrapped. Each scroll is ideally captured by a single segmentation (or each connected component of the scroll) rather than separate overlapping segmentations.
-* Compute the same measure for the papyrus sheets actually segmented in your submission. **You must segment 90% or more of the total from all scrolls** (not per-scroll).
-* Segments should be flattened and shown in 2D as if the scroll were unwrapped. Each scroll is ideally captured by a single segmentation (or each connected component of the scroll) rather than separate overlapping segmentations.
+* Estimate the total area of the scroll’s written surface (in cm2)
+* Compute the total surface area of the segmented mesh (in cm2) in your submission. **You must segment 90% or more of the total estimated area**
+* Segments should be flattened and shown in 2D as if the scroll were unwrapped.
+* The scroll should ideally be captured by a single segmentation (or each connected component of the scroll) rather than separate overlapping segmentations.
 * Segments should pass geometric sanity checks; for example, no self-intersections
-* 
+
 2. **Ink detection**
 * Your submission must contain ink predictions for the entire flattened mesh, of the same shape as the flattened surface
 * The entire submission is too large to transcribe quickly, so the papyrological team will evaluate each line as:
