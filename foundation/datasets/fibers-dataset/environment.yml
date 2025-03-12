@@ -12,5 +12,8 @@ dependencies:
   - scikit-image
   - pip
   - pip:
-      - webknossos
+      - webknossos==0.16.2
       - vesuvius
+      - kimimaro
+      - connected-components-3d
+      - posix_ipc
