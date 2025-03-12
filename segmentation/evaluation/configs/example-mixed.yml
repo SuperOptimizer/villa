@@ -1,0 +1,18 @@
+labels_folder: "/home/giorgio/Documents/nnUNet_raw/Dataset008_hz-vt/labelsTr"
+predictions_folder: "/home/giorgio/Documents/nnUNet_raw/Dataset008_hz-vt/preds"
+output_csv: "metrics.csv"
+output_folder: "/home/giorgio/Projects/villa-cases/segmentation/evaluation/output"
+wandb_project: "vesuvius-challenge-evaluation"
+run_name: "skeleton-fibers-mixed"
+metrics:
+  - type: "dice"
+    hyperparameters:
+      threshold: 0.5
+  - type: "skeleton_distance_length"
+    hyperparameters:
+      distance_metric: "wasserstein"  # or "symkl"
+      bins: 30
+      epsilon: 1e-8
+      output_folder: "/home/giorgio/Projects/villa-cases/segmentation/evaluation/output"
+  - type: "critical_components"
+    hyperparameters: {}

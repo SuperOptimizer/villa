@@ -14,3 +14,6 @@ dependencies:
   - pip:
       - webknossos==0.16.2
       - vesuvius
+      - kimimaro
+      - connected-components-3d
+      - posix_ipc
