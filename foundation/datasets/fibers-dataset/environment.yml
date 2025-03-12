@@ -10,10 +10,10 @@ dependencies:
   - scipy
   - tqdm
   - scikit-image
+  - posix_ipc
   - pip
   - pip:
-      - webknossos==0.16.2
       - vesuvius
       - kimimaro
-      - connected-components-3d
-      - posix_ipc
+      - webknossos[all]==0.16.2
+      - tensorstore==0.1.71
