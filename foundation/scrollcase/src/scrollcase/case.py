@@ -48,15 +48,16 @@ class ScrollCase:
     alignment_ring_width_mm: Optional[float] = 1.5
 
     # Alignment nubs
-    nub_size_mm: float = 4
+    nub_size_mm: float = 3
     nub_depth_mm: float = 2
-    nub_margin_mm: float = 0.5
+    nub_margin_mm: float = 1
 
     # Square caps
     square_height_mm: float = 10
     square_edge_fillet: float = 20
     oring_width: float = 3
     oring_depth: float = 2
+    right_cap_buffer: float = 1
 
     # Text properties
     text_font_size: float = 8
@@ -412,7 +413,17 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                     align=(Align.CENTER, Align.MIN, Align.CENTER),
                 )
 
+    # Extra space at bottom of right case half
+    with BuildPart() as right_bottom_margin:
+        with Locations((0, 0, case.cylinder_bottom - case.square_height_mm)):
+            Box(
+                case.square_loft_radius * 2,
+                case.square_loft_radius * 2,
+                case.right_cap_buffer,
+                align=(Align.CENTER, Align.CENTER, Align.MIN),
+            )
+
     left = case_part.solids()[0] + mount_disc.solids()[0] + nubs.solids()
-    right = case_part.solids()[1] - hollows.solids()
+    right = case_part.solids()[1] - hollows.solids() - right_bottom_margin.solids()
 
     return left, right
