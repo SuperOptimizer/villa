@@ -95,7 +95,7 @@ We may reward partial work - if your unrolling works but the ink detection isn't
 ## Progress Prizes
 As the challenges of autosegmentation and generalized ink detection become clearer, so do our expections for progress prize submissions.
 
-Submissions are evaluated monthly, and multiple submissions/awards per month are permitted. The next deadline is 11:59pm Pacific, February 28, 2025! When ready, please submit using [this form](https://docs.google.com/forms/d/e/1FAIpQLSckqMinI7t9pn15lcd3sying2tNhi4IQ6583IdcZ4yR08KvFg/viewform?usp=dialog).
+Submissions are evaluated monthly, and multiple submissions/awards per month are permitted. The next deadline is 11:59pm Pacific, February 28, 2025! When ready, please submit using [this form](https://docs.google.com/forms/d/e/1FAIpQLSdPKXHtDgZs0kihxTMlwCvFMiJcR0b6ls55Kol9-KFZQCU_zQ/viewform?usp=header).
 
 **Core Requirements**
 1. Problem Identification and Solution
