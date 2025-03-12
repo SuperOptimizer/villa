@@ -692,6 +692,11 @@ const team = {
       href: "https://youssefnader.com/",
     },
     {
+      name: "Johannes Rudolph",
+      title: "Platform Engineer",
+      href: "https://blog.virtual-void.net/",
+    },
+    {
       name: "David Josey",
       title: "ML Annotation Team Lead",
       href: "https://www.linkedin.com/in/davidsjosey/",
@@ -814,7 +819,7 @@ const team = {
     {
       name: "Michael McOsker",
       title: "Researcher, University College London",
-      href: "https://www.ucl.ac.uk/classics/michael-mcosker",
+      href: "https://profiles.ucl.ac.uk/97051-michael-mcosker",
     },
     {
       name: "Claudio Vergara",

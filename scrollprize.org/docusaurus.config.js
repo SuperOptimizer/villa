@@ -3,6 +3,8 @@
 
 const lightCodeTheme = require("prism-react-renderer").themes.github;
 const darkCodeTheme = require("prism-react-renderer").themes.dracula;
+const rehypeKatex = require("rehype-katex").default; // Extract default export for rehype-katex
+const remarkMath = require("remark-math").default; // Extract default export for remark-math
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -34,25 +36,17 @@ const config = {
           sidebarPath: require.resolve("./sidebars.js"),
           sidebarCollapsible: false,
           breadcrumbs: false,
-          editUrl: "https://github.com/ScrollPrize/villa/tree/main/scrollprize.org",
-          remarkPlugins: [
-            require("remark-math"), // Enable LaTeX syntax
-          ],
-          rehypePlugins: [
-            [
-              require("rehype-katex"),
-              {
-                strict: false,
-              },
-            ],
-          ],
+          editUrl:
+              "https://github.com/ScrollPrize/villa/tree/main/scrollprize.org",
+          remarkPlugins: [remarkMath],
+          rehypePlugins: [[rehypeKatex, { strict: false }]],
         },
         blog: false,
         theme: {
           customCss: require.resolve("./src/css/custom.css"),
         },
         gtag: {
-          trackingID: 'G-NLQQENBL0L',
+          trackingID: "G-NLQQENBL0L",
           anonymizeIP: false,
         },
       }),
@@ -60,122 +54,122 @@ const config = {
   ],
 
   themeConfig:
-    /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
-    ({
-      navbar: {
-        title: "Vesuvius Challenge",
-        logo: {
-          alt: "Vesuvius Challenge Logo",
-          src: "img/social/favicon-64x64.png",
+  /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
+      ({
+        navbar: {
+          title: "Vesuvius Challenge",
+          logo: {
+            alt: "Vesuvius Challenge Logo",
+            src: "img/social/favicon-64x64.png",
+          },
+          items: [],
         },
-        items: [],
-      },
-      footer: {
-        style: 'dark',
-        links: [
+        footer: {
+          style: "dark",
+          links: [
+            {
+              title: "Overview",
+              items: [
+                {
+                  label: "Getting Started",
+                  to: "/get_started",
+                },
+                {
+                  label: "Master Plan",
+                  to: "/master_plan",
+                },
+              ],
+            },
+            {
+              title: "Community",
+              items: [
+                {
+                  label: "Discord",
+                  href: "https://discord.gg/V4fJhvtaQn",
+                },
+                {
+                  label: "Substack",
+                  href: "https://scrollprize.substack.com",
+                },
+                {
+                  label: "GitHub",
+                  href: "https://github.com/ScrollPrize/villa",
+                },
+                {
+                  label: "𝕏",
+                  href: "https://x.com/scrollprize",
+                },
+              ],
+            },
+            {
+              title: "More",
+              items: [
+                {
+                  label: "Jobs",
+                  to: "/jobs",
+                },
+              ],
+            },
+          ],
+          copyright: `Copyright © ${new Date().getFullYear()} Vesuvius Challenge.`,
+        },
+        metadata: [
           {
-            title: 'Overview',
-            items: [
-              {
-                label: 'Getting Started',
-                to: '/get_started',
-              },
-              {
-                label: 'Master Plan',
-                to: '/master_plan',
-              }
-            ],
+            name: "description",
+            content:
+                "A $1,000,000+ machine learning and computer vision competition",
           },
           {
-            title: 'Community',
-            items: [
-              {
-                label: 'Discord',
-                href: 'https://discord.gg/V4fJhvtaQn',
-              },
-              {
-                label: 'Substack',
-                href: 'https://scrollprize.substack.com',
-              },
-              {
-                label: 'GitHub',
-                href: 'https://github.com/ScrollPrize/villa',
-              },
-              {
-                label: '𝕏',
-                href: 'https://x.com/scrollprize',
-              },
-            ],
+            property: "og:type",
+            content: "website",
           },
           {
-            title: 'More',
-            items: [
-              {
-                label: 'Jobs',
-                to: '/jobs', 
-              },
-            ],
+            property: "og:url",
+            content: "https://scrollprize.org/",
+          },
+          {
+            property: "og:title",
+            content: "Vesuvius Challenge",
+          },
+          {
+            property: "og:description",
+            content: "A machine learning & computer vision competition.",
+          },
+          {
+            property: "og:image",
+            content: "https://scrollprize.org/img/social/opengraph.jpg",
+          },
+          {
+            property: "twitter:card",
+            content: "summary_large_image",
+          },
+          {
+            property: "twitter:url",
+            content: "https://scrollprize.org/",
+          },
+          {
+            property: "twitter:title",
+            content: "Vesuvius Challenge",
+          },
+          {
+            property: "twitter:description",
+            content: "A machine learning & computer vision competition.",
+          },
+          {
+            property: "twitter:image",
+            content: "https://scrollprize.org/img/social/opengraph.jpg",
           },
         ],
-        copyright: `Copyright © ${new Date().getFullYear()} Vesuvius Challenge.`,
-      },
-      metadata: [
-        {
-          name: "description",
-          content:
-            "A $1,000,000+ machine learning and computer vision competition",
+        prism: {
+          theme: lightCodeTheme,
+          darkTheme: darkCodeTheme,
         },
-        {
-          property: "og:type",
-          content: "website",
+        colorMode: {
+          defaultMode: "dark",
+          disableSwitch: true,
+          respectPrefersColorScheme: false,
         },
-        {
-          property: "og:url",
-          content: "https://scrollprize.org/",
-        },
-        {
-          property: "og:title",
-          content: "Vesuvius Challenge",
-        },
-        {
-          property: "og:description",
-          content: "A machine learning & computer vision competition.",
-        },
-        {
-          property: "og:image",
-          content: "https://scrollprize.org/img/social/opengraph.jpg",
-        },
-        {
-          property: "twitter:card",
-          content: "summary_large_image",
-        },
-        {
-          property: "twitter:url",
-          content: "https://scrollprize.org/",
-        },
-        {
-          property: "twitter:title",
-          content: "Vesuvius Challenge",
-        },
-        {
-          property: "twitter:description",
-          content: "A machine learning & computer vision competition.",
-        },
-        {
-          property: "twitter:image",
-          content: "https://scrollprize.org/img/social/opengraph.jpg",
-        },
-      ],
-      prism: {
-        theme: lightCodeTheme,
-        darkTheme: darkCodeTheme,
-      },
-      colorMode: {
-        defaultMode: "dark",
-        disableSwitch: true,
-        respectPrefersColorScheme: false,
-      },
-    }),
+      }),
 
   plugins: [
     async function myPlugin(context, options) {
