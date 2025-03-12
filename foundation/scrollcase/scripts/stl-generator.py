@@ -81,7 +81,7 @@ def process_scroll(padded_scroll: str, mesh_file: str, output_dir: str, config=N
         "scroll_height_mm": height,
         "scroll_radius_mm": radius,
         "label_line_1": f"PHerc{padded_scroll}",
-        "label_line_2": "v1",
+        "label_line_2": "v2",
     }
     # If a YAML config was provided and contains "scroll_case", update the defaults.
     if config is not None and "scroll_case" in config:
