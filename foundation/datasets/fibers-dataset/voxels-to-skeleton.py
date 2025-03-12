@@ -229,7 +229,7 @@ def create_annotation_from_skeletons(branches_with_labels: list, dataset_name: s
         group = groups[branch_label]
         
         # Create a new tree in the group for this branch.
-        tree_name = f"{branch_label}_{i}"
+        tree_name = f"{branch_label}_{i:05d}"
         tree = group.add_tree(tree_name)
         prev_node = None
         
