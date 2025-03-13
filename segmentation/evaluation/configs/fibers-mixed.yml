@@ -5,14 +5,15 @@ output_folder: "/home/giorgio/Projects/villa-cases/segmentation/evaluation/outpu
 wandb_project: "vesuvius-challenge-evaluation"
 run_name: "skeleton-fibers-mixed"
 metrics:
-  - type: "dice"
+  - type: "dice_multiclass"
     hyperparameters:
-      threshold: 0.5
+      num_classes: 4
+      ignore_index: 0
   - type: "skeleton_distance_length"
     hyperparameters:
       distance_metric: "wasserstein"  # or "symkl"
       bins: 30
       epsilon: 1e-8
       output_folder: "/home/giorgio/Projects/villa-cases/segmentation/evaluation/output"
-  - type: "critical_components"
+  - type: "critical_components_multiclass"
     hyperparameters: {}

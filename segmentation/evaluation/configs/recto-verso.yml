@@ -1,0 +1,11 @@
+labels_folder: "/home/giorgio/Documents/nnUNet_raw/Dataset081_zebra-on-steroids/labelsTr"
+predictions_folder: "/home/giorgio/Documents/nnUNet_raw/Dataset081_zebra-on-steroids/preds-refined"
+output_csv: "metrics.csv"
+output_folder: "/home/giorgio/Projects/villa-cases/segmentation/evaluation/output"
+wandb_project: "vesuvius-challenge-evaluation"
+run_name: "recto-verso"
+metrics:
+  - type: "dice_multiclass"
+    hyperparameters:
+      num_classes: 4
+      ignore_index: 0
