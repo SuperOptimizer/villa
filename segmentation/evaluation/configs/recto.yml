@@ -1,0 +1,25 @@
+labels_folder: "/mnt/raid_nvme/test_datasets/labels"
+predictions_folder: "/mnt/raid_nvme/test_datasets/inference/da5_059/tifs"
+output_csv: "metrics.csv"
+output_folder: "/home/sean/Desktop/eval"
+wandb_project: "vesuvius-challenge-evaluation"
+run_name: "recto-"
+metrics:
+  - type: "dice_multiclass"
+    hyperparameters:
+      num_classes: 4
+      ignore_index: 0
+  - type: "critical_components_multiclass"
+    hyperparameters: {}
+  - type: "connected_components"
+    hyperparameters:
+      connectivity: 26
+      num_classes: 4
+      ignore_index: 0
+  - type: "mean_ap"
+    hyperparameters:
+      ignore_index: 0
+  - type: "centerline_dice"
+    hyperparameters:
+      tolerance_radius: 3.0
+
