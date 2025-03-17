@@ -16,6 +16,14 @@ const config = {
   onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "throw",
   favicon: "img/social/favicon.ico",
+  scripts: [
+    {
+      src: "https://cdn.usefathom.com/script.js",
+      "data-site": "XERDEBQR",
+      defer: true,
+      "data-spa": "auto",
+    },
+  ],
   markdown: {
     mermaid: true,
   },
