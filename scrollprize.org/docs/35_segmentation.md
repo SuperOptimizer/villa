@@ -464,5 +464,124 @@ ___
 
 **Seed or Expand steps are running slow on VC3D built from source**
     * Fix: on most ubuntu linux installations, at least one of two file indexers are typically installed -- `tracker-miner-fs` or `rygel`. Either of these will attempt to index every single file you add, and during the seed/expansion steps, this is a very large number. You will want to "mask" or disable these services, as they will slow the seed/expansion steps to a crawl. 
+___
+
+### Tips and Tricks
+
+**"Checkpointing"**
+
+If you are attempting to create very large traces, it is generally smart to "checkpoint" your progress as you go by running a relatively long trace, allowing it to continue through errors, and then utilizing your dbg_gen files as "superpatches". The process looks like this:
+  - Run a trace
+  - Starting from your longest one, identify large contiguous regions of papyrus without errors
+  - Edit the mask, and remove all the areas other than this
+  - Rename the folder to "auto_grown_xxx"
+  - Update the meta.json with this new name
+  - Run `vc_seg_add_overlap /path/to/paths /path/to/trace`
+  - Mark the segment as "approved" in the VC3D gui
+
+**Manual Seeding**
+
+It can be highly beneficial to manually seed volumes. The random seeding is just that, random. It places seeds at nonzero points throughout the volume, and these points can include the case, the lining, or regions that are far from the current location you're targeting. If you wish to manually seed, simply open the volume in VC3D, the simplest way is likely the following:
+  - ctrl+click on the predicted surfaces around the area you're trying to segment. Ensure you don't miss any sheets. As you click these points, the 3d coordinates will be printed into the terminal. 
+  - Copy the script below and paste it into a file called `create_seed.sh`, changing the paths to your own 
+  - Run this script from a separate terminal
+  - Paste the outputs of the coordinates (including the words before them) into the terminal running `create_seed`
+  - The script will run vc_grow_seg_from_segments in explicit seed mode at these locations
+  - Verify that a seed has been created on each surface around the target region, and that none have been missed
+  - If necessary, repeat the process until you have a seed on each wrap. 
+  - Run vc_grow_seg_from_seed in expansion mode as detailed earlier in the tutorial
+
+The primary motivation for doing this is that if you run expansion mode on randomly created seeds, a significant portion of your compute time is spend expanding seeds into regions you might not care about, or expanding seeds along the case. While its generally true that if you leave expansion mode running long enough, it will fill the volume, this may take a while. It is also not possible for a seed to expand if the surface itself is not connected well to other surfaces -- it is not uncommon to miss large parts of wraps if you do not verify and manually seed.
+
+
+```bash
+#!/bin/bash
+# Configuration variables - update these as needed:
+OME_ZARR_VOLUME="/home/sean/Documents/volpkgs/scroll3.volpkg/volumes/s3_059_medial_ome.zarr/"
+TGT_DIR="/home/sean/Documents/volpkgs/scroll3.volpkg/paths/"
+JSON_PARAMS="/home/sean/Documents/volpkgs/scroll3.volpkg/seed.json"
+CMD="bin/vc_grow_seg_from_seed"
+
+# Offset variable (in voxels)
+OFFSET=30
+
+# Maximum number of parallel jobs to run concurrently
+MAX_JOBS=16
+
+# Check for bc availability. If not available, fallback to awk.
+if command -v bc >/dev/null 2>&1; then
+    use_bc=1
+else
+    echo "bc command not found. Falling back to awk for arithmetic."
+    use_bc=0
+fi
+
+# Function to wait until background jobs are below MAX_JOBS
+wait_for_slot() {
+    while [ "$(jobs -r | wc -l)" -ge "$MAX_JOBS" ]; do
+        sleep 0.5
+    done
+}
+
+while true; do
+    echo "Paste coordinate lines (end with an empty line):"
+    lines=()
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && break
+        lines+=("$line")
+    done
+
+    if [ ${#lines[@]} -eq 0 ]; then
+        echo "No coordinates provided. Try again."
+        continue
+    fi
+
+    # Process each pasted line
+    for line in "${lines[@]}"; do
+        # Extract text between [ and ]
+        coords=$(echo "$line" | grep -o '\[[^]]*\]')
+        if [ -z "$coords" ]; then
+            echo "No coordinates found in: $line"
+            continue
+        fi
+
+        # Remove the square brackets and split into x, y, z
+        coords=${coords#[}
+        coords=${coords%]}
+        IFS=',' read -r x y z <<< "$coords"
+        x=$(echo "$x" | xargs)
+        y=$(echo "$y" | xargs)
+        z=$(echo "$z" | xargs)
+        
+        echo "Processing coordinate: x=$x, y=$y, z=$z"
+
+        # Loop only over x offsets: -OFFSET, 0, and +OFFSET
+        for dx in -$OFFSET 0 $OFFSET; do
+            # Ensure we don't exceed the parallel job limit
+            wait_for_slot
+
+            # Calculate new seed position for x; y and z remain unchanged.
+            if [ $use_bc -eq 1 ]; then
+                seed_x=$(echo "$x + $dx" | bc)
+            else
+                seed_x=$(awk "BEGIN {print $x + $dx}")
+            fi
+            seed_y=$y
+            seed_z=$z
+
+            echo "Launching: nice ionice $CMD $OME_ZARR_VOLUME $TGT_DIR $JSON_PARAMS $seed_x $seed_y $seed_z"
+            nice ionice $CMD "$OME_ZARR_VOLUME" "$TGT_DIR" "$JSON_PARAMS" "$seed_x" "$seed_y" "$seed_z" || true &
+        done
+    done
+
+    # Wait for all background jobs to finish before prompting again
+    wait
+    echo "Finished processing these coordinates."
+    echo
+done
+
+```
+
+
 
 ## Spiral Fitting (Coming Soon)
