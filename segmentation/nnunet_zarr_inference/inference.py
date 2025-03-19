@@ -854,6 +854,18 @@ class ZarrNNUNetInferenceHandler:
         # Output location info
         if self.rank == 0:
             print(f"\nFinal output saved to {store_path}")
+            
+        # Clean up the synchronizer
+        if os.path.exists(sync_path):
+            if self.verbose and self.rank == 0:
+                print(f"Cleaning up zarr synchronizer at {sync_path}")
+            try:
+                import shutil
+                shutil.rmtree(sync_path)
+                if self.verbose and self.rank == 0:
+                    print(f"Successfully removed synchronizer directory")
+            except Exception as e:
+                print(f"Warning: Could not remove synchronizer directory: {e}")
 
     def _optimized_postprocessing(self, zarr_store):
         """Optimized post-processing with improved vector handling and optional thresholding"""
