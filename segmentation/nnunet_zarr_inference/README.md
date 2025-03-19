@@ -9,6 +9,9 @@ This package provides utilities for running inference with nnUNet models on zarr
 - Multi-GPU support with DDP (Distributed Data Parallel)
 - Asynchronous disk writing to minimize I/O bottlenecks
 - Automatic overlapping patch blending with Gaussian windows
+- Test time augmentation support with mirroring (like nnUNet)
+- Thresholding to generate binary segmentation masks
+- Automatic cleanup of intermediate arrays
 
 ## Requirements
 
@@ -24,19 +27,39 @@ This package provides utilities for running inference with nnUNet models on zarr
 ### Basic Usage
 
 ```bash
-python inference.py \
+python -m nnunet_zarr_inference.inference \
   --input_path /path/to/input.zarr \
   --output_path /path/to/output \
   --model_folder /path/to/nnunet/model \
   --fold 0 \
   --batch_size 4 \
-  --overlap 0.25
+  --step_size 0.5
 ```
 
-### Multi-GPU Inference
+### With Thresholding
 
 ```bash
-torchrun --nproc_per_node=2 inference.py \
+python -m nnunet_zarr_inference.inference \
+  --input_path /path/to/input.zarr \
+  --output_path /path/to/output \
+  --model_folder /path/to/nnunet/model \
+  --fold 0 \
+  --threshold 50  # 50% confidence threshold
+```
+
+### Multi-GPU Inference with DDP
+
+```bash
+# Using torchrun (recommended for PyTorch 1.10+)
+torchrun --nproc_per_node=2 -m nnunet_zarr_inference.inference \
+  --input_path /path/to/input.zarr \
+  --output_path /path/to/output \
+  --model_folder /path/to/nnunet/model \
+  --fold 0 \
+  --batch_size 4
+
+# Or using torch.distributed.launch
+python -m torch.distributed.launch --nproc_per_node=2 -m nnunet_zarr_inference.inference \
   --input_path /path/to/input.zarr \
   --output_path /path/to/output \
   --model_folder /path/to/nnunet/model \
@@ -52,10 +75,14 @@ torchrun --nproc_per_node=2 inference.py \
 - `--fold`: Fold to use for inference (default: 0)
 - `--checkpoint`: Checkpoint file name to use (default: checkpoint_final.pth)
 - `--batch_size`: Batch size for inference (default: 4)
-- `--overlap`: Overlap between patches as a fraction (default: 0.25)
+- `--step_size`: Step size for sliding window as a fraction of patch size (default: 0.5, nnUNet default)
 - `--num_dataloader_workers`: Number of workers for the DataLoader (default: 4)
 - `--num_write_workers`: Number of worker threads for asynchronous disk writes (default: 4)
 - `--device`: Device to run inference on ('cuda' or 'cpu') (default: cuda)
+- `--threshold`: Apply threshold to probability map (value 0-100, represents percentage)
+- `--disable_tta`: Disable test time augmentation (mirroring) for faster but potentially less accurate inference
+- `--verbose`: Enable detailed output messages during inference
+- `--keep_intermediates`: Keep intermediate sum and count arrays after processing
 - `--write_layers`: Write the sliced z layers to disk
 - `--postprocess_only`: Skip the inference pass and only do final averaging + casting
 - `--load_all`: Load the entire input array into memory (use with caution!)
@@ -65,7 +92,7 @@ torchrun --nproc_per_node=2 inference.py \
 You can also use the Python API directly:
 
 ```python
-from inference import ZarrNNUNetInferenceHandler
+from nnunet_zarr_inference.inference import ZarrNNUNetInferenceHandler
 
 # Initialize the inference handler
 inference_handler = ZarrNNUNetInferenceHandler(
@@ -74,7 +101,11 @@ inference_handler = ZarrNNUNetInferenceHandler(
     model_folder="/path/to/nnunet/model",
     fold=0,
     batch_size=4,
-    overlap=0.25,
+    step_size=0.5,  # Controls sliding window overlap (nnUNet default)
+    threshold=50,   # Optional: Apply 50% threshold for binary segmentation
+    use_mirroring=True,  # Use test time augmentation (default)
+    verbose=False,  # Minimal console output
+    keep_intermediates=False,  # Clean up intermediates (default)
     num_dataloader_workers=4,
     num_write_workers=4
 )
@@ -85,10 +116,13 @@ inference_handler.infer()
 
 ## Output
 
-The output will be saved as a zarr array with the following datasets:
+By default, the output will be saved as a zarr array with the following datasets:
 
-- `{target_name}_sum`: Sum of all predictions
-- `{target_name}_count`: Count of predictions per voxel
-- `{target_name}_final`: Final averaged predictions (uint8 or uint16)
+- `segmentation_probabilities`: Probability maps scaled to 0-255 (uint8)
+- `segmentation_threshold`: Binary segmentation if a threshold was specified (uint8)
+
+If `--keep_intermediates` is specified, these additional arrays will be kept:
+- `segmentation_sum`: Sum of all predictions (float32)
+- `segmentation_count`: Count of predictions per voxel (float32)
 
 The default target name is "segmentation", but this can be customized using the output_targets parameter.
