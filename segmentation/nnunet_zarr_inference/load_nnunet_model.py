@@ -14,7 +14,7 @@ __all__ = ['load_model', 'run_inference']
 
 
 def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: str = 'checkpoint_final.pth', 
-            device='cuda', custom_plans_json=None, custom_dataset_json=None):
+            device='cuda', custom_plans_json=None, custom_dataset_json=None, use_mirroring: bool = True):
     """
     Load a trained nnUNet model from a model folder.
     
@@ -25,6 +25,7 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
         device: Device to load the model on ('cuda' or 'cpu')
         custom_plans_json: Optional custom plans.json to use instead of the one in model_folder
         custom_dataset_json: Optional custom dataset.json to use instead of the one in model_folder
+        use_mirroring: Enable test time augmentation via mirroring (default: True)
         
     Returns:
         network: The loaded model
@@ -110,6 +111,11 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
         print('Using torch.compile')
         network = torch.compile(network)
     
+    # Get allowed mirroring axes from checkpoint if available
+    inference_allowed_mirroring_axes = None
+    if 'inference_allowed_mirroring_axes' in checkpoint.keys():
+        inference_allowed_mirroring_axes = checkpoint['inference_allowed_mirroring_axes']
+    
     # Return useful information for inference
     model_info = {
         'network': network,
@@ -121,7 +127,9 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
         'trainer_name': trainer_name,
         'num_input_channels': num_input_channels,
         'num_seg_heads': label_manager.num_segmentation_heads,
-        'patch_size': configuration_manager.patch_size
+        'patch_size': configuration_manager.patch_size,
+        'use_mirroring': use_mirroring,
+        'allowed_mirroring_axes': inference_allowed_mirroring_axes
     }
     
     return model_info
@@ -157,11 +165,51 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor) -> tor
     device = next(network.parameters()).device
     input_tensor = input_tensor.to(device)
     
-    # Run inference
+    # Check if TTA (test time augmentation) should be used
+    use_mirroring = model_info.get('use_mirroring', True)  # Default to True (nnUNet default)
+    allowed_mirroring_axes = model_info.get('allowed_mirroring_axes', None)
+    
+    # If TTA is disabled or no mirroring axes are specified, just run standard inference
+    if not use_mirroring or allowed_mirroring_axes is None:
+        if not use_mirroring:
+            print("Test time augmentation (mirroring) is disabled")
+        elif allowed_mirroring_axes is None:
+            print("No mirroring axes specified in model checkpoint, test time augmentation not possible")
+        with torch.no_grad():
+            output = network(input_tensor)
+        return output
+    
+    # Implementation of TTA through mirroring (matches nnUNet's approach)
     with torch.no_grad():
-        output = network(input_tensor)
+        # Get standard prediction without mirroring
+        prediction = network(input_tensor)
         
-    return output
+        # Adjust mirror axes to account for batch and channel dimensions
+        mirror_axes = [i + 2 for i in allowed_mirroring_axes]  # +2 for batch and channel dimensions
+        print(f"Using test time augmentation with mirroring axes: {allowed_mirroring_axes}")
+        
+        # Import itertools for combinations
+        import itertools
+        
+        # Generate all possible combinations of mirroring axes
+        axes_combinations = [
+            c for i in range(len(mirror_axes)) 
+            for c in itertools.combinations(mirror_axes, i + 1)
+        ]
+        
+        # For each combination, mirror input, predict, and mirror prediction back
+        for axes in axes_combinations:
+            # Mirror input
+            mirrored_input = torch.flip(input_tensor, axes)
+            # Predict
+            mirrored_output = network(mirrored_input)
+            # Mirror prediction back to original orientation
+            prediction += torch.flip(mirrored_output, axes)
+        
+        # Average all predictions (original + mirrored variants)
+        prediction /= (len(axes_combinations) + 1)
+        
+    return prediction
 
 
 if __name__ == "__main__":
@@ -179,6 +227,8 @@ if __name__ == "__main__":
                       help='Path to custom dataset.json file (optional)')
     parser.add_argument('--test_inference', action='store_true', 
                       help='Run a test inference with random input')
+    parser.add_argument('--disable_tta', action='store_true',
+                      help='Disable test time augmentation (mirroring) for faster inference')
     
     args = parser.parse_args()
     
@@ -193,7 +243,8 @@ if __name__ == "__main__":
         checkpoint_name=args.checkpoint,
         device=args.device,
         custom_plans_json=custom_plans_json,
-        custom_dataset_json=custom_dataset_json
+        custom_dataset_json=custom_dataset_json,
+        use_mirroring=not args.disable_tta
     )
     
     # Print model information
@@ -207,6 +258,14 @@ if __name__ == "__main__":
     print(f"Input channels: {model_info['num_input_channels']}")
     print(f"Output segmentation heads: {model_info['num_seg_heads']}")
     print(f"Expected patch size: {model_info['patch_size']}")
+    
+    # Show TTA status
+    use_mirroring = model_info.get('use_mirroring', True)
+    mirroring_axes = model_info.get('allowed_mirroring_axes', None)
+    if use_mirroring and mirroring_axes is not None:
+        print(f"Test time augmentation: Enabled with mirroring axes {mirroring_axes}")
+    else:
+        print(f"Test time augmentation: {'Disabled by user' if not use_mirroring else 'Not available (no mirroring axes in checkpoint)'}")
     
     # Run a test inference if requested
     if args.test_inference:

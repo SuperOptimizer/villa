@@ -35,6 +35,7 @@ class ZarrNNUNetInferenceHandler:
                  postprocess_only: bool = False,
                  device: str = 'cuda',
                  threshold: Optional[float] = None,
+                 use_mirroring: bool = True,
                  output_targets: Optional[Dict[str, Dict]] = None):
         """
         Initialize the inference handler for nnUNet models on zarr arrays.
@@ -56,6 +57,7 @@ class ZarrNNUNetInferenceHandler:
             postprocess_only: Skip the inference pass and only do final averaging + casting
             device: Device to run inference on ('cuda' or 'cpu')
             threshold: Optional threshold value (0-100) for binarizing the probability map
+            use_mirroring: Enable test time augmentation via mirroring (default: True, matches nnUNet default)
             output_targets: Optional custom output targets configuration
         """
         self.input_path = input_path
@@ -72,6 +74,7 @@ class ZarrNNUNetInferenceHandler:
         self.write_layers = write_layers
         self.device_str = device
         self.threshold = threshold
+        self.use_mirroring = use_mirroring
         
         # Default output target configuration if not provided
         # For nnUNet, we expect 2 channels (background and foreground)
@@ -123,11 +126,13 @@ class ZarrNNUNetInferenceHandler:
         """
         try:
             print(f"Loading nnUNet model from {self.model_folder}, fold {self.fold}")
+            print(f"Test time augmentation (mirroring): {'enabled' if self.use_mirroring else 'disabled'}")
             model_info = load_model(
                 model_folder=self.model_folder,
                 fold=self.fold,
                 checkpoint_name=self.checkpoint_name,
-                device=self.device_str
+                device=self.device_str,
+                use_mirroring=self.use_mirroring
             )
             
             # Use the model's patch size if none was specified
@@ -940,6 +945,8 @@ def main():
                       help="Device to run inference on ('cuda' or 'cpu') (default: cuda)")
     parser.add_argument("--threshold", type=float, 
                       help="Apply threshold to probability map (value 0-100, represents percentage)")
+    parser.add_argument("--disable_tta", action="store_true",
+                      help="Disable test time augmentation (mirroring) for faster but potentially less accurate inference")
     parser.add_argument("--write_layers", action="store_true",
                       help="Write the sliced z layers to disk")
     parser.add_argument("--postprocess_only", action="store_true",
@@ -972,6 +979,7 @@ def main():
         postprocess_only=args.postprocess_only,
         device=device,
         threshold=args.threshold,
+        use_mirroring=not args.disable_tta,  # Invert flag to match nnUNet's behavior
         load_all=args.load_all
     )
     
