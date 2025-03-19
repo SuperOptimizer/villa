@@ -806,8 +806,14 @@ class ZarrNNUNetInferenceHandler:
             compressor = Blosc(cname='zstd', clevel=5, shuffle=Blosc.BITSHUFFLE)
 
             # Create dataset for probability output
+            # Use a more descriptive name for segmentation output
+            if tgt_name == "segmentation":
+                final_name = f"{tgt_name}_probabilities"
+            else:
+                final_name = f"{tgt_name}_final"
+                
             final_ds = zarr_store.create_dataset(
-                name=f"{tgt_name}_final",
+                name=final_name,
                 shape=sum_ds.shape,
                 chunks=sum_ds.chunks,
                 dtype=final_dtype,
