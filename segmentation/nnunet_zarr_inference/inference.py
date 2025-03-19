@@ -600,7 +600,8 @@ class ZarrNNUNetInferenceHandler:
                     # This ensures we handle nnUNet's binary segmentation output (2 channels) correctly
                     out_shape = (c, z_max, y_max, x_max)
                     chunks = (c, chunk_z, chunk_y, chunk_x)
-                    print(f"Using 4D output shape for target '{tgt_name}': {out_shape}")
+                    if self.verbose:
+                        print(f"Using 4D output shape for target '{tgt_name}': {out_shape}, chunks: {chunks}")
 
                     sum_ds = zarr_store.create_dataset(
                         name=f"{tgt_name}_sum",
@@ -788,7 +789,7 @@ class ZarrNNUNetInferenceHandler:
             
         # Output location info
         if self.rank == 0:
-            print(f"Final output saved to {store_path}")
+            print(f"\nFinal output saved to {store_path}")
 
     def _optimized_postprocessing(self, zarr_store):
         """Optimized post-processing with improved vector handling and optional thresholding"""
@@ -814,7 +815,8 @@ class ZarrNNUNetInferenceHandler:
             # Create additional dataset for thresholded output if threshold is specified
             thresholded_ds = None
             if self.threshold is not None and not is_normals:
-                print(f"Threshold value set to {self.threshold}% - will create binary threshold output")
+                if self.verbose:
+                    print(f"Threshold value set to {self.threshold}% - will create binary threshold output")
                 thresholded_ds = zarr_store.create_dataset(
                     name=f"{tgt_name}_threshold",
                     shape=sum_ds.shape,
@@ -827,8 +829,9 @@ class ZarrNNUNetInferenceHandler:
             # Determine if we have 3D or 4D arrays
             sum_ds_ndim = len(sum_ds.shape)
             
-            # Print shape info
-            print(f"Postprocessing {tgt_name}: sum_ds shape {sum_ds.shape}, count_ds shape {cnt_ds.shape}")
+            # Print shape info if verbose
+            if self.verbose:
+                print(f"Postprocessing {tgt_name}: sum_ds shape {sum_ds.shape}, count_ds shape {cnt_ds.shape}")
             
             for z0 in tqdm(range(0, sum_ds.shape[-3], chunk_size),
                            desc=f"Processing {tgt_name}"):
@@ -871,7 +874,8 @@ class ZarrNNUNetInferenceHandler:
                         # For softmax-activated binary segmentation from nnUNet:
                         # Scale to [0,255] for grayscale output (where higher values indicate higher foreground confidence)
                         sum_chunk = (sum_chunk * 255.0).clip(0, 255).astype(np.uint8)
-                        print(f"Processed foreground probability map: min={np.min(sum_chunk)}, max={np.max(sum_chunk)}")
+                        if self.verbose:
+                            print(f"Processed foreground probability map: min={np.min(sum_chunk)}, max={np.max(sum_chunk)}")
                     else:
                         # Standard scaling for other output types
                         sum_chunk = (sum_chunk * 255.0).clip(0, 255).astype(np.uint8)
