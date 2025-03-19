@@ -34,6 +34,7 @@ class ZarrNNUNetInferenceHandler:
                  write_layers: bool = False,
                  postprocess_only: bool = False,
                  device: str = 'cuda',
+                 threshold: Optional[float] = None,
                  output_targets: Optional[Dict[str, Dict]] = None):
         """
         Initialize the inference handler for nnUNet models on zarr arrays.
@@ -54,6 +55,7 @@ class ZarrNNUNetInferenceHandler:
             write_layers: Whether to write the sliced z layers to disk
             postprocess_only: Skip the inference pass and only do final averaging + casting
             device: Device to run inference on ('cuda' or 'cpu')
+            threshold: Optional threshold value (0-100) for binarizing the probability map
             output_targets: Optional custom output targets configuration
         """
         self.input_path = input_path
@@ -69,14 +71,21 @@ class ZarrNNUNetInferenceHandler:
         self.postprocess_only = postprocess_only
         self.write_layers = write_layers
         self.device_str = device
+        self.threshold = threshold
         
         # Default output target configuration if not provided
+        # For nnUNet, we expect 2 channels (background and foreground)
+        # But we'll only save the foreground channel (channel 1)
         self.output_targets = output_targets or {
             "segmentation": {
-                "channels": 1,
-                "activation": "softmax"
+                "channels": 1,  # We'll only save 1 channel after extracting the foreground
+                "activation": "softmax",
+                "nnunet_output_channels": 2  # nnUNet outputs 2 channels (bg, fg)
             }
         }
+        
+        # nnUNet always produces 2 channels (bg, fg) for binary segmentation
+        self.nnunet_foreground_channel = 1  # Second channel (index 1) is foreground
         
         # Buffer to accumulate patches before writing
         self.patch_buffer = defaultdict(list)
@@ -340,26 +349,16 @@ class ZarrNNUNetInferenceHandler:
                 activation_str = self.output_targets[tgt_name].get("activation", "none").lower()
                 # Note: We've already applied activations in the inference loop
                 
-                # Get actual number of channels in the output
+                # We're already handling the channel selection upstream
+                # (in the previous step where we extracted just the foreground channel)
+                # Here we just verify the shape is as expected
                 num_channels = pred.shape[0]
                 
-                # Handle binary segmentation with multi-channel output (background + foreground classes)
-                if self.output_targets[tgt_name]["channels"] == 1 and num_channels > 1:
-                    # For binary segmentation with softmax output, take the foreground class (index 1)
-                    # This is the standard nnUNet behavior for binary segmentation
-                    if activation_str == "softmax" and num_channels == 2:
-                        print(f"Multi-class output detected (channels={num_channels}), taking foreground class (index 1)")
-                        pred = pred[1:2]  # Keep as 4D with shape [1, Z, Y, X]
-                    # For other multi-channel outputs, keep the original prediction
-                elif self.output_targets[tgt_name]["channels"] == 1 and num_channels == 1:
-                    # If target is a single-channel output and prediction also has a single channel,
-                    # we can optionally squeeze it (but here we'll keep the channel dimension for consistency)
-                    pass
-                
-                # Update the output_targets to match actual dimensions if needed
+                # Just a sanity check to ensure we have the expected number of channels
                 if num_channels != self.output_targets[tgt_name]["channels"]:
-                    print(f"Updating output target '{tgt_name}' channels from {self.output_targets[tgt_name]['channels']} to {pred.shape[0]}")
-                    self.output_targets[tgt_name]["channels"] = pred.shape[0]
+                    print(f"Warning: Expected {self.output_targets[tgt_name]['channels']} channel(s) " 
+                          f"but got {num_channels} channels in the processed output.")
+                    # This shouldn't happen since we're controlling the channel count upstream
                 
                 self.patch_buffer[tgt_name].append(pred)
             self.buffer_positions.append(pos)
@@ -436,17 +435,11 @@ class ZarrNNUNetInferenceHandler:
                         # For nnUNet, get number of segmentation heads
                         num_model_outputs = self.model_info.get('num_seg_heads', 1)
                     
-                    # Force to 3D output shape for binary segmentation (if model outputs binary)
-                    if c == 1 and num_model_outputs <= 2:
-                        out_shape = (z_max, y_max, x_max)
-                        chunks = (chunk_z, chunk_y, chunk_x)
-                        print(f"Using 3D output shape for target '{tgt_name}': {out_shape}")
-                    else:
-                        # Use 4D output with channel dimension for multi-class segmentation
-                        # or when channel count > 1 (e.g., for normals)
-                        out_shape = (c, z_max, y_max, x_max)
-                        chunks = (c, chunk_z, chunk_y, chunk_x)
-                        print(f"Using 4D output shape for target '{tgt_name}': {out_shape}")
+                    # Always use 4D output with channel dimension
+                    # This ensures we handle nnUNet's binary segmentation output (2 channels) correctly
+                    out_shape = (c, z_max, y_max, x_max)
+                    chunks = (c, chunk_z, chunk_y, chunk_x)
+                    print(f"Using 4D output shape for target '{tgt_name}': {out_shape}")
 
                     sum_ds = zarr_store.create_dataset(
                         name=f"{tgt_name}_sum",
@@ -544,79 +537,23 @@ class ZarrNNUNetInferenceHandler:
                     # Process outputs based on activation functions
                     processed_outputs = {}
                     
-                    # For the first batch, adjust output_targets based on actual model output
+                    # For the first batch, verify nnUNet output format
                     if batch_idx == 0:
                         # For nnUNet, outputs is typically a tensor
                         if torch.is_tensor(outputs):
                             # Get the output shape to determine number of channels
                             num_channels = outputs.shape[1]
                             print(f"nnUNet model output shape: {outputs.shape}, channels: {num_channels}")
-                            config_changed = False
                             
-                            # Update output_targets to match actual model output
-                            for t_name in self.output_targets:
-                                if self.output_targets[t_name]["channels"] != num_channels:
-                                    print(f"Warning: Model outputs {num_channels} channels but target '{t_name}' expects {self.output_targets[t_name]['channels']} channels.")
-                                    print(f"Updating output target '{t_name}' channels to {num_channels}")
-                                    self.output_targets[t_name]["channels"] = num_channels
-                                    config_changed = True
-                            
-                            # If config changed, we need to recreate the arrays
-                            if config_changed:
-                                print("Recreating output arrays with correct channel dimensions...")
-                                # We need to create a new zarr store with the correct dimensions
-                                print("Closing and recreating zarr store...")
-                                
-                                # Create a new zarr store (old one will be overwritten)
-                                store_path_tmp = f"{store_path}_tmp"
-                                if os.path.exists(store_path_tmp):
-                                    import shutil
-                                    shutil.rmtree(store_path_tmp)
-                                
-                                os.makedirs(store_path_tmp, exist_ok=True)
-                                zarr_store = zarr.open(store_path_tmp, mode='w', synchronizer=synchronizer)
-                                
-                                # Recreate arrays with updated dimensions
-                                chunk_z, chunk_y, chunk_x = self.patch_size
-                                compressor = Blosc(cname='zstd', clevel=5, shuffle=Blosc.BITSHUFFLE)
-                                
-                                for tgt_name, tgt_conf in self.output_targets.items():
-                                    c = tgt_conf["channels"]
-                                    out_shape = (c, z_max, y_max, x_max)
-                                    chunks = (c, chunk_z, chunk_y, chunk_x)
-                                    print(f"Creating 4D output array for target '{tgt_name}': shape={out_shape}")
-                                    
-                                    sum_ds = zarr_store.create_dataset(
-                                        name=f"{tgt_name}_sum",
-                                        shape=out_shape,
-                                        chunks=chunks,
-                                        dtype='float32',
-                                        compressor=compressor,
-                                        fill_value=0,
-                                        synchronizer=synchronizer
-                                    )
-                                    cnt_ds = zarr_store.create_dataset(
-                                        name=f"{tgt_name}_count",
-                                        shape=(z_max, y_max, x_max),
-                                        chunks=(chunk_z, chunk_y, chunk_x),
-                                        dtype='float32',
-                                        compressor=compressor,
-                                        fill_value=0,
-                                        synchronizer=synchronizer
-                                    )
-                                    
-                                    output_arrays[tgt_name] = sum_ds
-                                    count_arrays[tgt_name] = cnt_ds
-                                
-                                # Update store_path to the temporary one
-                                print(f"Using new zarr store at {store_path_tmp}")
-                                store_path = store_path_tmp
-                                
-                                # If we're running with DDP, wait for all processes
-                                if dist.is_initialized():
-                                    dist.barrier(device_ids=[torch.cuda.current_device()])
+                            # Check if this is a typical nnUNet output (should have 2 channels for binary segmentation)
+                            if num_channels != 2:
+                                print(f"Warning: Expected 2 channels from nnUNet but got {num_channels} channels.")
+                                print(f"This might not be a standard binary nnUNet model.")
+                            else:
+                                print(f"Detected standard nnUNet binary segmentation output (2 channels).")
+                                print(f"Will extract foreground channel (index {self.nnunet_foreground_channel}) for final output.")
                     
-                    # Apply activations for each target 
+                    # Apply activations for each target and extract only the foreground channel
                     for t_name in self.output_targets:
                         # For nnUNet, the output might be a single tensor, not a dict with keys
                         if torch.is_tensor(outputs):
@@ -627,12 +564,19 @@ class ZarrNNUNetInferenceHandler:
                         t_conf = self.output_targets[t_name]
                         activation_str = t_conf.get("activation", "none").lower()
                         
+                        # Apply activation function
                         if activation_str == "sigmoid":
-                            processed_outputs[t_name] = torch.sigmoid(raw_output)
+                            activated = torch.sigmoid(raw_output)
                         elif activation_str == "softmax":
-                            processed_outputs[t_name] = torch.softmax(raw_output, dim=1)
+                            activated = torch.softmax(raw_output, dim=1)
                         else:
-                            processed_outputs[t_name] = raw_output
+                            activated = raw_output
+                        
+                        # For nnUNet with 2 channels, extract only the foreground channel (index 1)
+                        if activated.shape[1] == 2:
+                            processed_outputs[t_name] = activated[:, self.nnunet_foreground_channel:self.nnunet_foreground_channel+1]
+                        else:
+                            processed_outputs[t_name] = activated
                             
                     self._process_model_outputs(processed_outputs, positions, output_arrays, count_arrays)
 
@@ -662,19 +606,12 @@ class ZarrNNUNetInferenceHandler:
         if dist.is_initialized():
             dist.barrier(device_ids=[torch.cuda.current_device()])
             
-        # Move the temp store to final destination if we used a temp store
-        if self.rank == 0 and "_tmp" in store_path and os.path.exists(store_path):
-            final_path = store_path.replace("_tmp", "")
-            if os.path.exists(final_path):
-                import shutil
-                print(f"Removing existing store at {final_path}")
-                shutil.rmtree(final_path)
-            print(f"Moving {store_path} to {final_path}")
-            os.rename(store_path, final_path)
-            print(f"Final output saved to {final_path}")
+        # Output location info
+        if self.rank == 0:
+            print(f"Final output saved to {store_path}")
 
     def _optimized_postprocessing(self, zarr_store):
-        """Optimized post-processing with improved vector handling"""
+        """Optimized post-processing with improved vector handling and optional thresholding"""
         for tgt_name in self.output_targets:
             sum_ds = zarr_store[f"{tgt_name}_sum"]
             cnt_ds = zarr_store[f"{tgt_name}_count"]
@@ -684,6 +621,7 @@ class ZarrNNUNetInferenceHandler:
             final_dtype = "uint16" if is_normals else "uint8"
             compressor = Blosc(cname='zstd', clevel=5, shuffle=Blosc.BITSHUFFLE)
 
+            # Create dataset for probability output
             final_ds = zarr_store.create_dataset(
                 name=f"{tgt_name}_final",
                 shape=sum_ds.shape,
@@ -692,6 +630,19 @@ class ZarrNNUNetInferenceHandler:
                 compressor=compressor,
                 fill_value=0
             )
+            
+            # Create additional dataset for thresholded output if threshold is specified
+            thresholded_ds = None
+            if self.threshold is not None and not is_normals:
+                print(f"Threshold value set to {self.threshold}% - will create binary threshold output")
+                thresholded_ds = zarr_store.create_dataset(
+                    name=f"{tgt_name}_threshold",
+                    shape=sum_ds.shape,
+                    chunks=sum_ds.chunks,
+                    dtype="uint8",
+                    compressor=compressor,
+                    fill_value=0
+                )
 
             # Determine if we have 3D or 4D arrays
             sum_ds_ndim = len(sum_ds.shape)
@@ -716,6 +667,9 @@ class ZarrNNUNetInferenceHandler:
                 # Create mask of non-zero counts
                 mask = count_chunk > 0
 
+                # Save the normalized probability data for thresholding later
+                normalized_chunk = sum_chunk.copy()
+                
                 # Normalize based on count
                 if is_normals and sum_ds_ndim == 4:
                     # Normalize vector magnitude for normals
@@ -725,16 +679,55 @@ class ZarrNNUNetInferenceHandler:
                 else:
                     # Standard normalization (divide by count where count > 0)
                     sum_chunk[mask] /= count_chunk[mask]
+                    normalized_chunk[mask] /= count_chunk[mask]
 
                 # Apply final transformation based on target type
                 if is_normals:
                     # For normals: map from [-1,1] to [0,65535]
                     sum_chunk = ((sum_chunk + 1.0) / 2.0 * 65535.0).clip(0, 65535).astype(np.uint16)
                 else:
-                    # For segmentation: map to [0,255]
-                    sum_chunk = (sum_chunk * 255.0).clip(0, 255).astype(np.uint8)
+                    # For segmentation: handle based on target type
+                    if tgt_name == "segmentation" and self.output_targets[tgt_name].get("activation") == "softmax":
+                        # For softmax-activated binary segmentation from nnUNet:
+                        # Scale to [0,255] for grayscale output (where higher values indicate higher foreground confidence)
+                        sum_chunk = (sum_chunk * 255.0).clip(0, 255).astype(np.uint8)
+                        print(f"Processed foreground probability map: min={np.min(sum_chunk)}, max={np.max(sum_chunk)}")
+                    else:
+                        # Standard scaling for other output types
+                        sum_chunk = (sum_chunk * 255.0).clip(0, 255).astype(np.uint8)
 
-                # Write back to final dataset
+                # Create thresholded output if requested
+                if thresholded_ds is not None:
+                    # Calculate threshold value from the percentage
+                    # For probability maps that range from 0-1, we convert the percentage to a value between 0-1
+                    threshold_value = self.threshold / 100.0
+                    
+                    # Apply threshold to the normalized chunk
+                    if sum_ds_ndim == 4:
+                        # For 4D data, threshold each channel separately
+                        thresholded_chunk = (normalized_chunk >= threshold_value).astype(np.uint8) * 255
+                    else:
+                        # For 3D data
+                        thresholded_chunk = (normalized_chunk >= threshold_value).astype(np.uint8) * 255
+                    
+                    # Write thresholded chunk to dataset
+                    if sum_ds_ndim == 4 and len(thresholded_ds.shape) == 4:
+                        # Both 4D
+                        thresholded_ds[:, z0:z1] = thresholded_chunk
+                    elif sum_ds_ndim == 3 and len(thresholded_ds.shape) == 3:
+                        # Both 3D
+                        thresholded_ds[z0:z1] = thresholded_chunk
+                    elif sum_ds_ndim == 4 and len(thresholded_ds.shape) == 3:
+                        # Handle 4D to 3D case
+                        if thresholded_chunk.shape[0] == 1:
+                            # Single channel
+                            thresholded_ds[z0:z1] = thresholded_chunk[0]
+                        else:
+                            # Multiple channels - convert to binary using logical OR across channels
+                            combined = np.any(thresholded_chunk > 0, axis=0).astype(np.uint8) * 255
+                            thresholded_ds[z0:z1] = combined
+
+                # Write probability chunks back to final dataset
                 if sum_ds_ndim == 4 and len(final_ds.shape) == 4:
                     # Both 4D
                     final_ds[:, z0:z1] = sum_chunk
@@ -779,6 +772,8 @@ def main():
                       help="Number of worker threads for asynchronous disk writes (default: 4)")
     parser.add_argument("--device", type=str, default="cuda",
                       help="Device to run inference on ('cuda' or 'cpu') (default: cuda)")
+    parser.add_argument("--threshold", type=float, 
+                      help="Apply threshold to probability map (value 0-100, represents percentage)")
     parser.add_argument("--write_layers", action="store_true",
                       help="Write the sliced z layers to disk")
     parser.add_argument("--postprocess_only", action="store_true",
@@ -810,6 +805,7 @@ def main():
         write_layers=args.write_layers,
         postprocess_only=args.postprocess_only,
         device=device,
+        threshold=args.threshold,
         load_all=args.load_all
     )
     
