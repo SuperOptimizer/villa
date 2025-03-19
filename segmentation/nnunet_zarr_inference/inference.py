@@ -42,6 +42,8 @@ class ZarrNNUNetInferenceHandler:
                  device: str = 'cuda',
                  threshold: Optional[float] = None,
                  use_mirroring: bool = True,
+                 max_tta_combinations: Optional[int] = None,
+                 full_tta: bool = False,  # New flag for using all TTA combinations
                  verbose: bool = False,
                  keep_intermediates: bool = False,
                  save_probability_maps: bool = True,
@@ -67,6 +69,8 @@ class ZarrNNUNetInferenceHandler:
             device: Device to run inference on ('cuda' or 'cpu')
             threshold: Optional threshold value (0-100) for binarizing the probability map
             use_mirroring: Enable test time augmentation via mirroring (default: True, matches nnUNet default)
+            max_tta_combinations: Maximum number of TTA combinations to use (default: None = auto-detect based on GPU memory)
+            full_tta: Whether to use all possible TTA combinations regardless of GPU memory (default: False)
             verbose: Enable detailed output messages during inference (default: False)
             keep_intermediates: Keep intermediate sum and count arrays after processing (default: False)
             save_probability_maps: Save full probability maps for multiclass segmentation (default: True, set to False to save space)
@@ -87,6 +91,8 @@ class ZarrNNUNetInferenceHandler:
         self.device_str = device
         self.threshold = threshold
         self.use_mirroring = use_mirroring
+        self.max_tta_combinations = max_tta_combinations
+        self.full_tta = full_tta
         self.verbose = verbose
         self.keep_intermediates = keep_intermediates
         self.save_probability_maps = save_probability_maps
@@ -937,7 +943,8 @@ class ZarrNNUNetInferenceHandler:
                     patch_size=self.patch_size,
                     input_format=self.input_format,
                     step_size=self.tile_step_size,
-                    load_all=self.load_all
+                    load_all=self.load_all,
+                    verbose=self.verbose
                 )
                 
                 # Get the shape of the input array for output shape determination
@@ -1030,7 +1037,8 @@ class ZarrNNUNetInferenceHandler:
                 patch_size=self.patch_size,
                 input_format=self.input_format,
                 step_size=self.tile_step_size,  # This is a factor (0.5 = 50% overlap)
-                load_all=self.load_all
+                load_all=self.load_all,
+                verbose=self.verbose
             )
             
             if self.verbose:
@@ -1056,6 +1064,100 @@ class ZarrNNUNetInferenceHandler:
 
             # Run inference
             network.eval()
+            
+            # Determine optimal TTA batch multiplier using a single test patch
+            # This gives us accurate GPU memory measurements
+            if torch.cuda.is_available() and self.use_mirroring and self.rank == 0:
+                print("Determining optimal TTA batch multiplier...")
+                # Get the first batch to test memory usage
+                test_data = next(iter(loader))
+                test_patches = test_data["image"].to(device)
+                
+                # Run a single forward pass with TTA to accurately measure memory usage
+                with torch.no_grad():
+                    torch.cuda.synchronize(device)
+                    torch.cuda.reset_peak_memory_stats(device)
+                    
+                    # First run a normal forward pass 
+                    _ = network(test_patches)
+                    torch.cuda.synchronize(device)
+                    
+                    # Now run with a single TTA flip to measure memory requirements
+                    # This gives us an accurate picture of TTA memory usage
+                    # We'll use the first allowed mirroring axis
+                    if 'allowed_mirroring_axes' in self.model_info and self.model_info['allowed_mirroring_axes']:
+                        # Get first mirroring axis and adjust for batch/channel dimensions
+                        axis = self.model_info['allowed_mirroring_axes'][0]
+                        mirror_axis = axis + 2  # +2 for batch and channel dimensions
+                        
+                        # Create flipped input
+                        flipped_input = torch.flip(test_patches, [mirror_axis])
+                        
+                        # Forward pass with flipped input
+                        _ = network(flipped_input)
+                        torch.cuda.synchronize(device)
+                
+                # Get peak memory usage for this forward pass
+                peak_memory = torch.cuda.max_memory_allocated(device)
+                current_memory = torch.cuda.memory_allocated(device)
+                total_memory = torch.cuda.get_device_properties(device).total_memory
+                
+                # Calculate safe batch multiplier (4GB safety margin)
+                safety_margin = 4 * (1024**3)  # 4GB in bytes
+                available_memory = total_memory - current_memory - safety_margin
+                
+                # How many batches of this size can we fit with the remaining memory?
+                if peak_memory > 0:
+                    max_multiplier = int(available_memory / peak_memory)
+                    # Use at least 1, at most 8 multiplier
+                    max_multiplier = max(1, min(8, max_multiplier))
+                    
+                    print(f"GPU Memory Analysis:")
+                    print(f"  Total GPU memory: {total_memory/(1024**3):.1f}GB")
+                    print(f"  Current usage: {current_memory/(1024**3):.1f}GB")
+                    print(f"  Peak usage for one batch: {peak_memory/(1024**3):.1f}GB")
+                    print(f"  Available memory (with safety margin): {available_memory/(1024**3):.1f}GB")
+                    print(f"  TTA batch multiplier: {max_multiplier}")
+                    
+                    # Update the max_tta_combinations parameter
+                    # Handle different TTA modes
+                    if self.full_tta:
+                        # Full TTA mode - use all combinations (parallel or sequential based on memory)
+                        self.max_tta_combinations = None  # None means use all combinations
+                        print(f"Using FULL TTA mode with all available combinations")
+                        print(f"Parallel processing multiplier: {max_multiplier}")
+                    else:
+                        # Primary axes mode - always prioritize the 3 main axes
+                        min_desired_axes = 3
+                        
+                        # If user specified a value, respect it (up to memory limits)
+                        if self.max_tta_combinations is not None:
+                            # User-specified value
+                            if max_multiplier < self.max_tta_combinations:
+                                print(f"WARNING: Requested TTA combinations {self.max_tta_combinations} exceeds safe limit.")
+                                if max_multiplier >= min_desired_axes:
+                                    print(f"Reducing to {max_multiplier} (still covers all primary axes)")
+                                else:
+                                    print(f"Reducing to {max_multiplier} (insufficient memory for all primary axes)")
+                                self.max_tta_combinations = max_multiplier
+                        else:
+                            # Always use at least the 3 primary axes - regardless of memory constraints
+                            # We'll process them sequentially if needed
+                            self.max_tta_combinations = min_desired_axes  # Always use 3 primary axes
+                            
+                            # But adapt the parallel processing based on memory
+                            if max_multiplier >= min_desired_axes:
+                                print(f"Using TTA with all {min_desired_axes} primary axes (parallel processing)")
+                            else:
+                                print(f"Using TTA with all {min_desired_axes} primary axes (sequential processing due to memory constraints)")
+                    
+                    # Also pass the parallel processing multiplier to the run_inference function
+                    self.parallel_tta_multiplier = max_multiplier
+                
+                # Clear GPU memory
+                del test_patches
+                torch.cuda.empty_cache()
+            
             if self.rank == 0:
                 iterator = tqdm(enumerate(loader), total=len(loader),
                                 desc="Running nnUNet inference on patches...")
@@ -1072,8 +1174,16 @@ class ZarrNNUNetInferenceHandler:
                     if torch.cuda.is_available():
                         torch.cuda.synchronize(device)
                     
-                    # Use run_inference for nnUNet models
-                    outputs = run_inference(self.model_info, patches)
+                    # Use run_inference for nnUNet models with our optimized TTA settings
+                    # Pass both parameters:
+                    # - max_tta_combinations: Controls which combinations to use (None = all)
+                    # - parallel_tta_multiplier: Controls how many to process in parallel (for performance)
+                    outputs = run_inference(
+                        self.model_info, 
+                        patches, 
+                        max_tta_combinations=self.max_tta_combinations,
+                        parallel_tta_multiplier=getattr(self, 'parallel_tta_multiplier', None)
+                    )
                     
                     # Process outputs based on activation functions
                     processed_outputs = {}
@@ -1478,6 +1588,10 @@ def main():
                       help="Apply threshold to probability map (value 0-100, represents percentage)")
     parser.add_argument("--disable_tta", action="store_true",
                       help="Disable test time augmentation (mirroring) for faster but potentially less accurate inference")
+    parser.add_argument("--max_tta_combinations", type=int, default=None,
+                      help="Maximum number of TTA combinations to use (default: None = auto-detect based on GPU memory)")
+    parser.add_argument("--full_tta", action="store_true",
+                      help="Use all possible TTA combinations (slower but potentially more accurate)")
     parser.add_argument("--verbose", action="store_true",
                       help="Enable detailed output messages during inference")
     parser.add_argument("--write_layers", action="store_true",
@@ -1536,6 +1650,8 @@ def main():
         device=device,
         threshold=args.threshold,
         use_mirroring=not args.disable_tta,  # Invert flag to match nnUNet's behavior
+        max_tta_combinations=args.max_tta_combinations,
+        full_tta=args.full_tta,  # Whether to use all TTA combinations
         verbose=args.verbose,
         keep_intermediates=args.keep_intermediates,
         save_probability_maps=not args.skip_probability_maps,  # Invert flag for intuitive CLI

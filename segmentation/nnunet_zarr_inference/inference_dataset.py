@@ -19,7 +19,8 @@ class InferenceDataset(Dataset):
             patch_size=None,
             input_format: str = 'zarr',
             step_size: float = 0.5,
-            load_all: bool = False
+            load_all: bool = False,
+            verbose: bool = False
             ):
         """
         Dataset for nnUNet inference on zarr arrays.
@@ -32,6 +33,7 @@ class InferenceDataset(Dataset):
             input_format: Format of the input data ('zarr' supported currently)
             step_size: Step size for sliding window as a fraction of patch size (default: 0.5, nnUNet default)
             load_all: Whether to load the entire array into memory
+            verbose: Enable detailed output messages (default: False)
         """
         self.input_path = input_path
         self.input_format = input_format
@@ -41,9 +43,73 @@ class InferenceDataset(Dataset):
         self.step_size = step_size
         self.load_all = load_all
         self.model_info = model_info
+        self.verbose = verbose
 
         if input_format == 'zarr':
-            self.input_array = zarr.open(self.input_path, mode='r')
+            # Open the zarr array
+            zarr_root = zarr.open(self.input_path, mode='r')
+            
+            # Check if this is a multi-resolution zarr with groups named 0, 1, 2, etc.
+            # Use hasattr to safely check if keys exist in the zarr root
+            if hasattr(zarr_root, 'keys') and '0' in zarr_root.keys() and '1' in zarr_root.keys():
+                # If we have both '0' and '1', it's likely a multi-resolution zarr
+                if self.verbose:
+                    print(f"Detected multi-resolution zarr. Using highest resolution (group '0')")
+                
+                # Now determine if '0' is a group or an array and handle accordingly
+                if isinstance(zarr_root['0'], zarr.Group):
+                    # It's a group with potentially multiple arrays
+                    group_0 = zarr_root['0']
+                    
+                    # First look for direct array access
+                    if hasattr(group_0, 'shape'):
+                        # The group itself is array-like
+                        if self.verbose:
+                            print(f"Group '0' is directly accessible as an array")
+                        self.input_array = group_0
+                    else:
+                        # Find the first array in the group
+                        array_found = False
+                        if hasattr(group_0, 'keys'):
+                            # Use keys() method if available (safer)
+                            for key in group_0.keys():
+                                if hasattr(group_0[key], 'shape'):
+                                    if self.verbose:
+                                        print(f"Found array '{key}' in group '0'")
+                                    self.input_array = group_0[key]
+                                    array_found = True
+                                    break
+                        else:
+                            # Fallback to direct iteration (might cause issues with some zarr layouts)
+                            try:
+                                for key in group_0:
+                                    if hasattr(group_0[key], 'shape'):
+                                        if self.verbose:
+                                            print(f"Found array '{key}' in group '0'")
+                                        self.input_array = group_0[key]
+                                        array_found = True
+                                        break
+                            except Exception as e:
+                                if self.verbose:
+                                    print(f"Error iterating group: {e}")
+                        
+                        if not array_found:
+                            # Fallback to the group itself
+                            if self.verbose:
+                                print(f"No arrays found in group '0', using group directly")
+                            self.input_array = group_0
+                
+                elif hasattr(zarr_root['0'], 'shape'):
+                    # It's a multi-resolution zarr with arrays directly at the root
+                    if self.verbose:
+                        print(f"Using multi-resolution array '0'")
+                    self.input_array = zarr_root['0']
+                else:
+                    # Unexpected structure
+                    raise ValueError(f"Unsupported multi-resolution zarr structure: '0' exists but is not a group or array")
+            else:
+                # Not a multi-resolution zarr
+                self.input_array = zarr_root
         else:
             raise ValueError(f"Unsupported input format: {input_format}")
 

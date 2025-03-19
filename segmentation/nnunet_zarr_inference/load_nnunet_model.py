@@ -212,7 +212,9 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
     return model_info
 
 
-def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor) -> torch.Tensor:
+def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor, 
+                max_tta_combinations: int = None,
+                parallel_tta_multiplier: int = None) -> torch.Tensor:
     """
     Run inference with a loaded nnUNet model
     
@@ -220,6 +222,10 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor) -> tor
         model_info: Dictionary returned by the load_model function
         input_tensor: Input tensor of shape [B, C, ...] with dimensions matching the model's expected input size
                     (B: batch size, C: channels matching num_input_channels)
+        max_tta_combinations: If set, limits which TTA combinations to use
+                    (None = use all combinations, primarily affects accuracy)
+        parallel_tta_multiplier: If set, controls how many combinations to process in parallel
+                    (primarily affects performance/memory usage)
                     
     Returns:
         output: Model prediction tensor
@@ -258,11 +264,30 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor) -> tor
             output = network(input_tensor)
         return output
     
-    # Implementation of TTA through mirroring (matches nnUNet's approach)
-    with torch.no_grad():
-        # Get standard prediction without mirroring
-        prediction = network(input_tensor)
+    # Print TTA performance optimization information if verbose
+    if verbose:
+        # Check if we're using the optimized batch TTA
+        batch_size = input_tensor.shape[0]
+        using_batch_taa = batch_size <= 2 and torch.cuda.is_available()
         
+        if max_tta_combinations is not None:
+            print(f"Using optimized TTA with max {max_tta_combinations} combinations")
+        else:
+            print(f"Using optimized TTA with all possible combinations")
+            
+        if using_batch_taa:
+            print(f"Batch size {batch_size} allows for parallel TTA processing")
+        else:
+            print(f"Using sequential TTA processing due to batch size {batch_size}")
+            
+        # Memory info if available
+        if torch.cuda.is_available():
+            mem_allocated = torch.cuda.memory_allocated() / (1024**3)  # GB
+            mem_reserved = torch.cuda.memory_reserved() / (1024**3)    # GB
+            print(f"GPU memory: {mem_allocated:.2f}GB allocated, {mem_reserved:.2f}GB reserved")
+    
+    # Implementation of TTA through mirroring (matches nnUNet's approach but optimized)
+    with torch.no_grad():
         # Adjust mirror axes to account for batch and channel dimensions
         mirror_axes = [i + 2 for i in allowed_mirroring_axes]  # +2 for batch and channel dimensions
         if verbose:
@@ -277,17 +302,115 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor) -> tor
             for c in itertools.combinations(mirror_axes, i + 1)
         ]
         
-        # For each combination, mirror input, predict, and mirror prediction back
-        for axes in axes_combinations:
-            # Mirror input
-            mirrored_input = torch.flip(input_tensor, axes)
-            # Predict
-            mirrored_output = network(mirrored_input)
-            # Mirror prediction back to original orientation
-            prediction += torch.flip(mirrored_output, axes)
+        # Limit the number of combinations if specified
+        if max_tta_combinations is not None and len(axes_combinations) > max_tta_combinations:
+            if verbose:
+                print(f"Limiting TTA combinations from {len(axes_combinations)} to {max_tta_combinations}")
+            
+            # Special case for exactly 3 combinations - ALWAYS use the 3 single-axis flips
+            if max_tta_combinations == 3:
+                # Get the single-axis flips - these are the primary axes we always want
+                single_axis_flips = [c for c in axes_combinations if len(c) == 1]
+                
+                if len(single_axis_flips) == 3:
+                    # Found all 3 primary axis flips - use these
+                    axes_combinations = single_axis_flips
+                    
+                    if verbose:
+                        print(f"  - Using the 3 primary axis flips (most important for view coverage)")
+                else:
+                    # Something unexpected happened - the single axis flips aren't exactly 3
+                    # Fall back to standard prioritization
+                    axes_combinations.sort(key=len)  # Prioritize by number of flipped axes (fewer = better)
+                    axes_combinations = axes_combinations[:max_tta_combinations]
+                    
+                    if verbose:
+                        print(f"  - WARNING: Could not identify exactly 3 single-axis flips, using first {max_tta_combinations}")
+            else:
+                # For other counts, prioritize single-axis flips first, then others
+                single_axis_flips = [c for c in axes_combinations if len(c) == 1]
+                other_flips = [c for c in axes_combinations if len(c) > 1]
+                
+                # Sort the remaining flips by length (prioritize 2-axis over 3-axis flips)
+                other_flips.sort(key=len)
+                
+                # Determine how many additional flips we can include beyond the primary ones
+                num_primary = len(single_axis_flips)
+                
+                # Make sure we include at least the single-axis flips if possible
+                if max_tta_combinations >= num_primary:
+                    # Include all single-axis flips + as many others as will fit
+                    remaining_slots = max_tta_combinations - num_primary
+                    axes_combinations = single_axis_flips + other_flips[:remaining_slots]
+                    
+                    if verbose:
+                        print(f"  - Included all {num_primary} single-axis flips + {remaining_slots} additional flips")
+                else:
+                    # Not enough slots even for all single-axis flips
+                    # For medical data, still prioritize by axes length to get primary views
+                    axes_combinations.sort(key=len)  # Prioritize by number of flipped axes
+                    axes_combinations = axes_combinations[:max_tta_combinations]
+                    
+                    if verbose:
+                        print(f"  - WARNING: Not enough capacity for all single-axis flips, using first {max_tta_combinations}")
+        
+        # Calculate total number of predictions for averaging
+        num_predictions = len(axes_combinations) + 1
+        
+        # Get standard prediction without mirroring
+        prediction = network(input_tensor)
+        
+        # Determine the batch processing strategy based on parallel_tta_multiplier
+        # This controls HOW we process combinations (in parallel or sequentially)
+        use_batched_tta = False
+        if parallel_tta_multiplier is not None and parallel_tta_multiplier > 1 and torch.cuda.is_available():
+            use_batched_tta = True
+            max_batch_multiplier = parallel_tta_multiplier
+            
+            if verbose:
+                print(f"Using parallel TTA processing with multiplier: {max_batch_multiplier}")
+        elif verbose:
+            print(f"Using sequential TTA processing")
+            
+        if use_batched_tta:
+            # Process TTA combinations in batches to maximize GPU utilization
+            combo_batches = [axes_combinations[i:i+max_batch_multiplier] 
+                            for i in range(0, len(axes_combinations), max_batch_multiplier)]
+            
+            for combo_batch in combo_batches:
+                # Process multiple mirror combinations in parallel
+                batch_inputs = []
+                for axes in combo_batch:
+                    batch_inputs.append(torch.flip(input_tensor, axes))
+                
+                if batch_inputs:  # Make sure we have some inputs
+                    # Concatenate along batch dimension
+                    batched_input = torch.cat(batch_inputs, dim=0)
+                    
+                    # Single forward pass for multiple mirror combinations
+                    batched_output = network(batched_input)
+                    
+                    # Split and process the results
+                    split_outputs = torch.split(batched_output, input_tensor.shape[0])
+                    
+                    for i, axes in enumerate(combo_batch):
+                        # Flip each output back to original orientation and add to prediction
+                        prediction += torch.flip(split_outputs[i], axes)
+        else:
+            # Standard sequential processing of TTA combinations
+            if verbose and torch.cuda.is_available():
+                print(f"Using sequential TTA processing for {len(axes_combinations)} combinations")
+                
+            for axes in axes_combinations:
+                # Mirror input
+                mirrored_input = torch.flip(input_tensor, axes)
+                # Predict
+                mirrored_output = network(mirrored_input)
+                # Mirror prediction back to original orientation
+                prediction += torch.flip(mirrored_output, axes)
         
         # Average all predictions (original + mirrored variants)
-        prediction /= (len(axes_combinations) + 1)
+        prediction /= num_predictions
         
     return prediction
 
