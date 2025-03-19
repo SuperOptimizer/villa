@@ -900,7 +900,9 @@ class ZarrNNUNetInferenceHandler:
                 # Wait for at least one job to complete
                 if self.verbose:
                     print(f"Waiting for write futures to complete ({len(self.write_futures)} pending)")
-                done, self.write_futures = wait(self.write_futures, return_when=FIRST_COMPLETED)
+                done, not_done = wait(self.write_futures, return_when=FIRST_COMPLETED)
+                # Convert the set back to a list
+                self.write_futures = list(not_done)
 
     def infer(self):
         """Run inference with the nnUNet model on the zarr array."""
