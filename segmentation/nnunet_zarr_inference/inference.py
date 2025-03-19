@@ -228,8 +228,8 @@ class ZarrNNUNetInferenceHandler:
     def _process_buffer(self, output_arrays: Dict, count_arrays: Dict,
                         patch_buffer: Dict = None, positions: List[Tuple] = None):
         """
-        Write accumulated patches to the Zarr arrays, one patch at a time,
-        instead of grouping patches into large bounding boxes.
+        Write accumulated patches to the Zarr arrays, grouping spatially close patches
+        to minimize the number of small I/O operations and improve write throughput.
         """
         # Use the provided buffers if any; otherwise, use the instance buffers.
         if patch_buffer is None or positions is None:
@@ -239,14 +239,18 @@ class ZarrNNUNetInferenceHandler:
         if not patch_buffer or not positions:
             return
 
-        # Loop over each patch and write it directly.
-        for i, pos in enumerate(positions):
-            for tgt_name in self.output_targets:
-                patch_data = patch_buffer[tgt_name][i]
-                # We call _write_region_patches() with just a single patch in the list.
-                self._write_region_patches([patch_data], [pos],
-                                           output_arrays[tgt_name],
-                                           count_arrays[tgt_name])
+        # Group patches by target
+        for tgt_name in self.output_targets:
+            if tgt_name not in patch_buffer:
+                continue
+                
+            patches_for_target = [patch_buffer[tgt_name][i] for i in range(len(positions))]
+            
+            # Process all patches for this target at once
+            # This reduces the number of zarr array accesses and lock contentions
+            self._write_region_patches(patches_for_target, positions,
+                                      output_arrays[tgt_name],
+                                      count_arrays[tgt_name])
 
         # If these are the "live" buffers on the instance, clear them.
         if patch_buffer is self.patch_buffer:
@@ -260,51 +264,118 @@ class ZarrNNUNetInferenceHandler:
         For patches that have been zero–padded to reach the full patch size,
         we compute the valid region (i.e. the part that actually falls within the image)
         and only blend that region back into the output arrays.
+        
+        This optimized version groups spatially close patches to minimize zarr read/write operations.
         """
+        # Skip if no patches
+        if not patches or not positions:
+            return
+            
+        # Ensure blending weights are initialized outside the lock
+        if self.blend_weights is None:
+            self._initialize_blend_weights()
+
+        # Get the full image shape from the count array.
+        image_z, image_y, image_x = count_array.shape
+        full_z, full_y, full_x = self.patch_size
+
+        # Group patches by spatial proximity to minimize region reads/writes
+        # First, compute all valid sizes outside the lock
+        valid_sizes = []
+        for pos in positions:
+            z0, y0, x0 = pos
+            valid_z = full_z if (z0 + full_z) <= image_z else image_z - z0
+            valid_y = full_y if (y0 + full_y) <= image_y else image_y - y0
+            valid_x = full_x if (x0 + full_x) <= image_x else image_x - x0
+            valid_sizes.append((valid_z, valid_y, valid_x))
+
+        # Compute the bounding box for all patches
+        min_z = min(pos[0] for pos in positions)
+        min_y = min(pos[1] for pos in positions)
+        min_x = min(pos[2] for pos in positions)
+        max_z = max(pos[0] + valid[0] for pos, valid in zip(positions, valid_sizes))
+        max_y = max(pos[1] + valid[1] for pos, valid in zip(positions, valid_sizes))
+        max_x = max(pos[2] + valid[2] for pos, valid in zip(positions, valid_sizes))
+
+        # Check if bounding box is too large, if so, break it into chunks
+        z_range = max_z - min_z
+        y_range = max_y - min_y
+        x_range = max_x - min_x
+        
+        # Define max region size (larger regions = fewer I/O operations but more memory)
+        # These are chosen to balance memory usage and I/O operations
+        max_z_size = full_z * 2  # 2x patch size in Z
+        max_y_size = full_y * 2  # 2x patch size in Y
+        max_x_size = full_x * 2  # 2x patch size in X
+        
+        # If region is manageable, process it as a single unit; otherwise chunk it
+        # This helps with very large buffers where we have patches from disparate regions
+        if z_range <= max_z_size and y_range <= max_y_size and x_range <= max_x_size:
+            self._process_region(
+                patches, positions, valid_sizes, 
+                min_z, min_y, min_x, max_z, max_y, max_x,
+                output_array, count_array
+            )
+        else:
+            # Region too large, group patches into smaller chunks
+            print(f"Large region detected ({z_range}x{y_range}x{x_range}), chunking for efficient processing")
+            
+            # Group patches by Z chunks first (most optimal for most volume data)
+            z_chunks = range(min_z, max_z, max_z_size)
+            for z_start in z_chunks:
+                z_end = min(z_start + max_z_size, max_z)
+                
+                # Find patches that fall within this Z chunk
+                z_chunk_indices = [
+                    i for i, pos in enumerate(positions) 
+                    if (pos[0] < z_end and (pos[0] + valid_sizes[i][0]) > z_start)
+                ]
+                
+                if not z_chunk_indices:
+                    continue
+                    
+                # Process this chunk
+                chunk_patches = [patches[i] for i in z_chunk_indices]
+                chunk_positions = [positions[i] for i in z_chunk_indices]
+                chunk_valid_sizes = [valid_sizes[i] for i in z_chunk_indices]
+                
+                # Find bounds within this chunk
+                chunk_min_z = max(min(pos[0] for pos in chunk_positions), z_start)
+                chunk_min_y = min(pos[1] for pos in chunk_positions)
+                chunk_min_x = min(pos[2] for pos in chunk_positions)
+                chunk_max_z = min(max(pos[0] + vs[0] for pos, vs in zip(chunk_positions, chunk_valid_sizes)), z_end)
+                chunk_max_y = max(pos[1] + vs[1] for pos, vs in zip(chunk_positions, chunk_valid_sizes))
+                chunk_max_x = max(pos[2] + vs[2] for pos, vs in zip(chunk_positions, chunk_valid_sizes))
+                
+                self._process_region(
+                    chunk_patches, chunk_positions, chunk_valid_sizes,
+                    chunk_min_z, chunk_min_y, chunk_min_x, 
+                    chunk_max_z, chunk_max_y, chunk_max_x,
+                    output_array, count_array
+                )
+    
+    def _process_region(self, patches, positions, valid_sizes,
+                       min_z, min_y, min_x, max_z, max_y, max_x,
+                       output_array, count_array):
+        """Process a single region of patches with one read-modify-write cycle."""
         with self.write_lock:
-            # Ensure blending weights are initialized.
-            if self.blend_weights is None:
-                self._initialize_blend_weights()
-
-            # Get the full image shape from the count array.
-            image_z, image_y, image_x = count_array.shape
-            full_z, full_y, full_x = self.patch_size
-
-            # Compute valid sizes for each patch (i.e. how much of the patch actually falls inside the image).
-            valid_sizes = []
-            for pos in positions:
-                z0, y0, x0 = pos
-                valid_z = full_z if (z0 + full_z) <= image_z else image_z - z0
-                valid_y = full_y if (y0 + full_y) <= image_y else image_y - y0
-                valid_x = full_x if (x0 + full_x) <= image_x else image_x - x0
-                valid_sizes.append((valid_z, valid_y, valid_x))
-
-            # Compute the union region bounds for all patches.
-            min_z = min(pos[0] for pos in positions)
-            min_y = min(pos[1] for pos in positions)
-            min_x = min(pos[2] for pos in positions)
-            max_z = max(pos[0] + valid[0] for pos, valid in zip(positions, valid_sizes))
-            max_y = max(pos[1] + valid[1] for pos, valid in zip(positions, valid_sizes))
-            max_x = max(pos[2] + valid[2] for pos, valid in zip(positions, valid_sizes))
-
             # Check output_array dimensionality and adapt access pattern accordingly
             output_ndim = len(output_array.shape)
             
             # Determine if we have 3D or 4D data
             has_channel_dim = len(patches[0].shape) == 4
             
-            # Handle differently based on output dimensions
+            # Fetch the current region (single I/O operation)
             if output_ndim == 4 and has_channel_dim:
                 # Both have 4D: C,Z,Y,X
                 region_sum = output_array[:, min_z:max_z, min_y:max_y, min_x:max_x]
                 base_weights = self.blend_weights_4d
             elif output_ndim == 3 and has_channel_dim:
-                # Let's inspect the shapes to provide better debugging info
+                # This shouldn't happen anymore after our fixes
                 print(f"ERROR: Dimension mismatch detected:")
                 print(f"- Output array: shape={output_array.shape}, ndim={output_ndim}")
                 print(f"- Patch data: shape={patches[0].shape}, ndim={len(patches[0].shape)}")
                 print(f"- Channel flag: has_channel_dim={has_channel_dim}")
-                print(f"This indicates a serious dimension mismatch that shouldn't occur - the arrays were not properly recreated.")
                 
                 # Attempt to recover by reducing patch dimension
                 tmp_patches = [p[0:1] for p in patches]  # Keep only first channel
@@ -317,13 +388,13 @@ class ZarrNNUNetInferenceHandler:
                 region_sum = output_array[min_z:max_z, min_y:max_y, min_x:max_x]
                 base_weights = self.blend_weights
             else:
-                # Handle unusual case of 3D patch and 4D output - shouldn't happen but just in case
+                # Unusual case - shouldn't happen
                 raise ValueError(f"Incompatible dimensions: output array has {output_ndim} dimensions " 
                                f"but patch data has {len(patches[0].shape)} dimensions")
 
             region_count = count_array[min_z:max_z, min_y:max_y, min_x:max_x]
 
-            # Loop over patches and add only the valid region.
+            # Accumulate all patches into the region
             for patch, pos, valid in zip(patches, positions, valid_sizes):
                 valid_z, valid_y, valid_x = valid
                 z0, y0, x0 = pos
@@ -331,12 +402,38 @@ class ZarrNNUNetInferenceHandler:
                 y_rel = y0 - min_y
                 x_rel = x0 - min_x
 
+                # Skip if patch is completely outside the region
+                if (z_rel >= max_z - min_z) or (y_rel >= max_y - min_y) or (x_rel >= max_x - min_x) or \
+                   (z_rel + valid_z <= 0) or (y_rel + valid_y <= 0) or (x_rel + valid_x <= 0):
+                    continue
+
+                # Adjust relative coordinates if they are negative (patch partially outside region)
+                if z_rel < 0:
+                    valid_z += z_rel
+                    patch = patch[..., -z_rel:, :, :] if has_channel_dim else patch[-z_rel:, :, :]
+                    z_rel = 0
+                if y_rel < 0:
+                    valid_y += y_rel
+                    patch = patch[..., :, -y_rel:, :] if has_channel_dim else patch[:, -y_rel:, :]
+                    y_rel = 0
+                if x_rel < 0:
+                    valid_x += x_rel
+                    patch = patch[..., :, :, -x_rel:] if has_channel_dim else patch[:, :, -x_rel:]
+                    x_rel = 0
+
+                # Adjust valid region if it extends beyond region bounds
+                if z_rel + valid_z > max_z - min_z:
+                    valid_z = max_z - min_z - z_rel
+                if y_rel + valid_y > max_y - min_y:
+                    valid_y = max_y - min_y - y_rel
+                if x_rel + valid_x > max_x - min_x:
+                    valid_x = max_x - min_x - x_rel
+
                 # Crop the patch and blending weights to the valid region.
                 if has_channel_dim:
                     patch_valid = patch[:, :valid_z, :valid_y, :valid_x]
                     # Make sure we have 4D weights for 4D patch
                     if base_weights.ndim == 3:
-                        # Need to expand base_weights to match channel dimension
                         local_weights = np.expand_dims(base_weights[:valid_z, :valid_y, :valid_x], axis=0)
                     else:
                         local_weights = base_weights[:, :valid_z, :valid_y, :valid_x]
@@ -346,25 +443,22 @@ class ZarrNNUNetInferenceHandler:
 
                 weighted_patch = patch_valid * local_weights
 
-                # Update region sum based on whether we have channel dimension
+                # Update region with weighted patch
                 if output_ndim == 4 and has_channel_dim:
                     region_sum[:, z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += weighted_patch
                 elif output_ndim == 3 and has_channel_dim:
-                    # This path should not be reached due to earlier fix, but just in case
-                    print(f"Warning: attempting to add 4D data to 3D array - taking first channel only")
+                    # This path should not be reached due to earlier fix
                     region_sum[z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += weighted_patch[0]
                 else:
                     region_sum[z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += weighted_patch
                 
-                # For count array, adjust as needed based on weights dimensionality
+                # Update count array
                 if local_weights.ndim == 4:
-                    # For multi-channel weights, just use one channel for count
                     region_count[z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += local_weights[0]
                 else:
-                    # Single channel weights - use as is
                     region_count[z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += local_weights
 
-            # Write back the updated regions.
+            # Write back the updated regions - single I/O operation
             if output_ndim == 4 and has_channel_dim:
                 output_array[:, min_z:max_z, min_y:max_y, min_x:max_x] = region_sum
             else:
@@ -410,6 +504,15 @@ class ZarrNNUNetInferenceHandler:
 
         # When buffer is full, process it asynchronously
         if len(self.buffer_positions) >= self.buffer_size:
+            # Check if any futures are done without blocking
+            # This helps keep the main thread running without waiting
+            done, not_done = wait(self.write_futures, timeout=0, return_when=FIRST_COMPLETED)
+            for future in done:
+                # Clean up completed futures
+                if future.exception() is not None:
+                    print(f"Warning: A write future encountered an exception: {future.exception()}")
+                self.write_futures.remove(future)
+            
             # Make local copies of the current buffers and clear the instance buffers.
             local_patch_buffer = {k: v[:] for k, v in self.patch_buffer.items()}
             local_positions = self.buffer_positions[:]
@@ -421,11 +524,11 @@ class ZarrNNUNetInferenceHandler:
                                           local_patch_buffer, local_positions)
             self.write_futures.append(future)
 
-            # Wait (block) if too many pending write futures to avoid unbounded memory usage
+            # Only block if we absolutely have to (when memory pressure is high)
             if len(self.write_futures) >= self.max_pending_writes:
-                done, _ = wait(self.write_futures, return_when=FIRST_COMPLETED)
-                for future in done:
-                    self.write_futures.remove(future)
+                # Wait for at least one job to complete
+                print(f"Waiting for write futures to complete ({len(self.write_futures)} pending)")
+                done, self.write_futures = wait(self.write_futures, return_when=FIRST_COMPLETED)
 
     def infer(self):
         """Run inference with the nnUNet model on the zarr array."""
@@ -627,9 +730,27 @@ class ZarrNNUNetInferenceHandler:
 
             # Process any remaining patches in the buffer.
             if self.buffer_positions:
-                self._process_buffer(output_arrays, count_arrays)
-            for future in self.write_futures:
-                future.result()
+                # Create a copy of the buffer to avoid race conditions
+                local_patch_buffer = {k: v[:] for k, v in self.patch_buffer.items()}
+                local_positions = self.buffer_positions[:]
+                self.patch_buffer.clear()
+                self.buffer_positions.clear()
+                
+                # Process the final buffer
+                self._process_buffer(output_arrays, count_arrays, local_patch_buffer, local_positions)
+                
+            # Wait for and process all pending futures
+            if self.write_futures:
+                print(f"Waiting for {len(self.write_futures)} remaining write operations to complete...")
+                for i, future in enumerate(self.write_futures):
+                    try:
+                        # Process futures one by one to catch any exceptions
+                        future.result()
+                        if (i + 1) % 10 == 0:  # Print progress every 10 futures
+                            print(f"Processed {i+1}/{len(self.write_futures)} pending writes")
+                    except Exception as e:
+                        print(f"Error in write future: {e}")
+                self.write_futures.clear()
 
             # Shut down the executor.
             if self.executor is not None:
