@@ -14,7 +14,8 @@ __all__ = ['load_model', 'run_inference']
 
 
 def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: str = 'checkpoint_final.pth', 
-            device='cuda', custom_plans_json=None, custom_dataset_json=None, use_mirroring: bool = True):
+            device='cuda', custom_plans_json=None, custom_dataset_json=None, use_mirroring: bool = True, 
+            verbose: bool = False):
     """
     Load a trained nnUNet model from a model folder.
     
@@ -26,6 +27,7 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
         custom_plans_json: Optional custom plans.json to use instead of the one in model_folder
         custom_dataset_json: Optional custom dataset.json to use instead of the one in model_folder
         use_mirroring: Enable test time augmentation via mirroring (default: True)
+        verbose: Enable detailed output messages during loading (default: False)
         
     Returns:
         network: The loaded model
@@ -129,7 +131,8 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
         'num_seg_heads': label_manager.num_segmentation_heads,
         'patch_size': configuration_manager.patch_size,
         'use_mirroring': use_mirroring,
-        'allowed_mirroring_axes': inference_allowed_mirroring_axes
+        'allowed_mirroring_axes': inference_allowed_mirroring_axes,
+        'verbose': verbose
     }
     
     return model_info
@@ -168,13 +171,15 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor) -> tor
     # Check if TTA (test time augmentation) should be used
     use_mirroring = model_info.get('use_mirroring', True)  # Default to True (nnUNet default)
     allowed_mirroring_axes = model_info.get('allowed_mirroring_axes', None)
+    verbose = model_info.get('verbose', False)  # Default to False
     
     # If TTA is disabled or no mirroring axes are specified, just run standard inference
     if not use_mirroring or allowed_mirroring_axes is None:
-        if not use_mirroring:
-            print("Test time augmentation (mirroring) is disabled")
-        elif allowed_mirroring_axes is None:
-            print("No mirroring axes specified in model checkpoint, test time augmentation not possible")
+        if verbose:
+            if not use_mirroring:
+                print("Test time augmentation (mirroring) is disabled")
+            elif allowed_mirroring_axes is None:
+                print("No mirroring axes specified in model checkpoint, test time augmentation not possible")
         with torch.no_grad():
             output = network(input_tensor)
         return output
@@ -186,7 +191,8 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor) -> tor
         
         # Adjust mirror axes to account for batch and channel dimensions
         mirror_axes = [i + 2 for i in allowed_mirroring_axes]  # +2 for batch and channel dimensions
-        print(f"Using test time augmentation with mirroring axes: {allowed_mirroring_axes}")
+        if verbose:
+            print(f"Using test time augmentation with mirroring axes: {allowed_mirroring_axes}")
         
         # Import itertools for combinations
         import itertools
@@ -229,6 +235,8 @@ if __name__ == "__main__":
                       help='Run a test inference with random input')
     parser.add_argument('--disable_tta', action='store_true',
                       help='Disable test time augmentation (mirroring) for faster inference')
+    parser.add_argument('--verbose', action='store_true',
+                      help='Enable detailed output messages during loading and inference')
     
     args = parser.parse_args()
     
@@ -244,7 +252,8 @@ if __name__ == "__main__":
         device=args.device,
         custom_plans_json=custom_plans_json,
         custom_dataset_json=custom_dataset_json,
-        use_mirroring=not args.disable_tta
+        use_mirroring=not args.disable_tta,
+        verbose=args.verbose
     )
     
     # Print model information
@@ -259,13 +268,14 @@ if __name__ == "__main__":
     print(f"Output segmentation heads: {model_info['num_seg_heads']}")
     print(f"Expected patch size: {model_info['patch_size']}")
     
-    # Show TTA status
-    use_mirroring = model_info.get('use_mirroring', True)
-    mirroring_axes = model_info.get('allowed_mirroring_axes', None)
-    if use_mirroring and mirroring_axes is not None:
-        print(f"Test time augmentation: Enabled with mirroring axes {mirroring_axes}")
-    else:
-        print(f"Test time augmentation: {'Disabled by user' if not use_mirroring else 'Not available (no mirroring axes in checkpoint)'}")
+    # Show TTA status if verbose
+    if args.verbose:
+        use_mirroring = model_info.get('use_mirroring', True)
+        mirroring_axes = model_info.get('allowed_mirroring_axes', None)
+        if use_mirroring and mirroring_axes is not None:
+            print(f"Test time augmentation: Enabled with mirroring axes {mirroring_axes}")
+        else:
+            print(f"Test time augmentation: {'Disabled by user' if not use_mirroring else 'Not available (no mirroring axes in checkpoint)'}")
     
     # Run a test inference if requested
     if args.test_inference:

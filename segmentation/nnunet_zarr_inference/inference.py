@@ -36,6 +36,7 @@ class ZarrNNUNetInferenceHandler:
                  device: str = 'cuda',
                  threshold: Optional[float] = None,
                  use_mirroring: bool = True,
+                 verbose: bool = False,
                  output_targets: Optional[Dict[str, Dict]] = None):
         """
         Initialize the inference handler for nnUNet models on zarr arrays.
@@ -58,6 +59,7 @@ class ZarrNNUNetInferenceHandler:
             device: Device to run inference on ('cuda' or 'cpu')
             threshold: Optional threshold value (0-100) for binarizing the probability map
             use_mirroring: Enable test time augmentation via mirroring (default: True, matches nnUNet default)
+            verbose: Enable detailed output messages during inference (default: False)
             output_targets: Optional custom output targets configuration
         """
         self.input_path = input_path
@@ -75,6 +77,7 @@ class ZarrNNUNetInferenceHandler:
         self.device_str = device
         self.threshold = threshold
         self.use_mirroring = use_mirroring
+        self.verbose = verbose
         
         # Default output target configuration if not provided
         # For nnUNet, we expect 2 channels (background and foreground)
@@ -126,19 +129,22 @@ class ZarrNNUNetInferenceHandler:
         """
         try:
             print(f"Loading nnUNet model from {self.model_folder}, fold {self.fold}")
-            print(f"Test time augmentation (mirroring): {'enabled' if self.use_mirroring else 'disabled'}")
+            if self.verbose:
+                print(f"Test time augmentation (mirroring): {'enabled' if self.use_mirroring else 'disabled'}")
             model_info = load_model(
                 model_folder=self.model_folder,
                 fold=self.fold,
                 checkpoint_name=self.checkpoint_name,
                 device=self.device_str,
-                use_mirroring=self.use_mirroring
+                use_mirroring=self.use_mirroring,
+                verbose=self.verbose
             )
             
             # Use the model's patch size if none was specified
             if self.patch_size is None:
                 self.patch_size = model_info['patch_size']
-                print(f"Using model's patch size: {self.patch_size}")
+                if self.verbose:
+                    print(f"Using model's patch size: {self.patch_size}")
             
             return model_info
         except Exception as e:
@@ -323,7 +329,8 @@ class ZarrNNUNetInferenceHandler:
             )
         else:
             # Region too large, group patches into smaller chunks
-            print(f"Large region detected ({z_range}x{y_range}x{x_range}), chunking for efficient processing")
+            if self.verbose:
+                print(f"Large region detected ({z_range}x{y_range}x{x_range}), chunking for efficient processing")
             
             # Group patches by Z chunks first (most optimal for most volume data)
             z_chunks = range(min_z, max_z, max_z_size)
@@ -532,7 +539,8 @@ class ZarrNNUNetInferenceHandler:
             # Only block if we absolutely have to (when memory pressure is high)
             if len(self.write_futures) >= self.max_pending_writes:
                 # Wait for at least one job to complete
-                print(f"Waiting for write futures to complete ({len(self.write_futures)} pending)")
+                if self.verbose:
+                    print(f"Waiting for write futures to complete ({len(self.write_futures)} pending)")
                 done, self.write_futures = wait(self.write_futures, return_when=FIRST_COMPLETED)
 
     def infer(self):
@@ -746,12 +754,13 @@ class ZarrNNUNetInferenceHandler:
                 
             # Wait for and process all pending futures
             if self.write_futures:
-                print(f"Waiting for {len(self.write_futures)} remaining write operations to complete...")
+                if self.verbose:
+                    print(f"Waiting for {len(self.write_futures)} remaining write operations to complete...")
                 for i, future in enumerate(self.write_futures):
                     try:
                         # Process futures one by one to catch any exceptions
                         future.result()
-                        if (i + 1) % 10 == 0:  # Print progress every 10 futures
+                        if self.verbose and (i + 1) % 10 == 0:  # Print progress every 10 futures
                             print(f"Processed {i+1}/{len(self.write_futures)} pending writes")
                     except Exception as e:
                         print(f"Error in write future: {e}")
@@ -947,6 +956,8 @@ def main():
                       help="Apply threshold to probability map (value 0-100, represents percentage)")
     parser.add_argument("--disable_tta", action="store_true",
                       help="Disable test time augmentation (mirroring) for faster but potentially less accurate inference")
+    parser.add_argument("--verbose", action="store_true",
+                      help="Enable detailed output messages during inference")
     parser.add_argument("--write_layers", action="store_true",
                       help="Write the sliced z layers to disk")
     parser.add_argument("--postprocess_only", action="store_true",
@@ -980,6 +991,7 @@ def main():
         device=device,
         threshold=args.threshold,
         use_mirroring=not args.disable_tta,  # Invert flag to match nnUNet's behavior
+        verbose=args.verbose,
         load_all=args.load_all
     )
     
