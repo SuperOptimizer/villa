@@ -107,11 +107,18 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
     # Set to evaluation mode
     network.eval()
     
-    # Compile if needed
-    if ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) \
-            and not isinstance(network, OptimizedModule):
-        print('Using torch.compile')
-        network = torch.compile(network)
+    # Compile by default unless explicitly disabled
+    should_compile = True
+    if 'nnUNet_compile' in os.environ.keys():
+        should_compile = os.environ['nnUNet_compile'].lower() in ('true', '1', 't')
+    
+    if should_compile and not isinstance(network, OptimizedModule):
+        print('Using torch.compile for potential performance improvement')
+        try:
+            network = torch.compile(network)
+        except Exception as e:
+            print(f"Warning: Could not compile model: {e}")
+            print("Continuing with uncompiled model")
     
     # Get allowed mirroring axes from checkpoint if available
     inference_allowed_mirroring_axes = None

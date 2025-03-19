@@ -8,12 +8,7 @@ import torch
 from torch.utils.data import Dataset
 
 # Import helpers with fallback for different import scenarios
-try:
-    # First try relative imports (when running as a module)
-    from nnunet_zarr_inference.helpers import generate_positions
-except ImportError:
-    # Fallback for direct script execution
-    from helpers import generate_positions
+# We'll import specific functions only when needed in the code
 
 class InferenceDataset(Dataset):
     def __init__(
@@ -89,7 +84,13 @@ class InferenceDataset(Dataset):
             raise ValueError(f"Unsupported input shape: {self.input_shape}")
 
         # Generate all coordinates using nnUNet-style sliding window approach
-        from helpers import compute_steps_for_sliding_window
+        # Import compute_steps_for_sliding_window with same fallback strategy
+        try:
+            # First try relative imports (when running as a module)
+            from nnunet_zarr_inference.helpers import compute_steps_for_sliding_window
+        except ImportError:
+            # Fallback for direct script execution
+            from helpers import compute_steps_for_sliding_window
         
         # Use nnUNet's method to compute steps for sliding window
         if len(self.input_shape) == 3:  # 3D array (Z,Y,X)

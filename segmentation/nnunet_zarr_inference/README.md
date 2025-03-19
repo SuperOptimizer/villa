@@ -7,6 +7,7 @@ This package provides utilities for running inference with nnUNet models on zarr
 - Load trained nnUNet models (any valid nnUNet checkpoint)
 - Efficient sliding window inference on large 3D zarr arrays
 - Multi-GPU support with DDP (Distributed Data Parallel)
+- Automatic model compilation for improved performance
 - Asynchronous disk writing to minimize I/O bottlenecks
 - Automatic overlapping patch blending with Gaussian windows
 - Test time augmentation support with mirroring (like nnUNet)
@@ -56,16 +57,22 @@ torchrun --nproc_per_node=2 -m nnunet_zarr_inference.inference \
   --output_path /path/to/output \
   --model_folder /path/to/nnunet/model \
   --fold 0 \
-  --batch_size 4
+  --batch_size 4 \
+  --num_dataloader_workers 8  # Will be automatically divided by number of processes
 
-# Or using torch.distributed.launch
-python -m torch.distributed.launch --nproc_per_node=2 -m nnunet_zarr_inference.inference \
+# For better performance, set OMP_NUM_THREADS
+export OMP_NUM_THREADS=4  # Total CPU cores / Number of processes
+torchrun --nproc_per_node=2 -m nnunet_zarr_inference.inference \
   --input_path /path/to/input.zarr \
   --output_path /path/to/output \
   --model_folder /path/to/nnunet/model \
-  --fold 0 \
-  --batch_size 4
+  --fold 0
 ```
+
+When using DDP, worker counts are automatically adjusted:
+- You specify the **total** number of workers you want across all processes
+- The script automatically divides this by the number of processes
+- This ensures efficient CPU utilization without oversubscription
 
 ### Arguments
 
@@ -76,8 +83,8 @@ python -m torch.distributed.launch --nproc_per_node=2 -m nnunet_zarr_inference.i
 - `--checkpoint`: Checkpoint file name to use (default: checkpoint_final.pth)
 - `--batch_size`: Batch size for inference (default: 4)
 - `--step_size`: Step size for sliding window as a fraction of patch size (default: 0.5, nnUNet default)
-- `--num_dataloader_workers`: Number of workers for the DataLoader (default: 4)
-- `--num_write_workers`: Number of worker threads for asynchronous disk writes (default: 4)
+- `--num_dataloader_workers`: Number of workers for the DataLoader (default: 4). When using DDP, this is the total worker count across all processes.
+- `--num_write_workers`: Number of worker threads for asynchronous disk writes (default: 4). When using DDP, this is the total worker count across all processes.
 - `--device`: Device to run inference on ('cuda' or 'cpu') (default: cuda)
 - `--threshold`: Apply threshold to probability map (value 0-100, represents percentage)
 - `--disable_tta`: Disable test time augmentation (mirroring) for faster but potentially less accurate inference
@@ -126,3 +133,8 @@ If `--keep_intermediates` is specified, these additional arrays will be kept:
 - `segmentation_count`: Count of predictions per voxel (float32)
 
 The default target name is "segmentation", but this can be customized using the output_targets parameter.
+
+## Environment Variables
+
+- `OMP_NUM_THREADS`: Controls the number of OpenMP threads per process. Recommended to set this to (Total CPU cores / Number of processes).
+- `nnUNet_compile`: Controls model compilation (default is enabled). Set to 'false' to disable compilation if you encounter issues.

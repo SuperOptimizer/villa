@@ -1000,13 +1000,32 @@ def main():
     args = parser.parse_args()
 
     # Set the CUDA device before initializing the process group.
+    # Initialize distributed process group if running with DDP
+    world_size = 1
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        world_size = int(os.environ.get("WORLD_SIZE", 1))
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         torch.cuda.set_device(local_rank)  # Set the device first!
         dist.init_process_group(backend='nccl', init_method='env://')
         device = f'cuda:{local_rank}'
+        
+        # Only rank 0 should print this message
+        if int(os.environ.get("RANK", 0)) == 0:
+            print(f"Running in distributed mode with {world_size} processes")
     else:
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    
+    # Automatically adjust worker counts when running with DDP
+    # This ensures we use the same total resources regardless of process count
+    dataloader_workers = max(1, args.num_dataloader_workers // world_size)
+    write_workers = max(1, args.num_write_workers // world_size)
+    
+    # Only rank 0 prints the adjusted worker counts
+    if ('RANK' not in os.environ) or (int(os.environ.get("RANK", 0)) == 0):
+        if world_size > 1:
+            print(f"Adjusting worker counts for {world_size} processes:")
+            print(f"  - Dataloader workers per process: {dataloader_workers} (total: {dataloader_workers * world_size})")
+            print(f"  - Write workers per process: {write_workers} (total: {write_workers * world_size})")
 
     inference_handler = ZarrNNUNetInferenceHandler(
         input_path=args.input_path,
@@ -1016,8 +1035,8 @@ def main():
         checkpoint_name=args.checkpoint,
         batch_size=args.batch_size,
         step_size=args.step_size,
-        num_dataloader_workers=args.num_dataloader_workers,
-        num_write_workers=args.num_write_workers,
+        num_dataloader_workers=dataloader_workers,  # Use adjusted worker count
+        num_write_workers=write_workers,            # Use adjusted worker count
         write_layers=args.write_layers,
         postprocess_only=args.postprocess_only,
         device=device,
