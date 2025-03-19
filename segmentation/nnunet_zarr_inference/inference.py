@@ -1,0 +1,823 @@
+import os
+import argparse
+import numpy as np
+from tqdm import tqdm
+import zarr
+from numcodecs import Blosc
+import torch
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+import threading
+from typing import Dict, Tuple, List, Optional, Any, Union
+import torch.distributed as dist
+from collections import defaultdict
+
+# Import nnUNet model loader
+from load_nnunet_model import load_model, run_inference
+from inference_dataset import InferenceDataset
+
+class ZarrNNUNetInferenceHandler:
+    def __init__(self, 
+                 input_path: str,
+                 output_path: str,
+                 model_folder: str,
+                 fold: Union[int, str] = 0,
+                 checkpoint_name: str = 'checkpoint_final.pth',
+                 patch_size: Optional[Tuple[int, int, int]] = None,
+                 batch_size: int = 4,
+                 overlap: float = 0.25,
+                 num_dataloader_workers: int = 4,
+                 num_write_workers: int = 4,
+                 input_format: str = 'zarr',
+                 load_all: bool = False,
+                 write_layers: bool = False,
+                 postprocess_only: bool = False,
+                 device: str = 'cuda',
+                 output_targets: Optional[Dict[str, Dict]] = None):
+        """
+        Initialize the inference handler for nnUNet models on zarr arrays.
+        
+        Args:
+            input_path: Path to the input zarr store
+            output_path: Path to save the output zarr store
+            model_folder: Path to the nnUNet model folder
+            fold: Which fold to load (default: 0, can also be 'all')
+            checkpoint_name: Name of the checkpoint file (default: checkpoint_final.pth)
+            patch_size: Optional override for the patch size
+            batch_size: Batch size for inference
+            overlap: Overlap between patches as a fraction
+            num_dataloader_workers: Number of workers for the DataLoader
+            num_write_workers: Number of worker threads for asynchronous disk writes
+            input_format: Format of the input data ('zarr' supported currently)
+            load_all: Whether to load the entire array into memory
+            write_layers: Whether to write the sliced z layers to disk
+            postprocess_only: Skip the inference pass and only do final averaging + casting
+            device: Device to run inference on ('cuda' or 'cpu')
+            output_targets: Optional custom output targets configuration
+        """
+        self.input_path = input_path
+        self.output_path = output_path
+        self.model_folder = model_folder
+        self.fold = fold
+        self.checkpoint_name = checkpoint_name
+        self.batch_size = batch_size
+        self.overlap = overlap
+        self.num_dataloader_workers = num_dataloader_workers
+        self.input_format = input_format
+        self.load_all = load_all
+        self.postprocess_only = postprocess_only
+        self.write_layers = write_layers
+        self.device_str = device
+        
+        # Default output target configuration if not provided
+        self.output_targets = output_targets or {
+            "segmentation": {
+                "channels": 1,
+                "activation": "softmax"
+            }
+        }
+        
+        # Buffer to accumulate patches before writing
+        self.patch_buffer = defaultdict(list)
+        self.buffer_positions = []
+        self.buffer_size = 32  # Number of patches to accumulate before writing
+
+        # Initialize blend weights as None - will be created when needed
+        self.blend_weights = None
+        self.blend_weights_4d = None
+
+        # Determine rank for DDP
+        self.rank = 0
+        if dist.is_initialized():
+            self.rank = dist.get_rank()
+
+        # Create a ThreadPoolExecutor for asynchronous writing (if not in postprocess-only mode)
+        self.executor = None
+        self.write_futures = []
+        if not self.postprocess_only:
+            self.executor = ThreadPoolExecutor(max_workers=num_write_workers)
+
+        # Limit the number of pending writes to avoid unbounded memory usage
+        self.max_pending_writes = num_write_workers * 4
+        
+        # A lock to protect the read–modify–write update used for blending
+        self.write_lock = threading.Lock()
+        
+        # Load the nnUNet model
+        self.model_info = None
+        self.patch_size = patch_size  # This will be overridden if None and model is loaded
+    
+    def _load_nnunet_model(self):
+        """
+        Load the nnUNet model and return model information.
+        """
+        try:
+            print(f"Loading nnUNet model from {self.model_folder}, fold {self.fold}")
+            model_info = load_model(
+                model_folder=self.model_folder,
+                fold=self.fold,
+                checkpoint_name=self.checkpoint_name,
+                device=self.device_str
+            )
+            
+            # Use the model's patch size if none was specified
+            if self.patch_size is None:
+                self.patch_size = model_info['patch_size']
+                print(f"Using model's patch size: {self.patch_size}")
+            
+            return model_info
+        except Exception as e:
+            print(f"Error loading nnUNet model: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise
+
+    def _create_blend_weights(self):
+        """
+        Create a 3D Gaussian window to be used as blending weights.
+
+        If no overlap is desired (overlap == 0), then simply return an array of ones.
+        Otherwise, for each dimension a 1D Gaussian window is created and the full 3D weight is
+        computed as the outer product over all dimensions.
+
+        Adjust the sigma parameter as needed; here we use sigma = (patch_size / 4).
+        """
+        if self.overlap == 0:
+            return np.ones(self.patch_size, dtype=np.float32)
+
+        weights = np.ones(self.patch_size, dtype=np.float32)
+        # Create a Gaussian window for each axis and multiply them.
+        for axis, size in enumerate(self.patch_size):
+            # Center coordinate along this axis
+            center = (size - 1) / 2.0
+            # Standard deviation: adjust this factor (here, patch_size/4) as needed for your data.
+            sigma = size / 4.0
+            x = np.arange(size, dtype=np.float32)
+            gaussian_1d = np.exp(-0.5 * ((x - center) / sigma) ** 2)
+            # Reshape so that it broadcasts along the proper axis.
+            shape = [1] * len(self.patch_size)
+            shape[axis] = size
+            gaussian_1d = gaussian_1d.reshape(shape)
+            weights *= gaussian_1d
+
+        return weights
+
+    def _initialize_blend_weights(self):
+        """Initialize blend weights for the current patch size"""
+        if len(self.patch_size) == 3:  # 3D patches
+            self.blend_weights = self._create_blend_weights()
+            # Create 4D version for multi-channel data
+            self.blend_weights_4d = np.expand_dims(self.blend_weights, axis=0)
+
+    def _process_buffer(self, output_arrays: Dict, count_arrays: Dict,
+                        patch_buffer: Dict = None, positions: List[Tuple] = None):
+        """
+        Write accumulated patches to the Zarr arrays, one patch at a time,
+        instead of grouping patches into large bounding boxes.
+        """
+        # Use the provided buffers if any; otherwise, use the instance buffers.
+        if patch_buffer is None or positions is None:
+            patch_buffer = self.patch_buffer
+            positions = self.buffer_positions
+
+        if not patch_buffer or not positions:
+            return
+
+        # Loop over each patch and write it directly.
+        for i, pos in enumerate(positions):
+            for tgt_name in self.output_targets:
+                patch_data = patch_buffer[tgt_name][i]
+                # We call _write_region_patches() with just a single patch in the list.
+                self._write_region_patches([patch_data], [pos],
+                                           output_arrays[tgt_name],
+                                           count_arrays[tgt_name])
+
+        # If these are the "live" buffers on the instance, clear them.
+        if patch_buffer is self.patch_buffer:
+            self.patch_buffer.clear()
+            self.buffer_positions.clear()
+
+    def _write_region_patches(self, patches: List[np.ndarray], positions: List[Tuple],
+                              output_array: zarr.Array, count_array: zarr.Array):
+        """Write multiple patches with zero–padding handled.
+
+        For patches that have been zero–padded to reach the full patch size,
+        we compute the valid region (i.e. the part that actually overlaps the image)
+        and only blend that region back into the output arrays.
+        """
+        with self.write_lock:
+            # Ensure blending weights are initialized.
+            if self.blend_weights is None:
+                self._initialize_blend_weights()
+
+            # Get the full image shape from the count array.
+            image_z, image_y, image_x = count_array.shape
+            full_z, full_y, full_x = self.patch_size
+
+            # Compute valid sizes for each patch (i.e. how much of the patch actually falls inside the image).
+            valid_sizes = []
+            for pos in positions:
+                z0, y0, x0 = pos
+                valid_z = full_z if (z0 + full_z) <= image_z else image_z - z0
+                valid_y = full_y if (y0 + full_y) <= image_y else image_y - y0
+                valid_x = full_x if (x0 + full_x) <= image_x else image_x - x0
+                valid_sizes.append((valid_z, valid_y, valid_x))
+
+            # Compute the union region bounds for all patches.
+            min_z = min(pos[0] for pos in positions)
+            min_y = min(pos[1] for pos in positions)
+            min_x = min(pos[2] for pos in positions)
+            max_z = max(pos[0] + valid[0] for pos, valid in zip(positions, valid_sizes))
+            max_y = max(pos[1] + valid[1] for pos, valid in zip(positions, valid_sizes))
+            max_x = max(pos[2] + valid[2] for pos, valid in zip(positions, valid_sizes))
+
+            # Check output_array dimensionality and adapt access pattern accordingly
+            output_ndim = len(output_array.shape)
+            
+            # Determine if we have 3D or 4D data
+            has_channel_dim = len(patches[0].shape) == 4
+            
+            # Handle differently based on output dimensions
+            if output_ndim == 4 and has_channel_dim:
+                # Both have 4D: C,Z,Y,X
+                region_sum = output_array[:, min_z:max_z, min_y:max_y, min_x:max_x]
+                base_weights = self.blend_weights_4d
+            elif output_ndim == 3 and has_channel_dim:
+                # This shouldn't happen anymore after our fixes, but keeping it just in case
+                # Let's inspect the shapes to provide better debugging info
+                print(f"ERROR: Dimension mismatch detected:")
+                print(f"- Output array: shape={output_array.shape}, ndim={output_ndim}")
+                print(f"- Patch data: shape={patches[0].shape}, ndim={len(patches[0].shape)}")
+                print(f"- Channel flag: has_channel_dim={has_channel_dim}")
+                print(f"This indicates a serious dimension mismatch that shouldn't occur - the arrays were not properly recreated.")
+                
+                # Attempt to recover by reducing patch dimension
+                tmp_patches = [p[0:1] for p in patches]  # Keep only first channel
+                patches = tmp_patches  # Replace patches with reduced versions
+                region_sum = output_array[min_z:max_z, min_y:max_y, min_x:max_x]
+                base_weights = self.blend_weights 
+                has_channel_dim = False  # Reset flag since we've modified patches
+            elif output_ndim == 3 and not has_channel_dim:
+                # Both are 3D: Z,Y,X
+                region_sum = output_array[min_z:max_z, min_y:max_y, min_x:max_x]
+                base_weights = self.blend_weights
+            else:
+                # Handle unusual case of 3D patch and 4D output - shouldn't happen but just in case
+                raise ValueError(f"Incompatible dimensions: output array has {output_ndim} dimensions " 
+                               f"but patch data has {len(patches[0].shape)} dimensions")
+
+            region_count = count_array[min_z:max_z, min_y:max_y, min_x:max_x]
+
+            # Loop over patches and add only the valid region.
+            for patch, pos, valid in zip(patches, positions, valid_sizes):
+                valid_z, valid_y, valid_x = valid
+                z0, y0, x0 = pos
+                z_rel = z0 - min_z
+                y_rel = y0 - min_y
+                x_rel = x0 - min_x
+
+                # Crop the patch and blending weights to the valid region.
+                if has_channel_dim:
+                    patch_valid = patch[:, :valid_z, :valid_y, :valid_x]
+                    # Make sure we have 4D weights for 4D patch
+                    if base_weights.ndim == 3:
+                        # Need to expand base_weights to match channel dimension
+                        local_weights = np.expand_dims(base_weights[:valid_z, :valid_y, :valid_x], axis=0)
+                    else:
+                        local_weights = base_weights[:, :valid_z, :valid_y, :valid_x]
+                else:
+                    patch_valid = patch[:valid_z, :valid_y, :valid_x]
+                    local_weights = base_weights[:valid_z, :valid_y, :valid_x]
+
+                weighted_patch = patch_valid * local_weights
+
+                # Update region sum based on whether we have channel dimension
+                if output_ndim == 4 and has_channel_dim:
+                    region_sum[:, z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += weighted_patch
+                elif output_ndim == 3 and has_channel_dim:
+                    # This path should not be reached due to earlier fix, but just in case
+                    print(f"Warning: attempting to add 4D data to 3D array - taking first channel only")
+                    region_sum[z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += weighted_patch[0]
+                else:
+                    region_sum[z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += weighted_patch
+                
+                # For count array, adjust as needed based on weights dimensionality
+                if local_weights.ndim == 4:
+                    # For multi-channel weights, just use one channel for count
+                    region_count[z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += local_weights[0]
+                else:
+                    # Single channel weights - use as is
+                    region_count[z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += local_weights
+
+            # Write back the updated regions.
+            if output_ndim == 4 and has_channel_dim:
+                output_array[:, min_z:max_z, min_y:max_y, min_x:max_x] = region_sum
+            else:
+                output_array[min_z:max_z, min_y:max_y, min_x:max_x] = region_sum
+            count_array[min_z:max_z, min_y:max_y, min_x:max_x] = region_count
+
+    def _process_model_outputs(self, outputs, positions: List[Tuple],
+                               output_arrays: Dict, count_arrays: Dict):
+        """Process model outputs with buffering and offload writing asynchronously when full"""
+        # For nnUNet, the output is a tensor, not a dict - convert it to match target format
+        if torch.is_tensor(outputs):
+            # Convert single tensor output to dict based on output_targets
+            processed_outputs = {}
+            for tgt_name in self.output_targets:
+                processed_outputs[tgt_name] = outputs
+        else:
+            # Already in dict format
+            processed_outputs = outputs
+            
+        # Process each patch and add to buffer
+        for i, pos in enumerate(positions):
+            for tgt_name in self.output_targets:
+                # Get the prediction tensor for this target
+                pred = processed_outputs[tgt_name][i].cpu().numpy()
+                
+                # Apply activation based on the target config
+                activation_str = self.output_targets[tgt_name].get("activation", "none").lower()
+                # Note: We've already applied activations in the inference loop
+                
+                # Get actual number of channels in the output
+                num_channels = pred.shape[0]
+                
+                # Handle binary segmentation with multi-channel output (background + foreground classes)
+                if self.output_targets[tgt_name]["channels"] == 1 and num_channels > 1:
+                    # For binary segmentation with softmax output, take the foreground class (index 1)
+                    # This is the standard nnUNet behavior for binary segmentation
+                    if activation_str == "softmax" and num_channels == 2:
+                        print(f"Multi-class output detected (channels={num_channels}), taking foreground class (index 1)")
+                        pred = pred[1:2]  # Keep as 4D with shape [1, Z, Y, X]
+                    # For other multi-channel outputs, keep the original prediction
+                elif self.output_targets[tgt_name]["channels"] == 1 and num_channels == 1:
+                    # If target is a single-channel output and prediction also has a single channel,
+                    # we can optionally squeeze it (but here we'll keep the channel dimension for consistency)
+                    pass
+                
+                # Update the output_targets to match actual dimensions if needed
+                if num_channels != self.output_targets[tgt_name]["channels"]:
+                    print(f"Updating output target '{tgt_name}' channels from {self.output_targets[tgt_name]['channels']} to {pred.shape[0]}")
+                    self.output_targets[tgt_name]["channels"] = pred.shape[0]
+                
+                self.patch_buffer[tgt_name].append(pred)
+            self.buffer_positions.append(pos)
+
+        # When buffer is full, process it asynchronously
+        if len(self.buffer_positions) >= self.buffer_size:
+            # Make local copies of the current buffers and clear the instance buffers.
+            local_patch_buffer = {k: v[:] for k, v in self.patch_buffer.items()}
+            local_positions = self.buffer_positions[:]
+            self.patch_buffer.clear()
+            self.buffer_positions.clear()
+            
+            # Offload asynchronous writing.
+            future = self.executor.submit(self._process_buffer, output_arrays, count_arrays,
+                                          local_patch_buffer, local_positions)
+            self.write_futures.append(future)
+
+            # Wait (block) if too many pending write futures to avoid unbounded memory usage
+            if len(self.write_futures) >= self.max_pending_writes:
+                done, _ = wait(self.write_futures, return_when=FIRST_COMPLETED)
+                for future in done:
+                    self.write_futures.remove(future)
+
+    def infer(self):
+        """Run inference with the nnUNet model on the zarr array."""
+        # Create a synchronizer for concurrent writes
+        os.makedirs(self.output_path, exist_ok=True)
+        sync_path = os.path.join(self.output_path, ".zarr_sync")
+        synchronizer = zarr.ProcessSynchronizer(sync_path)
+        store_path = os.path.join(self.output_path, "predictions.zarr")
+        
+        # Load the nnUNet model if not in postprocess-only mode
+        if not self.postprocess_only:
+            self.model_info = self._load_nnunet_model()
+            network = self.model_info['network']
+
+        if not self.postprocess_only:
+            # Only rank 0 creates the Zarr store and datasets.
+            if self.rank == 0:
+                if os.path.isdir(store_path) and not self.postprocess_only:
+                    raise FileExistsError(f"Zarr store '{store_path}' already exists.")
+                zarr_store = zarr.open(store_path, mode='w', synchronizer=synchronizer)
+                output_arrays = {}
+                count_arrays = {}
+
+                # Create a temporary dataset to determine the full output shape.
+                dataset_temp = InferenceDataset(
+                    input_path=self.input_path,
+                    targets=self.output_targets,
+                    model_info=self.model_info,
+                    patch_size=self.patch_size,
+                    input_format=self.input_format,
+                    overlap=self.overlap,
+                    load_all=self.load_all
+                )
+                
+                # Get the shape of the input array for output shape determination
+                input_shape = dataset_temp.input_shape
+                if len(input_shape) == 3:  # 3D array (Z,Y,X)
+                    z_max, y_max, x_max = input_shape
+                elif len(input_shape) == 4:  # 4D array (C,Z,Y,X)
+                    _, z_max, y_max, x_max = input_shape
+                
+                chunk_z, chunk_y, chunk_x = self.patch_size
+                compressor = Blosc(cname='zstd', clevel=5, shuffle=Blosc.BITSHUFFLE)
+
+                for tgt_name, tgt_conf in self.output_targets.items():
+                    c = tgt_conf["channels"]
+                    
+                    # Check if the nnUNet model outputs multilabel segmentation (num_classes > 2)
+                    # or if the target has multiple channels
+                    num_model_outputs = 1
+                    if self.model_info is not None:
+                        # For nnUNet, get number of segmentation heads
+                        num_model_outputs = self.model_info.get('num_seg_heads', 1)
+                    
+                    # Force to 3D output shape for binary segmentation (if model outputs binary)
+                    if c == 1 and num_model_outputs <= 2:
+                        out_shape = (z_max, y_max, x_max)
+                        chunks = (chunk_z, chunk_y, chunk_x)
+                        print(f"Using 3D output shape for target '{tgt_name}': {out_shape}")
+                    else:
+                        # Use 4D output with channel dimension for multi-class segmentation
+                        # or when channel count > 1 (e.g., for normals)
+                        out_shape = (c, z_max, y_max, x_max)
+                        chunks = (c, chunk_z, chunk_y, chunk_x)
+                        print(f"Using 4D output shape for target '{tgt_name}': {out_shape}")
+
+                    sum_ds = zarr_store.create_dataset(
+                        name=f"{tgt_name}_sum",
+                        shape=out_shape,
+                        chunks=chunks,
+                        dtype='float32',
+                        compressor=compressor,
+                        fill_value=0,
+                        synchronizer=synchronizer
+                    )
+                    cnt_ds = zarr_store.create_dataset(
+                        name=f"{tgt_name}_count",
+                        shape=(z_max, y_max, x_max),
+                        chunks=(chunk_z, chunk_y, chunk_x),
+                        dtype='float32',
+                        compressor=compressor,
+                        fill_value=0,
+                        synchronizer=synchronizer
+                    )
+
+                    output_arrays[tgt_name] = sum_ds
+                    count_arrays[tgt_name] = cnt_ds
+
+            # Wait for rank 0 to create the store.
+            if dist.is_initialized():
+                dist.barrier(device_ids=[torch.cuda.current_device()])
+
+            if self.rank != 0:
+                zarr_store = zarr.open(store_path, mode='r+', synchronizer=synchronizer)
+                output_arrays = {
+                    tgt_name: zarr_store[f"{tgt_name}_sum"]
+                    for tgt_name in self.output_targets
+                }
+                count_arrays = {
+                    tgt_name: zarr_store[f"{tgt_name}_count"]
+                    for tgt_name in self.output_targets
+                }
+
+            # Get device for inference
+            if self.device_str.startswith('cuda'):
+                local_rank = int(os.environ.get("LOCAL_RANK", 0))
+                device = torch.device(f'cuda:{local_rank}')
+            else:
+                device = torch.device(self.device_str)
+
+            # Create dataset and dataloader
+            dataset = InferenceDataset(
+                input_path=self.input_path,
+                targets=self.output_targets,
+                model_info=self.model_info,
+                patch_size=self.patch_size,
+                input_format=self.input_format,
+                overlap=self.overlap,
+                load_all=self.load_all
+            )
+
+            # Set up distributed sampler if needed
+            sampler = None
+            if dist.is_initialized():
+                sampler = DistributedSampler(dataset, shuffle=False)
+                sampler.set_epoch(0)
+
+            loader = DataLoader(
+                dataset,
+                batch_size=self.batch_size,
+                shuffle=(sampler is None),
+                sampler=sampler,
+                num_workers=self.num_dataloader_workers,
+                prefetch_factor=2,
+                pin_memory=True,
+                persistent_workers=False
+            )
+
+            # Run inference
+            network.eval()
+            if self.rank == 0:
+                iterator = tqdm(enumerate(loader), total=len(loader),
+                                desc="Running nnUNet inference on patches...")
+            else:
+                iterator = enumerate(loader)
+
+            with torch.no_grad(), torch.amp.autocast(device_type=device.type):
+                for batch_idx, data in iterator:
+                    patches = data["image"].to(device)
+                    indices = data["index"]  # these are the indices from the dataset
+                    positions = [dataset.all_positions[i] for i in indices]
+
+                    # Run inference with the nnUNet model
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize(device)
+                    
+                    # Use run_inference for nnUNet models
+                    outputs = run_inference(self.model_info, patches)
+                    
+                    # Process outputs based on activation functions
+                    processed_outputs = {}
+                    
+                    # For the first batch, adjust output_targets based on actual model output
+                    if batch_idx == 0:
+                        # For nnUNet, outputs is typically a tensor
+                        if torch.is_tensor(outputs):
+                            # Get the output shape to determine number of channels
+                            num_channels = outputs.shape[1]
+                            print(f"nnUNet model output shape: {outputs.shape}, channels: {num_channels}")
+                            config_changed = False
+                            
+                            # Update output_targets to match actual model output
+                            for t_name in self.output_targets:
+                                if self.output_targets[t_name]["channels"] != num_channels:
+                                    print(f"Warning: Model outputs {num_channels} channels but target '{t_name}' expects {self.output_targets[t_name]['channels']} channels.")
+                                    print(f"Updating output target '{t_name}' channels to {num_channels}")
+                                    self.output_targets[t_name]["channels"] = num_channels
+                                    config_changed = True
+                            
+                            # If config changed, we need to recreate the arrays
+                            if config_changed:
+                                print("Recreating output arrays with correct channel dimensions...")
+                                # We need to create a new zarr store with the correct dimensions
+                                print("Closing and recreating zarr store...")
+                                
+                                # Create a new zarr store (old one will be overwritten)
+                                store_path_tmp = f"{store_path}_tmp"
+                                if os.path.exists(store_path_tmp):
+                                    import shutil
+                                    shutil.rmtree(store_path_tmp)
+                                
+                                os.makedirs(store_path_tmp, exist_ok=True)
+                                zarr_store = zarr.open(store_path_tmp, mode='w', synchronizer=synchronizer)
+                                
+                                # Recreate arrays with updated dimensions
+                                chunk_z, chunk_y, chunk_x = self.patch_size
+                                compressor = Blosc(cname='zstd', clevel=5, shuffle=Blosc.BITSHUFFLE)
+                                
+                                for tgt_name, tgt_conf in self.output_targets.items():
+                                    c = tgt_conf["channels"]
+                                    out_shape = (c, z_max, y_max, x_max)
+                                    chunks = (c, chunk_z, chunk_y, chunk_x)
+                                    print(f"Creating 4D output array for target '{tgt_name}': shape={out_shape}")
+                                    
+                                    sum_ds = zarr_store.create_dataset(
+                                        name=f"{tgt_name}_sum",
+                                        shape=out_shape,
+                                        chunks=chunks,
+                                        dtype='float32',
+                                        compressor=compressor,
+                                        fill_value=0,
+                                        synchronizer=synchronizer
+                                    )
+                                    cnt_ds = zarr_store.create_dataset(
+                                        name=f"{tgt_name}_count",
+                                        shape=(z_max, y_max, x_max),
+                                        chunks=(chunk_z, chunk_y, chunk_x),
+                                        dtype='float32',
+                                        compressor=compressor,
+                                        fill_value=0,
+                                        synchronizer=synchronizer
+                                    )
+                                    
+                                    output_arrays[tgt_name] = sum_ds
+                                    count_arrays[tgt_name] = cnt_ds
+                                
+                                # Update store_path to the temporary one
+                                print(f"Using new zarr store at {store_path_tmp}")
+                                store_path = store_path_tmp
+                                
+                                # If we're running with DDP, wait for all processes
+                                if dist.is_initialized():
+                                    dist.barrier(device_ids=[torch.cuda.current_device()])
+                    
+                    # Apply activations for each target 
+                    for t_name in self.output_targets:
+                        # For nnUNet, the output might be a single tensor, not a dict with keys
+                        if torch.is_tensor(outputs):
+                            raw_output = outputs
+                        else:
+                            raw_output = outputs[t_name]
+                            
+                        t_conf = self.output_targets[t_name]
+                        activation_str = t_conf.get("activation", "none").lower()
+                        
+                        if activation_str == "sigmoid":
+                            processed_outputs[t_name] = torch.sigmoid(raw_output)
+                        elif activation_str == "softmax":
+                            processed_outputs[t_name] = torch.softmax(raw_output, dim=1)
+                        else:
+                            processed_outputs[t_name] = raw_output
+                            
+                    self._process_model_outputs(processed_outputs, positions, output_arrays, count_arrays)
+
+            # Process any remaining patches in the buffer.
+            if self.buffer_positions:
+                self._process_buffer(output_arrays, count_arrays)
+            for future in self.write_futures:
+                future.result()
+
+            # Shut down the executor.
+            if self.executor is not None:
+                self.executor.shutdown(wait=True)
+
+        else:
+            # Postprocess-only: open the existing store.
+            zarr_store = zarr.open(store_path, mode='r+', synchronizer=synchronizer)
+
+        # Barrier: ensure all processes finish inference before postprocessing.
+        if dist.is_initialized():
+            dist.barrier(device_ids=[torch.cuda.current_device()])
+
+        # Only rank 0 performs postprocessing.
+        if self.rank == 0:
+            self._optimized_postprocessing(zarr_store)
+
+        # Final barrier to ensure all processes complete postprocessing.
+        if dist.is_initialized():
+            dist.barrier(device_ids=[torch.cuda.current_device()])
+            
+        # Move the temp store to final destination if we used a temp store
+        if self.rank == 0 and "_tmp" in store_path and os.path.exists(store_path):
+            final_path = store_path.replace("_tmp", "")
+            if os.path.exists(final_path):
+                import shutil
+                print(f"Removing existing store at {final_path}")
+                shutil.rmtree(final_path)
+            print(f"Moving {store_path} to {final_path}")
+            os.rename(store_path, final_path)
+            print(f"Final output saved to {final_path}")
+
+    def _optimized_postprocessing(self, zarr_store):
+        """Optimized post-processing with improved vector handling"""
+        for tgt_name in self.output_targets:
+            sum_ds = zarr_store[f"{tgt_name}_sum"]
+            cnt_ds = zarr_store[f"{tgt_name}_count"]
+            is_normals = (tgt_name.lower() == "normals")
+            chunk_size = sum_ds.chunks[-3]
+
+            final_dtype = "uint16" if is_normals else "uint8"
+            compressor = Blosc(cname='zstd', clevel=5, shuffle=Blosc.BITSHUFFLE)
+
+            final_ds = zarr_store.create_dataset(
+                name=f"{tgt_name}_final",
+                shape=sum_ds.shape,
+                chunks=sum_ds.chunks,
+                dtype=final_dtype,
+                compressor=compressor,
+                fill_value=0
+            )
+
+            # Determine if we have 3D or 4D arrays
+            sum_ds_ndim = len(sum_ds.shape)
+            
+            # Print shape info
+            print(f"Postprocessing {tgt_name}: sum_ds shape {sum_ds.shape}, count_ds shape {cnt_ds.shape}")
+            
+            for z0 in tqdm(range(0, sum_ds.shape[-3], chunk_size),
+                           desc=f"Processing {tgt_name}"):
+                z1 = min(z0 + chunk_size, sum_ds.shape[-3])
+                
+                # Process differently based on array dimensions
+                if sum_ds_ndim == 4:  # 4D array (C,Z,Y,X)
+                    sum_chunk = sum_ds[:, z0:z1].copy()
+                    count_chunk = cnt_ds[z0:z1].copy()
+                    count_chunk = np.expand_dims(count_chunk, axis=0)
+                    count_chunk = np.broadcast_to(count_chunk, sum_chunk.shape)
+                else:  # 3D array (Z,Y,X)
+                    sum_chunk = sum_ds[z0:z1].copy()
+                    count_chunk = cnt_ds[z0:z1].copy()
+
+                # Create mask of non-zero counts
+                mask = count_chunk > 0
+
+                # Normalize based on count
+                if is_normals and sum_ds_ndim == 4:
+                    # Normalize vector magnitude for normals
+                    eps = 1e-8
+                    mag = np.sqrt(np.sum(sum_chunk ** 2, axis=0)) + eps
+                    sum_chunk = sum_chunk / np.expand_dims(mag, axis=0)
+                else:
+                    # Standard normalization (divide by count where count > 0)
+                    sum_chunk[mask] /= count_chunk[mask]
+
+                # Apply final transformation based on target type
+                if is_normals:
+                    # For normals: map from [-1,1] to [0,65535]
+                    sum_chunk = ((sum_chunk + 1.0) / 2.0 * 65535.0).clip(0, 65535).astype(np.uint16)
+                else:
+                    # For segmentation: map to [0,255]
+                    sum_chunk = (sum_chunk * 255.0).clip(0, 255).astype(np.uint8)
+
+                # Write back to final dataset
+                if sum_ds_ndim == 4 and len(final_ds.shape) == 4:
+                    # Both 4D
+                    final_ds[:, z0:z1] = sum_chunk
+                elif sum_ds_ndim == 3 and len(final_ds.shape) == 3:  
+                    # Both 3D
+                    final_ds[z0:z1] = sum_chunk
+                elif sum_ds_ndim == 4 and len(final_ds.shape) == 3:
+                    # Sum is 4D but final is 3D (e.g., taking argmax)
+                    if sum_chunk.shape[0] > 1:
+                        # Multi-class: convert to single channel via argmax
+                        final_ds[z0:z1] = np.argmax(sum_chunk, axis=0).astype(np.uint8)
+                    else:
+                        # Single class: just take first channel
+                        final_ds[z0:z1] = sum_chunk[0]
+                else:
+                    # Handle unusual case
+                    raise ValueError(f"Incompatible dimensions in postprocessing: sum_ds has {sum_ds_ndim} dimensions " 
+                                   f"but final_ds has {len(final_ds.shape)} dimensions")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Inference script for nnUNet models on zarr arrays with DDP support."
+    )
+    parser.add_argument("--input_path", type=str, required=True,
+                      help="Path to the input zarr array")
+    parser.add_argument("--output_path", type=str, required=True,
+                      help="Path to save the output predictions")
+    parser.add_argument("--model_folder", type=str, required=True,
+                      help="Path to the nnUNet model folder")
+    parser.add_argument("--fold", type=str, default="0",
+                      help="Fold to use for inference (default: 0)")
+    parser.add_argument("--checkpoint", type=str, default="checkpoint_final.pth",
+                      help="Checkpoint file name to use (default: checkpoint_final.pth)")
+    parser.add_argument("--batch_size", type=int, default=4,
+                      help="Batch size for inference (default: 4)")
+    parser.add_argument("--overlap", type=float, default=0.25,
+                      help="Overlap between patches as a fraction (default: 0.25)")
+    parser.add_argument("--num_dataloader_workers", type=int, default=4,
+                      help="Number of workers for the DataLoader (default: 4)")
+    parser.add_argument("--num_write_workers", type=int, default=4,
+                      help="Number of worker threads for asynchronous disk writes (default: 4)")
+    parser.add_argument("--device", type=str, default="cuda",
+                      help="Device to run inference on ('cuda' or 'cpu') (default: cuda)")
+    parser.add_argument("--write_layers", action="store_true",
+                      help="Write the sliced z layers to disk")
+    parser.add_argument("--postprocess_only", action="store_true",
+                      help="Skip the inference pass and only do final averaging + casting")
+    parser.add_argument("--load_all", action="store_true",
+                      help="Load the entire input array into memory (use with caution!)")
+    
+    args = parser.parse_args()
+
+    # Set the CUDA device before initializing the process group.
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        torch.cuda.set_device(local_rank)  # Set the device first!
+        dist.init_process_group(backend='nccl', init_method='env://')
+        device = f'cuda:{local_rank}'
+    else:
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+    inference_handler = ZarrNNUNetInferenceHandler(
+        input_path=args.input_path,
+        output_path=args.output_path,
+        model_folder=args.model_folder,
+        fold=args.fold,
+        checkpoint_name=args.checkpoint,
+        batch_size=args.batch_size,
+        overlap=args.overlap,
+        num_dataloader_workers=args.num_dataloader_workers,
+        num_write_workers=args.num_write_workers,
+        write_layers=args.write_layers,
+        postprocess_only=args.postprocess_only,
+        device=device,
+        load_all=args.load_all
+    )
+    
+    inference_handler.infer()  # Run inference and postprocessing
+
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
+
+if __name__ == "__main__":
+    main()
