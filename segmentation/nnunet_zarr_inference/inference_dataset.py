@@ -16,7 +16,7 @@ class InferenceDataset(Dataset):
             model_info: Optional[Dict[str, Any]] = None,
             patch_size=None,
             input_format: str = 'zarr',
-            overlap: float = 0.25,
+            step_size: float = 0.5,
             load_all: bool = False
             ):
         """
@@ -28,7 +28,7 @@ class InferenceDataset(Dataset):
             model_info: Optional nnUNet model information dictionary
             patch_size: Patch size, can be overridden if model_info is provided
             input_format: Format of the input data ('zarr' supported currently)
-            overlap: Overlap between patches (as a fraction)
+            step_size: Step size for sliding window as a fraction of patch size (default: 0.5, nnUNet default)
             load_all: Whether to load the entire array into memory
         """
         self.input_path = input_path
@@ -36,7 +36,7 @@ class InferenceDataset(Dataset):
         self.targets = targets
         # Use model's patch size if available, otherwise use provided patch_size
         self.patch_size = model_info['patch_size'] if model_info is not None else patch_size
-        self.overlap = overlap
+        self.step_size = step_size
         self.load_all = load_all
         self.model_info = model_info
 
@@ -81,14 +81,18 @@ class InferenceDataset(Dataset):
         else:
             raise ValueError(f"Unsupported input shape: {self.input_shape}")
 
-        # Generate all coordinates
-        z_step = int(round(pZ * (1 - self.overlap)))
-        y_step = int(round(pY * (1 - self.overlap)))
-        x_step = int(round(pX * (1 - self.overlap)))
-
-        z_positions = generate_positions(minz, maxz, pZ, z_step)
-        y_positions = generate_positions(miny, maxy, pY, y_step)
-        x_positions = generate_positions(minx, maxx, pX, x_step)
+        # Generate all coordinates using nnUNet-style sliding window approach
+        from helpers import compute_steps_for_sliding_window
+        
+        # Use nnUNet's method to compute steps for sliding window
+        if len(self.input_shape) == 3:  # 3D array (Z,Y,X)
+            image_size = self.input_shape
+        else:  # 4D array (C,Z,Y,X)
+            image_size = self.input_shape[1:]
+        
+        z_positions = compute_steps_for_sliding_window(image_size[0], pZ, self.step_size)
+        y_positions = compute_steps_for_sliding_window(image_size[1], pY, self.step_size)
+        x_positions = compute_steps_for_sliding_window(image_size[2], pX, self.step_size)
 
         self.all_positions = []
         for z in z_positions:

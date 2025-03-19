@@ -41,7 +41,7 @@ def run_example(args):
         fold=args.fold,
         checkpoint_name=args.checkpoint,
         batch_size=args.batch_size,
-        overlap=args.overlap,
+        step_size=args.step_size,
         num_dataloader_workers=args.num_workers,
         num_write_workers=args.num_write_workers,
         device=args.device,
@@ -78,8 +78,8 @@ if __name__ == "__main__":
                         help="Checkpoint file name to use (default: checkpoint_final.pth)")
     parser.add_argument("--batch_size", type=int, default=4,
                         help="Batch size for inference (default: 4)")
-    parser.add_argument("--overlap", type=float, default=0.25,
-                        help="Overlap between patches as a fraction (default: 0.25)")
+    parser.add_argument("--step_size", type=float, default=0.5,
+                        help="Step size for sliding window as a fraction of patch size (default: 0.5, nnUNet default)")
     parser.add_argument("--num_workers", type=int, default=4,
                         help="Number of workers for the DataLoader (default: 4)")
     parser.add_argument("--num_write_workers", type=int, default=4,

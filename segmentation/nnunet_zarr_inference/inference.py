@@ -26,7 +26,7 @@ class ZarrNNUNetInferenceHandler:
                  checkpoint_name: str = 'checkpoint_final.pth',
                  patch_size: Optional[Tuple[int, int, int]] = None,
                  batch_size: int = 4,
-                 overlap: float = 0.25,
+                 step_size: float = 0.5,
                  num_dataloader_workers: int = 4,
                  num_write_workers: int = 4,
                  input_format: str = 'zarr',
@@ -47,7 +47,7 @@ class ZarrNNUNetInferenceHandler:
             checkpoint_name: Name of the checkpoint file (default: checkpoint_final.pth)
             patch_size: Optional override for the patch size
             batch_size: Batch size for inference
-            overlap: Overlap between patches as a fraction
+            step_size: Step size for sliding window prediction as a fraction of patch_size (default: 0.5, nnUNet default)
             num_dataloader_workers: Number of workers for the DataLoader
             num_write_workers: Number of worker threads for asynchronous disk writes
             input_format: Format of the input data ('zarr' supported currently)
@@ -64,7 +64,7 @@ class ZarrNNUNetInferenceHandler:
         self.fold = fold
         self.checkpoint_name = checkpoint_name
         self.batch_size = batch_size
-        self.overlap = overlap
+        self.tile_step_size = step_size  # Using nnUNet's naming convention
         self.num_dataloader_workers = num_dataloader_workers
         self.input_format = input_format
         self.load_all = load_all
@@ -144,34 +144,80 @@ class ZarrNNUNetInferenceHandler:
 
     def _create_blend_weights(self):
         """
-        Create a 3D Gaussian window to be used as blending weights.
+        Create a 3D Gaussian window to be used as blending weights, following nnUNet's approach.
 
-        If no overlap is desired (overlap == 0), then simply return an array of ones.
-        Otherwise, for each dimension a 1D Gaussian window is created and the full 3D weight is
-        computed as the outer product over all dimensions.
-
-        Adjust the sigma parameter as needed; here we use sigma = (patch_size / 4).
+        If tile_step_size is 1.0 (no overlap), then simply return an array of ones.
+        Otherwise, create a 3D Gaussian centered at the center of the patch.
+        
+        This implementation follows nnUNet's compute_gaussian function.
         """
-        if self.overlap == 0:
+        if self.tile_step_size == 1.0:
             return np.ones(self.patch_size, dtype=np.float32)
 
-        weights = np.ones(self.patch_size, dtype=np.float32)
-        # Create a Gaussian window for each axis and multiply them.
-        for axis, size in enumerate(self.patch_size):
-            # Center coordinate along this axis
-            center = (size - 1) / 2.0
-            # Standard deviation: adjust this factor (here, patch_size/4) as needed for your data.
-            sigma = size / 4.0
-            x = np.arange(size, dtype=np.float32)
-            gaussian_1d = np.exp(-0.5 * ((x - center) / sigma) ** 2)
-            # Reshape so that it broadcasts along the proper axis.
-            shape = [1] * len(self.patch_size)
-            shape[axis] = size
-            gaussian_1d = gaussian_1d.reshape(shape)
-            weights *= gaussian_1d
+        # Create a temporary zero array and set the center to 1
+        tmp = np.zeros(self.patch_size, dtype=np.float32)
+        center_coords = [i // 2 for i in self.patch_size]
+        tmp[tuple(center_coords)] = 1
+        
+        # Define sigma based on patch_size - using same scale as nnUNet (1/8)
+        sigma_scale = 1.0 / 8.0
+        sigmas = [i * sigma_scale for i in self.patch_size]
+        
+        # Apply Gaussian filter
+        from scipy.ndimage import gaussian_filter
+        gaussian_importance_map = gaussian_filter(tmp, sigmas, 0, mode='constant', cval=0)
+        
+        # Value scaling factor (higher values will create a more pronounced weighting)
+        # nnUNet uses 10, we'll use the same
+        value_scaling_factor = 10.0
+        
+        # Normalize the Gaussian map
+        gaussian_importance_map = gaussian_importance_map / (np.max(gaussian_importance_map) / value_scaling_factor)
+        
+        # Ensure no zero values to avoid division by zero later
+        mask = gaussian_importance_map == 0
+        if np.any(mask):
+            gaussian_importance_map[mask] = np.min(gaussian_importance_map[~mask])
+            
+        return gaussian_importance_map
 
-        return weights
-
+    def _compute_steps_for_sliding_window(self, image_size, patch_size, step_size):
+        """
+        Compute the positions for sliding window patches with specified step size.
+        This is based on nnUNet's compute_steps_for_sliding_window function.
+        
+        Args:
+            image_size: size of the whole image (Z, Y, X)
+            patch_size: size of the patches (Z, Y, X)
+            step_size: step size as a fraction of patch_size (0 < step_size <= 1)
+            
+        Returns:
+            List of steps for each dimension
+        """
+        assert all(i >= j for i, j in zip(image_size, patch_size)), "image size must be larger than patch_size"
+        assert 0 < step_size <= 1, 'step_size must be larger than 0 and smaller or equal to 1'
+        
+        # Calculate step sizes in voxels
+        target_step_sizes_in_voxels = [int(i * step_size) for i in patch_size]
+        
+        # Calculate number of steps for each dimension
+        num_steps = [int(np.ceil((i - k) / j)) + 1 for i, j, k in zip(image_size, target_step_sizes_in_voxels, patch_size)]
+        
+        # Calculate actual steps for each dimension
+        steps = []
+        for dim in range(len(patch_size)):
+            # The highest step value for this dimension
+            max_step_value = image_size[dim] - patch_size[dim]
+            if num_steps[dim] > 1:
+                actual_step_size = max_step_value / (num_steps[dim] - 1)
+            else:
+                actual_step_size = 99999999999  # Only one step at position 0
+                
+            steps_here = [int(np.round(actual_step_size * i)) for i in range(num_steps[dim])]
+            steps.append(steps_here)
+            
+        return steps
+        
     def _initialize_blend_weights(self):
         """Initialize blend weights for the current patch size"""
         if len(self.patch_size) == 3:  # 3D patches
@@ -212,7 +258,7 @@ class ZarrNNUNetInferenceHandler:
         """Write multiple patches with zero–padding handled.
 
         For patches that have been zero–padded to reach the full patch size,
-        we compute the valid region (i.e. the part that actually overlaps the image)
+        we compute the valid region (i.e. the part that actually falls within the image)
         and only blend that region back into the output arrays.
         """
         with self.write_lock:
@@ -253,7 +299,6 @@ class ZarrNNUNetInferenceHandler:
                 region_sum = output_array[:, min_z:max_z, min_y:max_y, min_x:max_x]
                 base_weights = self.blend_weights_4d
             elif output_ndim == 3 and has_channel_dim:
-                # This shouldn't happen anymore after our fixes, but keeping it just in case
                 # Let's inspect the shapes to provide better debugging info
                 print(f"ERROR: Dimension mismatch detected:")
                 print(f"- Output array: shape={output_array.shape}, ndim={output_ndim}")
@@ -411,7 +456,7 @@ class ZarrNNUNetInferenceHandler:
                     model_info=self.model_info,
                     patch_size=self.patch_size,
                     input_format=self.input_format,
-                    overlap=self.overlap,
+                    step_size=self.tile_step_size,
                     load_all=self.load_all
                 )
                 
@@ -492,7 +537,7 @@ class ZarrNNUNetInferenceHandler:
                 model_info=self.model_info,
                 patch_size=self.patch_size,
                 input_format=self.input_format,
-                overlap=self.overlap,
+                step_size=self.tile_step_size,
                 load_all=self.load_all
             )
 
@@ -764,8 +809,8 @@ def main():
                       help="Checkpoint file name to use (default: checkpoint_final.pth)")
     parser.add_argument("--batch_size", type=int, default=4,
                       help="Batch size for inference (default: 4)")
-    parser.add_argument("--overlap", type=float, default=0.25,
-                      help="Overlap between patches as a fraction (default: 0.25)")
+    parser.add_argument("--step_size", type=float, default=0.5,
+                      help="Step size for sliding window as a fraction of patch size (default: 0.5, nnUNet default)")
     parser.add_argument("--num_dataloader_workers", type=int, default=4,
                       help="Number of workers for the DataLoader (default: 4)")
     parser.add_argument("--num_write_workers", type=int, default=4,
@@ -799,7 +844,7 @@ def main():
         fold=args.fold,
         checkpoint_name=args.checkpoint,
         batch_size=args.batch_size,
-        overlap=args.overlap,
+        step_size=args.step_size,
         num_dataloader_workers=args.num_dataloader_workers,
         num_write_workers=args.num_write_workers,
         write_layers=args.write_layers,
