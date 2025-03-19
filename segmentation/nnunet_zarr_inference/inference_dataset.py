@@ -98,9 +98,34 @@ class InferenceDataset(Dataset):
         else:  # 4D array (C,Z,Y,X)
             image_size = self.input_shape[1:]
         
+        # Use nnUNet's method to compute steps for sliding window
+        # self.step_size is a factor (e.g., 0.5 means 50% overlap)
         z_positions = compute_steps_for_sliding_window(image_size[0], pZ, self.step_size)
         y_positions = compute_steps_for_sliding_window(image_size[1], pY, self.step_size)
         x_positions = compute_steps_for_sliding_window(image_size[2], pX, self.step_size)
+        
+        # Print position information if the model_info contains verbose flag
+        if self.model_info is not None and self.model_info.get('verbose', False):
+            print(f"Computed patch positions with step_size={self.step_size}:")
+            print(f"  - Input shape: {image_size}")
+            print(f"  - Patch size: {self.patch_size}")
+            print(f"  - Number of positions: z={len(z_positions)}, y={len(y_positions)}, x={len(x_positions)}")
+            print(f"  - Total patches: {len(z_positions) * len(y_positions) * len(x_positions)}")
+            
+            # Print overlap information for each dimension
+            for dim_name, positions, dim_size in zip(['Z', 'Y', 'X'], [z_positions, y_positions, x_positions], self.patch_size):
+                if len(positions) > 1:
+                    # Calculate overlap between first two patches as an example
+                    first_end = positions[0] + dim_size
+                    second_start = positions[1]
+                    overlap = first_end - second_start
+                    overlap_percent = (overlap / dim_size) * 100
+                    
+                    print(f"  - {dim_name}-axis: {len(positions)} positions, overlap={overlap} voxels ({overlap_percent:.1f}% of patch)")
+                    
+                    # Display a few example positions
+                    num_to_show = min(4, len(positions))
+                    print(f"    Example positions: {positions[:num_to_show]}{'...' if len(positions) > num_to_show else ''}")
 
         self.all_positions = []
         for z in z_positions:

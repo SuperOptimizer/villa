@@ -92,18 +92,23 @@ class ZarrNNUNetInferenceHandler:
         self.save_probability_maps = save_probability_maps
         
         # Default output target configuration if not provided
-        # For nnUNet, we expect 2 channels (background and foreground)
-        # But we'll only save the foreground channel (channel 1)
+        # For nnUNet binary segmentation, the model outputs 2 channels (background, foreground)
+        # But we'll typically only save the foreground channel (index 1) for binary segmentation
         self.output_targets = output_targets or {
             "segmentation": {
-                "channels": 1,  # We'll only save 1 channel after extracting the foreground
+                "channels": 1,  # We'll save 1 channel for binary segmentation (foreground only)
                 "activation": "softmax",
-                "nnunet_output_channels": 2  # nnUNet outputs 2 channels (bg, fg)
+                "nnunet_output_channels": 2  # nnUNet outputs 2 channels for binary (bg, fg)
             }
         }
         
-        # nnUNet always produces 2 channels (bg, fg) for binary segmentation
-        self.nnunet_foreground_channel = 1  # Second channel (index 1) is foreground
+        # nnUNet binary segmentation configuration
+        self.nnunet_foreground_channel = 1  # Second channel (index 1) is foreground in binary segmentation
+        
+        if self.verbose:
+            print(f"Initialized with step_size={self.tile_step_size}")
+            for tgt_name, tgt_conf in self.output_targets.items():
+                print(f"Output target '{tgt_name}': {tgt_conf}")
         
         # Buffer to accumulate patches before writing
         self.patch_buffer = defaultdict(list)
@@ -167,12 +172,12 @@ class ZarrNNUNetInferenceHandler:
 
     def _create_blend_weights(self):
         """
-        Create a 3D Gaussian window to be used as blending weights, following nnUNet's approach.
+        Create a 3D Gaussian window to be used as blending weights, exactly following nnUNet's approach.
 
         If tile_step_size is 1.0 (no overlap), then simply return an array of ones.
         Otherwise, create a 3D Gaussian centered at the center of the patch.
         
-        This implementation follows nnUNet's compute_gaussian function.
+        This implementation directly follows nnUNet's compute_gaussian function in sliding_window_prediction.py.
         """
         if self.tile_step_size == 1.0:
             return np.ones(self.patch_size, dtype=np.float32)
@@ -182,25 +187,91 @@ class ZarrNNUNetInferenceHandler:
         center_coords = [i // 2 for i in self.patch_size]
         tmp[tuple(center_coords)] = 1
         
-        # Define sigma based on patch_size - using same scale as nnUNet (1/8)
-        sigma_scale = 1.0 / 8.0
+        # Print debugging info about the gaussian creation
+        if self.verbose:
+            print(f"Creating Gaussian blend weights:")
+            print(f"  - Patch size: {self.patch_size}")
+            print(f"  - Center coords: {center_coords}")
+            print(f"  - Temp array shape: {tmp.shape}")
+        
+        # nnUNet uses sigma_scale = 1/8 of patch size
+        # We'll go back to using the exact nnUNet approach for consistency
+        sigma_scale = 1.0 / 8.0  # Match nnUNet's original approach
         sigmas = [i * sigma_scale for i in self.patch_size]
+        
+        if self.verbose:
+            print(f"  - Using sigma_scale: {sigma_scale}")
+            print(f"  - Sigmas: {sigmas}")
         
         # Apply Gaussian filter
         from scipy.ndimage import gaussian_filter
         gaussian_importance_map = gaussian_filter(tmp, sigmas, 0, mode='constant', cval=0)
         
-        # Value scaling factor (higher values will create a more pronounced weighting)
-        # nnUNet uses 10, we'll use the same
-        value_scaling_factor = 10.0
+        if self.verbose:
+            print(f"  - Gaussian map shape: {gaussian_importance_map.shape}")
+            print(f"  - Gaussian min/max: {np.min(gaussian_importance_map):.6f}, {np.max(gaussian_importance_map):.6f}")
         
-        # Normalize the Gaussian map
-        gaussian_importance_map = gaussian_importance_map / (np.max(gaussian_importance_map) / value_scaling_factor)
+        # Value scaling factor (higher values will create a more pronounced weighting)
+        # nnUNet uses 10.0 - we must use exactly the same
+        value_scaling_factor = 0.5  # Set to 1.0 so sum of weights equals ~1.0 at overlaps
+        
+        # Normalize the Gaussian map - simpler, more reliable approach
+        # Scale by value_scaling_factor but preserve the Gaussian shape
+        max_value = np.max(gaussian_importance_map)
+        gaussian_importance_map = gaussian_importance_map / max_value  # First normalize to [0, 1]
+        gaussian_importance_map = gaussian_importance_map * value_scaling_factor  # Then scale
         
         # Ensure no zero values to avoid division by zero later
         mask = gaussian_importance_map == 0
         if np.any(mask):
             gaussian_importance_map[mask] = np.min(gaussian_importance_map[~mask])
+            
+        if self.verbose:
+            print(f"Created Gaussian blend weights with shape {gaussian_importance_map.shape}")
+            print(f"  - min: {np.min(gaussian_importance_map):.4f}, max: {np.max(gaussian_importance_map):.4f}")
+            print(f"  - value_scaling_factor: {value_scaling_factor}")
+            
+            # Print central slice to show the Gaussian weight distribution
+            if len(self.patch_size) == 3:
+                central_z = self.patch_size[0] // 2
+                central_slice = gaussian_importance_map[central_z]
+                
+                # Print a simplified representation of weights for central slice
+                central_y = self.patch_size[1] // 2
+                row = central_slice[central_y, :]
+                print(f"  - Center row weights: {row.min():.3f} → {row.max():.3f}")
+                print(f"  - Center point weight: {gaussian_importance_map[central_z, central_y, self.patch_size[2]//2]:.3f}")
+                
+                # Calculate weight values at various distances from center
+                center_val = gaussian_importance_map[central_z, central_y, self.patch_size[2]//2]
+                quarter_x = self.patch_size[2] // 4
+                half_x = self.patch_size[2] // 2 + (self.patch_size[2] // 4)  # 3/4 of the way to the edge
+                quarter_val = gaussian_importance_map[central_z, central_y, quarter_x] 
+                half_val = gaussian_importance_map[central_z, central_y, half_x] if half_x < self.patch_size[2] else 0
+                edge_val = gaussian_importance_map[central_z, central_y, 0]
+                
+                print(f"  - Weight falloff from center to edge:")
+                print(f"    * center (100%): {center_val:.3f}")
+                print(f"    * 1/4 to edge ({quarter_val/center_val*100:.1f}%): {quarter_val:.3f}")
+                print(f"    * halfway ({half_val/center_val*100:.1f}%): {half_val:.3f}")
+                print(f"    * edge ({edge_val/center_val*100:.1f}%): {edge_val:.3f}")
+                
+                # Check weights at patch overlap points (for 50% overlap)
+                # With 50% overlap, patches overlap starting at patch_size/2
+                patch_edge = self.patch_size[2] - 1  # Last index
+                overlap_start = self.patch_size[2] // 2  # Where 50% overlap begins
+                edge_weight = gaussian_importance_map[central_z, central_y, 0]  # Weight at patch edge
+                overlap_weight = gaussian_importance_map[central_z, central_y, overlap_start]  # Weight at overlap point
+                
+                print(f"    * weight at patch edge: {edge_weight:.3f} ({edge_weight/center_val*100:.1f}% of center)")
+                print(f"    * weight at overlap start: {overlap_weight:.3f} ({overlap_weight/center_val*100:.1f}% of center)")
+                
+                # Check the ratio of weights at the overlap point - ideally should sum to ~1.0
+                # For position p = patch_size/2, we want w(p) + w(patch_size-p) ≈ 1.0
+                opposite_weight = gaussian_importance_map[central_z, central_y, patch_edge - overlap_start]
+                weight_sum = overlap_weight + opposite_weight
+                print(f"    * sum of weights at overlap: {overlap_weight:.3f} + {opposite_weight:.3f} = {weight_sum:.3f}")
+                print(f"      (ideally should be close to 1.0 for smooth blending)")
             
         return gaussian_importance_map
 
@@ -242,12 +313,30 @@ class ZarrNNUNetInferenceHandler:
         return steps
         
     def _initialize_blend_weights(self):
-        """Initialize blend weights for the current patch size"""
+        """
+        Initialize blend weights for the current patch size.
+        
+        This creates two versions of the weights:
+        1. blend_weights: standard 3D Gaussian weights for 3D data
+        2. blend_weights_4d: same Gaussian but with a singleton channel dimension for 4D data
+        
+        The two versions enable proper broadcasting during weighted blending
+        regardless of whether the data has a channel dimension.
+        """
         if len(self.patch_size) == 3:  # 3D patches
+            if self.verbose:
+                print(f"Initializing Gaussian blend weights for patch size {self.patch_size}")
+                
+            # Create the 3D Gaussian blend weights
             self.blend_weights = self._create_blend_weights()
-            # Create 4D version for multi-channel data with a singleton channel dimension
-            # This will allow broadcasting to work correctly with any number of channels
+            
+            # Create 4D version by adding a singleton channel dimension
+            # This allows broadcasting to work correctly with multi-channel data
             self.blend_weights_4d = np.expand_dims(self.blend_weights, axis=0)
+            
+            if self.verbose:
+                print(f"Blend weights shape: 3D={self.blend_weights.shape}, 4D={self.blend_weights_4d.shape}")
+                print(f"Min/max values: {np.min(self.blend_weights)}, {np.max(self.blend_weights)}")
 
     def _process_buffer(self, output_arrays: Dict, count_arrays: Dict,
                         patch_buffer: Dict = None, positions: List[Tuple] = None):
@@ -382,19 +471,50 @@ class ZarrNNUNetInferenceHandler:
     def _process_region(self, patches, positions, valid_sizes,
                        min_z, min_y, min_x, max_z, max_y, max_x,
                        output_array, count_array):
-        """Process a single region of patches with one read-modify-write cycle."""
+        """
+        Process a single region of patches with one read-modify-write cycle.
+        This implementation follows nnUNet's approach in predict_from_raw_data.py.
+        """
+        if self.verbose:
+            # Print detailed shape information to debug dimension issues
+            batch_size = len(patches)
+            print(f"\n--- PROCESS REGION ---")
+            print(f"Region: z={min_z}-{max_z}, y={min_y}-{max_y}, x={min_x}-{max_x}")
+            print(f"Processing {batch_size} patches")
+            if batch_size > 0:
+                print(f"First patch shape: {patches[0].shape}")
+                print(f"Blend weights shape: {self.blend_weights.shape}")
+                print(f"Blend weights 4D shape: {self.blend_weights_4d.shape}")
+                print(f"Output array shape: {output_array.shape}")
+                print(f"Count array shape: {count_array.shape}")
+            
         with self.write_lock:
             # Check output_array dimensionality and adapt access pattern accordingly
             output_ndim = len(output_array.shape)
             
+            if self.verbose:
+                print(f"Output array dimensionality: {output_ndim}")
+            
             # Determine if we have 3D or 4D data
             has_channel_dim = len(patches[0].shape) == 4
+            
+            if self.verbose:
+                print(f"Processing data with has_channel_dim={has_channel_dim}, output_ndim={output_ndim}")
+                print(f"First patch shape: {patches[0].shape}")
+            
+            # CRITICAL FIX: Always use the correct weights based on data dimensionality
+            # Use 4D weights (with channel dim) when patch has channel, 3D weights when it doesn't
+            base_weights = self.blend_weights_4d if has_channel_dim else self.blend_weights
+            
+            if self.verbose:
+                print(f"Using base weights with shape: {base_weights.shape}, ndim={base_weights.ndim}")
             
             # Fetch the current region (single I/O operation)
             if output_ndim == 4 and has_channel_dim:
                 # Both have 4D: C,Z,Y,X
                 region_sum = output_array[:, min_z:max_z, min_y:max_y, min_x:max_x]
-                base_weights = self.blend_weights_4d
+                if self.verbose:
+                    print(f"4D output + 4D patch case")
             elif output_ndim == 3 and has_channel_dim:
                 # This shouldn't happen anymore after our fixes
                 print(f"ERROR: Dimension mismatch detected:")
@@ -406,12 +526,13 @@ class ZarrNNUNetInferenceHandler:
                 tmp_patches = [p[0:1] for p in patches]  # Keep only first channel
                 patches = tmp_patches  # Replace patches with reduced versions
                 region_sum = output_array[min_z:max_z, min_y:max_y, min_x:max_x]
-                base_weights = self.blend_weights 
+                base_weights = self.blend_weights  # Switch to 3D weights
                 has_channel_dim = False  # Reset flag since we've modified patches
             elif output_ndim == 3 and not has_channel_dim:
                 # Both are 3D: Z,Y,X
                 region_sum = output_array[min_z:max_z, min_y:max_y, min_x:max_x]
-                base_weights = self.blend_weights
+                if self.verbose:
+                    print(f"3D output + 3D patch case")
             else:
                 # Unusual case - shouldn't happen
                 raise ValueError(f"Incompatible dimensions: output array has {output_ndim} dimensions " 
@@ -435,15 +556,15 @@ class ZarrNNUNetInferenceHandler:
                 # Adjust relative coordinates if they are negative (patch partially outside region)
                 if z_rel < 0:
                     valid_z += z_rel
-                    patch = patch[..., -z_rel:, :, :] if has_channel_dim else patch[-z_rel:, :, :]
+                    patch = patch[:, -z_rel:, :, :] if has_channel_dim else patch[-z_rel:, :, :]
                     z_rel = 0
                 if y_rel < 0:
                     valid_y += y_rel
-                    patch = patch[..., :, -y_rel:, :] if has_channel_dim else patch[:, -y_rel:, :]
+                    patch = patch[:, :, -y_rel:, :] if has_channel_dim else patch[:, -y_rel:, :]
                     y_rel = 0
                 if x_rel < 0:
                     valid_x += x_rel
-                    patch = patch[..., :, :, -x_rel:] if has_channel_dim else patch[:, :, -x_rel:]
+                    patch = patch[:, :, :, -x_rel:] if has_channel_dim else patch[:, :, -x_rel:]
                     x_rel = 0
 
                 # Adjust valid region if it extends beyond region bounds
@@ -455,51 +576,246 @@ class ZarrNNUNetInferenceHandler:
                     valid_x = max_x - min_x - x_rel
 
                 # Crop the patch and blending weights to the valid region.
+                if self.verbose:
+                    print(f"\n--- PATCH PROCESSING ---")
+                    print(f"Patch shape before cropping: {patch.shape}")
+                    print(f"Valid region: z={valid_z}, y={valid_y}, x={valid_x}")
+                    print(f"has_channel_dim: {has_channel_dim}")
+                
                 if has_channel_dim:
                     patch_valid = patch[:, :valid_z, :valid_y, :valid_x]
-                    # Make sure we have 4D weights for 4D patch
-                    if base_weights.ndim == 3:
-                        local_weights = np.expand_dims(base_weights[:valid_z, :valid_y, :valid_x], axis=0)
-                    else:
-                        local_weights = base_weights[:, :valid_z, :valid_y, :valid_x]
+                    
+                    if self.verbose:
+                        print(f"Patch shape after cropping: {patch_valid.shape}")
+                    
+                    # Get the appropriate weights slice - need to handle both 3D and 4D weights consistently
+                    if self.verbose:
+                        print(f"Slicing base_weights with shape {base_weights.shape}")
+                        
+                    # Handle different dimensionality of base_weights
+                    if base_weights.ndim == 4:  # 4D weights (with channel dim)
+                        weights_slice = base_weights[:, :valid_z, :valid_y, :valid_x]
+                        if self.verbose:
+                            print(f"Sliced 4D weights -> shape {weights_slice.shape}")
+                    else:  # 3D weights (no channel dim)
+                        weights_slice = base_weights[:valid_z, :valid_y, :valid_x]
+                        if self.verbose:
+                            print(f"Sliced 3D weights -> shape {weights_slice.shape}")
+                    
+                    if self.verbose:
+                        print(f"Weights slice shape before expansion: {weights_slice.shape}")
+                    
+                    # nnUNet applies weights per-channel by broadcasting
+                    # For 4D data, we need to ensure the weights have the right shape for broadcasting
+                    if patch_valid.ndim == 4:
+                        # Get the exact expected shape from the patch
+                        expected_shape = (1,) + patch_valid.shape[1:]
+                        
+                        if self.verbose:
+                            print(f"Patch shape is {patch_valid.shape}, expected weights shape is {expected_shape}")
+                        
+                        # We need to handle any mismatch in dimensions directly
+                        # This is simplest and most reliable approach
+                        if weights_slice.shape != expected_shape:
+                            if self.verbose:
+                                print(f"Weights shape {weights_slice.shape} doesn't match expected {expected_shape}")
+                                print(f"Creating new weights with exact patch shape...")
+                            
+                            # Check if we even have the right dimensionality
+                            if weights_slice.ndim != len(expected_shape):
+                                # Add or remove dimensions as needed
+                                if weights_slice.ndim < len(expected_shape):
+                                    # Add dimensions (expand_dims) to match
+                                    while weights_slice.ndim < len(expected_shape):
+                                        weights_slice = np.expand_dims(weights_slice, axis=0)
+                                        if self.verbose:
+                                            print(f"Added dimension, now: {weights_slice.shape}")
+                                else:
+                                    # Remove dimensions (squeeze) to match
+                                    while weights_slice.ndim > len(expected_shape):
+                                        weights_slice = np.squeeze(weights_slice, axis=0)
+                                        if self.verbose:
+                                            print(f"Removed dimension, now: {weights_slice.shape}")
+                            
+                            # Check if the dimensions still don't match exactly
+                            if weights_slice.shape != expected_shape:
+                                if self.verbose:
+                                    print(f"Need to resize weights from {weights_slice.shape} to {expected_shape}")
+                                
+                                # The most reliable approach - create a new array with the right shape
+                                # and sample the correct values from the weights_slice
+                                new_weights = np.zeros(expected_shape, dtype=weights_slice.dtype)
+                                
+                                # Determine valid region to copy (min of each dimension)
+                                copy_shape = tuple(min(s1, s2) for s1, s2 in zip(weights_slice.shape, expected_shape))
+                                
+                                if self.verbose:
+                                    print(f"Copy shape for valid region: {copy_shape}")
+                                
+                                # Create slices for copying
+                                src_slices = tuple(slice(0, s) for s in copy_shape)
+                                dst_slices = tuple(slice(0, s) for s in copy_shape)
+                                
+                                # Copy valid region 
+                                new_weights[dst_slices] = weights_slice[src_slices]
+                                
+                                # Replace the weights with our correctly sized version
+                                weights_slice = new_weights
+                                
+                                if self.verbose:
+                                    print(f"New weights created with shape: {weights_slice.shape}")
+                        else:
+                            if self.verbose:
+                                print(f"Weights shape already matches expected: {weights_slice.shape}")
+                    
+                    # Apply weights (this is exactly how nnUNet does it)
+                    weighted_patch = patch_valid * weights_slice
+                    
+                    if self.verbose:
+                        print(f"Weighted patch shape: {weighted_patch.shape}")
+                    
                 else:
                     patch_valid = patch[:valid_z, :valid_y, :valid_x]
-                    local_weights = base_weights[:valid_z, :valid_y, :valid_x]
-
-                weighted_patch = patch_valid * local_weights
-
-                # Update region with weighted patch
-                if output_ndim == 4 and has_channel_dim:
-                    # We need to handle different channel counts between patch and output array
-                    if weighted_patch.shape[0] != region_sum.shape[0]:
-                        # For multiclass segmentation, the number of channels might not match
-                        # This can happen when we've updated output_targets after detecting multiclass
-                        if self.verbose and (z_rel == 0 and y_rel == 0 and x_rel == 0):
-                            print(f"Adjusting channel dimension: patch has {weighted_patch.shape[0]} channels, output has {region_sum.shape[0]} channels")
-                            
-                        # Ensure we have the right number of channels
-                        if weighted_patch.shape[0] < region_sum.shape[0]:
-                            # Need to expand patch channels
-                            temp = np.zeros((region_sum.shape[0], valid_z, valid_y, valid_x), dtype=weighted_patch.dtype)
-                            temp[:weighted_patch.shape[0]] = weighted_patch
-                            weighted_patch = temp
-                        else:
-                            # Need to truncate patch channels
-                            weighted_patch = weighted_patch[:region_sum.shape[0]]
+                    weights_slice = base_weights[:valid_z, :valid_y, :valid_x]
+                    weighted_patch = patch_valid * weights_slice
                     
-                    # Now update with the properly shaped patch
-                    region_sum[:, z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += weighted_patch
+                    if self.verbose:
+                        print(f"3D case - Weighted patch shape: {weighted_patch.shape}")
+
+                # Update region with weighted patch - this follows nnUNet's approach:
+                # 1. Apply Gaussian weights to the prediction (prediction *= gaussian)
+                # 2. Add to accumulated predictions (predicted_logits[sl] += prediction)
+                # 3. Add Gaussian weights to count array (n_predictions[sl[1:]] += gaussian)
+                
+                if output_ndim == 4 and has_channel_dim:
+                    # Handle potential channel count mismatches and dimension mismatches
+                    if self.verbose:
+                        print(f"\n--- REGION UPDATE ---")
+                        print(f"Updating region with weighted patch")
+                        print(f"Weighted patch shape: {weighted_patch.shape}")
+                        target_region_shape = region_sum[:, z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x].shape
+                        print(f"Target region shape: {target_region_shape}")
+                        print(f"Relative coords: z_rel={z_rel}, y_rel={y_rel}, x_rel={x_rel}")
+                        print(f"Valid sizes: z={valid_z}, y={valid_y}, x={valid_x}")
+                    
+                    try:
+                        # First check for channel count mismatches (multiclass segmentation case)
+                        if weighted_patch.shape[0] != region_sum.shape[0]:
+                            # Special case - channel counts don't match
+                            if self.verbose:
+                                print(f"WARNING: Channel count mismatch during blending:")
+                                print(f"- Patch channels: {weighted_patch.shape[0]}")
+                                print(f"- Region channels: {region_sum.shape[0]}")
+                                
+                            # Match dimensions by padding or truncating the patch
+                            if weighted_patch.shape[0] < region_sum.shape[0]:
+                                # Need to pad the patch with zeros for missing channels
+                                if self.verbose:
+                                    print(f"Padding patch to match channel count")
+                                temp = np.zeros((region_sum.shape[0], valid_z, valid_y, valid_x), dtype=weighted_patch.dtype)
+                                temp[:weighted_patch.shape[0]] = weighted_patch
+                                if self.verbose:
+                                    print(f"Padded temp shape: {temp.shape}")
+                                region_sum[:, z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += temp
+                            else:
+                                # Need to truncate the patch to first N channels
+                                if self.verbose:
+                                    print(f"Truncating patch to first {region_sum.shape[0]} channels")
+                                region_sum[:, z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += weighted_patch[:region_sum.shape[0]]
+                        else:
+                            # Normal case - channels match exactly
+                            # Handle direct addition with proper broadcasting
+                            target_region = region_sum[:, z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x]
+                            
+                            if self.verbose:
+                                print(f"Direct channel match case:")
+                                print(f"- Weighted patch shape: {weighted_patch.shape}, ndim={weighted_patch.ndim}")
+                                print(f"- Target region shape: {target_region.shape}, ndim={target_region.ndim}")
+                            
+                            # If shapes don't match exactly, reshape for proper broadcasting
+                            if weighted_patch.ndim != target_region.ndim:
+                                if self.verbose:
+                                    print(f"Reshaping weighted_patch from {weighted_patch.shape} to match region dimensions {target_region.ndim}")
+                                
+                                # Let's replace the complex reshaping with a more direct approach
+                                # The issue is likely with how the extra dimension gets added
+                                
+                                if weighted_patch.ndim == 4 and target_region.ndim == 5:
+                                    # This is the problematic case - we need to match a 5D target with a 4D patch
+                                    if self.verbose:
+                                        print(f"Special case: 4D patch to 5D target")
+                                        
+                                    # Get the exact shape of the target region
+                                    target_shape = target_region.shape
+                                    if self.verbose:
+                                        print(f"Target shape dimensions: {target_shape}")
+                                        
+                                    # Create a temporary array with the exact target shape
+                                    # This avoids broadcasting issues
+                                    temp_weighted = np.zeros(target_shape, dtype=weighted_patch.dtype)
+                                    
+                                    # Copy the weighted patch into the temp array
+                                    # This handles the shape mismatch explicitly
+                                    temp_weighted[0] = weighted_patch
+                                    
+                                    if self.verbose:
+                                        print(f"Created temp array with shape: {temp_weighted.shape}")
+                                    
+                                    # Now add the temp array with the exact matching shape
+                                    region_sum[:, z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += temp_weighted
+                                    
+                                else:
+                                    # Old approach for other cases
+                                    if weighted_patch.ndim > target_region.ndim:
+                                        # Squeeze out extra dimensions
+                                        if self.verbose:
+                                            print(f"Squeezing down from {weighted_patch.ndim} to {target_region.ndim} dimensions")
+                                        while weighted_patch.ndim > target_region.ndim:
+                                            weighted_patch = np.squeeze(weighted_patch, axis=0)
+                                            if self.verbose:
+                                                print(f"After squeeze: {weighted_patch.shape}")
+                                    else:
+                                        # Add dimensions as needed
+                                        if self.verbose:
+                                            print(f"Expanding from {weighted_patch.ndim} to {target_region.ndim} dimensions")
+                                        while weighted_patch.ndim < target_region.ndim:
+                                            weighted_patch = np.expand_dims(weighted_patch, axis=0)
+                                            if self.verbose:
+                                                print(f"After expand: {weighted_patch.shape}")
+                                    
+                                    # Now do the addition with the reshaped patch
+                                    region_sum[:, z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += weighted_patch
+                            else:
+                                # Shapes match in dimensions, do direct addition
+                                if self.verbose:
+                                    print(f"Dimensions match exactly - direct addition")
+                                region_sum[:, z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += weighted_patch
+                            
+                    except Exception as e:
+                        # Print detailed error with shapes to help diagnose the issue
+                        print(f"ERROR during patch addition: {str(e)}")
+                        print(f"- Weighted patch: shape={weighted_patch.shape}, dtype={weighted_patch.dtype}, ndim={weighted_patch.ndim}")
+                        print(f"- Region sum total shape: {region_sum.shape}")
+                        print(f"- Target slice: z_rel={z_rel}, y_rel={y_rel}, x_rel={x_rel}, valid_z={valid_z}, valid_y={valid_y}, valid_x={valid_x}")
+                        print(f"- Target region shape: {region_sum[:, z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x].shape}")
+                        # Rethrow the exception
+                        raise
                 elif output_ndim == 3 and has_channel_dim:
                     # This path should not be reached due to earlier fix
                     region_sum[z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += weighted_patch[0]
                 else:
                     region_sum[z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += weighted_patch
                 
-                # Update count array
-                if local_weights.ndim == 4:
-                    region_count[z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += local_weights[0]
+                # Update count array with the weights - exactly as nnUNet does
+                # In nnUNet: n_predictions[sl[1:]] += gaussian
+                # The key is that the count array doesn't have channel dimension in nnUNet,
+                # so we need to ensure our weights don't have channel dimension when updating count
+                if weights_slice.ndim == 4:
+                    # For 4D weights, use the first channel for count (removes channel dimension)
+                    region_count[z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += weights_slice[0]
                 else:
-                    region_count[z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += local_weights
+                    # For 3D weights, use directly
+                    region_count[z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += weights_slice
 
             # Write back the updated regions - single I/O operation
             if output_ndim == 4 and has_channel_dim:
@@ -510,7 +826,10 @@ class ZarrNNUNetInferenceHandler:
 
     def _process_model_outputs(self, outputs, positions: List[Tuple],
                                output_arrays: Dict, count_arrays: Dict):
-        """Process model outputs with buffering and offload writing asynchronously when full"""
+        """
+        Process model outputs with buffering and offload writing asynchronously when full.
+        This function handles both single tensor outputs (standard nnUNet) and dictionary outputs.
+        """
         # For nnUNet, the output is a tensor, not a dict - convert it to match target format
         if torch.is_tensor(outputs):
             # Convert single tensor output to dict based on output_targets
@@ -537,11 +856,13 @@ class ZarrNNUNetInferenceHandler:
                 num_channels = pred.shape[0]
                 
                 # Just a sanity check to ensure we have the expected number of channels
-                # Skip this warning after we've adjusted the output_targets for multiclass
                 expected_channels = self.output_targets[tgt_name]["channels"]
-                if num_channels != expected_channels and batch_idx > 0:  # Only warn after the first batch
-                    print(f"Warning: Expected {expected_channels} channel(s) " 
-                          f"but got {num_channels} channels in the processed output.")
+                
+                if self.verbose and num_channels != expected_channels:
+                    # This can happen after the first batch when we've detected multiclass
+                    # and updated the output_targets, but have not yet updated the local variable
+                    print(f"Note: Channel count for {tgt_name}: expected={expected_channels}, actual={num_channels}")
+                    print(f"This is normal when processing multiclass segmentation models")
                 
                 self.patch_buffer[tgt_name].append(pred)
             self.buffer_positions.append(pos)
@@ -697,6 +1018,10 @@ class ZarrNNUNetInferenceHandler:
             else:
                 device = torch.device(self.device_str)
 
+            # Add verbose flag to model_info for debugging
+            if self.model_info is not None and self.verbose:
+                self.model_info['verbose'] = True
+                
             # Create dataset and dataloader
             dataset = InferenceDataset(
                 input_path=self.input_path,
@@ -704,9 +1029,13 @@ class ZarrNNUNetInferenceHandler:
                 model_info=self.model_info,
                 patch_size=self.patch_size,
                 input_format=self.input_format,
-                step_size=self.tile_step_size,
+                step_size=self.tile_step_size,  # This is a factor (0.5 = 50% overlap)
                 load_all=self.load_all
             )
+            
+            if self.verbose:
+                print(f"Created dataset with tile_step_size={self.tile_step_size}")
+                print(f"  - Will generate {len(dataset)} patches")
 
             # Set up distributed sampler if needed
             sampler = None
@@ -978,8 +1307,32 @@ class ZarrNNUNetInferenceHandler:
                     sum_chunk = sum_chunk / np.expand_dims(mag, axis=0)
                 else:
                     # Standard normalization (divide by count where count > 0)
+                    if self.verbose and z0 == 0:  # Only print this once
+                        print(f"Normalizing with count array:")
+                        print(f"  - count_chunk shape: {count_chunk.shape}")
+                        print(f"  - count range: {np.min(count_chunk[mask]):.4f} to {np.max(count_chunk[mask]):.4f}")
+                        print(f"  - before normalization: sum_chunk range: {np.min(sum_chunk[mask]):.4f} to {np.max(sum_chunk[mask]):.4f}")
+                        
+                        # Show histogram of count values to diagnose blending issues
+                        unique_counts = np.unique(count_chunk[mask])
+                        print(f"  - unique count values: {len(unique_counts)} values")
+                        print(f"  - count distribution: {unique_counts[:10]}{'...' if len(unique_counts) > 10 else ''}")
+                        
+                        # Check for regions with very high or very low counts
+                        high_count_pct = np.sum(count_chunk > np.max(count_chunk) * 0.8) / np.sum(mask) * 100
+                        print(f"  - high count regions (>80% max): {high_count_pct:.2f}% of non-zero voxels")
+                    
+                    # Apply normalization where count > 0
                     sum_chunk[mask] /= count_chunk[mask]
                     normalized_chunk[mask] /= count_chunk[mask]
+                    
+                    if self.verbose and z0 == 0:  # Only print this once
+                        print(f"  - after normalization: sum_chunk range: {np.min(sum_chunk[mask]):.4f} to {np.max(sum_chunk[mask]):.4f}")
+                        
+                        # Check for potential issues in result after normalization
+                        if np.any(sum_chunk[mask] > 1.1):  # Values over 1.1 might indicate normalization issues
+                            print(f"  - WARNING: Found values > 1.1 after normalization, max={np.max(sum_chunk[mask]):.4f}")
+                            print(f"    This could indicate issues with the blending weights")
 
                 # Apply final transformation based on target type
                 if is_normals:

@@ -33,12 +33,13 @@ def generate_positions(min_val, max_val, patch_size, step_size):
 
 def compute_steps_for_sliding_window(image_size, patch_size, step_size_factor):
     """
-    Compute the positions for sliding window patches with specified step size, based on nnUNet implementation.
+    Compute the positions for a single dimension.
+    This matches nnUNet's per-dimension computation in their sliding window function.
     
     Args:
-        image_size: size of the dimension (e.g., Z, Y, or X)
-        patch_size: size of the patch in this dimension
-        step_size_factor: step size as a fraction of patch_size (0 < step_size_factor <= 1)
+        image_size: size of this dimension
+        patch_size: patch size for this dimension
+        step_size_factor: step size as a fraction (0 < step_size_factor <= 1)
         
     Returns:
         List of step positions for this dimension
@@ -46,19 +47,62 @@ def compute_steps_for_sliding_window(image_size, patch_size, step_size_factor):
     assert image_size >= patch_size, "image size must be larger than patch_size"
     assert 0 < step_size_factor <= 1, 'step_size must be larger than 0 and smaller or equal to 1'
     
-    # Calculate step size in voxels
+    # Calculate step size in voxels - this is key
     target_step_size = int(patch_size * step_size_factor)
     
     # Calculate number of steps
     num_steps = int(np.ceil((image_size - patch_size) / target_step_size)) + 1
     
-    # Calculate actual steps
+    # Calculate actual steps for uniform spacing
     max_step_value = image_size - patch_size
     if num_steps > 1:
+        # When we have multiple steps, distribute them uniformly
         actual_step_size = max_step_value / (num_steps - 1)
     else:
+        # When we have just one step, place it at position 0
         actual_step_size = 99999999999  # Only one step at position 0
-        
+    
+    # Generate all step positions
     steps = [int(np.round(actual_step_size * i)) for i in range(num_steps)]
+    
+    return steps
+
+
+def compute_steps_for_sliding_window_tuple(image_size_tuple, patch_size_tuple, step_size_factor):
+    """
+    Compute steps for sliding window for all dimensions at once.
+    This is an exact reimplementation of nnUNet's compute_steps_for_sliding_window function.
+    
+    Args:
+        image_size_tuple: Tuple with sizes for each dimension (e.g., (Z, Y, X))
+        patch_size_tuple: Tuple with patch sizes for each dimension
+        step_size_factor: Step size as a fraction (0 < step_size_factor <= 1)
+        
+    Returns:
+        List of lists of step positions, one list per dimension
+    """
+    assert all(i >= j for i, j in zip(image_size_tuple, patch_size_tuple)), \
+        "image size must be as large or larger than patch_size"
+    assert 0 < step_size_factor <= 1, 'step_size must be larger than 0 and smaller or equal to 1'
+    
+    # Target step sizes in voxels for all dimensions
+    target_step_sizes_in_voxels = [int(i * step_size_factor) for i in patch_size_tuple]
+    
+    # Calculate number of steps for each dimension
+    num_steps = [int(np.ceil((i - k) / j)) + 1 for i, j, k in 
+                 zip(image_size_tuple, target_step_sizes_in_voxels, patch_size_tuple)]
+    
+    # Calculate steps for each dimension
+    steps = []
+    for dim in range(len(patch_size_tuple)):
+        # The highest step value for this dimension
+        max_step_value = image_size_tuple[dim] - patch_size_tuple[dim]
+        if num_steps[dim] > 1:
+            actual_step_size = max_step_value / (num_steps[dim] - 1)
+        else:
+            actual_step_size = 99999999999  # Only one step at position 0
+        
+        steps_here = [int(np.round(actual_step_size * i)) for i in range(num_steps[dim])]
+        steps.append(steps_here)
     
     return steps
