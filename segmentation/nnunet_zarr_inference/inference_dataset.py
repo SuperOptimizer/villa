@@ -6,7 +6,14 @@ import tifffile
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from helpers import generate_positions
+
+# Import helpers with fallback for different import scenarios
+try:
+    # First try relative imports (when running as a module)
+    from nnunet_zarr_inference.helpers import generate_positions
+except ImportError:
+    # Fallback for direct script execution
+    from helpers import generate_positions
 
 class InferenceDataset(Dataset):
     def __init__(
