@@ -5,6 +5,7 @@ This package provides utilities for running inference with nnUNet models on zarr
 ## Features
 
 - Load trained nnUNet models (any valid nnUNet checkpoint)
+- Support for both binary and multiclass segmentation
 - Efficient sliding window inference on large 3D zarr arrays
 - Multi-GPU support with DDP (Distributed Data Parallel)
 - Automatic model compilation for improved performance
@@ -90,6 +91,7 @@ When using DDP, worker counts are automatically adjusted:
 - `--disable_tta`: Disable test time augmentation (mirroring) for faster but potentially less accurate inference
 - `--verbose`: Enable detailed output messages during inference
 - `--keep_intermediates`: Keep intermediate sum and count arrays after processing
+- `--skip_probability_maps`: Skip storing full probability maps for multiclass segmentation to save disk space
 - `--write_layers`: Write the sliced z layers to disk
 - `--postprocess_only`: Skip the inference pass and only do final averaging + casting
 - `--load_all`: Load the entire input array into memory (use with caution!)
@@ -113,6 +115,7 @@ inference_handler = ZarrNNUNetInferenceHandler(
     use_mirroring=True,  # Use test time augmentation (default)
     verbose=False,  # Minimal console output
     keep_intermediates=False,  # Clean up intermediates (default)
+    save_probability_maps=True,  # For multiclass segmentation, save full probability maps
     num_dataloader_workers=4,
     num_write_workers=4
 )
@@ -125,8 +128,14 @@ inference_handler.infer()
 
 By default, the output will be saved as a zarr array with the following datasets:
 
+For binary segmentation:
 - `segmentation_probabilities`: Probability maps scaled to 0-255 (uint8)
 - `segmentation_threshold`: Binary segmentation if a threshold was specified (uint8)
+
+For multiclass segmentation:
+- `segmentation_argmax`: Class indices using argmax (uint8, always created)
+- `segmentation_probabilities`: Probability maps for all classes (uint8, optional with `--skip_probability_maps`)
+- `segmentation_threshold`: Per-class threshold if a threshold was specified (uint8)
 
 If `--keep_intermediates` is specified, these additional arrays will be kept:
 - `segmentation_sum`: Sum of all predictions (float32)

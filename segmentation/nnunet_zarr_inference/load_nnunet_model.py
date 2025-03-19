@@ -39,15 +39,82 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
         # We're inside a fold directory, move up one level
         model_path = os.path.dirname(model_folder)
     
-    dataset_json = custom_dataset_json if custom_dataset_json is not None else load_json(join(model_path, 'dataset.json'))
-    plans = custom_plans_json if custom_plans_json is not None else load_json(join(model_path, 'plans.json'))
-    plans_manager = PlansManager(plans)
+    # Check for dataset.json and plans.json
+    dataset_json_path = join(model_path, 'dataset.json')
+    plans_json_path = join(model_path, 'plans.json')
+    
+    if custom_dataset_json is None and not os.path.exists(dataset_json_path):
+        error_msg = f"ERROR: dataset.json not found at: {dataset_json_path}\n"
+        error_msg += f"\nThis file is required for nnUNet model loading.\n"
+        if os.path.isdir(model_path):
+            error_msg += f"Contents of model directory ({model_path}):\n"
+            error_msg += f"  {', '.join(os.listdir(model_path))}\n"
+        raise FileNotFoundError(error_msg)
+        
+    if custom_plans_json is None and not os.path.exists(plans_json_path):
+        error_msg = f"ERROR: plans.json not found at: {plans_json_path}\n"
+        error_msg += f"\nThis file is required for nnUNet model loading.\n"
+        if os.path.isdir(model_path):
+            error_msg += f"Contents of model directory ({model_path}):\n"
+            error_msg += f"  {', '.join(os.listdir(model_path))}\n"
+        raise FileNotFoundError(error_msg)
+    
+    # Load the JSON files
+    try:
+        dataset_json = custom_dataset_json if custom_dataset_json is not None else load_json(dataset_json_path)
+    except Exception as e:
+        raise RuntimeError(f"Failed to load dataset.json: {str(e)}")
+        
+    try:
+        plans = custom_plans_json if custom_plans_json is not None else load_json(plans_json_path)
+    except Exception as e:
+        raise RuntimeError(f"Failed to load plans.json: {str(e)}")
+        
+    try:
+        plans_manager = PlansManager(plans)
+    except Exception as e:
+        raise RuntimeError(f"Failed to create PlansManager: {str(e)}")
     
     # Load checkpoint - handle if we're already in a fold directory or not
     if os.path.basename(model_folder).startswith('fold_'):
         checkpoint_file = join(model_folder, checkpoint_name)
     else:
         checkpoint_file = join(model_folder, f'fold_{fold}', checkpoint_name)
+    
+    # Check if the checkpoint file exists
+    if not os.path.exists(checkpoint_file):
+        # List available folds and checkpoints to help the user
+        available_folds = []
+        if os.path.isdir(model_folder):
+            for item in os.listdir(model_folder):
+                if item.startswith('fold_') and os.path.isdir(join(model_folder, item)):
+                    available_folds.append(item)
+                    
+        error_msg = f"ERROR: Checkpoint file not found: {checkpoint_file}\n"
+        if available_folds:
+            error_msg += "\nAvailable folds in this model folder:\n"
+            for fold_dir in available_folds:
+                fold_path = join(model_folder, fold_dir)
+                checkpoints = [f for f in os.listdir(fold_path) if f.endswith('.pth')]
+                if checkpoints:
+                    error_msg += f"  - {fold_dir}: {', '.join(checkpoints)}\n"
+                else:
+                    error_msg += f"  - {fold_dir}: No checkpoint files found\n"
+        else:
+            error_msg += f"\nThe model folder does not contain any 'fold_X' subdirectories.\n"
+            if os.path.isdir(model_folder):
+                error_msg += f"Contents of {model_folder}:\n"
+                error_msg += f"  {', '.join(os.listdir(model_folder))}\n"
+            else:
+                error_msg += f"The model folder does not exist or is not accessible: {model_folder}\n"
+                
+        error_msg += "\nPlease check:\n"
+        error_msg += "1. The model_folder path is correct\n"
+        error_msg += "2. The fold number is correct\n"
+        error_msg += "3. The checkpoint_name is correct\n"
+        
+        raise FileNotFoundError(error_msg)
+        
     print(f"Loading checkpoint: {checkpoint_file}")
     try:
         print(f"Attempting to load checkpoint from: {checkpoint_file}")

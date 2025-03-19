@@ -44,6 +44,7 @@ class ZarrNNUNetInferenceHandler:
                  use_mirroring: bool = True,
                  verbose: bool = False,
                  keep_intermediates: bool = False,
+                 save_probability_maps: bool = True,
                  output_targets: Optional[Dict[str, Dict]] = None):
         """
         Initialize the inference handler for nnUNet models on zarr arrays.
@@ -68,6 +69,7 @@ class ZarrNNUNetInferenceHandler:
             use_mirroring: Enable test time augmentation via mirroring (default: True, matches nnUNet default)
             verbose: Enable detailed output messages during inference (default: False)
             keep_intermediates: Keep intermediate sum and count arrays after processing (default: False)
+            save_probability_maps: Save full probability maps for multiclass segmentation (default: True, set to False to save space)
             output_targets: Optional custom output targets configuration
         """
         self.input_path = input_path
@@ -87,6 +89,7 @@ class ZarrNNUNetInferenceHandler:
         self.use_mirroring = use_mirroring
         self.verbose = verbose
         self.keep_intermediates = keep_intermediates
+        self.save_probability_maps = save_probability_maps
         
         # Default output target configuration if not provided
         # For nnUNet, we expect 2 channels (background and foreground)
@@ -242,7 +245,8 @@ class ZarrNNUNetInferenceHandler:
         """Initialize blend weights for the current patch size"""
         if len(self.patch_size) == 3:  # 3D patches
             self.blend_weights = self._create_blend_weights()
-            # Create 4D version for multi-channel data
+            # Create 4D version for multi-channel data with a singleton channel dimension
+            # This will allow broadcasting to work correctly with any number of channels
             self.blend_weights_4d = np.expand_dims(self.blend_weights, axis=0)
 
     def _process_buffer(self, output_arrays: Dict, count_arrays: Dict,
@@ -466,6 +470,24 @@ class ZarrNNUNetInferenceHandler:
 
                 # Update region with weighted patch
                 if output_ndim == 4 and has_channel_dim:
+                    # We need to handle different channel counts between patch and output array
+                    if weighted_patch.shape[0] != region_sum.shape[0]:
+                        # For multiclass segmentation, the number of channels might not match
+                        # This can happen when we've updated output_targets after detecting multiclass
+                        if self.verbose and (z_rel == 0 and y_rel == 0 and x_rel == 0):
+                            print(f"Adjusting channel dimension: patch has {weighted_patch.shape[0]} channels, output has {region_sum.shape[0]} channels")
+                            
+                        # Ensure we have the right number of channels
+                        if weighted_patch.shape[0] < region_sum.shape[0]:
+                            # Need to expand patch channels
+                            temp = np.zeros((region_sum.shape[0], valid_z, valid_y, valid_x), dtype=weighted_patch.dtype)
+                            temp[:weighted_patch.shape[0]] = weighted_patch
+                            weighted_patch = temp
+                        else:
+                            # Need to truncate patch channels
+                            weighted_patch = weighted_patch[:region_sum.shape[0]]
+                    
+                    # Now update with the properly shaped patch
                     region_sum[:, z_rel:z_rel + valid_z, y_rel:y_rel + valid_y, x_rel:x_rel + valid_x] += weighted_patch
                 elif output_ndim == 3 and has_channel_dim:
                     # This path should not be reached due to earlier fix
@@ -515,10 +537,11 @@ class ZarrNNUNetInferenceHandler:
                 num_channels = pred.shape[0]
                 
                 # Just a sanity check to ensure we have the expected number of channels
-                if num_channels != self.output_targets[tgt_name]["channels"]:
-                    print(f"Warning: Expected {self.output_targets[tgt_name]['channels']} channel(s) " 
+                # Skip this warning after we've adjusted the output_targets for multiclass
+                expected_channels = self.output_targets[tgt_name]["channels"]
+                if num_channels != expected_channels and batch_idx > 0:  # Only warn after the first batch
+                    print(f"Warning: Expected {expected_channels} channel(s) " 
                           f"but got {num_channels} channels in the processed output.")
-                    # This shouldn't happen since we're controlling the channel count upstream
                 
                 self.patch_buffer[tgt_name].append(pred)
             self.buffer_positions.append(pos)
@@ -554,6 +577,17 @@ class ZarrNNUNetInferenceHandler:
 
     def infer(self):
         """Run inference with the nnUNet model on the zarr array."""
+        # Verify input path exists and is a valid zarr array
+        if not os.path.exists(self.input_path):
+            raise FileNotFoundError(f"Input path does not exist: {self.input_path}")
+        
+        try:
+            # Try to open the input zarr array to check if it's valid
+            if not self.postprocess_only:  # Skip this check in postprocess-only mode
+                _ = zarr.open(self.input_path, mode='r')
+        except Exception as e:
+            raise ValueError(f"Error opening input zarr array at {self.input_path}: {str(e)}")
+            
         # Create a synchronizer for concurrent writes
         os.makedirs(self.output_path, exist_ok=True)
         sync_path = os.path.join(self.output_path, ".zarr_sync")
@@ -604,9 +638,16 @@ class ZarrNNUNetInferenceHandler:
                     if self.model_info is not None:
                         # For nnUNet, get number of segmentation heads
                         num_model_outputs = self.model_info.get('num_seg_heads', 1)
+                        # For multiclass segmentation where the network has multiple segmentation heads
+                        # Update the channel count to match
+                        if num_model_outputs > 2 and tgt_name == "segmentation":
+                            c = num_model_outputs
+                            tgt_conf["channels"] = c
+                            tgt_conf["nnunet_output_channels"] = c
+                            print(f"Detected multiclass model with {c} classes from model_info")
                     
                     # Always use 4D output with channel dimension
-                    # This ensures we handle nnUNet's binary segmentation output (2 channels) correctly
+                    # This ensures we handle nnUNet's binary and multiclass segmentation output correctly
                     out_shape = (c, z_max, y_max, x_max)
                     chunks = (c, chunk_z, chunk_y, chunk_x)
                     if self.verbose:
@@ -716,15 +757,24 @@ class ZarrNNUNetInferenceHandler:
                             num_channels = outputs.shape[1]
                             print(f"nnUNet model output shape: {outputs.shape}, channels: {num_channels}")
                             
-                            # Check if this is a typical nnUNet output (should have 2 channels for binary segmentation)
-                            if num_channels != 2:
-                                print(f"Warning: Expected 2 channels from nnUNet but got {num_channels} channels.")
-                                print(f"This might not be a standard binary nnUNet model.")
-                            else:
+                            # Check if this is a binary or multiclass segmentation
+                            if num_channels == 2:
                                 print(f"Detected standard nnUNet binary segmentation output (2 channels).")
                                 print(f"Will extract foreground channel (index {self.nnunet_foreground_channel}) for final output.")
+                            else:
+                                print(f"Detected multiclass segmentation output with {num_channels} channels.")
+                                print(f"Processing all {num_channels} classes.")
+                                
+                                # Update the output target configuration to match the model output
+                                for t_name in self.output_targets:
+                                    self.output_targets[t_name]["channels"] = num_channels
+                                    self.output_targets[t_name]["nnunet_output_channels"] = num_channels
+                                
+                                # Only print this message on rank 0
+                                if self.rank == 0:
+                                    print(f"Automatically updated output configuration to handle {num_channels} classes.")
                     
-                    # Apply activations for each target and extract only the foreground channel
+                    # Apply activations for each target
                     for t_name in self.output_targets:
                         # For nnUNet, the output might be a single tensor, not a dict with keys
                         if torch.is_tensor(outputs):
@@ -743,10 +793,15 @@ class ZarrNNUNetInferenceHandler:
                         else:
                             activated = raw_output
                         
-                        # For nnUNet with 2 channels, extract only the foreground channel (index 1)
+                        # Handle different segmentation types
                         if activated.shape[1] == 2:
+                            # Binary segmentation: extract only the foreground channel (index 1)
                             processed_outputs[t_name] = activated[:, self.nnunet_foreground_channel:self.nnunet_foreground_channel+1]
+                        elif t_name == "segmentation" and activated.shape[1] > 2:
+                            # Multiclass segmentation: keep all channels
+                            processed_outputs[t_name] = activated
                         else:
+                            # Default behavior: keep all channels
                             processed_outputs[t_name] = activated
                             
                     self._process_model_outputs(processed_outputs, positions, output_arrays, count_arrays)
@@ -811,27 +866,62 @@ class ZarrNNUNetInferenceHandler:
             final_dtype = "uint16" if is_normals else "uint8"
             compressor = Blosc(cname='zstd', clevel=5, shuffle=Blosc.BITSHUFFLE)
 
-            # Create dataset for probability output
-            # Use a more descriptive name for segmentation output
-            if tgt_name == "segmentation":
-                final_name = f"{tgt_name}_probabilities"
-            else:
-                final_name = f"{tgt_name}_final"
-                
-            final_ds = zarr_store.create_dataset(
-                name=final_name,
-                shape=sum_ds.shape,
-                chunks=sum_ds.chunks,
-                dtype=final_dtype,
-                compressor=compressor,
-                fill_value=0
+            # Check if this is a multiclass segmentation
+            is_multiclass = sum_ds.shape[0] > 2 if len(sum_ds.shape) >= 4 else False
+            
+            # Determine if we should save probability maps
+            # For multiclass, we might skip them to save space
+            # For binary segmentation or non-segmentation targets, always save them
+            should_save_probabilities = (
+                self.save_probability_maps or  # User explicitly wants probability maps
+                not is_multiclass or          # Binary segmentation - always save probabilities
+                tgt_name != "segmentation"    # Not a segmentation target - always save values
             )
+            
+            # Create dataset for probability output if needed
+            final_ds = None
+            if should_save_probabilities:
+                # Use a more descriptive name for segmentation output
+                if tgt_name == "segmentation":
+                    final_name = f"{tgt_name}_probabilities"
+                else:
+                    final_name = f"{tgt_name}_final"
+                    
+                final_ds = zarr_store.create_dataset(
+                    name=final_name,
+                    shape=sum_ds.shape,
+                    chunks=sum_ds.chunks,
+                    dtype=final_dtype,
+                    compressor=compressor,
+                    fill_value=0
+                )
+                
+                if self.verbose and is_multiclass and tgt_name == "segmentation":
+                    print(f"Saving full probability maps for {sum_ds.shape[0]} classes (use --skip_probability_maps to save space)")
+            elif self.verbose and is_multiclass and tgt_name == "segmentation":
+                print(f"Skipping probability maps for {sum_ds.shape[0]} classes to save disk space")
+            
+            # For multiclass segmentation, also create an argmax output
+            argmax_ds = None
+            if is_multiclass and tgt_name == "segmentation":
+                if self.verbose:
+                    print(f"Creating argmax output for multiclass segmentation with {sum_ds.shape[0]} classes")
+                argmax_ds = zarr_store.create_dataset(
+                    name=f"{tgt_name}_argmax",
+                    shape=sum_ds.shape[1:],  # Remove channel dimension
+                    chunks=sum_ds.chunks[1:],  # Remove channel dimension from chunks
+                    dtype="uint8",
+                    compressor=compressor,
+                    fill_value=0
+                )
             
             # Create additional dataset for thresholded output if threshold is specified
             thresholded_ds = None
             if self.threshold is not None and not is_normals:
                 if self.verbose:
                     print(f"Threshold value set to {self.threshold}% - will create binary threshold output")
+                    
+                # For multiclass, create same shape as probabilities
                 thresholded_ds = zarr_store.create_dataset(
                     name=f"{tgt_name}_threshold",
                     shape=sum_ds.shape,
@@ -926,25 +1016,62 @@ class ZarrNNUNetInferenceHandler:
                             combined = np.any(thresholded_chunk > 0, axis=0).astype(np.uint8) * 255
                             thresholded_ds[z0:z1] = combined
 
-                # Write probability chunks back to final dataset
-                if sum_ds_ndim == 4 and len(final_ds.shape) == 4:
-                    # Both 4D
-                    final_ds[:, z0:z1] = sum_chunk
-                elif sum_ds_ndim == 3 and len(final_ds.shape) == 3:  
-                    # Both 3D
-                    final_ds[z0:z1] = sum_chunk
-                elif sum_ds_ndim == 4 and len(final_ds.shape) == 3:
-                    # Sum is 4D but final is 3D (e.g., taking argmax)
-                    if sum_chunk.shape[0] > 1:
-                        # Multi-class: convert to single channel via argmax
-                        final_ds[z0:z1] = np.argmax(sum_chunk, axis=0).astype(np.uint8)
+                # Process and write back data
+                # First, always process argmax for multiclass segmentation
+                if is_multiclass and argmax_ds is not None and sum_chunk.shape[0] > 2:
+                    # Calculate argmax along channel dimension (excluding background)
+                    # By convention in medical imaging, channel 0 is often background
+                    # For argmax output, we'll actually use argmax from channel 1 onwards
+                    # and add 1 to the result to get class indices starting from 1
+                    if self.verbose and z0 == 0:  # Print only once
+                        print("Computing argmax for multiclass segmentation (excluding background)")
+                    
+                    # Skip background (channel 0) for argmax calculation
+                    foreground_chunk = sum_chunk[1:, :, :, :]
+                    
+                    # Get argmax of foreground channels and add 1 to get class indices starting from 1
+                    # Channels with zero probability will become class 0 (background)
+                    # Apply a mask to only assign classes where there's sufficient probability
+                    foreground_max = np.max(foreground_chunk, axis=0)
+                    background_prob = sum_chunk[0, :, :, :]
+                    
+                    # Where foreground probability is higher than background, use argmax+1
+                    # Otherwise use 0 (background)
+                    mask = foreground_max > background_prob
+                    
+                    # Initialize with zeros (background)
+                    result = np.zeros_like(mask, dtype=np.uint8)
+                    
+                    # Where foreground wins, use argmax+1
+                    if np.any(mask):
+                        # Get argmax of foreground channels only
+                        argmax_foreground = np.argmax(foreground_chunk, axis=0)
+                        # Add 1 to convert to class indices (1-based)
+                        result[mask] = argmax_foreground[mask] + 1
+                        
+                    # Write to argmax dataset
+                    argmax_ds[z0:z1] = result
+                
+                # Then write probability maps if needed
+                if final_ds is not None:
+                    if sum_ds_ndim == 4 and len(final_ds.shape) == 4:
+                        # Both 4D
+                        final_ds[:, z0:z1] = sum_chunk
+                    elif sum_ds_ndim == 3 and len(final_ds.shape) == 3:  
+                        # Both 3D
+                        final_ds[z0:z1] = sum_chunk
+                    elif sum_ds_ndim == 4 and len(final_ds.shape) == 3:
+                        # Sum is 4D but final is 3D (e.g., taking argmax)
+                        if sum_chunk.shape[0] > 1:
+                            # Multi-class: convert to single channel via argmax
+                            final_ds[z0:z1] = np.argmax(sum_chunk, axis=0).astype(np.uint8)
+                        else:
+                            # Single class: just take first channel
+                            final_ds[z0:z1] = sum_chunk[0]
                     else:
-                        # Single class: just take first channel
-                        final_ds[z0:z1] = sum_chunk[0]
-                else:
-                    # Handle unusual case
-                    raise ValueError(f"Incompatible dimensions in postprocessing: sum_ds has {sum_ds_ndim} dimensions " 
-                                   f"but final_ds has {len(final_ds.shape)} dimensions")
+                        # Handle unusual case
+                        raise ValueError(f"Incompatible dimensions in postprocessing: sum_ds has {sum_ds_ndim} dimensions " 
+                                      f"but final_ds has {len(final_ds.shape)} dimensions")
         
         # Clean up intermediate arrays if not keeping them
         if not self.keep_intermediates:
@@ -994,6 +1121,8 @@ def main():
                       help="Skip the inference pass and only do final averaging + casting")
     parser.add_argument("--keep_intermediates", action="store_true",
                       help="Keep intermediate sum and count arrays after processing")
+    parser.add_argument("--skip_probability_maps", action="store_true",
+                      help="Skip storing full probability maps for multiclass segmentation to save disk space")
     parser.add_argument("--load_all", action="store_true",
                       help="Load the entire input array into memory (use with caution!)")
     
@@ -1044,6 +1173,7 @@ def main():
         use_mirroring=not args.disable_tta,  # Invert flag to match nnUNet's behavior
         verbose=args.verbose,
         keep_intermediates=args.keep_intermediates,
+        save_probability_maps=not args.skip_probability_maps,  # Invert flag for intuitive CLI
         load_all=args.load_all
     )
     

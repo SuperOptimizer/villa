@@ -143,7 +143,7 @@ class InferenceDataset(Dataset):
                 # Here we assume the data is already in the correct format (C,Z,Y,X)
                 pass
             else:
-                # Apply a simple standardization if no specific nnUNet normalization is available
+                # Apply z-score normalization if no specific nnUNet normalization is available
                 for c in range(patch.shape[0]):
                     mean = np.mean(patch[c])
                     std = np.std(patch[c])
