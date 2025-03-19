@@ -13,9 +13,15 @@ from typing import Dict, Tuple, List, Optional, Any, Union
 import torch.distributed as dist
 from collections import defaultdict
 
-# Import nnUNet model loader
-from load_nnunet_model import load_model, run_inference
-from inference_dataset import InferenceDataset
+# Import nnUNet model loader (with fallback for different import scenarios)
+try:
+    # First try relative imports (when running as a module)
+    from nnunet_zarr_inference.load_nnunet_model import load_model, run_inference
+    from nnunet_zarr_inference.inference_dataset import InferenceDataset
+except ImportError:
+    # Fallback for direct script execution
+    from load_nnunet_model import load_model, run_inference
+    from inference_dataset import InferenceDataset
 
 class ZarrNNUNetInferenceHandler:
     def __init__(self, 
@@ -318,9 +324,9 @@ class ZarrNNUNetInferenceHandler:
         
         # Define max region size (larger regions = fewer I/O operations but more memory)
         # These are chosen to balance memory usage and I/O operations
-        max_z_size = full_z * 2  # 2x patch size in Z
-        max_y_size = full_y * 2  # 2x patch size in Y
-        max_x_size = full_x * 2  # 2x patch size in X
+        max_z_size = full_z * 4  # 4x patch size in Z
+        max_y_size = full_y * 4  # 4x patch size in Y
+        max_x_size = full_x * 4  # 4x patch size in X
         
         # If region is manageable, process it as a single unit; otherwise chunk it
         # This helps with very large buffers where we have patches from disparate regions
