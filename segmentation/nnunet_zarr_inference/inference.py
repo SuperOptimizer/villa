@@ -37,6 +37,7 @@ class ZarrNNUNetInferenceHandler:
                  threshold: Optional[float] = None,
                  use_mirroring: bool = True,
                  verbose: bool = False,
+                 keep_intermediates: bool = False,
                  output_targets: Optional[Dict[str, Dict]] = None):
         """
         Initialize the inference handler for nnUNet models on zarr arrays.
@@ -60,6 +61,7 @@ class ZarrNNUNetInferenceHandler:
             threshold: Optional threshold value (0-100) for binarizing the probability map
             use_mirroring: Enable test time augmentation via mirroring (default: True, matches nnUNet default)
             verbose: Enable detailed output messages during inference (default: False)
+            keep_intermediates: Keep intermediate sum and count arrays after processing (default: False)
             output_targets: Optional custom output targets configuration
         """
         self.input_path = input_path
@@ -78,6 +80,7 @@ class ZarrNNUNetInferenceHandler:
         self.threshold = threshold
         self.use_mirroring = use_mirroring
         self.verbose = verbose
+        self.keep_intermediates = keep_intermediates
         
         # Default output target configuration if not provided
         # For nnUNet, we expect 2 channels (background and foreground)
@@ -930,6 +933,17 @@ class ZarrNNUNetInferenceHandler:
                     # Handle unusual case
                     raise ValueError(f"Incompatible dimensions in postprocessing: sum_ds has {sum_ds_ndim} dimensions " 
                                    f"but final_ds has {len(final_ds.shape)} dimensions")
+        
+        # Clean up intermediate arrays if not keeping them
+        if not self.keep_intermediates:
+            for tgt_name in self.output_targets:
+                if self.verbose:
+                    print(f"Cleaning up intermediate arrays for {tgt_name}")
+                # Delete sum and count arrays
+                if f"{tgt_name}_sum" in zarr_store:
+                    del zarr_store[f"{tgt_name}_sum"]
+                if f"{tgt_name}_count" in zarr_store:
+                    del zarr_store[f"{tgt_name}_count"]
 
 
 def main():
@@ -966,6 +980,8 @@ def main():
                       help="Write the sliced z layers to disk")
     parser.add_argument("--postprocess_only", action="store_true",
                       help="Skip the inference pass and only do final averaging + casting")
+    parser.add_argument("--keep_intermediates", action="store_true",
+                      help="Keep intermediate sum and count arrays after processing")
     parser.add_argument("--load_all", action="store_true",
                       help="Load the entire input array into memory (use with caution!)")
     
@@ -996,6 +1012,7 @@ def main():
         threshold=args.threshold,
         use_mirroring=not args.disable_tta,  # Invert flag to match nnUNet's behavior
         verbose=args.verbose,
+        keep_intermediates=args.keep_intermediates,
         load_all=args.load_all
     )
     
