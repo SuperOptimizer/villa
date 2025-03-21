@@ -2,6 +2,7 @@ import inspect
 import multiprocessing
 import os
 import yaml
+from importlib.resources import files
 import shutil
 import sys
 import warnings
@@ -224,7 +225,9 @@ class nnUNetTrainer(object):
 
         # Hyperparameters initialization
         if yaml_config_path is None:
-            yaml_config = yaml.safe_load(open("nnunetv2/training/nnUNetTrainer/configs/default.yaml"))
+            yaml_path = files('nnunetv2.training.nnUNetTrainer.configs').joinpath('default.yaml')
+            with yaml_path.open('r') as file:
+                yaml_config = yaml.safe_load(file)
         else:
             yaml_config = yaml.safe_load(open(yaml_config_path))
         yaml_config['architecture'] = configuration
