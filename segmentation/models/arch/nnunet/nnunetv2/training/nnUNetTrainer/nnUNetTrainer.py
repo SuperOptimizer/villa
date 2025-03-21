@@ -1222,12 +1222,6 @@ class nnUNetTrainer(object):
             self.logger.log('mean_fg_dice', mean_fg_dice, self.current_epoch)
             self.logger.log('dice_per_class_or_region', global_dice_per_class, self.current_epoch)
 
-        self.print_to_log_file("validation_loss", np.round(aggregated_loss, 4))
-        self.print_to_log_file("mean_fg_dice", np.round(mean_fg_dice, 4))
-        self.print_to_log_file("dice_per_class", [np.round(d, 4) for d in global_dice_per_class])
-
-
-
     def on_epoch_start(self):
         self.logger.log('epoch_start_timestamps', time(), self.current_epoch)
 
