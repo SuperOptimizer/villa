@@ -6,7 +6,7 @@ import sys
 import warnings
 from copy import deepcopy
 from datetime import datetime
-from typing import Tuple, Union, List
+from typing import Tuple, Union, List, Optional
 
 import numpy as np
 import torch
@@ -62,8 +62,8 @@ from batchgeneratorsv2.transforms.intensity.illumination import InhomogeneousSli
 
 class nnUNetTrainerDistDiceLoss(nnUNetTrainer):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
-                 device: torch.device = torch.device('cuda')):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+                 device: torch.device = torch.device('cuda'), yaml_config_path: Optional[str] = None):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device, yaml_config_path)
         self.dataset_class = DistanceTransformDataset  # Use the custom dataset class
 
 
