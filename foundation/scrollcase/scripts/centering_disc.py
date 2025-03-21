@@ -18,10 +18,6 @@ from meshlib import mrmeshpy as mm
 NO_SCROLL = 0
 
 
-def load_mesh(mesh_file: str) -> mm.Mesh:
-    return mm.loadMesh(mesh_file)
-
-
 def build_disc():
     case = sc.case.ScrollCase(scroll_height_mm=NO_SCROLL, scroll_radius_mm=NO_SCROLL)
 
@@ -71,11 +67,11 @@ def build_disc():
         # Convert to mesh
         with tempfile.NamedTemporaryFile(suffix=".stl") as temp_file:
             export_stl(mount_disc.solids()[0], temp_file.name)
-            mount_disc_mesh = load_mesh(temp_file.name)
+            mount_disc_mesh = sc.mesh.load_mesh(temp_file.name)
 
     return mount_disc_mesh
 
 
 disc = build_disc()
 
-mm.saveMesh(disc, "disc.stl")
+mm.saveMesh(disc, Path("disc.stl"))

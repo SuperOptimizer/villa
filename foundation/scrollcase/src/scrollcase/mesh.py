@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from functools import partial
 from typing import Callable, Optional
+from pathlib import Path
 
 import build123d as bd
 import meshlib.mrmeshnumpy as mn
@@ -20,7 +21,7 @@ def show_meshlib(*meshes: mm.Mesh, show_axis: bool = True):
     trimesh_meshes = []
     for mesh in meshes:
         with tempfile.NamedTemporaryFile("w", suffix=".stl") as f:
-            mm.saveMesh(mesh, f.name)
+            mm.saveMesh(mesh, Path(f.name))
             tri_mesh = trimesh.load(f.name)
             trimesh_meshes.append(tri_mesh)
     axis = trimesh.creation.axis(origin_size=10)
@@ -41,7 +42,7 @@ def _copy_meshlib(mesh: mm.Mesh):
 
 
 def load_mesh(mesh_file: str) -> mm.Mesh:
-    return mm.loadMesh(mesh_file)
+    return mm.loadMesh(Path(mesh_file))
 
 
 def affine_rotation(angle_rad: float) -> mm.AffineXf3f:
