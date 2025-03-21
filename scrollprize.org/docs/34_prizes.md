@@ -45,6 +45,8 @@ We’re also going to offer targeted “asks” for prizes, as we become aware o
 _**Let’s get started with the prizes!**_
 
 ## Read Entire Scroll Prize ($200,000)
+[Submission Form](https://docs.google.com/forms/d/e/1FAIpQLSed2vRgW3HECXW3E6-llYPOST550yr4L0T5AIQp45GAYRcnGQ/viewform?usp=dialog)
+
 We’re awarding $200,000 to the first team to unwrap an entire scroll and produce readable letters within.
 
 <details class="submission-details">
@@ -80,6 +82,8 @@ We may reward partial work - if your unrolling works but the ink detection isn't
 </details>
 
 ## First Letters and Title Prizes
+[Submission Form](https://docs.google.com/forms/d/e/1FAIpQLSdw43FX_uPQwBTIV8pC2y0xkwZmu6GhrwxV4n3WEbqC8Xof9Q/viewform?usp=dialog)
+
 **First Letters: $60,000 to the first team that uncovers 10 letters within a single 4cm^2 area of any of the following scrolls:**
 * Scroll 2
 * Scroll 3
