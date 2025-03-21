@@ -243,7 +243,7 @@ class nnUNetTrainer(object):
 
         # WandbWrapper initialization
         self.wandb = WandbWrapper(use_wandb=yaml_config['wandb_enabled'], config=yaml_config)
-        self.wandb.init(local_rank=self.local_rank)
+        self.wandb.init(local_rank=self.local_rank, config=yaml_config)
 
     def initialize(self):
         if not self.was_initialized:
@@ -1007,9 +1007,6 @@ class nnUNetTrainer(object):
 
         self._save_debug_information()
 
-        if self.local_rank == 0:
-            self.wandb.log({"config": self.wandb.config})
-
         # print(f"batch size: {self.batch_size}")
         # print(f"oversample: {self.oversample_foreground_percent}")
 
@@ -1171,110 +1168,126 @@ class nnUNetTrainer(object):
         return {'loss': l.detach().cpu().numpy(), 'tp_hard': tp_hard, 'fp_hard': fp_hard, 'fn_hard': fn_hard}
     
     def on_validation_epoch_end(self, val_outputs: List[dict]):
-        # First, collate the outputs collected by each process.
         outputs_collated = collate_outputs(val_outputs)
-        
-        # Compute per-process metrics:
+
         tp = np.sum(outputs_collated['tp_hard'], axis=0)
         fp = np.sum(outputs_collated['fp_hard'], axis=0)
         fn = np.sum(outputs_collated['fn_hard'], axis=0)
-        
-        # Compute the per-process validation loss:
         local_loss = np.mean(outputs_collated['loss'])
-        
-        # If using DDP, gather metrics from all processes:
+
         if self.is_ddp:
             world_size = dist.get_world_size()
-            
-            # Gather losses from all ranks
-            losses_all = [None for _ in range(world_size)]
+
+            losses_all = [None] * world_size
             dist.all_gather_object(losses_all, local_loss)
             aggregated_loss = np.mean(losses_all)
-            
-            # Gather true positives, false positives, and false negatives:
-            tp_list = [None for _ in range(world_size)]
-            fp_list = [None for _ in range(world_size)]
-            fn_list = [None for _ in range(world_size)]
+
+            tp_list, fp_list, fn_list = [None]*world_size, [None]*world_size, [None]*world_size
             dist.all_gather_object(tp_list, tp)
             dist.all_gather_object(fp_list, fp)
             dist.all_gather_object(fn_list, fn)
-            
-            # Sum over all processes to get global counts:
+
             global_tp = np.sum(np.vstack(tp_list), axis=0)
             global_fp = np.sum(np.vstack(fp_list), axis=0)
             global_fn = np.sum(np.vstack(fn_list), axis=0)
         else:
             aggregated_loss = local_loss
-            global_tp = tp
-            global_fp = fp
-            global_fn = fn
+            global_tp, global_fp, global_fn = tp, fp, fn
 
-        # Compute global dice per class: Dice = 2 * TP / (2 * TP + FP + FN)
-        global_dice_per_class = [2 * t / (2 * t + f + n) if (2 * t + f + n) > 0 else 0
-                                for t, f, n in zip(global_tp, global_fp, global_fn)]
-        
-        # Compute the mean foreground dice (exclude background if necessary)
+        global_dice_per_class = [
+            2 * t / (2 * t + f + n) if (2 * t + f + n) > 0 else 0
+            for t, f, n in zip(global_tp, global_fp, global_fn)
+        ]
+
         mean_fg_dice = np.nanmean(global_dice_per_class)
 
-        # Only rank 0 logs the aggregated metrics.
+        # Improved WandB logging with clear per-class dice labels
         if self.local_rank == 0:
-            self.wandb.log({
+            dice_per_class_dict = {
+                f"dice/{label_name}": np.round(global_dice_per_class[label_idx - 1], 4)
+                for label_name, label_idx in self.dataset_json['labels'].items()
+                if label_idx != 0
+            }
+
+            log_dict = {
                 "epoch": self.current_epoch,
-                "val_loss": aggregated_loss,
-                "mean_fg_dice": np.round(mean_fg_dice, 4),
-                "dice_per_class": [np.round(d, 4) for d in global_dice_per_class]
-            })
+                "val/loss": aggregated_loss,
+                "val/mean_fg_dice": mean_fg_dice,
+                **dice_per_class_dict
+            }
+
+            self.wandb.log(log_dict)
+
             self.logger.log('val_losses', aggregated_loss, self.current_epoch)
             self.logger.log('mean_fg_dice', mean_fg_dice, self.current_epoch)
-            self.logger.log('dice_per_class_or_region', [np.round(d, 4) for d in global_dice_per_class], self.current_epoch)
+            self.logger.log('dice_per_class_or_region', global_dice_per_class, self.current_epoch)
+
+        self.print_to_log_file("validation_loss", np.round(aggregated_loss, 4))
+        self.print_to_log_file("mean_fg_dice", np.round(mean_fg_dice, 4))
+        self.print_to_log_file("dice_per_class", [np.round(d, 4) for d in global_dice_per_class])
+
+
 
     def on_epoch_start(self):
         self.logger.log('epoch_start_timestamps', time(), self.current_epoch)
 
+
     def on_epoch_end(self):
         self.logger.log('epoch_end_timestamps', time(), self.current_epoch)
 
-        self.print_to_log_file('train_loss', np.round(self.logger.my_fantastic_logging['train_losses'][-1], decimals=4))
-        self.print_to_log_file('val_loss', np.round(self.logger.my_fantastic_logging['val_losses'][-1], decimals=4))
-        self.print_to_log_file('Pseudo dice', [np.round(i, decimals=4) for i in
-                                               self.logger.my_fantastic_logging['dice_per_class_or_region'][-1]])
-        if self.local_rank == 0:
-            self.wandb.log({"epoch": self.current_epoch, "val_loss": self.logger.my_fantastic_logging['val_losses'][-1],"training_loss": self.logger.my_fantastic_logging['train_losses'][-1], "lr": self.optimizer.param_groups[0]['lr']})
-            all_dice = [np.round(i, decimals=4) for i in self.logger.my_fantastic_logging['dice_per_class_or_region'][-1]]
-            dice_val = np.average(all_dice) # exclude background in the average dice
-            self.wandb.log({"Average Dice": np.round(dice_val, decimals=4)})
+        # Fetch values for logging clearly
+        train_loss = np.round(self.logger.my_fantastic_logging['train_losses'][-1], 4)
+        val_loss = np.round(self.logger.my_fantastic_logging['val_losses'][-1], 4)
+        dice_scores = self.logger.my_fantastic_logging['dice_per_class_or_region'][-1]
+        dice_val_avg = np.round(np.mean(dice_scores), 4)
 
+        epoch_time = np.round(
+            self.logger.my_fantastic_logging['epoch_end_timestamps'][-1] -
+            self.logger.my_fantastic_logging['epoch_start_timestamps'][-1],
+            2
+        )
+
+        # Improved WandB logging (clean, structured)
+        if self.local_rank == 0:
+            log_dict = {
+                "epoch": self.current_epoch,
+                "train/loss": train_loss,
+                "val/loss": val_loss,
+                "val/avg_dice": dice_val_avg,
+                "epoch_time": epoch_time,
+                "learning_rate": self.optimizer.param_groups[0]['lr'],
+            }
+
+            # log per-class dice explicitly
             for label_name, label_idx in self.dataset_json['labels'].items():
-                # Skip the 'background' or any label with index 0
-                if label_idx == 0:  
+                if label_idx == 0:
                     continue
-                
-                all_dice_idx = label_idx - 1
-                if 0 <= all_dice_idx < len(all_dice):
-                    dice_score = np.round(all_dice[all_dice_idx], decimals=4)
-                    self.wandb.log({f"{label_name} Dice": dice_score})
+                dice_idx = label_idx - 1
+                if 0 <= dice_idx < len(dice_scores):
+                    log_dict[f"dice/{label_name}"] = np.round(dice_scores[dice_idx], 4)
 
-        epoch_time = np.round(self.logger.my_fantastic_logging['epoch_end_timestamps'][-1] - self.logger.my_fantastic_logging['epoch_start_timestamps'][-1], decimals=2)
-        self.print_to_log_file(
-            f"Epoch time: {epoch_time} s")
-        
+            # EMA dice logging
+            current_ema_dice = self.logger.my_fantastic_logging['ema_fg_dice'][-1]
+            log_dict["val/ema_dice"] = current_ema_dice
+
+            if self._best_ema is None or current_ema_dice > self._best_ema:
+                self._best_ema = current_ema_dice
+                log_dict["val/best_ema_dice"] = current_ema_dice
+                self.save_checkpoint(join(self.output_folder, 'checkpoint_best.pth'))
+
+            self.wandb.log(log_dict)
+
+        self.print_to_log_file('train_loss', train_loss)
+        self.print_to_log_file('val_loss', val_loss)
+        self.print_to_log_file('Pseudo dice', [np.round(d, 4) for d in dice_scores])
+        self.print_to_log_file(f"Epoch time: {epoch_time} s")
+
         if self.local_rank == 0:
-            self.wandb.log({"epoch_time": epoch_time})
-        # handling periodic checkpointing
+            self.logger.plot_progress_png(self.output_folder)
+
         current_epoch = self.current_epoch
         if (current_epoch + 1) % self.save_every == 0 and current_epoch != (self.num_epochs - 1):
             self.save_checkpoint(join(self.output_folder, 'checkpoint_latest.pth'))
-
-        # handle 'best' checkpointing. ema_fg_dice is computed by the logger and can be accessed like this
-        if self._best_ema is None or self.logger.my_fantastic_logging['ema_fg_dice'][-1] > self._best_ema:
-            self._best_ema = self.logger.my_fantastic_logging['ema_fg_dice'][-1]
-            self.print_to_log_file(f"Yayy! New best EMA pseudo Dice: {np.round(self._best_ema, decimals=4)}")
-            self.save_checkpoint(join(self.output_folder, 'checkpoint_best.pth'))
-            if self.local_rank == 0:
-                self.wandb.log({"best EMA pseudo Dice": np.round(self._best_ema, decimals=4)})
-            
-        if self.local_rank == 0:
-            self.logger.plot_progress_png(self.output_folder)
 
         self.current_epoch += 1
 
