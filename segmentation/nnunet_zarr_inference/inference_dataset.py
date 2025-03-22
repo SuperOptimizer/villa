@@ -7,8 +7,19 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-# Import helpers with fallback for different import scenarios
-# We'll import specific functions only when needed in the code
+# Import helpers with consistent approach for both direct execution and module import
+import sys
+import os
+if __name__ == "__main__" or not __package__:
+    # Add parent directory to sys.path for direct script execution
+    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if parent_dir not in sys.path:
+        sys.path.insert(0, parent_dir)
+    # Direct import
+    from nnunet_zarr_inference.zarr_cache import ZarrArrayLRUCache
+else:
+    # Module import
+    from .zarr_cache import ZarrArrayLRUCache
 
 class InferenceDataset(Dataset):
     def __init__(
@@ -20,7 +31,9 @@ class InferenceDataset(Dataset):
             input_format: str = 'zarr',
             step_size: float = 0.5,
             load_all: bool = False,
-            verbose: bool = False
+            verbose: bool = False,
+            cache_size: int = 256,
+            max_cache_bytes: float = 4.0
             ):
         """
         Dataset for nnUNet inference on zarr arrays.
@@ -34,6 +47,8 @@ class InferenceDataset(Dataset):
             step_size: Step size for sliding window as a fraction of patch size (default: 0.5, nnUNet default)
             load_all: Whether to load the entire array into memory
             verbose: Enable detailed output messages (default: False)
+            cache_size: Size of the LRU cache for zarr chunks (default: 256)
+            max_cache_bytes: Maximum memory in GB to use for zarr cache (default: 4.0)
         """
         self.input_path = input_path
         self.input_format = input_format
@@ -44,6 +59,8 @@ class InferenceDataset(Dataset):
         self.load_all = load_all
         self.model_info = model_info
         self.verbose = verbose
+        self.cache_size = cache_size
+        self.max_cache_bytes = max_cache_bytes
 
         if input_format == 'zarr':
             # Open the zarr array
@@ -113,8 +130,24 @@ class InferenceDataset(Dataset):
         else:
             raise ValueError(f"Unsupported input format: {input_format}")
 
+        # Implement LRU caching for zarr arrays
         if load_all:
+            # Load the entire array into memory
             self.input_array = self.input_array[:]
+            self.cache_enabled = False
+            if self.verbose:
+                print(f"Loaded entire input array into memory (load_all=True)")
+        else:
+            # Use LRU cache for zarr array access
+            self.original_array = self.input_array
+            self.input_array = ZarrArrayLRUCache(
+                self.input_array, 
+                max_size=self.cache_size, 
+                max_bytes_gb=self.max_cache_bytes
+            )
+            self.cache_enabled = True
+            if self.verbose:
+                print(f"Using LRU cache for zarr array access with cache_size={self.cache_size}, max_cache_bytes={self.max_cache_bytes}GB")
 
         self.input_shape = self.input_array.shape
         self.input_dtype = self.input_array.dtype
@@ -222,32 +255,25 @@ class InferenceDataset(Dataset):
             # Already float32/float64, ensure it's float32
             patch = patch.astype(np.float32)
         
-        # Apply nnUNet-specific preprocessing if model_info is available
-        if self.model_info is not None:
-            # Get intensity properties from nnUNet for proper normalization
-            plans_manager = self.model_info.get('plans_manager')
-            configuration_manager = self.model_info.get('configuration_manager')
-            
-            if plans_manager is not None and configuration_manager is not None:
-                # Apply nnUNet preprocessing
-                # Transpose to match nnUNet's expected format if needed
-                # Here we assume the data is already in the correct format (C,Z,Y,X)
-                pass
-            else:
-                # Apply z-score normalization if no specific nnUNet normalization is available
-                for c in range(patch.shape[0]):
-                    mean = np.mean(patch[c])
-                    std = np.std(patch[c])
-                    if std > 0:
-                        patch[c] = (patch[c] - mean) / std
-        else:
-            # Simple z-score normalization when no model info is provided
-            for c in range(patch.shape[0]):
-                mean = np.mean(patch[c])
-                std = np.std(patch[c])
-                if std > 0:
-                    patch[c] = (patch[c] - mean) / std
+
+        # z-score normalization
+        for c in range(patch.shape[0]):
+            mean = np.mean(patch[c])
+            std = np.std(patch[c])
+            if std > 0:
+                patch[c] = (patch[c] - mean) / std
         
         patch = torch.from_numpy(patch)
         return {"image": patch, "index": idx}
+        
+    def get_cache_stats(self):
+        """
+        Get statistics about the LRU cache if enabled.
+        
+        Returns:
+            Dict with cache statistics or None if cache is not enabled
+        """
+        if hasattr(self, 'cache_enabled') and self.cache_enabled:
+            return self.input_array.get_stats()
+        return None
 

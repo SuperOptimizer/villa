@@ -15,7 +15,15 @@ __all__ = ['load_model', 'run_inference']
 
 def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: str = 'checkpoint_final.pth', 
             device='cuda', custom_plans_json=None, custom_dataset_json=None, use_mirroring: bool = True, 
-            verbose: bool = False):
+            verbose: bool = False, rank: int = 0):
+    """
+    MODIFIED version to add tracing for slow loading
+    """
+    # Only print from rank 0 by default
+    if rank == 0:
+        print(f"Starting load_model for {model_folder}, fold={fold}, device={device}")
+    import time
+    start_time = time.time()
     """
     Load a trained nnUNet model from a model folder.
     
@@ -28,6 +36,7 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
         custom_dataset_json: Optional custom dataset.json to use instead of the one in model_folder
         use_mirroring: Enable test time augmentation via mirroring (default: True)
         verbose: Enable detailed output messages during loading (default: False)
+        rank: Distributed rank of the process (default: 0, used to suppress output from non-rank-0 processes)
         
     Returns:
         network: The loaded model
@@ -115,19 +124,23 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
         
         raise FileNotFoundError(error_msg)
         
-    print(f"Loading checkpoint: {checkpoint_file}")
+    if rank == 0:  # Only print from rank 0
+        print(f"Loading checkpoint: {checkpoint_file}")
     try:
-        print(f"Attempting to load checkpoint from: {checkpoint_file}")
+        if rank == 0:
+            print(f"Attempting to load checkpoint from: {checkpoint_file}")
         try:
             # Try with weights_only=False first (required for PyTorch 2.6+)
             checkpoint = torch.load(checkpoint_file, map_location=torch.device('cpu'), weights_only=False)
-            print("Loaded checkpoint with weights_only=False")
+            if rank == 0:
+                print("Loaded checkpoint with weights_only=False")
         except TypeError:
             # Fallback for older PyTorch versions that don't have weights_only parameter
-            print("Falling back to loading without weights_only parameter")
+            if rank == 0:
+                print("Falling back to loading without weights_only parameter")
             checkpoint = torch.load(checkpoint_file, map_location=torch.device('cpu'))
     except Exception as e:
-        print(f"Error loading checkpoint: {str(e)}")
+        print(f"Error loading checkpoint (rank {rank}): {str(e)}")
         import traceback
         traceback.print_exc()
         raise
@@ -180,12 +193,14 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
         should_compile = os.environ['nnUNet_compile'].lower() in ('true', '1', 't')
     
     if should_compile and not isinstance(network, OptimizedModule):
-        print('Using torch.compile for potential performance improvement')
+        if rank == 0:
+            print('Using torch.compile for potential performance improvement')
         try:
             network = torch.compile(network)
         except Exception as e:
-            print(f"Warning: Could not compile model: {e}")
-            print("Continuing with uncompiled model")
+            if rank == 0:
+                print(f"Warning: Could not compile model: {e}")
+                print("Continuing with uncompiled model")
     
     # Get allowed mirroring axes from checkpoint if available
     inference_allowed_mirroring_axes = None
@@ -214,7 +229,8 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
 
 def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor, 
                 max_tta_combinations: int = None,
-                parallel_tta_multiplier: int = None) -> torch.Tensor:
+                parallel_tta_multiplier: int = None,
+                rank: int = 0) -> torch.Tensor:
     """
     Run inference with a loaded nnUNet model
     
@@ -255,7 +271,7 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor,
     
     # If TTA is disabled or no mirroring axes are specified, just run standard inference
     if not use_mirroring or allowed_mirroring_axes is None:
-        if verbose:
+        if verbose and rank == 0:
             if not use_mirroring:
                 print("Test time augmentation (mirroring) is disabled")
             elif allowed_mirroring_axes is None:
@@ -265,15 +281,18 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor,
         return output
     
     # Print TTA performance optimization information if verbose
-    if verbose:
+    if verbose and rank == 0:
         # Check if we're using the optimized batch TTA
         batch_size = input_tensor.shape[0]
         using_batch_taa = batch_size <= 2 and torch.cuda.is_available()
         
         if max_tta_combinations is not None:
-            print(f"Using optimized TTA with max {max_tta_combinations} combinations")
+            if max_tta_combinations == 3:
+                print(f"Using TTA with only the 3 primary axis flips (memory-efficient)")
+            else:
+                print(f"Using TTA with {max_tta_combinations} combinations")
         else:
-            print(f"Using optimized TTA with all possible combinations")
+            print(f"Using TTA with all possible combinations (may be memory-intensive)")
             
         if using_batch_taa:
             print(f"Batch size {batch_size} allows for parallel TTA processing")
@@ -287,10 +306,10 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor,
             print(f"GPU memory: {mem_allocated:.2f}GB allocated, {mem_reserved:.2f}GB reserved")
     
     # Implementation of TTA through mirroring (matches nnUNet's approach but optimized)
-    with torch.no_grad():
+    with torch.no_grad(), torch.amp.autocast('cuda'):
         # Adjust mirror axes to account for batch and channel dimensions
         mirror_axes = [i + 2 for i in allowed_mirroring_axes]  # +2 for batch and channel dimensions
-        if verbose:
+        if verbose and rank == 0:
             print(f"Using test time augmentation with mirroring axes: {allowed_mirroring_axes}")
         
         # Import itertools for combinations
@@ -302,10 +321,13 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor,
             for c in itertools.combinations(mirror_axes, i + 1)
         ]
         
+        # Store original combinations count for more informative messages
+        original_combinations_count = len(axes_combinations)
+        
         # Limit the number of combinations if specified
-        if max_tta_combinations is not None and len(axes_combinations) > max_tta_combinations:
-            if verbose:
-                print(f"Limiting TTA combinations from {len(axes_combinations)} to {max_tta_combinations}")
+        if max_tta_combinations is not None and original_combinations_count > max_tta_combinations:
+            if verbose and rank == 0:
+                print(f"Limiting TTA combinations from {original_combinations_count} to {max_tta_combinations}")
             
             # Special case for exactly 3 combinations - ALWAYS use the 3 single-axis flips
             if max_tta_combinations == 3:
@@ -316,7 +338,7 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor,
                     # Found all 3 primary axis flips - use these
                     axes_combinations = single_axis_flips
                     
-                    if verbose:
+                    if verbose and rank == 0:
                         print(f"  - Using the 3 primary axis flips (most important for view coverage)")
                 else:
                     # Something unexpected happened - the single axis flips aren't exactly 3
@@ -324,7 +346,7 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor,
                     axes_combinations.sort(key=len)  # Prioritize by number of flipped axes (fewer = better)
                     axes_combinations = axes_combinations[:max_tta_combinations]
                     
-                    if verbose:
+                    if verbose and rank == 0:
                         print(f"  - WARNING: Could not identify exactly 3 single-axis flips, using first {max_tta_combinations}")
             else:
                 # For other counts, prioritize single-axis flips first, then others
@@ -343,7 +365,7 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor,
                     remaining_slots = max_tta_combinations - num_primary
                     axes_combinations = single_axis_flips + other_flips[:remaining_slots]
                     
-                    if verbose:
+                    if verbose and rank == 0:
                         print(f"  - Included all {num_primary} single-axis flips + {remaining_slots} additional flips")
                 else:
                     # Not enough slots even for all single-axis flips
@@ -351,7 +373,7 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor,
                     axes_combinations.sort(key=len)  # Prioritize by number of flipped axes
                     axes_combinations = axes_combinations[:max_tta_combinations]
                     
-                    if verbose:
+                    if verbose and rank == 0:
                         print(f"  - WARNING: Not enough capacity for all single-axis flips, using first {max_tta_combinations}")
         
         # Calculate total number of predictions for averaging
@@ -367,9 +389,9 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor,
             use_batched_tta = True
             max_batch_multiplier = parallel_tta_multiplier
             
-            if verbose:
+            if verbose and rank == 0:
                 print(f"Using parallel TTA processing with multiplier: {max_batch_multiplier}")
-        elif verbose:
+        elif verbose and rank == 0:
             print(f"Using sequential TTA processing")
             
         if use_batched_tta:
@@ -398,7 +420,8 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor,
                         prediction += torch.flip(split_outputs[i], axes)
         else:
             # Standard sequential processing of TTA combinations
-            if verbose and torch.cuda.is_available():
+            if verbose and torch.cuda.is_available() and rank == 0:
+                # Use the actual number of combinations we're using, not the original count
                 print(f"Using sequential TTA processing for {len(axes_combinations)} combinations")
                 
             for axes in axes_combinations:

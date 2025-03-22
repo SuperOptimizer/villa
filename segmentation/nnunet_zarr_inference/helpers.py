@@ -1,6 +1,5 @@
 import numpy as np
 
-
 def generate_positions(min_val, max_val, patch_size, step_size):
     """
     Generate positions for patch extraction with step size.
@@ -64,6 +63,8 @@ def compute_steps_for_sliding_window(image_size, patch_size, step_size_factor):
     
     # Generate all step positions
     steps = [int(np.round(actual_step_size * i)) for i in range(num_steps)]
+
+    steps = [min(step, max_step_value) for step in steps]
     
     return steps
 
@@ -103,6 +104,7 @@ def compute_steps_for_sliding_window_tuple(image_size_tuple, patch_size_tuple, s
             actual_step_size = 99999999999  # Only one step at position 0
         
         steps_here = [int(np.round(actual_step_size * i)) for i in range(num_steps[dim])]
+        steps_here = [min(step, max_step_value) for step in steps_here]
         steps.append(steps_here)
     
     return steps
