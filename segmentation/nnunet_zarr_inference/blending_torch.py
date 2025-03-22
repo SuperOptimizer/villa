@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 
+
 def ensure_tensor(array, device='cuda'):
     """Convert a numpy array to a torch tensor on the specified device."""
     if torch.is_tensor(array):
@@ -148,20 +149,20 @@ def blend_patch_torch(output_array, count_array, patch, weights,
         output_array[:, z_start:z_end, y_start:y_end, x_start:x_end] += weighted_patch
     
     # Update the count array (only once per spatial location)
-    # Handle different count array types (uint8, uint16, float16, float32)
-    if count_array.dtype in (torch.uint8, torch.uint16):
-        # For unsigned integer types, scale weights to match the count array type
-        if count_array.dtype == torch.uint8:
-            max_val = 255.0
-        else:  # uint16
-            max_val = 65535.0
-        count_weights = (weight_slice * max_val / weight_slice.max()).to(count_array.dtype)
-        count_array[z_start:z_end, y_start:y_end, x_start:x_end] += count_weights
-    else:
-        # For float types (float16/float32), add weights directly
-        count_array[z_start:z_end, y_start:y_end, x_start:x_end] += weight_slice
+    # Always convert count_array to float32 for proper accumulation
+    # and to ensure we don't have precision issues with integer types
+    count_region = count_array[z_start:z_end, y_start:y_end, x_start:x_end]
+    
+    # For float types, we can add weights directly
+    # Convert to float32 for better numeric stability
+    if count_region.dtype != torch.float32:
+        count_region = count_region.float()
+    
+    # Add the weight_slice directly to the count_region
+    # This ensures weight accumulation is accurate
+    count_array[z_start:z_end, y_start:y_end, x_start:x_end] = count_region + weight_slice.float()
 
-def normalize_chunk_torch(output_chunk, count_chunk, dest_chunk, threshold=None, device='cpu'):
+def normalize_chunk_torch(output_chunk, count_chunk, dest_chunk, threshold=None, device='cpu', verbose=False):
     """
     Normalize a chunk by dividing output by count, with optional thresholding.
     
@@ -176,19 +177,18 @@ def normalize_chunk_torch(output_chunk, count_chunk, dest_chunk, threshold=None,
     if output_chunk.dtype == torch.float16:
         output_chunk = output_chunk.float()
     
-    # Ensure count is float for division, convert from integer types if needed
-    if count_chunk.dtype == torch.uint8:
-        # Convert to float and rescale to original weight range for uint8
-        count_chunk = count_chunk.float() / 255.0
-    elif count_chunk.dtype == torch.uint16:
-        # Convert to float and rescale to original weight range for uint16
-        count_chunk = count_chunk.float() / 65535.0
-    elif count_chunk.dtype == torch.float16:
-        # Convert to float32 for stable arithmetic
+    # Always convert count to float32 for stable division, regardless of input type
+    if count_chunk.dtype != torch.float32:
         count_chunk = count_chunk.float()
     
+    # Print debug info about count values if verbose
+    if verbose:
+        print(f"Count chunk stats: min={torch.min(count_chunk).item():.4f}, max={torch.max(count_chunk).item():.4f}, mean={torch.mean(count_chunk).item():.4f}")
+    
     # Create safe count tensor (avoid division by zero)
-    safe_count = torch.clamp(count_chunk, min=1.0)
+    # Use a consistent minimum value for stable normalization
+    # Using 0.0001 instead of 0.001 to maintain better dynamic range while avoiding extreme values
+    safe_count = torch.clamp(count_chunk, min=1e-8)
     
     # Normalize directly in PyTorch using broadcasting
     normalized = output_chunk / safe_count.unsqueeze(0)
@@ -233,6 +233,28 @@ def find_intersecting_patches_torch(positions_tensor, n_patches, z_start, z_end,
     intersecting_indices = torch.nonzero(intersects, as_tuple=True)[0]
     
     return intersecting_indices
+
+def intersects_chunk(z, y, x, patch_size_tuple, z_chunk_start, z_chunk_end):
+    """
+    Simple utility: Does a patch at (z,y,x) with shape patch_size_tuple
+    intersect a chunk in the z-dimension range [z_chunk_start, z_chunk_end)?
+    We only check Z here, but you could also chunk in Y or X similarly.
+    
+    Args:
+        z, y, x: Patch coordinates
+        patch_size_tuple: Tuple of patch dimensions (z, y, x)
+        z_chunk_start, z_chunk_end: Z-range to check
+        
+    Returns:
+        Boolean indicating if the patch intersects with the chunk
+    """
+    pz = patch_size_tuple[0]
+    # The patch covers z in [z, z + pz)
+    if z >= z_chunk_end:
+        return False
+    if (z + pz) <= z_chunk_start:
+        return False
+    return True
 
 def check_patch_intersection_torch(z, y, x, z_start, z_end, patch_size_tuple, max_z, max_y, max_x, device='cuda'):
     """

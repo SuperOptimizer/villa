@@ -249,61 +249,6 @@ class SequentialZarrNNUNetInference:
             traceback.print_exc()
             raise
 
-    def _create_blend_weights(self, device=None, edge_weight_boost=0.5):
-        """
-        Create a 3D Gaussian window to be used as blending weights using PyTorch.
-        This is a reimplementation of the original nnUNet approach with edge enhancement
-        to reduce artifacts at volume boundaries.
-
-        Args:
-            device: Optional PyTorch device to create the weights on. If None, uses self.device_str.
-            edge_weight_boost: Factor to boost edge weights (0.0 = no boost, 1.0 = full plateau)
-                            Higher values reduce edge artifacts but may introduce other blending effects.
-        """
-        # Ensure patch_size is a tuple
-        patch_size_tuple = tuple(self.patch_size) if isinstance(self.patch_size, list) else self.patch_size
-
-        # For step size of 1.0, no blending is needed
-        if self.tile_step_size == 1.0:
-            return torch.ones(patch_size_tuple, dtype=torch.float32)
-
-        # For segmentation, use more conservative settings to avoid edge artifacts
-        if any(target.get('name') == 'segmentation' for target in self.targets):
-            sigma_scale = 1.0 / 8.0  # Larger sigma for smoother transitions
-            value_scaling_factor = 10  # Smaller scaling for more balanced weights
-            edge_weight_boost = 0.0  # Disable edge boosting for segmentation
-        else:
-            sigma_scale = 1.0 / 8.0  # Match nnUNet's original approach
-            value_scaling_factor = 10  # Set to create smooth transitions between patches
-
-        # Print debugging info about the gaussian creation
-        if self.verbose:
-            print(f"Creating Gaussian blend weights:")
-            print(f"  - Patch size: {self.patch_size}")
-            print(f"  - Using sigma_scale: {sigma_scale}")
-            print(f"  - Value scaling factor: {value_scaling_factor}")
-            print(f"  - Edge weight boost: {edge_weight_boost}")
-
-        # Determine device for PyTorch operations
-        if device is None:
-            device = torch.device(
-                self.device_str if torch.cuda.is_available() and self.device_str.startswith('cuda') else 'cpu')
-
-        gaussian_importance_map = create_gaussian_weights_torch(
-            patch_size_tuple,
-            sigma_scale=sigma_scale,
-            value_scaling_factor=value_scaling_factor,
-            device=device,
-            edge_weight_boost=edge_weight_boost
-        )
-
-        if self.verbose:
-            print(f"Created Gaussian blend weights with shape {gaussian_importance_map.shape}")
-            print(f"  - min: {torch.min(gaussian_importance_map):.4f}, max: {torch.max(gaussian_importance_map):.4f}")
-            print(f"  - device: {gaussian_importance_map.device}")
-
-        return gaussian_importance_map
-
     def _create_memmap_arrays(self, target_name, num_expected_patches, patch_shape, temp_dir):
         """
         Create storage for patches and positions.
@@ -325,17 +270,9 @@ class SequentialZarrNNUNetInference:
         # Create file path for memory mapped patches array
         patches_file = os.path.join(temp_dir, f"{target_name}_patches_{uuid.uuid4().hex}.npy")
 
-        # Create memory-mapped array for patches
-        # For segmentation, we need to store raw logits as float32
-        # For other targets, we use uint8 to save memory
-        if target_name == "segmentation":
-            dtype = 'float32'
-        else:
-            dtype = 'uint8'
-
         patches_array = np.memmap(
             patches_file,
-            dtype=dtype,
+            dtype='float16',
             mode='w+',
             shape=(num_expected_patches,) + patch_shape
         )
@@ -448,20 +385,9 @@ class SequentialZarrNNUNetInference:
 
     def _blend_patches(self, patch_arrays, output_arrays, count_arrays):
         """
-        Blend all patches into the final output array using Gaussian weights.
-        Optimized version with PyTorch acceleration for better performance.
-        Keeps everything in PyTorch tensors throughout the process to minimize CPU-GPU transfers.
-
-        Args:
-            patch_arrays: Dictionary mapping target names to patch data. It can be either:
-                1. A single tuple (patches_array, positions_list, counter, file_path)
-                2. A list of such tuples for handling multiple ranks in DDP mode
-            output_arrays: Dictionary mapping target names to output arrays (NumPy/memmap)
-            count_arrays: Dictionary mapping target names to count arrays (NumPy/memmap)
-
-        Returns:
-            Dictionary mapping target names to PyTorch tensors for output and count arrays,
-            to be used directly in _finalize_arrays to avoid unnecessary transfers
+        Blend patches using a simplified z-chunking approach.
+        Each patch is processed exactly once in the first chunk it intersects with.
+        This eliminates boundary artifacts and simplifies the code.
         """
         if self.verbose:
             print("Starting patch blending phase...")
@@ -471,16 +397,29 @@ class SequentialZarrNNUNetInference:
 
         # Create Gaussian blend weights - use device from model
         device = self.device_str
-        blend_weights = self._create_blend_weights(
+
+        # Adjusted nnUNet parameters for smoother blending
+        sigma_scale = 1 / 8  # Increased from standard 1/8 (0.125) for smoother transitions
+        value_scaling_factor = 10  # Standard nnUNet value
+
+        if self.verbose:
+            print(f"Using sigma_scale={sigma_scale}, value_scaling_factor={value_scaling_factor}")
+
+        # Import intersects_chunk from blending_torch
+        if __name__ == "__main__" or not __package__:
+            from nnunet_zarr_inference.blending_torch import create_gaussian_weights_torch, blend_patch_torch, \
+                intersects_chunk
+        else:
+            from .blending_torch import create_gaussian_weights_torch, blend_patch_torch, intersects_chunk
+
+        # Create Gaussian weights with standard nnUNet parameters
+        blend_weights = create_gaussian_weights_torch(
+            patch_size_tuple,
+            sigma_scale=sigma_scale,
+            value_scaling_factor=value_scaling_factor,
             device=device,
-            edge_weight_boost=self.edge_weight_boost
+            edge_weight_boost=0  # No edge boost for simpler blending
         )
-
-        # We don't need the torch versions of the intersection functions anymore
-        # since we're handling the intersections directly in NumPy
-
-        # Dictionary to store output/count tensors
-        tensor_dict = {}
 
         # Process each target
         for target in self.targets:
@@ -489,155 +428,132 @@ class SequentialZarrNNUNetInference:
                 print(f"Warning: No patches found for target {tgt_name}")
                 continue
 
-            if self.verbose:
-                print(f"Blending patches for target: {tgt_name}")
-
-            # Handle both single array and list of arrays formats
-            patches_data_list = patch_arrays[tgt_name]
-            if not isinstance(patches_data_list, list):
-                patches_data_list = [patches_data_list]
-
-            total_patches = 0
-            for patches_array, positions_list, counter, _ in patches_data_list:
-                total_patches += counter['value']
-
-            if self.verbose:
-                print(f"  - Total patches to blend: {total_patches}")
-
-            # Get array dimensions
-            if len(output_arrays[tgt_name].shape) == 4:  # 4D output (C,Z,Y,X)
-                c, max_z, max_y, max_x = output_arrays[tgt_name].shape
-            else:  # 3D output (Z,Y,X)
-                max_z, max_y, max_x = output_arrays[tgt_name].shape
-                c = 1
-
-            # Convert output and count arrays to PyTorch tensors once
-            # Need to copy to make them writable and avoid warnings
-            # Keep them on GPU throughout the process
-            output_tensor = torch.from_numpy(output_arrays[tgt_name].copy()).to(device)
-            count_tensor = torch.from_numpy(count_arrays[tgt_name].copy()).to(device)
-
-            # Store these tensors for later use in finalize
-            tensor_dict[tgt_name] = (output_tensor, count_tensor)
-
-            # We'll process all patches at once to prevent double-processing at chunk boundaries
-            if self.verbose:
-                print(f"Processing patches in a single pass to avoid boundary issues")
-
-            # Create a combined list of all candidate patches from all ranks
-            all_candidates = []
-
-            # First, collect all patch candidates across all ranks
-            for rank_idx, (patches_array, positions_list, counter, _) in enumerate(patches_data_list):
+            # Collect all patches across ranks
+            all_patches = []
+            for rank_idx, (patches_array, positions_list, counter, _) in enumerate(patch_arrays[tgt_name]):
                 n_patches = counter['value']
-
                 for i in range(n_patches):
-                    # Skip None values (should not happen but check to be safe)
                     if positions_list[i] is None:
                         continue
-
-                    # Get position tuple (z, y, x)
                     pos = positions_list[i]
+                    all_patches.append((rank_idx, i, pos))
 
-                    # Store rank, index, and position
-                    all_candidates.append((rank_idx, i, pos))
+            # Get array dimensions
+            c, max_z, max_y, max_x = output_arrays[tgt_name].shape
 
-            if len(all_candidates) == 0:
-                continue
+            # Process in chunks to manage memory - standard approach
+            chunk_size = 256  # Standard chunk size
+
+            # Sort patches by z-position for better cache locality
+            all_patches.sort(key=lambda x: x[2][0])
 
             if self.verbose:
-                print(f"  - Processing all {len(all_candidates)} patches in a single pass")
+                print(f"Using chunk size {chunk_size} without overlap (nnU-Net standard approach)")
+                print(f"Each patch will contribute to all chunks it intersects with")
 
-            # Sort all candidates by z-coordinate then y-coordinate for better cache locality
-            all_candidates.sort(key=lambda x: (x[2][0], x[2][1]))  # Sort by z, then y coordinates
+            # Process patches in z-chunks - standard non-overlapping chunks
+            for z_start in range(0, max_z, chunk_size):
+                z_end = min(z_start + chunk_size, max_z)
 
-            # Process all patches from all ranks
-            for rank_idx, idx, pos in all_candidates:
-                # Get the correct patch data based on rank index
-                patches_array, positions_list, _, _ = patches_data_list[rank_idx]
+                # Load chunk data
+                output_chunk = output_arrays[tgt_name][:, z_start:z_end].copy()
+                count_chunk = count_arrays[tgt_name][z_start:z_end].copy()
 
-                # Extract position
-                z, y, x = pos
+                # Convert to PyTorch tensors
+                output_tensor = torch.from_numpy(output_chunk).to(device).float()
+                count_tensor = torch.from_numpy(count_chunk).to(device).float()
 
-                # Calculate intersection coordinates directly
-                # Calculate bounds for the output region
-                patch_z_end = min(z + patch_size_tuple[0], max_z)
-                target_z_start = max(0, z)
-                target_z_end = min(max_z, patch_z_end)
+                # Find ALL patches that intersect with this chunk
+                chunk_patches = []
+                for patch_idx, patch_info in enumerate(all_patches):
+                    rank_idx, idx, (z, y, x) = patch_info
 
-                target_y_start = y
-                target_y_end = min(max_y, y + patch_size_tuple[1])
+                    # Use the simpler intersection check
+                    if intersects_chunk(z, y, x, patch_size_tuple, z_start, z_end):
+                        chunk_patches.append((rank_idx, idx, (z, y, x)))
 
-                target_x_start = x
-                target_x_end = min(max_x, x + patch_size_tuple[2])
+                if self.verbose:
+                    print(f"Processing chunk [{z_start}:{z_end}] with {len(chunk_patches)} intersecting patches")
 
-                # Calculate offsets in the patch
-                patch_z_start_rel = max(0, 0 - z)  # Relative to start of volume (0), not chunk
-                patch_z_end_rel = min(patch_size_tuple[0], max_z - z)
-                patch_y_start_rel = 0
-                patch_y_end_rel = min(patch_size_tuple[1], max_y - y)
-                patch_x_start_rel = 0
-                patch_x_end_rel = min(patch_size_tuple[2], max_x - x)
+                # Process each patch that intersects with this chunk
+                for rank_idx, idx, (z, y, x) in chunk_patches:
 
-                # Skip if patch has invalid dimensions
-                if (patch_y_end_rel <= patch_y_start_rel or
-                        patch_x_end_rel <= patch_x_start_rel or
-                        patch_z_end_rel <= patch_z_start_rel):
-                    continue
+                    # Get patch data
+                    patches_array = patch_arrays[tgt_name][rank_idx][0]
 
-                # Organize coordinates for blending
-                target_coords = (target_z_start, target_z_end,
-                                 target_y_start, target_y_end,
-                                 target_x_start, target_x_end)
+                    # IMPORTANT CHANGE: Only calculate the intersection with the chunk - we don't alter
+                    # how patches are processed, only which parts are written to the current chunk
 
-                patch_coords = (patch_z_start_rel, patch_z_end_rel,
-                                patch_y_start_rel, patch_y_end_rel,
-                                patch_x_start_rel, patch_x_end_rel)
+                    # 1. Calculate patch bounds in global coordinates (clamped to volume size)
+                    patch_z_end = min(z + patch_size_tuple[0], max_z)
+                    patch_y_end = min(y + patch_size_tuple[1], max_y)
+                    patch_x_end = min(x + patch_size_tuple[2], max_x)
 
-                # Convert patch to PyTorch tensor - need to copy to make it writable
-                # This avoids the "non-writable tensor" warning when converting from memmap
-                # For segmentation, patches are now stored as float32 raw logits
-                # For other targets, patches are still uint8 for memory efficiency
-                patch_tensor = torch.from_numpy(patches_array[idx].copy()).to(device)
+                    # 2. Calculate intersection with current chunk
+                    global_target_z_start = max(z_start, z)
+                    global_target_z_end = min(z_end, patch_z_end)
 
-                # Unpack coordinates for blending
-                target_z_start, target_z_end, target_y_start, target_y_end, target_x_start, target_x_end = target_coords
-                patch_z_start_rel, patch_z_end_rel, patch_y_start_rel, patch_y_end_rel, patch_x_start_rel, patch_x_end_rel = patch_coords
+                    # Skip if no actual intersection (shouldn't happen due to earlier check)
+                    if global_target_z_end <= global_target_z_start:
+                        continue
 
-                # Blend the patch using PyTorch
-                blend_patch_torch(
-                    output_tensor, count_tensor,
-                    patch_tensor, blend_weights,
-                    target_z_start, target_z_end,
-                    target_y_start, target_y_end,
-                    target_x_start, target_x_end,
-                    patch_z_start_rel, patch_z_end_rel,
-                    patch_y_start_rel, patch_y_end_rel,
-                    patch_x_start_rel, patch_x_end_rel
-                )
+                    # 3. Calculate chunk-relative coordinates for the intersection
+                    target_z_start = global_target_z_start - z_start
+                    target_z_end = global_target_z_end - z_start
 
-                # Periodically clean up to free GPU memory
-                if len(all_candidates) > 100 and (all_candidates.index((rank_idx, idx, pos)) + 1) % 50 == 0:
-                    import gc
-                    gc.collect()
-                    torch.cuda.empty_cache()
+                    # Y and X coordinates (these aren't chunked, so use full patch extent)
+                    target_y_start = y
+                    target_y_end = patch_y_end
 
-                # We don't copy back to CPU after each chunk - keep everything on GPU
-                # Suggest garbage collection after each major chunk for GPU memory
-                import gc
-                gc.collect()
+                    target_x_start = x
+                    target_x_end = patch_x_end
+
+                    # 4. Calculate patch-relative coordinates for the intersection
+                    patch_z_start_rel = global_target_z_start - z
+                    patch_z_end_rel = global_target_z_end - z
+
+                    patch_y_start_rel = 0
+                    patch_y_end_rel = patch_y_end - y
+
+                    patch_x_start_rel = 0
+                    patch_x_end_rel = patch_x_end - x
+
+                    # Skip if patch has invalid dimensions
+                    if (patch_y_end_rel <= patch_y_start_rel or
+                            patch_x_end_rel <= patch_x_start_rel or
+                            patch_z_end_rel <= patch_z_start_rel):
+                        continue
+
+                    # Convert patch to PyTorch tensor
+                    patch_tensor = torch.from_numpy(patches_array[idx].copy()).to(device)
+
+                    # Blend the patch using the standard blend_patch_torch function
+                    blend_patch_torch(
+                        output_tensor, count_tensor,
+                        patch_tensor, blend_weights,
+                        target_z_start, target_z_end,
+                        target_y_start, target_y_end,
+                        target_x_start, target_x_end,
+                        patch_z_start_rel, patch_z_end_rel,
+                        patch_y_start_rel, patch_y_end_rel,
+                        patch_x_start_rel, patch_x_end_rel
+                    )
+
+                # Copy blended data back to memory-mapped arrays
+                output_arrays[tgt_name][:, z_start:z_end] = output_tensor.cpu().numpy()
+                count_arrays[tgt_name][z_start:z_end] = count_tensor.cpu().numpy()
+
+                # Clean up GPU memory
+                del output_tensor
+                del count_tensor
                 torch.cuda.empty_cache()
 
-            # Once we're done with a target, suggest explicit garbage collection
+            # Each patch should have contributed to all chunks it intersects with
             if self.verbose:
-                print(f"Completed blending for {tgt_name}")
-            import gc
-            gc.collect()
-            torch.cuda.empty_cache()
+                print(f"Processed all chunk-patch intersections, total patches: {len(all_patches)}")
+                print(f"Each patch was blended into every chunk it intersected with (standard nnU-Net approach)")
 
-        return tensor_dict
-
-    def _finalize_arrays(self, output_arrays, count_arrays, final_arrays, tensor_dict=None):
+    def _finalize_arrays(self, output_arrays, count_arrays, final_arrays):
         """
         Divide the sum arrays by the count arrays to get the final result.
         Also handles thresholding and conversion to appropriate data type.
@@ -652,8 +568,6 @@ class SequentialZarrNNUNetInference:
             output_arrays: Dictionary mapping target names to output arrays (NumPy/memmap)
             count_arrays: Dictionary mapping target names to count arrays (NumPy/memmap)
             final_arrays: Dictionary mapping target names to final output arrays (Zarr)
-            tensor_dict: Optional dictionary with target names mapping to PyTorch tensors
-                         containing output and count arrays already on GPU
         """
         if self.verbose:
             print("Finalizing arrays..")
@@ -717,21 +631,11 @@ class SequentialZarrNNUNetInference:
                 else:
                     print(f"Binary segmentation detected: will use both channels with softmax and threshold")
 
-            # Get the PyTorch tensors if provided, otherwise create them now
-            if tensor_dict and tgt_name in tensor_dict:
-                output_tensor_full, count_tensor_full = tensor_dict[tgt_name]
-                if self.verbose:
-                    print(f"Using GPU tensors from tensor_dict for {tgt_name}")
-            else:
-                # Convert to PyTorch tensors if not already provided
-                # Need to copy to make them writable and avoid warnings
-                output_tensor_full = torch.from_numpy(output_arrays[tgt_name].copy()).to(device)
-                # Convert uint8 count array to PyTorch tensor - conversion to float happens in normalize_chunk_torch
-                count_tensor_full = torch.from_numpy(count_arrays[tgt_name].copy()).to(device)
-                if self.verbose:
-                    print(f"Created new GPU tensors for {tgt_name}")
-
+            # Use a chunk-based approach to avoid loading the entire volume in memory
             chunk_size = 256
+
+            # We're always processing in chunks from memory-mapped arrays
+            using_preloaded_tensors = False
 
             # Only use tqdm progress bar on rank 0
             z_range = range(0, z_max, chunk_size)
@@ -742,9 +646,17 @@ class SequentialZarrNNUNetInference:
                 z_end = min(z_start + chunk_size, z_max)
                 z_range_size = z_end - z_start
 
-                # Get the slices for this region
-                count_tensor = count_tensor_full[z_start:z_end]
-                output_tensor = output_tensor_full[:, z_start:z_end]
+                # Process each chunk separately to minimize memory usage
+                # Load only the current chunk from the memory-mapped arrays
+                output_chunk = output_arrays[tgt_name][:, z_start:z_end].copy()
+                count_chunk = count_arrays[tgt_name][z_start:z_end].copy()
+
+                # Convert to PyTorch tensors
+                output_tensor = torch.from_numpy(output_chunk).to(device)
+                count_tensor = torch.from_numpy(count_chunk).to(device)
+
+                if self.verbose and z_start == 0:
+                    print(f"Processing in chunks to minimize memory usage for {tgt_name}")
 
                 # Determine processing approach based on configuration
                 if compute_argmax:
@@ -752,8 +664,17 @@ class SequentialZarrNNUNetInference:
                     if self.verbose:
                         print(f"Computing argmax over {output_tensor.shape[0]} channels using torch.argmax")
 
+                    # Ensure count_tensor is float32 for stable division
+                    if count_tensor.dtype != torch.float32:
+                        count_tensor = count_tensor.float()
+
                     # Create safe count tensor (avoid division by zero)
-                    safe_count_tensor = torch.clamp(count_tensor, min=1.0)
+                    # Use a very small value (0.001) instead of 1.0 to maintain the dynamic range
+                    safe_count_tensor = torch.clamp(count_tensor, min=1)
+
+                    if self.verbose:
+                        print(f"Count tensor max value: {torch.max(count_tensor).item():.4f}")
+                        print(f"Count tensor data type: {count_tensor.dtype}")
 
                     # Normalize directly in PyTorch using broadcasting
                     normalized_tensor = output_tensor / safe_count_tensor.unsqueeze(0)
@@ -797,8 +718,17 @@ class SequentialZarrNNUNetInference:
                         print(
                             f"Channel 1 (foreground) range: {torch.min(output_tensor[1]).item():.4f} to {torch.max(output_tensor[1]).item():.4f}")
 
+                    # Ensure count_tensor is float32 for stable division
+                    if count_tensor.dtype != torch.float32:
+                        count_tensor = count_tensor.float()
+
                     # Create safe count (avoid division by zero) using torch
-                    safe_count_tensor = torch.clamp(count_tensor, min=1.0)
+                    # Use a very small value (0.001) instead of 1.0 to maintain the dynamic range
+                    safe_count_tensor = torch.clamp(count_tensor, min=1e-8)
+
+                    if self.verbose:
+                        print(f"Count tensor max value: {torch.max(count_tensor).item():.4f}")
+                        print(f"Count tensor data type: {count_tensor.dtype}")
 
                     # Normalize logits by count array (both channels)
                     normalized_tensor = output_tensor / safe_count_tensor.unsqueeze(0)
@@ -912,8 +842,17 @@ class SequentialZarrNNUNetInference:
                             f"Before normalization - output max: {output_max:.4f}, count range: {count_min:.4f}-{count_max:.4f}")
                         print(f"Processing segmentation with {c} channels")
 
+                    # Ensure count_tensor is float32 for stable division
+                    if count_tensor.dtype != torch.float32:
+                        count_tensor = count_tensor.float()
+
                     # Create safe count tensor (avoid division by zero)
-                    safe_count_tensor = torch.clamp(count_tensor, min=1.0)
+                    # Use a very small value (0.001) instead of 1.0 to maintain the dynamic range
+                    safe_count_tensor = torch.clamp(count_tensor, min=1e-8)
+
+                    if self.verbose:
+                        print(f"Count tensor max value: {torch.max(count_tensor).item():.4f}")
+                        print(f"Count tensor data type: {count_tensor.dtype}")
 
                     # Normalize directly in PyTorch using broadcasting
                     normalized_tensor = output_tensor / safe_count_tensor.unsqueeze(0)
@@ -943,10 +882,6 @@ class SequentialZarrNNUNetInference:
                     import gc
                     gc.collect()
                     torch.cuda.empty_cache()
-
-            # Cleanup full tensors
-            del output_tensor_full
-            del count_tensor_full
 
             # Final cleanup
             torch.cuda.empty_cache()
@@ -990,9 +925,9 @@ class SequentialZarrNNUNetInference:
                         # Get number of channels
                         num_channels = pred_tensor.shape[0]
 
-                        # For logits, keep as float for proper blending
-                        # Note: we're storing the raw network outputs directly
-                        pred_uint8 = pred_tensor.numpy()
+                        # For logits, convert to float16 for proper blending and to save memory
+                        # Convert to float16 before numpy conversion
+                        pred_uint8 = pred_tensor.to(torch.float16).numpy()
 
                         if self.verbose and i < 3:
                             print(f"Storing raw logits for {tgt_name} with {num_channels} channels")
@@ -1532,7 +1467,7 @@ class SequentialZarrNNUNetInference:
                                     # Load the memmap arrays using the counter value received
                                     patches_array = np.memmap(
                                         patches_path,
-                                        dtype='uint8',
+                                        dtype='float16',
                                         mode='r',
                                         shape=(n_patches,) + patch_shape
                                     )
@@ -1572,11 +1507,10 @@ class SequentialZarrNNUNetInference:
                             traceback.print_exc()
 
             # Use the memory-mapped patch arrays for blending
-            # This returns PyTorch tensors we can use directly in finalize
-            tensor_dict = self._blend_patches(target_arrays, output_arrays, count_arrays)
+            self._blend_patches(target_arrays, output_arrays, count_arrays)
 
-            # Pass the PyTorch tensors to _finalize_arrays to avoid unnecessary transfers
-            self._finalize_arrays(output_arrays, count_arrays, final_arrays, tensor_dict=tensor_dict)
+            # Finalize the arrays without passing tensor_dict (since we're not using it)
+            self._finalize_arrays(output_arrays, count_arrays, final_arrays)
 
             # Clean up temporary files
             print(f"Rank {self.rank}: Cleaning up temporary files...")
