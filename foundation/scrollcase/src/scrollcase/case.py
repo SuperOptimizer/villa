@@ -44,8 +44,10 @@ class ScrollCase:
     mount_disc_box_width_mm: float = 13.5
 
     # Alignment ring spacing (up from bottom of lining interior)
-    alignment_ring_spacing_mm: Optional[float] = 98  #TODO(srparsons) this would be more helpful at I12 if it also accounts for the FOV
-    alignment_ring_width_mm: Optional[float] = 1.5
+    alignment_ring_spacing_mm: float = (
+        98  # TODO(srparsons) this would be more helpful at I12 if it also accounts for the FOV
+    )
+    alignment_ring_width_mm: float = 1.5
 
     # Alignment nubs
     nub_size_mm: float = 3
@@ -100,6 +102,10 @@ class ScrollCase:
     @property
     def lining_interior_height(self):
         return 2 * self.lining_offset_mm + self.scroll_height_mm
+
+    @property
+    def cylinder_top_to_lining_bottom(self):
+        return self.square_height_mm + self.lower_margin_mm + self.lining_thickness_mm
 
 
 def alignment_ring(case: ScrollCase):
@@ -156,7 +162,7 @@ def honeycomb_cylinder(
             .translate((0, 0, iz * (height / 2 + gap / 2)))
         )
         hex = extrude(hex, 3, both=True)
-        hexes = PolarLocations(r, nr, start_angle=start_angle) * hex
+        hexes = PolarLocations(r, int(nr), start_angle=start_angle) * hex
         all_hexes.extend(hexes)
 
     all_hexes = list(all_hexes)
