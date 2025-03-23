@@ -64,10 +64,8 @@ def build_disc():
                 mode=Mode.SUBTRACT,
             )
 
-        # Convert to mesh
-        with tempfile.NamedTemporaryFile(suffix=".stl") as temp_file:
-            export_stl(mount_disc.solids()[0], temp_file.name)
-            mount_disc_mesh = sc.mesh.load_mesh(temp_file.name)
+    # Convert to mesh
+    mount_disc_mesh = sc.mesh.brep_to_mesh(mount_disc.solids()[0])
 
     return mount_disc_mesh
 

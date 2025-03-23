@@ -332,6 +332,12 @@ def combine_brep_case_lining(
         )
 
 
+def brep_to_mesh(brep: bd.Solid) -> mm.Mesh:
+    with tempfile.NamedTemporaryFile(suffix=".stl") as temp_file:
+        bd.export_stl(brep.solids()[0], temp_file.name)
+        return load_mesh(temp_file.name)
+
+
 def combine_case_lining(
     case_mesh: mm.Mesh,
     cavity_mesh: mm.Mesh,
