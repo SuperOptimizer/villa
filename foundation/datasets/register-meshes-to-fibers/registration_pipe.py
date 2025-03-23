@@ -1,5 +1,5 @@
 # Giorgio Angelotti 2025
-# python registration_pipe.py --mesh_root /home/giorgio/Projects/legendary-cubes/steroids-filtered --tif_root /home/giorgio/Documents/infer-out-fibers --cube_label_root /home/giorgio/Projects/legendary-cubes/harmonized-cubes --output_root registered-meshes
+# python registration_pipe.py --mesh_root example_data/meshes --tif_root example_data/tifs --cube_label_root example_data/labels --output_root registered-meshes
 import argparse
 import os
 import numpy as np
