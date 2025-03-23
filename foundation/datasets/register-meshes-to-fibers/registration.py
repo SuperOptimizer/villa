@@ -78,7 +78,7 @@ def pad_neighbors(neighbors: Dict[int, Set[int]], N: int) -> Tuple[torch.Tensor,
     return padded_tensor, mask_tensor
 
 # -------------------------------------------------
-# Energy Terms (with improvements)
+# Energy Terms
 # -------------------------------------------------
 def arap_term_vectorized(vertices: torch.Tensor,
                          displacements: torch.Tensor,
@@ -447,7 +447,8 @@ if __name__ == "__main__":
     all_skel_geoms: List[o3d.geometry.Geometry] = []
     
     colors_mesh: List[List[float]] = [[0, 0, 1], [0, 0.6, 1], [0, 1, 1]]
-    colors_skel: List[List[float]] = [[1, 0, 0], [1, 0.5, 0], [1, 1, 0]]
+    colors_skel: List[List[float]] = [[1, 0, 0], [1, 0.5, 0], [1, 0, 1]]
+
     
     # Simulate surfaces and collect global skeleton curves.
     for s_idx in range(num_surfaces):
