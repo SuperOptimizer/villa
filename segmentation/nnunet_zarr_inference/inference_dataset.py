@@ -232,6 +232,55 @@ class InferenceDataset(Dataset):
                 for x in x_positions:
                     self.all_positions.append((z, y, x))
 
+    def get_input_shape(self):
+        """
+        Return the input shape of the dataset.
+        For 4D arrays, returns the spatial dimensions (Z,Y,X) excluding the channel dimension.
+        """
+        if len(self.input_shape) == 3:  # 3D array (Z,Y,X)
+            return self.input_shape
+        elif len(self.input_shape) == 4:  # 4D array (C,Z,Y,X)
+            return self.input_shape[1:]
+        else:
+            raise ValueError(f"Unsupported input shape: {self.input_shape}")
+    
+    def set_distributed(self, rank: int, world_size: int):
+        """
+        Configure this dataset for distributed data parallel processing.
+        
+        This method divides the dataset's patch positions among processes,
+        so each process works on a different subset of patches.
+        
+        Args:
+            rank: The rank of this process (0 to world_size-1)
+            world_size: Total number of processes
+        """
+        if world_size <= 1 or rank < 0 or rank >= world_size:
+            # No need to distribute or invalid configuration
+            return
+            
+        # Get total number of positions
+        total_positions = len(self.all_positions)
+        
+        if self.verbose:
+            print(f"Rank {rank}: Distributing {total_positions} positions among {world_size} processes")
+            
+        # Calculate positions for this rank (simple chunking)
+        # Each rank gets approximately total_positions / world_size positions
+        positions_per_rank = total_positions // world_size
+        remainder = total_positions % world_size
+        
+        # Calculate start and end indices
+        # Ranks with ID < remainder get one extra position
+        start_idx = rank * positions_per_rank + min(rank, remainder)
+        end_idx = start_idx + positions_per_rank + (1 if rank < remainder else 0)
+        
+        # Take only the positions assigned to this rank
+        self.all_positions = self.all_positions[start_idx:end_idx]
+        
+        if self.verbose:
+            print(f"Rank {rank}: Processing {len(self.all_positions)} positions ({start_idx} to {end_idx-1})")
+    
     def __len__(self):
         return len(self.all_positions)
 
@@ -264,7 +313,20 @@ class InferenceDataset(Dataset):
                 patch[c] = (patch[c] - mean) / std
         
         patch = torch.from_numpy(patch)
-        return {"image": patch, "index": idx}
+        
+        # Create the position tuple with the 3D coordinates
+        # Convert to integers to ensure consistency
+        position = (int(z), int(y), int(x))
+        
+        # Debug statement - only for the first few items
+        if idx < 5:
+            print(f"Created position in __getitem__[{idx}]: {position}")
+        
+        return {
+            "data": patch,  # Use key "data" for compatibility with inference.py
+            "pos": position,  # Include the 3D position
+            "index": idx
+        }
         
     def get_cache_stats(self):
         """

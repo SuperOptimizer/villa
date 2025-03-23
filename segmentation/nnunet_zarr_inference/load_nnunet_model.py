@@ -286,18 +286,11 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor,
         batch_size = input_tensor.shape[0]
         using_batch_taa = batch_size <= 2 and torch.cuda.is_available()
         
-        if max_tta_combinations is not None:
-            if max_tta_combinations == 3:
-                print(f"Using TTA with only the 3 primary axis flips (memory-efficient)")
-            else:
-                print(f"Using TTA with {max_tta_combinations} combinations")
-        else:
-            print(f"Using TTA with all possible combinations (may be memory-intensive)")
+
+        print(f"Using TTA with {max_tta_combinations} combinations")
+
             
-        if using_batch_taa:
-            print(f"Batch size {batch_size} allows for parallel TTA processing")
-        else:
-            print(f"Using sequential TTA processing due to batch size {batch_size}")
+
             
         # Memory info if available
         if torch.cuda.is_available():
@@ -338,16 +331,7 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor,
                     # Found all 3 primary axis flips - use these
                     axes_combinations = single_axis_flips
                     
-                    if verbose and rank == 0:
-                        print(f"  - Using the 3 primary axis flips (most important for view coverage)")
-                else:
-                    # Something unexpected happened - the single axis flips aren't exactly 3
-                    # Fall back to standard prioritization
-                    axes_combinations.sort(key=len)  # Prioritize by number of flipped axes (fewer = better)
-                    axes_combinations = axes_combinations[:max_tta_combinations]
-                    
-                    if verbose and rank == 0:
-                        print(f"  - WARNING: Could not identify exactly 3 single-axis flips, using first {max_tta_combinations}")
+
             else:
                 # For other counts, prioritize single-axis flips first, then others
                 single_axis_flips = [c for c in axes_combinations if len(c) == 1]
@@ -388,11 +372,7 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor,
         if parallel_tta_multiplier is not None and parallel_tta_multiplier > 1 and torch.cuda.is_available():
             use_batched_tta = True
             max_batch_multiplier = parallel_tta_multiplier
-            
-            if verbose and rank == 0:
-                print(f"Using parallel TTA processing with multiplier: {max_batch_multiplier}")
-        elif verbose and rank == 0:
-            print(f"Using sequential TTA processing")
+
             
         if use_batched_tta:
             # Process TTA combinations in batches to maximize GPU utilization
@@ -420,9 +400,6 @@ def run_inference(model_info: Dict[str, Any], input_tensor: torch.Tensor,
                         prediction += torch.flip(split_outputs[i], axes)
         else:
             # Standard sequential processing of TTA combinations
-            if verbose and torch.cuda.is_available() and rank == 0:
-                # Use the actual number of combinations we're using, not the original count
-                print(f"Using sequential TTA processing for {len(axes_combinations)} combinations")
                 
             for axes in axes_combinations:
                 # Mirror input

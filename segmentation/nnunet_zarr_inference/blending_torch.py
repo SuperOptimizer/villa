@@ -111,8 +111,8 @@ def blend_patch_torch(output_array, count_array, patch, weights,
     
     Args:
         output_array (torch.Tensor): Output tensor to add weighted patch to (C, Z, Y, X), can be float16
-        count_array (torch.Tensor): Count tensor to track weights (Z, Y, X), can be uint8
-        patch (torch.Tensor): Patch tensor (C, Z, Y, X), can be uint8 or float32
+        count_array (torch.Tensor): Count tensor to track weights (Z, Y, X), can be uint8/uint16/float16
+        patch (torch.Tensor): Patch tensor (C, Z, Y, X), can be uint8 or float32/float16
         weights (torch.Tensor): Gaussian weights (Z, Y, X)
         z_start, z_end, y_start, y_end, x_start, x_end: Target coordinates in output.
         patch_z_start, patch_z_end, patch_y_start, patch_y_end, patch_x_start, patch_x_end: Source coordinates in patch.
@@ -122,82 +122,89 @@ def blend_patch_torch(output_array, count_array, patch, weights,
     weight_slice = weights[patch_z_start:patch_z_end, patch_y_start:patch_y_end, patch_x_start:patch_x_end]
     
     # Handle different patch dtypes
-    # If patch is uint8, convert to float32 and normalize to [0,1] range
+    # If patch is uint8, convert to float16 and normalize to [0,1] range
     if patch_slice.dtype == torch.uint8:
-        patch_slice = patch_slice.float() / 255.0
-    elif patch_slice.dtype == torch.float16:
-        # Convert float16 to float32 for better numerical stability
-        patch_slice = patch_slice.float()
-    # If it's already float32, no conversion needed
+        patch_slice = patch_slice.to(torch.float16) / 255.0
+    # If it's already float16 or float32, keep as is for efficiency
     
-    # For float16 output arrays, we can add directly but may want to use float32 intermediates
-    # for better precision in accumulated results. This is handled dynamically by PyTorch.
-    weighted_patch = patch_slice * weight_slice.unsqueeze(0)
+    # Weight the patch directly using float16 computation for memory efficiency
+    weighted_patch = patch_slice * weight_slice.unsqueeze(0).to(torch.float16)
     
-    # Ensure output_array is float32 for best precision during blending
-    if output_array.dtype != torch.float32:
-        # Convert temporarily to float32 for the addition operation
-        orig_dtype = output_array.dtype
-        region = output_array[:, z_start:z_end, y_start:y_end, x_start:x_end].float()
-        region += weighted_patch
-        # If we needed to convert, convert back (though this shouldn't happen with proper setup)
-        if orig_dtype != torch.float32:
-            region = region.to(orig_dtype)
-            output_array[:, z_start:z_end, y_start:y_end, x_start:x_end] = region
-    else:
-        # Already float32, proceed normally
-        output_array[:, z_start:z_end, y_start:y_end, x_start:x_end] += weighted_patch
+    # Add to output using native float16 operations
+    # Get the target region and ensure it matches our computation dtype
+    region = output_array[:, z_start:z_end, y_start:y_end, x_start:x_end]
+    if region.dtype != weighted_patch.dtype:
+        region = region.to(weighted_patch.dtype)
+    
+    # Add weighted patch directly - all operations in float16
+    region += weighted_patch
+    output_array[:, z_start:z_end, y_start:y_end, x_start:x_end] = region
     
     # Update the count array (only once per spatial location)
-    # Always convert count_array to float32 for proper accumulation
-    # and to ensure we don't have precision issues with integer types
     count_region = count_array[z_start:z_end, y_start:y_end, x_start:x_end]
     
-    # For float types, we can add weights directly
-    # Convert to float32 for better numeric stability
-    if count_region.dtype != torch.float32:
-        count_region = count_region.float()
+    # Convert weight_slice to match count_array dtype
+    weight_slice_typed = weight_slice
+    
+    # For uint8 counts, we need to convert weights to same type
+    if count_region.dtype == torch.uint8:
+        # Scale weights by a factor to maintain precision when converting to uint8
+        # (max Gaussian weight is usually 10, so scale by 25 to use full uint8 range)
+        weight_slice_typed = (weight_slice * 25).to(torch.uint8)
+    elif count_region.dtype == torch.float16:
+        weight_slice_typed = weight_slice.to(torch.float16)
     
     # Add the weight_slice directly to the count_region
-    # This ensures weight accumulation is accurate
-    count_array[z_start:z_end, y_start:y_end, x_start:x_end] = count_region + weight_slice.float()
+    count_array[z_start:z_end, y_start:y_end, x_start:x_end] = count_region + weight_slice_typed
 
 def normalize_chunk_torch(output_chunk, count_chunk, dest_chunk, threshold=None, device='cpu', verbose=False):
     """
     Normalize a chunk by dividing output by count, with optional thresholding.
     
     Args:
-        output_chunk (torch.Tensor): Output chunk (C, Z, Y, X) to normalize, can be float16
-        count_chunk (torch.Tensor): Count chunk (Z, Y, X) to divide by, can be uint8
+        output_chunk (torch.Tensor): Output chunk (C, Z, Y, X) to normalize, works with float16
+        count_chunk (torch.Tensor): Count chunk (Z, Y, X) to divide by, works with uint16/float16
         dest_chunk (torch.Tensor): Destination tensor to write results to
         threshold: Optional threshold value between 0 and 1
         device: PyTorch device to use
     """
-    # Convert float16 to float32 for stable arithmetic
-    if output_chunk.dtype == torch.float16:
-        output_chunk = output_chunk.float()
+    # Get the original dtype to perform operations in that precision if possible
+    orig_dtype = output_chunk.dtype
+    count_orig_dtype = count_chunk.dtype
     
-    # Always convert count to float32 for stable division, regardless of input type
-    if count_chunk.dtype != torch.float32:
-        count_chunk = count_chunk.float()
+    # For uint8 counts, need to convert to float
+    if count_chunk.dtype == torch.uint8:
+        # Convert to float16, adjusting for any scaling factor applied during accumulation
+        # If we scaled by 25 during accumulation (see blend_patch_torch), we divide by 25 here
+        count_chunk = count_chunk.to(torch.float16) / 25.0
+    
+    # Keep everything in float16 for memory efficiency if the source is already float16
+    compute_dtype = torch.float16 if orig_dtype == torch.float16 else torch.float32
+    
+    # Convert tensors to computation dtype
+    output_comp = output_chunk.to(compute_dtype)
+    count_comp = count_chunk.to(compute_dtype)
     
     # Print debug info about count values if verbose
     if verbose:
-        print(f"Count chunk stats: min={torch.min(count_chunk).item():.4f}, max={torch.max(count_chunk).item():.4f}, mean={torch.mean(count_chunk).item():.4f}")
+        print(f"Count chunk stats: min={torch.min(count_comp).item():.4f}, max={torch.max(count_comp).item():.4f}, mean={torch.mean(count_comp).item():.4f}")
+        print(f"Computing normalization in {compute_dtype} precision")
     
     # Create safe count tensor (avoid division by zero)
-    # Use a consistent minimum value for stable normalization
-    # Using 0.0001 instead of 0.001 to maintain better dynamic range while avoiding extreme values
-    safe_count = torch.clamp(count_chunk, min=1e-8)
+    # Use a small epsilon value for stable normalization
+    safe_count = torch.clamp(count_comp, min=1e-4)
     
     # Normalize directly in PyTorch using broadcasting
-    normalized = output_chunk / safe_count.unsqueeze(0)
+    normalized = output_comp / safe_count.unsqueeze(0)
     
     # Apply threshold if provided
     if threshold is not None:
-        normalized = (normalized >= threshold).float()
+        normalized = (normalized >= threshold).to(compute_dtype)
     
-    # Copy to destination
+    # Copy to destination, converting to destination dtype if needed
+    if dest_chunk.dtype != normalized.dtype:
+        normalized = normalized.to(dest_chunk.dtype)
+    
     dest_chunk.copy_(normalized)
 
 def find_intersecting_patches_torch(positions_tensor, n_patches, z_start, z_end, patch_size_z, max_z, device='cuda'):

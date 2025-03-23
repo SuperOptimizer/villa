@@ -1,5 +1,7 @@
 import threading
 from collections import OrderedDict
+from atomic_counter import AtomicCounter
+
 
 class ZarrArrayLRUCache:
     """
@@ -45,10 +47,10 @@ class ZarrArrayLRUCache:
         # Using RLock to allow reentrant acquisition
         self.cache_lock = threading.RLock()
         
-        # We use atomic counters for stats to avoid locking
-        self.hits = 0
-        self.misses = 0
-        self.memory_limits_triggered = 0
+        # Use atomic counters for stats to avoid locking
+        self.hits = AtomicCounter(0)
+        self.misses = AtomicCounter(0)
+        self.memory_limits_triggered = AtomicCounter(0)
         
         # Print some debug info about zarr array
         print(f"ZarrArrayLRUCache: Array shape {self._shape}, dtype {self._dtype}, " + 
@@ -111,7 +113,7 @@ class ZarrArrayLRUCache:
             # Subtract its size from the total
             data_size = self._calculate_data_size(data)
             self.current_bytes -= data_size
-            self.memory_limits_triggered += 1
+            self.memory_limits_triggered.increment_and_get()
             
     def __getitem__(self, key):
         """Get an item from the cache if it exists, otherwise get it from the zarr array.
@@ -128,11 +130,11 @@ class ZarrArrayLRUCache:
                     # Cache hit - move to end (most recently used)
                     data = self.cache[cache_key]
                     self.cache.move_to_end(cache_key)
-                    self.hits += 1
+                    self.hits.increment_and_get()
                     return data
         
         # Cache miss - get from zarr array
-        self.misses += 1
+        self.misses.increment_and_get()
         data = self.zarr_array[key]
         
         # Update cache but only for reasonably sized arrays
@@ -212,16 +214,23 @@ class ZarrArrayLRUCache:
             
     def get_stats(self):
         """Get cache statistics."""
-        with self.cache_lock:  # Just to ensure consistent reading of stats
-            total = self.hits + self.misses
-            hit_rate = self.hits / total * 100 if total > 0 else 0
+        # Get atomic counter values
+        hits = self.hits.get()
+        misses = self.misses.get()
+        memory_limits_triggered = self.memory_limits_triggered.get()
+        
+        with self.cache_lock:  # Just for cache structure access
             current_size = len(self.cache)
             memory_mb = self.current_bytes / (1024**2)
             memory_limit_mb = self.max_bytes / (1024**2)
             
+            # Calculate stats
+            total = hits + misses
+            hit_rate = hits / total * 100 if total > 0 else 0
+            
             return {
-                'hits': self.hits,
-                'misses': self.misses,
+                'hits': hits,
+                'misses': misses,
                 'total': total,
                 'hit_rate': hit_rate,
                 'cache_entries': current_size,
@@ -229,15 +238,18 @@ class ZarrArrayLRUCache:
                 'memory_used_mb': round(memory_mb, 2),
                 'memory_limit_mb': round(memory_limit_mb, 2),
                 'memory_used_percent': round((self.current_bytes / self.max_bytes) * 100, 1) if self.max_bytes > 0 else 0,
-                'memory_limits_triggered': self.memory_limits_triggered
+                'memory_limits_triggered': memory_limits_triggered
             }
         
     def clear(self):
         """Clear the cache."""
         with self.cache_lock:
             self.cache.clear()
-            self.hits = 0
-            self.misses = 0
+            # Create new atomic counters instead of resetting
+            # as there's no direct way to reset them
+            self.hits = AtomicCounter(0)
+            self.misses = AtomicCounter(0)
+            self.memory_limits_triggered = AtomicCounter(0)
             
     def flush_all(self):
         """

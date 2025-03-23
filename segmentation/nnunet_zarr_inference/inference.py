@@ -13,6 +13,7 @@ import torch.distributed as dist
 from scipy.ndimage import gaussian_filter
 import uuid
 import queue
+import time
 
 # Add parent directory to sys.path for direct imports when running the script directly
 if __name__ == "__main__":
@@ -34,13 +35,17 @@ else:
     from .blending_torch import (create_gaussian_weights_torch,
                                  blend_patch_torch)
 
-# Import our zarr cache
+# Import our zarr cache and temp storage
 if __name__ == "__main__" or not __package__:
     # Direct script execution
     from nnunet_zarr_inference.zarr_cache import ZarrArrayLRUCache
+    from nnunet_zarr_inference.zarr_temp_storage import ZarrTempStorage
+    from nnunet_zarr_inference.zarr_writer_worker import zarr_writer_worker
 else:
     # Module import
     from .zarr_cache import ZarrArrayLRUCache
+    from .zarr_temp_storage import ZarrTempStorage
+    from .zarr_writer_worker import zarr_writer_worker
 
 # Try to configure NumPy and related libraries to use multiple threads
 try:
@@ -141,7 +146,12 @@ class SequentialZarrNNUNetInference:
             max_cache_bytes: Maximum memory in GB to use for zarr cache (default: 4.0)
         """
         self.input_path = input_path
+        
+        # Ensure output path ends with .zarr
+        if not output_path.endswith('.zarr'):
+            raise ValueError(f"Output path must end with '.zarr', got: {output_path}")
         self.output_path = output_path
+        
         self.model_folder = model_folder
         self.fold = fold
         self.checkpoint_name = checkpoint_name
@@ -161,6 +171,9 @@ class SequentialZarrNNUNetInference:
         self.cache_size = cache_size  # Number of zarr chunks to cache
         self.max_cache_bytes = max_cache_bytes  # Maximum cache size in GB
 
+        if max_tta_combinations == 0:
+            self.use_mirroring = False
+
         # Convert patch_size to tuple if it's a list or another sequence
         if patch_size is not None:
             self.patch_size = tuple(patch_size)
@@ -169,12 +182,16 @@ class SequentialZarrNNUNetInference:
         # Always use the list format expected by InferenceDataset
         self.targets = [
             {
-                "name": "segmentation",
+                "name": "segmentation",  # Internal name for tracking
                 "channels": 2,  # nnUNet always outputs at least 2 channels (background, foreground)
                 "activation": "sigmoid",
                 "nnunet_output_channels": 2  # This is the minimum number of channels
             }
         ]
+        
+        # Define output array name (when writing to the zarr file)
+        # We'll use an empty string to write directly to the zarr root
+        self.output_array_name = ""
 
         # Define foreground channel index for reference (not used for special handling)
         self.nnunet_foreground_channel = 1  # Second channel (index 1) is foreground in binary segmentation
@@ -190,7 +207,8 @@ class SequentialZarrNNUNetInference:
             self.rank = dist.get_rank()
 
         # Writer queue for patches
-        self.writer_queue = queue.Queue()
+        max_queue = 300
+        self.writer_queue = queue.Queue(maxsize=max_queue)
 
         # Load the nnUNet model
         self.model_info = None
@@ -201,6 +219,13 @@ class SequentialZarrNNUNetInference:
 
         # For TTA, we'll use only the 3 primary axis for mirroring
         self.tta_directions = [(0,), (1,), (2,)]  # Only axis-aligned flips
+        # Always use exactly 3 TTA combinations (one for each axis) for efficient inference
+        self.max_tta_combinations = max_tta_combinations
+
+        # Override any provided value to always use the 3 primary axis flips
+        
+        # Zarr temp storage - will be initialized in infer()
+        self.temp_storage = None
 
     def _load_nnunet_model(self):
         """
@@ -249,139 +274,6 @@ class SequentialZarrNNUNetInference:
             traceback.print_exc()
             raise
 
-    def _create_memmap_arrays(self, target_name, num_expected_patches, patch_shape, temp_dir):
-        """
-        Create storage for patches and positions.
-
-        Uses a memory-efficient approach:
-        - Patches stored in memory-mapped uint8 arrays for efficiency with large data
-        - Positions stored in regular Python list (in memory) for faster access
-        - Index counter stored as a thread-safe integer value in memory
-
-        Args:
-            target_name: Name of the target
-            num_expected_patches: Expected number of patches
-            patch_shape: Shape of a single patch (C, Z, Y, X)
-            temp_dir: Directory to store memory-mapped files
-
-        Returns:
-            Tuple of (patches_array, positions_list, counter, file_path)
-        """
-        # Create file path for memory mapped patches array
-        patches_file = os.path.join(temp_dir, f"{target_name}_patches_{uuid.uuid4().hex}.npy")
-
-        patches_array = np.memmap(
-            patches_file,
-            dtype='float16',
-            mode='w+',
-            shape=(num_expected_patches,) + patch_shape
-        )
-
-        # Use a regular Python list for positions (memory efficient enough)
-        # Pre-allocate with None values to maintain array-like indexing
-        positions_list = [None] * num_expected_patches
-
-        # Use a thread-safe counter object
-        counter = {'value': 0, 'lock': threading.Lock()}
-
-        if self.verbose:
-            print(f"Created storage for {target_name}:")
-            print(f"  - Patches: memory-mapped uint8 array with shape {patches_array.shape}")
-            print(f"  - Positions: in-memory list with {len(positions_list)} slots")
-
-        # Return storage objects (patches, positions, counter, file_path)
-        return patches_array, positions_list, counter, patches_file
-
-    def _get_next_index(self, counter):
-        """
-        Get the next available index and increment the counter atomically.
-
-        Uses an in-memory counter object with a lock for thread safety.
-
-        Args:
-            counter: A dictionary with 'value' and 'lock' keys
-
-        Returns:
-            Current index before increment
-        """
-        with counter['lock']:
-            current_index = counter['value']
-            counter['value'] += 1
-
-        return current_index
-
-    def _writer_worker(self, target_arrays, work_queue, worker_id):
-        """
-        Worker thread that writes patches to memory-mapped arrays and positions to in-memory lists.
-
-        Args:
-            target_arrays: Dictionary mapping target names to tuples of (patches_array, positions_list, counter, file_path).
-            work_queue: Queue for writer tasks
-            worker_id: Unique ID for this worker
-        """
-        try:
-            while True:
-                # Get an item from the queue
-                item = work_queue.get()
-
-                # Check for sentinel value to terminate
-                if item is None:
-                    if self.verbose:
-                        print(f"Writer {worker_id} received termination signal")
-                    work_queue.task_done()
-                    break
-
-                # Unpack the item
-                patch, position, target_name = item
-
-                # Get position info
-                z, y, x = position
-
-                # Get arrays for this target
-                if target_name not in target_arrays:
-                    # Skip if arrays don't exist for this target
-                    print(f"Warning: No arrays found for target {target_name}")
-                    work_queue.task_done()
-                    continue
-
-                # Get the first array tuple from the list (we only write to the first one)
-                patches_array, positions_list, counter, file_path = target_arrays[target_name][0]
-
-                # Get the next available index from the thread-safe counter
-                idx = self._get_next_index(counter)
-
-                # Bounds check to prevent index errors
-                if idx >= patches_array.shape[0]:
-                    print(f"Warning: Index {idx} exceeds array size {patches_array.shape[0]}. Skipping patch.")
-                    work_queue.task_done()
-                    continue
-
-                # Write patch to memory-mapped array
-                patches_array[idx] = patch
-
-                # Write position to in-memory list
-                positions_list[idx] = (z, y, x)
-
-                # Flush the patches array to ensure changes are written to disk
-                patches_array.flush()
-
-                # Log patch details
-                if self.verbose and idx < 3:
-                    print(f"Writer {worker_id}: Wrote patch with shape {patch.shape} at index {idx} for {target_name}")
-                elif self.verbose and idx % 1000 == 0:
-                    print(f"Writer {worker_id}: Progress - wrote patch {idx} for {target_name}")
-
-                # Mark task as done
-                work_queue.task_done()
-
-        except Exception as e:
-            print(f"Error in writer thread {worker_id}: {str(e)}")
-            if 'patch' in locals():
-                print(f"Patch shape: {patch.shape}")
-                print(f"Patch dtype: {patch.dtype}")
-            import traceback
-            traceback.print_exc()
-            work_queue.task_done()
 
     def _blend_patches(self, patch_arrays, output_arrays, count_arrays):
         """
@@ -418,7 +310,7 @@ class SequentialZarrNNUNetInference:
             sigma_scale=sigma_scale,
             value_scaling_factor=value_scaling_factor,
             device=device,
-            edge_weight_boost=0  # No edge boost for simpler blending
+            edge_weight_boost=0
         )
 
         # Process each target
@@ -428,44 +320,98 @@ class SequentialZarrNNUNetInference:
                 print(f"Warning: No patches found for target {tgt_name}")
                 continue
 
-            # Collect all patches across ranks
-            all_patches = []
-            for rank_idx, (patches_array, positions_list, counter, _) in enumerate(patch_arrays[tgt_name]):
-                n_patches = counter['value']
-                for i in range(n_patches):
-                    if positions_list[i] is None:
-                        continue
-                    pos = positions_list[i]
-                    all_patches.append((rank_idx, i, pos))
-
+            # Collect all patches across ranks using our simpler approach
+            print(f"Collecting patches for target {tgt_name} from all ranks...")
+            
+            # First, collect positions and patch data for all ranks
+            all_patch_info = self.temp_storage.collect_all_patches(tgt_name)
+            
+            if self.verbose:
+                print(f"Collected metadata for {len(all_patch_info)} patches for target {tgt_name} across all ranks")
+            
+            # Create a lookup dictionary for all patches - directly maps (rank, idx) -> patch data
+            print(f"Fetching patch data for {len(all_patch_info)} patches...")
+            patch_data_lookup = {}  # Dictionary to store patch data by (rank, idx)
+            
+            # Group patch info by rank for efficient fetching
+            patches_by_rank = {}
+            for rank_idx, idx, pos in all_patch_info:
+                if rank_idx not in patches_by_rank:
+                    patches_by_rank[rank_idx] = []
+                patches_by_rank[rank_idx].append((idx, pos))
+            
+            # Store arrays and indices for deferred loading - don't load all patches in memory
+            patch_arrays_by_rank = {}  # Store array references by rank
+            
+            for rank_idx, patches in patches_by_rank.items():
+                try:
+                    # Get the patches array and position dictionary in one call
+                    # This returns a reference to the zarr array, not the actual data
+                    patches_array, position_dict, _ = self.temp_storage.get_all_patches(rank_idx, tgt_name)
+                    
+                    if patches_array is not None:
+                        # Store the array reference for this rank
+                        patch_arrays_by_rank[rank_idx] = patches_array
+                        print(f"Added reference to patches array for rank {rank_idx} with {len(patches)} patches")
+                        
+                        # Only store the mapping of (rank,idx) -> position, not the actual patch data
+                        for idx, pos in patches:
+                            # Just register the patch in the lookup dictionary with None to indicate it exists
+                            # We'll load it on-demand when processing patches
+                            patch_data_lookup[(rank_idx, idx)] = (rank_idx, idx)
+                            
+                            # Print diagnostics for the first few patches
+                            if len(patch_data_lookup) <= 5 or len(patch_data_lookup) % 100 == 0:
+                                print(f"Registered patch: rank={rank_idx}, idx={idx}, pos={pos}")
+                    else:
+                        print(f"No patches array found for rank {rank_idx}")
+                except Exception as e:
+                    print(f"Error setting up patch references for rank {rank_idx}: {e}")
+            
+            # Print diagnostic information about the lookup table
+            print(f"Successfully registered {len(patch_data_lookup)} patches for deferred loading")
+            
+            # We'll modify the patch loading code to use these references when needed
+            # Store the array references in the instance for later use
+            self.patch_arrays_by_rank = patch_arrays_by_rank
+            
             # Get array dimensions
             c, max_z, max_y, max_x = output_arrays[tgt_name].shape
 
             # Process in chunks to manage memory - standard approach
             chunk_size = 256  # Standard chunk size
 
-            # Sort patches by z-position for better cache locality
-            all_patches.sort(key=lambda x: x[2][0])
+            # Sort patches by all position components (z, y, x) for consistent ordering
+            # This ensures a predictable spatial ordering regardless of how patches were stored
+            all_patch_info.sort(key=lambda x: (x[2][0], x[2][1], x[2][2]))
 
             if self.verbose:
                 print(f"Using chunk size {chunk_size} without overlap (nnU-Net standard approach)")
                 print(f"Each patch will contribute to all chunks it intersects with")
 
             # Process patches in z-chunks - standard non-overlapping chunks
-            for z_start in range(0, max_z, chunk_size):
+            total_chunks = (max_z + chunk_size - 1) // chunk_size
+            print(f"Processing {total_chunks} z-chunks with {len(all_patch_info)} patches")
+            chunk_start_time = time.time()
+            
+            for chunk_idx, z_start in enumerate(range(0, max_z, chunk_size)):
                 z_end = min(z_start + chunk_size, max_z)
+                print(f"Processing z-chunk {chunk_idx+1}/{total_chunks}: [{z_start}:{z_end}]...")
+                chunk_process_start = time.time()
 
-                # Load chunk data
-                output_chunk = output_arrays[tgt_name][:, z_start:z_end].copy()
-                count_chunk = count_arrays[tgt_name][z_start:z_end].copy()
-
-                # Convert to PyTorch tensors
-                output_tensor = torch.from_numpy(output_chunk).to(device).float()
-                count_tensor = torch.from_numpy(count_chunk).to(device).float()
+                # Load chunk data - but use direct reference when possible rather than copying
+                # For output array - directly reference the zarr array and convert the slice to tensor
+                output_chunk = output_arrays[tgt_name][:, z_start:z_end]
+                count_chunk = count_arrays[tgt_name][z_start:z_end]
+                
+                # Create tensors directly from the zarr array views - avoid copying data in memory first
+                # Use float16 for output tensor to reduce memory usage
+                output_tensor = torch.as_tensor(output_chunk, device=device, dtype=torch.float16).contiguous()
+                count_tensor = torch.as_tensor(count_chunk, device=device, dtype=torch.float16).contiguous()
 
                 # Find ALL patches that intersect with this chunk
                 chunk_patches = []
-                for patch_idx, patch_info in enumerate(all_patches):
+                for patch_idx, patch_info in enumerate(all_patch_info):
                     rank_idx, idx, (z, y, x) = patch_info
 
                     # Use the simpler intersection check
@@ -476,14 +422,25 @@ class SequentialZarrNNUNetInference:
                     print(f"Processing chunk [{z_start}:{z_end}] with {len(chunk_patches)} intersecting patches")
 
                 # Process each patch that intersects with this chunk
+                print(f"Processing chunk [{z_start}:{z_end}] - {len(chunk_patches)} patches...")
+                patch_counter = 0
+                
                 for rank_idx, idx, (z, y, x) in chunk_patches:
+                    # Debug progress periodically
+                    patch_counter += 1
+                    if patch_counter % 50 == 0 or patch_counter == 1 or patch_counter == len(chunk_patches):
+                        print(f"Processing patch {patch_counter}/{len(chunk_patches)}")
 
-                    # Get patch data
-                    patches_array = patch_arrays[tgt_name][rank_idx][0]
-
-                    # IMPORTANT CHANGE: Only calculate the intersection with the chunk - we don't alter
-                    # how patches are processed, only which parts are written to the current chunk
-
+                    # Get patch data from our pre-filled lookup dictionary
+                    # Much faster than fetching from disk each time
+                    if (rank_idx, idx) not in patch_data_lookup:
+                        print(f"WARNING: Missing patch data for rank={rank_idx}, idx={idx}, pos={z,y,x}")
+                        continue  # Skip if patch data not found
+                    
+                    # Debug the first few patches to see what's being processed
+                    if patch_counter <= 5:
+                        print(f"DEBUG: Processing patch rank={rank_idx}, idx={idx}, pos={z,y,x}")
+                        
                     # 1. Calculate patch bounds in global coordinates (clamped to volume size)
                     patch_z_end = min(z + patch_size_tuple[0], max_z)
                     patch_y_end = min(y + patch_size_tuple[1], max_y)
@@ -524,33 +481,64 @@ class SequentialZarrNNUNetInference:
                             patch_z_end_rel <= patch_z_start_rel):
                         continue
 
-                    # Convert patch to PyTorch tensor
-                    patch_tensor = torch.from_numpy(patches_array[idx].copy()).to(device)
+                    try:
+                        # Check if patch exists in our lookup
+                        if (rank_idx, idx) not in patch_data_lookup:
+                            print(f"WARNING: Missing patch reference for rank={rank_idx}, idx={idx}, pos={z,y,x}")
+                            continue
+                            
+                        # Instead of getting pre-loaded data, we now load it on demand
+                        # This saves memory by only loading patches when they're needed
+                        if rank_idx not in self.patch_arrays_by_rank:
+                            print(f"WARNING: No patch array reference for rank={rank_idx}")
+                            continue
+                        
+                        # Get the patch data directly from the zarr array (lazy loading)
+                        patch_data = self.patch_arrays_by_rank[rank_idx][idx]
+                        
+                        # Convert patch to PyTorch tensor and blend
+                        # Make contiguous for better GPU memory layout and performance
+                        patch_tensor = torch.as_tensor(patch_data, device=device).contiguous()
+                        
+                        # Blend the patch
+                        blend_patch_torch(
+                            output_tensor, count_tensor,
+                            patch_tensor, blend_weights,
+                            target_z_start, target_z_end,
+                            target_y_start, target_y_end,
+                            target_x_start, target_x_end,
+                            patch_z_start_rel, patch_z_end_rel,
+                            patch_y_start_rel, patch_y_end_rel,
+                            patch_x_start_rel, patch_x_end_rel
+                        )
+                        
+                        # Help reduce memory pressure by explicitly removing any reference to the patch data
+                        del patch_data
+                    except Exception as e:
+                        print(f"Error blending patch (rank={rank_idx}, idx={idx}): {str(e)}")
+                        if patch_counter <= 5:  # Only show detailed errors for first few patches
+                            import traceback
+                            traceback.print_exc()
 
-                    # Blend the patch using the standard blend_patch_torch function
-                    blend_patch_torch(
-                        output_tensor, count_tensor,
-                        patch_tensor, blend_weights,
-                        target_z_start, target_z_end,
-                        target_y_start, target_y_end,
-                        target_x_start, target_x_end,
-                        patch_z_start_rel, patch_z_end_rel,
-                        patch_y_start_rel, patch_y_end_rel,
-                        patch_x_start_rel, patch_x_end_rel
-                    )
-
-                # Copy blended data back to memory-mapped arrays
-                output_arrays[tgt_name][:, z_start:z_end] = output_tensor.cpu().numpy()
-                count_arrays[tgt_name][z_start:z_end] = count_tensor.cpu().numpy()
+                # Copy blended data back to memory-mapped arrays - single CPU transfer
+                # Use contiguous tensors to ensure efficient memory transfers
+                output_arrays[tgt_name][:, z_start:z_end] = output_tensor.contiguous().cpu().numpy()
+                count_arrays[tgt_name][z_start:z_end] = count_tensor.contiguous().cpu().numpy()
 
                 # Clean up GPU memory
                 del output_tensor
                 del count_tensor
-                torch.cuda.empty_cache()
+                # Only empty cache every few chunks to reduce overhead
+                if chunk_idx % 4 == 0:
+                    torch.cuda.empty_cache()
+                
+                # Report chunk processing time
+                chunk_process_time = time.time() - chunk_process_start
+                print(f"Completed z-chunk {chunk_idx+1}/{total_chunks} in {chunk_process_time:.2f} seconds")
 
             # Each patch should have contributed to all chunks it intersects with
             if self.verbose:
-                print(f"Processed all chunk-patch intersections, total patches: {len(all_patches)}")
+                print(f"Processed all chunk-patch intersections, total patches: {len(all_patch_info)}")
                 print(f"Each patch was blended into every chunk it intersected with (standard nnU-Net approach)")
 
     def _finalize_arrays(self, output_arrays, count_arrays, final_arrays):
@@ -564,10 +552,6 @@ class SequentialZarrNNUNetInference:
         This is done chunk by chunk to avoid loading entire large arrays into memory.
         Optimized with PyTorch for better performance on GPU.
 
-        Args:
-            output_arrays: Dictionary mapping target names to output arrays (NumPy/memmap)
-            count_arrays: Dictionary mapping target names to count arrays (NumPy/memmap)
-            final_arrays: Dictionary mapping target names to final output arrays (Zarr)
         """
         if self.verbose:
             print("Finalizing arrays..")
@@ -634,9 +618,6 @@ class SequentialZarrNNUNetInference:
             # Use a chunk-based approach to avoid loading the entire volume in memory
             chunk_size = 256
 
-            # We're always processing in chunks from memory-mapped arrays
-            using_preloaded_tensors = False
-
             # Only use tqdm progress bar on rank 0
             z_range = range(0, z_max, chunk_size)
             if self.rank == 0:
@@ -644,16 +625,16 @@ class SequentialZarrNNUNetInference:
 
             for z_start in z_range:
                 z_end = min(z_start + chunk_size, z_max)
-                z_range_size = z_end - z_start
 
                 # Process each chunk separately to minimize memory usage
-                # Load only the current chunk from the memory-mapped arrays
-                output_chunk = output_arrays[tgt_name][:, z_start:z_end].copy()
-                count_chunk = count_arrays[tgt_name][z_start:z_end].copy()
+                # Get direct references to zarr array slices - avoid copying data
+                output_chunk = output_arrays[tgt_name][:, z_start:z_end]
+                count_chunk = count_arrays[tgt_name][z_start:z_end]
 
-                # Convert to PyTorch tensors
-                output_tensor = torch.from_numpy(output_chunk).to(device)
-                count_tensor = torch.from_numpy(count_chunk).to(device)
+                # Convert to PyTorch tensors directly from the zarr array views
+                # Use float16 for both tensors to reduce memory usage
+                output_tensor = torch.as_tensor(output_chunk, device=device, dtype=torch.float16).contiguous()
+                count_tensor = torch.as_tensor(count_chunk, device=device, dtype=torch.float16).contiguous()
 
                 if self.verbose and z_start == 0:
                     print(f"Processing in chunks to minimize memory usage for {tgt_name}")
@@ -670,7 +651,7 @@ class SequentialZarrNNUNetInference:
 
                     # Create safe count tensor (avoid division by zero)
                     # Use a very small value (0.001) instead of 1.0 to maintain the dynamic range
-                    safe_count_tensor = torch.clamp(count_tensor, min=1)
+                    safe_count_tensor = torch.clamp(count_tensor, min=1e-8)
 
                     if self.verbose:
                         print(f"Count tensor max value: {torch.max(count_tensor).item():.4f}")
@@ -689,16 +670,15 @@ class SequentialZarrNNUNetInference:
                                               device=device)
                     dest_tensor[0] = argmax_tensor
 
-                    # Move to CPU for transfer to zarr
-                    dest_cpu = dest_tensor.cpu().numpy()
-
-                    # Add detailed diagnostics before writing to zarr
                     if self.verbose:
                         print(f"About to write to zarr array - diagnostics:")
-                        print(f"  - dest_cpu shape: {dest_cpu.shape}")
+                        print(f"  - dest_tensor shape: {dest_tensor.shape}")
                         print(f"  - final_arrays[{tgt_name}] shape: {final_arrays[tgt_name].shape}")
-                        print(f"  - dest_cpu has non-zero values: {np.any(dest_cpu > 0)}, max={np.max(dest_cpu)}")
+                        print(f"  - dest_tensor has non-zero values: {torch.any(dest_tensor > 0).item()}, max={torch.max(dest_tensor).item()}")
 
+                    # Move to CPU for transfer to zarr - use contiguous for more efficient transfer
+                    dest_cpu = dest_tensor.contiguous().cpu().numpy()
+                    
                     # Copy to the zarr array
                     final_arrays[tgt_name][:, z_start:z_end] = dest_cpu
 
@@ -814,16 +794,17 @@ class SequentialZarrNNUNetInference:
                         if self.verbose:
                             print(f"Saving only binary mask from argmax (single channel)")
 
-                    # Move to CPU for transfer to zarr
-                    dest_cpu = dest_tensor.cpu().numpy()
-
-                    # Debug the data being written to zarr
+                    # Debug the data (on GPU) being written to zarr
                     if self.verbose and self.rank == 0:
-                        print(f"Writing to zarr array: shape={dest_cpu.shape}, dtype={dest_cpu.dtype}")
-                        if dest_cpu.shape[0] == 2:  # Binary segmentation with probabilities
-                            print(f"  - Channel 0 (probabilities) range: {np.min(dest_cpu[0])}-{np.max(dest_cpu[0])}")
-                            print(f"  - Channel 1 (binary mask) range: {np.min(dest_cpu[1])}-{np.max(dest_cpu[1])}")
-                            print(f"  - Unique values in binary mask: {np.unique(dest_cpu[1])}")
+                        print(f"Writing to zarr array: shape={dest_tensor.shape}, dtype={dest_tensor.dtype}")
+                        if dest_tensor.shape[0] == 2:  # Binary segmentation with probabilities
+                            print(f"  - Channel 0 (probabilities) range: {torch.min(dest_tensor[0]).item()}-{torch.max(dest_tensor[0]).item()}")
+                            print(f"  - Channel 1 (binary mask) range: {torch.min(dest_tensor[1]).item()}-{torch.max(dest_tensor[1]).item()}")
+                            unique_values = torch.unique(dest_tensor[1])
+                            print(f"  - Unique values in binary mask: {unique_values.cpu().numpy()}")
+                    
+                    # Move to CPU for transfer to zarr - use contiguous for more efficient transfer
+                    dest_cpu = dest_tensor.contiguous().cpu().numpy()
 
                     # Write the result to the final array
                     final_arrays[tgt_name][:, z_start:z_end] = dest_cpu
@@ -847,7 +828,6 @@ class SequentialZarrNNUNetInference:
                         count_tensor = count_tensor.float()
 
                     # Create safe count tensor (avoid division by zero)
-                    # Use a very small value (0.001) instead of 1.0 to maintain the dynamic range
                     safe_count_tensor = torch.clamp(count_tensor, min=1e-8)
 
                     if self.verbose:
@@ -869,14 +849,15 @@ class SequentialZarrNNUNetInference:
                         threshold_uint8 = int(threshold_val * 255)
                         dest_tensor = (dest_tensor >= threshold_uint8).to(torch.uint8) * 255
 
-                    # Move to CPU for transfer to zarr
-                    dest_cpu = dest_tensor.cpu().numpy()
+                    # Move to CPU for transfer to zarr - use contiguous for more efficient transfer
+                    dest_cpu = dest_tensor.contiguous().cpu().numpy()
 
                     # Copy the results back to the zarr array
                     final_arrays[tgt_name][:, z_start:z_end] = dest_cpu
 
                 # Clean up temporary tensors
                 del normalized_tensor
+                # Less frequent cleanup - only every 4th chunk
                 if (z_start // chunk_size) % 4 == 0:
                     # Cleanup GPU memory
                     import gc
@@ -889,6 +870,9 @@ class SequentialZarrNNUNetInference:
     def _process_model_outputs(self, outputs, positions):
         """
         Process model outputs and submit them to the writer queue.
+        
+        This method converts model outputs to the appropriate format and
+        queues them for asynchronous storage in zarr via ZarrTempStorage.
         """
         # For nnUNet, the output is a tensor, not a dict - convert it
         if torch.is_tensor(outputs):
@@ -910,8 +894,29 @@ class SequentialZarrNNUNetInference:
         # Get the expected patch shape
         patch_size_tuple = tuple(self.patch_size) if isinstance(self.patch_size, list) else self.patch_size
 
+        # Debug outputs and positions
+        if self.verbose:
+            print(f"Number of positions: {len(positions)}")
+            first_target = self.targets[0].get("name")
+            if first_target in processed_outputs:
+                print(f"Processed outputs for {first_target} shape: {processed_outputs[first_target].shape}")
+            
+        # Ensure positions is a list-like object
+        positions_list = positions
+        if isinstance(positions, torch.Tensor):
+            # If positions is a tensor with batch dimension, convert to list
+            if positions.dim() > 1 and positions.shape[0] > 1:
+                positions_list = [positions[i] for i in range(positions.shape[0])]
+            
         # Process each patch and add to the queue
-        for i, pos in enumerate(positions):
+        for i in range(processed_outputs[self.targets[0].get("name")].shape[0]):
+            # Ensure we don't go beyond available positions
+            if i >= len(positions_list):
+                print(f"Warning: More outputs ({processed_outputs[self.targets[0].get('name')].shape[0]}) than positions ({len(positions_list)})")
+                continue
+                
+            pos = positions_list[i]
+            
             for target in self.targets:
                 tgt_name = target.get("name")
                 # Get the prediction tensor for this target
@@ -925,36 +930,50 @@ class SequentialZarrNNUNetInference:
                         # Get number of channels
                         num_channels = pred_tensor.shape[0]
 
-                        # For logits, convert to float16 for proper blending and to save memory
-                        # Convert to float16 before numpy conversion
-                        pred_uint8 = pred_tensor.to(torch.float16).numpy()
+                        # Convert to numpy for zarr storage
+                        pred_array = pred_tensor.numpy()
 
                         if self.verbose and i < 3:
                             print(f"Storing raw logits for {tgt_name} with {num_channels} channels")
-                            print(f"  - Value range: {pred_uint8.min():.4f}-{pred_uint8.max():.4f}")
+                            print(f"  - Value range: {pred_tensor.min().item():.4f}-{pred_tensor.max().item():.4f}")
+                            print(f"  - Dtype: {pred_tensor.dtype}")
+                            print(f"  - Position: {pos}")
                     else:
                         # For non-segmentation targets, scale to uint8 range (0-255)
-                        pred_uint8 = (pred_tensor * 255).to(torch.uint8).numpy()
+                        pred_array = (pred_tensor * 255).to(torch.uint8).numpy()
 
                     # Print shape information for the first few patches
                     if self.verbose and i < 3:
                         print(
-                            f"Patch for {tgt_name} - output shape: {pred_uint8.shape}, expected shape: (C, {patch_size_tuple[0]}, {patch_size_tuple[1]}, {patch_size_tuple[2]})")
-                        print(f"  - Value range: {pred_uint8.min()}-{pred_uint8.max()}, dtype: {pred_uint8.dtype}")
+                            f"Patch for {tgt_name} - output shape: {pred_array.shape}, expected shape: (C, {patch_size_tuple[0]}, {patch_size_tuple[1]}, {patch_size_tuple[2]})")
+                        print(f"  - Value range: {pred_array.min()}-{pred_array.max()}, dtype: {pred_array.dtype}")
 
-                    # Add to the writer queue as uint8
-                    self.writer_queue.put((pred_uint8, pos, tgt_name))
+                    # Add patch to the writer queue
+                    # The zarr_writer_worker will pick this up and store it in ZarrTempStorage
+                    self.writer_queue.put((pred_array, pos, tgt_name))
+                    
                 except Exception as e:
                     print(f"Error processing output for target {tgt_name}, position {pos}: {str(e)}")
                     print(f"Output keys: {list(processed_outputs.keys())}")
                     if tgt_name in processed_outputs:
                         print(f"Output shape for {tgt_name}: {processed_outputs[tgt_name].shape}")
+                        if i < processed_outputs[tgt_name].shape[0]:
+                            print(f"Output shape at index {i}: {processed_outputs[tgt_name][i].shape}")
                     else:
                         print(f"Target {tgt_name} not found in outputs")
                     raise
 
     def infer(self):
-
+        """
+        Main inference method using zarr for all storage needs.
+        
+        This method handles:
+        1. Loading the nnUNet model
+        2. Setting up zarr arrays for output
+        3. Processing input data in patches
+        4. Blending patches together for final output
+        5. Handling distributed processing across multiple GPUs
+        """
         # Verify input path exists and is a valid zarr array
         if not os.path.exists(self.input_path):
             raise FileNotFoundError(f"Input path does not exist: {self.input_path}")
@@ -965,330 +984,204 @@ class SequentialZarrNNUNetInference:
         except Exception as e:
             raise ValueError(f"Error opening input zarr array at {self.input_path}: {str(e)}")
 
-        # Create output directory
-        os.makedirs(self.output_path, exist_ok=True)
-        store_path = os.path.join(self.output_path, "predictions.zarr")
+        # Ensure output path ends with .zarr
+        if not self.output_path.endswith('.zarr'):
+            raise ValueError(f"Output path must end with '.zarr', got: {self.output_path}")
 
-        # Create a temporary directory for memory-mapped arrays
-        temp_dir = os.path.join(self.output_path, f"temp_memmap_{uuid.uuid4().hex}")
-        os.makedirs(temp_dir, exist_ok=True)
+        # Create parent directory if it doesn't exist
+        os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
+
+        # Get world size for distributed processing
+        world_size = dist.get_world_size() if dist.is_initialized() else 1
+        
+        # Create a directory for temporary storage next to the output zarr file
+        self.temp_dir = os.path.join(os.path.dirname(self.output_path), "temp")
+        os.makedirs(self.temp_dir, exist_ok=True)
+        
+        # Initialize ZarrTempStorage for temporary patch storage
+        # Use num_write_workers as the number of parallel I/O workers
+        # This ensures we actually use the requested number of writer processes
+        self.temp_storage = ZarrTempStorage(
+            output_path=self.temp_dir,
+            rank=self.rank,
+            world_size=world_size,
+            verbose=self.verbose,
+            num_io_workers=self.num_write_workers
+        )
+        self.temp_storage.initialize()
 
         # Load the nnUNet model
         self.model_info = self._load_nnunet_model()
         network = self.model_info['network']
-
-        # Only rank 0 creates the Zarr store and datasets
-        if self.rank == 0:
-            if os.path.isdir(store_path):
-                raise FileExistsError(f"Zarr store '{store_path}' already exists.")
-
-            # Create a temporary dataset to determine the full output shape
-            dataset_temp = InferenceDataset(
-                input_path=self.input_path,
-                targets=self.targets,
-                model_info=self.model_info,
-                patch_size=self.patch_size,
-                input_format=self.input_format,
-                step_size=self.tile_step_size,
-                load_all=self.load_all,
-                verbose=self.verbose,
-                cache_size=self.cache_size,
-                max_cache_bytes=self.max_cache_bytes
-            )
-
-            # Get the shape of the input array for output shape determination
-            input_shape = dataset_temp.input_shape
-            if len(input_shape) == 3:  # 3D array (Z,Y,X)
-                z_max, y_max, x_max = input_shape
-            elif len(input_shape) == 4:  # 4D array (C,Z,Y,X)
-                _, z_max, y_max, x_max = input_shape
-
-            # Calculate total number of patches
-            steps = compute_steps_for_sliding_window_tuple(
-                (z_max, y_max, x_max), self.patch_size, self.tile_step_size
-            )
-            z_steps, y_steps, x_steps = steps
-            total_patches = len(z_steps) * len(y_steps) * len(x_steps)
-
-            if self.verbose:
-                print(f"Total patches to process: {total_patches}")
-                print(f"Z steps: {len(z_steps)}, Y steps: {len(y_steps)}, X steps: {len(x_steps)}")
-
-            # Define compression for zarr arrays
-            compressor = Blosc(cname='zstd', clevel=3)
-
-            # Setup data structures for each target
-            for target in self.targets:
-                tgt_name = target.get("name")
-                c = target.get("channels")
-
-                # For nnUNet, get number of segmentation heads
-                num_model_outputs = self.model_info.get('num_seg_heads', 1)
-                # For multiclass segmentation, update the channel count
-                if num_model_outputs > 2 and tgt_name == "segmentation":
-                    c = num_model_outputs
-                    target["channels"] = c
-                    target["nnunet_output_channels"] = c
-                    print(f"Detected multiclass model with {c} classes from model_info")
-
-                # Convert patch_size to tuple if it's a list
-                patch_size_tuple = tuple(self.patch_size) if isinstance(self.patch_size, list) else self.patch_size
-
-                if self.verbose:
-                    print(
-                        f"Will use memory-mapped arrays for intermediate storage with shape ({c}, {patch_size_tuple[0]}, {patch_size_tuple[1]}, {patch_size_tuple[2]})")
-
-            # Create final output zarr arrays
-            final_zarr = zarr.open(store_path, mode='w')
-            output_arrays = {}
-            count_arrays = {}
-            final_arrays = {}
-
-            # Create sum, count, and final arrays for each target
-            for target in self.targets:
-                tgt_name = target.get("name")
-                c = target.get("channels")
-
-                # Always use 4D output with channel dimension for consistency
-                out_shape = (c, z_max, y_max, x_max)
-                chunks = (c, self.patch_size[0], self.patch_size[1], self.patch_size[2])
-
-                if self.verbose:
-                    print(f"Creating arrays for target '{tgt_name}': shape={out_shape}, chunks={chunks}")
-
-                # Create memory-mapped arrays for blending
-                # Convert patch_size to tuple if it's a list
-                patch_size_tuple = tuple(self.patch_size) if isinstance(self.patch_size, list) else self.patch_size
-
-                # Create temporary directory for memory-mapped files
-                temp_dir = os.path.join(self.output_path, f"temp_memmap_{uuid.uuid4().hex}")
-                os.makedirs(temp_dir, exist_ok=True)
-
-                # Create file paths for memory-mapped arrays
-                sum_file = os.path.join(temp_dir, f"{tgt_name}_sum.npy")
-                count_file = os.path.join(temp_dir, f"{tgt_name}_count.npy")
-
-                if self.verbose:
-                    print(f"Creating memory-mapped sum array with shape {out_shape}")
-                    print(f"Creating memory-mapped count array with shape {(z_max, y_max, x_max)}")
-
-                # Create memory-mapped array for output sum
-                output_arrays[tgt_name] = np.memmap(
-                    sum_file,
-                    dtype='float32',
-                    mode='w+',
-                    shape=out_shape
+        
+        try:
+            # -------------------------------------------------------------
+            # 1. Create output zarr arrays (only rank 0)
+            # -------------------------------------------------------------
+            final_arrays = {}  # Dictionary to store final output arrays
+            
+            if self.rank == 0:
+                if os.path.isdir(self.output_path):
+                    raise FileExistsError(f"Zarr store '{self.output_path}' already exists.")
+                
+                # Create a temporary dataset to determine the full output shape
+                dataset_temp = InferenceDataset(
+                    input_path=self.input_path,
+                    targets=self.targets,
+                    model_info=self.model_info,
+                    patch_size=self.patch_size,
+                    input_format=self.input_format,
+                    step_size=self.tile_step_size,
+                    load_all=self.load_all,
+                    verbose=self.verbose,
+                    cache_size=self.cache_size,
+                    max_cache_bytes=self.max_cache_bytes
                 )
-
-                # Create memory-mapped array for count
-                count_arrays[tgt_name] = np.memmap(
-                    count_file,
-                    dtype='float32',
-                    mode='w+',
-                    shape=(z_max, y_max, x_max)
-                )
-
-                # Initialize arrays to zero
-                output_arrays[tgt_name][:] = 0
-                count_arrays[tgt_name][:] = 0
-
-                # Flush to ensure initialization is written to disk
-                output_arrays[tgt_name].flush()
-                count_arrays[tgt_name].flush()
-
-                # Create final output array with appropriate format
-                # Get number of model outputs from model info
-                num_model_outputs = 1
-                if self.model_info is not None:
-                    # For nnUNet, get number of segmentation heads
-                    num_model_outputs = self.model_info.get('num_seg_heads', 1)
-
-                # Determine the output format based on segmentation type and configuration
-                is_multiclass = num_model_outputs > 2
-                is_binary = num_model_outputs == 2
-
-                # Case 1: Multiclass segmentation with argmax (single channel, uint8)
-                if not self.save_probability_maps and is_multiclass and tgt_name == "segmentation":
-                    # For debugging
+                
+                # Get full input shape using the proper method
+                input_shape = dataset_temp.get_input_shape()
+                if self.verbose:
+                    print(f"Input shape: {input_shape}")
+                
+                # Create output zarr store - don't create the actual store yet
+                if self.verbose:
+                    print(f"Will create output zarr array at {self.output_path}")
+                
+                # Create output arrays for each target
+                output_arrays = {}  # For accumulating outputs
+                count_arrays = {}   # For counting overlapping patches
+                
+                for target in self.targets:
+                    tgt_name = target.get("name")
+                    tgt_type = target.get("type", "segmentation")
+                    
+                    # Create output arrays
                     if self.verbose:
-                        print(f"Using optimized single-channel output for multiclass segmentation")
-                        print(f"  - save_probability_maps: {self.save_probability_maps}")
-                        print(f"  - num_model_outputs: {num_model_outputs}")
-                        print(f"  - activation: {target.get('activation', 'softmax')}")
-
-                    # Multiclass case - use uint8 for class indices after argmax
-                    output_shape = (1, z_max, y_max, x_max)
-                    output_chunks = (1,) + patch_size_tuple
-                    output_dtype = 'uint8'
-
-                    if self.verbose:
-                        print(f"Creating argmax output array with shape {output_shape}, dtype {output_dtype}")
-
-                    # Create the zarr array
-                    zarr_array = final_zarr.create_dataset(
-                        name=tgt_name,
-                        shape=output_shape,
-                        chunks=output_chunks,
-                        dtype=output_dtype,
-                        compressor=compressor,
-                        fill_value=0
-                    )
-
-                    # Always use direct zarr array to ensure data is properly persisted
-                    final_arrays[tgt_name] = zarr_array
-                    if self.verbose:
-                        print(f"Using direct zarr array for {tgt_name} with NO caching")
-
-                # Case 2: Binary segmentation - output format depends on save_probability_maps
-                elif is_binary and tgt_name == "segmentation":
-                    if self.save_probability_maps:
-                        # When save_probability_maps is True: 2-channel output
-                        if self.verbose:
-                            print(f"Using 2-channel output for binary segmentation")
-                            print(f"  - num_model_outputs: {num_model_outputs}")
-                            print(f"  - activation: {target.get('activation', 'sigmoid')}")
-                            print(f"  - channel 0: probability values (0-255)")
-                            print(f"  - channel 1: thresholded binary mask (0/255)")
-
-                        # 2-channel output format
-                        output_shape = (2, z_max, y_max, x_max)
-                        output_chunks = (2,) + patch_size_tuple
+                        print(f"Setting up output arrays for target: {tgt_name}")
+                    
+                    # Get the dimensions for the output array
+                    z_max, y_max, x_max = input_shape
+                    
+                    # Determine number of channels based on target type
+                    if tgt_type == "segmentation":
+                        # For nnUNet, get number of segmentation heads
+                        num_classes = self.model_info.get('num_seg_heads', 1)
+                        out_shape = (num_classes, z_max, y_max, x_max)
+                        
+                        # Output format based on configuration
+                        final_dtype = 'uint8'
+                        final_shape = out_shape
+                        
+                        if not self.save_probability_maps and num_classes > 2:
+                            # Argmax output for multiclass (single channel)
+                            final_shape = (1, z_max, y_max, x_max)
+                        elif not self.save_probability_maps and num_classes == 2:
+                            # Binary output for binary segmentation
+                            final_shape = (1, z_max, y_max, x_max)
                     else:
-                        # When save_probability_maps is False: single-channel thresholded output
-                        if self.verbose:
-                            print(f"Using single-channel output for binary segmentation")
-                            print(f"  - num_model_outputs: {num_model_outputs}")
-                            print(f"  - activation: {target.get('activation', 'sigmoid')}")
-                            print(f"  - output: thresholded binary mask (0/255)")
-
-                        # Single-channel output format
-                        output_shape = (1, z_max, y_max, x_max)
-                        output_chunks = (1,) + patch_size_tuple
-
-                    # Both formats use uint8
-                    output_dtype = 'uint8'
-
+                        # For regression/other targets - use float32
+                        out_shape = (1, z_max, y_max, x_max)
+                        final_dtype = 'float32'
+                        final_shape = out_shape
+                    
+                    # Create zarr arrays for sum and count
                     if self.verbose:
-                        print(
-                            f"Creating binary segmentation output array with shape {output_shape}, dtype {output_dtype}")
-
-                    # Create the zarr array
-                    zarr_array = final_zarr.create_dataset(
-                        name=tgt_name,
-                        shape=output_shape,
-                        chunks=output_chunks,
-                        dtype=output_dtype,
-                        compressor=compressor,
-                        fill_value=0
-                    )
-
-                    # Always use direct zarr array to ensure data is properly persisted
-                    final_arrays[tgt_name] = zarr_array
-                    if self.verbose:
-                        print(f"Using direct zarr array for {tgt_name} with NO caching")
-
-                # Case 3: Standard probability maps with all channels (default case)
-                else:
-                    # Standard probability maps with uint8 dtype to save space
-                    if self.verbose:
-                        print(f"Creating probability map array with shape {out_shape}, dtype uint8")
-
-                    # Create the zarr array
-                    zarr_array = final_zarr.create_dataset(
-                        name=tgt_name,
+                        print(f"Creating zarr sum array with shape {out_shape}")
+                        print(f"Creating zarr count array with shape {(z_max, y_max, x_max)}")
+                    
+                    # Create compressor for better performance
+                    compressor = Blosc(cname='zstd', clevel=3, shuffle=Blosc.SHUFFLE)
+                    
+                    # Ensure patch_size_tuple is defined and has correct dimensions
+                    patch_size_tuple = tuple(self.patch_size) if isinstance(self.patch_size, list) else self.patch_size
+                    
+                    # Create sum array in the temp zarr store with chunk size matching patch size
+                    sum_array = self.temp_storage.temp_zarr.create_dataset(
+                        f"sum_{tgt_name}", 
                         shape=out_shape,
-                        chunks=chunks,  # Use chunks that match patch size
-                        dtype='uint8',  # Using uint8 for all outputs
+                        chunks=(1,) + patch_size_tuple,  # 1 for channel dimension, then patch dimensions
+                        dtype='float16',  # Changed from 'float32' to reduce memory usage
                         compressor=compressor,
-                        fill_value=0
+                        fill_value=0,
+                        write_empty_chunks=False  # Skip writing empty chunks to save space
                     )
-
-                    # Always use direct zarr array to ensure data is properly persisted
-                    final_arrays[tgt_name] = zarr_array
+                    
+                    # Create count array in the temp zarr store with chunk size matching patch size
+                    count_array = self.temp_storage.temp_zarr.create_dataset(
+                        f"count_{tgt_name}",
+                        shape=(z_max, y_max, x_max),
+                        chunks=patch_size_tuple,  # Direct patch dimensions
+                        dtype='uint8',  # Changed from 'float32' to reduce memory usage (handles up to 255 overlapping patches)
+                        compressor=compressor,
+                        fill_value=0,
+                        write_empty_chunks=False  # Skip writing empty chunks to save space
+                    )
+                    
+                    # Store in our dictionaries for further use
+                    output_arrays[tgt_name] = sum_array
+                    count_arrays[tgt_name] = count_array
+                    
+                    # Create final output array with chunking matched to patch size
+                    # Always include a channel dimension in the chunks
+                    chunks = (1,) + patch_size_tuple
+                    
+                    # For segmentation target, create it directly at the root
+                    if tgt_name == "segmentation":
+                        # For root-level array, use zarr.open() directly with shape and chunks
+                        final_arrays[tgt_name] = zarr.open(
+                            self.output_path,
+                            mode='w',
+                            shape=final_shape,
+                            chunks=chunks,
+                            dtype=final_dtype,
+                            compressor=compressor,
+                            write_empty_chunks=False  # Skip writing empty chunks to save space
+                        )
+                        # Also store a reference as output_array for later use
+                        output_store = final_arrays[tgt_name]
+                    else:
+                        # For any other targets, create within an existing group
+                        # First ensure the output_store is open
+                        if "output_store" not in locals():
+                            output_store = zarr.open(self.output_path, mode='a')
+                        
+                        # Then create the dataset within that store
+                        final_arrays[tgt_name] = output_store.create_dataset(
+                            tgt_name,
+                            shape=final_shape,
+                            chunks=chunks,
+                            dtype=final_dtype,
+                            compressor=compressor,
+                            write_empty_chunks=False  # Skip writing empty chunks to save space
+                        )
+                    
                     if self.verbose:
-                        print(f"Using direct zarr array for {tgt_name} with NO caching")
-
-            # Create memory-mapped arrays for each target
-            # First, estimate the number of patches we'll need to process
-
-            dataset_temp = InferenceDataset(
-                input_path=self.input_path,
-                targets=self.targets,
-                model_info=self.model_info,
-                patch_size=self.patch_size,
-                input_format=self.input_format,
-                step_size=self.tile_step_size,
-                load_all=self.load_all,
-                verbose=self.verbose,
-                cache_size=self.cache_size,
-                max_cache_bytes=self.max_cache_bytes
-            )
-
-            # Calculate total number of patches
-            # Add 10% extra padding to be safe
-            input_shape = dataset_temp.input_shape
-            if len(input_shape) == 3:  # 3D array (Z,Y,X)
-                z_max, y_max, x_max = input_shape
-            elif len(input_shape) == 4:  # 4D array (C,Z,Y,X)
-                _, z_max, y_max, x_max = input_shape
-
-            steps = compute_steps_for_sliding_window_tuple(
-                (z_max, y_max, x_max), self.patch_size, self.tile_step_size
-            )
-            z_steps, y_steps, x_steps = steps
-            num_expected_patches = int(len(z_steps) * len(y_steps) * len(x_steps) * 1.1)  # 10% extra
-
-            # Create memory-mapped arrays for each target
-            target_arrays = {}
-            for target in self.targets:
-                tgt_name = target.get("name")
-                # Get the channel dimension
-                channels = target.get("channels")
-
-                # Check if the nnUNet model outputs multilabel segmentation (num_classes > 2)
-                if self.model_info is not None:
-                    # For nnUNet, get number of segmentation heads
-                    num_model_outputs = self.model_info.get('num_seg_heads', 1)
-                    # For multiclass segmentation, update the channel count
-                    if num_model_outputs > 2 and tgt_name == "segmentation":
-                        channels = num_model_outputs
-
-                # Create memory-mapped arrays for this target
-                # If we're storing patches for a binary segmentation with 1 channel,
-                # all ranks need to use the same format
-                if (tgt_name == "segmentation" and
-                        target.get("activation", "softmax") == "sigmoid"):
-                    # For binary segmentation, always use the same number of channels for writing patches
-                    # This ensures all ranks use the same format
-                    patch_shape = (target.get("channels"),) + tuple(self.patch_size)
-                    if self.verbose:
-                        print(f"Binary segmentation: using patch shape {patch_shape} for {tgt_name}")
-                else:
-                    # Standard patch shape for other cases
-                    patch_shape = (channels,) + tuple(self.patch_size)
-
-                array_tuple = self._create_memmap_arrays(
-                    target_name=tgt_name,
-                    num_expected_patches=num_expected_patches,
-                    patch_shape=patch_shape,
-                    temp_dir=temp_dir
-                )
-
-                # Store as a list to allow for merging patches from multiple ranks later
-                target_arrays[tgt_name] = [array_tuple]
-
-            # Start writer worker threads
+                        print(f"Created output array for {tgt_name}")
+                        print(f"  Shape: {final_shape}, dtype: {final_dtype}")
+                        print(f"  Chunking: {chunks}")
+            
+            # Wait for rank 0 to create output arrays
+            if dist.is_initialized():
+                dist.barrier()
+            
+            # -------------------------------------------------------------
+            # 2. Set up worker threads for zarr patch writing
+            # -------------------------------------------------------------
+            # Create writer threads using zarr_writer_worker
             writer_threads = []
             for worker_id in range(self.num_write_workers):
                 thread = threading.Thread(
-                    target=self._writer_worker,
-                    args=(target_arrays, self.writer_queue, worker_id)
+                    target=zarr_writer_worker,
+                    args=(self.temp_storage, self.writer_queue, worker_id, self.verbose)
                 )
                 thread.daemon = True
                 thread.start()
                 writer_threads.append(thread)
-
-            # Create the dataset for inference
+            
+            # -------------------------------------------------------------
+            # 3. Create dataset and dataloader for this rank
+            # -------------------------------------------------------------
+            # Create inference dataset
             dataset = InferenceDataset(
                 input_path=self.input_path,
                 targets=self.targets,
@@ -1301,542 +1194,317 @@ class SequentialZarrNNUNetInference:
                 cache_size=self.cache_size,
                 max_cache_bytes=self.max_cache_bytes
             )
-
-            # Create a dataloader with DistributedSampler if using DDP
-            if dist.is_initialized():
-                sampler = DistributedSampler(dataset)
-                if self.verbose:
-                    print(f"Rank {self.rank}: Using DistributedSampler with {len(dataset)} total samples")
-                dataloader = DataLoader(
-                    dataset,
-                    batch_size=self.batch_size,
-                    sampler=sampler,
-                    num_workers=self.num_dataloader_workers,
-                    pin_memory=True,
-                    prefetch_factor=8
-                )
-
-                # Set the epoch for the sampler to ensure proper shuffling
-                sampler.set_epoch(0)
+            
+            # Get the number of patches and update zarr temp storage size
+            total_patches = len(dataset)
+            if self.verbose:
+                print(f"Rank {self.rank}: Created dataset with {total_patches} patches")
+                
+            # Get volume dimensions for spatial hashing
+            volume_shape = dataset.get_input_shape()
+            max_z, max_y, max_x = volume_shape
+            
+            # With our simplified implementation, we just need to know how many patches each rank will process
+            # Divide patches evenly among ranks to avoid complex spatial hashing
+            patches_per_rank = total_patches // world_size
+            remainder = total_patches % world_size
+            
+            # Calculate how many patches this rank will process
+            if self.rank < remainder:
+                # First 'remainder' ranks get one extra patch
+                my_patches = patches_per_rank + 1
             else:
-                dataloader = DataLoader(
-                    dataset,
-                    batch_size=self.batch_size,
-                    num_workers=self.num_dataloader_workers,
-                    pin_memory=True,
-                    prefetch_factor=8
-                )
-
-            # Run inference
-            print(f"Rank {self.rank}: Running inference with {len(dataloader)} batches...")
-
-            # Use tqdm only on rank 0 for verbosity
-            batch_iter = dataloader
-            if self.rank == 0:
-                batch_iter = tqdm(dataloader, desc=f"Inference (Rank {self.rank})")
-
-            for batch in batch_iter:
-                # Get the batch data
-                images = batch["image"].to(self.device_str)
-                indices = batch["index"]
-
-                # Get positions for this batch
-                positions = [dataset.all_positions[i.item()] for i in indices]
-
-                # Run inference with mirroring TTA if enabled
-                if self.use_mirroring:
-                    # Process all output targets using the model_info for TTA
-                    outputs = run_inference(
-                        model_info=self.model_info,
-                        input_tensor=images,
-                        max_tta_combinations=3,  # Use only the 3 primary axes for TTA
-                        parallel_tta_multiplier=None,
-                        rank=self.rank  # Pass rank to control logging
-                    )
-                    # Print shape information for debugging if verbose (only from rank 0)
-                    if self.verbose and self.rank == 0 and isinstance(outputs, torch.Tensor):
-                        print(f"Output shape: {outputs.shape}, type: {type(outputs)}")
-                        print(f"Output Dtype: {outputs.dtype}")
-                else:
-                    # Without TTA, run standard inference
-                    if self.rank == 0:
-                        print("Running inference with no TTA")
-                    with torch.no_grad(), torch.amp.autocast('cuda'):
-                        outputs = network(images)
-
-                self._process_model_outputs(outputs, positions)
-
-            # Wait for all writer tasks to complete
-            self.writer_queue.join()
-
-            # Signal writer threads to terminate
-            for _ in range(self.num_write_workers):
-                self.writer_queue.put(None)
-
-            # Wait for all writer threads to finish
-            for thread in writer_threads:
-                thread.join()
-
-            print(f"Rank {self.rank}: All writer threads completed")
-
-            print(f"Rank {self.rank}: All inference and writing complete.")
-
-            # If using DDP, wait for all ranks to complete inference
+                my_patches = patches_per_rank
+                
+            # Add a small safety margin
+            safety_factor = 1.1  # 10% extra space should be enough
+            expected_patches = int(my_patches * safety_factor) + 1  # +1 for safety margin
+            
+            # Update temp storage size for each target
+            for target in self.targets:
+                self.temp_storage.set_expected_patch_count(target.get("name"), expected_patches)
+                if self.verbose:
+                    print(f"Rank {self.rank}: Setting expected patch count for {target.get('name')} to {expected_patches}")
+                    print(f"Rank {self.rank}: Out of {total_patches} total patches")
+                    print(f"Rank {self.rank}: Volume dimensions: {max_z}x{max_y}x{max_x}")
+            
+            # Split the dataset for distributed processing
             if dist.is_initialized():
-                # Check target arrays before barrier
-                for tgt_name in target_arrays:
-                    for array_tuple in target_arrays[tgt_name]:
-                        patches_array, positions_list, counter, file_path = array_tuple
-                        num_processed = counter['value']
-                        print(f"Rank {self.rank}: Processed {num_processed} patches for {tgt_name}")
-
-                print(f"Rank {self.rank}: Waiting for all ranks to complete inference...")
-
-                # Simple barrier - process group is already initialized with device ID
-                try:
-                    dist.barrier()
-                    print(f"Rank {self.rank}: All ranks have completed inference, continuing...")
-                except Exception as e:
-                    print(f"Rank {self.rank}: Error in barrier: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-                # For DDP, gather patches from all ranks
-                world_size = dist.get_world_size()
-                if world_size > 1:
-                    print(f"Rank {self.rank}: Gathering patches and positions from {world_size} ranks...")
-
-                    # For each non-zero rank, receive its counter values and positions
-                    for rank in range(1, world_size):
-                        try:
-                            # Process each target's memory-mapped arrays
-                            for target in self.targets:
-                                tgt_name = target.get("name")
-
-                                # Set up a tensor to receive the counter value
-                                counter_tensor = torch.zeros(1, dtype=torch.int64, device=self.device_str)
-
-                                # Receive the counter value from this rank
-                                dist.recv(counter_tensor, src=rank)
-                                n_patches = counter_tensor.item()
-
-                                print(
-                                    f"Rank {self.rank}: Received counter value {n_patches} from rank {rank} for target {tgt_name}")
-
-                                if n_patches == 0:
-                                    print(f"Rank {self.rank}: No patches found for rank {rank}, target {tgt_name}")
-                                    continue
-
-                                # Receive position data for each patch
-                                # Use int32 to match the sender (positions are relatively small)
-                                positions_tensor = torch.zeros((n_patches, 3), dtype=torch.int32,
-                                                               device=self.device_str)
-                                dist.recv(positions_tensor, src=rank)
-
-                                # Find the corresponding patches directory for this rank
-                                rank_temp_dir = None
-                                for entry in os.listdir(self.output_path):
-                                    if entry.startswith(f"temp_memmap_rank{rank}_"):
-                                        rank_temp_dir = os.path.join(self.output_path, entry)
-                                        break
-
-                                if rank_temp_dir and os.path.exists(rank_temp_dir):
-                                    print(f"Rank {self.rank}: Processing patches from {rank_temp_dir}")
-
-                                    # Find the corresponding patches files
-                                    patches_files = [f for f in os.listdir(rank_temp_dir)
-                                                     if f.startswith(f"{tgt_name}_patches_") and f.endswith(".npy")]
-
-                                    if not patches_files:
-                                        print(
-                                            f"Rank {self.rank}: Missing patch files for rank {rank}, target {tgt_name}")
-                                        continue
-
-                                    # Open the memory-mapped arrays for patches
-                                    patches_path = os.path.join(rank_temp_dir, patches_files[0])
-
-                                    # Get the channel dimension from the output target
-                                    target_config = next((t for t in self.targets if t.get("name") == tgt_name), None)
-                                    channels = target_config.get("channels") if target_config else 2
-
-                                    patch_shape = (channels,) + tuple(self.patch_size)
-
-                                    if self.verbose:
-                                        print(f"Using patch shape {patch_shape} for rank {rank}, target {tgt_name}")
-
-                                    # Load the memmap arrays using the counter value received
-                                    patches_array = np.memmap(
-                                        patches_path,
-                                        dtype='float16',
-                                        mode='r',
-                                        shape=(n_patches,) + patch_shape
-                                    )
-
-                                    # Convert positions tensor to list of tuples
-                                    positions_list = [None] * n_patches
-                                    for i in range(n_patches):
-                                        z = positions_tensor[i, 0].item()
-                                        y = positions_tensor[i, 1].item()
-                                        x = positions_tensor[i, 2].item()
-                                        positions_list[i] = (z, y, x)
-
-                                    # Create a counter dict to match the expected format
-                                    counter = {'value': n_patches, 'lock': threading.Lock()}
-
-                                    # Add to the existing target arrays for this target
-                                    if tgt_name not in target_arrays:
-                                        target_arrays[tgt_name] = []
-
-                                    # Store with the new format
-                                    target_arrays[tgt_name].append((
-                                        patches_array,
-                                        positions_list,
-                                        counter,
-                                        patches_path
-                                    ))
-
-                                    print(
-                                        f"Rank {self.rank}: Added {n_patches} patches from rank {rank} for target {tgt_name}")
-                                else:
-                                    print(f"Rank {self.rank}: Could not find temp directory for rank {rank}")
-
-                            print(f"Rank {self.rank}: Successfully processed patches from rank {rank}")
-                        except Exception as e:
-                            print(f"Rank {self.rank}: Error processing patches from rank {rank}: {str(e)}")
-                            import traceback
-                            traceback.print_exc()
-
-            # Use the memory-mapped patch arrays for blending
-            self._blend_patches(target_arrays, output_arrays, count_arrays)
-
-            # Finalize the arrays without passing tensor_dict (since we're not using it)
-            self._finalize_arrays(output_arrays, count_arrays, final_arrays)
-
-            # Clean up temporary files
-            print(f"Rank {self.rank}: Cleaning up temporary files...")
-
-            # Get a list of target names to avoid modifying the dictionary during iteration
-            target_names = list(output_arrays.keys())
-
-            # Close the memory-mapped arrays
-            for tgt_name in target_names:
-                # Delete to close the memory-mapped files
-                del output_arrays[tgt_name]
-                del count_arrays[tgt_name]
-
-                # Clean up all patch arrays
-                if tgt_name in target_arrays:
-                    for patch_data_tuple in target_arrays[tgt_name]:
-                        patches_array, positions_list, _, _ = patch_data_tuple
-                        del patches_array
-                        # No need to explicitly delete positions_list as it's a regular Python list
-
-            # Remove the temporary directory with memory-mapped files
-            if os.path.exists(temp_dir):
-                import shutil
-                shutil.rmtree(temp_dir)
-
-            # Signal other ranks that rank 0 is done with their data
-            if dist.is_initialized():
-                print(f"Rank {self.rank}: Signaling completion to other ranks...")
-                # Simple barrier - process group is already initialized with device ID
-                try:
-                    dist.barrier()
-                    print(f"Rank {self.rank}: Final barrier passed successfully")
-                except Exception as e:
-                    print(f"Rank {self.rank}: Error in final barrier: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-            # Report cache stats if verbose
-            if self.verbose:
-                print(f"Rank {self.rank}: Cache statistics for final arrays:")
-                for tgt_name, array in final_arrays.items():
-                    if isinstance(array, ZarrArrayLRUCache):
-                        stats = array.get_stats()
-                        hit_rate = stats['hit_rate']
-                        print(
-                            f"  - {tgt_name}: hits={stats['hits']}, misses={stats['misses']}, hit rate={hit_rate:.1f}%, cache size={stats['cache_size']}/{stats['max_size']}")
-
-            print(f"Rank {self.rank}: Inference complete. Results saved to {store_path}")
-
-        else:
-            # For non-zero ranks in distributed mode
-            if self.verbose:
-                print(f"Rank {self.rank}: Starting distributed inference")
-
-            # Load the model (all ranks need to load the model)
-            self.model_info = self._load_nnunet_model()
-            network = self.model_info['network']
-
-            # Create the dataset for inference
-            dataset = InferenceDataset(
-                input_path=self.input_path,
-                targets=self.targets,
-                model_info=self.model_info,
-                patch_size=self.patch_size,
-                input_format=self.input_format,
-                step_size=self.tile_step_size,
-                load_all=self.load_all,
-                verbose=self.verbose
-            )
-
-            # Create a dataloader with DistributedSampler
-            sampler = DistributedSampler(dataset)
-            if self.verbose:
-                print(f"Rank {self.rank}: Using DistributedSampler with {len(dataset)} total samples")
-
-            dataloader = DataLoader(
+                dataset.set_distributed(self.rank, world_size)
+            
+            # Define a custom collate function to ensure positions stay as tuples
+            def custom_collate(batch):
+                data = torch.stack([item['data'] for item in batch])
+                positions = [item['pos'] for item in batch]  # Keep positions as a list of tuples
+                indices = [item['index'] for item in batch]
+                return {'data': data, 'pos': positions, 'index': indices}
+                
+            # Create the dataloader with specified batch size and custom collate function
+            dataloader = torch.utils.data.DataLoader(
                 dataset,
                 batch_size=self.batch_size,
-                sampler=sampler,
+                shuffle=False,
                 num_workers=self.num_dataloader_workers,
                 pin_memory=True,
-                prefetch_factor=8
+                collate_fn=custom_collate  # Use our custom collate function
             )
-
-            # Set the epoch for the sampler to ensure proper shuffling
-            sampler.set_epoch(0)
-
-            # Create a temporary directory for this rank to store memory-mapped arrays
-            temp_dir = os.path.join(self.output_path, f"temp_memmap_rank{self.rank}_{uuid.uuid4().hex}")
-            os.makedirs(temp_dir, exist_ok=True)
-
-            # First, estimate the number of patches we'll need to process
-            dataset_temp = InferenceDataset(
-                input_path=self.input_path,
-                targets=self.targets,
-                model_info=self.model_info,
-                patch_size=self.patch_size,
-                input_format=self.input_format,
-                step_size=self.tile_step_size,
-                load_all=self.load_all,
-                verbose=self.verbose
-            )
-
-            # Calculate total number of patches
-            input_shape = dataset_temp.input_shape
-            if len(input_shape) == 3:  # 3D array (Z,Y,X)
-                z_max, y_max, x_max = input_shape
-            elif len(input_shape) == 4:  # 4D array (C,Z,Y,X)
-                _, z_max, y_max, x_max = input_shape
-
-            # Calculate number of patches with DistributedSampler
-            # This will be different from rank 0 as each rank gets a subset
-            steps = compute_steps_for_sliding_window_tuple(
-                (z_max, y_max, x_max), self.patch_size, self.tile_step_size
-            )
-            z_steps, y_steps, x_steps = steps
-            total_patches = len(z_steps) * len(y_steps) * len(x_steps)
-            world_size = dist.get_world_size()
-            patches_per_rank = (total_patches + world_size - 1) // world_size  # Ceiling division
-            num_expected_patches = int(patches_per_rank * 1.1)  # Add 10% extra
-
-            # Create memory-mapped arrays for each target
-            target_arrays = {}
-            for target in self.targets:
-                tgt_name = target.get("name")
-                # Get the channel dimension
-                channels = target.get("channels")
-
-                # Check if the nnUNet model outputs multilabel segmentation (num_classes > 2)
-                if self.model_info is not None:
-                    # For nnUNet, get number of segmentation heads
-                    num_model_outputs = self.model_info.get('num_seg_heads', 1)
-                    # For multiclass segmentation, update the channel count
-                    if num_model_outputs > 2 and tgt_name == "segmentation":
-                        channels = num_model_outputs
-                        target["channels"] = channels
-                        target["nnunet_output_channels"] = channels
-
-                # Create memory-mapped arrays for this target
-                patch_size_tuple = tuple(self.patch_size) if isinstance(self.patch_size, list) else self.patch_size
-                patch_shape = (channels,) + patch_size_tuple
-
-                array_tuple = self._create_memmap_arrays(
-                    target_name=tgt_name,
-                    num_expected_patches=num_expected_patches,
-                    patch_shape=patch_shape,
-                    temp_dir=temp_dir
-                )
-
-                # Store as a list to maintain consistency with rank 0's format
-                target_arrays[tgt_name] = [array_tuple]
-
-            # Start writer worker threads
-            writer_threads = []
-            writer_queue = queue.Queue()
-
-            for worker_id in range(self.num_write_workers):
-                thread = threading.Thread(
-                    target=self._writer_worker,
-                    args=(target_arrays, writer_queue, worker_id)
-                )
-                thread.daemon = True
-                thread.start()
-                writer_threads.append(thread)
-
-            # Run inference
+            
+            # Log dataset and dataloader information
             if self.verbose:
-                print(f"Rank {self.rank}: Running inference with {len(dataloader)} batches...")
-
-            # Use tqdm only on rank 0 for verbosity
-            batch_iter = dataloader
+                print(f"Rank {self.rank}: Dataset has {len(dataset)} patches")
+                print(f"Rank {self.rank}: Using batch size {self.batch_size}")
+                print(f"Rank {self.rank}: Using {self.num_dataloader_workers} dataloader workers")
+            
+            # -------------------------------------------------------------
+            # 4. Process patches with nnUNet model
+            # -------------------------------------------------------------
+            # Process patches
+            start_time = time.time()
+            total_patches = len(dataset)
+            processed_patches = 0
+            
+            # Enable evaluation mode
+            network.eval()
+            
+            # Move network to device
+            network = network.to(self.device_str)
+            
+            # Create progress bar (only for rank 0)
+            progress_bar = None
             if self.rank == 0:
-                batch_iter = tqdm(dataloader, desc=f"Inference (Rank {self.rank})")
-
-            for batch in batch_iter:
-                # Get the batch data
-                images = batch["image"].to(self.device_str)
-                indices = batch["index"]
-
-                # Get positions for this batch
-                positions = [dataset.all_positions[i.item()] for i in indices]
-
-                # Run inference with mirroring TTA if enabled
-                if self.use_mirroring:
-                    # Process all output targets using the model_info for TTA
+                from tqdm import tqdm
+                progress_bar = tqdm(total=total_patches, desc="Processing patches")
+            
+            # Inference loop with no_grad and autocast for mixed precision
+            with torch.no_grad(), torch.amp.autocast('cuda'):
+                for batch_idx, batch in enumerate(dataloader):
+                    # Extract input data and positions
+                    positions = batch['pos']
+                    
+                    # Debug position information in much more detail
+                    if self.verbose and batch_idx < 2:
+                        print(f"Batch #{batch_idx} positions type: {type(positions)}")
+                        if hasattr(positions, '__len__'):
+                            print(f"Positions length: {len(positions)}")
+                            if len(positions) > 0:
+                                print(f"First position: {positions[0]}, type: {type(positions[0])}")
+                                if hasattr(positions[0], 'shape'):
+                                    print(f"First position shape: {positions[0].shape}")
+                                    
+                        # Print each individual position in the batch
+                        if isinstance(positions, list) and len(positions) < 10:
+                            print("All positions in batch:", positions)
+                        elif hasattr(positions, 'shape') and positions.shape[0] < 10:
+                            print("All positions in batch (tensor):")
+                            for i in range(positions.shape[0]):
+                                print(f"  Position {i}: {positions[i]}")
+                                
+                        # Check if shape attributes exist
+                        if hasattr(positions, 'shape'):
+                            print(f"Positions tensor shape: {positions.shape}")
+                        if hasattr(batch['data'], 'shape'):
+                            print(f"Data batch shape: {batch['data'].shape}")
+                    
+                    # Get input data tensor and move to device - make contiguous for better performance
+                    inputs = batch['data'].to(self.device_str, non_blocking=True).contiguous()
+                    
+                    # Run inference using the run_inference function that properly handles TTA
+                    # Always use 3 for max_tta_combinations to get the 3 single-axis flips
                     outputs = run_inference(
                         model_info=self.model_info,
-                        input_tensor=images,
-                        max_tta_combinations=3,  # Use only the 3 primary axes for TTA
-                        parallel_tta_multiplier=None
+                        input_tensor=inputs,
+                        max_tta_combinations=self.max_tta_combinations,  # Use only the 3 single-axis flips
+                        rank=self.rank
                     )
-                else:
-                    # Without TTA, run standard inference
-                    with torch.no_grad(), torch.amp.autocast('cuda'):
-                        outputs = network(images)
-
-                # Process outputs and submit to the writer queue
-                for i, pos in enumerate(positions):
-                    for target in self.targets:
-                        tgt_name = target.get("name")
-                        # Get the prediction tensor for this target
-                        if torch.is_tensor(outputs):
-                            # Simple case - always keep all channels for consistency
-                            pred = outputs[i].cpu().numpy()
-                        else:
-                            pred = outputs[tgt_name][i].cpu().numpy()
-
-                        # Add to the writer queue
-                        writer_queue.put((pred, pos, tgt_name))
-
+                    
+                    # Process model outputs (queue them for writing)
+                    self._process_model_outputs(outputs, positions)
+                    
+                    # Update progress
+                    processed_patches += len(positions)
+                    if progress_bar is not None:
+                        progress_bar.update(len(positions))
+                    
+                    # Log progress periodically
+                    if self.verbose and (batch_idx + 1) % 10 == 0:
+                        elapsed = time.time() - start_time
+                        patches_per_sec = processed_patches / elapsed if elapsed > 0 else 0
+                        print(f"Rank {self.rank}: Processed {processed_patches}/{total_patches} patches "
+                              f"({patches_per_sec:.2f} patches/sec)")
+            
+            # Close progress bar if it was created
+            if progress_bar is not None:
+                progress_bar.close()
+            
+            # -------------------------------------------------------------
+            # 5. Finalize writer threads
+            # -------------------------------------------------------------
             # Wait for all writer tasks to complete
-            writer_queue.join()
-
-            # Signal writer threads to terminate
+            if self.verbose:
+                print(f"Rank {self.rank}: Waiting for writer tasks to complete...")
+            
+            self.writer_queue.join()
+            
+            # Send sentinel values to stop writer threads
             for _ in range(self.num_write_workers):
-                writer_queue.put(None)
-
+                self.writer_queue.put(None)
+            
             # Wait for all writer threads to finish
             for thread in writer_threads:
                 thread.join()
-
-            if self.verbose:
-                print(f"Rank {self.rank}: All inference and writing complete.")
-
-            # Check the count of processed patches before barrier
+            
+            # Finalize target counts in zarr storage
+            for target in self.targets:
+                tgt_name = target.get("name")
+                self.temp_storage.finalize_target(tgt_name)
+            
+            # Make sure all ranks have finalized their targets before proceeding
             if dist.is_initialized():
-                for tgt_name in target_arrays:
-                    for array_tuple in target_arrays[tgt_name]:
-                        patches_array, positions_list, counter, file_path = array_tuple
-                        num_processed = counter['value']
-                        print(f"Rank {self.rank}: Processed {num_processed} patches for {tgt_name}")
-
-                print(f"Rank {self.rank}: All data processing complete, waiting at barrier...")
-
-                # Make all processes wait here until all are done with inference
+                if self.verbose:
+                    print(f"Rank {self.rank}: Waiting at barrier for all ranks to finalize targets")
+                dist.barrier()
+                if self.verbose:
+                    print(f"Rank {self.rank}: All ranks have finalized targets, proceeding")
+            
+            # -------------------------------------------------------------
+            # 6. Blend patches and finalize output
+            # -------------------------------------------------------------
+            # Only rank 0 needs to blend patches from all ranks
+            if self.rank == 0:
+                # Wait a moment to ensure all ranks have finalized their data
+                time.sleep(1)
+                
+                # For segmentation array (our root), open it directly
+                for target in self.targets:
+                    tgt_name = target.get("name")
+                    
+                    if tgt_name == "segmentation":
+                        # For the segmentation target (root array), open it directly
+                        final_arrays[tgt_name] = zarr.open(self.output_path, mode='a')
+                    else:
+                        # For other targets (if any), open the store first then access them
+                        if "output_store" not in locals():
+                            output_store = zarr.open(self.output_path, mode='a')
+                        final_arrays[tgt_name] = output_store[tgt_name]
+                
+                # Blend all patches from all ranks
+                start_time = time.time()
+                
+                # Dictionary to store target arrays
+                target_arrays = {tgt.get("name"): tgt.get("type", "segmentation") for tgt in self.targets}
+                
+                # Blend patches using zarr-based approach
+                print("Starting _blend_patches method...")
                 try:
-                    # Simple barrier - process group is already initialized with device ID
-                    dist.barrier()
-                    print(f"Rank {self.rank}: Passed barrier successfully")
+                    self._blend_patches(target_arrays, output_arrays, count_arrays)
+                    print("_blend_patches completed successfully")
                 except Exception as e:
-                    print(f"Rank {self.rank}: Error in barrier: {e}")
+                    print(f"Error in _blend_patches: {str(e)}")
                     import traceback
                     traceback.print_exc()
-
-            # Only rank 0 will blend the patches from all ranks
-            # We need to share the counter values and positions with rank 0
-            # This is done using PyTorch distributed communication (dist.send/dist.recv)
-            # The memory-mapped patches are accessed from disk, and the positions are shared via tensors
-            if dist.is_initialized() and self.rank != 0:
-                # Share counter values and positions with rank 0 for each target
-                for tgt_name in target_arrays:
-                    for array_tuple in target_arrays[tgt_name]:
-                        patches_array, positions_list, counter, file_path = array_tuple
-
-                        # Get the counter value
-                        counter_value = counter['value']
-
-                        # Convert counter to tensor for sharing
-                        counter_tensor = torch.tensor([counter_value], dtype=torch.int64, device=self.device_str)
-
-                        # Share counter value with rank 0
-                        dist.send(counter_tensor, dst=0)
-
-                        # Share actual positions for each patch
-                        if counter_value > 0:
-                            # Convert positions_list to tensor for sharing
-                            # Each position is (z, y, x) - pack into a single tensor
-                            # Use int32 since positions are relatively small (max ~30,000)
-                            positions_tensor = torch.zeros((counter_value, 3), dtype=torch.int32,
-                                                           device=self.device_str)
-
-                            # Fill the tensor with positions
-                            for i in range(counter_value):
-                                if positions_list[i] is not None:
-                                    z, y, x = positions_list[i]
-                                    positions_tensor[i, 0] = z
-                                    positions_tensor[i, 1] = y
-                                    positions_tensor[i, 2] = x
-
-                            # Share positions with rank 0
-                            dist.send(positions_tensor, dst=0)
-
-                        print(
-                            f"Rank {self.rank}: Shared counter value {counter_value} and positions for target {tgt_name}")
-
-            # Wait for rank 0 to signal it's done with all data
+                
+                # Finalize the arrays without passing tensor_dict (since we're not using it)
+                self._finalize_arrays(output_arrays, count_arrays, final_arrays)
+                
+                # Log blending time
+                blend_time = time.time() - start_time
+                print(f"Blending completed in {blend_time:.2f} seconds")
+            
+            # -------------------------------------------------------------
+            # 7. Clean up temporary files - only after rank 0 is done blending
+            # -------------------------------------------------------------
+            # Wait for rank 0 to complete blending before proceeding with cleanup
             if dist.is_initialized():
-                print(f"Rank {self.rank}: Waiting for final signal from rank 0...")
-                # Simple barrier - process group is already initialized with device ID
-                try:
-                    dist.barrier()
-                    print(f"Rank {self.rank}: Final barrier passed successfully, exiting")
-                except Exception as e:
-                    print(f"Rank {self.rank}: Error in final barrier: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-            # Now clean up
-            if self.verbose:
+                if self.verbose and self.rank != 0:
+                    print(f"Rank {self.rank}: Waiting for rank 0 to complete blending...")
+                dist.barrier()
+                if self.verbose and self.rank != 0:
+                    print(f"Rank {self.rank}: Rank 0 has completed blending, proceeding with cleanup")
+            
+            # Only rank 0 should perform cleanup
+            if self.rank == 0:
                 print(f"Rank {self.rank}: Cleaning up temporary files...")
-
-            # Close and delete memory-mapped arrays
-            # Get a list of target names to avoid modifying the dictionary during iteration
-            target_names = list(target_arrays.keys())
-
-            for tgt_name in target_names:
-                # Close all arrays in the list
-                for patches_array, positions_list, _, _ in target_arrays[tgt_name]:
-                    # Close the memory-mapped patches array
-                    # (positions_list is a regular Python list, no need to explicitly delete)
-                    del patches_array
-
-            # Remove the temporary directory with all memory-mapped files
-            import shutil
-            import glob
-
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-            for f in glob.glob(os.path.join(self.output_path, "temp_memmap*")):
-                shutil.rmtree(f)
-
-            if self.verbose:
-                print(f"Rank {self.rank}: Done.")
-
-            if self.verbose:
-                print(f"Rank {self.rank}: Done.")
+                
+                # Clear references to zarr arrays from the dictionaries
+                if 'output_arrays' in locals():
+                    output_arrays.clear()
+                if 'count_arrays' in locals():
+                    count_arrays.clear()
+                
+                # Clean up ZarrTempStorage - only rank 0 does this
+                if self.temp_storage is not None:
+                    if self.verbose:
+                        print(f"Rank {self.rank}: Cleaning up zarr temporary storage...")
+                    self.temp_storage.cleanup()
+                    
+                # Only rank 0 cleans up the temp directory
+                if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
+                    try:
+                        # Try to remove the directory - will only succeed if empty
+                        os.rmdir(self.temp_dir)
+                        if self.verbose:
+                            print(f"Rank {self.rank}: Removed temporary directory {self.temp_dir}")
+                    except OSError as e:
+                        # Directory not empty - this is expected if other ranks are still using it
+                        if self.verbose:
+                            print(f"Note: Could not remove temp directory (may not be empty): {e}")
+            else:
+                # Non-rank-0 processes just clear their references but don't delete anything
+                if self.verbose:
+                    print(f"Rank {self.rank}: Clearing references but skipping cleanup (only rank 0 performs cleanup)")
+                
+                # Just clear references to help with memory usage
+                if 'output_arrays' in locals():
+                    output_arrays.clear()
+                if 'count_arrays' in locals():
+                    count_arrays.clear()
+                
+                # Clear reference to temp_storage but don't perform cleanup
+                self.temp_storage = None
+            
+            # Make sure all ranks finish reference clearing before proceeding
+            if dist.is_initialized():
+                dist.barrier()
+            
+            # -------------------------------------------------------------
+            # 8. Report statistics and completion
+            # -------------------------------------------------------------
+            # Report cache statistics if available
+            if hasattr(dataset, 'zarr_cache') and dataset.zarr_cache is not None:
+                stats = dataset.zarr_cache.get_stats()
+                print(f"Rank {self.rank}: Zarr cache statistics:")
+                for key, value in stats.items():
+                    print(f"  {key}: {value}")
+            
+            # Log completion
+            end_time = time.time()
+            total_time = end_time - start_time
+            print(f"Rank {self.rank}: Inference completed in {total_time:.2f} seconds")
+        
+        except Exception as e:
+            # Only rank 0 does any cleanup
+            if self.rank == 0:
+                # Clean up temporary files in case of error
+                if self.temp_storage is not None:
+                    print(f"Rank {self.rank}: Cleaning up temp storage after error")
+                    self.temp_storage.cleanup()
+                
+                # Also try to clean up the temp directory
+                if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
+                    try:
+                        # Try to remove the directory - will only succeed if empty
+                        os.rmdir(self.temp_dir)
+                    except OSError:
+                        # Ignore errors - cleanup as best effort
+                        pass
+            
+            # All ranks log the error
+            print(f"Rank {self.rank}: Error in inference: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            # Re-raise the exception
+            raise
 
 
 # Main function for standalone execution
@@ -1857,7 +1525,7 @@ def main():
 
     parser = argparse.ArgumentParser(description='Run sequential nnUNet inference on a zarr array')
     parser.add_argument('--input', type=str, required=True, help='Path to input zarr array')
-    parser.add_argument('--output', type=str, required=True, help='Path to output directory')
+    parser.add_argument('--output', type=str, required=True, help='Path to output zarr file (must end with .zarr)')
     parser.add_argument('--model_folder', type=str, required=True, help='Path to nnUNet model folder')
     parser.add_argument('--fold', type=str, default='0', help='Model fold to use (default: 0)')
     parser.add_argument('--checkpoint', type=str, default='checkpoint_final.pth',
@@ -1868,6 +1536,7 @@ def main():
     parser.add_argument('--device', type=str, default='cuda', help='Device to run on (default: cuda)')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of dataloader workers (default: 4)')
     parser.add_argument('--num_write_workers', type=int, default=4, help='Number of writer threads (default: 4)')
+    parser.add_argument('--max_tta_combinations', type=int, default=3, help='Number of TTA combinations (default: 3, or the primary axis flips only)")')
     parser.add_argument('--threshold', type=float, help='Optional threshold (0-100) for binarizing the output')
     parser.add_argument('--no_mirroring', action='store_true', help='Disable test time augmentation via mirroring')
     parser.add_argument('--no_probabilities', action='store_true',
@@ -1881,6 +1550,10 @@ def main():
                         help='Maximum memory in GB to use for zarr cache (default: 4.0)')
 
     args = parser.parse_args()
+    
+    # Ensure output path ends with .zarr
+    if not args.output.endswith('.zarr'):
+        raise ValueError(f"Output path must end with '.zarr', got: {args.output}")
 
     # Convert fold to int if numeric
     try:
