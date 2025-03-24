@@ -1,6 +1,7 @@
 import os
 import torch
-from typing import Union, List, Tuple, Dict, Any
+import time
+from typing import Union, List, Tuple, Dict, Any, Optional
 from batchgenerators.utilities.file_and_folder_operations import load_json, join
 import tempfile
 import shutil
@@ -19,7 +20,7 @@ except ImportError:
     HF_AVAILABLE = False
 
 # Define the module's public interface
-__all__ = ['load_model', 'initialize_network', 'load_model_from_hf']
+__all__ = ['load_model', 'initialize_network', 'load_model_from_hf', 'load_model_for_inference']
 
 def initialize_network(architecture_class_name: str,
                       arch_init_kwargs: dict,
@@ -68,8 +69,7 @@ def initialize_network(architecture_class_name: str,
     return network
 
 def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: str = 'checkpoint_final.pth', 
-            device='cuda', custom_plans_json=None, custom_dataset_json=None, use_mirroring: bool = True, 
-            verbose: bool = False, rank: int = 0):
+            device='cuda', custom_plans_json=None, custom_dataset_json=None, verbose: bool = False, rank: int = 0):
 
     # Only print from rank 0 by default
     if rank == 0:
@@ -86,7 +86,6 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
         device: Device to load the model on ('cuda' or 'cpu')
         custom_plans_json: Optional custom plans.json to use instead of the one in model_folder
         custom_dataset_json: Optional custom dataset.json to use instead of the one in model_folder
-        use_mirroring: Enable test time augmentation via mirroring (default: True)
         verbose: Enable detailed output messages during loading (default: False)
         rank: Distributed rank of the process (default: 0, used to suppress output from non-rank-0 processes)
         
@@ -218,13 +217,13 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
         
         # try to build the network with basically a copy of build_network_architecture, without relying on trainer class
         network = initialize_network(
-            configuration_manager.network_arch_class_name,
-            configuration_manager.network_arch_init_kwargs,
-            configuration_manager.network_arch_init_kwargs_req_import,
-            num_input_channels,
-            label_manager.num_segmentation_heads,
-            enable_deep_supervision=False
-        )
+                configuration_manager.network_arch_class_name,
+                configuration_manager.network_arch_init_kwargs,
+                configuration_manager.network_arch_init_kwargs_req_import,
+                num_input_channels,
+                label_manager.num_segmentation_heads,
+                enable_deep_supervision=False
+            )
     else:
         try:
             # Use the trainer class's build_network_architecture method
@@ -251,14 +250,12 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
                 enable_deep_supervision=False
             )
     
-    # Load model parameters
-    network_state_dict = checkpoint['network_weights']
-    
     # Move to the specified device
     device = torch.device(device)
     network = network.to(device)
     
     # Load the state dict
+    network_state_dict = checkpoint['network_weights']
     if not isinstance(network, OptimizedModule):
         network.load_state_dict(network_state_dict)
     else:
@@ -299,7 +296,6 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
         'num_input_channels': num_input_channels,
         'num_seg_heads': label_manager.num_segmentation_heads,
         'patch_size': configuration_manager.patch_size,
-        'use_mirroring': use_mirroring,
         'allowed_mirroring_axes': inference_allowed_mirroring_axes,
         'verbose': verbose
     }
@@ -308,7 +304,7 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
 
 
 def load_model_from_hf(repo_id: str, fold: Union[int, str] = 0, checkpoint_name: str = 'checkpoint_final.pth', 
-                     device='cuda', use_mirroring: bool = True, verbose: bool = False, rank: int = 0,
+                     device='cuda', verbose: bool = False, rank: int = 0,
                      token: str = None):
     """
     Load a trained nnUNet model from a Hugging Face model repository.
@@ -318,7 +314,6 @@ def load_model_from_hf(repo_id: str, fold: Union[int, str] = 0, checkpoint_name:
         fold: Which fold to load (default: 0, can also be 'all')
         checkpoint_name: Name of the checkpoint file (default: checkpoint_final.pth)
         device: Device to load the model on ('cuda' or 'cpu')
-        use_mirroring: Enable test time augmentation via mirroring (default: True)
         verbose: Enable detailed output messages during loading (default: False)
         rank: Distributed rank of the process (default: 0)
         token: Optional Hugging Face token for private repositories
@@ -331,7 +326,7 @@ def load_model_from_hf(repo_id: str, fold: Union[int, str] = 0, checkpoint_name:
             "The huggingface_hub package is required to load models from Hugging Face. "
             "Please install it with: pip install huggingface_hub"
         )
-        
+
     if rank == 0:
         print(f"Loading model from Hugging Face repository: {repo_id}")
         
@@ -339,7 +334,7 @@ def load_model_from_hf(repo_id: str, fold: Union[int, str] = 0, checkpoint_name:
     with tempfile.TemporaryDirectory() as temp_dir:
         if rank == 0 and verbose:
             print(f"Downloading model to temporary directory: {temp_dir}")
-            
+
         # Download the model repository
         try:
             download_path = snapshot_download(
@@ -347,28 +342,28 @@ def load_model_from_hf(repo_id: str, fold: Union[int, str] = 0, checkpoint_name:
                 local_dir=temp_dir,
                 token=token
             )
-            
+
             if rank == 0 and verbose:
                 print(f"Model downloaded to: {download_path}")
-                
+
             # Check if this is a flat repository structure (no fold directories)
             has_checkpoint = os.path.exists(os.path.join(download_path, checkpoint_name))
             has_plans = os.path.exists(os.path.join(download_path, 'plans.json'))
             has_dataset = os.path.exists(os.path.join(download_path, 'dataset.json'))
-            
+
             if has_checkpoint and has_plans and has_dataset:
                 if rank == 0 and verbose:
                     print("Detected flat repository structure with model files in root directory")
                 # Create a temporary fold directory to match the expected structure
                 fold_dir = os.path.join(download_path, f"fold_{fold}")
                 os.makedirs(fold_dir, exist_ok=True)
-                
+
                 # Copy checkpoint to the fold directory
                 shutil.copy(
                     os.path.join(download_path, checkpoint_name),
                     os.path.join(fold_dir, checkpoint_name)
                 )
-                
+
                 if rank == 0 and verbose:
                     print(f"Copied {checkpoint_name} to {fold_dir}")
                 
@@ -378,18 +373,113 @@ def load_model_from_hf(repo_id: str, fold: Union[int, str] = 0, checkpoint_name:
                 fold=fold,
                 checkpoint_name=checkpoint_name,
                 device=device,
-                use_mirroring=use_mirroring,
                 verbose=verbose,
                 rank=rank
             )
-            
+
             return model_info
-            
+
         except Exception as e:
             raise RuntimeError(f"Failed to download or load model from Hugging Face: {str(e)}")
 
 
 
+def load_model_for_inference(
+    model_folder: str = None,
+    hf_model_path: str = None,
+    hf_token: str = None,
+    fold: Union[int, str] = 0,
+    checkpoint_name: str = 'checkpoint_final.pth',
+    patch_size: Optional[Tuple[int, int, int]] = None,
+    device_str: str = 'cuda',
+    use_mirroring: bool = True,
+    verbose: bool = False,
+    rank: int = 0
+) -> Dict[str, Any]:
+    """
+    Load a trained nnUNet model for inference.
+    
+    Args:
+        model_folder: Path to the nnUNet model folder
+        hf_model_path: Path to the Hugging Face model
+        hf_token: Hugging Face token for private repositories
+        fold: Which fold to load (default: 0, can also be 'all')
+        checkpoint_name: Name of the checkpoint file (default: checkpoint_final.pth)
+        patch_size: Optional override for the patch size
+        device_str: Device to run inference on ('cuda' or 'cpu')
+        use_mirroring: Enable test time augmentation via mirroring (default: True)
+        verbose: Enable detailed output messages during loading
+        rank: Process rank for distributed processing (default: 0)
+        
+    Returns:
+        model_info: Dictionary with model information and parameters
+    """
+    try:
+        # Set verbose to False for non-rank-0 processes to avoid duplicate messages
+        local_verbose = verbose and rank == 0
+        
+        # Determine whether to load from local folder or Hugging Face
+        if hf_model_path is not None:
+            # Load from Hugging Face
+            if rank == 0:
+                print(f"Loading model from Hugging Face: {hf_model_path}, fold {fold}")
+                
+            if local_verbose:
+                print(f"Test time augmentation (mirroring): {'enabled' if use_mirroring else 'disabled'}")
+            
+            model_info = load_model_from_hf(
+                repo_id=hf_model_path,
+                fold=fold,
+                checkpoint_name=checkpoint_name,
+                device=device_str,
+                verbose=local_verbose,
+                rank=rank,
+                token=hf_token
+            )
+        else:
+            # Load from local folder
+            if rank == 0:
+                print(f"Loading model from {model_folder}, fold {fold}")
+
+            if local_verbose:
+                print(f"Test time augmentation (mirroring): {'enabled' if use_mirroring else 'disabled'}")
+
+            model_info = load_model(
+                model_folder=model_folder,
+                fold=fold,
+                checkpoint_name=checkpoint_name,
+                device=device_str,
+                verbose=local_verbose,
+                rank=rank
+            )
+
+        # Use the model's patch size if none was specified
+        if patch_size is None:
+            # Always convert to tuple for consistency (model_info often has it as a list)
+            patch_size = tuple(model_info['patch_size'])
+            if verbose and rank == 0:
+                print(f"Using model's patch size: {patch_size}")
+            model_info['patch_size'] = patch_size
+        else:
+            # Override the patch size in model_info
+            model_info['patch_size'] = patch_size
+
+        # Report multiclass vs binary if rank 0
+        num_classes = model_info.get('num_seg_heads', 1)  # Default to 1 if not specified
+        if rank == 0:
+            if num_classes > 2:
+                print(f"Detected multiclass model with {num_classes} classes from model_info")
+            elif num_classes == 2:
+                print(f"Detected binary segmentation model from model_info")
+            elif num_classes == 1:
+                print(f"Detected single-channel model from model_info")
+        
+        return model_info
+    except Exception as e:
+        print(f"Error loading model (rank {rank}): {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 if __name__ == "__main__":
     import argparse
@@ -425,7 +515,6 @@ if __name__ == "__main__":
         device=args.device,
         custom_plans_json=custom_plans_json,
         custom_dataset_json=custom_dataset_json,
-        use_mirroring=not args.disable_tta,
         verbose=args.verbose
     )
     

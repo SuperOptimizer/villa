@@ -1,6 +1,6 @@
 import torch
 from typing import Dict, List, Any, Optional, Tuple
-from vesuvius.utils.models.helpers import merge_tensors
+from utils.models.helpers import merge_tensors
 
 
 def get_tta_transformations(
@@ -48,6 +48,15 @@ def get_tta_transformations(
         if verbose and rank == 0:
             print("Test time augmentation is disabled")
         return transforms
+    
+    # If rotation TTA is enabled, skip mirroring TTA
+    if use_rotation_tta and len(input_tensor.shape) == 5:
+        # Skip mirroring TTA logic and let rotation TTA happen
+        pass
+    elif not use_rotation_tta and allowed_mirroring_axes is None:
+        # No mirroring axes specified, use standard axes for 3D data
+        if len(input_tensor.shape) == 5:  # [B, C, Z, Y, X]
+            allowed_mirroring_axes = [0, 1, 2]  # Z, Y, X axes
     
     # Use rotation-based TTA if requested and has 3D input (5D tensor with batch and channel dims)
     if use_rotation_tta and len(input_tensor.shape) == 5:  # [B, C, Z, Y, X]
@@ -233,6 +242,7 @@ def get_tta_augmented_inputs(
     model_info: Dict[str, Any],
     max_tta_combinations: Optional[int] = None,
     use_rotation_tta: bool = False,
+    use_mirroring: bool = True,  # Add parameter to control mirroring explicitly
     rotation_weights: Optional[List[float]] = None,
     verbose: bool = False,
     rank: int = 0
@@ -255,13 +265,13 @@ def get_tta_augmented_inputs(
             - List of transform dictionaries for inverse transforms
     """
     # Configure TTA settings from model_info
-    use_mirroring = model_info.get('use_mirroring', True)
+    # For our configuration: use_mirroring parameter takes precedence over model_info
     allowed_mirroring_axes = model_info.get('allowed_mirroring_axes', None)
     
     # Get transformations
     transforms = get_tta_transformations(
         input_tensor=input_tensor,
-        use_mirroring=use_mirroring,
+        use_mirroring=use_mirroring,  # Use the function parameter directly
         allowed_mirroring_axes=allowed_mirroring_axes,
         max_tta_combinations=max_tta_combinations,
         use_rotation_tta=use_rotation_tta,

@@ -166,6 +166,47 @@ def blend_patch_torch(output_array, count_array, patch, weights,
         weight_slice_typed = weight_slice.to(count_region.dtype)
         count_array[z_start:z_end, y_start:y_end, x_start:x_end] = count_region + weight_slice_typed
 
+def blend_patch_weighted(output_array, patch, gaussian_weights,
+                    z_start, z_end, y_start, y_end, x_start, x_end,
+                    patch_z_start, patch_z_end, patch_y_start, patch_y_end, patch_x_start, patch_x_end):
+    """
+    Torch implementation to blend a patch into an output tensor using pre-computed Gaussian weights.
+    This function adds the weighted patch to the output array without updating a count array.
+    
+    Args:
+        output_array (torch.Tensor): Output tensor to add weighted patch to (C, Z, Y, X)
+        patch (torch.Tensor): Patch tensor (C, Z, Y, X)
+        gaussian_weights (torch.Tensor): Pre-computed Gaussian weights (Z, Y, X)
+        z_start, z_end, y_start, y_end, x_start, x_end: Target coordinates in output.
+        patch_z_start, patch_z_end, patch_y_start, patch_y_end, patch_x_start, patch_x_end: Source coordinates in patch.
+    """
+    # Slice the patch
+    patch_slice = patch[:, patch_z_start:patch_z_end, patch_y_start:patch_y_end, patch_x_start:patch_x_end]
+    
+    # Get the corresponding Gaussian weights
+    weight_slice = gaussian_weights[patch_z_start:patch_z_end, patch_y_start:patch_y_end, patch_x_start:patch_x_end]
+    
+    # Handle different patch dtypes
+    if patch_slice.dtype == torch.uint8:
+        patch_slice = patch_slice.to(torch.float32) / 255.0
+    elif patch_slice.dtype == torch.float16:
+        patch_slice = patch_slice.to(torch.float32)
+    
+    # Apply the weights
+    weighted_patch = patch_slice * weight_slice.unsqueeze(0)
+    
+    # Add to output using full precision
+    region = output_array[:, z_start:z_end, y_start:y_end, x_start:x_end]
+    region_float = region.to(torch.float32)
+    region_float += weighted_patch
+    
+    # Store the result back
+    if output_array.dtype == torch.float16:
+        output_array[:, z_start:z_end, y_start:y_end, x_start:x_end] = region_float.to(torch.float16)
+    else:
+        output_array[:, z_start:z_end, y_start:y_end, x_start:x_end] = region_float
+
+
 def intersects_chunk(z, y, x, patch_size_tuple, z_chunk_start, z_chunk_end):
     """
     Simple utility: Does a patch at (z,y,x) with shape patch_size_tuple

@@ -24,8 +24,8 @@ with open("README.md", "r", encoding="utf-8") as fh:
 setup(
     name='vesuvius',
     version='0.1.10',
-    package_dir = {"": "src"},
-    packages=find_packages(where="src"),
+    py_modules=['vesuvius'],
+    packages=find_packages(),
     url='https://github.com/ScrollPrize/villa',
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -52,17 +52,17 @@ setup(
     python_requires='>=3.8',
     include_package_data=True,
     package_data={
-        '': ['src/vesuvius/configs/*.yaml'],
+        'vesuvius': ['setup/configs/*.yaml'],
+        'setup': ['configs/*.yaml'],
     },
     entry_points={
         'console_scripts': [
-            'vesuvius.accept_terms=vesuvius.setup.accept_terms:main',
-            'vesuvius.predict=vesuvius.models.nnunet.inference.inference:main'
+            'vesuvius.accept_terms=setup.accept_terms:main',
+            'vesuvius.predict=models.run.inference:main',
+            'vesuvius.volume_predict=models.run.vesuvius_predict:main'
         ],
     },
-    scripts=[
-        'bin/predict_nnunet',
-    ],
+    # No scripts needed as we're using entry_points
     classifiers=[
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.8',

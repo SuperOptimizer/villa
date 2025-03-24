@@ -2,7 +2,7 @@ import asyncio
 import aiohttp
 import yaml
 import requests
-from vesuvius.setup.accept_terms import get_installation_path
+from setup.accept_terms import get_installation_path
 from typing import List, Optional, Dict, Tuple
 from .parser import get_directory_structure, find_zarr_files, list_subfolders
 import nest_asyncio

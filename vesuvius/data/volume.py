@@ -11,8 +11,8 @@ import tempfile
 from PIL import Image
 from io import BytesIO
 from pathlib import Path
-from vesuvius.setup.accept_terms import get_installation_path
-from vesuvius.data.io.paths import list_files, is_aws_ec2_instance
+from setup.accept_terms import get_installation_path
+from data.io.paths import list_files, is_aws_ec2_instance
 
 # Remove the PIL image size limit
 Image.MAX_IMAGE_PIXELS = None
@@ -88,7 +88,7 @@ class Volume:
         Data type of the volume.
     """
         
-    def __init__(self, type: Union[str,int], scroll_id: Optional[Union[int, str]] = None, energy: Optional[int] = None, resolution: Optional[float] = None, segment_id: Optional[int] = None, cache: bool = True, cache_pool: int = 1e10, normalize: bool = False, verbose : bool = False, domain: Optional[str] = None, path: Optional[str] = None) -> None:
+    def __init__(self, type: Union[str,int], scroll_id: Optional[Union[int, str]] = None, energy: Optional[int] = None, resolution: Optional[float] = None, segment_id: Optional[int] = None, cache: bool = True, cache_pool: int = 1e10, normalize: bool = False, verbose : bool = False, domain: Optional[str] = None, path: Optional[str] = None, use_fsspec: bool = False) -> None:
         """
         Initialize the Volume object.
 
@@ -116,6 +116,8 @@ class Volume:
             The domain from where data is fetched: 'dl.ash2txt' or 'local'.
         path : Optional[str], default = None
             Path to the local data if domain is 'local'.
+        use_fsspec : bool, default = False
+            If True, uses fsspec instead of TensorStore for data access, which may be faster in some cases.
 
         Raises
         ------
@@ -161,8 +163,23 @@ class Volume:
             assert domain in ["dl.ash2txt", "local"], "domain should be dl.ash2txt or local"
 
             install_path = get_installation_path()
-        
-            self.configs = os.path.join(install_path, 'vesuvius', 'configs', f'scrolls.yaml')
+            
+            # Try different possible locations for the config file
+            possible_paths = [
+                os.path.join(install_path, 'setup', 'configs', f'scrolls.yaml'),  # For editable installs
+                os.path.join(install_path, 'vesuvius', 'setup', 'configs', f'scrolls.yaml'),  # For regular installs
+                os.path.join(install_path, 'configs', f'scrolls.yaml')  # Fallback
+            ]
+            
+            for path in possible_paths:
+                if os.path.exists(path):
+                    self.configs = path
+                    break
+            else:
+                # If no path exists, use the first one and we'll handle the error later
+                self.configs = possible_paths[0]
+                if self.verbose:
+                    print(f"Warning: Could not find config file at any of the expected locations: {possible_paths}")
 
             if energy:
                 self.energy = energy
@@ -179,14 +196,23 @@ class Volume:
             self.cache_pool = cache_pool
             self.normalize = normalize
             self.verbose = verbose
+            self.use_fsspec = use_fsspec
             
             if self.domain == "dl.ash2txt":
                 self.url = self.get_url_from_yaml()
                 self.metadata = self.load_ome_metadata()
                 self.data = self.load_data()
-                if self.normalize:
-                    self.max_dtype = get_max_value(self.data[0].dtype.numpy_dtype)
-                self.dtype = self.data[0].dtype.numpy_dtype
+                
+                # Handle dtype differently depending on fsspec or TensorStore
+                if self.use_fsspec:
+                    if self.normalize:
+                        self.max_dtype = get_max_value(self.data[0].dtype)
+                    self.dtype = self.data[0].dtype
+                else:
+                    if self.normalize:
+                        self.max_dtype = get_max_value(self.data[0].dtype.numpy_dtype)
+                    self.dtype = self.data[0].dtype.numpy_dtype
+                    
             elif self.domain == "local":
                 if self.aws is False:
                     assert path is not None
@@ -286,27 +312,44 @@ class Volume:
         ------
         ValueError
             If the URL cannot be found in the configuration.
+        FileNotFoundError
+            If the configuration file doesn't exist.
         """
-
-        # Load the YAML file
-        with open(self.configs, 'r') as file:
-            data: Dict[str, Any] = yaml.safe_load(file)
-        
-        # Retrieve the URL for the given id, energy, and resolution
-        if self.type == 'scroll':
-            url: str = data.get(str(self.scroll_id), {}).get(str(self.energy), {}).get(str(self.resolution), {}).get("volume")
-        elif self.type == 'segment':
-            url: str = data.get(str(self.scroll_id), {}).get(str(self.energy), {}).get(str(self.resolution), {}).get("segments", {}).get(str(self.segment_id))
-
-        if url is None:
+        try:
+            # Load the YAML file
+            with open(self.configs, 'r') as file:
+                data: Dict[str, Any] = yaml.safe_load(file)
+                
+            # Handle empty file or invalid YAML
+            if not data:
+                error_msg = f"Config file at {self.configs} is empty or invalid. "
+                if self.type == 'scroll':
+                    error_msg += f"You need to populate it with data for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}"
+                else:
+                    error_msg += f"You need to populate it with data for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}, segment: {self.segment_id}"
+                raise ValueError(error_msg)
+                
+            # Retrieve the URL for the given id, energy, and resolution
             if self.type == 'scroll':
-                raise ValueError(f"URL not found for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}")
+                url: str = data.get(str(self.scroll_id), {}).get(str(self.energy), {}).get(str(self.resolution), {}).get("volume")
             elif self.type == 'segment':
-                raise ValueError(f"URL not found for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}, segment: {self.segment_id}")
-            else:
-                raise ValueError("URL not found.")
+                url: str = data.get(str(self.scroll_id), {}).get(str(self.energy), {}).get(str(self.resolution), {}).get("segments", {}).get(str(self.segment_id))
+
+            if url is None:
+                if self.type == 'scroll':
+                    raise ValueError(f"URL not found for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}. Make sure these values are in your config file.")
+                elif self.type == 'segment':
+                    raise ValueError(f"URL not found for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}, segment: {self.segment_id}. Make sure these values are in your config file.")
+                else:
+                    raise ValueError("URL not found in the configuration file.")
+                
+            return url
             
-        return url
+        except FileNotFoundError:
+            error_msg = f"Configuration file not found at {self.configs}. "
+            error_msg += "Please make sure the vesuvius package is properly installed with configuration files.\n"
+            error_msg += "You can download example config files from: https://github.com/ScrollPrize/villa/tree/main/setup/configs"
+            raise FileNotFoundError(error_msg)
     
     def load_ome_metadata(self) -> Dict[str, Any]:
         """
@@ -325,7 +368,13 @@ class Volume:
         try:
             if self.domain == "dl.ash2txt":
                 # Load the .zattrs metadata
-                zattrs_url = f"{self.url}/.zattrs"
+                # Fix URL format - remove trailing slash if present
+                base_url = self.url.rstrip("/")
+                zattrs_url = f"{base_url}/.zattrs"
+                
+                if self.verbose:
+                    print(f"Attempting to load metadata from: {zattrs_url}")
+                    
                 zattrs_response = requests.get(zattrs_url)
                 zattrs_response.raise_for_status()
                 zattrs = zattrs_response.json()
@@ -339,53 +388,95 @@ class Volume:
             print(f"Error loading metadata: {e}")
             raise
 
-    def load_data(self) -> List[ts.TensorStore]:
+    def load_data(self):
         """
         Load the data for the volume.
 
         Returns
         -------
-        List[ts.TensorStore]
-            A list of TensorStore objects representing the sub-volumes.
+        List[ts.TensorStore] or List[zarr.Array]
+            A list of data objects representing the sub-volumes.
 
         Raises
         ------
         Exception
             If there is an error loading the data from the server.
         """
-        if self.cache:
-            context_spec = {
-                'cache_pool': {
-                    "total_bytes_limit": self.cache_pool
-                }
-            }
-        else:
-            context_spec = {}
-
+        # Fix URL format - remove trailing slash if present
+        base_url = self.url.rstrip("/")
         sub_volumes = []
-        for dataset in self.metadata['zattrs']['multiscales'][0]['datasets']:
-            path = dataset['path']
-            sub_url = f"{self.url}/{path}/"                
-            kvstore_spec = {
-                'driver': 'http',
-                'base_url': sub_url
-            }
+        
+        if self.use_fsspec:
+            # Use fsspec for loading
+            import fsspec
+            import zarr
             
-            spec = {
-                'driver': 'zarr',
-                'kvstore': kvstore_spec,
-                'context': context_spec
-            }
-
-            # Print the full URL for debugging
-            #print(f"Attempting to load data from: {sub_url}.zarray")
+            # For each resolution level
+            for dataset in self.metadata['zattrs']['multiscales'][0]['datasets']:
+                path = dataset['path']
+                sub_url = f"{base_url}/{path}"
+                
+                if self.verbose:
+                    print(f"Attempting to load data from: {sub_url} using fsspec")
+                
+                try:
+                    # Create HTTP filesystem
+                    fs = fsspec.filesystem("http")
+                    
+                    # Open zarr array directly
+                    zarr_map = fsspec.mapping.FSMap(sub_url, fs)
+                    zarr_array = zarr.open(zarr_map, mode='r')
+                    
+                    sub_volumes.append(zarr_array)
+                    
+                    if self.verbose:
+                        print(f"Successfully loaded data from {sub_url} using fsspec")
+                        print(f"Shape: {zarr_array.shape}, dtype: {zarr_array.dtype}")
+                    
+                except Exception as e:
+                    print(f"Error loading data from {sub_url} with fsspec: {e}")
+                    raise
+        else:
+            # Use TensorStore (original implementation)
+            if self.cache:
+                context_spec = {
+                    'cache_pool': {
+                        "total_bytes_limit": self.cache_pool
+                    }
+                }
+            else:
+                context_spec = {}
             
-            try:
-                data = ts.open(spec).result()
-                sub_volumes.append(data)
-            except Exception as e:
-                print(f"Error loading data from {sub_url}: {e}")
-                raise
+            # For each resolution level
+            for dataset in self.metadata['zattrs']['multiscales'][0]['datasets']:
+                path = dataset['path']
+                sub_url = f"{base_url}/{path}/"
+                
+                if self.verbose:
+                    print(f"Attempting to load data from: {sub_url} using TensorStore")
+                    
+                kvstore_spec = {
+                    'driver': 'http',
+                    'base_url': sub_url
+                }
+                
+                spec = {
+                    'driver': 'zarr',
+                    'kvstore': kvstore_spec,
+                    'context': context_spec
+                }
+                
+                try:
+                    data = ts.open(spec).result()
+                    sub_volumes.append(data)
+                    
+                    if self.verbose:
+                        print(f"Successfully loaded data from {sub_url} using TensorStore")
+                        print(f"Shape: {data.shape}, dtype: {data.dtype.numpy_dtype}")
+                        
+                except Exception as e:
+                    print(f"Error loading data from {sub_url} with TensorStore: {e}")
+                    raise
 
         return sub_volumes
     
@@ -444,88 +535,60 @@ class Volume:
         ValueError
             If the domain is invalid.
         """
+        # Determine subvolume_idx and coordinates
         if isinstance(idx, tuple) and len(idx) == 4:
-            x, y, z, subvolume_idx  = idx
-
+            x, y, z, subvolume_idx = idx
             assert 0 <= subvolume_idx < len(self.data), "Invalid subvolume index."
-            if self.domain == "dl.ash2txt":
-                if self.normalize:
-                    return self.data[subvolume_idx][x, y, z].read().result()/self.max_dtype
-                else:
-                    return self.data[subvolume_idx][x,y,z].read().result()
-                
-            elif self.domain == "local":
-                if self.normalize:
-                    return self.data[subvolume_idx][x, y, z]/self.max_dtype
-                else:
-                    return self.data[subvolume_idx][x,y,z]
-            else:
-                raise ValueError("Invalid domain.")
-            
         elif isinstance(idx, tuple) and len(idx) == 3:
             x, y, z = idx
-
             subvolume_idx = 0
-
-            if self.domain == "dl.ash2txt":
-                if self.normalize:
-                    return self.data[subvolume_idx][x, y, z].read().result()/self.max_dtype
-                
-                else:
-                    return self.data[subvolume_idx][x,y,z].read().result()
-                
-            elif self.domain == "local":
-                if self.normalize:
-                    return self.data[subvolume_idx][x, y, z]/self.max_dtype
-                
-                else:
-                    return self.data[subvolume_idx][x,y,z]
-            else:
-                raise ValueError("Invalid domain.")
-            
         elif isinstance(idx, tuple) and len(idx) == 2:
             x, y = idx
-
+            z = slice(None)  # Equivalent to ':'
             subvolume_idx = 0
-
-            if self.domain == "dl.ash2txt":
-                if self.normalize:
-                    return self.data[subvolume_idx][x, y, :].read().result()/self.max_dtype
-                
-                else:
-                    return self.data[subvolume_idx][x,y,:].read().result()
-                
-            elif self.domain == "local":
-                if self.normalize:
-                    return self.data[subvolume_idx][x, y, :]/self.max_dtype
-                
-                else:
-                    return self.data[subvolume_idx][x,y,:]
-                
         elif (isinstance(idx, tuple) and len(idx) == 1) or isinstance(idx, int):
-            x = idx
-
+            if isinstance(idx, tuple):
+                x = idx[0]
+            else:
+                x = idx
+            y = slice(None)  # Equivalent to ':'
+            z = slice(None)  # Equivalent to ':'
             subvolume_idx = 0
-
+        else:
+            raise IndexError("Invalid index. Must be a tuple of one to four elements, or an integer.")
+            
+        # Handle different data access methods based on use_fsspec
+        if self.use_fsspec:
+            # Using fsspec - direct indexing works on zarr arrays
+            data_slice = self.data[subvolume_idx][x, y, z]
+            
+            # Apply normalization if needed
+            if self.normalize:
+                return data_slice / self.max_dtype
+            else:
+                return data_slice
+        else:
+            # Using TensorStore
             if self.domain == "dl.ash2txt":
+                # TensorStore requires .read().result() to fetch data
+                data_slice = self.data[subvolume_idx][x, y, z].read().result()
+                
+                # Apply normalization if needed
                 if self.normalize:
-                    return self.data[subvolume_idx][x, :, :].read().result()/self.max_dtype
-                
+                    return data_slice / self.max_dtype
                 else:
-                    return self.data[subvolume_idx][x,:,:].read().result()
-                
+                    return data_slice
             elif self.domain == "local":
+                # Direct access for local zarr files
+                data_slice = self.data[subvolume_idx][x, y, z]
+                
+                # Apply normalization if needed
                 if self.normalize:
-                    return self.data[subvolume_idx][x,:, :]/self.max_dtype
-                
+                    return data_slice / self.max_dtype
                 else:
-                    return self.data[subvolume_idx][x,:,:]
-                
+                    return data_slice
             else:
                 raise ValueError("Invalid domain.")
-            
-        else:
-            raise IndexError("Invalid index. Must be a tuple of three elements (coordinates) or four elements (subvolume id and coordinates).")
         
     def grab_canonical_energy(self) -> Optional[int]:
         """
@@ -671,7 +734,21 @@ class Cube:
         """
         self.scroll_id = scroll_id
         install_path = get_installation_path()
-        self.configs = os.path.join(install_path, 'vesuvius', 'configs', f'cubes.yaml')
+        
+        # Try different possible locations for the config file
+        possible_paths = [
+            os.path.join(install_path, 'setup', 'configs', f'cubes.yaml'),  # For editable installs
+            os.path.join(install_path, 'vesuvius', 'setup', 'configs', f'cubes.yaml'),  # For regular installs
+            os.path.join(install_path, 'configs', f'cubes.yaml')  # Fallback
+        ]
+        
+        for path in possible_paths:
+            if os.path.exists(path):
+                self.configs = path
+                break
+        else:
+            # If no path exists, use the first one and we'll handle the error later
+            self.configs = possible_paths[0]
         self.energy = energy
         self.resolution = resolution
         self.z, self.y, self.x = z, y, x
@@ -705,22 +782,37 @@ class Cube:
         ------
         ValueError
             If the URLs cannot be found in the configuration.
+        FileNotFoundError
+            If the configuration file doesn't exist.
         """
-        # Load the YAML file
-        with open(self.configs, 'r') as file:
-            data: Dict[str, Any] = yaml.safe_load(file)
-        
-        # Retrieve the URL for the given id, energy, and resolution
-        base_url: str = data.get(self.scroll_id, {}).get(self.energy, {}).get(self.resolution, {}).get(f"{self.z:05d}_{self.y:05d}_{self.x:05d}")
-        if base_url is None:
-                raise ValueError("URL not found.")
+        try:
+            # Load the YAML file
+            with open(self.configs, 'r') as file:
+                data: Dict[str, Any] = yaml.safe_load(file)
+            
+            # Handle empty file or invalid YAML
+            if not data:
+                error_msg = f"Config file at {self.configs} is empty or invalid. "
+                error_msg += f"You need to populate it with data for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}, cube: {self.z:05d}_{self.y:05d}_{self.x:05d}"
+                raise ValueError(error_msg)
+                
+            # Retrieve the URL for the given id, energy, and resolution
+            base_url: str = data.get(self.scroll_id, {}).get(self.energy, {}).get(self.resolution, {}).get(f"{self.z:05d}_{self.y:05d}_{self.x:05d}")
+            if base_url is None:
+                raise ValueError(f"URL not found for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}, cube: {self.z:05d}_{self.y:05d}_{self.x:05d}. Make sure these values are in your config file.")
 
-        volume_filename = f"{self.z:05d}_{self.y:05d}_{self.x:05d}_volume.nrrd"
-        mask_filename = f"{self.z:05d}_{self.y:05d}_{self.x:05d}_mask.nrrd"
+            volume_filename = f"{self.z:05d}_{self.y:05d}_{self.x:05d}_volume.nrrd"
+            mask_filename = f"{self.z:05d}_{self.y:05d}_{self.x:05d}_mask.nrrd"
 
-        volume_url = os.path.join(base_url, volume_filename)
-        mask_url = os.path.join(base_url, mask_filename)
-        return volume_url, mask_url
+            volume_url = os.path.join(base_url, volume_filename)
+            mask_url = os.path.join(base_url, mask_filename)
+            return volume_url, mask_url
+            
+        except FileNotFoundError:
+            error_msg = f"Configuration file not found at {self.configs}. "
+            error_msg += "Please make sure the vesuvius package is properly installed with configuration files.\n"
+            error_msg += "You can download example config files from: https://github.com/ScrollPrize/villa/tree/main/setup/configs"
+            raise FileNotFoundError(error_msg)
     
     def load_data(self) -> Tuple[NDArray, NDArray]:
         """

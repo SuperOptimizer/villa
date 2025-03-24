@@ -213,6 +213,12 @@ class ZarrTempStorage:
         # Get the next available index
         idx = self.patch_counts[target_name]
         
+        # Check if the index is within bounds of the array
+        array_path = f"rank_{self.rank}/patches/{target_name}"
+        array_shape = self.patches_group[target_name].shape
+        if idx >= array_shape[0]:
+            raise IndexError(f"Index out of bounds: trying to write to index {idx} but array {array_path} has shape {array_shape}")
+        
         # Store position in our tracking dictionary
         self.positions[target_name][idx] = position
         self.all_rank_positions[self.rank][target_name][idx] = position
@@ -475,9 +481,9 @@ class ZarrTempStorage:
             
             # Create a simple sequential index mapping
             index_mapping = {i: i for i in range(count)}
-            
-            print(f"DEBUG: Created patches_array with shape: {patches_array.shape}")
-            print(f"DEBUG: Position dict has {len(position_dict)} entries")
+            if self.verbose:
+                print(f"DEBUG: Created patches_array with shape: {patches_array.shape}")
+                print(f"DEBUG: Position dict has {len(position_dict)} entries")
             
             return patches_array, position_dict, index_mapping
             
@@ -548,8 +554,9 @@ class ZarrTempStorage:
                             all_patches.append((rank, idx, pos_tuple))
                             
                             # Debug the first and last few positions
-                            if idx < 3 or idx >= count - 3:
-                                print(f"Added position from rank {rank}, index {idx}: {pos}")
+                            if self.verbose:
+                                if idx < 3 or idx >= count - 3:
+                                    print(f"Added position from rank {rank}, index {idx}: {pos}")
                         except Exception as e:
                             print(f"Error processing in-memory position: {e}")
                             raise  # Re-raise to abort processing - this is a critical error

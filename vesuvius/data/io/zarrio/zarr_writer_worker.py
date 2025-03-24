@@ -150,6 +150,12 @@ class ParallelZarrWriter:
                         # Get the array
                         array = open_arrays[array_path]
                         
+                        # Check for index out of bounds
+                        if index >= array.shape[0]:
+                            print(f"Worker {worker_id}: ERROR - Index {index} out of bounds for array {array_path} with shape {array.shape}")
+                            work_queue.task_done()
+                            continue
+                            
                         # Write the data
                         array[index] = data
                         patch_count += 1
