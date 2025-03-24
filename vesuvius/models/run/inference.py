@@ -1,53 +1,28 @@
 import os
-import sys
 import numpy as np
 from tqdm import tqdm
 import zarr
 from numcodecs import Blosc
 import torch
-from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 import threading
 from typing import Dict, Tuple, List, Optional, Any, Union
 import torch.distributed as dist
-from scipy.ndimage import gaussian_filter
-import uuid
 import queue
 import time
+from vesuvius.utils.models.blending import (
+    create_gaussian_weights_torch,
+    blend_patch_torch,
+    intersects_chunk
+)
+from vesuvius.data.io.zarrio.zarr_temp_storage import ZarrTempStorage
+from vesuvius.data.io.zarrio.zarr_writer_worker import zarr_writer_worker
+from vesuvius.utils.models.load_nnunet_model import load_model, load_model_from_hf
+from vesuvius.data.vc_dataset import VCDataset
+from vesuvius.utils.models.tta import get_tta_augmented_inputs
+from vesuvius.utils.models.helpers import merge_tensors
 
-# Add parent directory to sys.path for direct imports when running the script directly
-if __name__ == "__main__":
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    parent_dir = os.path.dirname(script_dir)
-    if parent_dir not in sys.path:
-        sys.path.insert(0, parent_dir)
 
-    # Now we can import as a module
-    # print(f"Added {parent_dir} to sys.path")
-
-# Import blending and activation
-if __name__ == "__main__" or not __package__:
-    # Direct script execution
-    from nnunet_zarr_inference.blending_torch import (create_gaussian_weights_torch,
-                                                      blend_patch_torch)
-else:
-    # Module import
-    from .blending_torch import (create_gaussian_weights_torch,
-                                 blend_patch_torch)
-
-# Import our zarr cache and temp storage
-if __name__ == "__main__" or not __package__:
-    # Direct script execution
-    from nnunet_zarr_inference.zarr_cache import ZarrArrayLRUCache
-    from nnunet_zarr_inference.zarr_temp_storage import ZarrTempStorage
-    from nnunet_zarr_inference.zarr_writer_worker import zarr_writer_worker
-else:
-    # Module import
-    from .zarr_cache import ZarrArrayLRUCache
-    from .zarr_temp_storage import ZarrTempStorage
-    from .zarr_writer_worker import zarr_writer_worker
-
-# Try to configure NumPy and related libraries to use multiple threads
+# configure NumPy and related libraries to use multiple threads
 try:
     # Determine optimal number of threads for various operations
     num_physical_cores = os.cpu_count() // 2 if os.cpu_count() else 4
@@ -55,42 +30,16 @@ try:
 
     # Configure NumPy threading
     np.set_num_threads(num_threads)
-
-    # Try to configure OpenMP for libraries like MKL
-    os.environ["OMP_NUM_THREADS"] = str(num_threads)
-    os.environ["MKL_NUM_THREADS"] = str(num_threads)
-    os.environ["OPENBLAS_NUM_THREADS"] = str(num_threads)
-    os.environ["VECLIB_MAXIMUM_THREADS"] = str(num_threads)
-    os.environ["NUMEXPR_NUM_THREADS"] = str(num_threads)
 except (AttributeError, ImportError):
     pass
 
-# Determine if this is being run as a module or directly
-import sys
-import os
-
-if __name__ == "__main__" or not __package__:
-    # Add parent directory to sys.path for direct script execution
-    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if parent_dir not in sys.path:
-        sys.path.insert(0, parent_dir)
-
-    # Import directly
-    from nnunet_zarr_inference.load_nnunet_model import load_model, run_inference
-    from nnunet_zarr_inference.inference_dataset import InferenceDataset
-    from nnunet_zarr_inference.helpers import compute_steps_for_sliding_window_tuple
-else:
-    # Relative imports for package/module usage
-    from .load_nnunet_model import load_model, run_inference
-    from .inference_dataset import InferenceDataset
-    from .helpers import compute_steps_for_sliding_window_tuple
-
-
-class SequentialZarrNNUNetInference:
+class ZarrInferer:
     def __init__(self,
                  input_path: str,
                  output_path: str,
-                 model_folder: str,
+                 model_folder: str = None,
+                 hf_model_path: str = None,
+                 hf_token: str = None,
                  fold: Union[int, str] = 0,
                  checkpoint_name: str = 'checkpoint_final.pth',
                  patch_size: Optional[Tuple[int, int, int]] = None,
@@ -102,13 +51,15 @@ class SequentialZarrNNUNetInference:
                  load_all: bool = False,
                  device: str = 'cuda',
                  threshold: Optional[float] = None,
-                 use_mirroring: bool = True,
-                 max_tta_combinations: Optional[int] = None,
+                 use_mirroring: bool = False,
+                 max_tta_combinations: Optional[int] = 3,
+                 use_rotation_tta: bool = True,
+                 rotation_weights: List[float] = None,
                  verbose: bool = False,
                  save_probability_maps: bool = True,
                  output_targets: Optional[List[Dict[str, Any]]] = None,
                  rank: int = 0,
-                 edge_weight_boost: float = 0.5,
+                 edge_weight_boost: float = 0,
                  cache_size: int = 256,
                  max_cache_bytes: float = 4.0):
         """
@@ -152,7 +103,15 @@ class SequentialZarrNNUNetInference:
             raise ValueError(f"Output path must end with '.zarr', got: {output_path}")
         self.output_path = output_path
         
+        # Model loading options
         self.model_folder = model_folder
+        self.hf_model_path = hf_model_path
+        self.hf_token = hf_token
+        
+        # Validate model sources
+        if self.model_folder is None and self.hf_model_path is None:
+            raise ValueError("Either model_folder or hf_model_path must be provided")
+            
         self.fold = fold
         self.checkpoint_name = checkpoint_name
         self.batch_size = batch_size
@@ -164,6 +123,8 @@ class SequentialZarrNNUNetInference:
         self.threshold = threshold
         self.use_mirroring = use_mirroring
         self.max_tta_combinations = max_tta_combinations
+        self.use_rotation_tta = use_rotation_tta
+        self.rotation_weights = rotation_weights
         self.verbose = verbose
         self.save_probability_maps = save_probability_maps
         self.rank = rank  # Store rank for distributed training awareness
@@ -232,25 +193,45 @@ class SequentialZarrNNUNetInference:
         Load the nnUNet model and return model information.
         """
         try:
-            # Only print from rank 0
-            if self.rank == 0:
-                print(f"Loading nnUNet model from {self.model_folder}, fold {self.fold}")
-
-            if self.verbose and self.rank == 0:
-                print(f"Test time augmentation (mirroring): {'enabled' if self.use_mirroring else 'disabled'}")
-
             # Set verbose to False for non-rank-0 processes to avoid duplicate messages
             local_verbose = self.verbose and self.rank == 0
+            
+            # Determine whether to load from local folder or Hugging Face
+            if self.hf_model_path is not None:
+                # Load from Hugging Face
+                if self.rank == 0:
+                    print(f"Loading nnUNet model from Hugging Face: {self.hf_model_path}, fold {self.fold}")
+                    
+                if local_verbose:
+                    print(f"Test time augmentation (mirroring): {'enabled' if self.use_mirroring else 'disabled'}")
+                
+                model_info = load_model_from_hf(
+                    repo_id=self.hf_model_path,
+                    fold=self.fold,
+                    checkpoint_name=self.checkpoint_name,
+                    device=self.device_str,
+                    use_mirroring=self.use_mirroring,
+                    verbose=local_verbose,
+                    rank=self.rank,  # Pass rank to load_model_from_hf
+                    token=self.hf_token
+                )
+            else:
+                # Load from local folder
+                if self.rank == 0:
+                    print(f"Loading nnUNet model from {self.model_folder}, fold {self.fold}")
 
-            model_info = load_model(
-                model_folder=self.model_folder,
-                fold=self.fold,
-                checkpoint_name=self.checkpoint_name,
-                device=self.device_str,
-                use_mirroring=self.use_mirroring,
-                verbose=local_verbose,
-                rank=self.rank  # Pass rank to load_model
-            )
+                if local_verbose:
+                    print(f"Test time augmentation (mirroring): {'enabled' if self.use_mirroring else 'disabled'}")
+
+                model_info = load_model(
+                    model_folder=self.model_folder,
+                    fold=self.fold,
+                    checkpoint_name=self.checkpoint_name,
+                    device=self.device_str,
+                    use_mirroring=self.use_mirroring,
+                    verbose=local_verbose,
+                    rank=self.rank  # Pass rank to load_model
+                )
 
             # Use the model's patch size if none was specified
             if self.patch_size is None:
@@ -291,18 +272,13 @@ class SequentialZarrNNUNetInference:
         device = self.device_str
 
         # Adjusted nnUNet parameters for smoother blending
-        sigma_scale = 1 / 8  # Increased from standard 1/8 (0.125) for smoother transitions
-        value_scaling_factor = 10  # Standard nnUNet value
+        sigma_scale = 1 / 4
+        value_scaling_factor = 5  # Standard nnUNet value
 
         if self.verbose:
             print(f"Using sigma_scale={sigma_scale}, value_scaling_factor={value_scaling_factor}")
 
-        # Import intersects_chunk from blending_torch
-        if __name__ == "__main__" or not __package__:
-            from nnunet_zarr_inference.blending_torch import create_gaussian_weights_torch, blend_patch_torch, \
-                intersects_chunk
-        else:
-            from .blending_torch import create_gaussian_weights_torch, blend_patch_torch, intersects_chunk
+        # Use previously imported intersects_chunk
 
         # Create Gaussian weights with standard nnUNet parameters
         blend_weights = create_gaussian_weights_torch(
@@ -569,19 +545,12 @@ class SequentialZarrNNUNetInference:
         # Get device from model
         device = self.device_str
 
-        # Import the normalize_chunk_torch function
-        if __name__ == "__main__" or not __package__:
-            from nnunet_zarr_inference.blending_torch import normalize_chunk_torch
-        else:
-            from .blending_torch import normalize_chunk_torch
-
         for target in self.targets:
             tgt_name = target.get("name")
             if self.verbose:
                 print(f"Processing {tgt_name}...")
 
             # Define threshold_val at the beginning for each target
-            # This ensures it's available for all code paths
             threshold_val = None
             if self.threshold is not None:
                 threshold_val = self.threshold / 100.0
@@ -615,7 +584,7 @@ class SequentialZarrNNUNetInference:
                 else:
                     print(f"Binary segmentation detected: will use both channels with softmax and threshold")
 
-            # Use a chunk-based approach to avoid loading the entire volume in memory
+            # num z slices for blending , we load this many at once
             chunk_size = 256
 
             # Only use tqdm progress bar on rank 0
@@ -626,18 +595,12 @@ class SequentialZarrNNUNetInference:
             for z_start in z_range:
                 z_end = min(z_start + chunk_size, z_max)
 
-                # Process each chunk separately to minimize memory usage
-                # Get direct references to zarr array slices - avoid copying data
                 output_chunk = output_arrays[tgt_name][:, z_start:z_end]
                 count_chunk = count_arrays[tgt_name][z_start:z_end]
 
                 # Convert to PyTorch tensors directly from the zarr array views
-                # Use float16 for both tensors to reduce memory usage
                 output_tensor = torch.as_tensor(output_chunk, device=device, dtype=torch.float16).contiguous()
                 count_tensor = torch.as_tensor(count_chunk, device=device, dtype=torch.float16).contiguous()
-
-                if self.verbose and z_start == 0:
-                    print(f"Processing in chunks to minimize memory usage for {tgt_name}")
 
                 # Determine processing approach based on configuration
                 if compute_argmax:
@@ -651,7 +614,7 @@ class SequentialZarrNNUNetInference:
 
                     # Create safe count tensor (avoid division by zero)
                     # Use a very small value (0.001) instead of 1.0 to maintain the dynamic range
-                    safe_count_tensor = torch.clamp(count_tensor, min=1e-8)
+                    safe_count_tensor = torch.clamp(count_tensor, min=1)
 
                     if self.verbose:
                         print(f"Count tensor max value: {torch.max(count_tensor).item():.4f}")
@@ -703,8 +666,7 @@ class SequentialZarrNNUNetInference:
                         count_tensor = count_tensor.float()
 
                     # Create safe count (avoid division by zero) using torch
-                    # Use a very small value (0.001) instead of 1.0 to maintain the dynamic range
-                    safe_count_tensor = torch.clamp(count_tensor, min=1e-8)
+                    safe_count_tensor = torch.clamp(count_tensor, min=1)
 
                     if self.verbose:
                         print(f"Count tensor max value: {torch.max(count_tensor).item():.4f}")
@@ -759,23 +721,71 @@ class SequentialZarrNNUNetInference:
                             print(f"  - {bin_edges[i]:.1f}-{bin_edges[i + 1]:.1f}: {hist[i].item():.0f} pixels")
 
                     if self.save_probability_maps:
-                        # When save_probability_maps is True, save foreground probability and binary mask
-                        # Use argmax for binary mask for consistent boundary handling
-
-                        # Save just the foreground probability channel (index 1)
-                        prob_tensor = (softmax_tensor[1] * 255).to(torch.uint8)
-
+                        # When save_probability_maps is True, handle probability map and binary mask separately
+                        # This approach completely separates the two outputs to avoid cross-contamination
+                        
+                        # CRITICAL CHANGE: Create TWO separate dest tensors rather than combining them
+                        
+                        # 1. Create and handle probability map (foreground probability only)
+                        # Get the raw foreground probabilities from the softmax
+                        foreground_prob = softmax_tensor[1].clone()  # Clone to avoid potential issues
+                        
+                        # Debug the raw probability values
+                        if self.verbose and self.rank == 0:
+                            print(f"Raw foreground probability range: {foreground_prob.min().item():.4f}-{foreground_prob.max().item():.4f}")
+                            
+                        # Scale probabilities from [0,1] to [0,255] range for uint8 storage
+                        # Make sure we're using float32 for the multiplication to avoid precision issues
+                        prob_tensor = (foreground_prob.to(torch.float32) * 255).to(torch.uint8)
+                        
+                        # CRITICAL CHECK: Verify we're not just getting binary values in our probability map
+                        if self.verbose and self.rank == 0:
+                            unique_probs = torch.unique(prob_tensor)
+                            print(f"Unique probability values: {unique_probs.cpu().numpy()}")
+                            if len(unique_probs) <= 2:
+                                print("WARNING: Probability map appears to be binarized! Should have many values.")
+                            else:
+                                print(f"Good: Found {len(unique_probs)} unique probability values")
+                        
+                        # Create a separate tensor for probabilities (single channel)
+                        prob_dest_tensor = torch.zeros((1,) + prob_tensor.shape,
+                                                     dtype=torch.uint8,
+                                                     device=device)
+                        prob_dest_tensor[0] = prob_tensor
+                        
+                        # 2. Create and handle binary mask separately
                         # Generate binary mask with argmax for maximum consistency
                         # This is how nnUNet creates binary segmentations - argmax across channels
                         binary_mask = torch.argmax(softmax_tensor, dim=0).to(torch.uint8)
-                        binary_tensor = binary_mask * 255  # Scale to 0/255 for visualization
-
-                        # Create 2-channel output: foreground prob, binary mask
-                        dest_tensor = torch.zeros((2,) + binary_tensor.shape,
-                                                  dtype=torch.uint8,
-                                                  device=device)
-                        dest_tensor[0] = prob_tensor  # Channel 0: foreground probability
-                        dest_tensor[1] = binary_tensor  # Channel 1: binary mask (0/255)
+                        
+                        # The binary mask is 0 or 1, where 1 means foreground
+                        # Scale to 0 or 255 for clearer visualization in 8-bit image viewers
+                        binary_tensor = binary_mask * 255
+                        
+                        # Create a separate tensor for binary mask (single channel)
+                        binary_dest_tensor = torch.zeros((1,) + binary_tensor.shape,
+                                                      dtype=torch.uint8,
+                                                      device=device)
+                        binary_dest_tensor[0] = binary_tensor
+                        
+                        # 3. Combine them into the final destination tensor
+                        # IMPORTANT: We need to make sure we're creating a clean, new tensor with the right shape
+                        shape_tuple = binary_tensor.shape
+                        
+                        # Create a fresh tensor with exactly 2 channels
+                        dest_tensor = torch.zeros((2,) + shape_tuple,
+                                               dtype=torch.uint8,
+                                               device=device)
+                        
+                        # Copy probability values carefully - this is the critical part
+                        # Make sure the tensors are the right shape and values
+                        if self.verbose and self.rank == 0:
+                            print(f"Probability tensor shape: {prob_tensor.shape}")
+                            print(f"Binary tensor shape: {binary_tensor.shape}")
+                            
+                        # Use direct assignment with explicit cloning to ensure complete separation
+                        dest_tensor[0] = prob_tensor.clone()  # Channel 0: Probability map [0-255]
+                        dest_tensor[1] = binary_tensor.clone()  # Channel 1: Binary mask [0/255]
 
                         if self.verbose and self.rank == 0:
                             print(f"Saving 2-channel binary segmentation output:")
@@ -828,7 +838,7 @@ class SequentialZarrNNUNetInference:
                         count_tensor = count_tensor.float()
 
                     # Create safe count tensor (avoid division by zero)
-                    safe_count_tensor = torch.clamp(count_tensor, min=1e-8)
+                    safe_count_tensor = torch.clamp(count_tensor, min=1)
 
                     if self.verbose:
                         print(f"Count tensor max value: {torch.max(count_tensor).item():.4f}")
@@ -1025,7 +1035,7 @@ class SequentialZarrNNUNetInference:
                     raise FileExistsError(f"Zarr store '{self.output_path}' already exists.")
                 
                 # Create a temporary dataset to determine the full output shape
-                dataset_temp = InferenceDataset(
+                dataset_temp = VCDataset(
                     input_path=self.input_path,
                     targets=self.targets,
                     model_info=self.model_info,
@@ -1182,7 +1192,7 @@ class SequentialZarrNNUNetInference:
             # 3. Create dataset and dataloader for this rank
             # -------------------------------------------------------------
             # Create inference dataset
-            dataset = InferenceDataset(
+            dataset = VCDataset(
                 input_path=self.input_path,
                 targets=self.targets,
                 model_info=self.model_info,
@@ -1308,14 +1318,36 @@ class SequentialZarrNNUNetInference:
                     # Get input data tensor and move to device - make contiguous for better performance
                     inputs = batch['data'].to(self.device_str, non_blocking=True).contiguous()
                     
-                    # Run inference using the run_inference function that properly handles TTA
-                    # Always use 3 for max_tta_combinations to get the 3 single-axis flips
-                    outputs = run_inference(
-                        model_info=self.model_info,
-                        input_tensor=inputs,
-                        max_tta_combinations=self.max_tta_combinations,  # Use only the 3 single-axis flips
-                        rank=self.rank
-                    )
+                    # Get TTA-augmented inputs
+                    network = self.model_info['network']
+                    
+                    # Use TTA if enabled
+                    if self.use_mirroring:
+                        # Get all TTA-transformed inputs and their transformation info
+                        augmented_inputs, transform_info = get_tta_augmented_inputs(
+                            input_tensor=inputs,
+                            model_info=self.model_info,
+                            max_tta_combinations=self.max_tta_combinations,
+                            use_rotation_tta=self.use_rotation_tta,
+                            rotation_weights=self.rotation_weights,
+                            verbose=self.verbose,
+                            rank=self.rank
+                        )
+                        
+                        # Run inference on each augmented input
+                        tta_outputs = []
+                        for idx, (aug_input, transform) in enumerate(zip(augmented_inputs, transform_info)):
+                            # Run inference
+                            with torch.no_grad(), torch.amp.autocast('cuda'):
+                                output = network(aug_input)
+                                tta_outputs.append((output, transform))
+                        
+                        # Combine the outputs from all TTA variants
+                        outputs = merge_tensors(tta_outputs)
+                    else:
+                        # No TTA - just run standard inference
+                        with torch.no_grad(), torch.amp.autocast('cuda'):
+                            outputs = network(inputs)
                     
                     # Process model outputs (queue them for writing)
                     self._process_model_outputs(outputs, positions)
@@ -1343,15 +1375,47 @@ class SequentialZarrNNUNetInference:
             if self.verbose:
                 print(f"Rank {self.rank}: Waiting for writer tasks to complete...")
             
-            self.writer_queue.join()
+            # Use a timeout for the join operation to avoid hanging indefinitely
+            try:
+                # Set a reasonable timeout for the join operation (60 seconds)
+                start_time = time.time()
+                
+                # Check if we can join the queue with a short timeout in a loop
+                while not self.writer_queue.empty():
+                    # Try joining with a short timeout
+                    self.writer_queue.join_nowait()  # Non-blocking check
+                    
+                    # Check if we've waited too long
+                    if time.time() - start_time > 60:
+                        print(f"Rank {self.rank}: Warning - Queue join taking too long, proceeding with shutdown")
+                        break
+                        
+                    # Wait a bit before checking again
+                    time.sleep(0.1)
+            except Exception as e:
+                print(f"Rank {self.rank}: Error waiting for writer queue to empty: {e}")
+                # Continue with shutdown even if there was an error
             
             # Send sentinel values to stop writer threads
             for _ in range(self.num_write_workers):
-                self.writer_queue.put(None)
+                try:
+                    self.writer_queue.put(None, block=False)  # Non-blocking put
+                except Exception as e:
+                    print(f"Rank {self.rank}: Error sending shutdown signal to worker: {e}")
             
-            # Wait for all writer threads to finish
-            for thread in writer_threads:
-                thread.join()
+            # Wait for all writer threads to finish with timeouts
+            for thread_idx, thread in enumerate(writer_threads):
+                try:
+                    # Use a reasonable timeout for thread joining (5 seconds)
+                    thread.join(timeout=5)
+                    
+                    # Check if thread is still alive
+                    if thread.is_alive():
+                        print(f"Rank {self.rank}: Warning - Writer thread {thread_idx} did not terminate within timeout")
+                        # There's no safe way to force-terminate a thread in Python,
+                        # so we'll just have to proceed and leave this thread dangling
+                except Exception as e:
+                    print(f"Rank {self.rank}: Error joining writer thread {thread_idx}: {e}")
             
             # Finalize target counts in zarr storage
             for target in self.targets:
@@ -1480,6 +1544,10 @@ class SequentialZarrNNUNetInference:
             end_time = time.time()
             total_time = end_time - start_time
             print(f"Rank {self.rank}: Inference completed in {total_time:.2f} seconds")
+            
+            # Print distributed status
+            if dist.is_initialized():
+                print(f"Rank {self.rank}: Process group will be destroyed at the end of main()")
         
         except Exception as e:
             # Only rank 0 does any cleanup
@@ -1522,11 +1590,14 @@ def main():
         # torchrun already sets the necessary environment variables
         print(f"Rank {local_rank}: Initializing process group with NCCL backend")
         dist.init_process_group(backend="nccl")
+        print(f"Rank {local_rank}: Process group initialized successfully, world_size={dist.get_world_size()}")
 
-    parser = argparse.ArgumentParser(description='Run sequential nnUNet inference on a zarr array')
+    parser = argparse.ArgumentParser(description='Run nnUNet inference on a zarr array')
     parser.add_argument('--input', type=str, required=True, help='Path to input zarr array')
     parser.add_argument('--output', type=str, required=True, help='Path to output zarr file (must end with .zarr)')
-    parser.add_argument('--model_folder', type=str, required=True, help='Path to nnUNet model folder')
+    parser.add_argument('--model_folder', type=str, help='Path to nnUNet model folder')
+    parser.add_argument('--hf_model_path', type=str, help='Hugging Face model repository path (e.g., "username/model-name")')
+    parser.add_argument('--hf_token', type=str, help='Optional Hugging Face token for private repositories')
     parser.add_argument('--fold', type=str, default='0', help='Model fold to use (default: 0)')
     parser.add_argument('--checkpoint', type=str, default='checkpoint_final.pth',
                         help='Checkpoint name (default: checkpoint_final.pth)')
@@ -1537,23 +1608,28 @@ def main():
     parser.add_argument('--num_workers', type=int, default=4, help='Number of dataloader workers (default: 4)')
     parser.add_argument('--num_write_workers', type=int, default=4, help='Number of writer threads (default: 4)')
     parser.add_argument('--max_tta_combinations', type=int, default=3, help='Number of TTA combinations (default: 3, or the primary axis flips only)")')
+    parser.add_argument('--use_rotation_tta', action='store_true', help='Use rotation-based TTA where each axis becomes the "top" in turn')
+    parser.add_argument('--rotation_weights', type=float, nargs=3, default=None, 
+                        help='Weights for each rotation axis in rotation TTA. Three values for [z, x, y] axes. Default is equal weights.')
     parser.add_argument('--threshold', type=float, help='Optional threshold (0-100) for binarizing the output')
     parser.add_argument('--no_mirroring', action='store_true', help='Disable test time augmentation via mirroring')
     parser.add_argument('--no_probabilities', action='store_true',
                         help='Do not save probability maps, save argmax for multiclass segmentation')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
-    parser.add_argument('--edge_weight_boost', type=float, default=0,
-                        help='Factor to boost weights at patch edges (0.0-1.0) to reduce boundary artifacts (default: 0)')
     parser.add_argument('--cache_size', type=int, default=256,
                         help='Number of zarr chunks to cache in memory (default: 256)')
-    parser.add_argument('--max_cache_bytes', type=float, default=4.0,
-                        help='Maximum memory in GB to use for zarr cache (default: 4.0)')
+    parser.add_argument('--max_cache_bytes', type=float, default=8.0,
+                        help='Maximum memory in GB to use for zarr cache (default: 8.0)')
 
     args = parser.parse_args()
     
     # Ensure output path ends with .zarr
     if not args.output.endswith('.zarr'):
         raise ValueError(f"Output path must end with '.zarr', got: {args.output}")
+        
+    # Ensure either local model folder or HF model path is provided
+    if args.model_folder is None and args.hf_model_path is None:
+        raise ValueError("Either --model_folder or --hf_model_path must be provided")
 
     # Convert fold to int if numeric
     try:
@@ -1590,10 +1666,12 @@ def main():
         write_workers = args.num_write_workers
 
     # Create inference handler
-    inference = SequentialZarrNNUNetInference(
+    inference = ZarrInferer(
         input_path=args.input,
         output_path=args.output,
         model_folder=args.model_folder,
+        hf_model_path=args.hf_model_path,
+        hf_token=args.hf_token,
         fold=fold,
         checkpoint_name=args.checkpoint,
         batch_size=args.batch_size,
@@ -1603,19 +1681,29 @@ def main():
         device=device,
         threshold=args.threshold,
         use_mirroring=not args.no_mirroring,
+        max_tta_combinations=args.max_tta_combinations,
+        use_rotation_tta=args.use_rotation_tta,
         save_probability_maps=not args.no_probabilities,
         verbose=args.verbose and (local_rank == -1 or local_rank == 0),  # Only be verbose on rank 0
-        edge_weight_boost=args.edge_weight_boost,  # Pass the edge weight boost parameter
         cache_size=args.cache_size,  # Pass the cache size parameter
         max_cache_bytes=args.max_cache_bytes  # Pass the max cache bytes parameter
     )
 
-    # Run inference
-    inference.infer()
-
-    # Cleanup distributed process group
-    if local_rank != -1:
-        dist.destroy_process_group()
+    # Run inference with guaranteed cleanup
+    try:
+        # Run inference - no timeout, let it take as long as needed
+        inference.infer()
+    except Exception as e:
+        print(f"Error during inference: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # Cleanup distributed process group - always executed
+        if dist.is_initialized():
+            rank = dist.get_rank()
+            print(f"Rank {rank}: Destroying process group...")
+            dist.destroy_process_group()
+            print(f"Rank {rank}: Process group successfully destroyed")
 
 
 if __name__ == "__main__":

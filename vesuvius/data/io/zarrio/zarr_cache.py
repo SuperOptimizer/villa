@@ -1,6 +1,6 @@
 import threading
 from collections import OrderedDict
-from atomic_counter import AtomicCounter
+from vesuvius.utils.models.counter import AtomicCounter
 
 
 class ZarrArrayLRUCache:

@@ -6,7 +6,7 @@ import time
 import torch.distributed as dist
 from typing import Tuple, Dict, Any, List, Optional, Union
 from numcodecs import Blosc
-from nnunet_zarr_inference.zarr_writer_worker import ParallelZarrWriter
+from .zarr_writer_worker import ParallelZarrWriter
 
 class ZarrTempStorage:
     """

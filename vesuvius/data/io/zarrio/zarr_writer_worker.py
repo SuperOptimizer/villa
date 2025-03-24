@@ -231,13 +231,29 @@ class ParallelZarrWriter:
         for q in self.queues:
             q.put(None)
             
-        # Wait for processes to terminate
+        # Wait for processes to terminate with a shorter timeout and more aggressive handling
         for i, p in enumerate(self.processes):
             try:
-                p.join(timeout=5)
+                # Use a shorter timeout to avoid hanging
+                p.join(timeout=2)
+                
+                # Check if still alive and terminate more aggressively
                 if p.is_alive():
                     self.logger.warning(f"Worker {i} did not terminate gracefully, forcing termination")
+                    # First try normal termination
                     p.terminate()
+                    
+                    # Give it a very short time to terminate
+                    p.join(timeout=1)
+                    
+                    # If still alive, use kill (SIGKILL) on Unix systems
+                    if p.is_alive():
+                        self.logger.warning(f"Worker {i} still alive after terminate(), using kill()")
+                        import signal
+                        try:
+                            os.kill(p.pid, signal.SIGKILL)
+                        except Exception as ke:
+                            self.logger.error(f"Could not kill worker {i} (pid {p.pid}): {ke}")
             except Exception as e:
                 self.logger.error(f"Error shutting down worker {i}: {e}")
                 

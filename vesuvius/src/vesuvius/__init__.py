@@ -2,13 +2,13 @@ import os
 import sys
 import site
 
-from .volume import Volume, Cube
-from .setup.accept_terms import is_colab
-from .paths.utils import update_list
-from .paths.utils import list_files
-from .paths.utils import list_cubes as cubes
-from .paths.local import update_local_list
-from .paths.utils import is_aws_ec2_instance
+from vesuvius.data.volume import Volume, Cube
+from vesuvius.setup.accept_terms import is_colab
+from vesuvius.data.io import update_list
+from vesuvius.data.io import list_files
+from vesuvius.data.io import list_cubes as cubes
+from vesuvius.data.io import update_local_list
+from vesuvius.data.io import is_aws_ec2_instance
 
 __all__ = ["Volume", "Cube", "list_files", "cubes", "is_aws_ec2_instance"]
 

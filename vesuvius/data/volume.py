@@ -11,8 +11,8 @@ import tempfile
 from PIL import Image
 from io import BytesIO
 from pathlib import Path
-from .setup.accept_terms import get_installation_path
-from .paths.utils import list_files, is_aws_ec2_instance
+from vesuvius.setup.accept_terms import get_installation_path
+from vesuvius.data.io.paths import list_files, is_aws_ec2_instance
 
 # Remove the PIL image size limit
 Image.MAX_IMAGE_PIXELS = None

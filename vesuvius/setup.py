@@ -41,7 +41,13 @@ setup(
         'nest_asyncio',
         'pynrrd',
         'pyyaml',
-        'Pillow'
+        'Pillow',
+        'Torch',
+        'nnUNetv2',
+        'atomics',
+        'scipy',
+        'batchgenerators',
+        'batchgeneratorsv2'
     ],
     python_requires='>=3.8',
     include_package_data=True,
@@ -51,8 +57,12 @@ setup(
     entry_points={
         'console_scripts': [
             'vesuvius.accept_terms=vesuvius.setup.accept_terms:main',
+            'vesuvius.predict=vesuvius.models.nnunet.inference.inference:main'
         ],
     },
+    scripts=[
+        'bin/predict_nnunet',
+    ],
     classifiers=[
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.8',
