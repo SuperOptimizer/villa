@@ -586,7 +586,12 @@ class Volume:
         Parameters
         ----------
         idx : Union[Tuple[int, ...], int]
-            Index tuple or integer to select the data. If fourth indices are provided the fourth selects a specific sub-volume, otherwise the data are taken from the first sub-volume.
+            Index tuple or integer to select the data. 
+            
+            For 3D data, the tuple order is (z, y, x) - this is the standard order for scientific data and TensorStore.
+            
+            If a fourth index is provided, it selects a specific sub-volume (resolution level),
+            otherwise the data are taken from the first sub-volume (highest resolution).
 
         Returns
         -------
@@ -601,24 +606,51 @@ class Volume:
             If the domain is invalid.
         """
         # Determine subvolume_idx and coordinates
+        # Use z,y,x order to match the normal standard in scientific data and TensorStore
         if isinstance(idx, tuple) and len(idx) == 4:
-            x, y, z, subvolume_idx = idx
-            assert 0 <= subvolume_idx < len(self.data), "Invalid subvolume index."
-        elif isinstance(idx, tuple) and len(idx) == 3:
-            x, y, z = idx
-            subvolume_idx = 0
-        elif isinstance(idx, tuple) and len(idx) == 2:
-            x, y = idx
-            z = slice(None)  # Equivalent to ':'
-            subvolume_idx = 0
-        elif (isinstance(idx, tuple) and len(idx) == 1) or isinstance(idx, int):
-            if isinstance(idx, tuple):
-                x = idx[0]
+            # Format is (c, z, y, x) for 4D data or (z, y, x, subvolume) for 3D with subvolume
+            if self.verbose:
+                print(f"Received 4D indexing: {idx}")
+                
+            if hasattr(self, 'data') and len(self.data) > 0 and len(self.data[0].shape) == 4:
+                # This is 4D data with channels (c, z, y, x)
+                z, y, x = idx[1], idx[2], idx[3]
+                c = idx[0]  # Channel index
+                subvolume_idx = 0
             else:
-                x = idx
-            y = slice(None)  # Equivalent to ':'
-            z = slice(None)  # Equivalent to ':'
+                # This is 3D data with specified subvolume (z, y, x, subvolume)
+                z, y, x, subvolume_idx = idx
+                
+            assert 0 <= subvolume_idx < len(self.data), "Invalid subvolume index."
+            
+        elif isinstance(idx, tuple) and len(idx) == 3:
+            # Format is (z, y, x) for standard 3D indexing
+            z, y, x = idx
             subvolume_idx = 0
+            
+        elif isinstance(idx, tuple) and len(idx) == 2:
+            # Format might be (z, y) or (c, z) depending on context
+            if hasattr(self, 'data') and len(self.data) > 0 and len(self.data[0].shape) == 4:
+                # This is likely 4D data, so this is (c, z)
+                c, z = idx
+                y = slice(None)  # All Y
+                x = slice(None)  # All X
+            else:
+                # This is 3D data, so this is (z, y)
+                z, y = idx
+                x = slice(None)  # All X
+            subvolume_idx = 0
+            
+        elif (isinstance(idx, tuple) and len(idx) == 1) or isinstance(idx, int):
+            # Single index can be z or c depending on data dimensions
+            if isinstance(idx, tuple):
+                z = idx[0]
+            else:
+                z = idx
+            y = slice(None)  # All Y
+            x = slice(None)  # All X
+            subvolume_idx = 0
+            
         else:
             raise IndexError("Invalid index. Must be a tuple of one to four elements, or an integer.")
             
@@ -627,10 +659,13 @@ class Volume:
             # Using fsspec - direct indexing works on zarr arrays
             try:
                 # For slice objects, just use them directly
-                data_slice = self.data[subvolume_idx][x, y, z]
+                # Zarr also expects dimensions in z,y,x order 
+                data_slice = self.data[subvolume_idx][z, y, x]
             except Exception as e:
                 if self.verbose:
-                    print(f"Error in fsspec slice with indices ({x}, {y}, {z}): {e}")
+                    print(f"Error in fsspec slice with indices (z={z}, y={y}, x={x}): {e}")
+                    print(f"Data shape: {self.data[subvolume_idx].shape if subvolume_idx < len(self.data) else 'UNKNOWN'}")
+                    print(f"Index types: z={type(z)}, y={type(y)}, x={type(x)}")
                 # Try to work around fsspec limitations by handling different slice patterns
                 if isinstance(x, slice) and isinstance(y, slice) and isinstance(z, slice):
                     # For all slice objects, we can try different approach
@@ -638,7 +673,7 @@ class Volume:
                         print(f"Trying alternative slice method for fsspec with x={x}, y={y}, z={z}")
                     # Get the raw array and index it directly
                     data_slice = self.data[subvolume_idx][:]
-                    data_slice = data_slice[x, y, z]
+                    data_slice = data_slice[z, y, x]
                 else:
                     # Re-raise the error if we can't handle it
                     raise
@@ -651,23 +686,56 @@ class Volume:
         else:
             # Using TensorStore
             if self.domain == "dl.ash2txt":
-                # TensorStore requires .read().result() to fetch data
-                data_slice = self.data[subvolume_idx][x, y, z].read().result()
-                
-                # Apply normalization if needed
-                if self.normalize:
-                    return data_slice / self.max_dtype
-                else:
-                    return data_slice
+                try:
+                    # TensorStore requires .read().result() to fetch data
+                    # Add debugging to understand the indexing behavior
+                    if self.verbose:
+                        print(f"TensorStore accessing with indices: [{x}, {y}, {z}], subvolume: {subvolume_idx}")
+                        print(f"Data shape: {self.data[subvolume_idx].shape}")
+                    
+                    # Properly handle slices to work with TensorStore
+                    # TensorStore expects dimensions in z,y,x order
+                    data_slice = self.data[subvolume_idx][z, y, x].read().result()
+                    
+                    if self.verbose:
+                        print(f"TensorStore returned shape: {data_slice.shape}")
+                    
+                    # Apply normalization if needed
+                    if self.normalize:
+                        return data_slice / self.max_dtype
+                    else:
+                        return data_slice
+                        
+                except Exception as e:
+                    if self.verbose:
+                        print(f"TensorStore access error: {e}")
+                        print(f"Indices: x={x}, y={y}, z={z}, type(x)={type(x)}, type(y)={type(y)}, type(z)={type(z)}")
+                    # Re-raise to let caller handle the error
+                    raise
             elif self.domain == "local":
-                # Direct access for local zarr files
-                data_slice = self.data[subvolume_idx][x, y, z]
-                
-                # Apply normalization if needed
-                if self.normalize:
-                    return data_slice / self.max_dtype
-                else:
-                    return data_slice
+                try:
+                    # Direct access for local zarr files
+                    if self.verbose:
+                        print(f"Local zarr accessing with indices: [{x}, {y}, {z}], subvolume: {subvolume_idx}")
+                        print(f"Data shape: {self.data[subvolume_idx].shape}")
+                    
+                    data_slice = self.data[subvolume_idx][z, y, x]
+                    
+                    if self.verbose:
+                        print(f"Local zarr returned shape: {data_slice.shape}")
+                    
+                    # Apply normalization if needed
+                    if self.normalize:
+                        return data_slice / self.max_dtype
+                    else:
+                        return data_slice
+                        
+                except Exception as e:
+                    if self.verbose:
+                        print(f"Local zarr access error: {e}")
+                        print(f"Indices: x={x}, y={y}, z={z}, type(x)={type(x)}, type(y)={type(y)}, type(z)={type(z)}")
+                    # Re-raise to let caller handle the error
+                    raise
             else:
                 raise ValueError("Invalid domain.")
         
