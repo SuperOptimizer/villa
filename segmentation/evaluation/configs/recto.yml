@@ -1,7 +1,7 @@
-labels_folder: "/mnt/raid_nvme/test_datasets/labels"
-predictions_folder: "/mnt/raid_nvme/test_datasets/inference/da5_059/tifs"
+labels_folder: "/home/giorgio/Documents/nnUNet_raw/Dataset081_zebra-on-steroids/labels-check"
+predictions_folder: "/home/giorgio/Documents/nnUNet_raw/Dataset081_zebra-on-steroids/preds-check"
 output_csv: "metrics.csv"
-output_folder: "/home/sean/Desktop/eval"
+output_folder: "/home/giorgio/Projects/villa-cases/segmentation/evaluation/output"
 wandb_project: "vesuvius-challenge-evaluation"
 run_name: "recto-"
 metrics:

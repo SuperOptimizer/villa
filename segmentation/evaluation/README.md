@@ -1,6 +1,7 @@
 # Evaluation Pipeline
 
 ## Setup
+Note: as of today the wheels to install our version of scikit-image are meant to work only on Linux
 
 Create and activate the conda environment:
 

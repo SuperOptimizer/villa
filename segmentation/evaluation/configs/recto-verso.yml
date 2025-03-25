@@ -16,3 +16,10 @@ metrics:
       connectivity: 26
       num_classes: 4
       ignore_index: 0
+  - type: "mean_ap"
+    hyperparameters:
+      ignore_index: 0
+  - type: "centerline_dice"
+    hyperparameters:
+      tolerance_radius: 3.0
+      surface: True
