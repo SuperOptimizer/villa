@@ -81,12 +81,16 @@ class VCDataset(Dataset):
         self.part_id = part_id
 
         # Check if we should use Volume class
-        # Either explicitly specified or if input_path contains scroll or segment indicators
+        # Only trigger Volume logic if input_format is explicitly 'volume'
+        # or if input_path matches specific patterns AND input_format is not explicitly 'zarr'
         if input_format == 'volume' or (
+            input_format != 'zarr' and
             isinstance(input_path, str) and 
             (re.match(r'scroll\d+', input_path.lower()) or input_path.isdigit())
         ):
             self.use_volume = True
+            if self.verbose:
+                print(f"Using Volume class for input_path: {input_path}")
             
             # Determine volume type, scroll_id, and segment_id from input_path if not provided
             if scroll_id is None and segment_id is None:
@@ -111,6 +115,17 @@ class VCDataset(Dataset):
                 if self.verbose:
                     print(f"Initializing Volume with type={type_value}, scroll_id={scroll_id}, energy={energy}, resolution={resolution}, segment_id={segment_id}")
                 
+                # When input_format is 'volume', always set path to None
+                # This ensures Volume uses the config.yaml to find the remote path
+                if input_format == 'volume':
+                    use_path = None
+                else:
+                    # For other formats, pass the input_path directly
+                    use_path = input_path
+                    
+                if self.verbose:
+                    print(f"Initializing Volume with type={type_value}, path={use_path}, use_fsspec={use_fsspec}")
+                    
                 self.volume = Volume(
                     type=type_value,
                     scroll_id=scroll_id,
@@ -121,7 +136,7 @@ class VCDataset(Dataset):
                     normalize=normalize,
                     verbose=verbose,
                     domain=domain,
-                    path=None if input_format == 'volume' else input_path,  # Only use input_path as path if not explicitly 'volume'
+                    path=use_path,
                     use_fsspec=use_fsspec
                 )
                 
@@ -141,8 +156,18 @@ class VCDataset(Dataset):
             # Original zarr-based loading
             self.use_volume = False
             
+            # Ensure input_path is preserved and not accidentally cleared
+            stored_input_path = str(self.input_path)
+            
             # Open the zarr array
-            zarr_root = zarr.open(self.input_path, mode='r')
+            # Add error checking to catch the empty input_path issue
+            if not stored_input_path:
+                raise ValueError(f"Empty input_path: '{stored_input_path}'. Input path was '{input_path}' but got cleared.")
+            
+            if self.verbose:
+                print(f"Opening zarr array at '{stored_input_path}'...")
+                
+            zarr_root = zarr.open(stored_input_path, mode='r')
 
             # Check if this is a multi-resolution zarr (has groups '0', '1', etc.)
             if hasattr(zarr_root, 'keys') and '0' in zarr_root.keys():

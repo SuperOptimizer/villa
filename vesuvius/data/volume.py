@@ -199,11 +199,16 @@ class Volume:
             self.use_fsspec = use_fsspec
             
             if self.domain == "dl.ash2txt":
+                # For remote paths, get the URL from the config
                 self.url = self.get_url_from_yaml()
+                if self.verbose:
+                    print(f"Using URL from config: {self.url}")
+                
+                # Load remote data and metadata using either fsspec or TensorStore
                 self.metadata = self.load_ome_metadata()
                 self.data = self.load_data()
                 
-                # Handle dtype differently depending on fsspec or TensorStore
+                # Handle dtype depending on whether we're using fsspec or TensorStore
                 if self.use_fsspec:
                     if self.normalize:
                         self.max_dtype = get_max_value(self.data[0].dtype)
@@ -215,10 +220,17 @@ class Volume:
                     
             elif self.domain == "local":
                 if self.aws is False:
-                    assert path is not None
+                    # When not on AWS EC2, a path must be provided for local domain
+                    assert path is not None, "For local domain, path must be provided unless running on AWS EC2"
                     self.url = path
                 if path is None:
+                    # On AWS, get the local path from yaml config
                     self.url = self.get_url_from_yaml()
+                
+                if self.verbose:
+                    print(f"Opening local zarr store at: {self.url}")
+                
+                # Open the zarr store
                 self.data = zarr.open(self.url, mode="r")
                 self.metadata = self.load_ome_metadata()
                 if self.normalize:
@@ -380,7 +392,15 @@ class Volume:
                 zattrs = zattrs_response.json()
 
             elif self.domain == "local":
+                # For local domain, access attributes from the zarr store
+                if not hasattr(self, 'data') or self.data is None:
+                    # This shouldn't happen normally, but just in case
+                    if self.verbose:
+                        print(f"Warning: Loading data inside load_ome_metadata for local domain")
+                    self.data = zarr.open(self.url, mode="r")
+                
                 zattrs = dict(self.data.attrs)
+                
             return {
                 "zattrs": zattrs,
             }
@@ -406,6 +426,17 @@ class Volume:
         base_url = self.url.rstrip("/")
         sub_volumes = []
         
+        # If data is already loaded through direct zarr access, return it
+        if hasattr(self, 'data') and self.data is not None and self.domain == "local":
+            if self.verbose:
+                print(f"Data already loaded from local zarr store, skipping load_data()")
+            if isinstance(self.data, zarr.Group):
+                # If it's a zarr group, return a list of its arrays
+                return [self.data[k] for k in sorted(self.data.keys())]
+            # Otherwise return the data as is
+            return self.data
+        
+        # Process based on whether we're using fsspec or TensorStore
         if self.use_fsspec:
             # Use fsspec for loading
             import fsspec
@@ -420,12 +451,46 @@ class Volume:
                     print(f"Attempting to load data from: {sub_url} using fsspec")
                 
                 try:
-                    # Create HTTP filesystem
-                    fs = fsspec.filesystem("http")
-                    
-                    # Open zarr array directly
-                    zarr_map = fsspec.mapping.FSMap(sub_url, fs)
-                    zarr_array = zarr.open(zarr_map, mode='r')
+                    if self.domain == "local":
+                        # For local files, open directly
+                        if os.path.exists(sub_url):
+                            zarr_array = zarr.open(sub_url, mode='r')
+                        else:
+                            # Try using the path directly if it exists
+                            if os.path.exists(base_url):
+                                # This might be a multi-resolution zarr store with the path directly in it
+                                try:
+                                    zarr_root = zarr.open(base_url, mode='r')
+                                    if path in zarr_root:
+                                        zarr_array = zarr_root[path]
+                                    else:
+                                        # Just use the first group or array we find
+                                        key = list(zarr_root.keys())[0]
+                                        zarr_array = zarr_root[key]
+                                except Exception as e:
+                                    print(f"Error accessing zarr store at {base_url}: {e}")
+                                    raise
+                            else:
+                                raise FileNotFoundError(f"Cannot find zarr data at {sub_url} or {base_url}")
+                    else:
+                        # Remote HTTP access through fsspec
+                        if self.verbose:
+                            print(f"Using fsspec to access remote zarr at {sub_url}")
+                        
+                        if not sub_url.startswith(('http://', 'https://')):
+                            raise ValueError(f"Invalid URL for fsspec HTTP access: {sub_url}")
+                            
+                        # Create HTTP filesystem with improved performance settings
+                        fs = fsspec.filesystem(
+                            "http",
+                            block_size=2**20,  # 1MB blocks for better throughput
+                            cache_type='readahead',  # Prefetch data
+                            cache_options={'max_blocks': 32},  # Cache up to 32MB
+                        )
+                        
+                        # Open zarr array via fsspec mapping
+                        zarr_map = fsspec.mapping.FSMap(sub_url, fs)
+                        zarr_array = zarr.open(zarr_map, mode='r')
                     
                     sub_volumes.append(zarr_array)
                     
@@ -560,8 +625,24 @@ class Volume:
         # Handle different data access methods based on use_fsspec
         if self.use_fsspec:
             # Using fsspec - direct indexing works on zarr arrays
-            data_slice = self.data[subvolume_idx][x, y, z]
-            
+            try:
+                # For slice objects, just use them directly
+                data_slice = self.data[subvolume_idx][x, y, z]
+            except Exception as e:
+                if self.verbose:
+                    print(f"Error in fsspec slice with indices ({x}, {y}, {z}): {e}")
+                # Try to work around fsspec limitations by handling different slice patterns
+                if isinstance(x, slice) and isinstance(y, slice) and isinstance(z, slice):
+                    # For all slice objects, we can try different approach
+                    if self.verbose:
+                        print(f"Trying alternative slice method for fsspec with x={x}, y={y}, z={z}")
+                    # Get the raw array and index it directly
+                    data_slice = self.data[subvolume_idx][:]
+                    data_slice = data_slice[x, y, z]
+                else:
+                    # Re-raise the error if we can't handle it
+                    raise
+                
             # Apply normalization if needed
             if self.normalize:
                 return data_slice / self.max_dtype

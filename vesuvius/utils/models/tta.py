@@ -43,25 +43,36 @@ def get_tta_transformations(
         'inverse_func': lambda x: x
     })
     
-    # If TTA is disabled, just return the identity transform
-    if not use_mirroring:
+    # If both mirroring and rotation TTA are disabled, just return the identity transform
+    if not use_mirroring and not use_rotation_tta:
         if verbose and rank == 0:
-            print("Test time augmentation is disabled")
+            print("Test time augmentation is disabled (both mirroring and rotation are off)")
+            print(f"Input tensor shape for reference: {input_tensor.shape}")
         return transforms
     
+    # Check if input tensor has the right format for 3D - [B, C, Z, Y, X]
+    is_valid_3d_format = len(input_tensor.shape) == 5
+    
     # If rotation TTA is enabled, skip mirroring TTA
-    if use_rotation_tta and len(input_tensor.shape) == 5:
+    if use_rotation_tta and is_valid_3d_format:
+        if verbose and rank == 0:
+            print(f"Using rotation-based TTA (input shape: {input_tensor.shape})")
         # Skip mirroring TTA logic and let rotation TTA happen
         pass
     elif not use_rotation_tta and allowed_mirroring_axes is None:
         # No mirroring axes specified, use standard axes for 3D data
-        if len(input_tensor.shape) == 5:  # [B, C, Z, Y, X]
+        if is_valid_3d_format:  # [B, C, Z, Y, X]
             allowed_mirroring_axes = [0, 1, 2]  # Z, Y, X axes
+            if verbose and rank == 0:
+                print(f"Using mirror-based TTA with axes {allowed_mirroring_axes} (input shape: {input_tensor.shape})")
     
     # Use rotation-based TTA if requested and has 3D input (5D tensor with batch and channel dims)
     if use_rotation_tta and len(input_tensor.shape) == 5:  # [B, C, Z, Y, X]
         if verbose and rank == 0:
-            print("Using rotation-based TTA (each axis as top)")
+            print(f"Using rotation-based TTA (each axis as top) with input shape {input_tensor.shape}")
+        
+        # Force use_mirroring to ensure transformations are generated
+        use_mirroring = True
         
         # Define how many rotations we'll perform (default to 3 for 3D volumes)
         num_rotations = 3 if max_tta_combinations is None else min(3, max_tta_combinations)
@@ -264,6 +275,18 @@ def get_tta_augmented_inputs(
             - List of transformed input tensors
             - List of transform dictionaries for inverse transforms
     """
+    # Debug input tensor shape and TTA settings
+    if verbose and rank == 0:
+        print(f"TTA settings: use_mirroring={use_mirroring}, use_rotation_tta={use_rotation_tta}, max_tta_combinations={max_tta_combinations}")
+        print(f"Input tensor shape: {input_tensor.shape}, dtype: {input_tensor.dtype}")
+    
+    # Reset max_tta_combinations to None if it's 0 or negative
+    if max_tta_combinations is not None and max_tta_combinations <= 0:
+        if verbose and rank == 0:
+            print("Disabling TTA due to max_tta_combinations <= 0")
+        use_mirroring = False
+        use_rotation_tta = False
+    
     # Configure TTA settings from model_info
     # For our configuration: use_mirroring parameter takes precedence over model_info
     allowed_mirroring_axes = model_info.get('allowed_mirroring_axes', None)

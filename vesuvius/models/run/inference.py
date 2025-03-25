@@ -1,4 +1,7 @@
+# Import os early
 import os
+import json
+
 import numpy as np
 from tqdm import tqdm
 import zarr
@@ -24,18 +27,6 @@ from utils.models.load_nnunet_model import load_model_for_inference
 from data.vc_dataset import VCDataset
 from utils.models.tta import get_tta_augmented_inputs
 from utils.models.helpers import merge_tensors
-
-
-# configure NumPy and related libraries to use multiple threads
-try:
-    # Determine optimal number of threads for various operations
-    num_physical_cores = os.cpu_count() // 2 if os.cpu_count() else 4
-    num_threads = min(8, num_physical_cores)
-
-    # Configure NumPy threading
-    np.set_num_threads(num_threads)
-except (AttributeError, ImportError):
-    pass
 
 class ZarrInferer:
     def __init__(self,
@@ -542,9 +533,22 @@ class ZarrInferer:
                         # Get the patch data directly from the zarr array (lazy loading)
                         patch_data = self.patch_arrays_by_rank[rank_idx][idx]
                         
+                        # Check if this patch has embedded position information
+                        # Look for attributes in the zarr array
+                        has_position_channels = False
+                        try:
+                            has_position_channels = self.patch_arrays_by_rank[rank_idx].attrs.get('has_position_channels', False)
+                        except:
+                            pass
+                        
                         # Convert patch to PyTorch tensor and blend
                         # Make contiguous for better GPU memory layout and performance
-                        patch_tensor = torch.as_tensor(patch_data, device=device).contiguous()
+                        if has_position_channels:
+                            # Extract only the actual data channels (skip the first 3 position channels)
+                            patch_tensor = torch.as_tensor(patch_data[3:], device=device).contiguous()
+                        else:
+                            # Use the full patch as-is
+                            patch_tensor = torch.as_tensor(patch_data, device=device).contiguous()
                         
                         # Blend the patch using the weighted blending function
                         blend_patch_weighted(
@@ -1036,14 +1040,18 @@ class ZarrInferer:
                     raise
 
 
-    def infer(self):
+    def infer(self, skip_blending=False):
         """
         Main inference method
         1. Loading the model
         2. Setting up zarr arrays for output
         3. Processing input data in patches
-        4. Blending patches together for final output
+        4. Blending patches together for final output (unless skip_blending=True)
         5. Handling distributed processing across multiple GPUs
+        
+        Args:
+            skip_blending: If True, skip the blending phase and just save patch data.
+                           Use blend_patches.py later to blend the saved patches.
         """
         # Check if we're using the VCDataset with Volume
         if hasattr(self.dataset, 'use_volume') and self.dataset.use_volume:
@@ -1072,7 +1080,41 @@ class ZarrInferer:
         world_size = dist.get_world_size() if dist.is_initialized() else 1
         
         # Create a directory for temporary storage next to the output zarr file
-        self.temp_dir = os.path.join(os.path.dirname(self.output_path), "temp")
+        # If we're using dataset partitioning, include part ID in the temp directory name
+        try:
+            # Check if dataset has part_id and num_parts attributes
+            part_id = getattr(self.dataset, 'part_id', None)
+            num_parts = getattr(self.dataset, 'num_parts', 1)
+            
+            # Print debug info
+            if self.verbose:
+                print(f"Temp directory decision:")
+                print(f"  - Dataset has part_id attribute: {hasattr(self.dataset, 'part_id')}")
+                print(f"  - Dataset has num_parts attribute: {hasattr(self.dataset, 'num_parts')}")
+                print(f"  - part_id value: {part_id}")
+                print(f"  - num_parts value: {num_parts}")
+            
+            # Only use part-specific directory if explicitly doing partitioning
+            if hasattr(self.dataset, 'part_id') and hasattr(self.dataset, 'num_parts') and num_parts > 1:
+                # When using partitioning, create a part-specific temp directory
+                self.temp_dir = os.path.join(os.path.dirname(self.output_path), f"temp_part{part_id}")
+                if self.verbose:
+                    print(f"Using part-specific temp directory for part_id={part_id}: {self.temp_dir}")
+            else:
+                # Standard temp directory
+                self.temp_dir = os.path.join(os.path.dirname(self.output_path), "temp")
+                if self.verbose:
+                    print(f"Using standard temp directory: {self.temp_dir}")
+        except AttributeError as e:
+            # If there's any issue accessing the attributes, use the standard directory
+            self.temp_dir = os.path.join(os.path.dirname(self.output_path), "temp")
+            if self.verbose:
+                print(f"AttributeError when checking for part_id: {e}")
+                print(f"Using standard temp directory: {self.temp_dir}")
+        
+        # Create the temp directory
+        if self.verbose:
+            print(f"Creating temp directory at: {self.temp_dir}")
         os.makedirs(self.temp_dir, exist_ok=True)
         
         # Get the dataset size for proper array allocation
@@ -1093,6 +1135,29 @@ class ZarrInferer:
             num_io_workers=self.num_write_workers
         )
         self.temp_storage.initialize(expected_patch_count=expected_patches)
+        
+        # Save blending configuration for later use by blend_patches.py
+        # Only rank 0 needs to save this configuration
+        if self.rank == 0:
+            # Create a dictionary with all the parameters needed for blending
+            blend_config = {
+                "patch_size": list(self.patch_size),
+                "step_size": self.tile_step_size,
+                "threshold": self.threshold,
+                "save_probability_maps": self.save_probability_maps,
+                "edge_weight_boost": self.edge_weight_boost,
+                "output_path": self.output_path
+            }
+            
+            # Save the configuration as a JSON file in the temp directory
+            config_path = os.path.join(self.temp_dir, "blend_config.json")
+            try:
+                with open(config_path, 'w') as f:
+                    json.dump(blend_config, f, indent=2)
+                if self.verbose:
+                    print(f"Saved blending configuration to {config_path}")
+            except Exception as e:
+                print(f"Warning: Failed to save blending configuration: {e}")
 
         network = self.model_info['network']
         
@@ -1204,35 +1269,42 @@ class ZarrInferer:
                     # for single channel output models we can rip the channel off later
                     chunks = (1,) + patch_size_tuple
                     
-                    # For segmentation target, create it directly at the root
-                    if tgt_name == "segmentation":
-                        # For root-level array, use zarr.open() directly with shape and chunks
-                        final_arrays[tgt_name] = zarr.open(
-                            self.output_path,
-                            mode='w',
-                            shape=final_shape,
-                            chunks=chunks,
-                            dtype=final_dtype,
-                            compressor=compressor,
-                            write_empty_chunks=False
-                        )
-
-                        output_store = final_arrays[tgt_name]
+                    # If skip_blending is true, we don't create the final output arrays
+                    # These will be created later by the blend_patches script
+                    if not skip_blending:
+                        # For segmentation target, create it directly at the root
+                        if tgt_name == "segmentation":
+                            # For root-level array, use zarr.open() directly with shape and chunks
+                            final_arrays[tgt_name] = zarr.open(
+                                self.output_path,
+                                mode='w',
+                                shape=final_shape,
+                                chunks=chunks,
+                                dtype=final_dtype,
+                                compressor=compressor,
+                                write_empty_chunks=False
+                            )
+    
+                            output_store = final_arrays[tgt_name]
+                        else:
+                            # For any other targets, create within an existing group
+                            # First ensure the output_store is open
+                            if "output_store" not in locals():
+                                output_store = zarr.open(self.output_path, mode='a')
+                            
+                            # Then create the dataset within that store
+                            final_arrays[tgt_name] = output_store.create_dataset(
+                                tgt_name,
+                                shape=final_shape,
+                                chunks=chunks,
+                                dtype=final_dtype,
+                                compressor=compressor,
+                                write_empty_chunks=False
+                            )
                     else:
-                        # For any other targets, create within an existing group
-                        # First ensure the output_store is open
-                        if "output_store" not in locals():
-                            output_store = zarr.open(self.output_path, mode='a')
-                        
-                        # Then create the dataset within that store
-                        final_arrays[tgt_name] = output_store.create_dataset(
-                            tgt_name,
-                            shape=final_shape,
-                            chunks=chunks,
-                            dtype=final_dtype,
-                            compressor=compressor,
-                            write_empty_chunks=False
-                        )
+                        # If skip_blending is true, we just create a placeholder in the final_arrays dict
+                        # to avoid errors in the rest of the code, but don't actually create the zarr array
+                        final_arrays[tgt_name] = None
                     
                     if self.verbose:
                         print(f"Created output array for {tgt_name}")
@@ -1302,7 +1374,9 @@ class ZarrInferer:
             progress_bar = None
             if self.rank == 0:
                 from tqdm import tqdm
-                progress_bar = tqdm(total=total_patches, desc="Processing patches")
+                # Calculate total iterations based on batch size
+                total_iterations = (total_patches + self.batch_size - 1) // self.batch_size
+                progress_bar = tqdm(total=total_iterations, desc="Processing batches")
             
             # Inference loop with no_grad and autocast for mixed precision
             with torch.no_grad(), torch.amp.autocast('cuda'):
@@ -1335,17 +1409,22 @@ class ZarrInferer:
                             print(f"Data batch shape: {batch['data'].shape}")
                     
                     # Get input data tensor and move to device - make contiguous for better performance
-                    inputs = batch['data'].to(self.device_str, non_blocking=True).contiguous()
+                    # Ensure data is float32 before sending to model
+                    inputs = batch['data'].float().to(self.device_str, non_blocking=True).contiguous()
 
                     network = self.model_info['network']
                     
                     # Use TTA if enabled
                     if self.use_mirroring:
+                        # Debug input shape when verbose is on
+                        if self.verbose and self.rank == 0:
+                            print(f"Processing input of shape {inputs.shape} with use_mirroring={self.use_mirroring}, use_rotation_tta={self.use_rotation_tta}")
+                            
                         # Get all TTA-transformed inputs and their transformation info
                         # In our config: if rotation TTA is enabled, it takes precedence over mirroring
                         # If rotation TTA is disabled, use mirroring TTA
                         use_mirroring_tta = not self.use_rotation_tta
-                        
+
                         augmented_inputs, transform_info = get_tta_augmented_inputs(
                             input_tensor=inputs,
                             model_info=self.model_info,
@@ -1378,7 +1457,8 @@ class ZarrInferer:
                     # Update progress
                     processed_patches += len(positions)
                     if progress_bar is not None:
-                        progress_bar.update(len(positions))
+                        # Update by 1 batch, not by number of positions
+                        progress_bar.update(1)
                     
                     # Log progress periodically
                     if self.verbose and (batch_idx + 1) % 10 == 0:
@@ -1464,87 +1544,118 @@ class ZarrInferer:
                     print(f"Rank {self.rank}: All ranks have finalized targets, proceeding")
             
             # -------------------------------------------------------------
-            # 6. Blend patches and finalize output
+            # 6. Blend patches and finalize output (if not skipped)
             # -------------------------------------------------------------
-            # Only rank 0 needs to blend patches from all ranks
-            if self.rank == 0:
-                # Wait a moment to ensure all ranks have finalized their data
-                time.sleep(1)
+            if skip_blending:
+                if self.rank == 0:
+                    print("Skipping blending phase as requested. To blend patches later, use one of:")
+                    print(f"1. python -m models.run.blend_patches --temp_storage {self.temp_dir}/temp.zarr")
+                    print(f"   (This will automatically read blend configuration from {self.temp_dir}/blend_config.json)")
+                    print(f"2. python -m models.run.blend_patches --temp_storage {self.temp_dir}/temp.zarr --output {self.output_path} --patch_size {self.patch_size[0]} {self.patch_size[1]} {self.patch_size[2]} --step_size {self.tile_step_size}")
+                    print(f"   (This uses command line arguments which override the saved configuration)")
+                    print(f"Optional flags:")
+                    print(f"  --force                Force overwrite of existing output without prompting")
+                    print(f"  --no-cleanup           Keep temporary files after blending (default is to clean up)")
+                    print(f"  --no-include-parts     Don't automatically include patches from all part directories")
+                    print(f"  --verbose              Show detailed progress information")
                 
-                # For segmentation array (our root), open it directly
-                for target in self.targets:
-                    tgt_name = target.get("name")
+                # We're done here if blending is skipped
+                self.temp_dir_preserved = True  # Mark temp dir to not clean it up
+            else:
+                # Only rank 0 needs to blend patches from all ranks
+                if self.rank == 0:
+                    # Wait a moment to ensure all ranks have finalized their data
+                    time.sleep(1)
                     
-                    if tgt_name == "segmentation":
-                        # For the segmentation target (root array), open it directly
-                        final_arrays[tgt_name] = zarr.open(self.output_path, mode='a')
-                    else:
-                        # For other targets (if any), open the store first then access them
-                        if "output_store" not in locals():
-                            output_store = zarr.open(self.output_path, mode='a')
-                        final_arrays[tgt_name] = output_store[tgt_name]
-                
-                # Blend all patches from all ranks
-                start_time = time.time()
-                
-                # Dictionary to store target arrays
-                target_arrays = {tgt.get("name"): tgt.get("type", "segmentation") for tgt in self.targets}
-                
-                # Blend patches using zarr-based approach
-                print("Starting _blend_patches method...")
-                try:
-                    self._blend_patches(target_arrays, output_arrays, count_arrays)
-                    print("_blend_patches completed successfully")
-                except Exception as e:
-                    print(f"Error in _blend_patches: {str(e)}")
-                    import traceback
-                    traceback.print_exc()
-                
-                # Finalize the arrays without passing tensor_dict (since we're not using it)
-                self._finalize_arrays(output_arrays, count_arrays, final_arrays)
-                
-                # Log blending time
+                    # For segmentation array (our root), open it directly
+                    for target in self.targets:
+                        tgt_name = target.get("name")
+                        
+                        if tgt_name == "segmentation":
+                            # For the segmentation target (root array), open it directly
+                            final_arrays[tgt_name] = zarr.open(self.output_path, mode='a')
+                        else:
+                            # For other targets (if any), open the store first then access them
+                            if "output_store" not in locals():
+                                output_store = zarr.open(self.output_path, mode='a')
+                            final_arrays[tgt_name] = output_store[tgt_name]
+                    
+                    # Blend all patches from all ranks
+                    start_time = time.time()
+                    
+                    # Dictionary to store target arrays
+                    target_arrays = {tgt.get("name"): tgt.get("type", "segmentation") for tgt in self.targets}
+                    
+                    # Blend patches using zarr-based approach
+                    print("Starting _blend_patches method...")
+                    try:
+                        self._blend_patches(target_arrays, output_arrays, count_arrays)
+                        print("_blend_patches completed successfully")
+                    except Exception as e:
+                        print(f"Error in _blend_patches: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
+                    
+                    # Finalize the arrays without passing tensor_dict (since we're not using it)
+                    self._finalize_arrays(output_arrays, count_arrays, final_arrays)
+                    
+                    # Log blending time
                 blend_time = time.time() - start_time
                 print(f"Blending completed in {blend_time:.2f} seconds")
             
             # -------------------------------------------------------------
-            # 7. Clean up temporary files - only after rank 0 is done blending
+            # 7. Clean up temporary files - only after rank 0 is done (unless preserving temp dir)
             # -------------------------------------------------------------
-            # Wait for rank 0 to complete blending before proceeding with cleanup
+            # Wait for rank 0 to complete processing before proceeding with cleanup
             if dist.is_initialized():
                 if self.verbose and self.rank != 0:
-                    print(f"Rank {self.rank}: Waiting for rank 0 to complete blending...")
+                    print(f"Rank {self.rank}: Waiting for rank 0 to complete processing...")
                 dist.barrier()
                 if self.verbose and self.rank != 0:
-                    print(f"Rank {self.rank}: Rank 0 has completed blending, proceeding with cleanup")
-            
+                    print(f"Rank {self.rank}: Rank 0 has completed processing, proceeding with cleanup")
+
             # Only rank 0 should perform cleanup
             if self.rank == 0:
-                print(f"Rank {self.rank}: Cleaning up temporary files...")
-                
-                # Clear references to zarr arrays from the dictionaries
-                if 'output_arrays' in locals():
-                    output_arrays.clear()
-                if 'count_arrays' in locals():
-                    count_arrays.clear()
-                
-                # Clean up ZarrTempStorage - only rank 0 does this
-                if self.temp_storage is not None:
-                    if self.verbose:
-                        print(f"Rank {self.rank}: Cleaning up zarr temporary storage...")
-                    self.temp_storage.cleanup()
+                # Skip cleanup if we're preserving the temp directory for later blending
+                if hasattr(self, 'temp_dir_preserved') and self.temp_dir_preserved:
+                    print(f"Rank {self.rank}: Preserving temporary directory for later blending: {self.temp_dir}/temp.zarr")
                     
-                # Only rank 0 cleans up the temp directory
-                if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
-                    try:
-                        # Try to remove the directory - will only succeed if empty
-                        os.rmdir(self.temp_dir)
+                    # Still clear references to arrays
+                    if 'output_arrays' in locals():
+                        output_arrays.clear()
+                    if 'count_arrays' in locals():
+                        count_arrays.clear()
+                        
+                    # We should NOT clean up the ZarrTempStorage, but we should close it
+                    if self.temp_storage is not None:
+                        # Just close the store without deleting anything
+                        self.temp_storage.temp_zarr = None
+                else:
+                    print(f"Rank {self.rank}: Cleaning up temporary files...")
+                    
+                    # Clear references to zarr arrays from the dictionaries
+                    if 'output_arrays' in locals():
+                        output_arrays.clear()
+                    if 'count_arrays' in locals():
+                        count_arrays.clear()
+                    
+                    # Clean up ZarrTempStorage - only rank 0 does this
+                    if self.temp_storage is not None:
                         if self.verbose:
-                            print(f"Rank {self.rank}: Removed temporary directory {self.temp_dir}")
-                    except OSError as e:
-                        # Directory not empty - this is expected if other ranks are still using it
-                        if self.verbose:
-                            print(f"Note: Could not remove temp directory (may not be empty): {e}")
+                            print(f"Rank {self.rank}: Cleaning up zarr temporary storage...")
+                        self.temp_storage.cleanup()
+                        
+                    # Only rank 0 cleans up the temp directory
+                    if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
+                        try:
+                            # Try to remove the directory - will only succeed if empty
+                            os.rmdir(self.temp_dir)
+                            if self.verbose:
+                                print(f"Rank {self.rank}: Removed temporary directory {self.temp_dir}")
+                        except OSError as e:
+                            # Directory not empty - this is expected if other ranks are still using it
+                            if self.verbose:
+                                print(f"Note: Could not remove temp directory (may not be empty): {e}")
 
             # Make sure all ranks finish reference clearing before proceeding
             if dist.is_initialized():
@@ -1566,19 +1677,28 @@ class ZarrInferer:
         except Exception as e:
             # Only rank 0 does any cleanup
             if self.rank == 0:
-                # Clean up temporary files in case of error
-                if self.temp_storage is not None:
-                    print(f"Rank {self.rank}: Cleaning up temp storage after error")
-                    self.temp_storage.cleanup()
-                
-                # Also try to clean up the temp directory
-                if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
-                    try:
-                        # Try to remove the directory - will only succeed if empty
-                        os.rmdir(self.temp_dir)
-                    except OSError:
-                        # Ignore errors - cleanup as best effort
-                        pass
+                # Skip cleanup if we're preserving the temp directory for later blending
+                if hasattr(self, 'temp_dir_preserved') and self.temp_dir_preserved:
+                    print(f"Rank {self.rank}: Error occurred, but preserving temporary directory for later blending: {self.temp_dir}/temp.zarr")
+                    
+                    # We should NOT clean up the ZarrTempStorage, but we should close it
+                    if self.temp_storage is not None:
+                        # Just close the store without deleting anything
+                        self.temp_storage.temp_zarr = None
+                else:
+                    # Clean up temporary files in case of error
+                    if self.temp_storage is not None:
+                        print(f"Rank {self.rank}: Cleaning up temp storage after error")
+                        self.temp_storage.cleanup()
+                    
+                    # Also try to clean up the temp directory
+                    if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
+                        try:
+                            # Try to remove the directory - will only succeed if empty
+                            os.rmdir(self.temp_dir)
+                        except OSError:
+                            # Ignore errors - cleanup as best effort
+                            pass
             
             # All ranks log the error
             print(f"Rank {self.rank}: Error in inference: {str(e)}")
@@ -1616,15 +1736,55 @@ def find_free_port(start_port=12000, max_tries=100):
     # If we get here, we couldn't find a free port
     raise RuntimeError(f"Could not find a free port in range [{start_port}-{start_port+max_tries-1}]")
 
-def run_worker(rank, world_size, args):
-    """Worker function that runs on each GPU."""
+def run_worker(rank, world_size, 
+              input_path, 
+              output_path, 
+              model_folder,
+              hf_model_path,
+              hf_token,
+              fold,
+              checkpoint,
+              dist_port,
+              batch_size,
+              step_size,
+              input_format,
+              num_workers,
+              num_write_workers,
+              verbose,
+              use_mirroring,
+              max_tta_combinations,
+              use_rotation_tta,
+              rotation_weights,
+              save_probability_maps,
+              skip_blending,
+              threshold,
+              dist_backend,
+              num_parts,
+              part_id,
+              use_fsspec=False,
+              scroll_id=None,
+              energy=None,
+              resolution=None,
+              segment_id=None):
+    """Worker function that runs on each GPU with explicit arguments."""
     import torch.distributed as dist
     import torch
     import os
     import time
     
-    # Make input_path available for the function
-    input_path = args.input
+    # Print out the directly passed values to confirm
+    print(f"Rank {rank}: Input path = '{input_path}'")
+    print(f"Rank {rank}: Output path = '{output_path}'")
+    
+    # Ensure input path is not empty or None
+    if not input_path:
+        print(f"Rank {rank}: ERROR - Empty input path detected! This should not happen.")
+        raise ValueError(f"Input path is empty. Cannot proceed with inference.")
+
+    # Configure NumExpr and NumPy thread settings for this worker
+    os.environ["NUMEXPR_MAX_THREADS"] = str(os.cpu_count())  # Use all available cores
+    os.environ["OMP_NUM_THREADS"] = str(os.cpu_count())      # For NumPy operations
+    os.environ["MKL_NUM_THREADS"] = str(os.cpu_count())      # For NumPy with MKL backend
 
     # Set environment variables for this process (should already be set in main)
     os.environ['RANK'] = str(rank)
@@ -1633,12 +1793,12 @@ def run_worker(rank, world_size, args):
     
     # The port should have been pre-selected by the parent process and passed via args
     # Just use the port directly from args - no file coordination needed
-    port = args.dist_port
+    port = dist_port
     print(f"Rank {rank}: Using port {port} for distributed communication")
     os.environ['MASTER_PORT'] = str(port)
 
     # Choose appropriate backend based on available hardware
-    backend = args.dist_backend
+    backend = dist_backend
     if not torch.cuda.is_available() and backend == 'nccl':
         backend = 'gloo'  # Fall back to gloo if NCCL requested but no GPUs available
         print(f"Rank {rank}: Falling back to gloo backend since NCCL requires CUDA devices")
@@ -1685,33 +1845,32 @@ def run_worker(rank, world_size, args):
 
     # Convert fold to int if numeric
     try:
-        fold = int(args.fold)
+        fold_int = int(fold)
+        fold = fold_int
     except ValueError:
-        fold = args.fold  # Keep as string if not numeric (e.g., "all")
+        pass  # Keep as string if not numeric (e.g., "all")
 
     # Adjust workers based on world size for DDP
-    dataloader_workers = max(1, args.num_workers // world_size)
-    write_workers = max(1, args.num_write_workers // world_size)
+    dataloader_workers = max(1, num_workers // world_size)
+    write_workers = max(1, num_write_workers // world_size)
     if rank == 0:
         print(f"Adjusting workers for {world_size} processes:")
-        print(f"  - Dataloader workers: {args.num_workers} -> {dataloader_workers} per process")
-        print(f"  - Write workers: {args.num_write_workers} -> {write_workers} per process")
+        print(f"  - Dataloader workers: {num_workers} -> {dataloader_workers} per process")
+        print(f"  - Write workers: {num_write_workers} -> {write_workers} per process")
 
     # Load the model first - each process loads its own copy
     print(f"Rank {rank}: Loading model...")
-    # TTA is always enabled by default, with rotation taking precedence
-    # Only disable TTA if args.no_mirroring is True AND args.max_tta_combinations is 0
-    use_tta = not (args.no_mirroring and args.max_tta_combinations == 0)
+    # TTA is already calculated above
     
     model_info = load_model_for_inference(
-        model_folder=args.model_folder,
-        hf_model_path=args.hf_model_path,
-        hf_token=args.hf_token,
+        model_folder=model_folder,
+        hf_model_path=hf_model_path,
+        hf_token=hf_token,
         fold=fold,
-        checkpoint_name=args.checkpoint,
+        checkpoint_name=checkpoint,
         device_str=device,
-        use_mirroring=use_tta,  # Use TTA by default
-        verbose=args.verbose and (rank == 0),
+        use_mirroring=use_mirroring,  # Pass the explicit parameter
+        verbose=verbose and (rank == 0),
         rank=rank
     )
     print(f"Rank {rank}: Model loaded successfully")
@@ -1737,31 +1896,37 @@ def run_worker(rank, world_size, args):
     print(f"Rank {rank}: Creating dataset...")
     
     # Validate partitioning parameters if specified
-    if args.num_parts > 1:
-        if args.part_id < 0 or args.part_id >= args.num_parts:
-            raise ValueError(f"part_id must be between 0 and {args.num_parts-1}, got {args.part_id}")
-        print(f"Rank {rank}: Processing part {args.part_id} of {args.num_parts} parts along Z-axis")
+    if num_parts > 1:
+        if part_id < 0 or part_id >= num_parts:
+            raise ValueError(f"part_id must be between 0 and {num_parts-1}, got {part_id}")
+        print(f"Rank {rank}: Processing part {part_id} of {num_parts} parts along Z-axis")
+
+    # Make sure we use the correct input_path variable that we verified above
+    # Force input_path to be a string, in case it was converted to something else
+    input_path = str(input_path) if input_path is not None else None
+    print(f"Rank {rank}: Creating dataset with input_path='{input_path}' (type: {type(input_path)})")
     
     dataset = VCDataset(
-        input_path=args.input,
+        input_path=input_path,
         targets=output_targets,
         patch_size=patch_size,
         num_input_channels=num_input_channels,
-        input_format=args.input_format,  # Use the command-line argument
-        step_size=args.step_size,
+        input_format=input_format,  # Use the explicit parameter
+        step_size=step_size,
         load_all=False,
-        verbose=args.verbose and (rank == 0),
-        num_parts=args.num_parts,
-        part_id=args.part_id,
-        # Volume-specific parameters
-        scroll_id=args.scroll_id if hasattr(args, 'scroll_id') else None,
-        energy=args.energy if hasattr(args, 'energy') else None,
-        resolution=args.resolution if hasattr(args, 'resolution') else None,
-        segment_id=args.segment_id if hasattr(args, 'segment_id') else None,
-        cache=not args.no_volume_cache if hasattr(args, 'no_volume_cache') else True,
-        normalize=args.volume_normalize if hasattr(args, 'volume_normalize') else False,
-        domain=args.volume_domain if hasattr(args, 'volume_domain') else None,
-        use_fsspec=args.use_fsspec if hasattr(args, 'use_fsspec') else False
+        verbose=verbose and (rank == 0),
+        num_parts=num_parts,
+        part_id=part_id,
+        # Volume-specific parameters passed through worker function arguments
+        # These should be included in the worker function parameters if needed
+        scroll_id=scroll_id,  # Pass scroll_id from args
+        energy=energy,         # Pass energy from args
+        resolution=resolution, # Pass resolution from args
+        segment_id=segment_id, # Pass segment_id from args
+        cache=True,  # Default to True
+        normalize=False,  # Default to False
+        domain=None,
+        use_fsspec=use_fsspec  # Use the args.use_fsspec flag
     )
     
     # Split the dataset for distributed processing
@@ -1770,40 +1935,54 @@ def run_worker(rank, world_size, args):
     # Create dataloader
     dataloader = DataLoader(
         dataset,
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         shuffle=False,
         num_workers=dataloader_workers,
         pin_memory=True,
-        collate_fn=custom_collate
+        collate_fn=custom_collate,
+        prefetch_factor=8
     )
     
     print(f"Rank {rank}: Created dataset with {len(dataset)} patches")
     
+    # Print parameters for debug when verbose is on
+    if verbose and rank == 0:
+        print(f"Worker TTA parameters:")
+        print(f"  - use_mirroring: {use_mirroring}")
+        print(f"  - max_tta_combinations: {max_tta_combinations}")
+        print(f"  - use_rotation_tta: {use_rotation_tta}")
+    
     # Create inference handler with the loaded model and dataset
     # TTA is always enabled by default, with rotation taking precedence
-    # Only disable TTA if args.no_mirroring is True AND args.max_tta_combinations is 0
-    use_tta = not (args.no_mirroring and args.max_tta_combinations == 0)
+    # Only disable TTA if use_mirroring is False (explicitly disabled)
+    use_tta = use_mirroring
     
-    # Use rotation TTA by default, unless explicitly disabled with --no_rotation_tta
-    use_rotation_tta = not args.no_rotation_tta and use_tta
+    # Force always using TTA unless explicitly disabled
+    if not use_tta and verbose and rank == 0:
+        print(f"Test time augmentation is DISABLED: use_tta={use_tta}")
+    elif verbose and rank == 0:
+        print(f"Test time augmentation is ENABLED: use_tta={use_tta}, use_rotation_tta={use_rotation_tta}")
+    
+    # Use rotation TTA by default, unless explicitly disabled
+    use_rotation_tta = use_rotation_tta and use_tta
     
     inference = ZarrInferer(
-        input_path=args.input,
-        output_path=args.output,
+        input_path=input_path,  # Use the validated input_path variable
+        output_path=output_path,
         model_info=model_info,
         dataset=dataset,
         dataloader=dataloader,
         patch_size=patch_size,
-        batch_size=args.batch_size,
-        step_size=args.step_size,
+        batch_size=batch_size,
+        step_size=step_size,
         num_write_workers=write_workers,
-        threshold=args.threshold,
+        threshold=threshold,
         use_mirroring=use_tta,
-        max_tta_combinations=args.max_tta_combinations,
+        max_tta_combinations=max_tta_combinations,
         use_rotation_tta=use_rotation_tta,
-        rotation_weights=args.rotation_weights,
-        save_probability_maps=not args.no_probabilities,
-        verbose=args.verbose and (rank == 0),
+        rotation_weights=rotation_weights,
+        save_probability_maps=save_probability_maps,
+        verbose=verbose and (rank == 0),
         rank=rank,
         edge_weight_boost=0,
         output_targets=output_targets
@@ -1813,7 +1992,7 @@ def run_worker(rank, world_size, args):
     inference_start_time = time.time()
     try:
         # Run inference - no timeout, let it take as long as needed
-        inference.infer()
+        inference.infer(skip_blending=skip_blending)
         
         # Print completion message
         print(f"Rank {rank}: Inference completed in {inference.total_time:.2f} seconds")
@@ -1870,6 +2049,14 @@ def main():
     # Set the multiprocessing start method to 'spawn' to avoid fork issues with TensorStore
     # Force=True to make sure it's set even if another method was already set
     mp.set_start_method('spawn', force=True)
+    
+    # Configure NumExpr and NumPy thread settings
+    os.environ["NUMEXPR_MAX_THREADS"] = str(os.cpu_count())  # Use all available cores
+    os.environ["OMP_NUM_THREADS"] = str(os.cpu_count())      # For NumPy operations
+    os.environ["MKL_NUM_THREADS"] = str(os.cpu_count())      # For NumPy with MKL backend
+    
+    if os.cpu_count() is not None:
+        print(f"Setting numerical libraries to use {os.cpu_count()} threads")
 
     # Parse arguments
     parser = argparse.ArgumentParser(description='Run nnUNet inference on a zarr array')
@@ -1923,6 +2110,8 @@ def main():
     parser.add_argument('--no_mirroring', action='store_true', help='Disable test time augmentation completely (only when combined with --max_tta_combinations=0)')
     parser.add_argument('--no_probabilities', action='store_true',
                         help='Do not save probability maps, save argmax for multiclass segmentation')
+    parser.add_argument('--skip_blending', action='store_true',
+                        help='Skip the blending phase and only save inference patches for later blending')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
     parser.add_argument('--dist_backend', type=str, default='nccl', 
                         help='PyTorch distributed backend (default: nccl, alternatives: gloo, mpi)')
@@ -2045,9 +2234,99 @@ def main():
                 
                 # Use mp.spawn like nnUNetv2 (simpler approach)
                 print(f"Starting {num_gpus} worker processes...")
+                
+                # Get specific arguments needed instead of passing the entire args object
+                input_path = args.input
+                output_path = args.output
+                model_folder = args.model_folder
+                hf_model_path = args.hf_model_path
+                hf_token = args.hf_token
+                fold = args.fold
+                checkpoint = args.checkpoint
+                dist_port = args.dist_port
+                batch_size = args.batch_size
+                step_size = args.step_size 
+                input_format = args.input_format
+                num_workers = args.num_workers
+                num_write_workers = args.num_write_workers
+                verbose = args.verbose
+                # If no_mirroring is True OR max_tta_combinations is 0, disable TTA
+                use_mirroring = not (args.no_mirroring or args.max_tta_combinations == 0)
+                # Override: Always enable TTA by default unless explicitly disabled
+                use_mirroring = True
+                max_tta_combinations = args.max_tta_combinations
+                use_rotation_tta = not args.no_rotation_tta and use_mirroring
+                rotation_weights = args.rotation_weights
+                save_probability_maps = not args.no_probabilities
+                skip_blending = args.skip_blending
+                threshold = args.threshold
+                dist_backend = args.dist_backend
+                num_parts = args.num_parts
+                part_id = args.part_id
+                
+                print(f"Starting worker processes with essential args:")
+                print(f"  - input_path: {input_path}")
+                print(f"  - output_path: {output_path}")
+                print(f"  - num_parts: {num_parts}")
+                print(f"  - part_id: {part_id}")
+                print(f"  - batch_size: {batch_size}")
+                
+                # Display TTA parameters
+                print(f"  - use_mirroring: {use_mirroring}")
+                print(f"  - max_tta_combinations: {max_tta_combinations}")
+                print(f"  - use_rotation_tta: {use_rotation_tta}")
+                print(f"  - no_mirroring flag: {args.no_mirroring}")
+                print(f"  - skip_blending: {skip_blending}")
+                
+                # Extract additional Volume-specific parameters
+                use_fsspec = args.use_fsspec if hasattr(args, 'use_fsspec') else False
+                scroll_id = args.scroll_id if hasattr(args, 'scroll_id') else None
+                energy = args.energy if hasattr(args, 'energy') else None
+                resolution = args.resolution if hasattr(args, 'resolution') else None
+                segment_id = args.segment_id if hasattr(args, 'segment_id') else None
+                
+                print(f"  - use_fsspec: {use_fsspec}")
+                if scroll_id:
+                    print(f"  - scroll_id: {scroll_id}")
+                if energy:
+                    print(f"  - energy: {energy}")
+                if resolution:
+                    print(f"  - resolution: {resolution}")
+                if segment_id:
+                    print(f"  - segment_id: {segment_id}")
+                
                 mp.spawn(
                     run_worker,
-                    args=(num_gpus, args),
+                    args=(num_gpus, 
+                          input_path, 
+                          output_path, 
+                          model_folder,
+                          hf_model_path,
+                          hf_token,
+                          fold,
+                          checkpoint,
+                          dist_port,
+                          batch_size,
+                          step_size,
+                          input_format,
+                          num_workers,
+                          num_write_workers,
+                          verbose,
+                          use_mirroring,
+                          max_tta_combinations,
+                          use_rotation_tta,
+                          rotation_weights,
+                          save_probability_maps,
+                          skip_blending,
+                          threshold,
+                          dist_backend,
+                          num_parts,
+                          part_id,
+                          use_fsspec,
+                          scroll_id,
+                          energy,
+                          resolution,
+                          segment_id),
                     nprocs=num_gpus,
                     join=True
                 )
@@ -2071,6 +2350,15 @@ def single_process_inference(args):
     
     # Make input_path available for the function
     input_path = args.input
+    print(f"Single process: Input path = '{input_path}' (type: {type(input_path)})")
+    
+    # Ensure input path is not empty or None
+    if not input_path:
+        print(f"Single process: ERROR - Empty input path detected! This should not happen.")
+        raise ValueError("Input path is empty or None. Cannot proceed with inference.")
+        
+    # Ensure input_path is a string
+    input_path = str(input_path)
     
     # Convert fold to int if numeric
     try:
@@ -2155,7 +2443,8 @@ def single_process_inference(args):
         shuffle=False,
         num_workers=args.num_workers,
         pin_memory=True,
-        collate_fn=custom_collate
+        collate_fn=custom_collate,
+        prefetch_factor=8
     )
     
     print(f"Created dataset with {len(dataset)} patches")
@@ -2169,7 +2458,7 @@ def single_process_inference(args):
     use_rotation_tta = not args.no_rotation_tta and use_tta
     
     inference = ZarrInferer(
-        input_path=args.input,
+        input_path=input_path,  # Use the validated input_path variable
         output_path=args.output,
         model_info=model_info,
         dataset=dataset,

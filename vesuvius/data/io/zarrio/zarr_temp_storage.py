@@ -156,11 +156,31 @@ class ZarrTempStorage:
         # Convert position to integers to ensure consistency
         position = tuple(int(p) for p in position)
         
+        # Augment the patch with position information
+        # Add 3 channels at the beginning - each channel will have a single value for the entire patch
+        # This creates a new shape: (original_channels + 3, Z, Y, X)
+        # Those first 3 channels will store position information
+        patch_shape = patch.shape
+        
+        # Create the combined patch with 3 additional channels for position
+        c, *spatial_dims = patch_shape  # Extract channels and spatial dimensions
+        combined_shape = (c + 3,) + tuple(spatial_dims)
+        combined_patch = np.zeros(combined_shape, dtype=patch.dtype)
+        
+        # Store position values in the first three channels as single values
+        # These will be uniform arrays where every element has the same position value
+        combined_patch[0] = position[0]  # Z position in first channel
+        combined_patch[1] = position[1]  # Y position in second channel
+        combined_patch[2] = position[2]  # X position in third channel
+        
+        # Copy the original patch data into the remaining channels
+        combined_patch[3:] = patch
+        
         # Initialize structures if needed (with locking ONLY for initialization)
         # This happens exactly once per target at the start
-        if target_name not in self.positions:
+        if target_name not in self.patch_counts:
             with self.lock:
-                if target_name not in self.positions:
+                if target_name not in self.patch_counts:
                     # We must have the expected_patch_counts set - fail otherwise
                     if not hasattr(self, 'expected_patch_counts') or target_name not in self.expected_patch_counts:
                         raise ValueError(f"Expected patch count must be set for target {target_name} before storing patches")
@@ -172,43 +192,39 @@ class ZarrTempStorage:
                     if self.verbose:
                         print(f"Rank {self.rank}: Using exact count of {exact_size} patches for {target_name}")
                     
-                    # Initialize positions dictionary for this target
-                    self.positions[target_name] = {}
+                    # Initialize counter for patch tracking
                     self.patch_counts[target_name] = 0
-                    
-                    # Initialize positions in the all rank positions dictionary
-                    if self.rank not in self.all_rank_positions:
-                        self.all_rank_positions[self.rank] = {}
-                    self.all_rank_positions[self.rank][target_name] = {}
-                    
-                    # Get shape and dtype for patch array
-                    patch_shape = patch.shape
-                    patch_dtype = patch.dtype
                     
                     # Create a simple zarr array to store patches without compression for maximum write speed
                     # No compression for temp storage to maximize I/O throughput
                     self.patches_group.create_dataset(
                         target_name, 
-                        shape=(exact_size,) + patch_shape,  # (num_patches, C, Z, Y, X)
-                        chunks=(1,) + patch_shape,  # Each patch in its own chunk for parallel access
-                        dtype=patch_dtype,
+                        shape=(exact_size,) + combined_shape,  # (num_patches, C+3, Z, Y, X)
+                        chunks=(1,) + combined_shape,  # Each patch in its own chunk for parallel access
+                        dtype=combined_patch.dtype,
                         compressor=None,  # No compression for faster writes
                         write_empty_chunks=False  # Skip writing empty chunks to save space
                     )
+                    
+                    # Store metadata about position channels
+                    self.patches_group[target_name].attrs['has_position_channels'] = True
+                    self.patches_group[target_name].attrs['position_channel_z'] = 0
+                    self.patches_group[target_name].attrs['position_channel_y'] = 1 
+                    self.patches_group[target_name].attrs['position_channel_x'] = 2
                     
                     # Register this array with the parallel writer
                     array_path = f"rank_{self.rank}/patches/{target_name}"
                     if self.parallel_writer:
                         self.parallel_writer.register_array(
                             array_path=array_path,
-                            shape=(exact_size,) + patch_shape,
-                            dtype=patch_dtype,
-                            chunks=(1,) + patch_shape
+                            shape=(exact_size,) + combined_shape,
+                            dtype=combined_patch.dtype,
+                            chunks=(1,) + combined_shape
                         )
                     
                     if self.verbose:
                         print(f"Rank {self.rank}: Created array for target {target_name} with exact size {exact_size}")
-                        print(f"Rank {self.rank}: Using simple dictionary to track positions")
+                        print(f"Rank {self.rank}: Each patch now contains position channels Z, Y, X as first 3 channels")
         
         # Get the next available index
         idx = self.patch_counts[target_name]
@@ -219,26 +235,22 @@ class ZarrTempStorage:
         if idx >= array_shape[0]:
             raise IndexError(f"Index out of bounds: trying to write to index {idx} but array {array_path} has shape {array_shape}")
         
-        # Store position in our tracking dictionary
-        self.positions[target_name][idx] = position
-        self.all_rank_positions[self.rank][target_name][idx] = position
-        
         # Increment patch count
         self.patch_counts[target_name] += 1
         
-        # Send the patch to the parallel writer instead of storing directly
+        # Send the combined patch to the parallel writer instead of storing directly
         if self.parallel_writer:
             array_path = f"rank_{self.rank}/patches/{target_name}"
-            self.parallel_writer.write_patch(array_path, idx, patch)
+            self.parallel_writer.write_patch(array_path, idx, combined_patch)
             
             if self.verbose and idx < 3:
-                print(f"Sending patch at index {idx} with position {position} to parallel writer")
+                print(f"Sending patch at index {idx} with embedded position {position} to parallel writer")
         else:
             # Fallback to direct storage
-            self.patches_group[target_name][idx] = patch
+            self.patches_group[target_name][idx] = combined_patch
             
             if self.verbose and idx < 3:
-                print(f"Storing patch at index {idx} with position {position} directly (no parallel writer)")
+                print(f"Storing patch at index {idx} with embedded position {position} directly (no parallel writer)")
         
         return idx
     
@@ -301,17 +313,14 @@ class ZarrTempStorage:
     
     def finalize_target(self, target_name: str):
         """
-        Finalize a target by recording the positions in metadata.
+        Finalize a target by recording the patch count in metadata.
         
         Args:
             target_name: Target name to finalize
         """
-        if target_name in self.positions:
-            # Get the positions for this target
-            positions_dict = self.positions[target_name]
-            
-            # Calculate count of patches
-            count = len(positions_dict)
+        if target_name in self.patch_counts:
+            # Get count of patches from our counter
+            count = self.patch_counts[target_name]
             
             # Store count as metadata in the zarr array
             if target_name in self.patches_group:
@@ -325,46 +334,30 @@ class ZarrTempStorage:
                 write_empty_chunks=False  # Skip writing empty chunks to save space
             )
             
-            # Store positions in zarr for other ranks to access
-            if 'positions' not in self.rank_group:
-                positions_group = self.rank_group.create_group('positions')
-            else:
-                positions_group = self.rank_group['positions']
-                
-            # Convert positions dictionary to array for storage
-            if count > 0:
-                positions_array = np.zeros((count, 3), dtype=np.int32)
-                for idx, pos in positions_dict.items():
-                    if idx < count:  # Safety check
-                        positions_array[idx] = np.array(pos, dtype=np.int32)
-                
-                # Save to zarr without compression for maximum write speed
-                positions_group.create_dataset(
-                    target_name,
-                    data=positions_array,
-                    dtype='i4',
-                    compressor=None,  # No compression for faster writes
-                    write_empty_chunks=False  # Skip writing empty chunks to save space
-                )
-                
-                if self.verbose:
-                    print(f"Saved {count} positions to zarr for target {target_name}")
-            
             if self.verbose:
                 print(f"Number of patches stored: {count}")
-                if count > 0:
-                    # Show first few positions
-                    keys_to_show = sorted(positions_dict.keys())[:5] if len(positions_dict) >= 5 else sorted(positions_dict.keys())
-                    first_positions = [(idx, positions_dict[idx]) for idx in keys_to_show]
-                    print(f"First few positions: {first_positions}")
-                    
-                    # Show last few positions
-                    last_keys = sorted(positions_dict.keys())[-5:] if len(positions_dict) >= 5 else sorted(positions_dict.keys())
-                    last_positions = [(idx, positions_dict[idx]) for idx in last_keys]
-                    print(f"Last few positions: {last_positions}")
+                
+                # Display information about stored positions
+                print(f"Position information is embedded in each patch in the first 3 channels")
+                
+                # Show some statistics about the first few patches if available
+                if count > 0 and target_name in self.patches_group:
+                    # Get the first few patches (up to 5) for display
+                    num_to_show = min(5, count)
+                    for idx in range(num_to_show):
+                        try:
+                            # Extract just the position channels from the first patch
+                            patch_with_pos = self.patches_group[target_name][idx]
+                            # Get the position from the first pixel of each of the first 3 channels
+                            z_pos = patch_with_pos[0, 0, 0, 0]  # First channel is Z
+                            y_pos = patch_with_pos[1, 0, 0, 0]  # Second channel is Y
+                            x_pos = patch_with_pos[2, 0, 0, 0]  # Third channel is X
+                            print(f"Patch {idx} position: ({z_pos}, {y_pos}, {x_pos})")
+                        except Exception as e:
+                            print(f"Error extracting position from patch {idx}: {e}")
             
             if self.verbose:
-                print(f"Rank {self.rank}: Finalized target {target_name} with {count} patches and positions")
+                print(f"Rank {self.rank}: Finalized target {target_name} with {count} patches")
     
     def get_all_patches(self, rank: int, target_name: str) -> Tuple[np.ndarray, Dict[int, Tuple[int, int, int]]]:
         """
@@ -377,6 +370,10 @@ class ZarrTempStorage:
         Returns:
             Tuple of (patches_array, position_dict, index_mapping)
             where position_dict maps indices to (z,y,x) positions
+            
+        Note:
+            Position information is embedded in the patches themselves in the first 3 channels.
+            The position_dict is built on-demand from the embedded positions.
         """
         try:
             print(f"  get_all_patches for rank {rank}, target {target_name}")
@@ -388,27 +385,6 @@ class ZarrTempStorage:
                 print(f"  No patches found for target {target_name} in rank {rank}")
                 return None, {}, {}
             
-            # If this is our own rank, we can access the data directly
-            if rank == self.rank and target_name in self.positions:
-                print(f"  Getting patches from our own rank {rank}")
-                
-                # Get all positions from our dictionary
-                position_dict = self.positions[target_name]
-                
-                if self.verbose:
-                    print(f"  Found {len(position_dict)} positions")
-                
-                # Return a reference to the zarr array, don't load all into memory
-                # This is a reference that will load data on-demand when indexed
-                patches_array = self.patches_group[target_name]
-                
-                # Create a simple sequential index mapping (identity mapping)
-                index_mapping = {i: i for i in range(count)}
-                
-                print(f"  Returning {count} patches for rank {rank}, target {target_name}")
-                return patches_array, position_dict, index_mapping
-            
-            # Otherwise we're reading from another rank via zarr
             # Make sure the zarr store is open
             if self.temp_zarr is None:
                 print(f"  Opening zarr store at {self.temp_zarr_path}")
@@ -442,48 +418,33 @@ class ZarrTempStorage:
             # This is a reference that will load data on-demand when indexed
             patches_array = patches_group[target_name]
             
-            # Get position dictionary if we have it in memory
-            if rank in self.all_rank_positions and target_name in self.all_rank_positions[rank]:
-                position_dict = self.all_rank_positions[rank][target_name]
-            else:
-                # Try to load positions from zarr storage
-                position_dict = {}
-                try:
-                    # Check if positions group exists
-                    if "positions" in rank_group and target_name in rank_group["positions"]:
-                        positions_dataset = rank_group["positions"][target_name]
-                        
-                        # Read all positions at once
-                        positions_array = positions_dataset[:]
-                        
-                        # Check dataset shape
-                        if len(positions_array.shape) != 2 or positions_array.shape[1] != 3:
-                            print(f"Warning: Invalid positions dataset shape: {positions_array.shape}")
-                        else:
-                            # Convert to dictionary of tuples
-                            for idx in range(positions_array.shape[0]):
-                                pos = tuple(int(x) for x in positions_array[idx])
-                                position_dict[idx] = pos
-                            
-                            print(f"Loaded {len(position_dict)} positions from zarr for rank {rank}")
-                            
-                            # Cache the positions for future use
-                            if rank not in self.all_rank_positions:
-                                self.all_rank_positions[rank] = {}
-                            self.all_rank_positions[rank][target_name] = position_dict
-                    else:
-                        print(f"Warning: No position data for rank {rank}, target {target_name} in zarr storage")
-                except Exception as e:
-                    print(f"Error loading positions from zarr: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    # Continue with empty dict as fallback
+            # Check if patches have embedded position information by looking at attributes
+            has_position_channels = patches_array.attrs.get('has_position_channels', False)
             
-            # Create a simple sequential index mapping
+            if not has_position_channels:
+                print(f"Warning: Patches for {target_name} in rank {rank} do not have embedded position channels")
+                return patches_array, {}, {i: i for i in range(count)}
+            
+            # Create position dictionary from the first few patches (lazy loading)
+            # For memory efficiency, don't load all patches at once to extract positions
+            # Instead create a dictionary that will extract positions on demand
+            position_dict = {}
+            
+            # Check the first patch to confirm position channel structure
+            if count > 0:
+                # Get just the first few pixels of the position channels from the first patch
+                first_patch_pos_data = patches_array[0, :3, 0:1, 0:1, 0:1]
+                z_pos = first_patch_pos_data[0, 0, 0, 0]
+                y_pos = first_patch_pos_data[1, 0, 0, 0]
+                x_pos = first_patch_pos_data[2, 0, 0, 0]
+                print(f"  Sample position from first patch: ({z_pos}, {y_pos}, {x_pos})")
+            
+            # Create a sequential index mapping
             index_mapping = {i: i for i in range(count)}
+            
             if self.verbose:
-                print(f"DEBUG: Created patches_array with shape: {patches_array.shape}")
-                print(f"DEBUG: Position dict has {len(position_dict)} entries")
+                print(f"DEBUG: Found patches_array with shape: {patches_array.shape}")
+                print(f"DEBUG: Using embedded position channels for {count} patches")
             
             return patches_array, position_dict, index_mapping
             
@@ -499,6 +460,7 @@ class ZarrTempStorage:
         Collect all patches across all ranks for a specific target.
         
         This constructs a list of (rank, patch_idx, position) tuples for all patches.
+        Position information is extracted from the embedded position channels in each patch.
         
         Args:
             target_name: Target name to collect patches for
@@ -509,141 +471,88 @@ class ZarrTempStorage:
         print(f"Starting collect_all_patches for {target_name}")
         all_patches = []
         
-        # Share position information between all ranks if using distributed training
+        # Synchronize ranks if using distributed training
         if dist.is_initialized():
-            # Create an explicit collective operation to share position data between ranks
-            # This ensures all ranks have position information from all other ranks
-            
-            # First, collect our own positions
-            if target_name in self.positions:
-                # Using our own memory for our own rank
-                positions_dict = self.positions[target_name]
-                
-                # Update our entry in all_rank_positions
-                if self.rank not in self.all_rank_positions:
-                    self.all_rank_positions[self.rank] = {}
-                self.all_rank_positions[self.rank][target_name] = positions_dict
-                
-                if self.verbose:
-                    print(f"Collected our own positions for rank {self.rank}, target {target_name}: {len(positions_dict)} entries")
-                    
-            # Barrier to ensure all ranks have processed their positions
+            # Barrier to ensure all ranks have saved their patches
             dist.barrier()
+        
+        # Make sure the zarr store is open
+        if self.temp_zarr is None:
+            print(f"Opening zarr store at {self.temp_zarr_path}")
+            self.temp_zarr = zarr.open(self.temp_zarr_path, mode='r')
         
         # Now collect patches from all ranks
         for rank in range(self.world_size):
             print(f"Collecting patches for rank {rank}...")
             try:
-                # First try to use in-memory data if available for our own rank
-                if rank == self.rank and target_name in self.positions:
-                    # Using our own memory for our own rank
-                    positions_dict = self.positions[target_name]
-                    count = len(positions_dict)
+                # First check if rank directory exists
+                rank_key = f"rank_{rank}"
+                if rank_key not in self.temp_zarr:
+                    print(f"Warning: No directory for rank {rank} found in zarr store at {self.temp_zarr_path}")
+                    print(f"Available keys: {list(self.temp_zarr.keys())}")
+                    continue
                     
-                    print(f"Using in-memory positions for rank {self.rank}, found {count} patches")
-                    
-                    # Add each patch to the list with its position
-                    for idx, pos in positions_dict.items():
-                        try:
-                            # Ensure position is a proper (z,y,x) tuple with exactly 3 integer values
-                            if not isinstance(pos, tuple) or len(pos) != 3:
-                                raise ValueError(f"Invalid position format: {pos}, expected a tuple of exactly 3 values")
-                                
-                            # Convert to integers to ensure consistency
-                            pos_tuple = (int(pos[0]), int(pos[1]), int(pos[2]))
-                            all_patches.append((rank, idx, pos_tuple))
-                            
-                            # Debug the first and last few positions
-                            if self.verbose:
-                                if idx < 3 or idx >= count - 3:
-                                    print(f"Added position from rank {rank}, index {idx}: {pos}")
-                        except Exception as e:
-                            print(f"Error processing in-memory position: {e}")
-                            raise  # Re-raise to abort processing - this is a critical error
-                    
-                    print(f"Successfully added {count} patches from rank {rank}")
-                    continue  # Skip to next rank
+                # Then check if patches group exists
+                if "patches" not in self.temp_zarr[rank_key]:
+                    print(f"Warning: No 'patches' group in rank {rank} directory")
+                    print(f"Available keys in {rank_key}: {list(self.temp_zarr[rank_key].keys())}")
+                    continue
                 
-                # Otherwise check if we already have the position data in memory
-                if rank in self.all_rank_positions and target_name in self.all_rank_positions[rank]:
-                    positions_dict = self.all_rank_positions[rank][target_name]
-                    count = len(positions_dict)
-                    
-                    print(f"Using cached positions for rank {rank}, found {count} patches")
-                    
-                    # Add each patch to the list with its position
-                    for idx, pos in positions_dict.items():
-                        try:
-                            # Ensure position is a proper tuple
-                            if not isinstance(pos, tuple) or len(pos) != 3:
-                                raise ValueError(f"Invalid position format: {pos}")
-                                
-                            # Convert to integers to ensure consistency
-                            pos_tuple = (int(pos[0]), int(pos[1]), int(pos[2]))
-                            all_patches.append((rank, idx, pos_tuple))
-                            
-                            # Debug the first and last few positions
-                            if idx < 3 or idx >= count - 3:
-                                print(f"Added position from rank {rank}, index {idx}: {pos}")
-                        except Exception as e:
-                            print(f"Error processing cached position: {e}")
-                            continue
-                    
-                    print(f"Successfully added {count} patches from rank {rank}")
-                    continue  # Skip to next rank
-                
-                # Otherwise fetch position data from zarr (for non-distributed case or fallback)
+                # Fetch patch count from zarr
                 count = self.get_patches_count(rank, target_name)
                 print(f"Found {count} patches for rank {rank}")
                 
                 if count == 0:
                     continue
                 
-                try:
-                    # First get the rank group from zarr
-                    rank_key = f"rank_{rank}"
-                    if rank_key not in self.temp_zarr:
-                        print(f"Warning: No data for rank {rank} found in zarr store")
-                        continue
+                # Get the patches array for this rank
+                rank_key = f"rank_{rank}"
+                if rank_key not in self.temp_zarr:
+                    print(f"Warning: No data for rank {rank} found in zarr store")
+                    continue
+                
+                rank_group = self.temp_zarr[rank_key]
+                
+                if "patches" not in rank_group:
+                    print(f"Warning: No patches group for rank {rank}")
+                    continue
+                
+                patches_group = rank_group["patches"]
+                
+                if target_name not in patches_group:
+                    print(f"Warning: No patches for target {target_name} in rank {rank}")
+                    continue
+                
+                # Get the patches array (reference only, doesn't load all data)
+                patches_array = patches_group[target_name]
+                
+                # Check if position information is embedded in patches
+                has_position_channels = patches_array.attrs.get('has_position_channels', False)
+                
+                if has_position_channels:
+                    print(f"Found {count} patches with embedded positions for rank {rank}")
                     
-                    rank_group = self.temp_zarr[rank_key]
+                    # Use sampling to avoid loading all patches into memory at once
+                    # Only load the minimum data needed (first pixel of each position channel)
+                    for idx in range(count):
+                        try:
+                            # Extract just the position channels' first pixel for this patch
+                            pos_data = patches_array[idx, :3, 0, 0, 0]
+                            
+                            # Create position tuple from the channel values
+                            pos_tuple = (int(pos_data[0]), int(pos_data[1]), int(pos_data[2]))
+                            all_patches.append((rank, idx, pos_tuple))
+                            
+                            # Debug the first and last few positions
+                            if idx < 3 or idx >= count - 3:
+                                print(f"Added position from rank {rank}, index {idx}: {pos_tuple}")
+                        except Exception as e:
+                            print(f"Error extracting position from patch {idx}: {e}")
+                            continue
                     
-                    # Check if positions group exists
-                    if "positions" not in rank_group:
-                        print(f"Warning: No positions group for rank {rank}")
-                        continue
-                    
-                    # Check if target exists in positions group
-                    positions_group = rank_group["positions"]
-                    if target_name not in positions_group:
-                        print(f"Warning: No positions for target {target_name} in rank {rank}")
-                        continue
-                    
-                    # Get positions dataset
-                    positions_dataset = positions_group[target_name]
-                    
-                    # Check dataset shape
-                    if len(positions_dataset.shape) != 2 or positions_dataset.shape[1] != 3:
-                        print(f"Warning: Invalid positions dataset shape: {positions_dataset.shape}")
-                        continue
-                    
-                    # Read all positions at once and convert to tuples
-                    positions_array = positions_dataset[:]
-                    
-                    # Add positions to the all_patches list
-                    for idx in range(positions_array.shape[0]):
-                        pos = tuple(int(x) for x in positions_array[idx])
-                        all_patches.append((rank, idx, pos))
-                        
-                        # Debug logging for first and last few positions
-                        if idx < 3 or idx >= positions_array.shape[0] - 3:
-                            print(f"Added position from zarr for rank {rank}, index {idx}: {pos}")
-                    
-                    print(f"Successfully added {positions_array.shape[0]} patches from rank {rank} (loaded from zarr)")
-                except Exception as e:
-                    print(f"Error loading positions from zarr for rank {rank}: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    print(f"Successfully added {count} patches from rank {rank}")
+                else:
+                    print(f"Warning: Patches for rank {rank}, target {target_name} don't have embedded positions")
 
             except Exception as e:
                 print(f"Error collecting patches for rank {rank}, target {target_name}: {e}")
