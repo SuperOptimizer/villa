@@ -13,6 +13,7 @@ from io import BytesIO
 from pathlib import Path
 from setup.accept_terms import get_installation_path
 from data.io.paths import list_files, is_aws_ec2_instance
+import torch
 
 # Remove the PIL image size limit
 Image.MAX_IMAGE_PIXELS = None
@@ -88,7 +89,20 @@ class Volume:
         Data type of the volume.
     """
         
-    def __init__(self, type: Union[str,int], scroll_id: Optional[Union[int, str]] = None, energy: Optional[int] = None, resolution: Optional[float] = None, segment_id: Optional[int] = None, cache: bool = True, cache_pool: int = 1e10, normalize: bool = False, verbose : bool = False, domain: Optional[str] = None, path: Optional[str] = None, use_fsspec: bool = False) -> None:
+    def __init__(self, type: Union[str,int],
+                 scroll_id: Optional[Union[int, str]] = None,
+                 energy: Optional[int] = None,
+                 resolution: Optional[float] = None,
+                 segment_id: Optional[int] = None,
+                 cache: bool = True, cache_pool: int = 1e10,
+                 normalize: bool = False,
+                 normalization_scheme: str = 'none',
+                 return_as_type: str = 'none', # none in this parameter indicates no dtype conversion will occur
+                 return_as_tensor: bool = False,
+                 verbose : bool = False,
+                 domain: Optional[str] = None,
+                 path: Optional[str] = None,
+                 use_fsspec: bool = False) -> None:
         """
         Initialize the Volume object.
 
@@ -109,7 +123,14 @@ class Volume:
         cache_pool : int, default = 1e10
             Size of the cache pool in bytes.
         normalize : bool, default = False
-            Indicates if the data should be normalized.
+            Indicates if the data should be normalized to float  (values between 0 and 1)
+        normalization_scheme : str, default = 'none'
+            In addition to normalizing to float values, data can be additionally normalized by performing one of the normalization schemes,
+            available options are basic standard deviation , and zscore
+        return_as_type : str, default = 'none'
+            Specify the type of data you'd like returned, options are uint8, uint16, float16, float32. 'none' will simply return in the dtype provided
+        return_as_tensor: bool, default = False
+            If True, returns the data as a PyTorch tensor instead of a NumPy array
         verbose : bool, default = False
             If True, prints additional information during initialization.
         domain : str, default = "dl.ash2txt"
@@ -213,6 +234,9 @@ class Volume:
             self.cache = cache
             self.cache_pool = cache_pool
             self.normalize = normalize
+            self.normalization_scheme = normalization_scheme
+            self.return_as_type = return_as_type
+            self.return_as_tensor = return_as_tensor
             self.verbose = verbose
             self.use_fsspec = use_fsspec
             
@@ -765,12 +789,6 @@ class Volume:
                     # Re-raise the error if we can't handle it
                     raise
                 
-            # Apply normalization if needed
-            if self.normalize:
-                return data_slice / self.max_dtype
-            else:
-                return data_slice
-                
         else:
             # Using TensorStore (for both local and remote)
             try:
@@ -786,19 +804,60 @@ class Volume:
                 
                 if self.verbose:
                     print(f"TensorStore returned shape: {data_slice.shape}")
-                
-                # Apply normalization if needed
-                if self.normalize:
-                    return data_slice / self.max_dtype
-                else:
-                    return data_slice
-                    
+
             except Exception as e:
                 if self.verbose:
                     print(f"TensorStore access error: {e}")
                     print(f"Indices: z={z}, y={y}, x={x}, type(z)={type(z)}, type(y)={type(y)}, type(x)={type(x)}")
                 # Re-raise to let caller handle the error
                 raise
+
+        # we perform all normalization in float32 , and then scale for output dtypes if specified in 'return_as_type'
+
+        # Apply normalization if needed
+        if self.normalize:
+            data_slice = data_slice / self.max_dtype
+            data_slice = data_slice.astype(np.float32)
+
+        if self.normalization_scheme:
+            if self.normalization_scheme == 'zscore' or self.normalization_scheme == 'std':
+                # zscore and std do the same normalization: (x - mean) / std
+                for c in range(data_slice.shape[0]):
+                    mean = np.mean(data_slice[c])
+                    std = np.std(data_slice[c])
+                    if std > 0:
+                        data_slice[c] = (data_slice[c] - mean) / std
+            elif self.normalization_scheme == 'minmax':
+                for c in range(data_slice.shape[0]):
+                    min_val = np.min(data_slice[c])
+                    max_val = np.max(data_slice[c])
+                    if max_val > min_val:
+                        data_slice[c] = (data_slice[c] - min_val) / (max_val - min_val)
+
+
+        if self.return_as_type:
+            if self.return_as_type == 'np.float32':
+                pass # data is float32 at this stage, we just pass it along
+            elif self.return_as_type == 'np.uint8':
+                data_slice = data_slice * get_max_value(np.uint8)
+                data_slice = data_slice.astype(np.uint8)
+            elif self.return_as_type == 'np.uint16':
+                data_slice = data_slice * get_max_value(np.uint16)
+                data_slice = data_slice.astype(np.uint16)
+            elif self.return_as_type == 'np.float16':
+                data_slice = data_slice * get_max_value(np.float16)
+                data_slice = data_slice.astype(np.float16)
+
+        if self.return_as_tensor:
+            data_slice = torch.from_numpy(data_slice).contiguous()
+            return data_slice
+        else:
+            return data_slice
+
+
+
+                    
+
         
     def grab_canonical_energy(self) -> Optional[int]:
         """

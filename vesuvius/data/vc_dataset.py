@@ -30,7 +30,10 @@ class VCDataset(Dataset):
             resolution: Optional[float] = None, 
             segment_id: Optional[int] = None,
             cache: bool = True,
-            normalize: bool = False,
+            normalize: bool = True,
+            normalization_scheme: str = 'zscore',
+            return_as_type: str = 'np.float32',
+            return_as_tensor: bool = True,
             domain: Optional[str] = None,
             use_fsspec: bool = False,
             ):
@@ -56,7 +59,10 @@ class VCDataset(Dataset):
             resolution: Resolution value for Volume
             segment_id: ID of the segment for Volume
             cache: Whether to use caching with Volume (default: True)
-            normalize: Whether to normalize Volume data (default: False)
+            normalize: Whether to normalize Volume data to 0:1 values (default: True)
+            normalization_scheme: Normalization scheme to apply ('none', 'zscore', 'minmax') (default: 'zscore')
+            return_as_type: Type to return data as ('none', 'np.uint8', 'np.uint16', 'np.float16', 'np.float32') (default: 'np.float32')
+            return_as_tensor: Whether to return data as torch tensor (default: True)
             domain: Domain for Volume ('dl.ash2txt' or 'local')
             use_fsspec: Whether to use fsspec instead of TensorStore for data access (default: False)
         """
@@ -135,6 +141,9 @@ class VCDataset(Dataset):
                 segment_id=segment_id,
                 cache=cache,
                 normalize=normalize,
+                normalization_scheme=normalization_scheme,
+                return_as_type=return_as_type,
+                return_as_tensor=return_as_tensor,
                 verbose=verbose,
                 domain=domain,
                 path=use_path,
@@ -156,13 +165,10 @@ class VCDataset(Dataset):
             pass
 
         elif mode == 'infer':
-            # num_input_channels is already provided as a parameter
-            pass
 
             pZ, pY, pX = self.patch_size
-
-            # Get the 3D spatial dimensions regardless of input shape
-            image_size = self.get_input_shape()
+            # Get the 3D spatial dimensions directly
+            image_size = self.input_shape if len(self.input_shape) == 3 else self.input_shape[1:]
 
             # Generate all coordinates using sliding window
             # self.step_size is a factor (e.g., 0.5 means 50% overlap)
@@ -227,13 +233,6 @@ class VCDataset(Dataset):
                     else:
                         print("Warning: No positions in this partition!")
 
-    def get_input_shape(self):
-        """
-        Return the spatial dimensions (Z,Y,X) of the input array.
-        For 4D arrays (C,Z,Y,X), returns just the spatial part (Z,Y,X).
-        """
-        # Handle both 3D array (Z,Y,X) and 4D array with channels (C,Z,Y,X)
-        return self.input_shape if len(self.input_shape) == 3 else self.input_shape[1:]
 
     def set_distributed(self, rank: int, world_size: int):
         """
@@ -293,174 +292,117 @@ class VCDataset(Dataset):
     def __getitem__(self, idx):
         z, y, x = self.all_positions[idx]
 
-        if self.use_volume:
-            # Extract the patch from Volume
-            pZ, pY, pX = self.patch_size
-            
-            # Get patch data using Volume's indexing capabilities
-            try:
-                # Check if input has channels or if it's a single-channel 3D volume
-                if len(self.input_shape) == 3:  # Single-channel implicit
-                    # Extract spatial patch from Volume
+        pZ, pY, pX = self.patch_size
+
+        # Get patch data using Volume
+        try:
+            # Check if input has channels or if it's a single-channel 3D volume
+            if len(self.input_shape) == 3:  # Single-channel implicit
+                # Extract spatial patch from Volume
+                if self.verbose and idx < 3:
+                    print(f"Extracting patch at z={z}, y={y}, x={x} with size {self.patch_size}")
+
+                # Extract the entire patch at once
+                # Volume's __getitem__ accepts indices as (x, y, z, subvolume_idx)
+                patch_data = np.zeros((pZ, pY, pX), dtype=np.float32)
+
+                # Extract patch data using uniform approach regardless of fsspec or TensorStore
+                try:
+                    # Define safe slices that don't go out of bounds
+                    z_slice = slice(z, min(z + pZ, self.input_shape[0]))
+                    y_slice = slice(y, min(y + pY, self.input_shape[1]))
+                    x_slice = slice(x, min(x + pX, self.input_shape[2]))
+
                     if self.verbose and idx < 3:
-                        print(f"Extracting patch at z={z}, y={y}, x={x} with size {self.patch_size}")
-                    
-                    # Extract the entire patch at once
-                    # Volume's __getitem__ accepts indices as (x, y, z, subvolume_idx)
-                    patch_data = np.zeros((pZ, pY, pX), dtype=np.float32)
-                    
-                    # Extract patch data using uniform approach regardless of fsspec or TensorStore
+                        print(f"Extracting patch with slices: z={z_slice}, y={y_slice}, x={x_slice}")
+                        print(f"Volume access mode: {'fsspec/zarr' if self.volume.use_fsspec else 'TensorStore'}")
+
+                    # Get the data using Volume's __getitem__ method
+                    # Volume.__getitem__ handles the read().result() call for TensorStore
+                    # And direct array access for fsspec/zarr
+                    extracted_data = self.volume[z_slice, y_slice, x_slice]
+
+                    # Copy data to the right location in our patch
+                    # Calculate actual sizes fetched (may be smaller than requested due to bounds)
+                    fetched_z = extracted_data.shape[0]
+                    fetched_y = extracted_data.shape[1]
+                    fetched_x = extracted_data.shape[2]
+
+                    # Copy the data into our patch buffer
+                    patch_data[:fetched_z, :fetched_y, :fetched_x] = extracted_data
+
+                    if self.verbose and idx < 3:
+                        print(f"Extracted data shape: {extracted_data.shape}")
+
+                except Exception as e:
+                    if self.verbose:
+                        print(f"Error extracting patch: {e}")
+
+                # Add channel dimension (create C,Z,Y,X)
+                patch = patch_data[np.newaxis, ...]
+
+            else:  # Multi-channel explicit (C,Z,Y,X)
+                # For multi-channel, we need to extract each channel separately
+                num_channels = self.input_shape[0]
+                patch = np.zeros((num_channels, pZ, pY, pX), dtype=np.float32)
+
+                # Use a unified approach for both fsspec and TensorStore
+                try:
+                    # Define safe slices that don't go out of bounds
+                    z_slice = slice(z, min(z + pZ, self.input_shape[1]))  # input_shape[1] is Z for multi-channel
+                    y_slice = slice(y, min(y + pY, self.input_shape[2]))  # input_shape[2] is Y for multi-channel
+                    x_slice = slice(x, min(x + pX, self.input_shape[3]))  # input_shape[3] is X for multi-channel
+
+                    if self.verbose and idx < 3:
+                        print(f"Extracting multi-channel patch with slices: z={z_slice}, y={y_slice}, x={x_slice}")
+                        print(f"Volume access mode: {'fsspec/zarr' if self.volume.use_fsspec else 'TensorStore'}")
+
+                    # Try to extract all channels at once first
                     try:
-                        # Define safe slices that don't go out of bounds
-                        z_slice = slice(z, min(z + pZ, self.input_shape[0]))
-                        y_slice = slice(y, min(y + pY, self.input_shape[1]))
-                        x_slice = slice(x, min(x + pX, self.input_shape[2]))
-                        
+                        # Attempt to extract the entire 4D chunk at once
+                        all_data = self.volume[:, z_slice, y_slice, x_slice]
+
                         if self.verbose and idx < 3:
-                            print(f"Extracting patch with slices: z={z_slice}, y={y_slice}, x={x_slice}")
-                            print(f"Volume access mode: {'fsspec/zarr' if self.volume.use_fsspec else 'TensorStore'}")
-                        
-                        # Get the data using Volume's __getitem__ method
-                        # Volume.__getitem__ handles the read().result() call for TensorStore
-                        # And direct array access for fsspec/zarr
-                        extracted_data = self.volume[z_slice, y_slice, x_slice]
-                        
-                        # Copy data to the right location in our patch
-                        # Calculate actual sizes fetched (may be smaller than requested due to bounds)
-                        fetched_z = extracted_data.shape[0]
-                        fetched_y = extracted_data.shape[1] 
-                        fetched_x = extracted_data.shape[2]
-                        
-                        # Copy the data into our patch buffer
-                        patch_data[:fetched_z, :fetched_y, :fetched_x] = extracted_data
-                        
-                        if self.verbose and idx < 3:
-                            print(f"Extracted data shape: {extracted_data.shape}")
-                        
-                        # Volume class already handles normalization based on normalize parameter
-                        # We only need to handle dtype conversion if data is not already normalized
-                        if not self.volume.normalize:
-                            # Apply appropriate normalization based on dtype
-                            if self.input_dtype == np.uint8:
-                                patch_data = patch_data / 255.0
-                            elif self.input_dtype == np.uint16:
-                                patch_data = patch_data / 65535.0
-                            
+                            print(f"Extracted full multi-channel data shape: {all_data.shape}")
+
+                        # Copy to our patch buffer
+                        # We need to handle potential size differences if bounds were hit
+                        c_size = min(all_data.shape[0], patch.shape[0])
+                        z_size = min(all_data.shape[1], pZ)
+                        y_size = min(all_data.shape[2], pY)
+                        x_size = min(all_data.shape[3], pX)
+
+                        patch[:c_size, :z_size, :y_size, :x_size] = all_data[:c_size, :z_size, :y_size, :x_size]
+
                     except Exception as e:
                         if self.verbose:
-                            print(f"Error extracting patch: {e}")
-                            
-                        # Fall back to slice-by-slice extraction if bulk extraction fails
-                        for i in range(pZ):
-                            if z + i < self.input_shape[0]:
-                                for j in range(pY):
-                                    if y + j < self.input_shape[1]:
-                                        try:
-                                            # Volume expects coordinates as z, y, x for the 3D case
-                                            slice_data = self.volume[z + i, y + j, x:x + pX]
-                                            patch_data[i, j, :min(pX, len(slice_data))] = slice_data[:min(pX, len(slice_data))]
-                                        except (IndexError, ValueError) as e:
-                                            if self.verbose and idx < 3:
-                                                print(f"Warning: Error extracting slice at z={z+i}, y={y+j}, x={x}: {e}")
-                    
-                    # Add channel dimension (create C,Z,Y,X)
-                    patch = patch_data[np.newaxis, ...]
-                    
-                else:  # Multi-channel explicit (C,Z,Y,X)
-                    # For multi-channel, we need to extract each channel separately
-                    num_channels = self.input_shape[0]
-                    patch = np.zeros((num_channels, pZ, pY, pX), dtype=np.float32)
-                    
-                    # Use a unified approach for both fsspec and TensorStore
-                    try:
-                        # Define safe slices that don't go out of bounds
-                        z_slice = slice(z, min(z + pZ, self.input_shape[1]))  # input_shape[1] is Z for multi-channel
-                        y_slice = slice(y, min(y + pY, self.input_shape[2]))  # input_shape[2] is Y for multi-channel
-                        x_slice = slice(x, min(x + pX, self.input_shape[3]))  # input_shape[3] is X for multi-channel
-                        
-                        if self.verbose and idx < 3:
-                            print(f"Extracting multi-channel patch with slices: z={z_slice}, y={y_slice}, x={x_slice}")
-                            print(f"Volume access mode: {'fsspec/zarr' if self.volume.use_fsspec else 'TensorStore'}")
-                        
-                        # Try to extract all channels at once first
-                        try:
-                            # Attempt to extract the entire 4D chunk at once
-                            all_data = self.volume[:, z_slice, y_slice, x_slice]
-                            
-                            if self.verbose and idx < 3:
-                                print(f"Extracted full multi-channel data shape: {all_data.shape}")
-                            
-                            # Copy to our patch buffer
-                            # We need to handle potential size differences if bounds were hit
-                            c_size = min(all_data.shape[0], patch.shape[0])
-                            z_size = min(all_data.shape[1], pZ)
-                            y_size = min(all_data.shape[2], pY) 
-                            x_size = min(all_data.shape[3], pX)
-                            
-                            patch[:c_size, :z_size, :y_size, :x_size] = all_data[:c_size, :z_size, :y_size, :x_size]
-                            
-                        except Exception as e:
-                            if self.verbose:
-                                print(f"Full multi-channel extraction failed: {e}, falling back to per-channel extraction")
-                                
-                            # Extract each channel separately
-                            for c in range(num_channels):
-                                # Volume.__getitem__ handles read().result() call for TensorStore
-                                channel_data = self.volume[c, z_slice, y_slice, x_slice]
-                                
-                                # Copy data to the right location in our patch
-                                fetched_z = channel_data.shape[0]
-                                fetched_y = channel_data.shape[1]
-                                fetched_x = channel_data.shape[2]
-                                
-                                # Copy the data into our patch buffer for this channel
-                                patch[c, :fetched_z, :fetched_y, :fetched_x] = channel_data
-                        
-                        # Volume class may already handle normalization based on normalize parameter
-                        # We only need to handle dtype conversion if data is not already normalized
-                        if not self.volume.normalize:
-                            # Apply appropriate normalization based on dtype
-                            if self.input_dtype == np.uint8:
-                                patch = patch / 255.0
-                            elif self.input_dtype == np.uint16:
-                                patch = patch / 65535.0
-                    
-                    except Exception as e:
-                        if self.verbose:
-                            print(f"Multi-channel extraction error: {e}")
-                        
-                        # Fall back to per-slice extraction for all channels
+                            print(f"Full multi-channel extraction failed: {e}, falling back to per-channel extraction")
+
+                        # Extract each channel separately
                         for c in range(num_channels):
-                            for i in range(pZ):
-                                if z + i < self.input_shape[1]:  # Check Z bounds (input_shape now includes channel dim)
-                                    for j in range(pY):
-                                        if y + j < self.input_shape[2]:  # Check Y bounds
-                                            try:
-                                                # Extract slice for this channel
-                                                slice_data = self.volume[c, z + i, y + j, x:x + pX]
-                                                # Assign to proper channel in the patch
-                                                patch[c, i, j, :min(pX, len(slice_data))] = slice_data[:min(pX, len(slice_data))]
-                                            except (IndexError, ValueError) as e:
-                                                if self.verbose and idx < 3:
-                                                    print(f"Warning: Error extracting channel {c} slice at z={z+i}, y={y+j}, x={x}: {e}")
-            
-            except Exception as e:
-                raise ValueError("Could not extract patch from Volume") from e
+                            # Volume.__getitem__ handles read().result() call for TensorStore
+                            channel_data = self.volume[c, z_slice, y_slice, x_slice]
 
-        # Ensure data is float32 for further processing
-        patch = patch.astype(np.float32)
+                            # Copy data to the right location in our patch
+                            fetched_z = channel_data.shape[0]
+                            fetched_y = channel_data.shape[1]
+                            fetched_x = channel_data.shape[2]
 
-        # z-score normalization
-        for c in range(patch.shape[0]):
-            mean = np.mean(patch[c])
-            std = np.std(patch[c])
-            if std > 0:
-                patch[c] = (patch[c] - mean) / std
+                            # Copy the data into our patch buffer for this channel
+                            patch[c, :fetched_z, :fetched_y, :fetched_x] = channel_data
 
-        patch = torch.from_numpy(patch)
+                except Exception as e:
+                    if self.verbose:
+                        print(f"Multi-channel extraction error: {e}")
 
-        # Create the position tuple with the 3D coordinates
-        # Convert to integers to ensure consistency
+        except Exception as e:
+            raise ValueError("Could not extract patch from Volume") from e
+
+        # Assert that patch is already a torch tensor
+        assert isinstance(patch, torch.Tensor), "Volume should return torch tensors when return_as_tensor=True"
+
+        # Create the position tuple
+        # Convert to integers
         position = (int(z), int(y), int(x))
 
         # Debug statement - only for the first few items
