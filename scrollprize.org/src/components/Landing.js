@@ -683,13 +683,18 @@ const team = {
     },
     {
       name: "Giorgio Angelotti",
-      title: "Machine Learning Consultant",
-      href: "https://www.linkedin.com/in/giorgio-angelotti/",
+      title: "ML Consultant & Research Scientist, PhD",
+      href: "https://thegiorgio.org/",
     },
     {
       name: "Youssef Nader",
       title: "Machine Learning Researcher",
       href: "https://youssefnader.com/",
+    },
+    {
+      name: "Elian Rafael Dal Prá",
+      title: "ML Intern",
+      href: "https://www.linkedin.com/in/elian-rafael-dal-pr%C3%A1-181a762b2/",
     },
     {
       name: "Johannes Rudolph",
