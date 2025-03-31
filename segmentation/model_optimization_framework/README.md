@@ -1,12 +1,12 @@
 # Model Optimization Framework for nnUNet
 
-This framework provides a structured approach to model optimization for nnUNet, including hyperparameter tuning and other optimization techniques. It automates the process of creating trainer variants, running training, performing inference, evaluating models, and comparing results.
+This framework provides a structured approach to model optimization for nnUNet, including hyperparameter tuning and other optimization techniques. It automates the process of creating trainer variants, running training, performing inference, and evaluating models.
 
 ## Components
 
 The framework consists of the following components:
 
-1. **Configuration file (`config.yml`)**: Defines the hyperparameter space to explore
+1. **Configuration file (`configs/config.yml`)**: Defines the hyperparameter space to explore
 2. **Trainer generator (`generate_trainers.py`)**: Creates trainer variant classes
 3. **Training script (`run_training.py`)**: Executes training for all configurations
 4. **Inference script (`run_inference.py`)**: Runs inference on test data
@@ -23,7 +23,7 @@ The framework consists of the following components:
 
 ### Configuration
 
-Edit the `config.yml` file to define:
+Edit the `configs/config.yml` file to define:
 
 1. The base trainer (e.g., `nnUNetTrainer`)
 2. Dataset information (dataset ID, configuration, fold)
@@ -92,13 +92,15 @@ python run_model_optimization.py \
   --input-folder /path/to/input/data \
   --labels-folder /path/to/ground/truth \
   --predictions-folder predictions \
-  --evaluation-folder evaluation_results
+  --evaluation-folder evaluation_results \
+  --evaluation-script-dir /path/to/evaluation/scripts
 ```
 
 Optional arguments:
 
-- `--config`: Path to the configuration file (default: config.yml)
+- `--config`: Path to the configuration file (default: configs/config.yml)
 - `--pretrained-weights`: Path to pretrained weights for fine-tuning
+- `--evaluation-script-dir`: Path to the directory containing custom evaluation scripts (required)
 - `--variants`: Comma-separated list of variant names to run (e.g., "baseline,low_lr")
 - `--num-gpus`: Number of GPUs to use for training (default: 1)
 - `--skip-generate`: Skip trainer generation step
@@ -111,7 +113,7 @@ Optional arguments:
 #### 1. Generate trainer variants
 
 ```bash
-python generate_trainers.py --config config.yml [--output-dir /path/to/output]
+python generate_trainers.py --config configs/config.yml [--output-dir /path/to/output]
 ```
 
 This will create trainer classes in the specified output directory. If `--output-dir` is not provided, it will try to find the nnUNet installation path and create the trainers in the appropriate subdirectory.
@@ -119,12 +121,12 @@ This will create trainer classes in the specified output directory. If `--output
 #### 2. Run training
 
 ```bash
-python run_training.py --config config.yml [--pretrained-weights /path/to/weights] [--variants baseline,low_lr] [--continue-training] [--validate-only]
+python run_training.py --config configs/config.yml [--pretrained-weights /path/to/weights] [--variants baseline,low_lr] [--continue-training] [--validate-only]
 ```
 
 Arguments:
 
-- `--config`: Path to the configuration file (default: config.yml)
+- `--config`: Path to the configuration file (default: configs/config.yml)
 - `--pretrained-weights`: Path to pretrained weights for fine-tuning
 - `--variants`: Comma-separated list of variant names to run
 - `--continue-training`: Continue training from the latest checkpoint
@@ -135,12 +137,12 @@ The script will use the `num_gpus` parameter from the config file to determine w
 #### 3. Run inference
 
 ```bash
-python run_inference.py --config config.yml --input-folder /path/to/input/data --output-folder predictions [--variants baseline,low_lr]
+python run_inference.py --config configs/config.yml --input-folder /path/to/input/data --output-folder predictions [--variants baseline,low_lr]
 ```
 
 Arguments:
 
-- `--config`: Path to the configuration file (default: config.yml)
+- `--config`: Path to the configuration file (default: configs/config.yml)
 - `--input-folder`: Path to the folder containing input images to predict (required)
 - `--output-folder`: Base path where predictions will be stored (default: predictions)
 - `--variants`: Comma-separated list of variant names to run
@@ -150,13 +152,14 @@ The script will use the `num_gpus` parameter from the config file to determine w
 #### 4. Evaluate models
 
 ```bash
-python evaluate_models.py --config config.yml --labels-folder /path/to/ground/truth --predictions-folder predictions --output-folder evaluation_results [--wandb-project project_name] [--variants baseline,low_lr]
+python evaluate_models.py --config configs/config.yml --labels-folder /path/to/ground/truth --predictions-folder predictions --output-folder evaluation_results --evaluation-script-dir /path/to/evaluation/scripts [--wandb-project project_name] [--variants baseline,low_lr]
 ```
 
 Arguments:
 
-- `--config`: Path to the configuration file (default: config.yml)
+- `--config`: Path to the configuration file (default: configs/config.yml)
 - `--labels-folder`: Path to the ground truth labels (required)
+- `--evaluation-script-dir`: Path to the directory containing custom evaluation scripts (required)
 - `--predictions-folder`: Base path to the predictions (default: from config)
 - `--output-folder`: Base path where evaluation results will be stored (default: from config)
 - `--wandb-project`: Weights & Biases project name for logging (default: from config)
