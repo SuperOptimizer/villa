@@ -238,7 +238,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 Text(case.label_line_2, case.text_font_size)
             with Locations((0, 20 - case.square_loft_radius)):
                 Text(
-                    f"{case.cylinder_outer_diameter:.1f}D x {case.lining_interior_height:.1f}H",
+                    f"{case.cylinder_outer_diameter:.2f}D x {case.lining_interior_height:.2f}H",
                     case.text_font_size,
                 )
         extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
