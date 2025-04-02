@@ -386,6 +386,168 @@ class SaltAndPepperNoise(BaseAugmentation):
         return self._add_salt_and_pepper_noise(data)
 
 
+class ScipyDownsampling(BaseAugmentation):
+    """
+    Applies downsampling and then upsampling to 3D volumes using scipy.ndimage.
+    
+    This implementation is more reliable across platforms, including those
+    without CUDA support. It simulates lower resolution data by first downsampling
+    the volume to a lower resolution and then upsampling it back to the
+    original size, removing high-frequency details in the process.
+    """
+    
+    def __init__(
+        self,
+        volume: Optional[ArrayLike] = None,
+        label: Optional[ArrayLike] = None,
+        scale_factor: Union[float, List[float]] = 0.5,
+        order: int = 1,            # Interpolation order for volume data
+        order_label: int = 0,      # Interpolation order for label data
+        apply_to_label: bool = False,
+        device: Optional[Union[str, torch.device]] = 'cpu',  # Ignored but kept for API
+        **kwargs
+    ):
+        """Initialize the scipy-based downsampling augmentation.
+        
+        Parameters
+        ----------
+        volume : Optional[ArrayLike], default=None
+            Input volume data as numpy array, torch tensor, or cupy array
+        label : Optional[ArrayLike], default=None
+            Input label data as numpy array, torch tensor, or cupy array
+        scale_factor : Union[float, List[float]], default=0.5
+            Scale factor for downsampling. Can be a single float or a list of 3 floats [z, y, x]
+            Values must be between 0 and 1 (smaller values = more downsampling)
+        order : int, default=1
+            Interpolation order for volume data (0=nearest, 1=linear, etc.)
+        order_label : int, default=0
+            Interpolation order for label data (default: nearest)
+        apply_to_label : bool, default=False
+            Whether to apply downsampling to label data
+        device : Optional[Union[str, torch.device]], default='cpu'
+            Device is ignored but kept for API compatibility
+        **kwargs
+            Additional keyword arguments
+        """
+        super().__init__(volume, label, device, **kwargs)
+        
+        # Validate scale factor
+        if isinstance(scale_factor, (int, float)):
+            if not 0 < scale_factor < 1:
+                raise ValueError("Scale factor must be between 0 and 1")
+            self.scale_factor = [scale_factor] * 3
+        elif isinstance(scale_factor, list):
+            if len(scale_factor) != 3:
+                raise ValueError("Scale factor list must have 3 elements for 3D data [z, y, x]")
+            if not all(0 < sf < 1 for sf in scale_factor):
+                raise ValueError("All scale factors must be between 0 and 1")
+            self.scale_factor = scale_factor
+        else:
+            raise TypeError("Scale factor must be a float or a list of 3 floats")
+        
+        self.order = order
+        self.order_label = order_label
+        self.apply_to_label = apply_to_label
+    
+    def _apply_transform(self, data: torch.Tensor) -> torch.Tensor:
+        """Apply the downsampling to the data.
+        
+        Parameters
+        ----------
+        data : torch.Tensor
+            Input data to transform
+            
+        Returns
+        -------
+        torch.Tensor
+            Transformed data with resolution reduction
+        """
+        from scipy.ndimage import zoom
+        import numpy as np
+        
+        # Convert to numpy array for scipy operations
+        is_tensor = isinstance(data, torch.Tensor)
+        if is_tensor:
+            orig_device = data.device
+            data_np = data.detach().cpu().numpy()
+        else:
+            data_np = data
+        
+        # Ensure the data is contiguous
+        data_np = np.ascontiguousarray(data_np)
+        
+        # Determine if we're dealing with a volume or label
+        is_label = False
+        if self.label is not None and data is self.label:
+            is_label = True
+            order = self.order_label
+        else:
+            order = self.order
+            
+        # Skip if not supposed to apply to labels
+        if is_label and not self.apply_to_label:
+            # Convert back to tensor if input was tensor
+            if is_tensor:
+                return torch.from_numpy(data_np).to(orig_device)
+            else:
+                return data_np
+        
+        # Apply downsampling and upsampling
+        result = self._apply_downsampling(data_np, order)
+        
+        # Convert back to tensor if input was tensor
+        if is_tensor:
+            # Ensure the result is contiguous
+            result = np.ascontiguousarray(result)
+            result = torch.from_numpy(result).to(orig_device)
+        
+        return result
+    
+    def _apply_downsampling(self, data_np: np.ndarray, order: int) -> np.ndarray:
+        """Apply downsampling and upsampling to numpy array.
+        
+        Parameters
+        ----------
+        data_np : np.ndarray
+            Input data as numpy array
+        order : int
+            Interpolation order
+            
+        Returns
+        -------
+        np.ndarray
+            Downsampled and upsampled data
+        """
+        from scipy.ndimage import zoom
+        import numpy as np
+        
+        # Handle different dimensionality
+        if data_np.ndim == 4:  # (C, D, H, W)
+            channels = data_np.shape[0]
+            result = np.zeros_like(data_np)
+            
+            # Process each channel independently
+            for c in range(channels):
+                # Downsample (smaller factors = more downsampling)
+                downsampled = zoom(data_np[c], self.scale_factor, order=order)
+                
+                # Upsample back to original size (larger factors = more upsampling)
+                upsampling_factors = [1/sf for sf in self.scale_factor]
+                result[c] = zoom(downsampled, upsampling_factors, order=order)
+            
+            return result
+        
+        else:  # 3D volume (D, H, W)
+            # Downsample
+            downsampled = zoom(data_np, self.scale_factor, order=order)
+            
+            # Upsample back to original size
+            upsampling_factors = [1/sf for sf in self.scale_factor]
+            result = zoom(downsampled, upsampling_factors, order=order)
+            
+            return result
+
+
 class Downsampling(BaseAugmentation):
     """
     Applies downsampling and then upsampling to 3D volumes.
