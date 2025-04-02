@@ -693,8 +693,8 @@ const team = {
     },
     {
       name: "Elian Rafael Dal Prá",
-      title: "ML Intern",
-      href: "https://www.linkedin.com/in/elian-rafael-dal-pr%C3%A1-181a762b2/",
+      title: "ML Intern & Annotation Specialist",
+      href: "https://twitter.com/elianrafaeldp",
     },
     {
       name: "Johannes Rudolph",
@@ -708,13 +708,33 @@ const team = {
     },
     {
       name: "Adrionna Fey",
-      title: "Annotation Team Member",
+      title: "Annotation Specialist",
       href: "https://twitter.com/Meadowsnax1",
     },
     {
+      name: "Eric Thvedt",
+      title: "Annotation Specialist",
+      href: "https://www.linkedin.com/in/eric-thvedt/",
+    },
+    {
+      name: "Kendra Brown",
+      title: "Annotation Specialist",
+      href: "https://darthkendraresearch.wordpress.com/",
+    },
+    {
       name: "Konrad Rosenberg",
-      title: "Annotation Team Member",
+      title: "Annotation Specialist",
       href: "https://twitter.com/germanicgems",
+    },
+    {
+      name: "Sarah Morejohn",
+      title: "Annotation Specialist",
+      href: "https://www.linkedin.com/in/sarah-morejohn-1140b049/",
+    },
+    {
+      name: "Sergei Pnev",
+      title: "Annotation Specialist",
+      href: "www.linkedin.com/in/sergey-pnev",
     },
   ],
   educe: [
@@ -764,6 +784,11 @@ const team = {
       name: "Ben Kyles",
       title: "Segmentation Team Lead",
       href: "https://twitter.com/ben_kyles",
+    },
+    {
+      name: "Raymond Gasper",
+      title: "Annotation Specialist",
+      href: "https://www.linkedin.com/in/raymond-james-gasper/",
     },
     {
       name: "Daniel Havíř",
