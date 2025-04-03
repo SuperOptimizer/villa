@@ -115,6 +115,7 @@ def blend_saved_patches(
     force_overwrite: bool = False,
     cleanup_temp: bool = True,
     include_all_parts: bool = True,
+    chunk_memory_limit_gb: float = 16.0,
 ):
     """
     Blend patches from a temporary storage location into a final segmentation output.
@@ -135,6 +136,7 @@ def blend_saved_patches(
         cleanup_temp: If True, clean up temporary storage files after blending
         include_all_parts: If True, automatically find and include patches from all part-specific
                            temp directories (when using num_parts/part_id in dataset)
+        chunk_memory_limit_gb: Maximum GPU memory to use per chunk in GB (adjust based on GPU VRAM)
     
     Returns:
         Path to the output zarr file, or None if blending was cancelled
@@ -539,8 +541,28 @@ def blend_saved_patches(
                 print(f"  {source}: {count} patches")
         
         # Process in z-chunks to manage memory, with overlap to handle boundaries
-        chunk_size = 256  # Standard chunk size
-        overlap = patch_size[0] // 2  # Half a patch size overlap between chunks
+        # Calculate approximate memory requirements for each slice
+        # Output tensor is (channels, z, y, x) in float16: 2 bytes per value
+        # Weight map is (z, y, x) in float32: 4 bytes per value
+        mem_per_z_slice_mb = ((num_channels * 2 + 4) * max_y * max_x) / (1024 * 1024)
+        
+        # Convert chunk_memory_limit_gb to MB
+        max_chunk_size_mb = chunk_memory_limit_gb * 1024
+        
+        # Calculate optimal chunk size based on available memory (in slices)
+        optimal_chunk_size = min(512, max(16, int(max_chunk_size_mb / mem_per_z_slice_mb)))
+        # Round down to multiple of 16 for better memory alignment
+        chunk_size = max(16, (optimal_chunk_size // 16) * 16)
+        
+        if verbose:
+            print(f"Memory per Z-slice: {mem_per_z_slice_mb:.2f} MB")
+            print(f"Memory limit per chunk: {max_chunk_size_mb:.2f} MB")
+            print(f"Using chunk size of {chunk_size} slices")
+        else:
+            print(f"Memory per Z-slice: {mem_per_z_slice_mb:.2f} MB, using chunk size of {chunk_size} slices")
+        
+        # Use adequate overlap for patch size
+        overlap = min(patch_size[0], max(4, patch_size[0] // 2))  # Half patch size overlap with min/max bounds
         
         # Create overlapping chunks for processing
         z_chunks = []
@@ -814,7 +836,8 @@ def blend_saved_patches(
             target_name,
             threshold,
             save_probability_maps,
-            verbose
+            verbose,
+            chunk_memory_limit_gb
         )
     
     # Clean up temporary blending arrays
@@ -829,9 +852,19 @@ def blend_saved_patches(
     return output_path
 
 
-def finalize_arrays(output_arrays, count_arrays, final_arrays, target_name, threshold, save_probability_maps, verbose):
+def finalize_arrays(output_arrays, count_arrays, final_arrays, target_name, threshold, save_probability_maps, verbose, chunk_memory_limit_gb=16.0):
     """
     Finalize the arrays by converting the accumulated sums to appropriate output format.
+    
+    Args:
+        output_arrays: Dict of output arrays from blending
+        count_arrays: Dict of count arrays for tracking weights
+        final_arrays: Dict for final output arrays
+        target_name: Name of the target being processed
+        threshold: Optional threshold value (0-100) for binarizing
+        save_probability_maps: Whether to save full probability maps
+        verbose: Enable verbose output
+        chunk_memory_limit_gb: Maximum GPU memory to use per chunk in GB
     """
     if verbose:
         print("Finalizing arrays...")
@@ -855,9 +888,18 @@ def finalize_arrays(output_arrays, count_arrays, final_arrays, target_name, thre
     compute_argmax = not save_probability_maps and is_multiclass
     extract_binary = is_binary
     
-    # Process in chunks to manage memory
-    chunk_size = 256
-
+    # Calculate memory per slice for optimal chunk sizing
+    mem_per_slice_mb = (num_channels * 2 * y_max * x_max) / (1024 * 1024)  # float16 = 2 bytes per element
+    max_chunk_size_mb = chunk_memory_limit_gb * 1024 / 2  # Use only half the memory limit for finalization
+    
+    # Calculate optimal chunk size (in z slices)
+    optimal_chunk_size = max(16, min(512, int(max_chunk_size_mb / mem_per_slice_mb)))
+    chunk_size = (optimal_chunk_size // 16) * 16  # Round to multiple of 16
+    
+    if verbose:
+        print(f"Finalization memory per slice: {mem_per_slice_mb:.2f} MB")
+        print(f"Using finalization chunk size of {chunk_size} slices")
+    
     z_range = tqdm(range(0, z_max, chunk_size), desc=f"Finalizing {target_name}")
     
     for z_start in z_range:
@@ -1078,6 +1120,8 @@ if __name__ == "__main__":
                         help='Do not clean up temporary directories after blending')
     parser.add_argument('--no-include-parts', action='store_true',
                         help='Do not automatically include patches from all part-specific temp directories')
+    parser.add_argument('--chunk-memory-limit', type=float, default=16.0,
+                        help='Maximum GPU memory to use per chunk in GB (adjust based on available GPU VRAM)')
     
     args = parser.parse_args()
     
@@ -1138,6 +1182,9 @@ if __name__ == "__main__":
     # Include all parts flag is the inverse of no-include-parts
     include_all_parts = not args.no_include_parts
     
+    # Get chunk memory limit
+    chunk_memory_limit_gb = args.chunk_memory_limit
+    
     # Show the parameters being used
     print(f"Blending parameters:")
     print(f"  Temp storage path: {temp_storage_path}")
@@ -1151,6 +1198,7 @@ if __name__ == "__main__":
     print(f"  Force overwrite: {force_overwrite}")
     print(f"  Clean up temp storage: {cleanup_temp}")
     print(f"  Include all part directories: {include_all_parts}")
+    print(f"  Chunk memory limit: {chunk_memory_limit_gb} GB")
     
     # Execute blending
     blend_saved_patches(
@@ -1164,5 +1212,6 @@ if __name__ == "__main__":
         edge_weight_boost=edge_weight_boost,
         force_overwrite=force_overwrite,
         cleanup_temp=cleanup_temp,
-        include_all_parts=include_all_parts
+        include_all_parts=include_all_parts,
+        chunk_memory_limit_gb=chunk_memory_limit_gb
     )

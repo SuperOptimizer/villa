@@ -272,12 +272,91 @@ class Volume:
                 if self.verbose:
                     print(f"Opening local zarr store at: {self.url}")
                 
-                # Open the zarr store
-                self.data = zarr.open(self.url, mode="r")
+                # Open the zarr store - lazily, don't load entire file into memory
+                if self.use_fsspec:
+                    # For fsspec mode, lazily open with zarr
+                    self.data = zarr.open(self.url, mode="r")
+                else:
+                    # For TensorStore mode, use TensorStore for lazy loading
+                    # Create file-based kvstore spec for local files
+                    context_spec = {
+                        'cache_pool': {
+                            "total_bytes_limit": self.cache_pool
+                        }
+                    } if self.cache else {}
+                    
+                    kvstore_spec = {
+                        'driver': 'file',
+                        'path': self.url,
+                    }
+                    
+                    # Common spec for local access
+                    spec = {
+                        'driver': 'zarr',
+                        'kvstore': kvstore_spec,
+                        'context': context_spec
+                    }
+                    
+                    if self.verbose:
+                        print(f"TensorStore spec for local access: {spec}")
+                    
+                    # Open using TensorStore for lazy loading
+                    try:
+                        # First, open using zarr to understand the structure
+                        zarr_root = zarr.open(self.url, mode='r')
+                        # Collect data arrays in a list
+                        sub_volumes = []
+                        
+                        # Look for groups or arrays
+                        for key in sorted(zarr_root.keys()):
+                            try:
+                                # Try to access this as a data array using TensorStore
+                                curr_spec = spec.copy()
+                                curr_spec['path'] = key  # Add path within zarr store
+                                data = ts.open(curr_spec).result()
+                                sub_volumes.append(data)
+                                if self.verbose:
+                                    print(f"Loaded {key} with shape {data.shape}")
+                            except Exception as e:
+                                if self.verbose:
+                                    print(f"Error loading {key} with TensorStore: {e}")
+                        
+                        if not sub_volumes:
+                            # If no subgroups found, try loading the root itself
+                            data = ts.open(spec).result()
+                            sub_volumes.append(data)
+                            
+                        self.data = sub_volumes
+                    except Exception as e:
+                        if self.verbose:
+                            print(f"Error using TensorStore for local zarr: {e}")
+                            print("Falling back to direct zarr access")
+                        # Fall back to direct zarr access if TensorStore fails
+                        self.data = zarr.open(self.url, mode="r")
+                        # Ensure it's a list of arrays for consistent access
+                        if isinstance(self.data, zarr.Group):
+                            self.data = [self.data[k] for k in sorted(self.data.keys())]
+                
                 self.metadata = self.load_ome_metadata()
-                if self.normalize:
-                    self.max_dtype = get_max_value(self.data[0].dtype)
-                self.dtype = self.data[0].dtype
+                
+                # Set dtype properties based on access method
+                if hasattr(self.data, 'dtype'):
+                    # Single array case
+                    if self.normalize:
+                        self.max_dtype = get_max_value(self.data.dtype)
+                    self.dtype = self.data.dtype
+                elif isinstance(self.data, list) and len(self.data) > 0:
+                    # List of arrays/volumes case
+                    if hasattr(self.data[0], 'dtype'):
+                        # Direct dtype access (zarr array)
+                        if self.normalize:
+                            self.max_dtype = get_max_value(self.data[0].dtype)
+                        self.dtype = self.data[0].dtype
+                    elif hasattr(self.data[0], 'dtype') and hasattr(self.data[0].dtype, 'numpy_dtype'):
+                        # TensorStore dtype access
+                        if self.normalize:
+                            self.max_dtype = get_max_value(self.data[0].dtype.numpy_dtype)
+                        self.dtype = self.data[0].dtype.numpy_dtype
         
             if self.type == "segment":
                 self.inklabel = np.zeros(self.shape(0), dtype=np.uint8)

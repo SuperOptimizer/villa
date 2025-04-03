@@ -47,7 +47,8 @@ setup(
         'atomics',
         'scipy',
         'batchgenerators',
-        'batchgeneratorsv2'
+        'batchgeneratorsv2',
+        'dynamic_network_architectures'
     ],
     python_requires='>=3.8',
     include_package_data=True,
@@ -59,7 +60,6 @@ setup(
         'console_scripts': [
             'vesuvius.accept_terms=setup.accept_terms:main',
             'vesuvius.predict=models.run.inference:main',
-            'vesuvius.volume_predict=models.run.vesuvius_predict:main'
         ],
     },
     # No scripts needed as we're using entry_points
