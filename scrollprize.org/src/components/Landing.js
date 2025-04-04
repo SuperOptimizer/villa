@@ -736,6 +736,11 @@ const team = {
       title: "Annotation Specialist",
       href: "www.linkedin.com/in/sergey-pnev",
     },
+    {
+      name: "Techjays",
+      title: "Annotation Services",
+      href: "https://www.techjays.com/",
+    },
   ],
   educe: [
     {
