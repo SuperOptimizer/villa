@@ -1,4 +1,3 @@
 [console_scripts]
 vesuvius.accept_terms = setup.accept_terms:main
 vesuvius.predict = models.run.inference:main
-vesuvius.volume_predict = models.run.vesuvius_predict:main

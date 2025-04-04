@@ -16,3 +16,4 @@ atomics
 scipy
 batchgenerators
 batchgeneratorsv2
+dynamic_network_architectures

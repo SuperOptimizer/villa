@@ -14,16 +14,9 @@ from models.config_manager import ConfigManager
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss, BCELoss
 from utils.models.helpers import init_weights_he
 
-# Add the imports for training visualization
-try:
-    from training.visualization.plotting import save_debug_gif, export_data_dict_as_tif
-except ImportError:
-    # Define fallback functions if the actual ones aren't available
-    def save_debug_gif(input_volume, targets_dict, outputs_dict, tasks_dict, epoch, save_path):
-        print(f"Warning: save_debug_gif not available. Skipping visualization for epoch {epoch}")
-        
-    def export_data_dict_as_tif(dataset, num_batches, out_dir):
-        print(f"Warning: export_data_dict_as_tif not available. Skipping export to {out_dir}")
+from vesuvius.models.visualization.plotting import save_debug_gif, export_data_dict_as_tif
+
+
 
 
 class BaseTrainer:
@@ -61,11 +54,11 @@ class BaseTrainer:
         return model
 
     def _compose_augmentations(self):
-        from augmentation.compose import Compose
-        from augmentation.spatial.rotation import RandomRotate90
-        from augmentation.spatial.noise import RandomZoom
-        from augmentation.noise.intensity import RandomIntensityScaling
-        from augmentation.noise.noise import GaussianNoise
+        from vesuvius.augmentation.compose import Compose
+        from vesuvius.augmentation.spatial.rotation import RandomRotate90
+        from vesuvius.augmentation.spatial.noise import RandomZoom
+        from vesuvius.augmentation.noise.intensity import RandomIntensityScaling
+        from vesuvius.augmentation.noise.noise import GaussianNoise
         
         augmentations = Compose([
             RandomRotate90(axes=(1, 2), p=0.5),  # Rotate in Y-X plane
@@ -78,7 +71,7 @@ class BaseTrainer:
 
     # --- configure dataset --- #
     def _configure_dataset(self):
-        from data.vc_dataset import VCDataset
+        from vesuvius.data.vc_dataset import VCDataset
         
         # Convert targets dictionary to the list of dictionaries format expected by VCDataset
         vc_targets = []
@@ -146,9 +139,9 @@ class BaseTrainer:
     # --- optimizer ---- #
 
     def _get_optimizer(self, model):
-        from models.training.optimizers import get_optimizer
+        from vesuvius.models.training.optimizers import create_optimizer
         
-        return get_optimizer(
+        return create_optimizer(
             model=model,
             optimizer_type=self.mgr.optimizer,
             initial_lr=self.mgr.initial_lr,

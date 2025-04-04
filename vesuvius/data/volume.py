@@ -1,6 +1,6 @@
 import os
 import yaml
-import tensorstore as ts
+import json
 from numpy.typing import NDArray
 from typing import Any, Dict, Optional, Tuple, Union, List
 import numpy as np
@@ -11,42 +11,15 @@ import tempfile
 from PIL import Image
 from io import BytesIO
 from pathlib import Path
-from setup.accept_terms import get_installation_path
+# Direct import to avoid circular reference issues
 from data.io.paths import list_files, is_aws_ec2_instance
 import torch
+import tensorstore as ts
+from .utils import get_max_value
 
 # Remove the PIL image size limit
 Image.MAX_IMAGE_PIXELS = None
 
-# Function to get the maximum value of a dtype
-def get_max_value(dtype: np.dtype) -> Union[float, int]:
-    """
-    Get the maximum value for a given NumPy dtype.
-
-    Parameters:
-    ----------
-    dtype : np.dtype
-        The NumPy data type to evaluate.
-
-    Returns:
-    -------
-    Union[float, int]
-        The maximum value that the dtype can hold.
-
-    Raises:
-    ------
-    ValueError
-        If the dtype is not a floating point or integer.
-    """
-
-    if np.issubdtype(dtype, np.floating):
-        max_value = np.finfo(dtype).max
-    elif np.issubdtype(dtype, np.integer):
-        max_value = np.iinfo(dtype).max
-    else:
-        raise ValueError("Unsupported dtype")
-    return max_value
-    
 class Volume:
     """
     A class to represent a 3D volume in a scroll or segment.
@@ -66,7 +39,7 @@ class Volume:
     cache : bool
         Indicates if caching is enabled.
     cache_pool : int
-        Size of the cache pool.
+        Size of the cache pool in bytes.
     normalize : bool
         Indicates if the data should be normalized.
     verbose : bool
@@ -82,27 +55,29 @@ class Volume:
     metadata : Dict[str, Any]
         Metadata related to the volume.
     data : List[ts.TensorStore]
-        Loaded volume data.
+        Loaded volume data using TensorStore.
     inklabel : np.ndarray
         Ink label data (only for segments).
     dtype : np.dtype
         Data type of the volume.
     """
-        
-    def __init__(self, type: Union[str,int],
+
+    def __init__(self, type: Union[str, int],
                  scroll_id: Optional[Union[int, str]] = None,
                  energy: Optional[int] = None,
                  resolution: Optional[float] = None,
                  segment_id: Optional[int] = None,
                  cache: bool = True, cache_pool: int = 1e10,
+                 format: str = 'zarr',
                  normalize: bool = False,
                  normalization_scheme: str = 'none',
-                 return_as_type: str = 'none', # none in this parameter indicates no dtype conversion will occur
+                 return_as_type: str = 'none',  # none in this parameter indicates no dtype conversion will occur
                  return_as_tensor: bool = False,
-                 verbose : bool = False,
+                 verbose: bool = False,
                  domain: Optional[str] = None,
                  path: Optional[str] = None,
-                 use_fsspec: bool = False) -> None:
+                 ):
+
         """
         Initialize the Volume object.
 
@@ -122,13 +97,16 @@ class Volume:
             Indicates if caching is enabled.
         cache_pool : int, default = 1e10
             Size of the cache pool in bytes.
+        format : str, default = 'zarr'
+            Format of the data store. Currently only 'zarr' is supported.
         normalize : bool, default = False
             Indicates if the data should be normalized to float  (values between 0 and 1)
         normalization_scheme : str, default = 'none'
             In addition to normalizing to float values, data can be additionally normalized by performing one of the normalization schemes,
-            available options are basic standard deviation , and zscore
+            available options are 'zscore'/'std' and 'minmax'
         return_as_type : str, default = 'none'
-            Specify the type of data you'd like returned, options are uint8, uint16, float16, float32. 'none' will simply return in the dtype provided
+            Specify the type of data you'd like returned, options are 'np.uint8', 'np.uint16', 'np.float16', 'np.float32'. 
+            'none' will simply return in the original dtype.
         return_as_tensor: bool, default = False
             If True, returns the data as a PyTorch tensor instead of a NumPy array
         verbose : bool, default = False
@@ -137,27 +115,215 @@ class Volume:
             The domain from where data is fetched: 'dl.ash2txt' or 'local'.
         path : Optional[str], default = None
             Path to the local data if domain is 'local'.
-        use_fsspec : bool, default = False
-            If True, uses fsspec instead of TensorStore for data access, which may be faster in some cases.
 
         Raises
         ------
         ValueError
             If the provided `type` or `domain` is invalid.
+        Exception
+            If there's an error opening or accessing the data store.
         """
 
+        # Initialize basic attributes
+        self.format = format
+        self.cache = cache
+        self.cache_pool = cache_pool
+        self.normalize = normalize
+        self.normalization_scheme = normalization_scheme
+        self.return_as_type = return_as_type
+        self.return_as_tensor = return_as_tensor
+        self.path = path
+        self.verbose = verbose
+
         try:
-            type = str(type).lower()
-            # Store path for later use in get_url_from_yaml
-            self.path = path
-            
-            # Check if this is a zarr file/path
-            if type == "zarr":
-                self.type = "zarr"
-                self.scroll_id = scroll_id
-                self.segment_id = segment_id
-                # path will be used directly for data access
-            
+            if format == "zarr" and self.path is not None:
+                # Configure TensorStore for direct zarr access
+                cache_pool_bytes = int(self.cache_pool) if self.cache else 0
+                
+                # Determine if the path is HTTP/HTTPS or local
+                is_http = self.path.startswith(('http://', 'https://'))
+                
+                # Configure the kvstore driver based on path type
+                if is_http:
+                    kvstore_config = {
+                        'driver': 'http',
+                        'base_url': self.path,
+                    }
+                else:
+                    kvstore_config = {
+                        'driver': 'file',
+                        'path': self.path,
+                    }
+                
+                ts_config = {
+                    'driver': 'zarr',
+                    'kvstore': kvstore_config,
+                    'context': {
+                        'cache_pool': {
+                            'total_bytes_limit': cache_pool_bytes
+                        }
+                    }
+                }
+                
+                if self.verbose:
+                    print(f"Opening zarr store with TensorStore at path: {self.path}")
+                    print(f"TensorStore config: {json.dumps(ts_config, indent=2)}")
+                
+                try:
+                    # Set type and other required attributes first
+                    self.type = "zarr"
+                    self.scroll_id = None
+                    self.segment_id = None
+                    self.domain = "local" if not is_http else "dl.ash2txt"
+                    
+                    # Fix URL format - remove trailing slash if present for consistency
+                    self.url = self.path.rstrip("/")
+                    
+                    # Set the resolution parameter
+                    self.resolution = 0.0
+                    
+                    # First try to open directly - this will work if .zarray is at the root level
+                    try:
+                        if self.verbose:
+                            print(f"Attempting to open zarr store directly at: {self.path}")
+                        future = ts.open(ts_config)
+                        self.data = [future.result()]
+                        if self.verbose:
+                            print(f"Successfully opened zarr store at: {self.path}")
+                    except Exception as root_e:
+                        if self.verbose:
+                            print(f"Error opening zarr at root level: {root_e}")
+                        
+                        # If that fails, try to open with "/0" appended for multiresolution zarr stores
+                        # where .zarray is in subgroups
+                        try:
+                            # Make sure we don't get a double-slash in the URL
+                            subpath = os.path.join(self.url, "0")
+                            if self.verbose:
+                                print(f"Attempting to open multiresolution zarr store at: {subpath}")
+                            
+                            # Modify the config to add path="/0" for zarr driver
+                            multi_ts_config = ts_config.copy()
+                            multi_ts_config['path'] = "0"
+                            
+                            future = ts.open(multi_ts_config)
+                            result = future.result()
+                            self.data = [result]
+                            
+                            # Check if this is truly a multiresolution zarr by trying to open /1, /2, etc.
+                            try:
+                                resolutions = []
+                                # Start with the first resolution (already loaded)
+                                resolutions.append(result)
+                                
+                                # Try to load additional resolutions
+                                for res_level in [1, 2, 3, 4, 5]:  # Try up to 5 resolution levels
+                                    res_config = ts_config.copy()
+                                    res_config['path'] = str(res_level)
+                                    try:
+                                        if self.verbose:
+                                            print(f"Trying to open resolution level {res_level}")
+                                        res_future = ts.open(res_config)
+                                        res_result = res_future.result()
+                                        resolutions.append(res_result)
+                                        if self.verbose:
+                                            print(f"Successfully loaded resolution level {res_level}")
+                                    except Exception as res_e:
+                                        if self.verbose:
+                                            print(f"No more resolution levels after {res_level-1}: {res_e}")
+                                        break
+                                
+                                # If we found multiple resolutions, update self.data
+                                if len(resolutions) > 1:
+                                    self.data = resolutions
+                                    if self.verbose:
+                                        print(f"Loaded {len(resolutions)} resolution levels")
+                            except Exception as multi_e:
+                                if self.verbose:
+                                    print(f"Error checking for additional resolution levels: {multi_e}")
+                                # Continue with just the first resolution level
+                                pass
+                            
+                            if self.verbose:
+                                print(f"Successfully opened multiresolution zarr store")
+                        except Exception as subgroup_e:
+                            # Re-raise the original error if all attempts fail
+                            if self.verbose:
+                                print(f"Error opening zarr with subgroup path: {subgroup_e}")
+                            raise root_e
+                    
+                    # Get dtype from TensorStore
+                    self.dtype = self.data[0].dtype.numpy_dtype
+                    
+                    if self.normalize:
+                        self.max_dtype = get_max_value(self.dtype)
+                    
+                    # Try to load the actual metadata from the zarr store
+                    if is_http:
+                        # For HTTP zarr, use requests to get the metadata
+                        try:
+                            zattrs_url = f"{self.path.rstrip('/')}/.zattrs"
+                            response = requests.get(zattrs_url)
+                            response.raise_for_status()
+                            self.metadata = {"zattrs": response.json()}
+                            
+                            if self.verbose:
+                                print(f"Loaded metadata from {zattrs_url}")
+                        except Exception as e:
+                            # If root .zattrs fails, try in the "0" subgroup
+                            try:
+                                subgroup_url = f"{self.path.rstrip('/')}/0/.zattrs"
+                                if self.verbose:
+                                    print(f"Root .zattrs not found, trying {subgroup_url}")
+                                response = requests.get(subgroup_url)
+                                response.raise_for_status()
+                                self.metadata = {"zattrs": response.json()}
+                                
+                                if self.verbose:
+                                    print(f"Loaded metadata from {subgroup_url}")
+                            except Exception as sub_e:
+                                if self.verbose:
+                                    print(f"Failed to load metadata: {sub_e}")
+                                raise ValueError(f"Could not load .zattrs metadata from {self.path}")
+                    else:
+                        # For local zarr, check the filesystem
+                        try:
+                            zattrs_path = os.path.join(self.path, ".zattrs")
+                            if os.path.exists(zattrs_path):
+                                with open(zattrs_path, 'r') as f:
+                                    self.metadata = {"zattrs": json.load(f)}
+                                
+                                if self.verbose:
+                                    print(f"Loaded metadata from {zattrs_path}")
+                            else:
+                                # If root .zattrs doesn't exist, try in the "0" subgroup
+                                subgroup_path = os.path.join(self.path, "0", ".zattrs")
+                                if os.path.exists(subgroup_path):
+                                    if self.verbose:
+                                        print(f"Root .zattrs not found, trying {subgroup_path}")
+                                    with open(subgroup_path, 'r') as f:
+                                        self.metadata = {"zattrs": json.load(f)}
+                                    
+                                    if self.verbose:
+                                        print(f"Loaded metadata from {subgroup_path}")
+                                else:
+                                    if self.verbose:
+                                        print(f"Could not find .zattrs at {zattrs_path} or {subgroup_path}")
+                                    raise ValueError(f"Could not find .zattrs metadata in {self.path}")
+                        except Exception as e:
+                            if self.verbose:
+                                print(f"Failed to load metadata: {e}")
+                            raise
+                    
+                    # Skip the rest of initialization as we already have the data
+                    if self.verbose:
+                        self.meta()
+                    return
+                except Exception as e:
+                    if self.verbose:
+                        print(f"Error opening zarr with TensorStore: {e}")
+                    # Continue with initialization in case there's another way to open this data
+
             # Check if this is a segment ID (numeric)
             elif type[0].isdigit():
                 scroll_id, energy, resolution, _ = self.find_segment_details(str(type))
@@ -166,7 +332,7 @@ class Volume:
                 self.type = type
                 self.segment_id = segment_id
                 self.scroll_id = scroll_id
-            
+
             # Check if this is a scroll identifier
             elif type.startswith("scroll") and (len(type) > 6):
                 self.type = "scroll"
@@ -175,7 +341,7 @@ class Volume:
                 else:
                     self.scroll_id = str(type[6:])
                 self.segment_id = None
-            
+
             else:
                 # Handle standard types
                 assert type in ["scroll", "segment"], "type should be either 'scroll', 'scroll#', 'segment', or 'zarr'"
@@ -201,15 +367,15 @@ class Volume:
 
             assert domain in ["dl.ash2txt", "local"], "domain should be dl.ash2txt or local"
 
-            install_path = get_installation_path()
+            # Use relative paths for config files instead of installation path
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             
             # Try different possible locations for the config file
             possible_paths = [
-                os.path.join(install_path, 'setup', 'configs', f'scrolls.yaml'),  # For editable installs
-                os.path.join(install_path, 'vesuvius', 'setup', 'configs', f'scrolls.yaml'),  # For regular installs
-                os.path.join(install_path, 'configs', f'scrolls.yaml')  # Fallback
+                os.path.join(base_dir, 'setup', 'configs', f'scrolls.yaml'),  # For editable installs
+                os.path.join(base_dir, 'configs', f'scrolls.yaml')  # Fallback
             ]
-            
+
             for path in possible_paths:
                 if os.path.exists(path):
                     self.configs = path
@@ -219,6 +385,10 @@ class Volume:
                 self.configs = possible_paths[0]
                 if self.verbose:
                     print(f"Warning: Could not find config file at any of the expected locations: {possible_paths}")
+
+            # Now that self.configs is set, we can check for zarr type using config file
+            if self.type == 'zarr' and self.path == self.configs:
+                raise ValueError(f"Invalid zarr path: Config file ({self.configs}) cannot be used as zarr store")
 
             if energy:
                 self.energy = energy
@@ -231,169 +401,66 @@ class Volume:
                 self.resolution = self.grab_canonical_resolution()
 
             self.domain = domain
-            self.cache = cache
-            self.cache_pool = cache_pool
-            self.normalize = normalize
-            self.normalization_scheme = normalization_scheme
-            self.return_as_type = return_as_type
-            self.return_as_tensor = return_as_tensor
-            self.verbose = verbose
-            self.use_fsspec = use_fsspec
-            
+
             if self.domain == "dl.ash2txt":
                 # For remote paths, get the URL from the config
                 self.url = self.get_url_from_yaml()
                 if self.verbose:
                     print(f"Using URL from config: {self.url}")
-                
-                # Load remote data and metadata using either fsspec or TensorStore
+
+                # Load remote data and metadata using TensorStore
+                self.metadata = self.load_ome_metadata()
+                self.data = self.load_data()
+
+                # Handle dtype for TensorStore data
+                if self.normalize:
+                    self.max_dtype = get_max_value(self.data[0].dtype.numpy_dtype)
+                self.dtype = self.data[0].dtype.numpy_dtype
+
+            elif self.domain == "local":
+                if self.verbose:
+                    print(f"Opening local zarr store at: {self.url}")
+
+                # Load local data using TensorStore
                 self.metadata = self.load_ome_metadata()
                 self.data = self.load_data()
                 
-                # Handle dtype depending on whether we're using fsspec or TensorStore
-                if self.use_fsspec:
-                    if self.normalize:
-                        self.max_dtype = get_max_value(self.data[0].dtype)
-                    self.dtype = self.data[0].dtype
-                else:
-                    if self.normalize:
-                        self.max_dtype = get_max_value(self.data[0].dtype.numpy_dtype)
-                    self.dtype = self.data[0].dtype.numpy_dtype
-                    
-            elif self.domain == "local":
-                if self.aws is False:
-                    # When not on AWS EC2, a path must be provided for local domain
-                    assert path is not None, "For local domain, path must be provided unless running on AWS EC2"
-                    self.url = path
-                if path is None:
-                    # On AWS, get the local path from yaml config
-                    self.url = self.get_url_from_yaml()
-                
-                if self.verbose:
-                    print(f"Opening local zarr store at: {self.url}")
-                
-                # Open the zarr store - lazily, don't load entire file into memory
-                if self.use_fsspec:
-                    # For fsspec mode, lazily open with zarr
-                    self.data = zarr.open(self.url, mode="r")
-                else:
-                    # For TensorStore mode, use TensorStore for lazy loading
-                    # Create file-based kvstore spec for local files
-                    context_spec = {
-                        'cache_pool': {
-                            "total_bytes_limit": self.cache_pool
-                        }
-                    } if self.cache else {}
-                    
-                    kvstore_spec = {
-                        'driver': 'file',
-                        'path': self.url,
-                    }
-                    
-                    # Common spec for local access
-                    spec = {
-                        'driver': 'zarr',
-                        'kvstore': kvstore_spec,
-                        'context': context_spec
-                    }
-                    
-                    if self.verbose:
-                        print(f"TensorStore spec for local access: {spec}")
-                    
-                    # Open using TensorStore for lazy loading
-                    try:
-                        # First, open using zarr to understand the structure
-                        zarr_root = zarr.open(self.url, mode='r')
-                        # Collect data arrays in a list
-                        sub_volumes = []
-                        
-                        # Look for groups or arrays
-                        for key in sorted(zarr_root.keys()):
-                            try:
-                                # Try to access this as a data array using TensorStore
-                                curr_spec = spec.copy()
-                                curr_spec['path'] = key  # Add path within zarr store
-                                data = ts.open(curr_spec).result()
-                                sub_volumes.append(data)
-                                if self.verbose:
-                                    print(f"Loaded {key} with shape {data.shape}")
-                            except Exception as e:
-                                if self.verbose:
-                                    print(f"Error loading {key} with TensorStore: {e}")
-                        
-                        if not sub_volumes:
-                            # If no subgroups found, try loading the root itself
-                            data = ts.open(spec).result()
-                            sub_volumes.append(data)
-                            
-                        self.data = sub_volumes
-                    except Exception as e:
-                        if self.verbose:
-                            print(f"Error using TensorStore for local zarr: {e}")
-                            print("Falling back to direct zarr access")
-                        # Fall back to direct zarr access if TensorStore fails
-                        self.data = zarr.open(self.url, mode="r")
-                        # Ensure it's a list of arrays for consistent access
-                        if isinstance(self.data, zarr.Group):
-                            self.data = [self.data[k] for k in sorted(self.data.keys())]
-                
-                self.metadata = self.load_ome_metadata()
-                
-                # Set dtype properties based on access method
-                if hasattr(self.data, 'dtype'):
-                    # Single array case
-                    if self.normalize:
-                        self.max_dtype = get_max_value(self.data.dtype)
-                    self.dtype = self.data.dtype
-                elif isinstance(self.data, list) and len(self.data) > 0:
-                    # List of arrays/volumes case
-                    if hasattr(self.data[0], 'dtype'):
-                        # Direct dtype access (zarr array)
-                        if self.normalize:
-                            self.max_dtype = get_max_value(self.data[0].dtype)
-                        self.dtype = self.data[0].dtype
-                    elif hasattr(self.data[0], 'dtype') and hasattr(self.data[0].dtype, 'numpy_dtype'):
-                        # TensorStore dtype access
-                        if self.normalize:
-                            self.max_dtype = get_max_value(self.data[0].dtype.numpy_dtype)
-                        self.dtype = self.data[0].dtype.numpy_dtype
-        
+                # Handle dtype for TensorStore data
+                if self.normalize:
+                    self.max_dtype = get_max_value(self.data[0].dtype.numpy_dtype)
+                self.dtype = self.data[0].dtype.numpy_dtype
+
+
             if self.type == "segment":
                 self.inklabel = np.zeros(self.shape(0), dtype=np.uint8)
                 self.download_inklabel()
 
             if self.verbose:
                 self.meta()
-        
+
         except Exception as e:
             print(f"An error occurred while initializing the Volume class: {e}", end="\n")
-            print('Load the canonical scroll 1 with Volume(type="scroll", scroll_id=1, energy=54, resolution=7.91)', end="\n")
-            print('If loading another part of the same physical scroll use for instance Volume(type="scroll", scroll_id="1b", energy=54, resolution=7.91)', end="\n")
-            print('Load a segment (e.g. 20230827161847) with Volume(type="segment", scroll_id=1, energy=54, resolution=7.91, segment_id=20230827161847)')
+            print('Load the canonical scroll 1 with Volume(type="scroll", scroll_id=1, energy=54, resolution=7.91)',
+                  end="\n")
+            print(
+                'If loading another part of the same physical scroll use for instance Volume(type="scroll", scroll_id="1b", energy=54, resolution=7.91)',
+                end="\n")
+            print(
+                'Load a segment (e.g. 20230827161847) with Volume(type="segment", scroll_id=1, energy=54, resolution=7.91, segment_id=20230827161847)')
             raise
-    
+
     def meta(self) -> None:
         """
         Print metadata information about the volume.
 
         This method provides information about the resolution and shape of the data at the original and scaled resolutions.
         """
+        # Print just the shape information for each subvolume
+        for idx in range(len(self.data)):
+            print(f"Subvolume {idx} shape: {self.shape(idx)}")
 
-        # Assuming the first dataset is the original resolution
-        original_dataset = self.metadata['zattrs']['multiscales'][0]['datasets'][0]
-        original_scale = original_dataset['coordinateTransformations'][0]['scale'][0]
-        original_resolution = float(self.resolution) * float(original_scale)
-        idx = 0
-        print(f"Data with original resolution: {original_resolution} um, subvolume idx: {idx}, shape: {self.shape(idx)}")
-
-        # Loop through the datasets to print the scaled resolutions, excluding the first one
-        for dataset in self.metadata['zattrs']['multiscales'][0]['datasets'][1:]:
-            idx += 1
-            scale_factors = dataset['coordinateTransformations'][0]['scale']
-            scaled_resolution = float(self.resolution) * float(scale_factors[0])
-            print(f"Contains also data with scaled resolution: {scaled_resolution} um, subvolume idx: {idx}, shape: {self.shape(idx)}")
-
-    def find_segment_details(self, segment_id: str) -> Tuple[Optional[int], Optional[int], Optional[float], Optional[Dict[str, Any]]]:
+    def find_segment_details(self, segment_id: str) -> Tuple[
+        Optional[int], Optional[int], Optional[float], Optional[Dict[str, Any]]]:
         """
         Find the details of a segment given its ID.
 
@@ -412,13 +479,13 @@ class Volume:
         ValueError
             If the segment details cannot be found.
         """
-                
+
         dictionary = list_files()
         stack = [(list(dictionary.items()), [])]
 
         while stack:
             items, path = stack.pop()
-            
+
             for key, value in items:
                 if isinstance(value, dict):
                     # Check if 'segments' key is present in the current level of the dictionary
@@ -452,13 +519,19 @@ class Volume:
         if self.type == 'zarr' and hasattr(self, 'path') and self.path is not None:
             if self.verbose:
                 print(f"Using path directly for zarr type: {self.path}")
-            return self.path
+                print(f"Config file path: {self.configs}")
             
+            # Ensure the path isn't the same as the config file path
+            if self.path == self.configs:
+                raise ValueError(f"Invalid zarr path: Configuration file path '{self.path}' cannot be used as zarr store")
+                
+            return self.path
+
         try:
             # Load the YAML file for scroll/segment types
             with open(self.configs, 'r') as file:
                 data: Dict[str, Any] = yaml.safe_load(file)
-                
+
             # Handle empty file or invalid YAML
             if not data:
                 error_msg = f"Config file at {self.configs} is empty or invalid. "
@@ -467,31 +540,36 @@ class Volume:
                 else:
                     error_msg += f"You need to populate it with data for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}, segment: {self.segment_id}"
                 raise ValueError(error_msg)
-                
+
             # Retrieve the URL for the given id, energy, and resolution
             if self.type == 'scroll':
-                url: str = data.get(str(self.scroll_id), {}).get(str(self.energy), {}).get(str(self.resolution), {}).get("volume")
+                url: str = data.get(str(self.scroll_id), {}).get(str(self.energy), {}).get(str(self.resolution),
+                                                                                           {}).get("volume")
             elif self.type == 'segment':
-                url: str = data.get(str(self.scroll_id), {}).get(str(self.energy), {}).get(str(self.resolution), {}).get("segments", {}).get(str(self.segment_id))
+                url: str = data.get(str(self.scroll_id), {}).get(str(self.energy), {}).get(str(self.resolution),
+                                                                                           {}).get("segments", {}).get(
+                    str(self.segment_id))
             else:
                 raise ValueError(f"Cannot retrieve URL from config for type: {self.type}")
 
             if url is None:
                 if self.type == 'scroll':
-                    raise ValueError(f"URL not found for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}. Make sure these values are in your config file.")
+                    raise ValueError(
+                        f"URL not found for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}. Make sure these values are in your config file.")
                 elif self.type == 'segment':
-                    raise ValueError(f"URL not found for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}, segment: {self.segment_id}. Make sure these values are in your config file.")
+                    raise ValueError(
+                        f"URL not found for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}, segment: {self.segment_id}. Make sure these values are in your config file.")
                 else:
                     raise ValueError("URL not found in the configuration file.")
-                
+
             return url
-            
+
         except FileNotFoundError:
             error_msg = f"Configuration file not found at {self.configs}. "
             error_msg += "Please make sure the vesuvius package is properly installed with configuration files.\n"
             error_msg += "You can download example config files from: https://github.com/ScrollPrize/villa/tree/main/setup/configs"
             raise FileNotFoundError(error_msg)
-    
+
     def load_ome_metadata(self) -> Dict[str, Any]:
         """
         Load the OME (Open Microscopy Environment) metadata for the volume.
@@ -507,44 +585,73 @@ class Volume:
             If there is an error loading the metadata from the server.
         """
         try:
-            if self.domain == "dl.ash2txt":
-                # Load the .zattrs metadata
-                # Fix URL format - remove trailing slash if present
-                base_url = self.url.rstrip("/")
+            # Fix URL format - remove trailing slash if present
+            base_url = self.url.rstrip("/")
+            
+            if self.domain == "dl.ash2txt" or base_url.startswith(('http://', 'https://')):
+                # Try root level .zattrs first
                 zattrs_url = f"{base_url}/.zattrs"
-                
+
                 if self.verbose:
                     print(f"Attempting to load metadata from: {zattrs_url}")
+
+                try:
+                    # Use direct HTTP requests to load metadata from remote
+                    response = requests.get(zattrs_url)
+                    response.raise_for_status()
+                    zattrs = response.json()
+                except Exception as root_e:
+                    if self.verbose:
+                        print(f"Error loading root metadata, trying subgroup /0: {root_e}")
                     
-                zattrs_response = requests.get(zattrs_url)
-                zattrs_response.raise_for_status()
-                zattrs = zattrs_response.json()
+                    # If that fails, try in the /0 subgroup for multiresolution zarrs
+                    subgroup_zattrs_url = f"{base_url}/0/.zattrs"
+                    if self.verbose:
+                        print(f"Attempting to load metadata from subgroup: {subgroup_zattrs_url}")
+                    
+                    response = requests.get(subgroup_zattrs_url)
+                    response.raise_for_status()
+                    zattrs = response.json()
 
             elif self.domain == "local":
-                # For local domain, access attributes from the zarr store
-                if not hasattr(self, 'data') or self.data is None:
-                    # This shouldn't happen normally, but just in case
+                # For local domain, try root level .zattrs first
+                zattrs_path = os.path.join(base_url, '.zattrs')
+                
+                if os.path.exists(zattrs_path):
                     if self.verbose:
-                        print(f"Warning: Loading data inside load_ome_metadata for local domain")
-                    self.data = zarr.open(self.url, mode="r")
-                
-                zattrs = dict(self.data.attrs)
-                
+                        print(f"Reading metadata from: {zattrs_path}")
+                    
+                    # Load JSON metadata directly from the file
+                    with open(zattrs_path, 'r') as f:
+                        zattrs = json.load(f)
+                else:
+                    # If not found, check for multiresolution zarr with .zattrs in /0
+                    subgroup_zattrs_path = os.path.join(base_url, "0", ".zattrs")
+                    
+                    if self.verbose:
+                        print(f"Root .zattrs not found, trying: {subgroup_zattrs_path}")
+                    
+                    if os.path.exists(subgroup_zattrs_path):
+                        with open(subgroup_zattrs_path, 'r') as f:
+                            zattrs = json.load(f)
+                    else:
+                        raise FileNotFoundError(f"Could not find .zattrs at {zattrs_path} or {subgroup_zattrs_path}")
+
             return {
                 "zattrs": zattrs,
             }
-        except requests.RequestException as e:
+        except Exception as e:
             print(f"Error loading metadata: {e}")
             raise
 
     def load_data(self):
         """
-        Load the data for the volume.
+        Load the data for the volume using TensorStore.
 
         Returns
         -------
-        List[ts.TensorStore] or List[zarr.Array]
-            A list of data objects representing the sub-volumes.
+        List[ts.TensorStore]
+            A list of TensorStore objects representing the sub-volumes.
 
         Raises
         ------
@@ -554,178 +661,138 @@ class Volume:
         # Fix URL format - remove trailing slash if present
         base_url = self.url.rstrip("/")
         sub_volumes = []
-        
-        # If data is already loaded through direct zarr access, return it
-        if hasattr(self, 'data') and self.data is not None and self.domain == "local" and isinstance(self.data, zarr.Group):
+
+        # For each resolution level
+        for dataset in self.metadata['zattrs']['multiscales'][0]['datasets']:
+            path = dataset['path']
+            sub_url = f"{base_url}/{path}"
+
             if self.verbose:
-                print(f"Data already loaded from local zarr store, using existing data")
-            if self.use_fsspec:
-                # If it's a zarr group, return a list of its arrays
-                return [self.data[k] for k in sorted(self.data.keys())]
-            else:
-                # Need to convert to TensorStore for each subvolume
-                # But this shouldn't happen - we're keeping the same approach throughout
-                print("Warning: Mixing data access methods - this should be avoided")
-                return self.data
-        
-        # Determine the access method based solely on use_fsspec flag
-        if self.use_fsspec:
-            # Use fsspec/zarr for loading (both local and remote)
-            import fsspec
-            import zarr
-            
-            # For each resolution level
-            for dataset in self.metadata['zattrs']['multiscales'][0]['datasets']:
-                path = dataset['path']
-                sub_url = f"{base_url}/{path}"
+                print(f"Attempting to load data from: {sub_url} using TensorStore")
+
+            try:
+                # Configure cache pool size based on user settings
+                cache_pool_bytes = int(self.cache_pool) if self.cache else 0
                 
-                if self.verbose:
-                    print(f"Attempting to load data from: {sub_url} using fsspec/zarr")
-                
-                try:
-                    if self.domain == "local":
-                        # For local files, open directly with zarr
-                        if os.path.exists(sub_url):
-                            zarr_array = zarr.open(sub_url, mode='r')
-                        else:
-                            # Try using the path directly if it exists
-                            if os.path.exists(base_url):
-                                # This might be a multi-resolution zarr store with the path directly in it
-                                try:
-                                    zarr_root = zarr.open(base_url, mode='r')
-                                    if path in zarr_root:
-                                        zarr_array = zarr_root[path]
-                                    else:
-                                        # Just use the first group or array we find
-                                        key = list(zarr_root.keys())[0]
-                                        zarr_array = zarr_root[key]
-                                except Exception as e:
-                                    print(f"Error accessing zarr store at {base_url}: {e}")
-                                    raise
-                            else:
-                                raise FileNotFoundError(f"Cannot find zarr data at {sub_url} or {base_url}")
-                    else:
-                        # Remote HTTP access through fsspec
-                        if self.verbose:
-                            print(f"Using fsspec to access remote zarr at {sub_url}")
-                        
-                        if not sub_url.startswith(('http://', 'https://')):
-                            raise ValueError(f"Invalid URL for fsspec HTTP access: {sub_url}")
-                            
-                        # Create HTTP filesystem with improved performance settings
-                        fs = fsspec.filesystem(
-                            "http",
-                            block_size=2**20,  # 1MB blocks for better throughput
-                            cache_type='readahead',  # Prefetch data
-                            cache_options={'max_blocks': 32},  # Cache up to 32MB
-                        )
-                        
-                        # Open zarr array via fsspec mapping
-                        zarr_map = fsspec.mapping.FSMap(sub_url, fs)
-                        zarr_array = zarr.open(zarr_map, mode='r')
-                    
-                    sub_volumes.append(zarr_array)
-                    
-                    if self.verbose:
-                        print(f"Successfully loaded data from {sub_url} using fsspec/zarr")
-                        print(f"Shape: {zarr_array.shape}, dtype: {zarr_array.dtype}")
-                    
-                except Exception as e:
-                    print(f"Error loading data from {sub_url} with fsspec/zarr: {e}")
-                    raise
-        else:
-            # Use TensorStore for everything (both local and remote)
-            if self.verbose:
-                print(f"Using TensorStore for data access (use_fsspec={self.use_fsspec})")
-                
-            if self.cache:
-                context_spec = {
+                # Common TensorStore context with cache settings
+                context = {
                     'cache_pool': {
-                        "total_bytes_limit": self.cache_pool
+                        'total_bytes_limit': cache_pool_bytes
                     }
                 }
-            else:
-                context_spec = {}
-            
-            # For each resolution level
-            for dataset in self.metadata['zattrs']['multiscales'][0]['datasets']:
-                path = dataset['path']
                 
-                try:
-                    if self.domain == "local":
-                        # For local files, use file kvstore driver
-                        sub_url = f"{base_url}/{path}"
-                        
-                        if self.verbose:
-                            print(f"Attempting to load local data from: {sub_url} using TensorStore")
-                            
-                        # Check if path exists
-                        if not os.path.exists(sub_url) and os.path.exists(base_url):
-                            # Try opening as a multi-resolution zarr store
-                            if self.verbose:
-                                print(f"Path {sub_url} not found, trying multi-resolution zarr at {base_url}")
-                                
-                            # This is likely a zarr hierarchy with subgroups
-                            # First, open using zarr to get a list of keys
-                            try:
-                                import zarr
-                                z = zarr.open(base_url, mode='r')
-                                
-                                # If path is in the keys, use that
-                                if path in z.keys():
-                                    sub_url = f"{base_url}/{path}"
-                                else:
-                                    # Use the first key
-                                    key = sorted(z.keys())[0]
-                                    sub_url = f"{base_url}/{key}"
-                                    if self.verbose:
-                                        print(f"Using first group in zarr store: {key}")
-                            except Exception as e:
-                                print(f"Error examining zarr store: {e}")
-                                # Continue with original path
-                        
-                        # Create a file-based kvstore spec for local files
-                        kvstore_spec = {
+                if self.domain == "local":
+                    # Local file system access
+                    kvstore_config = {
+                        'driver': 'file',
+                        'path': base_url,  # Use base URL as the path for all resolutions
+                    }
+                    
+                    # Check for multiresolution zarr
+                    multiresolution = False
+                    zarray_path = os.path.join(sub_url, '.zarray')
+                    base_zarray_path = os.path.join(base_url, '.zarray')
+                    
+                    # First check if this is a traditional zarr with .zarray at the path level
+                    if os.path.exists(zarray_path):
+                        # This is a standard zarr with .zarray at the sub_url level
+                        kvstore_config = {
                             'driver': 'file',
                             'path': sub_url,
                         }
+                    # Then check if this is a multiresolution zarr with .zarray in numbered groups
+                    elif os.path.exists(os.path.join(base_url, path, '.zarray')):
+                        # This is a multiresolution zarr with .zarray in numbered groups
+                        multiresolution = True
+                    # Otherwise check if .zarray is at the base URL
+                    elif os.path.exists(base_zarray_path):
+                        # This is a standard zarr with .zarray at the root
+                        pass
                     else:
-                        # For remote data, use http kvstore driver
-                        sub_url = f"{base_url}/{path}/"
-                        
-                        if self.verbose:
-                            print(f"Attempting to load remote data from: {sub_url} using TensorStore")
-                            
-                        kvstore_spec = {
-                            'driver': 'http',
-                            'base_url': sub_url
-                        }
+                        raise FileNotFoundError(f"Cannot find zarr data at {sub_url}, {base_url}, or {os.path.join(base_url, path)}")
+                
+                else:
+                    # Remote HTTP access
+                    if not base_url.startswith(('http://', 'https://')):
+                        raise ValueError(f"Invalid URL for HTTP access: {base_url}")
                     
-                    # Common spec for both local and remote
-                    spec = {
-                        'driver': 'zarr',
-                        'kvstore': kvstore_spec,
-                        'context': context_spec
+                    # For remote paths, assume multiresolution by default and try both methods
+                    kvstore_config = {
+                        'driver': 'http',
+                        'base_url': base_url,  # Use base URL as the base for all resolutions
                     }
+                    multiresolution = True
                     
-                    if self.verbose:
-                        print(f"TensorStore spec: {spec}")
-                    
+                    # Validate the sub_url
+                    if not sub_url.startswith(('http://', 'https://')):
+                        # If somehow sub_url doesn't have the protocol, it's an error
+                        raise ValueError(f"Invalid URL for HTTP access: {sub_url}")
+                
+                # Create and open TensorStore
+                ts_config = {
+                    'driver': 'zarr',
+                    'kvstore': kvstore_config,
+                    'context': context,
+                }
+                
+                # For multiresolution zarrs, add the path to the zarr config
+                if multiresolution:
+                    ts_config['path'] = path
+                
+                if self.verbose:
+                    print(f"TensorStore config: {json.dumps(ts_config, indent=2)}")
+                
+                # Try to open with the current configuration
+                try:
                     # Open the TensorStore
-                    data = ts.open(spec).result()
-                    sub_volumes.append(data)
-                    
+                    future = ts.open(ts_config)
+                    store = future.result()
+                except Exception as e1:
                     if self.verbose:
-                        print(f"Successfully loaded data with TensorStore")
-                        print(f"Shape: {data.shape}, dtype: {data.dtype.numpy_dtype}")
-                        
-                except Exception as e:
-                    print(f"Error loading data with TensorStore: {e}")
-                    print(f"URL: {sub_url}")
+                        print(f"First attempt failed: {e1}")
+                    
+                    # If that fails and we're using HTTP, try with the sub_url directly
+                    if self.domain != "local":
+                        try:
+                            # Try with direct sub_url access
+                            alt_config = {
+                                'driver': 'zarr',
+                                'kvstore': {
+                                    'driver': 'http',
+                                    'base_url': sub_url,
+                                },
+                                'context': context,
+                            }
+                            
+                            if self.verbose:
+                                print(f"Trying alternative config with direct sub_url: {json.dumps(alt_config, indent=2)}")
+                                
+                            future = ts.open(alt_config)
+                            store = future.result()
+                        except Exception as e2:
+                            if self.verbose:
+                                print(f"Alternative attempt also failed: {e2}")
+                            # If both methods fail, raise the original error
+                            raise e1
+                
+                sub_volumes.append(store)
+
+                if self.verbose:
+                    print(f"Successfully loaded data from {sub_url} using TensorStore")
+                    print(f"Shape: {store.shape}, dtype: {store.dtype}")
+
+            except Exception as e:
+                print(f"Error loading data from {sub_url} with TensorStore: {e}")
+                if len(sub_volumes) > 0:
+                    # If we've successfully loaded at least one resolution level, continue with what we have
+                    print(f"Continuing with {len(sub_volumes)} successfully loaded resolution levels")
+                    break
+                else:
+                    # If we couldn't load any resolution levels, it's a critical error
                     raise
 
         return sub_volumes
-    
+
     def download_inklabel(self) -> None:
         """
         Download the ink label image for a segment.
@@ -739,38 +806,65 @@ class Volume:
         """
         assert self.type == "segment", "Can download ink label only for segments."
         if self.url[-1] == "/":
-            inklabel_url = self.url[:-6]+"_inklabels.png"
+            inklabel_url = self.url[:-6] + "_inklabels.png"
         else:
-            inklabel_url = self.url[:-5]+"_inklabels.png"
+            inklabel_url = self.url[:-5] + "_inklabels.png"
+            
+        if self.verbose:
+            print(f"Attempting to load ink label from: {inklabel_url}")
+            
+        # Configure TensorStore for image access
         if self.domain == "local":
-            # If domain is local, open the image from the local file path
-            if os.path.exists(inklabel_url):
-                self.inklabel = np.array(Image.open(inklabel_url))
-            else:
-                print(f"File not found: {inklabel_url}")
+            # Local file system access
+            ts_config = {
+                'driver': 'image',
+                'kvstore': {
+                    'driver': 'file',
+                    'path': inklabel_url,
+                }
+            }
         else:
-            # Make a GET request to the URL to download the image
-            response = requests.get(inklabel_url)
+            # Remote HTTP access
+            ts_config = {
+                'driver': 'image',
+                'kvstore': {
+                    'driver': 'http',
+                    'url': inklabel_url,
+                }
+            }
+            
+        try:
+            # Open and read the image with TensorStore
+            future = ts.open(ts_config)
+            img_store = future.result()
+            img_data = img_store.read().result()
+            self.inklabel = np.array(img_data)
+            
+            if self.verbose:
+                print(f"Successfully loaded ink label with shape: {self.inklabel.shape}")
+        except Exception as e:
+            print(f"Error loading ink label: {e}")
+            # Initialize an empty ink label array with the expected shape
+            if hasattr(self, 'data') and len(self.data) > 0:
+                # Get x and y dimensions from the data shape
+                shape = self.shape(0)
+                if len(shape) >= 3:
+                    # For 3D data, ink label is typically a 2D mask matching the XY dimensions
+                    self.inklabel = np.zeros((shape[-2], shape[-1]), dtype=np.uint8)
+                    if self.verbose:
+                        print(f"Created empty ink label with shape: {self.inklabel.shape}")
 
-            # Check if the request was successful
-            if response.status_code == 200:
-                # Open the image directly from the response content using PIL
-                self.inklabel = np.array(Image.open(BytesIO(response.content)))
-            else:
-                print(f"Failed to download inklabel. Status code: {response.status_code}")
-        
-
-    def __getitem__(self, idx: Union[Tuple[int, ...],int]) -> NDArray:
+    def __getitem__(self, idx: Union[Tuple[int, ...], int]) -> NDArray:
         """
         Get a sub-volume or slice of the data.
 
         Parameters
         ----------
         idx : Union[Tuple[int, ...], int]
-            Index tuple or integer to select the data. 
-            
+            Index tuple or integer to select the data.
+
             For 3D data, the tuple order is (z, y, x) - this is the standard order for scientific data and TensorStore.
-            
+
             If a fourth index is provided, it selects a specific sub-volume (resolution level),
             otherwise the data are taken from the first sub-volume (highest resolution).
 
@@ -792,7 +886,7 @@ class Volume:
             # Format is (c, z, y, x) for 4D data or (z, y, x, subvolume) for 3D with subvolume
             if self.verbose:
                 print(f"Received 4D indexing: {idx}")
-                
+
             if hasattr(self, 'data') and len(self.data) > 0 and len(self.data[0].shape) == 4:
                 # This is 4D data with channels (c, z, y, x)
                 z, y, x = idx[1], idx[2], idx[3]
@@ -801,122 +895,78 @@ class Volume:
             else:
                 # This is 3D data with specified subvolume (z, y, x, subvolume)
                 z, y, x, subvolume_idx = idx
-                
+
             assert 0 <= subvolume_idx < len(self.data), "Invalid subvolume index."
-            
+
         elif isinstance(idx, tuple) and len(idx) == 3:
             # Format is (z, y, x) for standard 3D indexing
             z, y, x = idx
             subvolume_idx = 0
-            
-        elif isinstance(idx, tuple) and len(idx) == 2:
-            # Format might be (z, y) or (c, z) depending on context
-            if hasattr(self, 'data') and len(self.data) > 0 and len(self.data[0].shape) == 4:
-                # This is likely 4D data, so this is (c, z)
-                c, z = idx
-                y = slice(None)  # All Y
-                x = slice(None)  # All X
-            else:
-                # This is 3D data, so this is (z, y)
-                z, y = idx
-                x = slice(None)  # All X
-            subvolume_idx = 0
-            
-        elif (isinstance(idx, tuple) and len(idx) == 1) or isinstance(idx, int):
-            # Single index can be z or c depending on data dimensions
-            if isinstance(idx, tuple):
-                z = idx[0]
-            else:
-                z = idx
-            y = slice(None)  # All Y
-            x = slice(None)  # All X
-            subvolume_idx = 0
-            
-        else:
-            raise IndexError("Invalid index. Must be a tuple of one to four elements, or an integer.")
-            
-        # Handle different data access methods based solely on use_fsspec flag
-        if self.use_fsspec:
-            # Using fsspec/zarr direct indexing (for both local and remote)
-            try:
-                # For slice objects, just use them directly
-                # Access with z,y,x ordering as this is the standard for scientific data
-                if self.verbose:
-                    print(f"Zarr accessing with indices: (z={z}, y={y}, x={x}), subvolume: {subvolume_idx}")
-                    print(f"Data shape: {self.data[subvolume_idx].shape if subvolume_idx < len(self.data) else 'UNKNOWN'}")
-                
-                data_slice = self.data[subvolume_idx][z, y, x]
-                
-                if self.verbose:
-                    print(f"Zarr returned shape: {data_slice.shape}")
-                
-            except Exception as e:
-                if self.verbose:
-                    print(f"Error in zarr slice with indices (z={z}, y={y}, x={x}): {e}")
-                    print(f"Data shape: {self.data[subvolume_idx].shape if subvolume_idx < len(self.data) else 'UNKNOWN'}")
-                    print(f"Index types: z={type(z)}, y={type(y)}, x={type(x)}")
-                
-                # Try to work around zarr/fsspec limitations by handling different slice patterns
-                if isinstance(x, slice) and isinstance(y, slice) and isinstance(z, slice):
-                    # For all slice objects, we can try different approach
-                    if self.verbose:
-                        print(f"Trying alternative slice method for zarr with z={z}, y={y}, x={x}")
-                    # Get the raw array and index it directly
-                    data_slice = self.data[subvolume_idx][:]
-                    data_slice = data_slice[z, y, x]
-                else:
-                    # Re-raise the error if we can't handle it
-                    raise
-                
-        else:
-            # Using TensorStore (for both local and remote)
-            try:
-                # TensorStore requires .read().result() to fetch data
-                # Add debugging to understand the indexing behavior
-                if self.verbose:
-                    print(f"TensorStore accessing with indices: (z={z}, y={y}, x={x}), subvolume: {subvolume_idx}")
-                    print(f"Data shape: {self.data[subvolume_idx].shape}")
-                
-                # Properly handle slices to work with TensorStore
-                # TensorStore expects dimensions in z,y,x order
-                data_slice = self.data[subvolume_idx][z, y, x].read().result()
-                
-                if self.verbose:
-                    print(f"TensorStore returned shape: {data_slice.shape}")
 
-            except Exception as e:
-                if self.verbose:
-                    print(f"TensorStore access error: {e}")
-                    print(f"Indices: z={z}, y={y}, x={x}, type(z)={type(z)}, type(y)={type(y)}, type(x)={type(x)}")
-                # Re-raise to let caller handle the error
-                raise
+        try:
+            # For slice objects, just use them directly with TensorStore
+            # Access with z,y,x ordering as this is the standard for scientific data
+            if self.verbose:
+                print(f"TensorStore accessing with indices: (z={z}, y={y}, x={x}), subvolume: {subvolume_idx}")
+                print(f"Data shape: {self.data[subvolume_idx].shape}")
 
-        # we perform all normalization in float32 , and then scale for output dtypes if specified in 'return_as_type'
+            # TensorStore supports standard NumPy-like indexing
+            # Read data from TensorStore
+            future = self.data[subvolume_idx][z, y, x].read()
+            data_slice = future.result()
+            
+            # Convert to numpy array
+            data_slice = np.array(data_slice)
 
-        # Apply normalization if needed
-        if self.normalize:
-            data_slice = data_slice / self.max_dtype
+            if self.verbose:
+                print(f"TensorStore returned shape: {data_slice.shape}")
+
+        except Exception as e:
+            if self.verbose:
+                print(f"Error in TensorStore slice with indices (z={z}, y={y}, x={x}): {e}")
+                print(f"Data shape: {self.data[subvolume_idx].shape}")
+                print(f"Index types: z={type(z)}, y={type(y)}, x={type(x)}")
+            raise
+
+        # Perform normalization only once, consistently
+        
+        # Convert to float32 first if normalization is needed
+        if self.normalize or self.normalization_scheme != 'none':
             data_slice = data_slice.astype(np.float32)
-
-        if self.normalization_scheme:
-            if self.normalization_scheme == 'zscore' or self.normalization_scheme == 'std':
-                # zscore and std do the same normalization: (x - mean) / std
-                for c in range(data_slice.shape[0]):
-                    mean = np.mean(data_slice[c])
-                    std = np.std(data_slice[c])
-                    if std > 0:
-                        data_slice[c] = (data_slice[c] - mean) / std
-            elif self.normalization_scheme == 'minmax':
-                for c in range(data_slice.shape[0]):
-                    min_val = np.min(data_slice[c])
-                    max_val = np.max(data_slice[c])
-                    if max_val > min_val:
-                        data_slice[c] = (data_slice[c] - min_val) / (max_val - min_val)
-
+            
+        # Apply normalization based on strategy
+        if self.normalization_scheme == 'zscore' or self.normalization_scheme == 'std':
+            # Z-score normalization exactly as in nnUNet's ZScoreNormalization
+            for c in range(data_slice.shape[0]):
+                mean = np.mean(data_slice[c])
+                std = np.std(data_slice[c])
+                # Use max(std, 1e-8) to match nnUNet's epsilon handling
+                data_slice[c] = (data_slice[c] - mean) / (max(std, 1e-8))
+        elif self.normalization_scheme == 'minmax':
+            # Min-max normalization matching nnUNet's RescaleTo01Normalization 
+            for c in range(data_slice.shape[0]):
+                min_val = np.min(data_slice[c])
+                # First shift to make minimum 0
+                data_slice[c] = data_slice[c] - min_val
+                # Then scale to max of 1, with epsilon to prevent division by zero
+                max_val = np.max(data_slice[c])
+                data_slice[c] = data_slice[c] / max(max_val, 1e-8)
+        # Scale to [0,1] range if normalize=True and no other normalization applied
+        elif self.normalize:
+            # For TensorStore, dtype is an object, so we need to get numpy_dtype
+            if hasattr(self, 'max_dtype'):
+                data_slice = data_slice / self.max_dtype
+            else:
+                # If max_dtype is not set, calculate it
+                if hasattr(self.data[subvolume_idx].dtype, 'numpy_dtype'):
+                    self.max_dtype = get_max_value(self.data[subvolume_idx].dtype.numpy_dtype)
+                else:
+                    self.max_dtype = get_max_value(self.data[subvolume_idx].dtype)
+                data_slice = data_slice / self.max_dtype
 
         if self.return_as_type:
             if self.return_as_type == 'np.float32':
-                pass # data is float32 at this stage, we just pass it along
+                pass  # data is float32 at this stage, we just pass it along
             elif self.return_as_type == 'np.uint8':
                 data_slice = data_slice * get_max_value(np.uint8)
                 data_slice = data_slice.astype(np.uint8)
@@ -933,11 +983,6 @@ class Volume:
         else:
             return data_slice
 
-
-
-                    
-
-        
     def grab_canonical_energy(self) -> Optional[int]:
         """
         Get the canonical energy for the volume based on the scroll ID.
@@ -967,7 +1012,7 @@ class Volume:
             3: 3.24, 4: 3.24, 5: 7.91
         }
         return resolution_mapping.get(self.scroll_id, None)
-                
+
     def activate_caching(self) -> None:
         """
         Activate caching for the volume data.
@@ -977,7 +1022,16 @@ class Volume:
         if self.domain != "local":
             if not self.cache:
                 self.cache = True
+                # Reload data with TensorStore caching enabled
                 self.data = self.load_data()
+                # Update dtype info for the reloaded data
+                if hasattr(self.data[0].dtype, 'numpy_dtype'):
+                    self.dtype = self.data[0].dtype.numpy_dtype
+                else:
+                    self.dtype = self.data[0].dtype
+                
+                if self.normalize:
+                    self.max_dtype = get_max_value(self.dtype)
 
     def deactivate_caching(self) -> None:
         """
@@ -988,7 +1042,16 @@ class Volume:
         if self.domain != "local":
             if self.cache:
                 self.cache = False
+                # Reload data with TensorStore caching disabled
                 self.data = self.load_data()
+                # Update dtype info for the reloaded data
+                if hasattr(self.data[0].dtype, 'numpy_dtype'):
+                    self.dtype = self.data[0].dtype.numpy_dtype
+                else:
+                    self.dtype = self.data[0].dtype
+                
+                if self.normalize:
+                    self.max_dtype = get_max_value(self.dtype)
 
     def shape(self, subvolume_idx: int = 0) -> Tuple[int, ...]:
         """
@@ -1010,9 +1073,10 @@ class Volume:
             If the sub-volume index is invalid.
         """
         assert 0 <= subvolume_idx < len(self.data), "Invalid subvolume index"
-        return self.data[subvolume_idx].shape
+        # TensorStore stores shape as a property, return it as a tuple
+        return tuple(self.data[subvolume_idx].shape)
 
-  
+
 class Cube:
     """
     A class to represent a 3D instance annotated cube within a scroll.
@@ -1050,7 +1114,9 @@ class Cube:
     max_dtype : Union[float, int]
         Maximum value of the dtype if normalization is enabled.
     """
-    def __init__(self, scroll_id: int, energy: int, resolution: float, z: int, y: int, x: int, cache: bool = False, cache_dir : Optional[os.PathLike] = None, normalize: bool = False) -> None:
+
+    def __init__(self, scroll_id: int, energy: int, resolution: float, z: int, y: int, x: int, cache: bool = False,
+                 cache_dir: Optional[os.PathLike] = None, normalize: bool = False) -> None:
         """
         Initialize the Cube object.
 
@@ -1081,15 +1147,16 @@ class Cube:
             If the URL cannot be found in the configuration.
         """
         self.scroll_id = scroll_id
-        install_path = get_installation_path()
+        
+        # Use relative paths for config files
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
         # Try different possible locations for the config file
         possible_paths = [
-            os.path.join(install_path, 'setup', 'configs', f'cubes.yaml'),  # For editable installs
-            os.path.join(install_path, 'vesuvius', 'setup', 'configs', f'cubes.yaml'),  # For regular installs
-            os.path.join(install_path, 'configs', f'cubes.yaml')  # Fallback
+            os.path.join(base_dir, 'setup', 'configs', f'cubes.yaml'),  # For editable installs
+            os.path.join(base_dir, 'configs', f'cubes.yaml')  # Fallback
         ]
-        
+
         for path in possible_paths:
             if os.path.exists(path):
                 self.configs = path
@@ -1116,7 +1183,7 @@ class Cube:
 
         if self.normalize:
             self.max_dtype = get_max_value(self.volume.dtype)
-        
+
     def get_url_from_yaml(self) -> str:
         """
         Retrieve the URLs for the volume and mask data from the YAML configuration file.
@@ -1137,17 +1204,19 @@ class Cube:
             # Load the YAML file
             with open(self.configs, 'r') as file:
                 data: Dict[str, Any] = yaml.safe_load(file)
-            
+
             # Handle empty file or invalid YAML
             if not data:
                 error_msg = f"Config file at {self.configs} is empty or invalid. "
                 error_msg += f"You need to populate it with data for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}, cube: {self.z:05d}_{self.y:05d}_{self.x:05d}"
                 raise ValueError(error_msg)
-                
+
             # Retrieve the URL for the given id, energy, and resolution
-            base_url: str = data.get(self.scroll_id, {}).get(self.energy, {}).get(self.resolution, {}).get(f"{self.z:05d}_{self.y:05d}_{self.x:05d}")
+            base_url: str = data.get(self.scroll_id, {}).get(self.energy, {}).get(self.resolution, {}).get(
+                f"{self.z:05d}_{self.y:05d}_{self.x:05d}")
             if base_url is None:
-                raise ValueError(f"URL not found for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}, cube: {self.z:05d}_{self.y:05d}_{self.x:05d}. Make sure these values are in your config file.")
+                raise ValueError(
+                    f"URL not found for scroll: {self.scroll_id}, energy: {self.energy}, resolution: {self.resolution}, cube: {self.z:05d}_{self.y:05d}_{self.x:05d}. Make sure these values are in your config file.")
 
             volume_filename = f"{self.z:05d}_{self.y:05d}_{self.x:05d}_volume.nrrd"
             mask_filename = f"{self.z:05d}_{self.y:05d}_{self.x:05d}_mask.nrrd"
@@ -1155,13 +1224,13 @@ class Cube:
             volume_url = os.path.join(base_url, volume_filename)
             mask_url = os.path.join(base_url, mask_filename)
             return volume_url, mask_url
-            
+
         except FileNotFoundError:
             error_msg = f"Configuration file not found at {self.configs}. "
             error_msg += "Please make sure the vesuvius package is properly installed with configuration files.\n"
             error_msg += "You can download example config files from: https://github.com/ScrollPrize/villa/tree/main/setup/configs"
             raise FileNotFoundError(error_msg)
-    
+
     def load_data(self) -> Tuple[NDArray, NDArray]:
         """
         Load the data for the cube.
@@ -1225,7 +1294,6 @@ class Cube:
 
         return output[0], output[1]
 
-
     def __getitem__(self, idx: Tuple[int, ...]) -> NDArray:
         """
         Get a slice of the cube data.
@@ -1249,14 +1317,14 @@ class Cube:
             zz, yy, xx = idx
 
             if self.normalize:
-                return self.volume[zz, yy, xx]/self.max_dtype, self.mask[zz, yy, xx]
-            
+                return self.volume[zz, yy, xx] / self.max_dtype, self.mask[zz, yy, xx]
+
             else:
                 return self.volume[zz, yy, xx], self.mask[zz, yy, xx]
-            
+
         else:
             raise IndexError("Invalid index. Must be a tuple of three elements.")
-    
+
     def activate_caching(self, cache_dir: Optional[os.PathLike] = None) -> None:
         """
         Activate caching for the cube data.
@@ -1281,4 +1349,3 @@ class Cube:
         if self.cache:
             self.cache = False
             self.volume, self.mask = self.load_data()
-

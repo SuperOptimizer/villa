@@ -35,7 +35,7 @@ class VCDataset(Dataset):
             return_as_type: str = 'np.float32',
             return_as_tensor: bool = True,
             domain: Optional[str] = None,
-            use_fsspec: bool = False,
+            use_fsspec: bool = False,  # Deprecated: TensorStore is now always used
             ):
         """
         Dataset for nnUNet inference on zarr arrays, with support for local and remote data via Volume class.
@@ -64,7 +64,7 @@ class VCDataset(Dataset):
             return_as_type: Type to return data as ('none', 'np.uint8', 'np.uint16', 'np.float16', 'np.float32') (default: 'np.float32')
             return_as_tensor: Whether to return data as torch tensor (default: True)
             domain: Domain for Volume ('dl.ash2txt' or 'local')
-            use_fsspec: Whether to use fsspec instead of TensorStore for data access (default: False)
+            use_fsspec: Deprecated parameter. TensorStore is now always used for data access
         """
         self.input_path = input_path
         self.input_format = input_format
@@ -75,6 +75,7 @@ class VCDataset(Dataset):
         self.num_input_channels = num_input_channels
         self.verbose = verbose
         self.mode = mode
+        self.return_as_tensor = return_as_tensor
         
         # Data partitioning parameters
         if num_parts < 1:
@@ -126,12 +127,43 @@ class VCDataset(Dataset):
             # This allows Volume to handle both local and remote zarr files uniformly
             type_value = "zarr"
             use_path = input_path
+            
+            # For zarr type with a file path, always use local domain
+            if domain is None:
+                domain = "local"
+                if self.verbose:
+                    print(f"For zarr paths, automatically setting domain to 'local'")
         
         # Initialize Volume for all access
         try:
             if self.verbose:
                 print(f"Initializing Volume with type={type_value}, scroll_id={scroll_id}, energy={energy}, resolution={resolution}, segment_id={segment_id}")
                 print(f"Path={use_path}, use_fsspec={use_fsspec}, domain={domain}")
+                
+            # Fix for zarr path issue - ensure path is absolute and exists
+            if type_value == "zarr" and use_path is not None:
+                from pathlib import Path
+                import os
+                
+                # Make sure it's absolute
+                actual_path = Path(use_path)
+                if not actual_path.is_absolute():
+                    fixed_path = actual_path.absolute()
+                    print(f"Converting relative path {use_path} to absolute path {fixed_path}")
+                    use_path = str(fixed_path)
+                
+                # Check if path exists and is a directory (zarr store)
+                if not os.path.exists(use_path):
+                    raise ValueError(f"Zarr path does not exist: {use_path}")
+                    
+                if not os.path.isdir(use_path):
+                    raise ValueError(f"Zarr path exists but is not a directory: {use_path}")
+                
+                # Check if it has key zarr files
+                if not os.path.exists(os.path.join(use_path, '.zarray')) and not os.path.exists(os.path.join(use_path, '.zgroup')):
+                    print(f"WARNING: Path {use_path} does not appear to be a valid zarr store (missing .zarray or .zgroup).")
+                
+                print(f"Using zarr path: {use_path}")
                 
             self.volume = Volume(
                 type=type_value,
@@ -146,17 +178,15 @@ class VCDataset(Dataset):
                 return_as_tensor=return_as_tensor,
                 verbose=verbose,
                 domain=domain,
-                path=use_path,
-                use_fsspec=use_fsspec
+                path=use_path
             )
-            
-            if self.verbose:
-                print(f"Successfully initialized Volume")
-                self.volume.meta()
             
             # Get volume's shape for the highest resolution (subvolume 0)
             self.input_shape = self.volume.shape(0)
             self.input_dtype = self.volume.dtype
+            
+            if self.verbose:
+                print(f"Successfully initialized Volume with shape: {self.input_shape}")
             
         except Exception as e:
             raise ValueError(f"Error initializing Volume from input_path '{input_path}': {str(e)}")
@@ -299,8 +329,6 @@ class VCDataset(Dataset):
             # Check if input has channels or if it's a single-channel 3D volume
             if len(self.input_shape) == 3:  # Single-channel implicit
                 # Extract spatial patch from Volume
-                if self.verbose and idx < 3:
-                    print(f"Extracting patch at z={z}, y={y}, x={x} with size {self.patch_size}")
 
                 # Extract the entire patch at once
                 # Volume's __getitem__ accepts indices as (x, y, z, subvolume_idx)
@@ -313,13 +341,10 @@ class VCDataset(Dataset):
                     y_slice = slice(y, min(y + pY, self.input_shape[1]))
                     x_slice = slice(x, min(x + pX, self.input_shape[2]))
 
-                    if self.verbose and idx < 3:
-                        print(f"Extracting patch with slices: z={z_slice}, y={y_slice}, x={x_slice}")
-                        print(f"Volume access mode: {'fsspec/zarr' if self.volume.use_fsspec else 'TensorStore'}")
+                    # No verbose output for extracting patches
 
                     # Get the data using Volume's __getitem__ method
-                    # Volume.__getitem__ handles the read().result() call for TensorStore
-                    # And direct array access for fsspec/zarr
+                    # Volume.__getitem__ handles TensorStore access with proper slicing
                     extracted_data = self.volume[z_slice, y_slice, x_slice]
 
                     # Copy data to the right location in our patch
@@ -331,8 +356,7 @@ class VCDataset(Dataset):
                     # Copy the data into our patch buffer
                     patch_data[:fetched_z, :fetched_y, :fetched_x] = extracted_data
 
-                    if self.verbose and idx < 3:
-                        print(f"Extracted data shape: {extracted_data.shape}")
+                    # No verbose printing
 
                 except Exception as e:
                     if self.verbose:
@@ -340,6 +364,10 @@ class VCDataset(Dataset):
 
                 # Add channel dimension (create C,Z,Y,X)
                 patch = patch_data[np.newaxis, ...]
+                
+                # Convert to tensor if needed
+                if self.return_as_tensor and not isinstance(patch, torch.Tensor):
+                    patch = torch.from_numpy(patch).contiguous()
 
             else:  # Multi-channel explicit (C,Z,Y,X)
                 # For multi-channel, we need to extract each channel separately
@@ -353,17 +381,14 @@ class VCDataset(Dataset):
                     y_slice = slice(y, min(y + pY, self.input_shape[2]))  # input_shape[2] is Y for multi-channel
                     x_slice = slice(x, min(x + pX, self.input_shape[3]))  # input_shape[3] is X for multi-channel
 
-                    if self.verbose and idx < 3:
-                        print(f"Extracting multi-channel patch with slices: z={z_slice}, y={y_slice}, x={x_slice}")
-                        print(f"Volume access mode: {'fsspec/zarr' if self.volume.use_fsspec else 'TensorStore'}")
+                    # No verbose printing
 
                     # Try to extract all channels at once first
                     try:
                         # Attempt to extract the entire 4D chunk at once
                         all_data = self.volume[:, z_slice, y_slice, x_slice]
 
-                        if self.verbose and idx < 3:
-                            print(f"Extracted full multi-channel data shape: {all_data.shape}")
+                        # No verbose printing
 
                         # Copy to our patch buffer
                         # We need to handle potential size differences if bounds were hit
@@ -394,6 +419,10 @@ class VCDataset(Dataset):
                 except Exception as e:
                     if self.verbose:
                         print(f"Multi-channel extraction error: {e}")
+                        
+                # Convert to tensor if needed
+                if self.return_as_tensor and not isinstance(patch, torch.Tensor):
+                    patch = torch.from_numpy(patch).contiguous()
 
         except Exception as e:
             raise ValueError("Could not extract patch from Volume") from e
@@ -405,10 +434,7 @@ class VCDataset(Dataset):
         # Convert to integers
         position = (int(z), int(y), int(x))
 
-        # Debug statement - only for the first few items
-        if self.verbose:
-            if idx < 3:
-                print(f"Created position in __getitem__[{idx}]: {position}")
+        # No verbose output
 
         return {
             "data": patch,  # Use key "data" for compatibility with inference.py

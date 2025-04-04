@@ -6,3 +6,6 @@ node_modules/.yarn-integrity
 /vesuvius/outputs
 /vesuvius/sandbox
 /vesuvius/sandbox
+/vesuvius/utils/tests/s5_test.zarr
+/vesuvius/vesuvius.egg-info
+/vesuvius/vesuvius.egg-info

@@ -30,6 +30,7 @@ Requires-Dist: atomics
 Requires-Dist: scipy
 Requires-Dist: batchgenerators
 Requires-Dist: batchgeneratorsv2
+Requires-Dist: dynamic_network_architectures
 Dynamic: classifier
 Dynamic: description
 Dynamic: description-content-type

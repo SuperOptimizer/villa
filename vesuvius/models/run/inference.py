@@ -385,8 +385,8 @@ class ZarrInferer:
                 count_chunk = count_arrays[tgt_name][z_start:z_end]
                 
                 # Create tensors directly from the zarr array views - avoid copying data in memory first
-                # Use float16 for output tensor to reduce memory usage
-                output_tensor = torch.as_tensor(output_chunk, device=device, dtype=torch.float16).contiguous()
+                # Use float32 for output tensor to avoid numerical issues
+                output_tensor = torch.as_tensor(output_chunk, device=device, dtype=torch.float32).contiguous()
                 
                 # Find ALL patches that intersect with this chunk
                 chunk_patches = []
@@ -787,7 +787,9 @@ class ZarrInferer:
                             f"  - Foreground range: {torch.min(softmax_tensor[1]).item():.4f} to {torch.max(softmax_tensor[1]).item():.4f}")
 
                         # Show histogram of foreground probabilities
-                        hist = torch.histc(foreground_prob, bins=10, min=0.0, max=1.0)
+                        # Convert to float32 first as histc doesn't support float16
+                        foreground_prob_float = foreground_prob.to(torch.float32)
+                        hist = torch.histc(foreground_prob_float, bins=10, min=0.0, max=1.0)
                         bin_edges = torch.linspace(0, 1, 11)
                         print(f"Foreground probability histogram:")
                         for i in range(10):
@@ -1182,7 +1184,7 @@ class ZarrInferer:
                 dataset_temp = self.dataset
                 
                 # Get full input shape
-                input_shape = dataset_temp.get_input_shape()
+                input_shape = dataset_temp.input_shape
                 if self.verbose:
                     print(f"Input shape: {input_shape}")
                 
@@ -1243,7 +1245,7 @@ class ZarrInferer:
                         f"sum_{tgt_name}", 
                         shape=out_shape,
                         chunks=(1,) + patch_size_tuple,  # 1 for channel dimension, then patch dimensions
-                        dtype='float16',
+                        dtype='float32',  # Using float32 instead of float16 to avoid numerical issues
                         compressor=compressor,
                         fill_value=0,
                         write_empty_chunks=False
@@ -1341,7 +1343,7 @@ class ZarrInferer:
             if self.verbose:
                 print(f"Rank {self.rank}: Dataset has {total_patches} patches")
 
-            volume_shape = dataset.get_input_shape()
+            volume_shape = dataset.input_shape
             max_z, max_y, max_x = volume_shape
             
             # Update temp storage size for each target
@@ -2483,7 +2485,7 @@ def single_process_inference(args):
     inference_start_time = time.time()
     try:
         # Run inference - no timeout, let it take as long as needed
-        inference.infer()
+        inference.infer(skip_blending=args.skip_blending)
         
         # Print completion message
         print(f"Inference completed in {inference.total_time:.2f} seconds")
