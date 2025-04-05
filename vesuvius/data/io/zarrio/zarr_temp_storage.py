@@ -200,14 +200,17 @@ class ZarrTempStorage:
                     # Initialize counter for patch tracking
                     self.patch_counts[target_name] = 0
                     
-                    # Create a simple zarr array to store patches without compression for maximum write speed
-                    # No compression for temp storage to maximize I/O throughput
+                    # Create zarr array to store patches with compression to save space
+                    # Use ZSTD compression with a moderate level (3) for good balance of speed and compression
+                    from numcodecs import Blosc
+                    compressor = Blosc(cname='zstd', clevel=3)
+                    
                     self.patches_group.create_dataset(
                         target_name, 
                         shape=(exact_size,) + combined_shape,  # (num_patches, C+3, Z, Y, X)
                         chunks=(1,) + combined_shape,  # Each patch in its own chunk for parallel access
                         dtype=combined_patch.dtype,
-                        compressor=None,  # No compression for faster writes
+                        compressor=compressor,  # Use compression to save space
                         write_empty_chunks=False  # Skip writing empty chunks to save space
                     )
                     
@@ -224,7 +227,8 @@ class ZarrTempStorage:
                             array_path=array_path,
                             shape=(exact_size,) + combined_shape,
                             dtype=combined_patch.dtype,
-                            chunks=(1,) + combined_shape
+                            chunks=(1,) + combined_shape,
+                            compressor=compressor  # Add the compressor for parallel writer
                         )
                     
                     if self.verbose:

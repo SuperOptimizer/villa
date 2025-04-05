@@ -207,7 +207,7 @@ class ParallelZarrWriter:
         self.queues[worker_id].put((array_path, index, data))
     
     def register_array(self, array_path: str, shape: Tuple, dtype: np.dtype, 
-                       chunks: Optional[Tuple] = None):
+                       chunks: Optional[Tuple] = None, compressor=None):
         """
         Register an array's metadata (not required, for future enhancements).
         
@@ -216,11 +216,13 @@ class ParallelZarrWriter:
             shape: Array shape
             dtype: Array data type
             chunks: Chunk size (optional)
+            compressor: Compression codec to use (optional)
         """
         self.arrays[array_path] = {
             'shape': shape,
             'dtype': dtype,
-            'chunks': chunks
+            'chunks': chunks,
+            'compressor': compressor
         }
     
     def shutdown(self):
