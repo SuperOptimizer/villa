@@ -1,170 +1,209 @@
-from typing import List, Dict, Optional, Any, Tuple, Union
-import zarr
-import tifffile
+import os
+import yaml
+import json
+from numpy.typing import NDArray
+from typing import Any, Dict, Optional, Tuple, Union, List
 import numpy as np
+import requests
+# import zarr # No longer needed directly in VCDataset
+# import tifffile # No longer needed directly in VCDataset
 import torch
 from torch.utils.data import Dataset
-import os
 import re
+from pathlib import Path
 
+# Assuming these are in the correct relative paths
 from utils.models.helpers import compute_steps_for_sliding_window
 from data.volume import Volume
+# Placeholder imports if the originals are not in the expected location
+try:
+    from data.io.paths import list_files, is_aws_ec2_instance
+except ImportError:
+    print("Warning: Could not import list_files, is_aws_ec2_instance. Using placeholders.")
+    def list_files(): return {}
+    def is_aws_ec2_instance(): return False
+try:
+    from .utils import get_max_value # Assuming utils is relative to volume.py
+except ImportError:
+     # Placeholder function copied from previous Volume implementation
+     def get_max_value(dtype):
+        dtype = np.dtype(dtype) # Ensure it's a numpy dtype object
+        if np.issubdtype(dtype, np.integer):
+            return np.iinfo(dtype).max
+        elif np.issubdtype(dtype, np.floating):
+            # For floats used in scaling [0,1] -> int range, target max is often relevant
+            # Return 1.0 as a sensible default for float scaling factor base
+             return 1.0
+        else:
+            return 1 # Default for bool, etc.
+
 
 class VCDataset(Dataset):
     def __init__(
             self,
             input_path: str,
-            targets: List[Dict],
-            patch_size,
-            num_input_channels: int = 2,
-            input_format: str = 'zarr',
+            targets: List[Dict], # Kept for potential future use or compatibility, but not used in current logic
+            patch_size: Tuple[int, int, int],
+            num_input_channels: Optional[int] = None, # Can often be inferred from Volume
+            input_format: str = 'zarr', # Less critical now, type inferred from input_path/params
             step_size: float = 0.5,
-            load_all: bool = False,
+            load_all: bool = False, # Ignored, Volume handles memory management/caching
             verbose: bool = False,
-            mode: str = 'infer',
+            mode: str = 'infer', # Currently only 'infer' logic is fully implemented
             num_parts: int = 1,
             part_id: int = 0,
-            # Volume-specific parameters
+            # --- Volume Class Pass-through Parameters ---
             scroll_id: Optional[Union[int, str]] = None,
-            energy: Optional[int] = None, 
-            resolution: Optional[float] = None, 
+            energy: Optional[int] = None,
+            resolution: Optional[float] = None,
             segment_id: Optional[int] = None,
             cache: bool = True,
-            normalize: bool = True,
-            normalization_scheme: str = 'zscore',
-            return_as_type: str = 'np.float32',
-            return_as_tensor: bool = True,
+            cache_pool: int = 1e10, # Default cache pool size for Volume
+            normalization_scheme: str = 'instance_zscore', # Default to instance z-score
+            global_mean: Optional[float] = None,
+            global_std: Optional[float] = None,
+            return_as_type: str = 'np.float32', # Default float type for model input
+            # return_as_tensor: bool = True, # Forcing True below
             domain: Optional[str] = None,
-            use_fsspec: bool = False,  # Deprecated: TensorStore is now always used
             ):
         """
-        Dataset for nnUNet inference on zarr arrays, with support for local and remote data via Volume class.
-        
+        Dataset for nnUNet inference using the Volume class for data access and preprocessing.
+
+        Handles local/remote Zarr, scrolls, and segments uniformly via Volume.
+
         Args:
-            input_path: Path to the input zarr store or an indicator for remote Volume
-            targets: Output targets configuration
-            patch_size: Patch size for extraction (tuple of 3 ints)
-            num_input_channels: Number of input channels expected by the model
-            input_format: Format of the input data ('zarr' or 'volume')
-            step_size: Step size for sliding window as a fraction of patch size (default: 0.5, nnUNet default)
-            load_all: Whether to load the entire array into memory (ignored when using Volume class)
-            verbose: Enable detailed output messages (default: False)
-            mode: Mode of operation ('infer' or 'train')
-            num_parts: Number of parts to split the dataset into (default: 1, no splitting)
-            part_id: Which part to use (0-indexed, default: 0, must be < num_parts)
-            
-            # Volume parameters
-            scroll_id: ID of the scroll for Volume
-            energy: Energy value for Volume
-            resolution: Resolution value for Volume
-            segment_id: ID of the segment for Volume
-            cache: Whether to use caching with Volume (default: True)
-            normalize: Whether to normalize Volume data to 0:1 values (default: True)
-            normalization_scheme: Normalization scheme to apply ('none', 'zscore', 'minmax') (default: 'zscore')
-            return_as_type: Type to return data as ('none', 'np.uint8', 'np.uint16', 'np.float16', 'np.float32') (default: 'np.float32')
-            return_as_tensor: Whether to return data as torch tensor (default: True)
-            domain: Domain for Volume ('dl.ash2txt' or 'local')
-            use_fsspec: Deprecated parameter. TensorStore is now always used for data access
+            input_path: Path to input data (local/remote Zarr, scroll ID, segment ID).
+            targets: Output targets configuration (currently unused in inference).
+            patch_size: Patch size for extraction (tuple of 3 ints - Z, Y, X).
+            num_input_channels: Expected number of input channels (optional, can be inferred).
+            input_format: Format hint ('zarr', 'volume'). Type is mainly inferred now.
+            step_size: Step size for sliding window as a fraction of patch size (0.5 = 50% overlap).
+            load_all: Ignored. Volume class handles data loading.
+            verbose: Enable detailed output messages.
+            mode: 'infer' (default). 'train' mode logic is not implemented here.
+            num_parts: Number of parts to split the dataset into along Z-axis.
+            part_id: Which part of the split dataset to use (0-indexed).
+
+            scroll_id: Scroll ID for Volume (if input_path isn't a specific scroll/segment).
+            energy: Energy value for Volume.
+            resolution: Resolution value for Volume.
+            segment_id: Segment ID for Volume (if input_path isn't a specific scroll/segment).
+            cache: Enable Volume's TensorStore caching.
+            cache_pool: Cache size for Volume's TensorStore.
+            normalization_scheme: Normalization method for Volume ('none', 'instance_zscore',
+                                  'global_zscore', 'instance_minmax').
+            global_mean: Global mean for 'global_zscore' scheme.
+            global_std: Global standard deviation for 'global_zscore' scheme.
+            return_as_type: Target NumPy dtype string for Volume output *before* tensor conversion
+                             (e.g., 'np.float16', 'np.float32'). Default is 'np.float32'.
+            domain: Data source domain for Volume ('dl.ash2txt', 'local'). Auto-detected if None.
         """
         self.input_path = input_path
-        self.input_format = input_format
+        self.input_format = input_format # Keep for informational purposes
         self.targets = targets
         self.patch_size = patch_size
         self.step_size = step_size
-        self.load_all = load_all
-        self.num_input_channels = num_input_channels
+        # self.load_all = False # Always false now
         self.verbose = verbose
         self.mode = mode
-        self.return_as_tensor = return_as_tensor
-        
+        self.return_as_tensor = True # Dataset __getitem__ always returns tensors
+
         # Data partitioning parameters
         if num_parts < 1:
             raise ValueError(f"num_parts must be >= 1, got {num_parts}")
-        if part_id < 0 or part_id >= num_parts:
+        if not (0 <= part_id < num_parts):
             raise ValueError(f"part_id must be between 0 and {num_parts-1}, got {part_id}")
-            
         self.num_parts = num_parts
         self.part_id = part_id
 
-        # Always use Volume class for all data access
-        self.use_volume = True
-        
-        # Determine volume type, scroll_id, and segment_id from input_path if not provided
-        if input_format == 'volume' or (
-            isinstance(input_path, str) and 
-            (re.match(r'scroll\d+', input_path.lower()) or input_path.isdigit())
-        ):
-            # This is a scroll or segment identifier
-            if self.verbose:
-                print(f"Using Volume class for scroll/segment identifier: {input_path}")
-            
-            if scroll_id is None and segment_id is None:
-                if re.match(r'scroll\d+', input_path.lower()):
-                    # Format: 'scroll1', 'scroll2', etc.
-                    type_value = input_path.lower()
-                elif input_path.isdigit():
-                    # Format: segment id as numeric string
-                    type_value = input_path
-                    segment_id = int(input_path)
-                else:
-                    type_value = input_path
+        if self.mode != 'infer':
+            print(f"Warning: VCDataset mode is '{self.mode}'. Only 'infer' mode logic (sliding window) is fully implemented.")
+
+        # --- Determine Volume Type and Path ---
+        type_value: Union[str, int]
+        use_path: Optional[str] = None
+
+        if isinstance(input_path, str):
+            input_lower = input_path.lower()
+            # Check for Scroll ID format (e.g., "scroll1", "scroll1b")
+            if re.match(r'scroll[0-9]+[a-z]*$', input_lower):
+                 type_value = input_path # Pass original case potentially
+                 if scroll_id is None: scroll_id = type_value # Set scroll_id if not provided
+                 if self.verbose: print(f"Interpreting input_path '{input_path}' as Volume type 'scroll'.")
+            # Check for Segment ID format (numeric string)
+            elif input_path.isdigit():
+                 type_value = input_path # Keep as string for Volume constructor flexibility
+                 if segment_id is None: segment_id = int(input_path) # Set segment_id if not provided
+                 if self.verbose: print(f"Interpreting input_path '{input_path}' as Volume type 'segment'.")
+            # Check for explicit 'volume' format hint (less common now)
+            elif input_format == 'volume':
+                 # This case requires scroll_id or segment_id to be provided explicitly
+                 if segment_id is not None:
+                      type_value = str(segment_id)
+                      if self.verbose: print(f"Using explicit segment_id {segment_id} as Volume type.")
+                 elif scroll_id is not None:
+                      type_value = f"scroll{scroll_id}" # Construct type
+                      if self.verbose: print(f"Using explicit scroll_id {scroll_id} to set Volume type.")
+                 else:
+                      raise ValueError("input_format='volume' requires scroll_id or segment_id to be provided.")
+            # Otherwise, assume it's a path (Zarr or potentially other formats Volume might support)
             else:
-                # Type can be determined from segment_id or scroll_id
-                if segment_id is not None:
-                    type_value = str(segment_id)  # Use segment_id as type
-                else:
-                    type_value = f"scroll{scroll_id}"  # Use scroll as type
-                    
-            # When input_format is 'volume' or it's a scroll/segment ID, set path to None
-            # This ensures Volume uses the config.yaml to find the remote path
-            use_path = None
+                 type_value = "zarr" # Default type when it looks like a path
+                 use_path = input_path
+                 if self.verbose: print(f"Interpreting input_path '{input_path}' as a path for Volume type 'zarr'.")
+                 # Automatically set domain to local for file paths unless overridden
+                 if domain is None and not use_path.startswith(('http://', 'https://')):
+                     domain = "local"
+                     if self.verbose: print("Auto-setting domain to 'local' for non-HTTP path.")
+
+        elif isinstance(input_path, int): # Handle integer scroll_id passed as input_path
+             type_value = f"scroll{input_path}"
+             if scroll_id is None: scroll_id = input_path
+             if self.verbose: print(f"Interpreting integer input_path {input_path} as scroll ID.")
         else:
-            # This is a path to a zarr file/store
-            if self.verbose:
-                print(f"Using Volume class for zarr path: {input_path}")
-                
-            # For regular zarr paths, use the zarr path as type
-            # This allows Volume to handle both local and remote zarr files uniformly
-            type_value = "zarr"
-            use_path = input_path
-            
-            # For zarr type with a file path, always use local domain
-            if domain is None:
-                domain = "local"
-                if self.verbose:
-                    print(f"For zarr paths, automatically setting domain to 'local'")
-        
-        # Initialize Volume for all access
+             raise TypeError(f"Unsupported input_path type: {type(input_path)}")
+
+
+        # --- Initialize Volume Class ---
         try:
             if self.verbose:
-                print(f"Initializing Volume with type={type_value}, scroll_id={scroll_id}, energy={energy}, resolution={resolution}, segment_id={segment_id}")
-                print(f"Path={use_path}, use_fsspec={use_fsspec}, domain={domain}")
-                
-            # Fix for zarr path issue - ensure path is absolute and exists
-            if type_value == "zarr" and use_path is not None:
-                from pathlib import Path
-                import os
-                
-                # Make sure it's absolute
-                actual_path = Path(use_path)
-                if not actual_path.is_absolute():
-                    fixed_path = actual_path.absolute()
-                    print(f"Converting relative path {use_path} to absolute path {fixed_path}")
-                    use_path = str(fixed_path)
-                
-                # Check if path exists and is a directory (zarr store)
+                print("\n--- Initializing Volume ---")
+                print(f"  Type: {type_value}")
+                print(f"  Path: {use_path}")
+                print(f"  Scroll ID: {scroll_id}")
+                print(f"  Segment ID: {segment_id}")
+                print(f"  Energy: {energy}")
+                print(f"  Resolution: {resolution}")
+                print(f"  Domain: {domain}")
+                print(f"  Cache: {cache}, Pool (bytes): {cache_pool}")
+                print(f"  Normalization: {normalization_scheme}")
+                if normalization_scheme == 'global_zscore':
+                     print(f"    Global Mean: {global_mean}, Global Std: {global_std}")
+                print(f"  Return Type (NumPy): {return_as_type}")
+                print(f"  Return As Tensor: {self.return_as_tensor}") # Use internal dataset flag
+                print(f"  Input Channels: {num_input_channels}")
+                print(f"  Targets: {targets}")
+                print("---------------------------\n")
+
+            # Validate Zarr path if provided
+            if type_value == "zarr" and use_path is not None and not use_path.startswith(('http://', 'https://')):
+                p = Path(use_path)
+                if not p.is_absolute():
+                     abs_p = p.resolve()
+                     if self.verbose: print(f"  Converting relative Zarr path '{use_path}' to absolute '{abs_p}'")
+                     use_path = str(abs_p)
+
                 if not os.path.exists(use_path):
-                    raise ValueError(f"Zarr path does not exist: {use_path}")
-                    
+                    raise FileNotFoundError(f"Zarr path does not exist: {use_path}")
                 if not os.path.isdir(use_path):
-                    raise ValueError(f"Zarr path exists but is not a directory: {use_path}")
-                
-                # Check if it has key zarr files
-                if not os.path.exists(os.path.join(use_path, '.zarray')) and not os.path.exists(os.path.join(use_path, '.zgroup')):
-                    print(f"WARNING: Path {use_path} does not appear to be a valid zarr store (missing .zarray or .zgroup).")
-                
-                print(f"Using zarr path: {use_path}")
-                
+                     # Allow if it's a zip file potentially containing zarr? Tensorstore might handle this.
+                     # Let Volume handle errors, but warn if basic checks fail.
+                     if not use_path.endswith('.zip'): # Basic check
+                         print(f"  Warning: Zarr path '{use_path}' exists but is not a directory.")
+                # Check for key Zarr files (optional, Volume handles errors)
+                # if not os.path.exists(os.path.join(use_path, '.zarray')) and not os.path.exists(os.path.join(use_path, '.zgroup')):
+                #     print(f"  Warning: Path {use_path} might not be a Zarr store (missing .zarray/.zgroup).")
+
             self.volume = Volume(
                 type=type_value,
                 scroll_id=scroll_id,
@@ -172,272 +211,240 @@ class VCDataset(Dataset):
                 resolution=resolution,
                 segment_id=segment_id,
                 cache=cache,
-                normalize=normalize,
+                cache_pool=cache_pool,
+                # normalize=False, # Removed, use scheme
                 normalization_scheme=normalization_scheme,
+                global_mean=global_mean,
+                global_std=global_std,
                 return_as_type=return_as_type,
-                return_as_tensor=return_as_tensor,
+                return_as_tensor=self.return_as_tensor, # Ensure Volume returns tensors directly
                 verbose=verbose,
                 domain=domain,
                 path=use_path
             )
-            
-            # Get volume's shape for the highest resolution (subvolume 0)
-            self.input_shape = self.volume.shape(0)
-            self.input_dtype = self.volume.dtype
-            
+
+            # Get shape and dtype from the primary resolution level (0)
+            self.input_shape = self.volume.shape(0) # Z, Y, X or C, Z, Y, X
+            self.input_dtype = self.volume.dtype # Original dtype before Volume's processing
+            self.output_dtype = getattr(torch, return_as_type.replace('np.', '')) if self.return_as_tensor else getattr(np, return_as_type.replace('np.', ''))
+
             if self.verbose:
-                print(f"Successfully initialized Volume with shape: {self.input_shape}")
-            
+                print(f"Volume initialized successfully.")
+                print(f"  Input Shape (from Volume level 0): {self.input_shape}")
+                print(f"  Original Dtype (from Volume): {self.input_dtype}")
+                print(f"  Output Dtype (expected from Volume): {self.output_dtype}")
+
+            # Infer num_input_channels if not provided
+            if num_input_channels is None:
+                if len(self.input_shape) == 4: # Assume C, Z, Y, X
+                    self.num_input_channels = self.input_shape[0]
+                    if self.verbose: print(f"  Inferred num_input_channels: {self.num_input_channels}")
+                else: # Assume Z, Y, X
+                    self.num_input_channels = 1
+                    if self.verbose: print(f"  Assuming single channel input (num_input_channels=1).")
+            else:
+                self.num_input_channels = num_input_channels
+                 # Add a check
+                if len(self.input_shape) == 4 and self.input_shape[0] != self.num_input_channels:
+                     print(f"Warning: Provided num_input_channels ({self.num_input_channels}) does not match "
+                           f"first dimension of Volume shape ({self.input_shape[0]}). Using provided value.")
+                elif len(self.input_shape) == 3 and self.num_input_channels != 1:
+                     print(f"Warning: Provided num_input_channels ({self.num_input_channels}) != 1 for 3D Volume shape. "
+                           f"Will add channel dimension in getitem. Using provided value.")
+
         except Exception as e:
-            raise ValueError(f"Error initializing Volume from input_path '{input_path}': {str(e)}")
+            print(f"ERROR: Failed to initialize Volume within VCDataset.")
+            # Log details that might be helpful
+            print(f"  Attempted Volume params: type={type_value}, path={use_path}, scroll={scroll_id}, seg={segment_id}, ...")
+            raise ValueError(f"Error initializing Volume: {e}") from e
 
-        if mode == 'train':
-            pass
 
-        elif mode == 'infer':
+        # --- Sliding Window Position Calculation (for infer mode) ---
+        self.all_positions = []
+        if mode == 'infer':
+            if not isinstance(self.patch_size, (list, tuple)) or len(self.patch_size) != 3:
+                 raise ValueError(f"patch_size must be a tuple/list of 3 integers (Z, Y, X), got {self.patch_size}")
 
             pZ, pY, pX = self.patch_size
-            # Get the 3D spatial dimensions directly
-            image_size = self.input_shape if len(self.input_shape) == 3 else self.input_shape[1:]
+            # Get the 3D spatial dimensions (Z, Y, X)
+            if len(self.input_shape) == 3: # Z, Y, X
+                image_size = self.input_shape
+            elif len(self.input_shape) == 4: # C, Z, Y, X
+                image_size = self.input_shape[1:]
+            else:
+                raise ValueError(f"Unsupported input shape dimension from Volume: {self.input_shape}")
 
-            # Generate all coordinates using sliding window
-            # self.step_size is a factor (e.g., 0.5 means 50% overlap)
+            # Generate all potential coordinates
             z_positions = compute_steps_for_sliding_window(image_size[0], pZ, self.step_size)
             y_positions = compute_steps_for_sliding_window(image_size[1], pY, self.step_size)
             x_positions = compute_steps_for_sliding_window(image_size[2], pX, self.step_size)
 
-            # Print position information if verbose is enabled
             if self.verbose:
-                print(f"Computed patch positions with step_size={self.step_size}:")
-                print(f"  - Input shape: {image_size}")
-                print(f"  - Patch size: {self.patch_size}")
-                print(f"  - Number of positions: z={len(z_positions)}, y={len(y_positions)}, x={len(x_positions)}")
-                print(f"  - Total patches: {len(z_positions) * len(y_positions) * len(x_positions)}")
+                print(f"\nCalculating sliding window positions:")
+                print(f"  Image Size (Z, Y, X): {image_size}")
+                print(f"  Patch Size (Z, Y, X): {self.patch_size}")
+                print(f"  Step Size Factor: {self.step_size}")
+                print(f"  Num Positions (Z, Y, X): ({len(z_positions)}, {len(y_positions)}, {len(x_positions)})")
+                total_patches = len(z_positions) * len(y_positions) * len(x_positions)
+                print(f"  Total potential patches: {total_patches}")
 
-            self.all_positions = []
+            # Combine positions
             for z in z_positions:
                 for y in y_positions:
                     for x in x_positions:
                         self.all_positions.append((z, y, x))
-                        
-            # Apply dataset partitioning along Z-axis if requested
+
+            # Apply Z-axis partitioning if num_parts > 1
             if self.num_parts > 1:
-                # Instead of partitioning by position index, we'll partition by Z coordinate
-                # First, get the Z range from the volume
                 max_z = image_size[0]
-                
-                # Calculate Z boundaries for each part
-                z_per_part = max_z / self.num_parts  # This can be a float for even division
-                
-                # Calculate Z range for this part (part 0 is the bottom of the volume)
+                z_per_part = max_z / self.num_parts
                 z_start = int(z_per_part * self.part_id)
                 z_end = int(z_per_part * (self.part_id + 1)) if self.part_id < self.num_parts - 1 else max_z
-                
+
                 if self.verbose:
-                    print(f"Partitioning dataset along Z-axis: z_range=[0-{max_z}], num_parts={self.num_parts}, part_id={self.part_id}")
-                    print(f"Z range for this part: {z_start} to {z_end}")
-                
-                # Filter positions to only include those in our Z range
-                filtered_positions = []
-                for pos in self.all_positions:
-                    z, y, x = pos
-                    z_patch_end = z + self.patch_size[0]  # End of the patch in Z direction
-                    
-                    # Include patch if:
-                    # 1. Patch start is in our range, OR
-                    # 2. Patch end is in our range, OR
-                    # 3. Patch completely surrounds our range
-                    if ((z_start <= z < z_end) or 
-                        (z_start < z_patch_end <= z_end) or
-                        (z <= z_start and z_patch_end >= z_end)):
-                        filtered_positions.append(pos)
-                
-                # Update positions list
-                self.all_positions = filtered_positions
-                
+                    print(f"\nApplying Z-axis partitioning:")
+                    print(f"  Num Parts: {self.num_parts}, Part ID: {self.part_id}")
+                    print(f"  Z Range for this part: [{z_start}, {z_end})")
+
+                # Filter positions based on the patch *starting* coordinate
+                # A patch belongs to the partition its starting Z coordinate falls into.
+                # This is simpler than checking overlap and ensures non-overlapping assignment.
+                original_count = len(self.all_positions)
+                self.all_positions = [pos for pos in self.all_positions if z_start <= pos[0] < z_end]
+                filtered_count = len(self.all_positions)
+
                 if self.verbose:
-                    print(f"Partitioned dataset: using {len(self.all_positions)} positions in Z range [{z_start}-{z_end}]")
-                    if self.all_positions:
-                        print(f"First position: {self.all_positions[0]}")
-                        print(f"Last position: {self.all_positions[-1]}")
+                    print(f"  Filtered positions from {original_count} to {filtered_count}")
+                    if filtered_count > 0:
+                         print(f"  Part {self.part_id} Z-range of positions: [{self.all_positions[0][0]} - {self.all_positions[-1][0]}]")
                     else:
-                        print("Warning: No positions in this partition!")
+                         print(f"  Warning: No patch starting positions found in the Z-range [{z_start}, {z_end}) for part {self.part_id}.")
 
 
     def set_distributed(self, rank: int, world_size: int):
         """
-        Configure this dataset for distributed data parallel processing.
-
-        This method divides the dataset's patch positions among processes,
-        so each process works on a different subset of patches.
-        
-        Note: If dataset was already partitioned (num_parts > 1), this method
-        will subdivide the current partition further among distributed processes.
-
-        Args:
-            rank: The rank of this process (0 to world_size-1)
-            world_size: Total number of processes
+        Configures the dataset for distributed processing by assigning a subset of patches to this rank.
         """
-        if world_size <= 1 or rank < 0 or rank >= world_size:
-            # No need to distribute or invalid configuration
+        if world_size <= 1 or not (0 <= rank < world_size):
+            if self.verbose: print("Distribution not required or invalid rank/world_size.")
             return
 
-        # Get total number of positions in the current partition
         total_positions = len(self.all_positions)
+        if total_positions == 0:
+             if self.verbose: print(f"Rank {rank}: No positions to distribute.")
+             return
 
-        if self.verbose:
-            if self.num_parts > 1:
-                print(f"Rank {rank}: Distributing {total_positions} positions from Z-partition {self.part_id}/{self.num_parts} among {world_size} processes")
-            else:
-                print(f"Rank {rank}: Distributing {total_positions} positions among {world_size} processes")
-
-        # Calculate positions for this rank (simple chunking)
-        # Each rank gets approximately total_positions / world_size positions
-        positions_per_rank = total_positions // world_size
+        # Determine the subset of indices for this rank
+        num_per_rank = total_positions // world_size
         remainder = total_positions % world_size
+        start_idx = rank * num_per_rank + min(rank, remainder)
+        end_idx = start_idx + num_per_rank + (1 if rank < remainder else 0)
 
-        # Calculate start and end indices
-        # Ranks with ID < remainder get one extra position
-        start_idx = rank * positions_per_rank + min(rank, remainder)
-        end_idx = start_idx + positions_per_rank + (1 if rank < remainder else 0)
-
-        # Take only the positions assigned to this rank
-        self.all_positions = self.all_positions[start_idx:end_idx]
+        # Slice the positions
+        assigned_positions = self.all_positions[start_idx:end_idx]
+        num_assigned = len(assigned_positions)
 
         if self.verbose:
-            print(f"Rank {rank}: Processing {len(self.all_positions)} positions (indices {start_idx} to {end_idx - 1})")
-            if len(self.all_positions) > 0:
-                # Get Z range of positions for this rank
-                z_values = [pos[0] for pos in self.all_positions]
-                min_z = min(z_values) if z_values else "N/A"
-                max_z = max(z_values) if z_values else "N/A"
-                print(f"Rank {rank}: Z-range: {min_z} to {max_z}")
-                print(f"Rank {rank}: Sample positions: {self.all_positions[:2]} ... {self.all_positions[-2:] if len(self.all_positions) > 1 else []}")
+            partition_info = f"(from Z-partition {self.part_id}/{self.num_parts})" if self.num_parts > 1 else ""
+            print(f"\nDistributing data for Rank {rank}/{world_size} {partition_info}:")
+            print(f"  Total positions in current partition: {total_positions}")
+            print(f"  Assigning indices [{start_idx} to {end_idx -1}] ({num_assigned} positions) to Rank {rank}")
+            if num_assigned > 0:
+                z_values = [pos[0] for pos in assigned_positions]
+                min_z, max_z = min(z_values), max(z_values)
+                print(f"  Rank {rank} Z-range of positions: [{min_z} - {max_z}]")
             else:
-                print(f"Rank {rank}: Warning - No positions assigned to this rank")
+                 print(f"  Warning: Rank {rank} has been assigned 0 positions.")
+
+
+        self.all_positions = assigned_positions
+
 
     def __len__(self):
         return len(self.all_positions)
 
     def __getitem__(self, idx):
-        z, y, x = self.all_positions[idx]
+        if idx >= len(self.all_positions):
+             raise IndexError(f"Index {idx} out of bounds for dataset length {len(self.all_positions)}")
 
+        z, y, x = self.all_positions[idx]
         pZ, pY, pX = self.patch_size
 
-        # Get patch data using Volume
+        # Define the slices for fetching data from Volume
+        # Use spatial dimensions (Z, Y, X) correctly based on input_shape length
+        spatial_dims_indices = slice(1, None) if len(self.input_shape) == 4 else slice(None)
+        image_shape_zyx = self.input_shape[spatial_dims_indices]
+
+        z_slice = slice(z, min(z + pZ, image_shape_zyx[0]))
+        y_slice = slice(y, min(y + pY, image_shape_zyx[1]))
+        x_slice = slice(x, min(x + pX, image_shape_zyx[2]))
+
         try:
-            # Check if input has channels or if it's a single-channel 3D volume
-            if len(self.input_shape) == 3:  # Single-channel implicit
-                # Extract spatial patch from Volume
-
-                # Extract the entire patch at once
-                # Volume's __getitem__ accepts indices as (x, y, z, subvolume_idx)
-                patch_data = np.zeros((pZ, pY, pX), dtype=np.float32)
-
-                # Extract patch data using uniform approach regardless of fsspec or TensorStore
-                try:
-                    # Define safe slices that don't go out of bounds
-                    z_slice = slice(z, min(z + pZ, self.input_shape[0]))
-                    y_slice = slice(y, min(y + pY, self.input_shape[1]))
-                    x_slice = slice(x, min(x + pX, self.input_shape[2]))
-
-                    # No verbose output for extracting patches
-
-                    # Get the data using Volume's __getitem__ method
-                    # Volume.__getitem__ handles TensorStore access with proper slicing
-                    extracted_data = self.volume[z_slice, y_slice, x_slice]
-
-                    # Copy data to the right location in our patch
-                    # Calculate actual sizes fetched (may be smaller than requested due to bounds)
-                    fetched_z = extracted_data.shape[0]
-                    fetched_y = extracted_data.shape[1]
-                    fetched_x = extracted_data.shape[2]
-
-                    # Copy the data into our patch buffer
-                    patch_data[:fetched_z, :fetched_y, :fetched_x] = extracted_data
-
-                    # No verbose printing
-
-                except Exception as e:
-                    if self.verbose:
-                        print(f"Error extracting patch: {e}")
-
-                # Add channel dimension (create C,Z,Y,X)
-                patch = patch_data[np.newaxis, ...]
+            # Fetch the (potentially smaller) patch from Volume
+            # Volume's __getitem__ handles normalization, type conversion, and tensor conversion
+            if len(self.input_shape) == 3: # Input is Z, Y, X
+                # For 3D input (Z, Y, X), we always create a single-channel tensor
+                # The model expects a single channel regardless of how many output classes it produces
                 
-                # Convert to tensor if needed
-                if self.return_as_tensor and not isinstance(patch, torch.Tensor):
-                    patch = torch.from_numpy(patch).contiguous()
+                # Volume returns (Z, Y, X) tensor
+                extracted_tensor = self.volume[z_slice, y_slice, x_slice]
+                # We need to add channel dim and pad
+                fetched_z, fetched_y, fetched_x = extracted_tensor.shape
+                
+                # Initialize the full-size patch tensor with zeros (for padding)
+                # Use the dtype returned by Volume
+                # ALWAYS use a single channel (1) here since we're coming from Z,Y,X data
+                patch_tensor = torch.zeros((1, pZ, pY, pX), dtype=extracted_tensor.dtype)
+                
+                # Copy fetched data into the patch tensor
+                patch_tensor[0, :fetched_z, :fetched_y, :fetched_x] = extracted_tensor
 
-            else:  # Multi-channel explicit (C,Z,Y,X)
-                # For multi-channel, we need to extract each channel separately
-                num_channels = self.input_shape[0]
-                patch = np.zeros((num_channels, pZ, pY, pX), dtype=np.float32)
-
-                # Use a unified approach for both fsspec and TensorStore
-                try:
-                    # Define safe slices that don't go out of bounds
-                    z_slice = slice(z, min(z + pZ, self.input_shape[1]))  # input_shape[1] is Z for multi-channel
-                    y_slice = slice(y, min(y + pY, self.input_shape[2]))  # input_shape[2] is Y for multi-channel
-                    x_slice = slice(x, min(x + pX, self.input_shape[3]))  # input_shape[3] is X for multi-channel
-
-                    # No verbose printing
-
-                    # Try to extract all channels at once first
-                    try:
-                        # Attempt to extract the entire 4D chunk at once
-                        all_data = self.volume[:, z_slice, y_slice, x_slice]
-
-                        # No verbose printing
-
-                        # Copy to our patch buffer
-                        # We need to handle potential size differences if bounds were hit
-                        c_size = min(all_data.shape[0], patch.shape[0])
-                        z_size = min(all_data.shape[1], pZ)
-                        y_size = min(all_data.shape[2], pY)
-                        x_size = min(all_data.shape[3], pX)
-
-                        patch[:c_size, :z_size, :y_size, :x_size] = all_data[:c_size, :z_size, :y_size, :x_size]
-
-                    except Exception as e:
-                        if self.verbose:
-                            print(f"Full multi-channel extraction failed: {e}, falling back to per-channel extraction")
-
-                        # Extract each channel separately
-                        for c in range(num_channels):
-                            # Volume.__getitem__ handles read().result() call for TensorStore
-                            channel_data = self.volume[c, z_slice, y_slice, x_slice]
-
-                            # Copy data to the right location in our patch
-                            fetched_z = channel_data.shape[0]
-                            fetched_y = channel_data.shape[1]
-                            fetched_x = channel_data.shape[2]
-
-                            # Copy the data into our patch buffer for this channel
-                            patch[c, :fetched_z, :fetched_y, :fetched_x] = channel_data
-
-                except Exception as e:
-                    if self.verbose:
-                        print(f"Multi-channel extraction error: {e}")
-                        
-                # Convert to tensor if needed
-                if self.return_as_tensor and not isinstance(patch, torch.Tensor):
-                    patch = torch.from_numpy(patch).contiguous()
+            elif len(self.input_shape) == 4: # Input is C, Z, Y, X
+                # Volume returns (C, Z, Y, X) tensor
+                
+                # For multiclass models, we need to ensure we're using exactly the right number of input channels
+                available_channels = self.input_shape[0]
+                
+                # Verify that we have enough channels in our data
+                if available_channels < self.num_input_channels:
+                    raise ValueError(f"Model expects {self.num_input_channels} input channels, but data only has {available_channels}")
+                
+                # Extract exactly the number of channels the model needs
+                if self.verbose:
+                    print(f"4D input: Extracting {self.num_input_channels} channels from data with {available_channels} channels")
+                
+                # Take exactly what the model expects
+                extracted_tensor = self.volume[:self.num_input_channels, z_slice, y_slice, x_slice]
+                
+                # Get dimensions for padding
+                fetched_c, fetched_z, fetched_y, fetched_x = extracted_tensor.shape
+                
+                # Initialize the full-size patch tensor with exact channel count
+                patch_tensor = torch.zeros((self.num_input_channels, pZ, pY, pX), dtype=extracted_tensor.dtype)
+                
+                # Copy fetched data
+                patch_tensor[:, :fetched_z, :fetched_y, :fetched_x] = extracted_tensor
+            else:
+                 # Should have been caught in init, but safety check
+                 raise RuntimeError(f"Unsupported volume shape encountered in getitem: {self.input_shape}")
 
         except Exception as e:
-            raise ValueError("Could not extract patch from Volume") from e
+             print(f"ERROR fetching/padding patch at ZYX=({z},{y},{x}), index={idx}")
+             print(f"  Slices: Z={z_slice}, Y={y_slice}, X={x_slice}")
+             print(f"  Volume shape: {self.input_shape}")
+             # Re-raise the error with more context
+             raise RuntimeError(f"Failed to get item {idx} (pos {z},{y},{x}): {e}") from e
 
-        # Assert that patch is already a torch tensor
-        assert isinstance(patch, torch.Tensor), "Volume should return torch tensors when return_as_tensor=True"
 
-        # Create the position tuple
-        # Convert to integers
-        position = (int(z), int(y), int(x))
+        # Data should already be a tensor of the correct type due to Volume settings
+        # assert isinstance(patch_tensor, torch.Tensor), "Volume did not return a tensor as expected"
+        # assert patch_tensor.dtype == self.output_dtype, f"Expected dtype {self.output_dtype} but got {patch_tensor.dtype}"
 
-        # No verbose output
+
+        position_tuple = (int(z), int(y), int(x))
 
         return {
-            "data": patch,  # Use key "data" for compatibility with inference.py
-            "pos": position,  # Include the 3D position
-            "index": idx
+            "data": patch_tensor, # Key required by nnUNet inference
+            "pos": position_tuple, # Pass position for potential stitching later
+            "index": idx # Pass original index
         }

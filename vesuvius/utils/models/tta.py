@@ -87,11 +87,24 @@ def get_tta_transformations(
             axes_order is a list specifying the new order of spatial dimensions
             e.g. [0, 2, 1] would swap Y and X axes
             """
-            # Keep batch and channel dimensions unchanged
+            # Check if the tensor has the right number of dimensions first
+            if len(x.shape) != 2 + len(axes_order):
+                print(f"Warning: Cannot rotate tensor - shape mismatch. Tensor shape: {x.shape}, expected {2 + len(axes_order)} dimensions")
+                # If dimensions don't match, return the tensor as is - safer than crashing
+                return x
+                
+            # Normal case - keep batch and channel dimensions unchanged
             return x.permute(0, 1, *[i+2 for i in axes_order])
             
         def rotate_back(x, axes_order):
             """Calculate the inverse permutation"""
+            # Check if the tensor has the right number of dimensions first
+            if len(x.shape) != 2 + len(axes_order):
+                print(f"Warning: Cannot rotate tensor back - shape mismatch. Tensor shape: {x.shape}, expected {2 + len(axes_order)} dimensions")
+                # If dimensions don't match, return the tensor as is - safer than crashing
+                return x
+                
+            # Normal case - calculate the inverse permutation
             inverse_order = [0, 1]  # Batch and channel stay the same
             for i in range(len(axes_order)):
                 inverse_order.append(axes_order.index(i) + 2)

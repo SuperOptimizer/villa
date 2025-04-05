@@ -165,6 +165,11 @@ class ZarrTempStorage:
         # Create the combined patch with 3 additional channels for position
         c, *spatial_dims = patch_shape  # Extract channels and spatial dimensions
         combined_shape = (c + 3,) + tuple(spatial_dims)
+        
+        # Debug output for critical shapes
+        print(f"DEBUG: patch_shape={patch_shape}, extracted c={c}, spatial_dims={spatial_dims}")
+        print(f"DEBUG: combined_shape={combined_shape}")
+        
         combined_patch = np.zeros(combined_shape, dtype=patch.dtype)
         
         # Store position values in the first three channels as single values
@@ -562,6 +567,25 @@ class ZarrTempStorage:
                 
         print(f"collect_all_patches completed, returning {len(all_patches)} total patches")
         return all_patches
+    
+    def close(self):
+        """
+        Close the zarr temporary storage without removing it.
+        
+        This should be called when you want to preserve the temp store but free resources.
+        """
+        # Shut down our parallel writer
+        if self.parallel_writer:
+            if self.verbose:
+                print(f"Rank {self.rank}: Shutting down parallel writer")
+            try:
+                self.parallel_writer.shutdown()
+                self.parallel_writer = None
+            except Exception as e:
+                print(f"Error shutting down parallel writer: {e}")
+        
+        # Close the zarr store but don't remove it
+        self.temp_zarr = None
     
     def cleanup(self):
         """
