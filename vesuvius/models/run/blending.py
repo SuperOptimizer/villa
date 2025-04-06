@@ -273,9 +273,13 @@ async def merge_inference_outputs(
     normalize_futures = []
     max_concurrent_normalize = 32  # Limit concurrent reads/writes
 
-    for read_chunk in chunk_iterator:
-        # read_chunk.transform contains the slice definition for this chunk
-        chunk_slice = read_chunk.transform.output_slices
+    for read_chunk_indices in chunk_iterator:
+        # Calculate slices for this chunk using the chunk indices
+        # Generate a tuple of slices based on chunk indices and chunk size
+        chunk_slice = tuple(
+            slice(idx * chunk, min((idx + 1) * chunk, shape_dim))
+            for idx, chunk, shape_dim in zip(read_chunk_indices, output_chunks, output_shape)
+        )
 
         # Read summed logits and weights for this chunk
         logit_chunk_future = final_store[chunk_slice].read()
