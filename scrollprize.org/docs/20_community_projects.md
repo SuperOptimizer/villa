@@ -147,6 +147,10 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 - [vesuvius-render](https://github.com/jrudolph/vesuvius-gui?tab=readme-ov-file#vesuvius-render) by Johannes Rudolph:
     - Fast self-contained CPU-based rendering of segments from obj files downloading data on-the-fly.
 
+- [segmata](https://github.com/sgoutteb/segmata) by Stephane Gouttebroze:
+    - Improve the segmentation process by sharpening the layers rendering, this is based on optimizing the layer 32, a further objective is to link this optimization on a inference loop (optimizing on the detected ink instead of only layers)
+
+
 ### 📦 Materials
 
 #### 🌟 Highlighted
