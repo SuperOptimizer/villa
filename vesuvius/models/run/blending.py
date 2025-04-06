@@ -86,9 +86,10 @@ async def merge_inference_outputs(
         if 'logits' not in part_files[part_id] or 'coordinates' not in part_files[part_id]:
             raise FileNotFoundError(f"Part {part_id} is missing logits or coordinates Zarr.")
 
-    # --- 2. Read Metadata (from part 0) ---
-    print("Reading metadata from part 0...")
-    part0_logits_path = part_files[0]['logits']
+    # --- 2. Read Metadata (from first available part) ---
+    first_part_id = part_ids[0]  # Use the first available part_id 
+    print(f"Reading metadata from part {first_part_id}...")
+    part0_logits_path = part_files[first_part_id]['logits']
     try:
         # Properly format TensorStore spec with file driver
         part0_logits_store = await ts.open({
