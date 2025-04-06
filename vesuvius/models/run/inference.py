@@ -395,6 +395,12 @@ class Inferer():
                 return await future  # Wait for this specific write to complete
 
         for batch_data in self.dataloader:
+            # Check if batch is empty (all patches were skipped)
+            if isinstance(batch_data, dict) and batch_data.get('empty_batch', False):
+                if self.verbose:
+                    print("Skipping empty batch (all patches were homogeneous/empty)")
+                continue  # Skip this batch entirely
+
             # Adapt data loading based on dataset output
             if isinstance(batch_data, (list, tuple)):
                 input_batch = batch_data[0].to(self.device)  # Assuming first element is image
@@ -402,6 +408,12 @@ class Inferer():
                 input_batch = batch_data['data'].to(self.device)  # Assuming key 'data'
             else:
                 input_batch = batch_data.to(self.device)  # Assuming it's the tensor itself
+
+            # Extra safety check: ensure we have a valid batch with data
+            if input_batch is None or input_batch.shape[0] == 0:
+                if self.verbose:
+                    print("Skipping batch with no valid data")
+                continue  # Skip this batch
 
             current_batch_size = input_batch.shape[0]
 

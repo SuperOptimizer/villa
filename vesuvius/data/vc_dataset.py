@@ -487,13 +487,13 @@ class VCDataset(Dataset):
         # Filter out None values
         batch = [item for item in batch if item is not None]
         
-        # If all items were None, return an empty batch
+        # If all items were None, return a special empty batch marker
         if len(batch) == 0:
             return {
-                "data": torch.zeros((0, 1, 1, 1, 1)),  # Empty tensor with batch dim
+                "empty_batch": True,
+                "data": None,  # No data to process
                 "pos": [],
-                "index": [],
-                "is_empty": []
+                "index": []
             }
             
         # Extract items by key
@@ -502,8 +502,8 @@ class VCDataset(Dataset):
         indices = [item["index"] for item in batch]
         
         return {
+            "empty_batch": False,
             "data": data,
             "pos": pos,
-            "index": indices,
-            "is_empty": [False] * len(batch)  # Mark all returned items as non-empty
+            "index": indices
         }
