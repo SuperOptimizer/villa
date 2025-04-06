@@ -1,10 +1,6 @@
 import os
-import yaml
-import json
-from numpy.typing import NDArray
-from typing import Any, Dict, Optional, Tuple, Union, List
+from typing import Optional, Tuple, Union
 import numpy as np
-import requests
 # import zarr # No longer needed directly in VCDataset
 # import tifffile # No longer needed directly in VCDataset
 import torch
@@ -15,27 +11,10 @@ from pathlib import Path
 # Assuming these are in the correct relative paths
 from utils.models.helpers import compute_steps_for_sliding_window
 from data.volume import Volume
-# Placeholder imports if the originals are not in the expected location
-try:
-    from data.io.paths import list_files, is_aws_ec2_instance
-except ImportError:
-    print("Warning: Could not import list_files, is_aws_ec2_instance. Using placeholders.")
-    def list_files(): return {}
-    def is_aws_ec2_instance(): return False
-try:
-    from .utils import get_max_value # Assuming utils is relative to volume.py
-except ImportError:
-     # Placeholder function copied from previous Volume implementation
-     def get_max_value(dtype):
-        dtype = np.dtype(dtype) # Ensure it's a numpy dtype object
-        if np.issubdtype(dtype, np.integer):
-            return np.iinfo(dtype).max
-        elif np.issubdtype(dtype, np.floating):
-            # For floats used in scaling [0,1] -> int range, target max is often relevant
-            # Return 1.0 as a sensible default for float scaling factor base
-             return 1.0
-        else:
-            return 1 # Default for bool, etc.
+# Import utility functions directly from vesuvius package
+from utils import list_files, is_aws_ec2_instance
+# Import get_max_value from data.utils to avoid import errors
+from data.utils import get_max_value
 
 
 class VCDataset(Dataset):
@@ -61,9 +40,10 @@ class VCDataset(Dataset):
             normalization_scheme: str = 'instance_zscore', # Default to instance z-score
             global_mean: Optional[float] = None,
             global_std: Optional[float] = None,
-            return_as_type: str = 'np.float32', # Default float type for model input
+            return_as_type: str = 'np.float16', # Default float type for model input
             # return_as_tensor: bool = True, # Forcing True below
             domain: Optional[str] = None,
+            skip_empty_patches: bool = True,  # Whether to skip empty (homogeneous) patches
             ):
         """
         Dataset for nnUNet inference using the Volume class for data access and preprocessing.
@@ -106,6 +86,8 @@ class VCDataset(Dataset):
         self.verbose = verbose
         self.mode = mode
         self.return_as_tensor = True # Dataset __getitem__ always returns tensors
+        self.skip_empty_patches = skip_empty_patches
+        self.empty_patches_skipped = 0  # Counter for skipped patches
 
         # Data partitioning parameters
         if num_parts < 1:
@@ -283,6 +265,7 @@ class VCDataset(Dataset):
                 print(f"  Image Size (Z, Y, X): {image_size}")
                 print(f"  Patch Size (Z, Y, X): {self.patch_size}")
                 print(f"  Step Size Factor: {self.step_size}")
+                print(f"  Skip Empty Patches: {self.skip_empty_patches}")
                 print(f"  Num Positions (Z, Y, X): ({len(z_positions)}, {len(y_positions)}, {len(x_positions)})")
                 total_patches = len(z_positions) * len(y_positions) * len(x_positions)
                 print(f"  Total potential patches: {total_patches}")
@@ -361,6 +344,14 @@ class VCDataset(Dataset):
 
     def __len__(self):
         return len(self.all_positions)
+        
+    def get_empty_patches_report(self):
+        """Return a report of empty patches that were skipped"""
+        return {
+            "total_skipped": self.empty_patches_skipped,
+            "total_positions": len(self.all_positions),
+            "skip_ratio": self.empty_patches_skipped / (len(self.all_positions) + self.empty_patches_skipped) if self.empty_patches_skipped > 0 else 0
+        }
 
     def __getitem__(self, idx):
         if idx >= len(self.all_positions):
@@ -387,6 +378,21 @@ class VCDataset(Dataset):
                 
                 # Volume returns (Z, Y, X) tensor
                 extracted_tensor = self.volume[z_slice, y_slice, x_slice]
+                
+                # Fast check for empty patch - skip if all zeros or all values are the same
+                # This avoids processing empty patches which won't contain any information
+                if self.skip_empty_patches and extracted_tensor.numel() > 0:
+                    # Check if tensor is empty (all zeros or same value)
+                    # We use a fast min/max comparison rather than var() which is more expensive
+                    min_val = extracted_tensor.min().item()
+                    max_val = extracted_tensor.max().item()
+                    if min_val == max_val:
+                        # All values are the same - this is likely empty space
+                        self.empty_patches_skipped += 1
+                        if self.verbose and self.empty_patches_skipped % 100 == 0:
+                            print(f"Skipped {self.empty_patches_skipped} empty patches so far")
+                        return None
+                
                 # We need to add channel dim and pad
                 fetched_z, fetched_y, fetched_x = extracted_tensor.shape
                 
@@ -414,6 +420,30 @@ class VCDataset(Dataset):
                 
                 # Take exactly what the model expects
                 extracted_tensor = self.volume[:self.num_input_channels, z_slice, y_slice, x_slice]
+                
+                # Fast check for empty patch - skip if all zeros or all values are the same
+                if self.skip_empty_patches and extracted_tensor.numel() > 0:
+                    # Check if tensor is empty (all same value) across all channels
+                    is_empty = True
+                    
+                    # Check just the first few channels for efficiency
+                    check_channels = min(3, extracted_tensor.shape[0])
+                    for c in range(check_channels):
+                        channel_tensor = extracted_tensor[c]
+                        if channel_tensor.numel() > 0:
+                            min_val = channel_tensor.min().item()
+                            max_val = channel_tensor.max().item()
+                            if min_val != max_val:
+                                # Found variation in this channel, not empty
+                                is_empty = False
+                                break
+                    
+                    if is_empty:
+                        # All checked channels have constant values - likely empty space
+                        self.empty_patches_skipped += 1
+                        if self.verbose and self.empty_patches_skipped % 100 == 0:
+                            print(f"Skipped {self.empty_patches_skipped} empty patches so far")
+                        return None
                 
                 # Get dimensions for padding
                 fetched_c, fetched_z, fetched_y, fetched_x = extracted_tensor.shape
@@ -446,4 +476,34 @@ class VCDataset(Dataset):
             "data": patch_tensor, # Key required by nnUNet inference
             "pos": position_tuple, # Pass position for potential stitching later
             "index": idx # Pass original index
+        }
+    
+    @staticmethod
+    def collate_fn(batch):
+        """
+        Custom collate function that filters out None values (empty patches)
+        and collates the remaining items properly.
+        """
+        # Filter out None values
+        batch = [item for item in batch if item is not None]
+        
+        # If all items were None, return an empty batch
+        if len(batch) == 0:
+            return {
+                "data": torch.zeros((0, 1, 1, 1, 1)),  # Empty tensor with batch dim
+                "pos": [],
+                "index": [],
+                "is_empty": []
+            }
+            
+        # Extract items by key
+        data = torch.stack([item["data"] for item in batch])
+        pos = [item["pos"] for item in batch]
+        indices = [item["index"] for item in batch]
+        
+        return {
+            "data": data,
+            "pos": pos,
+            "index": indices,
+            "is_empty": [False] * len(batch)  # Mark all returned items as non-empty
         }

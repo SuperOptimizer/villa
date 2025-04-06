@@ -6,38 +6,32 @@ import re
 import json
 from tqdm.auto import tqdm
 from scipy.ndimage import gaussian_filter  # For map generation alternative
-import torch  # For tensor type checking
+import torch
 
 
 # --- Gaussian Map Generation ---
-def generate_gaussian_map(patch_size: tuple, sigma_scale: float = 8.0, dtype=np.float32) -> np.ndarray:
+def generate_gaussian_map(patch_size: tuple, sigma_scale: float = 8.0, dtype=torch.float32) -> torch.Tensor:
     """
     Generates a Gaussian importance map for a given patch size.
     Weights decay from the center towards the edges.
     Shape: (1, pZ, pY, pX) for easy broadcasting.
     """
     pZ, pY, pX = patch_size
-    tmp = np.zeros(patch_size)
+    tmp = torch.zeros(patch_size, dtype=dtype)
     center_coords = [i // 2 for i in patch_size]
     sigmas = [i / sigma_scale for i in patch_size]
 
-    # Set center voxel to 1
-    # This uses a simpler approach common in segmentation pipelines,
-    # effectively creating weights by blurring a single point.
     tmp[tuple(center_coords)] = 1
-    gaussian_map = gaussian_filter(tmp, sigmas, 0, mode='constant', cval=0)
 
-    # Normalize to have max of 1 (optional, but good practice)
-    gaussian_map /= np.max(gaussian_map)
-
-    # Add channel dimension for broadcasting
-    gaussian_map = gaussian_map.astype(dtype).reshape(1, pZ, pY, pX)
-
-    # Ensure weights are non-negative
-    gaussian_map[gaussian_map < 0] = 0
-
+    tmp_np = tmp.cpu().numpy()
+    gaussian_map_np = gaussian_filter(tmp_np, sigmas, 0, mode='constant', cval=0)
+    gaussian_map = torch.from_numpy(gaussian_map_np)
+    gaussian_map /= gaussian_map.max()
+    gaussian_map = gaussian_map.reshape(1, pZ, pY, pX)
+    gaussian_map = torch.clamp(gaussian_map, min=0)
+    
     print(
-        f"Generated Gaussian map with shape {gaussian_map.shape}, min: {np.min(gaussian_map):.4f}, max: {np.max(gaussian_map):.4f}")
+        f"Generated Gaussian map with shape {gaussian_map.shape}, min: {gaussian_map.min().item():.4f}, max: {gaussian_map.max().item():.4f}")
     return gaussian_map
 
 
@@ -47,8 +41,8 @@ async def merge_inference_outputs(
         output_path: str,
         weight_accumulator_path: str = None,  # Optional: Path for weights, default is temp
         sigma_scale: float = 8.0,
-        chunk_size: tuple = (64, 64, 64),  # Spatial chunk size (Z, Y, X) for output
-        cache_pool_gb: float = 4.0,
+        chunk_size: tuple = (128, 128, 128),  # Spatial chunk size (Z, Y, X) for output
+        cache_pool_gb: float = 10.0,
         delete_weights: bool = True,  # Delete weight accumulator after merge
         verbose: bool = True):
     """
@@ -169,9 +163,9 @@ async def merge_inference_outputs(
 
     # --- 4. Generate Gaussian Map ---
     gaussian_map = generate_gaussian_map(patch_size, sigma_scale=sigma_scale)
-    # Ensure it's on CPU for numpy operations if generated elsewhere
-    if isinstance(gaussian_map, torch.Tensor):
-        gaussian_map = gaussian_map.cpu().numpy()
+    # Make sure it's on CPU
+    gaussian_map = gaussian_map.cpu()
+    # Extract spatial dimensions for weights store
     gaussian_map_spatial = gaussian_map[0]  # Shape (pZ, pY, pX) for weights store
 
     # --- 5. Process Each Part (Accumulation) ---
@@ -196,13 +190,15 @@ async def merge_inference_outputs(
 
         # Read all coordinates for this part
         coords_np = await coords_store.read()  # Async read directly returns the data
-        num_patches_in_part = coords_np.shape[0]
+        # Convert to tensor
+        coords = torch.from_numpy(coords_np)
+        num_patches_in_part = coords.shape[0]
         if verbose: print(f"  Found {num_patches_in_part} patches in part {part_id}.")
 
         # Process patches serially for simplicity, could be parallelized with care
         for patch_idx in tqdm(range(num_patches_in_part), desc=f"  Patches Part {part_id}", leave=False,
                               disable=not verbose):
-            z, y, x = coords_np[patch_idx]
+            z, y, x = coords[patch_idx].tolist()  # Convert tensor values to Python integers
 
             # Define slices (handle boundary conditions implicitly via slicing)
             output_slice = (
@@ -217,25 +213,34 @@ async def merge_inference_outputs(
                 slice(x, x + pX)
             )
 
-            # Read logit patch - read directly into numpy array
-            logit_patch = await logits_store[patch_idx].read()  # Reads (C, pZ, pY, pX)
-
+            # Read logit patch and immediately convert to tensor
+            logit_patch_np = await logits_store[patch_idx].read()  # Reads (C, pZ, pY, pX)
+            logit_patch = torch.from_numpy(logit_patch_np)
+            
             # Apply Gaussian weight map
             weighted_patch = logit_patch * gaussian_map  # Broadcasting (1, pZ, pY, pX)
 
             # Atomically add to stores
             # We can't use accumulate parameter directly with TensorStore
             # So we read the current values, add, and write back
-            current_logits = await final_store[output_slice].read()
-            current_weights = await weights_store[weight_slice].read()
+            current_logits_np = await final_store[output_slice].read()
+            current_weights_np = await weights_store[weight_slice].read()
+            
+            # Convert to tensors
+            current_logits = torch.from_numpy(current_logits_np)
+            current_weights = torch.from_numpy(current_weights_np)
 
             # Add to existing values
             updated_logits = current_logits + weighted_patch
             updated_weights = current_weights + gaussian_map_spatial
 
+            # Convert back to numpy for TensorStore write
+            updated_logits_np = updated_logits.numpy()
+            updated_weights_np = updated_weights.numpy()
+
             # Write back
-            write_logit_future = final_store[output_slice].write(updated_logits)
-            write_weight_future = weights_store[weight_slice].write(updated_weights)
+            write_logit_future = final_store[output_slice].write(updated_logits_np)
+            write_weight_future = weights_store[weight_slice].write(updated_weights_np)
 
             # Await writes for this patch before next (simplest flow control)
             await asyncio.gather(write_logit_future, write_weight_future)
@@ -288,25 +293,34 @@ async def merge_inference_outputs(
         weight_chunk_future = weights_store[weight_chunk_slice].read()
 
         # Process concurrently
-        logit_chunk, weight_chunk = await asyncio.gather(logit_chunk_future, weight_chunk_future)
+        logit_chunk_np, weight_chunk_np = await asyncio.gather(logit_chunk_future, weight_chunk_future)
+        
+        # Convert to PyTorch tensors
+        logit_chunk = torch.from_numpy(logit_chunk_np)
+        weight_chunk = torch.from_numpy(weight_chunk_np)
 
         # Ensure weights are broadcastable to logits shape (C, cZ, cY, cX)
         # Add class dimension to weights: (cZ, cY, cX) -> (1, cZ, cY, cX)
-        weight_chunk_b = np.expand_dims(weight_chunk, axis=0)
+        weight_chunk_b = weight_chunk.unsqueeze(0)
 
         # Normalize, handling division by zero
         # Add a small epsilon to weights to avoid division by zero errors
-        # Or explicitly check where weights are zero
         epsilon = 1e-8
-        final_chunk = np.where(
-            weight_chunk_b > epsilon,
-            logit_chunk / (weight_chunk_b + epsilon),
-            0.0  # Set output to 0 where weight was 0
-        ).astype(np.float32)
+        # Create a mask where weights are significant
+        mask = weight_chunk_b > epsilon
+        
+        # Initialize with zeros 
+        final_chunk = torch.zeros_like(logit_chunk)
+        
+        # Only normalize where weights are significant
+        final_chunk[mask] = logit_chunk[mask] / (weight_chunk_b[mask] + epsilon)
+        
+        # Convert back to numpy for TensorStore write 
+        final_chunk_np = final_chunk.numpy()
 
         # Write the normalized chunk back (overwrite)
         # Use fire-and-forget writes and manage concurrency
-        write_future = final_store[chunk_slice].write(final_chunk)
+        write_future = final_store[chunk_slice].write(final_chunk_np)
         normalize_futures.append(write_future)
 
         # --- Concurrency Management ---
@@ -319,7 +333,7 @@ async def merge_inference_outputs(
             # print("Done waiting.")
 
         # Update progress tracking (approximate)
-        num_processed_voxels += np.prod(final_chunk.shape)
+        num_processed_voxels += torch.prod(torch.tensor(final_chunk.shape)).item()
 
     # Wait for any remaining normalization writes
     if normalize_futures:
@@ -336,15 +350,10 @@ async def merge_inference_outputs(
     if delete_weights:
         print(f"Deleting weight accumulator: {weight_accumulator_path}")
         try:
-            # Use TensorStore to delete (handles different kvstores)
-            await ts.open(
-                ts.Spec({
-                    'driver': 'zarr',
-                    'kvstore': {'driver': 'file', 'path': weight_accumulator_path}
-                }),
-                delete_existing=True,
-                context=ts_context
-            )
+            import shutil
+            if os.path.exists(weight_accumulator_path):
+                shutil.rmtree(weight_accumulator_path)
+                print(f"Successfully deleted weight accumulator")
         except Exception as e:
             print(f"Warning: Failed to delete weight accumulator: {e}")
             print(f"You may need to delete it manually: {weight_accumulator_path}")
@@ -354,8 +363,10 @@ async def merge_inference_outputs(
 
 
 # --- Command Line Interface ---
-if __name__ == '__main__':
+def main():
+    """Entry point for the vesuvius.blend command line tool."""
     import argparse
+    import sys
 
     parser = argparse.ArgumentParser(description='Merge partial nnUNet inference outputs with Gaussian blending.')
     parser.add_argument('parent_dir', type=str,
@@ -386,13 +397,25 @@ if __name__ == '__main__':
         except ValueError:
             parser.error("Invalid chunk_size format. Expected 3 comma-separated integers (Z,Y,X).")
 
-    asyncio.run(merge_inference_outputs(
-        parent_dir=args.parent_dir,
-        output_path=args.output_path,
-        weight_accumulator_path=args.weights_path,
-        sigma_scale=args.sigma_scale,
-        chunk_size=chunks,
-        cache_pool_gb=args.cache_gb,
-        delete_weights=not args.keep_weights,
-        verbose=not args.quiet
-    ))
+    try:
+        asyncio.run(merge_inference_outputs(
+            parent_dir=args.parent_dir,
+            output_path=args.output_path,
+            weight_accumulator_path=args.weights_path,
+            sigma_scale=args.sigma_scale,
+            chunk_size=chunks,
+            cache_pool_gb=args.cache_gb,
+            delete_weights=not args.keep_weights,
+            verbose=not args.quiet
+        ))
+        return 0
+    except Exception as e:
+        print(f"\n--- Blending Failed ---")
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+if __name__ == '__main__':
+    import sys
+    sys.exit(main())

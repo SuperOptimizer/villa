@@ -17,6 +17,8 @@ Requires-Dist: requests
 Requires-Dist: aiohttp
 Requires-Dist: fsspec
 Requires-Dist: tensorstore
+Requires-Dist: huggingface_hub
+Requires-Dist: dask
 Requires-Dist: zarr
 Requires-Dist: tqdm
 Requires-Dist: lxml
@@ -26,7 +28,6 @@ Requires-Dist: pyyaml
 Requires-Dist: Pillow
 Requires-Dist: Torch
 Requires-Dist: nnUNetv2
-Requires-Dist: atomics
 Requires-Dist: scipy
 Requires-Dist: batchgenerators
 Requires-Dist: batchgeneratorsv2

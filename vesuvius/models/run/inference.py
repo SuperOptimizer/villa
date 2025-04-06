@@ -36,7 +36,15 @@ class Inferer():
                  normalization_scheme: str = 'instance_zscore',
                  device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
                  num_dataloader_workers: int = 4,
-                 verbose: bool = False
+                 verbose: bool = False,
+                 skip_empty_patches: bool = True,  # Skip empty/homogeneous patches
+                 # Additional parameters for Volume class
+                 scroll_id: [str, int] = None,
+                 segment_id: [str, int] = None,
+                 energy: int = None,
+                 resolution: float = None,
+                 # Hugging Face parameters
+                 hf_token: str = None
                  ):
 
         self.model_path = model_path
@@ -57,6 +65,14 @@ class Inferer():
         self.input_format = input_format
         self.device = torch.device(device)
         self.num_dataloader_workers = num_dataloader_workers
+        self.skip_empty_patches = skip_empty_patches
+        # Volume-specific parameters
+        self.scroll_id = scroll_id
+        self.segment_id = segment_id
+        self.energy = energy
+        self.resolution = resolution
+        # Hugging Face parameters
+        self.hf_token = hf_token
         # These will be set after model loading if not provided
         self.model_patch_size = None
         self.num_classes = None
@@ -100,10 +116,28 @@ class Inferer():
 
     def _load_model(self):
         # Load model onto the specified device
-        model_info = load_model_for_inference(
-            model_folder=self.model_path,
-            device_str=str(self.device)
-        )
+        # Check if model_path is a Hugging Face model path (starts with "hf://")
+        if isinstance(self.model_path, str) and self.model_path.startswith("hf://"):
+            # Extract the repository ID from the path
+            hf_model_path = self.model_path.replace("hf://", "")
+            if self.verbose:
+                print(f"Loading model from Hugging Face repo: {hf_model_path}")
+            model_info = load_model_for_inference(
+                model_folder=None,
+                hf_model_path=hf_model_path,
+                hf_token=self.hf_token if hasattr(self, 'hf_token') else None,
+                device_str=str(self.device),
+                verbose=self.verbose
+            )
+        else:
+            # Load from local path
+            if self.verbose:
+                print(f"Loading model from local path: {self.model_path}")
+            model_info = load_model_for_inference(
+                model_folder=self.model_path,
+                device_str=str(self.device),
+                verbose=self.verbose
+            )
         
         # model loader returns a dict, network is the actual model
         model = model_info['network']
@@ -165,7 +199,14 @@ class Inferer():
             normalization_scheme=self.normalization_scheme,
             input_format=self.input_format,
             verbose=self.verbose,
-            mode='infer'
+            mode='infer',
+            # Pass skip_empty_patches flag
+            skip_empty_patches=self.skip_empty_patches,
+            # Pass Volume-specific parameters
+            scroll_id=self.scroll_id,
+            segment_id=self.segment_id,
+            energy=self.energy,
+            resolution=self.resolution
         )
 
         # Retrieve the calculated patch coordinates from the dataset instance
@@ -199,7 +240,8 @@ class Inferer():
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_dataloader_workers,
-            pin_memory=True if self.device != torch.device('cpu') else False
+            pin_memory=True if self.device != torch.device('cpu') else False,
+            collate_fn=VCDataset.collate_fn  # Use the custom collate function that skips empty patches
         )
         return self.dataset, self.dataloader
         
@@ -249,7 +291,7 @@ class Inferer():
             'driver': 'zarr',
             'kvstore': {'driver': 'file', 'path': main_store_path},
             'metadata': {
-                'dtype': '<f4',
+                'dtype': '<f2',
                 'shape': output_shape,
                 'chunks': output_chunks,
                 'compressor': {'id': 'blosc'},
@@ -363,7 +405,7 @@ class Inferer():
 
             current_batch_size = input_batch.shape[0]
 
-            with torch.no_grad():
+            with torch.no_grad(), torch.amp.autocast('cuda'):
                 if self.do_tta:
                     # --- TTA ---
                     outputs_batch_tta = []  # Store list of outputs for each TTA for the batch
@@ -420,13 +462,18 @@ class Inferer():
                     pbar.refresh()
 
             # Move output to CPU and convert to NumPy for TensorStore writing
-            output_np = output_batch.cpu().numpy().astype(np.float32)  # B, C, Z, Y, X
+            output_np = output_batch.cpu().numpy().astype(np.float16)  # B, C, Z, Y, X
             current_batch_size = output_np.shape[0]
 
+            # Get patch indices from the batch data (needed when skipping empty patches)
+            patch_indices = batch_data.get('index', [i for i in range(current_batch_size)])
+            
             # Process each patch in the batch
             for i in range(current_batch_size):
                 patch_data = output_np[i]  # Shape: (C, Z, Y, X)
-                write_index = self.current_patch_write_index
+                
+                # Use the original dataset index as the write index to maintain correspondence with coordinates
+                write_index = patch_indices[i]
                 
                 # Schedule the limited write operation (will be executed concurrently)
                 # This creates a task that we can gather later
@@ -458,8 +505,10 @@ class Inferer():
         pbar.close()
 
         if self.verbose:
-            print(f"Finished writing {self.current_patch_write_index} patches.")
-        if self.current_patch_write_index != self.num_total_patches:
+            print(f"Finished writing {self.current_patch_write_index} non-empty patches.")
+        
+        # With skip_empty_patches, we expect fewer patches to be processed
+        if not self.skip_empty_patches and self.current_patch_write_index != self.num_total_patches:
              print(f"Warning: Expected {self.num_total_patches} patches, but wrote {self.current_patch_write_index}.")
 
     async def _run_inference_async(self):
@@ -501,14 +550,15 @@ class Inferer():
             traceback.print_exc() # Print detailed traceback
 
 
-# --- Command line usage ---
-if __name__ == '__main__':
+def main():
+    """Entry point for the vesuvius.predict command line tool."""
     import argparse
+    import sys
     
     parser = argparse.ArgumentParser(description='Run nnUNet inference on Zarr data')
     parser.add_argument('--model_path', type=str, required=True, help='Path to the nnUNet model folder')
     parser.add_argument('--input_dir', type=str, required=True, help='Path to the input Zarr volume')
-    parser.add_argument('--output_dir', type=str, default=None, help='Path to store output predictions (uses temp dir if not specified)')
+    parser.add_argument('--output_dir', type=str, required=True, help='Path to store output predictions')
     parser.add_argument('--input_format', type=str, default='zarr', help='Input format (zarr, volume)')
     parser.add_argument('--tta_type', type=str, default='mirroring', choices=['mirroring', 'rotation'], 
                       help='TTA type (mirroring or rotation)')
@@ -525,6 +575,20 @@ if __name__ == '__main__':
                       help='Normalization scheme (instance_zscore, global_zscore, instance_minmax, none)')
     parser.add_argument('--device', type=str, default='cuda', help='Device to use (cuda, cpu)')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
+    parser.add_argument('--skip-empty-patches', dest='skip_empty_patches', action='store_true', 
+                      help='Skip patches that are empty (all values the same). Default: True')
+    parser.add_argument('--no-skip-empty-patches', dest='skip_empty_patches', action='store_false',
+                      help='Process all patches, even if they appear empty')
+    parser.set_defaults(skip_empty_patches=True)
+    
+    # Add arguments for the updated Volume class
+    parser.add_argument('--scroll_id', type=str, default=None, help='Scroll ID to use (if input_format is volume)')
+    parser.add_argument('--segment_id', type=str, default=None, help='Segment ID to use (if input_format is volume)')
+    parser.add_argument('--energy', type=int, default=None, help='Energy level to use (if input_format is volume)')
+    parser.add_argument('--resolution', type=float, default=None, help='Resolution to use (if input_format is volume)')
+    
+    # Add arguments for Hugging Face model loading
+    parser.add_argument('--hf_token', type=str, default=None, help='Hugging Face token for accessing private repositories')
     
     args = parser.parse_args()
     
@@ -538,6 +602,16 @@ if __name__ == '__main__':
             print(f"Error parsing patch_size: {e}")
             print("Expected format: comma-separated integers, e.g. '192,192,192'")
             print("Using model's default patch size instead.")
+    
+    # Convert scroll_id and segment_id if needed
+    scroll_id = args.scroll_id
+    segment_id = args.segment_id
+    
+    if scroll_id is not None and scroll_id.isdigit():
+        scroll_id = int(scroll_id)
+    
+    if segment_id is not None and segment_id.isdigit():
+        segment_id = int(segment_id)
     
     print("\n--- Initializing Inferer ---")
     inferer = Inferer(
@@ -556,7 +630,15 @@ if __name__ == '__main__':
         cache_pool=args.cache_pool,
         normalization_scheme=args.normalization,
         device=args.device,
-        verbose=args.verbose
+        verbose=args.verbose,
+        skip_empty_patches=args.skip_empty_patches,  # Skip empty patches flag
+        # Pass Volume-specific parameters to VCDataset
+        scroll_id=scroll_id,
+        segment_id=segment_id,
+        energy=args.energy,
+        resolution=args.resolution,
+        # Pass Hugging Face parameters
+        hf_token=args.hf_token
     )
 
     try:
@@ -579,6 +661,16 @@ if __name__ == '__main__':
                  print(f"Output chunks: {output_store.chunk_layout.read_chunk.shape}")
             except Exception as inspect_e:
                 print(f"Could not inspect output Zarr: {inspect_e}")
+                
+            # Print empty patches report if skip_empty_patches was enabled
+            if inferer.skip_empty_patches and hasattr(inferer.dataset, 'get_empty_patches_report'):
+                report = inferer.dataset.get_empty_patches_report()
+                print("\n--- Empty Patches Report ---")
+                print(f"  Empty Patches Skipped: {report['total_skipped']}")
+                print(f"  Total Available Positions: {report['total_positions']}")
+                if report['total_skipped'] > 0:
+                    print(f"  Skip Ratio: {report['skip_ratio']:.2%}")
+                    print(f"  Effective Speedup: {1/(1-report['skip_ratio']):.2f}x")
 
             print("\n--- Inspecting Coordinate Store ---")
             try:
@@ -589,15 +681,19 @@ if __name__ == '__main__':
                 print(f"First few coordinates:\n{first_few_coords}")
             except Exception as inspect_e:
                 print(f"Could not inspect coordinate Zarr: {inspect_e}")
+            return 0
         else:
              print("\n--- Inference finished, but output path seems invalid or wasn't created. ---")
+             return 1
 
     except Exception as main_e:
         print(f"\n--- Inference Failed ---")
         print(f"Error: {main_e}")
         import traceback
         traceback.print_exc()
+        return 1
 
-    finally:
-        # Temp directory cleanup is handled internally by the TemporaryDirectory object
-        pass
+# --- Command line usage ---
+if __name__ == '__main__':
+    import sys
+    sys.exit(main())

@@ -3,6 +3,8 @@ requests
 aiohttp
 fsspec
 tensorstore
+huggingface_hub
+dask
 zarr
 tqdm
 lxml
@@ -12,7 +14,6 @@ pyyaml
 Pillow
 Torch
 nnUNetv2
-atomics
 scipy
 batchgenerators
 batchgeneratorsv2

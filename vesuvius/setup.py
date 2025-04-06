@@ -35,6 +35,8 @@ setup(
         'aiohttp',
         'fsspec',
         'tensorstore',
+        'huggingface_hub',
+        'dask',
         'zarr',
         'tqdm',
         'lxml',
@@ -44,7 +46,6 @@ setup(
         'Pillow',
         'Torch',
         'nnUNetv2',
-        'atomics',
         'scipy',
         'batchgenerators',
         'batchgeneratorsv2',
@@ -60,6 +61,9 @@ setup(
         'console_scripts': [
             'vesuvius.accept_terms=setup.accept_terms:main',
             'vesuvius.predict=models.run.inference:main',
+            'vesuvius.blend_logits=models.run.blending:main',
+            'vesuvius.finalize_outputs=models.run.finalize_outputs:main',
+            'vesuvius.inference_pipeline=models.run.vesuvius_pipeline:run_pipeline',
         ],
     },
     # No scripts needed as we're using entry_points
