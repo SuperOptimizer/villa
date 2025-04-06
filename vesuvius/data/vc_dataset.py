@@ -42,16 +42,15 @@ class VCDataset(Dataset):
     def __init__(
             self,
             input_path: str,
-            targets: List[Dict], # Kept for potential future use or compatibility, but not used in current logic
             patch_size: Tuple[int, int, int],
             num_input_channels: Optional[int] = None, # Can often be inferred from Volume
             input_format: str = 'zarr', # Less critical now, type inferred from input_path/params
             step_size: float = 0.5,
-            load_all: bool = False, # Ignored, Volume handles memory management/caching
             verbose: bool = False,
             mode: str = 'infer', # Currently only 'infer' logic is fully implemented
             num_parts: int = 1,
             part_id: int = 0,
+            targets = None,  # Added targets parameter with None default
             # --- Volume Class Pass-through Parameters ---
             scroll_id: Optional[Union[int, str]] = None,
             energy: Optional[int] = None,
