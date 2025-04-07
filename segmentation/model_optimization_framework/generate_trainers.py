@@ -649,7 +649,7 @@ def main() -> None:
     parser.add_argument(
         "--config", 
         type=str, 
-        default="config.yml",
+        default="configs/config.yml",
         help="Path to the model optimization configuration file"
     )
     parser.add_argument(
