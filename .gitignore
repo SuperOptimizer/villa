@@ -4,3 +4,6 @@
 *.tif
 node_modules/.yarn-integrity
 !**/wandb/**
+/segmentation/models/arch/nnunet/wandb
+/segmentation/models/arch/nnunet/nnunetv2.egg-info
+segmentation/models/arch/nnunet/nnunetv2.egg-info/SOURCES.txt

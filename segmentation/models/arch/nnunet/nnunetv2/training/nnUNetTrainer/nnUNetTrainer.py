@@ -182,7 +182,7 @@ class nnUNetTrainer(object):
         self.num_input_channels = None  # -> self.initialize()
         self.network = None  # -> self.build_network_architecture()
         self.optimizer = self.lr_scheduler = None  # -> self.initialize
-        self.grad_scaler = GradScaler() if self.device.type == 'cuda' else None
+        self.grad_scaler = torch.amp.GradScaler('cuda') if self.device.type == 'cuda' else None
         self.loss = None  # -> self.initialize
 
         ### Simple logging. Don't take that away from me!
@@ -209,20 +209,6 @@ class nnUNetTrainer(object):
         self.save_every = 50
         self.disable_checkpointing = False
 
-        ## DDP batch size and oversampling can differ between workers and needs adaptation
-        # we need to change the batch size in DDP because we don't use any of those distributed samplers
-        self._set_batch_size_and_oversample()
-
-        self.was_initialized = False
-
-        self.print_to_log_file("\n#######################################################################\n"
-                               "Please cite the following paper when using nnU-Net:\n"
-                               "Isensee, F., Jaeger, P. F., Kohl, S. A., Petersen, J., & Maier-Hein, K. H. (2021). "
-                               "nnU-Net: a self-configuring method for deep learning-based biomedical image segmentation. "
-                               "Nature methods, 18(2), 203-211.\n"
-                               "#######################################################################\n",
-                               also_print_to_console=True, add_timestamp=False)
-
         # Hyperparameters initialization
         if yaml_config_path is None:
             yaml_path = files('nnunetv2.training.nnUNetTrainer.configs').joinpath('default.yaml')
@@ -241,9 +227,23 @@ class nnUNetTrainer(object):
         self.enable_deep_supervision = yaml_config['enable_deep_supervision']
         self.current_epoch = 0  ## Dynamic variable not stored in yaml config
 
+        ## DDP batch size and oversampling can differ between workers and needs adaptation
+        # we need to change the batch size in DDP because we don't use any of those distributed samplers
+        self._set_batch_size_and_oversample()
+
+        self.was_initialized = False
+
         # WandbWrapper initialization
         self.wandb = WandbWrapper(use_wandb=yaml_config['wandb_enabled'], config=yaml_config)
         self.wandb.init(local_rank=self.local_rank, config=yaml_config)
+
+        self.print_to_log_file("\n#######################################################################\n"
+                               "Please cite the following paper when using nnU-Net:\n"
+                               "Isensee, F., Jaeger, P. F., Kohl, S. A., Petersen, J., & Maier-Hein, K. H. (2021). "
+                               "nnU-Net: a self-configuring method for deep learning-based biomedical image segmentation. "
+                               "Nature methods, 18(2), 203-211.\n"
+                               "#######################################################################\n",
+                               also_print_to_console=True, add_timestamp=False)
 
     def initialize(self):
         if not self.was_initialized:
@@ -1202,6 +1202,10 @@ class nnUNetTrainer(object):
         mean_fg_dice = np.nanmean(global_dice_per_class)
 
         # Improved WandB logging with clear per-class dice labels
+        # When using DDP, all processes should log validation metrics (not just rank 0)
+        # This ensures all ranks have the same logger state
+        
+        # WandB logging only happens on rank 0
         if self.local_rank == 0:
             dice_per_class_dict = {
                 f"dice/{label_name}": np.round(global_dice_per_class[label_idx - 1], 4)
@@ -1217,10 +1221,11 @@ class nnUNetTrainer(object):
             }
 
             self.wandb.log(log_dict)
-
-            self.logger.log('val_losses', aggregated_loss, self.current_epoch)
-            self.logger.log('mean_fg_dice', mean_fg_dice, self.current_epoch)
-            self.logger.log('dice_per_class_or_region', global_dice_per_class, self.current_epoch)
+        
+        # ALL ranks must log validation metrics to keep logger state consistent across processes
+        self.logger.log('val_losses', aggregated_loss, self.current_epoch)
+        self.logger.log('mean_fg_dice', mean_fg_dice, self.current_epoch)
+        self.logger.log('dice_per_class_or_region', global_dice_per_class, self.current_epoch)
 
     def on_epoch_start(self):
         self.logger.log('epoch_start_timestamps', time(), self.current_epoch)
