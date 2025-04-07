@@ -78,7 +78,3 @@ evaluation:
     type: connected_components
   output_folder: /path/to/evaluation
   predictions_base_folder: /path/to/predictions
-experiment_name: lr_tuning_experiment_SkeletonSuperVoxel
-fold: 0
-num_gpus: 1
-plans: nnUNetResEncUNetLPlans
