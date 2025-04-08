@@ -422,17 +422,22 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                     align=(Align.CENTER, Align.MIN, Align.CENTER),
                 )
 
-    # Extra space at bottom of right case half
-    with BuildPart() as right_bottom_margin:
+    # Extra space at bottom of left case half
+    with BuildPart() as left_bottom_margin:
         with Locations((0, 0, case.cylinder_bottom - case.square_height_mm)):
             Box(
                 case.square_loft_radius * 2,
                 case.square_loft_radius * 2,
                 case.right_cap_buffer,
-                align=(Align.CENTER, Align.CENTER, Align.MIN),
+                align=(Align.CENTER, Align.MIN, Align.MAX),
             )
 
-    left = case_part.solids()[0] + mount_disc.solids()[0] + nubs.solids()
-    right = case_part.solids()[1] - hollows.solids() - right_bottom_margin.solids()
+    left = (
+        case_part.solids()[0]
+        + mount_disc.solids()[0]
+        + nubs.solids()
+        - left_bottom_margin.solids()
+    )
+    right = case_part.solids()[1] - hollows.solids()
 
     return left, right
