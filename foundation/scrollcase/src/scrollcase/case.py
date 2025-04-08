@@ -43,12 +43,6 @@ class ScrollCase:
     mount_disc_box_height_mm: float = 7
     mount_disc_box_width_mm: float = 13.5
 
-    # Alignment ring spacing (up from bottom of lining interior)
-    alignment_ring_spacing_mm: float = (
-        98  # TODO(srparsons) this would be more helpful at I12 if it also accounts for the FOV
-    )
-    alignment_ring_width_mm: float = 1.5
-
     # Alignment nubs
     nub_size_mm: float = 3
     nub_depth_mm: float = 2
@@ -57,8 +51,6 @@ class ScrollCase:
     # Square caps
     square_height_mm: float = 10
     square_edge_fillet: float = 20
-    oring_width: float = 3
-    oring_depth: float = 2
     right_cap_buffer: float = 1
 
     # Text properties
@@ -108,25 +100,35 @@ class ScrollCase:
         return self.square_height_mm + self.lower_margin_mm + self.lining_thickness_mm
 
 
-def alignment_ring(case: ScrollCase):
-    """Generate an alignment ring.
+def cap(case: ScrollCase):
+    with BuildPart() as cap_part:
+        with BuildSketch():
+            r = Rectangle(2 * case.square_loft_radius, 2 * case.square_loft_radius)
+            fillet(r.vertices(), case.square_edge_fillet)
+        extrude(amount=case.square_height_mm)
 
-    Args:
-        radius: Minor radius
+    return cap_part
 
-    Returns:
-        Alignment ring
-    """
-    with BuildPart() as part:
-        Cylinder(
-            case.cylinder_inner_radius + case.wall_thickness_mm,
-            case.alignment_ring_width_mm,
-        )
-        Cylinder(
-            case.cylinder_inner_radius, case.alignment_ring_width_mm, mode=Mode.SUBTRACT
-        )
 
-    return part
+# def alignment_ring(case: ScrollCase):
+#     """Generate an alignment ring.
+
+#     Args:
+#         radius: Minor radius
+
+#     Returns:
+#         Alignment ring
+#     """
+#     with BuildPart() as part:
+#         Cylinder(
+#             case.cylinder_inner_radius + case.wall_thickness_mm,
+#             case.alignment_ring_width_mm,
+#         )
+#         Cylinder(
+#             case.cylinder_inner_radius, case.alignment_ring_width_mm, mode=Mode.SUBTRACT
+#         )
+
+#     return part
 
 
 def honeycomb_cylinder(
@@ -207,29 +209,13 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
             align=(Align.CENTER, Align.CENTER, Align.MIN),
         )
 
-        # Alignment rings
-        if case.alignment_ring_spacing_mm:
-            with Locations(
-                [
-                    (0.0, 0.0, x)
-                    for x in np.arange(
-                        case.lower_margin_mm + case.lining_thickness_mm,
-                        case.cylinder_height,
-                        case.alignment_ring_spacing_mm,
-                    )
-                ]  # type: ignore
-            ):
-                add(alignment_ring(case))
-
-        # Top Cap
-        with BuildSketch(Location((0, 0, case.cylinder_bottom + case.cylinder_height))):
-            r = Rectangle(2 * case.square_loft_radius, 2 * case.square_loft_radius)
-            fillet(r.vertices(), case.square_edge_fillet)
-
-        cap = extrude(amount=case.square_height_mm)
+        # Top and bottom caps
+        with Locations((0, 0, case.cylinder_height), (0, 0, -case.square_height_mm)):
+            add(cap(case))
 
         # Text
-        with BuildSketch(cap.faces().sort_by()[-1]):
+        topf = case_part.faces().sort_by(Axis.Z)[-1]
+        with BuildSketch(topf):
             with Locations((0, 40)):
                 Text(case.label_line_1, case.text_font_size)
             with Locations((0, 40 - case.square_loft_radius)):
@@ -242,13 +228,6 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                     case.text_font_size,
                 )
         extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
-
-        # Bottom Cap
-        with BuildSketch(Location((0, 0, case.cylinder_bottom))):
-            r = Rectangle(2 * case.square_loft_radius, 2 * case.square_loft_radius)
-            fillet(r.vertices(), case.square_edge_fillet)
-
-        extrude(amount=-case.square_height_mm)
 
         split(bisect_by=Plane.XZ, keep=Keep.BOTH)
 
