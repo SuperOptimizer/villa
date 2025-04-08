@@ -67,6 +67,10 @@ class ScrollCase:
         return self.scroll_radius_mm + self.lining_offset_mm + self.wall_thickness_mm
 
     @property
+    def lining_outer_diameter(self):
+        return 2 * self.lining_outer_radius
+
+    @property
     def cylinder_height(self):
         return (
             self.scroll_height_mm
@@ -77,24 +81,12 @@ class ScrollCase:
         )
 
     @property
-    def cylinder_inner_radius(self):
-        return self.lining_outer_radius + self.radial_margin_mm
-
-    @property
-    def cylinder_outer_radius(self):
-        return self.cylinder_inner_radius + self.wall_thickness_mm
-
-    @property
     def cylinder_bottom(self):
         return -self.lining_offset_mm - self.wall_thickness_mm - self.lower_margin_mm
 
     @property
     def square_loft_radius(self):
-        return max(self.mount_disc_diameter_mm / 2, self.cylinder_outer_radius)
-
-    @property
-    def cylinder_outer_diameter(self):
-        return 2 * self.cylinder_outer_radius
+        return max(self.mount_disc_diameter_mm / 2, self.lining_outer_radius)
 
     @property
     def lining_interior_height(self):
@@ -216,12 +208,6 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
     )
 
     with BuildPart(Location((0, 0, case.cylinder_bottom))) as case_part:
-        Cylinder(
-            case.cylinder_inner_radius,
-            case.cylinder_height,
-            align=(Align.CENTER, Align.CENTER, Align.MIN),
-        )
-
         # Top and bottom caps
         with Locations((0, 0, case.cylinder_height), (0, 0, -case.square_height_mm)):
             add(cap(case))
@@ -237,10 +223,35 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 Text(case.label_line_2, case.text_font_size)
             with Locations((0, 20 - case.square_loft_radius)):
                 Text(
-                    f"{case.cylinder_outer_diameter:.2f}D x {case.lining_interior_height:.2f}H",
+                    f"{case.lining_outer_diameter:.2f}D x {case.lining_interior_height:.2f}H",
                     case.text_font_size,
                 )
         extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
+
+        with BuildPart() as divider:
+            pts = [
+                (-case.lining_outer_radius, 0),
+                (-case.lining_outer_radius / 2, case.square_height_mm),
+                (0, 0),
+                (case.lining_outer_radius / 2, -case.square_height_mm),
+                (case.lining_outer_radius, 0),
+            ]
+            with BuildLine() as spline_ln:
+                # ln1 = Spline(pts)
+                ln1 = ThreePointArc(pts[0], pts[1], pts[2])
+                ln2 = ThreePointArc(pts[2], pts[3], pts[4])
+                tangent = ln1 % 1
+                orthogonal_plane = Plane(
+                    origin=(0, 0, case.cylinder_bottom),
+                    z_dir=tangent,
+                )
+            with BuildSketch(orthogonal_plane) as spline_sk:
+                Rectangle(
+                    case.wall_thickness_mm * 2,
+                    case.cylinder_height,
+                    align=(Align.CENTER, Align.MAX),
+                )
+            sweep()
 
         split(bisect_by=Plane.XZ, keep=Keep.BOTH)
 
@@ -282,14 +293,14 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
     # Alignment nubs
     with BuildPart(mode=Mode.PRIVATE) as nubs:
         with Locations((0, 0, case.cylinder_bottom - case.square_height_mm / 2)):
-            with Locations(((case.cylinder_inner_radius / 2), 0, 0)):
+            with Locations(((case.lining_outer_radius / 2), 0, 0)):
                 Box(
                     case.nub_size_mm,
                     case.nub_depth_mm,
                     case.nub_size_mm,
                     align=(Align.CENTER, Align.MIN, Align.CENTER),
                 )
-            with Locations((-(case.cylinder_inner_radius / 2), 0, 0)):
+            with Locations((-(case.lining_outer_radius / 2), 0, 0)):
                 Box(
                     case.nub_size_mm,
                     case.nub_depth_mm,
@@ -305,14 +316,14 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 case.cylinder_bottom + case.cylinder_height + case.square_height_mm / 2,
             )
         ):
-            with Locations(((case.cylinder_inner_radius / 2), 0, 0)):
+            with Locations(((case.lining_outer_radius / 2), 0, 0)):
                 Box(
                     case.nub_size_mm,
                     case.nub_depth_mm,
                     case.nub_size_mm,
                     align=(Align.CENTER, Align.MIN, Align.CENTER),
                 )
-            with Locations((-(case.cylinder_inner_radius / 2), 0, 0)):
+            with Locations((-(case.lining_outer_radius / 2), 0, 0)):
                 Box(
                     case.nub_size_mm,
                     case.nub_depth_mm,
@@ -324,14 +335,14 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
     # Alignment nub hollows
     with BuildPart() as hollows:
         with Locations((0, 0, case.cylinder_bottom - case.square_height_mm / 2)):
-            with Locations(((case.cylinder_inner_radius / 2), 0, 0)):
+            with Locations(((case.lining_outer_radius / 2), 0, 0)):
                 Box(
                     case.nub_size_mm + 2 * case.nub_margin_mm,
                     case.nub_depth_mm,
                     case.nub_size_mm + 2 * case.nub_margin_mm,
                     align=(Align.CENTER, Align.MIN, Align.CENTER),
                 )
-            with Locations((-(case.cylinder_inner_radius / 2), 0, 0)):
+            with Locations((-(case.lining_outer_radius / 2), 0, 0)):
                 Box(
                     case.nub_size_mm + 2 * case.nub_margin_mm,
                     case.nub_depth_mm,
@@ -347,14 +358,14 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 case.cylinder_bottom + case.cylinder_height + case.square_height_mm / 2,
             )
         ):
-            with Locations(((case.cylinder_inner_radius / 2), 0, 0)):
+            with Locations(((case.lining_outer_radius / 2), 0, 0)):
                 Box(
                     case.nub_size_mm + 2 * case.nub_margin_mm,
                     case.nub_depth_mm,
                     case.nub_size_mm + 2 * case.nub_margin_mm,
                     align=(Align.CENTER, Align.MIN, Align.CENTER),
                 )
-            with Locations((-(case.cylinder_inner_radius / 2), 0, 0)):
+            with Locations((-(case.lining_outer_radius / 2), 0, 0)):
                 Box(
                     case.nub_size_mm + 2 * case.nub_margin_mm,
                     case.nub_depth_mm,
