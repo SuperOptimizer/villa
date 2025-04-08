@@ -52,9 +52,12 @@ class ScrollCase:
     square_height_mm: float = 10
     square_edge_fillet: float = 20
     right_cap_buffer: float = 1
+    # Based on M4 bolts
     cap_bolt_hole_diameter_mm: float = 5
     cap_bolt_counter_bore_diameter_mm: float = 8
     cap_bolt_counter_bore_depth_mm: float = 2
+    cap_bolt_nut_diameter_mm: float = 9
+    cap_bolt_nut_depth_mm: float = 3.5
 
     # Text properties
     text_font_size: float = 8
@@ -101,6 +104,15 @@ class ScrollCase:
     @property
     def cylinder_top_to_lining_bottom(self):
         return self.square_height_mm + self.lower_margin_mm + self.lining_thickness_mm
+
+
+def hex_nut(diameter_mm: float, depth_mm: float):
+    with BuildPart() as hex_part:
+        with BuildSketch() as hex_sketch:
+            RegularPolygon(radius=diameter_mm / 2, side_count=6)
+        extrude(amount=depth_mm)
+
+    return hex_part
 
 
 def cap(case: ScrollCase):
@@ -169,28 +181,26 @@ def cap(case: ScrollCase):
                 rotation=(90, 0, 0),
                 align=(Align.CENTER, Align.CENTER, Align.MAX),
             )
+
+        # Hexagonal nut cutouts
+        with Locations(
+            (
+                -case.square_loft_radius - case.square_height_mm / 2,
+                -case.square_height_mm + case.cap_bolt_nut_depth_mm,
+                case.square_height_mm / 2,
+            ),
+            (
+                case.square_loft_radius + case.square_height_mm / 2,
+                -case.square_height_mm + case.cap_bolt_nut_depth_mm,
+                case.square_height_mm / 2,
+            ),
+        ):
+            hex = hex_nut(
+                case.cap_bolt_nut_diameter_mm, case.cap_bolt_nut_depth_mm + 10
+            )
+            add(hex, mode=Mode.SUBTRACT, rotation=(90, 0, 0))
+
     return cap_part
-
-
-# def alignment_ring(case: ScrollCase):
-#     """Generate an alignment ring.
-
-#     Args:
-#         radius: Minor radius
-
-#     Returns:
-#         Alignment ring
-#     """
-#     with BuildPart() as part:
-#         Cylinder(
-#             case.cylinder_inner_radius + case.wall_thickness_mm,
-#             case.alignment_ring_width_mm,
-#         )
-#         Cylinder(
-#             case.cylinder_inner_radius, case.alignment_ring_width_mm, mode=Mode.SUBTRACT
-#         )
-
-#     return part
 
 
 def honeycomb_cylinder(
