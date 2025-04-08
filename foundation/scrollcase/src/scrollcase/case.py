@@ -52,6 +52,9 @@ class ScrollCase:
     square_height_mm: float = 10
     square_edge_fillet: float = 20
     right_cap_buffer: float = 1
+    cap_bolt_hole_diameter_mm: float = 5
+    cap_bolt_counter_bore_diameter_mm: float = 8
+    cap_bolt_counter_bore_depth_mm: float = 2
 
     # Text properties
     text_font_size: float = 8
@@ -103,10 +106,69 @@ class ScrollCase:
 def cap(case: ScrollCase):
     with BuildPart() as cap_part:
         with BuildSketch():
+            # Main rectangle
             r = Rectangle(2 * case.square_loft_radius, 2 * case.square_loft_radius)
             fillet(r.vertices(), case.square_edge_fillet)
+
+            # Left bolt protrusion
+            with Locations((-case.square_loft_radius, 0)):
+                r2 = Rectangle(
+                    case.square_height_mm,
+                    case.square_height_mm * 2,
+                    align=(Align.MAX, Align.CENTER),
+                )
+                fillet(r2.vertices(), case.square_height_mm / 2)
+
+            # Right bolt protrusion
+            with Locations((case.square_loft_radius, 0)):
+                r3 = Rectangle(
+                    case.square_height_mm,
+                    case.square_height_mm * 2,
+                    align=(Align.MIN, Align.CENTER),
+                )
+                fillet(r3.vertices(), case.square_height_mm / 2)
         extrude(amount=case.square_height_mm)
 
+        # Bolt holes
+        with Locations(
+            (
+                -case.square_loft_radius - case.square_height_mm / 2,
+                0,
+                case.square_height_mm / 2,
+            ),
+            (
+                case.square_loft_radius + case.square_height_mm / 2,
+                0,
+                case.square_height_mm / 2,
+            ),
+        ):
+            Cylinder(
+                case.cap_bolt_hole_diameter_mm / 2,
+                4 * case.square_height_mm,
+                rotation=(90, 0, 0),
+                mode=Mode.SUBTRACT,
+            )
+
+        # Bolt head cutouts
+        with Locations(
+            (
+                -case.square_loft_radius - case.square_height_mm / 2,
+                case.square_height_mm - case.cap_bolt_counter_bore_depth_mm,
+                case.square_height_mm / 2,
+            ),
+            (
+                case.square_loft_radius + case.square_height_mm / 2,
+                case.square_height_mm - case.cap_bolt_counter_bore_depth_mm,
+                case.square_height_mm / 2,
+            ),
+        ):
+            Cylinder(
+                case.cap_bolt_counter_bore_diameter_mm / 2,
+                2 * case.square_height_mm,
+                mode=Mode.SUBTRACT,
+                rotation=(90, 0, 0),
+                align=(Align.CENTER, Align.CENTER, Align.MAX),
+            )
     return cap_part
 
 
