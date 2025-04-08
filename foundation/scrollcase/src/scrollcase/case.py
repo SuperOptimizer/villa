@@ -202,53 +202,6 @@ def cap(case: ScrollCase):
     return cap_part
 
 
-def honeycomb_cylinder(
-    r: float, h: float, t: float, nr: float = 6, gap: float = 2
-) -> Compound:
-    """Build a hollow cylinder with honeycomb cutouts.
-
-    Args:
-        r: Cylinder minor radius.
-        h: Cylinder height.
-        t: Cylinder thickness.
-        nr: Number of radial cutouts.
-        gap: Gap between cutouts.
-
-    Returns:
-        Honeycomb cylinder.
-    """
-    # NOTE(akoen): This is not quite right since this assumes that the plane is flat,
-    # which it is not.
-    width = (4 * np.pi * r) / (3 * nr) - 2 * gap / np.sqrt(3)
-    spacing = 3 / 2 * width + np.sqrt(3) * gap
-
-    height = width * np.cos(np.pi / 6)
-
-    nz = int(np.ceil(2 * h / (height + gap))) + 1
-
-    all_hexes = []
-    for iz in range(nz):
-        start_angle = 360 / (2 * nr) * (iz % 2)
-        hex = (
-            (Plane.YZ * RegularPolygon(width / 2, 6, major_radius=True))
-            .face()
-            .translate((0, 0, iz * (height / 2 + gap / 2)))
-        )
-        hex = extrude(hex, 3, both=True)
-        hexes = PolarLocations(r, int(nr), start_angle=start_angle) * hex
-        all_hexes.extend(hexes)
-
-    all_hexes = list(all_hexes)
-
-    cyl = Cylinder(r + t, h, align=(Align.CENTER, Align.CENTER, Align.MIN)) - Cylinder(
-        r, h, align=(Align.CENTER, Align.CENTER, Align.MIN)
-    )
-
-    honey_cyl = cyl - all_hexes
-
-    return honey_cyl
-
-
 def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
     """Build the scroll case.
 
@@ -262,20 +215,9 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
         f"Constructing case with scroll radius: {case.scroll_radius_mm}, height: {case.scroll_height_mm}"
     )
 
-    honeycomb = honeycomb_cylinder(
-        case.cylinder_inner_radius,
-        case.cylinder_height,
-        case.wall_thickness_mm,
-        gap=3.0,
-    )
-
     with BuildPart(Location((0, 0, case.cylinder_bottom))) as case_part:
-        add(honeycomb)
-
-        # Parting rect
-        Box(
-            case.cylinder_outer_diameter,
-            2 * case.wall_thickness_mm,
+        Cylinder(
+            case.cylinder_inner_radius,
             case.cylinder_height,
             align=(Align.CENTER, Align.CENTER, Align.MIN),
         )
