@@ -92,6 +92,19 @@ class ScrollCase:
         return self.square_height_mm + self.lower_margin_mm + self.wall_thickness_mm
 
 
+def divider_curve(case: ScrollCase):
+    pts = [
+        (-case.lining_outer_radius, 0),
+        (-case.lining_outer_radius / 2, case.square_height_mm),
+        (0, 0),
+        (case.lining_outer_radius / 2, -case.square_height_mm),
+        (case.lining_outer_radius, 0),
+    ]
+    ln1 = ThreePointArc(pts[0], pts[1], pts[2])
+    ln2 = ThreePointArc(pts[2], pts[3], pts[4])
+    return ln1 + ln2
+
+
 def hex_nut(diameter_mm: float, depth_mm: float):
     with BuildPart() as hex_part:
         with BuildSketch() as hex_sketch:
@@ -224,18 +237,9 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
         extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
 
         with BuildPart() as divider:
-            pts = [
-                (-case.lining_outer_radius, 0),
-                (-case.lining_outer_radius / 2, case.square_height_mm),
-                (0, 0),
-                (case.lining_outer_radius / 2, -case.square_height_mm),
-                (case.lining_outer_radius, 0),
-            ]
             with BuildLine() as spline_ln:
-                # ln1 = Spline(pts)
-                ln1 = ThreePointArc(pts[0], pts[1], pts[2])
-                ln2 = ThreePointArc(pts[2], pts[3], pts[4])
-                tangent = ln1 % 1
+                ln = divider_curve(case)
+                tangent = ln % 0.5
                 orthogonal_plane = Plane(
                     origin=(0, 0, case.cylinder_bottom),
                     z_dir=tangent,
