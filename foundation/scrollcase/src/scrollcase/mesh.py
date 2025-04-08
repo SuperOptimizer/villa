@@ -160,7 +160,7 @@ class ScrollMesh:
     voxel_size_diagonal_percent: float = 0.4
     simplify_max_error_diagonal_percent: float = 2
     lining_offset_mm: float = 2
-    lining_thickness_mm: float = 2
+    wall_thickness_mm: float = 2
     target_scale_diagonal_mm: Optional[float] = None
     rotation_callback: Optional[Callable[[mm.Mesh], mm.Mesh]] = partial(
         rotate_about_2nd_principal, rotation_rad=0
@@ -286,8 +286,8 @@ def build_lining(
 
     # Build mesh
     logger.info("Building lining")
-    cavity_mesh_pos_offset = mm.offsetMesh(cavity_mesh_pos, offset=mesh_params.lining_thickness_mm, params=params)  # type: ignore
-    cavity_mesh_neg_offset = mm.offsetMesh(cavity_mesh_neg, offset=mesh_params.lining_thickness_mm, params=params)  # type: ignore
+    cavity_mesh_pos_offset = mm.offsetMesh(cavity_mesh_pos, offset=mesh_params.wall_thickness_mm, params=params)  # type: ignore
+    cavity_mesh_neg_offset = mm.offsetMesh(cavity_mesh_neg, offset=mesh_params.wall_thickness_mm, params=params)  # type: ignore
     mm.trimWithPlane(cavity_mesh_pos_offset, cut_plane, outCutEdges=hole_edges_pos)
     mm.trimWithPlane(cavity_mesh_neg_offset, -cut_plane, outCutEdges=hole_edges_neg)
 

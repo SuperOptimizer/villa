@@ -23,7 +23,6 @@ class ScrollCase:
     # Gap/offset between scroll and lining wall interior
     lining_offset_mm: float = 2
     # Wall thicknesses
-    lining_thickness_mm: float = 2
     wall_thickness_mm: float = 2
 
     # Between lining exterior and top/bottom caps
@@ -65,14 +64,14 @@ class ScrollCase:
 
     @property
     def lining_outer_radius(self):
-        return self.scroll_radius_mm + self.lining_offset_mm + self.lining_thickness_mm
+        return self.scroll_radius_mm + self.lining_offset_mm + self.wall_thickness_mm
 
     @property
     def cylinder_height(self):
         return (
             self.scroll_height_mm
             + 2 * self.lining_offset_mm
-            + 2 * self.lining_thickness_mm
+            + 2 * self.wall_thickness_mm
             + self.lower_margin_mm
             + self.upper_margin_mm
         )
@@ -87,7 +86,7 @@ class ScrollCase:
 
     @property
     def cylinder_bottom(self):
-        return -self.lining_offset_mm - self.lining_thickness_mm - self.lower_margin_mm
+        return -self.lining_offset_mm - self.wall_thickness_mm - self.lower_margin_mm
 
     @property
     def square_loft_radius(self):
@@ -103,7 +102,7 @@ class ScrollCase:
 
     @property
     def cylinder_top_to_lining_bottom(self):
-        return self.square_height_mm + self.lower_margin_mm + self.lining_thickness_mm
+        return self.square_height_mm + self.lower_margin_mm + self.wall_thickness_mm
 
 
 def hex_nut(diameter_mm: float, depth_mm: float):
