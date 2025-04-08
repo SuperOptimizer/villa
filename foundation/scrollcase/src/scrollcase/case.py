@@ -243,60 +243,12 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 )
         extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
 
-        # Top O-ring
-        with BuildSketch(
-            Location(
-                (
-                    0,
-                    0,
-                    case.cylinder_bottom
-                    + case.cylinder_height
-                    + case.square_height_mm / 2,
-                )
-            )
-        ):
-            Rectangle(
-                2 * case.square_loft_radius,
-                2 * case.square_loft_radius,
-            )
-            with BuildSketch(mode=Mode.SUBTRACT):
-                r = Rectangle(
-                    2 * case.square_loft_radius - 2 * case.oring_depth,
-                    2 * case.square_loft_radius - 2 * case.oring_depth,
-                )
-                fillet(r.vertices(), case.square_edge_fillet)
-
-        extrude(amount=case.oring_width / 2, both=True, mode=Mode.SUBTRACT)
-
         # Bottom Cap
         with BuildSketch(Location((0, 0, case.cylinder_bottom))):
             r = Rectangle(2 * case.square_loft_radius, 2 * case.square_loft_radius)
             fillet(r.vertices(), case.square_edge_fillet)
 
         extrude(amount=-case.square_height_mm)
-
-        # Bottom O-ring
-        with BuildSketch(
-            Location(
-                (
-                    0,
-                    0,
-                    case.cylinder_bottom - case.square_height_mm / 2,
-                )
-            )
-        ):
-            Rectangle(
-                2 * case.square_loft_radius,
-                2 * case.square_loft_radius,
-            )
-            with BuildSketch(mode=Mode.SUBTRACT):
-                r = Rectangle(
-                    2 * case.square_loft_radius - 2 * case.oring_depth,
-                    2 * case.square_loft_radius - 2 * case.oring_depth,
-                )
-                fillet(r.vertices(), case.square_edge_fillet)
-
-        extrude(amount=-case.oring_width / 2, both=True, mode=Mode.SUBTRACT)
 
         split(bisect_by=Plane.XZ, keep=Keep.BOTH)
 
