@@ -214,8 +214,8 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
             add(cap(case))
 
         # Text
-        topf = case_part.faces().sort_by(Axis.Z)[-1]
-        with BuildSketch(topf):
+        top_face = case_part.faces().sort_by(Axis.Z)[-1]
+        with BuildSketch(top_face):
             with Locations((0, 40)):
                 Text(case.label_line_1, case.text_font_size)
             with Locations((0, 40 - case.square_loft_radius)):
