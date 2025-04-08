@@ -828,7 +828,7 @@ const team = {
   ],
   papyrology: [
     {
-      name: "Federica Nicolardi (Coordinator)",
+      name: "Federica Nicolardi (Lead Papyrologist)",
       title:
         "Assistant Professor of Papyrology, University of Naples Federico II",
       href: "https://www.docenti.unina.it/federica.nicolardi",
@@ -2170,7 +2170,7 @@ export function Landing() {
                   </div>
                   <div className="flex-1 flex-col lg:gap-0 gap-2 mt-8 min-w-[100%] md:min-w-[50%] pr-4 lg:pr-12">
                     <h3 className="text-3xl font-black tracking-tighter text=[--ifm-color-primary]">
-                      Papyrology: Reviewers
+                      Papyrology Team
                     </h3>
                     {team.papyrology.map((t, i) => (
                       <Link link={t} key={i} />
