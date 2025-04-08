@@ -42,11 +42,6 @@ class ScrollCase:
     mount_disc_box_height_mm: float = 7
     mount_disc_box_width_mm: float = 13.5
 
-    # Alignment nubs
-    nub_size_mm: float = 3
-    nub_depth_mm: float = 2
-    nub_margin_mm: float = 1
-
     # Square caps
     square_height_mm: float = 10
     square_edge_fillet: float = 20
@@ -290,90 +285,6 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 mode=Mode.SUBTRACT,
             )
 
-    # Alignment nubs
-    with BuildPart(mode=Mode.PRIVATE) as nubs:
-        with Locations((0, 0, case.cylinder_bottom - case.square_height_mm / 2)):
-            with Locations(((case.lining_outer_radius / 2), 0, 0)):
-                Box(
-                    case.nub_size_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm,
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
-                )
-            with Locations((-(case.lining_outer_radius / 2), 0, 0)):
-                Box(
-                    case.nub_size_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm,
-                    rotation=(0, 45, 0),
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
-                )
-
-        with Locations(
-            (
-                0,
-                0,
-                case.cylinder_bottom + case.cylinder_height + case.square_height_mm / 2,
-            )
-        ):
-            with Locations(((case.lining_outer_radius / 2), 0, 0)):
-                Box(
-                    case.nub_size_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm,
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
-                )
-            with Locations((-(case.lining_outer_radius / 2), 0, 0)):
-                Box(
-                    case.nub_size_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm,
-                    rotation=(0, 45, 0),
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
-                )
-
-    # Alignment nub hollows
-    with BuildPart() as hollows:
-        with Locations((0, 0, case.cylinder_bottom - case.square_height_mm / 2)):
-            with Locations(((case.lining_outer_radius / 2), 0, 0)):
-                Box(
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
-                )
-            with Locations((-(case.lining_outer_radius / 2), 0, 0)):
-                Box(
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    rotation=(0, 45, 0),
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
-                )
-
-        with Locations(
-            (
-                0,
-                0,
-                case.cylinder_bottom + case.cylinder_height + case.square_height_mm / 2,
-            )
-        ):
-            with Locations(((case.lining_outer_radius / 2), 0, 0)):
-                Box(
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
-                )
-            with Locations((-(case.lining_outer_radius / 2), 0, 0)):
-                Box(
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    rotation=(0, 45, 0),
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
-                )
-
     # Extra space at bottom of left case half
     with BuildPart() as left_bottom_margin:
         with Locations((0, 0, case.cylinder_bottom - case.square_height_mm)):
@@ -384,12 +295,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 align=(Align.CENTER, Align.MIN, Align.MAX),
             )
 
-    left = (
-        case_part.solids()[0]
-        + mount_disc.solids()[0]
-        + nubs.solids()
-        - left_bottom_margin.solids()
-    )
-    right = case_part.solids()[1] - hollows.solids()
+    left = case_part.solids()[0] + mount_disc.solids()[0] - left_bottom_margin.solids()
+    right = case_part.solids()[1]
 
     return left, right
