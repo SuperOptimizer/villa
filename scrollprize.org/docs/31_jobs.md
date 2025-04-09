@@ -54,7 +54,7 @@ In addition, we are hiring for the specific roles listed below.
 
 ## Synchrotron Tomography Reconstruction Expert
 
-The Vesuvius Challenge platform team builds the tools that make researchers and contestants more productive. This includes libraries, visualizations, annotation tools, and data organization & accessibility.
+We seek an expert in synchrotron tomography reconstruction to help us scan and process hundreds of Herculaneum scrolls. This role will be critical in developing and maintaining our acquisition protocol and reconstruction pipeline to handle the large volume of CT scan data we expect to process.
 
 #### Overview
 At the Vesuvius Challenge we aim to scan the full collection of Herculaneum papyri found - and yet to be found - thus far. This includes hundreds of scrolls, whose images need to be acquired at beamline synchrotron facilities and reconstructed via computer tomography.
