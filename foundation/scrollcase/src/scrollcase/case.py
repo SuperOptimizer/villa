@@ -107,9 +107,7 @@ def divider_curve(case: ScrollCase):
 
 def divider_solid(case: ScrollCase):
     with BuildPart() as divider:
-        with BuildSketch(
-            Location((0, 0, case.cylinder_bottom - case.square_height_mm))
-        ):
+        with BuildSketch():
             with BuildLine() as divider_ln:
                 ln1 = Line(
                     (-case.square_loft_radius * 2, 0),
@@ -286,10 +284,12 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 )
             sweep()
 
-        # split(bisect_by=Plane.XZ, keep=Keep.BOTH)
-        divider_solid_part = divider_solid(case)
-        left = case_part.part - divider_solid_part.part
-        right = case_part.part & divider_solid_part.part
+        divider_solid_part = divider_solid(case).part.move(
+            Location((0, 0, case.cylinder_bottom - case.square_height_mm))
+        )
+
+        left = case_part.part - divider_solid_part
+        right = case_part.part & divider_solid_part
 
     # Base
     with BuildPart(
@@ -327,14 +327,9 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
             )
 
         # Extra space at bottom of right case half
-        # TODO make this fit the curve shape
-        Box(
-            case.square_loft_radius * 2,
-            case.square_loft_radius * 2,
-            case.right_cap_buffer,
-            align=(Align.CENTER, Align.MIN, Align.MAX),
-            mode=Mode.SUBTRACT,
-        )
+        with Locations((0, 0, -case.right_cap_buffer)):
+            remove_part = divider_solid(case)
+            add(remove_part, mode=Mode.SUBTRACT)
 
     left = left.solid() + mount_disc.solid()
     right = right.solid()
