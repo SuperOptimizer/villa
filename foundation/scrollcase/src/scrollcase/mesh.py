@@ -13,6 +13,7 @@ import numpy as np
 import trimesh
 
 from . import alignment
+from . import divider_utils
 
 logger = logging.getLogger(__name__)
 

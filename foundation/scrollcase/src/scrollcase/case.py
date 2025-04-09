@@ -5,6 +5,8 @@ from typing import Optional
 import numpy as np
 from build123d import *
 
+from . import divider_utils
+
 logger = logging.getLogger(__name__)
 
 
@@ -90,51 +92,6 @@ class ScrollCase:
     @property
     def cylinder_top_to_lining_bottom(self):
         return self.square_height_mm + self.lower_margin_mm + self.wall_thickness_mm
-
-
-def divider_curve(case: ScrollCase):
-    pts = [
-        (-case.lining_outer_radius, 0),
-        (-case.lining_outer_radius / 2, case.square_height_mm),
-        (0, 0),
-        (case.lining_outer_radius / 2, -case.square_height_mm),
-        (case.lining_outer_radius, 0),
-    ]
-    ln1 = ThreePointArc(pts[0], pts[1], pts[2])
-    ln2 = ThreePointArc(pts[2], pts[3], pts[4])
-    return ln1 + ln2
-
-
-def divider_solid(case: ScrollCase):
-    with BuildPart() as divider:
-        with BuildSketch():
-            with BuildLine() as divider_ln:
-                ln1 = Line(
-                    (-case.square_loft_radius * 2, 0),
-                    (-case.lining_outer_radius, 0),
-                )
-                ln2 = divider_curve(case)
-                ln3 = Line(
-                    (case.lining_outer_radius, 0),
-                    (case.square_loft_radius * 2, 0),
-                )
-
-                ln4 = Line(
-                    (case.square_loft_radius * 2, 0),
-                    (case.square_loft_radius * 2, case.square_loft_radius * 2),
-                )
-                ln5 = Line(
-                    (case.square_loft_radius * 2, case.square_loft_radius * 2),
-                    (-case.square_loft_radius * 2, case.square_loft_radius * 2),
-                )
-                ln6 = Line(
-                    (-case.square_loft_radius * 2, case.square_loft_radius * 2),
-                    (-case.square_loft_radius * 2, 0),
-                )
-            make_face()
-        extrude(amount=case.cylinder_height + case.square_height_mm * 2)
-
-    return divider
 
 
 def hex_nut(diameter_mm: float, depth_mm: float):
@@ -270,7 +227,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
 
         with BuildPart() as divider_wall:
             with BuildLine() as spline_ln:
-                ln = divider_curve(case)
+                ln = divider_utils.divider_curve(case)
                 tangent = ln % 0.5
                 orthogonal_plane = Plane(
                     origin=(0, 0, case.cylinder_bottom),
@@ -297,7 +254,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                     Circle(case.wall_thickness_mm)
             extrude(amount=case.cylinder_height)
 
-        divider_solid_part = divider_solid(case).part.move(
+        divider_solid_part = divider_utils.divider_solid(case).part.move(
             Location((0, 0, case.cylinder_bottom - case.square_height_mm))
         )
 
@@ -341,7 +298,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
 
         # Extra space at bottom of right case half
         with Locations((0, 0, -case.right_cap_buffer)):
-            remove_part = divider_solid(case)
+            remove_part = divider_utils.divider_solid(case)
             add(remove_part, mode=Mode.SUBTRACT)
 
     left = left.solid() + mount_disc.solid()
