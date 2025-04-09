@@ -262,15 +262,36 @@ def build_lining(
 
     logger.debug(f"Offset mesh: {count_vertices(offset_mesh)} vertices")
 
-    # Split along YZ plane
+    # Split in two
     logger.info("Splitting mesh")
-    cut_plane = mm.Plane3f(mm.Vector3f(0, 1, 0), 0)
     hole_edges_pos = mm.UndirectedEdgeBitSet()
     hole_edges_neg = mm.UndirectedEdgeBitSet()
+
+    # Get divider piece
+    divider_piece = (
+        divider_utils.divider_solid(
+            radius + mesh_params.lining_offset_mm + mesh_params.wall_thickness_mm,
+            10,
+            112.5 / 2,
+        )
+        .part.move(bd.Location((0, 0, -100)))
+        .solid()
+    )
+    divider_piece_mesh = brep_to_mesh(divider_piece)
+
+    # Create positive mesh
     split_mesh_pos = _copy_meshlib(offset_mesh)
-    mm.trimWithPlane(split_mesh_pos, cut_plane, outCutEdges=hole_edges_pos)
+    # mm.trimWithPlane(split_mesh_pos, cut_plane, outCutEdges=hole_edges_pos)
+    split_mesh_pos = mm.boolean(
+        split_mesh_pos, divider_piece_mesh, mm.BooleanOperation.Intersection
+    ).mesh
+
+    # Create negative mesh
     split_mesh_neg = _copy_meshlib(offset_mesh)
-    mm.trimWithPlane(split_mesh_neg, -cut_plane, outCutEdges=hole_edges_neg)
+    # mm.trimWithPlane(split_mesh_neg, -cut_plane, outCutEdges=hole_edges_neg)
+    split_mesh_neg = mm.boolean(
+        split_mesh_neg, divider_piece_mesh, mm.BooleanOperation.DifferenceAB
+    ).mesh
 
     logger.debug(f"Split mesh pos: {count_vertices(split_mesh_pos)} vertices")
 
@@ -289,8 +310,15 @@ def build_lining(
     logger.info("Building lining")
     cavity_mesh_pos_offset = mm.offsetMesh(cavity_mesh_pos, offset=mesh_params.wall_thickness_mm, params=params)  # type: ignore
     cavity_mesh_neg_offset = mm.offsetMesh(cavity_mesh_neg, offset=mesh_params.wall_thickness_mm, params=params)  # type: ignore
-    mm.trimWithPlane(cavity_mesh_pos_offset, cut_plane, outCutEdges=hole_edges_pos)
-    mm.trimWithPlane(cavity_mesh_neg_offset, -cut_plane, outCutEdges=hole_edges_neg)
+
+    # mm.trimWithPlane(cavity_mesh_pos_offset, cut_plane, outCutEdges=hole_edges_pos)
+    # mm.trimWithPlane(cavity_mesh_neg_offset, -cut_plane, outCutEdges=hole_edges_neg)
+    cavity_mesh_pos_offset = mm.boolean(
+        cavity_mesh_pos_offset, divider_piece_mesh, mm.BooleanOperation.Intersection
+    ).mesh
+    cavity_mesh_neg_offset = mm.boolean(
+        cavity_mesh_neg_offset, divider_piece_mesh, mm.BooleanOperation.DifferenceAB
+    ).mesh
 
     fill_hole_params = mm.FillHoleParams()
     edges_pos = mm.std_vector_Id_EdgeTag(hole_edges_pos)
