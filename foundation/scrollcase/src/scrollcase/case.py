@@ -105,6 +105,40 @@ def divider_curve(case: ScrollCase):
     return ln1 + ln2
 
 
+def divider_solid(case: ScrollCase):
+    with BuildPart() as divider:
+        with BuildSketch(
+            Location((0, 0, case.cylinder_bottom - case.square_height_mm))
+        ):
+            with BuildLine() as divider_ln:
+                ln1 = Line(
+                    (-case.square_loft_radius * 2, 0),
+                    (-case.lining_outer_radius, 0),
+                )
+                ln2 = divider_curve(case)
+                ln3 = Line(
+                    (case.lining_outer_radius, 0),
+                    (case.square_loft_radius * 2, 0),
+                )
+
+                ln4 = Line(
+                    (case.square_loft_radius * 2, 0),
+                    (case.square_loft_radius * 2, case.square_loft_radius * 2),
+                )
+                ln5 = Line(
+                    (case.square_loft_radius * 2, case.square_loft_radius * 2),
+                    (-case.square_loft_radius * 2, case.square_loft_radius * 2),
+                )
+                ln6 = Line(
+                    (-case.square_loft_radius * 2, case.square_loft_radius * 2),
+                    (-case.square_loft_radius * 2, 0),
+                )
+            make_face()
+        extrude(amount=case.cylinder_height + case.square_height_mm * 2)
+
+    return divider
+
+
 def hex_nut(diameter_mm: float, depth_mm: float):
     with BuildPart() as hex_part:
         with BuildSketch() as hex_sketch:
@@ -236,7 +270,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 )
         extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
 
-        with BuildPart() as divider:
+        with BuildPart() as divider_wall:
             with BuildLine() as spline_ln:
                 ln = divider_curve(case)
                 tangent = ln % 0.5
@@ -252,7 +286,10 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 )
             sweep()
 
-        split(bisect_by=Plane.XZ, keep=Keep.BOTH)
+        # split(bisect_by=Plane.XZ, keep=Keep.BOTH)
+        divider_solid_part = divider_solid(case)
+        left = case_part.part - divider_solid_part.part
+        right = case_part.part & divider_solid_part.part
 
     # Base
     with BuildPart(
@@ -290,6 +327,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
             )
 
         # Extra space at bottom of right case half
+        # TODO make this fit the curve shape
         Box(
             case.square_loft_radius * 2,
             case.square_loft_radius * 2,
@@ -298,7 +336,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
             mode=Mode.SUBTRACT,
         )
 
-    left = case_part.solids()[0] + mount_disc.solids()[0]
-    right = case_part.solids()[1]
+    left = left.solid() + mount_disc.solid()
+    right = right.solid()
 
     return left, right
