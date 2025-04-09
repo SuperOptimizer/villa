@@ -284,6 +284,19 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 )
             sweep()
 
+            with BuildSketch(
+                Plane(
+                    origin=(0, 0, case.cylinder_bottom),
+                    z_dir=(0, 0, 1),
+                )
+            ):
+                with Locations(
+                    (-case.lining_outer_radius, 0),
+                    (case.lining_outer_radius, 0),
+                ):
+                    Circle(case.wall_thickness_mm)
+            extrude(amount=case.cylinder_height)
+
         divider_solid_part = divider_solid(case).part.move(
             Location((0, 0, case.cylinder_bottom - case.square_height_mm))
         )
