@@ -33,7 +33,7 @@ class ScrollCase:
 
     # Square caps
     square_height_mm: float = 10
-    square_edge_fillet: float = 20
+    square_edge_fillet: float = 6.25
     right_cap_buffer: float = 1
     # Based on M4 bolts
     cap_bolt_hole_diameter_mm: float = 5
@@ -45,8 +45,6 @@ class ScrollCase:
     # Mounting disc
     mount_disc_diameter_mm: float = 112.5
     mount_disc_height_mm: float = 10
-    mount_disc_hole_depth_mm: float = 5.75
-    mount_disc_hole_diameter_mm: float = 6.8
     kinematic_mount_num_slots: int = 3
     kinematic_mount_slot_pos_radius_mm: float = (mount_disc_diameter_mm / 2) * (2 / 3)
     kinematic_mount_slot_width_mm: float = 2
@@ -55,6 +53,12 @@ class ScrollCase:
     # Text properties
     text_font_size: float = 8
     text_depth_mm: float = 0.5
+
+    # Base bolt holes (based on M6)
+    base_bolt_hole_diameter_mm: float = 6.8
+    base_bolt_hole_counter_bore_diameter_mm: float = 10.5
+    base_bolt_hole_counter_bore_depth_mm: float = 5
+    base_bolt_hole_spacing_from_center_mm: float = 50
 
     @property
     def lining_outer_radius(self):
@@ -222,6 +226,38 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 )
         extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
 
+        # Bolt holes
+        with Locations(
+            (
+                -case.base_bolt_hole_spacing_from_center_mm,
+                -case.base_bolt_hole_spacing_from_center_mm,
+            ),
+            (
+                case.base_bolt_hole_spacing_from_center_mm,
+                -case.base_bolt_hole_spacing_from_center_mm,
+            ),
+            (
+                -case.base_bolt_hole_spacing_from_center_mm,
+                case.base_bolt_hole_spacing_from_center_mm,
+            ),
+            (
+                case.base_bolt_hole_spacing_from_center_mm,
+                case.base_bolt_hole_spacing_from_center_mm,
+            ),
+        ):
+            Cylinder(
+                case.base_bolt_hole_diameter_mm / 2,
+                case.square_height_mm,
+                mode=Mode.SUBTRACT,
+                align=(Align.CENTER, Align.CENTER, Align.MAX),
+            )
+            Cylinder(
+                case.base_bolt_hole_counter_bore_diameter_mm / 2,
+                case.base_bolt_hole_counter_bore_depth_mm,
+                mode=Mode.SUBTRACT,
+                align=(Align.CENTER, Align.CENTER, Align.MAX),
+            )
+
         with BuildPart() as divider_wall:
             with BuildLine() as spline_ln:
                 ln = divider_utils.divider_curve(
@@ -278,7 +314,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
             with PolarLocations(
                 case.kinematic_mount_slot_pos_radius_mm,
                 case.kinematic_mount_num_slots,
-                start_angle=270,
+                start_angle=90,
             ):
                 Box(
                     case.kinematic_mount_slot_length_mm,
@@ -287,26 +323,6 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                     rotation=(45, 0, 0),
                     mode=Mode.SUBTRACT,
                 )
-
-        # Bolt holes
-        with Locations(
-            (0, case.mount_disc_diameter_mm / 2, -case.mount_disc_height_mm / 2)
-        ):
-            Cylinder(
-                case.mount_disc_hole_diameter_mm / 2,
-                2 * case.mount_disc_hole_depth_mm,
-                rotation=(90, 0, 0),
-                mode=Mode.SUBTRACT,
-            )
-        with Locations(
-            (0, -case.mount_disc_diameter_mm / 2, -case.mount_disc_height_mm / 2)
-        ):
-            Cylinder(
-                case.mount_disc_hole_diameter_mm / 2,
-                2 * case.mount_disc_hole_depth_mm,
-                rotation=(-90, 0, 0),
-                mode=Mode.SUBTRACT,
-            )
 
         # Extra space at bottom of right case half
         with Locations((0, 0, -case.right_cap_buffer)):
