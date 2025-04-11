@@ -31,14 +31,6 @@ class ScrollCase:
     upper_margin_mm: float = 3
     lower_margin_mm: float = 3
 
-    # Mounting disc dimensions
-    mount_disc_diameter_mm: float = 112.5
-    mount_disc_height_mm: float = 10
-    mount_disc_hole_depth_mm: float = 5.75
-    mount_disc_hole_diameter_mm: float = 6.8
-    mount_disc_box_height_mm: float = 7
-    mount_disc_box_width_mm: float = 13.5
-
     # Square caps
     square_height_mm: float = 10
     square_edge_fillet: float = 20
@@ -49,6 +41,16 @@ class ScrollCase:
     cap_bolt_counter_bore_depth_mm: float = 2
     cap_bolt_nut_diameter_mm: float = 9
     cap_bolt_nut_depth_mm: float = 3.5
+
+    # Mounting disc
+    mount_disc_diameter_mm: float = 112.5
+    mount_disc_height_mm: float = 10
+    mount_disc_hole_depth_mm: float = 5.75
+    mount_disc_hole_diameter_mm: float = 6.8
+    kinematic_mount_num_slots: int = 3
+    kinematic_mount_slot_pos_radius_mm: float = (mount_disc_diameter_mm / 2) * (2 / 3)
+    kinematic_mount_slot_width_mm: float = 2
+    kinematic_mount_slot_length_mm: float = 10
 
     # Text properties
     text_font_size: float = 8
@@ -271,10 +273,20 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
             align=(Align.CENTER, Align.CENTER, Align.MAX),
         )
 
-        # Alignment Cube
-        with BuildSketch(cyl.faces().sort_by()[0]):
-            Rectangle(case.mount_disc_box_width_mm, case.mount_disc_box_width_mm)
-        extrude(amount=-case.mount_disc_box_height_mm, mode=Mode.SUBTRACT)
+        # Kinematic mount slots
+        with Locations((0, 0, -case.mount_disc_height_mm)):
+            with PolarLocations(
+                case.kinematic_mount_slot_pos_radius_mm,
+                case.kinematic_mount_num_slots,
+                start_angle=270,
+            ):
+                Box(
+                    case.kinematic_mount_slot_length_mm,
+                    case.kinematic_mount_slot_width_mm,
+                    case.kinematic_mount_slot_width_mm,
+                    rotation=(45, 0, 0),
+                    mode=Mode.SUBTRACT,
+                )
 
         # Bolt holes
         with Locations(
