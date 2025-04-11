@@ -5,6 +5,8 @@ from typing import Optional
 import numpy as np
 from build123d import *
 
+from . import divider_utils
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,81 +25,66 @@ class ScrollCase:
     # Gap/offset between scroll and lining wall interior
     lining_offset_mm: float = 2
     # Wall thicknesses
-    lining_thickness_mm: float = 2
     wall_thickness_mm: float = 2
 
     # Between lining exterior and top/bottom caps
     upper_margin_mm: float = 3
     lower_margin_mm: float = 3
 
-    # Between lining exterior and cylinder wall interior
-    # Just enough space to not touch/create trap points for glass beads
-    # Otherwise want to minimize exterior diameter
-    radial_margin_mm: float = 0.5
-
-    # Mounting disc dimensions
-    mount_disc_diameter_mm: float = 112.5
-    mount_disc_height_mm: float = 10
-    mount_disc_hole_depth_mm: float = 5.75
-    mount_disc_hole_diameter_mm: float = 6.8
-    mount_disc_box_height_mm: float = 7
-    mount_disc_box_width_mm: float = 13.5
-
-    # Alignment ring spacing (up from bottom of lining interior)
-    alignment_ring_spacing_mm: float = (
-        98  # TODO(srparsons) this would be more helpful at I12 if it also accounts for the FOV
-    )
-    alignment_ring_width_mm: float = 1.5
-
-    # Alignment nubs
-    nub_size_mm: float = 3
-    nub_depth_mm: float = 2
-    nub_margin_mm: float = 1
-
     # Square caps
     square_height_mm: float = 10
-    square_edge_fillet: float = 20
-    oring_width: float = 3
-    oring_depth: float = 2
-    right_cap_buffer: float = 1
+    square_edge_fillet: float = 6.25
+    right_cap_buffer: float = 0.5
+    # Based on M4 bolts
+    cap_bolt_hole_diameter_mm: float = 5
+    cap_bolt_counter_bore_diameter_mm: float = 8
+    cap_bolt_counter_bore_depth_mm: float = 2
+    cap_bolt_nut_diameter_mm: float = 9
+    cap_bolt_nut_depth_mm: float = 3.5
+
+    # Mounting disc
+    mount_disc_diameter_mm: float = 112.5
+    mount_disc_height_mm: float = 10
+    kinematic_mount_num_slots: int = 3
+    kinematic_mount_slot_pos_radius_mm: float = (mount_disc_diameter_mm / 2) * (2 / 3)
+    kinematic_mount_slot_width_mm: float = 2
+    kinematic_mount_slot_length_mm: float = 10
 
     # Text properties
     text_font_size: float = 8
     text_depth_mm: float = 0.5
 
+    # Base bolt holes (based on M6)
+    base_bolt_hole_diameter_mm: float = 6.8
+    base_bolt_hole_counter_bore_diameter_mm: float = 10.5
+    base_bolt_hole_counter_bore_depth_mm: float = 5
+    base_bolt_hole_spacing_from_center_mm: float = 50
+
     @property
     def lining_outer_radius(self):
-        return self.scroll_radius_mm + self.lining_offset_mm + self.lining_thickness_mm
+        return self.scroll_radius_mm + self.lining_offset_mm + self.wall_thickness_mm
+
+    @property
+    def lining_outer_diameter(self):
+        return 2 * self.lining_outer_radius
 
     @property
     def cylinder_height(self):
         return (
             self.scroll_height_mm
             + 2 * self.lining_offset_mm
-            + 2 * self.lining_thickness_mm
+            + 2 * self.wall_thickness_mm
             + self.lower_margin_mm
             + self.upper_margin_mm
         )
 
     @property
-    def cylinder_inner_radius(self):
-        return self.lining_outer_radius + self.radial_margin_mm
-
-    @property
-    def cylinder_outer_radius(self):
-        return self.cylinder_inner_radius + self.wall_thickness_mm
-
-    @property
     def cylinder_bottom(self):
-        return -self.lining_offset_mm - self.lining_thickness_mm - self.lower_margin_mm
+        return -self.lining_offset_mm - self.wall_thickness_mm - self.lower_margin_mm
 
     @property
     def square_loft_radius(self):
-        return max(self.mount_disc_diameter_mm / 2, self.cylinder_outer_radius)
-
-    @property
-    def cylinder_outer_diameter(self):
-        return 2 * self.cylinder_outer_radius
+        return max(self.mount_disc_diameter_mm / 2, self.lining_outer_radius)
 
     @property
     def lining_interior_height(self):
@@ -105,75 +92,104 @@ class ScrollCase:
 
     @property
     def cylinder_top_to_lining_bottom(self):
-        return self.square_height_mm + self.lower_margin_mm + self.lining_thickness_mm
+        return self.square_height_mm + self.lower_margin_mm + self.wall_thickness_mm
 
 
-def alignment_ring(case: ScrollCase):
-    """Generate an alignment ring.
+def hex_nut(diameter_mm: float, depth_mm: float):
+    with BuildPart() as hex_part:
+        with BuildSketch() as hex_sketch:
+            RegularPolygon(radius=diameter_mm / 2, side_count=6)
+        extrude(amount=depth_mm)
 
-    Args:
-        radius: Minor radius
-
-    Returns:
-        Alignment ring
-    """
-    with BuildPart() as part:
-        Cylinder(
-            case.cylinder_inner_radius + case.wall_thickness_mm,
-            case.alignment_ring_width_mm,
-        )
-        Cylinder(
-            case.cylinder_inner_radius, case.alignment_ring_width_mm, mode=Mode.SUBTRACT
-        )
-
-    return part
+    return hex_part
 
 
-def honeycomb_cylinder(
-    r: float, h: float, t: float, nr: float = 6, gap: float = 2
-) -> Compound:
-    """Build a hollow cylinder with honeycomb cutouts.
+def cap(case: ScrollCase):
+    with BuildPart() as cap_part:
+        with BuildSketch():
+            # Main rectangle
+            r = Rectangle(2 * case.square_loft_radius, 2 * case.square_loft_radius)
+            fillet(r.vertices(), case.square_edge_fillet)
 
-    Args:
-        r: Cylinder minor radius.
-        h: Cylinder height.
-        t: Cylinder thickness.
-        nr: Number of radial cutouts.
-        gap: Gap between cutouts.
+            # Left bolt protrusion
+            with Locations((-case.square_loft_radius, 0)):
+                r2 = Rectangle(
+                    case.square_height_mm,
+                    case.square_height_mm * 2,
+                    align=(Align.MAX, Align.CENTER),
+                )
+                fillet(r2.vertices(), case.square_height_mm / 2)
 
-    Returns:
-        Honeycomb cylinder.
-    """
-    # NOTE(akoen): This is not quite right since this assumes that the plane is flat,
-    # which it is not.
-    width = (4 * np.pi * r) / (3 * nr) - 2 * gap / np.sqrt(3)
-    spacing = 3 / 2 * width + np.sqrt(3) * gap
+            # Right bolt protrusion
+            with Locations((case.square_loft_radius, 0)):
+                r3 = Rectangle(
+                    case.square_height_mm,
+                    case.square_height_mm * 2,
+                    align=(Align.MIN, Align.CENTER),
+                )
+                fillet(r3.vertices(), case.square_height_mm / 2)
+        extrude(amount=case.square_height_mm)
 
-    height = width * np.cos(np.pi / 6)
+        # Bolt holes
+        with Locations(
+            (
+                -case.square_loft_radius - case.square_height_mm / 2,
+                0,
+                case.square_height_mm / 2,
+            ),
+            (
+                case.square_loft_radius + case.square_height_mm / 2,
+                0,
+                case.square_height_mm / 2,
+            ),
+        ):
+            Cylinder(
+                case.cap_bolt_hole_diameter_mm / 2,
+                4 * case.square_height_mm,
+                rotation=(90, 0, 0),
+                mode=Mode.SUBTRACT,
+            )
 
-    nz = int(np.ceil(2 * h / (height + gap))) + 1
+        # Bolt head cutouts
+        with Locations(
+            (
+                -case.square_loft_radius - case.square_height_mm / 2,
+                case.square_height_mm - case.cap_bolt_counter_bore_depth_mm,
+                case.square_height_mm / 2,
+            ),
+            (
+                case.square_loft_radius + case.square_height_mm / 2,
+                case.square_height_mm - case.cap_bolt_counter_bore_depth_mm,
+                case.square_height_mm / 2,
+            ),
+        ):
+            Cylinder(
+                case.cap_bolt_counter_bore_diameter_mm / 2,
+                2 * case.square_height_mm,
+                mode=Mode.SUBTRACT,
+                rotation=(90, 0, 0),
+                align=(Align.CENTER, Align.CENTER, Align.MAX),
+            )
 
-    all_hexes = []
-    for iz in range(nz):
-        start_angle = 360 / (2 * nr) * (iz % 2)
-        hex = (
-            (Plane.YZ * RegularPolygon(width / 2, 6, major_radius=True))
-            .face()
-            .translate((0, 0, iz * (height / 2 + gap / 2)))
-        )
-        hex = extrude(hex, 3, both=True)
-        hexes = PolarLocations(r, int(nr), start_angle=start_angle) * hex
-        all_hexes.extend(hexes)
+        # Hexagonal nut cutouts
+        with Locations(
+            (
+                -case.square_loft_radius - case.square_height_mm / 2,
+                -case.square_height_mm + case.cap_bolt_nut_depth_mm,
+                case.square_height_mm / 2,
+            ),
+            (
+                case.square_loft_radius + case.square_height_mm / 2,
+                -case.square_height_mm + case.cap_bolt_nut_depth_mm,
+                case.square_height_mm / 2,
+            ),
+        ):
+            hex = hex_nut(
+                case.cap_bolt_nut_diameter_mm, case.cap_bolt_nut_depth_mm + 10
+            )
+            add(hex, mode=Mode.SUBTRACT, rotation=(90, 0, 0))
 
-    all_hexes = list(all_hexes)
-
-    cyl = Cylinder(r + t, h, align=(Align.CENTER, Align.CENTER, Align.MIN)) - Cylinder(
-        r, h, align=(Align.CENTER, Align.CENTER, Align.MIN)
-    )
-
-    honey_cyl = cyl - all_hexes
-
-    return honey_cyl
+    return cap_part
 
 
 def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
@@ -189,47 +205,14 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
         f"Constructing case with scroll radius: {case.scroll_radius_mm}, height: {case.scroll_height_mm}"
     )
 
-    honeycomb = honeycomb_cylinder(
-        case.cylinder_inner_radius,
-        case.cylinder_height,
-        case.wall_thickness_mm,
-        gap=3.0,
-    )
-
     with BuildPart(Location((0, 0, case.cylinder_bottom))) as case_part:
-        add(honeycomb)
-
-        # Parting rect
-        Box(
-            case.cylinder_outer_diameter,
-            2 * case.wall_thickness_mm,
-            case.cylinder_height,
-            align=(Align.CENTER, Align.CENTER, Align.MIN),
-        )
-
-        # Alignment rings
-        if case.alignment_ring_spacing_mm:
-            with Locations(
-                [
-                    (0.0, 0.0, x)
-                    for x in np.arange(
-                        case.lower_margin_mm + case.lining_thickness_mm,
-                        case.cylinder_height,
-                        case.alignment_ring_spacing_mm,
-                    )
-                ]  # type: ignore
-            ):
-                add(alignment_ring(case))
-
-        # Top Cap
-        with BuildSketch(Location((0, 0, case.cylinder_bottom + case.cylinder_height))):
-            r = Rectangle(2 * case.square_loft_radius, 2 * case.square_loft_radius)
-            fillet(r.vertices(), case.square_edge_fillet)
-
-        cap = extrude(amount=case.square_height_mm)
+        # Top and bottom caps
+        with Locations((0, 0, case.cylinder_height), (0, 0, -case.square_height_mm)):
+            add(cap(case))
 
         # Text
-        with BuildSketch(cap.faces().sort_by()[-1]):
+        top_face = case_part.faces().sort_by(Axis.Z)[-1]
+        with BuildSketch(top_face):
             with Locations((0, 40)):
                 Text(case.label_line_1, case.text_font_size)
             with Locations((0, 40 - case.square_loft_radius)):
@@ -238,67 +221,95 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 Text(case.label_line_2, case.text_font_size)
             with Locations((0, 20 - case.square_loft_radius)):
                 Text(
-                    f"{case.cylinder_outer_diameter:.2f}D x {case.lining_interior_height:.2f}H",
+                    f"{case.lining_outer_diameter:.2f}D x {case.lining_interior_height:.2f}H",
                     case.text_font_size,
                 )
         extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
 
-        # Top O-ring
-        with BuildSketch(
-            Location(
-                (
-                    0,
-                    0,
-                    case.cylinder_bottom
-                    + case.cylinder_height
-                    + case.square_height_mm / 2,
-                )
-            )
+        # Bolt holes
+        with Locations(
+            (
+                -case.base_bolt_hole_spacing_from_center_mm,
+                -case.base_bolt_hole_spacing_from_center_mm,
+            ),
+            (
+                case.base_bolt_hole_spacing_from_center_mm,
+                -case.base_bolt_hole_spacing_from_center_mm,
+            ),
+            (
+                -case.base_bolt_hole_spacing_from_center_mm,
+                case.base_bolt_hole_spacing_from_center_mm,
+            ),
+            (
+                case.base_bolt_hole_spacing_from_center_mm,
+                case.base_bolt_hole_spacing_from_center_mm,
+            ),
         ):
-            Rectangle(
-                2 * case.square_loft_radius,
-                2 * case.square_loft_radius,
+            Cylinder(
+                case.base_bolt_hole_diameter_mm / 2,
+                case.square_height_mm,
+                mode=Mode.SUBTRACT,
+                align=(Align.CENTER, Align.CENTER, Align.MAX),
             )
-            with BuildSketch(mode=Mode.SUBTRACT):
-                r = Rectangle(
-                    2 * case.square_loft_radius - 2 * case.oring_depth,
-                    2 * case.square_loft_radius - 2 * case.oring_depth,
-                )
-                fillet(r.vertices(), case.square_edge_fillet)
+            Cylinder(
+                case.base_bolt_hole_counter_bore_diameter_mm / 2,
+                case.base_bolt_hole_counter_bore_depth_mm,
+                mode=Mode.SUBTRACT,
+                align=(Align.CENTER, Align.CENTER, Align.MAX),
+            )
 
-        extrude(amount=case.oring_width / 2, both=True, mode=Mode.SUBTRACT)
-
-        # Bottom Cap
+        # Alignment arrow
         with BuildSketch(Location((0, 0, case.cylinder_bottom))):
-            r = Rectangle(2 * case.square_loft_radius, 2 * case.square_loft_radius)
-            fillet(r.vertices(), case.square_edge_fillet)
-
-        extrude(amount=-case.square_height_mm)
-
-        # Bottom O-ring
-        with BuildSketch(
-            Location(
-                (
-                    0,
-                    0,
-                    case.cylinder_bottom - case.square_height_mm / 2,
-                )
+            Arrow(
+                case.square_height_mm / 2,
+                Line(
+                    (0, case.square_loft_radius),
+                    (0, case.square_loft_radius - case.square_height_mm),
+                ),
+                case.square_height_mm / 8,
             )
-        ):
-            Rectangle(
-                2 * case.square_loft_radius,
-                2 * case.square_loft_radius,
-            )
-            with BuildSketch(mode=Mode.SUBTRACT):
-                r = Rectangle(
-                    2 * case.square_loft_radius - 2 * case.oring_depth,
-                    2 * case.square_loft_radius - 2 * case.oring_depth,
+        extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
+
+        with BuildPart() as divider_wall:
+            with BuildLine() as spline_ln:
+                ln = divider_utils.divider_curve(
+                    case.lining_outer_radius,
+                    case.wall_thickness_mm,
                 )
-                fillet(r.vertices(), case.square_edge_fillet)
+                tangent = ln % 0.5
+                orthogonal_plane = Plane(
+                    origin=(0, 0, case.cylinder_bottom),
+                    z_dir=tangent,
+                )
+            with BuildSketch(orthogonal_plane) as spline_sk:
+                Rectangle(
+                    case.wall_thickness_mm * 2,
+                    case.cylinder_height,
+                    align=(Align.CENTER, Align.MAX),
+                )
+            sweep()
 
-        extrude(amount=-case.oring_width / 2, both=True, mode=Mode.SUBTRACT)
+            with BuildSketch(
+                Plane(
+                    origin=(0, 0, case.cylinder_bottom),
+                    z_dir=(0, 0, 1),
+                )
+            ):
+                with Locations(
+                    (-case.lining_outer_radius + case.wall_thickness_mm, 0),
+                    (case.lining_outer_radius - case.wall_thickness_mm, 0),
+                ):
+                    Circle(case.wall_thickness_mm)
+            extrude(amount=case.cylinder_height)
 
-        split(bisect_by=Plane.XZ, keep=Keep.BOTH)
+        divider_solid_part = divider_utils.divider_solid(
+            case.lining_outer_radius,
+            case.square_loft_radius,
+            case.wall_thickness_mm,
+        ).part.move(Location((0, 0, case.cylinder_bottom - case.square_height_mm)))
+
+        left = case_part.part - divider_solid_part
+        right = case_part.part & divider_solid_part
 
     # Base
     with BuildPart(
@@ -310,126 +321,31 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
             align=(Align.CENTER, Align.CENTER, Align.MAX),
         )
 
-        # Alignment Cube
-        with BuildSketch(cyl.faces().sort_by()[0]):
-            Rectangle(case.mount_disc_box_width_mm, case.mount_disc_box_width_mm)
-        extrude(amount=-case.mount_disc_box_height_mm, mode=Mode.SUBTRACT)
-
-        # Bolt holes
-        with Locations(
-            (0, case.mount_disc_diameter_mm / 2, -case.mount_disc_height_mm / 2)
-        ):
-            Cylinder(
-                case.mount_disc_hole_diameter_mm / 2,
-                2 * case.mount_disc_hole_depth_mm,
-                rotation=(90, 0, 0),
-                mode=Mode.SUBTRACT,
-            )
-        with Locations(
-            (0, -case.mount_disc_diameter_mm / 2, -case.mount_disc_height_mm / 2)
-        ):
-            Cylinder(
-                case.mount_disc_hole_diameter_mm / 2,
-                2 * case.mount_disc_hole_depth_mm,
-                rotation=(-90, 0, 0),
-                mode=Mode.SUBTRACT,
-            )
-
-    # Alignment nubs
-    with BuildPart(mode=Mode.PRIVATE) as nubs:
-        with Locations((0, 0, case.cylinder_bottom - case.square_height_mm / 2)):
-            with Locations(((case.cylinder_inner_radius / 2), 0, 0)):
+        # Kinematic mount slots
+        with Locations((0, 0, -case.mount_disc_height_mm)):
+            with PolarLocations(
+                case.kinematic_mount_slot_pos_radius_mm,
+                case.kinematic_mount_num_slots,
+                start_angle=90,
+            ):
                 Box(
-                    case.nub_size_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm,
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
-                )
-            with Locations((-(case.cylinder_inner_radius / 2), 0, 0)):
-                Box(
-                    case.nub_size_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm,
-                    rotation=(0, 45, 0),
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
+                    case.kinematic_mount_slot_length_mm,
+                    case.kinematic_mount_slot_width_mm,
+                    case.kinematic_mount_slot_width_mm,
+                    rotation=(45, 0, 0),
+                    mode=Mode.SUBTRACT,
                 )
 
-        with Locations(
-            (
-                0,
-                0,
-                case.cylinder_bottom + case.cylinder_height + case.square_height_mm / 2,
-            )
-        ):
-            with Locations(((case.cylinder_inner_radius / 2), 0, 0)):
-                Box(
-                    case.nub_size_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm,
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
-                )
-            with Locations((-(case.cylinder_inner_radius / 2), 0, 0)):
-                Box(
-                    case.nub_size_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm,
-                    rotation=(0, 45, 0),
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
-                )
+        # Extra space at bottom of right case half
+        with Locations((0, 0, -case.right_cap_buffer)):
+            remove_part = divider_utils.divider_solid(
+                case.lining_outer_radius,
+                case.square_loft_radius,
+                case.wall_thickness_mm,
+            ).part
+            add(remove_part, mode=Mode.SUBTRACT)
 
-    # Alignment nub hollows
-    with BuildPart() as hollows:
-        with Locations((0, 0, case.cylinder_bottom - case.square_height_mm / 2)):
-            with Locations(((case.cylinder_inner_radius / 2), 0, 0)):
-                Box(
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
-                )
-            with Locations((-(case.cylinder_inner_radius / 2), 0, 0)):
-                Box(
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    rotation=(0, 45, 0),
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
-                )
-
-        with Locations(
-            (
-                0,
-                0,
-                case.cylinder_bottom + case.cylinder_height + case.square_height_mm / 2,
-            )
-        ):
-            with Locations(((case.cylinder_inner_radius / 2), 0, 0)):
-                Box(
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
-                )
-            with Locations((-(case.cylinder_inner_radius / 2), 0, 0)):
-                Box(
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    case.nub_depth_mm,
-                    case.nub_size_mm + 2 * case.nub_margin_mm,
-                    rotation=(0, 45, 0),
-                    align=(Align.CENTER, Align.MIN, Align.CENTER),
-                )
-
-    # Extra space at bottom of right case half
-    with BuildPart() as right_bottom_margin:
-        with Locations((0, 0, case.cylinder_bottom - case.square_height_mm)):
-            Box(
-                case.square_loft_radius * 2,
-                case.square_loft_radius * 2,
-                case.right_cap_buffer,
-                align=(Align.CENTER, Align.CENTER, Align.MIN),
-            )
-
-    left = case_part.solids()[0] + mount_disc.solids()[0] + nubs.solids()
-    right = case_part.solids()[1] - hollows.solids() - right_bottom_margin.solids()
+    left = left.solid() + mount_disc.solid()
+    right = right.solid()
 
     return left, right
