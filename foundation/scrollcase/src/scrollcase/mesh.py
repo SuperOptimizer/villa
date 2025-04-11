@@ -271,7 +271,6 @@ def build_lining(
     divider_piece = (
         divider_utils.divider_solid(
             radius + mesh_params.lining_offset_mm + mesh_params.wall_thickness_mm,
-            10,
             112.5 / 2,
             mesh_params.wall_thickness_mm,
         )

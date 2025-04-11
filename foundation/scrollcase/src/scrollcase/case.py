@@ -229,7 +229,6 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
             with BuildLine() as spline_ln:
                 ln = divider_utils.divider_curve(
                     case.lining_outer_radius,
-                    case.square_height_mm,
                     case.wall_thickness_mm,
                 )
                 tangent = ln % 0.5
@@ -260,7 +259,6 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
 
         divider_solid_part = divider_utils.divider_solid(
             case.lining_outer_radius,
-            case.square_height_mm,
             case.square_loft_radius,
             case.wall_thickness_mm,
         ).part.move(Location((0, 0, case.cylinder_bottom - case.square_height_mm)))
@@ -307,7 +305,6 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
         with Locations((0, 0, -case.right_cap_buffer)):
             remove_part = divider_utils.divider_solid(
                 case.lining_outer_radius,
-                case.square_height_mm,
                 case.square_loft_radius,
                 case.wall_thickness_mm,
             ).part
