@@ -34,7 +34,7 @@ class ScrollCase:
     # Square caps
     square_height_mm: float = 10
     square_edge_fillet: float = 6.25
-    right_cap_buffer: float = 1
+    right_cap_buffer: float = 0.5
     # Based on M4 bolts
     cap_bolt_hole_diameter_mm: float = 5
     cap_bolt_counter_bore_diameter_mm: float = 8
@@ -257,6 +257,18 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 mode=Mode.SUBTRACT,
                 align=(Align.CENTER, Align.CENTER, Align.MAX),
             )
+
+        # Alignment arrow
+        with BuildSketch(Location((0, 0, case.cylinder_bottom))):
+            Arrow(
+                case.square_height_mm / 2,
+                Line(
+                    (0, case.square_loft_radius),
+                    (0, case.square_loft_radius - case.square_height_mm),
+                ),
+                case.square_height_mm / 8,
+            )
+        extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
 
         with BuildPart() as divider_wall:
             with BuildLine() as spline_ln:
