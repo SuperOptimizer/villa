@@ -228,7 +228,9 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
         with BuildPart() as divider_wall:
             with BuildLine() as spline_ln:
                 ln = divider_utils.divider_curve(
-                    case.lining_outer_radius, case.square_height_mm
+                    case.lining_outer_radius,
+                    case.square_height_mm,
+                    case.wall_thickness_mm,
                 )
                 tangent = ln % 0.5
                 orthogonal_plane = Plane(
@@ -250,8 +252,8 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 )
             ):
                 with Locations(
-                    (-case.lining_outer_radius, 0),
-                    (case.lining_outer_radius, 0),
+                    (-case.lining_outer_radius + case.wall_thickness_mm, 0),
+                    (case.lining_outer_radius - case.wall_thickness_mm, 0),
                 ):
                     Circle(case.wall_thickness_mm)
             extrude(amount=case.cylinder_height)
@@ -260,6 +262,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
             case.lining_outer_radius,
             case.square_height_mm,
             case.square_loft_radius,
+            case.wall_thickness_mm,
         ).part.move(Location((0, 0, case.cylinder_bottom - case.square_height_mm)))
 
         left = case_part.part - divider_solid_part
@@ -306,6 +309,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 case.lining_outer_radius,
                 case.square_height_mm,
                 case.square_loft_radius,
+                case.wall_thickness_mm,
             ).part
             add(remove_part, mode=Mode.SUBTRACT)
 
