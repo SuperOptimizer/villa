@@ -31,11 +31,6 @@ class ScrollCase:
     upper_margin_mm: float = 3
     lower_margin_mm: float = 3
 
-    # Between lining exterior and cylinder wall interior
-    # Just enough space to not touch/create trap points for glass beads
-    # Otherwise want to minimize exterior diameter
-    radial_margin_mm: float = 0.5
-
     # Mounting disc dimensions
     mount_disc_diameter_mm: float = 112.5
     mount_disc_height_mm: float = 10
