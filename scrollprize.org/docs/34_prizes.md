@@ -116,7 +116,7 @@ We may reward partial work - if your unrolling works but the ink detection isn't
 Your submission will be reviewed by the review teams to verify technical validity and papyrological plausibility and legibility.
 Just as with the Grand Prize, please **do not** make your discovery public until winning the prize. We will work with you to announce your findings.
 
-Make your submission using [this form]([https://forms.gle/hQtXEtG95zpvfKDd6](https://docs.google.com/forms/d/e/1FAIpQLSdw43FX_uPQwBTIV8pC2y0xkwZmu6GhrwxV4n3WEbqC8Xof9Q/viewform?usp=dialog)).
+Make your submission using [this form](https://docs.google.com/forms/d/e/1FAIpQLSdw43FX_uPQwBTIV8pC2y0xkwZmu6GhrwxV4n3WEbqC8Xof9Q/viewform?usp=dialog).
 
 </details>
 
