@@ -116,14 +116,14 @@ We may reward partial work - if your unrolling works but the ink detection isn't
 Your submission will be reviewed by the review teams to verify technical validity and papyrological plausibility and legibility.
 Just as with the Grand Prize, please **do not** make your discovery public until winning the prize. We will work with you to announce your findings.
 
-Submissions must be made by 11:59pm Pacific, December 31, 2024. Make your submission using [this form](https://forms.gle/hQtXEtG95zpvfKDd6).
+Make your submission using [this form]([https://forms.gle/hQtXEtG95zpvfKDd6](https://docs.google.com/forms/d/e/1FAIpQLSdw43FX_uPQwBTIV8pC2y0xkwZmu6GhrwxV4n3WEbqC8Xof9Q/viewform?usp=dialog)).
 
 </details>
 
 ## Progress Prizes
 As the challenges of autosegmentation and generalized ink detection become clearer, so do our expections for progress prize submissions.
 
-Submissions are evaluated monthly, and multiple submissions/awards per month are permitted. The next deadline is 11:59pm Pacific, February 28, 2025! When ready, please submit using [this form](https://docs.google.com/forms/d/e/1FAIpQLSdPKXHtDgZs0kihxTMlwCvFMiJcR0b6ls55Kol9-KFZQCU_zQ/viewform?usp=header).
+Submissions are evaluated monthly, and multiple submissions/awards per month are permitted. The next deadline is 11:59pm Pacific, April 30th, 2025! When ready, please submit using [this form](https://docs.google.com/forms/d/e/1FAIpQLSfc5oTc-XyWA7XJFrUL2Xvi-L3ApDMvQfAqWwgBkrfxChNLZA/viewform?usp=dialog).
 
 **Core Requirements**
 1. Problem Identification and Solution
