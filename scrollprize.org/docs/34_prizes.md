@@ -89,7 +89,7 @@ We may reward partial work - if your unrolling works but the ink detection isn't
 * Scroll 3
 * Scroll 4
 
-**First Title: $60,000 to the first team to unveil a title of any of our scrolls.**
+**First Title: $60,000 to the first team to unveil a title in any of Scrolls 1-4.**
 
 <div className="mb-4">
   <img src="/img/data/title_example.webp" className="w-[50%]"/>
@@ -100,7 +100,7 @@ We may reward partial work - if your unrolling works but the ink detection isn't
 <summary>Submission criteria and requirements</summary>
 
 * **Image.** Submissions must be an image of the virtually unwrapped segment, showing visible and legible text.
-  * Submit a single static image showing the text region. Images must be generated programmatically, as direct outputs of CT data inputs, and should not contain manual annotations of characters or text.
+  * Submit a single static image showing the text region. Images must be generated programmatically, as direct outputs of CT data inputs, and should not contain manual annotations of characters or text. This includes annotations that were then used as training data and memorized by a machine learning ink model. Ink model outputs of this region should not overlap with any training data used.
   * For the First Title Prize, please illustrate the ink predictions in spatial context of the title search, similar to what is [shown here](https://scrollprize.substack.com/p/30k-first-title-prize). You **do not** have to read the title yourself, but just have to produce an image of it that our team of papyrologists are able to read.
   * Specify which scroll the image comes from. For multiple scrolls, please make multiple submissions.
   * Include a scale bar showing the size of 1 cm on the submission image.
@@ -111,6 +111,7 @@ We may reward partial work - if your unrolling works but the ink detection isn't
   * Please include an easily accessible link from which we can download it.
 * **Hallucination mitigation.** If there is any risk of your model hallucinating results, please let us know how you mitigated that risk. Tell us why you are confident that the results you are getting are real.
   * We strongly discourage submissions that use window sizes larger than 0.5x0.5 mm to generate images from machine learning models. This corresponds to 64x64 pixels for 8 µm scans. If your submission uses larger window sizes, we may reject it and ask you to modify and resubmit.
+  * In addition to hallucination mitigation, do not include overlap between training and prediction regions. This leads to the memorization of annotated labels.
 * **Other information.** Feel free to include any other things we should know.
 
 Your submission will be reviewed by the review teams to verify technical validity and papyrological plausibility and legibility.
