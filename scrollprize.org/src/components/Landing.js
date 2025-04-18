@@ -53,16 +53,6 @@ const stories = ({ unrollVideo, mlVideo, xrayVideo }) => [
         </div>
         {inlineImage("/img/landing/scroll.webp")}
         {inlineImage("/img/landing/herc-materials.webp")}
-        {/* <div className="max-w-3xl mb-8">
-          What's more, excavations were never completed, and many historians
-          believe that thousands more scrolls remain underground.
-        </div>
-
-        <div className="max-w-3xl mb-8">
-          Imagine the secrets of Roman and Greek philosophy, science,
-          literature, mathematics, poetry, and politics, which are locked away
-          in these lumps of ash, waiting to be read!{" "}
-        </div> */}
       </>
     ),
     background: "/img/landing/story2.webp",
@@ -96,12 +86,6 @@ const stories = ({ unrollVideo, mlVideo, xrayVideo }) => [
           <source src="/img/landing/engedi5.webm" type="video/webm" />
         </video>
         {inlineImage("/img/landing/brent1.webp")}
-        {/* <div className="max-w-3xl mb-8">
-          But the Herculaneum Papyri prove more challenging: unlike the denser
-          inks used in the En-Gedi scroll, the Herculaneum ink is carbon-based,
-          affording no X-ray contrast against the underlying carbon-based
-          papyrus.
-        </div> */}
       </>
     ),
     background: "/img/landing/story3.webp",
@@ -129,48 +113,6 @@ const stories = ({ unrollVideo, mlVideo, xrayVideo }) => [
             className="pan-horizontal max-w-none"
           />
         </div>
-        {/* <figure className="md:w-[26%] w-[46%] sepia-[.4] mb-0">
-            <img
-              src="/img/landing/fragment-zoomed.webp"
-              className="h-full object-cover w-full"
-            />
-          </figure>
-          <figure className="w-[40.5%] sepia-[.8] mb-0 md:block hidden">
-            <video
-              autoPlay
-              playsInline
-              loop
-              muted
-              className="w-[100%] h-full object-cover"
-              poster="/img/landing/model-input3.webp"
-            >
-              <source src="/img/landing/model-input3.webm" type="video/webm" />
-            </video>
-          </figure>
-          <figure className="md:w-[33.4%] w-[54%] sepia-[.4] mb-0">
-            <video
-              // autoPlay
-              playsInline
-              loop
-              muted
-              className="w-[100%] h-full object-cover"
-              poster="/img/landing/fragment-training2.webp"
-              ref={xrayVideo}
-            >
-              <source
-                src="/img/landing/fragment-training2.webm"
-                type="video/webm"
-              />
-              <source
-                src="/img/landing/fragment-training2.webm"
-                type="video/webm"
-              />
-            </video>
-          </figure> */}
-        {/* <div className="max-w-3xl mb-8">
-          After 275 years, the ancient puzzle of the Herculaneum Papyri has been
-          reduced to a software problem – one that you can help solve!
-        </div> */}
       </>
     ),
     background: "/img/landing/story5.webp",
@@ -230,18 +172,6 @@ const prizes = [
     requirement: "",
     winnersLabel: "54 Winners",
     winners: [
-      // {
-      //   name: "Philip Allgaier",
-      //   image: "https://pbs.twimg.com/profile_images/460039964365836288/n6b-1m3K_400x400.jpeg",
-      // },
-      // {
-      //   name: "Chuck",
-      //   image: "https://avatars.githubusercontent.com/u/133787404?v=4",
-      // },
-      // {
-      //   name: "Sean Johnson",
-      //   image: "https://avatars.githubusercontent.com/u/120566210?v=4",
-      // },
       {
         name: "Giorgio Angelotti",
         image: "/img/landing/giorgio.webp",
@@ -253,18 +183,6 @@ const prizes = [
       {
         name: "Brett Olsen",
         image: "/img/landing/brett.webp",
-      },
-      // {
-      //   name: "Dalufishe",
-      //   image: "https://avatars.githubusercontent.com/u/118270401?v=4",
-      // },
-      // {
-      //   name: "Santiago Pelufo",
-      //   image: "https://avatars.githubusercontent.com/u/1312203?v=4",
-      // },
-      {
-        name: "Moshe Levy",
-        image: "/img/landing/moshe.webp",
       },
     ],
     won: true,
@@ -344,7 +262,6 @@ const prizes = [
       "Find first letters in Scrolls 2, 3, and 4, or the title of Scroll 1",
     requirement: "",
     href: "2024_prizes#3-first-letters-prizes-scrolls-2-4",
-    // tba: true,
   },
   {
     title: "Monthly Progress Prizes",
@@ -1143,8 +1060,6 @@ const Prize = ({ prize }) => (
                 : "object-cover"
             }`}
           />
-          {/* <div className="">
-          </div> */}
         </div>
       )}
     </div>
@@ -1525,6 +1440,16 @@ const TopCard = ({ title, subtext, href, imageSrc, useArrow = false }) => {
   );
 };
 
+const BuildingBlock = ({ title, description, showDividerMobile = true, showDividerDesktop = true }) => (
+  <div className="relative px-3">
+    {(showDividerMobile || showDividerDesktop) && (
+      <div className={`absolute right-0 top-0 bottom-0 w-px bg-orange-600 ${showDividerMobile ? 'block' : 'hidden'} ${showDividerDesktop ? 'md:block' : 'md:hidden'}`} />
+    )}
+    <b className="block mb-2">{title}</b>
+    <p className="text-sm">{description}</p>
+  </div>
+);
+
 const App = () => {
   const tabData = [{ label: "Tab 1" }, { label: "Tab 2" }, { label: "Tab 3" }];
 
@@ -1770,75 +1695,31 @@ export function Landing() {
                   What We're Building Towards
                 </h3>
 
-                {/* Mobile Version: 2x2 Grid (visible on screens below md) */}
-                <div className="grid grid-cols-2 gap-4 px-6 pb-3 md:hidden">
-                  <div className="relative pr-3">
-                    <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
-                    <b className="block mb-2">
-                      Accurate Surface Representation
-                    </b>
-                    <p className="text-sm">
-                      We lack the accuracy to make the meshing step as simple as
-                      it could be.
-                    </p>
-                  </div>
-                  <div className="relative">
-                    <b className="block mb-2">Generalizable Ink Detection</b>
-                    <p className="text-sm">
-                      Ink has been found in two scrolls, but remains elusive in
-                      our other scrolls.
-                    </p>
-                  </div>
-                  <div className="relative">
-                    <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
-                    <b className="block mb-2">High Quality Annotations</b>
-                    <p className="text-sm">
-                      We need an abundance of high-quality annotations.
-                    </p>
-                  </div>
-                  <div className="relative">
-                    <b className="block mb-2">Robust Meshing</b>
-                    <p className="text-sm">
-                      Methods that function where Surface Representation is
-                      unreliable are needed.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Desktop Version: 4‑Column Grid (visible on md and up) */}
-                <div className="hidden md:grid grid-cols-4 gap-5 px-6 pb-3">
-                  <div className="relative px-3">
-                    <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
-                    <b className="block mb-2">
-                      Accurate Surface Representations
-                    </b>
-                    <p className="text-sm">
-                      We lack the accuracy to make the meshing step as simple as
-                      it could be.
-                    </p>
-                  </div>
-                  <div className="relative px-3">
-                    <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
-                    <b className="block mb-2">Generalizable Ink Detection</b>
-                    <p className="text-sm">
-                      Ink has been found in two scrolls, but remains elusive in
-                      our other scrolls.
-                    </p>
-                  </div>
-                  <div className="relative px-3">
-                    <div className="absolute right-0 top-0 bottom-0 w-px bg-orange-600" />
-                    <b className="block mb-2">High Quality Annotations</b>
-                    <p className="text-sm">
-                      We need an abundance of high-quality annotations.
-                    </p>
-                  </div>
-                  <div className="px-3">
-                    <b className="block mb-2">Robust Meshing</b>
-                    <p className="text-sm">
-                      Methods that function where Surface Representation is
-                      unreliable are needed.
-                    </p>
-                  </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-5 px-6 pb-3">
+                  <BuildingBlock
+                    title="Accurate Surface Representation"
+                    description="We lack the accuracy to make the meshing step as simple as it could be."
+                    showDividerMobile={true}
+                    showDividerDesktop={true}
+                  />
+                  <BuildingBlock
+                    title="Generalizable Ink Detection"
+                    description="Ink has been found in two scrolls, but remains elusive in our other scrolls."
+                    showDividerMobile={false}
+                    showDividerDesktop={true}
+                  />
+                  <BuildingBlock
+                    title="High Quality Annotations"
+                    description="We need an abundance of high-quality annotations."
+                    showDividerMobile={true}
+                    showDividerDesktop={true}
+                  />
+                  <BuildingBlock
+                    title="Robust Meshing"
+                    description="Methods that function where Surface Representation is unreliable are needed."
+                    showDividerMobile={false}
+                    showDividerDesktop={false}
+                  />
                 </div>
               </div>
 
