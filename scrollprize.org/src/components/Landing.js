@@ -1585,20 +1585,19 @@ export function Landing() {
                     useArrow={true}
                   />
                   <TopCard
-                    title="New Year, New Prizes!"
-                    href="/prizes"
-                    subtext="2/14/2025"
+                    title="February Progress Prizes and Updates"
+                    href="https://scrollprize.substack.com/p/february-progress-prizes-and-updates"
+                    subtext="March 12"
+                  />
+                  <TopCard
+                    title="New Prizes and Progress Update"
+                    href="https://scrollprize.substack.com/p/new-prizes-and-an-update-on-progress"
+                    subtext="February 27"
                   />
                   <TopCard
                     title="Exciting News from Scroll 5!"
                     href="https://scrollprize.substack.com/p/exciting-news-from-scroll-5"
-                    subtext="2/05/2025"
-                  />
-                  <TopCard
-                    title="$60,000 Awarded for FASP Submissions!"
-                    href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
-                    subtext="01/23/2025"
-                    imageSrc="/img/landing/fragment.webp"
+                    subtext="February 5"
                   />
                 </div>
 
