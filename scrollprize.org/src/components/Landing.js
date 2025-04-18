@@ -1520,6 +1520,42 @@ const DesktopTopCard = ({ title, subtext, href, imageSrc, useArrow = false }) =>
   );
 };
 
+const MobileTopCard = ({ title, subtext, href, imageSrc }) => {
+  const cardContent = (
+    <div
+      className="h-auto relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
+      style={{
+        boxShadow:
+          "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
+      }}
+    >
+      <div className="flex flex-col py-3 px-4">
+        <h3 className="text-base sm:text-lg text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
+          {title}
+        </h3>
+        {subtext && <p className="text-xs">{subtext}</p>}
+        <div className="pt-2"></div>
+      </div>
+      {imageSrc && (
+        <img
+          className="absolute top-[50px] right-0 max-w-[190px] w-full h-auto object-contain"
+          src={imageSrc}
+          alt=""
+        />
+      )}
+    </div>
+  );
+
+  return (
+    <a
+      className="cursor-pointer group hover:no-underline"
+      href={href}
+    >
+      {cardContent}
+    </a>
+  );
+};
+
 const App = () => {
   const tabData = [{ label: "Tab 1" }, { label: "Tab 2" }, { label: "Tab 3" }];
 
@@ -1649,111 +1685,27 @@ export function Landing() {
                 </div>
                 {/* MOBILE LAYOUT – visible on screens below md */}
                 <div className="grid grid-cols-2 gap-4 max-w-9xl pb-3 md:hidden">
-                  {/* Card 1: Get Started */}
-                  <div className="w-full">
-                    <a
-                      className="cursor-pointer group hover:no-underline"
-                      href="/get_started"
-                    >
-                      <div
-                        className="h-auto relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
-                        style={{
-                          boxShadow:
-                            "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
-                        }}
-                      >
-                        <div className="flex flex-col py-3 px-4 h-32">
-                          <h3 className="text-base sm:text-lg text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow pb-2">
-                            Get Started
-                          </h3>
-                          <p className="text-sm">
-                            $1.5 million in prizes already awarded!
-                          </p>
-                          <div className="pt-2"></div>
-                        </div>
-                      </div>
-                    </a>
-                  </div>
-
-                  {/* Card 2 */}
-                  <div className="w-full">
-                    <a
-                      className="cursor-pointer group hover:no-underline"
-                      href="/prizes"
-                    >
-                      <div
-                        className="h-auto relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
-                        style={{
-                          boxShadow:
-                            "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
-                        }}
-                      >
-                        <div className="flex flex-col py-3 px-4">
-                          <h3 className="text-base sm:text-lg text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
-                            New Year, New Prizes!
-                          </h3>
-                          <p className="text-xs">2/14/2025</p>
-                          {/* Remove the animated arrow; add a spacer if desired */}
-                          <div className="pt-2"></div>
-                        </div>
-                        <img className="w-full h-auto" src="" alt="" />
-                      </div>
-                    </a>
-                  </div>
-
-                  {/* Card 3 */}
-                  <div className="w-full">
-                    <a
-                      className="cursor-pointer group hover:no-underline"
-                      href="https://scrollprize.substack.com/p/exciting-news-from-scroll-5"
-                    >
-                      <div
-                        className="h-auto relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
-                        style={{
-                          boxShadow:
-                            "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
-                        }}
-                      >
-                        <div className="flex flex-col py-3 px-4">
-                          <h3 className="text-base sm:text-lg text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
-                            Exciting News from Scroll 5!
-                          </h3>
-                          <p className="text-xs">01/23/2025</p>
-                          <div className="pt-2"></div>
-                        </div>
-                        <img className="w-full h-auto" src="" alt="" />
-                      </div>
-                    </a>
-                  </div>
-
-                  {/* Card 4 */}
-                  <div className="w-full">
-                    <a
-                      className="cursor-pointer group hover:no-underline"
-                      href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
-                    >
-                      <div
-                        className="relative rounded-2xl border border-[#FFFFFF20] bg-[#131114bf] group-hover:-translate-y-2 transition-transform ease-in-out duration-300 flex flex-col overflow-hidden"
-                        style={{
-                          boxShadow:
-                            "0px 2.767px 2.214px 0px rgba(0,0,0,0.09), 0px 6.65px 5.32px 0px rgba(0,0,0,0.13), 0px 12.522px 10.017px 0px rgba(0,0,0,0.16), 0px 22.336px 17.869px 0px rgba(0,0,0,0.19), 0px 41.778px 33.422px 0px rgba(0,0,0,0.23), 0px 100px 80px 0px rgba(0,0,0,0.32)",
-                        }}
-                      >
-                        <div className="h-auto flex flex-col py-3 px-4 z-10">
-                          <h3 className="text-base sm:text-lg text-white mt-0 mb-1 tracking-tighter leading-[90%] flex-grow">
-                            $60,000 Awarded for FASP Submissions!
-                          </h3>
-                          <p className="text-xs">01/22/2025</p>
-                          <div className="pt-2"></div>
-                        </div>
-                        <img
-                          className="absolute top-[50px] right-0 max-w-[190px] w-full h-auto object-contain"
-                          src="/img/landing/fragment.webp"
-                          alt=""
-                        />
-                      </div>
-                    </a>
-                  </div>
+                  <MobileTopCard
+                    title="Get Started"
+                    href="/get_started"
+                    subtext="$1.5M+ already awarded"
+                  />
+                  <MobileTopCard
+                    title="New Year, New Prizes!"
+                    href="/prizes"
+                    subtext="2/14/2025"
+                  />
+                  <MobileTopCard
+                    title="Exciting News from Scroll 5!"
+                    href="https://scrollprize.substack.com/p/exciting-news-from-scroll-5"
+                    subtext="2/05/2025"
+                  />
+                  <MobileTopCard
+                    title="$60,000 Awarded for FASP Submissions!"
+                    href="https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation"
+                    subtext="01/23/2025"
+                    imageSrc="/img/landing/fragment.webp"
+                  />
                 </div>
 
                 {/* DESKTOP LAYOUT – visible on md and above */}
@@ -1867,7 +1819,6 @@ export function Landing() {
               <div
                 className="mt-2 pt-2 pb-0 relative rounded-2xl border-solid text-white border border-[#FFFFFF20] bg-[#131114bf]"
                 style={{
-                  // Remove any fixed height to let the container size naturally.
                   boxShadow:
                     "0px 2.767px 2.214px 0px rgba(0, 0, 0, 0.09), 0px 6.65px 5.32px 0px rgba(0, 0, 0, 0.13), 0px 12.522px 10.017px 0px rgba(0, 0, 0, 0.16), 0px 22.336px 17.869px 0px rgba(0, 0, 0, 0.19), 0px 41.778px 33.422px 0px rgba(0, 0, 0, 0.23), 0px 100px 80px 0px rgba(0, 0, 0, 0.32)",
                 }}
