@@ -72,7 +72,7 @@ const stories = ({ unrollVideo, mlVideo, xrayVideo }) => [
           Virtual unwrapping has since emerged as a growing field with multiple
           successes. Their work went on to show the elusive carbon ink of the
           Herculaneum scrolls can also be detected using X-ray tomography,
-          laying the foundation for the Vesuvius Challenge.
+          laying the foundation for Vesuvius Challenge.
         </div>
         <video
           // autoPlay
@@ -96,7 +96,7 @@ const stories = ({ unrollVideo, mlVideo, xrayVideo }) => [
     description: (
       <>
         <div className="max-w-3xl mb-8">
-          The Vesuvius Challenge was launched in March 2023 to bring the world
+          Vesuvius Challenge was launched in March 2023 to bring the world
           together to read the Herculaneum scrolls. Along with smaller progress
           prizes, a Grand Prize was issued for the first team to recover 4
           passages of 140 characters from a Herculaneum scroll.
@@ -117,14 +117,67 @@ const stories = ({ unrollVideo, mlVideo, xrayVideo }) => [
     ),
     background: "/img/landing/story5.webp",
   },
+  {
+    date: "2024 AD",
+    text: "New frontiers.",
+    description: (
+      <>
+        <div className="max-w-3xl mb-8">
+          <p>
+            A widespread community effort builds on the success of the first scroll,
+            automating and refining the components of the virtual unwrapping pipeline.
+            Efforts to scan and read multiple scrolls are underway.
+            New text is revealed from another scroll.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-4 mt-4">
+            <img
+              src="/img/landing/patches.webp"
+              alt="Community Effort 1"
+              className="w-full sm:w-1/2 object-cover rounded-lg"
+            />
+            <img
+              src="/img/landing/scroll5.webp"
+              alt="Community Effort 2"
+              className="w-full sm:w-1/2 object-cover rounded-lg"
+            />
+          </div>
+        </div>
+      </>
+    ),
+    background: "/img/landing/story6.webp",
+  },
 ];
 
 const prizes = [
   {
+    title: "First Automated Segmentation Prize",
+    prizeMoney: "$60,000",
+    description: "Reproduce the 2023 Grand Prize result but faster",
+    requirement: "",
+    href: "https://scrollprize.substack.com/p/awarding-the-amazing-autosegmentation",
+    winners: [
+      // {
+      //   name: "Paul Henderson",
+      //   image: "/img/landing/paul.webp",
+      // },
+      // {
+      //   name: "Hendrik Schilling",
+      //   image: "/img/landing/hendrik.webp",
+      // },
+      {
+        name: "Sean Johnson",
+        image: "/img/landing/sean.webp",
+      },
+    ],
+    winnersLabel: "3 Winners",
+    won: true,
+    bannerImage: "/img/landing/patches.webp",
+  },
+  {
     title: "2023 Grand Prize",
     prizeMoney: "$850,000",
     description: "First team to read a scroll by December 31st 2023",
-    requirement: "Success requires that the Review Team can:",
+    requirement: "",
     winnersLabel: "4 Winning Teams",
     winners: [
       {
@@ -167,10 +220,10 @@ const prizes = [
   },
   {
     title: "Open Source Prizes",
-    prizeMoney: "$170,000",
-    description: "Detect 10 letters in a 4 cm² area in a scroll",
+    prizeMoney: "$200,000+",
+    description: "",
     requirement: "",
-    winnersLabel: "54 Winners",
+    winnersLabel: "50+ Winners",
     winners: [
       {
         name: "Giorgio Angelotti",
@@ -242,33 +295,26 @@ const prizes = [
     href: "/winners",
   },
   {
-    title: "Grand Prize",
+    title: "Read Entire Scroll Prize",
     prizeMoney: "$200,000",
-    description: "Read 90% of each four scrolls",
+    description: "Read an entire scroll",
     requirement: "",
-    href: "2024_prizes#2024-grand-prize",
-  },
-  {
-    title: "First Automated Segmentation Prize",
-    prizeMoney: "$100,000",
-    description: "Reproduce the 2023 Grand Prize result but faster",
-    requirement: "",
-    href: "2024_prizes#first-automated-segmentation-prize",
+    href: "prizes#read-entire-scroll-prize-200000",
   },
   {
     title: "First Letters / First Title Prizes",
-    prizeMoney: "4 x $60,000",
+    prizeMoney: "7 x $60,000",
     description:
-      "Find first letters in Scrolls 2, 3, and 4, or the title of Scroll 1",
+      "Find the first letters or the title of a scroll",
     requirement: "",
-    href: "2024_prizes#3-first-letters-prizes-scrolls-2-4",
+    href: "prizes#first-letters-and-title-prizes",
   },
   {
     title: "Monthly Progress Prizes",
     prizeMoney: "$350,000",
     description: "Open ended prizes from $1,000-20,000",
     requirement: "",
-    href: "2024_prizes#monthly-progress-prizes",
+    href: "prizes#progress-prizes",
   },
 ];
 
@@ -1572,11 +1618,6 @@ export function Landing() {
               </div>
 
               <div className="grid items-start max-w-8xl">
-                <div className="">
-                  {/*<h2 className="text-right pt-2 mr-12">*/}
-                  {/*  What's Happening*/}
-                  {/*</h2>*/}
-                </div>
                 <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 max-w-9xl pb-3">
                   <TopCard
                     title="Get Started"
@@ -1585,7 +1626,7 @@ export function Landing() {
                     useArrow={true}
                   />
                   <TopCard
-                    title="February Progress Prizes and Updates"
+                    title="February Prizes and Updates"
                     href="https://scrollprize.substack.com/p/february-progress-prizes-and-updates"
                     subtext="March 12"
                   />
@@ -1630,7 +1671,7 @@ export function Landing() {
                     </ChallengeBox>
 
                     <ChallengeBox
-                      title="Open Problem: Meshing and Reconstruction"
+                      title="Open Problem: Geometric Reconstruction"
                       linkText="Chart the Path"
                       href="/segmentation"
                       imageSrc={
@@ -1667,7 +1708,6 @@ export function Landing() {
                       }
                       imagePosition="right"
                     >
-                      <div></div>
                       <p className="">
                         We've so far recovered text from just two of our five
                         scrolls. Is the ink fundamentally different in others?
@@ -1774,15 +1814,14 @@ export function Landing() {
                       textFillColor: "transparent",
                     }}
                   >
-                    2024 AD
+                    {new Date().getFullYear()} AD
                   </span>
                   <br />
                   The Challenge Continues
                 </h1>
                 <p className="max-w-xl md:text-xl text-lg font-medium !mb-8 md:w-full w-4/5  !leading-[110%] tracking-tight opacity-60">
-                  Due to the overwhelming success from the past year, the
-                  Vesuvius Challenge moves onto its next stage of reading 90% of
-                  all four scrolls. Read more about the prizes below, and on how
+                  Vesuvius Challenge moves onto its next stage of reading multiple entire scrolls.
+                  Read more about the prizes below, and on how
                   they contribute towards the{" "}
                   <a href="master_plan">The Master Plan</a>.
                 </p>
@@ -1808,7 +1847,7 @@ export function Landing() {
                 </p>
               </div>
               <div className="flex flex-col gap-3 max-w-7xl">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-6xl">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 max-w-6xl">
                   {prizes
                     .filter((p) => p.winners && p.bannerImage)
                     .map((p, i) => (
@@ -1924,7 +1963,7 @@ export function Landing() {
                   </div>
                   <div className="flex-1 flex-col lg:gap-0 gap-2 mt-8 min-w-[100%] md:min-w-[50%] pr-4 lg:pr-12">
                     <h3 className="text-3xl font-black tracking-tighter text=[--ifm-color-primary]">
-                      Papyrology: Advisors/2023 Reviewers
+                      Papyrology Advisors
                     </h3>
                     {team.papyrologyAdvisors.map((t, i) => (
                       <Link link={t} key={i} />
