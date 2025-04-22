@@ -1,6 +1,6 @@
 ---
 id: prizes
-title: "New Year, New Prizes"
+title: "2025 Prizes"
 sidebar_label: "2025 Prizes"
 hide_table_of_contents: true
 ---
@@ -38,16 +38,20 @@ hide_table_of_contents: true
   />
 </head>
 
-This year, we're changing up the prizes a bit from previous phases. We’re issuing more frequent, targeted awards that address specific technical challenges.
-
-We’re also going to offer targeted “asks” for prizes, as we become aware of what roadblocks lie in the way. We still encourage open ended solutions to problems, but will often provide more specific requirements for some progress prizes. 
-
-_**Let’s get started with the prizes!**_
+Vesuvius Challenge is ongoing and **YOU** can win the below prizes and help us make history!
 
 ## Read Entire Scroll Prize ($200,000)
-[Submission Form](https://docs.google.com/forms/d/e/1FAIpQLSed2vRgW3HECXW3E6-llYPOST550yr4L0T5AIQp45GAYRcnGQ/viewform?usp=dialog)
 
 We’re awarding $200,000 to the first team to unwrap an entire scroll and produce readable letters within.
+
+We've made great strides by uncovering hidden text from inside a sealed Herculaneum scroll (now multiple!), but we're still reading 5% or less of full scrolls.
+Segmenting and reading an entire scroll, probably using more automated methods, is the next major milestone for our technical endeavor.
+Reach this bar, and $200,000 is yours!
+
+<div className="mb-4">
+  <img src="/img/landing/scroll.webp" className="w-[50%]"/>
+  <figcaption className="mt-[-6px]">An Entire Scroll.</figcaption>
+</div>
 
 <details class="submission-details">
 <summary>Submission criteria and requirements</summary>
@@ -81,15 +85,19 @@ We may reward partial work - if your unrolling works but the ink detection isn't
 
 </details>
 
+[Submission Form](https://docs.google.com/forms/d/e/1FAIpQLSed2vRgW3HECXW3E6-llYPOST550yr4L0T5AIQp45GAYRcnGQ/viewform?usp=dialog)
+
 ## First Letters and Title Prizes
-[Submission Form](https://docs.google.com/forms/d/e/1FAIpQLSdw43FX_uPQwBTIV8pC2y0xkwZmu6GhrwxV4n3WEbqC8Xof9Q/viewform?usp=dialog)
 
-**First Letters: $60,000 to the first team that uncovers 10 letters within a single 4cm^2 area of any of the following scrolls:**
-* Scroll 2
-* Scroll 3
-* Scroll 4
+One of the frontiers of Vesuvius Challenge is finding techniques that work across multiple scrolls.
+While we've discovered text in some of our scrolls, others have not yet produced legible findings.
+Finding the first letters inside one of these scrolls is a major step forward.
 
-**First Title: $60,000 to the first team to unveil a title in any of Scrolls 1-4.**
+Additionally, finding the title of any scroll is a huge and exciting discovery that helps scholars contextualize the rest of the work!
+
+**First Letters: $60,000 to the first team that uncovers 10 letters within a single 4cm^2 area of any of Scrolls 2-4.**
+
+**First Title: $60,000 to the first team to discover the title in any of Scrolls 1-4.**
 
 <div className="mb-4">
   <img src="/img/data/title_example.webp" className="w-[50%]"/>
@@ -116,10 +124,9 @@ We may reward partial work - if your unrolling works but the ink detection isn't
 
 Your submission will be reviewed by the review teams to verify technical validity and papyrological plausibility and legibility.
 Just as with the Grand Prize, please **do not** make your discovery public until winning the prize. We will work with you to announce your findings.
-
-Make your submission using [this form](https://docs.google.com/forms/d/e/1FAIpQLSdw43FX_uPQwBTIV8pC2y0xkwZmu6GhrwxV4n3WEbqC8Xof9Q/viewform?usp=dialog).
-
 </details>
+
+[Submission Form](https://docs.google.com/forms/d/e/1FAIpQLSdw43FX_uPQwBTIV8pC2y0xkwZmu6GhrwxV4n3WEbqC8Xof9Q/viewform?usp=dialog)
 
 ## Progress Prizes
 As the challenges of autosegmentation and generalized ink detection become clearer, so do our expections for progress prize submissions.
