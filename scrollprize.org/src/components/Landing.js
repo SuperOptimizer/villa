@@ -820,6 +820,11 @@ const team = {
       href: "https://profiles.ucl.ac.uk/97051-michael-mcosker",
     },
     {
+      name: "Maria Chiara Robustelli",
+      title: "Postdoctoral Fellow in Papyrology, University of Naples Federico II",
+      href: "https://unina.academia.edu/mrobustelli",
+    },
+    {
       name: "Claudio Vergara",
       title:
         "Postdoctoral Fellow in Papyrology, University of Naples Federico II",
