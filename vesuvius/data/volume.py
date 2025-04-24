@@ -198,7 +198,7 @@ class Volume:
             # --- Scroll/Segment Type Resolution ---
             # Determine type, scroll_id, segment_id from 'type' parameter if needed
             if isinstance(type, str):
-                if type.startswith("scroll") and len(type) > 6:  # e.g., "scroll1", "scroll1b"
+                if type.lower().startswith("scroll") and len(type) > 6:  # e.g., "scroll1", "scroll1b"
                     self.type = "scroll"
                     scroll_part = type[6:]
                     self.scroll_id = int(scroll_part) if scroll_part.isdigit() else scroll_part
@@ -228,7 +228,7 @@ class Volume:
                         self.scroll_id = scroll_id
                 else:
                     raise ValueError(
-                        f"Invalid 'type' string: {type}. Expected 'scroll', 'segment', 'scrollX', 'zarr', or segment timestamp.")
+                        f"Invalid 'type' string: {type}. Expected 'scroll', 'segment', 'ScrollX', 'zarr', or segment timestamp.")
             elif isinstance(type, int):  # Assume it's a scroll ID if just an int
                 self.type = "scroll"
                 self.scroll_id = type
