@@ -759,6 +759,11 @@ const team = {
       href: "https://www.linkedin.com/in/raymond-james-gasper/",
     },
     {
+      name: "Cooper Miller",
+      title: "Annotation Specialist",
+      href: "https://kcm.sh/",
+    },
+    {
       name: "Daniel Havíř",
       title: "Machine Learning",
       href: "https://danielhavir.com/",
