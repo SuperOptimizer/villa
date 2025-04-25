@@ -26,10 +26,6 @@ jobs:
       - name: Extract version from tag
         run: echo "VERSION=${GITHUB_REF#refs/tags/vesuvius-v}" >> $GITHUB_ENV
 
-      - name: Update version in setup.py
-        run: |
-         sed -i "s/^ *version *= *\".*\"/version=\"$VERSION\"/" setup.py
-
       - name: Set up Python environment
         uses: actions/setup-python@v4
         with:
