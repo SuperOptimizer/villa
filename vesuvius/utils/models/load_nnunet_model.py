@@ -140,8 +140,23 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
         checkpoint_file = join(model_folder, checkpoint_name)
     else:
         checkpoint_file = join(model_folder, f'fold_{fold}', checkpoint_name)
-    
-    # Check if the checkpoint file exists
+
+    # --- fallback: if final checkpoint not found, try 'checkpoint_best.pth' ---
+    if not os.path.exists(checkpoint_file) and checkpoint_name == 'checkpoint_final.pth':
+        alt_checkpoint_name = 'checkpoint_best.pth'
+        if os.path.basename(model_folder).startswith('fold_'):
+            alt_checkpoint_file = join(model_folder, alt_checkpoint_name)
+        else:
+            alt_checkpoint_file = join(model_folder, f'fold_{fold}', alt_checkpoint_name)
+
+        if os.path.exists(alt_checkpoint_file):
+            if rank == 0:
+                print(f"WARNING: '{checkpoint_name}' not found; using '{alt_checkpoint_name}' instead.")
+            checkpoint_file = alt_checkpoint_file
+            checkpoint_name = alt_checkpoint_name
+    # ---------------------------------------------------------------------
+
+    # Check if the (possibly updated) checkpoint file exists
     if not os.path.exists(checkpoint_file):
         # List available folds and checkpoints to help the user
         available_folds = []
@@ -149,7 +164,6 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
             for item in os.listdir(model_folder):
                 if item.startswith('fold_') and os.path.isdir(join(model_folder, item)):
                     available_folds.append(item)
-                    
         error_msg = f"ERROR: Checkpoint file not found: {checkpoint_file}\n"
         if available_folds:
             error_msg += "\nAvailable folds in this model folder:\n"
@@ -167,12 +181,10 @@ def load_model(model_folder: str, fold: Union[int, str] = 0, checkpoint_name: st
                 error_msg += f"  {', '.join(os.listdir(model_folder))}\n"
             else:
                 error_msg += f"The model folder does not exist or is not accessible: {model_folder}\n"
-                
         error_msg += "\nPlease check:\n"
         error_msg += "1. The model_folder path is correct\n"
         error_msg += "2. The fold number is correct\n"
         error_msg += "3. The checkpoint_name is correct\n"
-        
         raise FileNotFoundError(error_msg)
         
     if rank == 0:  # Only print from rank 0
