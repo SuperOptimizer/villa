@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from functools import partial
 from typing import Callable, Optional
+from pathlib import Path
 
 import build123d as bd
 import meshlib.mrmeshnumpy as mn
@@ -12,6 +13,7 @@ import numpy as np
 import trimesh
 
 from . import alignment
+from . import divider_utils
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,7 @@ def show_meshlib(*meshes: mm.Mesh, show_axis: bool = True):
     trimesh_meshes = []
     for mesh in meshes:
         with tempfile.NamedTemporaryFile("w", suffix=".stl") as f:
-            mm.saveMesh(mesh, f.name)
+            mm.saveMesh(mesh, Path(f.name))
             tri_mesh = trimesh.load(f.name)
             trimesh_meshes.append(tri_mesh)
     axis = trimesh.creation.axis(origin_size=10)
@@ -41,7 +43,7 @@ def _copy_meshlib(mesh: mm.Mesh):
 
 
 def load_mesh(mesh_file: str) -> mm.Mesh:
-    return mm.loadMesh(mesh_file)
+    return mm.loadMesh(Path(mesh_file))
 
 
 def affine_rotation(angle_rad: float) -> mm.AffineXf3f:
@@ -159,7 +161,7 @@ class ScrollMesh:
     voxel_size_diagonal_percent: float = 0.4
     simplify_max_error_diagonal_percent: float = 2
     lining_offset_mm: float = 2
-    lining_thickness_mm: float = 2
+    wall_thickness_mm: float = 2
     target_scale_diagonal_mm: Optional[float] = None
     rotation_callback: Optional[Callable[[mm.Mesh], mm.Mesh]] = partial(
         rotate_about_2nd_principal, rotation_rad=0
@@ -260,15 +262,36 @@ def build_lining(
 
     logger.debug(f"Offset mesh: {count_vertices(offset_mesh)} vertices")
 
-    # Split along YZ plane
+    # Split in two
     logger.info("Splitting mesh")
-    cut_plane = mm.Plane3f(mm.Vector3f(0, 1, 0), 0)
     hole_edges_pos = mm.UndirectedEdgeBitSet()
     hole_edges_neg = mm.UndirectedEdgeBitSet()
+
+    # Get divider piece
+    divider_piece = (
+        divider_utils.divider_solid(
+            radius + mesh_params.lining_offset_mm + mesh_params.wall_thickness_mm,
+            112.5 / 2,
+            mesh_params.wall_thickness_mm,
+        )
+        .part.move(bd.Location((0, 0, -100)))
+        .solid()
+    )
+    divider_piece_mesh = brep_to_mesh(divider_piece)
+
+    # Create positive mesh
     split_mesh_pos = _copy_meshlib(offset_mesh)
-    mm.trimWithPlane(split_mesh_pos, cut_plane, outCutEdges=hole_edges_pos)
+    # mm.trimWithPlane(split_mesh_pos, cut_plane, outCutEdges=hole_edges_pos)
+    split_mesh_pos = mm.boolean(
+        split_mesh_pos, divider_piece_mesh, mm.BooleanOperation.Intersection
+    ).mesh
+
+    # Create negative mesh
     split_mesh_neg = _copy_meshlib(offset_mesh)
-    mm.trimWithPlane(split_mesh_neg, -cut_plane, outCutEdges=hole_edges_neg)
+    # mm.trimWithPlane(split_mesh_neg, -cut_plane, outCutEdges=hole_edges_neg)
+    split_mesh_neg = mm.boolean(
+        split_mesh_neg, divider_piece_mesh, mm.BooleanOperation.DifferenceAB
+    ).mesh
 
     logger.debug(f"Split mesh pos: {count_vertices(split_mesh_pos)} vertices")
 
@@ -285,10 +308,17 @@ def build_lining(
 
     # Build mesh
     logger.info("Building lining")
-    cavity_mesh_pos_offset = mm.offsetMesh(cavity_mesh_pos, offset=mesh_params.lining_thickness_mm, params=params)  # type: ignore
-    cavity_mesh_neg_offset = mm.offsetMesh(cavity_mesh_neg, offset=mesh_params.lining_thickness_mm, params=params)  # type: ignore
-    mm.trimWithPlane(cavity_mesh_pos_offset, cut_plane, outCutEdges=hole_edges_pos)
-    mm.trimWithPlane(cavity_mesh_neg_offset, -cut_plane, outCutEdges=hole_edges_neg)
+    cavity_mesh_pos_offset = mm.offsetMesh(cavity_mesh_pos, offset=mesh_params.wall_thickness_mm, params=params)  # type: ignore
+    cavity_mesh_neg_offset = mm.offsetMesh(cavity_mesh_neg, offset=mesh_params.wall_thickness_mm, params=params)  # type: ignore
+
+    # mm.trimWithPlane(cavity_mesh_pos_offset, cut_plane, outCutEdges=hole_edges_pos)
+    # mm.trimWithPlane(cavity_mesh_neg_offset, -cut_plane, outCutEdges=hole_edges_neg)
+    cavity_mesh_pos_offset = mm.boolean(
+        cavity_mesh_pos_offset, divider_piece_mesh, mm.BooleanOperation.Intersection
+    ).mesh
+    cavity_mesh_neg_offset = mm.boolean(
+        cavity_mesh_neg_offset, divider_piece_mesh, mm.BooleanOperation.DifferenceAB
+    ).mesh
 
     fill_hole_params = mm.FillHoleParams()
     edges_pos = mm.std_vector_Id_EdgeTag(hole_edges_pos)
@@ -329,6 +359,12 @@ def combine_brep_case_lining(
         return combine_case_lining(
             case_mesh, cavity_mesh, lining_mesh, voxel_size_diagonal_percent
         )
+
+
+def brep_to_mesh(brep: bd.Solid) -> mm.Mesh:
+    with tempfile.NamedTemporaryFile(suffix=".stl") as temp_file:
+        bd.export_stl(brep.solids()[0], temp_file.name)
+        return load_mesh(temp_file.name)
 
 
 def combine_case_lining(

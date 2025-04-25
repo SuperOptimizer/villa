@@ -43,6 +43,7 @@ Requires-Dist: einops
 Requires-Dist: monai
 Requires-Dist: edt
 Requires-Dist: opencv-python-headless
+Requires-Dist: wandb
 Provides-Extra: dev
 Requires-Dist: black; extra == "dev"
 Requires-Dist: ruff; extra == "dev"

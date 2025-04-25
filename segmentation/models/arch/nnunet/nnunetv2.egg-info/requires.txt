@@ -23,6 +23,7 @@ einops
 monai
 edt
 opencv-python-headless
+wandb
 
 [dev]
 black
