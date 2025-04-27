@@ -104,6 +104,32 @@ def hex_nut(diameter_mm: float, depth_mm: float):
     return hex_part
 
 
+def mount_disc(case: ScrollCase):
+    with BuildPart() as mount_disc_part:
+        cyl = Cylinder(
+            case.mount_disc_diameter_mm / 2,
+            case.mount_disc_height_mm,
+            align=(Align.CENTER, Align.CENTER, Align.MAX),
+        )
+
+        # Kinematic mount slots
+        with Locations((0, 0, -case.mount_disc_height_mm)):
+            with PolarLocations(
+                case.kinematic_mount_slot_pos_radius_mm,
+                case.kinematic_mount_num_slots,
+                start_angle=90,
+            ):
+                Box(
+                    case.kinematic_mount_slot_length_mm,
+                    case.kinematic_mount_slot_width_mm,
+                    case.kinematic_mount_slot_width_mm,
+                    rotation=(45, 0, 0),
+                    mode=Mode.SUBTRACT,
+                )
+
+        return mount_disc_part
+
+
 def cap(case: ScrollCase):
     with BuildPart() as cap_part:
         with BuildSketch():
@@ -192,26 +218,12 @@ def cap(case: ScrollCase):
     return cap_part
 
 
-def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
-    """Build the scroll case.
-
-    Args:
-        case (ScrollCase): The scroll case parameters.
-
-    Returns:
-        tuple[Solid, Solid]: The left and right halves of the scroll case.
-    """
-    logger.info(
-        f"Constructing case with scroll radius: {case.scroll_radius_mm}, height: {case.scroll_height_mm}"
-    )
-
-    with BuildPart(Location((0, 0, case.cylinder_bottom))) as case_part:
-        # Top and bottom caps
-        with Locations((0, 0, case.cylinder_height), (0, 0, -case.square_height_mm)):
-            add(cap(case))
+def top_cap(case: ScrollCase):
+    with BuildPart() as top_cap_part:
+        add(cap(case))
 
         # Text
-        top_face = case_part.faces().sort_by(Axis.Z)[-1]
+        top_face = top_cap_part.faces().sort_by(Axis.Z)[-1]
         with BuildSketch(top_face):
             with Locations((0, 40)):
                 Text(case.label_line_1, case.text_font_size)
@@ -226,23 +238,34 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 )
         extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
 
+    return top_cap_part
+
+
+def bottom_cap(case: ScrollCase):
+    with BuildPart() as bottom_cap_part:
+        add(cap(case))
+
         # Bolt holes
         with Locations(
             (
                 -case.base_bolt_hole_spacing_from_center_mm,
                 -case.base_bolt_hole_spacing_from_center_mm,
+                case.square_height_mm,
             ),
             (
                 case.base_bolt_hole_spacing_from_center_mm,
                 -case.base_bolt_hole_spacing_from_center_mm,
+                case.square_height_mm,
             ),
             (
                 -case.base_bolt_hole_spacing_from_center_mm,
                 case.base_bolt_hole_spacing_from_center_mm,
+                case.square_height_mm,
             ),
             (
                 case.base_bolt_hole_spacing_from_center_mm,
                 case.base_bolt_hole_spacing_from_center_mm,
+                case.square_height_mm,
             ),
         ):
             Cylinder(
@@ -258,17 +281,40 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
                 align=(Align.CENTER, Align.CENTER, Align.MAX),
             )
 
-        # Alignment arrow
-        with BuildSketch(Location((0, 0, case.cylinder_bottom))):
-            Arrow(
-                case.square_height_mm / 2,
-                Line(
-                    (0, case.square_loft_radius),
-                    (0, case.square_loft_radius - case.square_height_mm),
-                ),
-                case.square_height_mm / 8,
-            )
-        extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
+            # Alignment arrow
+            with BuildSketch(Location((0, 0, case.square_height_mm))):
+                Arrow(
+                    case.square_height_mm / 2,
+                    Line(
+                        (0, case.square_loft_radius),
+                        (0, case.square_loft_radius - case.square_height_mm),
+                    ),
+                    case.square_height_mm / 8,
+                )
+            extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
+
+    return bottom_cap_part
+
+
+def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
+    """Build the scroll case.
+
+    Args:
+        case (ScrollCase): The scroll case parameters.
+
+    Returns:
+        tuple[Solid, Solid]: The left and right halves of the scroll case.
+    """
+    logger.info(
+        f"Constructing case with scroll radius: {case.scroll_radius_mm}, height: {case.scroll_height_mm}"
+    )
+
+    with BuildPart(Location((0, 0, case.cylinder_bottom))) as case_part:
+        # Top and bottom caps
+        with Locations((0, 0, case.cylinder_height)):
+            add(top_cap(case))
+        with Locations((0, 0, -case.square_height_mm)):
+            add(bottom_cap(case))
 
         with BuildPart() as divider_wall:
             with BuildLine() as spline_ln:
@@ -314,27 +360,8 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
     # Base
     with BuildPart(
         Location((0, 0, case.cylinder_bottom - case.square_height_mm))
-    ) as mount_disc:
-        cyl = Cylinder(
-            case.mount_disc_diameter_mm / 2,
-            case.mount_disc_height_mm,
-            align=(Align.CENTER, Align.CENTER, Align.MAX),
-        )
-
-        # Kinematic mount slots
-        with Locations((0, 0, -case.mount_disc_height_mm)):
-            with PolarLocations(
-                case.kinematic_mount_slot_pos_radius_mm,
-                case.kinematic_mount_num_slots,
-                start_angle=90,
-            ):
-                Box(
-                    case.kinematic_mount_slot_length_mm,
-                    case.kinematic_mount_slot_width_mm,
-                    case.kinematic_mount_slot_width_mm,
-                    rotation=(45, 0, 0),
-                    mode=Mode.SUBTRACT,
-                )
+    ) as base_disc:
+        add(mount_disc(case))
 
         # Extra space at bottom of right case half
         with Locations((0, 0, -case.right_cap_buffer)):
@@ -345,7 +372,7 @@ def build_case(case: ScrollCase) -> tuple[Solid, Solid]:
             ).part
             add(remove_part, mode=Mode.SUBTRACT)
 
-    left = left.solid() + mount_disc.solid()
+    left = left.solid() + base_disc.solid()
     right = right.solid()
 
     return left, right
