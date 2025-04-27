@@ -25,7 +25,7 @@ def build_disc():
     # Base
     with BuildPart() as centering_disc:
         add(sc.case.mount_disc(case))
-        add(sc.case.bottom_cap(case))
+        add(sc.case.bottom_cap(case, with_bolt_protrusions=False))
 
         # Centering cone
         Cone(
@@ -34,24 +34,6 @@ def build_disc():
             height=case.mount_disc_top_to_lining_bottom,
             align=(Align.CENTER, Align.CENTER, Align.MIN),
         )
-
-        # Remove bolt protrusions as they are not needed
-        with Locations((case.square_loft_radius, 0, 0)):
-            Box(
-                case.square_loft_radius,
-                case.square_loft_radius,
-                case.square_height_mm,
-                align=(Align.MIN, Align.CENTER, Align.MIN),
-                mode=Mode.SUBTRACT,
-            )
-        with Locations((-case.square_loft_radius, 0, 0)):
-            Box(
-                case.square_loft_radius,
-                case.square_loft_radius,
-                case.square_height_mm,
-                align=(Align.MAX, Align.CENTER, Align.MIN),
-                mode=Mode.SUBTRACT,
-            )
 
     show(centering_disc, reset_camera=Camera.KEEP)
 

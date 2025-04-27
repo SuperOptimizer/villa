@@ -130,97 +130,99 @@ def mount_disc(case: ScrollCase):
         return mount_disc_part
 
 
-def cap(case: ScrollCase):
+def cap(case: ScrollCase, with_bolt_protrusions: bool = True):
     with BuildPart() as cap_part:
         with BuildSketch():
             # Main rectangle
             r = Rectangle(2 * case.square_loft_radius, 2 * case.square_loft_radius)
             fillet(r.vertices(), case.square_edge_fillet)
 
-            # Left bolt protrusion
-            with Locations((-case.square_loft_radius, 0)):
-                r2 = Rectangle(
-                    case.square_height_mm,
-                    case.square_height_mm * 2,
-                    align=(Align.MAX, Align.CENTER),
-                )
+            if with_bolt_protrusions:
+                # Left bolt protrusion
+                with Locations((-case.square_loft_radius, 0)):
+                    r2 = Rectangle(
+                        case.square_height_mm,
+                        case.square_height_mm * 2,
+                        align=(Align.MAX, Align.CENTER),
+                    )
                 fillet(r2.vertices(), case.square_height_mm / 2)
 
-            # Right bolt protrusion
-            with Locations((case.square_loft_radius, 0)):
-                r3 = Rectangle(
-                    case.square_height_mm,
-                    case.square_height_mm * 2,
-                    align=(Align.MIN, Align.CENTER),
-                )
+                # Right bolt protrusion
+                with Locations((case.square_loft_radius, 0)):
+                    r3 = Rectangle(
+                        case.square_height_mm,
+                        case.square_height_mm * 2,
+                        align=(Align.MIN, Align.CENTER),
+                    )
                 fillet(r3.vertices(), case.square_height_mm / 2)
         extrude(amount=case.square_height_mm)
 
-        # Bolt holes
-        with Locations(
-            (
-                -case.square_loft_radius - case.square_height_mm / 2,
-                0,
-                case.square_height_mm / 2,
-            ),
-            (
-                case.square_loft_radius + case.square_height_mm / 2,
-                0,
-                case.square_height_mm / 2,
-            ),
-        ):
-            Cylinder(
-                case.cap_bolt_hole_diameter_mm / 2,
-                4 * case.square_height_mm,
-                rotation=(90, 0, 0),
-                mode=Mode.SUBTRACT,
-            )
+        if with_bolt_protrusions:
+            # Bolt holes
+            with Locations(
+                (
+                    -case.square_loft_radius - case.square_height_mm / 2,
+                    0,
+                    case.square_height_mm / 2,
+                ),
+                (
+                    case.square_loft_radius + case.square_height_mm / 2,
+                    0,
+                    case.square_height_mm / 2,
+                ),
+            ):
+                Cylinder(
+                    case.cap_bolt_hole_diameter_mm / 2,
+                    4 * case.square_height_mm,
+                    rotation=(90, 0, 0),
+                    mode=Mode.SUBTRACT,
+                )
 
-        # Bolt head cutouts
-        with Locations(
-            (
-                -case.square_loft_radius - case.square_height_mm / 2,
-                case.square_height_mm - case.cap_bolt_counter_bore_depth_mm,
-                case.square_height_mm / 2,
-            ),
-            (
-                case.square_loft_radius + case.square_height_mm / 2,
-                case.square_height_mm - case.cap_bolt_counter_bore_depth_mm,
-                case.square_height_mm / 2,
-            ),
-        ):
-            Cylinder(
-                case.cap_bolt_counter_bore_diameter_mm / 2,
-                2 * case.square_height_mm,
-                mode=Mode.SUBTRACT,
-                rotation=(90, 0, 0),
-                align=(Align.CENTER, Align.CENTER, Align.MAX),
-            )
+            # Bolt head cutouts
+            with Locations(
+                (
+                    -case.square_loft_radius - case.square_height_mm / 2,
+                    case.square_height_mm - case.cap_bolt_counter_bore_depth_mm,
+                    case.square_height_mm / 2,
+                ),
+                (
+                    case.square_loft_radius + case.square_height_mm / 2,
+                    case.square_height_mm - case.cap_bolt_counter_bore_depth_mm,
+                    case.square_height_mm / 2,
+                ),
+            ):
+                Cylinder(
+                    case.cap_bolt_counter_bore_diameter_mm / 2,
+                    2 * case.square_height_mm,
+                    mode=Mode.SUBTRACT,
+                    rotation=(90, 0, 0),
+                    align=(Align.CENTER, Align.CENTER, Align.MAX),
+                )
 
-        # Hexagonal nut cutouts
-        with Locations(
-            (
-                -case.square_loft_radius - case.square_height_mm / 2,
-                -case.square_height_mm + case.cap_bolt_nut_depth_mm,
-                case.square_height_mm / 2,
-            ),
-            (
-                case.square_loft_radius + case.square_height_mm / 2,
-                -case.square_height_mm + case.cap_bolt_nut_depth_mm,
-                case.square_height_mm / 2,
-            ),
-        ):
-            hex = hex_nut(
-                case.cap_bolt_nut_diameter_mm, case.cap_bolt_nut_depth_mm + 10
-            )
-            add(hex, mode=Mode.SUBTRACT, rotation=(90, 0, 0))
+            # Hexagonal nut cutouts
+            with Locations(
+                (
+                    -case.square_loft_radius - case.square_height_mm / 2,
+                    -case.square_height_mm + case.cap_bolt_nut_depth_mm,
+                    case.square_height_mm / 2,
+                ),
+                (
+                    case.square_loft_radius + case.square_height_mm / 2,
+                    -case.square_height_mm + case.cap_bolt_nut_depth_mm,
+                    case.square_height_mm / 2,
+                ),
+            ):
+                hex = hex_nut(
+                    case.cap_bolt_nut_diameter_mm, case.cap_bolt_nut_depth_mm + 10
+                )
+                add(hex, mode=Mode.SUBTRACT, rotation=(90, 0, 0))
 
     return cap_part
 
 
-def top_cap(case: ScrollCase):
+def top_cap(case: ScrollCase, with_bolt_protrusions: bool = True):
     with BuildPart() as top_cap_part:
-        add(cap(case))
+        add(cap(case, with_bolt_protrusions=with_bolt_protrusions))
 
         # Text
         top_face = top_cap_part.faces().sort_by(Axis.Z)[-1]
@@ -241,9 +243,9 @@ def top_cap(case: ScrollCase):
     return top_cap_part
 
 
-def bottom_cap(case: ScrollCase):
+def bottom_cap(case: ScrollCase, with_bolt_protrusions: bool = True):
     with BuildPart() as bottom_cap_part:
-        add(cap(case))
+        add(cap(case, with_bolt_protrusions=with_bolt_protrusions))
 
         # Bolt holes
         with Locations(
