@@ -91,7 +91,7 @@ class ScrollCase:
         return 2 * self.lining_offset_mm + self.scroll_height_mm
 
     @property
-    def cylinder_top_to_lining_bottom(self):
+    def mount_disc_top_to_lining_bottom(self):
         return self.square_height_mm + self.lower_margin_mm + self.wall_thickness_mm
 
 
