@@ -59,6 +59,10 @@ class ScrollCase:
     base_bolt_hole_counter_bore_diameter_mm: float = 10.5
     base_bolt_hole_counter_bore_depth_mm: float = 5
     base_bolt_hole_spacing_from_center_mm: float = 50
+    base_bolt_hole_diameter_for_tapping_mm: float = 5.2
+
+    # Tomo stage bolt holes
+    tomo_stage_bolt_hole_spacing_from_center_mm: float = 25
 
     @property
     def lining_outer_radius(self):
@@ -243,57 +247,62 @@ def top_cap(case: ScrollCase, with_bolt_protrusions: bool = True):
     return top_cap_part
 
 
-def bottom_cap(case: ScrollCase, with_bolt_protrusions: bool = True):
+def bottom_cap(
+    case: ScrollCase,
+    with_bolt_protrusions: bool = True,
+    with_counter_bore: bool = True,
+):
     with BuildPart() as bottom_cap_part:
         add(cap(case, with_bolt_protrusions=with_bolt_protrusions))
 
-        # Bolt holes
-        with Locations(
-            (
-                -case.base_bolt_hole_spacing_from_center_mm,
-                -case.base_bolt_hole_spacing_from_center_mm,
-                case.square_height_mm,
-            ),
-            (
-                case.base_bolt_hole_spacing_from_center_mm,
-                -case.base_bolt_hole_spacing_from_center_mm,
-                case.square_height_mm,
-            ),
-            (
-                -case.base_bolt_hole_spacing_from_center_mm,
-                case.base_bolt_hole_spacing_from_center_mm,
-                case.square_height_mm,
-            ),
-            (
-                case.base_bolt_hole_spacing_from_center_mm,
-                case.base_bolt_hole_spacing_from_center_mm,
-                case.square_height_mm,
-            ),
-        ):
-            Cylinder(
-                case.base_bolt_hole_diameter_mm / 2,
-                case.square_height_mm,
-                mode=Mode.SUBTRACT,
-                align=(Align.CENTER, Align.CENTER, Align.MAX),
-            )
-            Cylinder(
-                case.base_bolt_hole_counter_bore_diameter_mm / 2,
-                case.base_bolt_hole_counter_bore_depth_mm,
-                mode=Mode.SUBTRACT,
-                align=(Align.CENTER, Align.CENTER, Align.MAX),
-            )
-
-            # Alignment arrow
-            with BuildSketch(Location((0, 0, case.square_height_mm))):
-                Arrow(
-                    case.square_height_mm / 2,
-                    Line(
-                        (0, case.square_loft_radius),
-                        (0, case.square_loft_radius - case.square_height_mm),
-                    ),
-                    case.square_height_mm / 8,
+        if with_counter_bore:
+            # Bolt holes
+            with Locations(
+                (
+                    -case.base_bolt_hole_spacing_from_center_mm,
+                    -case.base_bolt_hole_spacing_from_center_mm,
+                    case.square_height_mm,
+                ),
+                (
+                    case.base_bolt_hole_spacing_from_center_mm,
+                    -case.base_bolt_hole_spacing_from_center_mm,
+                    case.square_height_mm,
+                ),
+                (
+                    -case.base_bolt_hole_spacing_from_center_mm,
+                    case.base_bolt_hole_spacing_from_center_mm,
+                    case.square_height_mm,
+                ),
+                (
+                    case.base_bolt_hole_spacing_from_center_mm,
+                    case.base_bolt_hole_spacing_from_center_mm,
+                    case.square_height_mm,
+                ),
+            ):
+                Cylinder(
+                    case.base_bolt_hole_diameter_mm / 2,
+                    case.square_height_mm,
+                    mode=Mode.SUBTRACT,
+                    align=(Align.CENTER, Align.CENTER, Align.MAX),
                 )
-            extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
+                Cylinder(
+                    case.base_bolt_hole_counter_bore_diameter_mm / 2,
+                    case.base_bolt_hole_counter_bore_depth_mm,
+                    mode=Mode.SUBTRACT,
+                    align=(Align.CENTER, Align.CENTER, Align.MAX),
+                )
+
+        # Alignment arrow
+        with BuildSketch(Location((0, 0, case.square_height_mm))):
+            Arrow(
+                case.square_height_mm / 2,
+                Line(
+                    (0, case.square_loft_radius),
+                    (0, case.square_loft_radius - case.square_height_mm),
+                ),
+                case.square_height_mm / 8,
+            )
+        extrude(amount=-case.text_depth_mm, mode=Mode.SUBTRACT)
 
     return bottom_cap_part
 
