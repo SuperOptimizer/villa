@@ -210,6 +210,8 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 
 - [Volume Viewer](https://github.com/tomhsiao1260/vc-whiteboard/tree/demo-3) Used by the segmentation team primarily to see which segments they have worked on already. Hosted [here](http://37.19.207.113:5174/). By Yao Hsiao
     - [Vesuvius Challenge Whiteboard](https://github.com/tomhsiao1260/vc-whiteboard/tree/dev) by Yao Hsiao and Dalufishe
+ 
+- [Neuroglancer Mini](https://github.com/tomhsiao1260/neuroglancer-mini) A trimmed-down version of the Neuroglancer source code. By Yao Hsiao
 
 - [Scroll Viewer](https://github.com/lukeboi/scroll-viewer) by Luke Farritor. A lightweight, extensible tool for viewing volumetric data, which runs in the browser, and is very fast.
 
