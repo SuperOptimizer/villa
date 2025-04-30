@@ -85,37 +85,6 @@ Send your resume, cover letter, and examples of relevant projects to jobs@scroll
 
 ***
 
-## Synchrotron Tomography Reconstruction Expert
-
-We seek an expert in synchrotron tomography reconstruction to help us scan and process hundreds of Herculaneum scrolls. This role will be critical in developing and maintaining our acquisition protocol and reconstruction pipeline to handle the petabytes of CT scan data we expect to process.
-
-#### Overview
-At Vesuvius Challenge we aim to scan the full collection of Herculaneum papyri found thus far. This includes hundreds of scrolls, whose images need to be acquired at beamline synchrotron facilities and reconstructed via computed tomography.
-
-We need help scanning and reconstructing the images of the scrolls. Specifically, we seek a Synchrotron Tomography Reconstruction Expert to develop and maintain a robust, high-throughput, and facility-agnostic tomographic reconstruction pipeline. The expert will integrate open-source toolkits with in-house automation scripts to streamline data processing—from raw projections through phase retrieval to final reconstructions.
-
-#### Responsibilities include:
-- Develop and optimize an automated pipeline for X-ray tomography reconstruction (including phase contrast imaging) using open-source libraries
-- Run the pipeline to reconstruct the images of hundreds of Herculaneum papyri in a short time-frame
-- Ensure synchrotron/beamline-invariant compatibility: adapt metadata and geometry definitions from multiple facilities into a uniform pipeline
-- Collaborate with beamline scientists and domain experts to validate reconstruction quality and optimize parameters (e.g., phase retrieval, artifact correction, center-of-rotation finding)
-- Integrate HPC and GPU acceleration
-- Deploy and maintain the pipeline on cloud infrastructure
-- Participate in scan sessions to ensure the acquisition of high-quality data
-- Write comprehensive documentation and provide user training/support both for internal researchers and our online community
-
-#### Ideal qualifications:
-- Direct synchrotron beamline experience
-- MSc or PhD in Experimental Physics, Applied Mathematics, CS or a related field
-- Experience with tomographic software frameworks
-- Experience in scientific computing, HPC, and/or GPU programming
-- Exposure to cloud computing
-
-#### To Apply
-Send your resume, cover letter, and examples of relevant projects to jobs@scrollprize.org. Include "Reconstruction Expert" in the subject line.
-
-***
-
 ## Platform Engineer
 
 The Vesuvius Challenge platform team builds the tools that make researchers and contestants more productive. This includes libraries, visualizations, annotation tools, and data organization & accessibility.
@@ -151,44 +120,33 @@ Send your resume, cover letter, and examples of relevant projects to jobs@scroll
 
 ***
 
-## Annotation Specialist 
+## Synchrotron Tomography Reconstruction Expert
 
-Help us unravel the mysteries of the only remaining library from antiquity! 
-
-#### Role
-As an Annotation Specialist you will analyze and process volumetric CT scan data from ancient scrolls, which were carbonized and buried at Herculaneum two thousand years ago during the eruption of Mt. Vesuvius. 
+We seek an expert in synchrotron tomography reconstruction to help us scan and process hundreds of Herculaneum scrolls. This role will be critical in developing and maintaining our acquisition protocol and reconstruction pipeline to handle the petabytes of CT scan data we expect to process.
 
 #### Overview
-The most important requirement is the capacity to sustain a high level of engagement in complex repetitive tasks. Computer literacy and experience looking at data are strongly suggested, and direct experience in medical annotation or similar is a bonus. Scroll annotation has many flavors in 2D and 3D, and will be an evolving landscape. 
+At Vesuvius Challenge we aim to scan the full collection of Herculaneum papyri found thus far. This includes hundreds of scrolls, whose images need to be acquired at beamline synchrotron facilities and reconstructed via computed tomography.
 
-A good fit comes down to personality as much as skill sets. Maybe you have strong gaming skills, or rebuild vintage watches as a hobby. If fast-paced repetitive complex tasks sound relaxing, this may be for you! 
+We need help scanning and reconstructing the images of the scrolls. Specifically, we seek a Synchrotron Tomography Reconstruction Expert to develop and maintain a robust, high-throughput, and facility-agnostic tomographic reconstruction pipeline. The expert will integrate open-source toolkits with in-house automation scripts to streamline data processing—from raw projections through phase retrieval to final reconstructions.
 
-This is not a programming position, and the majority of your time will be spent in the trenches annotating papyrus. However, this is active research, so experience writing code, beta-testing and debugging software, algorithm development, graphics, general data science, visual art and other creative skills will all be of great benefit. 
+#### Responsibilities include:
+- Develop and optimize an automated pipeline for X-ray tomography reconstruction (including phase contrast imaging) using open-source libraries
+- Run the pipeline to reconstruct the images of hundreds of Herculaneum papyri in a short time-frame
+- Ensure synchrotron/beamline-invariant compatibility: adapt metadata and geometry definitions from multiple facilities into a uniform pipeline
+- Collaborate with beamline scientists and domain experts to validate reconstruction quality and optimize parameters (e.g., phase retrieval, artifact correction, center-of-rotation finding)
+- Integrate HPC and GPU acceleration
+- Deploy and maintain the pipeline on cloud infrastructure
+- Participate in scan sessions to ensure the acquisition of high-quality data
+- Write comprehensive documentation and provide user training/support both for internal researchers and our online community
 
-This is a full-time position (30+ hours/week). Pay rate up to $40 per hour.
-
-#### Key Responsibilities
-- Master several techniques for annotating X-ray CT scans of scrolls with evolving software
-- Collaborate with researchers to develop and test new annotation tooling 
-- Document processes and maintain consistent standards
-- Ensure access to a fast internet connection
-
-#### Required Skills 
-- Capacity to sustain a high level of engagement in complex repetitive tasks
-- Attention to detail
-- Excellent communication skills
-- Familiarity with basic Linux command line operations 
-
-#### Preferred Qualifications
-- Experience with volumetric image segmentation and annotation
-- Experience beta-testing and debugging software
-- Graphics and algorithm development
-- C/C++, Python
-
-#### Impact
-Not only will you unwrap ancient scrolls and be the first human to lay eyes on the resulting text in two millennia, your efforts will directly contribute to automation of unwrapping, which is a key ingredient to help catalyze further excavation of Herculaneum and unearth the only remaining library from antiquity before it is too late! 
+#### Ideal qualifications:
+- Direct synchrotron beamline experience
+- MSc or PhD in Experimental Physics, Applied Mathematics, CS or a related field
+- Experience with tomographic software frameworks
+- Experience in scientific computing, HPC, and/or GPU programming
+- Exposure to cloud computing
 
 #### To Apply
-Send your resume, cover letter, and examples of relevant projects to jobs@scrollprize.org. Include "Annotation Specialist" in the subject line.
+Send your resume, cover letter, and examples of relevant projects to jobs@scrollprize.org. Include "Reconstruction Expert" in the subject line.
 
 ***
