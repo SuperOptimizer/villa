@@ -1,7 +1,7 @@
 ---
 id: prizes
-title: "2025 Prizes"
-sidebar_label: "2025 Prizes"
+title: "Open Prizes"
+sidebar_label: "Open Prizes"
 hide_table_of_contents: true
 ---
 
@@ -38,7 +38,17 @@ hide_table_of_contents: true
   />
 </head>
 
+import TOCInline from '@theme/TOCInline';
+
 Vesuvius Challenge is ongoing and **YOU** can win the below prizes and help us make history!
+
+***
+
+<TOCInline
+  toc={toc}
+/>
+
+***
 
 ## Read Entire Scroll Prize ($200,000)
 
@@ -87,6 +97,8 @@ We may reward partial work - if your unrolling works but the ink detection isn't
 
 [Submission Form](https://docs.google.com/forms/d/e/1FAIpQLSed2vRgW3HECXW3E6-llYPOST550yr4L0T5AIQp45GAYRcnGQ/viewform?usp=dialog)
 
+***
+
 ## First Letters and Title Prizes
 
 One of the frontiers of Vesuvius Challenge is finding techniques that work across multiple scrolls.
@@ -128,6 +140,8 @@ Just as with the Grand Prize, please **do not** make your discovery public until
 
 [Submission Form](https://docs.google.com/forms/d/e/1FAIpQLSdw43FX_uPQwBTIV8pC2y0xkwZmu6GhrwxV4n3WEbqC8Xof9Q/viewform?usp=dialog)
 
+***
+
 ## Progress Prizes
 
 In addition to milestone-based prizes, we offer monthly prizes for open source contributions that help read the scrolls.
@@ -168,6 +182,24 @@ Submissions are evaluated monthly, and multiple submissions/awards per month are
 </details>
 
 [Submission Form](https://docs.google.com/forms/d/e/1FAIpQLSfc5oTc-XyWA7XJFrUL2Xvi-L3ApDMvQfAqWwgBkrfxChNLZA/viewform?usp=dialog)
+
+***
+
+## Referral Prize
+
+Refer a successful hire - earn a $5,000 prize.
+
+<details>
+<summary>Submission criteria and requirements</summary>
+
+1. **The Offer:** Earn $5,000 for referring a candidate we hire for our research team!
+2. **Referrer Eligibility:** You must be legally eligible to receive the prize payment.
+3. **Hire Eligibility:** Candidates must be new contacts and legally authorized to receive payment from Vesuvius Challenge.
+4. **How to Refer:** Email jobs@scrollprize.org with subject: "Referral: [Candidate Name]." Include: your name & Discord username (if applicable), your contact information, candidate's name & contact information (confirming their permission), and why they're a good fit.
+5. **Terms:** Hires and prizes are determined at the sole discretion of Curious Cases, Inc. Referral must be submitted per the above instructions. Referral must be received before the candidate applies directly. Your referral must be the first one received for that candidate. The candidate must acknowledge your referral during hiring. The candidate must be hired for a full-time research team role.
+</details>
+
+***
 
 ## Terms and Conditions
 
