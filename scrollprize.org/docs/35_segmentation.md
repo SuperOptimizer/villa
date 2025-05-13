@@ -86,7 +86,7 @@ Move into the directory you have cloned the repo into, and then install the imag
 
 ```bash
 cd volume-cartographer-dev-next
-sudo docker build -f ubuntu-22.04-jammy.Dockerfile -t vc3d3 .
+sudo docker build -f ubuntu-24.04-noble.Dockerfile -t vc3d .
 ```
 
 **Launch VC3D**
