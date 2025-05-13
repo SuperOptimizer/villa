@@ -59,8 +59,19 @@ def inference_widget(
         return
     
     try:
-        # Load the model and get config
-        model_loader = ModelLoader(model_path)
+        # Try to access the global config manager from main_window
+        config_manager = None
+        try:
+            from main_window import _config_manager
+            if _config_manager is not None:
+                config_manager = _config_manager
+                print("Using global config manager from main_window")
+        except (ImportError, AttributeError):
+            # Fall back to using the wrapper in inference.py
+            print("No global config manager available, using default config")
+        
+        # Load the model and get config, passing the config_manager if available
+        model_loader = ModelLoader(model_path, config_manager=config_manager)
         
         # Check for config files in various locations
         checkpoint_path = Path(model_path)
@@ -109,6 +120,9 @@ def inference_widget(
                     patch_size = config_data['model']['train_patch_size']
                 elif 'train_patch_size' in config_data:
                     patch_size = config_data['train_patch_size']
+                elif 'patch_size' in config_data:
+                    # Check for patch_size at the root level
+                    patch_size = config_data['patch_size']
                 elif 'inference' in config_data and 'patch_size' in config_data['inference']:
                     patch_size = config_data['inference']['patch_size']
                 else:

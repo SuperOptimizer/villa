@@ -2,7 +2,7 @@
 
 tr_setup:
   model_name: test_1638                    # required [str] this is the name your model will checkpoint will be saved as
-  autoconfigure: false               # optional, true -- if true, the network will attempt to set some reasonable defaults based on your vram_max
+  autoconfigure: true               # optional, true -- if true, the network will attempt to set some reasonable defaults based on your vram_max
   tr_val_split: 0.90                 # optional[float] the percentage of your total dataset used for training, with the other part being used for val
   dilate_label: false                # optional, false [bool] if true, will apply a small dilation to your labels using a 3x3 spherical kernel -- will skip tasks named "normals"
   # checkpoint_path: "./ink_157.pth" # optional, none [str] if provided, will load the provided checkpoint and begin training from there
@@ -15,7 +15,7 @@ tr_config:
   weight_decay: 0.0001             # optional, 0.0001 [float]
   gradient_accumulation: 1      # optional, 1 [int] if 1, no accumulation, if >1 will accumulate this many 'batches' each batch to simulate larger batch size.
   num_dataloader_workers: 4    # optional, 4 [int]
-  patch_size: [64, 64]    # optional [list] patch size for training
+  patch_size: [128, 128]    # optional [list] patch size for training
   batch_size: 2              # optional [int] batch size for training
   max_steps_per_epoch: 200      # optional, 500 [int] the number of batches seen by the model each epoch
   max_val_steps_per_epoch: 1   # optional, 25 [int] the number of batches seen in validation each epoch
@@ -29,7 +29,7 @@ model_config:
 
 dataset_config:
   min_bbox_percent: 0.50      # optional, 0.97 [float] a percentage of the patch size that must be encompassed by a bbox containing all the labels in the patch
-  min_labeled_ratio: 0.05     # optional, 0.15 [float] a percentage of the above bbox that must contain labeled data (ie: the density of the labels)
+  min_labeled_ratio: 0.50     # optional, 0.15 [float] a percentage of the above bbox that must contain labeled data (ie: the density of the labels)
 
 inference_config:                           # these parameters only apply on inference
   checkpoint_path: "./checkpoints/ckpt.pth" # the checkpoint to load

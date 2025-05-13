@@ -7,11 +7,12 @@ from pathlib import Path
 import json
 from model.build_network_from_config import NetworkFromConfig
 import torch.nn as nn
+from tqdm.auto import tqdm
 
 class ModelLoader:
     """Class to load a model from a checkpoint with its configuration"""
     
-    def __init__(self, checkpoint_path):
+    def __init__(self, checkpoint_path, config_manager=None):
         """
         Initialize the model loader
         
@@ -19,10 +20,15 @@ class ModelLoader:
         ----------
         checkpoint_path : str or Path
             Path to the checkpoint file (.pth)
+        config_manager : object, optional
+            An existing config manager object. If provided, will use this instead of creating a new one.
         """
         self.checkpoint_path = Path(checkpoint_path)
         if not self.checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
+        
+        # Store the provided config manager if any
+        self.config_manager = config_manager
         
         # Try to find corresponding config file in same directory
         self.config_path = self.checkpoint_path.with_name(
@@ -55,53 +61,148 @@ class ModelLoader:
         print(f"Loading checkpoint from {self.checkpoint_path}")
         checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
         
-        # Get model configuration, with fallbacks
-        model_config = None
-        
-        # First try to get config from checkpoint
-        if 'model_config' in checkpoint:
-            model_config = checkpoint['model_config']
-            print("Using model configuration from checkpoint")
-        
-        # Next try separate config file if found
-        elif self.config_path.exists():
-            with open(self.config_path, 'r') as f:
-                config_data = json.load(f)
-                model_config = config_data.get('model', {})
-            print(f"Using model configuration from {self.config_path}")
-        
-        # Finally, fall back to default configuration
+        # If a real config manager was provided, use it directly
+        if self.config_manager is not None:
+            print("Using provided config manager")
+            config_mgr = self.config_manager
+            model_config = getattr(config_mgr, 'model_config', {})
         else:
-            print("No model configuration found. Using default configuration.")
-            model_config = {
-                "model_name": self.checkpoint_path.stem.split('_')[0],
-                "in_channels": 1,
-                "out_channels": 1,
-                "train_patch_size": [64, 64, 64],
-                "autoconfigure": True,
-                "conv_op": "nn.Conv3d"
-            }
-        
-        # Create a config wrapper that mimics the ConfigManager interface
-        config_wrapper = ConfigWrapper(model_config)
+            # No config manager was provided - import and create a real one
+            try:
+                from main_window import ConfigManager
+                
+                # Get model configuration, with fallbacks
+                model_config = None
+                
+                # First try to get config from checkpoint
+                if 'model_config' in checkpoint:
+                    model_config = checkpoint['model_config']
+                    print("Using model configuration from checkpoint")
+                
+                # Next try separate config file if found
+                elif self.config_path.exists():
+                    with open(self.config_path, 'r') as f:
+                        config_data = json.load(f)
+                        model_config = config_data.get('model', {})
+                    print(f"Using model configuration from {self.config_path}")
+                
+                # Finally, fall back to default configuration
+                else:
+                    print("No model configuration found. Using default configuration.")
+                    model_config = {
+                        "model_name": self.checkpoint_path.stem.split('_')[0],
+                        "in_channels": 1,
+                        "out_channels": 1,
+                        "train_patch_size": [64, 64, 64],
+                        "autoconfigure": True,
+                        "conv_op": "nn.Conv3d"
+                    }
+                
+                # Create a real config manager
+                config_mgr = ConfigManager(verbose=True)
+                
+                # First check if there's a complete config in the JSON file
+                if self.config_path.exists():
+                    print(f"Reading complete config from {self.config_path}")
+                    try:
+                        with open(self.config_path, 'r') as f:
+                            config_data = json.load(f)
+                        
+                        # Initialize config sections
+                        config_mgr.model_config = config_data
+                        config_mgr.inference_config = config_data
+                        config_mgr.tr_configs = {}
+                        config_mgr.tr_info = {"model_name": config_data.get("model_name", "model")}
+                        config_mgr.dataset_config = {}
+                        
+                        # Set essential attributes from the config
+                        # Check for and print patch_size value explicitly for debugging
+                        if "patch_size" in config_data:
+                            print(f"Found patch_size in config: {config_data['patch_size']}")
+                        config_mgr.train_patch_size = config_data.get("patch_size", [64, 64, 64])
+                        config_mgr.train_batch_size = config_data.get("batch_size", 2)
+                        config_mgr.in_channels = config_data.get("in_channels", 1)
+                        config_mgr.autoconfigure = config_data.get("autoconfigure", False)
+                        config_mgr.model_name = config_data.get("model_name", self.checkpoint_path.stem.split('_')[0])
+                        config_mgr.spacing = [1, 1, 1]
+                        config_mgr.targets = config_data.get("targets", {"default": {"out_channels": 1, "loss_fn": "BCEDiceLoss"}})
+                        
+                        print(f"Successfully loaded full configuration from {self.config_path}")
+                        
+                    except Exception as e:
+                        print(f"Error loading config from file: {e}")
+                        # Continue with fallback approach below
+                
+                # If no config file or error occurred, set up with model_config 
+                if not hasattr(config_mgr, 'model_config') or not config_mgr.model_config:
+                    # Set up the config manager with our data
+                    config_mgr.model_config = model_config
+                    config_mgr.inference_config = model_config  # Add inference_config
+                    config_mgr.train_patch_size = model_config.get("train_patch_size", model_config.get("patch_size", [64, 64, 64]))
+                    config_mgr.train_batch_size = model_config.get("batch_size", 2)
+                    config_mgr.in_channels = model_config.get("in_channels", 1)
+                    config_mgr.spacing = [1, 1, 1]
+                    config_mgr.targets = model_config.get("targets", {"default": {"out_channels": 1, "loss_fn": "BCEDiceLoss"}})
+                    config_mgr.autoconfigure = model_config.get("autoconfigure", True)
+                    config_mgr.model_name = model_config.get("model_name", self.checkpoint_path.stem.split('_')[0])
+                
+            except ImportError:
+                # If we can't import ConfigManager, we're in a standalone script
+                # Create an object with the minimum required attributes
+                print("Cannot import ConfigManager. Creating a minimal configuration object.")
+                from types import SimpleNamespace
+                
+                # Get model configuration, with fallbacks
+                model_config = None
+                
+                # First try to get config from checkpoint
+                if 'model_config' in checkpoint:
+                    model_config = checkpoint['model_config']
+                    print("Using model configuration from checkpoint")
+                
+                # Next try separate config file if found
+                elif self.config_path.exists():
+                    with open(self.config_path, 'r') as f:
+                        config_data = json.load(f)
+                        model_config = config_data.get('model', {})
+                    print(f"Using model configuration from {self.config_path}")
+                
+                # Finally, fall back to default configuration
+                else:
+                    print("No model configuration found. Using default configuration.")
+                    model_config = {
+                        "model_name": self.checkpoint_path.stem.split('_')[0],
+                        "in_channels": 1,
+                        "out_channels": 1,
+                        "train_patch_size": [64, 64, 64],
+                        "autoconfigure": True,
+                        "conv_op": "nn.Conv3d"
+                    }
+                
+                # Create a simple object with the necessary attributes
+                config_mgr = SimpleNamespace(
+                    model_config=model_config,
+                    inference_config=model_config,  # Add inference_config
+                    train_patch_size=model_config.get("train_patch_size", model_config.get("patch_size", [64, 64, 64])),
+                    train_batch_size=model_config.get("batch_size", 2),
+                    in_channels=model_config.get("in_channels", 1),
+                    spacing=[1, 1, 1],
+                    targets=model_config.get("targets", {"default": {"out_channels": 1, "loss_fn": "BCEDiceLoss"}}),
+                    autoconfigure=model_config.get("autoconfigure", True),
+                    model_name=model_config.get("model_name", self.checkpoint_path.stem.split('_')[0]),
+                    tr_configs={},
+                    tr_info={"model_name": model_config.get("model_name", "model")},
+                    dataset_config={}
+                )
         
         # Create the model
-        model = NetworkFromConfig(config_wrapper)
+        model = NetworkFromConfig(config_mgr)
         model.load_state_dict(checkpoint['model'])
         model = model.to(self.device)
         model.eval()
         
         print(f"Model loaded successfully with configuration: {model_config.get('model_name', 'unknown')}")
         return model, model_config
-
-class ConfigWrapper:
-    """
-    Wrapper class to mimic the ConfigManager interface expected by NetworkFromConfig
-    """
-    def __init__(self, config_dict):
-        # Copy all attributes from the config dictionary
-        for key, value in config_dict.items():
-            setattr(self, key, value)
 
 
 def create_gaussian_window(patch_size, sigma_scale=1/4, device=None):
@@ -234,57 +335,54 @@ def sliding_window_inference_2d(model, image, patch_size, overlap=0.5, batch_siz
     
     # Generate all patches
     total_patches = num_patches_h * num_patches_w
-    patch_count = 0
     
     if verbose:
         print(f"Processing {total_patches} patches with size {patch_size} (overlap: {overlap})")
+        # Create a flattened list of all patch indices for tqdm
+        patch_iterator = tqdm([(h, w) for h in range(num_patches_h) for w in range(num_patches_w)], 
+                              desc="2D Sliding Window", unit="patch")
+    else:
+        patch_iterator = [(h, w) for h in range(num_patches_h) for w in range(num_patches_w)]
     
-    for h_idx in range(num_patches_h):
-        for w_idx in range(num_patches_w):
-            # Calculate start positions
-            start_h = min(h_idx * step_h, height - patch_size[0])
-            start_w = min(w_idx * step_w, width - patch_size[1])
+    for h_idx, w_idx in patch_iterator:
+        # Calculate start positions
+        start_h = min(h_idx * step_h, height - patch_size[0])
+        start_w = min(w_idx * step_w, width - patch_size[1])
+        
+        # Extract patch
+        patch = image[:, :, start_h:start_h + patch_size[0], start_w:start_w + patch_size[1]]
+        
+        # Store patch and position
+        patches.append(patch)
+        positions.append((start_h, start_w))
+        
+        # Process in batches
+        if len(patches) == batch_size or (h_idx == num_patches_h - 1 and w_idx == num_patches_w - 1):
+            # Stack patches into batch
+            batch = torch.cat(patches, dim=0)
             
-            # Extract patch
-            patch = image[:, :, start_h:start_h + patch_size[0], start_w:start_w + patch_size[1]]
+            # Forward pass
+            with torch.no_grad():
+                batch_output = model(batch)
             
-            # Store patch and position
-            patches.append(patch)
-            positions.append((start_h, start_w))
-            
-            # Update progress counter
-            patch_count += 1
-            if verbose and patch_count % 10 == 0:
-                progress = (patch_count / total_patches) * 100
-                print(f"Processing patch {patch_count}/{total_patches} ({progress:.1f}%)")
-            
-            # Process in batches
-            if len(patches) == batch_size or (h_idx == num_patches_h - 1 and w_idx == num_patches_w - 1):
-                # Stack patches into batch
-                batch = torch.cat(patches, dim=0)
+            # Put predictions back into output tensor with gaussian blending
+            for b_idx in range(len(patches)):
+                start_h, start_w = positions[b_idx]
                 
-                # Forward pass
-                with torch.no_grad():
-                    batch_output = model(batch)
-                
-                # Put predictions back into output tensor with gaussian blending
-                for b_idx in range(len(patches)):
-                    start_h, start_w = positions[b_idx]
+                # Apply predictions for each task
+                for task_name in task_names:
+                    task_output = batch_output[task_name][b_idx:b_idx+1]
                     
-                    # Apply predictions for each task
-                    for task_name in task_names:
-                        task_output = batch_output[task_name][b_idx:b_idx+1]
-                        
-                        # Apply gaussian weighting
-                        weighted_output = task_output * gaussian_window
-                        
-                        # Add to output and importance map
-                        outputs[task_name][:, :, start_h:start_h + patch_size[0], start_w:start_w + patch_size[1]] += weighted_output
-                        importance_maps[task_name][:, :, start_h:start_h + patch_size[0], start_w:start_w + patch_size[1]] += gaussian_window
-                
-                # Clear for next batch
-                patches = []
-                positions = []
+                    # Apply gaussian weighting
+                    weighted_output = task_output * gaussian_window
+                    
+                    # Add to output and importance map
+                    outputs[task_name][:, :, start_h:start_h + patch_size[0], start_w:start_w + patch_size[1]] += weighted_output
+                    importance_maps[task_name][:, :, start_h:start_h + patch_size[0], start_w:start_w + patch_size[1]] += gaussian_window
+            
+            # Clear for next batch
+            patches = []
+            positions = []
     
     # Normalize by importance map (prevent division by zero)
     results = {}
@@ -374,59 +472,63 @@ def sliding_window_inference_3d(model, volume, patch_size, overlap=0.5, batch_si
     
     # Generate all patches
     total_patches = num_patches_d * num_patches_h * num_patches_w
-    patch_count = 0
     
     if verbose:
         print(f"Processing {total_patches} 3D patches with size {patch_size} (overlap: {overlap})")
+        # Create a flattened list of all patch indices for tqdm
+        patch_iterator = tqdm([(d, h, w) for d in range(num_patches_d) 
+                               for h in range(num_patches_h) 
+                               for w in range(num_patches_w)], 
+                              desc="3D Sliding Window", unit="patch")
+    else:
+        patch_iterator = [(d, h, w) for d in range(num_patches_d) 
+                        for h in range(num_patches_h) 
+                        for w in range(num_patches_w)]
     
-    for d_idx in range(num_patches_d):
-        for h_idx in range(num_patches_h):
-            for w_idx in range(num_patches_w):
-                # Calculate start positions
-                start_d = min(d_idx * step_d, depth - patch_size[0])
-                start_h = min(h_idx * step_h, height - patch_size[1])
-                start_w = min(w_idx * step_w, width - patch_size[2])
+    patch_count = 0  # Keep track for batch processing
+    for d_idx, h_idx, w_idx in patch_iterator:
+        # Calculate start positions
+        start_d = min(d_idx * step_d, depth - patch_size[0])
+        start_h = min(h_idx * step_h, height - patch_size[1])
+        start_w = min(w_idx * step_w, width - patch_size[2])
+        
+        # Extract patch
+        patch = volume[:, :, start_d:start_d + patch_size[0], start_h:start_h + patch_size[1], start_w:start_w + patch_size[2]]
+        
+        # Store patch and position
+        patches.append(patch)
+        positions.append((start_d, start_h, start_w))
+        
+        # Update counter for batch processing
+        patch_count += 1
+        
+        # Process in batches
+        if len(patches) == batch_size or patch_count == total_patches:
+            # Stack patches into batch
+            batch = torch.cat(patches, dim=0)
+            
+            # Forward pass
+            with torch.no_grad():
+                batch_output = model(batch)
+            
+            # Put predictions back into output tensor with gaussian blending
+            for b_idx in range(len(patches)):
+                start_d, start_h, start_w = positions[b_idx]
                 
-                # Extract patch
-                patch = volume[:, :, start_d:start_d + patch_size[0], start_h:start_h + patch_size[1], start_w:start_w + patch_size[2]]
-                
-                # Store patch and position
-                patches.append(patch)
-                positions.append((start_d, start_h, start_w))
-                
-                # Update progress counter
-                patch_count += 1
-                if verbose and patch_count % 5 == 0:
-                    progress = (patch_count / total_patches) * 100
-                    print(f"Processing patch {patch_count}/{total_patches} ({progress:.1f}%)")
-                
-                # Process in batches
-                if len(patches) == batch_size or patch_count == total_patches:
-                    # Stack patches into batch
-                    batch = torch.cat(patches, dim=0)
+                # Apply predictions for each task
+                for task_name in task_names:
+                    task_output = batch_output[task_name][b_idx:b_idx+1]
                     
-                    # Forward pass
-                    with torch.no_grad():
-                        batch_output = model(batch)
+                    # Apply gaussian weighting
+                    weighted_output = task_output * gaussian_window
                     
-                    # Put predictions back into output tensor with gaussian blending
-                    for b_idx in range(len(patches)):
-                        start_d, start_h, start_w = positions[b_idx]
-                        
-                        # Apply predictions for each task
-                        for task_name in task_names:
-                            task_output = batch_output[task_name][b_idx:b_idx+1]
-                            
-                            # Apply gaussian weighting
-                            weighted_output = task_output * gaussian_window
-                            
-                            # Add to output and importance map
-                            outputs[task_name][:, :, start_d:start_d + patch_size[0], start_h:start_h + patch_size[1], start_w:start_w + patch_size[2]] += weighted_output
-                            importance_maps[task_name][:, :, start_d:start_d + patch_size[0], start_h:start_h + patch_size[1], start_w:start_w + patch_size[2]] += gaussian_window
-                    
-                    # Clear for next batch
-                    patches = []
-                    positions = []
+                    # Add to output and importance map
+                    outputs[task_name][:, :, start_d:start_d + patch_size[0], start_h:start_h + patch_size[1], start_w:start_w + patch_size[2]] += weighted_output
+                    importance_maps[task_name][:, :, start_d:start_d + patch_size[0], start_h:start_h + patch_size[1], start_w:start_w + patch_size[2]] += gaussian_window
+            
+            # Clear for next batch
+            patches = []
+            positions = []
     
     # Normalize by importance map (prevent division by zero)
     results = {}
@@ -467,8 +569,19 @@ def run_inference(viewer, layer, checkpoint_path, patch_size=None, overlap=0.25,
     new_layers : list of napari.layers.Layer
         List of new layers added to the viewer
     """
-    # Load the model
-    loader = ModelLoader(checkpoint_path)
+    # Try to access the global config manager from main_window
+    config_manager = None
+    try:
+        from main_window import _config_manager
+        if _config_manager is not None:
+            config_manager = _config_manager
+            print("Using global config manager from main_window")
+    except (ImportError, AttributeError):
+        # Fall back to using the wrapper in inference.py
+        print("No global config manager available, using default config")
+    
+    # Load the model with the config manager if available
+    loader = ModelLoader(checkpoint_path, config_manager=config_manager)
     model, model_config = loader.load()
     
     # Get model name from checkpoint path
