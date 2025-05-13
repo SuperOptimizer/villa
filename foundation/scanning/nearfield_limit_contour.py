@@ -13,7 +13,7 @@ sns.set_style('white')
 MinPixum, MaxPixum = 1, 15  # in micrometers after scaling
 MinKeV, MaxKeV = 40, 150
 
-# Diffraction limit size mesh (m), then convert to micrometers
+# Detector pixel size mesh (m), then convert to micrometers
 DELTA_m = np.logspace(np.log10(MinPixum * 1e-6), np.log10(MaxPixum * 1e-6), num=1000)
 DELTA_um = DELTA_m * 1e6  # convert to micrometers
 
@@ -32,7 +32,7 @@ h = 6.62607004e-34
 c = 299792458
 eJ = 1.602176634e-19
 LAMBDA = (h * c) / (EV_eV_mesh * eJ)
-Lp = ((DS_m_mesh) ** 2) / LAMBDA
+Lp = ((2*DS_m_mesh) ** 2) / LAMBDA
 
 # Contour levels and labels (original)
 levels = [0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 0.4, 1, 1.2, 2.2, 2.8, 5, 10, 15, 20, 30, 100, 300]
@@ -77,7 +77,7 @@ ax.grid(which='major', linestyle='--', linewidth=0.6, alpha=0.8)
 ax.grid(which='minor', linestyle=':', linewidth=0.4, alpha=0.6)
 
 # Labels
-ax.set_xlabel('Diffraction Limit [µm]', fontsize=12)
+ax.set_xlabel('Detector pixel size [µm]', fontsize=12)
 ax.set_ylabel('Photon Energy [keV]', fontsize=12)
 ax.tick_params(axis='both', which='major', labelsize=10)
 
