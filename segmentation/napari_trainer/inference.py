@@ -59,6 +59,12 @@ class ModelLoader:
         model_config = checkpoint['model_config']
         print("Using model configuration from checkpoint")
         
+        # Check if this is a compiled model state dict (keys will have "_orig_mod." prefix)
+        model_state_dict = checkpoint['model']
+        is_compiled_state_dict = any("_orig_mod." in key for key in model_state_dict.keys())
+        if is_compiled_state_dict:
+            print("Detected compiled model state dict (contains '_orig_mod.' prefix keys)")
+        
         # If a config manager was provided, update it with the config from the checkpoint
         if self.config_manager is not None:
             print("Updating provided config manager with checkpoint configuration")
@@ -105,8 +111,30 @@ class ModelLoader:
         
         # Create the model
         model = NetworkFromConfig(config_mgr)
-        model.load_state_dict(checkpoint['model'])
-        model = model.to(self.device)
+        
+        # If we're on CUDA and the model was trained with compilation,
+        # we need to compile it before loading weights to match the state dict structure
+        if self.device.type == 'cuda' and is_compiled_state_dict:
+            print("Running on CUDA with compiled model checkpoint - compiling model before loading weights")
+            model = model.to(self.device)
+            model = torch.compile(model)
+        else:
+            model = model.to(self.device)
+            
+            # If the state dict has compiled keys but we're not compiling,
+            # remove the "_orig_mod." prefix from the keys
+            if is_compiled_state_dict:
+                print("Removing '_orig_mod.' prefix from state dict keys for non-compiled model loading")
+                cleaned_state_dict = {}
+                for key, value in model_state_dict.items():
+                    if key.startswith('_orig_mod.'):
+                        cleaned_state_dict[key[len('_orig_mod.'):]] = value
+                    else:
+                        cleaned_state_dict[key] = value
+                model_state_dict = cleaned_state_dict
+        
+        # Load state dict and set model to eval mode
+        model.load_state_dict(model_state_dict)
         model.eval()
         
         print(f"Model loaded successfully with configuration: {model_config.get('model_name', 'unknown')}")
