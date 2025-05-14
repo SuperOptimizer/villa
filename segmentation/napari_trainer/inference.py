@@ -336,7 +336,12 @@ def sliding_window_inference(model, data, patch_size, overlap=0.5, batch_size=1,
                         start_positions[0]:start_positions[0] + patch_size[0], 
                         start_positions[1]:start_positions[1] + patch_size[1]]
         
-        patch = A.Normalize(normalization="min_max")
+        # Apply min-max normalization (scale to 0-1)
+        min_val = torch.min(patch)
+        max_val = torch.max(patch)
+        if max_val > min_val:
+            patch = (patch - min_val) / (max_val - min_val)
+            
         # Store patch and position
         patches.append(patch)
         positions.append(start_positions)

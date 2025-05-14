@@ -193,9 +193,19 @@ class NapariDataset(Dataset):
         first_target_name = list(self.target_volumes.keys())[0]
         img_arr = self.target_volumes[first_target_name][vol_idx]['data']['data']
         
-        img_arr = A.Normalize(normalization="min_max")
+        # Extract image patch
+        if is_2d:
+            img_patch = img_arr[y:y+dy, x:x+dx]
+        else:
+            img_patch = img_arr[z:z+dz, y:y+dy, x:x+dx]
         
-        img_patch = np.ascontiguousarray(img_arr).copy()
+        # Apply min-max normalization (scale to 0-1)
+        min_val = np.min(img_patch)
+        max_val = np.max(img_patch)
+        if max_val > min_val:
+            img_patch = (img_patch - min_val) / (max_val - min_val)
+        
+        img_patch = np.ascontiguousarray(img_patch).copy()
         
         # Now extract all label patches
         label_patches = {}
