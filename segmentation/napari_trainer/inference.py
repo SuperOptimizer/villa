@@ -8,6 +8,7 @@ import json
 from model.build_network_from_config import NetworkFromConfig
 import torch.nn as nn
 from tqdm.auto import tqdm
+import albumentations as A 
 
 class ModelLoader:
     """Class to load a model from a checkpoint with its configuration"""
@@ -271,16 +272,12 @@ def sliding_window_inference(model, data, patch_size, overlap=0.5, batch_size=1,
     # Create gaussian window for blending
     gaussian_window = create_gaussian_window(patch_size, device=device)
     
-    # Get the task names from the model (keys of the output dictionary)
-    # Use a dummy forward pass to get the keys
     with torch.no_grad():
         dummy_input = torch.zeros((1, data.shape[1], *patch_size), device=device)
         dummy_output = model(dummy_input)
         task_names = list(dummy_output.keys())
-    
-    # Initialize aggregation variables for each task
+
     for task_name in task_names:
-        # Get the number of output channels for this task
         num_classes = dummy_output[task_name].shape[1]
         if is_3d:
             outputs[task_name] = torch.zeros((1, num_classes, *spatial_dims), device=device)
@@ -289,7 +286,6 @@ def sliding_window_inference(model, data, patch_size, overlap=0.5, batch_size=1,
             outputs[task_name] = torch.zeros((1, num_classes, *spatial_dims), device=device)
             importance_maps[task_name] = torch.zeros((1, 1, *spatial_dims), device=device)
     
-    # Generate all patch indices
     if is_3d:
         total_patches = num_patches[0] * num_patches[1] * num_patches[2]
         if verbose:
@@ -311,7 +307,6 @@ def sliding_window_inference(model, data, patch_size, overlap=0.5, batch_size=1,
         else:
             patch_iterator = [(h, w) for h in range(num_patches[0]) for w in range(num_patches[1])]
     
-    # Process all patches
     patches = []
     positions = []
     patch_count = 0
@@ -341,6 +336,7 @@ def sliding_window_inference(model, data, patch_size, overlap=0.5, batch_size=1,
                         start_positions[0]:start_positions[0] + patch_size[0], 
                         start_positions[1]:start_positions[1] + patch_size[1]]
         
+        patch = A.Normalize(normalization="min_max")
         # Store patch and position
         patches.append(patch)
         positions.append(start_positions)
@@ -354,9 +350,27 @@ def sliding_window_inference(model, data, patch_size, overlap=0.5, batch_size=1,
             # Stack patches into batch
             batch = torch.cat(patches, dim=0)
             
+            if not hasattr(torch, 'no_op'):
+                # Define a simple no-op context manager if not available
+                class NullContextManager:
+                    def __enter__(self):
+                        return self
+                    
+                    def __exit__(self, exc_type, exc_val, exc_tb):
+                        pass
+                
+                torch.no_op = lambda: NullContextManager()
+            
+            context = (
+                    torch.amp.autocast(device.type) if device.type == 'cuda' 
+                    else torch.amp.autocast('cpu') if device.type == 'cpu' 
+                    else torch.no_op() if device.type == 'mps' 
+                    else torch.no_op()
+                )
+            
             # Forward pass
-            with torch.no_grad():
-                batch_output = model(batch)
+            with torch.no_grad(), context:
+                batch_output = model(batch) 
             
             # Put predictions back into output tensor with gaussian blending
             for b_idx in range(len(patches)):
@@ -440,8 +454,7 @@ def run_inference(viewer, layer, checkpoint_path, patch_size=None, overlap=0.25,
             config_manager = _config_manager
             print("Using global config manager from main_window")
     except (ImportError, AttributeError):
-        # Fall back to using the wrapper in inference.py
-        print("No global config manager available, using default config")
+        print("No global config manager available")
     
     # Load the model with the config manager if available
     loader = ModelLoader(checkpoint_path, config_manager=config_manager)
@@ -514,8 +527,8 @@ def run_inference(viewer, layer, checkpoint_path, patch_size=None, overlap=0.25,
             new_layer = viewer.add_image(
                 result,
                 name=layer_name,
-                colormap='magma',
-                blending='additive'
+                colormap='gray',
+                blending='translucent'
             )
             new_layers.append(new_layer)
     except Exception as e:

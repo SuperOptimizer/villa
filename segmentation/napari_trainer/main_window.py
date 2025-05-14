@@ -2,6 +2,8 @@ import napari
 from magicgui import magicgui, widgets
 from magicclass import magicclass, field, vfield, FieldGroup
 import napari.viewer
+import scipy.ndimage
+
 from napari_inference import inference_widget
 import cv2
 from PIL import Image
@@ -375,6 +377,7 @@ def run_training():
     # Start training
     print("Starting training...")
     trainer.train()
+    
 
 
 

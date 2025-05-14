@@ -268,8 +268,6 @@ class BaseTrainer:
         if model.save_config:
             self.mgr.save_config()
 
-
-
         start_epoch = 0
 
         # Create base checkpoint directory if it doesn't exist

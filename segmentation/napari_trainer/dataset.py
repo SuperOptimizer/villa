@@ -193,28 +193,9 @@ class NapariDataset(Dataset):
         first_target_name = list(self.target_volumes.keys())[0]
         img_arr = self.target_volumes[first_target_name][vol_idx]['data']['data']
         
-        if is_2d:
-            # Extract and process 2D image patch
-            img_patch = img_arr[y:y+dy, x:x+dx]
-            img_patch = img_patch.astype(np.float32)
-            img_patch = pad_or_crop_2d(img_patch, (dy, dx))
-            
-            # Z-score normalization
-            from scipy import stats
-            img_patch = stats.zscore(img_patch, axis=None)
-            img_patch = np.nan_to_num(img_patch)
-        else:
-            # Extract and process 3D image patch
-            img_patch = img_arr[z:z+dz, y:y+dy, x:x+dx]
-            img_patch = img_patch.astype(np.float32)
-            img_patch = pad_or_crop_3d(img_patch, (dz, dy, dx))
-            
-            # Z-score normalization
-            from scipy import stats
-            img_patch = stats.zscore(img_patch, axis=None)
-            img_patch = np.nan_to_num(img_patch)
+        img_arr = A.Normalize(normalization="min_max")
         
-        img_patch = np.ascontiguousarray(img_patch).copy()
+        img_patch = np.ascontiguousarray(img_arr).copy()
         
         # Now extract all label patches
         label_patches = {}
