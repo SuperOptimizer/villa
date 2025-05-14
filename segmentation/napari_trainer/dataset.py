@@ -263,9 +263,11 @@ class NapariDataset(Dataset):
             # Store the label patch with its target name
             label_patches[t_name] = label_patch
         
-        # Apply transformations to both image and all labels at once
+        # Apply transformations to both image and all labels 
         if is_2d and self.image_transforms:
             # For 2D, use albumentations transformations
+            # Albumentations automatically applies geometric transforms to masks, 
+            # and pixel-level transforms only to images
             transform_input = {"image": img_patch}
             
             # Add all label patches to the transformation input
@@ -284,11 +286,25 @@ class NapariDataset(Dataset):
                 mask_key = f"mask_{t_name}"
                 label_patches[t_name] = transformed[mask_key]
         elif not is_2d and self.volume_transforms:
-            # For 3D, use volume transformations if provided
+            # For 3D data, we need special handling to ensure that geometric transforms
+            # are applied consistently to both the image and label volumes
+            
+            # Currently, we apply transformations only to the image volumes
+            # but in the future this should be extended to apply geometric
+            # transformations to labels as well
+            
+            # TODO: Implement proper 3D synchronized transformations for
+            # both volumes and labels using a similar approach to how
+            # Albumentations does this for 2D data with additional_targets
+            
             vol_augmented = self.volume_transforms(volume=img_patch)
             img_patch = vol_augmented["volume"]
-            # Note: 3D label transformations would need to be handled separately
-            # if needed in the future, as it's not part of the current implementation
+            
+            # Warning: Currently 3D transforms are not synchronized between
+            # images and labels. This means any geometric transforms in
+            # volume_transforms will create misalignment between images and labels.
+            # Until this is implemented, volume_transforms should only include
+            # intensity transformations, not geometric ones.
         
         # Add channel dimension to image and convert to tensor
         if is_2d:

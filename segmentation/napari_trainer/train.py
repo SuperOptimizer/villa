@@ -69,22 +69,26 @@ class BaseTrainer:
         return model
 
     def _compose_augmentations(self):
+        # Get all target names to create additional_targets dictionary
+        additional_targets = {}
+        for t_name in self.mgr.targets.keys():
+            additional_targets[f'mask_{t_name}'] = 'mask'
 
         # --- Augmentations (2D only) ---
         image_transforms = A.Compose([
-            # Intensity transformations
+            # Intensity transformations (applied to image only)
             A.OneOf([
                 A.RandomBrightnessContrast(),
                 A.Illumination(),
             ], p=0.5),
 
-            # Noise transformations
+            # Noise transformations (applied to image only)
             A.OneOf([
                 A.GaussNoise(),
                 A.MultiplicativeNoise(),
             ], p=0.5),
 
-            # Blur and quality transformations
+            # Blur and quality transformations (applied to image only)
             A.OneOf([
                 A.MotionBlur(),
                 A.Defocus(),
@@ -92,13 +96,13 @@ class BaseTrainer:
                 A.GaussianBlur(),
             ], p=0.5),
             
-            # Spatial transformations
+            # Spatial/Geometric transformations (applied to both image and masks)
             A.OneOf([
                 A.ElasticTransform(),
                 A.GridDistortion(),
                 A.OpticalDistortion(),
             ], p=0.5),
-        ], p=1.0)  # Always apply the composition
+        ], additional_targets=additional_targets, p=1.0)  # Always apply the composition
 
         return image_transforms
 
