@@ -1,5 +1,5 @@
 import napari
-from magicgui import magicgui
+from magicgui import magicgui, widgets
 from magicclass import magicclass, field, vfield, FieldGroup
 import napari.viewer
 from napari_inference import inference_widget
@@ -50,7 +50,7 @@ class ConfigManager:
         
         # Training setup
         self.train_patch_size = tuple(self.tr_configs.get("patch_size", [192, 192, 192]))
-        self.in_channels = 1 
+        self.in_channels = 1
 
         self.model_name = self.tr_info.get("model_name", "Model")
         self.autoconfigure = bool(self.tr_info.get("autoconfigure", True))
@@ -79,15 +79,35 @@ class ConfigManager:
         # Dataset config
         self.min_labeled_ratio = float(self.dataset_config.get("min_labeled_ratio", 0.10))
         self.min_bbox_percent = float(self.dataset_config.get("min_bbox_percent", 0.95))
-        self.targets = self.dataset_config.get("targets", {})
+        
+        # Only initialize targets from config if not already created dynamically
+        if not hasattr(self, 'targets') or not self.targets:
+            self.targets = self.dataset_config.get("targets", {})
+            if self.verbose and self.targets:
+                print(f"Loaded targets from config: {self.targets}")
 
         # model config
         self.use_timm = self.model_config.get("use_timm", False)
         self.timm_encoder_class = self.model_config.get("timm_encoder_class", None)
+        
+        # Auto-detect dimensionality from patch_size and set appropriate convolution
+        if len(self.train_patch_size) == 2:
+            # Set 2D convolutions for 2D data
+            self.model_config["conv_op"] = "nn.Conv2d"
+            # Make sure spacing dimension matches patch size dimension
+            self.spacing = [1] * len(self.train_patch_size)
+            if self.verbose:
+                print(f"Detected 2D patch size {self.train_patch_size}, setting conv_op to nn.Conv2d")
+        else:
+            # Default to 3D convolutions for 3D data
+            self.model_config["conv_op"] = "nn.Conv3d"
+            # Make sure spacing dimension matches patch size dimension
+            self.spacing = [1] * len(self.train_patch_size)
+            if self.verbose:
+                print(f"Detected 3D patch size {self.train_patch_size}, setting conv_op to nn.Conv3d")
 
         # channel configuration
         self.in_channels = 1
-        self.spacing = [1, 1, 1]
         self.out_channels = ()
         for target_name, task_info in self.targets.items():
             # Look for either 'out_channels' or 'channels' in the task info
@@ -112,7 +132,8 @@ class ConfigManager:
     def get_images(self):
         """
         Returns image/label pairs as np arrays formatted for the dataset.
-        Labels must be named either {image}_label or {image}_labels
+        Labels are expected to be named {image_name}_{suffix} where suffix is a unique identifier.
+        For each image layer, multiple label layers can be associated.
         
         Returns
         -------
@@ -124,86 +145,139 @@ class ConfigManager:
         if viewer is None:
             raise ValueError("No active viewer found")
         
-        # Initialize lists to store paired images and labels
-        images = []
-        labels = []
+        # Get all layers for faster lookup
+        all_layers = list(viewer.layers)
+        layer_names = [layer.name for layer in all_layers]
         
-        # Get all layer names for faster lookup
-        layer_names = [layer.name for layer in viewer.layers]
+        # Find image layers
+        image_layers = [layer for layer in all_layers if isinstance(layer, napari.layers.Image)]
         
-        # Find image layers and their corresponding label layers
-        image_layers = [layer for layer in viewer.layers if isinstance(layer, napari.layers.Image)]
+        if not image_layers:
+            raise ValueError("No image layers found in the viewer")
         
-        # Check that each image has a corresponding label layer
+        # Build targets dictionary based on naming patterns
+        self.targets = {}
+        result = {}
+        
         for image_layer in image_layers:
             image_name = image_layer.name
-            label_name = f"{image_name}_label"
             
             if self.verbose:
-                print(f"Looking for label layer matching {image_name}")
+                print(f"Processing image layer: {image_name}")
                 print(f"Available layers: {layer_names}")
             
-            # Find matching label layer
-            label_layer = None
-            for layer in viewer.layers:
-                if layer.name == label_name or layer.name == f"{image_name}_labels":
-                    label_layer = layer
+            # Find all label layers that correspond to this image layer
+            # Pattern: image_name_suffix
+            matching_label_layers = []
+            
+            for layer in all_layers:
+                if (isinstance(layer, napari.layers.Labels) and 
+                    layer.name.startswith(f"{image_name}_")):
+                    suffix = layer.name[len(image_name) + 1:]  # Extract suffix after image_name_
                     if self.verbose:
-                        print(f"Found matching label layer: {layer.name}")
-                    break
-                    
-            if label_layer is None:
-                raise ValueError(f"Cannot locate matching label for {image_name}, available layers: {layer_names}")
+                        print(f"Found matching label layer: {layer.name} with suffix: {suffix}")
+                    matching_label_layers.append((suffix, layer))
             
-            # Add the pair to our lists
-            images.append(deepcopy(image_layer.data))
-            labels.append(deepcopy(label_layer.data))
-    
-        if self.verbose: 
-            for im_idx, img in enumerate(images):
-                print(f"image: {im_idx}")
-                print(f"dtype: {img.dtype}")
-                print(f"shape: {img.shape}")
+            if not matching_label_layers:
+                if self.verbose:
+                    print(f"No matching label layers found for image: {image_name}")
+                continue
+            
+            # For each matching label layer, create a target
+            for target_suffix, label_layer in matching_label_layers:
+                # Use the suffix as the target name
+                target_name = target_suffix
                 
-            for l_idx, lbl in enumerate(labels):
-                print(f"label: {l_idx}")
-                print(f"dtype: {lbl.dtype}")
-                print(f"shape: {lbl.shape}")
-        
-        # Create the formatted dictionary compatible with dataset.py
-        result = {}
-        for target_name, task_info in self.targets.items():
-            # Look for either 'out_channels' or 'channels' in the task info
-            if 'out_channels' in task_info:
-                out_channels = task_info['out_channels']
-            elif 'channels' in task_info:
-                out_channels = task_info['channels']
-            else:
-                raise ValueError(f"Target {target_name} is missing channels specification")
-            
-            volumes = []
-            for i in range(len(images)):
-                volumes.append({
+                # Create the target if it doesn't exist
+                if target_name not in self.targets:
+                    self.targets[target_name] = {"out_channels": 1, "loss_fn": "BCEDiceLoss"}
+                    result[target_name] = []
+                
+                # Append the data for this target
+                result[target_name].append({
                     'data': {
-                        'data': images[i],
-                        'label': labels[i]
+                        'data': deepcopy(image_layer.data),
+                        'label': deepcopy(label_layer.data)
                     },
-                    'out_channels': out_channels,
-                    'name': f"volume_{i}"
+                    'out_channels': self.targets[target_name]["out_channels"],
+                    'name': f"{image_name}_{target_name}"
                 })
+                
+                if self.verbose:
+                    print(f"Added target {target_name} with data from {image_name} and {label_layer.name}")
+        
+        if not self.targets:
+            raise ValueError("No valid image-label pairs found. Label layers should be named as image_name_suffix.")
+        
+        # Update out_channels in ConfigManager
+        self.out_channels = tuple(task_info["out_channels"] for task_info in self.targets.values())
+        
+        # Check the dimensionality of the data to ensure it matches with the current configuration
+        if result:
+            # Get the first target's first item to check dimensionality
+            first_target = next(iter(result.values()))[0]
+            img_data = first_target['data']['data']
+            data_is_2d = len(img_data.shape) == 2
+            config_is_2d = len(self.train_patch_size) == 2
             
-            result[target_name] = volumes
+            # If there's a mismatch between data and configuration, update the configuration
+            if data_is_2d != config_is_2d:
+                if data_is_2d:
+                    # Data is 2D but config is 3D
+                    if self.verbose:
+                        print(f"Data is 2D but config is for 3D. Updating conv_op to nn.Conv2d")
+                    # Set 2D convolutions for 2D data
+                    self.model_config["conv_op"] = "nn.Conv2d"
+                    # Keep existing patch_size dimensions but adapt to 2D
+                    if len(self.train_patch_size) > 2:
+                        self.train_patch_size = self.train_patch_size[-2:]
+                        self.tr_configs["patch_size"] = list(self.train_patch_size)
+                        # Update spacing to match patch size dimensions
+                        self.spacing = [1] * len(self.train_patch_size)
+                        if self.verbose:
+                            print(f"Adjusted patch_size to {self.train_patch_size} for 2D data")
+                            print(f"Updated spacing to {self.spacing}")
+                else:
+                    # Data is 3D but config is 2D
+                    if self.verbose:
+                        print(f"Data is 3D but config is for 2D. Updating conv_op to nn.Conv3d")
+                    # Set 3D convolutions for 3D data
+                    self.model_config["conv_op"] = "nn.Conv3d"
+                    # Update spacing to match 3D dimensions
+                    self.spacing = [1, 1, 1]
+                    if self.verbose:
+                        print(f"Updated spacing to {self.spacing}")
+        
+        if self.verbose:
+            print(f"Final targets dictionary: {self.targets}")
+            print(f"Final output channels: {self.out_channels}")
                 
         return result
 
     def save_config(self):
+        # Make a deep copy of existing configs to avoid modifying the originals
+        tr_setup = deepcopy(self.tr_info)
+        tr_config = deepcopy(self.tr_configs)
+        model_config = deepcopy(self.model_config)
+        dataset_config = deepcopy(self.dataset_config)
+        inference_config = deepcopy(self.inference_config)
+        
+        # Ensure the targets from our dynamic layer detection are saved
+        if hasattr(self, 'targets') and self.targets:
+            dataset_config["targets"] = deepcopy(self.targets)
+            
+            # Also update model_config with the targets for inference
+            model_config["targets"] = deepcopy(self.targets)
+            
+            if self.verbose:
+                print(f"Saving targets to config: {self.targets}")
         
         combined_config = {
-            "tr_setup": self.tr_info,
-            "tr_config": self.tr_configs,
-            "model_config": self.model_config,
-            "dataset_config": self.dataset_config,
-            "inference_config": self.inference_config,
+            "tr_setup": tr_setup,
+            "tr_config": tr_config,
+            "model_config": model_config,
+            "dataset_config": dataset_config,
+            "inference_config": inference_config,
         }
 
         original_stem = self._config_path.stem  # e.g. "my_config"
@@ -241,8 +315,9 @@ class ConfigManager:
             print(f"  {k}: {v}")
         print("____________________________________________")
 
-# Global variable to hold the config manager instance
+# Global variables to hold important references
 _config_manager = None
+_loss_fn_widget = None
 
 # Function to pick config file, with callback to load it into ConfigManager
 @magicgui(filenames={"label": "select config file", "filter": "*.yaml"},
@@ -259,11 +334,18 @@ def filespicker(filenames: Sequence[Path]) -> Sequence[Path]:
 def run_training():
     """
     Start training with the currently loaded configuration and visible layers.
-    This will use images and their corresponding label layers to train the model.
     
-    Example: If you have an image layer "16" and a label layer "16_labels", 
-    this function will properly create the dataset, find valid patches,
-    and then run training.
+    Label Naming Convention:
+    For each image layer, you can have multiple label layers that will be treated as separate targets.
+    Labels must be named as: {image_name}_{target_name}
+    
+    Examples:
+    - If you have an image layer "32" and label layers "32_1" and "32_2", 
+      the system will create targets named "1" and "2".
+    - If you have multiple image layers like "image1" and "image2" with corresponding
+      label layers "image1_ink" and "image2_ink", the system will create a target named "ink".
+    
+    All labels with the same suffix (target name) will be grouped together for training.
     """
     if _config_manager is None:
         print("Error: No configuration loaded. Please load a config file first.")
@@ -272,11 +354,17 @@ def run_training():
     print("Starting training process...")
     print("Using images and labels from current viewer")
     
+    # First, get images and labels from the current viewer
+    try:
+        # This will populate the targets
+        _config_manager.get_images()
+    except Exception as e:
+        print(f"Error detecting images and labels: {e}")
+        raise
+    
     # Verify targets exist in the config
     if not hasattr(_config_manager, 'targets') or not _config_manager.targets:
-        print("Warning: No targets defined in configuration. Adding default target.")
-        # Add a default target if none exists
-        _config_manager.targets = {"ink": {"out_channels": 1, "loss_fn": "BCEDiceLoss"}}
+        raise ValueError("No targets defined. Please make sure you have label layers named {image_name}_{target_name} in the viewer.")
     
     # Import BaseTrainer here to avoid circular imports
     from train import BaseTrainer
@@ -289,17 +377,22 @@ def run_training():
     trainer.train()
 
 
+
 if __name__ == "__main__":
     viewer = napari.Viewer()
-    
+
     # Create config manager and store in global variable
     _config_manager = ConfigManager(verbose=True)
-    
+
     # Create the file picker widget
     file_picker_widget = filespicker
-    
-    viewer.window.add_dock_widget(file_picker_widget, area='right')
-    viewer.window.add_dock_widget(run_training, area='right')
-    viewer.window.add_dock_widget(inference_widget, area='right')
-    
+
+    # Add widgets to the viewer
+    viewer.window.add_dock_widget(file_picker_widget, area='right', name="Config File")
+
+
+    # Add training and inference widgets
+    viewer.window.add_dock_widget(run_training, area='right', name="Training")
+    viewer.window.add_dock_widget(inference_widget, area='right', name="Inference")
+
     napari.run()

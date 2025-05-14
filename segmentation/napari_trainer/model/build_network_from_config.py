@@ -51,18 +51,56 @@ class NetworkFromConfig(nn.Module):
         # Determine op_dims from patch_size
         if len(self.patch_size) == 2:
             self.op_dims = 2
+            print(f"Using 2D operations based on patch_size {self.patch_size}")
         elif len(self.patch_size) == 3:
             self.op_dims = 3
+            print(f"Using 3D operations based on patch_size {self.patch_size}")
         else:
-            raise ValueError("Patch size must have either 2 or 3 dimensions!")
+            raise ValueError(f"Patch size must have either 2 or 3 dimensions! Got {len(self.patch_size)}D: {self.patch_size}")
+        
+        # Make sure conv_op string matches op_dims
         if isinstance(self.conv_op, str):
-            self.conv_op = nn.Conv2d if self.op_dims == 2 else nn.Conv3d
+            expected_2d = "Conv2d" in self.conv_op
+            expected_3d = "Conv3d" in self.conv_op
+            
+            if expected_2d and self.op_dims != 2:
+                raise ValueError(f"Model config specifies 2D operations ({self.conv_op}) but patch_size {self.patch_size} is {self.op_dims}D")
+            
+            if expected_3d and self.op_dims != 3:
+                raise ValueError(f"Model config specifies 3D operations ({self.conv_op}) but patch_size {self.patch_size} is {self.op_dims}D")
+            
+        # Explicitly set the correct dimension operations based on op_dims
+        if isinstance(self.conv_op, str):
+            if self.op_dims == 2:
+                self.conv_op = nn.Conv2d
+                print("Using 2D convolutions (nn.Conv2d)")
+            else:
+                self.conv_op = nn.Conv3d
+                print("Using 3D convolutions (nn.Conv3d)")
+                
         if isinstance(self.pool_op, str):
-            self.pool_op = nn.AvgPool2d if self.op_dims == 2 else nn.AvgPool3d
+            if self.op_dims == 2:
+                self.pool_op = nn.AvgPool2d
+                print("Using 2D pooling (nn.AvgPool2d)")
+            else:
+                self.pool_op = nn.AvgPool3d
+                print("Using 3D pooling (nn.AvgPool3d)")
+                
         if isinstance(self.norm_op, str):
-            self.norm_op = nn.InstanceNorm2d if self.op_dims == 2 else nn.InstanceNorm3d
+            if self.op_dims == 2:
+                self.norm_op = nn.InstanceNorm2d
+                print("Using 2D normalization (nn.InstanceNorm2d)")
+            else:
+                self.norm_op = nn.InstanceNorm3d
+                print("Using 3D normalization (nn.InstanceNorm3d)")
+                
         if isinstance(self.dropout_op, str):
-            self.dropout_op = nn.Dropout2d if self.op_dims == 2 else nn.Dropout3d
+            if self.op_dims == 2:
+                self.dropout_op = nn.Dropout2d
+                print("Using 2D dropout (nn.Dropout2d)")
+            else:
+                self.dropout_op = nn.Dropout3d
+                print("Using 3D dropout (nn.Dropout3d)")
         if self.nonlin in ["nn.LeakyReLU", "LeakyReLU"]:
             self.nonlin = nn.LeakyReLU
             self.nonlin_kwargs = {"negative_slope": 1e-2, "inplace": True}
@@ -111,6 +149,10 @@ class NetworkFromConfig(nn.Module):
             # Set default kernel sizes and pool kernel sizes based on dimensionality
             default_kernel = [[3, 3]] * self.num_stages if self.op_dims == 2 else [[3, 3, 3]] * self.num_stages
             default_pool = [[1, 1]] * self.num_stages if self.op_dims == 2 else [[1, 1, 1]] * self.num_stages
+            default_strides = [[1, 1]] * self.num_stages if self.op_dims == 2 else [[1, 1, 1]] * self.num_stages
+            
+            print(f"Using {'2D' if self.op_dims == 2 else '3D'} kernel defaults: {default_kernel[0]}")
+            print(f"Using {'2D' if self.op_dims == 2 else '3D'} pool defaults: {default_pool[0]}")
             
             self.kernel_sizes = model_config.get("kernel_sizes", default_kernel)
             self.pool_op_kernel_sizes = model_config.get("pool_op_kernel_sizes", default_pool)
@@ -122,25 +164,67 @@ class NetworkFromConfig(nn.Module):
                 if len(self.kernel_sizes[i]) != self.op_dims:
                     print(f"WARNING: Kernel size at stage {i} does not match input dimensionality. Fixing...")
                     if self.op_dims == 2:
-                        self.kernel_sizes[i] = self.kernel_sizes[i][:2] if len(self.kernel_sizes[i]) > 2 else [3, 3]
+                        # Convert 3D kernels to 2D by taking first two dimensions
+                        if len(self.kernel_sizes[i]) > 2:
+                            print(f"  Converting 3D kernel {self.kernel_sizes[i]} to 2D kernel {self.kernel_sizes[i][:2]}")
+                            self.kernel_sizes[i] = self.kernel_sizes[i][:2]
+                        else:
+                            # Handle case of incomplete specification
+                            print(f"  Setting default 2D kernel [3,3] for stage {i}")
+                            self.kernel_sizes[i] = [3, 3]
                     else:
-                        self.kernel_sizes[i] = self.kernel_sizes[i] + [3] if len(self.kernel_sizes[i]) == 2 else [3, 3, 3]
+                        # Convert 2D kernels to 3D by adding a dimension
+                        if len(self.kernel_sizes[i]) == 2:
+                            print(f"  Converting 2D kernel {self.kernel_sizes[i]} to 3D kernel {self.kernel_sizes[i] + [3]}")
+                            self.kernel_sizes[i] = self.kernel_sizes[i] + [3]
+                        else:
+                            # Handle case of incomplete specification
+                            print(f"  Setting default 3D kernel [3,3,3] for stage {i}")
+                            self.kernel_sizes[i] = [3, 3, 3]
                         
             for i in range(len(self.strides)):
                 if len(self.strides[i]) != self.op_dims:
                     print(f"WARNING: Stride at stage {i} does not match input dimensionality. Fixing...")
                     if self.op_dims == 2:
-                        self.strides[i] = self.strides[i][:2] if len(self.strides[i]) > 2 else [1, 1]
+                        # Convert 3D strides to 2D by taking first two dimensions
+                        if len(self.strides[i]) > 2:
+                            print(f"  Converting 3D stride {self.strides[i]} to 2D stride {self.strides[i][:2]}")
+                            self.strides[i] = self.strides[i][:2]
+                        else:
+                            # Handle case of incomplete specification
+                            print(f"  Setting default 2D stride [1,1] for stage {i}")
+                            self.strides[i] = [1, 1]
                     else:
-                        self.strides[i] = self.strides[i] + [1] if len(self.strides[i]) == 2 else [1, 1, 1]
+                        # Convert 2D strides to 3D by adding a dimension
+                        if len(self.strides[i]) == 2:
+                            print(f"  Converting 2D stride {self.strides[i]} to 3D stride {self.strides[i] + [1]}")
+                            self.strides[i] = self.strides[i] + [1]
+                        else:
+                            # Handle case of incomplete specification
+                            print(f"  Setting default 3D stride [1,1,1] for stage {i}")
+                            self.strides[i] = [1, 1, 1]
                         
             for i in range(len(self.pool_op_kernel_sizes)):
                 if len(self.pool_op_kernel_sizes[i]) != self.op_dims:
                     print(f"WARNING: Pool kernel size at stage {i} does not match input dimensionality. Fixing...")
                     if self.op_dims == 2:
-                        self.pool_op_kernel_sizes[i] = self.pool_op_kernel_sizes[i][:2] if len(self.pool_op_kernel_sizes[i]) > 2 else [1, 1]
+                        # Convert 3D pool kernels to 2D by taking first two dimensions
+                        if len(self.pool_op_kernel_sizes[i]) > 2:
+                            print(f"  Converting 3D pool kernel {self.pool_op_kernel_sizes[i]} to 2D pool kernel {self.pool_op_kernel_sizes[i][:2]}")
+                            self.pool_op_kernel_sizes[i] = self.pool_op_kernel_sizes[i][:2]
+                        else:
+                            # Handle case of incomplete specification
+                            print(f"  Setting default 2D pool kernel [1,1] for stage {i}")
+                            self.pool_op_kernel_sizes[i] = [1, 1]
                     else:
-                        self.pool_op_kernel_sizes[i] = self.pool_op_kernel_sizes[i] + [1] if len(self.pool_op_kernel_sizes[i]) == 2 else [1, 1, 1]
+                        # Convert 2D pool kernels to 3D by adding a dimension
+                        if len(self.pool_op_kernel_sizes[i]) == 2:
+                            print(f"  Converting 2D pool kernel {self.pool_op_kernel_sizes[i]} to 3D pool kernel {self.pool_op_kernel_sizes[i] + [1]}")
+                            self.pool_op_kernel_sizes[i] = self.pool_op_kernel_sizes[i] + [1]
+                        else:
+                            # Handle case of incomplete specification
+                            print(f"  Setting default 3D pool kernel [1,1,1] for stage {i}")
+                            self.pool_op_kernel_sizes[i] = [1, 1, 1]
 
         # Derive stem channels from first feature map if not provided.
         self.stem_n_channels = self.features_per_stage[0]

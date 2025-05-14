@@ -59,89 +59,41 @@ def inference_widget(
         return
     
     try:
-        # Try to access the global config manager from main_window
+        # Get data dimensionality
+        image_data = layer.data
+        is_3d = image_data.ndim == 3 and image_data.shape[0] > 1
+        data_dims = 3 if is_3d else 2
+        print(f"Input data is {data_dims}D with shape {image_data.shape}")
+        
+        # Try to access the global config manager
         config_manager = None
         try:
             from main_window import _config_manager
             if _config_manager is not None:
                 config_manager = _config_manager
-                print("Using global config manager from main_window")
         except (ImportError, AttributeError):
-            # Fall back to using the wrapper in inference.py
-            print("No global config manager available, using default config")
+            pass
         
-        # Load the model and get config, passing the config_manager if available
+        # Load the model
         model_loader = ModelLoader(model_path, config_manager=config_manager)
+        model, model_config = model_loader.load()
         
-        # Check for config files in various locations
-        checkpoint_path = Path(model_path)
-        
-        # 1. Look in the same directory as the checkpoint
-        config_path = checkpoint_path.with_name(checkpoint_path.stem + "_config.json")
-        
-        # 2. Look in parent directory if we're in a model-specific directory
-        if not config_path.exists():
-            model_name = checkpoint_path.parent.name
-            parent_config = checkpoint_path.parent.parent / f"{model_name}_config.json"
-            if parent_config.exists():
-                config_path = parent_config
-                print(f"Found config in parent directory: {config_path}")
-        
-        # 3. Check if config is embedded in the checkpoint itself
-        checkpoint = None
+        # Get patch size from model config
         patch_size = None
-        if not config_path.exists():
-            try:
-                # Load the checkpoint to check for embedded config
-                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                checkpoint = torch.load(model_path, map_location=device)
-                if 'model_config' in checkpoint:
-                    print("Found configuration in checkpoint")
-                    # Extract patch size directly from the checkpoint
-                    if 'train_patch_size' in checkpoint['model_config']:
-                        patch_size = checkpoint['model_config']['train_patch_size']
-                        print(f"Using patch size from checkpoint: {patch_size}")
-                        # For 3D patch sizes, use the last 2 dimensions for 2D inference
-                        if len(patch_size) == 3:
-                            patch_size = tuple(patch_size[1:])  # Use y, x dimensions
-            except Exception as e:
-                print(f"Error loading checkpoint to check for config: {e}")
-                # We'll continue with config file approach
-        
-        # Process config file if it exists
-        if config_path.exists():
-            try:
-                import json
-                with open(config_path, 'r') as f:
-                    config_data = json.load(f)
-                
-                # Extract patch size from config (handles both model.train_patch_size and inference.patch_size)
-                if 'model' in config_data and 'train_patch_size' in config_data['model']:
-                    patch_size = config_data['model']['train_patch_size']
-                elif 'train_patch_size' in config_data:
-                    patch_size = config_data['train_patch_size']
-                elif 'patch_size' in config_data:
-                    # Check for patch_size at the root level
-                    patch_size = config_data['patch_size']
-                elif 'inference' in config_data and 'patch_size' in config_data['inference']:
-                    patch_size = config_data['inference']['patch_size']
-                else:
-                    print("Patch size not found in config, using default (256, 256)")
-                    patch_size = (256, 256)
-            except Exception as e:
-                print(f"Error reading config file: {e}")
-                print("Using default patch size (256, 256)")
-                patch_size = (256, 256)
+        if 'patch_size' in model_config:
+            patch_size = tuple(model_config['patch_size'])
+            print(f"Using patch_size from model config: {patch_size}")
+        elif 'train_patch_size' in model_config:
+            patch_size = tuple(model_config['train_patch_size'])
+            print(f"Using train_patch_size from model config: {patch_size}")
         else:
-            print(f"No configuration file found")
-            print("Using default patch size (256, 256)")
-            patch_size = (256, 256)
-            
-            # For 3D patch sizes, use the last 2 dimensions for 2D inference
-            if len(patch_size) == 3:
-                patch_size = tuple(patch_size[1:])  # Use y, x dimensions
-            
-            print(f"Using patch size: {patch_size}")
+            # No defaults - require patch size in config
+            raise ValueError("No patch_size or train_patch_size found in model config. Cannot proceed with inference.")
+        
+        # SIMPLE DIMENSION CHECK: Model dims must match data dims
+        model_dims = len(patch_size)
+        if model_dims != data_dims:
+            raise ValueError(f"Model dimensionality ({model_dims}D) must match data dimensionality ({data_dims}D)")
         
         # Run inference using thread_worker to avoid UI blocking
         from napari.qt.threading import thread_worker

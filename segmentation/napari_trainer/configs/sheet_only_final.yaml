@@ -1,0 +1,47 @@
+tr_setup:
+  model_name: test_1638
+  autoconfigure: true
+  tr_val_split: 0.9
+  dilate_label: false
+  load_weights_only: false
+  ckpt_out_base: ./checkpoints
+tr_config:
+  optimizer: SGD
+  initial_lr: 0.001
+  weight_decay: 0.0001
+  gradient_accumulation: 1
+  num_dataloader_workers: 4
+  patch_size:
+  - 128
+  - 128
+  batch_size: 2
+  max_steps_per_epoch: 200
+  max_val_steps_per_epoch: 1
+  max_epoch: 5
+  ignore_label: null
+  loss_only_on_label: false
+model_config:
+  use_timm_encoder: false
+  timm_encoder_class: null
+  conv_op: nn.Conv2d
+  targets:
+    '1':
+      out_channels: 1
+      loss_fn: BCEDiceLoss
+dataset_config:
+  min_bbox_percent: 0.5
+  min_labeled_ratio: 0.5
+  targets:
+    '1':
+      out_channels: 1
+      loss_fn: BCEDiceLoss
+inference_config:
+  checkpoint_path: ./checkpoints/ckpt.pth
+  num_dataloader_workers: 4
+  overlap: 0.5
+  batch_size: 4
+  targets:
+  - ink:
+      channels: 1
+      activation: none
+      weight: 1

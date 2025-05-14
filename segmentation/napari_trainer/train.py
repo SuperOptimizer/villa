@@ -12,7 +12,12 @@ from dataset import NapariDataset
 from plotting import save_debug
 from model.build_network_from_config import NetworkFromConfig
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss, BCELoss
-from losses import MaskedCosineLoss, BCEDiceLoss, DC_and_CE_loss
+from losses import (
+    MaskedCosineLoss, BCEDiceLoss, DC_and_CE_loss, 
+    DC_and_BCE_loss, DC_and_topk_loss, SoftDiceLoss, 
+    GeneralizedDiceLoss, WeightedCrossEntropyLoss,
+    DC_SkelREC_and_CE_loss, TopKLoss, RobustCrossEntropyLoss
+)
 
 
 class BaseTrainer:
@@ -67,22 +72,33 @@ class BaseTrainer:
 
         # --- Augmentations (2D only) ---
         image_transforms = A.Compose([
+            # Intensity transformations
             A.OneOf([
-                A.RandomBrightnessContrast(),
-                A.Illumination(),
-            ], p=0.2),
+                A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3),
+                A.Illumination(p=1.0),
+            ], p=0.5),
 
+            # Noise transformations
             A.OneOf([
-                A.GaussNoise()
-            ], p=0.2),
+                A.GaussNoise(var_limit=(10.0, 50.0)),
+                A.MultiplicativeNoise(),
+            ], p=0.5),
 
+            # Blur and quality transformations
             A.OneOf([
-                A.MotionBlur(),
-                A.Defocus(),
-                A.Downscale(),
-                A.AdvancedBlur()
-            ], p=0.2),
-        ], p=1.0)
+                A.MotionBlur(blur_limit=7),
+                A.Defocus(radius=(3, 7)),
+                A.Downscale(scale_min=0.8, scale_max=0.99),
+                A.GaussianBlur(blur_limit=(3, 7)),
+            ], p=0.5),
+            
+            # Spatial transformations
+            A.OneOf([
+                A.ElasticTransform(alpha=1, sigma=50, alpha_affine=50),
+                A.GridDistortion(num_steps=5, distort_limit=0.3),
+                A.OpticalDistortion(distort_limit=0.3, shift_limit=0.1),
+            ], p=0.5),
+        ], p=1.0)  # Always apply the composition
 
         return image_transforms
 
@@ -103,11 +119,28 @@ class BaseTrainer:
         # possible target in the dictionary of targets . the easiest is probably
         # to add it in losses.loss, import it here, and then add it to the map
         LOSS_FN_MAP = {
-            "BCEDiceLoss": BCEDiceLoss,
+            # Basic losses
+            "BCELoss": BCELoss,
+            "BCEWithLogitsLoss": BCEWithLogitsLoss,
             "CrossEntropyLoss": CrossEntropyLoss,
             "MSELoss": MSELoss,
-            "MaskedCosineLoss": MaskedCosineLoss,
+            "RobustCrossEntropyLoss": RobustCrossEntropyLoss,
+            
+            # Segmentation-specific losses
+            "BCEDiceLoss": BCEDiceLoss,
+            "SoftDiceLoss": SoftDiceLoss,
+            "GeneralizedDiceLoss": GeneralizedDiceLoss,
+            "WeightedCrossEntropyLoss": WeightedCrossEntropyLoss,
+            "TopKLoss": TopKLoss,
+            
+            # Combined losses
             "DC_and_CE_loss": DC_and_CE_loss,
+            "DC_and_BCE_loss": DC_and_BCE_loss,
+            "DC_and_topk_loss": DC_and_topk_loss,
+            
+            # Special losses
+            "MaskedCosineLoss": MaskedCosineLoss,
+            "DC_SkelREC_and_CE_loss": DC_SkelREC_and_CE_loss,
         }
 
         loss_fns = {}
@@ -310,12 +343,18 @@ class BaseTrainer:
             model.train()
 
             train_running_losses = {t_name: 0.0 for t_name in self.mgr.targets}
-            pbar = tqdm(enumerate(train_dataloader), total=self.mgr.max_steps_per_epoch)
+            # Always run exactly max_steps_per_epoch iterations, regardless of dataset size
+            train_dataloader_iter = iter(train_dataloader)
+            pbar = tqdm(range(self.mgr.max_steps_per_epoch), total=self.mgr.max_steps_per_epoch)
             steps = 0
 
-            for i, data_dict in pbar:
-                if i >= self.mgr.max_steps_per_epoch:
-                    break
+            for i in pbar:
+                try:
+                    data_dict = next(train_dataloader_iter)
+                except StopIteration:
+                    # Reset iterator if we run out of data
+                    train_dataloader_iter = iter(train_dataloader)
+                    data_dict = next(train_dataloader_iter)
 
                 if epoch == 0 and i == 0:
                     for item in data_dict:
@@ -371,7 +410,7 @@ class BaseTrainer:
                 # backward
                 scaler.scale(total_loss).backward()
 
-                if (i + 1) % grad_accumulate_n == 0 or (i + 1) == len(train_dataloader):
+                if (i + 1) % grad_accumulate_n == 0:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
                     scaler.step(optimizer)
                     scaler.update()
@@ -390,6 +429,12 @@ class BaseTrainer:
 
             pbar.close()
 
+            # Apply any remaining gradients at the end of the epoch
+            if steps % grad_accumulate_n != 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
 
             for t_name in self.mgr.targets:
                 # Avoid division by zero
@@ -400,9 +445,9 @@ class BaseTrainer:
 
             # Get model and checkpoint path within the model-specific directory
             ckpt_path = f"{model_ckpt_dir}/{self.mgr.model_name}_{epoch + 1}.pth"
-            model_config_path = f"{model_ckpt_dir}/{self.mgr.model_name}_{epoch + 1}_config.json"
             
             # Save checkpoint with model weights and training state
+            # Include the model configuration directly in the checkpoint
             torch.save({
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
@@ -411,11 +456,7 @@ class BaseTrainer:
                 'model_config': model.final_config  # Save the model configuration
             }, ckpt_path)
             
-            # Also save the configuration as a separate JSON file
-            if hasattr(model, 'final_config'):
-                import json
-                with open(model_config_path, 'w') as f:
-                    json.dump(model.final_config, f, indent=4)
+            print(f"Checkpoint saved to: {ckpt_path}")
                     
             # Save the full configuration via the ConfigManager
             self.mgr.save_config()
@@ -440,10 +481,16 @@ class BaseTrainer:
                     val_running_losses = {t_name: 0.0 for t_name in self.mgr.targets}
                     val_steps = 0
 
-                    pbar = tqdm(enumerate(val_dataloader), total=self.mgr.max_val_steps_per_epoch)
-                    for i, data_dict in pbar:
-                        if i >= self.mgr.max_val_steps_per_epoch:
-                            break
+                    # Always run exactly max_val_steps_per_epoch iterations
+                    val_dataloader_iter = iter(val_dataloader)
+                    pbar = tqdm(range(self.mgr.max_val_steps_per_epoch), total=self.mgr.max_val_steps_per_epoch)
+                    for i in pbar:
+                        try:
+                            data_dict = next(val_dataloader_iter)
+                        except StopIteration:
+                            # Reset iterator if we run out of data
+                            val_dataloader_iter = iter(val_dataloader)
+                            data_dict = next(val_dataloader_iter)
 
                         inputs = data_dict["image"].to(device, dtype=torch.float32)
                         targets_dict = {
@@ -519,9 +566,8 @@ class BaseTrainer:
         
         # Save final model with configuration in the model-specific directory
         final_model_path = f"{model_ckpt_dir}/{self.mgr.model_name}_final.pth"
-        final_config_path = f"{model_ckpt_dir}/{self.mgr.model_name}_final_config.json"
         
-        # Save the complete checkpoint
+        # Save the complete checkpoint with configuration embedded
         torch.save({
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
@@ -530,14 +576,8 @@ class BaseTrainer:
             'model_config': model.final_config
         }, final_model_path)
         
-        # Also save separate configuration JSON
-        if hasattr(model, 'final_config'):
-            import json
-            with open(final_config_path, 'w') as f:
-                json.dump(model.final_config, f, indent=4)
-                
         print(f"Final model saved to {final_model_path}")
-        print(f"Final configuration saved to {final_config_path}")
+        print(f"Model configuration is embedded in the checkpoint")
         
 
 
