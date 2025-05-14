@@ -190,7 +190,7 @@ class ConfigManager:
                 
                 # Create the target if it doesn't exist
                 if target_name not in self.targets:
-                    self.targets[target_name] = {"out_channels": 1, "loss_fn": "BCEDiceLoss"}
+                    self.targets[target_name] = {"out_channels": 1, "loss_fn": "BCEWithLogitsLoss"}
                     result[target_name] = []
                 
                 # Append the data for this target
