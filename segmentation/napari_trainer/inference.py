@@ -336,7 +336,8 @@ def sliding_window_inference(model, data, patch_size, overlap=0.5, batch_size=1,
                         start_positions[0]:start_positions[0] + patch_size[0], 
                         start_positions[1]:start_positions[1] + patch_size[1]]
         
-        # Apply min-max normalization (scale to 0-1)
+        # Ensure float32 type and apply min-max normalization (scale to 0-1)
+        patch = patch.float()  # Ensure float type before normalization
         min_val = torch.min(patch)
         max_val = torch.max(patch)
         if max_val > min_val:

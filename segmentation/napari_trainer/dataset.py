@@ -200,6 +200,7 @@ class NapariDataset(Dataset):
             img_patch = img_arr[z:z+dz, y:y+dy, x:x+dx]
         
         # Apply min-max normalization (scale to 0-1)
+        img_patch = img_patch.astype(np.float32)  # Ensure float32 type before normalization
         min_val = np.min(img_patch)
         max_val = np.max(img_patch)
         if max_val > min_val:
@@ -257,7 +258,8 @@ class NapariDataset(Dataset):
                 label_patch[binary_mask] = target_value
                 label_patch = pad_or_crop_3d(label_patch, (dz, dy, dx))
             
-            label_patch = np.ascontiguousarray(label_patch).copy()
+            # Ensure consistent data type with image for albumentations transformations
+            label_patch = np.ascontiguousarray(label_patch).astype(np.uint8).copy()
             # Store the label patch with its target name
             label_patches[t_name] = label_patch
         
