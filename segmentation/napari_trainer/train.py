@@ -74,29 +74,29 @@ class BaseTrainer:
         image_transforms = A.Compose([
             # Intensity transformations
             A.OneOf([
-                A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3),
-                A.Illumination(p=1.0),
+                A.RandomBrightnessContrast(),
+                A.Illumination(),
             ], p=0.5),
 
             # Noise transformations
             A.OneOf([
-                A.GaussNoise(var_limit=(10.0, 50.0)),
+                A.GaussNoise(),
                 A.MultiplicativeNoise(),
             ], p=0.5),
 
             # Blur and quality transformations
             A.OneOf([
-                A.MotionBlur(blur_limit=7),
-                A.Defocus(radius=(3, 7)),
-                A.Downscale(scale_min=0.8, scale_max=0.99),
-                A.GaussianBlur(blur_limit=(3, 7)),
+                A.MotionBlur(),
+                A.Defocus(),
+                A.Downscale(),
+                A.GaussianBlur(),
             ], p=0.5),
             
             # Spatial transformations
             A.OneOf([
-                A.ElasticTransform(alpha=1, sigma=50, alpha_affine=50),
-                A.GridDistortion(num_steps=5, distort_limit=0.3),
-                A.OpticalDistortion(distort_limit=0.3, shift_limit=0.1),
+                A.ElasticTransform(),
+                A.GridDistortion(),
+                A.OpticalDistortion(),
             ], p=0.5),
         ], p=1.0)  # Always apply the composition
 
