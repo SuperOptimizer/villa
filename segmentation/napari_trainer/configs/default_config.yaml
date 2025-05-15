@@ -1,7 +1,7 @@
 # YOU DO NOT HAVE TO PROVIDE VALUES IN MOST OF THESE FIELDS
 
 tr_setup:
-  model_name: test_1638                    # required [str] this is the name your model will checkpoint will be saved as
+  model_name: Default_Config                    # required [str] this is the name your model will checkpoint will be saved as
   autoconfigure: true               # optional, true -- if true, the network will attempt to set some reasonable defaults based on your vram_max
   tr_val_split: 0.90                 # optional[float] the percentage of your total dataset used for training, with the other part being used for val
   dilate_label: false                # optional, false [bool] if true, will apply a small dilation to your labels using a 3x3 spherical kernel -- will skip tasks named "normals"
@@ -10,16 +10,16 @@ tr_setup:
   ckpt_out_base: "./checkpoints"     # [str] the path the model checkpoint is saved to
 
 tr_config:
-  optimizer: "SGD"            # optional, AdamW [str] the optimizer to use during training. currently only AdamW and SGD are provided.
+  optimizer: "AdamW"            # optional, AdamW [str] the optimizer to use during training. currently only AdamW and SGD are provided.
   initial_lr: 0.001             # optional initial learning rate
   weight_decay: 0.0001             # optional, 0.0001 [float]
   gradient_accumulation: 1      # optional, 1 [int] if 1, no accumulation, if >1 will accumulate this many 'batches' each batch to simulate larger batch size.
   num_dataloader_workers: 4    # optional, 4 [int]
   patch_size: [96, 96]    # optional [list] patch size for training
   batch_size: 2              # optional [int] batch size for training
-  max_steps_per_epoch: 1500      # optional, 500 [int] the number of batches seen by the model each epoch
-  max_val_steps_per_epoch: 1   # optional, 25 [int] the number of batches seen in validation each epoch
-  max_epoch: 5                # optional, 500 [int] the maximum number of epochs to train for
+  max_steps_per_epoch: 500      # optional, 500 [int] the number of batches seen by the model each epoch
+  max_val_steps_per_epoch: 25   # optional, 25 [int] the number of batches seen in validation each epoch
+  max_epoch: 15                # optional, 500 [int] the maximum number of epochs to train for
   ignore_label: null            # [NOT YET IMPLEMENTED] if you have an ignore label, you can set it here and loss will not be computed against it
   loss_only_on_label: false     # [NOT YET IMPLEMENTED]
 

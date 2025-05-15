@@ -76,31 +76,20 @@ class BaseTrainer:
 
         # --- Augmentations (2D only) ---
         image_transforms = A.Compose([
-            # Intensity transformations (applied to image only)
-            A.OneOf([
-                A.RandomBrightnessContrast(),
-                A.Illumination(),
-            ], p=0.5),
 
-            # Noise transformations (applied to image only)
-            A.OneOf([
-                A.GaussNoise(),
-                A.MultiplicativeNoise(),
-            ], p=0.5),
-
-            # Blur and quality transformations (applied to image only)
+            A.GaussNoise(p=0.3), 
+            
             A.OneOf([
                 A.MotionBlur(),
-                A.Defocus(),
                 A.Downscale(),
                 A.GaussianBlur(),
             ], p=0.5),
             
             # Spatial/Geometric transformations (applied to both image and masks)
             A.OneOf([
-                A.ElasticTransform(),
-                A.GridDistortion(),
-                A.OpticalDistortion(),
+                A.Rotate(),
+                A.VerticalFlip(),
+                A.HorizontalFlip()
             ], p=0.5),
         ], additional_targets=additional_targets, p=1.0)  # Always apply the composition
 

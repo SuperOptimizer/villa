@@ -319,12 +319,11 @@ class ConfigManager:
 
 # Global variables to hold important references
 _config_manager = None
-_loss_fn_widget = None
 
 # Function to pick config file, with callback to load it into ConfigManager
 @magicgui(filenames={"label": "select config file", "filter": "*.yaml"},
           auto_call=True)
-def filespicker(filenames: Sequence[Path]) -> Sequence[Path]:
+def filespicker(filenames: Sequence[Path] = 'configs/default_config.yaml') -> Sequence[Path]:
     print("selected config : ", filenames)
     if filenames and _config_manager is not None:
         # Load the first selected file into the config manager
