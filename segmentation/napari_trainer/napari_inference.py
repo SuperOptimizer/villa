@@ -125,7 +125,7 @@ def inference_widget(
             layer_name = f"{layer.name}_{model_name}_{task_name}"
             
             # Return the result as a new image layer
-            napari.Viewer.add_image(result, name=f"{task_name}_result")
+            viewer.add_image(result, name=f"{task_name}_result")
         
         # If no results were processed, return None
         return None
