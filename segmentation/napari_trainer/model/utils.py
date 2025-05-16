@@ -284,50 +284,6 @@ def maybe_convert_scalar_to_list(conv_op, scalar):
     else:
         return scalar
 
-
-def get_default_network_config(dimension: int = 2,
-                               nonlin: str = "ReLU",
-                               norm_type: str = "bn") -> dict:
-    """
-    Use this to get a standard configuration. A network configuration looks like this:
-
-    config = {'conv_op': torch.nn.modules.conv.Conv2d,
-              'dropout_op': torch.nn.modules.dropout.Dropout2d,
-              'norm_op': torch.nn.modules.batchnorm.BatchNorm2d,
-              'norm_op_kwargs': {'eps': 1e-05, 'affine': True},
-              'nonlin': torch.nn.modules.activation.ReLU,
-              'nonlin_kwargs': {'inplace': True}}
-
-    There is no need to use get_default_network_config. You can create your own. Network configs are a convenient way of
-    setting dimensionality, normalization and nonlinearity.
-
-    :param dimension: integer denoting the dimension of the data. 1, 2 and 3 are accepted
-    :param nonlin: string (ReLU or LeakyReLU)
-    :param norm_type: string (bn=batch norm, in=instance norm)
-    torch.nn.Module
-    :return: dict
-    """
-    config = {}
-    config['conv_op'] = convert_dim_to_conv_op(dimension)
-    config['dropout_op'] = get_matching_dropout(dimension=dimension)
-    if norm_type == "bn":
-        config['norm_op'] = get_matching_batchnorm(dimension=dimension)
-    elif norm_type == "in":
-        config['norm_op'] = get_matching_instancenorm(dimension=dimension)
-
-    config['norm_op_kwargs'] = None # this will use defaults
-
-    if nonlin == "LeakyReLU":
-        config['nonlin'] = nn.LeakyReLU
-        config['nonlin_kwargs'] = {'negative_slope': 1e-2, 'inplace': True}
-    elif nonlin == "ReLU":
-        config['nonlin'] = nn.ReLU
-        config['nonlin_kwargs'] = {'inplace': True}
-    else:
-        raise NotImplementedError('Unknown nonlin %s. Only "LeakyReLU" and "ReLU" are supported for now' % nonlin)
-
-    return config
-
 from copy import deepcopy
 import numpy as np
 
@@ -443,3 +399,51 @@ def get_n_blocks_per_stage(num_stages):
         else:
             blocks.append(6)
     return blocks
+
+def determine_dimensionality(patch_size, verbose=False):
+    """
+    Centralized function to determine dimensionality and set appropriate operations
+    based on patch size.
+    
+    Parameters
+    ----------
+    patch_size : tuple or list
+        The patch size dimensions
+    verbose : bool, optional
+        Whether to print debug information
+        
+    Returns
+    -------
+    dict
+        Dictionary containing dimensionality info and appropriate operations
+    """
+    if len(patch_size) == 2:
+        if verbose:
+            print(f"Detected 2D patch size {patch_size}, setting 2D operations")
+        return {
+            "op_dims": 2,
+            "conv_op": "nn.Conv2d",
+            "pool_op": "nn.AvgPool2d",
+            "norm_op": "nn.InstanceNorm2d",
+            "dropout_op": "nn.Dropout2d",
+            "spacing": [1] * 2,
+            "default_kernel": [3, 3],
+            "default_pool": [1, 1],
+            "default_stride": [1, 1]
+        }
+    elif len(patch_size) == 3:
+        if verbose:
+            print(f"Detected 3D patch size {patch_size}, setting 3D operations")
+        return {
+            "op_dims": 3,
+            "conv_op": "nn.Conv3d",
+            "pool_op": "nn.AvgPool3d",
+            "norm_op": "nn.InstanceNorm3d",
+            "dropout_op": "nn.Dropout3d",
+            "spacing": [1] * 3,
+            "default_kernel": [3, 3, 3],
+            "default_pool": [1, 1, 1],
+            "default_stride": [1, 1, 1]
+        }
+    else:
+        raise ValueError(f"Patch size must have either 2 or 3 dimensions! Got {len(patch_size)}D: {patch_size}")

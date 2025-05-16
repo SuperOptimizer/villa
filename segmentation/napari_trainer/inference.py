@@ -2,457 +2,211 @@ import os
 import numpy as np
 import torch
 import napari
-from torch.nn import functional as F
 from pathlib import Path
-import json
-from model.build_network_from_config import NetworkFromConfig
 import torch.nn as nn
 from tqdm.auto import tqdm
-import albumentations as A 
+import contextlib
+from typing import Optional, List, Tuple, Dict, Any, Union, Callable
+from monai.inferers import SlidingWindowInferer, SaliencyInferer, Inferer
+from monai.transforms import AsDiscrete
 
+# Model loader class
 class ModelLoader:
-    """Class to load a model from a checkpoint with its configuration"""
+    """
+    Class for loading models from checkpoints with optional config manager integration.
+    """
     
     def __init__(self, checkpoint_path, config_manager=None):
-        """
-        Initialize the model loader
-        
-        Parameters
-        ----------
-        checkpoint_path : str or Path
-            Path to the checkpoint file (.pth)
-        config_manager : object, optional
-            An existing config manager object. If provided, will use this instead of creating a new one.
-        """
         self.checkpoint_path = Path(checkpoint_path)
-        if not self.checkpoint_path.exists():
-            raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
-        
-        # Store the provided config manager if any
         self.config_manager = config_manager
         
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
     def load(self):
-        """
-        Load the model and configuration directly from the checkpoint file
-        
-        Returns
-        -------
-        model : torch.nn.Module
-            The loaded model
-        model_config : dict
-            The model configuration
+        if not self.checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {self.checkpoint_path}")
             
-        Raises
-        ------
-        ValueError
-            If no model configuration is found in the checkpoint file
-        """
-        print(f"Loading checkpoint from {self.checkpoint_path}")
-        checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
+        checkpoint_data = torch.load(self.checkpoint_path, map_location='cpu')
         
-        # Always require model_config in the checkpoint
-        if 'model_config' not in checkpoint:
-            raise ValueError(f"No model configuration found in checkpoint file: {self.checkpoint_path}")
+        # Try to extract model configuration
+        model_config = {}
+        if 'model_config' in checkpoint_data:
+            model_config = checkpoint_data['model_config']
+        elif 'config' in checkpoint_data:
+            model_config = checkpoint_data['config']
+        elif self.config_manager is not None:
+            # Use config from config manager
+            model_config = self.config_manager.model_config
+            print(f"Using model configuration from config manager")
+        else:
+            print(f"Warning: No model configuration found in checkpoint. Using empty config.")
         
-        # Get model configuration from the checkpoint
-        model_config = checkpoint['model_config']
-        print("Using model configuration from checkpoint")
+        from model.build_network_from_config import NetworkFromConfig
+        
+        class MinimalConfigManager:
+            def __init__(self, model_config):
+                self.model_config = model_config
+                self.inference_config = model_config
+                self.targets = model_config.get('targets', {})
+                self.train_patch_size = model_config.get('patch_size', (128, 128, 128))
+                self.train_batch_size = model_config.get('batch_size', 1)
+                self.in_channels = model_config.get('in_channels', 1)
+                self.autoconfigure = model_config.get('autoconfigure', False)
+                
+                self.spacing = [1] * len(self.train_patch_size)
+                self.model_name = "Loaded_Model"
+                
+        if self.config_manager is not None:
+            mgr = self.config_manager
+        else:
+            mgr = MinimalConfigManager(model_config)
+            
+        model = NetworkFromConfig(mgr)
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        model = model.to(device)
+        
+        model_state_dict = None
+        if 'model' in checkpoint_data:
+            print("Loading weights from 'model' key in checkpoint")
+            model_state_dict = checkpoint_data['model']
+        elif 'model_state_dict' in checkpoint_data:
+            model_state_dict = checkpoint_data['model_state_dict']
+        elif 'state_dict' in checkpoint_data:
+            model_state_dict = checkpoint_data['state_dict']
+        else:
+            model_state_dict = checkpoint_data
         
         # Check if this is a compiled model state dict (keys will have "_orig_mod." prefix)
-        model_state_dict = checkpoint['model']
         is_compiled_state_dict = any("_orig_mod." in key for key in model_state_dict.keys())
-        if is_compiled_state_dict:
-            print("Detected compiled model state dict (contains '_orig_mod.' prefix keys)")
         
-        # If a config manager was provided, update it with the config from the checkpoint
-        if self.config_manager is not None:
-            print("Updating provided config manager with checkpoint configuration")
-            config_mgr = self.config_manager
-            config_mgr.model_config = model_config
-            config_mgr.inference_config = model_config
-        else:
-            # Create appropriate config manager based on what's available
-            try:
-                from main_window import ConfigManager
-                config_mgr = ConfigManager(verbose=True)
-                
-                # Set up the config manager with the model config from checkpoint
-                config_mgr.model_config = model_config
-                config_mgr.inference_config = model_config
-                config_mgr.train_patch_size = model_config.get("train_patch_size", model_config.get("patch_size", [64, 64, 64]))
-                config_mgr.train_batch_size = model_config.get("batch_size", 2)
-                config_mgr.in_channels = model_config.get("in_channels", 1)
-                # Make sure spacing dimension matches the patch size dimension
-                config_mgr.spacing = [1] * len(config_mgr.train_patch_size)
-                config_mgr.targets = model_config.get("targets", {"default": {"out_channels": 1, "loss_fn": "BCEDiceLoss"}})
-                config_mgr.autoconfigure = model_config.get("autoconfigure", True)
-                config_mgr.model_name = model_config.get("model_name", self.checkpoint_path.stem.split('_')[0])
-                config_mgr.tr_configs = {}
-                config_mgr.tr_info = {"model_name": model_config.get("model_name", "model")}
-                config_mgr.dataset_config = {}
-            except ImportError:
-                # If we can't import ConfigManager, create a simple namespace
-                from types import SimpleNamespace
-                config_mgr = SimpleNamespace(
-                    model_config=model_config,
-                    inference_config=model_config,
-                    train_patch_size=model_config.get("train_patch_size", model_config.get("patch_size", [64, 64, 64])),
-                    train_batch_size=model_config.get("batch_size", 2),
-                    in_channels=model_config.get("in_channels", 1),
-                    spacing=[1] * len(model_config.get("train_patch_size", model_config.get("patch_size", [64, 64, 64]))),
-                    targets=model_config.get("targets", {"default": {"out_channels": 1, "loss_fn": "BCEDiceLoss"}}),
-                    autoconfigure=model_config.get("autoconfigure", True),
-                    model_name=model_config.get("model_name", self.checkpoint_path.stem.split('_')[0]),
-                    tr_configs={},
-                    tr_info={"model_name": model_config.get("model_name", "model")},
-                    dataset_config={}
-                )
-        
-        # Create the model
-        model = NetworkFromConfig(config_mgr)
-        
-        # If we're on CUDA and the model was trained with compilation,
-        # we need to compile it before loading weights to match the state dict structure
-        if self.device.type == 'cuda' and is_compiled_state_dict:
-            print("Running on CUDA with compiled model checkpoint - compiling model before loading weights")
-            model = model.to(self.device)
+        # If we're on CUDA and the state dict is from a compiled model,
+        # compile our model before loading weights
+        if device.type == 'cuda' and is_compiled_state_dict:
+            print("On CUDA with compiled model checkpoint - compiling model before loading weights")
             model = torch.compile(model)
-        else:
-            model = model.to(self.device)
             
-            # If the state dict has compiled keys but we're not compiling,
-            # remove the "_orig_mod." prefix from the keys
-            if is_compiled_state_dict:
-                print("Removing '_orig_mod.' prefix from state dict keys for non-compiled model loading")
-                cleaned_state_dict = {}
-                for key, value in model_state_dict.items():
-                    if key.startswith('_orig_mod.'):
-                        cleaned_state_dict[key[len('_orig_mod.'):]] = value
-                    else:
-                        cleaned_state_dict[key] = value
-                model_state_dict = cleaned_state_dict
-        
-        # Load state dict and set model to eval mode
-        model.load_state_dict(model_state_dict)
-        model.eval()
-        
-        print(f"Model loaded successfully with configuration: {model_config.get('model_name', 'unknown')}")
+        # Load the state dict
+        try:
+            model.load_state_dict(model_state_dict, strict=False)
+            print("Model weights loaded successfully")
+        except Exception as e:
+            print(f"Warning: Error loading state dict: {str(e)}")
+            print("Attempting to continue with partially loaded weights")
+                
         return model, model_config
 
+class MonaiInferer:
+    def __init__(self, 
+                model: nn.Module,
+                roi_size: Union[List[int], Tuple[int, ...]], 
+                sw_batch_size: int = 1,
+                overlap: float = 0.25,
+                mode: str = "constant",
+                sigma_scale: float = 0.125,
+                padding_mode: str = "constant",
+                cval: float = 0.0,
+                sw_device = None,
+                device = None,
+                progress: bool = True,
+                cache_roi_weight_map: bool = False,
+                cpu_thresh = None,
+                buffer_steps = None,
+                buffer_dim: int = -1,):
+        
+        self.model = model
+        self.device = device or next(model.parameters()).device
+        self.model.to(self.device)
+        self.model.eval()
+        
+        self.sliding_window_inferer = SlidingWindowInferer(
+            roi_size=roi_size,
+            sw_batch_size=sw_batch_size,
+            overlap=overlap,
+            mode=mode,
+            sigma_scale=sigma_scale,
+            padding_mode=padding_mode,
+            cval=cval,
+            sw_device=sw_device,
+            device=self.device,
+            progress=progress,
+            cache_roi_weight_map=cache_roi_weight_map,
+            cpu_thresh=cpu_thresh,
+            buffer_steps=buffer_steps,
+            buffer_dim=buffer_dim,
+        )
+        
+    def infer(self, inputs: torch.Tensor, post_transform: Optional[Callable] = None) -> Dict[str, np.ndarray]:
 
-def create_gaussian_window(patch_size, sigma_scale=1/4, device=None):
-    """
-    Create a gaussian window for blending patches, works for both 2D and 3D
-    
-    Parameters
-    ----------
-    patch_size : tuple
-        Size of the patch (depth, height, width) for 3D or (height, width) for 2D
-    sigma_scale : float
-        Scale factor for standard deviation relative to patch size
-    device : torch.device
-        Device to place the window on
+        if not isinstance(inputs, torch.Tensor):
+            inputs = torch.as_tensor(inputs)
         
-    Returns
-    -------
-    window : torch.Tensor
-        Gaussian window of shape (1, 1, D, H, W) for 3D or (1, 1, H, W) for 2D
-    """
-    # Determine if we're creating a 2D or 3D window
-    is_3d = len(patch_size) == 3
-    
-    if is_3d:
-        # 3D case - create coordinate grids for 3D
-        d_coords = torch.linspace(-1, 1, patch_size[0])
-        y_coords = torch.linspace(-1, 1, patch_size[1])
-        x_coords = torch.linspace(-1, 1, patch_size[2])
-        grid_d, grid_y, grid_x = torch.meshgrid(d_coords, y_coords, x_coords, indexing='ij')
-        
-        # Compute 3D gaussian
-        sigma = sigma_scale * min(patch_size)
-        gaussian = torch.exp(-(grid_d**2 + grid_y**2 + grid_x**2) / (2 * sigma**2))
-        
-        # Reshape to (1, 1, D, H, W) for broadcasting
-        gaussian = gaussian.view(1, 1, *patch_size)
-    else:
-        # 2D case - create coordinate grids for 2D
-        y_coords = torch.linspace(-1, 1, patch_size[0])
-        x_coords = torch.linspace(-1, 1, patch_size[1])
-        grid_y, grid_x = torch.meshgrid(y_coords, x_coords, indexing='ij')
-        
-        # Compute 2D gaussian
-        sigma = sigma_scale * min(patch_size)
-        gaussian = torch.exp(-(grid_y**2 + grid_x**2) / (2 * sigma**2))
-        
-        # Reshape to (1, 1, H, W) for broadcasting
-        gaussian = gaussian.view(1, 1, *patch_size)
-    
-    # Move to device if provided
-    if device is not None:
-        gaussian = gaussian.to(device)
-    
-    return gaussian
-
-
-def sliding_window_inference(model, data, patch_size, overlap=0.5, batch_size=1, verbose=True, **kwargs):
-    """
-    Perform sliding window inference on a 2D image or 3D volume
-    
-    Parameters
-    ----------
-    model : torch.nn.Module
-        The model to use for inference
-    data : numpy.ndarray
-        Input image/volume of shape (H, W) or (C, H, W) for 2D
-        or (D, H, W) or (C, D, H, W) for 3D
-    patch_size : tuple
-        Size of patches to extract (height, width) for 2D
-        or (depth, height, width) for 3D
-    overlap : float
-        Overlap between patches (0-1)
-    batch_size : int
-        Batch size for inference
-    verbose : bool
-        Whether to print progress information
-        
-    Returns
-    -------
-    output : dict
-        Dictionary of output tensors, one for each task
-    """
-    device = next(model.parameters()).device
-    
-    # Determine if we're working with 2D or 3D data based on patch size
-    is_3d = len(patch_size) == 3
-    
-    # Handle different input shapes
-    input_ndim = len(data.shape)
-    
-    if is_3d:
-        if input_ndim == 3:  # (D, H, W)
-            data = data[np.newaxis, ...]  # Add channel dimension (1, D, H, W)
-    else:
-        if input_ndim == 2:  # (H, W)
-            data = data[np.newaxis, ...]  # Add channel dimension (1, H, W)
-    
-    # Convert to PyTorch tensor
-    if not isinstance(data, torch.Tensor):
-        data = torch.from_numpy(data).float()
-    
-    # Add batch dimension if not present
-    if is_3d and data.dim() == 4:  # (C, D, H, W)
-        data = data.unsqueeze(0)  # Add batch dimension (1, C, D, H, W)
-    elif not is_3d and data.dim() == 3:  # (C, H, W)
-        data = data.unsqueeze(0)  # Add batch dimension (1, C, H, W)
-    
-    data = data.to(device)
-    
-    # Get spatial dimensions based on whether we're in 2D or 3D mode
-    if is_3d:
-        _, _, depth, height, width = data.shape
-        spatial_dims = (depth, height, width)
-    else:
-        _, _, height, width = data.shape
-        spatial_dims = (height, width)
-    
-    # Calculate step sizes for patches with overlap
-    steps = [int(p * (1 - overlap)) for p in patch_size]
-    
-    # Calculate the number of patches in each dimension
-    num_patches = []
-    for i, (dim, patch, step) in enumerate(zip(spatial_dims, patch_size, steps)):
-        num_patches.append(max(1, (dim - patch) // step + 1) if dim > patch else 1)
-    
-    # Initialize output tensors and weight mask for blending
-    outputs = {}
-    importance_maps = {}
-    
-    # Create gaussian window for blending
-    gaussian_window = create_gaussian_window(patch_size, device=device)
-    
-    with torch.no_grad():
-        dummy_input = torch.zeros((1, data.shape[1], *patch_size), device=device)
-        dummy_output = model(dummy_input)
-        task_names = list(dummy_output.keys())
-
-    for task_name in task_names:
-        num_classes = dummy_output[task_name].shape[1]
-        if is_3d:
-            outputs[task_name] = torch.zeros((1, num_classes, *spatial_dims), device=device)
-            importance_maps[task_name] = torch.zeros((1, 1, *spatial_dims), device=device)
-        else:
-            outputs[task_name] = torch.zeros((1, num_classes, *spatial_dims), device=device)
-            importance_maps[task_name] = torch.zeros((1, 1, *spatial_dims), device=device)
-    
-    if is_3d:
-        total_patches = num_patches[0] * num_patches[1] * num_patches[2]
-        if verbose:
-            print(f"Processing {total_patches} 3D patches with size {patch_size} (overlap: {overlap})")
-            patch_iterator = tqdm([(d, h, w) for d in range(num_patches[0]) 
-                                for h in range(num_patches[1]) 
-                                for w in range(num_patches[2])], 
-                                desc="3D Sliding Window", unit="patch")
-        else:
-            patch_iterator = [(d, h, w) for d in range(num_patches[0]) 
-                            for h in range(num_patches[1]) 
-                            for w in range(num_patches[2])]
-    else:
-        total_patches = num_patches[0] * num_patches[1]
-        if verbose:
-            print(f"Processing {total_patches} 2D patches with size {patch_size} (overlap: {overlap})")
-            patch_iterator = tqdm([(h, w) for h in range(num_patches[0]) for w in range(num_patches[1])], 
-                                desc="2D Sliding Window", unit="patch")
-        else:
-            patch_iterator = [(h, w) for h in range(num_patches[0]) for w in range(num_patches[1])]
-    
-    patches = []
-    positions = []
-    patch_count = 0
-    
-    for indices in patch_iterator:
-        # Calculate start positions based on dimensionality
-        if is_3d:
-            d_idx, h_idx, w_idx = indices
-            start_positions = (
-                min(d_idx * steps[0], spatial_dims[0] - patch_size[0]),
-                min(h_idx * steps[1], spatial_dims[1] - patch_size[1]),
-                min(w_idx * steps[2], spatial_dims[2] - patch_size[2])
-            )
-            # Extract patch
-            patch = data[:, :, 
-                        start_positions[0]:start_positions[0] + patch_size[0], 
-                        start_positions[1]:start_positions[1] + patch_size[1], 
-                        start_positions[2]:start_positions[2] + patch_size[2]]
-        else:
-            h_idx, w_idx = indices
-            start_positions = (
-                min(h_idx * steps[0], spatial_dims[0] - patch_size[0]),
-                min(w_idx * steps[1], spatial_dims[1] - patch_size[1])
-            )
-            # Extract patch
-            patch = data[:, :, 
-                        start_positions[0]:start_positions[0] + patch_size[0], 
-                        start_positions[1]:start_positions[1] + patch_size[1]]
-        
-        # Ensure float32 type and apply min-max normalization (scale to 0-1)
-        patch = patch.float()  # Ensure float type before normalization
-        min_val = torch.min(patch)
-        max_val = torch.max(patch)
-        if max_val > min_val:
-            patch = (patch - min_val) / (max_val - min_val)
+        if inputs.dtype != torch.float32:
+            inputs = inputs.to(dtype=torch.float32)
             
-        # Store patch and position
-        patches.append(patch)
-        positions.append(start_positions)
+        if inputs.ndim == 2:  # (H, W)
+            inputs = inputs.unsqueeze(0).unsqueeze(0)  # (1, 1, H, W)
+        elif inputs.ndim == 3:  # (D, H, W) or (C, H, W)
+            # Assume channel dimension is missing
+            inputs = inputs.unsqueeze(0)  # (1, D, H, W) or (1, C, H, W)
+        elif inputs.ndim == 4:  # (C, D, H, W) - 3D with channels or (B, C, H, W) - 2D with batch
+            # Check if this is 3D data with channels or 2D data with batch
+            if len(self.sliding_window_inferer.roi_size) == 3:  # 3D inference
+                inputs = inputs.unsqueeze(0)  # (1, C, D, H, W)
+            # Otherwise, leave as is - already has batch dimension
         
-        # Update counter for batch processing
-        patch_count += 1
+
+        inputs = inputs.to(device=self.device)
         
-        # Process in batches
-        last_batch = patch_count == total_patches
-        if len(patches) == batch_size or last_batch:
-            # Stack patches into batch
-            batch = torch.cat(patches, dim=0)
+        def normalize(x):
+            return (x - x.min()) / (x.max() - x.min() + 1e-5)
             
-            if not hasattr(torch, 'no_op'):
-                # Define a simple no-op context manager if not available
-                class NullContextManager:
-                    def __enter__(self):
-                        return self
-                    
-                    def __exit__(self, exc_type, exc_val, exc_tb):
-                        pass
+        inputs = normalize(inputs)
+        
+        with torch.no_grad():
+            outputs = self.sliding_window_inferer(inputs, self.model)
+        
+        result = {}
+        
+        if isinstance(outputs, torch.Tensor):
+            # Single output tensor
+            outputs = {"output": outputs}
+        elif isinstance(outputs, tuple) and all(isinstance(o, torch.Tensor) for o in outputs):
+            # Tuple of tensors
+            outputs = {f"output_{i}": tensor for i, tensor in enumerate(outputs)}
+        elif not isinstance(outputs, dict):
+            raise ValueError(f"Unexpected output format: {type(outputs)}")
+        
+        for name, tensor in outputs.items():
+            if post_transform is not None:
+                tensor = post_transform(tensor)
                 
-                torch.no_op = lambda: NullContextManager()
+            array = tensor.detach().cpu().numpy()
+            result[name] = array
             
-            context = (
-                    torch.amp.autocast(device.type) if device.type == 'cuda' 
-                    else torch.amp.autocast('cpu') if device.type == 'cpu' 
-                    else torch.no_op() if device.type == 'mps' 
-                    else torch.no_op()
-                )
-            
-            # Forward pass
-            with torch.no_grad(), context:
-                batch_output = model(batch) 
-            
-            # Put predictions back into output tensor with gaussian blending
-            for b_idx in range(len(patches)):
-                start_positions = positions[b_idx]
-                
-                # Apply predictions for each task
-                for task_name in task_names:
-                    task_output = batch_output[task_name][b_idx:b_idx+1]
-                    
-                    # Apply gaussian weighting
-                    weighted_output = task_output * gaussian_window
-                    
-                    # Add to output and importance map - using different indexing for 2D vs 3D
-                    if is_3d:
-                        start_d, start_h, start_w = start_positions
-                        outputs[task_name][:, :, 
-                                        start_d:start_d + patch_size[0], 
-                                        start_h:start_h + patch_size[1], 
-                                        start_w:start_w + patch_size[2]] += weighted_output
-                        importance_maps[task_name][:, :, 
-                                                start_d:start_d + patch_size[0], 
-                                                start_h:start_h + patch_size[1], 
-                                                start_w:start_w + patch_size[2]] += gaussian_window
-                    else:
-                        start_h, start_w = start_positions
-                        outputs[task_name][:, :, 
-                                        start_h:start_h + patch_size[0], 
-                                        start_w:start_w + patch_size[1]] += weighted_output
-                        importance_maps[task_name][:, :, 
-                                                start_h:start_h + patch_size[0], 
-                                                start_w:start_w + patch_size[1]] += gaussian_window
-            
-            # Clear for next batch
-            patches = []
-            positions = []
-    
-    # Normalize by importance map (prevent division by zero)
-    results = {}
-    for task_name in task_names:
-        # Add small epsilon to avoid division by zero
-        normalized = outputs[task_name] / (importance_maps[task_name] + 1e-8)
-        results[task_name] = normalized.squeeze().cpu().numpy()
-    
-    return results
+        return result
 
 
-def run_inference(viewer, layer, checkpoint_path, patch_size=None, overlap=0.25, batch_size=2, num_dataloader_workers=4):
-    """
-    Run inference on a napari layer and add the results as new layers.
-    Automatically detects 2D or 3D data and uses the appropriate inference method.
-    
-    Parameters
-    ----------
-    viewer : napari.Viewer
-        Napari viewer instance
-    layer : napari.layers.Layer
-        Layer to run inference on
-    checkpoint_path : str or Path
-        Path to the model checkpoint
-    patch_size : tuple, optional
-        Size of patches to use for inference. If None, will be extracted from the model config.
-        For 2D: (height, width)
-        For 3D: (depth, height, width)
-    overlap : float
-        Overlap between patches (0-1)
-    batch_size : int
-        Batch size for inference
-    num_dataloader_workers : int
-        Number of worker threads for data loading
-        
-    Returns
-    -------
-    new_layers : list of napari.layers.Layer
-        List of new layers added to the viewer
-    """
-    # Try to access the global config manager from main_window
+def run_inference(viewer: napari.Viewer, 
+                       layer: napari.layers.Layer, 
+                       checkpoint_path: str,
+                       roi_size: Optional[Tuple[int, ...]] = None,
+                       overlap: float = 0.25,
+                       sw_batch_size: int = 2,
+                       mode: str = "constant",
+                       sigma_scale: float = 0.125,
+                       padding_mode: str = "constant",
+                       cval: float = 0.0,
+                       sw_device = None,
+                       progress: bool = True,
+                       cache_roi_weight_map: bool = False,
+                       cpu_thresh = None,
+                       buffer_steps = None,
+                       buffer_dim: int = -1,
+                       with_coord: bool = False,
+                       use_saliency: bool = False,
+                       target_layers: Optional[List[str]] = None,
+                       cam_name: str = "GradCAM",
+                       class_idx: Optional[int] = None,
+                       activation_type: str = "none") -> List[napari.layers.Layer]:
+
     config_manager = None
     try:
         from main_window import _config_manager
@@ -462,72 +216,77 @@ def run_inference(viewer, layer, checkpoint_path, patch_size=None, overlap=0.25,
     except (ImportError, AttributeError):
         print("No global config manager available")
     
-    # Load the model with the config manager if available
+
     loader = ModelLoader(checkpoint_path, config_manager=config_manager)
     model, model_config = loader.load()
-    
-    # Get model name from checkpoint path
     checkpoint_path = Path(checkpoint_path)
     model_name = checkpoint_path.stem
-    
-    # Get the input data
     image_data = layer.data
     
-    # Determine if input is 2D or 3D
     is_3d = image_data.ndim == 3 and image_data.shape[0] > 1
     
-    # If patch_size is not explicitly provided, extract from model config
-    if patch_size is None:
-        # Try to get patch size from config
+    if roi_size is None:
         if 'patch_size' in model_config:
             config_patch_size = model_config['patch_size']
             print(f"Using patch_size from model_config: {config_patch_size}")
-            patch_size = tuple(config_patch_size)
+            roi_size = tuple(config_patch_size)
         elif 'train_patch_size' in model_config:
             config_patch_size = model_config['train_patch_size']
             print(f"Using train_patch_size from model_config: {config_patch_size}")
-            patch_size = tuple(config_patch_size)
+            roi_size = tuple(config_patch_size)
         else:
             raise ValueError("No patch_size or train_patch_size found in model config. Cannot proceed with inference.")
     
-    print(f"Final patch size for inference: {patch_size}")
+    print(f"Final roi_size for inference: {roi_size}")
     print(f"Data shape: {image_data.shape}, Using {'3D' if is_3d else '2D'} inference")
     
-    # Verify that patch size dimensionality matches the data dimensionality
-    if is_3d and len(patch_size) != 3:
-        raise ValueError(f"3D data requires 3D patch size, but got {patch_size}")
-    elif not is_3d and len(patch_size) != 2:
-        raise ValueError(f"2D data requires 2D patch size, but got {patch_size}")
+    if is_3d and len(roi_size) != 3:
+        raise ValueError(f"3D data requires 3D roi_size, but got {roi_size}")
+    elif not is_3d and len(roi_size) != 2:
+        raise ValueError(f"2D data requires 2D roi_size, but got {roi_size}")
     
-    # Verify model dimensions match data dimensions
-    model_dims = len(patch_size)
+    model_dims = len(roi_size)
     data_dims = 3 if is_3d else 2
     if model_dims != data_dims:
         raise ValueError(f"Model dimensionality ({model_dims}D) must match data dimensionality ({data_dims}D)")
     
-    # Run unified sliding window inference
+    # Create inferer with all sliding window parameters
+    inferer = MonaiInferer(
+        model=model,
+        roi_size=roi_size,
+        sw_batch_size=sw_batch_size,
+        overlap=overlap,
+        mode=mode,
+        sigma_scale=sigma_scale,
+        padding_mode=padding_mode,
+        cval=cval,
+        sw_device=sw_device,
+        progress=progress,
+        cache_roi_weight_map=cache_roi_weight_map,
+        cpu_thresh=cpu_thresh,
+        buffer_steps=buffer_steps,
+        buffer_dim=buffer_dim,
+    )
+    
+    # Set up post-processing
+    post_transform = None
+    if activation_type.lower() == "sigmoid":
+        post_transform = torch.sigmoid
+    elif activation_type.lower() == "softmax":
+        def softmax_transform(x):
+            return torch.softmax(x, dim=1)
+        post_transform = softmax_transform
+    elif activation_type.lower() == "argmax":
+        post_transform = AsDiscrete(argmax=True)
+    
+    # Run inference
     new_layers = []
     
     try:
-        # Use the unified sliding window inference function
-        results = sliding_window_inference(
-            model, 
-            image_data, 
-            patch_size, 
-            overlap=overlap,
-            batch_size=batch_size
-        )
+        results = inferer.infer(image_data, post_transform=post_transform)
         
-        # Add results as new layers
-        for task_name, result in results.items():
-            # Apply activation if needed for binary segmentation tasks
-            if result.shape[0] == 2:  # Binary segmentation
-                # Apply softmax and take foreground probability
-                result_tensor = torch.from_numpy(result)
-                result = F.softmax(result_tensor, dim=0).numpy()[1]
-            
-            # Create layer name
-            layer_name = f"{layer.name}_{model_name}_{task_name}"
+        for output_name, result in results.items():
+            layer_name = f"{layer.name}_{model_name}_{output_name}"
             
             # Add as image layer
             new_layer = viewer.add_image(
@@ -537,85 +296,10 @@ def run_inference(viewer, layer, checkpoint_path, patch_size=None, overlap=0.25,
                 blending='translucent'
             )
             new_layers.append(new_layer)
+            
     except Exception as e:
+        print(f"Inference error: {str(e)}")
         raise e
     
     print(f"Inference completed. Added {len(new_layers)} new layers to the viewer.")
     return new_layers
-
-
-# Keep the old function name for backward compatibility
-def run_inference_on_layer(*args, **kwargs):
-    """Legacy function name for backward compatibility, calls run_inference"""
-    return run_inference(*args, **kwargs)
-
-
-if __name__ == '__main__':
-    import sys
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Inference on napari layers")
-    parser.add_argument("--checkpoint", type=str, required=True, help="Path to the model checkpoint")
-    parser.add_argument("--patch_size", type=int, nargs='+', help="Patch size for inference (for 2D: height width, for 3D: depth height width)")
-    parser.add_argument("--overlap", type=float, default=0.25, help="Overlap between patches (0-1)")
-    parser.add_argument("--batch_size", type=int, default=2, help="Batch size for inference")
-    args = parser.parse_args()
-    
-    # Start napari
-    viewer = napari.Viewer()
-    
-    # Add some example data if none is loaded
-    if len(viewer.layers) == 0:
-        print("No layers found. Please load an image or label layer and try again.")
-        print("Example: Add a sample image to get started.")
-        # Add sample image
-        sample = np.random.rand(512, 512)
-        viewer.add_image(sample, name="Sample")
-    
-    # Define callback for inference button
-    def run_inference_callback():
-        # Get the currently selected layer
-        current_layer = viewer.layers.selection.active
-        if current_layer is None:
-            print("No layer selected. Please select a layer.")
-            return
-        
-        # Parse patch size
-        patch_size = None
-        if args.patch_size:
-            if len(args.patch_size) == 2:
-                patch_size = tuple(args.patch_size)  # 2D
-            elif len(args.patch_size) == 3:
-                patch_size = tuple(args.patch_size)  # 3D
-            else:
-                print(f"Invalid patch size: {args.patch_size}. Expected 2 or 3 values.")
-                return
-            
-        # Run inference
-        run_inference(
-            viewer, 
-            current_layer, 
-            args.checkpoint,
-            patch_size=patch_size,
-            overlap=args.overlap,
-            batch_size=args.batch_size
-        )
-    
-    # Add button widget to run inference
-    import warnings
-    from qtpy.QtWidgets import QPushButton
-    
-    # Create button widget
-    btn = QPushButton("Run Inference")
-    
-    # Connect button directly to inference function
-    def on_click():
-        run_inference_callback()
-        
-    btn.clicked.connect(on_click)
-    
-    # Add button to viewer
-    viewer.window.add_dock_widget(btn, name="Inference")
-    
-    # Run napari
-    napari.run()

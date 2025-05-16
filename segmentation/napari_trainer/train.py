@@ -11,12 +11,14 @@ import albumentations as A
 from dataset import NapariDataset
 from plotting import save_debug
 from model.build_network_from_config import NetworkFromConfig
-from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss, BCELoss
+from torch.nn import CrossEntropyLoss, MSELoss, BCELoss
 from losses import (
-    MaskedCosineLoss, BCEDiceLoss, DC_and_CE_loss, 
-    DC_and_BCE_loss, DC_and_topk_loss, SoftDiceLoss, 
-    GeneralizedDiceLoss, WeightedCrossEntropyLoss,
-    DC_SkelREC_and_CE_loss, TopKLoss, RobustCrossEntropyLoss
+    BCEWithLogitsMaskedLoss,
+    BCEMaskedLoss,
+    CrossEntropyMaskedLoss,
+    MSEMaskedLoss,
+    L1MaskedLoss,
+    SoftDiceLoss
 )
 
 
@@ -44,9 +46,9 @@ class BaseTrainer:
     # --- build model --- #
     def _build_model(self):
         # Ensure model_config and inference_config are initialized
-        if hasattr(self.mgr, 'update_config'):
+        if hasattr(self.mgr, 'update_config_from_widget'):
             # If running from the GUI, ensure configs are updated
-            self.mgr.update_config()
+            self.mgr.update_config_from_widget()
         else:
             # If running directly, we need to make sure config is not None
             if not hasattr(self.mgr, 'model_config') or self.mgr.model_config is None:
@@ -64,8 +66,7 @@ class BaseTrainer:
                 self.mgr.inference_config = self.mgr.model_config.copy()
 
         model = NetworkFromConfig(self.mgr)
-        model.apply(lambda module: init_weights_he(module, neg_slope=1e-2))
-
+        # Weight initialization will be done in train() method before compilation
         return model
 
     def _compose_augmentations(self):
@@ -77,20 +78,12 @@ class BaseTrainer:
         # --- Augmentations (2D only) ---
         image_transforms = A.Compose([
 
-            A.GaussNoise(p=0.3), 
-            
             A.OneOf([
-                A.MotionBlur(),
-                A.Downscale(),
-                A.GaussianBlur(),
-            ], p=0.5),
-            
-            # Spatial/Geometric transformations (applied to both image and masks)
-            A.OneOf([
-                A.Rotate(),
+                A.RandomRotate90(),
                 A.VerticalFlip(),
                 A.HorizontalFlip()
-            ], p=0.5),
+            ], p=0.3),
+
         ], additional_targets=additional_targets, p=1.0)  # Always apply the composition
 
         return image_transforms
@@ -111,34 +104,32 @@ class BaseTrainer:
         # if you override this you need to allow for a loss fn to apply to every single
         # possible target in the dictionary of targets . the easiest is probably
         # to add it in losses.loss, import it here, and then add it to the map
+        
+        # Ensure we have the latest configuration, especially for loss functions
+        if hasattr(self.mgr, 'update_config_from_widget'):
+            self.mgr.update_config_from_widget()
+            
+        # Debug: Print the selected loss function from the config manager
+        if hasattr(self.mgr, 'selected_loss_function'):
+            print(f"DEBUG: Selected loss function from UI: {self.mgr.selected_loss_function}")
+        
         LOSS_FN_MAP = {
-            # Basic losses
-            "BCELoss": BCELoss,
-            "BCEWithLogitsLoss": BCEWithLogitsLoss,
-            "CrossEntropyLoss": CrossEntropyLoss,
-            "MSELoss": MSELoss,
-            "RobustCrossEntropyLoss": RobustCrossEntropyLoss,
+            # Basic losses with masking support
+            "BCELoss": BCEMaskedLoss,
+            "BCEWithLogitsLoss": BCEWithLogitsMaskedLoss, 
+            "CrossEntropyLoss": CrossEntropyMaskedLoss,
+            "MSELoss": MSEMaskedLoss,
+            "L1Loss": L1MaskedLoss,
             
-            # Segmentation-specific losses
-            "BCEDiceLoss": BCEDiceLoss,
+            # Simple dice loss for binary segmentation
             "SoftDiceLoss": SoftDiceLoss,
-            "GeneralizedDiceLoss": GeneralizedDiceLoss,
-            "WeightedCrossEntropyLoss": WeightedCrossEntropyLoss,
-            "TopKLoss": TopKLoss,
             
-            # Combined losses
-            "DC_and_CE_loss": DC_and_CE_loss,
-            "DC_and_BCE_loss": DC_and_BCE_loss,
-            "DC_and_topk_loss": DC_and_topk_loss,
-            
-            # Special losses
-            "MaskedCosineLoss": MaskedCosineLoss,
-            "DC_SkelREC_and_CE_loss": DC_SkelREC_and_CE_loss,
         }
 
         loss_fns = {}
         for task_name, task_info in self.mgr.targets.items():
-            loss_fn = task_info.get("loss_fn", "DC_and_CE_loss")
+            loss_fn = task_info.get("loss_fn", "SoftDiceLoss")
+            print(f"DEBUG: Target {task_name} using loss function: {loss_fn}")
             if loss_fn not in LOSS_FN_MAP:
                 raise ValueError(f"Loss function {loss_fn} not found in LOSS_FN_MAP. Add it to the mapping and try again.")
             loss_kwargs = task_info.get("loss_kwargs", {})
@@ -177,6 +168,10 @@ class BaseTrainer:
                 def scale(self, loss):
                     return loss
                 
+                def unscale_(self, optimizer):
+                    # No-op operation for CPU/MPS as mentioned in task description
+                    pass
+                
                 def step(self, optimizer):
                     optimizer.step()
                     
@@ -206,14 +201,14 @@ class BaseTrainer:
                                 batch_size=batch_size,
                                 sampler=SubsetRandomSampler(train_indices),
                                 pin_memory=(device_type == 'cuda'),  # Only use pin_memory for CUDA
-                                num_workers=num_workers)
+                                num_workers=0)
         val_dataloader = DataLoader(dataset,
                                     batch_size=1,
                                     sampler=SubsetRandomSampler(val_indices),
                                     pin_memory=(device_type == 'cuda'),  # Only use pin_memory for CUDA
-                                    num_workers=num_workers)
+                                    num_workers=0)
 
-        return train_dataloader, val_dataloader
+        return train_dataloader, val_dataloader, train_indices, val_indices
 
 
     def train(self):
@@ -235,11 +230,15 @@ class BaseTrainer:
             device = torch.device('cpu')
             print("Using CPU device")
         
+        # Apply weight initialization with recommended negative_slope=0.2 for LeakyReLU
+        # Do this BEFORE device transfer and compilation
+        model.apply(lambda module: init_weights_he(module, neg_slope=0.2))
+        
         model = model.to(device)
         
         # Only compile the model if it's on CUDA (not supported on MPS/CPU)
         if device.type == 'cuda':
-            model = torch.compile(model)
+            model = torch.compile(model, mode="default", fullgraph=False)
 
         # Create a no_op context manager as it might be needed for MPS
         if not hasattr(torch, 'no_op'):
@@ -256,8 +255,9 @@ class BaseTrainer:
         # Create appropriate scaler for the device
         scaler = self._get_scaler(device.type)
 
-        train_dataloader, val_dataloader = self._configure_dataloaders(dataset)
+        train_dataloader, val_dataloader, train_indices, val_indices = self._configure_dataloaders(dataset)
 
+        # Save initial configuration to checkpoint directory if requested
         if model.save_config:
             self.mgr.save_config()
 
@@ -304,9 +304,11 @@ class BaseTrainer:
                     
                     config_wrapper = ConfigWrapper(checkpoint['model_config'], self.mgr)
                     model = NetworkFromConfig(config_wrapper)
-                    model.apply(lambda module: init_weights_he(module, neg_slope=1e-2))
+
                     model = model.to(device)
-                    model = torch.compile(model)
+                    # Only compile for CUDA with explicit parameters
+                    if device.type == 'cuda':
+                        model = torch.compile(model, mode="default", fullgraph=False)
                     
                     # Also recreate optimizer since the model parameters changed
                     optimizer = self._get_optimizer(model)
@@ -334,9 +336,10 @@ class BaseTrainer:
             model.train()
 
             train_running_losses = {t_name: 0.0 for t_name in self.mgr.targets}
-            # Always run exactly max_steps_per_epoch iterations, regardless of dataset size
+            # Use the length of train indices as the number of iterations per epoch
             train_dataloader_iter = iter(train_dataloader)
-            pbar = tqdm(range(self.mgr.max_steps_per_epoch), total=self.mgr.max_steps_per_epoch)
+            num_iters = len(train_indices)
+            pbar = tqdm(range(num_iters), total=num_iters)
             steps = 0
 
             for i in pbar:
@@ -357,10 +360,16 @@ class BaseTrainer:
                 global_step += 1
 
                 inputs = data_dict["image"].to(device, dtype=torch.float32)
+                # Get the loss mask separately if it exists
+                loss_mask = None
+                if "loss_mask" in data_dict:
+                    loss_mask = data_dict["loss_mask"].to(device, dtype=torch.float32)
+                
+                # Create targets_dict excluding both image and loss_mask
                 targets_dict = {
                     k: v.to(device, dtype=torch.float32)
                     for k, v in data_dict.items()
-                    if k != "image"
+                    if k != "image" and k != "loss_mask"
                 }
 
                 # forward
@@ -378,20 +387,39 @@ class BaseTrainer:
                     per_task_losses = {}
 
                     for t_name, t_gt in targets_dict.items():
-
                         t_pred = outputs[t_name]
                         t_loss_fn = loss_fns[t_name]
                         task_weight = self.mgr.targets[t_name].get("weight", 1.0)
 
-                        # check if skeleton is available in data_dict (e.g. "fibers_skel")
-                        skel_key = f"{t_name}_skel"
-                        if skel_key in data_dict:
-                            t_skel = data_dict[skel_key].to(device, dtype=torch.float32)
-                            t_loss = t_loss_fn(t_pred, t_gt, t_skel) * task_weight
-                        else:
-                            t_loss = t_loss_fn(t_pred, t_gt) * task_weight
+                        # Use the loss_mask from the dataset if available, otherwise use the whole input
+                        label_mask = None
+                        if "loss_mask" in data_dict:
+                            # Get the loss mask provided by the dataset
+                            loss_mask = data_dict["loss_mask"].to(device, dtype=torch.float32)
+                            
+                            # Adjust mask dimensions to match the target format
+                            if isinstance(t_loss_fn, CrossEntropyMaskedLoss):
+                                # For CrossEntropyLoss, target has shape [B,H,W]
+                                if loss_mask.dim() == 4 and loss_mask.shape[1] == 1:  # [B,1,H,W]
+                                    label_mask = loss_mask.squeeze(1)
+                                else:
+                                    label_mask = loss_mask
+                            else:
+                                # For other losses with one-hot encoding, target has shape [B,C,H,W]
+                                if loss_mask.dim() == 3:  # [B,H,W]
+                                    label_mask = loss_mask.unsqueeze(1)  # Add channel dim [B,1,H,W]
+                                else:
+                                    label_mask = loss_mask
+                            
+                            # Print a message showing we're using the custom mask
+                            if steps == 0 and i == 0:
+                                print(f"Using custom loss mask for target {t_name}")
 
-                        total_loss += t_loss
+                        # Calculate the loss, passing the mask if available
+                        t_loss = t_loss_fn(t_pred, t_gt, loss_mask=label_mask)
+                        
+                        # Apply task weight to the loss
+                        total_loss += task_weight * t_loss
                         train_running_losses[t_name] += t_loss.item()
                         per_task_losses[t_name] = t_loss.item()
 
@@ -402,6 +430,7 @@ class BaseTrainer:
                 scaler.scale(total_loss).backward()
 
                 if (i + 1) % grad_accumulate_n == 0:
+                    scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
                     scaler.step(optimizer)
                     scaler.update()
@@ -422,10 +451,14 @@ class BaseTrainer:
 
             # Apply any remaining gradients at the end of the epoch
             if steps % grad_accumulate_n != 0:
+                scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
+                
+            # Step the scheduler once after each epoch
+            scheduler.step()
 
             for t_name in self.mgr.targets:
                 # Avoid division by zero
@@ -449,21 +482,35 @@ class BaseTrainer:
             
             print(f"Checkpoint saved to: {ckpt_path}")
                     
-            # Save the full configuration via the ConfigManager
-            self.mgr.save_config()
+            # Configuration is already saved in the checkpoint, no need to save it again here
 
-            # clean up old checkpoints -- currently just keeps 10 newest
+            # clean up old checkpoints and configs -- currently just keeps 10 newest
             # Path to the model-specific checkpoint directory
             ckpt_dir = Path(model_ckpt_dir)
+            
+            # Get all checkpoint files (.pth) and sort by modification time
             all_checkpoints = sorted(
                 ckpt_dir.glob(f"{self.mgr.model_name}_*.pth"),
                 key=lambda x: x.stat().st_mtime
             )
 
-            # if more than 10, remove the oldest
+            # Get all config files (.yaml) and sort by modification time
+            all_configs = sorted(
+                ckpt_dir.glob(f"{self.mgr.model_name}_*.yaml"),
+                key=lambda x: x.stat().st_mtime
+            )
+
+            # Keep only the 10 newest checkpoint files
             while len(all_checkpoints) > 10:
                 oldest = all_checkpoints.pop(0)
-                oldest.unlink()  #
+                oldest.unlink()
+                print(f"Removed old checkpoint: {oldest}")
+
+            # Keep only the 1 newest config file (others are redundant)
+            while len(all_configs) > 1:
+                oldest = all_configs.pop(0)
+                oldest.unlink()
+                print(f"Removed old config: {oldest}")
 
             # ---- validation ----- #
             if epoch % 1 == 0:
@@ -472,9 +519,10 @@ class BaseTrainer:
                     val_running_losses = {t_name: 0.0 for t_name in self.mgr.targets}
                     val_steps = 0
 
-                    # Always run exactly max_val_steps_per_epoch iterations
+                    # Use the length of val indices as the number of iterations for validation
                     val_dataloader_iter = iter(val_dataloader)
-                    pbar = tqdm(range(self.mgr.max_val_steps_per_epoch), total=self.mgr.max_val_steps_per_epoch)
+                    num_val_iters = len(val_indices)
+                    pbar = tqdm(range(num_val_iters), total=num_val_iters)
                     for i in pbar:
                         try:
                             data_dict = next(val_dataloader_iter)
@@ -484,10 +532,16 @@ class BaseTrainer:
                             data_dict = next(val_dataloader_iter)
 
                         inputs = data_dict["image"].to(device, dtype=torch.float32)
+                        # Get the loss mask separately if it exists
+                        loss_mask = None
+                        if "loss_mask" in data_dict:
+                            loss_mask = data_dict["loss_mask"].to(device, dtype=torch.float32)
+                        
+                        # Create targets_dict excluding both image and loss_mask
                         targets_dict = {
                             k: v.to(device, dtype=torch.float32)
                             for k, v in data_dict.items()
-                            if k != "image"
+                            if k != "image" and k != "loss_mask"
                         }
 
                         # Use the same context as in training
@@ -504,7 +558,28 @@ class BaseTrainer:
                             for t_name, t_gt in targets_dict.items():
                                 t_pred = outputs[t_name]
                                 t_loss_fn = loss_fns[t_name]
-                                t_loss = t_loss_fn(t_pred, t_gt)
+                                # Use the loss_mask from the dataset if available, otherwise use the whole input
+                                label_mask = None
+                                if "loss_mask" in data_dict:
+                                    # Get the loss mask provided by the dataset
+                                    loss_mask = data_dict["loss_mask"].to(device, dtype=torch.float32)
+                                    
+                                    # Adjust mask dimensions to match the target format
+                                    if isinstance(t_loss_fn, CrossEntropyMaskedLoss):
+                                        # For CrossEntropyLoss, target has shape [B,H,W]
+                                        if loss_mask.dim() == 4 and loss_mask.shape[1] == 1:  # [B,1,H,W]
+                                            label_mask = loss_mask.squeeze(1)
+                                        else:
+                                            label_mask = loss_mask
+                                    else:
+                                        # For other losses with one-hot encoding, target has shape [B,C,H,W]
+                                        if loss_mask.dim() == 3:  # [B,H,W]
+                                            label_mask = loss_mask.unsqueeze(1)  # Add channel dim [B,1,H,W]
+                                        else:
+                                            label_mask = loss_mask
+                                
+                                # Calculate the loss, passing label_mask if available
+                                t_loss = t_loss_fn(t_pred, t_gt, loss_mask=label_mask)
 
                                 total_val_loss += t_loss
                                 val_running_losses[t_name] += t_loss.item()
@@ -551,7 +626,7 @@ class BaseTrainer:
                     val_avg = val_running_losses[t_name] / val_steps if val_steps > 0 else 0
                     print(f"Task '{t_name}', epoch {epoch + 1} avg val loss: {val_avg:.4f}")
 
-            scheduler.step()
+            # Scheduler step happens once per epoch after training
 
         print('Training Finished!')
         

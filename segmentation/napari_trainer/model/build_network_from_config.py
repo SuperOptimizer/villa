@@ -10,7 +10,8 @@ def get_activation_module(activation_str: str):
     elif act_str == "sigmoid":
         return nn.Sigmoid()
     elif act_str == "softmax":
-        return nn.Softmax(dim=1)
+        print("Warning: Softmax not applicable for single-channel output. Using sigmoid instead.")
+        return nn.Sigmoid()
     else:
         raise ValueError(f"Unknown activation type: {activation_str}")
 
@@ -18,14 +19,12 @@ class NetworkFromConfig(nn.Module):
     def __init__(self, mgr):
         super().__init__()
         self.mgr = mgr
-        # Get configuration directly from mgr attributes
         self.targets = mgr.targets
         self.patch_size = mgr.train_patch_size
         self.batch_size = mgr.train_batch_size
-        self.in_channels = mgr.in_channels
+        self.in_channels = 1 
         self.autoconfigure = mgr.autoconfigure
 
-        # Choose the config dictionary (model_config has precedence)
         if hasattr(mgr, 'model_config') and mgr.model_config:
             model_config = mgr.model_config
         else:
@@ -48,28 +47,22 @@ class NetworkFromConfig(nn.Module):
         self.nonlin = model_config.get("nonlin", "nn.LeakyReLU")
         self.nonlin_kwargs = model_config.get("nonlin_kwargs", {"inplace": True})
 
-        # Determine op_dims from patch_size
-        if len(self.patch_size) == 2:
-            self.op_dims = 2
-            print(f"Using 2D operations based on patch_size {self.patch_size}")
-        elif len(self.patch_size) == 3:
-            self.op_dims = 3
-            print(f"Using 3D operations based on patch_size {self.patch_size}")
+        # Get op_dims from ConfigManager if available, or determine from patch_size
+        self.op_dims = getattr(mgr, 'op_dims', None)
+        if self.op_dims is None:
+            # Fallback to determining from patch size if not set by ConfigManager
+            if len(self.patch_size) == 2:
+                self.op_dims = 2
+                print(f"Using 2D operations based on patch_size {self.patch_size}")
+            elif len(self.patch_size) == 3:
+                self.op_dims = 3
+                print(f"Using 3D operations based on patch_size {self.patch_size}")
+            else:
+                raise ValueError(f"Patch size must have either 2 or 3 dimensions! Got {len(self.patch_size)}D: {self.patch_size}")
         else:
-            raise ValueError(f"Patch size must have either 2 or 3 dimensions! Got {len(self.patch_size)}D: {self.patch_size}")
+            print(f"Using dimensionality ({self.op_dims}D) from ConfigManager")
         
-        # Make sure conv_op string matches op_dims
-        if isinstance(self.conv_op, str):
-            expected_2d = "Conv2d" in self.conv_op
-            expected_3d = "Conv3d" in self.conv_op
-            
-            if expected_2d and self.op_dims != 2:
-                raise ValueError(f"Model config specifies 2D operations ({self.conv_op}) but patch_size {self.patch_size} is {self.op_dims}D")
-            
-            if expected_3d and self.op_dims != 3:
-                raise ValueError(f"Model config specifies 3D operations ({self.conv_op}) but patch_size {self.patch_size} is {self.op_dims}D")
-            
-        # Explicitly set the correct dimension operations based on op_dims
+        # Convert string operation types to actual PyTorch classes
         if isinstance(self.conv_op, str):
             if self.op_dims == 2:
                 self.conv_op = nn.Conv2d
@@ -260,8 +253,11 @@ class NetworkFromConfig(nn.Module):
         self.task_decoders = nn.ModuleDict()
         self.task_activations = nn.ModuleDict()
         for target_name, target_info in self.targets.items():
-            out_channels = target_info["out_channels"]
-            activation_str = target_info.get("activation", "none")
+            # Use single channel output for binary segmentation
+            target_info["out_channels"] = 1
+            out_channels = 1  # Single channel for binary segmentation
+            # Default to sigmoid activation for binary segmentation if none specified
+            activation_str = target_info.get("activation", "sigmoid")
             self.task_decoders[target_name] = Decoder(
                 encoder=self.shared_encoder,
                 basic_block=model_config.get("basic_decoder_block", "ConvBlock"),

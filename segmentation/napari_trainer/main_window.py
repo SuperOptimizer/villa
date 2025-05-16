@@ -1,34 +1,30 @@
 import napari
 from magicgui import magicgui, widgets
-from magicclass import magicclass, field, vfield, FieldGroup
 import napari.viewer
 import scipy.ndimage
 
-from napari_inference import inference_widget
-import cv2
+from inference_widget import inference_widget
 from PIL import Image
-import os
-import threading
 import numpy as np
 from pathlib import Path
 from collections.abc import Sequence
-from typing import Optional, List, Tuple, Dict, Any, Union, Set
 from copy import deepcopy
-# Import BaseTrainer inside functions instead of at module level to avoid circular imports
 import napari.layers
-
-Image.MAX_IMAGE_PIXELS = None
 import json
 import yaml
 from pathlib import Path
 import torch.nn as nn
+from model.utils import determine_dimensionality
+
+
+Image.MAX_IMAGE_PIXELS = None
 
 class ConfigManager:
     def __init__(self, verbose):
-        # Initialize empty
         self._config_path = None
         self.data = None
         self.verbose = verbose
+        self.selected_loss_function = "BCEWithLogitsLoss"
 
     def load_config(self, config_path):
         config_path = Path(config_path)
@@ -36,28 +32,25 @@ class ConfigManager:
         with open(config_path, "r") as f:
             config = yaml.safe_load(f)
         
-        # Store the main config sections
         self.tr_info = config.get("tr_setup", {})
         self.tr_configs = config.get("tr_config", {})
         self.model_config = config.get("model_config", {}) 
         self.dataset_config = config.get("dataset_config", {})
         self.inference_config = config.get("inference_config", {})
         
-        # Initialize all the derived attributes
         self._init_attributes()
         
         return config
     
     def _init_attributes(self):
-        
-        # Training setup
         self.train_patch_size = tuple(self.tr_configs.get("patch_size", [192, 192, 192]))
-        self.in_channels = 1
+        self.in_channels = 2
 
         self.model_name = self.tr_info.get("model_name", "Model")
         self.autoconfigure = bool(self.tr_info.get("autoconfigure", True))
         self.tr_val_split = float(self.tr_info.get("tr_val_split", 0.95))
-        self.dilate_label = bool(self.tr_info.get("dilate_label", False))
+        self.dilate_label = int(self.tr_info.get("dilate_label", 0))
+        self.compute_loss_on_label = bool(self.tr_info.get("compute_loss_on_label", True))
 
         ckpt_out_base = self.tr_info.get("ckpt_out_base", "./checkpoints/")
         self.ckpt_out_base = Path(ckpt_out_base)
@@ -92,24 +85,17 @@ class ConfigManager:
         self.use_timm = self.model_config.get("use_timm", False)
         self.timm_encoder_class = self.model_config.get("timm_encoder_class", None)
         
-        # Auto-detect dimensionality from patch_size and set appropriate convolution
-        if len(self.train_patch_size) == 2:
-            # Set 2D convolutions for 2D data
-            self.model_config["conv_op"] = "nn.Conv2d"
-            # Make sure spacing dimension matches patch size dimension
-            self.spacing = [1] * len(self.train_patch_size)
-            if self.verbose:
-                print(f"Detected 2D patch size {self.train_patch_size}, setting conv_op to nn.Conv2d")
-        else:
-            # Default to 3D convolutions for 3D data
-            self.model_config["conv_op"] = "nn.Conv3d"
-            # Make sure spacing dimension matches patch size dimension
-            self.spacing = [1] * len(self.train_patch_size)
-            if self.verbose:
-                print(f"Detected 3D patch size {self.train_patch_size}, setting conv_op to nn.Conv3d")
+        # Use the centralized dimensionality function to set appropriate operations
+        dim_props = determine_dimensionality(self.train_patch_size, self.verbose)
+        self.model_config["conv_op"] = dim_props["conv_op"]
+        self.model_config["pool_op"] = dim_props["pool_op"]
+        self.model_config["norm_op"] = dim_props["norm_op"]
+        self.model_config["dropout_op"] = dim_props["dropout_op"]
+        self.spacing = dim_props["spacing"]
+        self.op_dims = dim_props["op_dims"]
 
         # channel configuration
-        self.in_channels = 1
+        self.in_channels = 1  # Changed from 2 to 1 to match actual input data
         self.out_channels = ()
         for target_name, task_info in self.targets.items():
             # Look for either 'out_channels' or 'channels' in the task info
@@ -142,22 +128,17 @@ class ConfigManager:
         dict
             Dictionary with targets containing volume data and metadata
         """
-        # Get the current viewer and its layers
         viewer = napari.current_viewer()
         if viewer is None:
             raise ValueError("No active viewer found")
         
-        # Get all layers for faster lookup
         all_layers = list(viewer.layers)
         layer_names = [layer.name for layer in all_layers]
-        
-        # Find image layers
         image_layers = [layer for layer in all_layers if isinstance(layer, napari.layers.Image)]
         
         if not image_layers:
             raise ValueError("No image layers found in the viewer")
         
-        # Build targets dictionary based on naming patterns
         self.targets = {}
         result = {}
         
@@ -185,22 +166,42 @@ class ConfigManager:
                     print(f"No matching label layers found for image: {image_name}")
                 continue
             
+            mask_layer = None
+            mask_layer_name = f"{image_name}_mask"
+            for layer in all_layers:
+                if isinstance(layer, napari.layers.Labels) and layer.name == mask_layer_name:
+                    mask_layer = layer
+                    print(f"Found mask layer for image {image_name}: {mask_layer_name}")
+                    break
+            
             # For each matching label layer, create a target
             for target_suffix, label_layer in matching_label_layers:
-                # Use the suffix as the target name
+                if target_suffix == "mask":
+                    continue
+
                 target_name = target_suffix
-                
-                # Create the target if it doesn't exist
                 if target_name not in self.targets:
-                    self.targets[target_name] = {"out_channels": 1, "loss_fn": "BCEWithLogitsLoss"}
+
+                    self.targets[target_name] = {
+                        "out_channels": 1, 
+                        "loss_fn": self.selected_loss_function,
+                        "activation": "sigmoid" 
+                    }
+                    print(f"DEBUG: Creating new target '{target_name}' with loss function '{self.selected_loss_function}'")
                     result[target_name] = []
                 
-                # Append the data for this target
+                # Prepare the data dictionary
+                data_dict = {
+                    'data': deepcopy(image_layer.data),
+                    'label': deepcopy(label_layer.data)
+                }
+                
+                if mask_layer is not None:
+                    data_dict['mask'] = deepcopy(mask_layer.data)
+                    print(f"Including mask for target {target_name}")
+                
                 result[target_name].append({
-                    'data': {
-                        'data': deepcopy(image_layer.data),
-                        'label': deepcopy(label_layer.data)
-                    },
+                    'data': data_dict,
                     'out_channels': self.targets[target_name]["out_channels"],
                     'name': f"{image_name}_{target_name}"
                 })
@@ -211,44 +212,47 @@ class ConfigManager:
         if not self.targets:
             raise ValueError("No valid image-label pairs found. Label layers should be named as image_name_suffix.")
         
-        # Update out_channels in ConfigManager
         self.out_channels = tuple(task_info["out_channels"] for task_info in self.targets.values())
         
-        # Check the dimensionality of the data to ensure it matches with the current configuration
         if result:
-            # Get the first target's first item to check dimensionality
             first_target = next(iter(result.values()))[0]
             img_data = first_target['data']['data']
             data_is_2d = len(img_data.shape) == 2
             config_is_2d = len(self.train_patch_size) == 2
             
-            # If there's a mismatch between data and configuration, update the configuration
             if data_is_2d != config_is_2d:
+                # Reconfigure dimensionality based on actual data
                 if data_is_2d:
                     # Data is 2D but config is 3D
                     if self.verbose:
-                        print(f"Data is 2D but config is for 3D. Updating conv_op to nn.Conv2d")
-                    # Set 2D convolutions for 2D data
-                    self.model_config["conv_op"] = "nn.Conv2d"
+                        print(f"Data is 2D but config is for 3D. Reconfiguring for 2D operations.")
+                    
                     # Keep existing patch_size dimensions but adapt to 2D
                     if len(self.train_patch_size) > 2:
                         self.train_patch_size = self.train_patch_size[-2:]
                         self.tr_configs["patch_size"] = list(self.train_patch_size)
-                        # Update spacing to match patch size dimensions
-                        self.spacing = [1] * len(self.train_patch_size)
-                        if self.verbose:
-                            print(f"Adjusted patch_size to {self.train_patch_size} for 2D data")
-                            print(f"Updated spacing to {self.spacing}")
+                    
+                    # Update all dimension-dependent configurations
+                    dim_props = determine_dimensionality(self.train_patch_size, self.verbose)
+                    self.model_config["conv_op"] = dim_props["conv_op"]
+                    self.model_config["pool_op"] = dim_props["pool_op"]
+                    self.model_config["norm_op"] = dim_props["norm_op"]
+                    self.model_config["dropout_op"] = dim_props["dropout_op"]
+                    self.spacing = dim_props["spacing"]
+                    self.op_dims = dim_props["op_dims"]
                 else:
                     # Data is 3D but config is 2D
                     if self.verbose:
-                        print(f"Data is 3D but config is for 2D. Updating conv_op to nn.Conv3d")
-                    # Set 3D convolutions for 3D data
-                    self.model_config["conv_op"] = "nn.Conv3d"
-                    # Update spacing to match 3D dimensions
-                    self.spacing = [1, 1, 1]
-                    if self.verbose:
-                        print(f"Updated spacing to {self.spacing}")
+                        print(f"Data is 3D but config is for 2D. Reconfiguring for 3D operations.")
+                    
+                    # Update all dimension-dependent configurations
+                    dim_props = determine_dimensionality([1, 1, 1], self.verbose)  # Use dummy 3D patch
+                    self.model_config["conv_op"] = dim_props["conv_op"]
+                    self.model_config["pool_op"] = dim_props["pool_op"]
+                    self.model_config["norm_op"] = dim_props["norm_op"]
+                    self.model_config["dropout_op"] = dim_props["dropout_op"]
+                    self.spacing = dim_props["spacing"]
+                    self.op_dims = dim_props["op_dims"]
         
         if self.verbose:
             print(f"Final targets dictionary: {self.targets}")
@@ -257,18 +261,15 @@ class ConfigManager:
         return result
 
     def save_config(self):
-        # Make a deep copy of existing configs to avoid modifying the originals
         tr_setup = deepcopy(self.tr_info)
         tr_config = deepcopy(self.tr_configs)
         model_config = deepcopy(self.model_config)
         dataset_config = deepcopy(self.dataset_config)
         inference_config = deepcopy(self.inference_config)
         
-        # Ensure the targets from our dynamic layer detection are saved
         if hasattr(self, 'targets') and self.targets:
             dataset_config["targets"] = deepcopy(self.targets)
             
-            # Also update model_config with the targets for inference
             model_config["targets"] = deepcopy(self.targets)
             
             if self.verbose:
@@ -282,22 +283,68 @@ class ConfigManager:
             "inference_config": inference_config,
         }
 
-        original_stem = self._config_path.stem  # e.g. "my_config"
-        original_ext = self._config_path.suffix  # e.g. ".yaml"
-        original_parent = self._config_path.parent
+        # Create a specific directory for this model's checkpoints
+        model_ckpt_dir = Path(self.ckpt_out_base) / self.model_name
+        model_ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create the new filename with "_final" inserted
-        final_filename = f"{original_stem}_final{original_ext}"
+        # Create a config filename matching the model name
+        config_filename = f"{self.model_name}_config.yaml"
 
-        # Full path to the new file
-        final_path = original_parent / final_filename
+        # Full path to the new file in the checkpoint directory
+        config_path = model_ckpt_dir / config_filename
 
         # Write out the YAML
-        with final_path.open("w") as f:
+        with config_path.open("w") as f:
             yaml.safe_dump(combined_config, f, sort_keys=False)
 
-        print(f"Configuration saved to: {final_path}")
+        print(f"Configuration saved to: {config_path}")
 
+    def update_config_from_widget(self, widget=None):
+        if widget is not None:
+            patch_size_z = widget.patch_size_z.value
+            patch_size_x = widget.patch_size_x.value
+            patch_size_y = widget.patch_size_y.value
+            min_labeled_percentage = widget.min_labeled_percentage.value
+            max_epochs = widget.max_epochs.value
+            loss_function = widget.loss_function.value
+            new_patch_size = [patch_size_z, patch_size_x, patch_size_y]
+            self.train_patch_size = tuple(new_patch_size)
+            self.tr_configs["patch_size"] = new_patch_size
+            self.min_labeled_ratio = min_labeled_percentage / 100.0
+            self.dataset_config["min_labeled_ratio"] = self.min_labeled_ratio
+            
+            # Use centralized dimensionality function to set appropriate operations
+            dim_props = determine_dimensionality(self.train_patch_size, self.verbose)
+            self.model_config["conv_op"] = dim_props["conv_op"]
+            self.model_config["pool_op"] = dim_props["pool_op"]
+            self.model_config["norm_op"] = dim_props["norm_op"]
+            self.model_config["dropout_op"] = dim_props["dropout_op"]
+            self.spacing = dim_props["spacing"]
+            self.op_dims = dim_props["op_dims"]
+            
+            # Set max_steps_per_epoch and max_val_steps_per_epoch to None so that train.py will use the dataset length
+            self.max_steps_per_epoch = None
+            self.max_val_steps_per_epoch = None
+            self.max_epoch = max_epochs
+            self.tr_configs["max_epoch"] = max_epochs
+            self.selected_loss_function = loss_function
+            
+            if self.verbose:
+                print(f"Updated training parameters:")
+                print(f"  - Patch size: [{patch_size_z}, {patch_size_x}, {patch_size_y}]")
+                print(f"  - Min labeled ratio: {self.min_labeled_ratio:.2f} ({min_labeled_percentage}%)")
+                print(f"  - Max epochs: {max_epochs}")
+                print(f"  - Loss function: {loss_function}")
+        
+        if hasattr(self, 'selected_loss_function') and hasattr(self, 'targets') and self.targets:
+            print(f"DEBUG: Applying loss function '{self.selected_loss_function}' to all targets")
+            for target_name in self.targets:
+                self.targets[target_name]["loss_fn"] = self.selected_loss_function
+                print(f"DEBUG: Set target '{target_name}' loss_fn to '{self.selected_loss_function}'")
+            
+            if self.verbose:
+                print(f"Applied loss function '{self.selected_loss_function}' to all targets during config update")
+    
     def _print_summary(self):
         print("____________________________________________")
         print("Training Setup (tr_info):")
@@ -317,10 +364,7 @@ class ConfigManager:
             print(f"  {k}: {v}")
         print("____________________________________________")
 
-# Global variables to hold important references
 _config_manager = None
-
-# Function to pick config file, with callback to load it into ConfigManager
 @magicgui(filenames={"label": "select config file", "filter": "*.yaml"},
           auto_call=True)
 def filespicker(filenames: Sequence[Path] = 'configs/default_config.yaml') -> Sequence[Path]:
@@ -331,23 +375,20 @@ def filespicker(filenames: Sequence[Path] = 'configs/default_config.yaml') -> Se
         print(f"Config loaded from {filenames[0]}")
     return filenames
 
-@magicgui(call_button='run training')
-def run_training():
-    """
-    Start training with the currently loaded configuration and visible layers.
-    
-    Label Naming Convention:
-    For each image layer, you can have multiple label layers that will be treated as separate targets.
-    Labels must be named as: {image_name}_{target_name}
-    
-    Examples:
-    - If you have an image layer "32" and label layers "32_1" and "32_2", 
-      the system will create targets named "1" and "2".
-    - If you have multiple image layers like "image1" and "image2" with corresponding
-      label layers "image1_ink" and "image2_ink", the system will create a target named "ink".
-    
-    All labels with the same suffix (target name) will be grouped together for training.
-    """
+@magicgui(
+    call_button='run training',
+    patch_size_z={'widget_type': 'SpinBox', 'label': 'Patch Size Z', 'min': 0, 'max': 4096, 'value': 0},
+    patch_size_x={'widget_type': 'SpinBox', 'label': 'Patch Size X', 'min': 0, 'max': 4096, 'value': 128},
+    patch_size_y={'widget_type': 'SpinBox', 'label': 'Patch Size Y', 'min': 0, 'max': 4096, 'value': 128},
+    min_labeled_percentage={'widget_type': 'SpinBox', 'label': 'Min Labeled Percentage', 'min': 0.0, 'max': 100.0, 'step': 1.0, 'value': 10.0},
+    max_epochs={'widget_type': 'SpinBox', 'label': 'Max Epochs', 'min': 1, 'max': 1000, 'value': 5},
+    loss_function={'widget_type': 'ComboBox', 'choices': ["BCELoss", "BCEWithLogitsLoss", "MSELoss", 
+                                                         "L1Loss", "SoftDiceLoss"], 'value': "SoftDiceLoss"}
+)
+def run_training(patch_size_z: int = 128, patch_size_x: int = 128, patch_size_y: int = 128,
+                min_labeled_percentage: float = 10.0,
+                max_epochs: int = 5,
+                loss_function: str = "SoftDiceLoss"):
     if _config_manager is None:
         print("Error: No configuration loaded. Please load a config file first.")
         return
@@ -355,46 +396,32 @@ def run_training():
     print("Starting training process...")
     print("Using images and labels from current viewer")
     
-    # First, get images and labels from the current viewer
+    _config_manager.update_config_from_widget(run_training)
+    
     try:
-        # This will populate the targets
         _config_manager.get_images()
     except Exception as e:
         print(f"Error detecting images and labels: {e}")
         raise
     
-    # Verify targets exist in the config
     if not hasattr(_config_manager, 'targets') or not _config_manager.targets:
         raise ValueError("No targets defined. Please make sure you have label layers named {image_name}_{target_name} in the viewer.")
     
-    # Import BaseTrainer here to avoid circular imports
     from train import BaseTrainer
-    
-    # Initialize trainer with our config manager
     trainer = BaseTrainer(mgr=_config_manager, verbose=True)
-    
-    # Start training
     print("Starting training...")
     trainer.train()
-    
-
-
 
 if __name__ == "__main__":
     viewer = napari.Viewer()
-
-    # Create config manager and store in global variable
     _config_manager = ConfigManager(verbose=True)
+    default_config_path = 'configs/default_config.yaml'
+    _config_manager.load_config(default_config_path)
+    print(f"Default config loaded from {default_config_path}")
 
-    # Create the file picker widget
     file_picker_widget = filespicker
-
-    # Add widgets to the viewer
-    viewer.window.add_dock_widget(file_picker_widget, area='right', name="Config File")
-
-
-    # Add training and inference widgets
-    viewer.window.add_dock_widget(run_training, area='right', name="Training")
-    viewer.window.add_dock_widget(inference_widget, area='right', name="Inference")
+    viewer.window.add_dock_widget(file_picker_widget, area='right', name="config file")
+    viewer.window.add_dock_widget(run_training, area='right', name="training")
+    viewer.window.add_dock_widget(inference_widget, area='right', name="inference")
 
     napari.run()

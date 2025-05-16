@@ -27,18 +27,20 @@ def convert_slice_to_bgr(
     dynamic_range: bool = True
 ) -> np.ndarray:
     """
-    Converts a slice (either single-channel grayscale or 3-channel normal) into a BGR image
+    Converts a slice (single-channel, multi-channel, or 3-channel normal) into a BGR image
     by doing min..max scaling to the full range of values present in *that slice*.
 
     Args:
-        slice_2d_or_3d (np.ndarray): shape [H, W] for single-channel, or [3, H, W] for 3-channel.
+        slice_2d_or_3d (np.ndarray): shape [H, W] for single-channel, [3, H, W] for 3-channel (processed as BGR), 
+                                     or [C, H, W] for any number of channels (each channel visualized side by side).
         show_magnitude (bool): If True and data is 3-channel, we horizontally stack an extra panel
                                showing that slice's magnitude, also min–max scaled to [0..255].
         dynamic_range (bool): If True, we scale by the slice's min and max. If False, we clamp
                               to [-1..1] for 3-channel (old approach) or [0..1] for single-channel.
 
     Returns:
-        np.ndarray: BGR image of shape [H, W, 3], or shape [H, 2*W, 3] if magnitude panel is shown.
+        np.ndarray: BGR image of shape [H, W, 3], or shape [H, 2*W, 3] if magnitude panel is shown,
+                    or shape [H, C*W, 3] for multi-channel data with C channels.
     """
 
     def minmax_scale_to_8bit(img: np.ndarray) -> np.ndarray:
@@ -66,47 +68,63 @@ def convert_slice_to_bgr(
         return cv2.cvtColor(slice_8u, cv2.COLOR_GRAY2BGR)
 
     # -----------------------------------------
-    # Case 2: Three-channel [3, H, W]
+    # Case 2: Multi-channel [C, H, W]
     # -----------------------------------------
-    elif (
-        slice_2d_or_3d.ndim == 3
-        and slice_2d_or_3d.shape[0] == 3
-    ):
-        # shape => [3, H, W]
-        if dynamic_range:
-            # Per-channel local min..max
-            ch_list = []
-            for ch_idx in range(3):
-                ch_8u = minmax_scale_to_8bit(slice_2d_or_3d[ch_idx])
-                ch_list.append(ch_8u)
-            mapped_normals = np.stack(ch_list, axis=0)  # shape => [3, H, W]
-        else:
-            # Old clamp approach for normals => [-1..1] mapped to [0..255]
-            normal_slice = np.clip(slice_2d_or_3d, -1, 1)
-            mapped_normals = ((normal_slice * 0.5) + 0.5) * 255
-            mapped_normals = np.clip(mapped_normals, 0, 255).astype(np.uint8)
-
-        # Reorder to [H, W, 3]
-        bgr_normals = np.transpose(mapped_normals, (1, 2, 0))
-
-        # Optionally add a separate magnitude panel
-        if show_magnitude:
-            # Magnitude of the original float channels
-            mag = np.linalg.norm(slice_2d_or_3d, axis=0)  # => [H, W]
+    elif slice_2d_or_3d.ndim == 3:
+        # Special handling for 3-channel data (likely normals)
+        if slice_2d_or_3d.shape[0] == 3:
+            # shape => [3, H, W]
             if dynamic_range:
-                mag_8u = minmax_scale_to_8bit(mag)
+                # Per-channel local min..max
+                ch_list = []
+                for ch_idx in range(3):
+                    ch_8u = minmax_scale_to_8bit(slice_2d_or_3d[ch_idx])
+                    ch_list.append(ch_8u)
+                mapped_normals = np.stack(ch_list, axis=0)  # shape => [3, H, W]
             else:
-                # If you like, you could do the same [-1..1] clamp, but magnitude rarely is negative
-                mag_8u = minmax_scale_to_8bit(mag)
-            mag_bgr = cv2.cvtColor(mag_8u, cv2.COLOR_GRAY2BGR)
-            # Combine horizontally: [H, W + W, 3]
-            return np.hstack([mag_bgr, bgr_normals])
+                # Old clamp approach for normals => [-1..1] mapped to [0..255]
+                normal_slice = np.clip(slice_2d_or_3d, -1, 1)
+                mapped_normals = ((normal_slice * 0.5) + 0.5) * 255
+                mapped_normals = np.clip(mapped_normals, 0, 255).astype(np.uint8)
 
-        return bgr_normals
+            # Reorder to [H, W, 3]
+            bgr_normals = np.transpose(mapped_normals, (1, 2, 0))
+
+            # Optionally add a separate magnitude panel
+            if show_magnitude:
+                # Magnitude of the original float channels
+                mag = np.linalg.norm(slice_2d_or_3d, axis=0)  # => [H, W]
+                if dynamic_range:
+                    mag_8u = minmax_scale_to_8bit(mag)
+                else:
+                    # If you like, you could do the same [-1..1] clamp, but magnitude rarely is negative
+                    mag_8u = minmax_scale_to_8bit(mag)
+                mag_bgr = cv2.cvtColor(mag_8u, cv2.COLOR_GRAY2BGR)
+                # Combine horizontally: [H, W + W, 3]
+                return np.hstack([mag_bgr, bgr_normals])
+
+            return bgr_normals
+        
+        # Other multi-channel cases (2-channel, 4-channel, etc.)
+        else:
+            # Handle any number of channels by creating a grayscale image for each
+            ch_list = []
+            for ch_idx in range(slice_2d_or_3d.shape[0]):
+                ch_8u = minmax_scale_to_8bit(slice_2d_or_3d[ch_idx])
+                ch_bgr = cv2.cvtColor(ch_8u, cv2.COLOR_GRAY2BGR)
+                ch_list.append(ch_bgr)
+            
+            # Stack all channel images horizontally
+            if len(ch_list) == 1:
+                return ch_list[0]
+            
+            # For multiple channels, we show them side by side
+            combined = np.hstack(ch_list)
+            return combined
 
     else:
         raise ValueError(
-            f"convert_slice_to_bgr expects shape [H, W] or [3, H, W], got {slice_2d_or_3d.shape}"
+            f"convert_slice_to_bgr expects shape [H, W] or [C, H, W] where C is the number of channels, got {slice_2d_or_3d.shape}"
         )
 
 def save_debug(
