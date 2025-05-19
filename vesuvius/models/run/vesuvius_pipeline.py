@@ -5,7 +5,6 @@ Uses multiple GPUs by assigning different devices to different parts (not DDP).
 """
 
 import argparse
-import asyncio
 import os
 import sys
 import json
@@ -47,45 +46,43 @@ def parse_arguments():
     # Processing parameters
     parser.add_argument('--mode', type=str, choices=['binary', 'multiclass'], default='binary',
                       help='Processing mode. "binary" for 2-class, "multiclass" for >2 classes. Default: binary')
-    parser.add_argument('--threshold', action='store_true',
+    parser.add_argument('--threshold', dest='threshold', action='store_true',
                       help='Apply thresholding to get binary/class masks instead of probability maps')
-    parser.add_argument('--patch-size', type=str, 
+    parser.add_argument('--patch-size', dest='patch_size', type=str, 
                       help='Patch size (z, y, x) separated by commas')
     
     # GPU settings
     parser.add_argument('--gpus', type=str, default='all',
                       help='GPU IDs to use, comma-separated (e.g., "0,1,2") or "all" for all available GPUs. Default: all')
-    parser.add_argument('--parts-per-gpu', type=int, default=1,
+    parser.add_argument('--parts-per-gpu', dest='parts_per_gpu', type=int, default=1,
                       help='Number of parts to process per GPU. Higher values use less GPU memory but take longer. Default: 1')
     
     # Performance settings
-    parser.add_argument('--tta-type', type=str, choices=['mirroring', 'rotation'], 
+    parser.add_argument('--tta-type', dest='tta_type', type=str, choices=['mirroring', 'rotation'], 
                       help='Test time augmentation type (mirroring or rotation)')
-    parser.add_argument('--disable-tta', action='store_true',
+    parser.add_argument('--disable-tta', dest='disable_tta', action='store_true',
                       help='Disable test time augmentation')
-    parser.add_argument('--single-part', action='store_true',
+    parser.add_argument('--single-part', dest='single_part', action='store_true',
                       help='Process as a single part (no splitting for multi-GPU)')
-    parser.add_argument('--batch-size', type=int, default=4,
+    parser.add_argument('--batch-size', dest='batch_size', type=int, default=4,
                       help='Batch size for inference. Default: 2')
-    parser.add_argument('--num-workers', type=int, default=6,
+    parser.add_argument('--num-workers', dest='num_workers', type=int, default=6,
                       help='Number of data loader workers. Default: 4')
-    parser.add_argument('--cache-gb', type=float, default=10.0,
-                      help='TensorStore cache pool size in GiB. Default: 10.0')
     
     # Cleanup
-    parser.add_argument('--keep-intermediates', action='store_true',
+    parser.add_argument('--keep-intermediates', dest='keep_intermediates', action='store_true',
                       help='Keep intermediate files after processing')
     
     # Control flow
-    parser.add_argument('--skip-predict', action='store_true',
+    parser.add_argument('--skip-predict', dest='skip_predict', action='store_true',
                       help='Skip the prediction step (use existing prediction outputs)')
-    parser.add_argument('--skip-blend', action='store_true',
+    parser.add_argument('--skip-blend', dest='skip_blend', action='store_true',
                       help='Skip the blending step (use existing blended outputs)')
-    parser.add_argument('--skip-finalize', action='store_true',
+    parser.add_argument('--skip-finalize', dest='skip_finalize', action='store_true',
                       help='Skip the finalization step (only generate blended logits)')
     
     # Verbosity
-    parser.add_argument('--quiet', action='store_true',
+    parser.add_argument('--quiet', dest='quiet', action='store_true',
                       help='Reduce verbosity')
     
     return parser.parse_args()
@@ -216,8 +213,6 @@ def run_blend(args):
     """Run the blending step to merge all parts."""
     cmd = ['vesuvius.blend_logits', args.parts_dir, args.blended_path]
     
-    # Add optional arguments
-    cmd.extend(['--cache_gb', str(args.cache_gb)])
     
     if args.quiet:
         cmd.append('--quiet')
@@ -248,20 +243,25 @@ def run_blend(args):
 
 
 def run_finalize(args):
-    """Run the finalization step to process the blended output."""
+    # DEBUG: Print threshold flag value before command construction
+    print(f"DEBUG - threshold flag value: {args.threshold}")
+    print(f"DEBUG - threshold flag type: {type(args.threshold)}")
+    print(f"DEBUG - All available args: {vars(args)}")
+    
     cmd = ['vesuvius.finalize_outputs', args.blended_path, args.output]
     
     # Add mode and threshold arguments
     cmd.extend(['--mode', args.mode])
     if args.threshold:
+        print(f"DEBUG - Adding --threshold flag to command")
         cmd.append('--threshold')
+    else:
+        print(f"DEBUG - NOT adding --threshold flag")
     
     # Delete intermediates if not keeping them
     if not args.keep_intermediates:
         cmd.append('--delete-intermediates')
     
-    # Use hyphenated format for finalize command
-    cmd.extend(['--cache-gb', str(args.cache_gb)])
     
     if args.quiet:
         cmd.append('--quiet')
@@ -330,14 +330,7 @@ def run_pipeline():
     """Run the complete inference pipeline."""
     args = parse_arguments()
     
-    # Convert hyphenated argument names to underscore format for code access
-    # Store both original hyphenated name and Python-friendly underscore name
-    for attr_name in dir(args):
-        if '-' in attr_name:
-            underscore_name = attr_name.replace('-', '_')
-            setattr(args, underscore_name, getattr(args, attr_name))
-    
-    # Now we can access args.tta_type instead of args.tta-type
+    # No need to convert hyphenated argument names anymore - argparse does this for us with dest
     args = prepare_directories(args)
     
     # Select GPUs to use

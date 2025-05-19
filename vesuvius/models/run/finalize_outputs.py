@@ -1,20 +1,20 @@
-import tensorstore as ts
 import numpy as np
-import asyncio
 import os
 import torch
 import torch.nn.functional as F
 from tqdm.auto import tqdm
 import argparse
+import zarr
+import numcodecs
+import shutil
 
 
-async def finalize_logits(
+def finalize_logits(
     input_path: str,
     output_path: str,
     mode: str = "binary",  # "binary" or "multiclass"
     threshold: bool = False,  # If True, will apply argmax and only save class predictions
     delete_intermediates: bool = False,  # If True, will delete the input logits after processing
-    cache_pool_gb: float = 10.0,
     chunk_size: tuple = None,  # Optional custom chunk size for output
     verbose: bool = True
 ):
@@ -27,20 +27,20 @@ async def finalize_logits(
         mode: "binary" (2 channels) or "multiclass" (>2 channels)
         threshold: If True, applies argmax and only saves class predictions
         delete_intermediates: Whether to delete input logits after processing
-        cache_pool_gb: TensorStore cache pool size in GiB
         chunk_size: Optional custom chunk size for output (Z,Y,X)
         verbose: Print progress messages
     """
-    # Create TensorStore context with cache
-    ts_context = ts.Context({'cache_pool': {'total_bytes_limit': int(cache_pool_gb * 1024 ** 3)}})
+    # Setup compressor (similar to what's in blending.py)
+    compressor = numcodecs.Blosc(
+        cname='zstd',
+        clevel=1,  # Light compression for performance
+        shuffle=numcodecs.blosc.SHUFFLE
+    )
     
     # Debug info
     print(f"Opening input logits: {input_path}")
     print(f"Mode: {mode}, Threshold flag: {threshold}")
-    input_store = await ts.open({
-        'driver': 'zarr',
-        'kvstore': {'driver': 'file', 'path': input_path}
-    }, context=ts_context)
+    input_store = zarr.open(input_path, mode='r')
     
     # Get input shape and properties
     input_shape = input_store.shape
@@ -59,7 +59,8 @@ async def finalize_logits(
     if chunk_size is None:
         # Get chunks from input store if available
         try:
-            src_chunks = input_store.spec().to_json()["metadata"]["chunks"]
+            # Zarr chunks are directly accessible as a property
+            src_chunks = input_store.chunks
             # Input chunks include class dimension - extract spatial dimensions
             output_chunks = src_chunks[1:]
             if verbose:
@@ -96,19 +97,17 @@ async def finalize_logits(
     
     # Create output store
     print(f"Creating output store: {output_path}")
-    output_store = await ts.open(
-        ts.Spec({
-            'driver': 'zarr',
-            'kvstore': {'driver': 'file', 'path': output_path},
-            'metadata': {
-                'shape': output_shape,
-                'chunks': (1, *output_chunks),  # Chunk each channel separately
-                'dtype': '<f2',  # Use littleendian float32
-            },
-            'create': True,
-            'delete_existing': True,
-        }),
-        context=ts_context
+    output_chunks = (1, *output_chunks)  # Chunk each channel separately
+    
+    # Create output zarr array 
+    output_store = zarr.create(
+        shape=output_shape,
+        chunks=output_chunks,
+        dtype=np.float16,  # Use float16 to match <f2 from tensorstore
+        compressor=compressor,
+        store=output_path,
+        overwrite=True,
+        write_empty_chunks=False  # Skip empty chunks for efficiency
     )
     
     # Process data in chunks to avoid memory issues
@@ -117,7 +116,7 @@ async def finalize_logits(
         # For each dimension, calculate how many chunks we need
         # Skip first dimension (channels) as we'll handle all channels at once
         spatial_shape = shape[1:]  # Skip channel dimension
-        spatial_chunks = chunks  # These are already the spatial chunks
+        spatial_chunks = chunks[1:]  # These are the spatial chunks (skip channel dimension)
         
         # Generate all combinations of chunk indices for spatial dimensions
         from itertools import product
@@ -137,12 +136,12 @@ async def finalize_logits(
         # Calculate slice for this chunk
         spatial_slices = tuple(
             slice(idx * chunk, min((idx + 1) * chunk, shape_dim))
-            for idx, chunk, shape_dim in zip(chunk_idx, output_chunks, spatial_shape)
+            for idx, chunk, shape_dim in zip(chunk_idx, output_chunks[1:], spatial_shape)
         )
         
         # Read all classes for this spatial region
         input_slice = (slice(None),) + spatial_slices  # All classes, specific spatial region
-        logits_np = await input_store[input_slice].read()
+        logits_np = input_store[input_slice]
         
         # Convert to torch tensor for processing
         logits = torch.from_numpy(logits_np)
@@ -183,15 +182,25 @@ async def finalize_logits(
         output_slice = (slice(None),) + spatial_slices
         
         # Write to output store
-        await output_store[output_slice].write(output_np)
+        output_store[output_slice] = output_np
     
     print("\nOutput processing complete.")
+    
+    # Copy metadata/attributes from input to output if they exist
+    try:
+        if hasattr(input_store, 'attrs') and hasattr(output_store, 'attrs'):
+            for key in input_store.attrs:
+                output_store.attrs[key] = input_store.attrs[key]
+            # Add processing info to attributes
+            output_store.attrs['processing_mode'] = mode
+            output_store.attrs['threshold_applied'] = threshold
+    except Exception as e:
+        print(f"Warning: Failed to copy metadata: {e}")
     
     # Clean up intermediate files if requested
     if delete_intermediates:
         print(f"Deleting intermediate logits: {input_path}")
         try:
-            import shutil
             if os.path.exists(input_path):
                 shutil.rmtree(input_path)
                 print(f"Successfully deleted intermediate logits")
@@ -212,15 +221,15 @@ def main():
                       help='Path for the finalized output Zarr store')
     parser.add_argument('--mode', type=str, choices=['binary', 'multiclass'], default='binary',
                       help='Processing mode. "binary" for 2-class segmentation, "multiclass" for >2 classes. Default: binary')
-    parser.add_argument('--threshold', action='store_true',
+    parser.add_argument('--threshold', dest='threshold', action='store_true',
                       help='If set, applies argmax and only saves the class predictions (no probabilities). Works for both binary and multiclass.')
-    parser.add_argument('--delete-intermediates', action='store_true',
+    parser.add_argument('--delete-intermediates', dest='delete_intermediates', action='store_true',
                       help='Delete intermediate logits after processing')
-    parser.add_argument('--chunk-size', type=str, default=None,
+    parser.add_argument('--chunk-size', dest='chunk_size', type=str, default=None,
                       help='Spatial chunk size (Z,Y,X) for output Zarr. Comma-separated. If not specified, input chunks will be used.')
-    parser.add_argument('--cache-gb', type=float, default=4.0,
-                      help='TensorStore cache pool size in GiB. Default: 4.0')
-    parser.add_argument('--quiet', action='store_true',
+    parser.add_argument('--cache-gb', dest='cache_gb', type=float, default=4.0,
+                      help='Cache size in GiB (kept for backward compatibility). Default: 4.0')
+    parser.add_argument('--quiet', dest='quiet', action='store_true',
                       help='Suppress verbose output')
     
     args = parser.parse_args()
@@ -235,16 +244,15 @@ def main():
             parser.error("Invalid chunk_size format. Expected 3 comma-separated integers (Z,Y,X).")
     
     try:
-        asyncio.run(finalize_logits(
+        finalize_logits(
             input_path=args.input_path,
             output_path=args.output_path,
             mode=args.mode,
             threshold=args.threshold,
             delete_intermediates=args.delete_intermediates,
             chunk_size=chunks,
-            cache_pool_gb=args.cache_gb,
             verbose=not args.quiet
-        ))
+        )
         return 0
     except Exception as e:
         print(f"\n--- Finalization Failed ---")
