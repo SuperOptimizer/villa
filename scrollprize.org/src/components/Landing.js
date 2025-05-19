@@ -670,11 +670,6 @@ const team = {
       href: "https://www.linkedin.com/in/davidsjosey/",
     },
     {
-      name: "Adrionna Fey",
-      title: "Annotation Specialist",
-      href: "https://twitter.com/Meadowsnax1",
-    },
-    {
       name: "Eric Thvedt",
       title: "Annotation Specialist",
       href: "https://www.linkedin.com/in/eric-thvedt/",
@@ -693,11 +688,6 @@ const team = {
       name: "Sarah Morejohn",
       title: "Annotation Specialist",
       href: "https://www.linkedin.com/in/sarah-morejohn-1140b049/",
-    },
-    {
-      name: "Sergei Pnev",
-      title: "Annotation Specialist",
-      href: "www.linkedin.com/in/sergey-pnev",
     },
     {
       name: "Techjays",
@@ -754,14 +744,24 @@ const team = {
       href: "https://twitter.com/ben_kyles",
     },
     {
-      name: "Raymond Gasper",
+      name: "Adrionna Fey",
       title: "Annotation Specialist",
-      href: "https://www.linkedin.com/in/raymond-james-gasper/",
+      href: "https://twitter.com/Meadowsnax1",
     },
     {
       name: "Cooper Miller",
       title: "Annotation Specialist",
       href: "https://kcm.sh/",
+    },
+    {
+      name: "Raymond Gasper",
+      title: "Annotation Specialist",
+      href: "https://www.linkedin.com/in/raymond-james-gasper/",
+    },
+    {
+      name: "Sergei Pnev",
+      title: "Annotation Specialist",
+      href: "www.linkedin.com/in/sergey-pnev",
     },
     {
       name: "Daniel Havíř",
