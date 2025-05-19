@@ -1,15 +1,13 @@
 import torch
-import tensorstore as ts
 import numpy as np
-import asyncio
-import math
-import tempfile
-import shutil
+import zarr
 import os
 import json
 import multiprocessing
-# Set multiprocessing start method to 'spawn' for TensorStore compatibility
-# 'fork' is not allowed since tensorstore uses internal threading
+import threading
+from concurrent.futures import ThreadPoolExecutor
+# Set multiprocessing start method to 'spawn' for compatibility
+# 'fork' is not allowed since some libraries use internal threading
 multiprocessing.set_start_method('spawn', force=True)
 from tqdm.auto import tqdm
 from torch.utils.data import DataLoader
@@ -43,6 +41,9 @@ class Inferer():
                  segment_id: [str, int] = None,
                  energy: int = None,
                  resolution: float = None,
+                 # Zarr compression settings
+                 compressor_name: str = 'zstd',
+                 compression_level: int = 1,
                  # Hugging Face parameters
                  hf_token: str = None
                  ):
@@ -71,6 +72,9 @@ class Inferer():
         self.segment_id = segment_id
         self.energy = energy
         self.resolution = resolution
+        # Zarr compression settings
+        self.compressor_name = compressor_name
+        self.compression_level = compression_level
         # Hugging Face parameters
         self.hf_token = hf_token
         # These will be set after model loading if not provided
@@ -245,315 +249,273 @@ class Inferer():
         )
         return self.dataset, self.dataloader
         
-    def _write_zattrs(self, zarr_path, attributes):
-        """Helper method to write custom attributes to a .zattrs file in a Zarr store."""
-        zattrs_path = os.path.join(zarr_path, '.zattrs')
-        
-        # Read existing .zattrs if it exists
-        existing_data = {}
-        if os.path.exists(zattrs_path):
-            try:
-                with open(zattrs_path, 'r') as f:
-                    existing_data = json.load(f)
-            except json.JSONDecodeError:
-                if self.verbose:
-                    print(f"Warning: Could not parse existing .zattrs at {zattrs_path}")
-            except Exception as e:
-                if self.verbose:
-                    print(f"Warning: Error reading {zattrs_path}: {e}")
-        
-        # Merge existing data with new attributes
-        # For simplicity, we use top-level merging
-        merged_data = {**existing_data, **attributes}
-        
-        # Write back the merged data
-        try:
-            with open(zattrs_path, 'w') as f:
-                json.dump(merged_data, f, indent=2)
-            return True
-        except Exception as e:
-            if self.verbose:
-                print(f"Error writing to {zattrs_path}: {e}")
-            return False
+    def _get_zarr_compressor(self):
+        """Returns a configured zarr compressor based on settings."""
+        if self.compressor_name.lower() == 'zstd':
+            return zarr.Blosc(cname='zstd', clevel=self.compression_level, shuffle=zarr.Blosc.SHUFFLE)
+        elif self.compressor_name.lower() == 'lz4':
+            return zarr.Blosc(cname='lz4', clevel=self.compression_level, shuffle=zarr.Blosc.SHUFFLE)
+        elif self.compressor_name.lower() == 'zlib':
+            return zarr.Blosc(cname='zlib', clevel=self.compression_level, shuffle=zarr.Blosc.SHUFFLE)
+        elif self.compressor_name.lower() == 'none':
+            return None
+        else:
+            # Default to a good all-around compressor
+            return zarr.Blosc(cname='zstd', clevel=3, shuffle=zarr.Blosc.SHUFFLE)
 
-    async def _create_output_stores(self):
-        """Creates the main output Zarr and the coordinate Zarr."""
+    def _create_output_stores(self):
+        """Creates the main output Zarr and the coordinate Zarr using native Zarr API."""
         if self.num_classes is None or self.patch_size is None or self.num_total_patches is None:
             raise RuntimeError("Cannot create output stores: model/patch info missing.")
         if not self.patch_start_coords_list:
             raise RuntimeError("Cannot create output stores: patch coordinates not available.")
 
+        # Get the compressor
+        compressor = self._get_zarr_compressor()
+
         # --- 1. Main Output Store ---
         output_shape = (self.num_total_patches, self.num_classes, *self.patch_size)
-        output_chunks = (1, self.num_classes, *self.patch_size)
-        main_store_path = os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr")  # Give unique name per part
-        main_store_spec = {
-            'driver': 'zarr',
-            'kvstore': {'driver': 'file', 'path': main_store_path},
-            'metadata': {
-                'dtype': '<f2',
-                'shape': output_shape,
-                'chunks': output_chunks,
-                'compressor': {'id': 'blosc'},
-            },
-            'create': True, 'delete_existing': True
-        }
+        output_chunks = (1, self.num_classes, *self.patch_size)  # Chunk by individual patch
+        main_store_path = os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr")
         
-        # Store custom attributes in a separate zattrs file instead of in the metadata
-        if self.verbose: print(f"Will store custom attributes in .zattrs file after store creation")
-        if self.verbose: print(f"Creating main output Zarr: {main_store_path}")
-
+        # Create the store with direct Zarr API
+        self.output_store = zarr.open(
+            main_store_path, 
+            mode='w',  # Create new or overwrite existing
+            shape=output_shape,
+            chunks=output_chunks,
+            dtype=np.float16,  # Match the current implementation's dtype
+            compressor=compressor
+        )
+        
         # --- 2. Coordinate Store ---
         self.coords_store_path = os.path.join(self.output_dir, f"coordinates_part_{self.part_id}.zarr")
-        coord_shape = (self.num_total_patches, len(self.patch_size))  # (N, 3) for 3D
-        coord_chunks = (min(self.num_total_patches, 4096), len(self.patch_size))  # Chunk along patches dim
-        coord_store_spec = {
-            'driver': 'zarr',
-            'kvstore': {'driver': 'file', 'path': self.coords_store_path},
-            'metadata': {
-                'dtype': '<i4',  # Using 32-bit integer instead of int64
-                'shape': coord_shape,
-                'chunks': coord_chunks,
-                'compressor': {'id': 'blosc'},
-            },
-            'create': True, 'delete_existing': True
-        }
-        if self.verbose: print(f"Creating coordinate Zarr: {self.coords_store_path}")
-
-        cache_context = ts.Context({'cache_pool': {'total_bytes_limit': int(self.cache_pool)}})
-        self.output_store = await ts.open(main_store_spec, context=cache_context)
-        coords_store = await ts.open(coord_store_spec, context=cache_context)
-
-        # --- Write custom attributes to zattrs files ---
+        coord_shape = (self.num_total_patches, len(self.patch_size))
+        coord_chunks = (min(self.num_total_patches, 4096), len(self.patch_size))
+        
+        # Create the coordinate store with direct Zarr API
+        coords_store = zarr.open(
+            self.coords_store_path,
+            mode='w',
+            shape=coord_shape,
+            chunks=coord_chunks,
+            dtype=np.int32,
+            compressor=compressor
+        )
+        
+        # Write custom attributes
         try:
             # Get original volume shape from dataset.input_shape
             original_volume_shape = None
             if hasattr(self.dataset, 'input_shape'):
-                # Dataset input_shape could be (C, Z, Y, X) or (Z, Y, X)
                 if len(self.dataset.input_shape) == 4:  # has channel dimension
-                    original_volume_shape = list(self.dataset.input_shape[1:])  # Skip channel dimension
+                    original_volume_shape = list(self.dataset.input_shape[1:])
                 else:  # no channel dimension
                     original_volume_shape = list(self.dataset.input_shape)
                 if self.verbose:
                     print(f"Derived original volume shape from dataset.input_shape: {original_volume_shape}")
             
-            if not original_volume_shape:
-                print("Warning: Could not determine original volume shape from dataset")
+            # Add attributes directly to Zarr store
+            self.output_store.attrs['patch_size'] = list(self.patch_size)
+            self.output_store.attrs['overlap'] = self.overlap
+            self.output_store.attrs['part_id'] = self.part_id
+            self.output_store.attrs['num_parts'] = self.num_parts
             
-            # Write custom attributes to main store .zattrs
-            custom_attrs = {
-                'patch_size': list(self.patch_size),
-                'overlap': self.overlap,
-                'part_id': self.part_id,
-                'num_parts': self.num_parts,
-            }
-            
-            # Add original volume shape if available (required by merge_outputs.py)
             if original_volume_shape:
-                custom_attrs['original_volume_shape'] = original_volume_shape
+                self.output_store.attrs['original_volume_shape'] = original_volume_shape
             
-            self._write_zattrs(main_store_path, custom_attrs)
+            # Add attributes to coordinate store
+            coords_store.attrs['part_id'] = self.part_id
+            coords_store.attrs['num_parts'] = self.num_parts
             
-            # Write custom attributes to coords store .zattrs 
-            coords_attrs = {
-                'part_id': self.part_id,
-                'num_parts': self.num_parts,
-            }
-            self._write_zattrs(self.coords_store_path, coords_attrs)
-            
-            if self.verbose: print("Custom attributes written to .zattrs files")
         except Exception as e:
             print(f"Warning: Failed to write custom attributes: {e}")
 
         # --- Write Coordinates (all at once) ---
-        coords_np = np.array(self.patch_start_coords_list, dtype=np.int32)  # Using int32 instead of int64
-        if coords_np.shape != coord_shape:
-            raise ValueError(f"Shape mismatch for coordinates. Expected {coord_shape}, got {coords_np.shape}")
-        if self.verbose: print(f"Writing {self.num_total_patches} coordinates...")
-        await coords_store.write(coords_np)
-        # We don't need to keep the coords_store open after writing
-        if self.verbose: print("Coordinates written successfully.")
+        coords_np = np.array(self.patch_start_coords_list, dtype=np.int32)
+        coords_store[:] = coords_np
+        
+        if self.verbose: 
+            print(f"Created output stores: {main_store_path} and {self.coords_store_path}")
+        
+        return self.output_store
 
-        if self.verbose: print("Output stores opened successfully.")
-
-    async def _process_batches(self):
-        """Processes batches, performs inference (with inline TTA), and writes results asynchronously."""
-        write_futures = []  # Track all write futures to await later
+    def _process_batches(self):
+        """Processes batches and writes results using ThreadPoolExecutor for parallelism."""
+        # Thread-local storage for zarr arrays
+        thread_local = threading.local()
+        
+        # Track the number of patches processed
         self.current_patch_write_index = 0
         
-        # Create a semaphore to limit concurrent write operations
-        max_concurrent_writes = 16  # Adjust based on system capabilities
-        semaphore = asyncio.Semaphore(max_concurrent_writes)
+        # Create a ThreadPoolExecutor for parallel writes
+        max_workers = min(16, os.cpu_count() or 4)  # Limit based on CPU cores
         
-        # Always show progress bar, regardless of verbose mode
-        pbar = tqdm(total=self.num_total_patches, desc=f"Inferring Part {self.part_id}")
+        # Function to get thread-local zarr array
+        def get_zarr_array():
+            if not hasattr(thread_local, 'zarr_array'):
+                # Each thread gets its own handle to the zarr array
+                thread_local.zarr_array = zarr.open(os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr"), mode='r+')
+            return thread_local.zarr_array
         
-        async def limited_write(slice_idx, data):
-            """Write a patch with concurrency limiting"""
-            async with semaphore:  # This limits concurrent writes
-                future = self.output_store[slice_idx].write(data)  # Start the write
-                return await future  # Wait for this specific write to complete
-
-        for batch_data in self.dataloader:
-            # Check if batch is empty (all patches were skipped)
-            if isinstance(batch_data, dict) and batch_data.get('empty_batch', False):
-                if self.verbose:
-                    print("Skipping empty batch (all patches were homogeneous/empty)")
-                continue  # Skip this batch entirely
-
-            # Adapt data loading based on dataset output
-            if isinstance(batch_data, (list, tuple)):
-                input_batch = batch_data[0].to(self.device)  # Assuming first element is image
-            elif isinstance(batch_data, dict):
-                input_batch = batch_data['data'].to(self.device)  # Assuming key 'data'
-            else:
-                input_batch = batch_data.to(self.device)  # Assuming it's the tensor itself
-
-            # Extra safety check: ensure we have a valid batch with data
-            if input_batch is None or input_batch.shape[0] == 0:
-                if self.verbose:
-                    print("Skipping batch with no valid data")
-                continue  # Skip this batch
-
-            current_batch_size = input_batch.shape[0]
-
-            with torch.no_grad(), torch.amp.autocast('cuda'):
-                if self.do_tta:
-                    # --- TTA ---
-                    outputs_batch_tta = []  # Store list of outputs for each TTA for the batch
-
-                    if self.tta_type == 'mirroring':
-                        # Apply model to original and mirrored versions
-                        m0 = self.model(input_batch)
-                        m1 = self.model(torch.flip(input_batch, dims=[-1]))
-                        m2 = self.model(torch.flip(input_batch, dims=[-2]))
-                        m3 = self.model(torch.flip(input_batch, dims=[-3]))
-                        m4 = self.model(torch.flip(input_batch, dims=[-1, -2]))
-                        m5 = self.model(torch.flip(input_batch, dims=[-1, -3]))
-                        m6 = self.model(torch.flip(input_batch, dims=[-2, -3]))
-                        m7 = self.model(torch.flip(input_batch, dims=[-1, -2, -3]))
-
-                        # Reverse the flips on the outputs before averaging
-                        # Shape of each mi is (B, C, Z, Y, X)
-                        outputs_batch_tta = [
-                            m0,
-                            torch.flip(m1, dims=[-1]),
-                            torch.flip(m2, dims=[-2]),
-                            torch.flip(m3, dims=[-3]),
-                            torch.flip(m4, dims=[-1, -2]),
-                            torch.flip(m5, dims=[-1, -3]),
-                            torch.flip(m6, dims=[-2, -3]),
-                            torch.flip(m7, dims=[-1, -2, -3])
-                        ]
-
-                    elif self.tta_type == 'rotation':
-                        # Apply model to original and rotated versions (XY plane)
-                        r0 = self.model(input_batch)
-                        r1 = self.model(torch.rot90(input_batch, k=1, dims=(-2, -1)))  # 90 deg
-                        r2 = self.model(torch.rot90(input_batch, k=2, dims=(-2, -1)))  # 180 deg
-                        r3 = self.model(torch.rot90(input_batch, k=3, dims=(-2, -1)))  # 270 deg
-
-                        # Rotate outputs back before averaging
-                        # Shape of each ri is (B, C, Z, Y, X)
-                        outputs_batch_tta = [
-                            r0,
-                            torch.rot90(r1, k=-1, dims=(-2, -1)),  # -90 deg
-                            torch.rot90(r2, k=-2, dims=(-2, -1)),  # -180 deg
-                            torch.rot90(r3, k=-3, dims=(-2, -1))   # -270 deg
-                        ]
-
-                    # --- Merge TTA results for the batch ---
-                    # Stack along a new dimension (e.g., dim 0) -> (num_tta, B, C, Z, Y, X)
-                    stacked_outputs = torch.stack(outputs_batch_tta, dim=0)
-                    # Calculate the mean across the TTA dimension (dim 0)
-                    output_batch = torch.mean(stacked_outputs, dim=0)  # Result shape: (B, C, Z, Y, X)
-
-                else:
-                    # --- No TTA ---
-                    output_batch = self.model(input_batch)  # B, C, Z, Y, X
-                    pbar.refresh()
-
-            # Move output to CPU and convert to NumPy for TensorStore writing
-            output_np = output_batch.cpu().numpy().astype(np.float16)  # B, C, Z, Y, X
-            current_batch_size = output_np.shape[0]
-
-            # Get patch indices from the batch data (needed when skipping empty patches)
-            patch_indices = batch_data.get('index', [i for i in range(current_batch_size)])
+        # Function to write a single patch
+        def write_patch(write_index, patch_data):
+            zarr_array = get_zarr_array()
+            zarr_array[write_index] = patch_data
+            return write_index
             
-            # Process each patch in the batch
-            for i in range(current_batch_size):
-                patch_data = output_np[i]  # Shape: (C, Z, Y, X)
+        # Process batches with a progress bar
+        with tqdm(total=self.num_total_patches, desc=f"Inferring Part {self.part_id}") as pbar:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = []
                 
-                # Use the original dataset index as the write index to maintain correspondence with coordinates
-                write_index = patch_indices[i]
-                
-                # Schedule the limited write operation (will be executed concurrently)
-                # This creates a task that we can gather later
-                write_future = asyncio.create_task(
-                    limited_write(write_index, patch_data)
-                )
-                write_futures.append(write_future)
-                
-                self.current_patch_write_index += 1
-                pbar.update(1)
-                
-            # Periodically clean up completed futures to avoid unbounded memory growth
-            if len(write_futures) > max_concurrent_writes * 3:
-                done, write_futures = await asyncio.wait(
-                    write_futures, 
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                write_futures = list(write_futures)  # Convert back from set
-                
-                if self.verbose and done:
-                    print(f"Cleaned up {len(done)} completed writes, {len(write_futures)} pending")
+                for batch_data in self.dataloader:
+                    # Skip empty batches
+                    if isinstance(batch_data, dict) and batch_data.get('empty_batch', False):
+                        if self.verbose:
+                            print("Skipping empty batch (all patches were homogeneous/empty)")
+                        continue
+                    
+                    # Process input data
+                    if isinstance(batch_data, (list, tuple)):
+                        input_batch = batch_data[0].to(self.device)
+                    elif isinstance(batch_data, dict):
+                        input_batch = batch_data['data'].to(self.device)
+                    else:
+                        input_batch = batch_data.to(self.device)
+                    
+                    # Skip invalid batches
+                    if input_batch is None or input_batch.shape[0] == 0:
+                        if self.verbose:
+                            print("Skipping batch with no valid data")
+                        continue
+                    
+                    # Perform inference with or without TTA
+                    with torch.no_grad(), torch.amp.autocast('cuda'):
+                        if self.do_tta:
+                            # --- TTA ---
+                            outputs_batch_tta = []  # Store list of outputs for each TTA for the batch
 
-        # Wait for all remaining writes to complete
-        if write_futures:
-            if self.verbose:
-                print(f"Waiting for {len(write_futures)} remaining writes to complete...")
-            await asyncio.gather(*write_futures)
-            
-        pbar.close()
+                            if self.tta_type == 'mirroring':
+                                # Apply model to original and mirrored versions
+                                m0 = self.model(input_batch)
+                                m1 = self.model(torch.flip(input_batch, dims=[-1]))
+                                m2 = self.model(torch.flip(input_batch, dims=[-2]))
+                                m3 = self.model(torch.flip(input_batch, dims=[-3]))
+                                m4 = self.model(torch.flip(input_batch, dims=[-1, -2]))
+                                m5 = self.model(torch.flip(input_batch, dims=[-1, -3]))
+                                m6 = self.model(torch.flip(input_batch, dims=[-2, -3]))
+                                m7 = self.model(torch.flip(input_batch, dims=[-1, -2, -3]))
 
+                                # Reverse the flips on the outputs before averaging
+                                # Shape of each mi is (B, C, Z, Y, X)
+                                outputs_batch_tta = [
+                                    m0,
+                                    torch.flip(m1, dims=[-1]),
+                                    torch.flip(m2, dims=[-2]),
+                                    torch.flip(m3, dims=[-3]),
+                                    torch.flip(m4, dims=[-1, -2]),
+                                    torch.flip(m5, dims=[-1, -3]),
+                                    torch.flip(m6, dims=[-2, -3]),
+                                    torch.flip(m7, dims=[-1, -2, -3])
+                                ]
+
+                            elif self.tta_type == 'rotation':
+                                # Apply model to original and rotated versions (XY plane)
+                                r0 = self.model(input_batch)
+                                r1 = self.model(torch.rot90(input_batch, k=1, dims=(-2, -1)))  # 90 deg
+                                r2 = self.model(torch.rot90(input_batch, k=2, dims=(-2, -1)))  # 180 deg
+                                r3 = self.model(torch.rot90(input_batch, k=3, dims=(-2, -1)))  # 270 deg
+
+                                # Rotate outputs back before averaging
+                                # Shape of each ri is (B, C, Z, Y, X)
+                                outputs_batch_tta = [
+                                    r0,
+                                    torch.rot90(r1, k=-1, dims=(-2, -1)),  # -90 deg
+                                    torch.rot90(r2, k=-2, dims=(-2, -1)),  # -180 deg
+                                    torch.rot90(r3, k=-3, dims=(-2, -1))   # -270 deg
+                                ]
+
+                            # --- Merge TTA results for the batch ---
+                            # Stack along a new dimension (e.g., dim 0) -> (num_tta, B, C, Z, Y, X)
+                            stacked_outputs = torch.stack(outputs_batch_tta, dim=0)
+                            # Calculate the mean across the TTA dimension (dim 0)
+                            output_batch = torch.mean(stacked_outputs, dim=0)  # Result shape: (B, C, Z, Y, X)
+
+                        else:
+                            # --- No TTA ---
+                            output_batch = self.model(input_batch)  # B, C, Z, Y, X
+                    
+                    # Convert to numpy for zarr storage
+                    output_np = output_batch.cpu().numpy().astype(np.float16)
+                    current_batch_size = output_np.shape[0]
+                    
+                    # Get patch indices
+                    patch_indices = batch_data.get('index', list(range(current_batch_size)))
+                    
+                    # Submit each patch for writing
+                    for i in range(current_batch_size):
+                        patch_data = output_np[i]  # Shape: (C, Z, Y, X)
+                        write_index = patch_indices[i]
+                        
+                        # Submit the write job to the thread pool
+                        future = executor.submit(write_patch, write_index, patch_data)
+                        futures.append(future)
+                        
+                    # Check for completed futures to update progress
+                    # but don't wait for all to complete (allows inference and writing to overlap)
+                    completed = [f for f in futures if f.done()]
+                    for future in completed:
+                        try:
+                            _ = future.result()  # Get result to check for exceptions
+                            pbar.update(1)
+                            self.current_patch_write_index += 1
+                        except Exception as e:
+                            print(f"Error writing patch: {e}")
+                    
+                    # Remove completed futures from tracking list
+                    futures = [f for f in futures if not f.done()]
+                
+                # Wait for all remaining futures and update progress
+                for future in futures:
+                    try:
+                        _ = future.result()
+                        pbar.update(1)
+                        self.current_patch_write_index += 1
+                    except Exception as e:
+                        print(f"Error writing patch: {e}")
+        
+        # Output summary
         if self.verbose:
             print(f"Finished writing {self.current_patch_write_index} non-empty patches.")
         
-        # With skip_empty_patches, we expect fewer patches to be processed
+        # Verification
         if not self.skip_empty_patches and self.current_patch_write_index != self.num_total_patches:
-             print(f"Warning: Expected {self.num_total_patches} patches, but wrote {self.current_patch_write_index}.")
+            print(f"Warning: Expected {self.num_total_patches} patches, but wrote {self.current_patch_write_index}.")
 
-    async def _run_inference_async(self):
-        """Asynchronous orchestration function."""
+    def _run_inference(self):
+        """Orchestration function for the inference process, using direct Zarr."""
         if self.verbose: print("Loading model...")
         self.model = self._load_model()
 
         if self.verbose: print("Creating dataset and dataloader...")
-        self._create_dataset_and_loader() # This now gets coordinates
+        self._create_dataset_and_loader()
 
         if self.num_total_patches > 0:
-            if self.verbose: print("Creating output stores (logits and coordinates)...")
-            await self._create_output_stores() # Create both stores
+            if self.verbose: print("Creating output stores...")
+            self._create_output_stores()
 
             if self.verbose: print("Starting inference and writing logits...")
-            await self._process_batches() # Process and write only logits
+            self._process_batches()
         else:
-             print(f"Skipping processing for part {self.part_id} as no patches were found.")
+            print(f"Skipping processing for part {self.part_id} as no patches were found.")
 
         if self.verbose: print("Inference complete.")
-
 
     def infer(self):
         """Public method to start the inference process."""
         try:
-
-            context = ts.Context({
-                'cache_pool': {
-                    'total_bytes_limit': int(self.cache_pool)
-                }
-            })
-
-            asyncio.run(self._run_inference_async())
+            self._run_inference()
             main_output_path = os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr")
             return main_output_path, self.coords_store_path
         except Exception as e:
@@ -582,7 +544,7 @@ def main():
     parser.add_argument('--patch_size', type=str, default=None, 
                       help='Optional: Override patch size, comma-separated (e.g., "192,192,192"). If not provided, uses the model\'s default patch size.')
     parser.add_argument('--save_softmax', action='store_true', help='Save softmax outputs')
-    parser.add_argument('--cache_pool', type=float, default=1e10, help='TensorStore cache pool size in bytes')
+    parser.add_argument('--cache_pool', type=float, default=1e10, help='Cache pool size in bytes')
     parser.add_argument('--normalization', type=str, default='instance_zscore', 
                       help='Normalization scheme (instance_zscore, global_zscore, instance_minmax, none)')
     parser.add_argument('--device', type=str, default='cuda', help='Device to use (cuda, cpu)')
@@ -592,6 +554,13 @@ def main():
     parser.add_argument('--no-skip-empty-patches', dest='skip_empty_patches', action='store_false',
                       help='Process all patches, even if they appear empty')
     parser.set_defaults(skip_empty_patches=True)
+    
+    # Add arguments for Zarr compression
+    parser.add_argument('--zarr-compressor', type=str, default='zstd',
+                      choices=['zstd', 'lz4', 'zlib', 'none'],
+                      help='Zarr compression algorithm')
+    parser.add_argument('--zarr-compression-level', type=int, default=3,
+                      help='Compression level (1-9, higher = better compression but slower)')
     
     # Add arguments for the updated Volume class
     parser.add_argument('--scroll_id', type=str, default=None, help='Scroll ID to use (if input_format is volume)')
@@ -649,6 +618,9 @@ def main():
         segment_id=segment_id,
         energy=args.energy,
         resolution=args.resolution,
+        # Pass Zarr compression settings
+        compressor_name=args.zarr_compressor,
+        compression_level=args.zarr_compression_level,
         # Pass Hugging Face parameters
         hf_token=args.hf_token
     )
@@ -663,14 +635,11 @@ def main():
 
             print("\n--- Inspecting Output Store ---")
             try:
-                 # Open the store directly
-                 output_store = ts.open({
-                     'driver': 'zarr', 
-                     'kvstore': {'driver': 'file', 'path': logits_path}
-                 }).result()
+                 # Open the zarr store directly
+                 output_store = zarr.open(logits_path, mode='r')
                  print(f"Output shape: {output_store.shape}")
                  print(f"Output dtype: {output_store.dtype}")
-                 print(f"Output chunks: {output_store.chunk_layout.read_chunk.shape}")
+                 print(f"Output chunks: {output_store.chunks}")
             except Exception as inspect_e:
                 print(f"Could not inspect output Zarr: {inspect_e}")
                 
@@ -686,10 +655,10 @@ def main():
 
             print("\n--- Inspecting Coordinate Store ---")
             try:
-                coords_store = ts.open({'driver': 'zarr', 'kvstore': {'driver': 'file', 'path': coords_path}}).result()
+                coords_store = zarr.open(coords_path, mode='r')
                 print(f"Coords shape: {coords_store.shape}")
                 print(f"Coords dtype: {coords_store.dtype}")
-                first_few_coords = coords_store[0:5].read().result()
+                first_few_coords = coords_store[0:5]
                 print(f"First few coordinates:\n{first_few_coords}")
             except Exception as inspect_e:
                 print(f"Could not inspect coordinate Zarr: {inspect_e}")
