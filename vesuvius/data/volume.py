@@ -316,61 +316,87 @@ class Volume:
         if self.cache:
             storage_options['cache_storage'] = int(self.cache_pool)
             
-        # Set url attribute - make sure to preserve s3:// protocol
         self.url = self.path.rstrip("/")
         is_http = self.url.startswith(('http://', 'https://'))
         is_s3 = self.url.startswith('s3://')
 
         if self.verbose:
-            print(f"Opening zarr store with fsspec at path: {self.path}")
+            print(f"Opening zarr store with fsspec at path: {self.url}")
             print(f"Storage options: {storage_options}")
             if is_s3:
                 print(f"Using S3 protocol")
 
         opened_stores = []
-        try:
-            # Try opening root level first
-            if self.verbose: print("Attempting to open Zarr at root level...")
-            # Get mapper for the zarr store
-            mapper = fsspec.get_mapper(self.path, **storage_options)
-            root_store = zarr.open(mapper, mode='r')
-            opened_stores.append(root_store)
-            if self.verbose: print("Successfully opened Zarr at root level.")
-
-        except Exception as root_e:
-            if self.verbose: print(f"Failed opening root level: {root_e}. Checking for multi-resolution...")
-            # Try opening as multi-resolution (NGFF spec with datasets in subgroups 0, 1, ...)
+        
+        # For S3 paths, use the simple direct approach that works
+        if is_s3:
             try:
-                # Get mapper for the zarr store
-                mapper = fsspec.get_mapper(self.path, **storage_options)
-                z_root = zarr.open(mapper, mode='r')
+                if self.verbose: print(f"Using direct S3 access for: {self.url}")
+                mapper = fsspec.get_mapper(self.url, **storage_options)
+                store = zarr.open(mapper, mode='r')
+                opened_stores.append(store)
+                if self.verbose: print(f"Successfully opened S3 zarr store: {store}")
+            except Exception as e:
+                if self.verbose: print(f"Error opening S3 path: {e}")
                 
-                # Try opening level '0'
-                if self.verbose: print(f"Attempting to open Zarr at path '0'...")
+                # Check if the path might be a multi-resolution store
                 try:
-                    store0 = z_root['0']
-                    opened_stores.append(store0)
-                    if self.verbose: print("Successfully opened level '0'. Checking for further levels...")
-                
-                    # Try opening subsequent levels
-                    for level in range(1, 6):  # Check levels 1 to 5
-                        try:
-                            if self.verbose: print(f"Attempting to open Zarr at path '{level}'...")
-                            store_level = z_root[str(level)]
-                            opened_stores.append(store_level)
-                            if self.verbose: print(f"Successfully opened level '{level}'.")
-                        except (KeyError, ValueError) as level_e:
-                            if self.verbose: print(
-                                f"Level '{level}' not found or error opening: {level_e}. Stopping search.")
-                            break  # Stop searching if a level is missing
-                except (KeyError, ValueError):
-                    if self.verbose: print("Could not find level '0' in zarr store.")
-                    raise
+                    # Try appending '/0' if it's not already there
+                    if not self.url.endswith('/0'):
+                        s3_path_with_level = f"{self.url}/0"
+                        if self.verbose: print(f"Trying with /0 append: {s3_path_with_level}")
+                        mapper = fsspec.get_mapper(s3_path_with_level, **storage_options)
+                        store = zarr.open(mapper, mode='r')
+                        opened_stores.append(store)
+                        if self.verbose: print(f"Successfully opened S3 zarr store with /0: {store}")
+                except Exception as e2:
+                    if self.verbose: print(f"Error opening S3 path with /0: {e2}")
+                    raise e  # Re-raise the original error
+        else:
+            # For non-S3 paths, use the existing approach
+            try:
+                # Try opening root level first
+                if self.verbose: print("Attempting to open Zarr at root level...")
+                # Get mapper for the zarr store
+                mapper = fsspec.get_mapper(self.url, **storage_options)
+                root_store = zarr.open(mapper, mode='r')
+                opened_stores.append(root_store)
+                if self.verbose: print("Successfully opened Zarr at root level.")
 
-            except Exception as multi_e:
-                if self.verbose: print(f"Failed opening as multi-resolution: {multi_e}")
-                # If both root and multi-resolution failed, re-raise the original root error
-                raise root_e from multi_e
+            except Exception as root_e:
+                if self.verbose: print(f"Failed opening root level: {root_e}. Checking for multi-resolution...")
+                # Try opening as multi-resolution (NGFF spec with datasets in subgroups 0, 1, ...)
+                try:
+                    # Get mapper for the zarr store
+                    mapper = fsspec.get_mapper(self.url, **storage_options)
+                    z_root = zarr.open(mapper, mode='r')
+                    
+                    # Try opening level '0'
+                    if self.verbose: print(f"Attempting to open Zarr at path '0'...")
+                    try:
+                        store0 = z_root['0']
+                        opened_stores.append(store0)
+                        if self.verbose: print("Successfully opened level '0'. Checking for further levels...")
+                    
+                        # Try opening subsequent levels
+                        for level in range(1, 6):  # Check levels 1 to 5
+                            try:
+                                if self.verbose: print(f"Attempting to open Zarr at path '{level}'...")
+                                store_level = z_root[str(level)]
+                                opened_stores.append(store_level)
+                                if self.verbose: print(f"Successfully opened level '{level}'.")
+                            except (KeyError, ValueError) as level_e:
+                                if self.verbose: print(
+                                    f"Level '{level}' not found or error opening: {level_e}. Stopping search.")
+                                break  # Stop searching if a level is missing
+                    except (KeyError, ValueError):
+                        if self.verbose: print("Could not find level '0' in zarr store.")
+                        raise
+
+                except Exception as multi_e:
+                    if self.verbose: print(f"Failed opening as multi-resolution: {multi_e}")
+                    # If both root and multi-resolution failed, re-raise the original root error
+                    raise root_e from multi_e
 
         if not opened_stores:
             raise RuntimeError(f"Could not open Zarr store at {self.path} either as root or multi-resolution.")
