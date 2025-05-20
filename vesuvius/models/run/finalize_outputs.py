@@ -239,8 +239,6 @@ def main():
                       help='Delete intermediate logits after processing')
     parser.add_argument('--chunk-size', dest='chunk_size', type=str, default=None,
                       help='Spatial chunk size (Z,Y,X) for output Zarr. Comma-separated. If not specified, input chunks will be used.')
-    parser.add_argument('--cache-gb', dest='cache_gb', type=float, default=4.0,
-                      help='Cache size in GiB (kept for backward compatibility). Default: 4.0')
     parser.add_argument('--quiet', dest='quiet', action='store_true',
                       help='Suppress verbose output')
     

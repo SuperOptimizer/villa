@@ -30,7 +30,6 @@ class Inferer():
                  batch_size: int = 1,
                  patch_size: [list, tuple] = None,
                  save_softmax: bool = False,
-                 cache_pool: float = 1e10,
                  normalization_scheme: str = 'instance_zscore',
                  device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
                  num_dataloader_workers: int = 4,
@@ -58,7 +57,6 @@ class Inferer():
         self.batch_size = batch_size
         self.patch_size = tuple(patch_size) if patch_size is not None else None  # Can be None, will derive from model
         self.save_softmax = save_softmax
-        self.cache_pool = cache_pool
         self.verbose = verbose
         self.normalization_scheme = normalization_scheme
         self.input_format = input_format
@@ -187,7 +185,6 @@ class Inferer():
             step_size=self.overlap,
             num_parts=self.num_parts,
             part_id=self.part_id,
-            cache_pool=self.cache_pool,
             normalization_scheme=self.normalization_scheme,
             input_format=self.input_format,
             verbose=self.verbose,
@@ -509,7 +506,6 @@ def main():
     parser.add_argument('--patch_size', type=str, default=None, 
                       help='Optional: Override patch size, comma-separated (e.g., "192,192,192"). If not provided, uses the model\'s default patch size.')
     parser.add_argument('--save_softmax', action='store_true', help='Save softmax outputs')
-    parser.add_argument('--cache_pool', type=float, default=1e10, help='Cache pool size in bytes')
     parser.add_argument('--normalization', type=str, default='instance_zscore', 
                       help='Normalization scheme (instance_zscore, global_zscore, instance_minmax, none)')
     parser.add_argument('--device', type=str, default='cuda', help='Device to use (cuda, cpu)')
@@ -573,7 +569,6 @@ def main():
         batch_size=args.batch_size,
         patch_size=patch_size,  # Will use model's patch size if None
         save_softmax=args.save_softmax,
-        cache_pool=args.cache_pool,
         normalization_scheme=args.normalization,
         device=args.device,
         verbose=args.verbose,

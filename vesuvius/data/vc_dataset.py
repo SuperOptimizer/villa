@@ -35,8 +35,6 @@ class VCDataset(Dataset):
             energy: Optional[int] = None,
             resolution: Optional[float] = None,
             segment_id: Optional[int] = None,
-            cache: bool = True,
-            cache_pool: int = 1e10, # Default cache pool size for Volume
             normalization_scheme: str = 'instance_zscore', # Default to instance z-score
             global_mean: Optional[float] = None,
             global_std: Optional[float] = None,
@@ -67,8 +65,6 @@ class VCDataset(Dataset):
             energy: Energy value for Volume.
             resolution: Resolution value for Volume.
             segment_id: Segment ID for Volume (if input_path isn't a specific scroll/segment).
-            cache: Enable Volume's TensorStore caching.
-            cache_pool: Cache size for Volume's TensorStore.
             normalization_scheme: Normalization method for Volume ('none', 'instance_zscore',
                                   'global_zscore', 'instance_minmax').
             global_mean: Global mean for 'global_zscore' scheme.
@@ -156,7 +152,6 @@ class VCDataset(Dataset):
                 print(f"  Energy: {energy}")
                 print(f"  Resolution: {resolution}")
                 print(f"  Domain: {domain}")
-                print(f"  Cache: {cache}, Pool (bytes): {cache_pool}")
                 print(f"  Normalization: {normalization_scheme}")
                 if normalization_scheme == 'global_zscore':
                      print(f"    Global Mean: {global_mean}, Global Std: {global_std}")
@@ -193,8 +188,6 @@ class VCDataset(Dataset):
                 energy=energy,
                 resolution=resolution,
                 segment_id=segment_id,
-                cache=cache,
-                cache_pool=cache_pool,
                 # normalize=False, # Removed, use scheme
                 normalization_scheme=normalization_scheme,
                 global_mean=global_mean,
