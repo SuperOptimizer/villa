@@ -63,10 +63,6 @@ class Volume:
         Resolution of the volume.
     segment_id : Optional[int]
         ID of the segment.
-    cache : bool
-        Indicates if TensorStore caching is enabled.
-    cache_pool : int
-        Size of the TensorStore cache pool in bytes.
     normalization_scheme : str
         Specifies the normalization method:
         - 'none': No normalization.
@@ -107,7 +103,6 @@ class Volume:
                  energy: Optional[int] = None,
                  resolution: Optional[float] = None,
                  segment_id: Optional[int] = None,
-                 cache: bool = True, cache_pool: int = 1e10,
                  format: str = 'zarr',  # Currently only zarr via TensorStore is fully implemented here
                  normalization_scheme: str = 'none',
                  global_mean: Optional[float] = None,
@@ -135,10 +130,6 @@ class Volume:
             Resolution. Uses canonical if None.
         segment_id : Optional[int]
             Segment ID (required if type is 'segment').
-        cache : bool, default = True
-            Enable TensorStore caching.
-        cache_pool : int, default = 1e10
-            TensorStore cache size in bytes.
         format : str, default = 'zarr'
             Data format (currently only 'zarr' via TensorStore).
         normalization_scheme : str, default = 'none'
@@ -164,8 +155,6 @@ class Volume:
 
         # Initialize basic attributes
         self.format = format
-        self.cache = cache
-        self.cache_pool = cache_pool
         self.normalization_scheme = normalization_scheme
         self.global_mean = global_mean
         self.global_std = global_std
@@ -311,47 +300,49 @@ class Volume:
 
     def _init_from_zarr_path(self):
         """Helper to initialize directly from a Zarr path."""
-        # Configure storage options based on cache settings
-        storage_options = {}
-        if self.cache:
-            storage_options['cache_storage'] = int(self.cache_pool)
-            
-        self.url = self.path
-        
+        # Log what we're doing if verbose
         if self.verbose:
-            print(f"Opening zarr store with fsspec at path: {self.url}")
-            print(f"Storage options: {storage_options}")
+            print(f"Opening zarr store with fsspec at path: {self.path}")
         
-        # Simple, direct approach using fsspec.get_mapper
-        mapper = fsspec.get_mapper(self.url, **storage_options)
-        self.data = zarr.open(mapper, mode='r')
-        
-        # Get original dtype
-        if isinstance(self.data.dtype, type):
-            self.dtype = np.dtype(self.data.dtype)
-        else:
-            self.dtype = self.data.dtype
-            
-        if self.verbose:
-            print(f"Successfully opened zarr store: {self.data}")
-
-        # Load metadata (.zattrs)
+        # Direct approach - no storage_options, no path manipulation
         try:
-            self.metadata = self.load_ome_metadata()
-        except Exception as meta_e:
+            mapper = fsspec.get_mapper(self.path)
+            self.data = zarr.open(mapper, mode='r')
+            
+            # Get original dtype
+            if isinstance(self.data.dtype, type):
+                self.dtype = np.dtype(self.data.dtype)
+            else:
+                self.dtype = self.data.dtype
+                
             if self.verbose:
-                print(f"Warning: Could not load .zattrs metadata from {self.path}: {meta_e}")
-            self.metadata = {}  # Assign empty dict if metadata loading fails
-
-        # Set remaining attributes for consistency
-        if not hasattr(self, 'type'):
-            self.type = "zarr"
-        self.scroll_id = None
-        self.segment_id = None
-        # Determine domain from URL
-        self.domain = "local" if not self.url.startswith(('http://', 'https://', 's3://')) else "dl.ash2txt"
-        self.resolution = None
-        self.energy = None
+                print(f"Successfully opened zarr store: {self.data}")
+                
+            # Set URL for consistency with other parts of the code
+            self.url = self.path
+                
+            # Load metadata (.zattrs)
+            try:
+                self.metadata = self.load_ome_metadata()
+            except Exception as meta_e:
+                if self.verbose:
+                    print(f"Warning: Could not load .zattrs metadata from {self.path}: {meta_e}")
+                self.metadata = {}  # Assign empty dict if metadata loading fails
+    
+            # Set remaining attributes for consistency
+            if not hasattr(self, 'type'):
+                self.type = "zarr"
+            self.scroll_id = None
+            self.segment_id = None
+            # Determine domain from path
+            self.domain = "local" if not self.path.startswith(('http://', 'https://', 's3://')) else "dl.ash2txt"
+            self.resolution = None
+            self.energy = None
+            
+        except Exception as e:
+            if self.verbose:
+                print(f"Error opening zarr at {self.path}: {e}")
+            raise
 
     def meta(self) -> None:
         """Prints shape information for loaded volume data."""
@@ -506,27 +497,26 @@ class Volume:
 
     def load_data(self):
         """Load data from URL or path using fsspec.get_mapper"""
-        storage_options = {}
-        if self.cache:
-            storage_options['cache_storage'] = int(self.cache_pool)
-            
         base_path = self.path if self.type == 'zarr' and self.path else self.url
         if not base_path: 
             raise ValueError("Base path/URL missing.")
         
         if self.verbose:
             print(f"Loading data from: {base_path}")
-            print(f"Storage options: {storage_options}")
         
-        # Simple, direct approach with fsspec
-        mapper = fsspec.get_mapper(base_path, **storage_options)
-        data = zarr.open(mapper, mode='r')
-        
-        if self.verbose:
-            print(f"Successfully opened zarr store: {data}")
-            print(f"Shape: {data.shape}, Dtype: {data.dtype}")
+        try:
+            mapper = fsspec.get_mapper(base_path)
+            data = zarr.open(mapper, mode='r')
             
-        return data
+            if self.verbose:
+                print(f"Successfully opened zarr store: {data}")
+                print(f"Shape: {data.shape}, Dtype: {data.dtype}")
+                
+            return data
+        except Exception as e:
+            if self.verbose:
+                print(f"Error opening zarr at {base_path}: {e}")
+            raise
 
     def download_inklabel(self, save_path=None) -> None:
         """
@@ -838,48 +828,6 @@ class Volume:
         }
         return resolution_mapping.get(scroll_id_key)
 
-    def activate_caching(self) -> None:
-        if not self.cache:
-            if self.verbose: print("Activating caching...")
-            self.cache = True
-            # Reload data with caching enabled
-            try:
-                if self.type == 'zarr' and self.path:
-                    self._init_from_zarr_path()  # Re-init with cache active
-                else:
-                    self.metadata = self.load_ome_metadata()
-                    self.data = self.load_data()
-                    if isinstance(self.data[0].dtype, type):
-                        self.dtype = np.dtype(self.data[0].dtype)
-                    else:
-                        self.dtype = self.data[0].dtype
-                    if self.type == "segment": self.download_inklabel()
-                if self.verbose: print("Caching activated. Data handles updated.")
-            except Exception as e:
-                print(f"Error activating cache and reloading data: {e}")
-                self.cache = False  # Revert state if reload failed
-
-    def deactivate_caching(self) -> None:
-        if self.cache:
-            if self.verbose: print("Deactivating caching...")
-            self.cache = False
-            self.cache_pool = 0  # Ensure pool size is 0
-            # Reload data with caching disabled
-            try:
-                if self.type == 'zarr' and self.path:
-                    self._init_from_zarr_path()  # Re-init with cache disabled
-                else:
-                    self.metadata = self.load_ome_metadata()
-                    self.data = self.load_data()
-                    if isinstance(self.data[0].dtype, type):
-                        self.dtype = np.dtype(self.data[0].dtype)
-                    else:
-                        self.dtype = self.data[0].dtype
-                    if self.type == "segment": self.download_inklabel()
-                if self.verbose: print("Caching deactivated. Data handles updated.")
-            except Exception as e:
-                print(f"Error deactivating cache and reloading data: {e}")
-                self.cache = True  # Revert state if reload failed
 
     def shape(self, subvolume_idx: int = 0) -> Tuple[int, ...]:
         """Gets the shape of a specific sub-volume (resolution level)."""
