@@ -204,9 +204,18 @@ def finalize_logits(
     if delete_intermediates:
         print(f"Deleting intermediate logits: {input_path}")
         try:
-            if os.path.exists(input_path):
+            # Handle both local and remote paths (S3, etc.) using fsspec
+            if input_path.startswith(('s3://', 'gs://', 'azure://')):
+                # For remote storage, use fsspec's filesystem
+                fs_protocol = input_path.split('://', 1)[0]
+                fs = fsspec.filesystem(fs_protocol)
+                
+                if fs.exists(input_path):
+                    fs.rm(input_path, recursive=True)
+                    print(f"Successfully deleted intermediate logits (remote path)")
+            elif os.path.exists(input_path):
                 shutil.rmtree(input_path)
-                print(f"Successfully deleted intermediate logits")
+                print(f"Successfully deleted intermediate logits (local path)")
         except Exception as e:
             print(f"Warning: Failed to delete intermediate logits: {e}")
             print(f"You may need to delete them manually: {input_path}")

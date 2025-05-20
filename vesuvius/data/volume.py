@@ -316,113 +316,41 @@ class Volume:
         if self.cache:
             storage_options['cache_storage'] = int(self.cache_pool)
             
-        self.url = self.path.rstrip("/")
-        is_http = self.url.startswith(('http://', 'https://'))
-        is_s3 = self.url.startswith('s3://')
-
+        self.url = self.path
+        
         if self.verbose:
             print(f"Opening zarr store with fsspec at path: {self.url}")
             print(f"Storage options: {storage_options}")
-            if is_s3:
-                print(f"Using S3 protocol")
-
-        opened_stores = []
         
-        # For S3 paths, use the simple direct approach that works
-        if is_s3:
-            try:
-                if self.verbose: print(f"Using direct S3 access for: {self.url}")
-                mapper = fsspec.get_mapper(self.url, **storage_options)
-                store = zarr.open(mapper, mode='r')
-                opened_stores.append(store)
-                if self.verbose: print(f"Successfully opened S3 zarr store: {store}")
-            except Exception as e:
-                if self.verbose: print(f"Error opening S3 path: {e}")
-                
-                # Check if the path might be a multi-resolution store
-                try:
-                    # Try appending '/0' if it's not already there
-                    if not self.url.endswith('/0'):
-                        s3_path_with_level = f"{self.url}/0"
-                        if self.verbose: print(f"Trying with /0 append: {s3_path_with_level}")
-                        mapper = fsspec.get_mapper(s3_path_with_level, **storage_options)
-                        store = zarr.open(mapper, mode='r')
-                        opened_stores.append(store)
-                        if self.verbose: print(f"Successfully opened S3 zarr store with /0: {store}")
-                except Exception as e2:
-                    if self.verbose: print(f"Error opening S3 path with /0: {e2}")
-                    raise e  # Re-raise the original error
-        else:
-            # For non-S3 paths, use the existing approach
-            try:
-                # Try opening root level first
-                if self.verbose: print("Attempting to open Zarr at root level...")
-                # Get mapper for the zarr store
-                mapper = fsspec.get_mapper(self.url, **storage_options)
-                root_store = zarr.open(mapper, mode='r')
-                opened_stores.append(root_store)
-                if self.verbose: print("Successfully opened Zarr at root level.")
-
-            except Exception as root_e:
-                if self.verbose: print(f"Failed opening root level: {root_e}. Checking for multi-resolution...")
-                # Try opening as multi-resolution (NGFF spec with datasets in subgroups 0, 1, ...)
-                try:
-                    # Get mapper for the zarr store
-                    mapper = fsspec.get_mapper(self.url, **storage_options)
-                    z_root = zarr.open(mapper, mode='r')
-                    
-                    # Try opening level '0'
-                    if self.verbose: print(f"Attempting to open Zarr at path '0'...")
-                    try:
-                        store0 = z_root['0']
-                        opened_stores.append(store0)
-                        if self.verbose: print("Successfully opened level '0'. Checking for further levels...")
-                    
-                        # Try opening subsequent levels
-                        for level in range(1, 6):  # Check levels 1 to 5
-                            try:
-                                if self.verbose: print(f"Attempting to open Zarr at path '{level}'...")
-                                store_level = z_root[str(level)]
-                                opened_stores.append(store_level)
-                                if self.verbose: print(f"Successfully opened level '{level}'.")
-                            except (KeyError, ValueError) as level_e:
-                                if self.verbose: print(
-                                    f"Level '{level}' not found or error opening: {level_e}. Stopping search.")
-                                break  # Stop searching if a level is missing
-                    except (KeyError, ValueError):
-                        if self.verbose: print("Could not find level '0' in zarr store.")
-                        raise
-
-                except Exception as multi_e:
-                    if self.verbose: print(f"Failed opening as multi-resolution: {multi_e}")
-                    # If both root and multi-resolution failed, re-raise the original root error
-                    raise root_e from multi_e
-
-        if not opened_stores:
-            raise RuntimeError(f"Could not open Zarr store at {self.path} either as root or multi-resolution.")
-
-        self.data = opened_stores
+        # Simple, direct approach using fsspec.get_mapper
+        mapper = fsspec.get_mapper(self.url, **storage_options)
+        self.data = zarr.open(mapper, mode='r')
         
-        # Get original dtype from the first store - we'll need to convert from zarr's Python dtype to numpy dtype
-        if isinstance(self.data[0].dtype, type):
-            self.dtype = np.dtype(self.data[0].dtype)
+        # Get original dtype
+        if isinstance(self.data.dtype, type):
+            self.dtype = np.dtype(self.data.dtype)
         else:
-            self.dtype = self.data[0].dtype
+            self.dtype = self.data.dtype
+            
+        if self.verbose:
+            print(f"Successfully opened zarr store: {self.data}")
 
         # Load metadata (.zattrs)
         try:
-            self.metadata = self.load_ome_metadata()  # Use existing method, adapted for direct path
+            self.metadata = self.load_ome_metadata()
         except Exception as meta_e:
-            print(f"Warning: Could not load .zattrs metadata from {self.path}: {meta_e}")
+            if self.verbose:
+                print(f"Warning: Could not load .zattrs metadata from {self.path}: {meta_e}")
             self.metadata = {}  # Assign empty dict if metadata loading fails
 
-        # Set remaining attributes for consistency if not already set
+        # Set remaining attributes for consistency
         if not hasattr(self, 'type'):
             self.type = "zarr"
         self.scroll_id = None
         self.segment_id = None
-        self.domain = "local" if not is_http else "dl.ash2txt"
-        self.resolution = None  # Resolution might be in metadata, but not set directly here
+        # Determine domain from URL
+        self.domain = "local" if not self.url.startswith(('http://', 'https://', 's3://')) else "dl.ash2txt"
+        self.resolution = None
         self.energy = None
 
     def meta(self) -> None:
@@ -537,164 +465,72 @@ class Volume:
             raise
 
     def load_ome_metadata(self) -> Dict[str, Any]:
-        """Loads OME-Zarr metadata (.zattrs)."""
+        """Loads OME-Zarr metadata (.zattrs) using fsspec."""
         # Determine the base URL/path correctly, handling direct path or config-derived URL
         base_path = self.path if self.type == 'zarr' and self.path else self.url
         if not base_path:
             raise ValueError("Could not determine base path/URL for metadata loading.")
 
         base_path = base_path.rstrip("/")
-        is_http = base_path.startswith(('http://', 'https://'))
-
+        
+        # Try potential locations for .zattrs file
         potential_zattrs_paths = [
-            ".zattrs",  # Standard location at root
-            "0/.zattrs"  # Common location for first level in multi-resolution
+            f"{base_path}/.zattrs",  # Standard location at root
+            f"{base_path}/0/.zattrs"  # Common location for first level in multi-resolution
         ]
 
-        for relative_path in potential_zattrs_paths:
-            if is_http:
-                zattrs_url = f"{base_path}/{relative_path}"
-                if self.verbose: print(f"Attempting to load metadata from URL: {zattrs_url}")
-                try:
-                    response = requests.get(zattrs_url, timeout=10)  # Add timeout
-                    response.raise_for_status()
-                    zattrs_content = response.json()
-                    if self.verbose: print(f"Successfully loaded metadata from {zattrs_url}")
-                    # OME-Zarr metadata is usually under 'multiscales', etc.
-                    # Wrap it for consistency, though the direct content might be more useful.
-                    return {"zattrs": zattrs_content}
-                except requests.exceptions.RequestException as e:
-                    if self.verbose: print(f"Failed to load {zattrs_url}: {e}")
-                except json.JSONDecodeError as e:
-                    if self.verbose: print(f"Failed to parse JSON from {zattrs_url}: {e}")
-
-            else:  # Local file system
-                zattrs_file_path = os.path.join(base_path, relative_path)
-                if self.verbose: print(f"Attempting to load metadata from file: {zattrs_file_path}")
-                if os.path.exists(zattrs_file_path):
-                    try:
-                        with open(zattrs_file_path, 'r') as f:
-                            zattrs_content = json.load(f)
-                        if self.verbose: print(f"Successfully loaded metadata from {zattrs_file_path}")
-                        return {"zattrs": zattrs_content}
-                    except json.JSONDecodeError as e:
-                        if self.verbose: print(f"Failed to parse JSON from {zattrs_file_path}: {e}")
-                    except Exception as e:
-                        if self.verbose: print(f"Error reading {zattrs_file_path}: {e}")
-                else:
-                    if self.verbose: print(f"File not found: {zattrs_file_path}")
+        for zattrs_path in potential_zattrs_paths:
+            if self.verbose:
+                print(f"Attempting to load metadata from: {zattrs_path}")
+                
+            try:
+                # Use fsspec to open the file - works for any protocol
+                with fsspec.open(zattrs_path, mode='rb') as f:
+                    zattrs_content = json.load(f)
+                
+                if self.verbose:
+                    print(f"Successfully loaded metadata from {zattrs_path}")
+                
+                return {"zattrs": zattrs_content}
+            except (FileNotFoundError, json.JSONDecodeError) as e:
+                if self.verbose:
+                    print(f"Could not load metadata from {zattrs_path}: {e}")
+            except Exception as e:
+                if self.verbose:
+                    print(f"Error accessing {zattrs_path}: {e}")
 
         # If loop completes without returning, metadata wasn't found
-        print(f"Warning: Could not load .zattrs metadata from base path {base_path} at standard locations.")
+        if self.verbose:
+            print(f"Warning: Could not load .zattrs metadata from base path {base_path}")
         return {}  # Return empty dict if no metadata found
 
-    def load_data(self) -> List:
+    def load_data(self):
+        """Load data from URL or path using fsspec.get_mapper"""
         storage_options = {}
         if self.cache:
             storage_options['cache_storage'] = int(self.cache_pool)
             
-        if not self.metadata or 'zattrs' not in self.metadata or 'multiscales' not in self.metadata['zattrs']:
-            # If standard OME metadata structure is missing, try to load from base url/path directly
-            if self.verbose:
-                print("OME metadata structure missing, attempting direct zarr open on base path.")
-            try:
-                # Use the logic from _init_from_zarr_path to open potentially multi-res stores
-                base_path = self.path if self.type == 'zarr' and self.path else self.url
-                if not base_path: raise ValueError("Base path/URL missing.")
-                
-                # Try opening stores - first try root level
-                stores = []
-                try:
-                    # Get mapper for the zarr store
-                    mapper = fsspec.get_mapper(base_path, **storage_options)
-                    root_store = zarr.open(mapper, mode='r')
-                    stores.append(root_store)
-                    if self.verbose: print("Opened data directly from root path.")
-                    return stores
-                except Exception:
-                    pass  # Try levels if root fails
-                
-                # Try multi-resolution levels if root failed
-                mapper = fsspec.get_mapper(base_path, **storage_options)
-                try:
-                    z_root = zarr.open(mapper, mode='r')
-                    
-                    # Try accessing numbered groups (0, 1, etc.)
-                    for level in range(6):  # Check levels 0 to 5
-                        try:
-                            if self.verbose: print(f"Attempting to open Zarr at path '{level}'...")
-                            level_store = z_root[str(level)]
-                            stores.append(level_store)
-                            if self.verbose: print(f"Successfully opened level '{level}'.")
-                        except (KeyError, ValueError) as level_e:
-                            if level == 0:  # If level 0 fails, unlikely others will exist
-                                break
-                            if self.verbose: print(f"Level '{level}' not found: {level_e}. Stopping search.")
-                            break
-                except Exception as e:
-                    if self.verbose: print(f"Failed to open multi-resolution zarr: {e}")
-                
-                if stores:
-                    if self.verbose: print(f"Found {len(stores)} resolution levels.")
-                    return stores
-                else:
-                    raise RuntimeError(f"Could not open Zarr store at {base_path} directly or via levels 0-5.")
-                
-            except Exception as e:
-                print(f"Error loading data directly with fsspec+zarr: {e}")
-                raise RuntimeError(f"Failed to load data: OME metadata missing and direct load failed.") from e
-
-        # --- Load based on OME multiscales metadata ---
-        sub_volumes = []
-        base_url = self.url.rstrip("/")  # Assumes URL was set correctly
+        base_path = self.path if self.type == 'zarr' and self.path else self.url
+        if not base_path: 
+            raise ValueError("Base path/URL missing.")
         
-        # Check if multiscales exist and is a list
-        multiscales_data = self.metadata['zattrs'].get('multiscales')
-        if not isinstance(multiscales_data, list) or not multiscales_data:
-            raise ValueError("Invalid or missing 'multiscales' data in metadata.")
-
-        # Assume first multiscale entry, standard OME-Zarr
-        datasets = multiscales_data[0].get('datasets')
-        if not isinstance(datasets, list):
-            raise ValueError("Invalid or missing 'datasets' list within multiscales metadata.")
+        if self.verbose:
+            print(f"Loading data from: {base_path}")
+            print(f"Storage options: {storage_options}")
+        
+        # Simple, direct approach with fsspec
+        mapper = fsspec.get_mapper(base_path, **storage_options)
+        data = zarr.open(mapper, mode='r')
+        
+        if self.verbose:
+            print(f"Successfully opened zarr store: {data}")
+            print(f"Shape: {data.shape}, Dtype: {data.dtype}")
             
-        # Get the root zarr store for the hierarchical data
-        mapper = fsspec.get_mapper(base_url, **storage_options)
-        root = zarr.open(mapper, mode='r')
-        
-        for dataset_info in datasets:
-            path_suffix = dataset_info.get('path')
-            if path_suffix is None:
-                print(f"Warning: Dataset entry missing 'path': {dataset_info}. Skipping.")
-                continue
-
-            if self.verbose:
-                print(f"Attempting to open dataset at path: '{path_suffix}'")
-
-            try:
-                # Access the dataset through the root store
-                store = root[path_suffix]
-                sub_volumes.append(store)
-                if self.verbose:
-                    print(f"Successfully loaded data for path '{path_suffix}'. Shape: {store.shape}, Dtype: {store.dtype}")
-
-            except Exception as e:
-                print(f"ERROR loading data for path '{path_suffix}': {e}")
-                # Decide whether to continue or fail
-                if not sub_volumes:  # If even the first level failed
-                    raise RuntimeError(f"Failed to load the base resolution level '{path_suffix}'. Cannot continue.") from e
-                else:
-                    print(f"Stopping data loading after failure. Using {len(sub_volumes)} successfully loaded levels.")
-                    break  # Stop trying further levels
-
-        if not sub_volumes:
-            raise RuntimeError("Could not load any data levels based on the provided metadata.")
-
-        return sub_volumes
+        return data
 
     def download_inklabel(self, save_path=None) -> None:
         """
-        Downloads and loads the ink label image for a segment.
+        Downloads and loads the ink label image for a segment using fsspec.
         
         Parameters
         ----------
@@ -718,50 +554,40 @@ class Volume:
 
         # Construct inklabel URL (heuristic based on typical naming)
         base_url = self.url.rstrip('/')
-        # Assuming segment URL might be like ".../20230827161847" or ".../20230827161847/"
-        # We want to replace the segment ID part with "_inklabels.png" at the same level
+        # Extract parent URL and segment ID
         parent_url = os.path.dirname(base_url)
-        # Extract segment ID (timestamp) as the last part of the original URL
         segment_id_str = os.path.basename(base_url)
-        # Construct potential ink label filename
-        inklabel_filename = f"{segment_id_str}_inklabels.png"  # Adjust if naming differs
-        inklabel_url_or_path = os.path.join(parent_url, inklabel_filename)
+        # Construct ink label path
+        inklabel_filename = f"{segment_id_str}_inklabels.png"
+        inklabel_url = os.path.join(parent_url, inklabel_filename)
 
         if self.verbose:
-            print(f"Attempting to load ink label from: {inklabel_url_or_path}")
-
-        is_http = inklabel_url_or_path.startswith(('http://', 'https://'))
+            print(f"Attempting to load ink label from: {inklabel_url}")
 
         try:
-            if is_http:
-                response = requests.get(inklabel_url_or_path, timeout=10)
-                response.raise_for_status()
-                img = Image.open(BytesIO(response.content))
+            # Use fsspec to open the file - works for any protocol (local, http, s3)
+            with fsspec.open(inklabel_url, mode='rb') as f:
+                img_bytes = f.read()
+                img = Image.open(BytesIO(img_bytes))
+                
                 # Save the downloaded image if a save path is provided
                 if save_path:
                     img.save(save_path)
                     print(f"Saved ink label to: {save_path}")
+                    
                 # Convert to grayscale if it's not already L mode
                 if img.mode != 'L':
                     img = img.convert('L')
-                self.inklabel = np.array(img)
-            else:  # Local file path
-                if not os.path.exists(inklabel_url_or_path):
-                    raise FileNotFoundError(f"Inklabel file not found: {inklabel_url_or_path}")
-                img = Image.open(inklabel_url_or_path)
-                # Save the loaded image if a save path is provided
-                if save_path:
-                    img.save(save_path)
-                    print(f"Saved ink label to: {save_path}")
-                if img.mode != 'L':
-                    img = img.convert('L')
+                    
                 self.inklabel = np.array(img)
 
             if self.verbose:
                 print(f"Successfully loaded ink label with shape: {self.inklabel.shape}, dtype: {self.inklabel.dtype}")
 
         except Exception as e:
-            print(f"Warning: Could not load ink label from {inklabel_url_or_path}: {e}")
+            if self.verbose:
+                print(f"Warning: Could not load ink label from {inklabel_url}: {e}")
+            
             # Create an empty/dummy ink label array based on data shape if possible
             if hasattr(self, 'data') and self.data:
                 try:

@@ -306,6 +306,7 @@ def merge_inference_outputs(
         verbose: bool = True):
     """
     Merges partial inference results with Gaussian blending using parallel processing.
+    Uses fsspec.get_mapper for consistent zarr access across file systems and protocols.
 
     Args:
         parent_dir: Directory containing logits_part_X.zarr and coordinates_part_X.zarr.
@@ -364,40 +365,44 @@ def merge_inference_outputs(
         # Use zarr.open instead of tensorstore
         part0_logits_store = zarr.open(part0_logits_path, mode='r')
 
-        # Read .zattrs file directly for metadata
-        zattrs_path = os.path.join(part0_logits_path, '.zattrs')
-        if os.path.exists(zattrs_path):
-            with open(zattrs_path, 'r') as f:
-                meta_attrs = json.load(f)
-
+        # Read .zattrs using fsspec
+        try:
+            # Use the part0_logits_store's .attrs directly if available
+            meta_attrs = part0_logits_store.attrs
             patch_size = tuple(meta_attrs['patch_size'])  # Already a list in the file
             original_volume_shape = tuple(meta_attrs['original_volume_shape'])  # MUST exist
             num_classes = part0_logits_store.shape[1]  # (N, C, pZ, pY, pX) -> C
-        else:
-            # Try to infer from the array shape if .zattrs is missing
-            part0_coords_path = part_files[first_part_id]['coordinates']
-            coords_store = zarr.open(part0_coords_path, mode='r')
-            # First patch's logits shape should be (C, pZ, pY, pX)
-            first_patch_shape = part0_logits_store[0].shape
-            num_classes = first_patch_shape[0]
-            patch_size = first_patch_shape[1:]
-            
-            # Get first and last patch centers to estimate volume size
-            coords_data = coords_store[:]
-            min_coords = np.min(coords_data, axis=0)
-            max_coords = np.max(coords_data, axis=0)
-            estimated_shape = tuple((max_coords + np.array(patch_size) - min_coords).astype(int))
-            
-            original_volume_shape = estimated_shape
-            print("WARNING: No .zattrs file found. Using estimated volume shape from coordinates.")
-            
-        print(f"  Patch Size: {patch_size}")
-        print(f"  Num Classes: {num_classes}")
-        print(f"  Original Volume Shape (Z,Y,X): {original_volume_shape}")
+        except (KeyError, AttributeError):
+            # Fallback: try to read .zattrs file directly
+            zattrs_path = os.path.join(part0_logits_path, '.zattrs')
+            with fsspec.open(zattrs_path, 'r') as f:
+                meta_attrs = json.load(f)
+                
+            patch_size = tuple(meta_attrs['patch_size'])  
+            original_volume_shape = tuple(meta_attrs['original_volume_shape'])
+            num_classes = part0_logits_store.shape[1]
     except Exception as e:
-        print("\nERROR: Failed to read metadata from part 0 logits attributes.")
-        print("Ensure 'patch_size' and 'original_volume_shape' were saved during inference.")
-        raise e
+        # Try to infer from the array shape if .zattrs is missing
+        print(f"Warning: Error reading metadata, attempting to infer: {e}")
+        part0_coords_path = part_files[first_part_id]['coordinates']
+        coords_store = zarr.open(part0_coords_path, mode='r')
+        # First patch's logits shape should be (C, pZ, pY, pX)
+        first_patch_shape = part0_logits_store[0].shape
+        num_classes = first_patch_shape[0]
+        patch_size = first_patch_shape[1:]
+        
+        # Get first and last patch centers to estimate volume size
+        coords_data = coords_store[:]
+        min_coords = np.min(coords_data, axis=0)
+        max_coords = np.max(coords_data, axis=0)
+        estimated_shape = tuple((max_coords + np.array(patch_size) - min_coords).astype(int))
+        
+        original_volume_shape = estimated_shape
+        print("WARNING: No .zattrs file found. Using estimated volume shape from coordinates.")
+        
+    print(f"  Patch Size: {patch_size}")
+    print(f"  Num Classes: {num_classes}")
+    print(f"  Original Volume Shape (Z,Y,X): {original_volume_shape}")
 
     # --- 3. Prepare Output Stores ---
     output_shape = (num_classes, *original_volume_shape)  # (C, D, H, W)
@@ -574,7 +579,7 @@ def main():
     import argparse
     import sys
 
-    parser = argparse.ArgumentParser(description='Merge partial inference outputs with Gaussian blending (optimized parallel version).')
+    parser = argparse.ArgumentParser(description='Merge partial inference outputs with Gaussian blending using fsspec.')
     parser.add_argument('parent_dir', type=str,
                         help='Directory containing the partial inference results (logits_part_X.zarr, coordinates_part_X.zarr)')
     parser.add_argument('output_path', type=str,
