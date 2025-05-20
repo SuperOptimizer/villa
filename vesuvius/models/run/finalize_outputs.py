@@ -102,7 +102,13 @@ def finalize_logits(
     output_chunks = (1, *output_chunks)  # Chunk each channel separately
     
     # Create output zarr array using fsspec mapper
-    output_mapper = fsspec.get_mapper(output_path)
+    # Use proper storage options for S3 paths
+    storage_options = {}
+    if output_path.startswith('s3://'):
+        print(f"Detected S3 output path, using anon=False to use AWS credentials from environment")
+        storage_options = {'anon': False}
+    
+    output_mapper = fsspec.get_mapper(output_path, storage_options=storage_options)
     output_store = zarr.create(
         shape=output_shape,
         chunks=output_chunks,

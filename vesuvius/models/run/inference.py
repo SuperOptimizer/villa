@@ -253,7 +253,13 @@ class Inferer():
         main_store_path = os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr")
         
         # Use fsspec to create mapper for the zarr store
-        logits_mapper = fsspec.get_mapper(main_store_path)
+        # Use proper storage options for S3 paths
+        storage_options = {}
+        if main_store_path.startswith('s3://'):
+            print(f"Detected S3 output path for logits, using anon=False to use AWS credentials from environment")
+            storage_options = {'anon': False}
+            
+        logits_mapper = fsspec.get_mapper(main_store_path, storage_options=storage_options)
         self.output_store = zarr.open(
             logits_mapper, 
             mode='w',  
@@ -269,7 +275,13 @@ class Inferer():
         coord_shape = (self.num_total_patches, len(self.patch_size))
         coord_chunks = (min(self.num_total_patches, 4096), len(self.patch_size))
         
-        coords_mapper = fsspec.get_mapper(self.coords_store_path)
+        # Coordinates may also be on S3
+        coords_storage_options = {}
+        if self.coords_store_path.startswith('s3://'):
+            print(f"Detected S3 output path for coordinates, using anon=False to use AWS credentials from environment")
+            coords_storage_options = {'anon': False}
+            
+        coords_mapper = fsspec.get_mapper(self.coords_store_path, storage_options=coords_storage_options)
         coords_store = zarr.open(
             coords_mapper,
             mode='w',
@@ -321,7 +333,15 @@ class Inferer():
         def get_zarr_array():
             if not hasattr(thread_local, 'zarr_array'):
                 zarr_path = os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr")
-                mapper = fsspec.get_mapper(zarr_path)
+                
+                # Use proper storage options for S3 paths
+                storage_options = {}
+                if zarr_path.startswith('s3://'):
+                    if self.verbose:
+                        print(f"Thread using S3 path with anon=False: {zarr_path}")
+                    storage_options = {'anon': False}
+                    
+                mapper = fsspec.get_mapper(zarr_path, storage_options=storage_options)
                 thread_local.zarr_array = zarr.open(mapper, mode='r+')
             return thread_local.zarr_array
         
