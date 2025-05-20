@@ -628,7 +628,11 @@ class Volume:
 
             # Check if the last element looks like a subvolume index (integer)
             # compared to the dimensionality of the data.
-            data_ndim = self.data[0].ndim  # Dimensionality of the base resolution
+            # Handle the case when self.data is a zarr array directly (from _init_from_zarr_path)
+            if isinstance(self.data, zarr.Array):
+                data_ndim = self.data.ndim  # Dimensionality of the zarr array
+            else:
+                data_ndim = self.data[0].ndim  # Dimensionality of the base resolution
             if len(idx) == data_ndim + 1 and isinstance(idx[-1], int):
                 # Assume last element is subvolume index
                 potential_subvolume_idx = idx[-1]
@@ -664,16 +668,27 @@ class Volume:
             raise IndexError(f"Unsupported index type: {type(idx)}")
 
         # Validate subvolume index again just in case
-        if not (0 <= subvolume_idx < len(self.data)):
+        if isinstance(self.data, zarr.Array):
+            # Direct zarr array doesn't have subvolumes
+            if subvolume_idx != 0:
+                raise IndexError(f"Invalid subvolume index: {subvolume_idx}. Direct zarr array has only index 0.")
+        elif not (0 <= subvolume_idx < len(self.data)):
             raise IndexError(f"Invalid subvolume index: {subvolume_idx}. Must be between 0 and {len(self.data) - 1}.")
 
         # --- Read Data Slice ---
         if self.verbose:
             print(f"Accessing data level {subvolume_idx} with coordinates: {coord_idx}")
-            print(f"  Store shape: {self.data[subvolume_idx].shape}, Store dtype: {self.data[subvolume_idx].dtype}")
+            if isinstance(self.data, zarr.Array):
+                print(f"  Store shape: {self.data.shape}, Store dtype: {self.data.dtype}")
+            else:
+                print(f"  Store shape: {self.data[subvolume_idx].shape}, Store dtype: {self.data[subvolume_idx].dtype}")
 
         try:
-            data_slice = self.data[subvolume_idx][coord_idx]
+            # Handle the case when self.data is a zarr array directly (from _init_from_zarr_path)
+            if isinstance(self.data, zarr.Array):
+                data_slice = self.data[coord_idx]
+            else:
+                data_slice = self.data[subvolume_idx][coord_idx]
 
             original_dtype = data_slice.dtype  
 
@@ -683,7 +698,10 @@ class Volume:
         except Exception as e:
             print(f"ERROR during zarr read operation:")
             print(f"  Subvolume: {subvolume_idx}, Index: {coord_idx}")
-            print(f"  Store Shape: {self.data[subvolume_idx].shape}")
+            if isinstance(self.data, zarr.Array):
+                print(f"  Store Shape: {self.data.shape}")
+            else:
+                print(f"  Store Shape: {self.data[subvolume_idx].shape}")
             print(f"  Error: {e}")
             raise  # Re-raise the exception
 
@@ -831,6 +849,11 @@ class Volume:
 
     def shape(self, subvolume_idx: int = 0) -> Tuple[int, ...]:
         """Gets the shape of a specific sub-volume (resolution level)."""
+        # Handle the case when self.data is a zarr array directly (from _init_from_zarr_path)
+        if isinstance(self.data, zarr.Array):
+            return tuple(self.data.shape)
+        
+        # Original behavior for when self.data is a list of resolution levels
         if not (0 <= subvolume_idx < len(self.data)):
             raise IndexError(f"Invalid subvolume index: {subvolume_idx}. Available: 0 to {len(self.data) - 1}")
         return tuple(self.data[subvolume_idx].shape)
@@ -838,6 +861,11 @@ class Volume:
     @property
     def ndim(self, subvolume_idx: int = 0) -> int:
         """Gets the number of dimensions of a specific sub-volume."""
+        # Handle the case when self.data is a zarr array directly (from _init_from_zarr_path)
+        if isinstance(self.data, zarr.Array):
+            return self.data.ndim
+            
+        # Original behavior for when self.data is a list of resolution levels
         if not (0 <= subvolume_idx < len(self.data)):
             raise IndexError(f"Invalid subvolume index: {subvolume_idx}. Available: 0 to {len(self.data) - 1}")
         return self.data[subvolume_idx].ndim
