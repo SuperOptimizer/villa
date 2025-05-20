@@ -441,13 +441,12 @@ def merge_inference_outputs(
     print(f"  Shape: {output_shape}, Chunks: {output_chunks}")
     
     # Create zarr stores with compression using fsspec mappers
-    # Use proper storage options for S3 paths
-    storage_options = {}
     if output_path.startswith('s3://'):
         print(f"Detected S3 output path, using anon=False to use AWS credentials from environment")
-        storage_options = {'anon': False}
+        output_mapper = fsspec.get_mapper(output_path, anon=False)
+    else:
+        output_mapper = fsspec.get_mapper(output_path)
         
-    output_mapper = fsspec.get_mapper(output_path, storage_options=storage_options)
     zarr.open(
         output_mapper,
         mode='w',
@@ -462,12 +461,12 @@ def merge_inference_outputs(
     print(f"  Shape: {weights_shape}, Chunks: {weights_chunks}")
     
     # Weights may also be on S3
-    weights_storage_options = {}
     if weight_accumulator_path.startswith('s3://'):
         print(f"Detected S3 weight accumulator path, using anon=False to use AWS credentials from environment")
-        weights_storage_options = {'anon': False}
+        weights_mapper = fsspec.get_mapper(weight_accumulator_path, anon=False)
+    else:
+        weights_mapper = fsspec.get_mapper(weight_accumulator_path)
         
-    weights_mapper = fsspec.get_mapper(weight_accumulator_path, storage_options=weights_storage_options)
     zarr.open(
         weights_mapper,
         mode='w',

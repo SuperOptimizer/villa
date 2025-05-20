@@ -253,13 +253,12 @@ class Inferer():
         main_store_path = os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr")
         
         # Use fsspec to create mapper for the zarr store
-        # Use proper storage options for S3 paths
-        storage_options = {}
+        # Use proper authentication for S3 paths
         if main_store_path.startswith('s3://'):
             print(f"Detected S3 output path for logits, using anon=False to use AWS credentials from environment")
-            storage_options = {'anon': False}
-            
-        logits_mapper = fsspec.get_mapper(main_store_path, storage_options=storage_options)
+            logits_mapper = fsspec.get_mapper(main_store_path, anon=False)
+        else:
+            logits_mapper = fsspec.get_mapper(main_store_path)
         self.output_store = zarr.open(
             logits_mapper, 
             mode='w',  
@@ -276,12 +275,11 @@ class Inferer():
         coord_chunks = (min(self.num_total_patches, 4096), len(self.patch_size))
         
         # Coordinates may also be on S3
-        coords_storage_options = {}
         if self.coords_store_path.startswith('s3://'):
             print(f"Detected S3 output path for coordinates, using anon=False to use AWS credentials from environment")
-            coords_storage_options = {'anon': False}
-            
-        coords_mapper = fsspec.get_mapper(self.coords_store_path, storage_options=coords_storage_options)
+            coords_mapper = fsspec.get_mapper(self.coords_store_path, anon=False)
+        else:
+            coords_mapper = fsspec.get_mapper(self.coords_store_path)
         coords_store = zarr.open(
             coords_mapper,
             mode='w',
@@ -334,14 +332,13 @@ class Inferer():
             if not hasattr(thread_local, 'zarr_array'):
                 zarr_path = os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr")
                 
-                # Use proper storage options for S3 paths
-                storage_options = {}
+                # Use proper authentication for S3 paths
                 if zarr_path.startswith('s3://'):
                     if self.verbose:
                         print(f"Thread using S3 path with anon=False: {zarr_path}")
-                    storage_options = {'anon': False}
-                    
-                mapper = fsspec.get_mapper(zarr_path, storage_options=storage_options)
+                    mapper = fsspec.get_mapper(zarr_path, anon=False)
+                else:
+                    mapper = fsspec.get_mapper(zarr_path)
                 thread_local.zarr_array = zarr.open(mapper, mode='r+')
             return thread_local.zarr_array
         
