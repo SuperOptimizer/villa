@@ -316,12 +316,16 @@ class Volume:
         if self.cache:
             storage_options['cache_storage'] = int(self.cache_pool)
             
-        self.url = self.path.rstrip("/")  # Set url attribute
+        # Set url attribute - make sure to preserve s3:// protocol
+        self.url = self.path.rstrip("/")
         is_http = self.url.startswith(('http://', 'https://'))
+        is_s3 = self.url.startswith('s3://')
 
         if self.verbose:
             print(f"Opening zarr store with fsspec at path: {self.path}")
             print(f"Storage options: {storage_options}")
+            if is_s3:
+                print(f"Using S3 protocol")
 
         opened_stores = []
         try:

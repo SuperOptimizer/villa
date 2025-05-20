@@ -133,9 +133,9 @@ class VCDataset(Dataset):
                  use_path = input_path
                  if self.verbose: print(f"Interpreting input_path '{input_path}' as a path for Volume type 'zarr'.")
                  # Automatically set domain to local for file paths unless overridden
-                 if domain is None and not use_path.startswith(('http://', 'https://')):
+                 if domain is None and not use_path.startswith(('http://', 'https://', 's3://')):
                      domain = "local"
-                     if self.verbose: print("Auto-setting domain to 'local' for non-HTTP path.")
+                     if self.verbose: print("Auto-setting domain to 'local' for non-HTTP/S3 path.")
 
         elif isinstance(input_path, int): # Handle integer scroll_id passed as input_path
              type_value = f"scroll{input_path}"
@@ -166,8 +166,8 @@ class VCDataset(Dataset):
                 print(f"  Targets: {targets}")
                 print("---------------------------\n")
 
-            # Validate Zarr path if provided
-            if type_value == "zarr" and use_path is not None and not use_path.startswith(('http://', 'https://')):
+            # Validate Zarr path if provided - skip validation for remote paths
+            if type_value == "zarr" and use_path is not None and not use_path.startswith(('http://', 'https://', 's3://')):
                 p = Path(use_path)
                 if not p.is_absolute():
                      abs_p = p.resolve()
@@ -184,6 +184,8 @@ class VCDataset(Dataset):
                 # Check for key Zarr files (optional, Volume handles errors)
                 # if not os.path.exists(os.path.join(use_path, '.zarray')) and not os.path.exists(os.path.join(use_path, '.zgroup')):
                 #     print(f"  Warning: Path {use_path} might not be a Zarr store (missing .zarray/.zgroup).")
+            elif type_value == "zarr" and use_path is not None and use_path.startswith('s3://'):
+                if self.verbose: print(f"  Using S3 path: {use_path}")
 
             self.volume = Volume(
                 type=type_value,
