@@ -5,6 +5,7 @@ import os
 import json
 import multiprocessing
 import threading
+import fsspec
 from concurrent.futures import ThreadPoolExecutor
 # fork causes issues on windows and w/ tensorstore , force to spawn
 multiprocessing.set_start_method('spawn', force=True)
@@ -254,8 +255,10 @@ class Inferer():
         output_chunks = (1, self.num_classes, *self.patch_size)  # Chunk by individual patch
         main_store_path = os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr")
         
+        # Use fsspec to create mapper for the zarr store
+        logits_mapper = fsspec.get_mapper(main_store_path)
         self.output_store = zarr.open(
-            main_store_path, 
+            logits_mapper, 
             mode='w',  
             shape=output_shape,
             chunks=output_chunks,
@@ -269,8 +272,9 @@ class Inferer():
         coord_shape = (self.num_total_patches, len(self.patch_size))
         coord_chunks = (min(self.num_total_patches, 4096), len(self.patch_size))
         
+        coords_mapper = fsspec.get_mapper(self.coords_store_path)
         coords_store = zarr.open(
-            self.coords_store_path,
+            coords_mapper,
             mode='w',
             shape=coord_shape,
             chunks=coord_chunks,
@@ -319,7 +323,9 @@ class Inferer():
         
         def get_zarr_array():
             if not hasattr(thread_local, 'zarr_array'):
-                thread_local.zarr_array = zarr.open(os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr"), mode='r+')
+                zarr_path = os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr")
+                mapper = fsspec.get_mapper(zarr_path)
+                thread_local.zarr_array = zarr.open(mapper, mode='r+')
             return thread_local.zarr_array
         
         def write_patch(write_index, patch_data):
@@ -594,8 +600,9 @@ def main():
 
             print("\n--- Inspecting Output Store ---")
             try:
-                 # Open the zarr store directly
-                 output_store = zarr.open(logits_path, mode='r')
+                 # Open the zarr store using fsspec
+                 logits_mapper = fsspec.get_mapper(logits_path)
+                 output_store = zarr.open(logits_mapper, mode='r')
                  print(f"Output shape: {output_store.shape}")
                  print(f"Output dtype: {output_store.dtype}")
                  print(f"Output chunks: {output_store.chunks}")
@@ -614,7 +621,8 @@ def main():
 
             print("\n--- Inspecting Coordinate Store ---")
             try:
-                coords_store = zarr.open(coords_path, mode='r')
+                coords_mapper = fsspec.get_mapper(coords_path)
+                coords_store = zarr.open(coords_mapper, mode='r')
                 print(f"Coords shape: {coords_store.shape}")
                 print(f"Coords dtype: {coords_store.dtype}")
                 first_few_coords = coords_store[0:5]

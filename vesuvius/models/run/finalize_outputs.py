@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from tqdm.auto import tqdm
 import argparse
 import zarr
+import fsspec
 import numcodecs
 import shutil
 
@@ -40,7 +41,8 @@ def finalize_logits(
     # Debug info
     print(f"Opening input logits: {input_path}")
     print(f"Mode: {mode}, Threshold flag: {threshold}")
-    input_store = zarr.open(input_path, mode='r')
+    input_mapper = fsspec.get_mapper(input_path)
+    input_store = zarr.open(input_mapper, mode='r')
     
     # Get input shape and properties
     input_shape = input_store.shape
@@ -99,13 +101,14 @@ def finalize_logits(
     print(f"Creating output store: {output_path}")
     output_chunks = (1, *output_chunks)  # Chunk each channel separately
     
-    # Create output zarr array 
+    # Create output zarr array using fsspec mapper
+    output_mapper = fsspec.get_mapper(output_path)
     output_store = zarr.create(
         shape=output_shape,
         chunks=output_chunks,
         dtype=np.float16,  # Use float16 to match <f2 from tensorstore
         compressor=compressor,
-        store=output_path,
+        store=output_mapper,
         overwrite=True,
         write_empty_chunks=False  # Skip empty chunks for efficiency
     )

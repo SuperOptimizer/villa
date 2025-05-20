@@ -3,6 +3,7 @@ import os
 import re
 import json
 import zarr
+import fsspec
 import multiprocessing as mp
 from tqdm.auto import tqdm
 from scipy.ndimage import gaussian_filter
@@ -66,9 +67,10 @@ def process_tile(tile_info, parent_dir, output_path, weights_path, gaussian_map,
     gaussian_map_np = gaussian_map.numpy()
     gaussian_map_spatial_np = gaussian_map_np[0]  # Shape (pZ, pY, pX)
     
-    # Open output and weights zarr arrays for this tile
-    output_store = zarr.open(output_path, mode='r+')
-    weights_store = zarr.open(weights_path, mode='r+')
+    output_mapper = fsspec.get_mapper(output_path)
+    weights_mapper = fsspec.get_mapper(weights_path)
+    output_store = zarr.open(output_mapper, mode='r+')
+    weights_store = zarr.open(weights_mapper, mode='r+')
     
     # Create local accumulators for this tile - initialize with zeros
     # Shape: (C, tile_z, tile_y, tile_x)
@@ -88,9 +90,10 @@ def process_tile(tile_info, parent_dir, output_path, weights_path, gaussian_map,
         logits_path = part_files[part_id]['logits']
         coords_path = part_files[part_id]['coordinates']
         
-        # Open part zarr stores
-        coords_store = zarr.open(coords_path, mode='r')
-        logits_store = zarr.open(logits_path, mode='r')
+        coords_mapper = fsspec.get_mapper(coords_path)
+        logits_mapper = fsspec.get_mapper(logits_path)
+        coords_store = zarr.open(coords_mapper, mode='r')
+        logits_store = zarr.open(logits_mapper, mode='r')
         
         # Read all coordinates for this part
         coords_np = coords_store[:]
@@ -200,9 +203,10 @@ def normalize_tile(tile_info, output_path, weights_path, epsilon=1e-8):
     y_start, y_end = tile_info['y_start'], tile_info['y_end']
     x_start, x_end = tile_info['x_start'], tile_info['x_end']
     
-    # Open zarr arrays
-    output_store = zarr.open(output_path, mode='r+')
-    weights_store = zarr.open(weights_path, mode='r')
+    output_mapper = fsspec.get_mapper(output_path)
+    weights_mapper = fsspec.get_mapper(weights_path)
+    output_store = zarr.open(output_mapper, mode='r+')
+    weights_store = zarr.open(weights_mapper, mode='r')
     
     # Define slices for reading data
     output_slice = (
@@ -431,9 +435,10 @@ def merge_inference_outputs(
     print(f"Creating final output store: {output_path}")
     print(f"  Shape: {output_shape}, Chunks: {output_chunks}")
     
-    # Create zarr stores with compression (use open instead of save_array to avoid materializing arrays)
+    # Create zarr stores with compression using fsspec mappers
+    output_mapper = fsspec.get_mapper(output_path)
     zarr.open(
-        output_path,
+        output_mapper,
         mode='w',
         shape=output_shape,
         chunks=output_chunks,
@@ -445,8 +450,9 @@ def merge_inference_outputs(
     print(f"Creating weight accumulator store: {weight_accumulator_path}")
     print(f"  Shape: {weights_shape}, Chunks: {weights_chunks}")
     
+    weights_mapper = fsspec.get_mapper(weight_accumulator_path)
     zarr.open(
-        weight_accumulator_path,
+        weights_mapper,
         mode='w',
         shape=weights_shape,
         chunks=weights_chunks,
@@ -539,8 +545,8 @@ def merge_inference_outputs(
     print("\nNormalization complete.")
     
     # --- 8. Save Metadata ---
-    # Add metadata to the output zarr
-    output_zarr = zarr.open(output_path, mode='r+')
+    output_mapper = fsspec.get_mapper(output_path)
+    output_zarr = zarr.open(output_mapper, mode='r+')
     if hasattr(output_zarr, 'attrs'):
         output_zarr.attrs['patch_size'] = patch_size
         output_zarr.attrs['original_volume_shape'] = original_volume_shape

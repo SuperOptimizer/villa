@@ -40,7 +40,7 @@ def is_aws_ec2_instance():
 
 
 import torch
-import tensorstore as ts
+import fsspec
 from .utils import get_max_value
 
 # Remove the PIL image size limit
@@ -311,64 +311,57 @@ class Volume:
 
     def _init_from_zarr_path(self):
         """Helper to initialize directly from a Zarr path."""
-        cache_pool_bytes = int(self.cache_pool) if self.cache else 0
-        is_http = self.path.startswith(('http://', 'https://'))
-
-        kvstore_driver = 'http' if is_http else 'file'
-        kvstore_spec = {'driver': kvstore_driver}
-        if is_http:
-            kvstore_spec['base_url'] = self.path
-        else:
-            kvstore_spec['path'] = self.path
-
-        ts_config_base = {
-            'driver': 'zarr',
-            'kvstore': kvstore_spec,
-            'context': {'cache_pool': {'total_bytes_limit': cache_pool_bytes}}
-        }
+        # Configure storage options based on cache settings
+        storage_options = {}
+        if self.cache:
+            storage_options['cache_storage'] = int(self.cache_pool)
+            
+        self.url = self.path.rstrip("/")  # Set url attribute
+        is_http = self.url.startswith(('http://', 'https://'))
 
         if self.verbose:
-            print(f"Opening zarr store with TensorStore at path: {self.path}")
-            print(f"Base TensorStore config: {json.dumps(ts_config_base, indent=2)}")
+            print(f"Opening zarr store with fsspec at path: {self.path}")
+            print(f"Storage options: {storage_options}")
 
         opened_stores = []
         try:
             # Try opening root level first
             if self.verbose: print("Attempting to open Zarr at root level...")
-            future = ts.open(ts_config_base)
-            root_store = future.result()
+            # Get mapper for the zarr store
+            mapper = fsspec.get_mapper(self.path, **storage_options)
+            root_store = zarr.open(mapper, mode='r')
             opened_stores.append(root_store)
             if self.verbose: print("Successfully opened Zarr at root level.")
-            self.url = self.path.rstrip("/")  # Set url attribute
 
         except Exception as root_e:
             if self.verbose: print(f"Failed opening root level: {root_e}. Checking for multi-resolution...")
             # Try opening as multi-resolution (NGFF spec with datasets in subgroups 0, 1, ...)
             try:
+                # Get mapper for the zarr store
+                mapper = fsspec.get_mapper(self.path, **storage_options)
+                z_root = zarr.open(mapper, mode='r')
+                
                 # Try opening level '0'
-                ts_config_level0 = ts_config_base.copy()
-                ts_config_level0['path'] = '0'  # Specify the group path within the zarr store
                 if self.verbose: print(f"Attempting to open Zarr at path '0'...")
-                future0 = ts.open(ts_config_level0)
-                store0 = future0.result()
-                opened_stores.append(store0)
-                if self.verbose: print("Successfully opened level '0'. Checking for further levels...")
-                self.url = self.path.rstrip("/")  # Set url attribute
-
-                # Try opening subsequent levels
-                for level in range(1, 6):  # Check levels 1 to 5
-                    ts_config_level = ts_config_base.copy()
-                    ts_config_level['path'] = str(level)
-                    try:
-                        if self.verbose: print(f"Attempting to open Zarr at path '{level}'...")
-                        future_level = ts.open(ts_config_level)
-                        store_level = future_level.result()
-                        opened_stores.append(store_level)
-                        if self.verbose: print(f"Successfully opened level '{level}'.")
-                    except Exception as level_e:
-                        if self.verbose: print(
-                            f"Level '{level}' not found or error opening: {level_e}. Stopping search.")
-                        break  # Stop searching if a level is missing
+                try:
+                    store0 = z_root['0']
+                    opened_stores.append(store0)
+                    if self.verbose: print("Successfully opened level '0'. Checking for further levels...")
+                
+                    # Try opening subsequent levels
+                    for level in range(1, 6):  # Check levels 1 to 5
+                        try:
+                            if self.verbose: print(f"Attempting to open Zarr at path '{level}'...")
+                            store_level = z_root[str(level)]
+                            opened_stores.append(store_level)
+                            if self.verbose: print(f"Successfully opened level '{level}'.")
+                        except (KeyError, ValueError) as level_e:
+                            if self.verbose: print(
+                                f"Level '{level}' not found or error opening: {level_e}. Stopping search.")
+                            break  # Stop searching if a level is missing
+                except (KeyError, ValueError):
+                    if self.verbose: print("Could not find level '0' in zarr store.")
+                    raise
 
             except Exception as multi_e:
                 if self.verbose: print(f"Failed opening as multi-resolution: {multi_e}")
@@ -379,7 +372,12 @@ class Volume:
             raise RuntimeError(f"Could not open Zarr store at {self.path} either as root or multi-resolution.")
 
         self.data = opened_stores
-        self.dtype = self.data[0].dtype.numpy_dtype
+        
+        # Get original dtype from the first store - we'll need to convert from zarr's Python dtype to numpy dtype
+        if isinstance(self.data[0].dtype, type):
+            self.dtype = np.dtype(self.data[0].dtype)
+        else:
+            self.dtype = self.data[0].dtype
 
         # Load metadata (.zattrs)
         try:
@@ -560,73 +558,66 @@ class Volume:
         print(f"Warning: Could not load .zattrs metadata from base path {base_path} at standard locations.")
         return {}  # Return empty dict if no metadata found
 
-    def load_data(self) -> List[ts.TensorStore]:
-        """Loads data using TensorStore based on metadata."""
-        # This method relies on metadata having been loaded first
+    def load_data(self) -> List:
+        storage_options = {}
+        if self.cache:
+            storage_options['cache_storage'] = int(self.cache_pool)
+            
         if not self.metadata or 'zattrs' not in self.metadata or 'multiscales' not in self.metadata['zattrs']:
             # If standard OME metadata structure is missing, try to load from base url/path directly
-            # This covers simple Zarr stores without explicit multiscale metadata
             if self.verbose:
-                print("OME metadata structure missing, attempting direct TensorStore open on base path.")
+                print("OME metadata structure missing, attempting direct zarr open on base path.")
             try:
                 # Use the logic from _init_from_zarr_path to open potentially multi-res stores
-                # This is slightly redundant but ensures data loading works even without perfect metadata
                 base_path = self.path if self.type == 'zarr' and self.path else self.url
                 if not base_path: raise ValueError("Base path/URL missing.")
-
-                cache_pool_bytes = int(self.cache_pool) if self.cache else 0
-                is_http = base_path.startswith(('http://', 'https://'))
-                kvstore_driver = 'http' if is_http else 'file'
-                kvstore_spec = {'driver': kvstore_driver}
-                if is_http:
-                    kvstore_spec['base_url'] = base_path
-                else:
-                    kvstore_spec['path'] = base_path
-
-                ts_config_base = {
-                    'driver': 'zarr', 'kvstore': kvstore_spec,
-                    'context': {'cache_pool': {'total_bytes_limit': cache_pool_bytes}}
-                }
-                # Try opening levels 0 to 5, similar to _init_from_zarr_path
+                
+                # Try opening stores - first try root level
                 stores = []
-                # Try root first
                 try:
-                    future = ts.open(ts_config_base);
-                    stores.append(future.result())
+                    # Get mapper for the zarr store
+                    mapper = fsspec.get_mapper(base_path, **storage_options)
+                    root_store = zarr.open(mapper, mode='r')
+                    stores.append(root_store)
                     if self.verbose: print("Opened data directly from root path.")
                     return stores
                 except Exception:
-                    pass  # Ignore if root fails, try levels
-
-                # Try levels
-                for level in range(6):  # Check levels 0 to 5
-                    ts_config_level = ts_config_base.copy()
-                    ts_config_level['path'] = str(level)
-                    try:
-                        future_level = ts.open(ts_config_level)
-                        store_level = future_level.result()
-                        stores.append(store_level)
-                        if self.verbose: print(f"Opened data from path '{level}'.")
-                    except Exception:
-                        if level == 0:  # If level 0 fails, unlikely others will succeed
+                    pass  # Try levels if root fails
+                
+                # Try multi-resolution levels if root failed
+                mapper = fsspec.get_mapper(base_path, **storage_options)
+                try:
+                    z_root = zarr.open(mapper, mode='r')
+                    
+                    # Try accessing numbered groups (0, 1, etc.)
+                    for level in range(6):  # Check levels 0 to 5
+                        try:
+                            if self.verbose: print(f"Attempting to open Zarr at path '{level}'...")
+                            level_store = z_root[str(level)]
+                            stores.append(level_store)
+                            if self.verbose: print(f"Successfully opened level '{level}'.")
+                        except (KeyError, ValueError) as level_e:
+                            if level == 0:  # If level 0 fails, unlikely others will exist
+                                break
+                            if self.verbose: print(f"Level '{level}' not found: {level_e}. Stopping search.")
                             break
-                        else:  # Stop if a higher level fails after finding lower ones
-                            break
+                except Exception as e:
+                    if self.verbose: print(f"Failed to open multi-resolution zarr: {e}")
+                
                 if stores:
                     if self.verbose: print(f"Found {len(stores)} resolution levels.")
                     return stores
-                else:  # If nothing opened
-                    raise RuntimeError(f"Could not open data store at {base_path} directly or via levels 0-5.")
-
+                else:
+                    raise RuntimeError(f"Could not open Zarr store at {base_path} directly or via levels 0-5.")
+                
             except Exception as e:
-                print(f"Error loading data directly with TensorStore: {e}")
+                print(f"Error loading data directly with fsspec+zarr: {e}")
                 raise RuntimeError(f"Failed to load data: OME metadata missing and direct load failed.") from e
 
         # --- Load based on OME multiscales metadata ---
         sub_volumes = []
         base_url = self.url.rstrip("/")  # Assumes URL was set correctly
-        is_http = base_url.startswith(('http://', 'https://'))
-
+        
         # Check if multiscales exist and is a list
         multiscales_data = self.metadata['zattrs'].get('multiscales')
         if not isinstance(multiscales_data, list) or not multiscales_data:
@@ -636,53 +627,32 @@ class Volume:
         datasets = multiscales_data[0].get('datasets')
         if not isinstance(datasets, list):
             raise ValueError("Invalid or missing 'datasets' list within multiscales metadata.")
-
+            
+        # Get the root zarr store for the hierarchical data
+        mapper = fsspec.get_mapper(base_url, **storage_options)
+        root = zarr.open(mapper, mode='r')
+        
         for dataset_info in datasets:
             path_suffix = dataset_info.get('path')
             if path_suffix is None:
                 print(f"Warning: Dataset entry missing 'path': {dataset_info}. Skipping.")
                 continue
 
-            # Construct the full path/URL to the dataset level
-            # Important: For TensorStore Zarr driver, kvstore path/base_url points to the *root*
-            # of the Zarr store, and the 'path' parameter in the Zarr spec points to the *group*
-            # within the store (e.g., '0', '1').
-
-            cache_pool_bytes = int(self.cache_pool) if self.cache else 0
-            context = {'cache_pool': {'total_bytes_limit': cache_pool_bytes}}
-
-            kvstore_driver = 'http' if is_http else 'file'
-            kvstore_spec = {'driver': kvstore_driver}
-            if is_http:
-                kvstore_spec['base_url'] = base_url
-            else:
-                kvstore_spec['path'] = base_url  # Local file path
-
-            ts_config = {
-                'driver': 'zarr',
-                'kvstore': kvstore_spec,
-                'path': path_suffix,  # Specifies the group ('0', '1', etc.)
-                'context': context,
-            }
-
             if self.verbose:
-                print(f"Attempting TensorStore open for dataset path: '{path_suffix}'")
-                print(f"TensorStore config: {json.dumps(ts_config, indent=2)}")
+                print(f"Attempting to open dataset at path: '{path_suffix}'")
 
             try:
-                future = ts.open(ts_config)
-                store = future.result()
+                # Access the dataset through the root store
+                store = root[path_suffix]
                 sub_volumes.append(store)
                 if self.verbose:
-                    print(
-                        f"Successfully loaded data for path '{path_suffix}'. Shape: {store.shape}, Dtype: {store.dtype}")
+                    print(f"Successfully loaded data for path '{path_suffix}'. Shape: {store.shape}, Dtype: {store.dtype}")
 
             except Exception as e:
-                print(f"ERROR loading data for path '{path_suffix}' with TensorStore: {e}")
-                # Decide whether to continue or fail hard
+                print(f"ERROR loading data for path '{path_suffix}': {e}")
+                # Decide whether to continue or fail
                 if not sub_volumes:  # If even the first level failed
-                    raise RuntimeError(
-                        f"Failed to load the base resolution level '{path_suffix}'. Cannot continue.") from e
+                    raise RuntimeError(f"Failed to load the base resolution level '{path_suffix}'. Cannot continue.") from e
                 else:
                     print(f"Stopping data loading after failure. Using {len(sub_volumes)} successfully loaded levels.")
                     break  # Stop trying further levels
@@ -857,18 +827,15 @@ class Volume:
             print(f"  Store shape: {self.data[subvolume_idx].shape}, Store dtype: {self.data[subvolume_idx].dtype}")
 
         try:
-            # TensorStore uses standard NumPy-like slicing
-            future = self.data[subvolume_idx][coord_idx].read()
-            data_slice = future.result()
-            # Ensure it's a NumPy array for subsequent processing
-            data_slice = np.array(data_slice)
-            original_dtype = data_slice.dtype  # Store for potential later use
+            data_slice = self.data[subvolume_idx][coord_idx]
+
+            original_dtype = data_slice.dtype  
 
             if self.verbose:
                 print(f"  Read slice shape: {data_slice.shape}, dtype: {data_slice.dtype}")
 
         except Exception as e:
-            print(f"ERROR during TensorStore read operation:")
+            print(f"ERROR during zarr read operation:")
             print(f"  Subvolume: {subvolume_idx}, Index: {coord_idx}")
             print(f"  Store Shape: {self.data[subvolume_idx].shape}")
             print(f"  Error: {e}")
@@ -1016,43 +983,44 @@ class Volume:
         return resolution_mapping.get(scroll_id_key)
 
     def activate_caching(self) -> None:
-        """Activates TensorStore caching and reloads data if necessary."""
         if not self.cache:
             if self.verbose: print("Activating caching...")
             self.cache = True
-            # Reload data only if it was potentially loaded without cache active
-            # Re-initializing TensorStore with cache context is needed
+            # Reload data with caching enabled
             try:
                 if self.type == 'zarr' and self.path:
                     self._init_from_zarr_path()  # Re-init with cache active
                 else:
-                    # For config-based, need to re-run the loading sequence
                     self.metadata = self.load_ome_metadata()
                     self.data = self.load_data()
-                    self.dtype = self.data[0].dtype.numpy_dtype
+                    if isinstance(self.data[0].dtype, type):
+                        self.dtype = np.dtype(self.data[0].dtype)
+                    else:
+                        self.dtype = self.data[0].dtype
                     if self.type == "segment": self.download_inklabel()
-                if self.verbose: print("Caching activated. Data handles potentially updated.")
+                if self.verbose: print("Caching activated. Data handles updated.")
             except Exception as e:
-                print(f"Error reactivating cache and reloading data: {e}")
+                print(f"Error activating cache and reloading data: {e}")
                 self.cache = False  # Revert state if reload failed
 
     def deactivate_caching(self) -> None:
-        """Deactivates TensorStore caching and reloads data."""
         if self.cache:
             if self.verbose: print("Deactivating caching...")
             self.cache = False
             self.cache_pool = 0  # Ensure pool size is 0
-            # Re-initializing TensorStore without cache context is needed
+            # Reload data with caching disabled
             try:
                 if self.type == 'zarr' and self.path:
                     self._init_from_zarr_path()  # Re-init with cache disabled
                 else:
-                    # For config-based, re-run loading sequence
                     self.metadata = self.load_ome_metadata()
                     self.data = self.load_data()
-                    self.dtype = self.data[0].dtype.numpy_dtype
+                    if isinstance(self.data[0].dtype, type):
+                        self.dtype = np.dtype(self.data[0].dtype)
+                    else:
+                        self.dtype = self.data[0].dtype
                     if self.type == "segment": self.download_inklabel()
-                if self.verbose: print("Caching deactivated. Data handles potentially updated.")
+                if self.verbose: print("Caching deactivated. Data handles updated.")
             except Exception as e:
                 print(f"Error deactivating cache and reloading data: {e}")
                 self.cache = True  # Revert state if reload failed
@@ -1306,5 +1274,3 @@ class Cube:
             if self.verbose: print("Deactivating caching for Cube.")
             self.cache = False
             # Data is already in memory, no reload needed, just stops future caching
-
-
