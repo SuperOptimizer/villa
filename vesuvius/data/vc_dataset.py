@@ -14,7 +14,7 @@ from data.volume import Volume
 # Import utility functions directly from vesuvius package
 from utils import list_files, is_aws_ec2_instance
 # Import get_max_value from data.utils to avoid import errors
-from data.utils import get_max_value
+from data.utils import get_max_value, open_zarr
 
 
 class VCDataset(Dataset):

@@ -41,7 +41,7 @@ def is_aws_ec2_instance():
 
 import torch
 import fsspec
-from .utils import get_max_value
+from .utils import get_max_value, open_zarr
 
 # Remove the PIL image size limit
 Image.MAX_IMAGE_PIXELS = None
@@ -302,12 +302,17 @@ class Volume:
         """Helper to initialize directly from a Zarr path."""
         # Log what we're doing if verbose
         if self.verbose:
-            print(f"Opening zarr store with fsspec at path: {self.path}")
+            print(f"Opening zarr store at path: {self.path}")
         
-        # Direct approach - no storage_options, no path manipulation
+        # Use our helper function for direct zarr access
         try:
-            mapper = fsspec.get_mapper(self.path)
-            self.data = zarr.open(mapper, mode='r')
+            # Open the zarr store directly
+            self.data = open_zarr(
+                path=self.path,
+                mode='r',
+                storage_options={'anon': False} if self.path.startswith('s3://') else None,
+                verbose=self.verbose
+            )
             
             # Get original dtype
             if isinstance(self.data.dtype, type):
@@ -456,7 +461,7 @@ class Volume:
             raise
 
     def load_ome_metadata(self) -> Dict[str, Any]:
-        """Loads OME-Zarr metadata (.zattrs) using fsspec."""
+        """Loads OME-Zarr metadata (.zattrs) from zarr group attributes."""
         # Determine the base URL/path correctly, handling direct path or config-derived URL
         base_path = self.path if self.type == 'zarr' and self.path else self.url
         if not base_path:
@@ -464,10 +469,22 @@ class Volume:
 
         base_path = base_path.rstrip("/")
         
-        # Try potential locations for .zattrs file
+        # First try to access metadata directly from the zarr store if it's already loaded
+        if hasattr(self, 'data') and self.data is not None and hasattr(self.data, 'attrs'):
+            try:
+                attrs_dict = dict(self.data.attrs)
+                if attrs_dict:  # If attributes exist and aren't empty
+                    if self.verbose:
+                        print(f"Successfully loaded metadata from zarr store attributes")
+                    return {"zattrs": attrs_dict}
+            except Exception as e:
+                if self.verbose:
+                    print(f"Could not access attributes from data: {e}")
+        
+        # If we couldn't get attributes from the already-loaded store, try opening the paths directly
         potential_zattrs_paths = [
-            f"{base_path}/.zattrs",  # Standard location at root
-            f"{base_path}/0/.zattrs"  # Common location for first level in multi-resolution
+            base_path,            # Try the base path directly (zarr.open will access attrs)
+            f"{base_path}/0",     # Try the first resolution level
         ]
 
         for zattrs_path in potential_zattrs_paths:
@@ -475,7 +492,40 @@ class Volume:
                 print(f"Attempting to load metadata from: {zattrs_path}")
                 
             try:
-                # Use fsspec to open the file - works for any protocol
+                # Use our helper function to open the zarr store
+                zarr_store = open_zarr(
+                    path=zattrs_path, 
+                    mode='r',
+                    storage_options={'anon': False} if zattrs_path.startswith('s3://') else None,
+                    verbose=self.verbose
+                )
+                
+                # Get attributes from the store
+                if hasattr(zarr_store, 'attrs'):
+                    attrs_dict = dict(zarr_store.attrs)
+                    if self.verbose:
+                        print(f"Successfully loaded metadata from {zattrs_path}")
+                    return {"zattrs": attrs_dict}
+                else:
+                    if self.verbose:
+                        print(f"No attributes found in {zattrs_path}")
+            except Exception as e:
+                if self.verbose:
+                    print(f"Error accessing {zattrs_path}: {e}")
+
+        # If we still haven't found metadata, try looking for .zattrs files explicitly with fsspec
+        # This is a fallback for stores that don't have proper zarr attributes
+        zattrs_paths = [
+            f"{base_path}/.zattrs",  # Standard location at root
+            f"{base_path}/0/.zattrs"  # Common location for first level in multi-resolution
+        ]
+        
+        for zattrs_path in zattrs_paths:
+            if self.verbose:
+                print(f"Falling back to direct .zattrs file access: {zattrs_path}")
+                
+            try:
+                # Use fsspec to open the file directly - works for any protocol
                 with fsspec.open(zattrs_path, mode='rb') as f:
                     zattrs_content = json.load(f)
                 
@@ -492,11 +542,11 @@ class Volume:
 
         # If loop completes without returning, metadata wasn't found
         if self.verbose:
-            print(f"Warning: Could not load .zattrs metadata from base path {base_path}")
+            print(f"Warning: Could not load any metadata from base path {base_path}")
         return {}  # Return empty dict if no metadata found
 
     def load_data(self):
-        """Load data from URL or path using fsspec.get_mapper"""
+        """Load data from URL or path using direct zarr.open"""
         base_path = self.path if self.type == 'zarr' and self.path else self.url
         if not base_path: 
             raise ValueError("Base path/URL missing.")
@@ -505,8 +555,13 @@ class Volume:
             print(f"Loading data from: {base_path}")
         
         try:
-            mapper = fsspec.get_mapper(base_path)
-            data = zarr.open(mapper, mode='r')
+            # Use our helper function to open the zarr store
+            data = open_zarr(
+                path=base_path,
+                mode='r',
+                storage_options={'anon': False} if base_path.startswith('s3://') else None,
+                verbose=self.verbose
+            )
             
             if self.verbose:
                 print(f"Successfully opened zarr store: {data}")
@@ -520,7 +575,7 @@ class Volume:
 
     def download_inklabel(self, save_path=None) -> None:
         """
-        Downloads and loads the ink label image for a segment using fsspec.
+        Downloads and loads the ink label image for a segment.
         
         Parameters
         ----------
@@ -555,8 +610,10 @@ class Volume:
             print(f"Attempting to load ink label from: {inklabel_url}")
 
         try:
-            # Use fsspec to open the file - works for any protocol (local, http, s3)
-            with fsspec.open(inklabel_url, mode='rb') as f:
+            # Note: We still use fsspec here because this is a PNG file, not a zarr store
+            # For PNGs and other file types, fsspec.open is still the appropriate choice
+            storage_options = {'anon': False} if inklabel_url.startswith('s3://') else None
+            with fsspec.open(inklabel_url, mode='rb', **({} if storage_options is None else storage_options)) as f:
                 img_bytes = f.read()
                 img = Image.open(BytesIO(img_bytes))
                 

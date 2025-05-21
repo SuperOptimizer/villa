@@ -58,8 +58,8 @@ def parse_arguments():
                       help='Number of parts to process per GPU. Higher values use less GPU memory but take longer. Default: 1')
     
     # Performance settings
-    parser.add_argument('--tta-type', dest='tta_type', type=str, choices=['mirroring', 'rotation'], 
-                      help='Test time augmentation type (mirroring or rotation)')
+    parser.add_argument('--tta-type', dest='tta_type', type=str, choices=['mirroring', 'rotation'], default='rotation',
+                      help='Test time augmentation type (mirroring or rotation). Default: rotation')
     parser.add_argument('--disable-tta', dest='disable_tta', action='store_true',
                       help='Disable test time augmentation')
     parser.add_argument('--single-part', dest='single_part', action='store_true',
@@ -94,15 +94,28 @@ def prepare_directories(args):
     if args.workdir is None:
         args.workdir = f"{args.output}_work"
     
-    # Create needed directories
-    os.makedirs(args.workdir, exist_ok=True)
-    
     # Define paths for intermediate outputs
-    args.parts_dir = os.path.join(args.workdir, "parts")
-    args.blended_path = os.path.join(args.workdir, "blended.zarr")
-    
-    # Create parts directory
-    os.makedirs(args.parts_dir, exist_ok=True)
+    if args.workdir.startswith('s3://'):
+        # For S3 paths, use proper path join
+        args.parts_dir = f"{args.workdir.rstrip('/')}/parts"
+        args.blended_path = f"{args.workdir.rstrip('/')}/blended.zarr"
+        
+        # Create S3 directories
+        import fsspec
+        fs = fsspec.filesystem('s3', anon=False)
+        fs.makedirs(args.workdir, exist_ok=True)
+        fs.makedirs(args.parts_dir, exist_ok=True)
+    else:
+        # For local paths, use os.path.join
+        # Create needed directories
+        os.makedirs(args.workdir, exist_ok=True)
+        
+        # Define paths for intermediate outputs
+        args.parts_dir = os.path.join(args.workdir, "parts")
+        args.blended_path = os.path.join(args.workdir, "blended.zarr")
+        
+        # Create parts directory
+        os.makedirs(args.parts_dir, exist_ok=True)
     
     return args
 
@@ -172,7 +185,10 @@ def run_predict(args, part_id, gpu_id, z_min=None, z_max=None):
         cmd.extend(['--tta_type', args.tta_type])
     elif getattr(args, 'disable_tta', False):
         cmd.append('--disable_tta')
-    # Default behavior will use mirroring if neither is specified
+    else:
+        # Default to rotation TTA
+        cmd.extend(['--tta_type', 'rotation'])
+    # Default behavior now uses rotation TTA if neither is specified
     
     # Add other optional arguments
     if args.patch_size:
@@ -262,6 +278,11 @@ def run_finalize(args):
     if not args.keep_intermediates:
         cmd.append('--delete-intermediates')
     
+    # Add num_workers argument - use all available CPU cores
+    import multiprocessing as mp
+    num_workers = mp.cpu_count()
+    cmd.extend(['--num-workers', str(num_workers)])
+    print(f"Using {num_workers} worker processes for finalization")
     
     if args.quiet:
         cmd.append('--quiet')
@@ -295,15 +316,37 @@ def cleanup(args):
     """Clean up intermediate files."""
     if not args.keep_intermediates:
         print("Cleaning up intermediate files...")
-        if os.path.exists(args.parts_dir):
-            shutil.rmtree(args.parts_dir)
         
-        # Only remove the work directory if it's empty
-        try:
-            os.rmdir(args.workdir)
-        except OSError:
-            # Directory not empty, so keep it
-            pass
+        # Handle cleanup for S3 paths
+        if args.parts_dir.startswith('s3://'):
+            try:
+                import fsspec
+                fs = fsspec.filesystem('s3', anon=False)
+                if fs.exists(args.parts_dir):
+                    # Remove all files in the parts directory
+                    for file_path in fs.ls(args.parts_dir, detail=False):
+                        fs.rm(file_path, recursive=True)
+                    # Remove the parts directory itself
+                    fs.rmdir(args.parts_dir)
+                    
+                # Check if workdir is empty
+                if fs.exists(args.workdir):
+                    workdir_files = fs.ls(args.workdir, detail=False)
+                    if len(workdir_files) == 0:
+                        fs.rmdir(args.workdir)
+            except Exception as e:
+                print(f"Warning: Failed to clean up S3 intermediates: {e}")
+        else:
+            # Local file cleanup
+            if os.path.exists(args.parts_dir):
+                shutil.rmtree(args.parts_dir)
+            
+            # Only remove the work directory if it's empty
+            try:
+                os.rmdir(args.workdir)
+            except OSError:
+                # Directory not empty, so keep it
+                pass
 
 
 def setup_multipart(args, num_parts):
@@ -388,7 +431,18 @@ def run_pipeline():
     # Blending step
     if not args.skip_blend:
         print("\n--- Step 2: Blending ---")
-        if not os.path.exists(args.parts_dir) or not os.listdir(args.parts_dir):
+        
+        # Check if parts directory exists and has contents (handle S3 paths)
+        if args.parts_dir.startswith('s3://'):
+            import fsspec
+            fs = fsspec.filesystem('s3', anon=False)
+            parts_exist = fs.exists(args.parts_dir)
+            parts_has_files = len(fs.ls(args.parts_dir)) > 0 if parts_exist else False
+        else:
+            parts_exist = os.path.exists(args.parts_dir)
+            parts_has_files = os.listdir(args.parts_dir) if parts_exist else False
+            
+        if not parts_exist or not parts_has_files:
             print("No prediction parts found. Please run the prediction step first.")
             return 1
         
@@ -400,7 +454,16 @@ def run_pipeline():
     # Finalization step
     if not args.skip_finalize:
         print("\n--- Step 3: Finalization ---")
-        if not os.path.exists(args.blended_path):
+        
+        # Check if blended path exists (handle S3 paths)
+        if args.blended_path.startswith('s3://'):
+            import fsspec
+            fs = fsspec.filesystem('s3', anon=False)
+            blended_exists = fs.exists(args.blended_path)
+        else:
+            blended_exists = os.path.exists(args.blended_path)
+            
+        if not blended_exists:
             print("No blended data found. Please run the blending step first.")
             return 1
         
