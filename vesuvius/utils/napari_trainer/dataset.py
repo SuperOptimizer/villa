@@ -8,7 +8,7 @@ import zarr
 from torch.utils.data import Dataset
 import albumentations as A
 
-from utils import find_mask_patches, find_mask_patches_2d, pad_or_crop_3d, pad_or_crop_2d
+from utils.utils import find_mask_patches, find_mask_patches_2d, pad_or_crop_3d, pad_or_crop_2d
 
 class NapariDataset(Dataset):
     """

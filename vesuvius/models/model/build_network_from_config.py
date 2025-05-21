@@ -1,7 +1,7 @@
 import torch.nn as nn
 from .utils import get_pool_and_conv_props, get_n_blocks_per_stage
-from .encoder import Encoder
-from .decoder import Decoder
+from models.model.build.encoder import Encoder
+from models.model.build.decoder import Decoder
 
 def get_activation_module(activation_str: str):
     act_str = activation_str.lower()

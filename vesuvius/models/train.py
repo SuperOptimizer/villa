@@ -6,13 +6,13 @@ import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim import AdamW, SGD
 from torch.utils.data import DataLoader, SubsetRandomSampler
-from utils import init_weights_he
+from utils.utils import init_weights_he
 import albumentations as A
-from dataset import NapariDataset
-from plotting import save_debug
-from model.build_network_from_config import NetworkFromConfig
+from utils.napari_trainer.dataset import NapariDataset
+from utils.plotting import save_debug
+from models.model.build_network_from_config import NetworkFromConfig
 from torch.nn import CrossEntropyLoss, MSELoss, BCELoss
-from losses import (
+from models.losses import (
     BCEWithLogitsMaskedLoss,
     BCEMaskedLoss,
     CrossEntropyMaskedLoss,
@@ -139,7 +139,7 @@ class BaseTrainer:
 
     # --- optimizer ---- #
     def _get_optimizer(self, model):
-        from model.optimizers import create_optimizer
+        from models.optimizers import create_optimizer
         
         # Map ConfigManager params to what create_optimizer expects
         optimizer_config = {

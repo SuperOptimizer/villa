@@ -275,7 +275,17 @@ class Volume:
 
             self.metadata = self.load_ome_metadata()  # Loads .zattrs
             self.data = self.load_data()  # Loads TensorStore objects
-            self.dtype = self.data[0].dtype.numpy_dtype  # Get original dtype from TensorStore
+            
+            # Handle different data source types
+            if isinstance(self.data, zarr.Array):
+                # Direct zarr array case
+                self.dtype = self.data.dtype
+            elif hasattr(self.data[0].dtype, 'numpy_dtype'):
+                # TensorStore case
+                self.dtype = self.data[0].dtype.numpy_dtype
+            else:
+                # Fallback for other cases
+                self.dtype = self.data[0].dtype
 
             # --- Segment Specific ---
             if self.type == "segment":
