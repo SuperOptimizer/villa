@@ -1,8 +1,8 @@
 # Overview of the Inference Pipeline
 
-:::note Single Machine Option
+**Running on a single machine**
 If you want to run the entire pipeline in one go on a single machine (even with multiple gpus), you can use `vesuvius.inference_pipeline`. This handles all three stages (prediction, blending, and finalization) in a single command without having to run each step separately.
-:::
+
 
 The inference pipeline consists of three main stages:
 
@@ -10,13 +10,11 @@ The inference pipeline consists of three main stages:
 2. __Blending (`vesuvius.blend_logits`)__: Combines overlapping predictions using Gaussian weighting.
 3. __Finalization (`vesuvius.finalize_outputs`)__: Processes logits into final segmentation outputs (probabilities or class predictions).
 
-:::tip 
-
+*Note:*
 While the patch size of the model is potentially not the best chunk size for _viewing_ a zarr , we use it throughout this pipeline for reading/writing them. This is due to the performance penalty that you pay when writing partial chunks. 
 
 Because inference outputs are saved as exactly patch size to speed up writing, we keep this same chunk size throughout. It is a good idea to rechunk the final output before using it for downstream tasks.
 
-::: 
 
 ## 1. `vesuvius.predict` - Model Inference
 
