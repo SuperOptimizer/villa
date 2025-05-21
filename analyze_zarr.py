@@ -1,9 +1,12 @@
 import zarr
 import numpy as np
+import fsspec
 
-# Open the output zarr
+# Open the output zarr using fsspec for consistent pattern
 print("Opening zarr file...")
-z = zarr.open('/mnt/raid_nvme/s5_test_surf.zarr', mode='r')
+zarr_path = '/mnt/raid_nvme/s5_test_surf.zarr'
+mapper = fsspec.get_mapper(zarr_path)
+z = zarr.open(mapper, mode='r')
 
 # Print basic information
 print(f"Shape: {z.shape}")

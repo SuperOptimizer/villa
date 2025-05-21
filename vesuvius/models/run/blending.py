@@ -3,6 +3,7 @@ import os
 import re
 import json
 import zarr
+import fsspec
 import multiprocessing as mp
 from tqdm.auto import tqdm
 from scipy.ndimage import gaussian_filter
@@ -11,6 +12,7 @@ from functools import partial
 import numcodecs
 from concurrent.futures import ProcessPoolExecutor
 import math
+from data.utils import open_zarr
 
 
 # --- Gaussian Map Generation ---
@@ -40,14 +42,14 @@ def generate_gaussian_map(patch_size: tuple, sigma_scale: float = 8.0, dtype=tor
     return gaussian_map
 
 
-# --- Tile Processing Worker Function ---
-def process_tile(tile_info, parent_dir, output_path, weights_path, gaussian_map, 
+# --- Chunk Processing Worker Function ---
+def process_chunk(chunk_info, parent_dir, output_path, weights_path, gaussian_map, 
                 patch_size, part_files):
     """
-    Process a spatial tile of the volume, handling all patches that intersect with this tile.
+    Process a single chunk of the volume, handling all patches that intersect with this chunk.
     
     Args:
-        tile_info: Dictionary with tile boundaries {'z_start', 'z_end', 'y_start', 'y_end', 'x_start', 'x_end'}
+        chunk_info: Dictionary with chunk boundaries {'z_start', 'z_end', 'y_start', 'y_end', 'x_start', 'x_end'}
         parent_dir: Directory containing part files
         output_path: Path to output zarr
         weights_path: Path to weights zarr
@@ -55,10 +57,10 @@ def process_tile(tile_info, parent_dir, output_path, weights_path, gaussian_map,
         patch_size: Size of patches (pZ, pY, pX)
         part_files: Dictionary of part files
     """
-    # Extract tile boundaries
-    z_start, z_end = tile_info['z_start'], tile_info['z_end']
-    y_start, y_end = tile_info['y_start'], tile_info['y_end']
-    x_start, x_end = tile_info['x_start'], tile_info['x_end']
+    # Extract chunk boundaries
+    z_start, z_end = chunk_info['z_start'], chunk_info['z_end']
+    y_start, y_end = chunk_info['y_start'], chunk_info['y_end']
+    x_start, x_end = chunk_info['x_start'], chunk_info['x_end']
     
     pZ, pY, pX = patch_size
     
@@ -66,21 +68,21 @@ def process_tile(tile_info, parent_dir, output_path, weights_path, gaussian_map,
     gaussian_map_np = gaussian_map.numpy()
     gaussian_map_spatial_np = gaussian_map_np[0]  # Shape (pZ, pY, pX)
     
-    # Open output and weights zarr arrays for this tile
-    output_store = zarr.open(output_path, mode='r+')
-    weights_store = zarr.open(weights_path, mode='r+')
+    # Open zarr stores directly
+    output_store = open_zarr(output_path, mode='r+', storage_options={'anon': False} if output_path.startswith('s3://') else None)
+    weights_store = open_zarr(weights_path, mode='r+', storage_options={'anon': False} if weights_path.startswith('s3://') else None)
     
-    # Create local accumulators for this tile - initialize with zeros
-    # Shape: (C, tile_z, tile_y, tile_x)
+    # Create local accumulators for this chunk - initialize with zeros
+    # Shape: (C, chunk_z, chunk_y, chunk_x)
     num_classes = output_store.shape[0]
-    tile_shape = (num_classes, z_end - z_start, y_end - y_start, x_end - x_start)
+    chunk_shape = (num_classes, z_end - z_start, y_end - y_start, x_end - x_start)
     weights_shape = (z_end - z_start, y_end - y_start, x_end - x_start)
     
     # Initialize accumulators
-    tile_logits = np.zeros(tile_shape, dtype=np.float32)
-    tile_weights = np.zeros(weights_shape, dtype=np.float32)
+    chunk_logits = np.zeros(chunk_shape, dtype=np.float32)
+    chunk_weights = np.zeros(weights_shape, dtype=np.float32)
     
-    # Track which patches intersect with this tile
+    # Track which patches intersect with this chunk
     patches_processed = 0
     
     # Process each part file sequentially
@@ -88,25 +90,25 @@ def process_tile(tile_info, parent_dir, output_path, weights_path, gaussian_map,
         logits_path = part_files[part_id]['logits']
         coords_path = part_files[part_id]['coordinates']
         
-        # Open part zarr stores
-        coords_store = zarr.open(coords_path, mode='r')
-        logits_store = zarr.open(logits_path, mode='r')
+        # Open zarr stores directly
+        coords_store = open_zarr(coords_path, mode='r', storage_options={'anon': False} if coords_path.startswith('s3://') else None)
+        logits_store = open_zarr(logits_path, mode='r', storage_options={'anon': False} if logits_path.startswith('s3://') else None)
         
         # Read all coordinates for this part
         coords_np = coords_store[:]
         num_patches_in_part = coords_np.shape[0]
         
-        # Process patches that intersect with this tile
+        # Process patches that intersect with this chunk
         for patch_idx in range(num_patches_in_part):
             z, y, x = coords_np[patch_idx].tolist()
             
-            # Check if this patch intersects with our tile
+            # Check if this patch intersects with our chunk
             if (z + pZ <= z_start or z >= z_end or
                 y + pY <= y_start or y >= y_end or
                 x + pX <= x_start or x >= x_end):
-                continue  # Skip patches that don't intersect with this tile
+                continue  # Skip patches that don't intersect with this chunk
                 
-            # Calculate intersection between patch and tile
+            # Calculate intersection between patch and chunk
             iz_start = max(z, z_start) - z_start
             iz_end = min(z + pZ, z_end) - z_start
             iy_start = max(y, y_start) - y_start
@@ -144,14 +146,14 @@ def process_tile(tile_info, parent_dir, output_path, weights_path, gaussian_map,
             weighted_patch = logit_patch * weight_patch[np.newaxis, :, :, :]
             
             # Accumulate into local arrays
-            tile_logits[
+            chunk_logits[
                 :,  # All classes
                 iz_start:iz_end,
                 iy_start:iy_end,
                 ix_start:ix_end
             ] += weighted_patch
             
-            tile_weights[
+            chunk_weights[
                 iz_start:iz_end,
                 iy_start:iy_end,
                 ix_start:ix_end
@@ -174,37 +176,37 @@ def process_tile(tile_info, parent_dir, output_path, weights_path, gaussian_map,
             slice(x_start, x_end)
         )
         
-        # Lock for potentially concurrent writes
-        output_store[output_slice] = tile_logits
-        weights_store[weight_slice] = tile_weights
+        # Write accumulated chunk data
+        output_store[output_slice] = chunk_logits
+        weights_store[weight_slice] = chunk_weights
     
     return {
-        'tile': tile_info,
+        'chunk': chunk_info,
         'patches_processed': patches_processed
     }
 
 
 # --- Normalization Worker Function ---
-def normalize_tile(tile_info, output_path, weights_path, epsilon=1e-8):
+def normalize_chunk(chunk_info, output_path, weights_path, epsilon=1e-8):
     """
-    Normalize a spatial tile by dividing accumulated logits by weights.
+    Normalize a single chunk by dividing accumulated logits by weights.
     
     Args:
-        tile_info: Dictionary with tile boundaries {'z_start', 'z_end', 'y_start', 'y_end', 'x_start', 'x_end'}
+        chunk_info: Dictionary with chunk boundaries {'z_start', 'z_end', 'y_start', 'y_end', 'x_start', 'x_end'}
         output_path: Path to output zarr
         weights_path: Path to weights zarr
         epsilon: Small value to avoid division by zero
     """
-    # Extract tile boundaries
-    z_start, z_end = tile_info['z_start'], tile_info['z_end']
-    y_start, y_end = tile_info['y_start'], tile_info['y_end']
-    x_start, x_end = tile_info['x_start'], tile_info['x_end']
+    # Extract chunk boundaries
+    z_start, z_end = chunk_info['z_start'], chunk_info['z_end']
+    y_start, y_end = chunk_info['y_start'], chunk_info['y_end']
+    x_start, x_end = chunk_info['x_start'], chunk_info['x_end']
     
-    # Open zarr arrays
-    output_store = zarr.open(output_path, mode='r+')
-    weights_store = zarr.open(weights_path, mode='r')
+    # Open zarr stores directly
+    output_store = open_zarr(output_path, mode='r+', storage_options={'anon': False} if output_path.startswith('s3://') else None)
+    weights_store = open_zarr(weights_path, mode='r', storage_options={'anon': False} if weights_path.startswith('s3://') else None)
     
-    # Define slices for reading data
+    # Define slices for reading data (exact patch size)
     output_slice = (
         slice(None),  # All classes
         slice(z_start, z_end),
@@ -218,7 +220,7 @@ def normalize_tile(tile_info, output_path, weights_path, epsilon=1e-8):
         slice(x_start, x_end)
     )
     
-    # Read data
+    # Read data (chunk-sized)
     logits = output_store[output_slice]
     weights = weights_store[weight_slice]
     
@@ -234,59 +236,50 @@ def normalize_tile(tile_info, output_path, weights_path, epsilon=1e-8):
     output_store[output_slice] = normalized
     
     return {
-        'tile': tile_info,
+        'chunk': chunk_info,
         'normalized_voxels': np.prod(normalized.shape)
     }
 
 
 # --- Utility Functions ---
-def calculate_tiles(volume_shape, patch_size, num_classes=1, output_chunks=None):
+def calculate_chunks(volume_shape, output_chunks=None):
     """
-    Calculate optimal tile sizes that align with zarr chunk boundaries.
+    Calculate processing units based directly on zarr chunk size for memory efficiency.
     
     Args:
         volume_shape: Shape of the volume (Z, Y, X)
-        patch_size: Size of patches (pZ, pY, pX)
-        num_classes: Number of output classes
         output_chunks: Spatial chunk size for the output zarr (z_chunk, y_chunk, x_chunk)
         
     Returns:
-        List of tile dictionaries with boundaries
+        List of chunk dictionaries with boundaries
     """
     # Get volume dimensions
     Z, Y, X = volume_shape
     
-    # If no chunks specified, use patch size as base
+    # If no chunks specified, use reasonable defaults
     if output_chunks is None:
-        # Default chunk sizes based on patch size
-        pZ, pY, pX = patch_size
-        z_chunk, y_chunk, x_chunk = pZ, pY, pX
+        # Default chunk sizes (256 is a common size for zarr chunks)
+        z_chunk, y_chunk, x_chunk = 256, 256, 256
     else:
         # Use the provided chunks (these should be the spatial dimensions only)
         z_chunk, y_chunk, x_chunk = output_chunks
     
-    # Determine tile sizes that are multiples of chunk sizes
-    # We'll use reasonable defaults rather than complex memory calculations
-    tile_z = z_chunk * max(1, min(32, Z // z_chunk))  # Use up to 32 chunks per tile
-    tile_y = y_chunk * max(1, min(32, Y // y_chunk))
-    tile_x = x_chunk * max(1, min(32, X // x_chunk))
-    
-    # Generate tiles aligned to chunk boundaries
-    tiles = []
-    for z_start in range(0, Z, tile_z):
-        for y_start in range(0, Y, tile_y):
-            for x_start in range(0, X, tile_x):
-                z_end = min(z_start + tile_z, Z)
-                y_end = min(y_start + tile_y, Y)
-                x_end = min(x_start + tile_x, X)
+    # Process one chunk at a time for maximum memory efficiency
+    chunks = []
+    for z_start in range(0, Z, z_chunk):
+        for y_start in range(0, Y, y_chunk):
+            for x_start in range(0, X, x_chunk):
+                z_end = min(z_start + z_chunk, Z)
+                y_end = min(y_start + y_chunk, Y)
+                x_end = min(x_start + x_chunk, X)
                 
-                tiles.append({
+                chunks.append({
                     'z_start': z_start, 'z_end': z_end,
                     'y_start': y_start, 'y_end': y_end,
                     'x_start': x_start, 'x_end': x_end
                 })
     
-    return tiles
+    return chunks
 
 
 # --- Main Merging Function ---
@@ -302,6 +295,7 @@ def merge_inference_outputs(
         verbose: bool = True):
     """
     Merges partial inference results with Gaussian blending using parallel processing.
+    Uses fsspec.get_mapper for consistent zarr access across file systems and protocols.
 
     Args:
         parent_dir: Directory containing logits_part_X.zarr and coordinates_part_X.zarr.
@@ -323,17 +317,40 @@ def merge_inference_outputs(
         base, _ = os.path.splitext(output_path)
         weight_accumulator_path = f"{base}_weights.zarr"
     
-    # Configure process pool size
+    # Configure process pool size - use half of available CPUs for memory efficiency
     if num_workers is None:
-        num_workers = max(1, mp.cpu_count() - 1)
+        # Use half of CPU count (rounded up) to balance performance and memory usage
+        num_workers = max(1, mp.cpu_count() // 2)
     
-    print(f"Using {num_workers} worker processes")
+    print(f"Using {num_workers} worker processes (half of CPU count for memory efficiency)")
         
     # --- 1. Discover Parts ---
     part_files = {}
     part_pattern = re.compile(r"(logits|coordinates)_part_(\d+)\.zarr")
     print(f"Scanning for parts in: {parent_dir}")
-    for filename in os.listdir(parent_dir):
+    
+    # Use fsspec for listing files (works with S3 and local paths)
+    if parent_dir.startswith('s3://'):
+        fs = fsspec.filesystem('s3', anon=False)
+        # List directory to get all entries
+        full_paths = fs.ls(parent_dir)
+        
+        # For S3, strip the bucket name and path prefix to get just the directory name
+        # Each entry looks like: 'bucket/path/to/parent_dir/logits_part_0.zarr'
+        file_list = []
+        for path in full_paths:
+            # Remove the s3://bucket/ prefix 
+            path_parts = path.split('/')
+            # Get the last part which is the actual directory name
+            filename = path_parts[-1]
+            file_list.append(filename)
+            
+        print(f"DEBUG: Found files in S3: {file_list}")
+    else:
+        # Use os.listdir for local paths
+        file_list = os.listdir(parent_dir)
+        
+    for filename in file_list:
         match = part_pattern.match(filename)
         if match:
             file_type, part_id_str = match.groups()
@@ -357,61 +374,68 @@ def merge_inference_outputs(
     print(f"Reading metadata from part {first_part_id}...")
     part0_logits_path = part_files[first_part_id]['logits']
     try:
-        # Use zarr.open instead of tensorstore
-        part0_logits_store = zarr.open(part0_logits_path, mode='r')
+        # Use our helper function to open zarr store
+        part0_logits_store = open_zarr(part0_logits_path, mode='r', storage_options={'anon': False} if part0_logits_path.startswith('s3://') else None)
 
-        # Read .zattrs file directly for metadata
-        zattrs_path = os.path.join(part0_logits_path, '.zattrs')
-        if os.path.exists(zattrs_path):
-            with open(zattrs_path, 'r') as f:
-                meta_attrs = json.load(f)
+        # Read input zarr store chunk size
+        input_chunks = part0_logits_store.chunks
+        print(f"Input zarr chunk size: {input_chunks}")
 
+        # Read .zattrs using fsspec
+        try:
+            # Use the part0_logits_store's .attrs directly if available
+            meta_attrs = part0_logits_store.attrs
             patch_size = tuple(meta_attrs['patch_size'])  # Already a list in the file
             original_volume_shape = tuple(meta_attrs['original_volume_shape'])  # MUST exist
             num_classes = part0_logits_store.shape[1]  # (N, C, pZ, pY, pX) -> C
-        else:
-            # Try to infer from the array shape if .zattrs is missing
-            part0_coords_path = part_files[first_part_id]['coordinates']
-            coords_store = zarr.open(part0_coords_path, mode='r')
-            # First patch's logits shape should be (C, pZ, pY, pX)
-            first_patch_shape = part0_logits_store[0].shape
-            num_classes = first_patch_shape[0]
-            patch_size = first_patch_shape[1:]
-            
-            # Get first and last patch centers to estimate volume size
-            coords_data = coords_store[:]
-            min_coords = np.min(coords_data, axis=0)
-            max_coords = np.max(coords_data, axis=0)
-            estimated_shape = tuple((max_coords + np.array(patch_size) - min_coords).astype(int))
-            
-            original_volume_shape = estimated_shape
-            print("WARNING: No .zattrs file found. Using estimated volume shape from coordinates.")
-            
-        print(f"  Patch Size: {patch_size}")
-        print(f"  Num Classes: {num_classes}")
-        print(f"  Original Volume Shape (Z,Y,X): {original_volume_shape}")
+        except (KeyError, AttributeError):
+            # Fallback: try to read .zattrs file directly
+            zattrs_path = os.path.join(part0_logits_path, '.zattrs')
+            with fsspec.open(zattrs_path, 'r') as f:
+                meta_attrs = json.load(f)
+                
+            patch_size = tuple(meta_attrs['patch_size'])  
+            original_volume_shape = tuple(meta_attrs['original_volume_shape'])
+            num_classes = part0_logits_store.shape[1]
     except Exception as e:
-        print("\nERROR: Failed to read metadata from part 0 logits attributes.")
-        print("Ensure 'patch_size' and 'original_volume_shape' were saved during inference.")
-        raise e
+        # Try to infer from the array shape if .zattrs is missing
+        print(f"Warning: Error reading metadata, attempting to infer: {e}")
+        part0_coords_path = part_files[first_part_id]['coordinates']
+        coords_store = open_zarr(part0_coords_path, mode='r', storage_options={'anon': False} if part0_coords_path.startswith('s3://') else None)
+        # First patch's logits shape should be (C, pZ, pY, pX)
+        first_patch_shape = part0_logits_store[0].shape
+        num_classes = first_patch_shape[0]
+        patch_size = first_patch_shape[1:]
+        
+        # Get first and last patch centers to estimate volume size
+        coords_data = coords_store[:]
+        min_coords = np.min(coords_data, axis=0)
+        max_coords = np.max(coords_data, axis=0)
+        estimated_shape = tuple((max_coords + np.array(patch_size) - min_coords).astype(int))
+        
+        original_volume_shape = estimated_shape
+        print("WARNING: No .zattrs file found. Using estimated volume shape from coordinates.")
+        
+    print(f"  Patch Size: {patch_size}")
+    print(f"  Num Classes: {num_classes}")
+    print(f"  Original Volume Shape (Z,Y,X): {original_volume_shape}")
 
     # --- 3. Prepare Output Stores ---
     output_shape = (num_classes, *original_volume_shape)  # (C, D, H, W)
     weights_shape = original_volume_shape  # (D, H, W)
 
-    # Use patch_size as the basis for chunking if not specified
+    # Use patch_size directly as the chunk size if not specified
     if chunk_size is None or any(c == 0 for c in (chunk_size if chunk_size else [0, 0, 0])):
-        # Default to patch size but ensure chunks aren't too large
-        max_chunk_size = 256  # Keep below this size for more efficient I/O
+        # Default to patch size exactly
         output_chunks = (
             1,  # One class at a time
-            min(patch_size[0], max_chunk_size),
-            min(patch_size[1], max_chunk_size),
-            min(patch_size[2], max_chunk_size)
+            patch_size[0],  # Z - use exact patch size
+            patch_size[1],  # Y - use exact patch size
+            patch_size[2]   # X - use exact patch size
         )
         weights_chunks = output_chunks[1:]
         if verbose:
-            print(f"  Using optimized chunk_size {output_chunks[1:]} based on patch_size")
+            print(f"  Using chunk_size {output_chunks[1:]} based directly on patch_size")
     else:
         output_chunks = (1, *chunk_size)  # One class at a time, user-specified spatial chunks
         weights_chunks = chunk_size
@@ -431,28 +455,38 @@ def merge_inference_outputs(
     print(f"Creating final output store: {output_path}")
     print(f"  Shape: {output_shape}, Chunks: {output_chunks}")
     
-    # Create zarr stores with compression (use open instead of save_array to avoid materializing arrays)
-    zarr.open(
-        output_path,
+    # Our open_zarr helper function handles directory creation and authentication
+        
+    # Use our helper function to create zarr store
+    open_zarr(
+        path=output_path,
         mode='w',
+        storage_options={'anon': False} if output_path.startswith('s3://') else None,
+        verbose=verbose,
         shape=output_shape,
         chunks=output_chunks,
         compressor=compressor,
         dtype=np.float32,
-        fill_value=0
+        fill_value=0,
+        write_empty_chunks=False  # Skip empty chunks for memory efficiency
     )
     
     print(f"Creating weight accumulator store: {weight_accumulator_path}")
     print(f"  Shape: {weights_shape}, Chunks: {weights_chunks}")
     
-    zarr.open(
-        weight_accumulator_path,
+    # Our open_zarr helper function handles directory creation and authentication
+        
+    open_zarr(
+        path=weight_accumulator_path,
         mode='w',
+        storage_options={'anon': False} if weight_accumulator_path.startswith('s3://') else None,
+        verbose=verbose,
         shape=weights_shape,
         chunks=weights_chunks,
         compressor=compressor,
         dtype=np.float32,
-        fill_value=0
+        fill_value=0,
+        write_empty_chunks=False  # Skip empty chunks for memory efficiency
     )
 
     # --- 4. Generate Gaussian Map ---
@@ -460,22 +494,20 @@ def merge_inference_outputs(
     # Make sure it's on CPU and convert to numpy
     gaussian_map = gaussian_map.cpu()
 
-    # --- 5. Calculate Processing Tiles ---
-    tiles = calculate_tiles(
+    # --- 5. Calculate Processing Chunks ---
+    chunks = calculate_chunks(
         original_volume_shape,
-        patch_size,
-        num_classes,
         output_chunks=output_chunks[1:]  # Skip the class dimension from output_chunks
     )
     
-    print(f"Divided volume into {len(tiles)} tiles for parallel processing")
+    print(f"Divided volume into {len(chunks)} chunks for parallel processing")
     
-    # --- 6. Process Tiles in Parallel ---
+    # --- 6. Process Chunks in Parallel ---
     print("\n--- Accumulating Weighted Patches ---")
     
     # Create a partial function with fixed arguments
-    process_tile_partial = partial(
-        process_tile,
+    process_chunk_partial = partial(
+        process_chunk,
         parent_dir=parent_dir,
         output_path=output_path,
         weights_path=weight_accumulator_path,
@@ -484,26 +516,26 @@ def merge_inference_outputs(
         part_files=part_files
     )
     
-    # Process tiles in parallel
+    # Process chunks in parallel
     total_patches_processed = 0
     
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         # Submit all tasks
-        future_to_tile = {executor.submit(process_tile_partial, tile): tile for tile in tiles}
+        future_to_chunk = {executor.submit(process_chunk_partial, chunk): chunk for chunk in chunks}
         
         # Use as_completed for better progress tracking and early error detection
         from concurrent.futures import as_completed
         for future in tqdm(
-            as_completed(future_to_tile),
-            total=len(tiles),
-            desc="Processing Tiles",
+            as_completed(future_to_chunk),
+            total=len(chunks),
+            desc="Processing Chunks",
             disable=not verbose
         ):
             try:
                 result = future.result()
                 total_patches_processed += result['patches_processed']
             except Exception as e:
-                print(f"Error processing tile: {e}")
+                print(f"Error processing chunk: {e}")
                 raise e
     
     print(f"\nAccumulation complete. Processed {total_patches_processed} patches total.")
@@ -512,35 +544,39 @@ def merge_inference_outputs(
     print("\n--- Normalizing Output ---")
     
     # Create a partial function with fixed arguments
-    normalize_tile_partial = partial(
-        normalize_tile,
+    normalize_chunk_partial = partial(
+        normalize_chunk,
         output_path=output_path,
         weights_path=weight_accumulator_path
     )
     
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         # Submit all tasks
-        futures = {executor.submit(normalize_tile_partial, tile): tile for tile in tiles}
+        futures = {executor.submit(normalize_chunk_partial, chunk): chunk for chunk in chunks}
         
         # Use as_completed for better progress tracking and early error detection
         from concurrent.futures import as_completed
         for future in tqdm(
             as_completed(futures),
-            total=len(tiles),
-            desc="Normalizing Tiles",
+            total=len(chunks),
+            desc="Normalizing Chunks",
             disable=not verbose
         ):
             try:
-                future.result()  # Check for exceptions
+                result = future.result()  # Check for exceptions
             except Exception as e:
-                print(f"Error normalizing tile: {e}")
+                print(f"Error normalizing chunk: {e}")
                 raise e
     
     print("\nNormalization complete.")
     
     # --- 8. Save Metadata ---
-    # Add metadata to the output zarr
-    output_zarr = zarr.open(output_path, mode='r+')
+    output_zarr = open_zarr(
+        path=output_path,
+        mode='r+',
+        storage_options={'anon': False} if output_path.startswith('s3://') else None,
+        verbose=verbose
+    )
     if hasattr(output_zarr, 'attrs'):
         output_zarr.attrs['patch_size'] = patch_size
         output_zarr.attrs['original_volume_shape'] = original_volume_shape
@@ -568,7 +604,7 @@ def main():
     import argparse
     import sys
 
-    parser = argparse.ArgumentParser(description='Merge partial inference outputs with Gaussian blending (optimized parallel version).')
+    parser = argparse.ArgumentParser(description='Merge partial inference outputs with Gaussian blending using fsspec.')
     parser.add_argument('parent_dir', type=str,
                         help='Directory containing the partial inference results (logits_part_X.zarr, coordinates_part_X.zarr)')
     parser.add_argument('output_path', type=str,
