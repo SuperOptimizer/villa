@@ -1636,6 +1636,11 @@ export function Landing() {
                     useArrow={true}
                   />
                   <TopCard
+                    title="$60,000 First Title Prize Awarded"
+                    href="https://scrollprize.substack.com/p/60000-first-title-prize-awarded"
+                    subtext="May 5"
+                  />
+                  <TopCard
                     title="February Prizes and Updates"
                     href="https://scrollprize.substack.com/p/february-progress-prizes-and-updates"
                     subtext="March 12"
@@ -1644,11 +1649,6 @@ export function Landing() {
                     title="New Prizes and Progress Update"
                     href="https://scrollprize.substack.com/p/new-prizes-and-an-update-on-progress"
                     subtext="February 27"
-                  />
-                  <TopCard
-                    title="Exciting News from Scroll 5!"
-                    href="https://scrollprize.substack.com/p/exciting-news-from-scroll-5"
-                    subtext="February 5"
                   />
                 </div>
 
