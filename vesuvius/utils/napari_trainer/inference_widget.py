@@ -7,8 +7,7 @@ from typing import List, Dict, Any, Union, Tuple, Optional
 import numpy as np
 from enum import Enum
 
-# Import the MONAI inference functionality
-from inference import run_inference
+from .inference import run_inference
 
 # Function to get available layers for inference
 def get_data_layer_choices(viewer):

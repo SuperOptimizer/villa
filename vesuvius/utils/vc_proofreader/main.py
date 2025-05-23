@@ -9,7 +9,7 @@ from magicgui import magicgui
 
 # Try to import config defaults; if not found, use empty defaults.
 try:
-    from config import config
+    from .config import config
 except ImportError:
     config = {}
 
@@ -444,7 +444,9 @@ def prev_pair():
     print(f"Reverted to patch at {coord}.")
 
 
-if __name__ == '__main__':
+def main():
+    """Main entry point for the proofreader application."""
+    global viewer
     viewer = napari.Viewer()
     viewer.window.add_dock_widget(init_volume, name="Initialize Volumes", area="right")
     viewer.window.add_dock_widget(iter_pair, name="Iterate Patches", area="right")
@@ -462,3 +464,7 @@ if __name__ == '__main__':
         iter_pair.approved.value = not iter_pair.approved.value
 
     napari.run()
+
+
+if __name__ == '__main__':
+    main()

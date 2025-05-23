@@ -12,15 +12,15 @@ from torch.nn.modules.dropout import _DropoutNd
 from torch.nn.modules.instancenorm import _InstanceNorm
 from torch.nn.modules.pooling import _MaxPoolNd
 
-from model.utils import (maybe_convert_scalar_to_list,
+from models.model.utils import (maybe_convert_scalar_to_list,
                    get_matching_dropout,
                    get_matching_convtransp,
                    get_matching_batchnorm,
                    get_matching_instancenorm,
                    get_matching_pool_op)
 
-from model.simple_conv_blocks import ConvDropoutNormReLU, StackedConvBlocks
-from model.resblocks import (BasicBlockD,
+from .simple_conv_blocks import ConvDropoutNormReLU, StackedConvBlocks
+from .resblocks import (BasicBlockD,
                                 BottleneckD,
                                 StackedResidualBlocks)
 

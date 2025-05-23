@@ -3,7 +3,7 @@ from magicgui import magicgui, widgets
 import napari.viewer
 import scipy.ndimage
 
-from inference_widget import inference_widget
+from .inference_widget import inference_widget
 from PIL import Image
 import numpy as np
 from pathlib import Path
@@ -14,7 +14,7 @@ import json
 import yaml
 from pathlib import Path
 import torch.nn as nn
-from model.utils import determine_dimensionality
+from utils.utils import determine_dimensionality
 
 
 Image.MAX_IMAGE_PIXELS = None
@@ -367,7 +367,7 @@ class ConfigManager:
 _config_manager = None
 @magicgui(filenames={"label": "select config file", "filter": "*.yaml"},
           auto_call=True)
-def filespicker(filenames: Sequence[Path] = 'configs/default_config.yaml') -> Sequence[Path]:
+def filespicker(filenames: Sequence[Path] = str(Path(__file__).parent.parent.parent / 'models' / 'configs' / 'default_config.yaml')) -> Sequence[Path]:
     print("selected config : ", filenames)
     if filenames and _config_manager is not None:
         # Load the first selected file into the config manager
@@ -407,15 +407,17 @@ def run_training(patch_size_z: int = 128, patch_size_x: int = 128, patch_size_y:
     if not hasattr(_config_manager, 'targets') or not _config_manager.targets:
         raise ValueError("No targets defined. Please make sure you have label layers named {image_name}_{target_name} in the viewer.")
     
-    from train import BaseTrainer
+    from models.train import BaseTrainer
     trainer = BaseTrainer(mgr=_config_manager, verbose=True)
     print("Starting training...")
     trainer.train()
 
-if __name__ == "__main__":
+def main():
     viewer = napari.Viewer()
+    global _config_manager
     _config_manager = ConfigManager(verbose=True)
-    default_config_path = 'configs/default_config.yaml'
+    # Use an absolute path based on the location of this script
+    default_config_path = Path(__file__).parent.parent.parent / 'models' / 'configs' / 'default_config.yaml'
     _config_manager.load_config(default_config_path)
     print(f"Default config loaded from {default_config_path}")
 
@@ -425,3 +427,6 @@ if __name__ == "__main__":
     viewer.window.add_dock_widget(inference_widget, area='right', name="inference")
 
     napari.run()
+
+if __name__ == "__main__":
+    main()

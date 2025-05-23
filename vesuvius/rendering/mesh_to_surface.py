@@ -350,9 +350,9 @@ class MeshDataset(Dataset):
             from vesuvius import Volume  # Imported here to avoid pickling issues.
             splitted = self.scroll_name.split("-")
             if len(splitted) > 1:
-                self.scroll = Volume(type="scroll", scroll_id=splitted[0][-1], energy=splitted[1], resolution=splitted[2], cache=True)
+                self.scroll = Volume(type="scroll", scroll_id=splitted[0][-1], energy=splitted[1], resolution=splitted[2])
             else:
-                self.scroll = Volume(self.scroll_name, cache=True)
+                self.scroll = Volume(self.scroll_name)
             self.scroll_shape = self.scroll.shape(0)
 
         # Add one to r as in the original code.

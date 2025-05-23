@@ -39,7 +39,7 @@ class ModelLoader:
         else:
             print(f"Warning: No model configuration found in checkpoint. Using empty config.")
         
-        from model.build_network_from_config import NetworkFromConfig
+        from models.model.build_network_from_config import NetworkFromConfig
         
         class MinimalConfigManager:
             def __init__(self, model_config):
@@ -209,7 +209,7 @@ def run_inference(viewer: napari.Viewer,
 
     config_manager = None
     try:
-        from main_window import _config_manager
+        from .main_window import _config_manager
         if _config_manager is not None:
             config_manager = _config_manager
             print("Using global config manager from main_window")
