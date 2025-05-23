@@ -36,13 +36,25 @@ hide_table_of_contents: true
   />
 </head>
 
-Vesuvius Challenge has awarded **\$1,510,000** in prizes!
+Vesuvius Challenge has awarded **\$1,570,000** in prizes!
 
 This page lists all the prizes awarded so far:
 
+### \$60,000 First Title Prize (May, 2025)
+
+**Goal:** Discover the end title of a sealed Herculaneum scroll.<br/>
+**Announcement:** <a href="https://scrollprize.substack.com/p/60000-first-title-prize-awarded">Blog post</a>
+
+<div className="flex flex-row flex-wrap">
+  <a className="max-w-[632px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/mvrcii/vesuvius_first_title_prize">
+    <div className="mb-4"><div className="text-sm font-bold text-gray-300">\$60,000</div><span className="font-bold">Winner:</span> Marcel Roth and Micha Nowak</div>
+    <img className="max-w-[100%]" src="/img/firsttitle/scroll5-title-boxes.webp"/>
+  </a>
+</div>
+
 ### \$10,500 Open Source (February, 2025)
 
-**Goal:** Get us closer to reading entire scrolls.
+**Goal:** Get us closer to reading entire scrolls.<br/>
 **Announcement:** <a href="https://scrollprize.substack.com/p/february-progress-prizes-and-updates">Blog post</a>
 
 <div className="flex flex-row flex-wrap">
