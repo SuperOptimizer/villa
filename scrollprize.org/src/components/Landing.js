@@ -150,6 +150,25 @@ const stories = ({ unrollVideo, mlVideo, xrayVideo }) => [
 
 const prizes = [
   {
+    title: "First Title Prize",
+    prizeMoney: "$60,000",
+    description: "Discover the end title of a sealed Herculaneum scroll.",
+    requirement: "",
+    href: "https://scrollprize.substack.com/p/60000-first-title-prize-awarded",
+    winners: [
+      {
+        name: "Marcel Roth",
+        image: "/img/landing/marcel.webp",
+      },
+      {
+        name: "Micha Nowak",
+        image: "/img/landing/micha.webp",
+      },
+    ],
+    won: true,
+    bannerImage: "/img/landing/scroll5-title-boxes.webp",
+  },
+  {
     title: "First Automated Segmentation Prize",
     prizeMoney: "$60,000",
     description: "Reproduce the 2023 Grand Prize result but faster",
@@ -215,7 +234,7 @@ const prizes = [
         image: "/img/landing/casey.webp",
       },
     ],
-    bannerImage: "/img/landing/first-letters.webp",
+    // bannerImage: "/img/landing/first-letters.webp",
     href: "/firstletters",
   },
   {
@@ -267,33 +286,33 @@ const prizes = [
     ],
     href: "/winners",
   },
-  {
-    title: "Segmentation Prizes",
-    prizeMoney: "$90,000",
-    description: "Detect 10 letters in a 4 cm² area in a scroll",
-    requirement: "",
-    winnersLabel: "12 Winners",
-    winners: [
-      {
-        name: "Ahron Wayne",
-        image: "/img/landing/ahron.webp",
-      },
-      {
-        name: "Julian Schilliger",
-        image: "/img/landing/julian.webp",
-      },
-      {
-        name: "Santiago Pelufo",
-        image: "/img/landing/santiago.webp",
-      },
-      {
-        name: "Yao Hsiao",
-        image: "/img/landing/yao.webp",
-      },
-    ],
-    won: true,
-    href: "/winners",
-  },
+  // {
+  //   title: "Segmentation Prizes",
+  //   prizeMoney: "$90,000",
+  //   description: "Detect 10 letters in a 4 cm² area in a scroll",
+  //   requirement: "",
+  //   winnersLabel: "12 Winners",
+  //   winners: [
+  //     {
+  //       name: "Ahron Wayne",
+  //       image: "/img/landing/ahron.webp",
+  //     },
+  //     {
+  //       name: "Julian Schilliger",
+  //       image: "/img/landing/julian.webp",
+  //     },
+  //     {
+  //       name: "Santiago Pelufo",
+  //       image: "/img/landing/santiago.webp",
+  //     },
+  //     {
+  //       name: "Yao Hsiao",
+  //       image: "/img/landing/yao.webp",
+  //     },
+  //   ],
+  //   won: true,
+  //   href: "/winners",
+  // },
   {
     title: "Read Entire Scroll Prize",
     prizeMoney: "$200,000",
