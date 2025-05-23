@@ -53,7 +53,7 @@ module.exports = function (context, options) {
               }
             }
 
-            console.log('Substack posts fetch output:', stdout);
+            console.log(stdout.trim());
             console.log(`✓ Successfully validated ${data.posts.length} posts`);
             resolve(null);
 
