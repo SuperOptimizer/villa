@@ -47,6 +47,10 @@ class Inferer():
                  compression_level: int = 1,
                  hf_token: str = None
                  ):
+        
+        vol = os.environ.get('VESUVIUS_FIBER_VOLUME')
+        self.volume = int(vol) if vol is not None else None
+
         print(f"Initializing Inferer with output_dir: '{output_dir}'")
         if output_dir and not output_dir.strip():
             raise ValueError("output_dir cannot be an empty string")
@@ -118,7 +122,6 @@ class Inferer():
         self.num_classes = None
         self.num_total_patches = None
         self.current_patch_write_index = 0
-
 
     def _load_model(self):
         # check if model_path is a Hugging Face model path (starts with "hf://")
@@ -575,12 +578,15 @@ class StructureTensorInferer(Inferer):
     def __init__(self,
                  *args,
                  sigma: float = 1.0,
+                 smooth_components: bool = False, 
                  **kwargs):
-        # Force no TTA, always 6 output channels
-        super().__init__(*args, **kwargs)
+        # Force no TTA, always 6 output channels, no normalization
+        kwargs.pop('normalization_scheme', None)
+        super().__init__(*args, normalization_scheme='none', **kwargs)
         self.num_classes = 6
         self.do_tta = False
         self.sigma = sigma
+        self.smooth_components = smooth_components
 
         # --- Auto-infer patch_size from the input Zarr’s chunking if none given ---
         if self.patch_size is None:
@@ -614,6 +620,7 @@ class StructureTensorInferer(Inferer):
             g3 = g1[:, None, None] * g1[None, :, None] * g1[None, None, :]
             # store both kernel and pad:
             self._gauss3d = g3.unsqueeze(0).unsqueeze(0).clone()
+            self._gauss3d_tensor = self._gauss3d.expand(6, -1, -1, -1, -1)
             self._pad     = radius
 
         # Build 3D Sobel kernels and store as plain tensors
@@ -662,20 +669,23 @@ class StructureTensorInferer(Inferer):
 
         # 3) build tensor components
         Jxx = gx * gx
-        Jxy = gx * gy
-        Jxz = gx * gz
+        Jyx = gx * gy
+        Jzx = gx * gz
         Jyy = gy * gy
-        Jyz = gy * gz
+        Jzy = gy * gz
         Jzz = gz * gz
 
         # stack into [N,6, Z,Y,X]
-        J = torch.stack([Jxx, Jxy, Jxz, Jyy, Jyz, Jzz], dim=1)
+        J = torch.stack([Jzz, Jzy, Jzx, Jyy, Jyx, Jxx], dim=1)
 
-        # ---- drop the original single‐channel axis ----
-        # J is [N,6,1,D,H,W] because input x had C=1;
-        # remove that singleton so we get [N,6,D,H,W]
+        # drop that singleton channel axis → [N,6,D,H,W]
         if J.dim() == 6 and J.shape[2] == 1:
             J = J.squeeze(2)
+
+        # now group‐conv each of the 6 channels with your Gaussian:
+        if sigma > 0 and self.smooth_components:
+            # build one filter per channel
+            J = F.conv3d(J, weight=self._gauss3d_tensor, padding=(self._pad,)*3, groups=6)
 
         return J
 
@@ -710,6 +720,10 @@ class StructureTensorInferer(Inferer):
                 data = entry['data']
             else:
                 data = entry  # tensor of shape (Z,Y,X) or (C,Z,Y,X)
+
+            # fiber‐volume mask
+            if self.volume is not None:
+                data = (data == self.volume).float()
 
             # --- 2) Ensure shape is [1, C, Z, Y, X] ---
             if data.ndim == 3:
@@ -850,6 +864,11 @@ def main():
     # Structure-tensor only
     parser.add_argument('--sigma',      type=float, default=2.0,
                         help='Gaussian σ for structure-tensor smoothing')
+    parser.add_argument(
+        '--smooth-components',
+        action='store_true',
+        help='After computing Jxx…Jzz, apply a second Gaussian smoothing to each channel'
+    )
 
     args = parser.parse_args()
 
@@ -903,7 +922,8 @@ def main():
             compressor_name=args.zarr_compressor,
             compression_level=args.zarr_compression_level,
             hf_token=args.hf_token,
-            sigma=args.sigma
+            sigma=args.sigma,
+            smooth_components=args.smooth_components
         )
     else:
         inferer = Inferer(

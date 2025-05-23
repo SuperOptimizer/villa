@@ -4,8 +4,6 @@ Vesuvius Pipeline - Run the complete inference, blending, and finalization proce
 Uses multiple GPUs by assigning different devices to different parts (not DDP).
 """
 
-#TODO: insert different types of structure tensor analysis for volume / surfaces (ok), but fibers have 2 classes!
-
 import argparse
 import os
 import sys
@@ -48,6 +46,11 @@ def parse_arguments():
                         type=float,
                         default=1.0,
                         help='Gaussian σ for structure-tensor smoothing')
+    parser.add_argument(
+        '--smooth-components',
+        action='store_true',
+        help='After computing Jxx…Jzz, apply a second Gaussian smoothing to each channel'
+    )
 
     # Model arguments (only needed if not doing structure-tensor)
     parser.add_argument('--model',
@@ -117,11 +120,23 @@ def parse_arguments():
                         action='store_true',
                         help='Reduce verbosity')
 
+    # --- fibers support (only in structure-tensor mode) ---
+    parser.add_argument('--fibers',
+                        action='store_true',
+                        help='Run structure‐tensor twice: volume=1 (vertical) & volume=2 (horizontal)')
+    # hidden, internal switch for each sub‐run
+    parser.add_argument('--volume',
+                        type=int,
+                        choices=[1,2],
+                        help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     # enforce model presence when not doing structure-tensor
     if not args.structure_tensor and not args.model:
         parser.error("--model is required unless --structure-tensor is set")
+    # fibers only valid with structure‐tensor
+    if args.fibers and not args.structure_tensor:
+        parser.error("--fibers only valid when --structure-tensor is set")
 
     return args
 
@@ -183,6 +198,8 @@ def run_predict(args, part_id, gpu_id):
     if args.structure_tensor:
         cmd.append('--structure-tensor')
         cmd.extend(['--sigma', str(args.sigma)])
+        if args.smooth_components:
+            cmd.append('--smooth-components')
     else:
         cmd.extend(['--model_path', args.model])
 
@@ -253,6 +270,8 @@ def run_finalize(args):
     cmd.extend(['--mode', args.mode])
     if args.threshold:
         cmd.append('--threshold')
+    if getattr(args, 'swap_eigenvectors', False):
+        cmd.append('--swap-eigenvectors')
     if not args.keep_intermediates:
         cmd.append('--delete-intermediates')
     import multiprocessing as mp
@@ -306,6 +325,64 @@ def setup_multipart(args, num_parts):
     args.num_parts = num_parts
     return num_parts
 
+def _run_single_pipeline(args):
+    """
+    The core of your run_pipeline(), but isolated to one `args.volume` pass.
+    """
+    # 1) Prepare dirs, GPUs, parts
+    args = prepare_directories(args)
+    gpu_ids = select_gpus(args)
+    num_parts = setup_multipart(args, split_data_for_gpus(args, gpu_ids))
+
+    # 2) If we're filtering by volume, stash it in an env var for the inference script
+    #    (we'll pick it up in inference.py below).
+    if args.volume is not None:
+        os.environ['VESUVIUS_FIBER_VOLUME'] = str(args.volume)
+
+    # 3) Mode tweaks
+    if args.structure_tensor:
+        args.mode = "structure-tensor"
+        args.disable_tta = True
+
+    # 4) Predict
+    if not args.skip_predict:
+        print(f"\n--- Step 1: Prediction ({num_parts} parts) ---")
+        if num_parts > 1:
+            with ThreadPoolExecutor(max_workers=min(num_parts, os.cpu_count())) as ex:
+                futures = [
+                    ex.submit(run_predict, args, pid, gpu_ids[pid % len(gpu_ids)] if gpu_ids else None)
+                    for pid in range(num_parts)
+                ]
+                if not all(f.result() for f in futures):
+                    print("One or more prediction tasks failed. Aborting.")
+                    return 1
+        else:
+            if not run_predict(args, 0, gpu_ids[0] if gpu_ids else None):
+                print("Prediction failed. Aborting.")
+                return 1
+
+    # 5) Blend
+    if not args.skip_blend:
+        print("\n--- Step 2: Blending ---")
+        if not run_blend(args):
+            print("Blending failed. Aborting.")
+            return 1
+
+    # 6) Finalize — on the second (horizontal) pass, inject --swap-eigenvectors
+    if not args.skip_finalize:
+        print("\n--- Step 3: Finalization ---")
+        # monkey-patch a flag so run_finalize adds --swap-eigenvectors
+        if getattr(args, 'volume', None) == 2:
+            setattr(args, 'swap_eigenvectors', True)
+        if not run_finalize(args):
+            print("Finalization failed.")
+            return 1
+
+    # 7) Cleanup
+    cleanup(args)
+    print(f"\n--- Single‐pass Complete (volume={args.volume}) ---\n"
+          f"Final output saved to: {args.output}")
+    return 0
 
 def run_pipeline():
     args    = parse_arguments()
@@ -317,6 +394,27 @@ def run_pipeline():
         args.mode = "structure-tensor"
         args.disable_tta = True
 
+    if args.fibers:
+        import copy
+        orig_out = args.output
+        general_work = f"{orig_out}_work"
+        codes = []
+        for vol, label in [(1, "vertical"), (2, "horizontal")]:
+            sub = copy.deepcopy(args)
+            sub.fibers = False
+            sub.volume = vol
+            # if the output ends with ".zarr", put the suffix before that
+            base, ext = os.path.splitext(orig_out)
+            if ext == ".zarr":
+                sub.output = f"{base}_{label}{ext}"
+            else:
+                sub.output = f"{orig_out}_{label}"
+            codes.append(_run_single_pipeline(sub))
+        # remove any stray “general” workdir
+        if os.path.isdir(general_work):
+            shutil.rmtree(general_work, ignore_errors=True)
+        return 0 if all(c == 0 for c in codes) else 1
+    
     # Step 1: Prediction
     if not args.skip_predict:
         print(f"\n--- Step 1: Prediction ({num_parts} parts) ---")

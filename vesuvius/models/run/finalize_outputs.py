@@ -126,22 +126,17 @@ def _compute_eigenvectors(block: torch.Tensor) -> torch.Tensor:
     M = torch.nan_to_num(M, nan=0.0, posinf=0.0, neginf=0.0)
 
     # 4) Micro-batch the eigen-decomposition to avoid CUSOLVER limits
-    batch_size = 1024000  # or lower if you still see errors
-    w_chunks = []
+    batch_size = 1024000  # TODO: fix this more intelligently
+    # w_chunks = [] EIGENVALUES
     v_chunks = []
     for i in range(0, N, batch_size):
-        wi, vi = torch.linalg.eigh(M[i:i+batch_size])  # wi:[B,3], vi:[B,3,3]
-        w_chunks.append(wi)
+        _, vi = torch.linalg.eigh(M[i:i+batch_size])  # wi:[B,3], vi:[B,3,3]
+        # w_chunks.append(wi) EIGENVALUES
         v_chunks.append(vi)
-    w = torch.cat(w_chunks, dim=0)      # [N,3]
+    # w = torch.cat(w_chunks, dim=0)      # [N,3] EIGENVALUES
     v = torch.cat(v_chunks, dim=0)      # [N,3,3]
 
-    # 5) Sort eigenvectors by descending |w|
-    idx = torch.argsort(torch.abs(w), dim=1, descending=True)  # [N,3]
-    idx = idx.unsqueeze(1).expand(-1,3,-1)                     # [N,3,3]
-    v = v.gather(2, idx)                                       # [N,3,3]
-
-    # 6) Flatten into [9, N] then reshape back
+    # 5) Flatten into [9, N] then reshape back
     out = v.reshape(N, 9).permute(1, 0)    # [9, N]
     return out.view(9, dz, dy, dx)        # [9, dz, dy, dx]
 
@@ -153,7 +148,7 @@ _compute_eigenvectors = torch.compile(
 )
 
 def _finalize_structure_tensor_torch(
-    input_path, output_path, chunk_size, num_workers, compressor, verbose
+    input_path, output_path, chunk_size, num_workers, compressor, verbose, swap_eigenvectors=False
 ):
     # open input
     src = open_zarr(
@@ -218,6 +213,11 @@ def _finalize_structure_tensor_torch(
         out_block_tensor = _compute_eigenvectors(block)       # [9, dz, dy, dx] on GPU
         out_block = out_block_tensor.cpu().numpy() 
 
+        # if requested, swap first and second eigenvectors (channels 0–2 ↔ 3–5)
+        if swap_eigenvectors:
+            v1 = out_block[0:3].copy()
+            out_block[0:3] = out_block[3:6]
+            out_block[3:6] = v1
         # write
         dst = open_zarr(
             path=output_path, mode='r+',
@@ -234,7 +234,7 @@ def finalize_logits(
     mode="binary", threshold=False,
     delete_intermediates=False,
     chunk_size=None, num_workers=None,
-    verbose=True
+    swap_eigenvectors=False, verbose=True
 ):
     # disable internal Blosc threads
     numcodecs.blosc.use_threads = False
@@ -254,8 +254,16 @@ def finalize_logits(
             chunk_size=chunk_size,
             num_workers=num_workers,
             compressor=compressor,
-            verbose=verbose
+            verbose=verbose,
+            swap_eigenvectors=swap_eigenvectors
         )
+        # now delete the intermediate tensor if requested
+        if delete_intermediates:
+            if input_path.startswith('s3://'):
+                fs = fsspec.filesystem(input_path.split('://')[0], anon=False)
+                fs.rm(input_path, recursive=True)
+            else:
+                shutil.rmtree(input_path, ignore_errors=True)
         return
 
     # otherwise binary / multiclass
@@ -351,6 +359,10 @@ def main():
                         help='Number of worker processes (default=CPU//2)')
     parser.add_argument('--quiet', action='store_true',
                         help='Suppress verbose output')
+    parser.add_argument('--swap-eigenvectors',
+                        action='store_true',
+                        help='(structure-tensor horizontal) swap first↔second eigenvectors before writing')
+
     args = parser.parse_args()
 
     chunks = None
@@ -371,6 +383,7 @@ def main():
         delete_intermediates=args.delete_intermediates,
         chunk_size=chunks,
         num_workers=args.num_workers,
+        swap_eigenvectors=args.swap_eigenvectors,
         verbose=not args.quiet
     )
 
