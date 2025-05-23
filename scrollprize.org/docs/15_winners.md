@@ -3,6 +3,8 @@ title: "Winners"
 hide_table_of_contents: true
 ---
 
+import PrizeCard from '@site/src/components/PrizeCard';
+
 <head>
   <html data-theme="dark" />
 
@@ -46,10 +48,14 @@ This page lists all the prizes awarded so far:
 **Announcement:** <a href="https://scrollprize.substack.com/p/60000-first-title-prize-awarded">Blog post</a>
 
 <div className="flex flex-row flex-wrap">
-  <a className="max-w-[632px] mr-4 mb-4 text-gray-100 bg-[#444] hover:bg-[#555] hover:text-[unset] p-4 rounded-lg flex flex-col justify-between" href="https://github.com/mvrcii/vesuvius_first_title_prize">
-    <div className="mb-4"><div className="text-sm font-bold text-gray-300">\$60,000</div><span className="font-bold">Winner:</span> Marcel Roth and Micha Nowak</div>
-    <img className="max-w-[100%]" src="/img/firsttitle/scroll5-title-boxes.webp"/>
-  </a>
+  <PrizeCard
+    href="https://github.com/mvrcii/vesuvius_first_title_prize"
+    prizeAmount="$60,000"
+    title="Winner"
+    description="Marcel Roth and Micha Nowak"
+    mediaSrc="/img/firsttitle/scroll5-title-boxes.webp"
+    wide
+  />
 </div>
 
 ### \$10,500 Open Source (February, 2025)
