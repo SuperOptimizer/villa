@@ -92,30 +92,26 @@ class TifDataset(BaseDataset):
             data_array = dask_image.imread.imread(str(image_file))
             label_array = dask_image.imread.imread(str(label_file))
             
+            # Ensure float32 dtype for arrays
+            data_array = data_array.astype(np.float32)
+            label_array = label_array.astype(np.float32)
+            
+            # Store in the nested dictionary - only include mask if it exists
+            data_dict = {
+                'data': data_array,
+                'label': label_array
+            }
+            
             # Load mask if available
             if mask_file.exists():
                 mask_array = dask_image.imread.imread(str(mask_file))
+                mask_array = mask_array.astype(np.float32)
+                data_dict['mask'] = mask_array
                 print(f"Found mask for {image_id}_{target}")
             else:
-                # Create a default mask (all ones) based on label shape
-                # This will be computed lazily when accessed
-                mask_array = label_array.map_blocks(
-                    lambda x: np.ones_like(x, dtype=np.float32),
-                    dtype=np.float32
-                )
-                print(f"No mask file found for {image_id}_{target}, will create default mask")
+                print(f"No mask file found for {image_id}_{target}, will use no mask")
             
-            # Ensure float32 dtype for all arrays
-            data_array = data_array.astype(np.float32)
-            label_array = label_array.astype(np.float32)
-            mask_array = mask_array.astype(np.float32)
-            
-            # Store in the nested dictionary
-            targets_data[target][image_id] = {
-                'data': data_array,
-                'label': label_array,
-                'mask': mask_array
-            }
+            targets_data[target][image_id] = data_dict
             
             print(f"Registered {image_id}_{target} with shape {data_array.shape} (lazy loading)")
         

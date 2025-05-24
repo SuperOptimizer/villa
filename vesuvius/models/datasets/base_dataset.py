@@ -97,11 +97,23 @@ class BaseDataset(Dataset):
             vdata = volume_info['data']
             is_2d = len(vdata['label'].shape) == 2
             
-            if 'mask' not in vdata:
-                raise ValueError(f"No mask found for volume {vol_idx}. A mask layer is required for patch extraction.")
-            
-            mask_data = vdata['mask']
             label_data = vdata['label']  # Get the label data explicitly
+            
+            # Use mask if available, otherwise use label data for patch finding
+            if 'mask' in vdata:
+                mask_data = vdata['mask']
+                print(f"Using mask for patch extraction in volume {vol_idx}")
+            else:
+                # Create a simple mask from label data (non-zero regions)
+                # Handle both numpy arrays and zarr arrays
+                if hasattr(label_data, 'shape') and hasattr(label_data, '__array__'):
+                    # For zarr arrays, convert to numpy first
+                    label_np = np.asarray(label_data)
+                    mask_data = (label_np > 0).astype(np.float32)
+                else:
+                    # For regular numpy arrays
+                    mask_data = (label_data > 0).astype(np.float32)
+                print(f"No mask found for volume {vol_idx}, using label data for patch extraction")
             
             if is_2d:
                 h, w = self.patch_size[0], self.patch_size[1]  # y, x

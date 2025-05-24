@@ -93,38 +93,21 @@ class ZarrDataset(BaseDataset):
                 data_array = zarr.open(str(zarr_dir), mode='r')
                 label_array = zarr.open(str(label_dir), mode='r')
                 
+                # Store in the nested dictionary - only include mask if it exists
+                data_dict = {
+                    'data': data_array,
+                    'label': label_array
+                }
+                
                 # Load mask if available
                 if mask_dir.exists():
                     mask_array = zarr.open(str(mask_dir), mode='r')
+                    data_dict['mask'] = mask_array
                     print(f"Found mask for {image_id}_{target}")
                 else:
-                    # Create a lazy mask wrapper that generates ones when accessed
-                    class DefaultMaskArray:
-                        def __init__(self, reference_array):
-                            self.reference_array = reference_array
-                            
-                        @property
-                        def shape(self):
-                            return self.reference_array.shape
-                            
-                        @property
-                        def dtype(self):
-                            return np.float32
-                            
-                        def __getitem__(self, key):
-                            # Return ones with the same slice shape as the reference
-                            ref_slice = self.reference_array[key]
-                            return np.ones_like(ref_slice, dtype=np.float32)
-                    
-                    mask_array = DefaultMaskArray(label_array)
-                    print(f"No mask directory found for {image_id}_{target}, will create default mask")
+                    print(f"No mask directory found for {image_id}_{target}, will use no mask")
                 
-                # Store in the nested dictionary
-                targets_data[target][image_id] = {
-                    'data': data_array,
-                    'label': label_array,
-                    'mask': mask_array
-                }
+                targets_data[target][image_id] = data_dict
                 
                 print(f"Registered {image_id}_{target} with shape {data_array.shape} (lazy zarr)")
                 

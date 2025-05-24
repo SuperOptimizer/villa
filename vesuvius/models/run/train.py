@@ -653,14 +653,220 @@ class BaseTrainer:
         
 
 
+def detect_targets_from_data(mgr):
+    """
+    Detect available targets from the data directory structure.
+    
+    Parameters
+    ----------
+    mgr : ConfigManager
+        The configuration manager instance
+    """
+    data_path = Path(mgr.data_path)
+    images_dir = data_path / "images"
+    
+    if not images_dir.exists():
+        raise ValueError(f"Images directory not found: {images_dir}")
+    
+    # Find target names from image files
+    targets = set()
+    
+    if mgr.data_format == "zarr":
+        # Look for .zarr directories with format imageN_target.zarr
+        zarr_dirs = [d for d in images_dir.iterdir() if d.is_dir() and d.suffix == '.zarr']
+        for zarr_dir in zarr_dirs:
+            stem = zarr_dir.stem  # Remove .zarr extension
+            if '_' in stem:
+                target = stem.rsplit('_', 1)[1]
+                targets.add(target)
+    
+    elif mgr.data_format == "tif":
+        # Look for .tif files with format imageN_target.tif
+        tif_files = images_dir.glob("*.tif")
+        for tif_file in tif_files:
+            stem = tif_file.stem
+            if '_' in stem:
+                target = stem.rsplit('_', 1)[1]
+                targets.add(target)
+    
+    elif mgr.data_format == "napari":
+        # For napari, targets would need to be configured externally
+        # as napari datasets are typically loaded programmatically
+        print("Warning: Target detection not implemented for napari format. Please configure targets in config file.")
+        return
+    
+    # Create default target configuration if targets were found
+    if targets:
+        mgr.targets = {}
+        for target in sorted(targets):
+            mgr.targets[target] = {
+                "out_channels": 1,
+                "activation": "sigmoid",
+                "loss_fn": "SoftDiceLoss"
+            }
+        
+        print(f"Detected targets from data: {list(targets)}")
+    else:
+        print("No targets detected from data. Please configure targets in config file.")
+
+
+def apply_loss_functions_to_targets(mgr, loss_list):
+    """
+    Apply loss functions to targets in order.
+    
+    Parameters
+    ----------
+    mgr : ConfigManager
+        The configuration manager instance
+    loss_list : list
+        List of loss function names
+    """
+    # If no targets are configured yet, detect them from the data
+    if not hasattr(mgr, 'targets') or not mgr.targets:
+        detect_targets_from_data(mgr)
+    
+    if not mgr.targets:
+        raise ValueError("No targets found. Please ensure your data directory has the correct structure or configure targets in a config file.")
+    
+    target_names = list(mgr.targets.keys())
+    
+    # Apply loss functions in order
+    for i, target_name in enumerate(target_names):
+        if i < len(loss_list):
+            loss_fn = loss_list[i]
+        else:
+            # If more targets than loss functions, use the last loss function
+            loss_fn = loss_list[-1] if loss_list else "SoftDiceLoss"
+        
+        mgr.targets[target_name]["loss_fn"] = loss_fn
+        print(f"Applied {loss_fn} to target '{target_name}'")
+
+
+def update_config_from_args(mgr, args):
+    """
+    Update ConfigManager with command line arguments.
+    
+    Parameters
+    ----------
+    mgr : ConfigManager
+        The configuration manager instance
+    args : argparse.Namespace
+        Parsed command line arguments
+    """
+    # Set data path (maps to -i argument)
+    mgr.data_path = Path(args.input)
+    
+    # Set data format
+    mgr.data_format = args.format
+    
+    # Set checkpoint output directory
+    mgr.ckpt_out_base = Path(args.output)
+    mgr.tr_info["ckpt_out_base"] = str(mgr.ckpt_out_base)
+    
+    # Update optional parameters if provided
+    if args.batch_size is not None:
+        mgr.train_batch_size = args.batch_size
+        mgr.tr_configs["batch_size"] = args.batch_size
+    
+    if args.patch_size is not None:
+        # Parse patch size from string like "192,192,192" or "256,256"
+        try:
+            patch_size = [int(x.strip()) for x in args.patch_size.split(',')]
+            mgr.update_config(patch_size=patch_size)
+        except ValueError as e:
+            raise ValueError(f"Invalid patch size format: {args.patch_size}. Expected comma-separated integers like '192,192,192'")
+    
+    if args.train_split is not None:
+        if not 0.0 <= args.train_split <= 1.0:
+            raise ValueError(f"Train split must be between 0.0 and 1.0, got {args.train_split}")
+        mgr.tr_val_split = args.train_split
+        mgr.tr_info["tr_val_split"] = args.train_split
+    
+    if args.loss_on_label_only:
+        mgr.compute_loss_on_label = True
+        mgr.tr_info["compute_loss_on_label"] = True
+    
+    # Handle loss functions
+    if args.loss is not None:
+        # Parse loss function list like "[SoftDiceLoss, BCEWithLogitsLoss]"
+        try:
+            import ast
+            loss_list = ast.literal_eval(args.loss)
+            if not isinstance(loss_list, list):
+                loss_list = [loss_list]  # Convert single item to list
+        except (ValueError, SyntaxError):
+            # Try parsing as comma-separated string
+            loss_list = [s.strip() for s in args.loss.split(',')]
+        
+        # Apply loss functions to targets in order
+        apply_loss_functions_to_targets(mgr, loss_list)
+
+
 if __name__ == '__main__':
     import argparse
-    parser = argparse.ArgumentParser(description="Train script for MultiTaskUnet.")
-    parser.add_argument("--verbose", action="store_true")
+    
+    parser = argparse.ArgumentParser(
+        description="Train Vesuvius neural networks for ink detection and segmentation",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    
+    # Required arguments
+    parser.add_argument("-i", "--input", required=True, 
+                       help="Input directory containing images/, labels/, and optionally masks/ subdirectories")
+    parser.add_argument("-o", "--output", required=True,
+                       help="Output directory for saving checkpoints and configurations")
+    parser.add_argument("--format", required=True, choices=["tif", "zarr", "napari"],
+                       help="Data format (tif: TIFF files, zarr: Zarr arrays, napari: Napari layers)")
+    
+    # Optional arguments
+    parser.add_argument("--batch-size", type=int, 
+                       help="Training batch size (default: from config or 2)")
+    parser.add_argument("--patch-size", type=str,
+                       help="Patch size as comma-separated values, e.g., '192,192,192' for 3D or '256,256' for 2D")
+    parser.add_argument("--loss", type=str, 
+                       help="Loss functions as a list, e.g., '[SoftDiceLoss, BCEWithLogitsLoss]' or comma-separated")
+    parser.add_argument("--train-split", type=float,
+                       help="Training/validation split ratio (0.0-1.0, default: 0.95)")
+    parser.add_argument("--loss-on-label-only", action="store_true",
+                       help="Compute loss only on labeled regions (use masks for loss calculation)")
+    parser.add_argument("--config-path", type=str,
+                       help="Path to configuration YAML file (if not provided, uses defaults)")
+    parser.add_argument("--verbose", action="store_true",
+                       help="Enable verbose output for debugging")
+    
     args = parser.parse_args()
-
-    trainer = BaseTrainer(verbose=args.verbose)
+    
+    # Validate required arguments
+    if not Path(args.input).exists():
+        raise ValueError(f"Input directory does not exist: {args.input}")
+    
+    # Create output directory if it doesn't exist
+    Path(args.output).mkdir(parents=True, exist_ok=True)
+    
+    # Initialize ConfigManager
+    from models.config_manager import ConfigManager
+    mgr = ConfigManager(verbose=args.verbose)
+    
+    # Load config file if provided, otherwise initialize with defaults
+    if args.config_path:
+        if not Path(args.config_path).exists():
+            raise ValueError(f"Config file does not exist: {args.config_path}")
+        mgr.load_config(args.config_path)
+        print(f"Loaded configuration from: {args.config_path}")
+    else:
+        # Initialize with defaults
+        mgr._init_attributes()
+        print("Initialized with default configuration")
+    
+    # Update configuration with command line arguments
+    update_config_from_args(mgr, args)
+    
+    # Create and run trainer
+    trainer = BaseTrainer(mgr=mgr, verbose=args.verbose)
+    
+    print("Starting training...")
     trainer.train()
+    print("Training completed!")
 
 # During training, you'll get a dict with all outputs
 # outputs = model(input_tensor)
