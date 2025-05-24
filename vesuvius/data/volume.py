@@ -275,7 +275,17 @@ class Volume:
 
             self.metadata = self.load_ome_metadata()  # Loads .zattrs
             self.data = self.load_data()  # Loads TensorStore objects
-            self.dtype = self.data[0].dtype.numpy_dtype  # Get original dtype from TensorStore
+            
+            # Handle different data source types
+            if isinstance(self.data, zarr.Array):
+                # Direct zarr array case
+                self.dtype = self.data.dtype
+            elif hasattr(self.data[0].dtype, 'numpy_dtype'):
+                # TensorStore case
+                self.dtype = self.data[0].dtype.numpy_dtype
+            else:
+                # Fallback for other cases
+                self.dtype = self.data[0].dtype
 
             # --- Segment Specific ---
             if self.type == "segment":
@@ -926,3 +936,244 @@ class Volume:
         if not (0 <= subvolume_idx < len(self.data)):
             raise IndexError(f"Invalid subvolume index: {subvolume_idx}. Available: 0 to {len(self.data) - 1}")
         return self.data[subvolume_idx].ndim
+
+
+class Cube:
+    """
+    A class to represent a 3D instance annotated cube within a scroll.
+
+    Attributes
+    ----------
+    scroll_id : int
+        ID of the scroll.
+    energy : int
+        Energy value associated with the cube.
+    resolution : float
+        Resolution of the cube.
+    z : int
+        Z-coordinate of the cube.
+    y : int
+        Y-coordinate of the cube.
+    x : int
+        X-coordinate of the cube.
+    cache : bool
+        Indicates if caching is enabled.
+    cache_dir : Optional[os.PathLike]
+        Directory where cached files are stored.
+    normalize : bool
+        Indicates if the data should be normalized.
+    configs : str
+        Path to the configuration file.
+    volume_url : str
+        URL to access the volume data.
+    mask_url : str
+        URL to access the mask data.
+    volume : NDArray
+        Loaded volume data.
+    mask : NDArray
+        Loaded mask data.
+    max_dtype : Union[float, int]
+        Maximum value of the dtype if normalization is enabled.
+    """
+    def __init__(self, scroll_id: int, energy: int, resolution: float, z: int, y: int, x: int, cache: bool = False, cache_dir : Optional[os.PathLike] = None, normalize: bool = False) -> None:
+        """
+        Initialize the Cube object.
+
+        Parameters
+        ----------
+        scroll_id : int
+            ID of the scroll.
+        energy : int
+            Energy value associated with the cube.
+        resolution : float
+            Resolution of the cube.
+        z : int
+            Z-coordinate of the cube.
+        y : int
+            Y-coordinate of the cube.
+        x : int
+            X-coordinate of the cube.
+        cache : bool, default = False
+            Indicates if caching is enabled.
+        cache_dir : Optional[os.PathLike], default = None
+            Directory where cached files are stored. If None the files will be saved in $HOME / vesuvius / annotated-instances
+        normalize : bool, default = False
+            Indicates if the data should be normalized.
+
+        Raises
+        ------
+        ValueError
+            If the URL cannot be found in the configuration.
+        """
+        self.scroll_id = scroll_id
+        install_path = get_installation_path()
+        self.configs = os.path.join(install_path, 'setup', 'configs', f'cubes.yaml')
+        self.energy = energy
+        self.resolution = resolution
+        self.z, self.y, self.x = z, y, x
+        self.volume_url, self.mask_url = self.get_url_from_yaml()
+        self.aws = is_aws_ec2_instance()
+        if self.aws is False:
+            self.cache = cache
+            if self.cache:
+                if cache_dir is not None:
+                    self.cache_dir = Path(cache_dir)
+                else:
+                    self.cache_dir = Path.home() / 'vesuvius' / 'annotated-instances'
+                os.makedirs(self.cache_dir, exist_ok=True)
+        self.normalize = normalize
+
+        self.volume, self.mask = self.load_data()
+
+        if self.normalize:
+            self.max_dtype = get_max_value(self.volume.dtype)
+        
+    def get_url_from_yaml(self) -> str:
+        """
+        Retrieve the URLs for the volume and mask data from the YAML configuration file.
+
+        Returns
+        -------
+        Tuple[str, str]
+            The URLs for the volume and mask data.
+
+        Raises
+        ------
+        ValueError
+            If the URLs cannot be found in the configuration.
+        """
+        # Load the YAML file
+        with open(self.configs, 'r') as file:
+            data: Dict[str, Any] = yaml.safe_load(file)
+        
+        # Retrieve the URL for the given id, energy, and resolution
+        base_url: str = data.get(self.scroll_id, {}).get(self.energy, {}).get(self.resolution, {}).get(f"{self.z:05d}_{self.y:05d}_{self.x:05d}")
+        if base_url is None:
+                raise ValueError("URL not found.")
+
+        volume_filename = f"{self.z:05d}_{self.y:05d}_{self.x:05d}_volume.nrrd"
+        mask_filename = f"{self.z:05d}_{self.y:05d}_{self.x:05d}_mask.nrrd"
+
+        volume_url = os.path.join(base_url, volume_filename)
+        mask_url = os.path.join(base_url, mask_filename)
+        return volume_url, mask_url
+    
+    def load_data(self) -> Tuple[NDArray, NDArray]:
+        """
+        Load the data for the cube.
+
+        Returns
+        -------
+        Tuple[NDArray, NDArray]
+            A tuple containing the loaded volume and mask data.
+
+        Raises
+        ------
+        requests.RequestException
+            If there is an error downloading the data from the server.
+        """
+        output = []
+        for url in [self.volume_url, self.mask_url]:
+            if self.aws:
+                array, _ = nrrd.read(url)
+            else:
+                if self.cache:
+                    # Extract the relevant path after "instance-labels"
+                    path_after_finished_cubes = url.split('instance-labels/')[1]
+                    # Extract the directory structure and the filename
+                    dir_structure, filename = os.path.split(path_after_finished_cubes)
+
+                    # Create the full directory path in the temp_dir
+                    full_temp_dir_path = os.path.join(self.cache_dir, dir_structure)
+
+                    # Make sure the directory structure exists
+                    os.makedirs(full_temp_dir_path, exist_ok=True)
+
+                    # Create the full path for the temporary file
+                    temp_file_path = os.path.join(full_temp_dir_path, filename)
+
+                    # Check if the file already exists in the cache
+                    if os.path.exists(temp_file_path):
+                        # Read the NRRD file from the cache
+                        array, _ = nrrd.read(temp_file_path)
+
+                    else:
+                        # Download the remote file
+                        response = requests.get(url)
+                        response.raise_for_status()  # Ensure we notice bad responses
+                        # Write the downloaded content to the temporary file with the same directory structure and filename
+                        with open(temp_file_path, 'wb') as tmp_file:
+                            tmp_file.write(response.content)
+
+                            array, _ = nrrd.read(temp_file_path)
+
+                else:
+                    response = requests.get(url)
+                    response.raise_for_status()  # Ensure we notice bad responses
+                    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+                        tmp_file.write(response.content)
+                        temp_file_path = tmp_file.name
+                        # Read the NRRD file from the temporary file
+
+                        array, _ = nrrd.read(temp_file_path)
+
+            output.append(array)
+
+        return output[0], output[1]
+
+
+    def __getitem__(self, idx: Tuple[int, ...]) -> NDArray:
+        """
+        Get a slice of the cube data.
+
+        Parameters
+        ----------
+        idx : Tuple[int, ...]
+            A tuple representing the coordinates (z, y, x) within the cube.
+
+        Returns
+        -------
+        NDArray
+            The selected data slice.
+
+        Raises
+        ------
+        IndexError
+            If the index is invalid.
+        """
+        if isinstance(idx, tuple) and len(idx) == 3:
+            zz, yy, xx = idx
+
+            if self.normalize:
+                return self.volume[zz, yy, xx]/self.max_dtype, self.mask[zz, yy, xx]
+            
+            else:
+                return self.volume[zz, yy, xx], self.mask[zz, yy, xx]
+            
+        else:
+            raise IndexError("Invalid index. Must be a tuple of three elements.")
+    
+    def activate_caching(self, cache_dir: Optional[os.PathLike] = None) -> None:
+        """
+        Activate caching for the cube data.
+
+        Parameters
+        ----------
+        cache_dir : Optional[os.PathLike], default = None
+            Directory where cached files are stored.
+        """
+        if not self.cache:
+            if cache_dir is None:
+                self.cache_dir = Path.home() / 'vesuvius' / 'annotated-instances'
+            else:
+                self.cache_dir = Path(cache_dir)
+            self.cache = True
+            self.volume, self.mask = self.load_data()
+
+    def deactivate_caching(self) -> None:
+        """
+        Deactivate caching for the cube data.
+        """
+        if self.cache:
+            self.cache = False
+            self.volume, self.mask = self.load_data()
