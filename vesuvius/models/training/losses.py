@@ -22,7 +22,8 @@ class MaskedLoss(nn.Module):
             valid_elements = loss_mask.sum().clamp(min=1e-8)
             return (loss * loss_mask).sum() / valid_elements
         else:
-            raise ValueError("No mask provided, you must provide a valid mask")
+            # No mask provided, compute loss over the entire image
+            return loss.mean()
 
 class BCEWithLogitsMaskedLoss(MaskedLoss):
     """
@@ -128,3 +129,93 @@ class SoftDiceLoss(nn.Module):
         dice = (2.0 * intersection + self.smooth) / (input_sum + target_sum + self.smooth)
         
         return 1.0 - dice.mean()
+
+
+class CombinedDiceBCELoss(nn.Module):
+    """
+    Combined Dice and BCE with Logits Loss for binary segmentation.
+    
+    This loss function computes a weighted combination of:
+    1. Soft Dice Loss - measures overlap between predicted and target regions
+    2. BCE with Logits Loss - measures pixel-wise classification accuracy
+    
+    Args:
+        dice_weight (float): Weight for dice loss component. Default: 0.5
+        bce_weight (float): Weight for BCE loss component. Default: 0.5
+        label_smoothing (float): Label smoothing factor. 0.0 = no smoothing,
+                               0.1 = smooth labels to [0.1, 0.9]. Default: 0.0
+        smooth (float): Small epsilon for dice loss numerical stability. Default: 1e-5
+        
+    Example:
+        # Equal weighting
+        loss_fn = CombinedDiceBCELoss(dice_weight=0.5, bce_weight=0.5)
+        
+        # Favor dice loss
+        loss_fn = CombinedDiceBCELoss(dice_weight=0.7, bce_weight=0.3)
+        
+        # With label smoothing
+        loss_fn = CombinedDiceBCELoss(dice_weight=0.6, bce_weight=0.4, label_smoothing=0.1)
+    """
+    
+    def __init__(self, dice_weight=0.5, bce_weight=0.5, label_smoothing=0.0, smooth=1e-5):
+        super().__init__()
+        self.dice_weight = dice_weight
+        self.bce_weight = bce_weight
+        self.label_smoothing = label_smoothing
+        
+        # Initialize component losses
+        self.dice_loss = SoftDiceLoss(smooth=smooth)
+        self.bce_loss = nn.BCEWithLogitsLoss(reduction='none')
+        
+    def apply_label_smoothing(self, target):
+        """
+        Apply label smoothing to binary targets.
+        Maps 0 -> label_smoothing, 1 -> 1 - label_smoothing
+        """
+        if self.label_smoothing > 0.0:
+            # Smooth the labels: 0 becomes label_smoothing, 1 becomes 1-label_smoothing
+            smoothed_target = target * (1.0 - 2 * self.label_smoothing) + self.label_smoothing
+            return smoothed_target
+        return target
+        
+    def forward(self, input, target, loss_mask=None):
+        """
+        Forward pass for combined loss.
+        
+        Args:
+            input (torch.Tensor): Raw logits from model (before sigmoid)
+            target (torch.Tensor): Ground truth binary labels [0, 1]
+            loss_mask (torch.Tensor, optional): Mask to specify valid regions for loss computation
+            
+        Returns:
+            torch.Tensor: Combined weighted loss value
+        """
+        # Apply label smoothing if specified
+        smoothed_target = self.apply_label_smoothing(target)
+        
+        # Compute dice loss (dice loss expects sigmoid probabilities)
+        dice_loss_value = self.dice_loss(input, smoothed_target, loss_mask)
+        
+        # Compute BCE loss (BCE with logits expects raw logits)
+        bce_loss_raw = self.bce_loss(input, smoothed_target)
+        
+        # Apply mask to BCE loss if provided
+        if loss_mask is not None:
+            # Ensure mask has same shape as BCE loss
+            if loss_mask.ndim > bce_loss_raw.ndim:
+                loss_mask = loss_mask.squeeze(1)
+            elif loss_mask.ndim < bce_loss_raw.ndim:
+                loss_mask = loss_mask.unsqueeze(1)
+                
+            # Apply mask and compute mean over valid elements
+            valid_elements = loss_mask.sum().clamp(min=1e-8)
+            bce_loss_value = (bce_loss_raw * loss_mask).sum() / valid_elements
+        else:
+            # No mask, take mean over all elements
+            bce_loss_value = bce_loss_raw.mean()
+        
+        # Combine losses with specified weights
+        combined_loss = (self.dice_weight * dice_loss_value + 
+                        self.bce_weight * bce_loss_value)
+        
+        return combined_loss

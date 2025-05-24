@@ -10,12 +10,15 @@ import albumentations as A
 
 from utils.utils import find_mask_patches, find_mask_patches_2d, pad_or_crop_3d, pad_or_crop_2d
 
-class NapariDataset(Dataset):
+class BaseDataset(Dataset):
     """
-    A PyTorch Dataset for handling both 2D and 3D data from napari.
+    A PyTorch Dataset base class for handling both 2D and 3D data from various sources.
     
     This dataset automatically detects if the provided data is 2D or 3D and 
     handles it appropriately throughout the data loading process.
+    
+    Subclasses must implement the _initialize_volumes() method to specify how
+    data is loaded from their specific data source.
     """
     def __init__(self,
                  mgr,
@@ -62,8 +65,28 @@ class NapariDataset(Dataset):
         self._get_valid_patches()
 
     def _initialize_volumes(self):
-        """Initialize volumes from the ConfigManager's get_images method."""
-        self.target_volumes = self.mgr.get_images()
+        """
+        Initialize volumes from the data source.
+        
+        This method must be implemented by subclasses to specify how
+        data is loaded from their specific data source (napari, TIFs, Zarr, etc.).
+        
+        The implementation should populate self.target_volumes in the format:
+        {
+            'target_name': [
+                {
+                    'data': {
+                        'data': numpy_array,      # Image data
+                        'label': numpy_array,     # Label data  
+                        'mask': numpy_array       # Mask data (optional)
+                    }
+                },
+                ...  # Additional volumes for this target
+            ],
+            ...  # Additional targets
+        }
+        """
+        raise NotImplementedError("Subclasses must implement _initialize_volumes() method")
 
     def _get_valid_patches(self):
         """Find valid patches based on mask coverage and labeled ratio requirements."""

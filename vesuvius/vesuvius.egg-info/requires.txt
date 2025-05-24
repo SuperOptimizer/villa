@@ -2,7 +2,6 @@ numpy
 requests
 aiohttp
 fsspec
-tensorstore
 huggingface_hub
 dask
 zarr
@@ -18,3 +17,17 @@ scipy
 batchgenerators
 batchgeneratorsv2
 dynamic_network_architectures
+monai
+magicgui
+magic-class
+open3d
+numba
+s3fs
+napari
+dask
+dask-image
+einops
+opencv-python
+pytorch-lightning
+libigl
+psutil

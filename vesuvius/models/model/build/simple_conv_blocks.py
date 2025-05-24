@@ -8,6 +8,7 @@ from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.dropout import _DropoutNd
 
 from models.model.utils import maybe_convert_scalar_to_list
+from .activations import SwiGLUBlock, GLUBlock
 
 
 class ConvDropoutNormReLU(nn.Module):
@@ -60,7 +61,11 @@ class ConvDropoutNormReLU(nn.Module):
             ops.append(self.norm)
 
         if nonlin is not None:
-            self.nonlin = nonlin(**nonlin_kwargs)
+            # Special handling for gated activations that need additional parameters
+            if nonlin in [SwiGLUBlock, GLUBlock]:
+                self.nonlin = nonlin(output_channels, conv_op, conv_bias)
+            else:
+                self.nonlin = nonlin(**nonlin_kwargs)
             ops.append(self.nonlin)
 
         if nonlin_first and (norm_op is not None and nonlin is not None):
@@ -146,4 +151,3 @@ class StackedConvBlocks(nn.Module):
         for b in self.convs[1:]:
             output += b.compute_conv_feature_map_size(size_after_stride)
         return output
-

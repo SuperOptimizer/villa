@@ -2,6 +2,7 @@ import torch.nn as nn
 from .utils import get_pool_and_conv_props, get_n_blocks_per_stage
 from models.model.build.encoder import Encoder
 from models.model.build.decoder import Decoder
+from models.model.build.activations import SwiGLUBlock, GLUBlock
 
 def get_activation_module(activation_str: str):
     act_str = activation_str.lower()
@@ -100,6 +101,14 @@ class NetworkFromConfig(nn.Module):
         elif self.nonlin in ["nn.ReLU", "ReLU"]:
             self.nonlin = nn.ReLU
             self.nonlin_kwargs = {"inplace": True}
+        elif self.nonlin in ["SwiGLU", "swiglu"]:
+            self.nonlin = SwiGLUBlock
+            self.nonlin_kwargs = {}  # SwiGLUBlock doesn't use standard kwargs
+            print("Using SwiGLU activation - this will increase memory usage due to channel expansion")
+        elif self.nonlin in ["GLU", "glu"]:
+            self.nonlin = GLUBlock
+            self.nonlin_kwargs = {}  # GLUBlock doesn't use standard kwargs
+            print("Using GLU activation - this will increase memory usage due to channel expansion")
 
         # --------------------------------------------------------------------
         # Architecture parameters.

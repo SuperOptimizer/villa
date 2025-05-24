@@ -8,17 +8,18 @@ from torch.optim import AdamW, SGD
 from torch.utils.data import DataLoader, SubsetRandomSampler
 from utils.utils import init_weights_he
 import albumentations as A
-from utils.napari_trainer.dataset import NapariDataset
+from models.datasets import NapariDataset, TifDataset, ZarrDataset
 from utils.plotting import save_debug
 from models.model.build_network_from_config import NetworkFromConfig
 from torch.nn import CrossEntropyLoss, MSELoss, BCELoss
-from models.losses import (
+from models.training.losses import (
     BCEWithLogitsMaskedLoss,
     BCEMaskedLoss,
     CrossEntropyMaskedLoss,
     MSEMaskedLoss,
     L1MaskedLoss,
-    SoftDiceLoss
+    SoftDiceLoss,
+    CombinedDiceBCELoss
 )
 
 
@@ -40,63 +41,69 @@ class BaseTrainer:
             self.mgr = mgr
         else:
             # Import ConfigManager here to avoid circular imports
-            from main_window import ConfigManager
+            from models.config_manager import ConfigManager
             self.mgr = ConfigManager(verbose)
 
     # --- build model --- #
     def _build_model(self):
         # Ensure model_config and inference_config are initialized
-        if hasattr(self.mgr, 'update_config_from_widget'):
-            # If running from the GUI, ensure configs are updated
-            self.mgr.update_config_from_widget()
-        else:
-            # If running directly, we need to make sure config is not None
-            if not hasattr(self.mgr, 'model_config') or self.mgr.model_config is None:
-                print("Initializing model_config with defaults")
-                self.mgr.model_config = {
-                    "train_patch_size": self.mgr.train_patch_size,
-                    "in_channels": self.mgr.in_channels,
-                    "model_name": self.mgr.model_name,
-                    "autoconfigure": self.mgr.autoconfigure,
-                    "conv_op": "nn.Conv2d" if len(self.mgr.train_patch_size) == 2 else "nn.Conv3d"
-                }
-            
-            if not hasattr(self.mgr, 'inference_config') or self.mgr.inference_config is None:
-                print("Initializing inference_config with model_config defaults")
-                self.mgr.inference_config = self.mgr.model_config.copy()
+        # If running directly, we need to make sure config is not None
+        if not hasattr(self.mgr, 'model_config') or self.mgr.model_config is None:
+            print("Initializing model_config with defaults")
+            self.mgr.model_config = {
+                "train_patch_size": self.mgr.train_patch_size,
+                "in_channels": self.mgr.in_channels,
+                "model_name": self.mgr.model_name,
+                "autoconfigure": self.mgr.autoconfigure,
+                "conv_op": "nn.Conv2d" if len(self.mgr.train_patch_size) == 2 else "nn.Conv3d"
+            }
+        
+        if not hasattr(self.mgr, 'inference_config') or self.mgr.inference_config is None:
+            print("Initializing inference_config with model_config defaults")
+            self.mgr.inference_config = self.mgr.model_config.copy()
 
         model = NetworkFromConfig(self.mgr)
         # Weight initialization will be done in train() method before compilation
         return model
 
     def _compose_augmentations(self):
+        from .train_augmentations import compose_augmentations
+        
         # Get all target names to create additional_targets dictionary
         additional_targets = {}
         for t_name in self.mgr.targets.keys():
             additional_targets[f'mask_{t_name}'] = 'mask'
 
-        # --- Augmentations (2D only) ---
-        image_transforms = A.Compose([
+        # Determine dimension based on patch size
+        dimension = '2d' if len(self.mgr.train_patch_size) == 2 else '3d'
 
-            A.OneOf([
-                A.RandomRotate90(),
-                A.VerticalFlip(),
-                A.HorizontalFlip()
-            ], p=0.3),
-
-        ], additional_targets=additional_targets, p=1.0)  # Always apply the composition
-
-        return image_transforms
+        return compose_augmentations(dimension, additional_targets)
 
     # --- configure dataset --- #
     def _configure_dataset(self):
 
         image_transforms = self._compose_augmentations()
 
-        dataset = NapariDataset(mgr=self.mgr,
-                                     image_transforms=image_transforms,
-                                     volume_transforms=None)
-
+        # Get data format from config manager, default to zarr
+        data_format = getattr(self.mgr, 'data_format', 'zarr')
+        
+        if data_format == 'napari':
+            dataset = NapariDataset(mgr=self.mgr,
+                                   image_transforms=image_transforms,
+                                   volume_transforms=None)
+        elif data_format == 'tifs':
+            dataset = TifDataset(mgr=self.mgr,
+                                image_transforms=image_transforms,
+                                volume_transforms=None)
+        elif data_format == 'zarr':
+            dataset = ZarrDataset(mgr=self.mgr,
+                                 image_transforms=image_transforms,
+                                 volume_transforms=None)
+        else:
+            raise ValueError(f"Unsupported data format: {data_format}. "
+                           f"Supported formats are: 'napari', 'tifs', 'zarr'")
+        
+        print(f"Using {data_format} dataset format")
         return dataset
 
     # --- losses ---- #
@@ -105,10 +112,6 @@ class BaseTrainer:
         # possible target in the dictionary of targets . the easiest is probably
         # to add it in losses.loss, import it here, and then add it to the map
         
-        # Ensure we have the latest configuration, especially for loss functions
-        if hasattr(self.mgr, 'update_config_from_widget'):
-            self.mgr.update_config_from_widget()
-            
         # Debug: Print the selected loss function from the config manager
         if hasattr(self.mgr, 'selected_loss_function'):
             print(f"DEBUG: Selected loss function from UI: {self.mgr.selected_loss_function}")
@@ -123,6 +126,9 @@ class BaseTrainer:
             
             # Simple dice loss for binary segmentation
             "SoftDiceLoss": SoftDiceLoss,
+            
+            # Combined loss functions
+            "CombinedDiceBCELoss": CombinedDiceBCELoss,
             
         }
 
@@ -139,7 +145,7 @@ class BaseTrainer:
 
     # --- optimizer ---- #
     def _get_optimizer(self, model):
-        from models.optimizers import create_optimizer
+        from models.training.optimizers import create_optimizer
         
         # Map ConfigManager params to what create_optimizer expects
         optimizer_config = {
