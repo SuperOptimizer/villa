@@ -13,15 +13,10 @@ import numcodecs
 from concurrent.futures import ProcessPoolExecutor
 import math
 from data.utils import open_zarr
+import traceback
 
 
-# --- Gaussian Map Generation ---
 def generate_gaussian_map(patch_size: tuple, sigma_scale: float = 8.0, dtype=torch.float32) -> torch.Tensor:
-    """
-    Generates a Gaussian importance map for a given patch size.
-    Weights decay from the center towards the edges.
-    Shape: (1, pZ, pY, pX) for easy broadcasting.
-    """
     pZ, pY, pX = patch_size
     tmp = torch.zeros(patch_size, dtype=dtype)
     center_coords = [i // 2 for i in patch_size]
@@ -42,7 +37,6 @@ def generate_gaussian_map(patch_size: tuple, sigma_scale: float = 8.0, dtype=tor
     return gaussian_map
 
 
-# --- Chunk Processing Worker Function ---
 def process_chunk(chunk_info, parent_dir, output_path, weights_path, gaussian_map, 
                 patch_size, part_files):
     """
@@ -243,28 +237,14 @@ def normalize_chunk(chunk_info, output_path, weights_path, epsilon=1e-8):
 
 # --- Utility Functions ---
 def calculate_chunks(volume_shape, output_chunks=None):
-    """
-    Calculate processing units based directly on zarr chunk size for memory efficiency.
-    
-    Args:
-        volume_shape: Shape of the volume (Z, Y, X)
-        output_chunks: Spatial chunk size for the output zarr (z_chunk, y_chunk, x_chunk)
-        
-    Returns:
-        List of chunk dictionaries with boundaries
-    """
-    # Get volume dimensions
+
     Z, Y, X = volume_shape
-    
-    # If no chunks specified, use reasonable defaults
+
     if output_chunks is None:
-        # Default chunk sizes (256 is a common size for zarr chunks)
         z_chunk, y_chunk, x_chunk = 256, 256, 256
     else:
-        # Use the provided chunks (these should be the spatial dimensions only)
         z_chunk, y_chunk, x_chunk = output_chunks
     
-    # Process one chunk at a time for maximum memory efficiency
     chunks = []
     for z_start in range(0, Z, z_chunk):
         for y_start in range(0, Y, y_chunk):
@@ -281,7 +261,6 @@ def calculate_chunks(volume_shape, output_chunks=None):
     
     return chunks
 
-
 # --- Main Merging Function ---
 def merge_inference_outputs(
         parent_dir: str,
@@ -294,9 +273,6 @@ def merge_inference_outputs(
         delete_weights: bool = True,  # Delete weight accumulator after merge
         verbose: bool = True):
     """
-    Merges partial inference results with Gaussian blending using parallel processing.
-    Uses fsspec.get_mapper for consistent zarr access across file systems and protocols.
-
     Args:
         parent_dir: Directory containing logits_part_X.zarr and coordinates_part_X.zarr.
         output_path: Path for the final merged Zarr store.
@@ -311,15 +287,15 @@ def merge_inference_outputs(
         delete_weights: Whether to delete the weight accumulator Zarr after completion.
         verbose: Print progress messages.
     """
-    # Disable Blosc threading to avoid deadlocks when used with multiprocessing
+
+    # blosc has an issuse with threading , so we disable it
     numcodecs.blosc.use_threads = False
     if weight_accumulator_path is None:
         base, _ = os.path.splitext(output_path)
         weight_accumulator_path = f"{base}_weights.zarr"
     
-    # Configure process pool size - use half of available CPUs for memory efficiency
     if num_workers is None:
-        # Use half of CPU count (rounded up) to balance performance and memory usage
+        # just use half the cpu count 
         num_workers = max(1, mp.cpu_count() // 2)
     
     print(f"Using {num_workers} worker processes (half of CPU count for memory efficiency)")
@@ -329,25 +305,21 @@ def merge_inference_outputs(
     part_pattern = re.compile(r"(logits|coordinates)_part_(\d+)\.zarr")
     print(f"Scanning for parts in: {parent_dir}")
     
-    # Use fsspec for listing files (works with S3 and local paths)
+    # we need to use fsspec to work w/ s3 paths , as os.listdir doesn't work with s3
     if parent_dir.startswith('s3://'):
         fs = fsspec.filesystem('s3', anon=False)
-        # List directory to get all entries
         full_paths = fs.ls(parent_dir)
         
         # For S3, strip the bucket name and path prefix to get just the directory name
         # Each entry looks like: 'bucket/path/to/parent_dir/logits_part_0.zarr'
         file_list = []
         for path in full_paths:
-            # Remove the s3://bucket/ prefix 
             path_parts = path.split('/')
-            # Get the last part which is the actual directory name
             filename = path_parts[-1]
             file_list.append(filename)
             
         print(f"DEBUG: Found files in S3: {file_list}")
     else:
-        # Use os.listdir for local paths
         file_list = os.listdir(parent_dir)
         
     for filename in file_list:
@@ -364,24 +336,20 @@ def merge_inference_outputs(
         raise FileNotFoundError(f"No inference parts found in {parent_dir}")
     print(f"Found parts: {part_ids}")
 
-    # Validate that all parts have both files
     for part_id in part_ids:
         if 'logits' not in part_files[part_id] or 'coordinates' not in part_files[part_id]:
             raise FileNotFoundError(f"Part {part_id} is missing logits or coordinates Zarr.")
 
     # --- 2. Read Metadata (from first available part) ---
-    first_part_id = part_ids[0]  # Use the first available part_id 
+    first_part_id = part_ids[0]  
     print(f"Reading metadata from part {first_part_id}...")
     part0_logits_path = part_files[first_part_id]['logits']
     try:
-        # Use our helper function to open zarr store
         part0_logits_store = open_zarr(part0_logits_path, mode='r', storage_options={'anon': False} if part0_logits_path.startswith('s3://') else None)
 
-        # Read input zarr store chunk size
         input_chunks = part0_logits_store.chunks
         print(f"Input zarr chunk size: {input_chunks}")
 
-        # Read .zattrs using fsspec
         try:
             # Use the part0_logits_store's .attrs directly if available
             meta_attrs = part0_logits_store.attrs
@@ -397,24 +365,10 @@ def merge_inference_outputs(
             patch_size = tuple(meta_attrs['patch_size'])  
             original_volume_shape = tuple(meta_attrs['original_volume_shape'])
             num_classes = part0_logits_store.shape[1]
+
     except Exception as e:
-        # Try to infer from the array shape if .zattrs is missing
-        print(f"Warning: Error reading metadata, attempting to infer: {e}")
-        part0_coords_path = part_files[first_part_id]['coordinates']
-        coords_store = open_zarr(part0_coords_path, mode='r', storage_options={'anon': False} if part0_coords_path.startswith('s3://') else None)
-        # First patch's logits shape should be (C, pZ, pY, pX)
-        first_patch_shape = part0_logits_store[0].shape
-        num_classes = first_patch_shape[0]
-        patch_size = first_patch_shape[1:]
-        
-        # Get first and last patch centers to estimate volume size
-        coords_data = coords_store[:]
-        min_coords = np.min(coords_data, axis=0)
-        max_coords = np.max(coords_data, axis=0)
-        estimated_shape = tuple((max_coords + np.array(patch_size) - min_coords).astype(int))
-        
-        original_volume_shape = estimated_shape
-        print("WARNING: No .zattrs file found. Using estimated volume shape from coordinates.")
+        traceback.print_exc()
+        raise RuntimeError(f"Failed to read metadata from {part0_logits_path}: {e}")
         
     print(f"  Patch Size: {patch_size}")
     print(f"  Num Classes: {num_classes}")

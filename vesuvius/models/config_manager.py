@@ -14,9 +14,11 @@ Image.MAX_IMAGE_PIXELS = None
 class ConfigManager:
     def __init__(self, verbose):
         self._config_path = None
-        self.data = None
+        self.data = None # note that config manager DOES NOT hold data, 
+                         # it just holds the path to the data
         self.verbose = verbose
-        self.selected_loss_function = "BCEWithLogitsLoss"
+        self.selected_loss_function = "BCEWithLogitsLoss" # this is just a default loss value 
+                                                          # so we can init without it being empty
 
     def load_config(self, config_path):
         config_path = Path(config_path)
@@ -74,8 +76,11 @@ class ConfigManager:
                 print(f"Loaded targets from config: {self.targets}")
 
         # model config
-        self.use_timm = self.model_config.get("use_timm", False)
-        self.timm_encoder_class = self.model_config.get("timm_encoder_class", None)
+        
+        # TODO: add support for timm encoders , will need a bit of refactoring as we'll
+        # need to figure out the channels/feature map sizes to pass to the decoder
+        # self.use_timm = self.model_config.get("use_timm", False)
+        # self.timm_encoder_class = self.model_config.get("timm_encoder_class", None)
         
         # Use the centralized dimensionality function to set appropriate operations
         dim_props = determine_dimensionality(self.train_patch_size, self.verbose)
@@ -87,7 +92,8 @@ class ConfigManager:
         self.op_dims = dim_props["op_dims"]
 
         # channel configuration
-        self.in_channels = 1  # Changed from 2 to 1 to match actual input data
+        # Allow configurable input channels from model_config, otherwise default to 1
+        self.in_channels = self.model_config.get("in_channels", 1)
         self.out_channels = ()
         for target_name, task_info in self.targets.items():
             # Look for either 'out_channels' or 'channels' in the task info
@@ -112,6 +118,8 @@ class ConfigManager:
     def set_targets_and_data(self, targets_dict, data_dict):
         """
         Generic method to set targets and data from any source (napari, TIF, zarr, etc.)
+        this is necessary primarily because the target dict has to be created/set , and the desired 
+        loss functions have to be set for each target. it's a bit convoluted but i couldnt think of a simpler way 
         
         Parameters
         ----------
@@ -129,10 +137,8 @@ class ConfigManager:
             if "loss_fn" not in self.targets[target_name]:
                 self.targets[target_name]["loss_fn"] = self.selected_loss_function
         
-        # Update out_channels tuple
         self.out_channels = tuple(task_info["out_channels"] for task_info in self.targets.values())
         
-        # Auto-configure dimensionality if data is provided
         if data_dict:
             first_target = next(iter(data_dict.values()))[0]
             if 'data' in first_target and 'data' in first_target['data']:
@@ -151,44 +157,22 @@ class ConfigManager:
     
     def _reconfigure_dimensionality(self, data_is_2d):
         """
-        Reconfigure model operations based on data dimensionality
-        
-        Parameters
-        ----------
-        data_is_2d : bool
-            True if data is 2D, False if 3D
+        Adjust patch size based on data dimensionality. 
+        NetworkFromConfig will handle operation selection automatically.
         """
         if data_is_2d:
-            # Data is 2D but config is 3D
-            if self.verbose:
-                print(f"Data is 2D but config is for 3D. Reconfiguring for 2D operations.")
-            
-            # Keep existing patch_size dimensions but adapt to 2D
+            # Data is 2D but config is 3D - adjust patch size
             if len(self.train_patch_size) > 2:
+                if self.verbose:
+                    print(f"Data is 2D but config patch_size is 3D. Adjusting patch_size from {self.train_patch_size} to 2D.")
                 self.train_patch_size = self.train_patch_size[-2:]
                 self.tr_configs["patch_size"] = list(self.train_patch_size)
-            
-            # Update all dimension-dependent configurations
-            dim_props = determine_dimensionality(self.train_patch_size, self.verbose)
-            self.model_config["conv_op"] = dim_props["conv_op"]
-            self.model_config["pool_op"] = dim_props["pool_op"]
-            self.model_config["norm_op"] = dim_props["norm_op"]
-            self.model_config["dropout_op"] = dim_props["dropout_op"]
-            self.spacing = dim_props["spacing"]
-            self.op_dims = dim_props["op_dims"]
         else:
-            # Data is 3D but config is 2D
-            if self.verbose:
-                print(f"Data is 3D but config is for 2D. Reconfiguring for 3D operations.")
-            
-            # Update all dimension-dependent configurations
-            dim_props = determine_dimensionality([1, 1, 1], self.verbose)  # Use dummy 3D patch
-            self.model_config["conv_op"] = dim_props["conv_op"]
-            self.model_config["pool_op"] = dim_props["pool_op"]
-            self.model_config["norm_op"] = dim_props["norm_op"]
-            self.model_config["dropout_op"] = dim_props["dropout_op"]
-            self.spacing = dim_props["spacing"]
-            self.op_dims = dim_props["op_dims"]
+            # Data is 3D but config is 2D - this is less common but could happen
+            if len(self.train_patch_size) == 2:
+                if self.verbose:
+                    print(f"Data is 3D but config patch_size is 2D. NetworkFromConfig will handle operation selection.")
+                # Let NetworkFromConfig handle this case - it has better validation logic
 
     def save_config(self):
         tr_setup = deepcopy(self.tr_info)
@@ -213,43 +197,22 @@ class ConfigManager:
             "inference_config": inference_config,
         }
 
-        # Create a specific directory for this model's checkpoints
         model_ckpt_dir = Path(self.ckpt_out_base) / self.model_name
         model_ckpt_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create a config filename matching the model name
         config_filename = f"{self.model_name}_config.yaml"
-
-        # Full path to the new file in the checkpoint directory
         config_path = model_ckpt_dir / config_filename
 
-        # Write out the YAML
         with config_path.open("w") as f:
             yaml.safe_dump(combined_config, f, sort_keys=False)
 
         print(f"Configuration saved to: {config_path}")
 
     def update_config(self, patch_size=None, min_labeled_ratio=None, max_epochs=None, loss_function=None):
-        """
-        Generic method to update configuration parameters
-        
-        Parameters
-        ----------
-        patch_size : tuple or list, optional
-            New patch size, e.g., (128, 128, 128) or (128, 128)
-        min_labeled_ratio : float, optional
-            Minimum labeled ratio (0.0 to 1.0)
-        max_epochs : int, optional
-            Maximum number of epochs
-        loss_function : str, optional
-            Loss function name
-        """
         if patch_size is not None:
             if isinstance(patch_size, (list, tuple)) and len(patch_size) >= 2:
                 self.train_patch_size = tuple(patch_size)
                 self.tr_configs["patch_size"] = list(patch_size)
                 
-                # Use centralized dimensionality function to set appropriate operations
                 dim_props = determine_dimensionality(self.train_patch_size, self.verbose)
                 self.model_config["conv_op"] = dim_props["conv_op"]
                 self.model_config["pool_op"] = dim_props["pool_op"]
@@ -267,18 +230,8 @@ class ConfigManager:
             if self.verbose:
                 print(f"Updated min labeled ratio: {self.min_labeled_ratio:.2f}")
         
-        if max_epochs is not None:
-            # Set max_steps_per_epoch and max_val_steps_per_epoch to None so that train.py will use the dataset length
-            self.max_steps_per_epoch = None
-            self.max_val_steps_per_epoch = None
-            self.max_epoch = int(max_epochs)
-            self.tr_configs["max_epoch"] = self.max_epoch
-            if self.verbose:
-                print(f"Updated max epochs: {self.max_epoch}")
-        
         if loss_function is not None:
             self.selected_loss_function = loss_function
-            # Apply to existing targets if they exist
             if hasattr(self, 'targets') and self.targets:
                 for target_name in self.targets:
                     self.targets[target_name]["loss_fn"] = self.selected_loss_function
