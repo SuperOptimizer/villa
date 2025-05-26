@@ -112,14 +112,13 @@ def _compute_eigenvectors(block: torch.Tensor) -> torch.Tensor:
     _, dz, dy, dx = block.shape
     N = dz * dy * dx
     x = block.view(6, N)                  # [6, N]
-    jxx, jxy, jxz, jyy, jyz, jzz = x      # unpack
+    jzz, jzy, jzx, jyy, jyx, jxx = x
 
     # 2) Vectorized build of M: [N,3,3]
-    # rows = [ [jxx, jxy, jxz], [jxy, jyy, jyz], [jxz, jyz, jzz] ]
     M = torch.stack([
-        torch.stack([jxx, jxy, jxz], dim=1),
-        torch.stack([jxy, jyy, jyz], dim=1),
-        torch.stack([jxz, jyz, jzz], dim=1),
+        torch.stack([jzz, jzy, jzx], dim=1),  # row x
+        torch.stack([jzy, jyy, jyx], dim=1),  # row y
+        torch.stack([jzx, jyx, jxx], dim=1),  # row z
     ], dim=1)                              # [N,3,3]
 
     # 3) Sanitize any NaN/Inf
@@ -127,18 +126,21 @@ def _compute_eigenvectors(block: torch.Tensor) -> torch.Tensor:
 
     # 4) Micro-batch the eigen-decomposition to avoid CUSOLVER limits
     batch_size = 1024000  # TODO: fix this more intelligently
-    # w_chunks = [] EIGENVALUES
+    w_chunks = [] # EIGENVALUES
     v_chunks = []
     for i in range(0, N, batch_size):
-        _, vi = torch.linalg.eigh(M[i:i+batch_size])  # wi:[B,3], vi:[B,3,3]
-        # w_chunks.append(wi) EIGENVALUES
+        wi, vi = torch.linalg.eigh(M[i:i+batch_size])  # wi:[B,3], vi:[B,3,3]
+        w_chunks.append(wi) # EIGENVALUES
         v_chunks.append(vi)
-    # w = torch.cat(w_chunks, dim=0)      # [N,3] EIGENVALUES
+    w = torch.cat(w_chunks, dim=0)      # [N,3] EIGENVALUES
     v = torch.cat(v_chunks, dim=0)      # [N,3,3]
 
     # 5) Flatten into [9, N] then reshape back
     out = v.reshape(N, 9).permute(1, 0)    # [9, N]
-    return out.view(9, dz, dy, dx)        # [9, dz, dy, dx]
+    eigvecs = out.view(9, dz, dy, dx)      # [9, dz, dy, dx]
+    eigvals = w.permute(1, 0).view(3, dz, dy, dx)
+
+    return eigvals, eigvecs
 
 # Now compile it once at import time:
 _compute_eigenvectors = torch.compile(
@@ -168,7 +170,7 @@ def _finalize_structure_tensor_torch(
     if verbose:
         print(f"[Eigen] using chunks (dz,dy,dx)=({cz},{cy},{cx})")
 
-    # prepare output zarr
+    # prepare eigenvectors output zarr
     out_chunks = (1, cz, cy, cx)
     open_zarr(
         path=output_path, mode='w',
@@ -182,6 +184,18 @@ def _finalize_structure_tensor_torch(
         overwrite=True
     )
 
+    # prepare eigenvalue output zarr (3 channels)
+    eigval_path = output_path.replace('.zarr', '_eigenvalues.zarr')
+    open_zarr(
+        path=eigval_path, mode='w',
+        storage_options={'anon': False} if output_path.startswith('s3://') else None,
+        shape=(3, Z, Y, X),
+        chunks=out_chunks,
+        compressor=compressor,
+        dtype=np.float32,
+        write_empty_chunks=False,
+        overwrite=True
+    )
     # build chunk list
     def gen_bounds():
         for z0 in range(0, Z, cz):
@@ -210,23 +224,35 @@ def _finalize_structure_tensor_torch(
         # idx: int, bounds: (z0,z1,y0,y1,x0,x1), block: tensor [1,6,dz,dy,dx]
         z0, z1, y0, y1, x0, x1 = bounds
         # squeeze off the dummy batch dim
-        out_block_tensor = _compute_eigenvectors(block)       # [9, dz, dy, dx] on GPU
-        out_block = out_block_tensor.cpu().numpy() 
+        eigvals_block, eigvecs_block = _compute_eigenvectors(block)
+        eigvals_block = eigvals_block.cpu().numpy()
+        eigvecs_block = eigvecs_block.cpu().numpy()
 
         # if requested, swap first and second eigenvectors (channels 0–2 ↔ 3–5)
         if swap_eigenvectors:
-            v1 = out_block[0:3].copy()
-            out_block[0:3] = out_block[3:6]
-            out_block[3:6] = v1
+            v1 = eigvecs_block[0:3].copy()
+            eigvecs_block[0:3] = eigvecs_block[3:6]
+            eigvecs_block[3:6] = v1
+
+            ev1 = eigvals_block[0].copy()
+            eigvals_block[0] = eigvals_block[1]
+            eigvals_block[1] = ev1
+
         # write
-        dst = open_zarr(
+        dst_vec = open_zarr(
             path=output_path, mode='r+',
             storage_options={'anon': False} if output_path.startswith('s3://') else None
         )
-        dst[:, z0:z1, y0:y1, x0:x1] = out_block
+        dst_val = open_zarr(
+            path=eigval_path, mode='r+',
+            storage_options={'anon': False} if output_path.startswith('s3://') else None
+        )
+        dst_vec[:, z0:z1, y0:y1, x0:x1] = eigvecs_block
+        dst_val[:, z0:z1, y0:y1, x0:x1] = eigvals_block
 
     if verbose:
-        print(f"[Eigen] eigenvectors saved to {output_path}")
+        print(f"[Eigen] eigenvectors → {output_path}")
+        print(f"[Eigen] eigenvalues  → {eigval_path}")
 
 
 def finalize_logits(
