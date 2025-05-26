@@ -116,9 +116,9 @@ def _compute_eigenvectors(block: torch.Tensor) -> torch.Tensor:
 
     # 2) Vectorized build of M: [N,3,3]
     M = torch.stack([
-        torch.stack([jzz, jzy, jzx], dim=1),  # row x
+        torch.stack([jzz, jzy, jzx], dim=1),  # row z
         torch.stack([jzy, jyy, jyx], dim=1),  # row y
-        torch.stack([jzx, jyx, jxx], dim=1),  # row z
+        torch.stack([jzx, jyx, jxx], dim=1),  # row x
     ], dim=1)                              # [N,3,3]
 
     # 3) Sanitize any NaN/Inf
@@ -135,14 +135,14 @@ def _compute_eigenvectors(block: torch.Tensor) -> torch.Tensor:
     w = torch.cat(w_chunks, dim=0)      # [N,3] EIGENVALUES
     v = torch.cat(v_chunks, dim=0)      # [N,3,3]
 
-    # 5) Flatten into [9, N] then reshape back
-    out = v.reshape(N, 9).permute(1, 0)    # [9, N]
-    eigvecs = out.view(9, dz, dy, dx)      # [9, dz, dy, dx]
+    # 5) Make sure we are eigenvector-major: [N, eigenvector, component]
+    v = v.permute(0, 2, 1).reshape(N, 9).permute(1, 0)  # was [N, comp, ev] → [N, ev, comp]
+    eigvecs = v.view(9, dz, dy, dx)      # [9, dz, dy, dx]
     eigvals = w.permute(1, 0).view(3, dz, dy, dx)
 
     return eigvals, eigvecs
 
-# Now compile it once at import time:
+# Compile it once at import time:
 _compute_eigenvectors = torch.compile(
     _compute_eigenvectors,
     mode="max-autotune-no-cudagraphs",
@@ -228,15 +228,20 @@ def _finalize_structure_tensor_torch(
         eigvals_block = eigvals_block.cpu().numpy()
         eigvecs_block = eigvecs_block.cpu().numpy()
 
-        # if requested, swap first and second eigenvectors (channels 0–2 ↔ 3–5)
         if swap_eigenvectors:
-            v1 = eigvecs_block[0:3].copy()
-            eigvecs_block[0:3] = eigvecs_block[3:6]
-            eigvecs_block[3:6] = v1
+            # 1) reshape eigenvectors into [3 eigenvectors, 3 components, dz,dy,dx]
+            v = eigvecs_block.reshape(3, 3, *eigvecs_block.shape[1:])  # → [3,3,dz,dy,dx]
+            # eigenvalues are already [3, dz,dy,dx]
+            w = eigvals_block                                        # → [3,dz,dy,dx]
 
-            ev1 = eigvals_block[0].copy()
-            eigvals_block[0] = eigvals_block[1]
-            eigvals_block[1] = ev1
+            # 2) swap eigenvector #0 <-> #1 and their eigenvalues
+            #    this exchanges the *first* and *second* principal directions
+            v[[0, 1], :, ...] = v[[1, 0], :, ...]
+            w[[0, 1],    ...] = w[[1, 0],    ...]
+
+            # 3) flatten back to your Zarr layout
+            eigvecs_block = v.reshape(9, *eigvecs_block.shape[1:])
+            eigvals_block  = w
 
         # write
         dst_vec = open_zarr(

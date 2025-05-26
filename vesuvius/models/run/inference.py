@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 multiprocessing.set_start_method('spawn', force=True)
 from tqdm.auto import tqdm
 import torch.nn.functional as F
+from torch import nn
 from torch.utils.data import DataLoader
 from utils.models.load_nnunet_model import load_model_for_inference
 from data.vc_dataset import VCDataset
@@ -570,7 +571,7 @@ class Inferer():
             import traceback
             traceback.print_exc() 
 
-class StructureTensorInferer(Inferer):
+class StructureTensorInferer(Inferer, nn.Module):
     """
     Inherits all of Inferer’s I/O, patching, zarr & scheduling machinery,
     but replaces the nnU-Net inference with a 6‐channel 3D structure tensor.
@@ -580,9 +581,15 @@ class StructureTensorInferer(Inferer):
                  sigma: float = 1.0,
                  smooth_components: bool = False, 
                  **kwargs):
-        # Force no TTA, always 6 output channels, no normalization
+        # --- Initialize Module first so register_buffer exists ---
+        nn.Module.__init__(self)
+
+        # --- Remove any incoming normalization_scheme so it can’t collide ---
         kwargs.pop('normalization_scheme', None)
-        super().__init__(*args, normalization_scheme='none', **kwargs)
+
+        # --- Now initialize Inferer, forcing normalization_scheme='none' ---
+        Inferer.__init__(self, *args, normalization_scheme='none', **kwargs)
+
         self.num_classes = 6
         self.do_tta = False
         self.sigma = sigma
@@ -619,8 +626,9 @@ class StructureTensorInferer(Inferer):
             g1 = g1 / g1.sum()
             g3 = g1[:, None, None] * g1[None, :, None] * g1[None, None, :]
             # store both kernel and pad:
-            self._gauss3d = g3.unsqueeze(0).unsqueeze(0).clone()
-            self._gauss3d_tensor = self._gauss3d.expand(6, -1, -1, -1, -1)
+            self.register_buffer("_gauss3d",   g3[None,None])     # [1,1,D,H,W]
+            self.register_buffer("_gauss3d_tensor",
+                                 self._gauss3d.expand(6, -1, -1, -1, -1))
             self._pad     = radius
 
         # Build 3D Pavel Holoborodko kernels and store as plain tensors
@@ -629,8 +637,8 @@ class StructureTensorInferer(Inferer):
         
         dev   = self.device
         dtype = torch.float32
-        d = torch.tensor([2,1,-16,-27,0,27,16,-1,-2], device=dev, dtype=dtype) # derivative kernel
-        s = torch.tensor([1, 4, 6, 4, 1], device=dev, dtype=dtype) # smoothing kernel
+        d = torch.tensor([2.,1.,-16.,-27.,0.,27.,16.,-1.,-2.], device=dev, dtype=dtype) # derivative kernel
+        s = torch.tensor([1., 4., 6., 4., 1.], device=dev, dtype=dtype) # smoothing kernel
 
         # depth‐derivative with y/x smoothing
         kz = (d.view(9,1,1) * s.view(1,5,1) * s.view(1,1,5)) / (96*16*16)
@@ -639,13 +647,9 @@ class StructureTensorInferer(Inferer):
         # width‐derivative with z/y smoothing
         kx = (s.view(5,1,1) * s.view(1,5,1) * d.view(1,1,9)) / (96*16*16)
 
-        # reshape to conv3d weight shape: (out_ch, in_ch, D,H,W)
-        # here out_ch=in_ch=1
-        self.pavel_kz = kz.unsqueeze(0).unsqueeze(0)  # [1,1,9,5,5]
-        self.pavel_ky = ky.unsqueeze(0).unsqueeze(0)
-        self.pavel_kx = kx.unsqueeze(0).unsqueeze(0)
-
-        self.compute_structure_tensor = torch.compile(self.compute_structure_tensor, mode="reduce-overhead", fullgraph=True)
+        self.register_buffer("pavel_kz", kz[None,None])
+        self.register_buffer("pavel_ky", ky[None,None])
+        self.register_buffer("pavel_kx", kx[None,None])
 
     def _load_model(self):
         """
@@ -657,17 +661,102 @@ class StructureTensorInferer(Inferer):
         # default is never used).
         return None
 
+    def _create_output_stores(self):
+        if self.num_classes is None or self.patch_size is None or self.num_total_patches is None:
+            raise RuntimeError("Cannot create output stores: model/patch info missing.")
+        if not self.patch_start_coords_list:
+            raise RuntimeError("Cannot create output stores: patch coordinates not available.")
+
+        compressor = self._get_zarr_compressor()
+        output_shape = (self.num_total_patches, self.num_classes, *self.patch_size)
+        output_chunks = (1, self.num_classes, *self.patch_size)  # Chunk by individual patch
+        main_store_path = os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr")
+        
+        print(f"Creating output store at: {main_store_path}")
+        
+        # Create the zarr array using our helper function
+        self.output_store = open_zarr(
+            path=main_store_path, 
+            mode='w',  
+            storage_options={'anon': False} if main_store_path.startswith('s3://') else None,
+            verbose=self.verbose,
+            shape=output_shape,
+            chunks=output_chunks,
+            dtype=np.float32,  
+            compressor=compressor,
+            write_empty_chunks=False  # we skip empty chunks here so we don't write all zero patches to the array but keep
+                                      # the proper indices for later re-zarring 
+        )
+        
+        # Verify the zarr array was created
+        print(f"Created zarr array at {main_store_path} with shape {self.output_store.shape}")
+        
+        # Create coordinates zarr array
+        self.coords_store_path = os.path.join(self.output_dir, f"coordinates_part_{self.part_id}.zarr")
+        coord_shape = (self.num_total_patches, len(self.patch_size))
+        coord_chunks = (min(self.num_total_patches, 4096), len(self.patch_size))
+        
+        print(f"Creating coordinates store at: {self.coords_store_path}")
+        
+        # Create the coordinates zarr array with our helper function
+        coords_store = open_zarr(
+            path=self.coords_store_path,
+            mode='w',
+            storage_options={'anon': False} if self.coords_store_path.startswith('s3://') else None,
+            verbose=self.verbose,
+            shape=coord_shape,
+            chunks=coord_chunks,
+            dtype=np.int32,
+            compressor=compressor,
+            write_empty_chunks=False  
+        )
+        
+        # Verify the coordinates array was created
+        print(f"Created coordinates zarr array at {self.coords_store_path} with shape {coords_store.shape}")
+        
+        try:
+            original_volume_shape = None
+            if hasattr(self.dataset, 'input_shape'):
+                if len(self.dataset.input_shape) == 4:  # has channel dimension
+                    original_volume_shape = list(self.dataset.input_shape[1:])
+                else:  # no channel dimension
+                    original_volume_shape = list(self.dataset.input_shape)
+                if self.verbose:
+                    print(f"Derived original volume shape from dataset.input_shape: {original_volume_shape}")
+            
+            # store some metadata we might later want 
+            self.output_store.attrs['patch_size'] = list(self.patch_size)
+            self.output_store.attrs['overlap'] = self.overlap
+            self.output_store.attrs['part_id'] = self.part_id
+            self.output_store.attrs['num_parts'] = self.num_parts
+            
+            if original_volume_shape:
+                self.output_store.attrs['original_volume_shape'] = original_volume_shape
+            
+            coords_store.attrs['part_id'] = self.part_id
+            coords_store.attrs['num_parts'] = self.num_parts
+            
+        except Exception as e:
+            print(f"Warning: Failed to write custom attributes: {e}")
+
+        coords_np = np.array(self.patch_start_coords_list, dtype=np.int32)
+        coords_store[:] = coords_np
+        
+        if self.verbose: 
+            print(f"Created output stores: {main_store_path} and {self.coords_store_path}")
+        
+        return self.output_store
+    
     def compute_structure_tensor(self, x: torch.Tensor, sigma=None):
         # x: [N,1,Z,Y,X]
-        # 1) optional gaussian pre-smooth as before …
         if sigma is None: sigma = self.sigma
         if sigma > 0:
             x = F.conv3d(x, self._gauss3d, padding=(self._pad,)*3)
 
         # 2) apply Pavel
-        gx = F.conv3d(x, self.pavel_kx, padding=(2,2,4))
-        gy = F.conv3d(x, self.pavel_ky, padding=(2,4,2))
         gz = F.conv3d(x, self.pavel_kz, padding=(4,2,2))
+        gy = F.conv3d(x, self.pavel_ky, padding=(2,4,2))
+        gx = F.conv3d(x, self.pavel_kx, padding=(2,2,4))
 
         # 3) build tensor components
         Jxx = gx * gx
@@ -742,7 +831,7 @@ class StructureTensorInferer(Inferer):
             J = self.compute_structure_tensor(x, sigma=self.sigma)
 
             # --- 4) Bring to numpy and cast ---
-            out_np = J.cpu().numpy().astype(np.float16)
+            out_np = J.cpu().numpy().astype(np.float32)
 
             # --- 5) Defensive squeeze of any extra singleton dim ---
             # Target shape is (6, Z, Y, X)
@@ -773,6 +862,11 @@ class StructureTensorInferer(Inferer):
         if self.verbose:
             print(f"Written {self.current_patch_write_index}/{total} patches.")
 
+StructureTensorInferer.compute_structure_tensor = torch.compile(
+    StructureTensorInferer.compute_structure_tensor,
+    mode="reduce-overhead",
+    fullgraph=True
+)
 
 
 def main():
