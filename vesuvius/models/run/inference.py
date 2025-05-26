@@ -623,25 +623,27 @@ class StructureTensorInferer(Inferer):
             self._gauss3d_tensor = self._gauss3d.expand(6, -1, -1, -1, -1)
             self._pad     = radius
 
-        # Build 3D Sobel kernels and store as plain tensors
-        # derivative kernel: [-1,0,1]; smoothing: [1,2,1]
+        # Build 3D Pavel Holoborodko kernels and store as plain tensors
+        # http://www.holoborodko.com/pavel/image-processing/edge-detection/
+        # derivative kernel, smoothing kernel
+        
         dev   = self.device
         dtype = torch.float32
-        d = torch.tensor([-1.,0.,1.], device=dev, dtype=dtype)
-        s = torch.tensor([ 1.,2.,1.], device=dev, dtype=dtype)
+        d = torch.tensor([2,1,-16,-27,0,27,16,-1,-2], device=dev, dtype=dtype) # derivative kernel
+        s = torch.tensor([1, 4, 6, 4, 1], device=dev, dtype=dtype) # smoothing kernel
 
         # depth‐derivative with y/x smoothing
-        kz = (d.view(3,1,1) * s.view(1,3,1) * s.view(1,1,3))
+        kz = (d.view(9,1,1) * s.view(1,5,1) * s.view(1,1,5)) / (96*16*16)
         # height‐derivative with z/x smoothing
-        ky = (s.view(3,1,1) * d.view(1,3,1) * s.view(1,1,3))
+        ky = (s.view(5,1,1) * d.view(1,9,1) * s.view(1,1,5)) / (96*16*16)
         # width‐derivative with z/y smoothing
-        kx = (s.view(3,1,1) * s.view(1,3,1) * d.view(1,1,3))
+        kx = (s.view(5,1,1) * s.view(1,5,1) * d.view(1,1,9)) / (96*16*16)
 
         # reshape to conv3d weight shape: (out_ch, in_ch, D,H,W)
         # here out_ch=in_ch=1
-        self.sobel_kz = kz.unsqueeze(0).unsqueeze(0)  # [1,1,3,3,3]
-        self.sobel_ky = ky.unsqueeze(0).unsqueeze(0)
-        self.sobel_kx = kx.unsqueeze(0).unsqueeze(0)
+        self.pavel_kz = kz.unsqueeze(0).unsqueeze(0)  # [1,1,9,5,5]
+        self.pavel_ky = ky.unsqueeze(0).unsqueeze(0)
+        self.pavel_kx = kx.unsqueeze(0).unsqueeze(0)
 
         self.compute_structure_tensor = torch.compile(self.compute_structure_tensor, mode="reduce-overhead", fullgraph=True)
 
@@ -662,10 +664,10 @@ class StructureTensorInferer(Inferer):
         if sigma > 0:
             x = F.conv3d(x, self._gauss3d, padding=(self._pad,)*3)
 
-        # 2) apply Sobel
-        gx = F.conv3d(x, self.sobel_kx, padding=1)
-        gy = F.conv3d(x, self.sobel_ky, padding=1)
-        gz = F.conv3d(x, self.sobel_kz, padding=1)
+        # 2) apply Pavel
+        gx = F.conv3d(x, self.pavel_kx, padding=(2,2,4))
+        gy = F.conv3d(x, self.pavel_ky, padding=(2,4,2))
+        gz = F.conv3d(x, self.pavel_kz, padding=(4,2,2))
 
         # 3) build tensor components
         Jxx = gx * gx
