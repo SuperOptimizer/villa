@@ -326,10 +326,13 @@ def finalize_logits(
             if input_path.startswith(('s3://', 'gs://', 'azure://')):
                 # For remote storage, use fsspec's filesystem
                 fs_protocol = input_path.split('://', 1)[0]
-                fs = fsspec.filesystem(fs_protocol)
+                fs = fsspec.filesystem(fs_protocol, anon=False if fs_protocol == 's3' else None)
                 
-                if fs.exists(input_path):
-                    fs.rm(input_path, recursive=True)
+                # Remove protocol prefix for fs operations
+                path_no_prefix = input_path.split('://', 1)[1]
+                
+                if fs.exists(path_no_prefix):
+                    fs.rm(path_no_prefix, recursive=True)
                     print(f"Successfully deleted intermediate logits (remote path)")
             elif os.path.exists(input_path):
                 shutil.rmtree(input_path)
