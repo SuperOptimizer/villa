@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, Union
 
 from models.build.build_network_from_config import NetworkFromConfig
-from models.config_manager import ConfigManager
+from vesuvius.models.configuration.config_manager import ConfigManager
 
 
 def load_vesuvius_model_for_inference(

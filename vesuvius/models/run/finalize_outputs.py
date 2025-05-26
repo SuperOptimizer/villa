@@ -1,7 +1,5 @@
 import numpy as np
 import os
-import torch
-import torch.nn.functional as F
 from tqdm.auto import tqdm
 import argparse
 import zarr
@@ -14,7 +12,6 @@ from functools import partial
 from data.utils import open_zarr
 
 
-# Worker function to process a single chunk
 def process_chunk(chunk_info, input_path, output_path, mode, threshold, num_classes, spatial_shape, output_chunks):
     """
     Process a single chunk of the volume in parallel.
@@ -29,16 +26,14 @@ def process_chunk(chunk_info, input_path, output_path, mode, threshold, num_clas
         spatial_shape: Spatial dimensions of the volume (Z, Y, X)
         output_chunks: Chunk size for output
     """
-    # Extract chunk indices
+    
     chunk_idx = chunk_info['indices']
     
-    # Calculate slice for this chunk
     spatial_slices = tuple(
         slice(idx * chunk, min((idx + 1) * chunk, shape_dim))
         for idx, chunk, shape_dim in zip(chunk_idx, output_chunks[1:], spatial_shape)
     )
     
-    # Open input and output stores
     input_store = open_zarr(
         path=input_path,
         mode='r',
@@ -51,71 +46,72 @@ def process_chunk(chunk_info, input_path, output_path, mode, threshold, num_clas
         storage_options={'anon': False} if output_path.startswith('s3://') else None
     )
     
-    # Read all classes for this spatial region
-    input_slice = (slice(None),) + spatial_slices  # All classes, specific spatial region
+    input_slice = (slice(None),) + spatial_slices 
     logits_np = input_store[input_slice]
     
-    # Convert to torch tensor for processing
-    logits = torch.from_numpy(logits_np)
+    # Check if this is an empty chunk (all values are the same, indicating no meaningful data)
+    # This handles empty patches that have been filled with any constant value
+    first_value = logits_np.flat[0]  # Get the first value
+    is_empty = np.allclose(logits_np, first_value, rtol=1e-6)
     
-    # Process based on mode
+    if is_empty:
+        # For empty/homogeneous patches, don't write anything to the output store
+        # This ensures write_empty_chunks=False works correctly
+        return {'chunk_idx': chunk_idx, 'processed_voxels': 0, 'empty': True}
+    
     if mode == "binary":
         # For binary case, we just need a softmax over dim 0 (channels)
-        softmax = F.softmax(logits, dim=0)
+        # Compute softmax: exp(x) / sum(exp(x))
+        exp_logits = np.exp(logits_np - np.max(logits_np, axis=0, keepdims=True))
+        softmax = exp_logits / np.sum(exp_logits, axis=0, keepdims=True)
         
-        if threshold:  # Now a boolean flag
+        if threshold:
             # Create binary mask using argmax (class 1 is foreground)
             # Simply check if foreground probability > background probability
-            binary_mask = (softmax[1] > softmax[0]).float().unsqueeze(0)
-            output_data = binary_mask
+            binary_mask = (softmax[1] > softmax[0]).astype(np.float32)
+            output_data = binary_mask[np.newaxis, ...]  # Add channel dim
         else:
             # Extract foreground probability (channel 1)
-            fg_prob = softmax[1].unsqueeze(0)  # Add channel dim back
+            fg_prob = softmax[1:2]  
             output_data = fg_prob
             
-    else:  # multiclass
+    else:  # multiclass 
         # Apply softmax over channel dimension
-        softmax = F.softmax(logits, dim=0)
+        exp_logits = np.exp(logits_np - np.max(logits_np, axis=0, keepdims=True)) 
+        softmax = exp_logits / np.sum(exp_logits, axis=0, keepdims=True)
         
         # Compute argmax
-        argmax = torch.argmax(logits, dim=0).float().unsqueeze(0)  # Add channel dim
+        argmax = np.argmax(logits_np, axis=0).astype(np.float32)
+        argmax = argmax[np.newaxis, ...]  # Add channel dim
         
-        if threshold:  # Now a boolean flag
+        if threshold: 
             # If threshold is provided for multiclass, only save the argmax
             output_data = argmax
         else:
             # Concatenate softmax and argmax
-            output_data = torch.cat([softmax, argmax], dim=0)
+            output_data = np.concatenate([softmax, argmax], axis=0)
     
-    # Convert to numpy
-    output_np = output_data.numpy()
-    
-    # Check if this is an empty patch with 0.5 values
-    # This handles the specific case where empty patches got 0.5 values
-    is_empty = np.isclose(output_np, 0.5, rtol=1e-3).all()
-    
-    if is_empty:
-        # For empty patches, don't write anything to the output store
-        # This ensures write_empty_chunks=False works correctly
-        return {'chunk_idx': chunk_idx, 'processed_voxels': 0, 'empty': True}
+    # output_data is already numpy
+    output_np = output_data
     
     # Scale to uint8 range [0, 255]
     min_val = output_np.min()
     max_val = output_np.max()
-    if min_val < max_val:  # Avoid division by zero
-        # Scale to [0, 255] range
+    if min_val < max_val: 
         output_np = ((output_np - min_val) / (max_val - min_val) * 255).astype(np.uint8)
     else:
-        # Handle case where all values are the same but we still want to write it
-        # (shouldn't reach here due to empty patch check above)
-        output_np = np.zeros_like(output_np, dtype=np.uint8)
+        # All values are the same after processing - this is effectively an empty chunk
+        # Don't write anything to respect write_empty_chunks=False
+        return {'chunk_idx': chunk_idx, 'processed_voxels': 0, 'empty': True}
     
-    # Create output slice (all output channels for this spatial region)
+    # Final check: if the processed data is homogeneous, don't write it
+    first_processed_value = output_np.flat[0]
+    if np.all(output_np == first_processed_value):
+        # Processed chunk is homogeneous (e.g., all 0s or all 255s), skip writing
+        return {'chunk_idx': chunk_idx, 'processed_voxels': 0, 'empty': True}
+
     output_slice = (slice(None),) + spatial_slices
-    
-    # Write to output store
     output_store[output_slice] = output_np
-    
     return {'chunk_idx': chunk_idx, 'processed_voxels': np.prod(output_data.shape)}
 
 
@@ -142,24 +138,19 @@ def finalize_logits(
         num_workers: Number of worker processes to use for parallel processing
         verbose: Print progress messages
     """
-    # Disable Blosc threading to avoid deadlocks when used with multiprocessing
     numcodecs.blosc.use_threads = False
     
-    # Configure process pool size
     if num_workers is None:
-        # Use half of CPU count (rounded up) to balance performance and memory usage
         num_workers = max(1, mp.cpu_count() // 2)
     
-    print(f"Using {num_workers} worker processes for parallel processing")
+    print(f"Using {num_workers} worker processes")
     
-    # Setup compressor
     compressor = numcodecs.Blosc(
         cname='zstd',
-        clevel=1,  # Light compression for performance
+        clevel=1,  # compression level is 1 because we're only using this for mostly empty chunks
         shuffle=numcodecs.blosc.SHUFFLE
     )
     
-    # Debug info
     print(f"Opening input logits: {input_path}")
     print(f"Mode: {mode}, Threshold flag: {threshold}")
     input_store = open_zarr(
@@ -169,7 +160,6 @@ def finalize_logits(
         verbose=verbose
     )
     
-    # Get input shape and properties
     input_shape = input_store.shape
     num_classes = input_shape[0]
     spatial_shape = input_shape[1:]  # (Z, Y, X)
@@ -182,39 +172,33 @@ def finalize_logits(
     elif mode == "multiclass" and num_classes < 2:
         raise ValueError(f"Multiclass mode expects at least 2 channels, but input has {num_classes} channels.")
     
-    # Use chunks from input if not specified
     if chunk_size is None:
-        # Get chunks from input store if available
         try:
-            # Zarr chunks are directly accessible as a property
             src_chunks = input_store.chunks
             # Input chunks include class dimension - extract spatial dimensions
             output_chunks = src_chunks[1:]
             if verbose:
                 print(f"Using input chunk size: {output_chunks}")
         except:
-            # Default to reasonable chunk size if not available
-            output_chunks = (64, 64, 64)
-            print(f"Could not determine input chunks, using default: {output_chunks}")
+            raise ValueError("Cannot determine input chunk size. Please specify --chunk-size.")
     else:
         output_chunks = chunk_size
         if verbose:
             print(f"Using specified chunk size: {output_chunks}")
     
-    # Determine output shape based on mode and threshold
     if mode == "binary":
-        if threshold:  # Now a boolean flag
+        if threshold:  
             # If thresholding, only output argmax channel for binary
             output_shape = (1, *spatial_shape)  # Just the binary mask (argmax)
             print("Output will have 1 channel: [binary_mask]")
         else:
-            # Just the softmax values
-            output_shape = (1, *spatial_shape)  # Just softmax of FG class
+             # Just softmax of FG class
+            output_shape = (1, *spatial_shape) 
             print("Output will have 1 channel: [softmax_fg]")
     else:  # multiclass
-        if threshold:  # Now a boolean flag
+        if threshold:  
             # If threshold is provided for multiclass, only save the argmax
-            output_shape = (1, *spatial_shape)  # Just the argmax
+            output_shape = (1, *spatial_shape)
             print("Output will have 1 channel: [argmax]")
         else:
             # For multiclass, we'll output num_classes channels (all softmax values)
@@ -222,11 +206,9 @@ def finalize_logits(
             output_shape = (num_classes + 1, *spatial_shape)
             print(f"Output will have {num_classes + 1} channels: [softmax_c0...softmax_cN, argmax]")
     
-    # Create output store
     print(f"Creating output store: {output_path}")
     output_chunks = (1, *output_chunks)  # Chunk each channel separately
     
-    # Create output zarr array using our helper function
     output_store = open_zarr(
         path=output_path,
         mode='w',
@@ -234,37 +216,39 @@ def finalize_logits(
         verbose=verbose,
         shape=output_shape,
         chunks=output_chunks,
-        dtype=np.uint8,  # Use uint8 for the final outputs
+        dtype=np.uint8,  
         compressor=compressor,
-        write_empty_chunks=False,  # Skip empty chunks for efficiency
+        write_empty_chunks=False,
         overwrite=True
     )
     
-    # Function to calculate chunk indices
     def get_chunk_indices(shape, chunks):
         # For each dimension, calculate how many chunks we need
-        # Skip first dimension (channels) as we'll handle all channels at once
-        spatial_shape = shape[1:]  # Skip channel dimension
-        spatial_chunks = chunks[1:]  # These are the spatial chunks (skip channel dimension)
+        # Skip first dimension (channels)
+        spatial_shape = shape[1:] 
+        spatial_chunks = chunks[1:]
         
-        # Generate all combinations of chunk indices for spatial dimensions
+        # Generate all combinations of chunk indices
         from itertools import product
         chunk_counts = [int(np.ceil(s / c)) for s, c in zip(spatial_shape, spatial_chunks)]
         chunk_indices = list(product(*[range(count) for count in chunk_counts]))
         
-        # Convert to list of dictionaries for parallel processing
+        # list of dicts with indices for each chunk
+        # Each dict will have 'indices' key with the chunk indices
+        # we pass these to the worker functions 
         chunks_info = []
         for idx in chunk_indices:
             chunks_info.append({'indices': idx})
         
         return chunks_info
     
-    # Get spatial chunk indices
     chunk_infos = get_chunk_indices(input_shape, output_chunks)
     total_chunks = len(chunk_infos)
     print(f"Processing data in {total_chunks} chunks using {num_workers} worker processes...")
     
-    # Create a partial function with fixed arguments
+    # main processing function with partial application of common arguments
+    # This allows us to pass only the chunk_info to the worker function
+    # and keep the other parameters fixed
     process_chunk_partial = partial(
         process_chunk,
         input_path=input_path,
@@ -276,14 +260,12 @@ def finalize_logits(
         output_chunks=output_chunks
     )
     
-    # Process chunks in parallel
     total_processed = 0
     empty_chunks = 0
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        # Submit all tasks
+
         future_to_chunk = {executor.submit(process_chunk_partial, chunk): chunk for chunk in chunk_infos}
         
-        # Use as_completed for better progress tracking
         from concurrent.futures import as_completed
         for future in tqdm(
             as_completed(future_to_chunk),
@@ -294,7 +276,6 @@ def finalize_logits(
             try:
                 result = future.result()
                 if result.get('empty', False):
-                    # Count empty chunks that were skipped
                     empty_chunks += 1
                 else:
                     total_processed += result['processed_voxels']
@@ -304,12 +285,11 @@ def finalize_logits(
     
     print(f"\nOutput processing complete. Processed {total_chunks - empty_chunks} chunks, skipped {empty_chunks} empty chunks ({empty_chunks/total_chunks:.2%}).")
     
-    # Copy metadata/attributes from input to output if they exist
     try:
         if hasattr(input_store, 'attrs') and hasattr(output_store, 'attrs'):
             for key in input_store.attrs:
                 output_store.attrs[key] = input_store.attrs[key]
-            # Add processing info to attributes
+                
             output_store.attrs['processing_mode'] = mode
             output_store.attrs['threshold_applied'] = threshold
             output_store.attrs['empty_chunks_skipped'] = empty_chunks
@@ -318,13 +298,12 @@ def finalize_logits(
     except Exception as e:
         print(f"Warning: Failed to copy metadata: {e}")
     
-    # Clean up intermediate files if requested
     if delete_intermediates:
         print(f"Deleting intermediate logits: {input_path}")
         try:
-            # Handle both local and remote paths (S3, etc.) using fsspec
+            # we have to use fsspec for s3/gs/azure paths 
+            # os module does not work well with them
             if input_path.startswith(('s3://', 'gs://', 'azure://')):
-                # For remote storage, use fsspec's filesystem
                 fs_protocol = input_path.split('://', 1)[0]
                 fs = fsspec.filesystem(fs_protocol)
                 
@@ -364,7 +343,6 @@ def main():
     
     args = parser.parse_args()
     
-    # Parse chunk_size if provided
     chunks = None
     if args.chunk_size:
         try:

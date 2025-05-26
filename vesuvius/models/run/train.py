@@ -10,7 +10,7 @@ from utils.utils import init_weights_he
 import albumentations as A
 from models.datasets import NapariDataset, TifDataset, ZarrDataset
 from utils.plotting import save_debug
-from models.model.build_network_from_config import NetworkFromConfig
+from models.build.build_network_from_config import NetworkFromConfig
 from torch.nn import CrossEntropyLoss, MSELoss, BCELoss
 from models.training.losses import (
     BCEWithLogitsMaskedLoss,
@@ -21,6 +21,8 @@ from models.training.losses import (
     SoftDiceLoss,
     CombinedDiceBCELoss
 )
+from models.training.optimizers import create_optimizer
+from models.training.train_augmentations import compose_augmentations
 
 
 class BaseTrainer:
@@ -41,7 +43,7 @@ class BaseTrainer:
             self.mgr = mgr
         else:
             # Import ConfigManager here to avoid circular imports
-            from models.config_manager import ConfigManager
+            from vesuvius.models.configuration.config_manager import ConfigManager
             self.mgr = ConfigManager(verbose)
 
     # --- build model --- #
@@ -63,18 +65,14 @@ class BaseTrainer:
             self.mgr.inference_config = self.mgr.model_config.copy()
 
         model = NetworkFromConfig(self.mgr)
-        # Weight initialization will be done in train() method before compilation
         return model
 
     def _compose_augmentations(self):
-        from .train_augmentations import compose_augmentations
-        
         # Get all target names to create additional_targets dictionary
         additional_targets = {}
         for t_name in self.mgr.targets.keys():
             additional_targets[f'mask_{t_name}'] = 'mask'
 
-        # Determine dimension based on patch size
         dimension = '2d' if len(self.mgr.train_patch_size) == 2 else '3d'
 
         return compose_augmentations(dimension, additional_targets)
@@ -111,24 +109,15 @@ class BaseTrainer:
         # if you override this you need to allow for a loss fn to apply to every single
         # possible target in the dictionary of targets . the easiest is probably
         # to add it in losses.loss, import it here, and then add it to the map
-        
-        # Debug: Print the selected loss function from the config manager
-        if hasattr(self.mgr, 'selected_loss_function'):
-            print(f"DEBUG: Selected loss function from UI: {self.mgr.selected_loss_function}")
-        
+
         LOSS_FN_MAP = {
-            # Basic losses with masking support
             "BCELoss": BCEMaskedLoss,
             "BCEWithLogitsLoss": BCEWithLogitsMaskedLoss, 
             "CrossEntropyLoss": CrossEntropyMaskedLoss,
             "MSELoss": MSEMaskedLoss,
             "L1Loss": L1MaskedLoss,
-            
-            # Simple dice loss for binary segmentation
             "SoftDiceLoss": SoftDiceLoss,
-            
-            # Combined loss functions
-            "CombinedDiceBCELoss": CombinedDiceBCELoss,
+            "CombinedDiceBCELoss": CombinedDiceBCELoss, # linear combination of SoftDiceLoss and BCELoss
             
         }
 
@@ -145,9 +134,7 @@ class BaseTrainer:
 
     # --- optimizer ---- #
     def _get_optimizer(self, model):
-        from models.training.optimizers import create_optimizer
         
-        # Map ConfigManager params to what create_optimizer expects
         optimizer_config = {
             'name': self.mgr.optimizer,
             'learning_rate': self.mgr.initial_lr,
@@ -165,17 +152,16 @@ class BaseTrainer:
 
     # --- scaler --- #
     def _get_scaler(self, device_type='cuda'):
+        # for cuda, we can use a grad scaler for mixed precision training
+        # for mps or cpu, we create a dummy scaler that does nothing
         if device_type == 'cuda':
-            # Only create a GradScaler for CUDA
             return torch.amp.GradScaler()
         else:
-            # For MPS/CPU, return a dummy scaler that does nothing
             class DummyScaler:
                 def scale(self, loss):
                     return loss
                 
                 def unscale_(self, optimizer):
-                    # No-op operation for CPU/MPS as mentioned in task description
                     pass
                 
                 def step(self, optimizer):
@@ -197,22 +183,30 @@ class BaseTrainer:
         train_indices, val_indices = indices[:split], indices[split:]
         batch_size = self.mgr.train_batch_size
         
-        # Check if we're using MPS device for Apple Silicon
         device_type = 'mps' if hasattr(torch, 'mps') and torch.backends.mps.is_available() else 'cuda' if torch.cuda.is_available() else 'cpu'
         
         # For MPS device, set num_workers=0 to avoid pickling error
-        num_workers = 0 if device_type == 'mps' else self.mgr.train_num_dataloader_workers
+        if device_type == 'mps':
+            num_workers = 0
+        else:
+            # For CUDA or CPU, use the configured number of workers
+            # If train_num_dataloader_workers is not set, default to 0
+            if hasattr(self.mgr, 'train_num_dataloader_workers'):
+                num_workers = self.mgr.train_num_dataloader_workers
+            else:
+                num_workers = 4
         
         train_dataloader = DataLoader(dataset,
                                 batch_size=batch_size,
                                 sampler=SubsetRandomSampler(train_indices),
-                                pin_memory=(device_type == 'cuda'),  # Only use pin_memory for CUDA
-                                num_workers=0)
+                                pin_memory=(device_type == 'cuda'),  # pin_memory=True for CUDA
+                                num_workers=num_workers),
+        
         val_dataloader = DataLoader(dataset,
                                     batch_size=1,
                                     sampler=SubsetRandomSampler(val_indices),
-                                    pin_memory=(device_type == 'cuda'),  # Only use pin_memory for CUDA
-                                    num_workers=0)
+                                    pin_memory=(device_type == 'cuda'), 
+                                    num_workers=num_workers)
 
         return train_dataloader, val_dataloader, train_indices, val_indices
 
@@ -225,7 +219,6 @@ class BaseTrainer:
         dataset = self._configure_dataset()
         scheduler = self._get_scheduler(optimizer)
 
-        # Determine the best available device
         if torch.cuda.is_available():
             device = torch.device('cuda')
             print("Using CUDA device")
@@ -238,6 +231,7 @@ class BaseTrainer:
         
         # Apply weight initialization with recommended negative_slope=0.2 for LeakyReLU
         # Do this BEFORE device transfer and compilation
+
         model.apply(lambda module: init_weights_he(module, neg_slope=0.2))
         
         model = model.to(device)
@@ -297,7 +291,6 @@ class BaseTrainer:
                 # We may need to rebuild the model with the saved configuration
                 if model.autoconfigure != checkpoint['model_config'].get('autoconfigure', True):
                     print("Model autoconfiguration differs, rebuilding model from checkpoint config")
-                    from model.build_network_from_config import NetworkFromConfig
                     
                     # Create a version of the manager with the checkpoint's configuration
                     class ConfigWrapper:
@@ -844,7 +837,7 @@ if __name__ == '__main__':
     Path(args.output).mkdir(parents=True, exist_ok=True)
     
     # Initialize ConfigManager
-    from models.config_manager import ConfigManager
+    from vesuvius.models.configuration.config_manager import ConfigManager
     mgr = ConfigManager(verbose=args.verbose)
     
     # Load config file if provided, otherwise initialize with defaults

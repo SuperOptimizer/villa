@@ -1,9 +1,16 @@
 import importlib
-
 import torch
 from torch import optim
 import torch.nn
+from typing import Type
+import numpy as np
+from torch.nn.modules.batchnorm import _BatchNorm
+from torch.nn.modules.conv import _ConvNd, _ConvTransposeNd
+from torch.nn.modules.dropout import _DropoutNd
+from torch.nn.modules.instancenorm import _InstanceNorm
 
+# a significant part of this code is copied from nnUNetv2
+# https://github.com/MIC-DKFZ/nnUNet
 
 def get_number_of_learnable_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -84,15 +91,6 @@ class bcolors:
     ENDC = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
-
-from typing import Type
-import numpy as np
-import torch.nn
-from torch import nn
-from torch.nn.modules.batchnorm import _BatchNorm
-from torch.nn.modules.conv import _ConvNd, _ConvTransposeNd
-from torch.nn.modules.dropout import _DropoutNd
-from torch.nn.modules.instancenorm import _InstanceNorm
 
 
 def convert_dim_to_conv_op(dimension: int) -> Type[_ConvNd]:

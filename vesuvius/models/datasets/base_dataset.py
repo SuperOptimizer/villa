@@ -14,9 +14,6 @@ class BaseDataset(Dataset):
     """
     A PyTorch Dataset base class for handling both 2D and 3D data from various sources.
     
-    This dataset automatically detects if the provided data is 2D or 3D and 
-    handles it appropriately throughout the data loading process.
-    
     Subclasses must implement the _initialize_volumes() method to specify how
     data is loaded from their specific data source.
     """
@@ -45,6 +42,10 @@ class BaseDataset(Dataset):
         self.min_labeled_ratio = mgr.min_labeled_ratio
         self.min_bbox_percent = mgr.min_bbox_percent
         self.dilate_label = mgr.dilate_label
+
+        # New binarization control parameters
+        self.binarize_labels = mgr.binarize_labels
+        self.target_value = mgr.target_value
 
         self.image_transforms = image_transforms
         self.volume_transforms = volume_transforms
@@ -104,14 +105,10 @@ class BaseDataset(Dataset):
                 mask_data = vdata['mask']
                 print(f"Using mask for patch extraction in volume {vol_idx}")
             else:
-                # Create a simple mask from label data (non-zero regions)
-                # Handle both numpy arrays and zarr arrays
                 if hasattr(label_data, 'shape') and hasattr(label_data, '__array__'):
-                    # For zarr arrays, convert to numpy first
                     label_np = np.asarray(label_data)
                     mask_data = (label_np > 0).astype(np.float32)
                 else:
-                    # For regular numpy arrays
                     mask_data = (label_data > 0).astype(np.float32)
                 print(f"No mask found for volume {vol_idx}, using label data for patch extraction")
             
@@ -119,7 +116,7 @@ class BaseDataset(Dataset):
                 h, w = self.patch_size[0], self.patch_size[1]  # y, x
                 patches = find_mask_patches_2d(
                     mask_data,
-                    label_data,  # Pass the label data as well
+                    label_data,
                     patch_size=[h, w], 
                     min_mask_coverage=1.0,
                     min_labeled_ratio=self.min_labeled_ratio
@@ -128,7 +125,7 @@ class BaseDataset(Dataset):
             else:
                 patches = find_mask_patches(
                     mask_data,
-                    label_data,  # Pass the label data as well
+                    label_data,
                     patch_size=self.patch_size, 
                     min_mask_coverage=1.0,
                     min_labeled_ratio=self.min_labeled_ratio
@@ -142,7 +139,6 @@ class BaseDataset(Dataset):
                 })
 
     def __len__(self):
-        """Return the total number of valid patches."""
         return len(self.valid_patches)
 
     def _validate_dimensionality(self, data_item, ref_item=None):
@@ -268,24 +264,95 @@ class BaseDataset(Dataset):
             volume_info = volumes_list[vol_idx]
             label_arr = volume_info['data']['label']
             
-            # Extract label patch with appropriate dimensionality
             if is_2d:
                 label_patch = label_arr[y:y+dy, x:x+dx]
-                target_value = self._get_target_value(t_name)
                 
-                # Binarize label: keep zeros as zero, set non-zeros to target_value
-                binary_mask = (label_patch > 0)
-                label_patch = np.zeros_like(label_patch)
-                label_patch[binary_mask] = target_value
+                # Apply binarization only if configured to do so
+                if self.binarize_labels:
+                    target_value = self._get_target_value(t_name)
+                    
+                    if isinstance(target_value, dict):
+                        # Check if this is a multi-class config with regions
+                        if 'mapping' in target_value:
+                            # New format with mapping and optional regions
+                            mapping = target_value['mapping']
+                            regions = target_value.get('regions', {})
+                            
+                            # First apply standard mapping
+                            new_label_patch = np.zeros_like(label_patch)
+                            for original_val, new_val in mapping.items():
+                                mask = (label_patch == original_val)
+                                new_label_patch[mask] = new_val
+                            
+                            # Then apply regions (which override)
+                            for region_id, source_classes in regions.items():
+                                # Create mask for any pixel that belongs to source classes
+                                region_mask = np.zeros_like(new_label_patch, dtype=bool)
+                                for source_class in source_classes:
+                                    region_mask |= (new_label_patch == source_class)
+                                # Override those pixels with the region ID
+                                new_label_patch[region_mask] = region_id
+                            
+                            label_patch = new_label_patch
+                        else:
+                            # Old format: direct mapping
+                            new_label_patch = np.zeros_like(label_patch)
+                            for original_val, new_val in target_value.items():
+                                mask = (label_patch == original_val)
+                                new_label_patch[mask] = new_val
+                            label_patch = new_label_patch
+                    else:
+                        # Single class binarization: keep zeros as zero, set non-zeros to target_value
+                        binary_mask = (label_patch > 0)
+                        new_label_patch = np.zeros_like(label_patch)
+                        new_label_patch[binary_mask] = target_value
+                        label_patch = new_label_patch
+                        
                 label_patch = pad_or_crop_2d(label_patch, (dy, dx))
             else:
                 label_patch = label_arr[z:z+dz, y:y+dy, x:x+dx]
-                target_value = self._get_target_value(t_name)
                 
-                # Binarize label: keep zeros as zero, set non-zeros to target_value
-                binary_mask = (label_patch > 0)
-                label_patch = np.zeros_like(label_patch)
-                label_patch[binary_mask] = target_value
+                # Apply binarization only if configured to do so
+                if self.binarize_labels:
+                    target_value = self._get_target_value(t_name)
+                    
+                    if isinstance(target_value, dict):
+                        # Check if this is a multi-class config with regions
+                        if 'mapping' in target_value:
+                            # New format with mapping and optional regions
+                            mapping = target_value['mapping']
+                            regions = target_value.get('regions', {})
+                            
+                            # First apply standard mapping
+                            new_label_patch = np.zeros_like(label_patch)
+                            for original_val, new_val in mapping.items():
+                                mask = (label_patch == original_val)
+                                new_label_patch[mask] = new_val
+                            
+                            # Then apply regions (which override)
+                            for region_id, source_classes in regions.items():
+                                # Create mask for any pixel that belongs to source classes
+                                region_mask = np.zeros_like(new_label_patch, dtype=bool)
+                                for source_class in source_classes:
+                                    region_mask |= (new_label_patch == source_class)
+                                # Override those pixels with the region ID
+                                new_label_patch[region_mask] = region_id
+                            
+                            label_patch = new_label_patch
+                        else:
+                            # Old format: direct mapping
+                            new_label_patch = np.zeros_like(label_patch)
+                            for original_val, new_val in target_value.items():
+                                mask = (label_patch == original_val)
+                                new_label_patch[mask] = new_val
+                            label_patch = new_label_patch
+                    else:
+                        # Single class binarization: keep zeros as zero, set non-zeros to target_value
+                        binary_mask = (label_patch > 0)
+                        new_label_patch = np.zeros_like(label_patch)
+                        new_label_patch[binary_mask] = target_value
+                        label_patch = new_label_patch
+                        
                 label_patch = pad_or_crop_3d(label_patch, (dz, dy, dx))
             
             # Ensure consistent data type
@@ -296,7 +363,7 @@ class BaseDataset(Dataset):
     
     def _get_target_value(self, t_name):
         """
-        Extract target value from target name if it has a format like "32_3".
+        Extract target value from configuration.
         
         Parameters
         ----------
@@ -305,15 +372,18 @@ class BaseDataset(Dataset):
             
         Returns
         -------
-        int
-            Target value, defaults to 1 if no specific value found
+        int or dict
+            Target value(s) - can be int for single class or dict for multi-class
         """
-        target_value = 1
-        if "_" in t_name:
-            suffix = t_name.split("_")[-1]
-            if suffix.isdigit():
-                target_value = int(suffix)
-        return target_value
+        # Check if target_value is configured
+        if isinstance(self.target_value, dict) and t_name in self.target_value:
+            return self.target_value[t_name]
+        elif isinstance(self.target_value, int):
+            return self.target_value
+        else:
+            # Default to 1 if not configured
+            print(f"Warning: No target value configured for '{t_name}', defaulting to 1")
+            return 1
     
     def _extract_loss_mask(self, vol_idx, z, y, x, dz, dy, dx, is_2d):
         """
@@ -437,26 +507,47 @@ class BaseDataset(Dataset):
         if loss_mask is not None:
             data_dict["loss_mask"] = torch.from_numpy(loss_mask)
         
-        # Process all labels based on loss function
+        # Process all labels based on target configuration
         for t_name, label_patch in label_patches.items():
-            # Get the loss function for this target
-            loss_fn = self.targets[t_name].get("loss_fn", "SoftDiceLoss")
+            # Check if this is a multi-class target with regions
+            target_value = self._get_target_value(t_name)
+            is_multiclass_with_regions = (
+                isinstance(target_value, dict) and 
+                'mapping' in target_value and 
+                ('regions' in target_value or len(target_value['mapping']) > 2)
+            )
             
-            # Update to use a single channel (foreground only)
-            self.targets[t_name]["out_channels"] = 1
-            
-            # For all losses: use binary mask with a single channel
-            binary_mask = (label_patch > 0).astype(np.float32)
-            
-            # Add channel dimension
-            if is_2d:
-                # 2D case: [1, H, W]
-                binary_mask = binary_mask[np.newaxis, ...]
+            if is_multiclass_with_regions:
+                # Multi-class segmentation: use integer labels
+                # Determine number of classes (max label value + 1)
+                unique_vals = np.unique(label_patch)
+                num_classes = int(unique_vals.max()) + 1
+                
+                # Update target configuration for multi-class
+                self.targets[t_name]["out_channels"] = num_classes
+                self.targets[t_name]["loss_fn"] = "CrossEntropyLoss"
+                
+                # Convert to long tensor for CrossEntropyLoss
+                label_tensor = torch.from_numpy(label_patch.astype(np.int64))
             else:
-                # 3D case: [1, D, H, W]
-                binary_mask = binary_mask[np.newaxis, ...]
+                # Binary segmentation: use binary mask
+                loss_fn = self.targets[t_name].get("loss_fn", "SoftDiceLoss")
+                self.targets[t_name]["out_channels"] = 1
+                
+                # For binary tasks: use binary mask with a single channel
+                binary_mask = (label_patch > 0).astype(np.float32)
+                
+                # Add channel dimension
+                if is_2d:
+                    # 2D case: [1, H, W]
+                    binary_mask = binary_mask[np.newaxis, ...]
+                else:
+                    # 3D case: [1, D, H, W]
+                    binary_mask = binary_mask[np.newaxis, ...]
+                
+                label_tensor = torch.from_numpy(binary_mask)
             
-            data_dict[t_name] = torch.from_numpy(binary_mask)
+            data_dict[t_name] = label_tensor
         
         return data_dict
     

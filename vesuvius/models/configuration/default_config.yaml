@@ -30,6 +30,15 @@ model_config:
 dataset_config:
   min_bbox_percent: 0.30      # optional, 0.97 [float] a percentage of the patch size that must be encompassed by a bbox containing all the labels in the patch
   min_labeled_ratio: 0.25     # optional, 0.15 [float] a percentage of the above bbox that must contain labeled data (ie: the density of the labels)
+  binarize_labels: true       # optional, true [bool] whether to apply binarization/remapping to labels (set to false if labels are already properly formatted)
+  target_value:               # optional [int/dict] value(s) to assign to foreground pixels
+    ink: 1                    # For binary task: any non-zero pixels in label will be set to this value
+    # For multi-class task, use nested dictionary:
+    # segmentation:
+    #   0: 0  # background stays 0
+    #   1: 1  # class 1 stays 1
+    #   2: 2  # class 2 stays 2
+    #   3: 2  # class 3 merged into class 2
 
 inference_config:                           # these parameters only apply on inference
   checkpoint_path: "./checkpoints/ckpt.pth" # the checkpoint to load

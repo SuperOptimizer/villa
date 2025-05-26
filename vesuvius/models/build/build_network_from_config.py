@@ -38,13 +38,16 @@ RUNTIME VALIDATION:
 
 The network automatically configures pooling, convolution, and normalization operations
 based on the dimensionality of the input patch size (2D vs 3D).
+
+this is inspired by the nnUNet architecture.
+https://github.com/MIC-DKFZ/nnUNet
 """
 
 import torch.nn as nn
-from .utils import get_pool_and_conv_props, get_n_blocks_per_stage
-from models.model.build.encoder import Encoder
-from models.model.build.decoder import Decoder
-from models.model.build.activations import SwiGLUBlock, GLUBlock
+from ..utils import get_pool_and_conv_props, get_n_blocks_per_stage
+from .encoder import Encoder
+from .decoder import Decoder
+from .activations import SwiGLUBlock, GLUBlock
 
 def get_activation_module(activation_str: str):
     act_str = activation_str.lower()

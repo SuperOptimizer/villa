@@ -17,20 +17,38 @@ class ZarrDataset(BaseDataset):
         Initialize volumes from Zarr files.
         
         Expected directory structure:
+        
+        For multi-task scenarios:
+        data_path/
+        ├── images/
+        │   ├── image1.zarr/      # Single image directory
+        │   ├── image2.zarr/      # Single image directory
+        │   └── ...
+        ├── labels/
+        │   ├── image1_ink.zarr/
+        │   ├── image1_damage.zarr/
+        │   ├── image2_ink.zarr/
+        │   ├── image2_damage.zarr/
+        │   └── ...
+        └── masks/
+            ├── image1_ink.zarr/
+            ├── image1_damage.zarr/
+            ├── image2_ink.zarr/
+            ├── image2_damage.zarr/
+            └── ...
+            
+        For single-task scenarios:
         data_path/
         ├── images/
         │   ├── image1_ink.zarr/
-        │   ├── image1_normals.zarr/
         │   ├── image2_ink.zarr/
         │   └── ...
         ├── labels/
         │   ├── image1_ink.zarr/
-        │   ├── image1_normals.zarr/
         │   ├── image2_ink.zarr/
         │   └── ...
         └── masks/
             ├── image1_ink.zarr/
-            ├── image1_normals.zarr/
             ├── image2_ink.zarr/
             └── ...
         """
@@ -55,24 +73,28 @@ class ZarrDataset(BaseDataset):
         configured_targets = set(self.mgr.targets.keys())
         print(f"Looking for configured targets: {configured_targets}")
         
-        # Find all zarr directories and parse their names
-        zarr_dirs = [d for d in images_dir.iterdir() if d.is_dir() and d.suffix == '.zarr']
-        if not zarr_dirs:
-            raise ValueError(f"No .zarr directories found in {images_dir}")
+        # Find all label directories to determine which images and targets we need
+        label_dirs = [d for d in labels_dir.iterdir() if d.is_dir() and d.suffix == '.zarr']
+        if not label_dirs:
+            raise ValueError(f"No .zarr directories found in {labels_dir}")
         
         # Group files by target and image identifier
         targets_data = defaultdict(lambda: defaultdict(dict))
         
-        for zarr_dir in zarr_dirs:
-            # Parse directory name: image1_ink.zarr -> image_id="image1", target="ink"
-            stem = zarr_dir.stem  # Remove .zarr extension
+        # Process each label directory
+        for label_dir in label_dirs:
+            stem = label_dir.stem  # Remove .zarr extension
+            
+            # Parse label directory name: image1_ink.zarr -> image_id="image1", target="ink"
             if '_' not in stem:
-                raise ValueError(f"Invalid directory name format: {zarr_dir.name}. Expected format: imageN_target.zarr")
+                print(f"Skipping label directory without underscore: {label_dir.name}")
+                continue
             
             # Split on the last underscore to handle cases like "image1_test_ink"
             parts = stem.rsplit('_', 1)
             if len(parts) != 2:
-                raise ValueError(f"Invalid directory name format: {zarr_dir.name}. Expected format: imageN_target.zarr")
+                print(f"Invalid label directory name format: {label_dir.name}")
+                continue
             
             image_id, target = parts
             
@@ -81,16 +103,22 @@ class ZarrDataset(BaseDataset):
                 print(f"Skipping {image_id}_{target} - not in configured targets")
                 continue
             
-            # Find corresponding label and mask directories
-            label_dir = labels_dir / zarr_dir.name
-            mask_dir = masks_dir / zarr_dir.name
+            # Look for corresponding image directory
+            # First try without task suffix (multi-task scenario)
+            image_dir = images_dir / f"{image_id}.zarr"
             
-            if not label_dir.exists():
-                raise ValueError(f"Corresponding label directory not found: {label_dir}")
+            # If not found, try with task suffix (single-task/backward compatibility)
+            if not image_dir.exists():
+                image_dir = images_dir / f"{image_id}_{target}.zarr"
+                if not image_dir.exists():
+                    raise ValueError(f"Image directory not found for {image_id} (tried {image_id}.zarr and {image_id}_{target}.zarr)")
+            
+            # Look for mask directory (always with task suffix)
+            mask_dir = masks_dir / f"{image_id}_{target}.zarr"
             
             # Open zarr arrays - these are already lazily loaded
             try:
-                data_array = zarr.open(str(zarr_dir), mode='r')
+                data_array = zarr.open(str(image_dir), mode='r')
                 label_array = zarr.open(str(label_dir), mode='r')
                 
                 # Store in the nested dictionary - only include mask if it exists
@@ -112,7 +140,7 @@ class ZarrDataset(BaseDataset):
                 print(f"Registered {image_id}_{target} with shape {data_array.shape} (lazy zarr)")
                 
             except Exception as e:
-                raise ValueError(f"Error opening zarr directory {zarr_dir}: {e}")
+                raise ValueError(f"Error opening zarr directories: {e}")
         
         # Check that all configured targets were found
         found_targets = set(targets_data.keys())

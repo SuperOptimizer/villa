@@ -69,11 +69,21 @@ class ConfigManager:
         self.min_labeled_ratio = float(self.dataset_config.get("min_labeled_ratio", 0.10))
         self.min_bbox_percent = float(self.dataset_config.get("min_bbox_percent", 0.95))
         
+        # New configuration parameters for binarization control
+        self.binarize_labels = bool(self.dataset_config.get("binarize_labels", True))
+        self.target_value = self.dataset_config.get("target_value", "auto")  # "auto", int, or dict
+        
         # Only initialize targets from config if not already created dynamically
         if not hasattr(self, 'targets') or not self.targets:
             self.targets = self.dataset_config.get("targets", {})
             if self.verbose and self.targets:
                 print(f"Loaded targets from config: {self.targets}")
+                
+        if self.verbose:
+            print(f"Binarization settings - binarize_labels: {self.binarize_labels}, target_value: {self.target_value}")
+            
+        # Validate configuration consistency
+        self._validate_binarization_config()
 
         # model config
         
@@ -207,7 +217,8 @@ class ConfigManager:
 
         print(f"Configuration saved to: {config_path}")
 
-    def update_config(self, patch_size=None, min_labeled_ratio=None, max_epochs=None, loss_function=None):
+    def update_config(self, patch_size=None, min_labeled_ratio=None, max_epochs=None, loss_function=None, 
+                     binarize_labels=None, target_value=None):
         if patch_size is not None:
             if isinstance(patch_size, (list, tuple)) and len(patch_size) >= 2:
                 self.train_patch_size = tuple(patch_size)
@@ -230,6 +241,18 @@ class ConfigManager:
             if self.verbose:
                 print(f"Updated min labeled ratio: {self.min_labeled_ratio:.2f}")
         
+        if binarize_labels is not None:
+            self.binarize_labels = bool(binarize_labels)
+            self.dataset_config["binarize_labels"] = self.binarize_labels
+            if self.verbose:
+                print(f"Updated binarize_labels: {self.binarize_labels}")
+        
+        if target_value is not None:
+            self.target_value = target_value
+            self.dataset_config["target_value"] = self.target_value
+            if self.verbose:
+                print(f"Updated target_value: {self.target_value}")
+        
         if loss_function is not None:
             self.selected_loss_function = loss_function
             if hasattr(self, 'targets') and self.targets:
@@ -239,6 +262,83 @@ class ConfigManager:
                     print(f"Applied loss function '{self.selected_loss_function}' to all targets")
             elif self.verbose:
                 print(f"Set loss function: {self.selected_loss_function}")
+    
+    def _validate_binarization_config(self):
+        """
+        Validate the binarization configuration parameters for consistency.
+        """
+        if not self.binarize_labels and isinstance(self.target_value, dict):
+            if self.verbose:
+                print("Warning: target_value is a dict but binarize_labels is False. Target value mapping will be ignored.")
+        
+        if isinstance(self.target_value, dict):
+            for target_name, value in self.target_value.items():
+                if isinstance(value, dict):
+                    # Check if this is the new format with mapping and regions
+                    if 'mapping' in value:
+                        # New format with mapping and optional regions
+                        mapping = value['mapping']
+                        regions = value.get('regions', {})
+                        
+                        # Validate mapping
+                        for orig_val, new_val in mapping.items():
+                            if not isinstance(orig_val, (int, float)) or not isinstance(new_val, (int, float)):
+                                raise ValueError(f"Invalid mapping in target '{target_name}': {orig_val} -> {new_val}. Both values must be numeric.")
+                        
+                        # Validate regions
+                        if regions:
+                            mapped_values = set(mapping.values())
+                            for region_id, source_classes in regions.items():
+                                if not isinstance(region_id, (int, float)):
+                                    raise ValueError(f"Region ID must be numeric, got {region_id} ({type(region_id).__name__})")
+                                if region_id in mapped_values:
+                                    raise ValueError(
+                                        f"Region ID {region_id} conflicts with existing mapped class in target '{target_name}'. "
+                                        f"Mapped classes: {sorted(mapped_values)}"
+                                    )
+                                if not isinstance(source_classes, list):
+                                    raise ValueError(
+                                        f"Region {region_id} in target '{target_name}' must specify a list of source classes, "
+                                        f"got {type(source_classes).__name__}"
+                                    )
+                                for src_class in source_classes:
+                                    if not isinstance(src_class, (int, float)):
+                                        raise ValueError(
+                                            f"Source class {src_class} in region {region_id} must be numeric"
+                                        )
+                    else:
+                        # Old format: direct mapping
+                        for orig_val, new_val in value.items():
+                            if not isinstance(orig_val, (int, float)) or not isinstance(new_val, (int, float)):
+                                raise ValueError(f"Invalid multi-class mapping in target '{target_name}': {orig_val} -> {new_val}. Both values must be numeric.")
+                elif not isinstance(value, (int, float)):
+                    raise ValueError(f"Invalid target_value for '{target_name}': {value}. Must be int, float, or dict for multi-class mapping.")
+        elif self.target_value not in ["auto"] and not isinstance(self.target_value, (int, float)):
+            raise ValueError(f"Invalid target_value: {self.target_value}. Must be 'auto', int, float, or dict.")
+    
+    def set_binarization_config(self, binarize_labels=None, target_value=None):
+        """
+        Update binarization configuration and validate consistency.
+        
+        Parameters
+        ----------
+        binarize_labels : bool, optional
+            Whether to apply binarization to labels
+        target_value : str, int, float, or dict, optional
+            Target value(s) for binarization
+        """
+        if binarize_labels is not None:
+            self.binarize_labels = bool(binarize_labels)
+            self.dataset_config["binarize_labels"] = self.binarize_labels
+            
+        if target_value is not None:
+            self.target_value = target_value
+            self.dataset_config["target_value"] = self.target_value
+            
+        self._validate_binarization_config()
+        
+        if self.verbose:
+            print(f"Updated binarization config - binarize_labels: {self.binarize_labels}, target_value: {self.target_value}")
     
     def _print_summary(self):
         print("____________________________________________")

@@ -37,7 +37,7 @@ class Inferer():
                  num_dataloader_workers: int = 4,
                  verbose: bool = False,
                  skip_empty_patches: bool = True,  # Skip empty/homogeneous patches
-                 # parmas to get passed to Volume 
+                 # params to get passed to Volume 
                  scroll_id: [str, int] = None,
                  segment_id: [str, int] = None,
                  energy: int = None,
@@ -181,12 +181,8 @@ class Inferer():
                 if self.verbose:
                     print(f"Inferred number of output classes via dummy inference: {self.num_classes}")
             except Exception as e:
-                print(f"Warning: Could not automatically determine number of classes via dummy inference: {e}")
-                print("Ensure your model is loaded correctly and check the expected input shape.")
-                # Default to binary segmentation as fallback
-                self.num_classes = 2
-                print(f"Using default num_classes: {self.num_classes}")
-
+                raise RuntimeError(f"Warning: Could not automatically determine number of classes via dummy inference: {e}. \nEnsure your model is loaded correctly and check the expected input shape")
+            
         return model
 
     def _create_dataset_and_loader(self):
@@ -202,9 +198,7 @@ class Inferer():
             input_format=self.input_format,
             verbose=self.verbose,
             mode='infer',
-            # Pass skip_empty_patches flag
             skip_empty_patches=self.skip_empty_patches,
-            # Pass Volume-specific parameters
             scroll_id=self.scroll_id,
             segment_id=self.segment_id,
             energy=self.energy,
@@ -262,12 +256,11 @@ class Inferer():
 
         compressor = self._get_zarr_compressor()
         output_shape = (self.num_total_patches, self.num_classes, *self.patch_size)
-        output_chunks = (1, self.num_classes, *self.patch_size)  # Chunk by individual patch
+        output_chunks = (1, self.num_classes, *self.patch_size)  # we align chunks to patch size for better write performance
         main_store_path = os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr")
         
         print(f"Creating output store at: {main_store_path}")
         
-        # Create the zarr array using our helper function
         self.output_store = open_zarr(
             path=main_store_path, 
             mode='w',  
@@ -281,17 +274,14 @@ class Inferer():
                                       # the proper indices for later re-zarring 
         )
         
-        # Verify the zarr array was created
         print(f"Created zarr array at {main_store_path} with shape {self.output_store.shape}")
         
-        # Create coordinates zarr array
         self.coords_store_path = os.path.join(self.output_dir, f"coordinates_part_{self.part_id}.zarr")
         coord_shape = (self.num_total_patches, len(self.patch_size))
         coord_chunks = (min(self.num_total_patches, 4096), len(self.patch_size))
         
         print(f"Creating coordinates store at: {self.coords_store_path}")
         
-        # Create the coordinates zarr array with our helper function
         coords_store = open_zarr(
             path=self.coords_store_path,
             mode='w',
@@ -304,7 +294,6 @@ class Inferer():
             write_empty_chunks=False  
         )
         
-        # Verify the coordinates array was created
         print(f"Created coordinates zarr array at {self.coords_store_path} with shape {coords_store.shape}")
         
         try:
@@ -341,21 +330,13 @@ class Inferer():
         return self.output_store
 
     def _process_batches(self):
-        # Disable Blosc threading to avoid deadlocks when used with multiprocessing
         numcodecs.blosc.use_threads = False
         
         self.current_patch_write_index = 0
         max_workers = min(16, os.cpu_count() or 4)
         
-        # Use the output_store that was already created in _create_output_stores()
-        # No need to reopen it since we already have it
         zarr_path = os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr")
         
-        # Debug information
-        # print(f"Using output path: {zarr_path}")
-        # print(f"Output directory type: {type(self.output_dir)}, value: '{self.output_dir}'")
-        
-        # Validate zarr_path is not empty
         if not zarr_path:
             error_msg = f"Error: Empty zarr_path generated from output_dir='{self.output_dir}'"
             print(error_msg)
@@ -363,56 +344,38 @@ class Inferer():
         
         # Verify we have a valid output store from _create_output_stores()
         if self.output_store is None:
-            error_msg = f"Error: output_store is None. Make sure _create_output_stores() was called successfully."
-            print(error_msg)
-            raise RuntimeError(error_msg)
+            raise RuntimeError(f"Error: output_store is None. Make sure _create_output_stores() was called successfully.")
             
         if self.verbose:
             print(f"Using existing output store: {zarr_path}")
             print(f"Output store shape: {self.output_store.shape}")
         
-        # Keep a reference to the output store that will be shared by all threads
+        # reference to the output store that will be shared by all threads
         output_store = self.output_store
         
-        # Define write function that uses the shared output store
         def write_patch(write_index, patch_data):
-            # print(f"Writing patch {write_index} to {zarr_path}")
             try:
-                # Use the already opened shared output store
-                try:
-                    if not zarr_path or zarr_path.strip() == '':
-                        raise ValueError(f"Empty zarr path provided for index {write_index}")
-                        
-                    # Write directly to the shared output store
-                    output_store[write_index] = patch_data
-                   # print(f"Successfully wrote patch {write_index}")
-                except Exception as e:
-                    print(f"Error in write_patch with index {write_index}: {str(e)} (zarr_path={zarr_path})")
-                    import traceback
-                    traceback.print_exc()
-                    raise e
+                output_store[write_index] = patch_data
                 return write_index
             except Exception as e:
-                print(f"Error writing patch at index {write_index}: {str(e)}")
-                return None
+                raise RuntimeError(f"Failed to write patch at index {write_index}: {str(e)}")
             
         with tqdm(total=self.num_total_patches, desc=f"Inferring Part {self.part_id}") as pbar:
-            # Use ThreadPoolExecutor for I/O-bound tasks
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = []
                 
                 for batch_data in self.dataloader:
-                    if isinstance(batch_data, (list, tuple)):
-                        input_batch = batch_data[0].to(self.device)
-                        is_empty_flags = [False] * input_batch.shape[0]
-                    elif isinstance(batch_data, dict):
+                    if isinstance(batch_data, dict):
                         input_batch = batch_data['data'].to(self.device)
                         is_empty_flags = batch_data.get('is_empty', [False] * input_batch.shape[0])
+                    elif isinstance(batch_data, (list, tuple)):
+                        input_batch = batch_data[0].to(self.device)
+                        is_empty_flags = [False] * input_batch.shape[0]
                     else:
                         input_batch = batch_data.to(self.device)
                         is_empty_flags = [False] * input_batch.shape[0]
                     
-                    # Skip invalid batches
+                    # the case that the batch is empty is valid, e.g. when the input volume is smaller than the patch size
                     if input_batch is None or input_batch.shape[0] == 0:
                         if self.verbose:
                             print("Skipping batch with no valid data")
@@ -429,14 +392,13 @@ class Inferer():
                     if non_empty_indices:
                         non_empty_input = input_batch[non_empty_indices]
                         
-                        # Perform inference with or without TTA
                         with torch.no_grad(), torch.amp.autocast('cuda'):
                             if self.do_tta:
                                 # --- TTA ---
                                 outputs_batch_tta = []  # Store list of outputs for each TTA for the batch
 
                                 if self.tta_type == 'mirroring':
-                                    # Apply model to original and mirrored versions (but only for non-empty patches)
+                                    # Apply model to original and mirrored versions
                                     m0 = self.model(non_empty_input)
                                     m1 = self.model(torch.flip(non_empty_input, dims=[-1]))
                                     m2 = self.model(torch.flip(non_empty_input, dims=[-2]))
@@ -500,14 +462,12 @@ class Inferer():
                     
                     patch_indices = batch_data.get('index', list(range(current_batch_size)))
                     
-                    # Submit each patch for writing
                     for i in range(current_batch_size):
                         patch_data = output_np[i]  # Shape: (C, Z, Y, X)
                         write_index = patch_indices[i] if i < len(patch_indices) else i
                         future = executor.submit(write_patch, write_index, patch_data)
                         futures.append(future)
                         
-                    # Process completed futures
                     completed = [f for f in futures if f.done()]
                     for future in completed:
                         try:
@@ -518,14 +478,12 @@ class Inferer():
                         except Exception as e:
                             print(f"Error processing future result: {e}")
                     
-                    # Keep only pending futures
                     futures = [f for f in futures if not f.done()]
                 
-                # Process any remaining futures
                 for future in futures:
                     try:
                         result = future.result()
-                        if result is not None:  # Only update if write was successful
+                        if result is not None: 
                             pbar.update(1)
                             self.current_patch_write_index += 1
                     except Exception as e:
@@ -534,7 +492,6 @@ class Inferer():
         if self.verbose:
             print(f"Finished writing {self.current_patch_write_index} patches.")
         
-        # Verify completion and report
         if self.current_patch_write_index != self.num_total_patches:
             print(f"Warning: Expected {self.num_total_patches} patches, but wrote {self.current_patch_write_index}.")
 
@@ -688,8 +645,8 @@ def main():
                 else:
                     coords_exists = os.path.exists(coords_path)
             except Exception as e:
-                print(f"Error checking if output paths exist: {e}")
-                # Continue anyway and try to open the stores
+                print(f"Warning: Could not verify if output files exist: {e}")
+                print("Attempting to proceed with inspection anyway...")
                 logits_exists = True
                 coords_exists = True
             
@@ -699,7 +656,6 @@ def main():
 
                 print("\n--- Inspecting Output Store ---")
                 try:
-                    # Open the zarr store using our helper function
                     output_store = open_zarr(
                         path=logits_path,
                         mode='r',

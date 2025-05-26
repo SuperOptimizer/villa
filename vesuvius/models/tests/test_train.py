@@ -24,7 +24,7 @@ import os
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from run.train import BaseTrainer
-from config_manager import ConfigManager
+from vesuvius.models.configuration.config_manager import ConfigManager
 from tests.create_test_dataset import TestDatasetCreator
 
 

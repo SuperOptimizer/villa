@@ -17,20 +17,38 @@ class TifDataset(BaseDataset):
         Initialize volumes from TIFF files using dask_image for lazy loading.
         
         Expected directory structure:
+        
+        For multi-task scenarios:
+        data_path/
+        ├── images/
+        │   ├── image1.tif      # Single image file
+        │   ├── image2.tif      # Single image file
+        │   └── ...
+        ├── labels/
+        │   ├── image1_ink.tif
+        │   ├── image1_damage.tif
+        │   ├── image2_ink.tif
+        │   ├── image2_damage.tif
+        │   └── ...
+        └── masks/
+            ├── image1_ink.tif
+            ├── image1_damage.tif
+            ├── image2_ink.tif
+            ├── image2_damage.tif
+            └── ...
+            
+        For single-task scenarios:
         data_path/
         ├── images/
         │   ├── image1_ink.tif
-        │   ├── image1_normals.tif
         │   ├── image2_ink.tif
         │   └── ...
         ├── labels/
         │   ├── image1_ink.tif
-        │   ├── image1_normals.tif
         │   ├── image2_ink.tif
         │   └── ...
         └── masks/
             ├── image1_ink.tif
-            ├── image1_normals.tif
             ├── image2_ink.tif
             └── ...
         """
@@ -55,24 +73,28 @@ class TifDataset(BaseDataset):
         configured_targets = set(self.mgr.targets.keys())
         print(f"Looking for configured targets: {configured_targets}")
         
-        # Find all image files and parse their names
-        image_files = list(images_dir.glob("*.tif*"))
-        if not image_files:
-            raise ValueError(f"No TIFF files found in {images_dir}")
+        # Find all label files to determine which images and targets we need
+        label_files = list(labels_dir.glob("*.tif*"))
+        if not label_files:
+            raise ValueError(f"No TIFF files found in {labels_dir}")
         
         # Group files by target and image identifier
         targets_data = defaultdict(lambda: defaultdict(dict))
         
-        for image_file in image_files:
-            # Parse filename: image1_ink.tif -> image_id="image1", target="ink"
-            stem = image_file.stem  # Remove .tif extension
+        # Process each label file
+        for label_file in label_files:
+            stem = label_file.stem  # Remove .tif extension
+            
+            # Parse label filename: image1_ink.tif -> image_id="image1", target="ink"
             if '_' not in stem:
-                raise ValueError(f"Invalid filename format: {image_file.name}. Expected format: imageN_target.tif")
+                print(f"Skipping label file without underscore: {label_file.name}")
+                continue
             
             # Split on the last underscore to handle cases like "image1_test_ink"
             parts = stem.rsplit('_', 1)
             if len(parts) != 2:
-                raise ValueError(f"Invalid filename format: {image_file.name}. Expected format: imageN_target.tif")
+                print(f"Invalid label filename format: {label_file.name}")
+                continue
             
             image_id, target = parts
             
@@ -81,12 +103,24 @@ class TifDataset(BaseDataset):
                 print(f"Skipping {image_id}_{target} - not in configured targets")
                 continue
             
-            # Find corresponding label and mask files
-            label_file = labels_dir / image_file.name
-            mask_file = masks_dir / image_file.name
+            # Look for corresponding image file
+            # First try without task suffix (multi-task scenario)
+            image_file = images_dir / f"{image_id}.tif"
+            if not image_file.exists():
+                image_file = images_dir / f"{image_id}.tiff"
             
-            if not label_file.exists():
-                raise ValueError(f"Corresponding label file not found: {label_file}")
+            # If not found, try with task suffix (single-task/backward compatibility)
+            if not image_file.exists():
+                image_file = images_dir / f"{image_id}_{target}.tif"
+                if not image_file.exists():
+                    image_file = images_dir / f"{image_id}_{target}.tiff"
+                    if not image_file.exists():
+                        raise ValueError(f"Image file not found for {image_id} (tried {image_id}.tif, {image_id}.tiff, {image_id}_{target}.tif, and {image_id}_{target}.tiff)")
+            
+            # Look for mask file (always with task suffix)
+            mask_file = masks_dir / f"{image_id}_{target}.tif"
+            if not mask_file.exists():
+                mask_file = masks_dir / f"{image_id}_{target}.tiff"
             
             # Create dask arrays for lazy loading using dask_image.imread
             data_array = dask_image.imread.imread(str(image_file))

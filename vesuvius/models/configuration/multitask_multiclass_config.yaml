@@ -1,0 +1,99 @@
+# Example configuration for multi-task and multi-class scenarios
+# Demonstrates the new binarization control parameters
+
+tr_setup:
+  model_name: MultiTask_MultiClass_Example
+  autoconfigure: true
+  tr_val_split: 0.80
+  dilate_label: false
+  ckpt_out_base: "./checkpoints"
+
+tr_config:
+  optimizer: "AdamW"
+  initial_lr: 0.0001
+  weight_decay: 0.0001
+  gradient_accumulation: 1
+  num_dataloader_workers: 4
+  patch_size: [128, 128]
+  batch_size: 2
+  max_steps_per_epoch: 250
+  max_val_steps_per_epoch: 25
+  max_epoch: 15
+
+model_config:
+  use_timm_encoder: false
+  timm_encoder_class: null
+
+dataset_config:
+  min_bbox_percent: 0.30
+  min_labeled_ratio: 0.25
+  
+  # SCENARIO 1: Simple binary task
+  # binarize_labels: true
+  # target_value:
+  #   ink: 1              # Any non-zero pixels become 1
+  
+  # SCENARIO 2: Multi-task binary segmentation (current example)
+  binarize_labels: true
+  target_value:
+    ink: 1              # Binary task: 0 = background, non-zero = 1
+    damage: 1           # Binary task: 0 = background, non-zero = 1  
+    texture: 1          # Binary task: 0 = background, non-zero = 1
+  
+  # SCENARIO 3: Multi-class segmentation with remapping
+  # binarize_labels: true
+  # target_value:
+  #   segmentation:
+  #     0: 0    # background stays 0
+  #     1: 1    # class 1 stays 1
+  #     2: 2    # class 2 stays 2
+  #     3: 2    # class 3 merged into class 2
+  #     4: 3    # class 4 becomes class 3
+  
+  # SCENARIO 3b: Multi-class segmentation with regions (NEW)
+  # binarize_labels: true
+  # target_value:
+  #   segmentation:
+  #     mapping:
+  #       0: 0    # background stays 0
+  #       1: 1    # class 1 stays 1 (e.g., healthy tissue)
+  #       2: 2    # class 2 stays 2 (e.g., damaged tissue)
+  #       3: 3    # class 3 stays 3 (e.g., scar tissue)
+  #     regions:
+  #       4: [1, 2]      # region 4 = healthy OR damaged (all living tissue)
+  #       5: [2, 3]      # region 5 = damaged OR scar (all abnormal tissue)
+  #       6: [1, 2, 3]   # region 6 = all tissue types
+  
+  # SCENARIO 4: Mixed tasks (binary + multi-class)
+  # binarize_labels: true
+  # target_value:
+  #   ink: 1                    # Binary task
+  #   damage: 1                 # Binary task
+  #   material_classification:  # Multi-class task
+  #     0: 0
+  #     1: 1
+  #     2: 2
+  #     3: 3
+  
+  # SCENARIO 5: Pre-formatted labels (no remapping needed)
+  # binarize_labels: false       # Skip binarization entirely
+  # target_value: null           # Not used when binarize_labels is false
+
+inference_config:
+  checkpoint_path: "./checkpoints/ckpt.pth"
+  num_dataloader_workers: 4
+  overlap: 0.5
+  batch_size: 4
+  targets:
+    - ink:
+        channels: 1
+        activation: "sigmoid"
+        weight: 1
+    - damage:
+        channels: 1
+        activation: "sigmoid"
+        weight: 1
+    - texture:
+        channels: 1
+        activation: "sigmoid"
+        weight: 1

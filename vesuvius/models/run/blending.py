@@ -10,31 +10,29 @@ from scipy.ndimage import gaussian_filter
 import torch
 from functools import partial
 import numcodecs
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import math
 from data.utils import open_zarr
 import traceback
 
 
-def generate_gaussian_map(patch_size: tuple, sigma_scale: float = 8.0, dtype=torch.float32) -> torch.Tensor:
+def generate_gaussian_map(patch_size: tuple, sigma_scale: float = 8.0, dtype=np.float32) -> np.ndarray:
     pZ, pY, pX = patch_size
-    tmp = torch.zeros(patch_size, dtype=dtype)
+    tmp = np.zeros(patch_size, dtype=dtype)
     center_coords = [i // 2 for i in patch_size]
     sigmas = [i / sigma_scale for i in patch_size]
 
     tmp[tuple(center_coords)] = 1
 
-    tmp_np = tmp.cpu().numpy()
-    gaussian_map_np = gaussian_filter(tmp_np, sigmas, 0, mode='constant', cval=0)
-    gaussian_map = torch.from_numpy(gaussian_map_np)
-    # Safeguard against division by zero
-    gaussian_map /= max(gaussian_map.max().item(), 1e-12)
-    gaussian_map = gaussian_map.reshape(1, pZ, pY, pX)
-    gaussian_map = torch.clamp(gaussian_map, min=0)
+    gaussian_map_np = gaussian_filter(tmp, sigmas, 0, mode='constant', cval=0)
+
+    gaussian_map_np /= max(gaussian_map_np.max(), 1e-12)
+    gaussian_map_np = gaussian_map_np.reshape(1, pZ, pY, pX)
+    gaussian_map_np = np.clip(gaussian_map_np, a_min=0, a_max=None)
     
     print(
-        f"Generated Gaussian map with shape {gaussian_map.shape}, min: {gaussian_map.min().item():.4f}, max: {gaussian_map.max().item():.4f}")
-    return gaussian_map
+        f"Generated Gaussian map with shape {gaussian_map_np.shape}, min: {gaussian_map_np.min():.4f}, max: {gaussian_map_np.max():.4f}")
+    return gaussian_map_np
 
 
 def process_chunk(chunk_info, parent_dir, output_path, weights_path, gaussian_map, 
@@ -51,6 +49,7 @@ def process_chunk(chunk_info, parent_dir, output_path, weights_path, gaussian_ma
         patch_size: Size of patches (pZ, pY, pX)
         part_files: Dictionary of part files
     """
+    
     # Extract chunk boundaries
     z_start, z_end = chunk_info['z_start'], chunk_info['z_end']
     y_start, y_end = chunk_info['y_start'], chunk_info['y_end']
@@ -58,11 +57,8 @@ def process_chunk(chunk_info, parent_dir, output_path, weights_path, gaussian_ma
     
     pZ, pY, pX = patch_size
     
-    # Convert gaussian map to numpy for efficient processing
-    gaussian_map_np = gaussian_map.numpy()
-    gaussian_map_spatial_np = gaussian_map_np[0]  # Shape (pZ, pY, pX)
+    gaussian_map_spatial_np = gaussian_map[0]  # Shape (pZ, pY, pX)
     
-    # Open zarr stores directly
     output_store = open_zarr(output_path, mode='r+', storage_options={'anon': False} if output_path.startswith('s3://') else None)
     weights_store = open_zarr(weights_path, mode='r+', storage_options={'anon': False} if weights_path.startswith('s3://') else None)
     
@@ -72,37 +68,28 @@ def process_chunk(chunk_info, parent_dir, output_path, weights_path, gaussian_ma
     chunk_shape = (num_classes, z_end - z_start, y_end - y_start, x_end - x_start)
     weights_shape = (z_end - z_start, y_end - y_start, x_end - x_start)
     
-    # Initialize accumulators
     chunk_logits = np.zeros(chunk_shape, dtype=np.float32)
     chunk_weights = np.zeros(weights_shape, dtype=np.float32)
-    
-    # Track which patches intersect with this chunk
     patches_processed = 0
     
-    # Process each part file sequentially
     for part_id in part_files:
         logits_path = part_files[part_id]['logits']
         coords_path = part_files[part_id]['coordinates']
         
-        # Open zarr stores directly
         coords_store = open_zarr(coords_path, mode='r', storage_options={'anon': False} if coords_path.startswith('s3://') else None)
         logits_store = open_zarr(logits_path, mode='r', storage_options={'anon': False} if logits_path.startswith('s3://') else None)
         
-        # Read all coordinates for this part
         coords_np = coords_store[:]
         num_patches_in_part = coords_np.shape[0]
         
-        # Process patches that intersect with this chunk
         for patch_idx in range(num_patches_in_part):
             z, y, x = coords_np[patch_idx].tolist()
             
-            # Check if this patch intersects with our chunk
             if (z + pZ <= z_start or z >= z_end or
                 y + pY <= y_start or y >= y_end or
                 x + pX <= x_start or x >= x_end):
                 continue  # Skip patches that don't intersect with this chunk
                 
-            # Calculate intersection between patch and chunk
             iz_start = max(z, z_start) - z_start
             iz_end = min(z + pZ, z_end) - z_start
             iy_start = max(y, y_start) - y_start
@@ -110,7 +97,6 @@ def process_chunk(chunk_info, parent_dir, output_path, weights_path, gaussian_ma
             ix_start = max(x, x_start) - x_start
             ix_end = min(x + pX, x_end) - x_start
             
-            # Patch internal coordinates (for reading from logits)
             pz_start = max(z_start - z, 0)
             pz_end = pZ - max(z + pZ - z_end, 0)
             py_start = max(y_start - y, 0)
@@ -118,7 +104,6 @@ def process_chunk(chunk_info, parent_dir, output_path, weights_path, gaussian_ma
             px_start = max(x_start - x, 0)
             px_end = pX - max(x + pX - x_end, 0)
             
-            # Read patch logits (only the portion that intersects with our tile)
             patch_slice = (
                 slice(None),  # All classes
                 slice(pz_start, pz_end),
@@ -126,10 +111,8 @@ def process_chunk(chunk_info, parent_dir, output_path, weights_path, gaussian_ma
                 slice(px_start, px_end)
             )
             
-            # Read the specific portion of the logits for this patch
             logit_patch = logits_store[patch_idx][patch_slice]
             
-            # Get corresponding weights
             weight_patch = gaussian_map_spatial_np[
                 slice(pz_start, pz_end),
                 slice(py_start, py_end),
@@ -155,10 +138,9 @@ def process_chunk(chunk_info, parent_dir, output_path, weights_path, gaussian_ma
             
             patches_processed += 1
     
-    # Write accumulated data back to main arrays
     if patches_processed > 0:
         output_slice = (
-            slice(None),  # All classes
+            slice(None), 
             slice(z_start, z_end),
             slice(y_start, y_end),
             slice(x_start, x_end)
@@ -170,7 +152,6 @@ def process_chunk(chunk_info, parent_dir, output_path, weights_path, gaussian_ma
             slice(x_start, x_end)
         )
         
-        # Write accumulated chunk data
         output_store[output_slice] = chunk_logits
         weights_store[weight_slice] = chunk_weights
     
@@ -191,18 +172,16 @@ def normalize_chunk(chunk_info, output_path, weights_path, epsilon=1e-8):
         weights_path: Path to weights zarr
         epsilon: Small value to avoid division by zero
     """
-    # Extract chunk boundaries
+
     z_start, z_end = chunk_info['z_start'], chunk_info['z_end']
     y_start, y_end = chunk_info['y_start'], chunk_info['y_end']
     x_start, x_end = chunk_info['x_start'], chunk_info['x_end']
     
-    # Open zarr stores directly
     output_store = open_zarr(output_path, mode='r+', storage_options={'anon': False} if output_path.startswith('s3://') else None)
     weights_store = open_zarr(weights_path, mode='r', storage_options={'anon': False} if weights_path.startswith('s3://') else None)
     
-    # Define slices for reading data (exact patch size)
     output_slice = (
-        slice(None),  # All classes
+        slice(None), 
         slice(z_start, z_end),
         slice(y_start, y_end),
         slice(x_start, x_end)
@@ -214,26 +193,21 @@ def normalize_chunk(chunk_info, output_path, weights_path, epsilon=1e-8):
         slice(x_start, x_end)
     )
     
-    # Read data (chunk-sized)
     logits = output_store[output_slice]
     weights = weights_store[weight_slice]
     
-    # Use in-place division to save memory (no duplication)
-    # Initialize result array
     normalized = np.zeros_like(logits)
     
-    # Efficient, consistent division: divide only where weights > 0
+    # divide only where weights > 0
     np.divide(logits, weights[np.newaxis, :, :, :] + epsilon, 
               out=normalized, where=weights[np.newaxis, :, :, :] > 0)
     
-    # Write normalized data back
     output_store[output_slice] = normalized
     
     return {
         'chunk': chunk_info,
         'normalized_voxels': np.prod(normalized.shape)
     }
-
 
 # --- Utility Functions ---
 def calculate_chunks(volume_shape, output_chunks=None):
@@ -353,7 +327,7 @@ def merge_inference_outputs(
         try:
             # Use the part0_logits_store's .attrs directly if available
             meta_attrs = part0_logits_store.attrs
-            patch_size = tuple(meta_attrs['patch_size'])  # Already a list in the file
+            patch_size = tuple(meta_attrs['patch_size']) 
             original_volume_shape = tuple(meta_attrs['original_volume_shape'])  # MUST exist
             num_classes = part0_logits_store.shape[1]  # (N, C, pZ, pY, pX) -> C
         except (KeyError, AttributeError):
@@ -378,25 +352,27 @@ def merge_inference_outputs(
     output_shape = (num_classes, *original_volume_shape)  # (C, D, H, W)
     weights_shape = original_volume_shape  # (D, H, W)
 
-    # Use patch_size directly as the chunk size if not specified
+    # we use the patch size as the default chunk size throughout the pipeline
+    # so that the chunk size is consistent , to avoid partial chunk read/writes
+    # given that we write the logits with aligned chunk/patch size, we continue that here
     if chunk_size is None or any(c == 0 for c in (chunk_size if chunk_size else [0, 0, 0])):
-        # Default to patch size exactly
+
         output_chunks = (
-            1,  # One class at a time
-            patch_size[0],  # Z - use exact patch size
-            patch_size[1],  # Y - use exact patch size
-            patch_size[2]   # X - use exact patch size
+            1,  
+            patch_size[0],  # z 
+            patch_size[1],  # y
+            patch_size[2]   # x
         )
         weights_chunks = output_chunks[1:]
         if verbose:
             print(f"  Using chunk_size {output_chunks[1:]} based directly on patch_size")
     else:
-        output_chunks = (1, *chunk_size)  # One class at a time, user-specified spatial chunks
+        output_chunks = (1, *chunk_size) 
         weights_chunks = chunk_size
         if verbose:
             print(f"  Using specified chunk_size {chunk_size}")
 
-    # Setup compression
+    
     if compression_level > 0:
         compressor = numcodecs.Blosc(
             cname='zstd',
@@ -409,9 +385,6 @@ def merge_inference_outputs(
     print(f"Creating final output store: {output_path}")
     print(f"  Shape: {output_shape}, Chunks: {output_chunks}")
     
-    # Our open_zarr helper function handles directory creation and authentication
-        
-    # Use our helper function to create zarr store
     open_zarr(
         path=output_path,
         mode='w',
@@ -422,13 +395,11 @@ def merge_inference_outputs(
         compressor=compressor,
         dtype=np.float32,
         fill_value=0,
-        write_empty_chunks=False  # Skip empty chunks for memory efficiency
+        write_empty_chunks=False 
     )
     
     print(f"Creating weight accumulator store: {weight_accumulator_path}")
     print(f"  Shape: {weights_shape}, Chunks: {weights_chunks}")
-    
-    # Our open_zarr helper function handles directory creation and authentication
         
     open_zarr(
         path=weight_accumulator_path,
@@ -440,13 +411,11 @@ def merge_inference_outputs(
         compressor=compressor,
         dtype=np.float32,
         fill_value=0,
-        write_empty_chunks=False  # Skip empty chunks for memory efficiency
+        write_empty_chunks=False 
     )
 
     # --- 4. Generate Gaussian Map ---
     gaussian_map = generate_gaussian_map(patch_size, sigma_scale=sigma_scale)
-    # Make sure it's on CPU and convert to numpy
-    gaussian_map = gaussian_map.cpu()
 
     # --- 5. Calculate Processing Chunks ---
     chunks = calculate_chunks(
@@ -459,7 +428,6 @@ def merge_inference_outputs(
     # --- 6. Process Chunks in Parallel ---
     print("\n--- Accumulating Weighted Patches ---")
     
-    # Create a partial function with fixed arguments
     process_chunk_partial = partial(
         process_chunk,
         parent_dir=parent_dir,
@@ -470,15 +438,11 @@ def merge_inference_outputs(
         part_files=part_files
     )
     
-    # Process chunks in parallel
     total_patches_processed = 0
     
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        # Submit all tasks
         future_to_chunk = {executor.submit(process_chunk_partial, chunk): chunk for chunk in chunks}
         
-        # Use as_completed for better progress tracking and early error detection
-        from concurrent.futures import as_completed
         for future in tqdm(
             as_completed(future_to_chunk),
             total=len(chunks),
@@ -497,7 +461,6 @@ def merge_inference_outputs(
     # --- 7. Normalize in Parallel ---
     print("\n--- Normalizing Output ---")
     
-    # Create a partial function with fixed arguments
     normalize_chunk_partial = partial(
         normalize_chunk,
         output_path=output_path,
@@ -505,11 +468,9 @@ def merge_inference_outputs(
     )
     
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        # Submit all tasks
+
         futures = {executor.submit(normalize_chunk_partial, chunk): chunk for chunk in chunks}
         
-        # Use as_completed for better progress tracking and early error detection
-        from concurrent.futures import as_completed
         for future in tqdm(
             as_completed(futures),
             total=len(chunks),
@@ -517,7 +478,7 @@ def merge_inference_outputs(
             disable=not verbose
         ):
             try:
-                result = future.result()  # Check for exceptions
+                result = future.result() 
             except Exception as e:
                 print(f"Error normalizing chunk: {e}")
                 raise e
@@ -580,7 +541,6 @@ def main():
 
     args = parser.parse_args()
 
-    # Parse chunk_size if provided
     chunks = None
     if args.chunk_size:
         try:
