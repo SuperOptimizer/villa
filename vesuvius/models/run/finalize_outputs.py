@@ -103,51 +103,61 @@ class ChunkDataset(Dataset):
         block = torch.from_numpy(block_np).to(self.device)  # [6, dz, dy, dx]
         return idx, (z0, z1, y0, y1, x0, x1), block
 
-def _compute_eigenvectors(block: torch.Tensor) -> torch.Tensor:
-    """
-    block: [6, dz, dy, dx]
-    returns: [9, dz, dy, dx] float32
-    """
-    # 1) Flatten channels
+def _compute_eigenvectors(block: torch.Tensor):
+    # (1) build & sanitize M exactly as before
     _, dz, dy, dx = block.shape
     N = dz * dy * dx
-    x = block.view(6, N)                  # [6, N]
+    x = block.view(6, N)
     jzz, jzy, jzx, jyy, jyx, jxx = x
-
-    # 2) Vectorized build of M: [N,3,3]
     M = torch.stack([
-        torch.stack([jzz, jzy, jzx], dim=1),  # row z
-        torch.stack([jzy, jyy, jyx], dim=1),  # row y
-        torch.stack([jzx, jyx, jxx], dim=1),  # row x
+        torch.stack([jzz, jzy, jzx], dim=1),
+        torch.stack([jzy, jyy, jyx], dim=1),
+        torch.stack([jzx, jyx, jxx], dim=1),
     ], dim=1)                              # [N,3,3]
-
-    # 3) Sanitize any NaN/Inf
     M = torch.nan_to_num(M, nan=0.0, posinf=0.0, neginf=0.0)
+    zero_mask = (M.abs().sum(dim=(1,2)) == 0)  # [N]
 
-    # 4) Micro-batch the eigen-decomposition to avoid CUSOLVER limits
-    batch_size = 1024000  # TODO: fix this more intelligently
-    w_chunks = [] # EIGENVALUES
+    # (2) micro-batch parameters
+    batch_size = 65536  # or whatever fits in GPU memory
+    w_chunks = []
     v_chunks = []
-    for i in range(0, N, batch_size):
-        wi, vi = torch.linalg.eigh(M[i:i+batch_size])  # wi:[B,3], vi:[B,3,3]
-        w_chunks.append(wi) # EIGENVALUES
-        v_chunks.append(vi)
-    w = torch.cat(w_chunks, dim=0)      # [N,3] EIGENVALUES
-    v = torch.cat(v_chunks, dim=0)      # [N,3,3]
 
-    # 5) Make sure we are eigenvector-major: [N, eigenvector, component]
-    v = v.permute(0, 2, 1).reshape(N, 9).permute(1, 0)  # was [N, comp, ev] → [N, ev, comp]
-    eigvecs = v.view(9, dz, dy, dx)      # [9, dz, dy, dx]
-    eigvals = w.permute(1, 0).view(3, dz, dy, dx)
+    # (3) slice & solve in small batches
+    for i in range(0, N, batch_size):
+        M_slice = M[i:i+batch_size]              # [B,3,3]
+        mask_slice = zero_mask[i:i+batch_size]   # [B]
+
+        # always call eigh on the slice
+        wi, vi = torch.linalg.eigh(M_slice)      # [B,3], [B,3,3]
+
+        # sanitize
+        wi = torch.nan_to_num(wi, nan=0.0, posinf=0.0, neginf=0.0)
+        vi = torch.nan_to_num(vi, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # zero-out the “empty” voxels in this slice
+        if mask_slice.any():
+            wi = wi.masked_fill(mask_slice.unsqueeze(-1), 0.0)
+            vi = vi.masked_fill(mask_slice.unsqueeze(-1).unsqueeze(-1), 0.0)
+
+        w_chunks.append(wi)
+        v_chunks.append(vi)
+
+    # (4) re-assemble & reshape
+    w = torch.cat(w_chunks, dim=0)            # [N,3]
+    v = torch.cat(v_chunks, dim=0)            # [N,3,3]
+
+    eigvals = w.transpose(0,1).view(3, dz, dy, dx)
+    v = v.permute(0,2,1).reshape(N,9)
+    eigvecs = v.transpose(0,1).view(9, dz, dy, dx)
 
     return eigvals, eigvecs
 
 # Compile it once at import time:
-_compute_eigenvectors = torch.compile(
-    _compute_eigenvectors,
-    mode="max-autotune-no-cudagraphs",
-    fullgraph=True
-)
+#_compute_eigenvectors = torch.compile(
+#    _compute_eigenvectors,
+#    mode="max-autotune-no-cudagraphs",
+#    fullgraph=True
+#)
 
 def _finalize_structure_tensor_torch(
     input_path, output_path, chunk_size, num_workers, compressor, verbose, swap_eigenvectors=False
