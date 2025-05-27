@@ -405,7 +405,7 @@ def setup_multipart(args, num_parts):
 
 def _run_single_pipeline(args):
     """
-    The core of your run_pipeline(), but isolated to one `args.volume` pass.
+    The core of run_pipeline(), but isolated to one `args.volume` pass.
     """
     # 1) Prepare dirs, GPUs, parts
     args = prepare_directories(args)
