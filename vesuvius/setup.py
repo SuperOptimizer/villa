@@ -67,6 +67,7 @@ setup(
             'vesuvius.blend_logits=models.run.blending:main',
             'vesuvius.finalize_outputs=models.run.finalize_outputs:main',
             'vesuvius.inference_pipeline=models.run.vesuvius_pipeline:run_pipeline',
+            'vesuvius.create_st=structure_tensor.run_create_st:main',
         ],
     },
     # No scripts needed as we're using entry_points
