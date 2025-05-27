@@ -145,6 +145,7 @@ class ChunkDataset(Dataset):
         block = torch.from_numpy(block_np).to(self.device)  # [6, dz, dy, dx]
         return idx, (z0, z1, y0, y1, x0, x1), block
 
+# solve the eigenvalue problem and sanitize the output
 def _eigh_and_sanitize(M: torch.Tensor):
     w, v = torch.linalg.eigh(M) 
     # sanitize once
@@ -152,6 +153,7 @@ def _eigh_and_sanitize(M: torch.Tensor):
     v = torch.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
     return w, v
 
+# compute the eigenvectors (and the eigenvalues)
 def _compute_eigenvectors(
     block: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -198,12 +200,15 @@ def _compute_eigenvectors(
     )
     return eigvals, eigvecs
 
+# compiling the function
 _compute_eigenvectors = torch.compile(
     _compute_eigenvectors,
     mode="max-autotune-no-cudagraphs",
     fullgraph=True,
 )
 
+# main function to finalize the structure tensor eigen analysis
+# TODO: in parallel?
 def _finalize_structure_tensor_torch(
     input_path, output_path, chunk_size, num_workers, compressor, verbose, swap_eigenvectors=False
 ):
