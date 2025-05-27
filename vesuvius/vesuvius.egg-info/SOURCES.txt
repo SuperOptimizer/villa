@@ -26,6 +26,9 @@ setup/__init__.py
 setup/accept_terms.py
 setup/configs/cubes.yaml
 setup/configs/scrolls.yaml
+structure_tensor/__init__.py
+structure_tensor/create_st.py
+structure_tensor/run_create_st.py
 utils/__init__.py
 utils/models/__init__.py
 utils/models/helpers.py
