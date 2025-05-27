@@ -156,8 +156,11 @@ def prepare_directories(args):
         # Create S3 directories
         import fsspec
         fs = fsspec.filesystem('s3', anon=False)
-        fs.makedirs(args.workdir, exist_ok=True)
-        fs.makedirs(args.parts_dir, exist_ok=True)
+        # Remove s3:// prefix for fs operations
+        workdir_no_prefix = args.workdir.replace('s3://', '')
+        parts_dir_no_prefix = args.parts_dir.replace('s3://', '')
+        fs.makedirs(workdir_no_prefix, exist_ok=True)
+        fs.makedirs(parts_dir_no_prefix, exist_ok=True)
     else:
         # For local paths, use os.path.join
         # Create needed directories
@@ -442,70 +445,15 @@ def _run_single_pipeline(args):
     # 5) Blend
     if not args.skip_blend:
         print("\n--- Step 2: Blending ---")
-        if not run_blend(args):
-            print("Blending failed. Aborting.")
-            return 1
-
-    # 6) Finalize — on the second (horizontal) pass, inject --swap-eigenvectors
-    if not args.skip_finalize:
-        print("\n--- Step 3: Finalization ---")
-        # monkey-patch a flag so run_finalize adds --swap-eigenvectors
-        if getattr(args, 'volume', None) == 2:
-            setattr(args, 'swap_eigenvectors', True)
-        if not run_finalize(args):
-            print("Finalization failed.")
-            return 1
-
-    # 7) Cleanup
-    cleanup(args)
-    print(f"\n--- Single‐pass Complete (volume={args.volume}) ---\n"
-          f"Final output saved to: {args.output}")
-    return 0
-
-def run_pipeline():
-    args    = parse_arguments()
-    args    = prepare_directories(args)
-    gpu_ids = select_gpus(args)
-    num_parts = setup_multipart(args, split_data_for_gpus(args, gpu_ids))
-
-    if args.structure_tensor:
-        args.mode = "structure-tensor"
-        args.disable_tta = True
-
-    if args.fibers:
-        import copy
-        orig_out = args.output
-        general_work = f"{orig_out}_work"
-        codes = []
-        for vol, label in [(1, "vertical"), (2, "horizontal")]:
-            sub = copy.deepcopy(args)
-            sub.fibers = False
-            sub.volume = vol
-            # if the output ends with ".zarr", put the suffix before that
-            base, ext = os.path.splitext(orig_out)
-            if ext == ".zarr":
-                sub.output = f"{base}_{label}{ext}"
-            else:
-                sub.output = f"{orig_out}_{label}"
-            codes.append(_run_single_pipeline(sub))
-        # remove any stray “general” workdir
-        if os.path.isdir(general_work):
-            shutil.rmtree(general_work, ignore_errors=True)
-        return 0 if all(c == 0 for c in codes) else 1
-    
-    # Step 1: Prediction
-    if not args.skip_predict:
-        print(f"\n--- Step 1: Prediction ({num_parts} parts) ---")
-        if num_parts > 1:
-            with ThreadPoolExecutor(max_workers=min(num_parts, os.cpu_count())) as ex:
-                futures = [
-                    ex.submit(run_predict, args, pid, gpu_ids[pid % len(gpu_ids)] if gpu_ids else None)
-                    for pid in range(num_parts)
-                ]
-                success = all(f.result() for f in futures)
-            if not success:
-                print("One or more prediction tasks failed. Aborting.")
-                return 1
+        
+        # Check if parts directory exists and has contents (handle S3 paths)
+        if args.parts_dir.startswith('s3://'):
+            import fsspec
+            fs = fsspec.filesystem('s3', anon=False)
+            # Remove s3:// prefix for fs operations
+            parts_dir_no_prefix = args.parts_dir.replace('s3://', '')
+            parts_exist = fs.exists(parts_dir_no_prefix)
+            parts_has_files = len(fs.ls(parts_dir_no_prefix)) > 0 if parts_exist else False
         else:
             if not run_predict(args, 0, gpu_ids[0] if gpu_ids else None):
                 print("Prediction failed. Aborting.")
@@ -527,9 +475,17 @@ def run_pipeline():
     # Step 3: Finalization
     if not args.skip_finalize:
         print("\n--- Step 3: Finalization ---")
-        blended_exists = (args.blended_path.startswith('s3://') 
-                          and __import__('fsspec').filesystem('s3').exists(args.blended_path)) \
-            or os.path.exists(args.blended_path)
+        
+        # Check if blended path exists (handle S3 paths)
+        if args.blended_path.startswith('s3://'):
+            import fsspec
+            fs = fsspec.filesystem('s3', anon=False)
+            # Remove s3:// prefix for fs operations
+            blended_path_no_prefix = args.blended_path.replace('s3://', '')
+            blended_exists = fs.exists(blended_path_no_prefix)
+        else:
+            blended_exists = os.path.exists(args.blended_path)
+            
         if not blended_exists:
             print("No blended data found. Please run the blending step first.")
             return 1
