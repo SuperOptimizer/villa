@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+
+# example: vesuvius.inference_pipeline   --structure-tensor   --sigma 2.0   --input  /home/giorgio/scrolls/scroll1/volumes/s1a_fibers_4down.zarr   --output /home/giorgio/scrolls/scroll1/volumes/s1a_fibers_4down_eigens.zarr --fibers --patch-size 384,384,384 --batch-size 32 --smooth-components --single-part
 """
 Vesuvius Pipeline - Run the complete inference, blending, and finalization process.
 Uses multiple GPUs by assigning different devices to different parts (not DDP).

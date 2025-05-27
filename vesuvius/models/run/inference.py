@@ -828,7 +828,8 @@ class StructureTensorInferer(Inferer, nn.Module):
 
             # --- 3) Compute structure tensor ---
             # J has shape [1, 6, Z, Y, X]
-            J = self.compute_structure_tensor(x, sigma=self.sigma)
+            with torch.no_grad():
+                J = self.compute_structure_tensor(x, sigma=self.sigma)
 
             # --- 4) Bring to numpy and cast ---
             out_np = J.cpu().numpy().astype(np.float32)
