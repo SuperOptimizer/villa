@@ -22,7 +22,7 @@ import fsspec
 
 from data.utils import open_zarr
 
-
+# Worker function to process a single chunk
 def process_chunk(chunk_info, input_path, output_path,
                   mode, threshold, num_classes,
                   spatial_shape, output_chunks):
