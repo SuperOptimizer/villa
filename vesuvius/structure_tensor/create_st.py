@@ -113,8 +113,7 @@ class StructureTensorInferer(Inferer, nn.Module):
 
     def _create_output_stores(self):
         """
-        Override to create a single output zarr with the full volume shape
-        and write patches directly to their positions.
+        Override to create a zarr group hierarchy with structure_tensor as a subgroup.
         """
         if self.num_classes is None or self.patch_size is None:
             raise RuntimeError("Cannot create output stores: model/patch info missing.")
@@ -137,16 +136,23 @@ class StructureTensorInferer(Inferer, nn.Module):
             main_store_path = self.output_dir
             print(f"Opening existing shared store at: {main_store_path}")
             
-            self.output_store = open_zarr(
-                path=main_store_path, 
-                mode='r+',  # Open in read-write mode
-                storage_options={'anon': False} if main_store_path.startswith('s3://') else None,
-                verbose=self.verbose
+            # Open the root group
+            root_store = zarr.open_group(
+                main_store_path,
+                mode='r+',
+                storage_options={'anon': False} if main_store_path.startswith('s3://') else None
             )
+            
+            # Access the structure_tensor subgroup
+            self.output_store = root_store['structure_tensor']
+            
         else:
-            # Single-GPU mode: create new store
-            # Create output path - for structure tensor, we create the full volume directly
-            main_store_path = os.path.join(self.output_dir, f"structure_tensor_part_{self.part_id}.zarr")
+            # Single-GPU mode: create new store with group hierarchy
+            # Ensure output_dir ends with .zarr
+            if not self.output_dir.endswith('.zarr'):
+                main_store_path = self.output_dir + '.zarr'
+            else:
+                main_store_path = self.output_dir
             
             # Shape is (6 channels, Z, Y, X) for the full volume
             output_shape = (self.num_classes, *original_volume_shape)
@@ -160,36 +166,43 @@ class StructureTensorInferer(Inferer, nn.Module):
             print(f"Full volume shape: {output_shape}")
             print(f"Chunk shape: {output_chunks}")
             
-            # Create the zarr array using our helper function
-            self.output_store = open_zarr(
-                path=main_store_path, 
-                mode='w',  
-                storage_options={'anon': False} if main_store_path.startswith('s3://') else None,
-                verbose=self.verbose,
+            # Create the root group
+            root_store = zarr.open_group(
+                main_store_path,
+                mode='w',
+                storage_options={'anon': False} if main_store_path.startswith('s3://') else None
+            )
+            
+            # Create the structure_tensor array within the group
+            self.output_store = root_store.create_dataset(
+                'structure_tensor',
                 shape=output_shape,
                 chunks=output_chunks,
-                dtype=np.float32,  
+                dtype=np.float32,
                 compressor=compressor,
                 write_empty_chunks=False
             )
             
-            # Store metadata
+            # Store metadata in the root group
             try:
-                self.output_store.attrs['patch_size'] = list(self.patch_size)
-                self.output_store.attrs['overlap'] = self.overlap
-                self.output_store.attrs['part_id'] = self.part_id
-                self.output_store.attrs['num_parts'] = self.num_parts
-                self.output_store.attrs['original_volume_shape'] = original_volume_shape
-                self.output_store.attrs['sigma'] = self.sigma
-                self.output_store.attrs['smooth_components'] = self.smooth_components
+                root_store.attrs['patch_size'] = list(self.patch_size)
+                root_store.attrs['overlap'] = self.overlap
+                root_store.attrs['part_id'] = self.part_id
+                root_store.attrs['num_parts'] = self.num_parts
+                root_store.attrs['original_volume_shape'] = original_volume_shape
+                root_store.attrs['sigma'] = self.sigma
+                root_store.attrs['smooth_components'] = self.smooth_components
             except Exception as e:
                 print(f"Warning: Failed to write custom attributes: {e}")
+            
+            # Store the main path for later reference
+            self.main_store_path = main_store_path
         
         # Set coords_store_path to None since we're not creating it
         self.coords_store_path = None
         
         if self.verbose: 
-            print(f"Created output store: {main_store_path}")
+            print(f"Created output store structure_tensor group in: {main_store_path}")
         
         return self.output_store
     
@@ -246,13 +259,20 @@ class StructureTensorInferer(Inferer, nn.Module):
         """
         try:
             self._run_inference()
-            # Return the correct output path based on whether we're in multi-GPU mode
+            # Return the main store path (root group)
             if self.num_parts > 1 and self.output_dir.endswith('.zarr'):
                 # Multi-GPU mode: return the shared store path
                 main_output_path = self.output_dir
             else:
-                # Single-GPU mode: return the individual part path
-                main_output_path = os.path.join(self.output_dir, f"structure_tensor_part_{self.part_id}.zarr")
+                # Single-GPU mode: return the main store path
+                if hasattr(self, 'main_store_path'):
+                    main_output_path = self.main_store_path
+                else:
+                    # Fallback to ensure .zarr extension
+                    if not self.output_dir.endswith('.zarr'):
+                        main_output_path = self.output_dir + '.zarr'
+                    else:
+                        main_output_path = self.output_dir
             return main_output_path
         except Exception as e:
             print(f"An error occurred during inference: {e}")
@@ -450,32 +470,44 @@ _compute_eigenvectors = torch.compile(
 
 
 def _finalize_structure_tensor_torch(
-    input_path, output_path, chunk_size, num_workers, compressor, verbose, swap_eigenvectors=False
+    zarr_path, chunk_size, num_workers, compressor, verbose, swap_eigenvectors=False
 ):
-    # open input
-    src = open_zarr(
-        path=input_path, mode='r',
-        storage_options={'anon': False} if input_path.startswith('s3://') else None,
-        verbose=verbose
+    """
+    Compute eigenvectors and eigenvalues from structure tensor and save as groups.
+    
+    Args:
+        zarr_path: Path to the zarr file containing structure_tensor group
+        chunk_size: Chunk size for processing
+        num_workers: Number of workers for data loading
+        compressor: Zarr compressor to use
+        verbose: Enable verbose output
+        swap_eigenvectors: Whether to swap eigenvectors 0 and 1
+    """
+    # Open the root group
+    root_store = zarr.open_group(
+        zarr_path,
+        mode='r+',
+        storage_options={'anon': False} if zarr_path.startswith('s3://') else None
     )
+    
+    # Access the structure tensor array
+    src = root_store['structure_tensor']
     C, Z, Y, X = src.shape
     assert C == 6, f"Expect 6 channels, got {C}"
 
     # chunk dims
     if chunk_size is None:
-        # src.chunks == (1, cz, cy, cx)
+        # src.chunks == (6, cz, cy, cx) 
         cz, cy, cx = src.chunks[1:]
     else:
         cz, cy, cx = chunk_size
     if verbose:
         print(f"[Eigen] using chunks (dz,dy,dx)=({cz},{cy},{cx})")
 
-    # prepare eigenvectors output zarr
+    # prepare eigenvectors group
     out_chunks = (1, cz, cy, cx)
-    open_zarr(
-        path=output_path, mode='w',
-        storage_options={'anon': False} if output_path.startswith('s3://') else None,
-        verbose=verbose,
+    eigenvectors_arr = root_store.create_dataset(
+        'eigenvectors',
         shape=(9, Z, Y, X),
         chunks=out_chunks,
         compressor=compressor,
@@ -484,11 +516,9 @@ def _finalize_structure_tensor_torch(
         overwrite=True
     )
 
-    # prepare eigenvalue output zarr (3 channels)
-    eigval_path = output_path.replace('.zarr', '_eigenvalues.zarr')
-    open_zarr(
-        path=eigval_path, mode='w',
-        storage_options={'anon': False} if output_path.startswith('s3://') else None,
+    # prepare eigenvalues group
+    eigenvalues_arr = root_store.create_dataset(
+        'eigenvalues',
         shape=(3, Z, Y, X),
         chunks=out_chunks,
         compressor=compressor,
@@ -496,6 +526,7 @@ def _finalize_structure_tensor_torch(
         write_empty_chunks=False,
         overwrite=True
     )
+    
     # build chunk list
     def gen_bounds():
         for z0 in range(0, Z, cz):
@@ -508,24 +539,40 @@ def _finalize_structure_tensor_torch(
     if verbose:
         print(f"[Eigen] {len(chunks)} chunks to solve the eigenvalue problem on")
 
-    # 5) Dataset & DataLoader (with a no‐op collate so bounds come through untouched)
+    # Dataset & DataLoader
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    ds = ChunkDataset(input_path, chunks, device)
+    
+    # Modified ChunkDataset to work with zarr groups
+    class GroupChunkDataset(Dataset):
+        def __init__(self, structure_tensor_arr, chunks, device):
+            self.src = structure_tensor_arr
+            self.chunks = chunks
+            self.device = device
+
+        def __len__(self):
+            return len(self.chunks)
+
+        def __getitem__(self, idx):
+            z0, z1, y0, y1, x0, x1 = self.chunks[idx]
+            block_np = self.src[:, z0:z1, y0:y1, x0:x1].astype('float32')
+            block = torch.from_numpy(block_np).to(self.device)
+            return idx, (z0, z1, y0, y1, x0, x1), block
+    
+    ds = GroupChunkDataset(src, chunks, device)
     loader = DataLoader(
         ds,
         batch_size=1,
         num_workers=0,
         pin_memory=False,
-        collate_fn=lambda batch: batch[0]  # return the single sample directly
+        collate_fn=lambda batch: batch[0]
     )
 
-    # 6) Process each chunk
+    # Process each chunk
     for idx, bounds, block in tqdm(loader, desc="[Eigen] Chunks", disable=not verbose):
-        # idx: int, bounds: (z0,z1,y0,y1,x0,x1), block: tensor [1,6,dz,dy,dx]
         z0, z1, y0, y1, x0, x1 = bounds
-        # squeeze off the dummy batch dim
+        
         with torch.no_grad():
-            eigvals_block_gpu, eigvecs_block_gpu = _compute_eigenvectors(block) #TODO: fix batch size intelligently
+            eigvals_block_gpu, eigvecs_block_gpu = _compute_eigenvectors(block)
         eigvals_block = eigvals_block_gpu.cpu().numpy()
         eigvecs_block = eigvecs_block_gpu.cpu().numpy()
 
@@ -533,35 +580,25 @@ def _finalize_structure_tensor_torch(
         torch.cuda.empty_cache()
 
         if swap_eigenvectors:
-            # 1) reshape eigenvectors into [3 eigenvectors, 3 components, dz,dy,dx]
-            v = eigvecs_block.reshape(3, 3, *eigvecs_block.shape[1:])  # → [3,3,dz,dy,dx]
-            # eigenvalues are already [3, dz,dy,dx]
-            w = eigvals_block                                        # → [3,dz,dy,dx]
+            # reshape eigenvectors into [3 eigenvectors, 3 components, dz,dy,dx]
+            v = eigvecs_block.reshape(3, 3, *eigvecs_block.shape[1:])
+            w = eigvals_block
 
-            # 2) swap eigenvector #0 <-> #1 and their eigenvalues
-            #    this exchanges the *first* and *second* principal directions
+            # swap eigenvector #0 <-> #1 and their eigenvalues
             v[[0, 1], :, ...] = v[[1, 0], :, ...]
             w[[0, 1],    ...] = w[[1, 0],    ...]
 
-            # 3) flatten back to your Zarr layout
+            # flatten back
             eigvecs_block = v.reshape(9, *eigvecs_block.shape[1:])
-            eigvals_block  = w
+            eigvals_block = w
 
-        # write
-        dst_vec = open_zarr(
-            path=output_path, mode='r+',
-            storage_options={'anon': False} if output_path.startswith('s3://') else None
-        )
-        dst_val = open_zarr(
-            path=eigval_path, mode='r+',
-            storage_options={'anon': False} if output_path.startswith('s3://') else None
-        )
-        dst_vec[:, z0:z1, y0:y1, x0:x1] = eigvecs_block
-        dst_val[:, z0:z1, y0:y1, x0:x1] = eigvals_block
+        # write to groups
+        eigenvectors_arr[:, z0:z1, y0:y1, x0:x1] = eigvecs_block
+        eigenvalues_arr[:, z0:z1, y0:y1, x0:x1] = eigvals_block
 
     if verbose:
-        print(f"[Eigen] eigenvectors → {output_path}")
-        print(f"[Eigen] eigenvalues  → {eigval_path}")
+        print(f"[Eigen] eigenvectors → {zarr_path}/eigenvectors")
+        print(f"[Eigen] eigenvalues  → {zarr_path}/eigenvalues")
 
 
 def main():
@@ -581,6 +618,8 @@ def main():
     # Structure tensor computation arguments
     parser.add_argument('--structure-tensor', action='store_true', dest='structure_tensor',
                         help='Compute 6-channel 3D structure tensor (sets mode to structure-tensor)')
+    parser.add_argument('--structure-tensor-only', action='store_true',
+                        help='Compute only the structure tensor, skip eigenanalysis')
     parser.add_argument('--sigma', type=float, default=2.0,
                         help='Gaussian σ for structure-tensor smoothing')
     parser.add_argument('--smooth-components', action='store_true',
@@ -703,29 +742,27 @@ def main():
             
             if logits_path:
                 print(f"\n--- Structure Tensor Computation Finished ---")
-                print(f"Output tensor saved to: {logits_path}")
+                print(f"Structure tensor saved to: {logits_path}/structure_tensor")
                 
-                # Optionally run eigenanalysis immediately
-                if args.eigen_output:
+                # Run eigenanalysis automatically unless --structure-tensor-only is specified
+                if not args.structure_tensor_only:
                     print("\n--- Running Eigenanalysis ---")
                     _finalize_structure_tensor_torch(
-                        input_path=logits_path,
-                        output_path=args.eigen_output,
+                        zarr_path=logits_path,
                         chunk_size=chunk_size,
                         num_workers=args.num_workers,
                         compressor=compressor,
                         verbose=args.verbose,
                         swap_eigenvectors=args.swap_eigenvectors
                     )
-                    
-                    # Delete intermediate if requested
-                    if args.delete_intermediate:
-                        if logits_path.startswith('s3://'):
-                            fs = fsspec.filesystem(logits_path.split('://')[0], anon=False)
-                            fs.rm(logits_path, recursive=True)
-                        else:
-                            shutil.rmtree(logits_path, ignore_errors=True)
-                        print(f"Deleted intermediate tensor: {logits_path}")
+                    print("\n--- All computations completed successfully ---")
+                    print(f"Final output contains:")
+                    print(f"  - Structure tensor: {logits_path}/structure_tensor")
+                    print(f"  - Eigenvectors: {logits_path}/eigenvectors")
+                    print(f"  - Eigenvalues: {logits_path}/eigenvalues")
+                else:
+                    print("\n--- Structure tensor only mode ---")
+                    print("Eigenanalysis was skipped (--structure-tensor-only flag)")
                 
         except Exception as e:
             print(f"\n--- Structure Tensor Computation Failed ---")
@@ -739,15 +776,12 @@ def main():
         if not args.eigen_input:
             print("Error: --eigen-input must be provided for eigenanalysis mode")
             return 1
-        if not args.eigen_output:
-            print("Error: --eigen-output must be provided for eigenanalysis mode")
-            return 1
             
         print("\n--- Running Eigenanalysis ---")
+        print(f"Input zarr: {args.eigen_input}")
         try:
             _finalize_structure_tensor_torch(
-                input_path=args.eigen_input,
-                output_path=args.eigen_output,
+                zarr_path=args.eigen_input,
                 chunk_size=chunk_size,
                 num_workers=args.num_workers,
                 compressor=compressor,
@@ -755,16 +789,10 @@ def main():
                 swap_eigenvectors=args.swap_eigenvectors
             )
             
-            # Delete intermediate if requested
-            if args.delete_intermediate:
-                if args.eigen_input.startswith('s3://'):
-                    fs = fsspec.filesystem(args.eigen_input.split('://')[0], anon=False)
-                    fs.rm(args.eigen_input, recursive=True)
-                else:
-                    shutil.rmtree(args.eigen_input, ignore_errors=True)
-                print(f"Deleted intermediate tensor: {args.eigen_input}")
-                
             print("\n--- Eigenanalysis Completed Successfully ---")
+            print(f"Results saved to:")
+            print(f"  - Eigenvectors: {args.eigen_input}/eigenvectors")
+            print(f"  - Eigenvalues: {args.eigen_input}/eigenvalues")
             
         except Exception as e:
             print(f"\n--- Eigenanalysis Failed ---")

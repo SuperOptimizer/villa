@@ -62,7 +62,7 @@ def split_data_for_gpus(gpu_ids, parts_per_gpu):
 
 
 def create_shared_output_store(args, input_shape, patch_size):
-    """Create the shared output Zarr store that all GPU processes will write to."""
+    """Create the shared output Zarr store with group hierarchy that all GPU processes will write to."""
     if len(input_shape) == 4:  # has channel dimension
         original_volume_shape = list(input_shape[1:])
     else:  # no channel dimension
@@ -95,30 +95,34 @@ def create_shared_output_store(args, input_shape, patch_size):
     print(f"Full volume shape: {output_shape}")
     print(f"Chunk shape: {output_chunks}")
     
-    # Create the zarr array using our helper function
-    output_store = open_zarr(
-        path=main_store_path, 
-        mode='w',  
-        storage_options={'anon': False} if main_store_path.startswith('s3://') else None,
-        verbose=args.verbose,
+    # Create the root group
+    root_store = zarr.open_group(
+        main_store_path,
+        mode='w',
+        storage_options={'anon': False} if main_store_path.startswith('s3://') else None
+    )
+    
+    # Create the structure_tensor array within the group
+    structure_tensor_arr = root_store.create_dataset(
+        'structure_tensor',
         shape=output_shape,
         chunks=output_chunks,
-        dtype=np.float32,  
+        dtype=np.float32,
         compressor=compressor,
         write_empty_chunks=False
     )
     
-    # Store metadata
+    # Store metadata in the root group
     try:
-        output_store.attrs['patch_size'] = list(patch_size)
-        output_store.attrs['overlap'] = args.overlap
-        output_store.attrs['sigma'] = args.sigma
-        output_store.attrs['smooth_components'] = args.smooth_components
-        output_store.attrs['original_volume_shape'] = original_volume_shape
+        root_store.attrs['patch_size'] = list(patch_size)
+        root_store.attrs['overlap'] = args.overlap
+        root_store.attrs['sigma'] = args.sigma
+        root_store.attrs['smooth_components'] = args.smooth_components
+        root_store.attrs['original_volume_shape'] = original_volume_shape
     except Exception as e:
         print(f"Warning: Failed to write custom attributes: {e}")
     
-    print(f"Created shared output store: {main_store_path}")
+    print(f"Created shared output store with group hierarchy: {main_store_path}")
     return main_store_path
 
 
@@ -150,6 +154,8 @@ def run_structure_tensor_part(args, part_id, gpu_id, shared_output_path):
     cmd.extend(['--sigma', str(args.sigma)])
     if args.smooth_components:
         cmd.append('--smooth-components')
+    if args.structure_tensor_only:
+        cmd.append('--structure-tensor-only')
     if args.volume is not None:
         cmd.extend(['--volume', str(args.volume)])
     
@@ -190,8 +196,8 @@ def run_structure_tensor_part(args, part_id, gpu_id, shared_output_path):
     return rc == 0
 
 
-def run_eigenanalysis(input_path, output_path, chunk_size, compressor, verbose, swap_eigenvectors, num_workers):
-    """Run eigenanalysis on a structure tensor to compute eigenvectors."""
+def run_eigenanalysis(zarr_path, chunk_size, compressor, verbose, swap_eigenvectors, num_workers):
+    """Run eigenanalysis on a structure tensor zarr to compute eigenvectors."""
     print("\n--- Running Eigenanalysis ---")
     
     # Build command to run create_st.py's eigenanalysis mode
@@ -199,8 +205,7 @@ def run_eigenanalysis(input_path, output_path, chunk_size, compressor, verbose, 
     
     # Basic arguments
     cmd.extend(['--mode', 'eigenanalysis'])
-    cmd.extend(['--eigen-input', input_path])
-    cmd.extend(['--eigen-output', output_path])
+    cmd.extend(['--eigen-input', zarr_path])
     
     # Optional arguments
     if chunk_size:
@@ -264,8 +269,8 @@ def parse_arguments():
     
     # Mode selection
     parser.add_argument('--mode', type=str, default='structure-tensor',
-                        choices=['structure-tensor', 'eigenanalysis', 'both'],
-                        help='Mode of operation: compute structure tensor, perform eigenanalysis, or both')
+                        choices=['structure-tensor', 'eigenanalysis'],
+                        help='Mode of operation: compute structure tensor (with eigenanalysis by default) or perform eigenanalysis only')
     
     # Basic I/O arguments
     parser.add_argument('--input_dir', type=str, required=True, 
@@ -276,6 +281,8 @@ def parse_arguments():
     # Structure tensor computation arguments
     parser.add_argument('--sigma', type=float, default=2.0,
                         help='Gaussian σ for structure-tensor smoothing')
+    parser.add_argument('--structure-tensor-only', action='store_true',
+                        help='Compute only the structure tensor, skip eigenanalysis')
     parser.add_argument('--smooth-components', action='store_true',
                         help='After computing Jxx…Jzz, apply a second Gaussian smoothing to each channel')
     parser.add_argument('--volume', type=int, default=None,
@@ -330,15 +337,6 @@ def main():
         if not args.eigen_input:
             print("Error: --eigen-input must be provided for eigenanalysis mode")
             return 1
-        if not args.eigen_output:
-            print("Error: --eigen-output must be provided for eigenanalysis mode")
-            return 1
-    
-    # Validation for 'both' mode
-    if args.mode == 'both':
-        if not args.eigen_output:
-            print("Error: --eigen-output must be provided when mode is 'both'")
-            return 1
     
     # Get compressor for later use
     if args.zarr_compressor.lower() == 'zstd':
@@ -360,8 +358,7 @@ def main():
     # Handle eigenanalysis-only mode
     if args.mode == 'eigenanalysis':
         success = run_eigenanalysis(
-            input_path=args.eigen_input,
-            output_path=args.eigen_output,
+            zarr_path=args.eigen_input,
             chunk_size=chunk_size_str,
             compressor=compressor,
             verbose=args.verbose,
@@ -370,19 +367,19 @@ def main():
         )
         
         if success:
-            # Delete intermediate if requested
-            if args.delete_intermediate:
-                delete_intermediate_file(args.eigen_input, args.verbose)
             print("\n--- Eigenanalysis Completed Successfully ---")
+            print(f"Results saved to:")
+            print(f"  - Eigenvectors: {args.eigen_input}/eigenvectors")
+            print(f"  - Eigenvalues: {args.eigen_input}/eigenvalues")
             return 0
         else:
             print("\n--- Eigenanalysis Failed ---")
             return 1
     
-    # For structure-tensor or both modes, we need to compute the structure tensor first
+    # For structure-tensor mode, compute the structure tensor
     structure_tensor_output = None
     
-    if args.mode in ['structure-tensor', 'both']:
+    if args.mode == 'structure-tensor':
         # Select GPUs
         gpu_ids = select_gpus(args.gpus)
         if args.verbose:
@@ -490,30 +487,6 @@ def main():
             else:
                 print(f"\n--- Structure Tensor Processing Failed ---")
                 return 1
-    
-    # If mode is 'both', run eigenanalysis on the structure tensor output
-    if args.mode == 'both' and structure_tensor_output:
-        success = run_eigenanalysis(
-            input_path=structure_tensor_output,
-            output_path=args.eigen_output,
-            chunk_size=chunk_size_str,
-            compressor=compressor,
-            verbose=args.verbose,
-            swap_eigenvectors=args.swap_eigenvectors,
-            num_workers=args.num_workers
-        )
-        
-        if success:
-            print(f"\n--- Complete Workflow Finished Successfully ---")
-            print(f"Structure tensor saved to: {structure_tensor_output}")
-            print(f"Eigenvectors saved to: {args.eigen_output}")
-            
-            # Delete intermediate structure tensor if requested
-            if args.delete_intermediate:
-                delete_intermediate_file(structure_tensor_output, args.verbose)
-        else:
-            print("\n--- Eigenanalysis Failed ---")
-            return 1
     
     return 0
 
