@@ -104,16 +104,23 @@ def process_chunk(chunk_info, input_path, output_path,
         # This ensures write_empty_chunks=False works correctly
         return {'chunk_idx': chunk_idx, 'processed_voxels': 0, 'empty': True}
 
-    # scale to uint8
-    mn, mx = out_np.min(), out_np.max()
-    if mn < mx:
-        out_np = ((out_np - mn) / (mx - mn) * 255).astype(np.uint8)
+    # Scale to uint8 range [0, 255]
+    min_val = output_np.min()
+    max_val = output_np.max()
+    if min_val < max_val:  # Avoid division by zero
+        # Scale to [0, 255] range
+        output_np = ((output_np - min_val) / (max_val - min_val) * 255).astype(np.uint8)
     else:
-        out_np = np.zeros_like(out_np, dtype=np.uint8)
+        # Handle case where all values are the same but we still want to write it
+        # (shouldn't reach here due to empty patch check above)
+        output_np = np.zeros_like(output_np, dtype=np.uint8)
 
-    # write back
-    out_slice = (slice(None),) + spatial_slices
-    output_store[out_slice] = out_np
+    # Create output slice (all output channels for this spatial region)
+    output_slice = (slice(None),) + spatial_slices
+
+    # Write to output store
+    output_store[output_slice] = output_np
+    
     return {'chunk_idx': chunk_idx, 'processed_voxels': np.prod(output_data.shape)}
 
 
