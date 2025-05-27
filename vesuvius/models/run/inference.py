@@ -1034,18 +1034,21 @@ def main():
             part_id=args.part_id,
             overlap=args.overlap,
             batch_size=args.batch_size,
-            patch_size=patch_size,
+            patch_size=patch_size, # Will use model's patch size if None
             save_softmax=args.save_softmax,
             normalization_scheme=args.normalization,
             device=args.device,
             verbose=args.verbose,
-            skip_empty_patches=args.skip_empty_patches,
+            skip_empty_patches=args.skip_empty_patches, # Skip empty patches flag
+            # Pass Volume-specific parameters to VCDataset
             scroll_id=scroll_id,
             segment_id=segment_id,
             energy=args.energy,
             resolution=args.resolution,
+            # Pass Zarr compression settings
             compressor_name=args.zarr_compressor,
             compression_level=args.zarr_compression_level,
+            # Pass Hugging Face parameters
             hf_token=args.hf_token
         )
 
@@ -1094,6 +1097,7 @@ def main():
                 except Exception as inspect_e:
                     print(f"Could not inspect output Zarr: {inspect_e}")
 
+                # Print empty patches report if skip_empty_patches was enabled
                 if inferer.skip_empty_patches and hasattr(inferer.dataset, 'get_empty_patches_report'):
                     report = inferer.dataset.get_empty_patches_report()
                     print("\n--- Empty Patches Report ---")

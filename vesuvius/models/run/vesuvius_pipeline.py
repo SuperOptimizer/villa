@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-
-# example: vesuvius.inference_pipeline   --structure-tensor   --sigma 2.0   --input  /home/giorgio/scrolls/scroll1/volumes/s1a_fibers_4down.zarr   --output /home/giorgio/scrolls/scroll1/volumes/s1a_fibers_4down_eigens.zarr --fibers --patch-size 384,384,384 --batch-size 32 --smooth-components --single-part
 """
 Vesuvius Pipeline - Run the complete inference, blending, and finalization process.
+Can perform structure tensor analysis as well.
 Uses multiple GPUs by assigning different devices to different parts (not DDP).
 """
 
@@ -78,10 +77,9 @@ def parse_arguments():
 
     # GPU settings
     parser.add_argument('--gpus', type=str, default='all',
-                        help='GPU IDs to use, comma-separated (e.g., "0,1,2") or "all".')
-    parser.add_argument('--parts-per-gpu', dest='parts_per_gpu',
-                        type=int, default=1,
-                        help='Number of parts to process per GPU. Default: 1')
+                      help='GPU IDs to use, comma-separated (e.g., "0,1,2") or "all" for all available GPUs. Default: all')
+    parser.add_argument('--parts-per-gpu', dest='parts_per_gpu', type=int, default=1,
+                      help='Number of parts to process per GPU. Higher values use less GPU memory but take longer. Default: 1')
     
     # Performance settings
     parser.add_argument('--tta-type', dest='tta_type',
@@ -151,16 +149,25 @@ def prepare_directories(args):
 
     # Define paths for intermediate outputs
     if args.workdir.startswith('s3://'):
+        # For S3 paths, use proper path join
         args.parts_dir   = f"{args.workdir.rstrip('/')}/parts"
         args.blended_path = f"{args.workdir.rstrip('/')}/blended.zarr"
+
+        # Create S3 directories
         import fsspec
         fs = fsspec.filesystem('s3', anon=False)
         fs.makedirs(args.workdir, exist_ok=True)
         fs.makedirs(args.parts_dir, exist_ok=True)
     else:
+        # For local paths, use os.path.join
+        # Create needed directories
         os.makedirs(args.workdir, exist_ok=True)
+
+        # Define paths for intermediate outputs
         args.parts_dir    = os.path.join(args.workdir, "parts")
         args.blended_path = os.path.join(args.workdir, "blended.zarr")
+
+        # Create parts directory
         os.makedirs(args.parts_dir, exist_ok=True)
 
     return args
@@ -187,9 +194,14 @@ def select_gpus(args):
 
 def split_data_for_gpus(args, gpu_ids):
     """Determine how to split the data across GPUs."""
-    if args.single_part or not gpu_ids:
-        return 1
-    return len(gpu_ids) * args.parts_per_gpu
+    if getattr(args, 'single_part', False) or not gpu_ids:
+        # If single part or no GPUs, don't split
+        num_parts = 1
+    else:
+        # Calculate number of parts based on GPUs and parts per GPU
+        num_parts = len(gpu_ids) * getattr(args, 'parts_per_gpu', 1)
+
+    return num_parts
 
 
 def run_predict(args, part_id, gpu_id):
@@ -209,23 +221,36 @@ def run_predict(args, part_id, gpu_id):
     cmd.extend(['--input_dir',  args.input])
     cmd.extend(['--output_dir', args.parts_dir])
 
+    # Add model type argument
+    if args.model_type == 'custom':
+        # not yet implemented, will be for ink / other models that are not nnunet based
+        pass
+
+    # Add device argument
     if gpu_id is not None:
         cmd.extend(['--device', f'cuda:{gpu_id}'])
     else:
         cmd.extend(['--device', 'cpu'])
 
+    # Add part-specific arguments for multi-GPU
     cmd.extend(['--num_parts', str(args.num_parts)])
     cmd.extend(['--part_id',   str(part_id)])
 
-    # TTA settings
-    if args.disable_tta:
+    # TTA (Test Time Augmentation) settings
+    if getattr(args, 'tta_type', None):
+        cmd.extend(['--tta_type', args.tta_type])
+    elif getattr(args, 'disable_tta', False):
         cmd.append('--disable_tta')
     else:
-        cmd.extend(['--tta_type', args.tta_type])
+        # Default to rotation TTA
+        cmd.extend(['--tta_type', 'rotation'])
+    # Default behavior now uses rotation TTA if neither is specified
 
+    # Add other optional arguments
     if args.patch_size:
         cmd.extend(['--patch_size', args.patch_size])
 
+    # Performance settings
     cmd.extend(['--batch_size', str(args.batch_size)])
     if args.quiet:
         cmd.append('--quiet')
@@ -236,11 +261,13 @@ def run_predict(args, part_id, gpu_id):
         stdout=(subprocess.PIPE if args.quiet else None),
         stderr=(subprocess.PIPE if args.quiet else None),
         universal_newlines=True,
-        bufsize=1
+        bufsize=1 # Line buffered
     )
+
+    # Wait for the process to complete
     rc = proc.wait()
     if rc != 0 and args.quiet:
-        err = proc.stderr.read() if proc.stderr else "No error output"
+        err = proc.stderr.read() if proc.stderr else "No error output available"
         print(f"[Part {part_id}] ERROR:\n{err}")
     return rc == 0
 
@@ -251,14 +278,19 @@ def run_blend(args):
     if args.quiet:
         cmd.append('--quiet')
 
+    # Run the command
     print(f"Blending parts: {' '.join(cmd)}")
+
+    # Run with live stdout/stderr streaming for progress bars
     proc = subprocess.Popen(
         cmd,
         stdout=(subprocess.PIPE if args.quiet else None),
         stderr=(subprocess.PIPE if args.quiet else None),
         universal_newlines=True,
-        bufsize=1
+        bufsize=1 # Line buffered
     )
+
+    # Wait for the process to complete
     rc = proc.wait()
     if rc != 0 and args.quiet:
         err = proc.stderr.read() if proc.stderr else "No error output"
@@ -268,27 +300,46 @@ def run_blend(args):
 
 def run_finalize(args):
     """Run the finalization step."""
+    # DEBUG: Print threshold flag value before command construction
+    print(f"DEBUG - threshold flag value: {args.threshold}")
+    print(f"DEBUG - threshold flag type: {type(args.threshold)}")
+    print(f"DEBUG - All available args: {vars(args)}")
+
     cmd = ['vesuvius.finalize_outputs', args.blended_path, args.output]
+
+    # Add mode and threshold arguments
     cmd.extend(['--mode', args.mode])
     if args.threshold:
         cmd.append('--threshold')
     if getattr(args, 'swap_eigenvectors', False):
         cmd.append('--swap-eigenvectors')
+
+    # Delete intermediates if not keeping them
     if not args.keep_intermediates:
         cmd.append('--delete-intermediates')
+
+    # Add num_workers argument - use all available CPU cores
     import multiprocessing as mp
-    cmd.extend(['--num-workers', str(mp.cpu_count())])
+    num_workers = mp.cpu_count()
+    cmd.extend(['--num-workers', str(num_workers)])
+    print(f"Using {num_workers} worker processes for finalization")
+
     if args.quiet:
         cmd.append('--quiet')
 
+    # Run the command
     print(f"Finalizing output: {' '.join(cmd)}")
+
+    # Run with live stdout/stderr streaming for progress bars
     proc = subprocess.Popen(
         cmd,
         stdout=(subprocess.PIPE if args.quiet else None),
         stderr=(subprocess.PIPE if args.quiet else None),
         universal_newlines=True,
-        bufsize=1
+        bufsize=1  # Line buffered
     )
+
+    # Wait for the process to complete
     rc = proc.wait()
     if rc != 0 and args.quiet:
         err = proc.stderr.read() if proc.stderr else "No error output"
@@ -298,33 +349,58 @@ def run_finalize(args):
 
 def cleanup(args):
     """Clean up intermediate files."""
-    if args.keep_intermediates:
-        return
-    print("Cleaning up intermediate files...")
-    if args.parts_dir.startswith('s3://'):
-        import fsspec
-        fs = fsspec.filesystem('s3', anon=False)
-        if fs.exists(args.parts_dir):
-            for p in fs.ls(args.parts_dir, detail=False):
-                fs.rm(p, recursive=True)
-            fs.rmdir(args.parts_dir)
-        if fs.exists(args.workdir) and not fs.ls(args.workdir):
-            fs.rmdir(args.workdir)
-    else:
-        shutil.rmtree(args.parts_dir, ignore_errors=True)
-        try:
-            os.rmdir(args.workdir)
-        except OSError:
-            pass
+    if not args.keep_intermediates:
+        print("Cleaning up intermediate files...")
+
+        # Handle cleanup for S3 paths
+        if args.parts_dir.startswith('s3://'):
+            try:
+                import fsspec
+                fs = fsspec.filesystem('s3', anon=False)
+                if fs.exists(args.parts_dir):
+                    # Remove all files in the parts directory
+                    for file_path in fs.ls(args.parts_dir, detail=False):
+                        fs.rm(file_path, recursive=True)
+                    # Remove the parts directory itself
+                    fs.rmdir(args.parts_dir)
+
+                # Check if workdir is empty
+                if fs.exists(args.workdir):
+                    workdir_files = fs.ls(args.workdir, detail=False)
+                    if len(workdir_files) == 0:
+                        fs.rmdir(args.workdir)
+            except Exception as e:
+                print(f"Warning: Failed to clean up S3 intermediates: {e}")
+        else:
+            # Local file cleanup
+            if os.path.exists(args.parts_dir):
+                shutil.rmtree(args.parts_dir)
+
+            # Only remove the work directory if it's empty
+            try:
+                os.rmdir(args.workdir)
+            except OSError:
+                # Directory not empty, so keep it
+                pass
 
 
 def setup_multipart(args, num_parts):
     """Setup for multi-part processing."""
+    # No need to calculate Z-ranges since vesuvius.predict handles
+    # the data splitting internally based on num_parts and part_id
+
+    # Just validate and return the number of parts
     if num_parts < 1:
         print("Warning: Number of parts must be at least 1. Setting to 1.")
         num_parts = 1
+
     print(f"Setting up for processing in {num_parts} parts...")
+
+    # Store the num_parts as an attribute on args for use in run_predict
     args.num_parts = num_parts
+
+    # We're not returning Z-ranges anymore since vesuvius.predict
+    # will handle partitioning internally
     return num_parts
 
 def _run_single_pipeline(args):
@@ -455,15 +531,19 @@ def run_pipeline():
                           and __import__('fsspec').filesystem('s3').exists(args.blended_path)) \
             or os.path.exists(args.blended_path)
         if not blended_exists:
-            print("No blended output found; please run blending first.")
+            print("No blended data found. Please run the blending step first.")
             return 1
         # pass --mode structure-tensor (or binary/multiclass) down to vesuvius.finalize
         if not run_finalize(args):
             print("Finalization failed.")
             return 1
 
+    # Final cleanup
     cleanup(args)
-    print(f"\n--- Pipeline Complete ---\nFinal output saved to: {args.output}")
+
+    print(f"\n--- Pipeline Complete ---")
+    print(f"Final output saved to: {args.output}")
+
     return 0
 
 
