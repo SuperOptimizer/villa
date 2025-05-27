@@ -7,7 +7,7 @@ import os
 import shutil
 import argparse
 import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 
 import numpy as np
@@ -120,10 +120,10 @@ def process_chunk(chunk_info, input_path, output_path,
 
     # Write to output store
     output_store[output_slice] = output_np
-    
+
     return {'chunk_idx': chunk_idx, 'processed_voxels': np.prod(output_data.shape)}
 
-
+# This class is needed for the structure-tensor part
 class ChunkDataset(Dataset):
     """Dataset of spatial chunk bounds for structure‐tensor eigen decomposition."""
     def __init__(self, input_path, chunks, device):
