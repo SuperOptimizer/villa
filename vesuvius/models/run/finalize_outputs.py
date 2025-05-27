@@ -100,7 +100,9 @@ def process_chunk(chunk_info, input_path, output_path,
 
     # empty patch check
     if np.isclose(out_np, 0.5, rtol=1e-3).all():
-        return {'empty': True}
+        # For empty patches, don't write anything to the output store
+        # This ensures write_empty_chunks=False works correctly
+        return {'chunk_idx': chunk_idx, 'processed_voxels': 0, 'empty': True}
 
     # scale to uint8
     mn, mx = out_np.min(), out_np.max()
@@ -112,7 +114,7 @@ def process_chunk(chunk_info, input_path, output_path,
     # write back
     out_slice = (slice(None),) + spatial_slices
     output_store[out_slice] = out_np
-    return {'processed': True}
+    return {'chunk_idx': chunk_idx, 'processed_voxels': np.prod(output_data.shape)}
 
 
 class ChunkDataset(Dataset):
