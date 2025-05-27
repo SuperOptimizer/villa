@@ -1,7 +1,0 @@
-data
-examples
-models
-setup
-structure_tensor
-utils
-vesuvius
