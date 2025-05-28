@@ -77,7 +77,7 @@ class NetworkFromConfig(nn.Module):
             print("model_config is empty; using inference_config instead")
             model_config = mgr.inference_config
 
-        self.save_config = True
+        self.save_config = False
 
         # --------------------------------------------------------------------
         # Common nontrainable parameters (ops, activation, etc.)

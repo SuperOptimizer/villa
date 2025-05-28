@@ -69,6 +69,9 @@ class ConfigManager:
         self.min_labeled_ratio = float(self.dataset_config.get("min_labeled_ratio", 0.10))
         self.min_bbox_percent = float(self.dataset_config.get("min_bbox_percent", 0.95))
         
+        # Skip patch validation for performance (useful for TIF datasets)
+        self.skip_patch_validation = bool(self.dataset_config.get("skip_patch_validation", False))
+        
         # New configuration parameters for binarization control
         self.binarize_labels = bool(self.dataset_config.get("binarize_labels", True))
         self.target_value = self.dataset_config.get("target_value", "auto")  # "auto", int, or dict
@@ -218,7 +221,7 @@ class ConfigManager:
         print(f"Configuration saved to: {config_path}")
 
     def update_config(self, patch_size=None, min_labeled_ratio=None, max_epochs=None, loss_function=None, 
-                     binarize_labels=None, target_value=None):
+                     binarize_labels=None, target_value=None, skip_patch_validation=None):
         if patch_size is not None:
             if isinstance(patch_size, (list, tuple)) and len(patch_size) >= 2:
                 self.train_patch_size = tuple(patch_size)
@@ -252,6 +255,12 @@ class ConfigManager:
             self.dataset_config["target_value"] = self.target_value
             if self.verbose:
                 print(f"Updated target_value: {self.target_value}")
+        
+        if skip_patch_validation is not None:
+            self.skip_patch_validation = bool(skip_patch_validation)
+            self.dataset_config["skip_patch_validation"] = self.skip_patch_validation
+            if self.verbose:
+                print(f"Updated skip_patch_validation: {self.skip_patch_validation}")
         
         if loss_function is not None:
             self.selected_loss_function = loss_function

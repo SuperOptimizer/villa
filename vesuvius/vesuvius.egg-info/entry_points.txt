@@ -9,4 +9,5 @@ vesuvius.predict = models.run.inference:main
 vesuvius.proofreader = utils.vc_proofreader.main:main
 vesuvius.refine_labels = scripts.edt_frangi_label:main
 vesuvius.render_obj = rendering.mesh_to_surface:main
+vesuvius.train = models.run.train:main
 vesuvius.voxelize_obj = scripts.voxelize_objs:main

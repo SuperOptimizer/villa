@@ -12,6 +12,7 @@ Classifier: Topic :: Software Development :: Libraries
 Classifier: Topic :: Scientific/Engineering
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
+Requires-Dist: albumentations
 Requires-Dist: numpy
 Requires-Dist: requests
 Requires-Dist: aiohttp

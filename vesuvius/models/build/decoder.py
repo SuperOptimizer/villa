@@ -6,7 +6,7 @@ import numpy as np
 from typing import Union, Tuple, List, Type
 
 import torch
-from models.model.utils import get_matching_convtransp
+from models.utils import get_matching_convtransp
 from .resblocks import StackedResidualBlocks
 from .simple_conv_blocks import StackedConvBlocks
 from torch import nn

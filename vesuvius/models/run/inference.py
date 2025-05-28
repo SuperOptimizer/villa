@@ -8,7 +8,7 @@ import threading
 import fsspec
 import numcodecs
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-# fork causes issues on windows and w/ tensorstore , force to spawn
+# fork causes issues on windows , force to spawn
 multiprocessing.set_start_method('spawn', force=True)
 from tqdm.auto import tqdm
 from torch.utils.data import DataLoader

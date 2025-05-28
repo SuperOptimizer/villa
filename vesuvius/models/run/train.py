@@ -89,7 +89,7 @@ class BaseTrainer:
             dataset = NapariDataset(mgr=self.mgr,
                                    image_transforms=image_transforms,
                                    volume_transforms=None)
-        elif data_format == 'tifs':
+        elif data_format == 'tif':
             dataset = TifDataset(mgr=self.mgr,
                                 image_transforms=image_transforms,
                                 volume_transforms=None)
@@ -99,7 +99,7 @@ class BaseTrainer:
                                  volume_transforms=None)
         else:
             raise ValueError(f"Unsupported data format: {data_format}. "
-                           f"Supported formats are: 'napari', 'tifs', 'zarr'")
+                           f"Supported formats are: 'napari', 'tif', 'zarr'")
         
         print(f"Using {data_format} dataset format")
         return dataset
@@ -200,7 +200,7 @@ class BaseTrainer:
                                 batch_size=batch_size,
                                 sampler=SubsetRandomSampler(train_indices),
                                 pin_memory=(device_type == 'cuda'),  # pin_memory=True for CUDA
-                                num_workers=num_workers),
+                                num_workers=num_workers)
         
         val_dataloader = DataLoader(dataset,
                                     batch_size=1,
@@ -337,7 +337,13 @@ class BaseTrainer:
             train_running_losses = {t_name: 0.0 for t_name in self.mgr.targets}
             # Use the length of train indices as the number of iterations per epoch
             train_dataloader_iter = iter(train_dataloader)
-            num_iters = len(train_indices)
+            
+            # Determine number of iterations based on max_steps_per_epoch if set
+            if hasattr(self.mgr, 'max_steps_per_epoch') and self.mgr.max_steps_per_epoch and self.mgr.max_steps_per_epoch > 0:
+                num_iters = min(len(train_indices), self.mgr.max_steps_per_epoch)
+            else:
+                num_iters = len(train_indices)  # Use all data (current behavior)
+            
             pbar = tqdm(range(num_iters), total=num_iters)
             steps = 0
 
@@ -350,25 +356,37 @@ class BaseTrainer:
                     data_dict = next(train_dataloader_iter)
 
                 if epoch == 0 and i == 0:
+                    print("Items from the first batch -- Double check that your shapes and values are expected:")
                     for item in data_dict:
-                        print(f"Items from the first batch -- Double check that your shapes and values are expected:")
-                        print(f"{item}: {data_dict[item].dtype}")
-                        print(f"{item}: {data_dict[item].shape}")
-                        print(f"{item}: min : {data_dict[item].min()} max : {data_dict[item].max()}")
+                        if isinstance(data_dict[item], dict):
+                            # Handle dictionary items like loss_masks
+                            print(f"{item}: (dictionary with keys: {list(data_dict[item].keys())})")
+                            for sub_key, sub_val in data_dict[item].items():
+                                print(f"  {sub_key}: {sub_val.dtype}")
+                                print(f"  {sub_key}: {sub_val.shape}")
+                                print(f"  {sub_key}: min : {sub_val.min()} max : {sub_val.max()}")
+                        else:
+                            # Handle tensor items
+                            print(f"{item}: {data_dict[item].dtype}")
+                            print(f"{item}: {data_dict[item].shape}")
+                            print(f"{item}: min : {data_dict[item].min()} max : {data_dict[item].max()}")
 
                 global_step += 1
 
                 inputs = data_dict["image"].to(device, dtype=torch.float32)
-                # Get the loss mask separately if it exists
-                loss_mask = None
-                if "loss_mask" in data_dict:
-                    loss_mask = data_dict["loss_mask"].to(device, dtype=torch.float32)
+                # Get the loss masks dictionary if it exists
+                loss_masks = None
+                if "loss_masks" in data_dict:
+                    loss_masks = {
+                        t_name: mask.to(device, dtype=torch.float32)
+                        for t_name, mask in data_dict["loss_masks"].items()
+                    }
                 
-                # Create targets_dict excluding both image and loss_mask
+                # Create targets_dict excluding both image and loss_masks
                 targets_dict = {
                     k: v.to(device, dtype=torch.float32)
                     for k, v in data_dict.items()
-                    if k != "image" and k != "loss_mask"
+                    if k != "image" and k != "loss_masks"
                 }
 
                 # forward
@@ -390,25 +408,25 @@ class BaseTrainer:
                         t_loss_fn = loss_fns[t_name]
                         task_weight = self.mgr.targets[t_name].get("weight", 1.0)
 
-                        # Use the loss_mask from the dataset if available, otherwise use the whole input
+                        # Use the per-target loss mask if available
                         label_mask = None
-                        if "loss_mask" in data_dict:
-                            # Get the loss mask provided by the dataset
-                            loss_mask = data_dict["loss_mask"].to(device, dtype=torch.float32)
+                        if loss_masks is not None and t_name in loss_masks:
+                            # Get the target-specific loss mask
+                            label_mask = loss_masks[t_name]
                             
                             # Adjust mask dimensions to match the target format
                             if isinstance(t_loss_fn, CrossEntropyMaskedLoss):
                                 # For CrossEntropyLoss, target has shape [B,H,W]
-                                if loss_mask.dim() == 4 and loss_mask.shape[1] == 1:  # [B,1,H,W]
-                                    label_mask = loss_mask.squeeze(1)
-                                else:
-                                    label_mask = loss_mask
+                                if label_mask.dim() == 4 and label_mask.shape[1] == 1:  # [B,1,H,W]
+                                    label_mask = label_mask.squeeze(1)
+                                elif label_mask.dim() == 2:  # [H,W]
+                                    label_mask = label_mask.unsqueeze(0)  # Add batch dim
                             else:
-                                # For other losses with one-hot encoding, target has shape [B,C,H,W]
-                                if loss_mask.dim() == 3:  # [B,H,W]
-                                    label_mask = loss_mask.unsqueeze(1)  # Add channel dim [B,1,H,W]
-                                else:
-                                    label_mask = loss_mask
+                                # For other losses, target has shape [B,C,H,W]
+                                if label_mask.dim() == 3:  # [B,H,W]
+                                    label_mask = label_mask.unsqueeze(1)  # Add channel dim [B,1,H,W]
+                                elif label_mask.dim() == 2:  # [H,W]
+                                    label_mask = label_mask.unsqueeze(0).unsqueeze(0)  # Add batch and channel dims
                             
                             # Print a message showing we're using the custom mask
                             if steps == 0 and i == 0:
@@ -520,7 +538,13 @@ class BaseTrainer:
 
                     # Use the length of val indices as the number of iterations for validation
                     val_dataloader_iter = iter(val_dataloader)
-                    num_val_iters = len(val_indices)
+                    
+                    # Determine number of validation iterations based on max_val_steps_per_epoch if set
+                    if hasattr(self.mgr, 'max_val_steps_per_epoch') and self.mgr.max_val_steps_per_epoch and self.mgr.max_val_steps_per_epoch > 0:
+                        num_val_iters = min(len(val_indices), self.mgr.max_val_steps_per_epoch)
+                    else:
+                        num_val_iters = len(val_indices)  # Use all data (current behavior)
+                    
                     pbar = tqdm(range(num_val_iters), total=num_val_iters)
                     for i in pbar:
                         try:
@@ -531,16 +555,19 @@ class BaseTrainer:
                             data_dict = next(val_dataloader_iter)
 
                         inputs = data_dict["image"].to(device, dtype=torch.float32)
-                        # Get the loss mask separately if it exists
-                        loss_mask = None
-                        if "loss_mask" in data_dict:
-                            loss_mask = data_dict["loss_mask"].to(device, dtype=torch.float32)
+                        # Get the loss masks dictionary if it exists
+                        loss_masks = None
+                        if "loss_masks" in data_dict:
+                            loss_masks = {
+                                t_name: mask.to(device, dtype=torch.float32)
+                                for t_name, mask in data_dict["loss_masks"].items()
+                            }
                         
-                        # Create targets_dict excluding both image and loss_mask
+                        # Create targets_dict excluding both image and loss_masks
                         targets_dict = {
                             k: v.to(device, dtype=torch.float32)
                             for k, v in data_dict.items()
-                            if k != "image" and k != "loss_mask"
+                            if k != "image" and k != "loss_masks"
                         }
 
                         # Use the same context as in training
@@ -557,25 +584,26 @@ class BaseTrainer:
                             for t_name, t_gt in targets_dict.items():
                                 t_pred = outputs[t_name]
                                 t_loss_fn = loss_fns[t_name]
-                                # Use the loss_mask from the dataset if available, otherwise use the whole input
+                                
+                                # Use the per-target loss mask if available
                                 label_mask = None
-                                if "loss_mask" in data_dict:
-                                    # Get the loss mask provided by the dataset
-                                    loss_mask = data_dict["loss_mask"].to(device, dtype=torch.float32)
+                                if loss_masks is not None and t_name in loss_masks:
+                                    # Get the target-specific loss mask
+                                    label_mask = loss_masks[t_name]
                                     
                                     # Adjust mask dimensions to match the target format
                                     if isinstance(t_loss_fn, CrossEntropyMaskedLoss):
                                         # For CrossEntropyLoss, target has shape [B,H,W]
-                                        if loss_mask.dim() == 4 and loss_mask.shape[1] == 1:  # [B,1,H,W]
-                                            label_mask = loss_mask.squeeze(1)
-                                        else:
-                                            label_mask = loss_mask
+                                        if label_mask.dim() == 4 and label_mask.shape[1] == 1:  # [B,1,H,W]
+                                            label_mask = label_mask.squeeze(1)
+                                        elif label_mask.dim() == 2:  # [H,W]
+                                            label_mask = label_mask.unsqueeze(0)  # Add batch dim
                                     else:
-                                        # For other losses with one-hot encoding, target has shape [B,C,H,W]
-                                        if loss_mask.dim() == 3:  # [B,H,W]
-                                            label_mask = loss_mask.unsqueeze(1)  # Add channel dim [B,1,H,W]
-                                        else:
-                                            label_mask = loss_mask
+                                        # For other losses, target has shape [B,C,H,W]
+                                        if label_mask.dim() == 3:  # [B,H,W]
+                                            label_mask = label_mask.unsqueeze(1)  # Add channel dim [B,1,H,W]
+                                        elif label_mask.dim() == 2:  # [H,W]
+                                            label_mask = label_mask.unsqueeze(0).unsqueeze(0)  # Add batch and channel dims
                                 
                                 # Calculate the loss, passing label_mask if available
                                 t_loss = t_loss_fn(t_pred, t_gt, loss_mask=label_mask)
@@ -688,8 +716,8 @@ def detect_targets_from_data(mgr):
         print("Warning: Target detection not implemented for napari format. Please configure targets in config file.")
         return
     
-    # Create default target configuration if targets were found
-    if targets:
+    # Only create default target configuration if no targets are already configured
+    if targets and (not hasattr(mgr, 'targets') or not mgr.targets):
         mgr.targets = {}
         for target in sorted(targets):
             mgr.targets[target] = {
@@ -699,6 +727,13 @@ def detect_targets_from_data(mgr):
             }
         
         print(f"Detected targets from data: {list(targets)}")
+    elif targets and mgr.targets:
+        # Check if all detected targets are configured
+        configured_targets = set(mgr.targets.keys())
+        missing_targets = targets - configured_targets
+        if missing_targets:
+            print(f"Warning: Detected targets {missing_targets} are not configured in the config file")
+        print(f"Using configured targets: {list(mgr.targets.keys())}")
     else:
         print("No targets detected from data. Please configure targets in config file.")
 
@@ -779,6 +814,15 @@ def update_config_from_args(mgr, args):
         mgr.compute_loss_on_label = True
         mgr.tr_info["compute_loss_on_label"] = True
     
+    # Handle max steps per epoch if provided
+    if args.max_steps_per_epoch is not None:
+        mgr.max_steps_per_epoch = args.max_steps_per_epoch
+        mgr.tr_configs["max_steps_per_epoch"] = args.max_steps_per_epoch
+    
+    if args.max_val_steps_per_epoch is not None:
+        mgr.max_val_steps_per_epoch = args.max_val_steps_per_epoch
+        mgr.tr_configs["max_val_steps_per_epoch"] = args.max_val_steps_per_epoch
+    
     # Handle loss functions
     if args.loss is not None:
         # Parse loss function list like "[SoftDiceLoss, BCEWithLogitsLoss]"
@@ -795,7 +839,8 @@ def update_config_from_args(mgr, args):
         apply_loss_functions_to_targets(mgr, loss_list)
 
 
-if __name__ == '__main__':
+def main():
+    """Main entry point for the training script."""
     import argparse
     
     parser = argparse.ArgumentParser(
@@ -826,6 +871,10 @@ if __name__ == '__main__':
                        help="Path to configuration YAML file (if not provided, uses defaults)")
     parser.add_argument("--verbose", action="store_true",
                        help="Enable verbose output for debugging")
+    parser.add_argument("--max-steps-per-epoch", type=int, default=200,
+                       help="Maximum training steps per epoch (if not set, uses all data)")
+    parser.add_argument("--max-val-steps-per-epoch", type=int, default=30,
+                       help="Maximum validation steps per epoch (if not set, uses all data)")
     
     args = parser.parse_args()
     
@@ -837,7 +886,7 @@ if __name__ == '__main__':
     Path(args.output).mkdir(parents=True, exist_ok=True)
     
     # Initialize ConfigManager
-    from vesuvius.models.configuration.config_manager import ConfigManager
+    from models.configuration.config_manager import ConfigManager
     mgr = ConfigManager(verbose=args.verbose)
     
     # Load config file if provided, otherwise initialize with defaults
@@ -860,6 +909,10 @@ if __name__ == '__main__':
     print("Starting training...")
     trainer.train()
     print("Training completed!")
+
+
+if __name__ == '__main__':
+    main()
 
 # During training, you'll get a dict with all outputs
 # outputs = model(input_tensor)

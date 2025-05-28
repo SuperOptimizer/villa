@@ -33,6 +33,7 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     install_requires=[
+        'albumentations',
         'numpy',
         'requests',
         'aiohttp',
@@ -85,7 +86,8 @@ setup(
             'vesuvius.voxelize_obj=scripts.voxelize_objs:main',
             'vesuvius.refine_labels=scripts.edt_frangi_label:main',
             'vesuvius.render_obj=rendering.mesh_to_surface:main',
-            'vesuvius.flatten_obj=rendering.slim_uv:main'
+            'vesuvius.flatten_obj=rendering.slim_uv:main',
+            'vesuvius.train=models.run.train:main'
         ],
     },
     # No scripts needed as we're using entry_points

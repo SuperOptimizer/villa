@@ -172,8 +172,6 @@ class VCDataset(Dataset):
                 if not os.path.exists(use_path):
                     raise FileNotFoundError(f"Zarr path does not exist: {use_path}")
                 if not os.path.isdir(use_path):
-                     # Allow if it's a zip file potentially containing zarr? Tensorstore might handle this.
-                     # Let Volume handle errors, but warn if basic checks fail.
                      if not use_path.endswith('.zip'): # Basic check
                          print(f"  Warning: Zarr path '{use_path}' exists but is not a directory.")
                 # Check for key Zarr files (optional, Volume handles errors)

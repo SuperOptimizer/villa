@@ -37,7 +37,8 @@ def main():
     
     # Load configuration
     print(f"Loading configuration from: {args.config}")
-    mgr = ConfigManager(args.config)
+    mgr = ConfigManager(verbose=args.verbose)
+    mgr.load_config(args.config)
     
     # Add data path if provided
     if args.data_path:

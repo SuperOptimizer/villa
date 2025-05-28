@@ -169,6 +169,21 @@ def save_debug(
     targets_np, preds_np = {}, {}
     for t_name, t_tensor in targets_dict.items():
         arr_np = t_tensor.cpu().numpy()[0]  # => [C, Z, H, W] for 3D or [C, H, W] for 2D
+        # Check if this is a CrossEntropyLoss target (class indices)
+        loss_fn = tasks_dict[t_name].get("loss_fn", "")
+        if loss_fn == "CrossEntropyLoss":
+            # For CrossEntropyLoss, targets are class indices, not one-hot
+            # Shape is [Z, H, W] for 3D or [H, W] for 2D
+            # We'll convert to one-hot for visualization
+            num_classes = tasks_dict[t_name].get("out_channels", 2)
+            if is_2d:
+                # 2D: arr_np shape is [H, W]
+                one_hot = np.eye(num_classes)[arr_np.astype(int)]  # [H, W, num_classes]
+                arr_np = one_hot.transpose(2, 0, 1)  # [num_classes, H, W]
+            else:
+                # 3D: arr_np shape is [Z, H, W]
+                one_hot = np.eye(num_classes)[arr_np.astype(int)]  # [Z, H, W, num_classes]
+                arr_np = one_hot.transpose(3, 0, 1, 2)  # [num_classes, Z, H, W]
         targets_np[t_name] = arr_np
 
     for t_name, p_tensor in outputs_dict.items():

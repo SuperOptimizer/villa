@@ -1,0 +1,43 @@
+tr_setup:
+  model_name: MultiTask_Fiber_Segmentation
+
+tr_config:
+  patch_size: [128, 128, 128]
+
+dataset_config:
+  binarize_labels: true
+  target_value:
+    hz: 1  # Binary task
+    vt: 1  # Binary task
+  min_labeled_ratio: 0
+  min_bbox_percent: 0
+  skip_patch_validation: true
+  target_value:
+    hz:
+      mapping:
+        1: 1  
+    vt:
+      mapping:
+        1: 1  
+  targets:
+    hz:
+      out_channels: 1
+      activation: "sigmoid"
+      weight: 1
+      loss_fn: "BCEWithLogitsLoss" 
+    vt:
+      out_channels: 1
+      activation: "sigmoid"
+      weight: 1
+      loss_fn: "BCEWithLogitsLoss"
+
+inference_config:
+  targets:
+    - fiber_type1:
+        channels: 1
+        activation: "sigmoid"
+        weight: 1
+    - fiber_type2:
+        channels: 1
+        activation: "sigmoid"
+        weight: 1

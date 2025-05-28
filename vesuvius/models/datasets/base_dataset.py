@@ -46,6 +46,9 @@ class BaseDataset(Dataset):
         # New binarization control parameters
         self.binarize_labels = mgr.binarize_labels
         self.target_value = mgr.target_value
+        
+        # Skip patch validation (defaults to False)
+        self.skip_patch_validation = getattr(mgr, 'skip_patch_validation', False)
 
         self.image_transforms = image_transforms
         self.volume_transforms = volume_transforms
@@ -89,6 +92,111 @@ class BaseDataset(Dataset):
         """
         raise NotImplementedError("Subclasses must implement _initialize_volumes() method")
 
+    def _get_all_sliding_window_positions(self, volume_shape, patch_size, stride=None):
+        """
+        Generate all possible sliding window positions for a volume.
+        
+        Parameters
+        ----------
+        volume_shape : tuple
+            Shape of the volume (2D or 3D)
+        patch_size : tuple
+            Size of patches to extract
+        stride : tuple, optional
+            Stride for sliding window, defaults to 50% overlap
+            
+        Returns
+        -------
+        list
+            List of positions as dictionaries with 'start_pos' key
+        """
+        if len(volume_shape) == 2:
+            # 2D case
+            H, W = volume_shape
+            h, w = patch_size
+            
+            if stride is None:
+                stride = (h // 2, w // 2)  # 50% overlap by default
+            
+            positions = []
+            for y in range(0, H - h + 1, stride[0]):
+                for x in range(0, W - w + 1, stride[1]):
+                    positions.append({
+                        'start_pos': [0, y, x]  # [dummy_z, y, x] for 2D
+                    })
+            
+            # Ensure we cover the edges
+            # Add patches at the bottom edge if needed
+            if H - h > positions[-1]['start_pos'][1]:
+                for x in range(0, W - w + 1, stride[1]):
+                    positions.append({
+                        'start_pos': [0, H - h, x]
+                    })
+            
+            # Add patches at the right edge if needed
+            if W - w > positions[-1]['start_pos'][2]:
+                for y in range(0, H - h + 1, stride[0]):
+                    positions.append({
+                        'start_pos': [0, y, W - w]
+                    })
+            
+            # Add the bottom-right corner if needed
+            if H - h > positions[-1]['start_pos'][1] or W - w > positions[-1]['start_pos'][2]:
+                positions.append({
+                    'start_pos': [0, H - h, W - w]
+                })
+                
+        else:
+            # 3D case
+            D, H, W = volume_shape
+            d, h, w = patch_size
+            
+            if stride is None:
+                stride = (d // 2, h // 2, w // 2)  # 50% overlap by default
+            
+            positions = []
+            for z in range(0, D - d + 1, stride[0]):
+                for y in range(0, H - h + 1, stride[1]):
+                    for x in range(0, W - w + 1, stride[2]):
+                        positions.append({
+                            'start_pos': [z, y, x]
+                        })
+            
+            # Ensure we cover the edges in 3D
+            # This is more complex but follows the same principle
+            # Add patches to cover the edges if the stride doesn't naturally cover them
+            if D - d > 0 and (D - d) % stride[0] != 0:
+                for y in range(0, H - h + 1, stride[1]):
+                    for x in range(0, W - w + 1, stride[2]):
+                        positions.append({
+                            'start_pos': [D - d, y, x]
+                        })
+            
+            if H - h > 0 and (H - h) % stride[1] != 0:
+                for z in range(0, D - d + 1, stride[0]):
+                    for x in range(0, W - w + 1, stride[2]):
+                        positions.append({
+                            'start_pos': [z, H - h, x]
+                        })
+            
+            if W - w > 0 and (W - w) % stride[2] != 0:
+                for z in range(0, D - d + 1, stride[0]):
+                    for y in range(0, H - h + 1, stride[1]):
+                        positions.append({
+                            'start_pos': [z, y, W - w]
+                        })
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_positions = []
+        for pos in positions:
+            pos_tuple = tuple(pos['start_pos'])
+            if pos_tuple not in seen:
+                seen.add(pos_tuple)
+                unique_positions.append(pos)
+        
+        return unique_positions
+
     def _get_valid_patches(self):
         """Find valid patches based on mask coverage and labeled ratio requirements."""
         print("Computing valid patches...")
@@ -98,39 +206,55 @@ class BaseDataset(Dataset):
             vdata = volume_info['data']
             is_2d = len(vdata['label'].shape) == 2
             
-            label_data = vdata['label']  # Get the label data explicitly
-            
-            # Use mask if available, otherwise use label data for patch finding
-            if 'mask' in vdata:
-                mask_data = vdata['mask']
-                print(f"Using mask for patch extraction in volume {vol_idx}")
-            else:
-                if hasattr(label_data, 'shape') and hasattr(label_data, '__array__'):
-                    label_np = np.asarray(label_data)
-                    mask_data = (label_np > 0).astype(np.float32)
+            if self.skip_patch_validation:
+                # Skip validation - generate all sliding window positions
+                print(f"Skipping patch validation for volume {vol_idx} - using all sliding window positions")
+                
+                volume_shape = vdata['label'].shape
+                if is_2d:
+                    patch_size = self.patch_size[:2]  # [h, w]
                 else:
-                    mask_data = (label_data > 0).astype(np.float32)
-                print(f"No mask found for volume {vol_idx}, using label data for patch extraction")
-            
-            if is_2d:
-                h, w = self.patch_size[0], self.patch_size[1]  # y, x
-                patches = find_mask_patches_2d(
-                    mask_data,
-                    label_data,
-                    patch_size=[h, w], 
-                    min_mask_coverage=1.0,
-                    min_labeled_ratio=self.min_labeled_ratio
-                )
-                print(f"Found {len(patches)} patches from 2D data with min labeled ratio {self.min_labeled_ratio}")
+                    patch_size = self.patch_size  # [d, h, w]
+                
+                patches = self._get_all_sliding_window_positions(volume_shape, patch_size)
+                print(f"Generated {len(patches)} patches from {'2D' if is_2d else '3D'} data using sliding window")
             else:
-                patches = find_mask_patches(
-                    mask_data,
-                    label_data,
-                    patch_size=self.patch_size, 
-                    min_mask_coverage=1.0,
-                    min_labeled_ratio=self.min_labeled_ratio
-                )
-                print(f"Found {len(patches)} patches from 3D data with min labeled ratio {self.min_labeled_ratio}")
+                # Original validation logic
+                label_data = vdata['label']  # Get the label data explicitly
+                
+                # Check if mask is available
+                has_mask = 'mask' in vdata
+                
+                if has_mask:
+                    mask_data = vdata['mask']
+                    print(f"Using mask for patch extraction in volume {vol_idx}")
+                else:
+                    # When no mask is available, we'll skip mask checks entirely
+                    # The mask_data shape is still needed for the patch finding functions
+                    mask_data = label_data  # Just for shape, won't be used with skip_mask_check=True
+                    print(f"No mask found for volume {vol_idx}, skipping mask coverage checks")
+                
+                if is_2d:
+                    h, w = self.patch_size[0], self.patch_size[1]  # y, x
+                    patches = find_mask_patches_2d(
+                        mask_data,
+                        label_data,
+                        patch_size=[h, w], 
+                        min_mask_coverage=1.0,
+                        min_labeled_ratio=self.min_labeled_ratio,
+                        skip_mask_check=not has_mask  # Skip mask check if no mask provided
+                    )
+                    print(f"Found {len(patches)} patches from 2D data with min labeled ratio {self.min_labeled_ratio}")
+                else:
+                    patches = find_mask_patches(
+                        mask_data,
+                        label_data,
+                        patch_size=self.patch_size, 
+                        min_mask_coverage=1.0,
+                        min_labeled_ratio=self.min_labeled_ratio,
+                        skip_mask_check=not has_mask  # Skip mask check if no mask provided
+                    )
+                    print(f"Found {len(patches)} patches from 3D data with min labeled ratio {self.min_labeled_ratio}")
 
             for p in patches:
                 self.valid_patches.append({
@@ -402,8 +526,8 @@ class BaseDataset(Dataset):
             
         Returns
         -------
-        numpy.ndarray or None
-            Loss mask if available, None otherwise
+        dict or None
+            Dictionary of loss masks per target if available, None otherwise
         """
         # Check only the first target for the mask
         first_target_name = list(self.target_volumes.keys())[0]
@@ -411,6 +535,7 @@ class BaseDataset(Dataset):
         vdata = volume_info['data']
         
         if 'mask' in vdata:
+            # Use explicit mask if available - same mask for all targets
             mask_arr = vdata['mask']
             
             if is_2d:
@@ -421,7 +546,30 @@ class BaseDataset(Dataset):
                 mask_patch = pad_or_crop_3d(mask_patch, (dz, dy, dx))
             
             # Convert to binary mask
-            return (mask_patch > 0).astype(np.float32)
+            single_mask = (mask_patch > 0).astype(np.float32)
+            
+            # Return same mask for all targets
+            return {t_name: single_mask for t_name in self.target_volumes.keys()}
+            
+        elif hasattr(self.mgr, 'compute_loss_on_label') and self.mgr.compute_loss_on_label:
+            # Create separate masks from each target's labels
+            loss_masks = {}
+            
+            for t_name, volumes_list in self.target_volumes.items():
+                label_arr = volumes_list[vol_idx]['data']['label']
+                
+                # Extract label patch
+                if is_2d:
+                    label_patch = label_arr[y:y+dy, x:x+dx]
+                    label_patch = pad_or_crop_2d(label_patch, (dy, dx))
+                else:
+                    label_patch = label_arr[z:z+dz, y:y+dy, x:x+dx]
+                    label_patch = pad_or_crop_3d(label_patch, (dz, dy, dx))
+                
+                # Create binary mask from this target's label
+                loss_masks[t_name] = (label_patch > 0).astype(np.float32)
+            
+            return loss_masks
         
         return None
     
@@ -480,8 +628,8 @@ class BaseDataset(Dataset):
             Image patch
         label_patches : dict
             Dictionary of label patches for each target
-        loss_mask : numpy.ndarray or None
-            Loss mask if available
+        loss_mask : dict or None
+            Dictionary of loss masks per target if available
         vol_idx : int
             Volume index
         is_2d : bool
@@ -503,9 +651,12 @@ class BaseDataset(Dataset):
         # Add image to data dict
         data_dict["image"] = torch.from_numpy(img_patch)
         
-        # Add loss mask if available
+        # Add loss masks if available - now as a dictionary per target
         if loss_mask is not None:
-            data_dict["loss_mask"] = torch.from_numpy(loss_mask)
+            data_dict["loss_masks"] = {
+                t_name: torch.from_numpy(mask) 
+                for t_name, mask in loss_mask.items()
+            }
         
         # Process all labels based on target configuration
         for t_name, label_patch in label_patches.items():

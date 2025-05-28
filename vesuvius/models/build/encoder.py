@@ -12,7 +12,7 @@ from torch.nn.modules.dropout import _DropoutNd
 from torch.nn.modules.instancenorm import _InstanceNorm
 from torch.nn.modules.pooling import _MaxPoolNd
 
-from models.model.utils import (maybe_convert_scalar_to_list,
+from models.utils import (maybe_convert_scalar_to_list,
                    get_matching_dropout,
                    get_matching_convtransp,
                    get_matching_batchnorm,
