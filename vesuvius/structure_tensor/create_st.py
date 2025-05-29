@@ -303,7 +303,7 @@ class StructureTensorInferer(Inferer, nn.Module):
         Iterate over patches using DataLoader, compute J over a padded region,
         trim to the original patch, and write into the full-volume zarr.
         """
-        numcodecs.blosc.use_threads = False
+        numcodecs.blosc.use_threads = True
 
         total = self.num_total_patches
         store = self.output_store
@@ -723,13 +723,6 @@ def main():
         compressor = None
     else:
         compressor = zarr.Blosc(cname='zstd', clevel=1, shuffle=zarr.Blosc.SHUFFLE)
-    
-    # Compile the compute_structure_tensor method
-    StructureTensorInferer.compute_structure_tensor = torch.compile(
-        StructureTensorInferer.compute_structure_tensor,
-        mode="reduce-overhead",
-        fullgraph=True
-    )
     
     if args.mode == 'structure-tensor':
         # Run structure tensor computation
