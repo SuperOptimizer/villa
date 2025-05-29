@@ -87,7 +87,8 @@ setup(
             'vesuvius.refine_labels=scripts.edt_frangi_label:main',
             'vesuvius.render_obj=rendering.mesh_to_surface:main',
             'vesuvius.flatten_obj=rendering.slim_uv:main',
-            'vesuvius.train=models.run.train:main'
+            'vesuvius.train=models.run.train:main',
+            'vesuvius.models.run_tests=models.tests.run_comprehensive_tests:main',
         ],
     },
     # No scripts needed as we're using entry_points

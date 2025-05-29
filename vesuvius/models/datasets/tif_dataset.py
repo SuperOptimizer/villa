@@ -10,6 +10,52 @@ from multiprocessing import cpu_count
 from .base_dataset import BaseDataset
 
 
+def convert_to_uint8_dtype_range(img):
+    """
+    Convert image data to uint8 based on the input data type range.
+    
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image data
+        
+    Returns
+    -------
+    numpy.ndarray
+        Image converted to uint8 with proper scaling
+    """
+    # Handle special float values
+    if img.dtype in [np.float32, np.float64]:
+        img = np.nan_to_num(img, nan=0.0, posinf=255.0, neginf=0.0)
+    
+    # Convert based on data type
+    if img.dtype == np.uint8:
+        # Already uint8, no conversion needed
+        return img
+    elif img.dtype == np.uint16:
+        # Scale from 0-65535 to 0-255
+        return (img / 256).astype(np.uint8)  # Equivalent to img >> 8
+    elif img.dtype == np.int16:
+        # Scale from -32768 to 32767 to 0-255
+        # First shift to 0-65535 range, then scale to 0-255
+        return ((img.astype(np.int32) + 32768) / 256).astype(np.uint8)
+    elif img.dtype == np.uint32:
+        # Scale from 0-4294967295 to 0-255
+        return (img / 16777216).astype(np.uint8)  # Equivalent to img >> 24
+    elif img.dtype == np.int32:
+        # Scale from -2147483648 to 2147483647 to 0-255
+        return ((img.astype(np.int64) + 2147483648) / 16777216).astype(np.uint8)
+    else:
+        # For float or other types, use min-max scaling
+        min_val = np.min(img)
+        max_val = np.max(img)
+        if max_val > min_val:
+            return ((img - min_val) / (max_val - min_val) * 255).astype(np.uint8)
+        else:
+            # Constant image
+            return np.zeros_like(img, dtype=np.uint8)
+
+
 def convert_tif_to_zarr_worker(args):
     """
     Worker function to convert a single TIF file to a Zarr array.
@@ -18,40 +64,46 @@ def convert_tif_to_zarr_worker(args):
     Parameters
     ----------
     args : tuple
-        (tif_path, zarr_group_path, array_name, patch_size)
+        (tif_path, zarr_group_path, array_name, patch_size, pre_created)
         
     Returns
     -------
     tuple
         (array_name, shape, success, error_msg)
     """
-    tif_path, zarr_group_path, array_name, patch_size = args
+    tif_path, zarr_group_path, array_name, patch_size, pre_created = args
     
     try:
         # Read the TIFF file
         img = tifffile.imread(str(tif_path))
         
-        # Convert to float32
-        img = img.astype(np.uint8)
+        # Convert to uint8 with proper scaling based on dtype
+        img = convert_to_uint8_dtype_range(img)
         
-        # Use patch size directly as chunks
-        if len(img.shape) == 2:  # 2D
-            chunks = tuple(patch_size[:2])  # [h, w]
-        else:  # 3D
-            chunks = tuple(patch_size)  # [d, h, w]
+        # Open the Zarr group
+        group = zarr.open_group(str(zarr_group_path), mode='r+')
         
-        # Open the Zarr group and create the array
-        group = zarr.open_group(str(zarr_group_path), mode='a')
-        group.create_dataset(
-            array_name,
-            data=img,
-            shape=img.shape,
-            dtype=np.uint8,
-            chunks=chunks,
-            compressor=None,
-            overwrite=True,
-            write_empty_chunks=False
-        )
+        if pre_created:
+            # Array already exists, just write the data
+            group[array_name][:] = img
+        else:
+            # Create the array (fallback for single-threaded mode)
+            # Use patch size directly as chunks
+            if len(img.shape) == 2:  # 2D
+                chunks = tuple(patch_size[:2])  # [h, w]
+            else:  # 3D
+                chunks = tuple(patch_size)  # [d, h, w]
+            
+            group.create_dataset(
+                array_name,
+                data=img,
+                shape=img.shape,
+                dtype=np.uint8,
+                chunks=chunks,
+                compressor=None,
+                overwrite=True,
+                write_empty_chunks=False
+            )
         
         return array_name, img.shape, True, None
         
@@ -77,6 +129,9 @@ class TifDataset(BaseDataset):
         By default, TIF datasets skip patch validation for performance,
         considering all sliding window positions as valid.
         
+        Users can enable patch validation by setting min_labeled_ratio > 0
+        or min_bbox_percent > 0 in the configuration.
+        
         Parameters
         ----------
         mgr : ConfigManager
@@ -86,8 +141,19 @@ class TifDataset(BaseDataset):
         volume_transforms : list, optional
             3D volume transformations
         """
-        # Always set skip_patch_validation to True for TIF datasets
-        mgr.skip_patch_validation = True
+        # Check if user has specified validation parameters
+        min_labeled_ratio = getattr(mgr, 'min_labeled_ratio', 0)
+        min_bbox_percent = getattr(mgr, 'min_bbox_percent', 0)
+        
+        # Only skip validation if neither parameter is set
+        # This allows users to opt-in to validation by setting either parameter
+        if min_labeled_ratio == 0 and min_bbox_percent == 0:
+            # Default behavior: skip validation for performance
+            mgr.skip_patch_validation = True
+        else:
+            # User has specified validation parameters, enable validation
+            mgr.skip_patch_validation = False
+            print(f"Patch validation enabled with min_labeled_ratio={min_labeled_ratio}, min_bbox_percent={min_bbox_percent}")
         
         super().__init__(mgr, image_transforms, volume_transforms)
     
@@ -133,8 +199,8 @@ class TifDataset(BaseDataset):
         # Read the TIFF file
         img = tifffile.imread(str(tif_path))
         
-        # Convert to float32
-        img = img.astype(np.float32)
+        # Convert to uint8 with proper scaling based on dtype
+        img = convert_to_uint8_dtype_range(img)
         
         # Use patch size directly as chunks
         if len(img.shape) == 2:  # 2D
@@ -349,6 +415,7 @@ class TifDataset(BaseDataset):
         # Collect all conversion tasks that need to be done
         conversion_tasks = []
         array_info = {}  # Track which arrays go where
+        arrays_to_create = []  # Track arrays that need pre-creation
         
         for target, image_id, image_file, label_file, mask_file in files_to_process:
             # Determine array names
@@ -364,19 +431,28 @@ class TifDataset(BaseDataset):
             
             # Image conversion
             if image_array_name not in images_group or self._needs_update(image_file, images_group, image_array_name):
-                conversion_tasks.append((image_file, images_zarr_path, image_array_name, self.patch_size))
+                # Read shape for pre-creation
+                img_shape = tifffile.imread(str(image_file)).shape
+                arrays_to_create.append((images_group, image_array_name, img_shape))
+                conversion_tasks.append((image_file, images_zarr_path, image_array_name, self.patch_size, True))
             
             # Label conversion
             label_array_name = f"{image_id}_{target}"
             if label_array_name not in labels_group or self._needs_update(label_file, labels_group, label_array_name):
-                conversion_tasks.append((label_file, labels_zarr_path, label_array_name, self.patch_size))
+                # Read shape for pre-creation
+                label_shape = tifffile.imread(str(label_file)).shape
+                arrays_to_create.append((labels_group, label_array_name, label_shape))
+                conversion_tasks.append((label_file, labels_zarr_path, label_array_name, self.patch_size, True))
             
             # Mask conversion if available
             mask_array_name = None
             if mask_file:
                 mask_array_name = f"{image_id}_{target}"
                 if mask_array_name not in masks_group or self._needs_update(mask_file, masks_group, mask_array_name):
-                    conversion_tasks.append((mask_file, masks_zarr_path, mask_array_name, self.patch_size))
+                    # Read shape for pre-creation
+                    mask_shape = tifffile.imread(str(mask_file)).shape
+                    arrays_to_create.append((masks_group, mask_array_name, mask_shape))
+                    conversion_tasks.append((mask_file, masks_zarr_path, mask_array_name, self.patch_size, True))
             
             # Store info for later
             array_info[(target, image_id)] = {
@@ -387,7 +463,29 @@ class TifDataset(BaseDataset):
         
         # Perform parallel conversions if needed
         if conversion_tasks:
-            print(f"\nConverting {len(conversion_tasks)} TIF files to Zarr format using {cpu_count()} workers...")
+            print(f"\nConverting {len(conversion_tasks)} TIF files to Zarr format...")
+            
+            # Pre-create all Zarr arrays to avoid race conditions
+            print("Pre-creating Zarr array structure...")
+            for group, array_name, shape in arrays_to_create:
+                # Determine chunks based on shape
+                if len(shape) == 2:  # 2D
+                    chunks = tuple(self.patch_size[:2])
+                else:  # 3D
+                    chunks = tuple(self.patch_size)
+                
+                # Create empty array
+                group.create_dataset(
+                    array_name,
+                    shape=shape,
+                    dtype=np.uint8,
+                    chunks=chunks,
+                    compressor=None,
+                    overwrite=True,
+                    write_empty_chunks=False
+                )
+            
+            print(f"Using {cpu_count()} workers for parallel conversion...")
             
             with ProcessPoolExecutor(max_workers=cpu_count()) as executor:
                 # Submit all tasks

@@ -4,6 +4,7 @@ from tqdm import tqdm
 import numpy as np
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from models.training.lr_schedulers import get_scheduler, PolyLRScheduler
 from torch.optim import AdamW, SGD
 from torch.utils.data import DataLoader, SubsetRandomSampler
 from utils.utils import init_weights_he
@@ -11,18 +12,20 @@ import albumentations as A
 from models.datasets import NapariDataset, TifDataset, ZarrDataset
 from utils.plotting import save_debug
 from models.build.build_network_from_config import NetworkFromConfig
-from torch.nn import CrossEntropyLoss, MSELoss, BCELoss
-from models.training.losses import (
-    BCEWithLogitsMaskedLoss,
-    BCEMaskedLoss,
-    CrossEntropyMaskedLoss,
-    MSEMaskedLoss,
-    L1MaskedLoss,
-    SoftDiceLoss,
-    CombinedDiceBCELoss
-)
+
+from models.training.loss.compound_losses import (DC_and_CE_loss,
+                                                  DC_and_BCE_loss,
+                                                  DC_and_topk_loss)
+from models.training.loss.dice import MemoryEfficientSoftDiceLoss
+
+
 from models.training.optimizers import create_optimizer
-from models.training.train_augmentations import compose_augmentations
+# Augmentations will be handled directly in this file
+from models.augmentation.transforms.utils.compose import ComposeTransforms
+from models.augmentation.transforms.utils.random import RandomTransform
+from models.augmentation.transforms.spatial.mirroring import MirrorTransform
+from models.augmentation.transforms.spatial.transpose import TransposeAxesTransform
+from models.augmentation.transforms.noise.gaussian_blur import GaussianBlurTransform
 
 
 class BaseTrainer:
@@ -67,35 +70,78 @@ class BaseTrainer:
         model = NetworkFromConfig(self.mgr)
         return model
 
-    def _compose_augmentations(self):
-        # Get all target names to create additional_targets dictionary
-        additional_targets = {}
-        for t_name in self.mgr.targets.keys():
-            additional_targets[f'mask_{t_name}'] = 'mask'
-
-        dimension = '2d' if len(self.mgr.train_patch_size) == 2 else '3d'
-
-        return compose_augmentations(dimension, additional_targets)
+    def _create_training_transforms(self):
+        """
+        Create training transforms using batchgeneratorsv2.
+        Returns None for validation (no augmentations).
+        """
+        dimension = len(self.mgr.train_patch_size)
+        
+        if dimension == 2:
+            # 2D transforms (no transpose transform)
+            transforms = [
+                RandomTransform(
+                    MirrorTransform(allowed_axes=(0, 1)), 
+                    apply_probability=0.5
+                ),
+                RandomTransform(
+                    GaussianBlurTransform(
+                        blur_sigma=(0.5, 1.5),
+                        synchronize_channels=True,
+                        synchronize_axes=False,
+                        p_per_channel=1.0
+                    ),
+                    apply_probability=0.2
+                )
+            ]
+        else:
+            # 3D transforms
+            transforms = [
+                RandomTransform(
+                    MirrorTransform(allowed_axes=(0, 1, 2)), 
+                    apply_probability=0.5
+                ),
+                RandomTransform(
+                    GaussianBlurTransform(
+                        blur_sigma=(0.5, 1.0),
+                        synchronize_channels=True,
+                        synchronize_axes=False,
+                        p_per_channel=1.0
+                    ),
+                    apply_probability=0.2
+                )
+            ]
+            
+            # Only add transpose transform if all three dimensions (z, y, x) are equal
+            patch_d, patch_h, patch_w = self.mgr.train_patch_size
+            if patch_d == patch_h == patch_w:
+                transforms.insert(1, RandomTransform(
+                    TransposeAxesTransform(allowed_axes={0, 1, 2}), 
+                    apply_probability=0.5
+                ))
+                print(f"Added transpose transform for 3D (equal dimensions: {patch_d}x{patch_h}x{patch_w})")
+            else:
+                print(f"Skipped transpose transform for 3D (unequal dimensions: {patch_d}x{patch_h}x{patch_w})")
+        
+        return ComposeTransforms(transforms)
 
     # --- configure dataset --- #
     def _configure_dataset(self):
-
-        image_transforms = self._compose_augmentations()
-
         # Get data format from config manager, default to zarr
         data_format = getattr(self.mgr, 'data_format', 'zarr')
         
+        # Note: Augmentations are now handled in the training loop, not in the dataset
         if data_format == 'napari':
             dataset = NapariDataset(mgr=self.mgr,
-                                   image_transforms=image_transforms,
+                                   image_transforms=None,
                                    volume_transforms=None)
         elif data_format == 'tif':
             dataset = TifDataset(mgr=self.mgr,
-                                image_transforms=image_transforms,
+                                image_transforms=None,
                                 volume_transforms=None)
         elif data_format == 'zarr':
             dataset = ZarrDataset(mgr=self.mgr,
-                                 image_transforms=image_transforms,
+                                 image_transforms=None,
                                  volume_transforms=None)
         else:
             raise ValueError(f"Unsupported data format: {data_format}. "
@@ -111,23 +157,53 @@ class BaseTrainer:
         # to add it in losses.loss, import it here, and then add it to the map
 
         LOSS_FN_MAP = {
-            "BCELoss": BCEMaskedLoss,
-            "BCEWithLogitsLoss": BCEWithLogitsMaskedLoss, 
-            "CrossEntropyLoss": CrossEntropyMaskedLoss,
-            "MSELoss": MSEMaskedLoss,
-            "L1Loss": L1MaskedLoss,
-            "SoftDiceLoss": SoftDiceLoss,
-            "CombinedDiceBCELoss": CombinedDiceBCELoss, # linear combination of SoftDiceLoss and BCELoss
-            
+            "DC_and_CE_loss": DC_and_CE_loss,
+            "DC_and_BCE_loss": DC_and_BCE_loss, 
+            "DC_and_topk_loss": DC_and_topk_loss,
+            "MemoryEfficientSoftDiceLoss": MemoryEfficientSoftDiceLoss
         }
 
         loss_fns = {}
         for task_name, task_info in self.mgr.targets.items():
-            loss_fn = task_info.get("loss_fn", "SoftDiceLoss")
+            loss_fn = task_info.get("loss_fn", "DC_and_CE_loss")
             print(f"DEBUG: Target {task_name} using loss function: {loss_fn}")
             if loss_fn not in LOSS_FN_MAP:
                 raise ValueError(f"Loss function {loss_fn} not found in LOSS_FN_MAP. Add it to the mapping and try again.")
+            
+            # Get loss kwargs from task info, or use defaults for DC_and_CE_loss
             loss_kwargs = task_info.get("loss_kwargs", {})
+            
+            # Provide default kwargs for DC_and_CE_loss if not specified
+            if loss_fn == "DC_and_CE_loss" and not loss_kwargs:
+                loss_kwargs = {
+                    "soft_dice_kwargs": {
+                        "do_bg": False,  # Don't include background class in dice calculation
+                        "batch_dice": False
+                    },
+                    "ce_kwargs": {},
+                    "weight_ce": 1,
+                    "weight_dice": 1,
+                    "ignore_label": -100  # Default ignore label for masked regions
+                }
+            elif loss_fn == "DC_and_BCE_loss" and not loss_kwargs:
+                loss_kwargs = {
+                    "bce_kwargs": {},
+                    "soft_dice_kwargs": {
+                        "do_bg": False,  # Don't include background class in dice calculation
+                        "batch_dice": False
+                    },
+                    "weight_ce": 1,
+                    "weight_dice": 1
+                }
+            elif loss_fn == "DC_and_topk_loss" and not loss_kwargs:
+                loss_kwargs = {
+                    "soft_dice_kwargs": {},
+                    "ce_kwargs": {"k": 0.1},  # Default to top 10% hardest pixels
+                    "weight_ce": 1,
+                    "weight_dice": 1,
+                    "ignore_label": -100  # Default ignore label for masked regions
+                }
+            
             loss_fns[task_name] = LOSS_FN_MAP[loss_fn](**loss_kwargs)
 
         return loss_fns
@@ -145,9 +221,22 @@ class BaseTrainer:
 
     # --- scheduler --- #
     def _get_scheduler(self, optimizer):
-        scheduler = CosineAnnealingLR(optimizer,
-                                      T_max=self.mgr.max_epoch,
-                                      eta_min=0)
+        # Get scheduler type from config or use 'poly' as default
+        scheduler_type = getattr(self.mgr, 'scheduler', 'poly')
+        
+        # Get scheduler-specific kwargs from config if available
+        scheduler_kwargs = getattr(self.mgr, 'scheduler_kwargs', {})
+        
+        # Use the factory function to create the scheduler
+        scheduler = get_scheduler(
+            scheduler_type=scheduler_type,
+            optimizer=optimizer,
+            initial_lr=self.mgr.initial_lr,
+            max_steps=self.mgr.max_epoch,
+            **scheduler_kwargs
+        )
+        
+        print(f"Using {scheduler_type} learning rate scheduler")
         return scheduler
 
     # --- scaler --- #
@@ -329,6 +418,9 @@ class BaseTrainer:
 
         global_step = 0
         grad_accumulate_n = self.mgr.gradient_accumulation
+        
+        # Initialize training transforms
+        train_transforms = self._create_training_transforms()
 
         # ---- training! ----- #
         for epoch in range(start_epoch, self.mgr.max_epoch):
@@ -359,7 +451,7 @@ class BaseTrainer:
                     print("Items from the first batch -- Double check that your shapes and values are expected:")
                     for item in data_dict:
                         if isinstance(data_dict[item], dict):
-                            # Handle dictionary items like loss_masks
+                            # Handle dictionary items like ignore_masks
                             print(f"{item}: (dictionary with keys: {list(data_dict[item].keys())})")
                             for sub_key, sub_val in data_dict[item].items():
                                 print(f"  {sub_key}: {sub_val.dtype}")
@@ -372,21 +464,94 @@ class BaseTrainer:
                             print(f"{item}: min : {data_dict[item].min()} max : {data_dict[item].max()}")
 
                 global_step += 1
+                
+                # Apply augmentations to individual samples in the batch (only during training)
+                if train_transforms is not None:
+                    # Apply transforms to each sample in the batch individually
+                    batch_size = data_dict["image"].shape[0]
+                    # Initialize transformed_batch with proper structure
+                    transformed_batch = {}
+                    for key in data_dict.keys():
+                        if key == "ignore_masks":
+                            # Initialize ignore_masks as a dictionary of lists
+                            transformed_batch[key] = {mask_key: [] for mask_key in data_dict[key].keys()}
+                        else:
+                            transformed_batch[key] = []
+                    
+                    for batch_idx in range(batch_size):
+                        # Extract single sample from batch
+                        sample_dict = {}
+                        for key, value in data_dict.items():
+                            if key == "ignore_masks":
+                                # Handle ignore_masks dictionary
+                                sample_dict[key] = {
+                                    mask_key: mask_value[batch_idx] 
+                                    for mask_key, mask_value in value.items()
+                                }
+                            else:
+                                sample_dict[key] = value[batch_idx]
+                        
+                        # Apply transforms to single sample
+                        transformed_sample = train_transforms(**sample_dict)
+                        
+                        # Collect transformed samples
+                        for key, value in transformed_sample.items():
+                            if key == "ignore_masks":
+                                # Handle ignore_masks dictionary
+                                if key not in transformed_batch:
+                                    transformed_batch[key] = {mask_key: [] for mask_key in value.keys()}
+                                for mask_key, mask_value in value.items():
+                                    transformed_batch[key][mask_key].append(mask_value)
+                            else:
+                                transformed_batch[key].append(value)
+                    
+                    # Stack samples back into batch
+                    for key, value_list in transformed_batch.items():
+                        if key == "ignore_masks":
+                            # Handle ignore_masks dictionary
+                            data_dict[key] = {
+                                mask_key: torch.stack(mask_value_list) 
+                                for mask_key, mask_value_list in value_list.items()
+                            }
+                        else:
+                            data_dict[key] = torch.stack(value_list)
+
+                    # --- NEW: make sure each target has proper channel dimension ---
+                    for t_name in self.mgr.targets:
+                        if t_name in data_dict:  # Check if this target exists in the batch
+                            t_tensor = data_dict[t_name]
+                            # expected dims: B + C + spatial (len(patch_size))
+                            expected_dims = 2 + len(self.mgr.train_patch_size)
+                            
+                            if t_tensor.dim() == expected_dims - 1:
+                                # Missing channel dimension - check target config for expected channels
+                                target_info = self.mgr.targets[t_name]
+                                expected_channels = target_info.get("out_channels", 1)
+                                
+                                if expected_channels == 1:
+                                    # Single channel case - add channel dimension at dim=1
+                                    data_dict[t_name] = t_tensor.unsqueeze(1)
+                                else:
+                                    # Multi-channel case - this shouldn't happen as multi-channel targets
+                                    # should maintain their channel dimension through augmentations
+                                    # But if it does, we need to handle it appropriately
+                                    print(f"Warning: Target {t_name} expected {expected_channels} channels but channel dim was squeezed")
+                                    data_dict[t_name] = t_tensor.unsqueeze(1)  # Add single channel for now
 
                 inputs = data_dict["image"].to(device, dtype=torch.float32)
-                # Get the loss masks dictionary if it exists
-                loss_masks = None
-                if "loss_masks" in data_dict:
-                    loss_masks = {
+                # Get the ignore masks dictionary if it exists
+                ignore_masks = None
+                if "ignore_masks" in data_dict:
+                    ignore_masks = {
                         t_name: mask.to(device, dtype=torch.float32)
-                        for t_name, mask in data_dict["loss_masks"].items()
+                        for t_name, mask in data_dict["ignore_masks"].items()
                     }
                 
-                # Create targets_dict excluding both image and loss_masks
+                # Create targets_dict excluding both image and ignore_masks
                 targets_dict = {
                     k: v.to(device, dtype=torch.float32)
                     for k, v in data_dict.items()
-                    if k != "image" and k != "loss_masks"
+                    if k != "image" and k != "ignore_masks"
                 }
 
                 # forward
@@ -408,32 +573,29 @@ class BaseTrainer:
                         t_loss_fn = loss_fns[t_name]
                         task_weight = self.mgr.targets[t_name].get("weight", 1.0)
 
-                        # Use the per-target loss mask if available
-                        label_mask = None
-                        if loss_masks is not None and t_name in loss_masks:
-                            # Get the target-specific loss mask
-                            label_mask = loss_masks[t_name]
-                            
-                            # Adjust mask dimensions to match the target format
-                            if isinstance(t_loss_fn, CrossEntropyMaskedLoss):
-                                # For CrossEntropyLoss, target has shape [B,H,W]
-                                if label_mask.dim() == 4 and label_mask.shape[1] == 1:  # [B,1,H,W]
-                                    label_mask = label_mask.squeeze(1)
-                                elif label_mask.dim() == 2:  # [H,W]
-                                    label_mask = label_mask.unsqueeze(0)  # Add batch dim
-                            else:
-                                # For other losses, target has shape [B,C,H,W]
-                                if label_mask.dim() == 3:  # [B,H,W]
-                                    label_mask = label_mask.unsqueeze(1)  # Add channel dim [B,1,H,W]
-                                elif label_mask.dim() == 2:  # [H,W]
-                                    label_mask = label_mask.unsqueeze(0).unsqueeze(0)  # Add batch and channel dims
+            
+
+                        # Apply the per-target ignore mask if available
+                        if ignore_masks is not None and t_name in ignore_masks:
+                            ignore_mask = ignore_masks[t_name].to(device, dtype=torch.float32)
                             
                             # Print a message showing we're using the custom mask
                             if steps == 0 and i == 0:
-                                print(f"Using custom loss mask for target {t_name}")
+                                print(f"Using custom ignore mask for target {t_name}")
+                            
+                            # Get the ignore_label value from the loss function if it has one
+                            ignore_label = getattr(t_loss_fn, 'ignore_label', getattr(t_loss_fn, 'ignore_index', -100))
+                            
+                            # Ensure ignore mask has the same number of dimensions as target
+                            if ignore_mask.dim() == t_gt.dim() - 1:
+                                # Add channel dimension to match target
+                                ignore_mask = ignore_mask.unsqueeze(1)
+                            
+                            # Apply mask to target: set regions where mask is 1 to ignore_label
+                            t_gt = torch.where(ignore_mask == 1, torch.tensor(ignore_label, dtype=t_gt.dtype, device=t_gt.device), t_gt)
 
-                        # Calculate the loss, passing the mask if available
-                        t_loss = t_loss_fn(t_pred, t_gt, loss_mask=label_mask)
+                        # Calculate the loss (no need to pass mask, it's now embedded in the target)
+                        t_loss = t_loss_fn(t_pred, t_gt)
                         
                         # Apply task weight to the loss
                         total_loss += task_weight * t_loss
@@ -555,19 +717,19 @@ class BaseTrainer:
                             data_dict = next(val_dataloader_iter)
 
                         inputs = data_dict["image"].to(device, dtype=torch.float32)
-                        # Get the loss masks dictionary if it exists
-                        loss_masks = None
-                        if "loss_masks" in data_dict:
-                            loss_masks = {
+                        # Get the ignore masks dictionary if it exists
+                        ignore_masks = None
+                        if "ignore_masks" in data_dict:
+                            ignore_masks = {
                                 t_name: mask.to(device, dtype=torch.float32)
-                                for t_name, mask in data_dict["loss_masks"].items()
+                                for t_name, mask in data_dict["ignore_masks"].items()
                             }
                         
-                        # Create targets_dict excluding both image and loss_masks
+                        # Create targets_dict excluding both image and ignore_masks
                         targets_dict = {
                             k: v.to(device, dtype=torch.float32)
                             for k, v in data_dict.items()
-                            if k != "image" and k != "loss_masks"
+                            if k != "image" and k != "ignore_masks"
                         }
 
                         # Use the same context as in training
@@ -585,28 +747,23 @@ class BaseTrainer:
                                 t_pred = outputs[t_name]
                                 t_loss_fn = loss_fns[t_name]
                                 
-                                # Use the per-target loss mask if available
-                                label_mask = None
-                                if loss_masks is not None and t_name in loss_masks:
-                                    # Get the target-specific loss mask
-                                    label_mask = loss_masks[t_name]
+                                # Apply the per-target ignore mask if available
+                                if ignore_masks is not None and t_name in ignore_masks:
+                                    ignore_mask = ignore_masks[t_name].to(device, dtype=torch.float32)
                                     
-                                    # Adjust mask dimensions to match the target format
-                                    if isinstance(t_loss_fn, CrossEntropyMaskedLoss):
-                                        # For CrossEntropyLoss, target has shape [B,H,W]
-                                        if label_mask.dim() == 4 and label_mask.shape[1] == 1:  # [B,1,H,W]
-                                            label_mask = label_mask.squeeze(1)
-                                        elif label_mask.dim() == 2:  # [H,W]
-                                            label_mask = label_mask.unsqueeze(0)  # Add batch dim
-                                    else:
-                                        # For other losses, target has shape [B,C,H,W]
-                                        if label_mask.dim() == 3:  # [B,H,W]
-                                            label_mask = label_mask.unsqueeze(1)  # Add channel dim [B,1,H,W]
-                                        elif label_mask.dim() == 2:  # [H,W]
-                                            label_mask = label_mask.unsqueeze(0).unsqueeze(0)  # Add batch and channel dims
+                                    # Get the ignore_label value from the loss function if it has one
+                                    ignore_label = getattr(t_loss_fn, 'ignore_label', getattr(t_loss_fn, 'ignore_index', -100))
+                                    
+                                    # Ensure ignore mask has the same number of dimensions as target
+                                    if ignore_mask.dim() == t_gt.dim() - 1:
+                                        # Add channel dimension to match target
+                                        ignore_mask = ignore_mask.unsqueeze(1)
+                                    
+                                    # Apply mask to target: set regions where mask is 1 to ignore_label
+                                    t_gt = torch.where(ignore_mask == 1, torch.tensor(ignore_label, dtype=t_gt.dtype, device=t_gt.device), t_gt)
                                 
-                                # Calculate the loss, passing label_mask if available
-                                t_loss = t_loss_fn(t_pred, t_gt, loss_mask=label_mask)
+                                # Calculate the loss (no need to pass mask, it's now embedded in the target)
+                                t_loss = t_loss_fn(t_pred, t_gt)
 
                                 total_val_loss += t_loss
                                 val_running_losses[t_name] += t_loss.item()
@@ -721,9 +878,9 @@ def detect_targets_from_data(mgr):
         mgr.targets = {}
         for target in sorted(targets):
             mgr.targets[target] = {
-                "out_channels": 1,
-                "activation": "sigmoid",
-                "loss_fn": "SoftDiceLoss"
+                "out_channels": 2,  # Always use at least 2 channels
+                "activation": "softmax",  # Use softmax for multi-channel output
+                "loss_fn": "CrossEntropyLoss"  # Use CrossEntropyLoss for 2-channel binary
             }
         
         print(f"Detected targets from data: {list(targets)}")
@@ -764,7 +921,7 @@ def apply_loss_functions_to_targets(mgr, loss_list):
             loss_fn = loss_list[i]
         else:
             # If more targets than loss functions, use the last loss function
-            loss_fn = loss_list[-1] if loss_list else "SoftDiceLoss"
+            loss_fn = loss_list[-1] 
         
         mgr.targets[target_name]["loss_fn"] = loss_fn
         print(f"Applied {loss_fn} to target '{target_name}'")
@@ -823,6 +980,21 @@ def update_config_from_args(mgr, args):
         mgr.max_val_steps_per_epoch = args.max_val_steps_per_epoch
         mgr.tr_configs["max_val_steps_per_epoch"] = args.max_val_steps_per_epoch
     
+    # Handle model name
+    if args.model_name is not None:
+        mgr.model_name = args.model_name
+        mgr.tr_info["model_name"] = args.model_name
+        if mgr.verbose:
+            print(f"Set model name: {mgr.model_name}")
+    
+    # Handle nonlinearity/activation function
+    if args.nonlin is not None:
+        if not hasattr(mgr, 'model_config') or mgr.model_config is None:
+            mgr.model_config = {}
+        mgr.model_config["nonlin"] = args.nonlin
+        if mgr.verbose:
+            print(f"Set activation function: {args.nonlin}")
+    
     # Handle loss functions
     if args.loss is not None:
         # Parse loss function list like "[SoftDiceLoss, BCEWithLogitsLoss]"
@@ -875,6 +1047,10 @@ def main():
                        help="Maximum training steps per epoch (if not set, uses all data)")
     parser.add_argument("--max-val-steps-per-epoch", type=int, default=30,
                        help="Maximum validation steps per epoch (if not set, uses all data)")
+    parser.add_argument("--model-name", type=str,
+                       help="Model name for checkpoints and logging (default: from config or 'Model')")
+    parser.add_argument("--nonlin", type=str, choices=["LeakyReLU", "ReLU", "SwiGLU", "swiglu", "GLU", "glu"],
+                       help="Activation function to use in the model (default: from config or 'LeakyReLU')")
     
     args = parser.parse_args()
     

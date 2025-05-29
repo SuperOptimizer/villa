@@ -17,26 +17,53 @@ class SwiGLU(nn.Module):
     def forward(self, x):
         # Split input in half along the channel dimension
         x1, x2 = x.chunk(2, dim=self.dim)
-        # Apply Swish (SiLU) to first half, multiply by second half
-        return F.silu(x1) * x2
+        # Apply Swish (SiLU) to first half with clamping for stability
+        # Clamp prevents numerical overflow that can cause NaN
+        gate = F.silu(x1.clamp(min=-10, max=10))
+        return gate * x2
 
 
 class SwiGLUBlock(nn.Module):
     """
-    A block that doubles channels, applies SwiGLU, then projects back
-    to maintain same output channels as input.
-    
-    This allows SwiGLU to be used as a drop-in replacement for other
-    activation functions without changing the network architecture.
+    Linear(d → 2×hidden) → SwiGLU → Linear(hidden → d)
     """
-    def __init__(self, channels, conv_op, bias=False):
+    def __init__(self, channels, conv_op, bias=True, expansion_factor=1.5):
         super().__init__()
-        # Double the channels for SwiGLU
-        self.expand = conv_op(channels, channels * 2, kernel_size=1, bias=bias)
-        self.swiglu = SwiGLU(dim=1)  # Channel dimension is typically 1
+        hidden_channels = int(channels * expansion_factor)
+        # Ensure hidden_channels is even for the split in SwiGLU
+        hidden_channels = 2 * (hidden_channels // 2)
+        
+        # Expand to 2×hidden channels (for gate and value pathways)
+        # bias=True helps with stability
+        self.w_gate = conv_op(channels, hidden_channels, kernel_size=1, bias=bias)
+        # SwiGLU activation splits channels in half
+        self.swiglu = SwiGLU(dim=1)
+        # Project back from hidden/2 to original channels
+        self.w_out = conv_op(hidden_channels // 2, channels, kernel_size=1, bias=bias)
+        
+        # Initialize weights specifically for SwiGLU
+        self._initialize_swiglu_weights()
+        
+    def _initialize_swiglu_weights(self):
+        """Custom initialization for SwiGLU to prevent NaN issues"""
+        with torch.no_grad():
+            # Conservative initialization for gate pathway
+            # Use smaller gain to prevent explosion
+            nn.init.xavier_uniform_(self.w_gate.weight, gain=0.5)
+            if hasattr(self.w_gate, 'bias') and self.w_gate.bias is not None:
+                nn.init.zeros_(self.w_gate.bias)
+            
+            # Output projection initialized with small values
+            nn.init.xavier_uniform_(self.w_out.weight, gain=0.5)
+            if hasattr(self.w_out, 'bias') and self.w_out.bias is not None:
+                nn.init.zeros_(self.w_out.bias)
         
     def forward(self, x):
-        return self.swiglu(self.expand(x))
+        # Expand → SwiGLU → Project
+        x = self.w_gate(x)
+        x = self.swiglu(x)  # Output has hidden_channels // 2
+        x = self.w_out(x)
+        return x
 
 
 class GLU(nn.Module):
@@ -59,14 +86,26 @@ class GLU(nn.Module):
 
 class GLUBlock(nn.Module):
     """
-    A block that doubles channels, applies GLU, then maintains output channels.
+    Linear(d → 2×hidden) → GLU → Linear(hidden → d)
     Similar to SwiGLUBlock but with GLU activation.
     """
-    def __init__(self, channels, conv_op, bias=False):
+    def __init__(self, channels, conv_op, bias=False, expansion_factor=8/3):
         super().__init__()
-        # Double the channels for GLU
-        self.expand = conv_op(channels, channels * 2, kernel_size=1, bias=bias)
-        self.glu = GLU(dim=1)  # Channel dimension is typically 1
+        # expansion factor similar to SwiGLU
+        hidden_channels = int(channels * expansion_factor)
+        # Ensure hidden_channels is even for the split in GLU
+        hidden_channels = 2 * (hidden_channels // 2)
+        
+        # Expand to 2×hidden channels (for gate and value pathways)
+        self.w_gate = conv_op(channels, hidden_channels, kernel_size=1, bias=bias)
+        # GLU activation splits channels in half
+        self.glu = GLU(dim=1)
+        # Project back from hidden/2 to original channels
+        self.w_out = conv_op(hidden_channels // 2, channels, kernel_size=1, bias=bias)
         
     def forward(self, x):
-        return self.glu(self.expand(x))
+        # Expand → GLU → Project
+        x = self.w_gate(x)
+        x = self.glu(x)  # Output has hidden_channels // 2
+        x = self.w_out(x)
+        return x

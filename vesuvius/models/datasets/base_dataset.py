@@ -7,8 +7,14 @@ import fsspec
 import zarr
 from torch.utils.data import Dataset
 import albumentations as A
+from tqdm import tqdm
 
 from utils.utils import find_mask_patches, find_mask_patches_2d, pad_or_crop_3d, pad_or_crop_2d
+from utils.io.patch_cache_utils import (
+    get_data_checksums,
+    load_cached_patches,
+    save_computed_patches
+)
 
 class BaseDataset(Dataset):
     """
@@ -55,6 +61,17 @@ class BaseDataset(Dataset):
         self.target_volumes = {}
         self.valid_patches = []
         self.is_2d_dataset = None  
+        
+        # Store data_path as an attribute for cache handling
+        self.data_path = Path(mgr.data_path) if hasattr(mgr, 'data_path') else None
+        
+        # Cache-related attributes
+        self.cache_enabled = getattr(mgr, 'cache_valid_patches', True)
+        self.cache_dir = None
+        if self.data_path is not None:
+            self.cache_dir = self.data_path / '.patches_cache'
+            print(f"Cache directory: {self.cache_dir}")
+            print(f"Cache enabled: {self.cache_enabled}")
         
         self._initialize_volumes()
         ref_target = list(self.target_volumes.keys())[0]
@@ -119,11 +136,17 @@ class BaseDataset(Dataset):
                 stride = (h // 2, w // 2)  # 50% overlap by default
             
             positions = []
-            for y in range(0, H - h + 1, stride[0]):
-                for x in range(0, W - w + 1, stride[1]):
-                    positions.append({
-                        'start_pos': [0, y, x]  # [dummy_z, y, x] for 2D
-                    })
+            # Calculate total iterations for progress bar
+            y_positions = list(range(0, H - h + 1, stride[0]))
+            total_positions = len(y_positions) * len(range(0, W - w + 1, stride[1]))
+            
+            with tqdm(total=total_positions, desc="Generating 2D sliding window positions", leave=False) as pbar:
+                for y in y_positions:
+                    for x in range(0, W - w + 1, stride[1]):
+                        positions.append({
+                            'start_pos': [0, y, x]  # [dummy_z, y, x] for 2D
+                        })
+                        pbar.update(1)
             
             # Ensure we cover the edges
             # Add patches at the bottom edge if needed
@@ -155,12 +178,20 @@ class BaseDataset(Dataset):
                 stride = (d // 2, h // 2, w // 2)  # 50% overlap by default
             
             positions = []
-            for z in range(0, D - d + 1, stride[0]):
-                for y in range(0, H - h + 1, stride[1]):
-                    for x in range(0, W - w + 1, stride[2]):
-                        positions.append({
-                            'start_pos': [z, y, x]
-                        })
+            # Calculate total iterations for progress bar
+            z_positions = list(range(0, D - d + 1, stride[0]))
+            y_positions = list(range(0, H - h + 1, stride[1]))
+            x_positions = list(range(0, W - w + 1, stride[2]))
+            total_positions = len(z_positions) * len(y_positions) * len(x_positions)
+            
+            with tqdm(total=total_positions, desc="Generating 3D sliding window positions", leave=False) as pbar:
+                for z in z_positions:
+                    for y in y_positions:
+                        for x in x_positions:
+                            positions.append({
+                                'start_pos': [z, y, x]
+                            })
+                            pbar.update(1)
             
             # Ensure we cover the edges in 3D
             # This is more complex but follows the same principle
@@ -197,12 +228,52 @@ class BaseDataset(Dataset):
         
         return unique_positions
 
+
+    def _get_config_params(self):
+        """
+        Get configuration parameters for caching.
+        
+        Returns
+        -------
+        dict
+            Configuration parameters
+        """
+        return {
+            'patch_size': self.patch_size,
+            'min_labeled_ratio': self.min_labeled_ratio,
+            'min_bbox_percent': self.min_bbox_percent,
+            'skip_patch_validation': self.skip_patch_validation,
+            'targets': sorted(self.targets.keys()),
+            'is_2d_dataset': self.is_2d_dataset
+        }
+    
     def _get_valid_patches(self):
         """Find valid patches based on mask coverage and labeled ratio requirements."""
+        # Try to load from cache first
+        if self.cache_enabled and self.cache_dir is not None and self.data_path is not None:
+            print("\nAttempting to load patches from cache...")
+            config_params = self._get_config_params()
+            print(f"Cache configuration: {config_params}")
+            cached_patches = load_cached_patches(
+                self.cache_dir,
+                config_params,
+                self.data_path
+            )
+            if cached_patches is not None:
+                self.valid_patches = cached_patches
+                print(f"Successfully loaded {len(self.valid_patches)} patches from cache\n")
+                return
+            else:
+                print("No valid cache found, will compute patches...")
+            
+        # If no valid cache, compute patches
         print("Computing valid patches...")
         ref_target = list(self.target_volumes.keys())[0]
+        total_volumes = len(self.target_volumes[ref_target])
 
-        for vol_idx, volume_info in enumerate(self.target_volumes[ref_target]):
+        for vol_idx, volume_info in enumerate(tqdm(self.target_volumes[ref_target], 
+                                                    desc="Processing volumes", 
+                                                    total=total_volumes)):
             vdata = volume_info['data']
             is_2d = len(vdata['label'].shape) == 2
             
@@ -261,6 +332,28 @@ class BaseDataset(Dataset):
                     "volume_index": vol_idx,
                     "position": p["start_pos"]  # (z,y,x)
                 })
+        
+        # Save to cache after computing all patches
+        if self.cache_enabled and self.cache_dir is not None and self.data_path is not None:
+            print(f"\nAttempting to save {len(self.valid_patches)} patches to cache...")
+            config_params = self._get_config_params()
+            success = save_computed_patches(
+                self.valid_patches,
+                self.cache_dir,
+                config_params,
+                self.data_path
+            )
+            if success:
+                print(f"Successfully saved patches to cache directory: {self.cache_dir}\n")
+            else:
+                print("Failed to save patches to cache\n")
+        else:
+            if not self.cache_enabled:
+                print("Patch caching is disabled")
+            elif self.cache_dir is None:
+                print("Cache directory is not set")
+            elif self.data_path is None:
+                print("Data path is not set")
 
     def __len__(self):
         return len(self.valid_patches)
@@ -308,15 +401,31 @@ class BaseDataset(Dataset):
             (z, y, x, dz, dy, dx, is_2d) coordinates and dimensions
         """
         if self.is_2d_dataset:
-            # For 2D, position is [dummy_z, y, x] and patch_size is [h, w]
+            # For 2D, position is [dummy_z, y, x] and patch_size should be [h, w]
             _, y, x = patch_info["position"]  # Unpack properly ignoring dummy z value
-            dy, dx = self.patch_size
+            
+            # Handle patch_size dimensionality - take last 2 dimensions for 2D
+            if len(self.patch_size) >= 2:
+                dy, dx = self.patch_size[-2:]  # Take last 2 elements (height, width)
+            else:
+                raise ValueError(f"patch_size {self.patch_size} insufficient for 2D data")
+                
             z, dz = 0, 0  # Not used for 2D
             is_2d = True
         else:
             # For 3D, position is (z, y, x) and patch_size is (d, h, w)
             z, y, x = patch_info["position"]
-            dz, dy, dx = self.patch_size
+            
+            # Handle patch_size dimensionality
+            if len(self.patch_size) >= 3:
+                dz, dy, dx = self.patch_size[:3]  # Take first 3 elements
+            elif len(self.patch_size) == 2:
+                # 2D patch_size for 3D data - assume depth of 1
+                dy, dx = self.patch_size
+                dz = 1
+            else:
+                raise ValueError(f"patch_size {self.patch_size} insufficient for 3D data")
+                
             is_2d = False
             
         return z, y, x, dz, dy, dx, is_2d
@@ -509,9 +618,9 @@ class BaseDataset(Dataset):
             print(f"Warning: No target value configured for '{t_name}', defaulting to 1")
             return 1
     
-    def _extract_loss_mask(self, vol_idx, z, y, x, dz, dy, dx, is_2d):
+    def _extract_ignore_mask(self, vol_idx, z, y, x, dz, dy, dx, is_2d):
         """
-        Extract loss mask if available.
+        Extract ignore mask if available.
         
         Parameters
         ----------
@@ -527,7 +636,7 @@ class BaseDataset(Dataset):
         Returns
         -------
         dict or None
-            Dictionary of loss masks per target if available, None otherwise
+            Dictionary of ignore masks per target if available, None otherwise
         """
         # Check only the first target for the mask
         first_target_name = list(self.target_volumes.keys())[0]
@@ -545,15 +654,15 @@ class BaseDataset(Dataset):
                 mask_patch = mask_arr[z:z+dz, y:y+dy, x:x+dx]
                 mask_patch = pad_or_crop_3d(mask_patch, (dz, dy, dx))
             
-            # Convert to binary mask
-            single_mask = (mask_patch > 0).astype(np.float32)
+            # Convert to binary mask and invert (1 = ignore, 0 = compute)
+            single_mask = (mask_patch == 0).astype(np.float32)
             
             # Return same mask for all targets
             return {t_name: single_mask for t_name in self.target_volumes.keys()}
             
         elif hasattr(self.mgr, 'compute_loss_on_label') and self.mgr.compute_loss_on_label:
             # Create separate masks from each target's labels
-            loss_masks = {}
+            ignore_masks = {}
             
             for t_name, volumes_list in self.target_volumes.items():
                 label_arr = volumes_list[vol_idx]['data']['label']
@@ -566,10 +675,10 @@ class BaseDataset(Dataset):
                     label_patch = label_arr[z:z+dz, y:y+dy, x:x+dx]
                     label_patch = pad_or_crop_3d(label_patch, (dz, dy, dx))
                 
-                # Create binary mask from this target's label
-                loss_masks[t_name] = (label_patch > 0).astype(np.float32)
+                # Create binary mask from this target's label (1 = ignore unlabeled, 0 = compute on labeled)
+                ignore_masks[t_name] = (label_patch == 0).astype(np.float32)
             
-            return loss_masks
+            return ignore_masks
         
         return None
     
@@ -618,7 +727,7 @@ class BaseDataset(Dataset):
         
         return img_patch, label_patches
     
-    def _prepare_tensors(self, img_patch, label_patches, loss_mask, vol_idx, is_2d):
+    def _prepare_tensors(self, img_patch, label_patches, ignore_mask, vol_idx, is_2d):
         """
         Convert numpy arrays to PyTorch tensors with proper formatting.
         
@@ -628,8 +737,8 @@ class BaseDataset(Dataset):
             Image patch
         label_patches : dict
             Dictionary of label patches for each target
-        loss_mask : dict or None
-            Dictionary of loss masks per target if available
+        ignore_mask : dict or None
+            Dictionary of ignore masks per target if available
         vol_idx : int
             Volume index
         is_2d : bool
@@ -651,11 +760,11 @@ class BaseDataset(Dataset):
         # Add image to data dict
         data_dict["image"] = torch.from_numpy(img_patch)
         
-        # Add loss masks if available - now as a dictionary per target
-        if loss_mask is not None:
-            data_dict["loss_masks"] = {
+        # Add ignore masks if available - now as a dictionary per target
+        if ignore_mask is not None:
+            data_dict["ignore_masks"] = {
                 t_name: torch.from_numpy(mask) 
-                for t_name, mask in loss_mask.items()
+                for t_name, mask in ignore_mask.items()
             }
         
         # Process all labels based on target configuration
@@ -668,22 +777,43 @@ class BaseDataset(Dataset):
                 ('regions' in target_value or len(target_value['mapping']) > 2)
             )
             
-            if is_multiclass_with_regions:
-                # Multi-class segmentation: use integer labels
-                # Determine number of classes (max label value + 1)
+            # Get the number of output channels for this target
+            out_channels = self.targets[t_name].get("out_channels", 2)
+            
+            if is_multiclass_with_regions or out_channels > 2:
+                # Multi-class segmentation  ➜  keep integer labels but ADD channel dim
+                label_patch = label_patch.astype(np.float32)
+                if is_2d:
+                    label_patch = label_patch[np.newaxis, ...]   # [1, H, W]
+                else:
+                    label_patch = label_patch[np.newaxis, ...]   # [1, D, H, W]
+
+                # Update target metadata (unchanged)
                 unique_vals = np.unique(label_patch)
                 num_classes = int(unique_vals.max()) + 1
-                
-                # Update target configuration for multi-class
-                self.targets[t_name]["out_channels"] = num_classes
+                self.targets[t_name]["out_channels"] = max(num_classes, out_channels)
+                self.targets[t_name]["loss_fn"] = "CrossEntropyLoss"
+
+                label_tensor = torch.from_numpy(label_patch)
+
+            elif out_channels == 2:
+                # Binary segmentation with 2 channels: convert to one-hot encoding
+                # Update loss function to CrossEntropyLoss for 2-channel binary
                 self.targets[t_name]["loss_fn"] = "CrossEntropyLoss"
                 
-                # Convert to long tensor for CrossEntropyLoss
-                label_tensor = torch.from_numpy(label_patch.astype(np.int64))
+                # Create binary mask and convert to integer labels (0 or 1)
+                binary_mask = (label_patch > 0).astype(np.float32)
+                
+                # Add channel dimension for consistency during augmentations
+                if is_2d:
+                    binary_mask = binary_mask[np.newaxis, ...]  # [1, H, W]
+                else:
+                    binary_mask = binary_mask[np.newaxis, ...]  # [1, D, H, W]
+                
+                label_tensor = torch.from_numpy(binary_mask)
             else:
-                # Binary segmentation: use binary mask
+                # Legacy single-channel binary segmentation (shouldn't happen with our changes)
                 loss_fn = self.targets[t_name].get("loss_fn", "SoftDiceLoss")
-                self.targets[t_name]["out_channels"] = 1
                 
                 # For binary tasks: use binary mask with a single channel
                 binary_mask = (label_patch > 0).astype(np.float32)
@@ -727,13 +857,13 @@ class BaseDataset(Dataset):
         # 3. Extract label patches for all targets
         label_patches = self._extract_label_patches(vol_idx, z, y, x, dz, dy, dx, is_2d)
         
-        # 4. Extract loss mask if available
-        loss_mask = self._extract_loss_mask(vol_idx, z, y, x, dz, dy, dx, is_2d)
+        # 4. Extract ignore mask if available
+        ignore_mask = self._extract_ignore_mask(vol_idx, z, y, x, dz, dy, dx, is_2d)
         
         # 5. Apply transforms to image and labels
         img_patch, label_patches = self._apply_transforms(img_patch, label_patches, is_2d)
         
         # 6. Convert to tensors and format for the model
-        data_dict = self._prepare_tensors(img_patch, label_patches, loss_mask, vol_idx, is_2d)
+        data_dict = self._prepare_tensors(img_patch, label_patches, ignore_mask, vol_idx, is_2d)
         
         return data_dict

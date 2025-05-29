@@ -3,6 +3,7 @@ import zarr
 from pathlib import Path
 from collections import defaultdict
 from .base_dataset import BaseDataset
+from utils.io.zarr_io import _is_ome_zarr, _get_zarr_path
 
 class ZarrDataset(BaseDataset):
     """
@@ -10,7 +11,11 @@ class ZarrDataset(BaseDataset):
     
     This dataset loads Zarr files which are already lazily loaded by design,
     supporting numpy array slicing without loading all data into memory.
+    
+    Supports both regular Zarr files and OME-Zarr files with multiple resolution levels.
+    For OME-Zarr files, defaults to using resolution level 0 (highest resolution).
     """
+    
     
     def _initialize_volumes(self):
         """
@@ -118,8 +123,12 @@ class ZarrDataset(BaseDataset):
             
             # Open zarr arrays - these are already lazily loaded
             try:
-                data_array = zarr.open(str(image_dir), mode='r')
-                label_array = zarr.open(str(label_dir), mode='r')
+                # Get appropriate paths for OME-Zarr or regular zarr
+                data_path = _get_zarr_path(image_dir)
+                label_path = _get_zarr_path(label_dir)
+                
+                data_array = zarr.open(data_path, mode='r')
+                label_array = zarr.open(label_path, mode='r')
                 
                 # Store in the nested dictionary - only include mask if it exists
                 data_dict = {
@@ -129,7 +138,8 @@ class ZarrDataset(BaseDataset):
                 
                 # Load mask if available
                 if mask_dir.exists():
-                    mask_array = zarr.open(str(mask_dir), mode='r')
+                    mask_path = _get_zarr_path(mask_dir)
+                    mask_array = zarr.open(mask_path, mode='r')
                     data_dict['mask'] = mask_array
                     print(f"Found mask for {image_id}_{target}")
                 else:
@@ -137,7 +147,12 @@ class ZarrDataset(BaseDataset):
                 
                 targets_data[target][image_id] = data_dict
                 
-                print(f"Registered {image_id}_{target} with shape {data_array.shape} (lazy zarr)")
+                # Print information about the loaded arrays
+                if _is_ome_zarr(image_dir):
+                    resolution = getattr(self.mgr, 'ome_zarr_resolution', 0)
+                    print(f"Registered {image_id}_{target} with shape {data_array.shape} (OME-Zarr, resolution level {resolution})")
+                else:
+                    print(f"Registered {image_id}_{target} with shape {data_array.shape} (regular zarr)")
                 
             except Exception as e:
                 raise ValueError(f"Error opening zarr directories: {e}")

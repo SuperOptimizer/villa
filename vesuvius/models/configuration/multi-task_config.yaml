@@ -7,18 +7,18 @@ tr_config:
 dataset_config:
   binarize_labels: true
   target_value:
-    hz: 1  # Binary task
-    vt: 1  # Binary task
+    hz: 255  # Binary task
+    vt: 255  # Binary task
   min_labeled_ratio: 0
   min_bbox_percent: 0
   skip_patch_validation: true
   target_value:
     hz:
       mapping:
-        1: 1  
+        255: 255  
     vt:
       mapping:
-        1: 1  
+        255: 255  
   targets:
     hz:
       out_channels: 1

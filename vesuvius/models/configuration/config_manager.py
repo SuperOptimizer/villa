@@ -17,7 +17,7 @@ class ConfigManager:
         self.data = None # note that config manager DOES NOT hold data, 
                          # it just holds the path to the data
         self.verbose = verbose
-        self.selected_loss_function = "BCEWithLogitsLoss" # this is just a default loss value 
+        self.selected_loss_function = "DC_and_CE_loss" # this is just a default loss value 
                                                           # so we can init without it being empty
 
     def load_config(self, config_path):
@@ -72,6 +72,9 @@ class ConfigManager:
         # Skip patch validation for performance (useful for TIF datasets)
         self.skip_patch_validation = bool(self.dataset_config.get("skip_patch_validation", False))
         
+        # Cache valid patches for performance
+        self.cache_valid_patches = bool(self.dataset_config.get("cache_valid_patches", True))
+        
         # New configuration parameters for binarization control
         self.binarize_labels = bool(self.dataset_config.get("binarize_labels", True))
         self.target_value = self.dataset_config.get("target_value", "auto")  # "auto", int, or dict
@@ -116,6 +119,7 @@ class ConfigManager:
                 channels = task_info['channels']
             else:
                 raise ValueError(f"Target {target_name} is missing channels specification (either 'channels' or 'out_channels')")
+            
             self.out_channels += (channels,)
 
         # Inference config
@@ -146,6 +150,7 @@ class ConfigManager:
         self.targets = deepcopy(targets_dict)
         
         # Apply current loss function to all targets if not already set
+        # Also enforce minimum 2 channels for single-class tasks
         for target_name in self.targets:
             if "loss_fn" not in self.targets[target_name]:
                 self.targets[target_name]["loss_fn"] = self.selected_loss_function
