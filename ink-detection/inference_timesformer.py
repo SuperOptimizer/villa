@@ -263,7 +263,13 @@ import gc
 
 if __name__ == "__main__":
     # Loading the model
-    model = RegressionPLModel.load_from_checkpoint(args.model_path, strict=False)
+    try:
+        model = RegressionPLModel.load_from_checkpoint(args.model_path, strict=False)
+    except:
+        model = RegressionPLModel(pred_shape=(1,1))
+        w=torch.load(args.model_path,weights_only=False)
+        model.load_state_dict(w['state_dict'])
+    
     if args.model_compile:
         model=torch.compile(model)
     if args.gpus > 1:
