@@ -367,7 +367,7 @@ class StructureTensorInferer(Inferer, nn.Module):
                     data = torch.from_numpy(raw).to(self.device)
 
                     # Apply fiber-volume mask if needed
-                    if self.volume is not None and data.ndim == 4:
+                    if self.volume is not None:
                         data = (data == self.volume).float()
 
                     # Ensure shape is [1, C, Zp, Yp, Xp]
