@@ -100,7 +100,24 @@ class StructureTensorInferer(Inferer, nn.Module):
         self.register_buffer("pavel_kz", kz[None,None])
         self.register_buffer("pavel_ky", ky[None,None])
         self.register_buffer("pavel_kx", kx[None,None])
+        
 
+        # — figure out how much extra context the Pavel convs need —
+        # we take the maximum half‐kernel‐size over kz, ky, kx for each dim
+        pp = [k for k in (self.pavel_kz, self.pavel_ky, self.pavel_kx)]
+        pad_pz = max(k.shape[2] // 2 for k in pp)
+        pad_py = max(k.shape[3] // 2 for k in pp)
+        pad_px = max(k.shape[4] // 2 for k in pp)
+        # if you also smooth the 6 channels, that adds another gaussian pad
+        extra = self._pad if self.smooth_components else 0
+        # total pad needed on each side so that, after all conv→padding, you
+        # can still trim back to the original patch
+        self._total_pad = (
+            self._pad + pad_pz + extra,
+            self._pad + pad_py + extra,
+            self._pad + pad_px + extra,
+        )
+        
     def _load_model(self):
         """
         No model to load—just ensure num_classes is set.
@@ -206,6 +223,7 @@ class StructureTensorInferer(Inferer, nn.Module):
         
         return self.output_store
     
+    @torch.compile(mode="reduce-overhead", fullgraph=True)
     def compute_structure_tensor(self, x: torch.Tensor, sigma=None):
         # x: [N,1,Z,Y,X]
         if sigma is None: sigma = self.sigma
@@ -282,104 +300,117 @@ class StructureTensorInferer(Inferer, nn.Module):
 
     def _process_batches(self):
         """
-        Iterate over patches using DataLoader, compute J, and write directly to positions in the full volume zarr.
+        Iterate over patches using DataLoader, compute J over a padded region,
+        trim to the original patch, and write into the full-volume zarr.
         """
-        numcodecs.blosc.use_threads = False
+        numcodecs.blosc.use_threads = True
 
         total = self.num_total_patches
         store = self.output_store
         processed_count = 0
 
+        # Open the raw input volume once so we can read arbitrary slabs
+        input_src = open_zarr(
+            path=self.input,
+            mode='r',
+            storage_options={'anon': False} if str(self.input).startswith('s3://') else None
+        )
+        # Full volume dims (Z, Y, X)
+        if input_src.ndim == 4:
+            _, vol_Z, vol_Y, vol_X = input_src.shape
+        else:
+            vol_Z, vol_Y, vol_X = input_src.shape
+        # Amount of padding on each side (pz, py, px), computed in __init__
+        pz, py, px = self._total_pad
+
         with tqdm(total=total, desc="Struct-Tensor") as pbar:
             for batch_data in self.dataloader:
                 # Handle different batch data formats
                 if isinstance(batch_data, dict):
-                    data_batch = batch_data['data']
-                    pos_batch = batch_data.get('pos', [])
+                    data_batch    = batch_data['data']
+                    pos_batch     = batch_data.get('pos', [])
                     indices_batch = batch_data.get('index', [])
                 else:
-                    # Fallback for simple tensor batches
-                    data_batch = batch_data
-                    pos_batch = []
+                    data_batch    = batch_data
+                    pos_batch     = []
                     indices_batch = []
-                
-                # Move batch to device
-                data_batch = data_batch.to(self.device).float()
+
                 batch_size = data_batch.shape[0]
-                
-                # Process each item in the batch
+
                 for i in range(batch_size):
-                    data = data_batch[i]  # Shape: (C, Z, Y, X) or (Z, Y, X)
-                    
-                    # Get position
+                    # Determine the unpadded patch start
                     if pos_batch and i < len(pos_batch):
-                        pos = pos_batch[i]
+                        z0, y0, x0 = pos_batch[i]
                     elif indices_batch and i < len(indices_batch):
                         idx = indices_batch[i]
-                        pos = self.patch_start_coords_list[idx]
+                        z0, y0, x0 = self.patch_start_coords_list[idx]
                     else:
-                        # Fallback to sequential indexing
-                        pos = self.patch_start_coords_list[processed_count + i]
-                    
-                    # Extract coordinates
-                    z_start, y_start, x_start = pos
-                    z_end = z_start + self.patch_size[0]
-                    y_end = y_start + self.patch_size[1]
-                    x_end = x_start + self.patch_size[2]
-                    
-                    # fiber‐volume mask
+                        z0, y0, x0 = self.patch_start_coords_list[processed_count + i]
+
+                    # Compute end coords of the original patch
+                    z1 = z0 + self.patch_size[0]
+                    y1 = y0 + self.patch_size[1]
+                    x1 = x0 + self.patch_size[2]
+
+                    # Expand by padding, clamped to volume bounds
+                    za, zb = max(z0 - pz, 0), min(z1 + pz, vol_Z)
+                    ya, yb = max(y0 - py, 0), min(y1 + py, vol_Y)
+                    xa, xb = max(x0 - px, 0), min(x1 + px, vol_X)
+
+                    # --- dynamic slicing if no channel axis
+                    if input_src.ndim == 3:
+                        raw = input_src[za:zb, ya:yb, xa:xb].astype('float32')
+                    else:
+                        raw = input_src[:, za:zb, ya:yb, xa:xb].astype('float32')
+                    # ---
+
+                    data = torch.from_numpy(raw).to(self.device)
+
+                    # Apply fiber-volume mask if needed
                     if self.volume is not None:
                         data = (data == self.volume).float()
-                    
-                    # --- Ensure shape is [1, C, Z, Y, X] ---
+
+                    # Ensure shape is [1, C, Zp, Yp, Xp]
                     if data.ndim == 3:
-                        x = data.unsqueeze(0).unsqueeze(0)  # (1,1,Z,Y,X)
+                        x = data.unsqueeze(0).unsqueeze(0)   # (1,1,Z,Y,X)
                     elif data.ndim == 4:
                         x = data.unsqueeze(0)               # (1,C,Z,Y,X)
                     else:
-                        raise RuntimeError(f"Unexpected patch data ndim={data.ndim}")
-                    
-                    # --- Compute structure tensor ---
-                    # J has shape [1, 6, Z, Y, X]
+                        raise RuntimeError(f"Unexpected data ndim={data.ndim}")
+
+                    # Compute over padded patch
                     with torch.no_grad():
-                        J = self.compute_structure_tensor(x, sigma=self.sigma)
-                    
-                    # --- Bring to numpy and cast ---
-                    out_np = J.cpu().numpy().astype(np.float32)
-                    
-                    # --- Defensive squeeze of any extra singleton dim ---
-                    # Target shape is (6, Z, Y, X)
-                    if out_np.ndim == 5:
-                        # Could be (1,6,Z,Y,X) or (6,1,Z,Y,X)
-                        # First try drop batch axis if present
-                        if out_np.shape[0] == 1:
-                            out_np = out_np[0]
-                        # Then drop any singleton channel axis
-                        if out_np.ndim == 4 and out_np.shape[0] == 1 and self.num_classes != 1:
-                            # unlikely, but just in case
-                            out_np = out_np[0]
-                        # Or if shape is (6,1,Z,Y,X), drop the middle
-                        if out_np.ndim == 5 and out_np.shape[1] == 1:
-                            out_np = out_np[:,0]
-                    
-                    # Final check
+                        Jp = self.compute_structure_tensor(x, sigma=self.sigma)
+                        # Jp shape: [1, 6, Zp, Yp, Xp]
+
+                    # Trim off the padding to recover exactly the original patch size
+                    tz0, ty0, tx0 = pz, py, px
+                    tz1 = tz0 + self.patch_size[0]
+                    ty1 = ty0 + self.patch_size[1]
+                    tx1 = tx0 + self.patch_size[2]
+                    J = Jp[:, :, tz0:tz1, ty0:ty1, tx0:tx1]
+
+                    # Convert to numpy and drop the leading batch dim
+                    out_np = J.cpu().numpy().astype(np.float32).squeeze(0)
+
+                    # Sanity check
                     if out_np.shape != (self.num_classes, *self.patch_size):
                         raise RuntimeError(
-                            f"After squeeze, expected out_np shape {(self.num_classes, *self.patch_size)}, "
-                            f"but got {out_np.shape}"
+                            f"Trimmed output has shape {out_np.shape}, "
+                            f"expected {(self.num_classes, *self.patch_size)}"
                         )
-                    
-                    # --- Write directly to position in full volume Zarr ---
-                    store[:, z_start:z_end, y_start:y_end, x_start:x_end] = out_np
-                    
-                    # Update progress
+
+                    # Write the central patch into the full-volume zarr
+                    store[:, z0:z1, y0:y1, x0:x1] = out_np
+
                     pbar.update(1)
-                
+
                 processed_count += batch_size
                 self.current_patch_write_index = processed_count
 
         if self.verbose:
             print(f"Written {self.current_patch_write_index}/{total} patches.")
+    
 
 
 class ChunkDataset(Dataset):
@@ -414,6 +445,7 @@ def _eigh_and_sanitize(M: torch.Tensor):
 
 
 # compute the eigenvectors (and the eigenvalues)
+@torch.compile(mode="max-autotune-no-cudagraphs", fullgraph=True)
 def _compute_eigenvectors(
     block: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -459,15 +491,6 @@ def _compute_eigenvectors(
         .view(9, dz, dy, dx)
     )
     return eigvals, eigvecs
-
-
-# compiling the function
-_compute_eigenvectors = torch.compile(
-    _compute_eigenvectors,
-    mode="max-autotune-no-cudagraphs",
-    fullgraph=True,
-)
-
 
 def _finalize_structure_tensor_torch(
     zarr_path, chunk_size, num_workers, compressor, verbose, swap_eigenvectors=False
@@ -568,7 +591,7 @@ def _finalize_structure_tensor_torch(
     )
 
     # Process each chunk
-    for idx, bounds, block in tqdm(loader, desc="[Eigen] Chunks", disable=not verbose):
+    for idx, bounds, block in tqdm(loader, desc="[Eigen] Chunks"):
         z0, z1, y0, y1, x0, x1 = bounds
         
         with torch.no_grad():
@@ -700,13 +723,6 @@ def main():
         compressor = None
     else:
         compressor = zarr.Blosc(cname='zstd', clevel=1, shuffle=zarr.Blosc.SHUFFLE)
-    
-    # Compile the compute_structure_tensor method
-    StructureTensorInferer.compute_structure_tensor = torch.compile(
-        StructureTensorInferer.compute_structure_tensor,
-        mode="reduce-overhead",
-        fullgraph=True
-    )
     
     if args.mode == 'structure-tensor':
         # Run structure tensor computation
