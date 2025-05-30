@@ -178,4 +178,3 @@ class ZarrDataset(BaseDataset):
             print(f"Target '{target}' has {len(self.target_volumes[target])} volumes")
         
         print(f"Total targets loaded: {list(self.target_volumes.keys())}")
-        print("Note: All data is loaded lazily with zarr - actual chunk reading happens on demand")

@@ -7,37 +7,17 @@ tr_config:
 dataset_config:
   binarize_labels: true
   target_value:
-    hz: 255  # Binary task
-    vt: 255  # Binary task
+    hz: 1  # Binary task
+    vt: 1  # Binary task
   min_labeled_ratio: 0
   min_bbox_percent: 0
   skip_patch_validation: true
-  target_value:
-    hz:
-      mapping:
-        255: 255  
-    vt:
-      mapping:
-        255: 255  
   targets:
     hz:
-      out_channels: 1
-      activation: "sigmoid"
+      activation: "none"
       weight: 1
-      loss_fn: "BCEWithLogitsLoss" 
+      loss_fn: "BCEDiceLoss"
     vt:
-      out_channels: 1
-      activation: "sigmoid"
+      activation: "none"
       weight: 1
-      loss_fn: "BCEWithLogitsLoss"
-
-inference_config:
-  targets:
-    - fiber_type1:
-        channels: 1
-        activation: "sigmoid"
-        weight: 1
-    - fiber_type2:
-        channels: 1
-        activation: "sigmoid"
-        weight: 1
+      loss_fn: "BCEDiceLoss"

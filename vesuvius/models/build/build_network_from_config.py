@@ -74,8 +74,8 @@ class NetworkFromConfig(nn.Module):
         if hasattr(mgr, 'model_config') and mgr.model_config:
             model_config = mgr.model_config
         else:
-            print("model_config is empty; using inference_config instead")
-            model_config = mgr.inference_config
+            print("model_config is empty; using default configuration")
+            model_config = {}
 
         self.save_config = False
 
@@ -105,7 +105,7 @@ class NetworkFromConfig(nn.Module):
                 raise ValueError(f"Patch size must have either 2 or 3 dimensions! Got {len(self.patch_size)}D: {self.patch_size}")
         else:
             print(f"Using dimensionality ({self.op_dims}D) from ConfigManager")
-        
+
         # Convert string operation types to actual PyTorch classes
         if isinstance(self.conv_op, str):
             if self.op_dims == 2:
@@ -114,7 +114,7 @@ class NetworkFromConfig(nn.Module):
             else:
                 self.conv_op = nn.Conv3d
                 print("Using 3D convolutions (nn.Conv3d)")
-                
+
         if isinstance(self.pool_op, str):
             if self.op_dims == 2:
                 self.pool_op = nn.AvgPool2d
@@ -122,7 +122,7 @@ class NetworkFromConfig(nn.Module):
             else:
                 self.pool_op = nn.AvgPool3d
                 print("Using 3D pooling (nn.AvgPool3d)")
-                
+
         if isinstance(self.norm_op, str):
             if self.op_dims == 2:
                 self.norm_op = nn.InstanceNorm2d
@@ -130,7 +130,7 @@ class NetworkFromConfig(nn.Module):
             else:
                 self.norm_op = nn.InstanceNorm3d
                 print("Using 3D normalization (nn.InstanceNorm3d)")
-                
+
         if isinstance(self.dropout_op, str):
             if self.op_dims == 2:
                 self.dropout_op = nn.Dropout2d
@@ -138,7 +138,7 @@ class NetworkFromConfig(nn.Module):
             else:
                 self.dropout_op = nn.Dropout3d
                 print("Using 3D dropout (nn.Dropout3d)")
-                
+
         if self.nonlin in ["nn.LeakyReLU", "LeakyReLU"]:
             self.nonlin = nn.LeakyReLU
             self.nonlin_kwargs = {"negative_slope": 1e-2, "inplace": True}
@@ -170,13 +170,13 @@ class NetworkFromConfig(nn.Module):
                     min_feature_map_size=4,
                     max_numpool=999999
                 )
-            
+
             self.num_pool_per_axis = num_pool_per_axis
             self.must_be_divisible_by = must_div
             original_patch_size = self.patch_size
             self.patch_size = final_patch_size
             print(f"Patch size adjusted from {original_patch_size} to {final_patch_size} to ensure divisibility by pooling factors {must_div}")
-            
+
             self.num_stages = len(pool_op_kernel_sizes)
             base_features = 32
             max_features = 320
@@ -195,40 +195,38 @@ class NetworkFromConfig(nn.Module):
             self.basic_encoder_block = model_config.get("basic_encoder_block", "BasicBlockD")
             self.basic_decoder_block = model_config.get("basic_decoder_block", "ConvBlock")
             self.bottleneck_block = model_config.get("bottleneck_block", "BasicBlockD")
-            self.features_per_stage = model_config.get("features_per_stage",
-                                                        mgr.inference_config.get("features_per_stage",
-                                                                                   [32, 64, 128, 256, 320, 320, 320]))
+            self.features_per_stage = model_config.get("features_per_stage", [32, 64, 128, 256, 320, 320, 320])
             self.num_stages = model_config.get("n_stages", 7)
             self.n_blocks_per_stage = model_config.get("n_blocks_per_stage", [1, 3, 4, 6, 6, 6, 6])
             self.num_pool_per_axis = model_config.get("num_pool_per_axis", None)
             self.must_be_divisible_by = model_config.get("must_be_divisible_by", None)
-            
+
             # Set default kernel sizes and pool kernel sizes based on dimensionality
             default_kernel = [[3, 3]] * self.num_stages if self.op_dims == 2 else [[3, 3, 3]] * self.num_stages
             default_pool = [[1, 1]] * self.num_stages if self.op_dims == 2 else [[1, 1, 1]] * self.num_stages
             default_strides = [[1, 1]] * self.num_stages if self.op_dims == 2 else [[1, 1, 1]] * self.num_stages
-            
+
             print(f"Using {'2D' if self.op_dims == 2 else '3D'} kernel defaults: {default_kernel[0]}")
             print(f"Using {'2D' if self.op_dims == 2 else '3D'} pool defaults: {default_pool[0]}")
-            
+
             self.kernel_sizes = model_config.get("kernel_sizes", default_kernel)
             self.pool_op_kernel_sizes = model_config.get("pool_op_kernel_sizes", default_pool)
             self.n_conv_per_stage_decoder = model_config.get("n_conv_per_stage_decoder", [1] * (self.num_stages - 1))
             self.strides = model_config.get("strides", default_strides)
-            
+
             # Check for dimensionality mismatches 
             for i in range(len(self.kernel_sizes)):
                 if len(self.kernel_sizes[i]) != self.op_dims:
                     raise ValueError(f"Kernel size at stage {i} has {len(self.kernel_sizes[i])} dimensions "
                                    f"but patch size indicates {self.op_dims}D operations. "
                                    f"Kernel: {self.kernel_sizes[i]}, Expected dimensions: {self.op_dims}")
-                        
+
             for i in range(len(self.strides)):
                 if len(self.strides[i]) != self.op_dims:
                     raise ValueError(f"Stride at stage {i} has {len(self.strides[i])} dimensions "
                                    f"but patch size indicates {self.op_dims}D operations. "
                                    f"Stride: {self.strides[i]}, Expected dimensions: {self.op_dims}")
-                        
+
             for i in range(len(self.pool_op_kernel_sizes)):
                 if len(self.pool_op_kernel_sizes[i]) != self.op_dims:
                     raise ValueError(f"Pool kernel size at stage {i} has {len(self.pool_op_kernel_sizes[i])} dimensions "
@@ -278,10 +276,10 @@ class NetworkFromConfig(nn.Module):
                 # Default to matching input channels for adaptive behavior
                 out_channels = self.in_channels
                 print(f"No channel specification found for task '{target_name}', defaulting to {out_channels} channels (matching input)")
-            
+
             # Update target_info with the determined channels
             target_info["out_channels"] = out_channels
-            
+
             activation_str = target_info.get("activation", "sigmoid")
             self.task_decoders[target_name] = Decoder(
                 encoder=self.shared_encoder,
@@ -296,7 +294,7 @@ class NetworkFromConfig(nn.Module):
         # --------------------------------------------------------------------
         # Build final configuration snapshot.
         # --------------------------------------------------------------------
-        
+
         self.final_config = {
             "model_name": self.mgr.model_name,
             "basic_encoder_block": self.basic_encoder_block,
@@ -349,13 +347,13 @@ class NetworkFromConfig(nn.Module):
         # Temporarily set the input channels on the manager
         original_in_channels = getattr(mgr, 'in_channels', 1)
         mgr.in_channels = input_channels
-        
+
         # Create the network
         network = cls(mgr)
-        
+
         # Restore original value
         mgr.in_channels = original_in_channels
-        
+
         print(f"Created network with {input_channels} input channels")
         return network
 
@@ -374,7 +372,7 @@ class NetworkFromConfig(nn.Module):
     def forward(self, x):
         # Check input channels and warn if mismatch
         self.check_input_channels(x)
-        
+
         skips = self.shared_encoder(x)
         results = {}
         for task_name, decoder in self.task_decoders.items():

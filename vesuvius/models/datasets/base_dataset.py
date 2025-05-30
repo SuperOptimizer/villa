@@ -8,13 +8,19 @@ import zarr
 from torch.utils.data import Dataset
 import albumentations as A
 from tqdm import tqdm
+from multiprocessing import Pool, cpu_count
+from functools import partial
 
 from utils.utils import find_mask_patches, find_mask_patches_2d, pad_or_crop_3d, pad_or_crop_2d
 from utils.io.patch_cache_utils import (
     get_data_checksums,
     load_cached_patches,
-    save_computed_patches
+    save_computed_patches,
+    save_intensity_properties,
+    load_intensity_properties
 )
+from ..training.normalization import get_normalization
+from .intensity_sampling import compute_intensity_properties_parallel
 
 class BaseDataset(Dataset):
     """
@@ -55,6 +61,11 @@ class BaseDataset(Dataset):
         
         # Skip patch validation (defaults to False)
         self.skip_patch_validation = getattr(mgr, 'skip_patch_validation', False)
+        
+        # Initialize normalization (will be set after computing intensity properties)
+        self.normalization_scheme = getattr(mgr, 'normalization_scheme', 'zscore')
+        self.intensity_properties = getattr(mgr, 'intensity_properties', {})
+        self.normalizer = None  # Will be initialized after volumes are loaded
 
         self.image_transforms = image_transforms
         self.volume_transforms = volume_transforms
@@ -82,6 +93,67 @@ class BaseDataset(Dataset):
             print("Detected 2D dataset")
         else:
             print("Detected 3D dataset")
+        
+        # Try to load intensity properties from JSON file first
+        loaded_from_cache = False
+        if self.cache_enabled and self.cache_dir is not None and self.normalization_scheme in ['zscore', 'ct'] and not self.intensity_properties:
+            # Try to load from separate JSON file
+            print("\nChecking for cached intensity properties...")
+            intensity_result = load_intensity_properties(self.cache_dir)
+            if intensity_result is not None:
+                cached_intensity_properties, cached_normalization_scheme = intensity_result
+                if cached_normalization_scheme == self.normalization_scheme:
+                    self.intensity_properties = cached_intensity_properties
+                    self.mgr.intensity_properties = cached_intensity_properties
+                    if hasattr(self.mgr, 'dataset_config'):
+                        self.mgr.dataset_config['intensity_properties'] = cached_intensity_properties
+                    print("\nLoaded intensity properties from JSON cache - skipping computation")
+                    print("Cached intensity properties:")
+                    for key, value in cached_intensity_properties.items():
+                        print(f"  {key}: {value:.4f}")
+                    loaded_from_cache = True
+                else:
+                    print(f"Cached normalization scheme '{cached_normalization_scheme}' doesn't match current '{self.normalization_scheme}'")
+            
+        # Also check patches cache for backward compatibility
+        if self.cache_enabled and self.cache_dir is not None and self.data_path is not None and not loaded_from_cache:
+            config_params = self._get_config_params()
+            cache_result = load_cached_patches(
+                self.cache_dir,
+                config_params,
+                self.data_path
+            )
+            if cache_result is not None:
+                cached_patches, cached_intensity_properties, cached_normalization_scheme = cache_result
+                # If we have cached intensity properties and don't already have them, use the cached ones
+                if cached_intensity_properties and not self.intensity_properties:
+                    self.intensity_properties = cached_intensity_properties
+                    self.mgr.intensity_properties = cached_intensity_properties
+                    if hasattr(self.mgr, 'dataset_config'):
+                        self.mgr.dataset_config['intensity_properties'] = cached_intensity_properties
+                    print("\nLoaded intensity properties from patches cache - skipping computation")
+                    print("Cached intensity properties:")
+                    for key, value in cached_intensity_properties.items():
+                        print(f"  {key}: {value:.4f}")
+                    loaded_from_cache = True
+                    # Also save to JSON for visibility
+                    save_intensity_properties(self.cache_dir, cached_intensity_properties, cached_normalization_scheme or self.normalization_scheme)
+        
+        # Compute intensity properties if not provided and not loaded from cache
+        if self.normalization_scheme in ['zscore', 'ct'] and not self.intensity_properties and not loaded_from_cache:
+            print(f"\nComputing intensity properties for {self.normalization_scheme} normalization...")
+            self.intensity_properties = compute_intensity_properties_parallel(self.target_volumes, sample_ratio=0.001, max_samples=1000000)
+            # Update the config manager with computed properties
+            if hasattr(self.mgr, 'intensity_properties'):
+                self.mgr.intensity_properties = self.intensity_properties
+                self.mgr.dataset_config['intensity_properties'] = self.intensity_properties
+            
+            # Save to separate JSON file for visibility
+            if self.cache_enabled and self.cache_dir is not None:
+                save_intensity_properties(self.cache_dir, self.intensity_properties, self.normalization_scheme)
+        
+        # Now initialize the normalizer with the computed or provided properties
+        self.normalizer = get_normalization(self.normalization_scheme, self.intensity_properties)
         
         self._get_valid_patches()
 
@@ -228,7 +300,6 @@ class BaseDataset(Dataset):
         
         return unique_positions
 
-
     def _get_config_params(self):
         """
         Get configuration parameters for caching.
@@ -254,14 +325,27 @@ class BaseDataset(Dataset):
             print("\nAttempting to load patches from cache...")
             config_params = self._get_config_params()
             print(f"Cache configuration: {config_params}")
-            cached_patches = load_cached_patches(
+            cache_result = load_cached_patches(
                 self.cache_dir,
                 config_params,
                 self.data_path
             )
-            if cached_patches is not None:
+            if cache_result is not None:
+                cached_patches, cached_intensity_properties, cached_normalization_scheme = cache_result
                 self.valid_patches = cached_patches
                 print(f"Successfully loaded {len(self.valid_patches)} patches from cache\n")
+                
+                # Load cached intensity properties if available and not already set
+                if cached_intensity_properties and not self.intensity_properties:
+                    self.intensity_properties = cached_intensity_properties
+                    self.mgr.intensity_properties = cached_intensity_properties
+                    if hasattr(self.mgr, 'dataset_config'):
+                        self.mgr.dataset_config['intensity_properties'] = cached_intensity_properties
+                    print("Loaded intensity properties from cache - skipping computation")
+                    print("Cached intensity properties:")
+                    for key, value in cached_intensity_properties.items():
+                        print(f"  {key}: {value:.4f}")
+                    
                 return
             else:
                 print("No valid cache found, will compute patches...")
@@ -341,7 +425,9 @@ class BaseDataset(Dataset):
                 self.valid_patches,
                 self.cache_dir,
                 config_params,
-                self.data_path
+                self.data_path,
+                intensity_properties=self.intensity_properties,
+                normalization_scheme=self.normalization_scheme
             )
             if success:
                 print(f"Successfully saved patches to cache directory: {self.cache_dir}\n")
@@ -448,7 +534,7 @@ class BaseDataset(Dataset):
         Returns
         -------
         numpy.ndarray
-            Normalized image patch
+            Normalized image patch with channel dimension [C, H, W] or [C, D, H, W]
         """
         # Get the image from the first target (all targets share the same image)
         first_target_name = list(self.target_volumes.keys())[0]
@@ -462,12 +548,15 @@ class BaseDataset(Dataset):
             img_patch = img_arr[z:z+dz, y:y+dy, x:x+dx]
             img_patch = pad_or_crop_3d(img_patch, (dz, dy, dx))
         
-        # Normalize to [0, 1] range
-        img_patch = img_patch.astype(np.float32)
-        min_val = np.min(img_patch)
-        max_val = np.max(img_patch)
-        if max_val > min_val:
-            img_patch = (img_patch - min_val) / (max_val - min_val)
+        # Apply normalization
+        if self.normalizer is not None:
+            img_patch = self.normalizer.run(img_patch)
+        else:
+            # If no normalizer, just convert to float32
+            img_patch = img_patch.astype(np.float32)
+        
+        # Add channel dimension
+        img_patch = img_patch[np.newaxis, ...]  # Shape: [1, H, W] or [1, D, H, W]
         
         return np.ascontiguousarray(img_patch).copy()
     
@@ -588,6 +677,9 @@ class BaseDataset(Dataset):
                         
                 label_patch = pad_or_crop_3d(label_patch, (dz, dy, dx))
             
+            # Add channel dimension
+            label_patch = label_patch[np.newaxis, ...]  # Shape: [1, H, W] or [1, D, H, W]
+            
             # Ensure consistent data type
             label_patch = np.ascontiguousarray(label_patch).astype(np.float32).copy()
             label_patches[t_name] = label_patch
@@ -657,6 +749,9 @@ class BaseDataset(Dataset):
             # Convert to binary mask and invert (1 = ignore, 0 = compute)
             single_mask = (mask_patch == 0).astype(np.float32)
             
+            # Add channel dimension
+            single_mask = single_mask[np.newaxis, ...]  # [1, H, W] or [1, D, H, W]
+            
             # Return same mask for all targets
             return {t_name: single_mask for t_name in self.target_volumes.keys()}
             
@@ -676,7 +771,10 @@ class BaseDataset(Dataset):
                     label_patch = pad_or_crop_3d(label_patch, (dz, dy, dx))
                 
                 # Create binary mask from this target's label (1 = ignore unlabeled, 0 = compute on labeled)
-                ignore_masks[t_name] = (label_patch == 0).astype(np.float32)
+                mask = (label_patch == 0).astype(np.float32)
+                # Add channel dimension
+                mask = mask[np.newaxis, ...]  # Shape: [1, H, W] or [1, D, H, W]
+                ignore_masks[t_name] = mask
             
             return ignore_masks
         
@@ -729,14 +827,16 @@ class BaseDataset(Dataset):
     
     def _prepare_tensors(self, img_patch, label_patches, ignore_mask, vol_idx, is_2d):
         """
-        Convert numpy arrays to PyTorch tensors with proper formatting.
+        Convert numpy arrays to PyTorch tensors.
+        
+        All input arrays already have channel dimensions from extraction methods.
         
         Parameters
         ----------
         img_patch : numpy.ndarray
-            Image patch
+            Image patch with shape [C, H, W] or [C, D, H, W]
         label_patches : dict
-            Dictionary of label patches for each target
+            Dictionary of label patches for each target with shape [C, H, W] or [C, D, H, W]
         ignore_mask : dict or None
             Dictionary of ignore masks per target if available
         vol_idx : int
@@ -751,16 +851,10 @@ class BaseDataset(Dataset):
         """
         data_dict = {}
         
-        # Add channel dimension to image
-        if is_2d and img_patch.ndim == 2:
-            img_patch = img_patch[None, ...]  # Shape: (1, H, W)
-        elif not is_2d and img_patch.ndim == 3:
-            img_patch = img_patch[None, ...]  # Shape: (1, D, H, W)
-        
-        # Add image to data dict
+        # Simply convert image to tensor (already has channel dimension)
         data_dict["image"] = torch.from_numpy(img_patch)
         
-        # Add ignore masks if available - now as a dictionary per target
+        # Add ignore masks if available
         if ignore_mask is not None:
             data_dict["ignore_masks"] = {
                 t_name: torch.from_numpy(mask) 
@@ -769,9 +863,9 @@ class BaseDataset(Dataset):
         
         # Process all labels based on target configuration
         for t_name, label_patch in label_patches.items():
-            # Check if this is a multi-class target with regions
+            # Check if this is a multi-class target
             target_value = self._get_target_value(t_name)
-            is_multiclass_with_regions = (
+            is_multiclass = (
                 isinstance(target_value, dict) and 
                 'mapping' in target_value and 
                 ('regions' in target_value or len(target_value['mapping']) > 2)
@@ -780,55 +874,34 @@ class BaseDataset(Dataset):
             # Get the number of output channels for this target
             out_channels = self.targets[t_name].get("out_channels", 2)
             
-            if is_multiclass_with_regions or out_channels > 2:
-                # Multi-class segmentation  ➜  keep integer labels but ADD channel dim
-                label_patch = label_patch.astype(np.float32)
-                if is_2d:
-                    label_patch = label_patch[np.newaxis, ...]   # [1, H, W]
-                else:
-                    label_patch = label_patch[np.newaxis, ...]   # [1, D, H, W]
-
-                # Update target metadata (unchanged)
+            if is_multiclass or out_channels > 2:
+                # Multi-class segmentation - update metadata
                 unique_vals = np.unique(label_patch)
                 num_classes = int(unique_vals.max()) + 1
                 self.targets[t_name]["out_channels"] = max(num_classes, out_channels)
-                self.targets[t_name]["loss_fn"] = "CrossEntropyLoss"
-
-                label_tensor = torch.from_numpy(label_patch)
-
-            elif out_channels == 2:
-                # Binary segmentation with 2 channels: convert to one-hot encoding
-                # Update loss function to CrossEntropyLoss for 2-channel binary
-                self.targets[t_name]["loss_fn"] = "CrossEntropyLoss"
-                
-                # Create binary mask and convert to integer labels (0 or 1)
-                binary_mask = (label_patch > 0).astype(np.float32)
-                
-                # Add channel dimension for consistency during augmentations
-                if is_2d:
-                    binary_mask = binary_mask[np.newaxis, ...]  # [1, H, W]
-                else:
-                    binary_mask = binary_mask[np.newaxis, ...]  # [1, D, H, W]
-                
-                label_tensor = torch.from_numpy(binary_mask)
-            else:
-                # Legacy single-channel binary segmentation (shouldn't happen with our changes)
-                loss_fn = self.targets[t_name].get("loss_fn", "SoftDiceLoss")
-                
-                # For binary tasks: use binary mask with a single channel
-                binary_mask = (label_patch > 0).astype(np.float32)
-                
-                # Add channel dimension
-                if is_2d:
-                    # 2D case: [1, H, W]
-                    binary_mask = binary_mask[np.newaxis, ...]
-                else:
-                    # 3D case: [1, D, H, W]
-                    binary_mask = binary_mask[np.newaxis, ...]
-                
-                label_tensor = torch.from_numpy(binary_mask)
             
-            data_dict[t_name] = label_tensor
+            # Check if we need to convert to one-hot for binary segmentation
+            if out_channels == 2 and label_patch.shape[0] == 1:
+                # Binary segmentation with 2 output channels - convert to one-hot
+                # label_patch has shape [1, H, W] or [1, D, H, W]
+                label_tensor = torch.from_numpy(label_patch).long()
+                
+                # Create one-hot encoding
+                if is_2d:
+                    # Shape: [1, H, W] -> [2, H, W]
+                    one_hot = torch.zeros(2, label_tensor.shape[1], label_tensor.shape[2])
+                    one_hot[0] = (label_tensor[0] == 0).float()  # Background channel
+                    one_hot[1] = (label_tensor[0] == 1).float()  # Foreground channel
+                else:
+                    # Shape: [1, D, H, W] -> [2, D, H, W]
+                    one_hot = torch.zeros(2, label_tensor.shape[1], label_tensor.shape[2], label_tensor.shape[3])
+                    one_hot[0] = (label_tensor[0] == 0).float()  # Background channel
+                    one_hot[1] = (label_tensor[0] == 1).float()  # Foreground channel
+                
+                data_dict[t_name] = one_hot
+            else:
+                # Simply convert to tensor (already has proper shape and channel dimension)
+                data_dict[t_name] = torch.from_numpy(label_patch)
         
         return data_dict
     

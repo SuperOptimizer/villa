@@ -13,10 +13,7 @@ from models.datasets import NapariDataset, TifDataset, ZarrDataset
 from utils.plotting import save_debug
 from models.build.build_network_from_config import NetworkFromConfig
 
-from models.training.loss.compound_losses import (DC_and_CE_loss,
-                                                  DC_and_BCE_loss,
-                                                  DC_and_topk_loss)
-from models.training.loss.dice import MemoryEfficientSoftDiceLoss
+from models.training.loss.losses import _create_loss
 
 
 from models.training.optimizers import create_optimizer
@@ -34,7 +31,7 @@ class BaseTrainer:
                  verbose: bool = True):
         """
         Initialize the trainer with a config manager instance
-        
+
         Parameters
         ----------
         mgr : ConfigManager, optional
@@ -51,7 +48,7 @@ class BaseTrainer:
 
     # --- build model --- #
     def _build_model(self):
-        # Ensure model_config and inference_config are initialized
+        # Ensure model_config is initialized
         # If running directly, we need to make sure config is not None
         if not hasattr(self.mgr, 'model_config') or self.mgr.model_config is None:
             print("Initializing model_config with defaults")
@@ -62,21 +59,17 @@ class BaseTrainer:
                 "autoconfigure": self.mgr.autoconfigure,
                 "conv_op": "nn.Conv2d" if len(self.mgr.train_patch_size) == 2 else "nn.Conv3d"
             }
-        
-        if not hasattr(self.mgr, 'inference_config') or self.mgr.inference_config is None:
-            print("Initializing inference_config with model_config defaults")
-            self.mgr.inference_config = self.mgr.model_config.copy()
 
         model = NetworkFromConfig(self.mgr)
         return model
 
     def _create_training_transforms(self):
         """
-        Create training transforms using batchgeneratorsv2.
+        Create training transforms using custom batchgeneratorsv2.
         Returns None for validation (no augmentations).
         """
         dimension = len(self.mgr.train_patch_size)
-        
+
         if dimension == 2:
             # 2D transforms (no transpose transform)
             transforms = [
@@ -111,7 +104,7 @@ class BaseTrainer:
                     apply_probability=0.2
                 )
             ]
-            
+
             # Only add transpose transform if all three dimensions (z, y, x) are equal
             patch_d, patch_h, patch_w = self.mgr.train_patch_size
             if patch_d == patch_h == patch_w:
@@ -122,14 +115,14 @@ class BaseTrainer:
                 print(f"Added transpose transform for 3D (equal dimensions: {patch_d}x{patch_h}x{patch_w})")
             else:
                 print(f"Skipped transpose transform for 3D (unequal dimensions: {patch_d}x{patch_h}x{patch_w})")
-        
+
         return ComposeTransforms(transforms)
 
     # --- configure dataset --- #
     def _configure_dataset(self):
         # Get data format from config manager, default to zarr
         data_format = getattr(self.mgr, 'data_format', 'zarr')
-        
+
         # Note: Augmentations are now handled in the training loop, not in the dataset
         if data_format == 'napari':
             dataset = NapariDataset(mgr=self.mgr,
@@ -146,87 +139,64 @@ class BaseTrainer:
         else:
             raise ValueError(f"Unsupported data format: {data_format}. "
                            f"Supported formats are: 'napari', 'tif', 'zarr'")
-        
+
         print(f"Using {data_format} dataset format")
         return dataset
 
     # --- losses ---- #
     def _build_loss(self):
-        # if you override this you need to allow for a loss fn to apply to every single
-        # possible target in the dictionary of targets . the easiest is probably
-        # to add it in losses.loss, import it here, and then add it to the map
-
-        LOSS_FN_MAP = {
-            "DC_and_CE_loss": DC_and_CE_loss,
-            "DC_and_BCE_loss": DC_and_BCE_loss, 
-            "DC_and_topk_loss": DC_and_topk_loss,
-            "MemoryEfficientSoftDiceLoss": MemoryEfficientSoftDiceLoss
-        }
-
+        # Use the centralized _create_loss function to instantiate loss functions
         loss_fns = {}
         for task_name, task_info in self.mgr.targets.items():
-            loss_fn = task_info.get("loss_fn", "DC_and_CE_loss")
-            print(f"DEBUG: Target {task_name} using loss function: {loss_fn}")
-            if loss_fn not in LOSS_FN_MAP:
-                raise ValueError(f"Loss function {loss_fn} not found in LOSS_FN_MAP. Add it to the mapping and try again.")
+            loss_fn_name = task_info.get("loss_fn", "BCEDiceLoss")
+            print(f"DEBUG: Target {task_name} using loss function: {loss_fn_name}")
             
-            # Get loss kwargs from task info, or use defaults for DC_and_CE_loss
-            loss_kwargs = task_info.get("loss_kwargs", {})
+            # Get loss kwargs from task info, or use empty dict for defaults
+            loss_config = task_info.get("loss_kwargs", {})
             
-            # Provide default kwargs for DC_and_CE_loss if not specified
-            if loss_fn == "DC_and_CE_loss" and not loss_kwargs:
-                loss_kwargs = {
-                    "soft_dice_kwargs": {
-                        "do_bg": False,  # Don't include background class in dice calculation
-                        "batch_dice": False
-                    },
-                    "ce_kwargs": {},
-                    "weight_ce": 1,
-                    "weight_dice": 1,
-                    "ignore_label": -100  # Default ignore label for masked regions
-                }
-            elif loss_fn == "DC_and_BCE_loss" and not loss_kwargs:
-                loss_kwargs = {
-                    "bce_kwargs": {},
-                    "soft_dice_kwargs": {
-                        "do_bg": False,  # Don't include background class in dice calculation
-                        "batch_dice": False
-                    },
-                    "weight_ce": 1,
-                    "weight_dice": 1
-                }
-            elif loss_fn == "DC_and_topk_loss" and not loss_kwargs:
-                loss_kwargs = {
-                    "soft_dice_kwargs": {},
-                    "ce_kwargs": {"k": 0.1},  # Default to top 10% hardest pixels
-                    "weight_ce": 1,
-                    "weight_dice": 1,
-                    "ignore_label": -100  # Default ignore label for masked regions
-                }
+            # Get other parameters that might be needed
+            weight = loss_config.get("weight", None)
+            ignore_index = loss_config.get("ignore_index", None)
+            pos_weight = loss_config.get("pos_weight", None)
             
-            loss_fns[task_name] = LOSS_FN_MAP[loss_fn](**loss_kwargs)
+            # If compute_loss_on_label is set and no ignore_index is specified, use -100
+            if hasattr(self.mgr, 'compute_loss_on_label') and self.mgr.compute_loss_on_label and ignore_index is None:
+                ignore_index = -100
+                print(f"Setting ignore_index=-100 for target '{task_name}' due to compute_loss_on_label=True")
+            
+            # Create the loss function using the factory
+            try:
+                loss_fns[task_name] = _create_loss(
+                    name=loss_fn_name,
+                    loss_config=loss_config,
+                    weight=weight,
+                    ignore_index=ignore_index,
+                    pos_weight=pos_weight
+                )
+            except RuntimeError as e:
+                raise ValueError(f"Failed to create loss function '{loss_fn_name}' for target '{task_name}': {str(e)}")
 
         return loss_fns
 
     # --- optimizer ---- #
     def _get_optimizer(self, model):
-        
+
         optimizer_config = {
             'name': self.mgr.optimizer,
             'learning_rate': self.mgr.initial_lr,
             'weight_decay': self.mgr.weight_decay
         }
-        
+
         return create_optimizer(optimizer_config, model)
 
     # --- scheduler --- #
     def _get_scheduler(self, optimizer):
         # Get scheduler type from config or use 'poly' as default
         scheduler_type = getattr(self.mgr, 'scheduler', 'poly')
-        
+
         # Get scheduler-specific kwargs from config if available
         scheduler_kwargs = getattr(self.mgr, 'scheduler_kwargs', {})
-        
+
         # Use the factory function to create the scheduler
         scheduler = get_scheduler(
             scheduler_type=scheduler_type,
@@ -235,7 +205,7 @@ class BaseTrainer:
             max_steps=self.mgr.max_epoch,
             **scheduler_kwargs
         )
-        
+
         print(f"Using {scheduler_type} learning rate scheduler")
         return scheduler
 
@@ -249,16 +219,16 @@ class BaseTrainer:
             class DummyScaler:
                 def scale(self, loss):
                     return loss
-                
+
                 def unscale_(self, optimizer):
                     pass
-                
+
                 def step(self, optimizer):
                     optimizer.step()
-                    
+
                 def update(self):
                     pass
-                
+
             return DummyScaler()
 
     # --- dataloaders --- #
@@ -271,9 +241,9 @@ class BaseTrainer:
         split = int(np.floor(train_val_split * dataset_size))
         train_indices, val_indices = indices[:split], indices[split:]
         batch_size = self.mgr.train_batch_size
-        
+
         device_type = 'mps' if hasattr(torch, 'mps') and torch.backends.mps.is_available() else 'cuda' if torch.cuda.is_available() else 'cpu'
-        
+
         # For MPS device, set num_workers=0 to avoid pickling error
         if device_type == 'mps':
             num_workers = 0
@@ -284,13 +254,13 @@ class BaseTrainer:
                 num_workers = self.mgr.train_num_dataloader_workers
             else:
                 num_workers = 4
-        
+
         train_dataloader = DataLoader(dataset,
                                 batch_size=batch_size,
                                 sampler=SubsetRandomSampler(train_indices),
                                 pin_memory=(device_type == 'cuda'),  # pin_memory=True for CUDA
                                 num_workers=num_workers)
-        
+
         val_dataloader = DataLoader(dataset,
                                     batch_size=1,
                                     sampler=SubsetRandomSampler(val_indices),
@@ -302,10 +272,14 @@ class BaseTrainer:
 
     def train(self):
 
+        dataset = self._configure_dataset()
+        
+        # Auto-detect channels from dataset if needed
+        self.mgr.auto_detect_channels(dataset)
+        
         model = self._build_model()
         optimizer = self._get_optimizer(model)
         loss_fns = self._build_loss()
-        dataset = self._configure_dataset()
         scheduler = self._get_scheduler(optimizer)
 
         if torch.cuda.is_available():
@@ -317,14 +291,14 @@ class BaseTrainer:
         else:
             device = torch.device('cpu')
             print("Using CPU device")
-        
+
         # Apply weight initialization with recommended negative_slope=0.2 for LeakyReLU
         # Do this BEFORE device transfer and compilation
 
         model.apply(lambda module: init_weights_he(module, neg_slope=0.2))
-        
+
         model = model.to(device)
-        
+
         # Only compile the model if it's on CUDA (not supported on MPS/CPU)
         if device.type == 'cuda':
             model = torch.compile(model, mode="default", fullgraph=False)
@@ -335,10 +309,10 @@ class BaseTrainer:
             class NullContextManager:
                 def __enter__(self):
                     return self
-                
+
                 def __exit__(self, exc_type, exc_val, exc_tb):
                     pass
-            
+
             torch.no_op = lambda: NullContextManager()
 
         # Create appropriate scaler for the device
@@ -354,7 +328,7 @@ class BaseTrainer:
 
         # Create base checkpoint directory if it doesn't exist
         os.makedirs(self.mgr.ckpt_out_base, exist_ok=True)
-        
+
         # Create a specific directory for this model's checkpoints and configs
         model_ckpt_dir = os.path.join(self.mgr.ckpt_out_base, self.mgr.model_name)
         os.makedirs(model_ckpt_dir, exist_ok=True)
@@ -363,24 +337,41 @@ class BaseTrainer:
         valid_checkpoint = (self.mgr.checkpoint_path is not None and 
                            self.mgr.checkpoint_path != "" and 
                            Path(self.mgr.checkpoint_path).exists())
-        
+
         if valid_checkpoint:
             print(f"Loading checkpoint from {self.mgr.checkpoint_path}")
             checkpoint = torch.load(self.mgr.checkpoint_path, map_location=device)
-            
+
             # Check if this checkpoint has model configuration
             if 'model_config' in checkpoint:
                 print("Found model configuration in checkpoint, using it to initialize the model")
-                
+
                 # Update the manager with the saved configuration if needed
                 if hasattr(self.mgr, 'targets') and 'targets' in checkpoint['model_config']:
                     self.mgr.targets = checkpoint['model_config']['targets']
                     print(f"Updated targets from checkpoint: {self.mgr.targets}")
-                
+            
+            # Check for normalization information in checkpoint
+            if 'normalization_scheme' in checkpoint:
+                print(f"Found normalization scheme in checkpoint: {checkpoint['normalization_scheme']}")
+                self.mgr.normalization_scheme = checkpoint['normalization_scheme']
+                if hasattr(self.mgr, 'dataset_config'):
+                    self.mgr.dataset_config['normalization_scheme'] = checkpoint['normalization_scheme']
+            
+            if 'intensity_properties' in checkpoint:
+                print("Found intensity properties in checkpoint")
+                self.mgr.intensity_properties = checkpoint['intensity_properties']
+                if hasattr(self.mgr, 'dataset_config'):
+                    self.mgr.dataset_config['intensity_properties'] = checkpoint['intensity_properties']
+                # Print the loaded intensity properties
+                print("Loaded intensity properties:")
+                for key, value in checkpoint['intensity_properties'].items():
+                    print(f"  {key}: {value:.4f}")
+
                 # We may need to rebuild the model with the saved configuration
                 if model.autoconfigure != checkpoint['model_config'].get('autoconfigure', True):
                     print("Model autoconfiguration differs, rebuilding model from checkpoint config")
-                    
+
                     # Create a version of the manager with the checkpoint's configuration
                     class ConfigWrapper:
                         def __init__(self, config_dict, base_mgr):
@@ -389,7 +380,7 @@ class BaseTrainer:
                             for attr_name in dir(base_mgr):
                                 if not attr_name.startswith('__') and not hasattr(self, attr_name):
                                     setattr(self, attr_name, getattr(base_mgr, attr_name))
-                    
+
                     config_wrapper = ConfigWrapper(checkpoint['model_config'], self.mgr)
                     model = NetworkFromConfig(config_wrapper)
 
@@ -397,10 +388,10 @@ class BaseTrainer:
                     # Only compile for CUDA with explicit parameters
                     if device.type == 'cuda':
                         model = torch.compile(model, mode="default", fullgraph=False)
-                    
+
                     # Also recreate optimizer since the model parameters changed
                     optimizer = self._get_optimizer(model)
-            
+
             # Load model weights
             model.load_state_dict(checkpoint['model'])
 
@@ -418,7 +409,7 @@ class BaseTrainer:
 
         global_step = 0
         grad_accumulate_n = self.mgr.gradient_accumulation
-        
+
         # Initialize training transforms
         train_transforms = self._create_training_transforms()
 
@@ -427,15 +418,18 @@ class BaseTrainer:
             model.train()
 
             train_running_losses = {t_name: 0.0 for t_name in self.mgr.targets}
+            # Reset loss components for new epoch
+            if hasattr(self, '_loss_components'):
+                self._loss_components = {t_name: {'dice': [], 'ce': [], 'total': []} for t_name in self.mgr.targets}
             # Use the length of train indices as the number of iterations per epoch
             train_dataloader_iter = iter(train_dataloader)
-            
+
             # Determine number of iterations based on max_steps_per_epoch if set
             if hasattr(self.mgr, 'max_steps_per_epoch') and self.mgr.max_steps_per_epoch and self.mgr.max_steps_per_epoch > 0:
                 num_iters = min(len(train_indices), self.mgr.max_steps_per_epoch)
             else:
                 num_iters = len(train_indices)  # Use all data (current behavior)
-            
+
             pbar = tqdm(range(num_iters), total=num_iters)
             steps = 0
 
@@ -464,7 +458,7 @@ class BaseTrainer:
                             print(f"{item}: min : {data_dict[item].min()} max : {data_dict[item].max()}")
 
                 global_step += 1
-                
+
                 # Apply augmentations to individual samples in the batch (only during training)
                 if train_transforms is not None:
                     # Apply transforms to each sample in the batch individually
@@ -477,7 +471,7 @@ class BaseTrainer:
                             transformed_batch[key] = {mask_key: [] for mask_key in data_dict[key].keys()}
                         else:
                             transformed_batch[key] = []
-                    
+
                     for batch_idx in range(batch_size):
                         # Extract single sample from batch
                         sample_dict = {}
@@ -490,10 +484,10 @@ class BaseTrainer:
                                 }
                             else:
                                 sample_dict[key] = value[batch_idx]
-                        
+
                         # Apply transforms to single sample
                         transformed_sample = train_transforms(**sample_dict)
-                        
+
                         # Collect transformed samples
                         for key, value in transformed_sample.items():
                             if key == "ignore_masks":
@@ -504,7 +498,7 @@ class BaseTrainer:
                                     transformed_batch[key][mask_key].append(mask_value)
                             else:
                                 transformed_batch[key].append(value)
-                    
+
                     # Stack samples back into batch
                     for key, value_list in transformed_batch.items():
                         if key == "ignore_masks":
@@ -522,12 +516,12 @@ class BaseTrainer:
                             t_tensor = data_dict[t_name]
                             # expected dims: B + C + spatial (len(patch_size))
                             expected_dims = 2 + len(self.mgr.train_patch_size)
-                            
+
                             if t_tensor.dim() == expected_dims - 1:
                                 # Missing channel dimension - check target config for expected channels
                                 target_info = self.mgr.targets[t_name]
                                 expected_channels = target_info.get("out_channels", 1)
-                                
+
                                 if expected_channels == 1:
                                     # Single channel case - add channel dimension at dim=1
                                     data_dict[t_name] = t_tensor.unsqueeze(1)
@@ -546,7 +540,7 @@ class BaseTrainer:
                         t_name: mask.to(device, dtype=torch.float32)
                         for t_name, mask in data_dict["ignore_masks"].items()
                     }
-                
+
                 # Create targets_dict excluding both image and ignore_masks
                 targets_dict = {
                     k: v.to(device, dtype=torch.float32)
@@ -562,7 +556,7 @@ class BaseTrainer:
                     else torch.no_op() if device.type == 'mps' 
                     else torch.no_op()
                 )
-                
+
                 with context:
                     outputs = model(inputs)
                     total_loss = 0.0
@@ -573,30 +567,47 @@ class BaseTrainer:
                         t_loss_fn = loss_fns[t_name]
                         task_weight = self.mgr.targets[t_name].get("weight", 1.0)
 
-            
+
 
                         # Apply the per-target ignore mask if available
                         if ignore_masks is not None and t_name in ignore_masks:
                             ignore_mask = ignore_masks[t_name].to(device, dtype=torch.float32)
-                            
+
                             # Print a message showing we're using the custom mask
                             if steps == 0 and i == 0:
                                 print(f"Using custom ignore mask for target {t_name}")
-                            
-                            # Get the ignore_label value from the loss function if it has one
-                            ignore_label = getattr(t_loss_fn, 'ignore_label', getattr(t_loss_fn, 'ignore_index', -100))
-                            
+
+                            # Check if loss function has MaskingLossWrapper
+                            if hasattr(t_loss_fn, 'ignore_index'):
+                                ignore_label = t_loss_fn.ignore_index
+                            else:
+                                # Default ignore index if not wrapped
+                                ignore_label = -100
+
                             # Ensure ignore mask has the same number of dimensions as target
                             if ignore_mask.dim() == t_gt.dim() - 1:
                                 # Add channel dimension to match target
                                 ignore_mask = ignore_mask.unsqueeze(1)
-                            
+
                             # Apply mask to target: set regions where mask is 1 to ignore_label
                             t_gt = torch.where(ignore_mask == 1, torch.tensor(ignore_label, dtype=t_gt.dtype, device=t_gt.device), t_gt)
 
                         # Calculate the loss (no need to pass mask, it's now embedded in the target)
                         t_loss = t_loss_fn(t_pred, t_gt)
                         
+                        # Extract individual loss components if available
+                        if hasattr(t_loss_fn, 'last_dc_loss') and hasattr(t_loss_fn, 'last_ce_loss'):
+                            # Store individual components for display
+                            if not hasattr(self, '_loss_components'):
+                                self._loss_components = {t_name: {'dice': [], 'ce': [], 'total': []} for t_name in self.mgr.targets}
+                            
+                            dice_score = 1.0 - t_loss_fn.last_dc_loss  # Convert from loss to score
+                            ce_loss = t_loss_fn.last_ce_loss
+                            
+                            self._loss_components[t_name]['dice'].append(dice_score)
+                            self._loss_components[t_name]['ce'].append(ce_loss)
+                            self._loss_components[t_name]['total'].append(t_loss.item())
+
                         # Apply task weight to the loss
                         total_loss += task_weight * t_loss
                         train_running_losses[t_name] += t_loss.item()
@@ -619,9 +630,17 @@ class BaseTrainer:
 
                 desc_parts = []
                 for t_name in self.mgr.targets:
-                    # Avoid division by zero
-                    avg_t_loss = train_running_losses[t_name] / steps if steps > 0 else 0
-                    desc_parts.append(f"{t_name}: {avg_t_loss:.4f}")
+                    # Check if we have individual loss components
+                    if hasattr(self, '_loss_components') and t_name in self._loss_components and len(self._loss_components[t_name]['dice']) > 0:
+                        # Use recent values for smoother display
+                        recent_dice = np.mean(self._loss_components[t_name]['dice'][-50:])
+                        recent_ce = np.mean(self._loss_components[t_name]['ce'][-50:])
+                        recent_total = np.mean(self._loss_components[t_name]['total'][-50:])
+                        desc_parts.append(f"{t_name}: Dice={recent_dice:.3f}, CE={recent_ce:.3f}, Total={recent_total:.4f}")
+                    else:
+                        # Fallback to simple loss display
+                        avg_t_loss = train_running_losses[t_name] / steps if steps > 0 else 0
+                        desc_parts.append(f"{t_name}: {avg_t_loss:.4f}")
 
                 desc_str = f"Epoch {epoch + 1} => " + " | ".join(desc_parts)
                 pbar.set_description(desc_str)
@@ -635,38 +654,54 @@ class BaseTrainer:
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
-                
+
             # Step the scheduler once after each epoch
             scheduler.step()
 
+            # Print epoch summary with individual components
+            print(f"\n[Train] Epoch {epoch + 1} completed.")
             for t_name in self.mgr.targets:
                 # Avoid division by zero
                 epoch_avg = train_running_losses[t_name] / steps if steps > 0 else 0
-
-
-            print(f"[Train] Epoch {epoch + 1} completed.")
+                
+                # Print individual components if available
+                if hasattr(self, '_loss_components') and t_name in self._loss_components and len(self._loss_components[t_name]['dice']) > 0:
+                    avg_dice = np.mean(self._loss_components[t_name]['dice'])
+                    avg_ce = np.mean(self._loss_components[t_name]['ce'])
+                    print(f"  {t_name}: Avg Dice Score = {avg_dice:.3f}, Avg CE Loss = {avg_ce:.3f}, Avg Total Loss = {epoch_avg:.4f}")
+                else:
+                    print(f"  {t_name}: Avg Loss = {epoch_avg:.4f}")
 
             # Get model and checkpoint path within the model-specific directory
             ckpt_path = f"{model_ckpt_dir}/{self.mgr.model_name}_{epoch + 1}.pth"
-            
+
             # Save checkpoint with model weights and training state
             # Include the model configuration directly in the checkpoint
-            torch.save({
+            # Also include normalization information
+            checkpoint_data = {
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'scheduler': scheduler.state_dict(),
                 'epoch': epoch,
                 'model_config': model.final_config  # Save the model configuration
-            }, ckpt_path)
+            }
             
+            # Add normalization information from the dataset
+            if hasattr(dataset, 'normalization_scheme'):
+                checkpoint_data['normalization_scheme'] = dataset.normalization_scheme
+            if hasattr(dataset, 'intensity_properties'):
+                checkpoint_data['intensity_properties'] = dataset.intensity_properties
+                
+            torch.save(checkpoint_data, ckpt_path)
+
             print(f"Checkpoint saved to: {ckpt_path}")
-                    
+
             # Configuration is already saved in the checkpoint, no need to save it again here
 
             # clean up old checkpoints and configs -- currently just keeps 10 newest
             # Path to the model-specific checkpoint directory
             ckpt_dir = Path(model_ckpt_dir)
-            
+
             # Get all checkpoint files (.pth) and sort by modification time
             all_checkpoints = sorted(
                 ckpt_dir.glob(f"{self.mgr.model_name}_*.pth"),
@@ -700,13 +735,13 @@ class BaseTrainer:
 
                     # Use the length of val indices as the number of iterations for validation
                     val_dataloader_iter = iter(val_dataloader)
-                    
+
                     # Determine number of validation iterations based on max_val_steps_per_epoch if set
                     if hasattr(self.mgr, 'max_val_steps_per_epoch') and self.mgr.max_val_steps_per_epoch and self.mgr.max_val_steps_per_epoch > 0:
                         num_val_iters = min(len(val_indices), self.mgr.max_val_steps_per_epoch)
                     else:
                         num_val_iters = len(val_indices)  # Use all data (current behavior)
-                    
+
                     pbar = tqdm(range(num_val_iters), total=num_val_iters)
                     for i in pbar:
                         try:
@@ -724,7 +759,7 @@ class BaseTrainer:
                                 t_name: mask.to(device, dtype=torch.float32)
                                 for t_name, mask in data_dict["ignore_masks"].items()
                             }
-                        
+
                         # Create targets_dict excluding both image and ignore_masks
                         targets_dict = {
                             k: v.to(device, dtype=torch.float32)
@@ -739,29 +774,33 @@ class BaseTrainer:
                             else torch.no_op() if device.type == 'mps' 
                             else torch.no_op()
                         )
-                        
+
                         with context:
                             outputs = model(inputs)
                             total_val_loss = 0.0
                             for t_name, t_gt in targets_dict.items():
                                 t_pred = outputs[t_name]
                                 t_loss_fn = loss_fns[t_name]
-                                
+
                                 # Apply the per-target ignore mask if available
                                 if ignore_masks is not None and t_name in ignore_masks:
                                     ignore_mask = ignore_masks[t_name].to(device, dtype=torch.float32)
-                                    
-                                    # Get the ignore_label value from the loss function if it has one
-                                    ignore_label = getattr(t_loss_fn, 'ignore_label', getattr(t_loss_fn, 'ignore_index', -100))
-                                    
+
+                                    # Check if loss function has MaskingLossWrapper
+                                    if hasattr(t_loss_fn, 'ignore_index'):
+                                        ignore_label = t_loss_fn.ignore_index
+                                    else:
+                                        # Default ignore index if not wrapped
+                                        ignore_label = -100
+
                                     # Ensure ignore mask has the same number of dimensions as target
                                     if ignore_mask.dim() == t_gt.dim() - 1:
                                         # Add channel dimension to match target
                                         ignore_mask = ignore_mask.unsqueeze(1)
-                                    
+
                                     # Apply mask to target: set regions where mask is 1 to ignore_label
                                     t_gt = torch.where(ignore_mask == 1, torch.tensor(ignore_label, dtype=t_gt.dtype, device=t_gt.device), t_gt)
-                                
+
                                 # Calculate the loss (no need to pass mask, it's now embedded in the target)
                                 t_loss = t_loss_fn(t_pred, t_gt)
 
@@ -805,36 +844,45 @@ class BaseTrainer:
                 pbar.close()
 
                 # Final avg for each task
+                print(f"\n[Validation] Epoch {epoch + 1} summary:")
                 for t_name in self.mgr.targets:
                     # Avoid division by zero
                     val_avg = val_running_losses[t_name] / val_steps if val_steps > 0 else 0
-                    print(f"Task '{t_name}', epoch {epoch + 1} avg val loss: {val_avg:.4f}")
+                    print(f"  Task '{t_name}': Avg validation loss = {val_avg:.4f}")
 
             # Scheduler step happens once per epoch after training
 
         print('Training Finished!')
-        
+
         # Save final model with configuration in the model-specific directory
         final_model_path = f"{model_ckpt_dir}/{self.mgr.model_name}_final.pth"
-        
+
         # Save the complete checkpoint with configuration embedded
-        torch.save({
+        final_checkpoint_data = {
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
             'scheduler': scheduler.state_dict(),
             'epoch': self.mgr.max_epoch - 1,
             'model_config': model.final_config
-        }, final_model_path)
+        }
         
+        # Add normalization information from the dataset
+        if hasattr(dataset, 'normalization_scheme'):
+            final_checkpoint_data['normalization_scheme'] = dataset.normalization_scheme
+        if hasattr(dataset, 'intensity_properties'):
+            final_checkpoint_data['intensity_properties'] = dataset.intensity_properties
+            
+        torch.save(final_checkpoint_data, final_model_path)
+
         print(f"Final model saved to {final_model_path}")
         print(f"Model configuration is embedded in the checkpoint")
-        
+
 
 
 def detect_targets_from_data(mgr):
     """
     Detect available targets from the data directory structure.
-    
+
     Parameters
     ----------
     mgr : ConfigManager
@@ -842,13 +890,13 @@ def detect_targets_from_data(mgr):
     """
     data_path = Path(mgr.data_path)
     images_dir = data_path / "images"
-    
+
     if not images_dir.exists():
         raise ValueError(f"Images directory not found: {images_dir}")
-    
+
     # Find target names from image files
     targets = set()
-    
+
     if mgr.data_format == "zarr":
         # Look for .zarr directories with format imageN_target.zarr
         zarr_dirs = [d for d in images_dir.iterdir() if d.is_dir() and d.suffix == '.zarr']
@@ -857,7 +905,7 @@ def detect_targets_from_data(mgr):
             if '_' in stem:
                 target = stem.rsplit('_', 1)[1]
                 targets.add(target)
-    
+
     elif mgr.data_format == "tif":
         # Look for .tif files with format imageN_target.tif
         tif_files = images_dir.glob("*.tif")
@@ -866,13 +914,13 @@ def detect_targets_from_data(mgr):
             if '_' in stem:
                 target = stem.rsplit('_', 1)[1]
                 targets.add(target)
-    
+
     elif mgr.data_format == "napari":
         # For napari, targets would need to be configured externally
         # as napari datasets are typically loaded programmatically
         print("Warning: Target detection not implemented for napari format. Please configure targets in config file.")
         return
-    
+
     # Only create default target configuration if no targets are already configured
     if targets and (not hasattr(mgr, 'targets') or not mgr.targets):
         mgr.targets = {}
@@ -882,7 +930,7 @@ def detect_targets_from_data(mgr):
                 "activation": "softmax",  # Use softmax for multi-channel output
                 "loss_fn": "CrossEntropyLoss"  # Use CrossEntropyLoss for 2-channel binary
             }
-        
+
         print(f"Detected targets from data: {list(targets)}")
     elif targets and mgr.targets:
         # Check if all detected targets are configured
@@ -898,7 +946,7 @@ def detect_targets_from_data(mgr):
 def apply_loss_functions_to_targets(mgr, loss_list):
     """
     Apply loss functions to targets in order.
-    
+
     Parameters
     ----------
     mgr : ConfigManager
@@ -909,12 +957,12 @@ def apply_loss_functions_to_targets(mgr, loss_list):
     # If no targets are configured yet, detect them from the data
     if not hasattr(mgr, 'targets') or not mgr.targets:
         detect_targets_from_data(mgr)
-    
+
     if not mgr.targets:
         raise ValueError("No targets found. Please ensure your data directory has the correct structure or configure targets in a config file.")
-    
+
     target_names = list(mgr.targets.keys())
-    
+
     # Apply loss functions in order
     for i, target_name in enumerate(target_names):
         if i < len(loss_list):
@@ -922,7 +970,7 @@ def apply_loss_functions_to_targets(mgr, loss_list):
         else:
             # If more targets than loss functions, use the last loss function
             loss_fn = loss_list[-1] 
-        
+
         mgr.targets[target_name]["loss_fn"] = loss_fn
         print(f"Applied {loss_fn} to target '{target_name}'")
 
@@ -930,7 +978,7 @@ def apply_loss_functions_to_targets(mgr, loss_list):
 def update_config_from_args(mgr, args):
     """
     Update ConfigManager with command line arguments.
-    
+
     Parameters
     ----------
     mgr : ConfigManager
@@ -940,19 +988,19 @@ def update_config_from_args(mgr, args):
     """
     # Set data path (maps to -i argument)
     mgr.data_path = Path(args.input)
-    
+
     # Set data format
     mgr.data_format = args.format
-    
+
     # Set checkpoint output directory
     mgr.ckpt_out_base = Path(args.output)
     mgr.tr_info["ckpt_out_base"] = str(mgr.ckpt_out_base)
-    
+
     # Update optional parameters if provided
     if args.batch_size is not None:
         mgr.train_batch_size = args.batch_size
         mgr.tr_configs["batch_size"] = args.batch_size
-    
+
     if args.patch_size is not None:
         # Parse patch size from string like "192,192,192" or "256,256"
         try:
@@ -960,33 +1008,33 @@ def update_config_from_args(mgr, args):
             mgr.update_config(patch_size=patch_size)
         except ValueError as e:
             raise ValueError(f"Invalid patch size format: {args.patch_size}. Expected comma-separated integers like '192,192,192'")
-    
+
     if args.train_split is not None:
         if not 0.0 <= args.train_split <= 1.0:
             raise ValueError(f"Train split must be between 0.0 and 1.0, got {args.train_split}")
         mgr.tr_val_split = args.train_split
         mgr.tr_info["tr_val_split"] = args.train_split
-    
+
     if args.loss_on_label_only:
         mgr.compute_loss_on_label = True
         mgr.tr_info["compute_loss_on_label"] = True
-    
+
     # Handle max steps per epoch if provided
     if args.max_steps_per_epoch is not None:
         mgr.max_steps_per_epoch = args.max_steps_per_epoch
         mgr.tr_configs["max_steps_per_epoch"] = args.max_steps_per_epoch
-    
+
     if args.max_val_steps_per_epoch is not None:
         mgr.max_val_steps_per_epoch = args.max_val_steps_per_epoch
         mgr.tr_configs["max_val_steps_per_epoch"] = args.max_val_steps_per_epoch
-    
+
     # Handle model name
     if args.model_name is not None:
         mgr.model_name = args.model_name
         mgr.tr_info["model_name"] = args.model_name
         if mgr.verbose:
             print(f"Set model name: {mgr.model_name}")
-    
+
     # Handle nonlinearity/activation function
     if args.nonlin is not None:
         if not hasattr(mgr, 'model_config') or mgr.model_config is None:
@@ -994,7 +1042,16 @@ def update_config_from_args(mgr, args):
         mgr.model_config["nonlin"] = args.nonlin
         if mgr.verbose:
             print(f"Set activation function: {args.nonlin}")
-    
+
+    # Handle squeeze and excitation
+    if args.se:
+        if not hasattr(mgr, 'model_config') or mgr.model_config is None:
+            mgr.model_config = {}
+        mgr.model_config["squeeze_excitation"] = True
+        mgr.model_config["squeeze_excitation_reduction_ratio"] = args.se_reduction_ratio
+        if mgr.verbose:
+            print(f"Enabled squeeze and excitation with reduction ratio: {args.se_reduction_ratio}")
+
     # Handle loss functions
     if args.loss is not None:
         # Parse loss function list like "[SoftDiceLoss, BCEWithLogitsLoss]"
@@ -1006,7 +1063,7 @@ def update_config_from_args(mgr, args):
         except (ValueError, SyntaxError):
             # Try parsing as comma-separated string
             loss_list = [s.strip() for s in args.loss.split(',')]
-        
+
         # Apply loss functions to targets in order
         apply_loss_functions_to_targets(mgr, loss_list)
 
@@ -1014,12 +1071,12 @@ def update_config_from_args(mgr, args):
 def main():
     """Main entry point for the training script."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(
         description="Train Vesuvius neural networks for ink detection and segmentation",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    
+
     # Required arguments
     parser.add_argument("-i", "--input", required=True, 
                        help="Input directory containing images/, labels/, and optionally masks/ subdirectories")
@@ -1027,7 +1084,7 @@ def main():
                        help="Output directory for saving checkpoints and configurations")
     parser.add_argument("--format", required=True, choices=["tif", "zarr", "napari"],
                        help="Data format (tif: TIFF files, zarr: Zarr arrays, napari: Napari layers)")
-    
+
     # Optional arguments
     parser.add_argument("--batch-size", type=int, 
                        help="Training batch size (default: from config or 2)")
@@ -1051,20 +1108,23 @@ def main():
                        help="Model name for checkpoints and logging (default: from config or 'Model')")
     parser.add_argument("--nonlin", type=str, choices=["LeakyReLU", "ReLU", "SwiGLU", "swiglu", "GLU", "glu"],
                        help="Activation function to use in the model (default: from config or 'LeakyReLU')")
-    
+    parser.add_argument("--se", action="store_true", help="Enable squeeze and excitation modules in the encoder")
+    parser.add_argument("--se-reduction-ratio", type=float, default=0.0625,
+                       help="Squeeze excitation reduction ratio (default: 0.0625 = 1/16)")
+
     args = parser.parse_args()
-    
+
     # Validate required arguments
     if not Path(args.input).exists():
         raise ValueError(f"Input directory does not exist: {args.input}")
-    
+
     # Create output directory if it doesn't exist
     Path(args.output).mkdir(parents=True, exist_ok=True)
-    
+
     # Initialize ConfigManager
     from models.configuration.config_manager import ConfigManager
     mgr = ConfigManager(verbose=args.verbose)
-    
+
     # Load config file if provided, otherwise initialize with defaults
     if args.config_path:
         if not Path(args.config_path).exists():
@@ -1072,16 +1132,20 @@ def main():
         mgr.load_config(args.config_path)
         print(f"Loaded configuration from: {args.config_path}")
     else:
-        # Initialize with defaults
+        # Initialize with defaults - first set up the basic config dictionaries
+        mgr.tr_info = {}
+        mgr.tr_configs = {}
+        mgr.model_config = {}
+        mgr.dataset_config = {}
         mgr._init_attributes()
         print("Initialized with default configuration")
-    
+
     # Update configuration with command line arguments
     update_config_from_args(mgr, args)
-    
+
     # Create and run trainer
     trainer = BaseTrainer(mgr=mgr, verbose=args.verbose)
-    
+
     print("Starting training...")
     trainer.train()
     print("Training completed!")

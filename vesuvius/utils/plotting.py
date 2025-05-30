@@ -107,9 +107,13 @@ def convert_slice_to_bgr(
         
         # Other multi-channel cases (2-channel, 4-channel, etc.)
         else:
-            # For consistency, just show the first channel as a grayscale image
-            # to avoid width mismatches between GT and predictions
-            ch_8u = minmax_scale_to_8bit(slice_2d_or_3d[0])
+            # For 2-channel data (one-hot encoded binary segmentation), show the foreground channel
+            if slice_2d_or_3d.shape[0] == 2:
+                # Channel 1 is the foreground channel in one-hot encoding
+                ch_8u = minmax_scale_to_8bit(slice_2d_or_3d[1])
+            else:
+                # For other multi-channel cases, show the first channel
+                ch_8u = minmax_scale_to_8bit(slice_2d_or_3d[0])
             return cv2.cvtColor(ch_8u, cv2.COLOR_GRAY2BGR)
 
     else:
