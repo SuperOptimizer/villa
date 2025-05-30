@@ -12,7 +12,7 @@ from functools import partial
 from data.utils import open_zarr
 
 
-def process_chunk(chunk_info, input_path, output_path, mode, threshold, num_classes, spatial_shape, output_chunks):
+def process_chunk(chunk_info, input_path, output_path, mode, threshold, num_classes, spatial_shape, output_chunks, is_multi_task=False, target_info=None):
     """
     Process a single chunk of the volume in parallel.
     
@@ -25,6 +25,8 @@ def process_chunk(chunk_info, input_path, output_path, mode, threshold, num_clas
         num_classes: Number of classes in input
         spatial_shape: Spatial dimensions of the volume (Z, Y, X)
         output_chunks: Chunk size for output
+        is_multi_task: Whether this is a multi-task model
+        target_info: Dictionary with target information for multi-task models
     """
     
     chunk_idx = chunk_info['indices']
@@ -60,20 +62,49 @@ def process_chunk(chunk_info, input_path, output_path, mode, threshold, num_clas
         return {'chunk_idx': chunk_idx, 'processed_voxels': 0, 'empty': True}
     
     if mode == "binary":
-        # For binary case, we just need a softmax over dim 0 (channels)
-        # Compute softmax: exp(x) / sum(exp(x))
-        exp_logits = np.exp(logits_np - np.max(logits_np, axis=0, keepdims=True))
-        softmax = exp_logits / np.sum(exp_logits, axis=0, keepdims=True)
-        
-        if threshold:
-            # Create binary mask using argmax (class 1 is foreground)
-            # Simply check if foreground probability > background probability
-            binary_mask = (softmax[1] > softmax[0]).astype(np.float32)
-            output_data = binary_mask[np.newaxis, ...]  # Add channel dim
+        if is_multi_task and target_info:
+            # For multi-task binary, process each target separately
+            target_results = []
+            
+            # Process each target - sort by start_channel to maintain correct order
+            for target_name, info in sorted(target_info.items(), key=lambda x: x[1]['start_channel']):
+                start_ch = info['start_channel']
+                end_ch = info['end_channel']
+                
+                # Extract channels for this target
+                target_logits = logits_np[start_ch:end_ch]
+                
+                # Compute softmax for this target
+                exp_logits = np.exp(target_logits - np.max(target_logits, axis=0, keepdims=True))
+                softmax = exp_logits / np.sum(exp_logits, axis=0, keepdims=True)
+                
+                if threshold:
+                    # Create binary mask
+                    binary_mask = (softmax[1] > softmax[0]).astype(np.float32)
+                    target_results.append(binary_mask)
+                else:
+                    # Extract foreground probability
+                    fg_prob = softmax[1]
+                    target_results.append(fg_prob)
+            
+            # Stack results from all targets
+            output_data = np.stack(target_results, axis=0)
         else:
-            # Extract foreground probability (channel 1)
-            fg_prob = softmax[1:2]  
-            output_data = fg_prob
+            # Single task binary - existing logic
+            # For binary case, we just need a softmax over dim 0 (channels)
+            # Compute softmax: exp(x) / sum(exp(x))
+            exp_logits = np.exp(logits_np - np.max(logits_np, axis=0, keepdims=True))
+            softmax = exp_logits / np.sum(exp_logits, axis=0, keepdims=True)
+            
+            if threshold:
+                # Create binary mask using argmax (class 1 is foreground)
+                # Simply check if foreground probability > background probability
+                binary_mask = (softmax[1] > softmax[0]).astype(np.float32)
+                output_data = binary_mask[np.newaxis, ...]  # Add channel dim
+            else:
+                # Extract foreground probability (channel 1)
+                fg_prob = softmax[1:2]  
+                output_data = fg_prob
             
     else:  # multiclass 
         # Apply softmax over channel dimension
@@ -164,11 +195,26 @@ def finalize_logits(
     num_classes = input_shape[0]
     spatial_shape = input_shape[1:]  # (Z, Y, X)
     
+    # Check for multi-task metadata
+    is_multi_task = False
+    target_info = None
+    if hasattr(input_store, 'attrs'):
+        is_multi_task = input_store.attrs.get('is_multi_task', False)
+        target_info = input_store.attrs.get('target_info', None)
+    
     # Verify we have the expected number of channels based on mode
     print(f"Input shape: {input_shape}, Num classes: {num_classes}")
+    if is_multi_task:
+        print(f"Multi-task model detected with targets: {list(target_info.keys()) if target_info else 'None'}")
     
-    if mode == "binary" and num_classes != 2:
-        raise ValueError(f"Binary mode expects 2 channels, but input has {num_classes} channels.")
+    if mode == "binary":
+        if is_multi_task and target_info:
+            # For multi-task binary, each target should have 2 channels
+            expected_channels = sum(info['out_channels'] for info in target_info.values())
+            if num_classes != expected_channels:
+                raise ValueError(f"Multi-task binary mode expects {expected_channels} total channels, but input has {num_classes} channels.")
+        elif num_classes != 2:
+            raise ValueError(f"Binary mode expects 2 channels, but input has {num_classes} channels.")
     elif mode == "multiclass" and num_classes < 2:
         raise ValueError(f"Multiclass mode expects at least 2 channels, but input has {num_classes} channels.")
     
@@ -187,14 +233,23 @@ def finalize_logits(
             print(f"Using specified chunk size: {output_chunks}")
     
     if mode == "binary":
-        if threshold:  
-            # If thresholding, only output argmax channel for binary
-            output_shape = (1, *spatial_shape)  # Just the binary mask (argmax)
-            print("Output will have 1 channel: [binary_mask]")
+        if is_multi_task and target_info:
+            # For multi-task binary, output one channel per target
+            num_targets = len(target_info)
+            output_shape = (num_targets, *spatial_shape)  # One mask per target
+            if threshold:
+                print(f"Output will have {num_targets} channels: [" + ", ".join(f"{k}_binary_mask" for k in sorted(target_info.keys())) + "]")
+            else:
+                print(f"Output will have {num_targets} channels: [" + ", ".join(f"{k}_softmax_fg" for k in sorted(target_info.keys())) + "]")
         else:
-             # Just softmax of FG class
-            output_shape = (1, *spatial_shape) 
-            print("Output will have 1 channel: [softmax_fg]")
+            if threshold:  
+                # If thresholding, only output argmax channel for binary
+                output_shape = (1, *spatial_shape)  # Just the binary mask (argmax)
+                print("Output will have 1 channel: [binary_mask]")
+            else:
+                 # Just softmax of FG class
+                output_shape = (1, *spatial_shape) 
+                print("Output will have 1 channel: [softmax_fg]")
     else:  # multiclass
         if threshold:  
             # If threshold is provided for multiclass, only save the argmax
@@ -257,7 +312,9 @@ def finalize_logits(
         threshold=threshold,
         num_classes=num_classes,
         spatial_shape=spatial_shape,
-        output_chunks=output_chunks
+        output_chunks=output_chunks,
+        is_multi_task=is_multi_task,
+        target_info=target_info
     )
     
     total_processed = 0

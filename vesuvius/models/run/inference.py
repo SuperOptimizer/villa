@@ -418,12 +418,13 @@ class Inferer():
         if not isinstance(outputs_dict, dict):
             return outputs_dict
             
-        # Sort by target names to ensure consistent ordering
-        sorted_targets = sorted(self.target_info.keys())
+        # Sort targets by their start_channel to preserve the correct channel order
+        # This ensures outputs are concatenated in the same order they were allocated during model loading
+        sorted_targets = sorted(self.target_info.items(), key=lambda x: x[1]['start_channel'])
         
-        # Collect outputs in the correct order
+        # Collect outputs in the correct channel order
         output_tensors = []
-        for target_name in sorted_targets:
+        for target_name, target_info in sorted_targets:
             if target_name in outputs_dict:
                 output_tensors.append(outputs_dict[target_name])
             else:

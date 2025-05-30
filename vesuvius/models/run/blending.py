@@ -493,6 +493,11 @@ def merge_inference_outputs(
         verbose=verbose
     )
     if hasattr(output_zarr, 'attrs'):
+        # Copy all attributes from the input part
+        if hasattr(part0_logits_store, 'attrs'):
+            for key, value in part0_logits_store.attrs.items():
+                output_zarr.attrs[key] = value
+        # Update/add specific attributes
         output_zarr.attrs['patch_size'] = patch_size
         output_zarr.attrs['original_volume_shape'] = original_volume_shape
         output_zarr.attrs['sigma_scale'] = sigma_scale
