@@ -103,8 +103,11 @@ def prepare_directories(args):
         # Create S3 directories
         import fsspec
         fs = fsspec.filesystem('s3', anon=False)
-        fs.makedirs(args.workdir, exist_ok=True)
-        fs.makedirs(args.parts_dir, exist_ok=True)
+        # Remove s3:// prefix for fs operations
+        workdir_no_prefix = args.workdir.replace('s3://', '')
+        parts_dir_no_prefix = args.parts_dir.replace('s3://', '')
+        fs.makedirs(workdir_no_prefix, exist_ok=True)
+        fs.makedirs(parts_dir_no_prefix, exist_ok=True)
     else:
         # For local paths, use os.path.join
         # Create needed directories
@@ -436,8 +439,10 @@ def run_pipeline():
         if args.parts_dir.startswith('s3://'):
             import fsspec
             fs = fsspec.filesystem('s3', anon=False)
-            parts_exist = fs.exists(args.parts_dir)
-            parts_has_files = len(fs.ls(args.parts_dir)) > 0 if parts_exist else False
+            # Remove s3:// prefix for fs operations
+            parts_dir_no_prefix = args.parts_dir.replace('s3://', '')
+            parts_exist = fs.exists(parts_dir_no_prefix)
+            parts_has_files = len(fs.ls(parts_dir_no_prefix)) > 0 if parts_exist else False
         else:
             parts_exist = os.path.exists(args.parts_dir)
             parts_has_files = os.listdir(args.parts_dir) if parts_exist else False
@@ -459,7 +464,9 @@ def run_pipeline():
         if args.blended_path.startswith('s3://'):
             import fsspec
             fs = fsspec.filesystem('s3', anon=False)
-            blended_exists = fs.exists(args.blended_path)
+            # Remove s3:// prefix for fs operations
+            blended_path_no_prefix = args.blended_path.replace('s3://', '')
+            blended_exists = fs.exists(blended_path_no_prefix)
         else:
             blended_exists = os.path.exists(args.blended_path)
             

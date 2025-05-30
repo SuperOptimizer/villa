@@ -80,6 +80,7 @@ setup(
             'vesuvius.blend_logits=models.run.blending:main',
             'vesuvius.finalize_outputs=models.run.finalize_outputs:main',
             'vesuvius.inference_pipeline=models.run.vesuvius_pipeline:run_pipeline',
+            'vesuvius.compute_st=structure_tensor.run_create_st:main',
             'vesuvius.napari_trainer=utils.napari_trainer.main_window:main',
             'vesuvius.proofreader=utils.vc_proofreader.main:main',
             'vesuvius.voxelize_obj=scripts.voxelize_objs:main',

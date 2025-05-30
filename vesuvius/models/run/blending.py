@@ -282,7 +282,10 @@ def merge_inference_outputs(
     # we need to use fsspec to work w/ s3 paths , as os.listdir doesn't work with s3
     if parent_dir.startswith('s3://'):
         fs = fsspec.filesystem('s3', anon=False)
-        full_paths = fs.ls(parent_dir)
+        # Remove 's3://' prefix for fs.ls()
+        parent_dir_no_prefix = parent_dir.replace('s3://', '')
+        # List directory to get all entries
+        full_paths = fs.ls(parent_dir_no_prefix)
         
         # For S3, strip the bucket name and path prefix to get just the directory name
         # Each entry looks like: 'bucket/path/to/parent_dir/logits_part_0.zarr'
