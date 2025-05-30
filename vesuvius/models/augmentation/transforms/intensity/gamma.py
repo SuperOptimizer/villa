@@ -2,8 +2,8 @@ from typing import Callable, Union
 
 import torch
 
-from batchgeneratorsv2.helpers.scalar_type import RandomScalar, sample_scalar
-from batchgeneratorsv2.transforms.base.basic_transform import ImageOnlyTransform
+from models.augmentation.helpers.scalar_type import RandomScalar, sample_scalar
+from models.augmentation.transforms.base.basic_transform import ImageOnlyTransform
 
 
 class GammaTransform(ImageOnlyTransform):

@@ -11,9 +11,9 @@ from scipy.ndimage import fourier_gaussian
 from torch import Tensor
 from torch.nn.functional import grid_sample
 
-from batchgeneratorsv2.helpers.scalar_type import RandomScalar, sample_scalar
-from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform
-from batchgeneratorsv2.transforms.utils.cropping import crop_tensor
+from models.augmentation.helpers.scalar_type import RandomScalar, sample_scalar
+from models.augmentation.transforms.base.basic_transform import BasicTransform
+from models.augmentation.transforms.utils.cropping import crop_tensor
 
 
 class SpatialTransform(BasicTransform):

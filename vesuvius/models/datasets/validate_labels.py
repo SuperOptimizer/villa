@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirna
 
 from vesuvius.models.configuration.config_manager import ConfigManager
 from vesuvius.models.datasets.napari_dataset import NapariDataset
-from vesuvius.models.datasets.tif_dataset import TifDataset
+from vesuvius.models.datasets.image_dataset import TifDataset
 from vesuvius.models.datasets.zarr_dataset import ZarrDataset
 from vesuvius.models.datasets.label_config_utils import analyze_dataset_labels, validate_label_data
 

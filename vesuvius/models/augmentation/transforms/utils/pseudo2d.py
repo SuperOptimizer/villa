@@ -2,7 +2,7 @@ from copy import deepcopy
 
 import torch
 
-from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform
+from models.augmentation.transforms.base.basic_transform import BasicTransform
 
 
 class Convert3DTo2DTransform(BasicTransform):

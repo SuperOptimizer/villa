@@ -8,21 +8,12 @@ from models.training.lr_schedulers import get_scheduler, PolyLRScheduler
 from torch.optim import AdamW, SGD
 from torch.utils.data import DataLoader, SubsetRandomSampler
 from utils.utils import init_weights_he
-import albumentations as A
-from models.datasets import NapariDataset, TifDataset, ZarrDataset
+from models.datasets import NapariDataset, ImageDataset, ZarrDataset
 from utils.plotting import save_debug
 from models.build.build_network_from_config import NetworkFromConfig
 
 from models.training.loss.losses import _create_loss
-
-
 from models.training.optimizers import create_optimizer
-# Augmentations will be handled directly in this file
-from models.augmentation.transforms.utils.compose import ComposeTransforms
-from models.augmentation.transforms.utils.random import RandomTransform
-from models.augmentation.transforms.spatial.mirroring import MirrorTransform
-from models.augmentation.transforms.spatial.transpose import TransposeAxesTransform
-from models.augmentation.transforms.noise.gaussian_blur import GaussianBlurTransform
 
 
 def compute_gradient_norm(model):
@@ -74,84 +65,24 @@ class BaseTrainer:
         model = NetworkFromConfig(self.mgr)
         return model
 
-    def _create_training_transforms(self):
-        """
-        Create training transforms using custom batchgeneratorsv2.
-        Returns None for validation (no augmentations).
-        """
-        dimension = len(self.mgr.train_patch_size)
-
-        if dimension == 2:
-            # 2D transforms (no transpose transform)
-            transforms = [
-                RandomTransform(
-                    MirrorTransform(allowed_axes=(0, 1)), 
-                    apply_probability=0.5
-                ),
-                RandomTransform(
-                    GaussianBlurTransform(
-                        blur_sigma=(0.5, 1.5),
-                        synchronize_channels=True,
-                        synchronize_axes=False,
-                        p_per_channel=1.0
-                    ),
-                    apply_probability=0.2
-                )
-            ]
-        else:
-            # 3D transforms
-            transforms = [
-                RandomTransform(
-                    MirrorTransform(allowed_axes=(0, 1, 2)), 
-                    apply_probability=0.5
-                ),
-                RandomTransform(
-                    GaussianBlurTransform(
-                        blur_sigma=(0.5, 1.0),
-                        synchronize_channels=True,
-                        synchronize_axes=False,
-                        p_per_channel=1.0
-                    ),
-                    apply_probability=0.2
-                )
-            ]
-
-            # Only add transpose transform if all three dimensions (z, y, x) are equal
-            patch_d, patch_h, patch_w = self.mgr.train_patch_size
-            if patch_d == patch_h == patch_w:
-                transforms.insert(1, RandomTransform(
-                    TransposeAxesTransform(allowed_axes={0, 1, 2}), 
-                    apply_probability=0.5
-                ))
-                print(f"Added transpose transform for 3D (equal dimensions: {patch_d}x{patch_h}x{patch_w})")
-            else:
-                print(f"Skipped transpose transform for 3D (unequal dimensions: {patch_d}x{patch_h}x{patch_w})")
-
-        return ComposeTransforms(transforms)
 
     # --- configure dataset --- #
-    def _configure_dataset(self):
+    def _configure_dataset(self, is_training=True):
         # Get data format from config manager, default to zarr
         data_format = getattr(self.mgr, 'data_format', 'zarr')
 
-        # Note: Augmentations are now handled in the training loop, not in the dataset
+        # Note: Augmentations are now handled in the dataset based on is_training flag
         if data_format == 'napari':
-            dataset = NapariDataset(mgr=self.mgr,
-                                   image_transforms=None,
-                                   volume_transforms=None)
-        elif data_format == 'tif':
-            dataset = TifDataset(mgr=self.mgr,
-                                image_transforms=None,
-                                volume_transforms=None)
+            dataset = NapariDataset(mgr=self.mgr, is_training=is_training)
+        elif data_format == 'image':
+            dataset = ImageDataset(mgr=self.mgr, is_training=is_training)
         elif data_format == 'zarr':
-            dataset = ZarrDataset(mgr=self.mgr,
-                                 image_transforms=None,
-                                 volume_transforms=None)
+            dataset = ZarrDataset(mgr=self.mgr, is_training=is_training)
         else:
             raise ValueError(f"Unsupported data format: {data_format}. "
-                           f"Supported formats are: 'napari', 'tif', 'zarr'")
+                           f"Supported formats are: 'napari', 'image', 'zarr'")
 
-        print(f"Using {data_format} dataset format")
+        print(f"Using {data_format} dataset format ({'training' if is_training else 'validation'})")
         return dataset
 
     # --- losses ---- #
@@ -243,8 +174,12 @@ class BaseTrainer:
             return DummyScaler()
 
     # --- dataloaders --- #
-    def _configure_dataloaders(self, dataset):
-        dataset_size = len(dataset)
+    def _configure_dataloaders(self, train_dataset, val_dataset=None):
+        # If val_dataset is not provided, use the same dataset for validation
+        if val_dataset is None:
+            val_dataset = train_dataset
+            
+        dataset_size = len(train_dataset)
         indices = list(range(dataset_size))
         np.random.shuffle(indices)
 
@@ -266,13 +201,13 @@ class BaseTrainer:
             else:
                 num_workers = 4
 
-        train_dataloader = DataLoader(dataset,
+        train_dataloader = DataLoader(train_dataset,
                                 batch_size=batch_size,
                                 sampler=SubsetRandomSampler(train_indices),
                                 pin_memory=(device_type == 'cuda'),  # pin_memory=True for CUDA
                                 num_workers=num_workers)
 
-        val_dataloader = DataLoader(dataset,
+        val_dataloader = DataLoader(val_dataset,
                                     batch_size=1,
                                     sampler=SubsetRandomSampler(val_indices),
                                     pin_memory=(device_type == 'cuda'), 
@@ -283,10 +218,14 @@ class BaseTrainer:
 
     def train(self):
 
-        dataset = self._configure_dataset()
+        # Create training dataset with augmentations
+        train_dataset = self._configure_dataset(is_training=True)
+        
+        # Create validation dataset without augmentations
+        val_dataset = self._configure_dataset(is_training=False)
         
         # Auto-detect channels from dataset if needed
-        self.mgr.auto_detect_channels(dataset)
+        self.mgr.auto_detect_channels(train_dataset)
         
         model = self._build_model()
         optimizer = self._get_optimizer(model)
@@ -329,7 +268,8 @@ class BaseTrainer:
         # Create appropriate scaler for the device
         scaler = self._get_scaler(device.type)
 
-        train_dataloader, val_dataloader, train_indices, val_indices = self._configure_dataloaders(dataset)
+        # Configure dataloaders with separate datasets
+        train_dataloader, val_dataloader, train_indices, val_indices = self._configure_dataloaders(train_dataset, val_dataset)
 
         # Save initial configuration to checkpoint directory if requested
         if model.save_config:
@@ -421,9 +361,6 @@ class BaseTrainer:
         global_step = 0
         grad_accumulate_n = self.mgr.gradient_accumulation
 
-        # Initialize training transforms
-        train_transforms = self._create_training_transforms()
-
         # ---- training! ----- #
         for epoch in range(start_epoch, self.mgr.max_epoch):
             # Track gradient norms for this epoch
@@ -471,79 +408,6 @@ class BaseTrainer:
                             print(f"{item}: min : {data_dict[item].min()} max : {data_dict[item].max()}")
 
                 global_step += 1
-
-                # Apply augmentations to individual samples in the batch (only during training)
-                if train_transforms is not None:
-                    # Apply transforms to each sample in the batch individually
-                    batch_size = data_dict["image"].shape[0]
-                    # Initialize transformed_batch with proper structure
-                    transformed_batch = {}
-                    for key in data_dict.keys():
-                        if key == "ignore_masks":
-                            # Initialize ignore_masks as a dictionary of lists
-                            transformed_batch[key] = {mask_key: [] for mask_key in data_dict[key].keys()}
-                        else:
-                            transformed_batch[key] = []
-
-                    for batch_idx in range(batch_size):
-                        # Extract single sample from batch
-                        sample_dict = {}
-                        for key, value in data_dict.items():
-                            if key == "ignore_masks":
-                                # Handle ignore_masks dictionary
-                                sample_dict[key] = {
-                                    mask_key: mask_value[batch_idx] 
-                                    for mask_key, mask_value in value.items()
-                                }
-                            else:
-                                sample_dict[key] = value[batch_idx]
-
-                        # Apply transforms to single sample
-                        transformed_sample = train_transforms(**sample_dict)
-
-                        # Collect transformed samples
-                        for key, value in transformed_sample.items():
-                            if key == "ignore_masks":
-                                # Handle ignore_masks dictionary
-                                if key not in transformed_batch:
-                                    transformed_batch[key] = {mask_key: [] for mask_key in value.keys()}
-                                for mask_key, mask_value in value.items():
-                                    transformed_batch[key][mask_key].append(mask_value)
-                            else:
-                                transformed_batch[key].append(value)
-
-                    # Stack samples back into batch
-                    for key, value_list in transformed_batch.items():
-                        if key == "ignore_masks":
-                            # Handle ignore_masks dictionary
-                            data_dict[key] = {
-                                mask_key: torch.stack(mask_value_list) 
-                                for mask_key, mask_value_list in value_list.items()
-                            }
-                        else:
-                            data_dict[key] = torch.stack(value_list)
-
-                    # --- NEW: make sure each target has proper channel dimension ---
-                    for t_name in self.mgr.targets:
-                        if t_name in data_dict:  # Check if this target exists in the batch
-                            t_tensor = data_dict[t_name]
-                            # expected dims: B + C + spatial (len(patch_size))
-                            expected_dims = 2 + len(self.mgr.train_patch_size)
-
-                            if t_tensor.dim() == expected_dims - 1:
-                                # Missing channel dimension - check target config for expected channels
-                                target_info = self.mgr.targets[t_name]
-                                expected_channels = target_info.get("out_channels", 1)
-
-                                if expected_channels == 1:
-                                    # Single channel case - add channel dimension at dim=1
-                                    data_dict[t_name] = t_tensor.unsqueeze(1)
-                                else:
-                                    # Multi-channel case - this shouldn't happen as multi-channel targets
-                                    # should maintain their channel dimension through augmentations
-                                    # But if it does, we need to handle it appropriately
-                                    print(f"Warning: Target {t_name} expected {expected_channels} channels but channel dim was squeezed")
-                                    data_dict[t_name] = t_tensor.unsqueeze(1)  # Add single channel for now
 
                 inputs = data_dict["image"].to(device, dtype=torch.float32)
                 # Get the ignore masks dictionary if it exists
@@ -754,10 +618,10 @@ class BaseTrainer:
             }
             
             # Add normalization information from the dataset
-            if hasattr(dataset, 'normalization_scheme'):
-                checkpoint_data['normalization_scheme'] = dataset.normalization_scheme
-            if hasattr(dataset, 'intensity_properties'):
-                checkpoint_data['intensity_properties'] = dataset.intensity_properties
+            if hasattr(train_dataset, 'normalization_scheme'):
+                checkpoint_data['normalization_scheme'] = train_dataset.normalization_scheme
+            if hasattr(train_dataset, 'intensity_properties'):
+                checkpoint_data['intensity_properties'] = train_dataset.intensity_properties
                 
             torch.save(checkpoint_data, ckpt_path)
 
@@ -934,10 +798,10 @@ class BaseTrainer:
         }
         
         # Add normalization information from the dataset
-        if hasattr(dataset, 'normalization_scheme'):
-            final_checkpoint_data['normalization_scheme'] = dataset.normalization_scheme
-        if hasattr(dataset, 'intensity_properties'):
-            final_checkpoint_data['intensity_properties'] = dataset.intensity_properties
+        if hasattr(train_dataset, 'normalization_scheme'):
+            final_checkpoint_data['normalization_scheme'] = train_dataset.normalization_scheme
+        if hasattr(train_dataset, 'intensity_properties'):
+            final_checkpoint_data['intensity_properties'] = train_dataset.intensity_properties
             
         torch.save(final_checkpoint_data, final_model_path)
 
@@ -973,11 +837,11 @@ def detect_targets_from_data(mgr):
                 target = stem.rsplit('_', 1)[1]
                 targets.add(target)
 
-    elif mgr.data_format == "tif":
+    elif mgr.data_format == "Image":
         # Look for .tif files with format imageN_target.tif
-        tif_files = images_dir.glob("*.tif")
-        for tif_file in tif_files:
-            stem = tif_file.stem
+        image_files = images_dir.glob("*.tif, *.tiff, *.png, *.jpg")
+        for image_file in image_files:
+            stem = image_file.stem
             if '_' in stem:
                 target = stem.rsplit('_', 1)[1]
                 targets.add(target)
@@ -1156,8 +1020,8 @@ def main():
                        help="Input directory containing images/, labels/, and optionally masks/ subdirectories")
     parser.add_argument("-o", "--output", required=True,
                        help="Output directory for saving checkpoints and configurations")
-    parser.add_argument("--format", required=True, choices=["tif", "zarr", "napari"],
-                       help="Data format (tif: TIFF files, zarr: Zarr arrays, napari: Napari layers)")
+    parser.add_argument("--format", required=True, choices=["image", "zarr", "napari"],
+                       help="Data format (image: tif, png, or jpg files, zarr: Zarr arrays, napari: Napari layers)")
 
     # Optional arguments
     parser.add_argument("--batch-size", type=int, 

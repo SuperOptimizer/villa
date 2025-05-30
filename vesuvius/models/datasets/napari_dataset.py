@@ -63,6 +63,13 @@ class NapariDataset(BaseDataset):
                 if (isinstance(layer, napari.layers.Labels) and 
                     layer.name.startswith(f"{image_name}_")):
                     suffix = layer.name[len(image_name) + 1:]  # Extract suffix after image_name_
+                    
+                    # Validate suffix is meaningful
+                    if suffix.isdigit():
+                        print(f"\nWarning: Label layer '{layer.name}' uses numeric suffix '{suffix}'.")
+                        print(f"Consider using a descriptive name like '{image_name}_ink' or '{image_name}_labels' instead.")
+                        print(f"The suffix after '{image_name}_' will be used as the target name in the model.\n")
+                    
                     if self.mgr.verbose:
                         print(f"Found matching label layer: {layer.name} with suffix: {suffix}")
                     matching_label_layers.append((suffix, layer))
@@ -87,11 +94,11 @@ class NapariDataset(BaseDataset):
 
                 target_name = target_suffix
                 if target_name not in targets_dict:
+                    # Don't set out_channels here - let auto-detection handle it
                     targets_dict[target_name] = {
-                        "out_channels": 1, 
-                        "activation": "sigmoid" 
+                        "activation": "none"  # Default activation for auto-detected channels
                     }
-                    print(f"DEBUG: Creating new target '{target_name}'")
+                    print(f"DEBUG: Creating new target '{target_name}' - channels will be auto-detected")
                     data_dict[target_name] = []
                 
                 # Prepare the data dictionary
@@ -106,7 +113,7 @@ class NapariDataset(BaseDataset):
                 
                 data_dict[target_name].append({
                     'data': data_entry,
-                    'out_channels': targets_dict[target_name]["out_channels"],
+                    'out_channels': targets_dict[target_name].get("out_channels", None),  # Will be auto-detected
                     'name': f"{image_name}_{target_name}"
                 })
                 

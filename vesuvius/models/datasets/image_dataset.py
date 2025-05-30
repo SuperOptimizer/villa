@@ -1,6 +1,5 @@
 import numpy as np
 import zarr
-import tifffile
 from pathlib import Path
 from collections import defaultdict
 from tqdm import tqdm
@@ -9,27 +8,34 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 from .base_dataset import BaseDataset
 from utils.type_conversion import convert_to_uint8_dtype_range
+import cv2
+import tifffile
 
-def convert_tif_to_zarr_worker(args):
+def convert_image_to_zarr_worker(args):
     """
-    Worker function to convert a single TIF file to a Zarr array.
+    Worker function to convert a single image file to a Zarr array.
     This function is defined at module level to be picklable for multiprocessing.
     
     Parameters
     ----------
     args : tuple
-        (tif_path, zarr_group_path, array_name, patch_size, pre_created)
+        (image_path, zarr_group_path, array_name, patch_size, pre_created)
         
     Returns
     -------
     tuple
         (array_name, shape, success, error_msg)
     """
-    tif_path, zarr_group_path, array_name, patch_size, pre_created = args
+    image_path, zarr_group_path, array_name, patch_size, pre_created = args
     
     try:
-        # Read the TIFF file
-        img = tifffile.imread(str(tif_path))
+        # Read the image file
+        if str(image_path).lower().endswith(('.tif', '.tiff')):
+            # Use tifffile for TIFF files to handle 3D data
+            img = tifffile.imread(str(image_path))
+        else:
+            # Use cv2 for other image formats (2D only)
+            img = cv2.imread(str(image_path))
         
         # Convert to uint8 with proper scaling based on dtype
         img = convert_to_uint8_dtype_range(img)
@@ -64,11 +70,11 @@ def convert_tif_to_zarr_worker(args):
     except Exception as e:
         return array_name, None, False, str(e)
 
-class TifDataset(BaseDataset):
+class ImageDataset(BaseDataset):
     """
-    A PyTorch Dataset for handling both 2D and 3D data from TIFF files.
+    A PyTorch Dataset for handling both 2D data from jpeg/png/image and 3D data from image files.
     
-    This dataset automatically converts TIFF files to Zarr format on first use
+    This dataset automatically converts files to Zarr format on first use
     for much faster random access during training. The Zarr files are stored
     as groups in the data path:
     - images.zarr/  (contains image1, image2, etc. as arrays)
@@ -76,11 +82,11 @@ class TifDataset(BaseDataset):
     - masks.zarr/   (contains image1_ink, image2_ink, etc. as arrays)
     """
     
-    def __init__(self, mgr, image_transforms=None, volume_transforms=None):
+    def __init__(self, mgr, is_training=True):
         """
-        Initialize the TIF dataset with configuration from the manager.
+        Initialize the dataset with configuration from the manager.
         
-        By default, TIF datasets skip patch validation for performance,
+        By default, datasets skip patch validation for performance,
         considering all sliding window positions as valid.
         
         Users can enable patch validation by setting min_labeled_ratio > 0
@@ -90,10 +96,8 @@ class TifDataset(BaseDataset):
         ----------
         mgr : ConfigManager
             Manager containing configuration parameters
-        image_transforms : list, optional
-            2D image transformations via albumentations
-        volume_transforms : list, optional
-            3D volume transformations
+        is_training : bool
+            Whether this dataset is for training (applies augmentations) or validation
         """
         # Check if user has specified validation parameters
         min_labeled_ratio = getattr(mgr, 'min_labeled_ratio', 0)
@@ -109,7 +113,7 @@ class TifDataset(BaseDataset):
             mgr.skip_patch_validation = False
             print(f"Patch validation enabled with min_labeled_ratio={min_labeled_ratio}, min_bbox_percent={min_bbox_percent}")
         
-        super().__init__(mgr, image_transforms, volume_transforms)
+        super().__init__(mgr, is_training=is_training)
     
     def _get_or_create_zarr_groups(self):
         """
@@ -132,14 +136,14 @@ class TifDataset(BaseDataset):
         
         return images_group, labels_group, masks_group
     
-    def _tif_to_zarr_array(self, tif_path, zarr_group, array_name):
+    def _image_to_zarr_array(self, image_path, zarr_group, array_name):
         """
-        Convert a TIFF file to a Zarr array within a group.
+        Convert a image file to a Zarr array within a group.
         
         Parameters
         ----------
-        tif_path : Path
-            Path to the TIFF file
+        image_path : Path
+            Path to the image file
         zarr_group : zarr.Group
             The Zarr group to store the array in
         array_name : str
@@ -150,8 +154,13 @@ class TifDataset(BaseDataset):
         zarr.Array
             The created Zarr array
         """
-        # Read the TIFF file
-        img = tifffile.imread(str(tif_path))
+        # Read the image file
+        if str(image_path).lower().endswith(('.tif', '.tiff')):
+            # Use tifffile for TIFF files to handle 3D data
+            img = tifffile.imread(str(image_path))
+        else:
+            # Use cv2 for other image formats (2D only)
+            img = cv2.imread(str(image_path))
         
         # Convert to uint8 with proper scaling based on dtype
         img = convert_to_uint8_dtype_range(img)
@@ -175,14 +184,14 @@ class TifDataset(BaseDataset):
         
         return z_array
     
-    def _needs_update(self, tif_file, zarr_group, array_name):
+    def _needs_update(self, image_file, zarr_group, array_name):
         """
-        Check if a TIF file is newer than its corresponding Zarr array.
+        Check if a image file is newer than its corresponding Zarr array.
         
         Parameters
         ----------
-        tif_file : Path
-            Path to the TIFF file
+        image_file : Path
+            Path to the image file
         zarr_group : zarr.Group
             The Zarr group containing the array
         array_name : str
@@ -191,13 +200,13 @@ class TifDataset(BaseDataset):
         Returns
         -------
         bool
-            True if the TIF file is newer and needs updating
+            True if the image file is newer and needs updating
         """
         if array_name not in zarr_group:
             return True
         
         # Check modification times
-        tif_mtime = os.path.getmtime(tif_file)
+        image_mtime = os.path.getmtime(image_file)
         
         # For groups, check the array metadata file modification time
         group_store_path = Path(zarr_group.store.path)
@@ -205,18 +214,18 @@ class TifDataset(BaseDataset):
             array_meta_path = group_store_path / array_name / ".zarray"
             if array_meta_path.exists():
                 zarr_mtime = os.path.getmtime(array_meta_path)
-                return tif_mtime > zarr_mtime
+                return image_mtime > zarr_mtime
         
         return True
     
-    def _ensure_zarr_array(self, tif_file, zarr_group, array_name):
+    def _ensure_zarr_array(self, image_file, zarr_group, array_name):
         """
         Ensure a Zarr array exists in the group, creating or updating as needed.
         
         Parameters
         ----------
-        tif_file : Path
-            Path to the TIFF file
+        image_file : Path
+            Path to the image file
         zarr_group : zarr.Group
             The Zarr group containing the array
         array_name : str
@@ -229,8 +238,8 @@ class TifDataset(BaseDataset):
         """
         # Check if array exists in the group
         if array_name in zarr_group:
-            # Check if we need to update (TIF is newer)
-            tif_mtime = os.path.getmtime(tif_file)
+            # Check if we need to update (image is newer)
+            image_mtime = os.path.getmtime(image_file)
             
             # For groups, we check the group's store path modification time
             group_store_path = Path(zarr_group.store.path)
@@ -240,17 +249,17 @@ class TifDataset(BaseDataset):
                 if array_meta_path.exists():
                     zarr_mtime = os.path.getmtime(array_meta_path)
                     
-                    if zarr_mtime >= tif_mtime:
+                    if zarr_mtime >= image_mtime:
                         # Cache is up to date, return existing array
                         return zarr_group[array_name]
         
         # Need to create or update the array
-        print(f"Converting {tif_file.name} to Zarr format...")
-        return self._tif_to_zarr_array(tif_file, zarr_group, array_name)
+        print(f"Converting {image_file.name} to Zarr format...")
+        return self._image_to_zarr_array(image_file, zarr_group, array_name)
     
     def _initialize_volumes(self):
         """
-        Initialize volumes from TIFF files, converting to Zarr format for fast access.
+        Initialize volumes from image files, converting to Zarr format for fast access.
         
         Expected directory structure:
         
@@ -289,7 +298,7 @@ class TifDataset(BaseDataset):
             └── ...
         """
         if not hasattr(self.mgr, 'data_path'):
-            raise ValueError("ConfigManager must have 'data_path' attribute for TIF dataset")
+            raise ValueError("ConfigManager must have 'data_path' attribute for image dataset")
         
         self.data_path = Path(self.mgr.data_path)
         if not self.data_path.exists():
@@ -313,19 +322,24 @@ class TifDataset(BaseDataset):
         print(f"Looking for configured targets: {configured_targets}")
         
         # Find all label files to determine which images and targets we need
-        label_files = list(labels_dir.glob("*.tif*"))
-        if not label_files:
-            raise ValueError(f"No TIFF files found in {labels_dir}")
+        # Support multiple image formats
+        supported_extensions = ['.tif', '.tiff', '.png', '.jpg', '.jpeg']
+        label_files = []
+        for ext in supported_extensions:
+            label_files.extend(labels_dir.glob(f"*{ext}"))
         
-        # Group files by target and image identifier
+        if not label_files:
+            raise ValueError(f"No image files found in {labels_dir} with supported extensions: {supported_extensions}")
+        
+        # Group files by target and image idenimageier
         targets_data = defaultdict(lambda: defaultdict(dict))
         
         # Track files to convert for progress bar
         files_to_process = []
         
-        # First pass: identify all files that need processing
+        # First pass: idenimagey all files that need processing
         for label_file in label_files:
-            stem = label_file.stem  # Remove .tif extension
+            stem = label_file.stem  # Remove image extension
             
             # Parse label filename: image1_ink.tif -> image_id="image1", target="ink"
             if '_' not in stem:
@@ -346,25 +360,39 @@ class TifDataset(BaseDataset):
                 continue
             
             # Look for corresponding image file
+            # Get the extension of the label file to try matching first
+            label_ext = label_file.suffix
+            
             # First try without task suffix (multi-task scenario)
-            image_file = images_dir / f"{image_id}.tif"
-            if not image_file.exists():
-                image_file = images_dir / f"{image_id}.tiff"
+            image_file = None
+            for ext in [label_ext] + supported_extensions:
+                test_file = images_dir / f"{image_id}{ext}"
+                if test_file.exists():
+                    image_file = test_file
+                    break
             
             # If not found, try with task suffix (single-task/backward compatibility)
-            if not image_file.exists():
-                image_file = images_dir / f"{image_id}_{target}.tif"
-                if not image_file.exists():
-                    image_file = images_dir / f"{image_id}_{target}.tiff"
-                    if not image_file.exists():
-                        raise ValueError(f"Image file not found for {image_id} (tried {image_id}.tif, {image_id}.tiff, {image_id}_{target}.tif, and {image_id}_{target}.tiff)")
+            if image_file is None:
+                for ext in [label_ext] + supported_extensions:
+                    test_file = images_dir / f"{image_id}_{target}{ext}"
+                    if test_file.exists():
+                        image_file = test_file
+                        break
+            
+            if image_file is None:
+                tried_names = [f"{image_id}{ext}" for ext in supported_extensions]
+                tried_names.extend([f"{image_id}_{target}{ext}" for ext in supported_extensions])
+                raise ValueError(f"Image file not found for {image_id} (tried {', '.join(tried_names)})")
             
             # Look for mask file (always with task suffix)
-            mask_file = masks_dir / f"{image_id}_{target}.tif"
-            if not mask_file.exists():
-                mask_file = masks_dir / f"{image_id}_{target}.tiff"
+            mask_file = None
+            for ext in [label_ext] + supported_extensions:
+                test_file = masks_dir / f"{image_id}_{target}{ext}"
+                if test_file.exists():
+                    mask_file = test_file
+                    break
             
-            files_to_process.append((target, image_id, image_file, label_file, mask_file if mask_file.exists() else None))
+            files_to_process.append((target, image_id, image_file, label_file, mask_file))
         
         # Collect all conversion tasks that need to be done
         conversion_tasks = []
@@ -373,7 +401,7 @@ class TifDataset(BaseDataset):
         
         for target, image_id, image_file, label_file, mask_file in files_to_process:
             # Determine array names
-            if image_file.name.endswith(f"_{target}.tif") or image_file.name.endswith(f"_{target}.tiff"):
+            if image_file.stem.endswith(f"_{target}"):
                 image_array_name = f"{image_id}_{target}"
             else:
                 image_array_name = image_id
@@ -386,7 +414,10 @@ class TifDataset(BaseDataset):
             # Image conversion
             if image_array_name not in images_group or self._needs_update(image_file, images_group, image_array_name):
                 # Read shape for pre-creation
-                img_shape = tifffile.imread(str(image_file)).shape
+                if str(image_file).lower().endswith(('.tif', '.tiff')):
+                    img_shape = tifffile.imread(str(image_file)).shape
+                else:
+                    img_shape = cv2.imread(str(image_file)).shape
                 arrays_to_create.append((images_group, image_array_name, img_shape))
                 conversion_tasks.append((image_file, images_zarr_path, image_array_name, self.patch_size, True))
             
@@ -394,7 +425,10 @@ class TifDataset(BaseDataset):
             label_array_name = f"{image_id}_{target}"
             if label_array_name not in labels_group or self._needs_update(label_file, labels_group, label_array_name):
                 # Read shape for pre-creation
-                label_shape = tifffile.imread(str(label_file)).shape
+                if str(label_file).lower().endswith(('.tif', '.tiff')):
+                    label_shape = tifffile.imread(str(label_file)).shape
+                else:
+                    label_shape = cv2.imread(str(label_file)).shape
                 arrays_to_create.append((labels_group, label_array_name, label_shape))
                 conversion_tasks.append((label_file, labels_zarr_path, label_array_name, self.patch_size, True))
             
@@ -404,7 +438,10 @@ class TifDataset(BaseDataset):
                 mask_array_name = f"{image_id}_{target}"
                 if mask_array_name not in masks_group or self._needs_update(mask_file, masks_group, mask_array_name):
                     # Read shape for pre-creation
-                    mask_shape = tifffile.imread(str(mask_file)).shape
+                    if str(mask_file).lower().endswith(('.tif', '.tiff')):
+                        mask_shape = tifffile.imread(str(mask_file)).shape
+                    else:
+                        mask_shape = cv2.imread(str(mask_file)).shape
                     arrays_to_create.append((masks_group, mask_array_name, mask_shape))
                     conversion_tasks.append((mask_file, masks_zarr_path, mask_array_name, self.patch_size, True))
             
@@ -417,7 +454,7 @@ class TifDataset(BaseDataset):
         
         # Perform parallel conversions if needed
         if conversion_tasks:
-            print(f"\nConverting {len(conversion_tasks)} TIF files to Zarr format...")
+            print(f"\nConverting {len(conversion_tasks)} image files to Zarr format...")
             
             # Pre-create all Zarr arrays to avoid race conditions
             print("Pre-creating Zarr array structure...")
@@ -443,10 +480,10 @@ class TifDataset(BaseDataset):
             
             with ProcessPoolExecutor(max_workers=cpu_count()) as executor:
                 # Submit all tasks
-                futures = {executor.submit(convert_tif_to_zarr_worker, task): task for task in conversion_tasks}
+                futures = {executor.submit(convert_image_to_zarr_worker, task): task for task in conversion_tasks}
                 
                 # Process completed tasks with progress bar
-                with tqdm(total=len(futures), desc="Converting TIFs to Zarr") as pbar:
+                with tqdm(total=len(futures), desc="Converting images to Zarr") as pbar:
                     for future in as_completed(futures):
                         array_name, shape, success, error_msg = future.result()
                         

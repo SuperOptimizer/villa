@@ -6,10 +6,24 @@ import torch
 import fsspec
 import zarr
 from torch.utils.data import Dataset
-import albumentations as A
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 from functools import partial
+from models.augmentation.transforms.spatial.transpose import TransposeAxesTransform
+# Augmentations will be handled directly in this file
+from models.augmentation.transforms.utils.random import RandomTransform
+from models.augmentation.helpers.scalar_type import RandomScalar
+from models.augmentation.transforms.intensity.brightness import MultiplicativeBrightnessTransform
+from models.augmentation.transforms.intensity.contrast import ContrastTransform, BGContrast
+from models.augmentation.transforms.intensity.gamma import GammaTransform
+from models.augmentation.transforms.intensity.gaussian_noise import GaussianNoiseTransform
+from models.augmentation.transforms.noise.gaussian_blur import GaussianBlurTransform
+from models.augmentation.transforms.spatial.low_resolution import SimulateLowResolutionTransform
+from models.augmentation.transforms.spatial.mirroring import MirrorTransform
+from models.augmentation.transforms.spatial.spatial import SpatialTransform
+from models.augmentation.transforms.utils.compose import ComposeTransforms
+from models.augmentation.transforms.noise.extranoisetransforms import BlankRectangleTransform
+from models.augmentation.transforms.intensity.illumination import InhomogeneousSliceIlluminationTransform
 
 from utils.utils import find_mask_patches, find_mask_patches_2d, pad_or_crop_3d, pad_or_crop_2d
 from utils.io.patch_cache_utils import (
@@ -31,8 +45,7 @@ class BaseDataset(Dataset):
     """
     def __init__(self,
                  mgr,
-                 image_transforms=None,
-                 volume_transforms=None):
+                 is_training=True):
         """
         Initialize the dataset with configuration from the manager.
         
@@ -40,13 +53,13 @@ class BaseDataset(Dataset):
         ----------
         mgr : ConfigManager
             Manager containing configuration parameters
-        image_transforms : list, optional
-            2D image transformations via albumentations
-        volume_transforms : list, optional
-            3D volume transformations
+        is_training : bool
+            Whether this dataset is for training (applies augmentations) or validation
+
         """
         super().__init__()
         self.mgr = mgr
+        self.is_training = is_training
 
         self.model_name = mgr.model_name
         self.targets = mgr.targets               # e.g. {"ink": {...}, "normals": {...}}
@@ -67,8 +80,6 @@ class BaseDataset(Dataset):
         self.intensity_properties = getattr(mgr, 'intensity_properties', {})
         self.normalizer = None  # Will be initialized after volumes are loaded
 
-        self.image_transforms = image_transforms
-        self.volume_transforms = volume_transforms
         self.target_volumes = {}
         self.valid_patches = []
         self.is_2d_dataset = None  
@@ -154,6 +165,12 @@ class BaseDataset(Dataset):
         
         # Now initialize the normalizer with the computed or provided properties
         self.normalizer = get_normalization(self.normalization_scheme, self.intensity_properties)
+        
+        # Initialize transforms for training
+        self.transforms = None
+        if self.is_training:
+            self.transforms = self._create_training_transforms()
+            print("Training transforms initialized")
         
         self._get_valid_patches()
 
@@ -780,51 +797,6 @@ class BaseDataset(Dataset):
         
         return None
     
-    def _apply_transforms(self, img_patch, label_patches, is_2d):
-        """
-        Apply transforms to image and label patches.
-        
-        Parameters
-        ----------
-        img_patch : numpy.ndarray
-            Image patch
-        label_patches : dict
-            Dictionary of label patches for each target
-        is_2d : bool
-            Whether the data is 2D
-            
-        Returns
-        -------
-        tuple
-            (transformed_img, transformed_labels)
-        """
-        if is_2d and self.image_transforms:
-            # For 2D, use albumentations transformations
-            transform_input = {"image": img_patch}
-            
-            # Add all label patches to the transformation input
-            for t_name, label_patch in label_patches.items():
-                mask_key = f"mask_{t_name}"
-                transform_input[mask_key] = label_patch
-            
-            # Apply the transformations to image and all masks
-            transformed = self.image_transforms(**transform_input)
-            
-            # Get the transformed image
-            img_patch = transformed["image"]
-            
-            # Get all transformed labels
-            for t_name in label_patches.keys():
-                mask_key = f"mask_{t_name}"
-                label_patches[t_name] = transformed[mask_key]
-        elif not is_2d and self.volume_transforms:
-            # 3D transformations affect only the image for now
-            # TODO: Implement proper 3D synchronized transformations
-            vol_augmented = self.volume_transforms(volume=img_patch)
-            img_patch = vol_augmented["volume"]
-        
-        return img_patch, label_patches
-    
     def _prepare_tensors(self, img_patch, label_patches, ignore_mask, vol_idx, is_2d):
         """
         Convert numpy arrays to PyTorch tensors.
@@ -872,6 +844,10 @@ class BaseDataset(Dataset):
             )
             
             # Get the number of output channels for this target
+            if t_name not in self.targets:
+                print(f"Warning: Target '{t_name}' not found in self.targets. Available targets: {list(self.targets.keys())}")
+                # Create a default entry
+                self.targets[t_name] = {"out_channels": 2}
             out_channels = self.targets[t_name].get("out_channels", 2)
             
             if is_multiclass or out_channels > 2:
@@ -905,6 +881,165 @@ class BaseDataset(Dataset):
         
         return data_dict
     
+
+    def _create_training_transforms(self):
+        """
+        Create training transforms using custom batchgeneratorsv2.
+        Returns None for validation (no augmentations).
+        """
+        dimension = len(self.mgr.train_patch_size)
+        patch_d, patch_h, patch_w = self.mgr.train_patch_size
+        if dimension == 2:
+            if max(self.mgr.train_patch_size) / min(self.mgr.train_patch_size) > 1.5:
+                rotation_for_DA = (-15. / 360 * 2. * np.pi, 15. / 360 * 2. * np.pi)
+            else:
+                rotation_for_DA = (-180. / 360 * 2. * np.pi, 180. / 360 * 2. * np.pi)
+            mirror_axes = (0, 1)
+        elif dimension == 3:
+            rotation_for_DA = (-30. / 360 * 2. * np.pi, 30. / 360 * 2. * np.pi)
+            mirror_axes = (0, 1, 2)
+
+        transforms = []
+        
+        if dimension == 2:
+            # 2D transforms (no transpose transform)
+            
+            transforms.append(RandomTransform(
+                MirrorTransform(allowed_axes=(0, 1)), 
+                apply_probability=0.5
+            )),
+            transforms.append(RandomTransform(
+                GaussianBlurTransform(
+                    blur_sigma=(0.5, 1.5),
+                    synchronize_channels=True,
+                    synchronize_axes=False,
+                    p_per_channel=1.0
+                ),
+                apply_probability=0.2
+            ))
+        else:
+            # 3D transforms
+            transforms.append(
+            SpatialTransform(
+                self.mgr.train_patch_size, patch_center_dist_from_border=0, random_crop=False, p_elastic_deform=0,
+                p_rotation=0.2,
+                rotation=rotation_for_DA, p_scaling=0.2, scaling=(0.7, 1.4), p_synchronize_scaling_across_axes=1,
+                bg_style_seg_sampling=False  # , mode_seg='nearest'
+            )),
+            transforms.append(RandomTransform(
+                    MirrorTransform(allowed_axes=mirror_axes), 
+                    apply_probability=0.5
+                )),
+            transforms.append(RandomTransform(
+                    GaussianBlurTransform(
+                        blur_sigma=(0.5, 1.0),
+                        synchronize_channels=True,
+                        synchronize_axes=False,
+                        p_per_channel=1.0
+                    ),
+                    apply_probability=0.2
+                )),
+            transforms.append(RandomTransform(
+                TransposeAxesTransform(
+                    allowed_axes={0, 1, 2},
+                    ),
+                    apply_probability=0.2
+            )),
+            transforms.append(RandomTransform(
+                GaussianNoiseTransform(
+                    noise_variance=(0, 0.1),
+                    p_per_channel=1,
+                    synchronize_channels=True
+                ), apply_probability=0.1
+            ))
+            transforms.append(RandomTransform(
+                GaussianBlurTransform(
+                    blur_sigma=(0.5, 1.),
+                    synchronize_channels=False,
+                    synchronize_axes=False,
+                    p_per_channel=0.5, benchmark=True
+                ), apply_probability=0.2
+            ))
+            transforms.append(RandomTransform(
+                MultiplicativeBrightnessTransform(
+                    multiplier_range=BGContrast((0.75, 1.25)),
+                    synchronize_channels=False,
+                    p_per_channel=1
+                ), apply_probability=0.15
+            ))
+            transforms.append(RandomTransform(
+                ContrastTransform(
+                    contrast_range=BGContrast((0.75, 1.25)),
+                    preserve_range=True,
+                    synchronize_channels=False,
+                    p_per_channel=1
+                ), apply_probability=0.15
+            ))
+            transforms.append(RandomTransform(
+                SimulateLowResolutionTransform(
+                    scale=(0.5, 1),
+                    synchronize_channels=False,
+                    synchronize_axes=True,
+                    ignore_axes=None,
+                    allowed_channels=None,
+                    p_per_channel=0.5
+                ), apply_probability=0.25
+            ))
+            transforms.append(RandomTransform(
+                GammaTransform(
+                    gamma=BGContrast((0.7, 1.5)),
+                    p_invert_image=1,
+                    synchronize_channels=False,
+                    p_per_channel=1,
+                    p_retain_stats=1
+                ), apply_probability=0.1
+            ))
+            transforms.append(RandomTransform(
+                GammaTransform(
+                    gamma=BGContrast((0.7, 1.5)),
+                    p_invert_image=0,
+                    synchronize_channels=False,
+                    p_per_channel=1,
+                    p_retain_stats=1
+                ), apply_probability=0.3
+            ))
+            transforms.append(RandomTransform(
+                BlankRectangleTransform(
+                    rectangle_size=((max(1, self.mgr.train_patch_size[0] // 10), self.mgr.train_patch_size[0] // 3),
+                                    (max(1, self.mgr.train_patch_size[1] // 10), self.mgr.train_patch_size[1] // 3),
+                                    (max(1, self.mgr.train_patch_size[2] // 10), self.mgr.train_patch_size[2] // 3)),
+                    rectangle_value=np.mean,  # keeping the mean value
+                    num_rectangles=(1, 5),  # same as original
+                    force_square=False,  # same as original
+                    p_per_sample=0.4,  # same as original
+                    p_per_channel=0.5  # same as original
+                ), apply_probability=0.5
+            ))
+            transforms.append(RandomTransform(
+                InhomogeneousSliceIlluminationTransform(
+                    num_defects=(2, 5),  # Range for number of defects
+                    defect_width=(5, 20),  # Range for defect width
+                    mult_brightness_reduction_at_defect=(0.3, 0.7),  # Range for brightness reduction
+                    base_p=(0.2, 0.4),  # Base probability range
+                    base_red=(0.5, 0.9),  # Base reduction range
+                    p_per_sample=1.0,  # Probability per sample
+                    per_channel=True,  # Apply per channel
+                    p_per_channel=0.5  # Probability per channel
+                ), apply_probability=0.25
+            ))
+
+            # Only add transpose transform if all three dimensions (z, y, x) are equal
+            if patch_d == patch_h == patch_w:
+                transforms.insert(1, RandomTransform(
+                    TransposeAxesTransform(allowed_axes={0, 1, 2}), 
+                    apply_probability=0.5
+                ))
+                print(f"Added transpose transform for 3D (equal dimensions: {patch_d}x{patch_h}x{patch_w})")
+            else:
+                print(f"Skipped transpose transform for 3D (unequal dimensions: {patch_d}x{patch_h}x{patch_w})")
+
+        return ComposeTransforms(transforms)
+    
     def __getitem__(self, index):
         """
         Get a patch from the dataset.
@@ -932,11 +1067,13 @@ class BaseDataset(Dataset):
         
         # 4. Extract ignore mask if available
         ignore_mask = self._extract_ignore_mask(vol_idx, z, y, x, dz, dy, dx, is_2d)
-        
-        # 5. Apply transforms to image and labels
-        img_patch, label_patches = self._apply_transforms(img_patch, label_patches, is_2d)
-        
-        # 6. Convert to tensors and format for the model
+    
+        # 5. Convert to tensors and format for the model
         data_dict = self._prepare_tensors(img_patch, label_patches, ignore_mask, vol_idx, is_2d)
+        
+        # 6. Apply augmentations if in training mode
+        if self.is_training and self.transforms is not None:
+            # Apply transforms directly to the torch tensors
+            data_dict = self.transforms(**data_dict)
         
         return data_dict

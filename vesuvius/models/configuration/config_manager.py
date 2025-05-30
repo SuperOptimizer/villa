@@ -171,7 +171,11 @@ class ConfigManager:
             if "loss_fn" not in self.targets[target_name]:
                 self.targets[target_name]["loss_fn"] = self.selected_loss_function
 
-        self.out_channels = tuple(task_info["out_channels"] for task_info in self.targets.values())
+        # Only set out_channels if all targets have it defined, otherwise it will be auto-detected later
+        if all('out_channels' in task_info for task_info in self.targets.values()):
+            self.out_channels = tuple(task_info["out_channels"] for task_info in self.targets.values())
+        else:
+            self.out_channels = None  # Will be set during auto-detection
 
         if data_dict:
             first_target = next(iter(data_dict.values()))[0]

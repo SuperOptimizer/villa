@@ -62,7 +62,7 @@ setup(
         'dask',
         'dask-image',
         'einops',
-        'opencv-python',
+        'opencv-python-headless',
         'pytorch-lightning',
         'libigl',
         'psutil'
