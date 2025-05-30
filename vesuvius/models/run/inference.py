@@ -15,6 +15,8 @@ from torch.utils.data import DataLoader
 from utils.models.load_nnunet_model import load_model_for_inference
 from data.vc_dataset import VCDataset
 from data.utils import open_zarr
+from pathlib import Path
+from models.build.build_network_from_config import NetworkFromConfig
 
 class Inferer():
     def __init__(self,
@@ -77,6 +79,14 @@ class Inferer():
         self.hf_token = hf_token
         self.model_patch_size = None
         self.num_classes = None
+        
+        # Store normalization info from model checkpoint
+        self.model_normalization_scheme = None
+        self.model_intensity_properties = None
+        
+        # Multi-task model info
+        self.is_multi_task = False
+        self.target_info = None  # Will store target names and channel counts
 
         # --- Validation ---
         if not self.input or self.model_path is None:
@@ -133,14 +143,24 @@ class Inferer():
                 verbose=self.verbose
             )
         else:
-            # Load from local path
-            if self.verbose:
-                print(f"Loading model from local path: {self.model_path}")
-            model_info = load_model_for_inference(
-                model_folder=self.model_path,
-                device_str=str(self.device),
-                verbose=self.verbose
-            )
+            # Check if this is a train.py checkpoint (single .pth file)
+            model_path = Path(self.model_path)
+            is_train_py_checkpoint = model_path.is_file() and model_path.suffix == '.pth'
+            
+            if is_train_py_checkpoint:
+                # Load train.py checkpoint
+                if self.verbose:
+                    print(f"Loading train.py checkpoint from: {self.model_path}")
+                model_info = self._load_train_py_model(model_path)
+            else:
+                # Load from local path using nnUNet loader
+                if self.verbose:
+                    print(f"Loading nnUNet model from local path: {self.model_path}")
+                model_info = load_model_for_inference(
+                    model_folder=self.model_path,
+                    device_str=str(self.device),
+                    verbose=self.verbose
+                )
         
         # model loader returns a dict, network is the actual model
         model = model_info['network']
@@ -177,24 +197,174 @@ class Inferer():
             try:
                 with torch.no_grad():
                     dummy_output = model(dummy_input)
-                self.num_classes = dummy_output.shape[1]  # N, C, D, H, W
-                if self.verbose:
-                    print(f"Inferred number of output classes via dummy inference: {self.num_classes}")
+                    if isinstance(dummy_output, dict):
+                        # Multi-task model returning dict
+                        self.is_multi_task = True
+                        self.target_info = {}
+                        self.num_classes = 0
+                        for target_name, target_output in dummy_output.items():
+                            target_channels = target_output.shape[1]
+                            self.target_info[target_name] = {
+                                'out_channels': target_channels,
+                                'start_channel': self.num_classes,
+                                'end_channel': self.num_classes + target_channels
+                            }
+                            self.num_classes += target_channels
+                        if self.verbose:
+                            print(f"Inferred multi-task model with total output channels: {self.num_classes}")
+                            print(f"Target channel mapping: {self.target_info}")
+                    else:
+                        # Single task model
+                        self.num_classes = dummy_output.shape[1]  # N, C, D, H, W
+                        if self.verbose:
+                            print(f"Inferred number of output classes via dummy inference: {self.num_classes}")
             except Exception as e:
                 raise RuntimeError(f"Warning: Could not automatically determine number of classes via dummy inference: {e}. \nEnsure your model is loaded correctly and check the expected input shape")
             
         return model
+    
+    def _load_train_py_model(self, checkpoint_path):
+        """Load a model checkpoint from train.py format."""
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+        
+        # Load checkpoint
+        checkpoint_data = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+        
+        # Extract model configuration
+        model_config = checkpoint_data.get('model_config', {})
+        if not model_config:
+            raise ValueError("No model configuration found in checkpoint")
+        
+        # Extract normalization info if present
+        if 'normalization_scheme' in checkpoint_data:
+            self.model_normalization_scheme = checkpoint_data['normalization_scheme']
+            if self.verbose:
+                print(f"Found normalization scheme in checkpoint: {self.model_normalization_scheme}")
+        
+        if 'intensity_properties' in checkpoint_data:
+            self.model_intensity_properties = checkpoint_data['intensity_properties']
+            if self.verbose:
+                print("Found intensity properties in checkpoint:")
+                for key, value in self.model_intensity_properties.items():
+                    print(f"  {key}: {value:.4f}")
+        
+        # Create minimal config manager for NetworkFromConfig
+        class MinimalConfigManager:
+            def __init__(self, model_config):
+                self.model_config = model_config
+                self.targets = model_config.get('targets', {})
+                self.train_patch_size = model_config.get('train_patch_size', model_config.get('patch_size', (128, 128, 128)))
+                self.train_batch_size = model_config.get('train_batch_size', model_config.get('batch_size', 2))
+                self.in_channels = model_config.get('in_channels', 1)
+                self.autoconfigure = model_config.get('autoconfigure', False)
+                self.model_name = model_config.get('model_name', 'Model')
+                
+                # Set spacing based on patch size dimensions
+                self.spacing = [1] * len(self.train_patch_size)
+        
+        mgr = MinimalConfigManager(model_config)
+        
+        # Build model using NetworkFromConfig
+        model = NetworkFromConfig(mgr)
+        model = model.to(self.device)
+        
+        # Load weights
+        model_state_dict = checkpoint_data.get('model', checkpoint_data)
+        
+        # Check if this is a compiled model state dict
+        is_compiled = any("_orig_mod." in key for key in model_state_dict.keys())
+        
+        # Compile model if needed
+        if self.device.type == 'cuda' and is_compiled:
+            if self.verbose:
+                print("Compiling model to match checkpoint format")
+            model = torch.compile(model)
+        
+        # Load state dict
+        model.load_state_dict(model_state_dict, strict=True)
+        if self.verbose:
+            print("Model weights loaded successfully")
+        
+        # Handle multi-target models
+        if len(mgr.targets) > 1:
+            if self.verbose:
+                print(f"Multi-target model detected with targets: {list(mgr.targets.keys())}")
+            
+            # Set multi-task flag
+            self.is_multi_task = True
+            
+            # Calculate total output channels and store target info
+            self.target_info = {}
+            num_classes = 0
+            for target_name, target_config in mgr.targets.items():
+                target_channels = target_config.get('out_channels', 1)
+                self.target_info[target_name] = {
+                    'out_channels': target_channels,
+                    'start_channel': num_classes,
+                    'end_channel': num_classes + target_channels
+                }
+                num_classes += target_channels
+            
+            if self.verbose:
+                print(f"Total output channels across all targets: {num_classes}")
+                print(f"Target channel mapping: {self.target_info}")
+        else:
+            # Single target model
+            target_name = list(mgr.targets.keys())[0] if mgr.targets else 'output'
+            num_classes = mgr.targets.get(target_name, {}).get('out_channels', 1)
+        
+        # Create model_info dict compatible with the rest of the code
+        model_info = {
+            'network': model,
+            'patch_size': mgr.train_patch_size,
+            'num_input_channels': mgr.in_channels,
+            'num_seg_heads': num_classes,
+            'model_config': model_config,
+            'targets': mgr.targets
+        }
+        
+        return model_info
 
     def _create_dataset_and_loader(self):
         # Use step_size instead of overlap (step_size is [0-1] representing stride as fraction of patch size)
         # step_size of 0.5 means 50% overlap
+        
+        # Use normalization from model checkpoint if available, otherwise use command line arg
+        normalization_scheme = self.model_normalization_scheme or self.normalization_scheme
+        
+        # Handle train.py model normalization scheme mapping
+        if self.model_normalization_scheme and normalization_scheme == 'zscore':
+            # This is a train.py model with 'zscore' normalization
+            if self.model_intensity_properties and 'mean' in self.model_intensity_properties and 'std' in self.model_intensity_properties:
+                # We have intensity properties, use global_zscore
+                normalization_scheme = 'global_zscore'
+                if self.verbose:
+                    print("Mapped 'zscore' to 'global_zscore' (intensity properties available)")
+            else:
+                # No intensity properties, use instance_zscore
+                normalization_scheme = 'instance_zscore'
+                if self.verbose:
+                    print("Mapped 'zscore' to 'instance_zscore' (no intensity properties)")
+        
+        # Extract global normalization parameters if using global_zscore
+        global_mean = None
+        global_std = None
+        if normalization_scheme == 'global_zscore' and self.model_intensity_properties:
+            global_mean = self.model_intensity_properties.get('mean')
+            global_std = self.model_intensity_properties.get('std')
+            if self.verbose:
+                print(f"Using global normalization from checkpoint: mean={global_mean:.4f}, std={global_std:.4f}")
+        
         self.dataset = VCDataset(
             input_path=self.input,
             patch_size=self.patch_size,
             step_size=self.overlap,
             num_parts=self.num_parts,
             part_id=self.part_id,
-            normalization_scheme=self.normalization_scheme,
+            normalization_scheme=normalization_scheme,
+            global_mean=global_mean,
+            global_std=global_std,
             input_format=self.input_format,
             verbose=self.verbose,
             mode='infer',
@@ -235,6 +405,34 @@ class Inferer():
                                              # so we don't run them through the model 
         )
         return self.dataset, self.dataloader
+    
+    def _concat_multi_task_outputs(self, outputs_dict):
+        """Concatenate multi-task model outputs into a single tensor.
+        
+        Args:
+            outputs_dict: Dictionary of target_name -> tensor outputs from multi-task model
+            
+        Returns:
+            Concatenated tensor with all target outputs along the channel dimension
+        """
+        if not isinstance(outputs_dict, dict):
+            return outputs_dict
+            
+        # Sort by target names to ensure consistent ordering
+        sorted_targets = sorted(self.target_info.keys())
+        
+        # Collect outputs in the correct order
+        output_tensors = []
+        for target_name in sorted_targets:
+            if target_name in outputs_dict:
+                output_tensors.append(outputs_dict[target_name])
+            else:
+                raise ValueError(f"Target '{target_name}' not found in model outputs")
+        
+        # Concatenate along channel dimension (dim=1)
+        concatenated = torch.cat(output_tensors, dim=1)
+        
+        return concatenated
         
     def _get_zarr_compressor(self):
         if self.compressor_name.lower() == 'zstd':
@@ -311,6 +509,13 @@ class Inferer():
             self.output_store.attrs['overlap'] = self.overlap
             self.output_store.attrs['part_id'] = self.part_id
             self.output_store.attrs['num_parts'] = self.num_parts
+            
+            # Store multi-task metadata if applicable
+            if self.is_multi_task and self.target_info:
+                self.output_store.attrs['is_multi_task'] = True
+                self.output_store.attrs['target_info'] = self.target_info
+                if self.verbose:
+                    print(f"Stored multi-task metadata in output zarr")
             
             if original_volume_shape:
                 self.output_store.attrs['original_volume_shape'] = original_volume_shape
@@ -408,6 +613,17 @@ class Inferer():
                                     m6 = self.model(torch.flip(non_empty_input, dims=[-2, -3]))
                                     m7 = self.model(torch.flip(non_empty_input, dims=[-1, -2, -3]))
 
+                                    # Convert dict outputs to concatenated tensors if multi-task
+                                    if self.is_multi_task:
+                                        m0 = self._concat_multi_task_outputs(m0)
+                                        m1 = self._concat_multi_task_outputs(m1)
+                                        m2 = self._concat_multi_task_outputs(m2)
+                                        m3 = self._concat_multi_task_outputs(m3)
+                                        m4 = self._concat_multi_task_outputs(m4)
+                                        m5 = self._concat_multi_task_outputs(m5)
+                                        m6 = self._concat_multi_task_outputs(m6)
+                                        m7 = self._concat_multi_task_outputs(m7)
+
                                     # Reverse the flips on the outputs before averaging
                                     outputs_batch_tta = [
                                         m0,
@@ -434,6 +650,12 @@ class Inferer():
                                     z_up = torch.transpose(non_empty_input, -3, -2)
                                     r_z_up = self.model(z_up)
                                     
+                                    # Convert dict outputs to concatenated tensors if multi-task
+                                    if self.is_multi_task:
+                                        r0 = self._concat_multi_task_outputs(r0)
+                                        r_x_up = self._concat_multi_task_outputs(r_x_up)
+                                        r_z_up = self._concat_multi_task_outputs(r_z_up)
+                                    
                                     # Rotate outputs back to original orientation before averaging
                                     outputs_batch_tta = [
                                         r0,  # Original
@@ -447,7 +669,11 @@ class Inferer():
 
                             else:
                                 # --- No TTA ---
-                                non_empty_output = self.model(non_empty_input) 
+                                non_empty_output = self.model(non_empty_input)
+                                
+                                # Convert dict outputs to concatenated tensors if multi-task
+                                if self.is_multi_task:
+                                    non_empty_output = self._concat_multi_task_outputs(non_empty_output) 
                         
                         # Place non-empty patch outputs in the correct positions in output_batch
                         for idx, original_idx in enumerate(non_empty_indices):

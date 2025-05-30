@@ -62,9 +62,9 @@ def create_optimizer(optimizer_config, model):
         momentum = optimizer_config.get('momentum', 0)
         optimizer = optim.RMSprop(model.parameters(), lr=learning_rate, weight_decay=weight_decay, momentum=momentum)
     elif optim_name == 'SGD':
-        momentum = optimizer_config.get('momentum', 0)
+        momentum = optimizer_config.get('momentum', 0.99)
         dampening = optimizer_config.get('dampening', 0)
-        nesterov = optimizer_config.get('nesterov', False)
+        nesterov = optimizer_config.get('nesterov', True)
         optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum,
                               dampening=dampening, nesterov=nesterov,
                               weight_decay=weight_decay)

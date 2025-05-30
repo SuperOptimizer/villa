@@ -25,6 +25,17 @@ from models.augmentation.transforms.spatial.transpose import TransposeAxesTransf
 from models.augmentation.transforms.noise.gaussian_blur import GaussianBlurTransform
 
 
+def compute_gradient_norm(model):
+    """Compute the L2 norm of gradients across all parameters."""
+    total_norm = 0.0
+    for p in model.parameters():
+        if p.grad is not None:
+            param_norm = p.grad.data.norm(2)
+            total_norm += param_norm.item() ** 2
+    total_norm = total_norm ** 0.5
+    return total_norm
+
+
 class BaseTrainer:
     def __init__(self,
                  mgr=None,
@@ -156,13 +167,13 @@ class BaseTrainer:
             
             # Get other parameters that might be needed
             weight = loss_config.get("weight", None)
-            ignore_index = loss_config.get("ignore_index", None)
+            ignore_index = loss_config.get("ignore_index", -100)
             pos_weight = loss_config.get("pos_weight", None)
             
-            # If compute_loss_on_label is set and no ignore_index is specified, use -100
-            if hasattr(self.mgr, 'compute_loss_on_label') and self.mgr.compute_loss_on_label and ignore_index is None:
+            # If compute_loss_on_labeled_only is set and no ignore_index is specified, use -100
+            if hasattr(self.mgr, 'compute_loss_on_labeled_only') and self.mgr.compute_loss_on_labeled_only and ignore_index is None:
                 ignore_index = -100
-                print(f"Setting ignore_index=-100 for target '{task_name}' due to compute_loss_on_label=True")
+                print(f"Setting ignore_index=-100 for target '{task_name}' due to compute_loss_on_labeled_only=True")
             
             # Create the loss function using the factory
             try:
@@ -415,6 +426,8 @@ class BaseTrainer:
 
         # ---- training! ----- #
         for epoch in range(start_epoch, self.mgr.max_epoch):
+            # Track gradient norms for this epoch
+            epoch_grad_norms = []
             model.train()
 
             train_running_losses = {t_name: 0.0 for t_name in self.mgr.targets}
@@ -613,6 +626,36 @@ class BaseTrainer:
                         train_running_losses[t_name] += t_loss.item()
                         per_task_losses[t_name] = t_loss.item()
 
+                # Check for NaN/Inf loss before backward pass
+                if torch.isnan(total_loss) or torch.isinf(total_loss):
+                    print(f"\nERROR: NaN/Inf loss detected at epoch {epoch+1}, step {i}")
+                    print(f"Loss components: {per_task_losses}")
+                    # Save a debug checkpoint
+                    debug_path = f"{model_ckpt_dir}/debug_nan_epoch{epoch+1}_step{i}.pth"
+                    torch.save({
+                        'model': model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'epoch': epoch,
+                        'step': i,
+                        'loss_values': per_task_losses,
+                        'batch_info': {
+                            'input_stats': {
+                                'min': inputs.min().item(),
+                                'max': inputs.max().item(),
+                                'mean': inputs.mean().item(),
+                                'std': inputs.std().item()
+                            },
+                            'target_stats': {t_name: {
+                                'min': t_gt.min().item(),
+                                'max': t_gt.max().item(),
+                                'mean': t_gt.mean().item(),
+                                'std': t_gt.std().item()
+                            } for t_name, t_gt in targets_dict.items()}
+                        }
+                    }, debug_path)
+                    print(f"Saved debug checkpoint to: {debug_path}")
+                    raise ValueError("Training stopped due to NaN/Inf loss")
+                
                 # backward
                 # loss \ accumulation steps to maintain same effective batch size
                 total_loss = total_loss / grad_accumulate_n
@@ -621,7 +664,20 @@ class BaseTrainer:
 
                 if (i + 1) % grad_accumulate_n == 0:
                     scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
+                    
+                    # Calculate gradient norm before clipping
+                    grad_norm_before = compute_gradient_norm(model)
+                    epoch_grad_norms.append(grad_norm_before)
+                    
+                    # Warn if gradients are exploding
+                    if grad_norm_before > 100:
+                        print(f"\nWARNING: Large gradient norm detected: {grad_norm_before:.2f} at epoch {epoch+1}, step {i}")
+                    
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 12)
+                    
+                    # Calculate gradient norm after clipping (for debugging)
+                    grad_norm_after = compute_gradient_norm(model)
+                    
                     scaler.step(optimizer)
                     scaler.update()
                     optimizer.zero_grad(set_to_none=True)
@@ -629,6 +685,10 @@ class BaseTrainer:
                 steps += 1
 
                 desc_parts = []
+                # Add gradient norm to description if available
+                if 'grad_norm_before' in locals() and (i + 1) % grad_accumulate_n == 0:
+                    desc_parts.append(f"grad: {grad_norm_before:.2f}")
+                    
                 for t_name in self.mgr.targets:
                     # Check if we have individual loss components
                     if hasattr(self, '_loss_components') and t_name in self._loss_components and len(self._loss_components[t_name]['dice']) > 0:
@@ -650,7 +710,7 @@ class BaseTrainer:
             # Apply any remaining gradients at the end of the epoch
             if steps % grad_accumulate_n != 0:
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 12)
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
@@ -660,6 +720,13 @@ class BaseTrainer:
 
             # Print epoch summary with individual components
             print(f"\n[Train] Epoch {epoch + 1} completed.")
+            
+            # Print gradient statistics for this epoch
+            if epoch_grad_norms:
+                avg_grad_norm = np.mean(epoch_grad_norms)
+                max_grad_norm = np.max(epoch_grad_norms)
+                print(f"  Gradient norms - Avg: {avg_grad_norm:.2f}, Max: {max_grad_norm:.2f}")
+            
             for t_name in self.mgr.targets:
                 # Avoid division by zero
                 epoch_avg = train_running_losses[t_name] / steps if steps > 0 else 0
@@ -1016,8 +1083,8 @@ def update_config_from_args(mgr, args):
         mgr.tr_info["tr_val_split"] = args.train_split
 
     if args.loss_on_label_only:
-        mgr.compute_loss_on_label = True
-        mgr.tr_info["compute_loss_on_label"] = True
+        mgr.compute_loss_on_labeled_only = True
+        mgr.tr_info["compute_loss_on_labeled_only"] = True
 
     # Handle max steps per epoch if provided
     if args.max_steps_per_epoch is not None:
@@ -1051,6 +1118,13 @@ def update_config_from_args(mgr, args):
         mgr.model_config["squeeze_excitation_reduction_ratio"] = args.se_reduction_ratio
         if mgr.verbose:
             print(f"Enabled squeeze and excitation with reduction ratio: {args.se_reduction_ratio}")
+
+    # Handle optimizer selection
+    if args.optimizer is not None:
+        mgr.optimizer = args.optimizer
+        mgr.tr_configs["optimizer"] = args.optimizer
+        if mgr.verbose:
+            print(f"Set optimizer: {mgr.optimizer}")
 
     # Handle loss functions
     if args.loss is not None:
@@ -1111,6 +1185,10 @@ def main():
     parser.add_argument("--se", action="store_true", help="Enable squeeze and excitation modules in the encoder")
     parser.add_argument("--se-reduction-ratio", type=float, default=0.0625,
                        help="Squeeze excitation reduction ratio (default: 0.0625 = 1/16)")
+    parser.add_argument("--optimizer", type=str, 
+                       choices=["Adam", "AdamW", "SGD", "RMSprop", "Adadelta", "Adagrad", 
+                               "Adamax", "ASGD", "LBFGS", "NAdam", "RAdam", "Rprop", "SparseAdam"],
+                       help="Optimizer to use for training (default: from config or 'AdamW')")
 
     args = parser.parse_args()
 

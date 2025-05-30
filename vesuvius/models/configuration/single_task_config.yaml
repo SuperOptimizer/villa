@@ -14,4 +14,4 @@ dataset_config:
     surfaces:
       activation: "none"
       weight: 1
-      loss_fn: "BCEDiceLoss"
+      loss_fn: "CEDiceLoss"

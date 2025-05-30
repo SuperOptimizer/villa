@@ -755,7 +755,7 @@ class BaseDataset(Dataset):
             # Return same mask for all targets
             return {t_name: single_mask for t_name in self.target_volumes.keys()}
             
-        elif hasattr(self.mgr, 'compute_loss_on_label') and self.mgr.compute_loss_on_label:
+        elif hasattr(self.mgr, 'compute_loss_on_labeled_only') and self.mgr.compute_loss_on_labeled_only:
             # Create separate masks from each target's labels
             ignore_masks = {}
             

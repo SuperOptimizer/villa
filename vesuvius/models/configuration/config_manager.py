@@ -18,7 +18,7 @@ class ConfigManager:
         self.data = None # note that config manager DOES NOT hold data, 
                          # it just holds the path to the data
         self.verbose = verbose
-        self.selected_loss_function = "BCEDiceLoss" # this is just a default loss value 
+        self.selected_loss_function = "CEDiceLoss" # this is just a default loss value 
                                                           # so we can init without it being empty
 
     def load_config(self, config_path):
@@ -43,13 +43,13 @@ class ConfigManager:
 
     def _init_attributes(self):
         self.train_patch_size = tuple(self.tr_configs.get("patch_size", [192, 192, 192]))
-        self.in_channels = 2
+        self.in_channels = 1
 
         self.model_name = self.tr_info.get("model_name", "Model")
         self.autoconfigure = bool(self.tr_info.get("autoconfigure", True))
         self.tr_val_split = float(self.tr_info.get("tr_val_split", 0.95))
         self.dilate_label = int(self.tr_info.get("dilate_label", 0))
-        self.compute_loss_on_label = bool(self.tr_info.get("compute_loss_on_label", False))
+        self.compute_loss_on_labeled_only = bool(self.tr_info.get("compute_loss_on_labeled_only", False))
 
         ckpt_out_base = self.tr_info.get("ckpt_out_base", "./checkpoints/")
         self.ckpt_out_base = Path(ckpt_out_base)
@@ -60,9 +60,9 @@ class ConfigManager:
         self.load_weights_only = bool(self.tr_info.get("load_weights_only", False))
 
         # Training config
-        self.optimizer = self.tr_configs.get("optimizer", "AdamW")
-        self.initial_lr = float(self.tr_configs.get("initial_lr", 1e-3))
-        self.weight_decay = float(self.tr_configs.get("weight_decay", 0))
+        self.optimizer = self.tr_configs.get("optimizer", "SGD")
+        self.initial_lr = float(self.tr_configs.get("initial_lr", 0.01))
+        self.weight_decay = float(self.tr_configs.get("weight_decay", 0.00003))
         self.train_batch_size = int(self.tr_configs.get("batch_size", 2))
         self.gradient_accumulation = int(self.tr_configs.get("gradient_accumulation", 1))
         self.max_steps_per_epoch = int(self.tr_configs.get("max_steps_per_epoch", 200))
@@ -74,19 +74,18 @@ class ConfigManager:
         self.min_labeled_ratio = float(self.dataset_config.get("min_labeled_ratio", 0.10))
         self.min_bbox_percent = float(self.dataset_config.get("min_bbox_percent", 0.95))
 
-        # Skip patch validation for performance (useful for TIF datasets)
+        # Skip patch validation -- consider all possible patch positions as valid
         self.skip_patch_validation = bool(self.dataset_config.get("skip_patch_validation", False))
 
-        # Cache valid patches for performance
+        # Cache valid patches
         self.cache_valid_patches = bool(self.dataset_config.get("cache_valid_patches", True))
-
-        # New configuration parameters for binarization control
-        self.binarize_labels = bool(self.dataset_config.get("binarize_labels", True))
+        self.binarize_labels = bool(self.dataset_config.get("binarize_labels", True)) 
         self.target_value = self.dataset_config.get("target_value", "auto")  # "auto", int, or dict
 
         # Normalization configuration
         self.normalization_scheme = self.dataset_config.get("normalization_scheme", "zscore")
         self.intensity_properties = self.dataset_config.get("intensity_properties", {})
+        self.use_mask_for_norm = bool(self.dataset_config.get("use_mask_for_norm", False))
 
         # Only initialize targets from config if not already created dynamically
         if not hasattr(self, 'targets') or not self.targets:
@@ -107,7 +106,7 @@ class ConfigManager:
         # self.use_timm = self.model_config.get("use_timm", False)
         # self.timm_encoder_class = self.model_config.get("timm_encoder_class", None)
 
-        # Use the centralized dimensionality function to set appropriate operations
+        # Determine dims for ops based on patch size
         dim_props = determine_dimensionality(self.train_patch_size, self.verbose)
         self.model_config["conv_op"] = dim_props["conv_op"]
         self.model_config["pool_op"] = dim_props["pool_op"]
@@ -117,7 +116,6 @@ class ConfigManager:
         self.op_dims = dim_props["op_dims"]
 
         # channel configuration
-        # Allow configurable input channels from model_config, otherwise default to 1
         self.in_channels = self.model_config.get("in_channels", 1)
         self.out_channels = ()
         for target_name, task_info in self.targets.items():
@@ -127,7 +125,6 @@ class ConfigManager:
             elif 'channels' in task_info:
                 channels = task_info['channels']
             else:
-                # Don't raise error - we'll auto-detect channels later
                 if self.verbose:
                     print(f"Target {target_name} has no channel specification - will auto-detect from data")
                 channels = None  # Placeholder, will be set during auto-detection
@@ -146,7 +143,7 @@ class ConfigManager:
         if not hasattr(self, 'infer_output_targets'):
             self.infer_output_targets = ['all']
         if not hasattr(self, 'infer_overlap'):
-            self.infer_overlap = 0.25
+            self.infer_overlap = 0.50
         if not hasattr(self, 'load_strict'):
             self.load_strict = True
         if not hasattr(self, 'infer_num_dataloader_workers'):
@@ -214,7 +211,7 @@ class ConfigManager:
             self.infer_batch_size = int(infer_config.get("batch_size"))
 
         self.infer_output_targets = infer_config.get("output_targets", ['all'])
-        self.infer_overlap = float(infer_config.get("overlap", 0.25))
+        self.infer_overlap = float(infer_config.get("overlap", 0.50))
         self.load_strict = bool(infer_config.get("load_strict", True))
 
         if "num_dataloader_workers" in infer_config:
