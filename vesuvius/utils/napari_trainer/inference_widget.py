@@ -34,7 +34,7 @@ class PaddingMode(Enum):
     CIRCULAR = "circular"
 
 @magicgui(
-    call_button="Run MONAI Inference",
+    call_button="Run Inference",
     layout="vertical",
     model_path={"label": "Model Checkpoint", "widget_type": "FileEdit", "filter": "PyTorch Checkpoint (*.pth)"},
     layer={"label": "Layer for inference", "choices": get_data_layer_choices},

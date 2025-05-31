@@ -26,7 +26,7 @@ Note that significant portions of this pipeline were borrowed/inspired by [dynam
 The training process begins when the user executes the training script:
 
 ```bash
-python train.py -i /path/to/data -o /path/to/checkpoints --format zarr [options]
+python train.py -i /path/to/data -o /path/to/checkpoints 
 ```
 
 ### 1.2 Argument Processing

@@ -88,10 +88,8 @@ setup(
             'vesuvius.render_obj=rendering.mesh_to_surface:main',
             'vesuvius.flatten_obj=rendering.slim_uv:main',
             'vesuvius.train=models.run.train:main',
-            'vesuvius.models.run_tests=models.tests.run_comprehensive_tests:main',
         ],
     },
-    # No scripts needed as we're using entry_points
     classifiers=[
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.8',

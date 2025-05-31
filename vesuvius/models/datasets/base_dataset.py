@@ -884,7 +884,15 @@ class BaseDataset(Dataset):
         Returns None for validation (no augmentations).
         """
         dimension = len(self.mgr.train_patch_size)
-        patch_d, patch_h, patch_w = self.mgr.train_patch_size
+        
+        # Handle both 2D and 3D patch sizes
+        if dimension == 2:
+            patch_h, patch_w = self.mgr.train_patch_size
+            patch_d = None  # Not used for 2D
+        elif dimension == 3:
+            patch_d, patch_h, patch_w = self.mgr.train_patch_size
+        else:
+            raise ValueError(f"Invalid patch size dimension: {dimension}. Expected 2 or 3.")
         if dimension == 2:
             if max(self.mgr.train_patch_size) / min(self.mgr.train_patch_size) > 1.5:
                 rotation_for_DA = (-15. / 360 * 2. * np.pi, 15. / 360 * 2. * np.pi)

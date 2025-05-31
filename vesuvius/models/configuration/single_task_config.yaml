@@ -2,7 +2,7 @@ tr_setup:
   model_name: SingleTask_Binary_Segmentation
 
 tr_config:
-  patch_size: [128, 128, 128]
+  patch_size: [128, 128]
 
 dataset_config:
   binarize_labels: true
