@@ -186,7 +186,6 @@ def get_scheduler(scheduler_type: str,
         gamma = kwargs.get('gamma', 0.1)
         return torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
     
-    elif scheduler_type == 
     
     else:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}")
