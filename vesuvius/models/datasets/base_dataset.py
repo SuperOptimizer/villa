@@ -383,6 +383,15 @@ class BaseDataset(Dataset):
                 print(f"Skipping patch validation for volume {vol_idx} - using all sliding window positions")
                 
                 volume_shape = vdata['label'].shape
+                
+                # Handle multi-channel labels (e.g., eigenvalues with shape [C, D, H, W])
+                if len(volume_shape) == 4 and not is_2d:
+                    # Skip first dimension (channels) for 3D multi-channel data
+                    volume_shape = volume_shape[1:]  # [D, H, W]
+                elif len(volume_shape) == 3 and is_2d:
+                    # Skip first dimension (channels) for 2D multi-channel data
+                    volume_shape = volume_shape[1:]  # [H, W]
+                
                 if is_2d:
                     patch_size = self.patch_size[:2]  # [h, w]
                 else:
@@ -394,23 +403,45 @@ class BaseDataset(Dataset):
                 # Original validation logic
                 label_data = vdata['label']  # Get the label data explicitly
                 
+                # Handle multi-channel labels for patch finding
+                if len(label_data.shape) == 4 and not is_2d:
+                    # 4D data: [C, D, H, W] - use first channel for patch finding to avoid loading entire array
+                    print(f"Detected 4D label data with shape {label_data.shape} for volume {vol_idx}")
+                    print(f"Using first channel (of {label_data.shape[0]}) for patch validation to avoid memory issues")
+                    label_data_for_patches = label_data[0]  # [D, H, W] - only loads first channel
+                elif len(label_data.shape) == 3 and is_2d:
+                    # 3D data for 2D: [C, H, W] - use first channel
+                    print(f"Detected multi-channel 2D label data with shape {label_data.shape} for volume {vol_idx}")
+                    print(f"Using first channel (of {label_data.shape[0]}) for patch validation to avoid memory issues")
+                    label_data_for_patches = label_data[0]  # [H, W] - only loads first channel
+                else:
+                    # Normal 3D or 2D data
+                    label_data_for_patches = label_data
+                
                 # Check if mask is available
                 has_mask = 'mask' in vdata
                 
                 if has_mask:
                     mask_data = vdata['mask']
+                    # Handle multi-channel masks similarly
+                    if len(mask_data.shape) == 4 and not is_2d:
+                        mask_data_for_patches = mask_data[0]  # Use first channel only
+                    elif len(mask_data.shape) == 3 and is_2d:
+                        mask_data_for_patches = mask_data[0]  # Use first channel only
+                    else:
+                        mask_data_for_patches = mask_data
                     print(f"Using mask for patch extraction in volume {vol_idx}")
                 else:
                     # When no mask is available, we'll skip mask checks entirely
                     # The mask_data shape is still needed for the patch finding functions
-                    mask_data = label_data  # Just for shape, won't be used with skip_mask_check=True
+                    mask_data_for_patches = label_data_for_patches  # Just for shape, won't be used with skip_mask_check=True
                     print(f"No mask found for volume {vol_idx}, skipping mask coverage checks")
                 
                 if is_2d:
                     h, w = self.patch_size[0], self.patch_size[1]  # y, x
                     patches = find_mask_patches_2d(
-                        mask_data,
-                        label_data,
+                        mask_data_for_patches,
+                        label_data_for_patches,
                         patch_size=[h, w], 
                         min_mask_coverage=1.0,
                         min_labeled_ratio=self.min_labeled_ratio,
@@ -419,8 +450,8 @@ class BaseDataset(Dataset):
                     print(f"Found {len(patches)} patches from 2D data with min labeled ratio {self.min_labeled_ratio}")
                 else:
                     patches = find_mask_patches(
-                        mask_data,
-                        label_data,
+                        mask_data_for_patches,
+                        label_data_for_patches,
                         patch_size=self.patch_size, 
                         min_mask_coverage=1.0,
                         min_labeled_ratio=self.min_labeled_ratio,
@@ -601,104 +632,147 @@ class BaseDataset(Dataset):
             volume_info = volumes_list[vol_idx]
             label_arr = volume_info['data']['label']
             
-            if is_2d:
-                label_patch = label_arr[y:y+dy, x:x+dx]
-                
-                # Apply binarization only if configured to do so
-                if self.binarize_labels:
-                    target_value = self._get_target_value(t_name)
-                    
-                    if isinstance(target_value, dict):
-                        # Check if this is a multi-class config with regions
-                        if 'mapping' in target_value:
-                            # New format with mapping and optional regions
-                            mapping = target_value['mapping']
-                            regions = target_value.get('regions', {})
-                            
-                            # First apply standard mapping
-                            new_label_patch = np.zeros_like(label_patch)
-                            for original_val, new_val in mapping.items():
-                                mask = (label_patch == original_val)
-                                new_label_patch[mask] = new_val
-                            
-                            # Then apply regions (which override)
-                            for region_id, source_classes in regions.items():
-                                # Create mask for any pixel that belongs to source classes
-                                region_mask = np.zeros_like(new_label_patch, dtype=bool)
-                                for source_class in source_classes:
-                                    region_mask |= (new_label_patch == source_class)
-                                # Override those pixels with the region ID
-                                new_label_patch[region_mask] = region_id
-                            
-                            label_patch = new_label_patch
-                        else:
-                            # Old format: direct mapping
-                            new_label_patch = np.zeros_like(label_patch)
-                            for original_val, new_val in target_value.items():
-                                mask = (label_patch == original_val)
-                                new_label_patch[mask] = new_val
-                            label_patch = new_label_patch
-                    else:
-                        # Single class binarization: keep zeros as zero, set non-zeros to target_value
-                        binary_mask = (label_patch > 0)
-                        new_label_patch = np.zeros_like(label_patch)
-                        new_label_patch[binary_mask] = target_value
-                        label_patch = new_label_patch
-                        
-                label_patch = pad_or_crop_2d(label_patch, (dy, dx))
-            else:
-                label_patch = label_arr[z:z+dz, y:y+dy, x:x+dx]
-                
-                # Apply binarization only if configured to do so
-                if self.binarize_labels:
-                    target_value = self._get_target_value(t_name)
-                    
-                    if isinstance(target_value, dict):
-                        # Check if this is a multi-class config with regions
-                        if 'mapping' in target_value:
-                            # New format with mapping and optional regions
-                            mapping = target_value['mapping']
-                            regions = target_value.get('regions', {})
-                            
-                            # First apply standard mapping
-                            new_label_patch = np.zeros_like(label_patch)
-                            for original_val, new_val in mapping.items():
-                                mask = (label_patch == original_val)
-                                new_label_patch[mask] = new_val
-                            
-                            # Then apply regions (which override)
-                            for region_id, source_classes in regions.items():
-                                # Create mask for any pixel that belongs to source classes
-                                region_mask = np.zeros_like(new_label_patch, dtype=bool)
-                                for source_class in source_classes:
-                                    region_mask |= (new_label_patch == source_class)
-                                # Override those pixels with the region ID
-                                new_label_patch[region_mask] = region_id
-                            
-                            label_patch = new_label_patch
-                        else:
-                            # Old format: direct mapping
-                            new_label_patch = np.zeros_like(label_patch)
-                            for original_val, new_val in target_value.items():
-                                mask = (label_patch == original_val)
-                                new_label_patch[mask] = new_val
-                            label_patch = new_label_patch
-                    else:
-                        # Single class binarization: keep zeros as zero, set non-zeros to target_value
-                        binary_mask = (label_patch > 0)
-                        new_label_patch = np.zeros_like(label_patch)
-                        new_label_patch[binary_mask] = target_value
-                        label_patch = new_label_patch
-                        
-                label_patch = pad_or_crop_3d(label_patch, (dz, dy, dx))
+            # Check if label has channel dimension
+            has_channels = False
+            if is_2d and len(label_arr.shape) == 3:
+                # 2D multi-channel: [C, H, W]
+                has_channels = True
+                n_channels = label_arr.shape[0]
+            elif not is_2d and len(label_arr.shape) == 4:
+                # 3D multi-channel: [C, D, H, W]
+                has_channels = True
+                n_channels = label_arr.shape[0]
             
-            # Add channel dimension and ensure contiguous
-            label_patch = label_patch[np.newaxis, ...]
-            label_patch = np.ascontiguousarray(label_patch, dtype=np.float32)  
+            if is_2d:
+                if has_channels:
+                    # Multi-channel 2D: extract channels one at a time to avoid memory issues
+                    channel_patches = []
+                    for c in range(n_channels):
+                        channel_patches.append(label_arr[c, y:y+dy, x:x+dx])
+                    label_patch = np.stack(channel_patches, axis=0)
+                else:
+                    # Single-channel 2D
+                    label_patch = label_arr[y:y+dy, x:x+dx]
+                
+                # Apply binarization only if configured to do so
+                if self.binarize_labels:
+                    target_value = self._get_target_value(t_name)
+                    
+                    if isinstance(target_value, dict):
+                        # Check if this is a multi-class config with regions
+                        if 'mapping' in target_value:
+                            # New format with mapping and optional regions
+                            mapping = target_value['mapping']
+                            regions = target_value.get('regions', {})
+                            
+                            # First apply standard mapping
+                            new_label_patch = np.zeros_like(label_patch)
+                            for original_val, new_val in mapping.items():
+                                mask = (label_patch == original_val)
+                                new_label_patch[mask] = new_val
+                            
+                            # Then apply regions (which override)
+                            for region_id, source_classes in regions.items():
+                                # Create mask for any pixel that belongs to source classes
+                                region_mask = np.zeros_like(new_label_patch, dtype=bool)
+                                for source_class in source_classes:
+                                    region_mask |= (new_label_patch == source_class)
+                                # Override those pixels with the region ID
+                                new_label_patch[region_mask] = region_id
+                            
+                            label_patch = new_label_patch
+                        else:
+                            # Old format: direct mapping
+                            new_label_patch = np.zeros_like(label_patch)
+                            for original_val, new_val in target_value.items():
+                                mask = (label_patch == original_val)
+                                new_label_patch[mask] = new_val
+                            label_patch = new_label_patch
+                    else:
+                        # Single class binarization: keep zeros as zero, set non-zeros to target_value
+                        binary_mask = (label_patch > 0)
+                        new_label_patch = np.zeros_like(label_patch)
+                        new_label_patch[binary_mask] = target_value
+                        label_patch = new_label_patch
+                
+                if has_channels:
+                    # Pad each channel separately
+                    padded_channels = []
+                    for c in range(n_channels):
+                        padded_channels.append(pad_or_crop_2d(label_patch[c], (dy, dx)))
+                    label_patch = np.stack(padded_channels, axis=0)
+                else:
+                    label_patch = pad_or_crop_2d(label_patch, (dy, dx))
+            else:
+                if has_channels:
+                    # Multi-channel 3D: extract channels one at a time to avoid memory issues
+                    channel_patches = []
+                    for c in range(n_channels):
+                        channel_patches.append(label_arr[c, z:z+dz, y:y+dy, x:x+dx])
+                    label_patch = np.stack(channel_patches, axis=0)
+                else:
+                    # Single-channel 3D
+                    label_patch = label_arr[z:z+dz, y:y+dy, x:x+dx]
+                
+                # Apply binarization only if configured to do so
+                if self.binarize_labels:
+                    target_value = self._get_target_value(t_name)
+                    
+                    if isinstance(target_value, dict):
+                        # Check if this is a multi-class config with regions
+                        if 'mapping' in target_value:
+                            # New format with mapping and optional regions
+                            mapping = target_value['mapping']
+                            regions = target_value.get('regions', {})
+                            
+                            # First apply standard mapping
+                            new_label_patch = np.zeros_like(label_patch)
+                            for original_val, new_val in mapping.items():
+                                mask = (label_patch == original_val)
+                                new_label_patch[mask] = new_val
+                            
+                            # Then apply regions (which override)
+                            for region_id, source_classes in regions.items():
+                                # Create mask for any pixel that belongs to source classes
+                                region_mask = np.zeros_like(new_label_patch, dtype=bool)
+                                for source_class in source_classes:
+                                    region_mask |= (new_label_patch == source_class)
+                                # Override those pixels with the region ID
+                                new_label_patch[region_mask] = region_id
+                            
+                            label_patch = new_label_patch
+                        else:
+                            # Old format: direct mapping
+                            new_label_patch = np.zeros_like(label_patch)
+                            for original_val, new_val in target_value.items():
+                                mask = (label_patch == original_val)
+                                new_label_patch[mask] = new_val
+                            label_patch = new_label_patch
+                    else:
+                        # Single class binarization: keep zeros as zero, set non-zeros to target_value
+                        binary_mask = (label_patch > 0)
+                        new_label_patch = np.zeros_like(label_patch)
+                        new_label_patch[binary_mask] = target_value
+                        label_patch = new_label_patch
+                        
+                if has_channels:
+                    # Pad each channel separately
+                    padded_channels = []
+                    for c in range(n_channels):
+                        padded_channels.append(pad_or_crop_3d(label_patch[c], (dz, dy, dx)))
+                    label_patch = np.stack(padded_channels, axis=0)
+                else:
+                    label_patch = pad_or_crop_3d(label_patch, (dz, dy, dx))
+            
+            # Add channel dimension if not already present
+            if not has_channels:
+                label_patch = label_patch[np.newaxis, ...]
+            # Ensure contiguous
+            label_patch = np.ascontiguousarray(label_patch, dtype=np.float32)
             label_patches[t_name] = label_patch
             
         return label_patches
-    
+
     def _get_target_value(self, t_name):
         """
         Extract target value from configuration.
@@ -713,6 +787,10 @@ class BaseDataset(Dataset):
         int or dict
             Target value(s) - can be int for single class or dict for multi-class
         """
+        # Don't warn about missing target value if binarization is disabled
+        if not self.binarize_labels:
+            return 1  # Return default without warning
+        
         # Check if target_value is configured
         if isinstance(self.target_value, dict) and t_name in self.target_value:
             return self.target_value[t_name]
@@ -722,6 +800,7 @@ class BaseDataset(Dataset):
             # Default to 1 if not configured
             print(f"Warning: No target value configured for '{t_name}', defaulting to 1")
             return 1
+
     
     def _extract_ignore_mask(self, vol_idx, z, y, x, dz, dy, dx, is_2d):
         """
@@ -752,18 +831,52 @@ class BaseDataset(Dataset):
             # Use explicit mask if available - same mask for all targets
             mask_arr = vdata['mask']
             
+            # Check if mask has channel dimension
+            has_channels = False
+            if is_2d and len(mask_arr.shape) == 3:
+                has_channels = True
+                n_channels = mask_arr.shape[0]
+            elif not is_2d and len(mask_arr.shape) == 4:
+                has_channels = True
+                n_channels = mask_arr.shape[0]
+            
             if is_2d:
-                mask_patch = mask_arr[y:y+dy, x:x+dx]
-                mask_patch = pad_or_crop_2d(mask_patch, (dy, dx))
+                if has_channels:
+                    # Extract channels one at a time to avoid memory issues
+                    channel_patches = []
+                    for c in range(n_channels):
+                        channel_patches.append(mask_arr[c, y:y+dy, x:x+dx])
+                    mask_patch = np.stack(channel_patches, axis=0)
+                    # Pad each channel separately
+                    padded_channels = []
+                    for c in range(n_channels):
+                        padded_channels.append(pad_or_crop_2d(mask_patch[c], (dy, dx)))
+                    mask_patch = np.stack(padded_channels, axis=0)
+                else:
+                    mask_patch = mask_arr[y:y+dy, x:x+dx]
+                    mask_patch = pad_or_crop_2d(mask_patch, (dy, dx))
             else:
-                mask_patch = mask_arr[z:z+dz, y:y+dy, x:x+dx]
-                mask_patch = pad_or_crop_3d(mask_patch, (dz, dy, dx))
+                if has_channels:
+                    # Extract channels one at a time to avoid memory issues
+                    channel_patches = []
+                    for c in range(n_channels):
+                        channel_patches.append(mask_arr[c, z:z+dz, y:y+dy, x:x+dx])
+                    mask_patch = np.stack(channel_patches, axis=0)
+                    # Pad each channel separately
+                    padded_channels = []
+                    for c in range(n_channels):
+                        padded_channels.append(pad_or_crop_3d(mask_patch[c], (dz, dy, dx)))
+                    mask_patch = np.stack(padded_channels, axis=0)
+                else:
+                    mask_patch = mask_arr[z:z+dz, y:y+dy, x:x+dx]
+                    mask_patch = pad_or_crop_3d(mask_patch, (dz, dy, dx))
             
             # Convert to binary mask and invert (1 = ignore, 0 = compute)
             single_mask = (mask_patch == 0).astype(np.float32)
             
-            # Add channel dimension
-            single_mask = single_mask[np.newaxis, ...]  # [1, H, W] or [1, D, H, W]
+            # Add channel dimension if not already present
+            if not has_channels:
+                single_mask = single_mask[np.newaxis, ...]  # [1, H, W] or [1, D, H, W]
             
             # Return same mask for all targets
             return {t_name: single_mask for t_name in self.target_volumes.keys()}
@@ -775,16 +888,55 @@ class BaseDataset(Dataset):
             for t_name, volumes_list in self.target_volumes.items():
                 label_arr = volumes_list[vol_idx]['data']['label']
                 
+                # Check if label has channel dimension
+                has_channels = False
+                if is_2d and len(label_arr.shape) == 3:
+                    has_channels = True
+                    n_channels = label_arr.shape[0]
+                elif not is_2d and len(label_arr.shape) == 4:
+                    has_channels = True
+                    n_channels = label_arr.shape[0]
+                
                 # Extract label patch
                 if is_2d:
-                    label_patch = label_arr[y:y+dy, x:x+dx]
-                    label_patch = pad_or_crop_2d(label_patch, (dy, dx))
+                    if has_channels:
+                        # Extract channels one at a time to avoid memory issues
+                        channel_patches = []
+                        for c in range(n_channels):
+                            channel_patches.append(label_arr[c, y:y+dy, x:x+dx])
+                        label_patch = np.stack(channel_patches, axis=0)
+                        # Pad each channel separately
+                        padded_channels = []
+                        for c in range(n_channels):
+                            padded_channels.append(pad_or_crop_2d(label_patch[c], (dy, dx)))
+                        label_patch = np.stack(padded_channels, axis=0)
+                    else:
+                        label_patch = label_arr[y:y+dy, x:x+dx]
+                        label_patch = pad_or_crop_2d(label_patch, (dy, dx))
                 else:
-                    label_patch = label_arr[z:z+dz, y:y+dy, x:x+dx]
-                    label_patch = pad_or_crop_3d(label_patch, (dz, dy, dx))
+                    if has_channels:
+                        # Extract channels one at a time to avoid memory issues
+                        channel_patches = []
+                        for c in range(n_channels):
+                            channel_patches.append(label_arr[c, z:z+dz, y:y+dy, x:x+dx])
+                        label_patch = np.stack(channel_patches, axis=0)
+                        # Pad each channel separately
+                        padded_channels = []
+                        for c in range(n_channels):
+                            padded_channels.append(pad_or_crop_3d(label_patch[c], (dz, dy, dx)))
+                        label_patch = np.stack(padded_channels, axis=0)
+                    else:
+                        label_patch = label_arr[z:z+dz, y:y+dy, x:x+dx]
+                        label_patch = pad_or_crop_3d(label_patch, (dz, dy, dx))
                 
                 # Create binary mask from this target's label (1 = ignore unlabeled, 0 = compute on labeled)
-                mask = (label_patch == 0).astype(np.float32)
+                # For multi-channel, we might want to consider all channels
+                if has_channels:
+                    # Take the max across channels - if any channel has a value, consider it labeled
+                    mask = (label_patch.max(axis=0) == 0).astype(np.float32)
+                else:
+                    mask = (label_patch == 0).astype(np.float32)
+                
                 # Add channel dimension
                 mask = mask[np.newaxis, ...]  # Shape: [1, H, W] or [1, D, H, W]
                 ignore_masks[t_name] = mask
@@ -792,6 +944,7 @@ class BaseDataset(Dataset):
             return ignore_masks
         
         return None
+
     
     def _prepare_tensors(self, img_patch, label_patches, ignore_mask, vol_idx, is_2d):
         """
@@ -883,6 +1036,11 @@ class BaseDataset(Dataset):
         Create training transforms using custom batchgeneratorsv2.
         Returns None for validation (no augmentations).
         """
+        # Check if spatial transformations are disabled
+        if getattr(self.mgr, 'no_spatial', False):
+            print("Spatial transformations disabled (no_spatial=True)")
+            return None
+            
         dimension = len(self.mgr.train_patch_size)
         
         # Handle both 2D and 3D patch sizes

@@ -327,6 +327,162 @@ class WeightedSmoothL1Loss(nn.SmoothL1Loss):
         return l1.mean()
 
 
+class MaskedMSELoss(nn.Module):
+    """
+    MSE Loss that computes loss only on labeled/masked regions.
+    Can accept masks in multiple formats:
+    - As a separate mask tensor (same shape as input/target)
+    - Through ignore_index (computes where target != ignore_index)
+    - As an extra channel in the target tensor (last channel is the mask)
+    """
+    def __init__(self, ignore_index=None, mask_channel=False):
+        """
+        Args:
+            ignore_index: Value to ignore in target (creates mask where target != ignore_index)
+            mask_channel: If True, expects last channel of target to be the mask
+        """
+        super(MaskedMSELoss, self).__init__()
+        self.ignore_index = ignore_index
+        self.mask_channel = mask_channel
+        
+    def forward(self, input, target, mask=None):
+        # Handle different mask formats
+        if mask is None:
+            if self.mask_channel and target.size(1) > 1:
+                # Last channel of target is the mask
+                mask = target[:, -1:, ...]
+                target = target[:, :-1, ...]
+                # Ensure mask is binary (0 or 1)
+                mask = (mask > 0).float()
+            elif self.ignore_index is not None:
+                # Create mask from ignore_index
+                mask = (target != self.ignore_index).float()
+            else:
+                # No mask provided, compute regular MSE
+                return F.mse_loss(input, target)
+        
+        # Ensure input and target have same shape
+        if input.size() != target.size():
+            if target.size(1) == 1 and input.size(1) > 1:
+                # Expand target to match input channels if needed
+                target = target.expand_as(input)
+        
+        # Ensure mask has same spatial dimensions
+        if mask.dim() == input.dim() - 1:
+            mask = mask.unsqueeze(1)
+        
+        # Expand mask to match input channels if needed
+        if mask.size(1) == 1 and input.size(1) > 1:
+            mask = mask.expand_as(input)
+            
+        # Compute masked MSE
+        diff_squared = (input - target) ** 2
+        
+        # Apply mask
+        masked_diff = diff_squared * mask
+        
+        # Compute mean only over masked elements
+        num_masked = mask.sum()
+        if num_masked > 0:
+            return masked_diff.sum() / num_masked
+        else:
+            # If no valid pixels, return 0 to avoid NaN
+            return torch.tensor(0.0, device=input.device, requires_grad=True)
+
+import torch
+from torch import nn
+import torch.nn.functional as F
+
+
+class EigenvalueLoss(nn.Module):
+    """
+    Loss for regressing a *set* of eigen-values that
+
+      • treats the eigen-values as an unordered set
+      • can use absolute or relative squared error
+      • accepts per-eigen-value weights
+      • honors an `ignore_index` 
+    """
+
+    def __init__(
+        self,
+        reduction: str = "mean",
+        relative: bool = False,
+        weight: torch.Tensor | None = None,
+        ignore_index: float | int | None = None,
+        eps: float = 1e-8,
+    ):
+        """
+        Parameters
+        ----------
+        reduction     {"mean","sum","none"}
+        relative      If True ⇒ use squared relative error
+        weight        1-D tensor of length k with per-eigen-value weights
+        ignore_index  Scalar sentinel value in the target to mask out
+        eps           Small value to stabilise relative error
+        """
+        super().__init__()
+        if reduction not in ("mean", "sum", "none"):
+            raise ValueError("reduction must be 'mean', 'sum', or 'none'")
+        self.reduction = reduction
+        self.relative = relative
+        self.register_buffer("weight", weight if weight is not None else None)
+        self.ignore_index = ignore_index
+        self.eps = eps
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        if input.shape != target.shape:
+            raise ValueError(
+                f"input and target must have the same shape, got {input.shape} vs {target.shape}"
+            )
+
+        # ── Sort eigen-values so their order is irrelevant ──────────────────────
+        input_sorted, _ = torch.sort(input, dim=1)
+        target_sorted, _ = torch.sort(target, dim=1)
+
+        # ── Create mask for ignore_index (all ones if not used) ────────────────
+        if self.ignore_index is None:
+            mask = torch.ones_like(target_sorted, dtype=torch.bool)
+            target_masked = target_sorted
+        else:
+            mask = target_sorted.ne(self.ignore_index)
+            # Replace ignored entries by *something* that keeps the
+            # arithmetic valid but will be masked out later.
+            target_masked = torch.where(mask, target_sorted, torch.zeros_like(target_sorted))
+
+        # ── Compute (relative) squared error ───────────────────────────────────
+        if self.relative:
+            diff = (input_sorted - target_masked) / (target_masked.abs() + self.eps)
+        else:
+            diff = input_sorted - target_masked
+
+        sq_err = diff.pow(2)
+
+        # ── Apply per-eigen-value weights ──────────────────────────────────────
+        if self.weight is not None:
+            w = self.weight.to(sq_err.device).view(1, -1)
+            sq_err = sq_err * w
+
+        # ── Zero-out ignored positions, then reduce ───────────────────────────
+        sq_err = sq_err * mask
+
+        if self.reduction == "none":
+            return sq_err
+
+        valid_elems = mask.sum()  # scalar
+        if valid_elems == 0:
+            # Nothing to optimise – return 0 so .backward() is safe
+            return torch.zeros(
+                (), dtype=sq_err.dtype, device=sq_err.device, requires_grad=input.requires_grad
+            )
+
+        if self.reduction == "sum":
+            return sq_err.sum()
+
+        # "mean" – average only over *valid* entries
+        return sq_err.sum() / valid_elems
+
+
 def flatten(tensor):
     """Flattens a given tensor such that the channel axis is first.
     The shapes are transformed as follows:
@@ -418,6 +574,9 @@ def _create_loss(name, loss_config, weight, ignore_index, pos_weight):
         base_loss = DiceLoss(weight=weight, normalization=normalization, exclude_channels=exclude_channels)
     elif name == 'MSELoss':
         base_loss = MSELoss()
+    elif name == 'MaskedMSELoss':
+        mask_channel = loss_config.get('mask_channel', False)
+        base_loss = MaskedMSELoss(ignore_index=ignore_index, mask_channel=mask_channel)
     elif name == 'SmoothL1Loss':
         base_loss = SmoothL1Loss()
     elif name == 'L1Loss':
@@ -426,8 +585,18 @@ def _create_loss(name, loss_config, weight, ignore_index, pos_weight):
         base_loss = WeightedSmoothL1Loss(threshold=loss_config['threshold'],
                                         initial_weight=loss_config['initial_weight'],
                                         apply_below_threshold=loss_config.get('apply_below_threshold', True))
+    elif name == 'EigenvalueLoss':
+        base_loss = EigenvalueLoss(
+            reduction   = loss_config.get('reduction', 'mean'),
+            relative    = loss_config.get('relative', False),
+            weight      = weight,
+            ignore_index= ignore_index, 
+            eps         = loss_config.get('eps', 1e-8)
+        )
+
     else:
         raise RuntimeError(f"Unsupported loss function: '{name}'")
+    
     
     # Wrap with MaskingLossWrapper if ignore_index is specified and loss doesn't support it natively
     if ignore_index is not None and name in losses_without_ignore_support:
