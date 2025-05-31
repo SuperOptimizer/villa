@@ -8,13 +8,15 @@ import threading
 import fsspec
 import numcodecs
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-# fork causes issues on windows and w/ tensorstore , force to spawn
+# fork causes issues on windows , force to spawn
 multiprocessing.set_start_method('spawn', force=True)
 from tqdm.auto import tqdm
 from torch.utils.data import DataLoader
 from utils.models.load_nnunet_model import load_model_for_inference
 from data.vc_dataset import VCDataset
 from data.utils import open_zarr
+from pathlib import Path
+from models.build.build_network_from_config import NetworkFromConfig
 
 class Inferer():
     def __init__(self,
@@ -37,7 +39,7 @@ class Inferer():
                  num_dataloader_workers: int = 4,
                  verbose: bool = False,
                  skip_empty_patches: bool = True,  # Skip empty/homogeneous patches
-                 # parmas to get passed to Volume 
+                 # params to get passed to Volume 
                  scroll_id: [str, int] = None,
                  segment_id: [str, int] = None,
                  energy: int = None,
@@ -77,6 +79,14 @@ class Inferer():
         self.hf_token = hf_token
         self.model_patch_size = None
         self.num_classes = None
+        
+        # Store normalization info from model checkpoint
+        self.model_normalization_scheme = None
+        self.model_intensity_properties = None
+        
+        # Multi-task model info
+        self.is_multi_task = False
+        self.target_info = None  # Will store target names and channel counts
 
         # --- Validation ---
         if not self.input or self.model_path is None:
@@ -133,14 +143,24 @@ class Inferer():
                 verbose=self.verbose
             )
         else:
-            # Load from local path
-            if self.verbose:
-                print(f"Loading model from local path: {self.model_path}")
-            model_info = load_model_for_inference(
-                model_folder=self.model_path,
-                device_str=str(self.device),
-                verbose=self.verbose
-            )
+            # Check if this is a train.py checkpoint (single .pth file)
+            model_path = Path(self.model_path)
+            is_train_py_checkpoint = model_path.is_file() and model_path.suffix == '.pth'
+            
+            if is_train_py_checkpoint:
+                # Load train.py checkpoint
+                if self.verbose:
+                    print(f"Loading train.py checkpoint from: {self.model_path}")
+                model_info = self._load_train_py_model(model_path)
+            else:
+                # Load from local path using nnUNet loader
+                if self.verbose:
+                    print(f"Loading nnUNet model from local path: {self.model_path}")
+                model_info = load_model_for_inference(
+                    model_folder=self.model_path,
+                    device_str=str(self.device),
+                    verbose=self.verbose
+                )
         
         # model loader returns a dict, network is the actual model
         model = model_info['network']
@@ -177,34 +197,178 @@ class Inferer():
             try:
                 with torch.no_grad():
                     dummy_output = model(dummy_input)
-                self.num_classes = dummy_output.shape[1]  # N, C, D, H, W
-                if self.verbose:
-                    print(f"Inferred number of output classes via dummy inference: {self.num_classes}")
+                    if isinstance(dummy_output, dict):
+                        # Multi-task model returning dict
+                        self.is_multi_task = True
+                        self.target_info = {}
+                        self.num_classes = 0
+                        for target_name, target_output in dummy_output.items():
+                            target_channels = target_output.shape[1]
+                            self.target_info[target_name] = {
+                                'out_channels': target_channels,
+                                'start_channel': self.num_classes,
+                                'end_channel': self.num_classes + target_channels
+                            }
+                            self.num_classes += target_channels
+                        if self.verbose:
+                            print(f"Inferred multi-task model with total output channels: {self.num_classes}")
+                            print(f"Target channel mapping: {self.target_info}")
+                    else:
+                        # Single task model
+                        self.num_classes = dummy_output.shape[1]  # N, C, D, H, W
+                        if self.verbose:
+                            print(f"Inferred number of output classes via dummy inference: {self.num_classes}")
             except Exception as e:
-                print(f"Warning: Could not automatically determine number of classes via dummy inference: {e}")
-                print("Ensure your model is loaded correctly and check the expected input shape.")
-                # Default to binary segmentation as fallback
-                self.num_classes = 2
-                print(f"Using default num_classes: {self.num_classes}")
-
+                raise RuntimeError(f"Warning: Could not automatically determine number of classes via dummy inference: {e}. \nEnsure your model is loaded correctly and check the expected input shape")
+            
         return model
+    
+    def _load_train_py_model(self, checkpoint_path):
+        """Load a model checkpoint from train.py format."""
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+        
+        # Load checkpoint
+        checkpoint_data = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+        
+        # Extract model configuration
+        model_config = checkpoint_data.get('model_config', {})
+        if not model_config:
+            raise ValueError("No model configuration found in checkpoint")
+        
+        # Extract normalization info if present
+        if 'normalization_scheme' in checkpoint_data:
+            self.model_normalization_scheme = checkpoint_data['normalization_scheme']
+            if self.verbose:
+                print(f"Found normalization scheme in checkpoint: {self.model_normalization_scheme}")
+        
+        if 'intensity_properties' in checkpoint_data:
+            self.model_intensity_properties = checkpoint_data['intensity_properties']
+            if self.verbose:
+                print("Found intensity properties in checkpoint:")
+                for key, value in self.model_intensity_properties.items():
+                    print(f"  {key}: {value:.4f}")
+        
+        # Create minimal config manager for NetworkFromConfig
+        class MinimalConfigManager:
+            def __init__(self, model_config):
+                self.model_config = model_config
+                self.targets = model_config.get('targets', {})
+                self.train_patch_size = model_config.get('train_patch_size', model_config.get('patch_size', (128, 128, 128)))
+                self.train_batch_size = model_config.get('train_batch_size', model_config.get('batch_size', 2))
+                self.in_channels = model_config.get('in_channels', 1)
+                self.autoconfigure = model_config.get('autoconfigure', False)
+                self.model_name = model_config.get('model_name', 'Model')
+                
+                # Set spacing based on patch size dimensions
+                self.spacing = [1] * len(self.train_patch_size)
+        
+        mgr = MinimalConfigManager(model_config)
+        
+        # Build model using NetworkFromConfig
+        model = NetworkFromConfig(mgr)
+        model = model.to(self.device)
+        
+        # Load weights
+        model_state_dict = checkpoint_data.get('model', checkpoint_data)
+        
+        # Check if this is a compiled model state dict
+        is_compiled = any("_orig_mod." in key for key in model_state_dict.keys())
+        
+        # Compile model if needed
+        if self.device.type == 'cuda' and is_compiled:
+            if self.verbose:
+                print("Compiling model to match checkpoint format")
+            model = torch.compile(model)
+        
+        # Load state dict
+        model.load_state_dict(model_state_dict, strict=True)
+        if self.verbose:
+            print("Model weights loaded successfully")
+        
+        # Handle multi-target models
+        if len(mgr.targets) > 1:
+            if self.verbose:
+                print(f"Multi-target model detected with targets: {list(mgr.targets.keys())}")
+            
+            # Set multi-task flag
+            self.is_multi_task = True
+            
+            # Calculate total output channels and store target info
+            self.target_info = {}
+            num_classes = 0
+            for target_name, target_config in mgr.targets.items():
+                target_channels = target_config.get('out_channels', 1)
+                self.target_info[target_name] = {
+                    'out_channels': target_channels,
+                    'start_channel': num_classes,
+                    'end_channel': num_classes + target_channels
+                }
+                num_classes += target_channels
+            
+            if self.verbose:
+                print(f"Total output channels across all targets: {num_classes}")
+                print(f"Target channel mapping: {self.target_info}")
+        else:
+            # Single target model
+            target_name = list(mgr.targets.keys())[0] if mgr.targets else 'output'
+            num_classes = mgr.targets.get(target_name, {}).get('out_channels', 1)
+        
+        # Create model_info dict compatible with the rest of the code
+        model_info = {
+            'network': model,
+            'patch_size': mgr.train_patch_size,
+            'num_input_channels': mgr.in_channels,
+            'num_seg_heads': num_classes,
+            'model_config': model_config,
+            'targets': mgr.targets
+        }
+        
+        return model_info
 
     def _create_dataset_and_loader(self):
         # Use step_size instead of overlap (step_size is [0-1] representing stride as fraction of patch size)
         # step_size of 0.5 means 50% overlap
+        
+        # Use normalization from model checkpoint if available, otherwise use command line arg
+        normalization_scheme = self.model_normalization_scheme or self.normalization_scheme
+        
+        # Handle train.py model normalization scheme mapping
+        if self.model_normalization_scheme and normalization_scheme == 'zscore':
+            # This is a train.py model with 'zscore' normalization
+            if self.model_intensity_properties and 'mean' in self.model_intensity_properties and 'std' in self.model_intensity_properties:
+                # We have intensity properties, use global_zscore
+                normalization_scheme = 'global_zscore'
+                if self.verbose:
+                    print("Mapped 'zscore' to 'global_zscore' (intensity properties available)")
+            else:
+                # No intensity properties, use instance_zscore
+                normalization_scheme = 'instance_zscore'
+                if self.verbose:
+                    print("Mapped 'zscore' to 'instance_zscore' (no intensity properties)")
+        
+        # Extract global normalization parameters if using global_zscore
+        global_mean = None
+        global_std = None
+        if normalization_scheme == 'global_zscore' and self.model_intensity_properties:
+            global_mean = self.model_intensity_properties.get('mean')
+            global_std = self.model_intensity_properties.get('std')
+            if self.verbose:
+                print(f"Using global normalization from checkpoint: mean={global_mean:.4f}, std={global_std:.4f}")
+        
         self.dataset = VCDataset(
             input_path=self.input,
             patch_size=self.patch_size,
             step_size=self.overlap,
             num_parts=self.num_parts,
             part_id=self.part_id,
-            normalization_scheme=self.normalization_scheme,
+            normalization_scheme=normalization_scheme,
+            global_mean=global_mean,
+            global_std=global_std,
             input_format=self.input_format,
             verbose=self.verbose,
             mode='infer',
-            # Pass skip_empty_patches flag
             skip_empty_patches=self.skip_empty_patches,
-            # Pass Volume-specific parameters
             scroll_id=self.scroll_id,
             segment_id=self.segment_id,
             energy=self.energy,
@@ -241,6 +405,35 @@ class Inferer():
                                              # so we don't run them through the model 
         )
         return self.dataset, self.dataloader
+    
+    def _concat_multi_task_outputs(self, outputs_dict):
+        """Concatenate multi-task model outputs into a single tensor.
+        
+        Args:
+            outputs_dict: Dictionary of target_name -> tensor outputs from multi-task model
+            
+        Returns:
+            Concatenated tensor with all target outputs along the channel dimension
+        """
+        if not isinstance(outputs_dict, dict):
+            return outputs_dict
+            
+        # Sort targets by their start_channel to preserve the correct channel order
+        # This ensures outputs are concatenated in the same order they were allocated during model loading
+        sorted_targets = sorted(self.target_info.items(), key=lambda x: x[1]['start_channel'])
+        
+        # Collect outputs in the correct channel order
+        output_tensors = []
+        for target_name, target_info in sorted_targets:
+            if target_name in outputs_dict:
+                output_tensors.append(outputs_dict[target_name])
+            else:
+                raise ValueError(f"Target '{target_name}' not found in model outputs")
+        
+        # Concatenate along channel dimension (dim=1)
+        concatenated = torch.cat(output_tensors, dim=1)
+        
+        return concatenated
         
     def _get_zarr_compressor(self):
         if self.compressor_name.lower() == 'zstd':
@@ -262,12 +455,11 @@ class Inferer():
 
         compressor = self._get_zarr_compressor()
         output_shape = (self.num_total_patches, self.num_classes, *self.patch_size)
-        output_chunks = (1, self.num_classes, *self.patch_size)  # Chunk by individual patch
+        output_chunks = (1, self.num_classes, *self.patch_size)  # we align chunks to patch size for better write performance
         main_store_path = os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr")
         
         print(f"Creating output store at: {main_store_path}")
         
-        # Create the zarr array using our helper function
         self.output_store = open_zarr(
             path=main_store_path, 
             mode='w',  
@@ -281,17 +473,14 @@ class Inferer():
                                       # the proper indices for later re-zarring 
         )
         
-        # Verify the zarr array was created
         print(f"Created zarr array at {main_store_path} with shape {self.output_store.shape}")
         
-        # Create coordinates zarr array
         self.coords_store_path = os.path.join(self.output_dir, f"coordinates_part_{self.part_id}.zarr")
         coord_shape = (self.num_total_patches, len(self.patch_size))
         coord_chunks = (min(self.num_total_patches, 4096), len(self.patch_size))
         
         print(f"Creating coordinates store at: {self.coords_store_path}")
         
-        # Create the coordinates zarr array with our helper function
         coords_store = open_zarr(
             path=self.coords_store_path,
             mode='w',
@@ -304,7 +493,6 @@ class Inferer():
             write_empty_chunks=False  
         )
         
-        # Verify the coordinates array was created
         print(f"Created coordinates zarr array at {self.coords_store_path} with shape {coords_store.shape}")
         
         try:
@@ -322,6 +510,13 @@ class Inferer():
             self.output_store.attrs['overlap'] = self.overlap
             self.output_store.attrs['part_id'] = self.part_id
             self.output_store.attrs['num_parts'] = self.num_parts
+            
+            # Store multi-task metadata if applicable
+            if self.is_multi_task and self.target_info:
+                self.output_store.attrs['is_multi_task'] = True
+                self.output_store.attrs['target_info'] = self.target_info
+                if self.verbose:
+                    print(f"Stored multi-task metadata in output zarr")
             
             if original_volume_shape:
                 self.output_store.attrs['original_volume_shape'] = original_volume_shape
@@ -341,21 +536,13 @@ class Inferer():
         return self.output_store
 
     def _process_batches(self):
-        # Disable Blosc threading to avoid deadlocks when used with multiprocessing
         numcodecs.blosc.use_threads = False
         
         self.current_patch_write_index = 0
         max_workers = min(16, os.cpu_count() or 4)
         
-        # Use the output_store that was already created in _create_output_stores()
-        # No need to reopen it since we already have it
         zarr_path = os.path.join(self.output_dir, f"logits_part_{self.part_id}.zarr")
         
-        # Debug information
-        # print(f"Using output path: {zarr_path}")
-        # print(f"Output directory type: {type(self.output_dir)}, value: '{self.output_dir}'")
-        
-        # Validate zarr_path is not empty
         if not zarr_path:
             error_msg = f"Error: Empty zarr_path generated from output_dir='{self.output_dir}'"
             print(error_msg)
@@ -363,56 +550,38 @@ class Inferer():
         
         # Verify we have a valid output store from _create_output_stores()
         if self.output_store is None:
-            error_msg = f"Error: output_store is None. Make sure _create_output_stores() was called successfully."
-            print(error_msg)
-            raise RuntimeError(error_msg)
+            raise RuntimeError(f"Error: output_store is None. Make sure _create_output_stores() was called successfully.")
             
         if self.verbose:
             print(f"Using existing output store: {zarr_path}")
             print(f"Output store shape: {self.output_store.shape}")
         
-        # Keep a reference to the output store that will be shared by all threads
+        # reference to the output store that will be shared by all threads
         output_store = self.output_store
         
-        # Define write function that uses the shared output store
         def write_patch(write_index, patch_data):
-            # print(f"Writing patch {write_index} to {zarr_path}")
             try:
-                # Use the already opened shared output store
-                try:
-                    if not zarr_path or zarr_path.strip() == '':
-                        raise ValueError(f"Empty zarr path provided for index {write_index}")
-                        
-                    # Write directly to the shared output store
-                    output_store[write_index] = patch_data
-                   # print(f"Successfully wrote patch {write_index}")
-                except Exception as e:
-                    print(f"Error in write_patch with index {write_index}: {str(e)} (zarr_path={zarr_path})")
-                    import traceback
-                    traceback.print_exc()
-                    raise e
+                output_store[write_index] = patch_data
                 return write_index
             except Exception as e:
-                print(f"Error writing patch at index {write_index}: {str(e)}")
-                return None
+                raise RuntimeError(f"Failed to write patch at index {write_index}: {str(e)}")
             
         with tqdm(total=self.num_total_patches, desc=f"Inferring Part {self.part_id}") as pbar:
-            # Use ThreadPoolExecutor for I/O-bound tasks
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = []
                 
                 for batch_data in self.dataloader:
-                    if isinstance(batch_data, (list, tuple)):
-                        input_batch = batch_data[0].to(self.device)
-                        is_empty_flags = [False] * input_batch.shape[0]
-                    elif isinstance(batch_data, dict):
+                    if isinstance(batch_data, dict):
                         input_batch = batch_data['data'].to(self.device)
                         is_empty_flags = batch_data.get('is_empty', [False] * input_batch.shape[0])
+                    elif isinstance(batch_data, (list, tuple)):
+                        input_batch = batch_data[0].to(self.device)
+                        is_empty_flags = [False] * input_batch.shape[0]
                     else:
                         input_batch = batch_data.to(self.device)
                         is_empty_flags = [False] * input_batch.shape[0]
                     
-                    # Skip invalid batches
+                    # the case that the batch is empty is valid, e.g. when the input volume is smaller than the patch size
                     if input_batch is None or input_batch.shape[0] == 0:
                         if self.verbose:
                             print("Skipping batch with no valid data")
@@ -429,14 +598,13 @@ class Inferer():
                     if non_empty_indices:
                         non_empty_input = input_batch[non_empty_indices]
                         
-                        # Perform inference with or without TTA
                         with torch.no_grad(), torch.amp.autocast('cuda'):
                             if self.do_tta:
                                 # --- TTA ---
                                 outputs_batch_tta = []  # Store list of outputs for each TTA for the batch
 
                                 if self.tta_type == 'mirroring':
-                                    # Apply model to original and mirrored versions (but only for non-empty patches)
+                                    # Apply model to original and mirrored versions
                                     m0 = self.model(non_empty_input)
                                     m1 = self.model(torch.flip(non_empty_input, dims=[-1]))
                                     m2 = self.model(torch.flip(non_empty_input, dims=[-2]))
@@ -445,6 +613,17 @@ class Inferer():
                                     m5 = self.model(torch.flip(non_empty_input, dims=[-1, -3]))
                                     m6 = self.model(torch.flip(non_empty_input, dims=[-2, -3]))
                                     m7 = self.model(torch.flip(non_empty_input, dims=[-1, -2, -3]))
+
+                                    # Convert dict outputs to concatenated tensors if multi-task
+                                    if self.is_multi_task:
+                                        m0 = self._concat_multi_task_outputs(m0)
+                                        m1 = self._concat_multi_task_outputs(m1)
+                                        m2 = self._concat_multi_task_outputs(m2)
+                                        m3 = self._concat_multi_task_outputs(m3)
+                                        m4 = self._concat_multi_task_outputs(m4)
+                                        m5 = self._concat_multi_task_outputs(m5)
+                                        m6 = self._concat_multi_task_outputs(m6)
+                                        m7 = self._concat_multi_task_outputs(m7)
 
                                     # Reverse the flips on the outputs before averaging
                                     outputs_batch_tta = [
@@ -472,6 +651,12 @@ class Inferer():
                                     z_up = torch.transpose(non_empty_input, -3, -2)
                                     r_z_up = self.model(z_up)
                                     
+                                    # Convert dict outputs to concatenated tensors if multi-task
+                                    if self.is_multi_task:
+                                        r0 = self._concat_multi_task_outputs(r0)
+                                        r_x_up = self._concat_multi_task_outputs(r_x_up)
+                                        r_z_up = self._concat_multi_task_outputs(r_z_up)
+                                    
                                     # Rotate outputs back to original orientation before averaging
                                     outputs_batch_tta = [
                                         r0,  # Original
@@ -485,7 +670,11 @@ class Inferer():
 
                             else:
                                 # --- No TTA ---
-                                non_empty_output = self.model(non_empty_input) 
+                                non_empty_output = self.model(non_empty_input)
+                                
+                                # Convert dict outputs to concatenated tensors if multi-task
+                                if self.is_multi_task:
+                                    non_empty_output = self._concat_multi_task_outputs(non_empty_output) 
                         
                         # Place non-empty patch outputs in the correct positions in output_batch
                         for idx, original_idx in enumerate(non_empty_indices):
@@ -500,14 +689,12 @@ class Inferer():
                     
                     patch_indices = batch_data.get('index', list(range(current_batch_size)))
                     
-                    # Submit each patch for writing
                     for i in range(current_batch_size):
                         patch_data = output_np[i]  # Shape: (C, Z, Y, X)
                         write_index = patch_indices[i] if i < len(patch_indices) else i
                         future = executor.submit(write_patch, write_index, patch_data)
                         futures.append(future)
                         
-                    # Process completed futures
                     completed = [f for f in futures if f.done()]
                     for future in completed:
                         try:
@@ -518,14 +705,12 @@ class Inferer():
                         except Exception as e:
                             print(f"Error processing future result: {e}")
                     
-                    # Keep only pending futures
                     futures = [f for f in futures if not f.done()]
                 
-                # Process any remaining futures
                 for future in futures:
                     try:
                         result = future.result()
-                        if result is not None:  # Only update if write was successful
+                        if result is not None: 
                             pbar.update(1)
                             self.current_patch_write_index += 1
                     except Exception as e:
@@ -534,7 +719,6 @@ class Inferer():
         if self.verbose:
             print(f"Finished writing {self.current_patch_write_index} patches.")
         
-        # Verify completion and report
         if self.current_patch_write_index != self.num_total_patches:
             print(f"Warning: Expected {self.num_total_patches} patches, but wrote {self.current_patch_write_index}.")
 
@@ -688,8 +872,8 @@ def main():
                 else:
                     coords_exists = os.path.exists(coords_path)
             except Exception as e:
-                print(f"Error checking if output paths exist: {e}")
-                # Continue anyway and try to open the stores
+                print(f"Warning: Could not verify if output files exist: {e}")
+                print("Attempting to proceed with inspection anyway...")
                 logits_exists = True
                 coords_exists = True
             
@@ -699,7 +883,6 @@ def main():
 
                 print("\n--- Inspecting Output Store ---")
                 try:
-                    # Open the zarr store using our helper function
                     output_store = open_zarr(
                         path=logits_path,
                         mode='r',

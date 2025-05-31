@@ -1,11 +1,12 @@
 import numpy as np
 import torch.nn as nn
+from tqdm import tqdm
 
 
-def find_mask_patches(mask_array, label_array, patch_size, stride=None, min_mask_coverage=1.0, min_labeled_ratio=0.05):
+def find_mask_patches(mask_array, label_array, patch_size, stride=None, min_mask_coverage=1.0, min_labeled_ratio=0.05, skip_mask_check=False):
     """
     Find 3D patches where:
-    1. The patch is fully contained within the masked region
+    1. The patch is fully contained within the masked region (unless skip_mask_check=True)
     2. The patch contains a minimum ratio of labeled voxels
     
     Parameters:
@@ -22,6 +23,8 @@ def find_mask_patches(mask_array, label_array, patch_size, stride=None, min_mask
         Minimum coverage ratio of mask required (1.0 = 100% coverage)
     min_labeled_ratio : float, optional
         Minimum ratio of labeled voxels in the entire patch (0.05 = 5%)
+    skip_mask_check : bool, optional
+        If True, skip the mask coverage check entirely
     
     Returns:
     --------
@@ -37,38 +40,48 @@ def find_mask_patches(mask_array, label_array, patch_size, stride=None, min_mask
     
     patches = []
     
-    # Generate all possible positions
-    for z in range(0, D-d+1, stride[0]):
-        for y in range(0, H-h+1, stride[1]):
-            for x in range(0, W-w+1, stride[2]):
-                # Extract the patch from both mask and label arrays
-                mask_patch = mask_array[z:z+d, y:y+h, x:x+w]
-                label_patch = label_array[z:z+d, y:y+h, x:x+w]
-                
-                # Skip patches with no mask values
-                if not np.any(mask_patch > 0):
-                    continue
-                
-                # MASK REQUIREMENT:
-                # Check mask coverage
-                mask_coverage = np.count_nonzero(mask_patch) / mask_patch.size
-                if mask_coverage < min_mask_coverage:
-                    continue
+    # Calculate total iterations for progress bar
+    z_positions = list(range(0, D-d+1, stride[0]))
+    y_positions = list(range(0, H-h+1, stride[1]))
+    x_positions = list(range(0, W-w+1, stride[2]))
+    total_positions = len(z_positions) * len(y_positions) * len(x_positions)
+    
+    # Generate all possible positions with progress bar
+    with tqdm(total=total_positions, desc="Finding valid 3D patches", leave=False) as pbar:
+        for z in z_positions:
+            for y in y_positions:
+                for x in x_positions:
+                    pbar.update(1)
+                    # Extract the patch from both mask and label arrays
+                    mask_patch = mask_array[z:z+d, y:y+h, x:x+w] if not skip_mask_check else None
+                    label_patch = label_array[z:z+d, y:y+h, x:x+w]
                     
-                # LABEL REQUIREMENT:
-                # Calculate ratio of labeled voxels in the patch
-                labeled_ratio = np.count_nonzero(label_patch) / label_patch.size
-                
-                # Only include patches with sufficient labeled voxels
-                if labeled_ratio >= min_labeled_ratio:
-                    patches.append({'start_pos': [z, y, x]})
+                    # Skip mask checks if requested
+                    if not skip_mask_check:
+                        # Skip patches with no mask values
+                        if not np.any(mask_patch > 0):
+                            continue
+                        
+                        # MASK REQUIREMENT:
+                        # Check mask coverage
+                        mask_coverage = np.count_nonzero(mask_patch) / mask_patch.size
+                        if mask_coverage < min_mask_coverage:
+                            continue
+                        
+                    # LABEL REQUIREMENT:
+                    # Calculate ratio of labeled voxels in the patch
+                    labeled_ratio = np.count_nonzero(label_patch) / label_patch.size
+                    
+                    # Only include patches with sufficient labeled voxels
+                    if labeled_ratio >= min_labeled_ratio:
+                        patches.append({'start_pos': [z, y, x]})
     
     return patches
 
-def find_mask_patches_2d(mask_array, label_array, patch_size, stride=None, min_mask_coverage=1.0, min_labeled_ratio=0.05):
+def find_mask_patches_2d(mask_array, label_array, patch_size, stride=None, min_mask_coverage=1.0, min_labeled_ratio=0.05, skip_mask_check=False):
     """
     Find 2D patches where:
-    1. The patch is fully contained within the masked region
+    1. The patch is fully contained within the masked region (unless skip_mask_check=True)
     2. The patch contains a minimum ratio of labeled pixels
     
     Parameters:
@@ -85,6 +98,8 @@ def find_mask_patches_2d(mask_array, label_array, patch_size, stride=None, min_m
         Minimum coverage ratio of mask required (1.0 = 100% coverage)
     min_labeled_ratio : float, optional
         Minimum ratio of labeled pixels in the entire patch (0.05 = 5%)
+    skip_mask_check : bool, optional
+        If True, skip the mask coverage check entirely
     
     Returns:
     --------
@@ -100,30 +115,39 @@ def find_mask_patches_2d(mask_array, label_array, patch_size, stride=None, min_m
     
     patches = []
     
-    # Generate all possible positions
-    for y in range(0, H-h+1, stride[0]):
-        for x in range(0, W-w+1, stride[1]):
-            # Extract the patch from both mask and label arrays
-            mask_patch = mask_array[y:y+h, x:x+w]
-            label_patch = label_array[y:y+h, x:x+w]
-            
-            # Skip patches with no mask values
-            if not np.any(mask_patch > 0):
-                continue
+    # Calculate total iterations for progress bar
+    y_positions = list(range(0, H-h+1, stride[0]))
+    x_positions = list(range(0, W-w+1, stride[1]))
+    total_positions = len(y_positions) * len(x_positions)
+    
+    # Generate all possible positions with progress bar
+    with tqdm(total=total_positions, desc="Finding valid 2D patches", leave=False) as pbar:
+        for y in y_positions:
+            for x in x_positions:
+                pbar.update(1)
+                # Extract the patch from both mask and label arrays
+                mask_patch = mask_array[y:y+h, x:x+w] if not skip_mask_check else None
+                label_patch = label_array[y:y+h, x:x+w]
                 
-            # MASK REQUIREMENT:
-            # Check mask coverage
-            mask_coverage = np.count_nonzero(mask_patch) / mask_patch.size
-            if mask_coverage < min_mask_coverage:
-                continue
+                # Skip mask checks if requested
+                if not skip_mask_check:
+                    # Skip patches with no mask values
+                    if not np.any(mask_patch > 0):
+                        continue
+                        
+                    # MASK REQUIREMENT:
+                    # Check mask coverage
+                    mask_coverage = np.count_nonzero(mask_patch) / mask_patch.size
+                    if mask_coverage < min_mask_coverage:
+                        continue
+                    
+                # LABEL REQUIREMENT:
+                # Calculate ratio of labeled pixels in the patch
+                labeled_ratio = np.count_nonzero(label_patch) / label_patch.size
                 
-            # LABEL REQUIREMENT:
-            # Calculate ratio of labeled pixels in the patch
-            labeled_ratio = np.count_nonzero(label_patch) / label_patch.size
-            
-            # Only include patches with sufficient labeled pixels
-            if labeled_ratio >= min_labeled_ratio:
-                patches.append({'start_pos': [0, y, x]})  # [dummy_z, y, x]
+                # Only include patches with sufficient labeled pixels
+                if labeled_ratio >= min_labeled_ratio:
+                    patches.append({'start_pos': [0, y, x]})  # [dummy_z, y, x]
     
     return patches
 

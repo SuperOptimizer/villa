@@ -90,8 +90,6 @@ class Volume:
         Resolved URL or path to the data store.
     metadata : Dict[str, Any]
         Metadata loaded from the data store (e.g., .zattrs).
-    data : List[ts.TensorStore]
-        List of TensorStore objects representing volume data (potentially multi-resolution).
     inklabel : Optional[np.ndarray]
         Ink label data (only for segments). None otherwise.
     dtype : np.dtype
@@ -103,7 +101,7 @@ class Volume:
                  energy: Optional[int] = None,
                  resolution: Optional[float] = None,
                  segment_id: Optional[int] = None,
-                 format: str = 'zarr',  # Currently only zarr via TensorStore is fully implemented here
+                 format: str = 'zarr',  # Currently only zarr 
                  normalization_scheme: str = 'none',
                  global_mean: Optional[float] = None,
                  global_std: Optional[float] = None,
@@ -131,7 +129,7 @@ class Volume:
         segment_id : Optional[int]
             Segment ID (required if type is 'segment').
         format : str, default = 'zarr'
-            Data format (currently only 'zarr' via TensorStore).
+            Data format (currently only 'zarr').
         normalization_scheme : str, default = 'none'
             Normalization method ('none', 'instance_zscore', 'global_zscore', 'instance_minmax').
         global_mean : Optional[float], default = None
@@ -274,14 +272,14 @@ class Volume:
                 return
 
             self.metadata = self.load_ome_metadata()  # Loads .zattrs
-            self.data = self.load_data()  # Loads TensorStore objects
+            self.data = self.load_data() 
             
             # Handle different data source types
             if isinstance(self.data, zarr.Array):
                 # Direct zarr array case
                 self.dtype = self.data.dtype
             elif hasattr(self.data[0].dtype, 'numpy_dtype'):
-                # TensorStore case
+                #  case
                 self.dtype = self.data[0].dtype.numpy_dtype
             else:
                 # Fallback for other cases
@@ -665,7 +663,7 @@ class Volume:
         """
         Gets a sub-volume or slice, applying specified normalization and type conversion.
 
-        Indexing follows NumPy/TensorStore conventions. For 3D data, the order is (z, y, x).
+        Indexing follows NumPy conventions. For 3D data, the order is (z, y, x).
         A 4th index can specify the resolution level (sub-volume index), default is 0.
 
         Parameters

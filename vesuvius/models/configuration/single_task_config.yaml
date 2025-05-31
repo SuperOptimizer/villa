@@ -1,0 +1,17 @@
+tr_setup:
+  model_name: SingleTask_Binary_Segmentation
+
+tr_config:
+  patch_size: [128, 128]
+
+dataset_config:
+  binarize_labels: true
+  target_value: 1  # Binary task
+  min_labeled_ratio: 0.01
+  min_bbox_percent: 0.01
+  skip_patch_validation: false
+  targets:
+    surfaces:
+      activation: "none"
+      weight: 1
+      loss_fn: "CEDiceLoss"

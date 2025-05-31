@@ -107,20 +107,14 @@ def convert_slice_to_bgr(
         
         # Other multi-channel cases (2-channel, 4-channel, etc.)
         else:
-            # Handle any number of channels by creating a grayscale image for each
-            ch_list = []
-            for ch_idx in range(slice_2d_or_3d.shape[0]):
-                ch_8u = minmax_scale_to_8bit(slice_2d_or_3d[ch_idx])
-                ch_bgr = cv2.cvtColor(ch_8u, cv2.COLOR_GRAY2BGR)
-                ch_list.append(ch_bgr)
-            
-            # Stack all channel images horizontally
-            if len(ch_list) == 1:
-                return ch_list[0]
-            
-            # For multiple channels, we show them side by side
-            combined = np.hstack(ch_list)
-            return combined
+            # For 2-channel data (one-hot encoded binary segmentation), show the foreground channel
+            if slice_2d_or_3d.shape[0] == 2:
+                # Channel 1 is the foreground channel in one-hot encoding
+                ch_8u = minmax_scale_to_8bit(slice_2d_or_3d[1])
+            else:
+                # For other multi-channel cases, show the first channel
+                ch_8u = minmax_scale_to_8bit(slice_2d_or_3d[0])
+            return cv2.cvtColor(ch_8u, cv2.COLOR_GRAY2BGR)
 
     else:
         raise ValueError(
@@ -168,7 +162,45 @@ def save_debug(
     # Convert targets & predictions to NumPy (and apply activation if needed)
     targets_np, preds_np = {}, {}
     for t_name, t_tensor in targets_dict.items():
-        arr_np = t_tensor.cpu().numpy()[0]  # => [C, Z, H, W] for 3D or [C, H, W] for 2D
+        arr_np = t_tensor.cpu().numpy()  # Remove [0] indexing - we'll handle it below
+        
+        # Check if this is a CrossEntropyLoss target (class indices)
+        loss_fn = tasks_dict[t_name].get("loss_fn", "")
+        if loss_fn == "CrossEntropyLoss":
+            # For CrossEntropyLoss, targets are class indices, not one-hot
+            # First, handle batch dimension if present
+            if arr_np.ndim == 4:  # [B, 1, Z, H, W] for 3D
+                arr_np = arr_np[0, 0]  # => [Z, H, W]
+            elif arr_np.ndim == 3 and is_2d:  # [B, 1, H, W] for 2D
+                arr_np = arr_np[0, 0]  # => [H, W]
+            elif arr_np.ndim == 3 and not is_2d:  # [B, Z, H, W] for 3D
+                arr_np = arr_np[0]  # => [Z, H, W]
+            elif arr_np.ndim == 2:  # Already [H, W] for 2D
+                pass
+            else:
+                # Try to extract the first element
+                while arr_np.ndim > (2 if is_2d else 3):
+                    arr_np = arr_np[0]
+            
+            # We'll convert to one-hot for visualization
+            num_classes = tasks_dict[t_name].get("out_channels", 2)
+            arr_np = arr_np.astype(int)
+            
+            if is_2d:
+                # 2D: arr_np shape is [H, W]
+                one_hot = np.eye(num_classes)[arr_np]  # [H, W, num_classes]
+                arr_np = one_hot.transpose(2, 0, 1)  # [num_classes, H, W]
+            else:
+                # 3D: arr_np shape is [Z, H, W]
+                one_hot = np.eye(num_classes)[arr_np]  # [Z, H, W, num_classes]
+                arr_np = one_hot.transpose(3, 0, 1, 2)  # [num_classes, Z, H, W]
+        else:
+            # For non-CrossEntropyLoss targets, extract batch dimension
+            if arr_np.ndim > (3 if is_2d else 4):
+                arr_np = arr_np[0]  # Remove batch dimension
+            elif arr_np.ndim == (3 if is_2d else 4):
+                arr_np = arr_np[0]  # Remove batch dimension
+                
         targets_np[t_name] = arr_np
 
     for t_name, p_tensor in outputs_dict.items():

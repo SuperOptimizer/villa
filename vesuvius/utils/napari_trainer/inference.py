@@ -24,7 +24,7 @@ class ModelLoader:
         if not self.checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {self.checkpoint_path}")
             
-        checkpoint_data = torch.load(self.checkpoint_path, map_location='cpu')
+        checkpoint_data = torch.load(self.checkpoint_path, map_location='cpu', weights_only=False)
         
         # Try to extract model configuration
         model_config = {}
@@ -39,7 +39,7 @@ class ModelLoader:
         else:
             print(f"Warning: No model configuration found in checkpoint. Using empty config.")
         
-        from models.model.build_network_from_config import NetworkFromConfig
+        from models.build.build_network_from_config import NetworkFromConfig
         
         class MinimalConfigManager:
             def __init__(self, model_config):
