@@ -9,6 +9,8 @@ import torch
 from torch.optim.lr_scheduler import _LRScheduler
 from typing import Optional
 
+from pytorch_optimizer import CosineAnnealingWarmupRestarts
+
 
 class PolyLRScheduler(_LRScheduler):
     """
@@ -134,7 +136,7 @@ def get_scheduler(scheduler_type: str,
     Factory function to create learning rate schedulers.
     
     Args:
-        scheduler_type: Type of scheduler ('poly', 'warmup_poly', 'cosine', 'step')
+        scheduler_type: Type of scheduler ('poly', 'warmup_poly', 'cosine', 'cosine_warmup', 'step')
         optimizer: The optimizer to schedule
         initial_lr: The initial learning rate
         max_steps: The maximum number of steps
@@ -160,10 +162,31 @@ def get_scheduler(scheduler_type: str,
     elif scheduler_type == 'cosine':
         return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_steps)
     
+    elif scheduler_type == 'cosine_warmup':
+        # Extract parameters for cosine warmup scheduler
+        first_cycle_steps = kwargs.get('first_cycle_steps', max_steps)
+        cycle_mult = kwargs.get('cycle_mult', 1.0)
+        warmup_steps = kwargs.get('warmup_steps', int(0.1 * first_cycle_steps))  # Default 10% warmup
+        gamma = kwargs.get('gamma', 0.9)
+        min_lr = kwargs.get('min_lr', 1e-6)
+        
+        # CosineAnnealingWarmupRestarts expects max_lr not initial_lr
+        return CosineAnnealingWarmupRestarts(
+            optimizer,
+            first_cycle_steps=first_cycle_steps,
+            cycle_mult=cycle_mult,
+            max_lr=initial_lr,  # Use initial_lr as max_lr
+            min_lr=min_lr,
+            warmup_steps=warmup_steps,
+            gamma=gamma
+        )
+    
     elif scheduler_type == 'step':
         step_size = kwargs.get('step_size', max_steps // 3)
         gamma = kwargs.get('gamma', 0.1)
         return torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
+    
+    elif scheduler_type == 
     
     else:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}")

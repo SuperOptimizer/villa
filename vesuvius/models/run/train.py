@@ -269,6 +269,13 @@ class BaseTrainer:
         os.makedirs(self.mgr.ckpt_out_base, exist_ok=True)
         model_ckpt_dir = os.path.join(self.mgr.ckpt_out_base, self.mgr.model_name)
         os.makedirs(model_ckpt_dir, exist_ok=True)
+        
+        # Create the checkpoint directory once at the start of training
+        now = datetime.now()
+        date_str = now.strftime('%m%d%y')
+        time_str = now.strftime('%H%M')
+        ckpt_dir = os.path.join('checkpoints', f"{self.mgr.model_name}_{date_str}{time_str}")
+        os.makedirs(ckpt_dir, exist_ok=True)
 
         valid_checkpoint = (self.mgr.checkpoint_path is not None and 
                            self.mgr.checkpoint_path != "" and 
@@ -424,7 +431,8 @@ class BaseTrainer:
 
                 if (i + 1) % grad_accumulate_n == 0 or (i + 1) == num_iters:
                     scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), 12)
+                    grad_clip = getattr(self.mgr, 'gradient_clip', 12.0)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                     scaler.step(optimizer)
                     scaler.update()
                     
@@ -452,16 +460,10 @@ class BaseTrainer:
                 avg_loss = np.mean(epoch_losses[t_name]) if epoch_losses[t_name] else 0
                 print(f"  {t_name}: Avg Loss = {avg_loss:.4f}")
 
-            now = datetime.now()
-            date_str = now.strftime('%m%d%y')
-            time_str = now.strftime('%H%M')
-
-            ckpt_dir = os.path.join('checkpoints', f"{self.mgr.model_name}_{date_str}{time_str}")
-            os.makedirs(ckpt_dir, exist_ok=True)
-
+            # Use the checkpoint directory created at the start of training
             ckpt_path = os.path.join(
                 ckpt_dir,
-                f"{self.mgr.model_name}_{date_str}{time_str}_epoch{epoch}.pth"
+                f"{self.mgr.model_name}_epoch{epoch}.pth"
                 )
             
             # Save checkpoint with model weights and training state
@@ -837,6 +839,31 @@ def update_config_from_args(mgr, args):
         if mgr.verbose:
             print(f"Disabled spatial transformations (--no-spatial flag set)")
 
+    # Handle gradient clipping
+    if args.grad_clip is not None:
+        mgr.gradient_clip = args.grad_clip
+        mgr.tr_configs["gradient_clip"] = args.grad_clip
+        if mgr.verbose:
+            print(f"Set gradient clipping: {mgr.gradient_clip}")
+    
+    # Handle scheduler selection
+    if args.scheduler is not None:
+        mgr.scheduler = args.scheduler
+        mgr.tr_configs["scheduler"] = args.scheduler
+        if mgr.verbose:
+            print(f"Set learning rate scheduler: {mgr.scheduler}")
+        
+        # If using cosine_warmup, handle its specific parameters
+        if args.scheduler == "cosine_warmup":
+            if not hasattr(mgr, 'scheduler_kwargs'):
+                mgr.scheduler_kwargs = {}
+            
+            # Set warmup steps if provided
+            if args.warmup_steps is not None:
+                mgr.scheduler_kwargs["warmup_steps"] = args.warmup_steps
+                if mgr.verbose:
+                    print(f"Set warmup steps: {args.warmup_steps}")
+
 
 def main():
     """Main entry point for the training script."""
@@ -882,12 +909,19 @@ def main():
     parser.add_argument("--se", action="store_true", help="Enable squeeze and excitation modules in the encoder")
     parser.add_argument("--se-reduction-ratio", type=float, default=0.0625,
                        help="Squeeze excitation reduction ratio (default: 0.0625 = 1/16)")
-    parser.add_argument("--optimizer", type=str, 
-                       choices=["Adam", "AdamW", "SGD", "RMSprop", "Adadelta", "Adagrad", 
-                               "Adamax", "ASGD", "LBFGS", "NAdam", "RAdam", "Rprop", "SparseAdam"],
-                       help="Optimizer to use for training (default: from config or 'AdamW')")
+    parser.add_argument("--optimizer", type=str,
+                       help="Optimizer to use for training (default: from config or 'AdamW, available options in models/optimizers.py')")
     parser.add_argument("--no-spatial", action="store_true",
                        help="Disable spatial/geometric transformations (rotations, flips, etc.) during training")
+    parser.add_argument("--grad-clip", type=float, default=12.0,
+                       help="Gradient clipping value (default: 12.0)")
+    
+    # Learning rate scheduler arguments
+    parser.add_argument("--scheduler", type=str, 
+                       choices=["poly", "warmup_poly", "cosine", "cosine_warmup", "step"],
+                       help="Learning rate scheduler type (default: from config or 'poly')")
+    parser.add_argument("--warmup-steps", type=int,
+                       help="Number of warmup steps for cosine_warmup scheduler (default: 10%% of first cycle)")
 
     args = parser.parse_args()
 
