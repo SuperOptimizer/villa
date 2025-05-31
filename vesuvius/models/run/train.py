@@ -829,6 +829,14 @@ def update_config_from_args(mgr, args):
             loss_list = [s.strip() for s in args.loss.split(',')]
         configure_targets(mgr, loss_list)
 
+    # Handle no_spatial flag
+    if args.no_spatial:
+        mgr.no_spatial = True
+        if hasattr(mgr, 'dataset_config'):
+            mgr.dataset_config['no_spatial'] = True
+        if mgr.verbose:
+            print(f"Disabled spatial transformations (--no-spatial flag set)")
+
 
 def main():
     """Main entry point for the training script."""
@@ -878,6 +886,8 @@ def main():
                        choices=["Adam", "AdamW", "SGD", "RMSprop", "Adadelta", "Adagrad", 
                                "Adamax", "ASGD", "LBFGS", "NAdam", "RAdam", "Rprop", "SparseAdam"],
                        help="Optimizer to use for training (default: from config or 'AdamW')")
+    parser.add_argument("--no-spatial", action="store_true",
+                       help="Disable spatial/geometric transformations (rotations, flips, etc.) during training")
 
     args = parser.parse_args()
 

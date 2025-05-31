@@ -105,6 +105,9 @@ class ConfigManager:
         self.cache_valid_patches = bool(self.dataset_config.get("cache_valid_patches", True))
         self.binarize_labels = bool(self.dataset_config.get("binarize_labels", True)) 
         self.target_value = self.dataset_config.get("target_value", "auto")  # "auto", int, or dict
+        
+        # Spatial transformations control
+        self.no_spatial = bool(self.dataset_config.get("no_spatial", False))
 
         # Normalization configuration
         self.normalization_scheme = self.dataset_config.get("normalization_scheme", "zscore")
