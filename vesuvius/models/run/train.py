@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+from datetime import datetime
 from tqdm import tqdm
 import numpy as np
 import torch
@@ -14,6 +15,10 @@ from models.build.build_network_from_config import NetworkFromConfig
 
 from models.training.loss.losses import _create_loss
 from models.training.optimizers import create_optimizer
+from itertools import cycle
+from contextlib import nullcontext
+from collections import deque   
+import gc                      
 
 
 def compute_gradient_norm(model):
@@ -69,7 +74,7 @@ class BaseTrainer:
     # --- configure dataset --- #
     def _configure_dataset(self, is_training=True):
         # Get data format from config manager, default to zarr
-        data_format = getattr(self.mgr, 'data_format', 'zarr')
+        data_format = getattr(self.mgr, 'data_format', 'zarr').lower()
 
         # Note: Augmentations are now handled in the dataset based on is_training flag
         if data_format == 'napari':
@@ -149,7 +154,12 @@ class BaseTrainer:
         )
 
         print(f"Using {scheduler_type} learning rate scheduler")
-        return scheduler
+        
+        # Determine if this is a per-iteration scheduler
+        per_iter_schedulers = ['onecycle', 'cyclic', 'cosine_warmup']
+        is_per_iteration = scheduler_type.lower() in per_iter_schedulers
+        
+        return scheduler, is_per_iteration
 
     # --- scaler --- #
     def _get_scaler(self, device_type='cuda'):
@@ -195,7 +205,7 @@ class BaseTrainer:
             num_workers = 0
         else:
             # For CUDA or CPU, use the configured number of workers
-            # If train_num_dataloader_workers is not set, default to 0
+            # If train_num_dataloader_workers is not set, default to 4
             if hasattr(self.mgr, 'train_num_dataloader_workers'):
                 num_workers = self.mgr.train_num_dataloader_workers
             else:
@@ -230,7 +240,7 @@ class BaseTrainer:
         model = self._build_model()
         optimizer = self._get_optimizer(model)
         loss_fns = self._build_loss()
-        scheduler = self._get_scheduler(optimizer)
+        scheduler, is_per_iteration_scheduler = self._get_scheduler(optimizer)
 
         if torch.cuda.is_available():
             device = torch.device('cuda')
@@ -271,6 +281,10 @@ class BaseTrainer:
         # Configure dataloaders with separate datasets
         train_dataloader, val_dataloader, train_indices, val_indices = self._configure_dataloaders(train_dataset, val_dataset)
 
+        # Remove the cycle iterator - we'll create fresh iterator each epoch
+        # train_loader_cycle = cycle(train_dataloader)
+
+        # Set up iteration counts using loader length
         # Save initial configuration to checkpoint directory if requested
         if model.save_config:
             self.mgr.save_config()
@@ -355,7 +369,7 @@ class BaseTrainer:
             else:
                 # Start a 'new run' from epoch 0 or 1
                 start_epoch = 0
-                scheduler = self._get_scheduler(optimizer)
+                scheduler, is_per_iteration_scheduler = self._get_scheduler(optimizer)
                 print("Loaded model weights only; starting new training run from epoch 1.")
 
         global_step = 0
@@ -363,249 +377,156 @@ class BaseTrainer:
 
         # ---- training! ----- #
         for epoch in range(start_epoch, self.mgr.max_epoch):
-            # Track gradient norms for this epoch
-            epoch_grad_norms = []
             model.train()
 
-            train_running_losses = {t_name: 0.0 for t_name in self.mgr.targets}
-            # Reset loss components for new epoch
-            if hasattr(self, '_loss_components'):
-                self._loss_components = {t_name: {'dice': [], 'ce': [], 'total': []} for t_name in self.mgr.targets}
-            # Use the length of train indices as the number of iterations per epoch
-            train_dataloader_iter = iter(train_dataloader)
-
-            # Determine number of iterations based on max_steps_per_epoch if set
-            if hasattr(self.mgr, 'max_steps_per_epoch') and self.mgr.max_steps_per_epoch and self.mgr.max_steps_per_epoch > 0:
-                num_iters = min(len(train_indices), self.mgr.max_steps_per_epoch)
+            # Determine number of iterations based on loader
+            if getattr(self.mgr, 'max_steps_per_epoch', None) and self.mgr.max_steps_per_epoch > 0:
+                num_iters = min(len(train_dataloader), self.mgr.max_steps_per_epoch)
             else:
-                num_iters = len(train_indices)  # Use all data (current behavior)
+                num_iters = len(train_dataloader)
 
-            pbar = tqdm(range(num_iters), total=num_iters)
-            steps = 0
-
+            # Initialize epoch metrics
+            epoch_losses = {t_name: [] for t_name in self.mgr.targets}
+            
+            # Create fresh dataloader iterator for this epoch (ensures proper shuffling)
+            train_iter = iter(train_dataloader)
+            
+            # Training loop with tqdm
+            pbar = tqdm(range(num_iters), desc=f'Epoch {epoch+1}/{self.mgr.max_epoch}')
+            
             for i in pbar:
-                try:
-                    data_dict = next(train_dataloader_iter)
-                except StopIteration:
-                    # Reset iterator if we run out of data
-                    train_dataloader_iter = iter(train_dataloader)
-                    data_dict = next(train_dataloader_iter)
+                # Zero gradients at the start of accumulation steps
+                if i % grad_accumulate_n == 0:
+                    optimizer.zero_grad(set_to_none=True)
+                
+                data_dict = next(train_iter)
 
-                if epoch == 0 and i == 0:
+                if epoch == 0 and i == 0 and self.mgr.verbose:
                     print("Items from the first batch -- Double check that your shapes and values are expected:")
-                    for item in data_dict:
-                        if isinstance(data_dict[item], dict):
-                            # Handle dictionary items like ignore_masks
-                            print(f"{item}: (dictionary with keys: {list(data_dict[item].keys())})")
-                            for sub_key, sub_val in data_dict[item].items():
-                                print(f"  {sub_key}: {sub_val.dtype}")
-                                print(f"  {sub_key}: {sub_val.shape}")
-                                print(f"  {sub_key}: min : {sub_val.min()} max : {sub_val.max()}")
+                    for item, val in data_dict.items():
+                        if isinstance(val, dict):
+                            print(f"{item}: (dictionary with keys: {list(val.keys())})")
+                            for sub_key, sub_val in val.items():
+                                print(f"  {sub_key}: {sub_val.dtype}, {sub_val.shape}, min {sub_val.min()} max {sub_val.max()}")
                         else:
-                            # Handle tensor items
-                            print(f"{item}: {data_dict[item].dtype}")
-                            print(f"{item}: {data_dict[item].shape}")
-                            print(f"{item}: min : {data_dict[item].min()} max : {data_dict[item].max()}")
+                            print(f"{item}: {val.dtype}, {val.shape}, min {val.min()} max {val.max()}")
 
                 global_step += 1
-
                 inputs = data_dict["image"].to(device, dtype=torch.float32)
-                # Get the ignore masks dictionary if it exists
                 ignore_masks = None
                 if "ignore_masks" in data_dict:
-                    ignore_masks = {
-                        t_name: mask.to(device, dtype=torch.float32)
-                        for t_name, mask in data_dict["ignore_masks"].items()
-                    }
+                    ignore_masks = {t_name: mask.to(device) for t_name, mask in data_dict["ignore_masks"].items()}
 
-                # Create targets_dict excluding both image and ignore_masks
                 targets_dict = {
                     k: v.to(device, dtype=torch.float32)
                     for k, v in data_dict.items()
-                    if k != "image" and k != "ignore_masks"
+                    if k not in ["image", "ignore_masks"]
                 }
 
-                # forward
-                # Use device-specific autocast or context manager
-                context = (
-                    torch.amp.autocast(device.type) if device.type == 'cuda' 
-                    else torch.amp.autocast('cpu') if device.type == 'cpu' 
-                    else torch.no_op() if device.type == 'mps' 
-                    else torch.no_op()
-                )
+                # mixed-precision context - use torch.amp.autocast for consistency
+                autocast_ctx = torch.amp.autocast(device.type) if device.type in ['cuda', 'cpu'] else nullcontext()
 
-                with context:
+                with autocast_ctx:
                     outputs = model(inputs)
                     total_loss = 0.0
-                    per_task_losses = {}
 
                     for t_name, t_gt in targets_dict.items():
                         t_pred = outputs[t_name]
                         t_loss_fn = loss_fns[t_name]
                         task_weight = self.mgr.targets[t_name].get("weight", 1.0)
 
-
-
-                        # Apply the per-target ignore mask if available
                         if ignore_masks is not None and t_name in ignore_masks:
-                            ignore_mask = ignore_masks[t_name].to(device, dtype=torch.float32)
+                            ignore_mask = ignore_masks[t_name]
 
-                            # Print a message showing we're using the custom mask
-                            if steps == 0 and i == 0:
+                            if i == 0:
                                 print(f"Using custom ignore mask for target {t_name}")
 
-                            # Check if loss function has MaskingLossWrapper
-                            if hasattr(t_loss_fn, 'ignore_index'):
-                                ignore_label = t_loss_fn.ignore_index
-                            else:
-                                # Default ignore index if not wrapped
-                                ignore_label = -100
+                            ignore_label = getattr(t_loss_fn, 'ignore_index', -100)
 
-                            # Ensure ignore mask has the same number of dimensions as target
                             if ignore_mask.dim() == t_gt.dim() - 1:
-                                # Add channel dimension to match target
                                 ignore_mask = ignore_mask.unsqueeze(1)
 
-                            # Apply mask to target: set regions where mask is 1 to ignore_label
-                            t_gt = torch.where(ignore_mask == 1, torch.tensor(ignore_label, dtype=t_gt.dtype, device=t_gt.device), t_gt)
+                            ignore_tensor = torch.tensor(ignore_label, dtype=t_gt.dtype, device=t_gt.device)
+                            t_gt = torch.where(ignore_mask == 1, ignore_tensor, t_gt)
 
-                        # Calculate the loss (no need to pass mask, it's now embedded in the target)
                         t_loss = t_loss_fn(t_pred, t_gt)
                         
-                        # Extract individual loss components if available
-                        if hasattr(t_loss_fn, 'last_dc_loss') and hasattr(t_loss_fn, 'last_ce_loss'):
-                            # Store individual components for display
-                            if not hasattr(self, '_loss_components'):
-                                self._loss_components = {t_name: {'dice': [], 'ce': [], 'total': []} for t_name in self.mgr.targets}
-                            
-                            dice_score = 1.0 - t_loss_fn.last_dc_loss  # Convert from loss to score
-                            ce_loss = t_loss_fn.last_ce_loss
-                            
-                            self._loss_components[t_name]['dice'].append(dice_score)
-                            self._loss_components[t_name]['ce'].append(ce_loss)
-                            self._loss_components[t_name]['total'].append(t_loss.item())
-
                         # Apply task weight to the loss
-                        total_loss += task_weight * t_loss
-                        train_running_losses[t_name] += t_loss.item()
-                        per_task_losses[t_name] = t_loss.item()
+                        weighted_loss = task_weight * t_loss
+                        total_loss += weighted_loss
+                        
+                        # Store the actual loss value (after task weighting but before grad accumulation scaling)
+                        epoch_losses[t_name].append(t_loss.detach().cpu().item())
+
+                    # Scale loss by accumulation steps to maintain same effective batch size
+                    total_loss = total_loss / grad_accumulate_n
 
                 # Check for NaN/Inf loss before backward pass
                 if torch.isnan(total_loss) or torch.isinf(total_loss):
                     print(f"\nERROR: NaN/Inf loss detected at epoch {epoch+1}, step {i}")
-                    print(f"Loss components: {per_task_losses}")
-                    # Save a debug checkpoint
-                    debug_path = f"{model_ckpt_dir}/debug_nan_epoch{epoch+1}_step{i}.pth"
-                    torch.save({
-                        'model': model.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'epoch': epoch,
-                        'step': i,
-                        'loss_values': per_task_losses,
-                        'batch_info': {
-                            'input_stats': {
-                                'min': inputs.min().item(),
-                                'max': inputs.max().item(),
-                                'mean': inputs.mean().item(),
-                                'std': inputs.std().item()
-                            },
-                            'target_stats': {t_name: {
-                                'min': t_gt.min().item(),
-                                'max': t_gt.max().item(),
-                                'mean': t_gt.mean().item(),
-                                'std': t_gt.std().item()
-                            } for t_name, t_gt in targets_dict.items()}
-                        }
-                    }, debug_path)
-                    print(f"Saved debug checkpoint to: {debug_path}")
-                    raise ValueError("Training stopped due to NaN/Inf loss")
+                    print(f"Loss components: {[epoch_losses[t][-1] for t in self.mgr.targets]}")
+                    continue  # Skip this iteration
                 
-                # backward
-                # loss \ accumulation steps to maintain same effective batch size
-                total_loss = total_loss / grad_accumulate_n
-                # backward
+                # Backward pass
                 scaler.scale(total_loss).backward()
 
-                if (i + 1) % grad_accumulate_n == 0:
+                # Perform optimizer step after accumulation
+                if (i + 1) % grad_accumulate_n == 0 or (i + 1) == num_iters:
+                    # Unscale gradients
                     scaler.unscale_(optimizer)
                     
-                    # Calculate gradient norm before clipping
-                    grad_norm_before = compute_gradient_norm(model)
-                    epoch_grad_norms.append(grad_norm_before)
-                    
-                    # Warn if gradients are exploding
-                    if grad_norm_before > 100:
-                        print(f"\nWARNING: Large gradient norm detected: {grad_norm_before:.2f} at epoch {epoch+1}, step {i}")
-                    
+                    # Gradient clipping
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 12)
                     
-                    # Calculate gradient norm after clipping (for debugging)
-                    grad_norm_after = compute_gradient_norm(model)
-                    
+                    # Optimizer step
                     scaler.step(optimizer)
-                    scaler.update()
-                    optimizer.zero_grad(set_to_none=True)
-
-                steps += 1
-
-                desc_parts = []
-                # Add gradient norm to description if available
-                if 'grad_norm_before' in locals() and (i + 1) % grad_accumulate_n == 0:
-                    desc_parts.append(f"grad: {grad_norm_before:.2f}")
                     
-                for t_name in self.mgr.targets:
-                    # Check if we have individual loss components
-                    if hasattr(self, '_loss_components') and t_name in self._loss_components and len(self._loss_components[t_name]['dice']) > 0:
-                        # Use recent values for smoother display
-                        recent_dice = np.mean(self._loss_components[t_name]['dice'][-50:])
-                        recent_ce = np.mean(self._loss_components[t_name]['ce'][-50:])
-                        recent_total = np.mean(self._loss_components[t_name]['total'][-50:])
-                        desc_parts.append(f"{t_name}: Dice={recent_dice:.3f}, CE={recent_ce:.3f}, Total={recent_total:.4f}")
-                    else:
-                        # Fallback to simple loss display
-                        avg_t_loss = train_running_losses[t_name] / steps if steps > 0 else 0
-                        desc_parts.append(f"{t_name}: {avg_t_loss:.4f}")
+                    # Update scaler
+                    scaler.update()
+                    
+                    # Step per-iteration schedulers after optimizer step
+                    if is_per_iteration_scheduler:
+                        scheduler.step()
 
-                desc_str = f"Epoch {epoch + 1} => " + " | ".join(desc_parts)
-                pbar.set_description(desc_str)
-
-            pbar.close()
-
-            # Apply any remaining gradients at the end of the epoch
-            if steps % grad_accumulate_n != 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 12)
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad(set_to_none=True)
-
-            # Step the scheduler once after each epoch
-            scheduler.step()
-
-            # Print epoch summary with individual components
-            print(f"\n[Train] Epoch {epoch + 1} completed.")
-            
-            # Print gradient statistics for this epoch
-            if epoch_grad_norms:
-                avg_grad_norm = np.mean(epoch_grad_norms)
-                max_grad_norm = np.max(epoch_grad_norms)
-                print(f"  Gradient norms - Avg: {avg_grad_norm:.2f}, Max: {max_grad_norm:.2f}")
-            
-            for t_name in self.mgr.targets:
-                # Avoid division by zero
-                epoch_avg = train_running_losses[t_name] / steps if steps > 0 else 0
+                # Update progress bar with current losses
+                loss_str = " | ".join([f"{t}: {np.mean(epoch_losses[t][-100:]):.4f}" 
+                                      for t in self.mgr.targets if len(epoch_losses[t]) > 0])
+                pbar.set_postfix_str(loss_str)
                 
-                # Print individual components if available
-                if hasattr(self, '_loss_components') and t_name in self._loss_components and len(self._loss_components[t_name]['dice']) > 0:
-                    avg_dice = np.mean(self._loss_components[t_name]['dice'])
-                    avg_ce = np.mean(self._loss_components[t_name]['ce'])
-                    print(f"  {t_name}: Avg Dice Score = {avg_dice:.3f}, Avg CE Loss = {avg_ce:.3f}, Avg Total Loss = {epoch_avg:.4f}")
-                else:
-                    print(f"  {t_name}: Avg Loss = {epoch_avg:.4f}")
+                # Cleanup
+                del data_dict, inputs, targets_dict, outputs
+                if ignore_masks is not None:
+                    del ignore_masks
+
+            # Step per-epoch schedulers once after each epoch
+            if not is_per_iteration_scheduler:
+                scheduler.step()
+            
+            # Garbage collection and cache clearing once per epoch
+            gc.collect()
+            if device.type == 'cuda':
+                torch.cuda.empty_cache()
+
+            # Print epoch summary
+            print(f"\n[Train] Epoch {epoch + 1} completed.")
+            for t_name in self.mgr.targets:
+                avg_loss = np.mean(epoch_losses[t_name]) if epoch_losses[t_name] else 0
+                print(f"  {t_name}: Avg Loss = {avg_loss:.4f}")
 
             # Get model and checkpoint path within the model-specific directory
-            ckpt_path = f"{model_ckpt_dir}/{self.mgr.model_name}_{epoch + 1}.pth"
 
+            now = datetime.now()
+            date_str = now.strftime('%m%d%y')
+            time_str = now.strftime('%H%M')
+
+            ckpt_dir = os.path.join('checkpoints', f"{self.mgr.model_name}_{date_str}{time_str}")
+            os.makedirs(ckpt_dir, exist_ok=True)
+
+            ckpt_path = os.path.join(
+                ckpt_dir,
+                f"{self.mgr.model_name}_{date_str}{time_str}_epoch{epoch}.pth"
+                )
+            
             # Save checkpoint with model weights and training state
             # Include the model configuration directly in the checkpoint
             # Also include normalization information
@@ -624,34 +545,32 @@ class BaseTrainer:
                 checkpoint_data['intensity_properties'] = train_dataset.intensity_properties
                 
             torch.save(checkpoint_data, ckpt_path)
-
             print(f"Checkpoint saved to: {ckpt_path}")
-
-            # Configuration is already saved in the checkpoint, no need to save it again here
+            
+            # Explicit cleanup after checkpoint save
+            del checkpoint_data
+            if device.type == 'cuda':
+                torch.cuda.empty_cache()
 
             # clean up old checkpoints and configs -- currently just keeps 10 newest
-            # Path to the model-specific checkpoint directory
             ckpt_dir = Path(model_ckpt_dir)
 
-            # Get all checkpoint files (.pth) and sort by modification time
+
             all_checkpoints = sorted(
                 ckpt_dir.glob(f"{self.mgr.model_name}_*.pth"),
                 key=lambda x: x.stat().st_mtime
             )
 
-            # Get all config files (.yaml) and sort by modification time
             all_configs = sorted(
                 ckpt_dir.glob(f"{self.mgr.model_name}_*.yaml"),
                 key=lambda x: x.stat().st_mtime
             )
 
-            # Keep only the 10 newest checkpoint files
             while len(all_checkpoints) > 10:
                 oldest = all_checkpoints.pop(0)
                 oldest.unlink()
                 print(f"Removed old checkpoint: {oldest}")
 
-            # Keep only the 1 newest config file (others are redundant)
             while len(all_configs) > 1:
                 oldest = all_configs.pop(0)
                 oldest.unlink()
@@ -661,20 +580,18 @@ class BaseTrainer:
             if epoch % 1 == 0:
                 model.eval()
                 with torch.no_grad():
-                    val_running_losses = {t_name: 0.0 for t_name in self.mgr.targets}
-                    val_steps = 0
+                    val_losses = {t_name: [] for t_name in self.mgr.targets}
 
-                    # Use the length of val indices as the number of iterations for validation
                     val_dataloader_iter = iter(val_dataloader)
 
-                    # Determine number of validation iterations based on max_val_steps_per_epoch if set
                     if hasattr(self.mgr, 'max_val_steps_per_epoch') and self.mgr.max_val_steps_per_epoch and self.mgr.max_val_steps_per_epoch > 0:
                         num_val_iters = min(len(val_indices), self.mgr.max_val_steps_per_epoch)
                     else:
-                        num_val_iters = len(val_indices)  # Use all data (current behavior)
+                        num_val_iters = len(val_indices)  # Use all data 
 
-                    pbar = tqdm(range(num_val_iters), total=num_val_iters)
-                    for i in pbar:
+                    val_pbar = tqdm(range(num_val_iters), desc=f'Validation {epoch+1}')
+                    
+                    for i in val_pbar:
                         try:
                             data_dict = next(val_dataloader_iter)
                         except StopIteration:
@@ -708,7 +625,7 @@ class BaseTrainer:
 
                         with context:
                             outputs = model(inputs)
-                            total_val_loss = 0.0
+                            
                             for t_name, t_gt in targets_dict.items():
                                 t_pred = outputs[t_name]
                                 t_loss_fn = loss_fns[t_name]
@@ -734,11 +651,7 @@ class BaseTrainer:
 
                                 # Calculate the loss (no need to pass mask, it's now embedded in the target)
                                 t_loss = t_loss_fn(t_pred, t_gt)
-
-                                total_val_loss += t_loss
-                                val_running_losses[t_name] += t_loss.item()
-
-                            val_steps += 1
+                                val_losses[t_name].append(t_loss.detach().cpu().item())
 
                             if i == 0:
                                 b_idx = 0  # pick which sample in the batch to visualize
@@ -763,25 +676,24 @@ class BaseTrainer:
                                     epoch=epoch,
                                     save_path=debug_img_path
                                 )
+                            
+                            # Update progress bar with current losses
+                            loss_str = " | ".join([f"{t}: {np.mean(val_losses[t]):.4f}" 
+                                                  for t in self.mgr.targets if len(val_losses[t]) > 0])
+                            val_pbar.set_postfix_str(loss_str)
+                            
+                            # Clean up references
+                            del outputs, inputs, targets_dict
+                            if ignore_masks is not None:
+                                del ignore_masks
 
-                    desc_parts = []
+                    # Final avg for each task
+                    print(f"\n[Validation] Epoch {epoch + 1} summary:")
                     for t_name in self.mgr.targets:
-                        # Avoid division by zero
-                        avg_loss_for_t = val_running_losses[t_name] / val_steps if val_steps > 0 else 0
-                        desc_parts.append(f"{t_name} {avg_loss_for_t:.4f}")
-                    desc_str = "Val: " + " | ".join(desc_parts)
-                    pbar.set_description(desc_str)
+                        val_avg = np.mean(val_losses[t_name]) if val_losses[t_name] else 0
+                        print(f"  Task '{t_name}': Avg validation loss = {val_avg:.4f}")
 
-                pbar.close()
-
-                # Final avg for each task
-                print(f"\n[Validation] Epoch {epoch + 1} summary:")
-                for t_name in self.mgr.targets:
-                    # Avoid division by zero
-                    val_avg = val_running_losses[t_name] / val_steps if val_steps > 0 else 0
-                    print(f"  Task '{t_name}': Avg validation loss = {val_avg:.4f}")
-
-            # Scheduler step happens once per epoch after training
+                # Scheduler step happens once per epoch after training
 
         print('Training Finished!')
 
@@ -796,8 +708,6 @@ class BaseTrainer:
             'epoch': self.mgr.max_epoch - 1,
             'model_config': model.final_config
         }
-        
-        # Add normalization information from the dataset
         if hasattr(train_dataset, 'normalization_scheme'):
             final_checkpoint_data['normalization_scheme'] = train_dataset.normalization_scheme
         if hasattr(train_dataset, 'intensity_properties'):
@@ -809,119 +719,117 @@ class BaseTrainer:
         print(f"Model configuration is embedded in the checkpoint")
 
 
-
-def detect_targets_from_data(mgr):
+def detect_data_format(data_path):
     """
-    Detect available targets from the data directory structure.
-
+    Automatically detect the data format based on file extensions in the input directory.
+    
     Parameters
     ----------
-    mgr : ConfigManager
-        The configuration manager instance
+    data_path : Path
+        Path to the data directory containing images/ and labels/ subdirectories
+        
+    Returns
+    -------
+    str or None
+        Detected format ('zarr' or 'image') or None if cannot be determined
     """
-    data_path = Path(mgr.data_path)
+    data_path = Path(data_path)
     images_dir = data_path / "images"
-
+    labels_dir = data_path / "labels"
+    
     if not images_dir.exists():
-        raise ValueError(f"Images directory not found: {images_dir}")
-
-    # Find target names from image files
-    targets = set()
-
-    if mgr.data_format == "zarr":
-        # Look for .zarr directories with format imageN_target.zarr
-        zarr_dirs = [d for d in images_dir.iterdir() if d.is_dir() and d.suffix == '.zarr']
-        for zarr_dir in zarr_dirs:
-            stem = zarr_dir.stem  # Remove .zarr extension
-            if '_' in stem:
-                target = stem.rsplit('_', 1)[1]
-                targets.add(target)
-
-    elif mgr.data_format == "Image":
-        # Look for .tif files with format imageN_target.tif
-        image_files = images_dir.glob("*.tif, *.tiff, *.png, *.jpg")
-        for image_file in image_files:
-            stem = image_file.stem
-            if '_' in stem:
-                target = stem.rsplit('_', 1)[1]
-                targets.add(target)
-
-    elif mgr.data_format == "napari":
-        # For napari, targets would need to be configured externally
-        # as napari datasets are typically loaded programmatically
-        print("Warning: Target detection not implemented for napari format. Please configure targets in config file.")
-        return
-
-    # Only create default target configuration if no targets are already configured
-    if targets and (not hasattr(mgr, 'targets') or not mgr.targets):
-        mgr.targets = {}
-        for target in sorted(targets):
-            mgr.targets[target] = {
-                "out_channels": 2,  # Always use at least 2 channels
-                "activation": "softmax",  # Use softmax for multi-channel output
-                "loss_fn": "CrossEntropyLoss"  # Use CrossEntropyLoss for 2-channel binary
-            }
-
-        print(f"Detected targets from data: {list(targets)}")
-    elif targets and mgr.targets:
-        # Check if all detected targets are configured
-        configured_targets = set(mgr.targets.keys())
-        missing_targets = targets - configured_targets
-        if missing_targets:
-            print(f"Warning: Detected targets {missing_targets} are not configured in the config file")
-        print(f"Using configured targets: {list(mgr.targets.keys())}")
+        return None
+        
+    # Check for zarr directories and image files
+    zarr_count = 0
+    image_count = 0
+    
+    # Check images directory
+    for item in images_dir.iterdir():
+        if item.is_dir() and item.suffix == '.zarr':
+            zarr_count += 1
+        elif item.is_file() and item.suffix.lower() in ['.tif', '.tiff', '.png', '.jpg', '.jpeg']:
+            image_count += 1
+    
+    # Also check labels directory if it exists
+    if labels_dir.exists():
+        for item in labels_dir.iterdir():
+            if item.is_dir() and item.suffix == '.zarr':
+                zarr_count += 1
+            elif item.is_file() and item.suffix.lower() in ['.tif', '.tiff', '.png', '.jpg', '.jpeg']:
+                image_count += 1
+    
+    # Determine format based on what was found
+    if zarr_count > 0 and image_count == 0:
+        # Only zarr files found
+        return 'zarr'
+    elif image_count > 0:
+        # If there are any image files, it's image format
+        # (even if there are zarr files too, as they may have been created during training)
+        return 'image'
     else:
-        print("No targets detected from data. Please configure targets in config file.")
+        # No recognized files found
+        return None
 
 
-def apply_loss_functions_to_targets(mgr, loss_list):
+def configure_targets(mgr, loss_list=None):
     """
-    Apply loss functions to targets in order.
-
-    Parameters
-    ----------
-    mgr : ConfigManager
-        The configuration manager instance
-    loss_list : list
-        List of loss function names
+    Detect available targets from the data directory and apply optional loss_list.
     """
-    # If no targets are configured yet, detect them from the data
-    if not hasattr(mgr, 'targets') or not mgr.targets:
-        detect_targets_from_data(mgr)
+    # Detect data-based targets if not yet configured
+    if not getattr(mgr, 'targets', None):
+        data_path = Path(mgr.data_path)
+        images_dir = data_path / "images"
+        if not images_dir.exists():
+            raise ValueError(f"Images directory not found: {images_dir}")
 
-    if not mgr.targets:
-        raise ValueError("No targets found. Please ensure your data directory has the correct structure or configure targets in a config file.")
-
-    target_names = list(mgr.targets.keys())
-
-    # Apply loss functions in order
-    for i, target_name in enumerate(target_names):
-        if i < len(loss_list):
-            loss_fn = loss_list[i]
+        targets = set()
+        if mgr.data_format == "zarr":
+            for d in images_dir.iterdir():
+                if d.is_dir() and d.suffix == '.zarr' and '_' in d.stem:
+                    targets.add(d.stem.rsplit('_', 1)[1])
+        elif mgr.data_format.lower() == "image":
+            for ext in ['*.tif','*.tiff','*.png','*.jpg','*.jpeg']:
+                for f in images_dir.glob(ext):
+                    if '_' in f.stem:
+                        targets.add(f.stem.rsplit('_',1)[1])
+        elif mgr.data_format == "napari":
+            print("Warning: target detection not implemented for napari format.")
+        if targets:
+            mgr.targets = {}
+            for t in sorted(targets):
+                mgr.targets[t] = {
+                    "out_channels": 2,
+                    "activation": "softmax",
+                    "loss_fn": "CrossEntropyLoss"
+                }
+            print(f"Detected targets from data: {sorted(targets)}")
         else:
-            # If more targets than loss functions, use the last loss function
-            loss_fn = loss_list[-1] 
+            print("No targets detected from data. Please configure targets in config file.")
 
-        mgr.targets[target_name]["loss_fn"] = loss_fn
-        print(f"Applied {loss_fn} to target '{target_name}'")
+    # Apply loss_list to configured targets, if provided
+    if loss_list:
+        names = list(mgr.targets.keys())
+        for i, tname in enumerate(names):
+            fn = loss_list[i] if i < len(loss_list) else loss_list[-1]
+            mgr.targets[tname]["loss_fn"] = fn
+            print(f"Applied {fn} to target '{tname}'")
 
 
 def update_config_from_args(mgr, args):
     """
     Update ConfigManager with command line arguments.
-
-    Parameters
-    ----------
-    mgr : ConfigManager
-        The configuration manager instance
-    args : argparse.Namespace
-        Parsed command line arguments
     """
-    # Set data path (maps to -i argument)
     mgr.data_path = Path(args.input)
 
-    # Set data format
-    mgr.data_format = args.format
+    if args.format:
+        mgr.data_format = args.format; print(f"Using specified data format: {mgr.data_format}")
+    else:
+        detected = detect_data_format(mgr.data_path)
+        if detected:
+            mgr.data_format = detected; print(f"Auto-detected data format: {mgr.data_format}")
+        else:
+            raise ValueError("Data format could not be determined. Please specify --format.")
 
     # Set checkpoint output directory
     mgr.ckpt_out_base = Path(args.output)
@@ -992,23 +900,19 @@ def update_config_from_args(mgr, args):
 
     # Handle loss functions
     if args.loss is not None:
-        # Parse loss function list like "[SoftDiceLoss, BCEWithLogitsLoss]"
+        # parse loss list
         try:
-            import ast
             loss_list = ast.literal_eval(args.loss)
-            if not isinstance(loss_list, list):
-                loss_list = [loss_list]  # Convert single item to list
-        except (ValueError, SyntaxError):
-            # Try parsing as comma-separated string
+            loss_list = loss_list if isinstance(loss_list, list) else [loss_list]
+        except Exception:
             loss_list = [s.strip() for s in args.loss.split(',')]
-
-        # Apply loss functions to targets in order
-        apply_loss_functions_to_targets(mgr, loss_list)
+        configure_targets(mgr, loss_list)
 
 
 def main():
     """Main entry point for the training script."""
     import argparse
+    import ast
 
     parser = argparse.ArgumentParser(
         description="Train Vesuvius neural networks for ink detection and segmentation",
@@ -1018,10 +922,10 @@ def main():
     # Required arguments
     parser.add_argument("-i", "--input", required=True, 
                        help="Input directory containing images/, labels/, and optionally masks/ subdirectories")
-    parser.add_argument("-o", "--output", required=True,
-                       help="Output directory for saving checkpoints and configurations")
-    parser.add_argument("--format", required=True, choices=["image", "zarr", "napari"],
-                       help="Data format (image: tif, png, or jpg files, zarr: Zarr arrays, napari: Napari layers)")
+    parser.add_argument("-o", "--output", default="checkpoints",
+                       help="Output directory for saving checkpoints and configurations (default: checkpoints)")
+    parser.add_argument("--format", choices=["image", "zarr", "napari"],
+                       help="Data format (image: tif, png, or jpg files, zarr: Zarr arrays, napari: Napari layers). If not specified, will attempt to auto-detect.")
 
     # Optional arguments
     parser.add_argument("--batch-size", type=int, 
@@ -1095,9 +999,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-# During training, you'll get a dict with all outputs
-# outputs = model(input_tensor)
-# sheet_pred = outputs['sheet']          # Shape: [B, 1, D, H, W]
-# normals_pred = outputs['normals']      # Shape: [B, 3, D, H, W]
-# affinities_pred = outputs['affinities']  # Shape: [B, N_affinities, D, H, W]

@@ -569,13 +569,11 @@ class BaseDataset(Dataset):
         if self.normalizer is not None:
             img_patch = self.normalizer.run(img_patch)
         else:
-            # If no normalizer, just convert to float32
             img_patch = img_patch.astype(np.float32)
         
-        # Add channel dimension
-        img_patch = img_patch[np.newaxis, ...]  # Shape: [1, H, W] or [1, D, H, W]
-        
-        return np.ascontiguousarray(img_patch).copy()
+        # Add channel dimension and ensure contiguous
+        img_patch = np.ascontiguousarray(img_patch[np.newaxis, ...])     
+        return img_patch
     
     def _extract_label_patches(self, vol_idx, z, y, x, dz, dy, dx, is_2d):
         """
@@ -694,11 +692,9 @@ class BaseDataset(Dataset):
                         
                 label_patch = pad_or_crop_3d(label_patch, (dz, dy, dx))
             
-            # Add channel dimension
-            label_patch = label_patch[np.newaxis, ...]  # Shape: [1, H, W] or [1, D, H, W]
-            
-            # Ensure consistent data type
-            label_patch = np.ascontiguousarray(label_patch).astype(np.float32).copy()
+            # Add channel dimension and ensure contiguous
+            label_patch = label_patch[np.newaxis, ...]
+            label_patch = np.ascontiguousarray(label_patch, dtype=np.float32)  
             label_patches[t_name] = label_patch
             
         return label_patches
@@ -1071,9 +1067,34 @@ class BaseDataset(Dataset):
         # 5. Convert to tensors and format for the model
         data_dict = self._prepare_tensors(img_patch, label_patches, ignore_mask, vol_idx, is_2d)
         
+        # Clean up intermediate numpy arrays
+        del img_patch, label_patches
+        if ignore_mask is not None:
+            del ignore_mask
+        
         # 6. Apply augmentations if in training mode
         if self.is_training and self.transforms is not None:
             # Apply transforms directly to the torch tensors
             data_dict = self.transforms(**data_dict)
         
         return data_dict
+    
+    def clear_transform_cache(self):
+        """
+        Clear any cached state in transforms to prevent memory accumulation.
+        This should be called periodically during training.
+        """
+        if hasattr(self, 'transforms') and self.transforms is not None:
+            # Clear any potential cached state in individual transforms
+            if hasattr(self.transforms, 'transforms'):
+                for transform in self.transforms.transforms:
+                    # Clear any cached random state or parameters
+                    if hasattr(transform, '_cached_params'):
+                        delattr(transform, '_cached_params')
+                    # For RandomTransform, clear the wrapped transform too
+                    if hasattr(transform, 'transform') and hasattr(transform.transform, '_cached_params'):
+                        delattr(transform.transform, '_cached_params')
+            
+            # Force garbage collection of any lingering references
+            import gc
+            gc.collect()

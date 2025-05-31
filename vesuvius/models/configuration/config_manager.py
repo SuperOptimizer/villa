@@ -61,11 +61,35 @@ class ConfigManager:
 
         # Training config
         self.optimizer = self.tr_configs.get("optimizer", "SGD")
-        self.initial_lr = float(self.tr_configs.get("initial_lr", 0.01))
-        self.weight_decay = float(self.tr_configs.get("weight_decay", 0.00003))
+        
+        # Set optimizer-specific defaults for learning rate and weight decay
+        if self.optimizer == "AdamW":
+            # AdamW always goes inf/nan w/ 0.01 lr so we use 1e-3
+            default_lr = 1e-3  # 0.001
+            default_weight_decay = 0.01 
+        elif self.optimizer == "SGD":
+            # SGD can handle higher learning rates, on par w/ nnunetv2
+            default_lr = 0.01
+            default_weight_decay = 3e-5  # 0.00003
+        elif self.optimizer == "Adam":
+            default_lr = 1e-3
+            default_weight_decay = 0
+        else:
+            default_lr = 1e-3
+            default_weight_decay = 0
+        
+        # Use config values if provided, otherwise use optimizer-specific defaults
+        self.initial_lr = float(self.tr_configs.get("initial_lr", default_lr))
+        self.weight_decay = float(self.tr_configs.get("weight_decay", default_weight_decay))
+        
+        # Print message if using optimizer-specific defaults
+        if "initial_lr" not in self.tr_configs and self.verbose:
+            print(f"Using {self.optimizer}-specific default learning rate: {self.initial_lr}")
+        if "weight_decay" not in self.tr_configs and self.verbose:
+            print(f"Using {self.optimizer}-specific default weight decay: {self.weight_decay}")
         self.train_batch_size = int(self.tr_configs.get("batch_size", 2))
         self.gradient_accumulation = int(self.tr_configs.get("gradient_accumulation", 1))
-        self.max_steps_per_epoch = int(self.tr_configs.get("max_steps_per_epoch", 200))
+        self.max_steps_per_epoch = int(self.tr_configs.get("", 200))
         self.max_val_steps_per_epoch = int(self.tr_configs.get("max_val_steps_per_epoch", 25))
         self.train_num_dataloader_workers = int(self.tr_configs.get("num_dataloader_workers", 4))
         self.max_epoch = int(self.tr_configs.get("max_epoch", 1000))
