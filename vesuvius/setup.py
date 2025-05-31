@@ -65,7 +65,8 @@ setup(
         'opencv-python-headless',
         'pytorch-lightning',
         'libigl',
-        'psutil'
+        'psutil',
+        'pytorch-optimizer'
     ],
     python_requires='>=3.8',
     include_package_data=True,

@@ -68,6 +68,22 @@ def create_optimizer(optimizer_config, model):
         optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum,
                               dampening=dampening, nesterov=nesterov,
                               weight_decay=weight_decay)
+    elif optim_name == 'StableAdamW' : 
+        from pytorch_optimizer import StableAdamW
+        optimizer = StableAdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    
+    elif optim_name == 'AdaBelief' : 
+        from pytorch_optimizer import AdaBelief
+        optimizer = AdaBelief(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
+    elif optim_name == 'Muon' : 
+        from pytorch_optimizer import Muon
+        optimizer = Muon(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    
+    elif optim_name == 'Shampoo' :
+        from pytorch_optimizer import Shampoo
+        optimizer = Shampoo(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
     else:  # Adam is default
         betas = tuple(optimizer_config.get('betas', (0.9, 0.999)))
         optimizer = optim.Adam(model.parameters(), lr=learning_rate, betas=betas,
