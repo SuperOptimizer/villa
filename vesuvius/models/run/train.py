@@ -49,14 +49,11 @@ class BaseTrainer:
         if mgr is not None:
             self.mgr = mgr
         else:
-            # Import ConfigManager here to avoid circular imports
             from vesuvius.models.configuration.config_manager import ConfigManager
             self.mgr = ConfigManager(verbose)
 
     # --- build model --- #
     def _build_model(self):
-        # Ensure model_config is initialized
-        # If running directly, we need to make sure config is not None
         if not hasattr(self.mgr, 'model_config') or self.mgr.model_config is None:
             print("Initializing model_config with defaults")
             self.mgr.model_config = {
@@ -73,10 +70,9 @@ class BaseTrainer:
 
     # --- configure dataset --- #
     def _configure_dataset(self, is_training=True):
-        # Get data format from config manager, default to zarr
+
         data_format = getattr(self.mgr, 'data_format', 'zarr').lower()
 
-        # Note: Augmentations are now handled in the dataset based on is_training flag
         if data_format == 'napari':
             dataset = NapariDataset(mgr=self.mgr, is_training=is_training)
         elif data_format == 'image':
@@ -92,16 +88,12 @@ class BaseTrainer:
 
     # --- losses ---- #
     def _build_loss(self):
-        # Use the centralized _create_loss function to instantiate loss functions
         loss_fns = {}
         for task_name, task_info in self.mgr.targets.items():
             loss_fn_name = task_info.get("loss_fn", "BCEDiceLoss")
-            print(f"DEBUG: Target {task_name} using loss function: {loss_fn_name}")
+            print(f"Target {task_name} using loss function: {loss_fn_name}")
             
-            # Get loss kwargs from task info, or use empty dict for defaults
             loss_config = task_info.get("loss_kwargs", {})
-            
-            # Get other parameters that might be needed
             weight = loss_config.get("weight", None)
             ignore_index = loss_config.get("ignore_index", -100)
             pos_weight = loss_config.get("pos_weight", None)
@@ -111,7 +103,6 @@ class BaseTrainer:
                 ignore_index = -100
                 print(f"Setting ignore_index=-100 for target '{task_name}' due to compute_loss_on_labeled_only=True")
             
-            # Create the loss function using the factory
             try:
                 loss_fns[task_name] = _create_loss(
                     name=loss_fn_name,
@@ -138,13 +129,10 @@ class BaseTrainer:
 
     # --- scheduler --- #
     def _get_scheduler(self, optimizer):
-        # Get scheduler type from config or use 'poly' as default
-        scheduler_type = getattr(self.mgr, 'scheduler', 'poly')
 
-        # Get scheduler-specific kwargs from config if available
+        scheduler_type = getattr(self.mgr, 'scheduler', 'poly')
         scheduler_kwargs = getattr(self.mgr, 'scheduler_kwargs', {})
 
-        # Use the factory function to create the scheduler
         scheduler = get_scheduler(
             scheduler_type=scheduler_type,
             optimizer=optimizer,
@@ -155,7 +143,7 @@ class BaseTrainer:
 
         print(f"Using {scheduler_type} learning rate scheduler")
         
-        # Determine if this is a per-iteration scheduler
+        # set some per iteration schedulers so we can easily step them once per iter vs once per epoch
         per_iter_schedulers = ['onecycle', 'cyclic', 'cosine_warmup']
         is_per_iteration = scheduler_type.lower() in per_iter_schedulers
         
@@ -185,7 +173,7 @@ class BaseTrainer:
 
     # --- dataloaders --- #
     def _configure_dataloaders(self, train_dataset, val_dataset=None):
-        # If val_dataset is not provided, use the same dataset for validation
+
         if val_dataset is None:
             val_dataset = train_dataset
             
@@ -228,15 +216,14 @@ class BaseTrainer:
 
     def train(self):
 
-        # Create training dataset with augmentations
+        # the is_training flag forces the dataset to perform augmentations
+        # we put augmentations in the dataset class so we can use the __getitem__ method
+        # for free multi processing of augmentations 
         train_dataset = self._configure_dataset(is_training=True)
-        
-        # Create validation dataset without augmentations
         val_dataset = self._configure_dataset(is_training=False)
         
-        # Auto-detect channels from dataset if needed
+
         self.mgr.auto_detect_channels(train_dataset)
-        
         model = self._build_model()
         optimizer = self._get_optimizer(model)
         loss_fns = self._build_loss()
@@ -252,20 +239,14 @@ class BaseTrainer:
             device = torch.device('cpu')
             print("Using CPU device")
 
-        # Apply weight initialization with recommended negative_slope=0.2 for LeakyReLU
-        # Do this BEFORE device transfer and compilation
-
         model.apply(lambda module: init_weights_he(module, neg_slope=0.2))
-
         model = model.to(device)
 
         # Only compile the model if it's on CUDA (not supported on MPS/CPU)
         if device.type == 'cuda':
             model = torch.compile(model, mode="default", fullgraph=False)
 
-        # Create a no_op context manager as it might be needed for MPS
         if not hasattr(torch, 'no_op'):
-            # Define a simple no-op context manager if not available
             class NullContextManager:
                 def __enter__(self):
                     return self
@@ -275,30 +256,20 @@ class BaseTrainer:
 
             torch.no_op = lambda: NullContextManager()
 
-        # Create appropriate scaler for the device
-        scaler = self._get_scaler(device.type)
 
-        # Configure dataloaders with separate datasets
+        scaler = self._get_scaler(device.type)
         train_dataloader, val_dataloader, train_indices, val_indices = self._configure_dataloaders(train_dataset, val_dataset)
 
-        # Remove the cycle iterator - we'll create fresh iterator each epoch
-        # train_loader_cycle = cycle(train_dataloader)
-
-        # Set up iteration counts using loader length
-        # Save initial configuration to checkpoint directory if requested
         if model.save_config:
             self.mgr.save_config()
 
         start_epoch = 0
 
-        # Create base checkpoint directory if it doesn't exist
-        os.makedirs(self.mgr.ckpt_out_base, exist_ok=True)
 
-        # Create a specific directory for this model's checkpoints and configs
+        os.makedirs(self.mgr.ckpt_out_base, exist_ok=True)
         model_ckpt_dir = os.path.join(self.mgr.ckpt_out_base, self.mgr.model_name)
         os.makedirs(model_ckpt_dir, exist_ok=True)
 
-        # Check for a valid, non-empty checkpoint path
         valid_checkpoint = (self.mgr.checkpoint_path is not None and 
                            self.mgr.checkpoint_path != "" and 
                            Path(self.mgr.checkpoint_path).exists())
@@ -307,16 +278,13 @@ class BaseTrainer:
             print(f"Loading checkpoint from {self.mgr.checkpoint_path}")
             checkpoint = torch.load(self.mgr.checkpoint_path, map_location=device)
 
-            # Check if this checkpoint has model configuration
             if 'model_config' in checkpoint:
                 print("Found model configuration in checkpoint, using it to initialize the model")
 
-                # Update the manager with the saved configuration if needed
                 if hasattr(self.mgr, 'targets') and 'targets' in checkpoint['model_config']:
                     self.mgr.targets = checkpoint['model_config']['targets']
                     print(f"Updated targets from checkpoint: {self.mgr.targets}")
             
-            # Check for normalization information in checkpoint
             if 'normalization_scheme' in checkpoint:
                 print(f"Found normalization scheme in checkpoint: {checkpoint['normalization_scheme']}")
                 self.mgr.normalization_scheme = checkpoint['normalization_scheme']
@@ -328,20 +296,16 @@ class BaseTrainer:
                 self.mgr.intensity_properties = checkpoint['intensity_properties']
                 if hasattr(self.mgr, 'dataset_config'):
                     self.mgr.dataset_config['intensity_properties'] = checkpoint['intensity_properties']
-                # Print the loaded intensity properties
                 print("Loaded intensity properties:")
                 for key, value in checkpoint['intensity_properties'].items():
                     print(f"  {key}: {value:.4f}")
 
-                # We may need to rebuild the model with the saved configuration
                 if model.autoconfigure != checkpoint['model_config'].get('autoconfigure', True):
                     print("Model autoconfiguration differs, rebuilding model from checkpoint config")
 
-                    # Create a version of the manager with the checkpoint's configuration
                     class ConfigWrapper:
                         def __init__(self, config_dict, base_mgr):
                             self.__dict__.update(config_dict)
-                            # Add any missing attributes from the base manager
                             for attr_name in dir(base_mgr):
                                 if not attr_name.startswith('__') and not hasattr(self, attr_name):
                                     setattr(self, attr_name, getattr(base_mgr, attr_name))
@@ -350,11 +314,8 @@ class BaseTrainer:
                     model = NetworkFromConfig(config_wrapper)
 
                     model = model.to(device)
-                    # Only compile for CUDA with explicit parameters
                     if device.type == 'cuda':
-                        model = torch.compile(model, mode="default", fullgraph=False)
-
-                    # Also recreate optimizer since the model parameters changed
+                        model = torch.compile(model)
                     optimizer = self._get_optimizer(model)
 
             # Load model weights
@@ -367,7 +328,6 @@ class BaseTrainer:
                 start_epoch = checkpoint['epoch'] + 1
                 print(f"Resuming training from epoch {start_epoch + 1}")
             else:
-                # Start a 'new run' from epoch 0 or 1
                 start_epoch = 0
                 scheduler, is_per_iteration_scheduler = self._get_scheduler(optimizer)
                 print("Loaded model weights only; starting new training run from epoch 1.")
@@ -377,25 +337,19 @@ class BaseTrainer:
 
         # ---- training! ----- #
         for epoch in range(start_epoch, self.mgr.max_epoch):
+
             model.train()
 
-            # Determine number of iterations based on loader
             if getattr(self.mgr, 'max_steps_per_epoch', None) and self.mgr.max_steps_per_epoch > 0:
                 num_iters = min(len(train_dataloader), self.mgr.max_steps_per_epoch)
             else:
                 num_iters = len(train_dataloader)
 
-            # Initialize epoch metrics
             epoch_losses = {t_name: [] for t_name in self.mgr.targets}
-            
-            # Create fresh dataloader iterator for this epoch (ensures proper shuffling)
             train_iter = iter(train_dataloader)
-            
-            # Training loop with tqdm
             pbar = tqdm(range(num_iters), desc=f'Epoch {epoch+1}/{self.mgr.max_epoch}')
             
             for i in pbar:
-                # Zero gradients at the start of accumulation steps
                 if i % grad_accumulate_n == 0:
                     optimizer.zero_grad(set_to_none=True)
                 
@@ -423,7 +377,6 @@ class BaseTrainer:
                     if k not in ["image", "ignore_masks"]
                 }
 
-                # mixed-precision context - use torch.amp.autocast for consistency
                 autocast_ctx = torch.amp.autocast(device.type) if device.type in ['cuda', 'cpu'] else nullcontext()
 
                 with autocast_ctx:
@@ -451,7 +404,6 @@ class BaseTrainer:
 
                         t_loss = t_loss_fn(t_pred, t_gt)
                         
-                        # Apply task weight to the loss
                         weighted_loss = task_weight * t_loss
                         total_loss += weighted_loss
                         
@@ -467,33 +419,22 @@ class BaseTrainer:
                     print(f"Loss components: {[epoch_losses[t][-1] for t in self.mgr.targets]}")
                     continue  # Skip this iteration
                 
-                # Backward pass
+                # backward 
                 scaler.scale(total_loss).backward()
 
-                # Perform optimizer step after accumulation
                 if (i + 1) % grad_accumulate_n == 0 or (i + 1) == num_iters:
-                    # Unscale gradients
                     scaler.unscale_(optimizer)
-                    
-                    # Gradient clipping
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 12)
-                    
-                    # Optimizer step
                     scaler.step(optimizer)
-                    
-                    # Update scaler
                     scaler.update()
                     
-                    # Step per-iteration schedulers after optimizer step
                     if is_per_iteration_scheduler:
                         scheduler.step()
 
-                # Update progress bar with current losses
                 loss_str = " | ".join([f"{t}: {np.mean(epoch_losses[t][-100:]):.4f}" 
                                       for t in self.mgr.targets if len(epoch_losses[t]) > 0])
                 pbar.set_postfix_str(loss_str)
                 
-                # Cleanup
                 del data_dict, inputs, targets_dict, outputs
                 if ignore_masks is not None:
                     del ignore_masks
@@ -502,18 +443,14 @@ class BaseTrainer:
             if not is_per_iteration_scheduler:
                 scheduler.step()
             
-            # Garbage collection and cache clearing once per epoch
             gc.collect()
             if device.type == 'cuda':
                 torch.cuda.empty_cache()
 
-            # Print epoch summary
             print(f"\n[Train] Epoch {epoch + 1} completed.")
             for t_name in self.mgr.targets:
                 avg_loss = np.mean(epoch_losses[t_name]) if epoch_losses[t_name] else 0
                 print(f"  {t_name}: Avg Loss = {avg_loss:.4f}")
-
-            # Get model and checkpoint path within the model-specific directory
 
             now = datetime.now()
             date_str = now.strftime('%m%d%y')
@@ -553,16 +490,15 @@ class BaseTrainer:
                 torch.cuda.empty_cache()
 
             # clean up old checkpoints and configs -- currently just keeps 10 newest
-            ckpt_dir = Path(model_ckpt_dir)
-
+            ckpt_dir_parent = Path(model_ckpt_dir)
 
             all_checkpoints = sorted(
-                ckpt_dir.glob(f"{self.mgr.model_name}_*.pth"),
+                ckpt_dir_parent.glob(f"{self.mgr.model_name}_*.pth"),
                 key=lambda x: x.stat().st_mtime
             )
 
             all_configs = sorted(
-                ckpt_dir.glob(f"{self.mgr.model_name}_*.yaml"),
+                ckpt_dir_parent.glob(f"{self.mgr.model_name}_*.yaml"),
                 key=lambda x: x.stat().st_mtime
             )
 
@@ -595,12 +531,10 @@ class BaseTrainer:
                         try:
                             data_dict = next(val_dataloader_iter)
                         except StopIteration:
-                            # Reset iterator if we run out of data
                             val_dataloader_iter = iter(val_dataloader)
                             data_dict = next(val_dataloader_iter)
 
                         inputs = data_dict["image"].to(device, dtype=torch.float32)
-                        # Get the ignore masks dictionary if it exists
                         ignore_masks = None
                         if "ignore_masks" in data_dict:
                             ignore_masks = {
@@ -608,14 +542,12 @@ class BaseTrainer:
                                 for t_name, mask in data_dict["ignore_masks"].items()
                             }
 
-                        # Create targets_dict excluding both image and ignore_masks
                         targets_dict = {
                             k: v.to(device, dtype=torch.float32)
                             for k, v in data_dict.items()
                             if k != "image" and k != "ignore_masks"
                         }
 
-                        # Use the same context as in training
                         context = (
                             torch.amp.autocast(device.type) if device.type == 'cuda' 
                             else torch.amp.autocast('cpu') if device.type == 'cpu' 
@@ -630,31 +562,25 @@ class BaseTrainer:
                                 t_pred = outputs[t_name]
                                 t_loss_fn = loss_fns[t_name]
 
-                                # Apply the per-target ignore mask if available
                                 if ignore_masks is not None and t_name in ignore_masks:
                                     ignore_mask = ignore_masks[t_name].to(device, dtype=torch.float32)
 
-                                    # Check if loss function has MaskingLossWrapper
                                     if hasattr(t_loss_fn, 'ignore_index'):
                                         ignore_label = t_loss_fn.ignore_index
                                     else:
-                                        # Default ignore index if not wrapped
                                         ignore_label = -100
 
-                                    # Ensure ignore mask has the same number of dimensions as target
                                     if ignore_mask.dim() == t_gt.dim() - 1:
-                                        # Add channel dimension to match target
                                         ignore_mask = ignore_mask.unsqueeze(1)
 
                                     # Apply mask to target: set regions where mask is 1 to ignore_label
                                     t_gt = torch.where(ignore_mask == 1, torch.tensor(ignore_label, dtype=t_gt.dtype, device=t_gt.device), t_gt)
 
-                                # Calculate the loss (no need to pass mask, it's now embedded in the target)
                                 t_loss = t_loss_fn(t_pred, t_gt)
                                 val_losses[t_name].append(t_loss.detach().cpu().item())
 
                             if i == 0:
-                                b_idx = 0  # pick which sample in the batch to visualize
+                                b_idx = 0  
                                 # Slicing shape: [1, c, z, y, x ]
                                 inputs_first = inputs[b_idx: b_idx + 1]
 
@@ -666,41 +592,35 @@ class BaseTrainer:
                                 for t_name, p_tensor in outputs.items():
                                     outputs_dict_first[t_name] = p_tensor[b_idx: b_idx + 1]
 
-                                # create debug visualization (gif for 3D, png for 2D) in the model-specific directory
-                                debug_img_path = f"{model_ckpt_dir}/{self.mgr.model_name}_debug.gif"
+                                debug_img_path = f"{ckpt_dir}/{self.mgr.model_name}_debug_epoch{epoch}.gif"
                                 save_debug(
                                     input_volume=inputs_first,
                                     targets_dict=targets_dict_first,
                                     outputs_dict=outputs_dict_first,
-                                    tasks_dict=self.mgr.targets, # your dictionary, e.g. {"sheet": {"activation":"sigmoid"}, "normals": {"activation":"none"}}
+                                    tasks_dict=self.mgr.targets, # dictionary, e.g. {"sheet": {"activation":"sigmoid"}, "normals": {"activation":"none"}}
                                     epoch=epoch,
                                     save_path=debug_img_path
                                 )
                             
-                            # Update progress bar with current losses
+
                             loss_str = " | ".join([f"{t}: {np.mean(val_losses[t]):.4f}" 
                                                   for t in self.mgr.targets if len(val_losses[t]) > 0])
                             val_pbar.set_postfix_str(loss_str)
                             
-                            # Clean up references
                             del outputs, inputs, targets_dict
                             if ignore_masks is not None:
                                 del ignore_masks
 
-                    # Final avg for each task
                     print(f"\n[Validation] Epoch {epoch + 1} summary:")
                     for t_name in self.mgr.targets:
                         val_avg = np.mean(val_losses[t_name]) if val_losses[t_name] else 0
                         print(f"  Task '{t_name}': Avg validation loss = {val_avg:.4f}")
 
-                # Scheduler step happens once per epoch after training
 
         print('Training Finished!')
 
-        # Save final model with configuration in the model-specific directory
         final_model_path = f"{model_ckpt_dir}/{self.mgr.model_name}_final.pth"
 
-        # Save the complete checkpoint with configuration embedded
         final_checkpoint_data = {
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
@@ -900,6 +820,7 @@ def update_config_from_args(mgr, args):
 
     # Handle loss functions
     if args.loss is not None:
+        import ast
         # parse loss list
         try:
             loss_list = ast.literal_eval(args.loss)
@@ -960,25 +881,21 @@ def main():
 
     args = parser.parse_args()
 
-    # Validate required arguments
+
     if not Path(args.input).exists():
         raise ValueError(f"Input directory does not exist: {args.input}")
 
-    # Create output directory if it doesn't exist
     Path(args.output).mkdir(parents=True, exist_ok=True)
 
-    # Initialize ConfigManager
     from models.configuration.config_manager import ConfigManager
     mgr = ConfigManager(verbose=args.verbose)
 
-    # Load config file if provided, otherwise initialize with defaults
     if args.config_path:
         if not Path(args.config_path).exists():
             raise ValueError(f"Config file does not exist: {args.config_path}")
         mgr.load_config(args.config_path)
         print(f"Loaded configuration from: {args.config_path}")
     else:
-        # Initialize with defaults - first set up the basic config dictionaries
         mgr.tr_info = {}
         mgr.tr_configs = {}
         mgr.model_config = {}
@@ -986,10 +903,8 @@ def main():
         mgr._init_attributes()
         print("Initialized with default configuration")
 
-    # Update configuration with command line arguments
     update_config_from_args(mgr, args)
 
-    # Create and run trainer
     trainer = BaseTrainer(mgr=mgr, verbose=args.verbose)
 
     print("Starting training...")
