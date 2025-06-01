@@ -150,10 +150,10 @@ class BaseTrainer:
         return scheduler, is_per_iteration
 
     # --- scaler --- #
-    def _get_scaler(self, device_type='cuda'):
-        # for cuda, we can use a grad scaler for mixed precision training
-        # for mps or cpu, we create a dummy scaler that does nothing
-        if device_type == 'cuda':
+    def _get_scaler(self, device_type='cuda', use_amp=True):
+        # for cuda, we can use a grad scaler for mixed precision training if amp is enabled
+        # for mps or cpu, or when amp is disabled, we create a dummy scaler that does nothing
+        if device_type == 'cuda' and use_amp:
             return torch.amp.GradScaler()
         else:
             class DummyScaler:
@@ -257,13 +257,27 @@ class BaseTrainer:
             torch.no_op = lambda: NullContextManager()
 
 
-        scaler = self._get_scaler(device.type)
+        # Check if AMP is disabled
+        use_amp = not getattr(self.mgr, 'no_amp', False)
+        if not use_amp:
+            print("Automatic Mixed Precision (AMP) is disabled")
+        elif device.type == 'cuda':
+            print("Using Automatic Mixed Precision (AMP) for training")
+        
+        scaler = self._get_scaler(device.type, use_amp=use_amp)
         train_dataloader, val_dataloader, train_indices, val_indices = self._configure_dataloaders(train_dataset, val_dataset)
 
         if model.save_config:
             self.mgr.save_config()
 
         start_epoch = 0
+        
+        # track the validation loss so we can save the best checkpoints
+        val_loss_history = {}  # {epoch: validation_loss}
+        checkpoint_history = deque(maxlen=3)  
+        best_checkpoints = []  
+        debug_gif_history = deque(maxlen=3) 
+        best_debug_gifs = []  # List of (val_loss, epoch, gif_path)
 
 
         os.makedirs(self.mgr.ckpt_out_base, exist_ok=True)
@@ -356,6 +370,11 @@ class BaseTrainer:
             train_iter = iter(train_dataloader)
             pbar = tqdm(range(num_iters), desc=f'Epoch {epoch+1}/{self.mgr.max_epoch}')
             
+            print(f"Using optimizer : {optimizer.__class__.__name__}")
+            print(f"Using scheduler : {scheduler.__class__.__name__} (per-iteration: {is_per_iteration_scheduler})")
+            print(f"Initial learning rate : {self.mgr.initial_lr}")
+            print(f"Gradient accumulation steps : {grad_accumulate_n}")
+
             for i in pbar:
                 if i % grad_accumulate_n == 0:
                     optimizer.zero_grad(set_to_none=True)
@@ -384,7 +403,11 @@ class BaseTrainer:
                     if k not in ["image", "ignore_masks"]
                 }
 
-                autocast_ctx = torch.amp.autocast(device.type) if device.type in ['cuda', 'cpu'] else nullcontext()
+                # Only use autocast if AMP is enabled
+                if use_amp and device.type in ['cuda', 'cpu']:
+                    autocast_ctx = torch.amp.autocast(device.type)
+                else:
+                    autocast_ctx = nullcontext()
 
                 with autocast_ctx:
                     outputs = model(inputs)
@@ -419,12 +442,6 @@ class BaseTrainer:
 
                     # Scale loss by accumulation steps to maintain same effective batch size
                     total_loss = total_loss / grad_accumulate_n
-
-                # Check for NaN/Inf loss before backward pass
-                if torch.isnan(total_loss) or torch.isinf(total_loss):
-                    print(f"\nERROR: NaN/Inf loss detected at epoch {epoch+1}, step {i}")
-                    print(f"Loss components: {[epoch_losses[t][-1] for t in self.mgr.targets]}")
-                    continue  # Skip this iteration
                 
                 # backward 
                 scaler.scale(total_loss).backward()
@@ -486,33 +503,13 @@ class BaseTrainer:
             torch.save(checkpoint_data, ckpt_path)
             print(f"Checkpoint saved to: {ckpt_path}")
             
+            # Add to checkpoint history
+            checkpoint_history.append((epoch, ckpt_path))
+            
             # Explicit cleanup after checkpoint save
             del checkpoint_data
             if device.type == 'cuda':
                 torch.cuda.empty_cache()
-
-            # clean up old checkpoints and configs -- currently just keeps 10 newest
-            ckpt_dir_parent = Path(model_ckpt_dir)
-
-            all_checkpoints = sorted(
-                ckpt_dir_parent.glob(f"{self.mgr.model_name}_*.pth"),
-                key=lambda x: x.stat().st_mtime
-            )
-
-            all_configs = sorted(
-                ckpt_dir_parent.glob(f"{self.mgr.model_name}_*.yaml"),
-                key=lambda x: x.stat().st_mtime
-            )
-
-            while len(all_checkpoints) > 10:
-                oldest = all_checkpoints.pop(0)
-                oldest.unlink()
-                print(f"Removed old checkpoint: {oldest}")
-
-            while len(all_configs) > 1:
-                oldest = all_configs.pop(0)
-                oldest.unlink()
-                print(f"Removed old config: {oldest}")
 
             # ---- validation ----- #
             if epoch % 1 == 0:
@@ -550,12 +547,16 @@ class BaseTrainer:
                             if k != "image" and k != "ignore_masks"
                         }
 
-                        context = (
-                            torch.amp.autocast(device.type) if device.type == 'cuda' 
-                            else torch.amp.autocast('cpu') if device.type == 'cpu' 
-                            else torch.no_op() if device.type == 'mps' 
-                            else torch.no_op()
-                        )
+                        # Only use autocast if AMP is enabled
+                        if use_amp:
+                            context = (
+                                torch.amp.autocast(device.type) if device.type == 'cuda' 
+                                else torch.amp.autocast('cpu') if device.type == 'cpu' 
+                                else torch.no_op() if device.type == 'mps' 
+                                else torch.no_op()
+                            )
+                        else:
+                            context = nullcontext()
 
                         with context:
                             outputs = model(inputs)
@@ -603,6 +604,7 @@ class BaseTrainer:
                                     epoch=epoch,
                                     save_path=debug_img_path
                                 )
+                                debug_gif_history.append((epoch, debug_img_path))
                             
 
                             loss_str = " | ".join([f"{t}: {np.mean(val_losses[t]):.4f}" 
@@ -614,9 +616,93 @@ class BaseTrainer:
                                 del ignore_masks
 
                     print(f"\n[Validation] Epoch {epoch + 1} summary:")
+                    total_val_loss = 0.0
                     for t_name in self.mgr.targets:
                         val_avg = np.mean(val_losses[t_name]) if val_losses[t_name] else 0
                         print(f"  Task '{t_name}': Avg validation loss = {val_avg:.4f}")
+                        total_val_loss += val_avg
+                    
+                    # Average validation loss across all tasks
+                    avg_val_loss = total_val_loss / len(self.mgr.targets) if self.mgr.targets else 0
+                    val_loss_history[epoch] = avg_val_loss
+                    
+                    # Update best checkpoints
+                    if epoch in [e for e, _ in checkpoint_history]:
+                        ckpt_path = next(p for e, p in checkpoint_history if e == epoch)
+                        best_checkpoints.append((avg_val_loss, epoch, ckpt_path))
+                        best_checkpoints.sort(key=lambda x: x[0])  # Sort by validation loss
+                        
+                        # Keep only 2 best checkpoints
+                        if len(best_checkpoints) > 2:
+                            _, _, removed_path = best_checkpoints.pop(-1)  # Remove worst
+                            # Check if the removed checkpoint is not in the last 3
+                            if removed_path not in [p for _, p in checkpoint_history]:
+                                if Path(removed_path).exists():
+                                    Path(removed_path).unlink()
+                                    print(f"Removed checkpoint with higher validation loss: {removed_path}")
+                    
+                    # Update best debug gifs
+                    if epoch in [e for e, _ in debug_gif_history]:
+                        gif_path = next(p for e, p in debug_gif_history if e == epoch)
+                        best_debug_gifs.append((avg_val_loss, epoch, gif_path))
+                        best_debug_gifs.sort(key=lambda x: x[0])  # Sort by validation loss
+                        
+                        # Keep only 2 best debug gifs
+                        if len(best_debug_gifs) > 2:
+                            _, _, removed_gif = best_debug_gifs.pop(-1)  # Remove worst
+                            # Check if the removed gif is not in the last 3
+                            if removed_gif not in [p for _, p in debug_gif_history]:
+                                if Path(removed_gif).exists():
+                                    Path(removed_gif).unlink()
+                                    print(f"Removed debug gif with higher validation loss: {removed_gif}")
+                    
+                    # Clean up checkpoints not in last 3 or best 2
+                    all_checkpoints_to_keep = set()
+                    # Add last 3
+                    for _, ckpt_path in checkpoint_history:
+                        all_checkpoints_to_keep.add(Path(ckpt_path))
+                    # Add best 2
+                    for _, _, ckpt_path in best_checkpoints[:2]:
+                        all_checkpoints_to_keep.add(Path(ckpt_path))
+                    
+                    # Remove checkpoints not in the keep set
+                    ckpt_dir_path = Path(ckpt_dir)
+                    for ckpt_file in ckpt_dir_path.glob(f"{self.mgr.model_name}_epoch*.pth"):
+                        if ckpt_file not in all_checkpoints_to_keep:
+                            ckpt_file.unlink()
+                            print(f"Removed checkpoint: {ckpt_file}")
+                    
+                    # Clean up debug gifs not in last 3 or best 2
+                    all_gifs_to_keep = set()
+                    # Add last 3
+                    for _, gif_path in debug_gif_history:
+                        all_gifs_to_keep.add(Path(gif_path))
+                    # Add best 2
+                    for _, _, gif_path in best_debug_gifs[:2]:
+                        all_gifs_to_keep.add(Path(gif_path))
+                    
+                    # Remove gifs not in the keep set
+                    for gif_file in ckpt_dir_path.glob(f"{self.mgr.model_name}_debug_epoch*.gif"):
+                        if gif_file not in all_gifs_to_keep:
+                            gif_file.unlink()
+                            print(f"Removed debug gif: {gif_file}")
+                    
+                    # Print current checkpoint status
+                    print(f"\nCheckpoint management:")
+                    print(f"  Last 3 checkpoints: {[f'epoch{e}' for e, _ in checkpoint_history]}")
+                    if best_checkpoints:
+                        print(f"  Best 2 checkpoints: {[f'epoch{e} (loss={l:.4f})' for l, e, _ in best_checkpoints[:2]]}")
+                    
+                    # Clean up old config files - keep only the latest
+                    ckpt_dir_parent = Path(model_ckpt_dir)
+                    all_configs = sorted(
+                        ckpt_dir_parent.glob(f"{self.mgr.model_name}_*.yaml"),
+                        key=lambda x: x.stat().st_mtime
+                    )
+                    while len(all_configs) > 1:
+                        oldest = all_configs.pop(0)
+                        oldest.unlink()
+                        print(f"Removed old config: {oldest}")
 
 
         print('Training Finished!')
@@ -743,6 +829,10 @@ def update_config_from_args(mgr, args):
     Update ConfigManager with command line arguments.
     """
     mgr.data_path = Path(args.input)
+    # Save data_path to dataset_config
+    if not hasattr(mgr, 'dataset_config'):
+        mgr.dataset_config = {}
+    mgr.dataset_config["data_path"] = str(mgr.data_path)
 
     if args.format:
         mgr.data_format = args.format; print(f"Using specified data format: {mgr.data_format}")
@@ -752,6 +842,9 @@ def update_config_from_args(mgr, args):
             mgr.data_format = detected; print(f"Auto-detected data format: {mgr.data_format}")
         else:
             raise ValueError("Data format could not be determined. Please specify --format.")
+    
+    # Save data_format to dataset_config
+    mgr.dataset_config["data_format"] = mgr.data_format
 
     # Set checkpoint output directory
     mgr.ckpt_out_base = Path(args.output)
@@ -861,8 +954,17 @@ def update_config_from_args(mgr, args):
             # Set warmup steps if provided
             if args.warmup_steps is not None:
                 mgr.scheduler_kwargs["warmup_steps"] = args.warmup_steps
+                # Save scheduler_kwargs to tr_configs
+                mgr.tr_configs["scheduler_kwargs"] = mgr.scheduler_kwargs
                 if mgr.verbose:
                     print(f"Set warmup steps: {args.warmup_steps}")
+    
+    # Handle no_amp flag
+    if args.no_amp:
+        mgr.no_amp = True
+        mgr.tr_configs["no_amp"] = True
+        if mgr.verbose:
+            print(f"Disabled Automatic Mixed Precision (AMP)")
 
 
 def main():
@@ -915,10 +1017,11 @@ def main():
                        help="Disable spatial/geometric transformations (rotations, flips, etc.) during training")
     parser.add_argument("--grad-clip", type=float, default=12.0,
                        help="Gradient clipping value (default: 12.0)")
+    parser.add_argument("--no-amp", action="store_true",
+                       help="Disable Automatic Mixed Precision (AMP) for training")
     
     # Learning rate scheduler arguments
     parser.add_argument("--scheduler", type=str, 
-                       choices=["poly", "warmup_poly", "cosine", "cosine_warmup", "step"],
                        help="Learning rate scheduler type (default: from config or 'poly')")
     parser.add_argument("--warmup-steps", type=int,
                        help="Number of warmup steps for cosine_warmup scheduler (default: 10%% of first cycle)")
