@@ -9,7 +9,7 @@ class InferenceArgumentParser(Tap):
     model_path:str= 'outputs/vesuvius/pretraining_all/vesuvius-models/valid_20230827161847_0_fr_i3depoch=7.ckpt'
     out_path:str=""
     stride: int = 32
-    start_idx:int=15
+    start_idx:int=17
     workers: int = 4
     batch_size: int = 64
     size:int=64
@@ -293,7 +293,7 @@ if __name__ == "__main__":
             preds=[]
             try:
                 for r in [0]:
-                    for i in [17]:
+                    for i in [args.start_idx]:
                         start_f=i
                         end_f=start_f+CFG.in_chans
                         img_split = get_img_splits(fragment_id,start_f,end_f,r)
