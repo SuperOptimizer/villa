@@ -37,7 +37,15 @@ class ConfigManager:
         infer_config = config.get("inference_config", {})
         self._set_inference_attributes(infer_config)
 
+        # Load auxiliary tasks configuration
+        self.auxiliary_tasks = config.get("auxiliary_tasks", {})
+        self._validate_auxiliary_tasks()
+
         self._init_attributes()
+        
+        # Apply auxiliary tasks after loading config
+        if self.auxiliary_tasks and self.targets:
+            self._apply_auxiliary_tasks()
 
         return config
 
@@ -197,6 +205,9 @@ class ConfigManager:
         for target_name in self.targets:
             if "loss_fn" not in self.targets[target_name]:
                 self.targets[target_name]["loss_fn"] = self.selected_loss_function
+
+        # Apply auxiliary tasks to targets
+        self._apply_auxiliary_tasks()
 
         # Only set out_channels if all targets have it defined, otherwise it will be auto-detected later
         if all('out_channels' in task_info for task_info in self.targets.values()):
@@ -431,29 +442,85 @@ class ConfigManager:
         elif self.target_value not in ["auto"] and not isinstance(self.target_value, (int, float)):
             raise ValueError(f"Invalid target_value: {self.target_value}. Must be 'auto', int, float, or dict.")
 
-    def set_binarization_config(self, binarize_labels=None, target_value=None):
+    def _validate_auxiliary_tasks(self):
         """
-        Update binarization configuration and validate consistency.
-
-        Parameters
-        ----------
-        binarize_labels : bool, optional
-            Whether to apply binarization to labels
-        target_value : str, int, float, or dict, optional
-            Target value(s) for binarization
+        Validate auxiliary tasks configuration.
         """
-        if binarize_labels is not None:
-            self.binarize_labels = bool(binarize_labels)
-            self.dataset_config["binarize_labels"] = self.binarize_labels
+        if not self.auxiliary_tasks:
+            return
+            
+        supported_task_types = {"distance_transform"}
+        
+        for task_name, task_config in self.auxiliary_tasks.items():
+            if not isinstance(task_config, dict):
+                raise ValueError(f"Auxiliary task '{task_name}' must be a dictionary")
+                
+            task_type = task_config.get("type")
+            if not task_type:
+                raise ValueError(f"Auxiliary task '{task_name}' must specify a 'type'")
+                
+            if task_type not in supported_task_types:
+                raise ValueError(f"Unsupported auxiliary task type '{task_type}'. Supported types: {supported_task_types}")
+                
+            # Validate distance transform specific settings
+            if task_type == "distance_transform":
+                source_target = task_config.get("source_target")
+                if not source_target:
+                    raise ValueError(f"Distance transform auxiliary task '{task_name}' must specify a 'source_target'")
+                    
+                # Set default loss function for distance transform if not specified
+                if "loss_fn" not in task_config:
+                    task_config["loss_fn"] = "MSELoss"
+                    if self.verbose:
+                        print(f"Set default loss function 'MSELoss' for distance transform task '{task_name}'")
+                        
+                # Set default number of output channels (1 for distance maps)
+                if "out_channels" not in task_config:
+                    task_config["out_channels"] = 1
+                    
+                # Validate loss weight if specified
+                loss_weight = task_config.get("loss_weight", 1.0)
+                if not isinstance(loss_weight, (int, float)) or loss_weight < 0:
+                    raise ValueError(f"Loss weight for auxiliary task '{task_name}' must be a non-negative number")
+                    
+        if self.verbose and self.auxiliary_tasks:
+            print(f"Validated auxiliary tasks: {list(self.auxiliary_tasks.keys())}")
 
-        if target_value is not None:
-            self.target_value = target_value
-            self.dataset_config["target_value"] = self.target_value
-
-        self._validate_binarization_config()
-
-        if self.verbose:
-            print(f"Updated binarization config - binarize_labels: {self.binarize_labels}, target_value: {self.target_value}")
+    def _apply_auxiliary_tasks(self):
+        """
+        Apply auxiliary tasks by adding them to the targets dictionary.
+        """
+        if not self.auxiliary_tasks:
+            return
+            
+        for aux_task_name, aux_config in self.auxiliary_tasks.items():
+            task_type = aux_config["type"]
+            
+            if task_type == "distance_transform":
+                source_target = aux_config["source_target"]
+                
+                # Check if source target exists
+                if source_target not in self.targets:
+                    raise ValueError(f"Source target '{source_target}' for auxiliary task '{aux_task_name}' not found in targets")
+                
+                # Create auxiliary target configuration
+                aux_target_name = f"{aux_task_name}"  # dt = distance transform
+                self.targets[aux_target_name] = {
+                    "out_channels": aux_config["out_channels"],
+                    "loss_fn": aux_config["loss_fn"],
+                    "activation": "none",  # Distance transforms need raw output
+                    "auxiliary_task": True,
+                    "task_type": "distance_transform",
+                    "source_target": source_target,
+                    "loss_weight": aux_config.get("loss_weight", 1.0),
+                    "weight": aux_config.get("loss_weight", 1.0)  # Also set as 'weight' for loss computation
+                }
+                
+                if self.verbose:
+                    print(f"Added distance transform auxiliary task '{aux_target_name}' from source '{source_target}'")
+                    
+        if self.verbose and self.auxiliary_tasks:
+            print(f"Applied {len(self.auxiliary_tasks)} auxiliary tasks to targets")
 
     def auto_detect_channels(self, dataset):
         """
