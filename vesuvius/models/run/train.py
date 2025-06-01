@@ -784,6 +784,13 @@ def configure_targets(mgr, loss_list=None):
     """
     Detect available targets from the data directory and apply optional loss_list.
     """
+    # Save existing auxiliary tasks before detection
+    auxiliary_targets = {}
+    if hasattr(mgr, 'targets') and mgr.targets:
+        for target_name, target_info in mgr.targets.items():
+            if target_info.get('auxiliary_task', False):
+                auxiliary_targets[target_name] = target_info
+    
     # Detect data-based targets if not yet configured
     if not getattr(mgr, 'targets', None):
         data_path = Path(mgr.data_path)
@@ -814,6 +821,15 @@ def configure_targets(mgr, loss_list=None):
             print(f"Detected targets from data: {sorted(targets)}")
         else:
             print("No targets detected from data. Please configure targets in config file.")
+    
+    # Re-add auxiliary targets
+    if auxiliary_targets:
+        mgr.targets.update(auxiliary_targets)
+        print(f"Re-added auxiliary targets: {list(auxiliary_targets.keys())}")
+    
+    # Re-apply auxiliary tasks from config
+    if hasattr(mgr, '_apply_auxiliary_tasks'):
+        mgr._apply_auxiliary_tasks()
 
     # Apply loss_list to configured targets, if provided
     if loss_list:

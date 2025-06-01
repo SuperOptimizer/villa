@@ -522,9 +522,12 @@ class ImageDataset(BaseDataset):
             targets_data[target][image_id] = data_dict
             print(f"Loaded {image_id}_{target} with shape {data_array.shape}")
         
-        # Check that all configured targets were found
+        # Check that all configured targets were found (excluding auxiliary tasks)
         found_targets = set(targets_data.keys())
-        missing_targets = configured_targets - found_targets
+        # Filter out auxiliary tasks from the check - they are generated dynamically
+        non_auxiliary_targets = {t for t in configured_targets 
+                                if not self.mgr.targets.get(t, {}).get('auxiliary_task', False)}
+        missing_targets = non_auxiliary_targets - found_targets
         if missing_targets:
             raise ValueError(f"Configured targets not found in data: {missing_targets}")
         

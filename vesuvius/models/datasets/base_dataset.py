@@ -9,6 +9,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 from functools import partial
+from scipy.ndimage import distance_transform_edt
 from models.augmentation.transforms.spatial.transpose import TransposeAxesTransform
 # Augmentations will be handled directly in this file
 from models.augmentation.transforms.utils.random import RandomTransform
@@ -654,8 +655,8 @@ class BaseDataset(Dataset):
                     # Single-channel 2D
                     label_patch = label_arr[y:y+dy, x:x+dx]
                 
-                # Apply binarization only if configured to do so
-                if self.binarize_labels:
+                # Apply binarization only if configured to do so and not an auxiliary task
+                if self.binarize_labels and not self.targets.get(t_name, {}).get('auxiliary_task', False):
                     target_value = self._get_target_value(t_name)
                     
                     if isinstance(target_value, dict):
@@ -771,6 +772,9 @@ class BaseDataset(Dataset):
             label_patch = np.ascontiguousarray(label_patch, dtype=np.float32)
             label_patches[t_name] = label_patch
             
+        # Process auxiliary tasks - generate distance transforms and other auxiliary targets
+        self._process_auxiliary_tasks(label_patches, is_2d)
+            
         return label_patches
 
     def _get_target_value(self, t_name):
@@ -787,6 +791,10 @@ class BaseDataset(Dataset):
         int or dict
             Target value(s) - can be int for single class or dict for multi-class
         """
+        # Check if this is an auxiliary task - they don't need target values
+        if t_name in self.targets and self.targets[t_name].get('auxiliary_task', False):
+            return None  # Auxiliary tasks don't have target values
+        
         # Don't warn about missing target value if binarization is disabled
         if not self.binarize_labels:
             return 1  # Return default without warning
@@ -984,6 +992,12 @@ class BaseDataset(Dataset):
         
         # Process all labels based on target configuration
         for t_name, label_patch in label_patches.items():
+            # Skip target value processing for auxiliary tasks
+            if t_name in self.targets and self.targets[t_name].get('auxiliary_task', False):
+                # Auxiliary tasks are regression targets, just convert to tensor
+                data_dict[t_name] = torch.from_numpy(label_patch)
+                continue
+                
             # Check if this is a multi-class target
             target_value = self._get_target_value(t_name)
             is_multiclass = (
@@ -1264,3 +1278,63 @@ class BaseDataset(Dataset):
             # Force garbage collection of any lingering references
             import gc
             gc.collect()
+
+    def _process_auxiliary_tasks(self, label_patches, is_2d):
+        """
+        Process auxiliary tasks by computing additional targets like distance transforms.
+        
+        Parameters
+        ----------
+        label_patches : dict
+            Dictionary of label patches for each target
+        is_2d : bool
+            Whether the data is 2D
+        """
+        # Check if manager has auxiliary tasks
+        if not hasattr(self.mgr, 'auxiliary_tasks') or not self.mgr.auxiliary_tasks:
+            return
+            
+        for aux_task_name, aux_config in self.mgr.auxiliary_tasks.items():
+            task_type = aux_config["type"]
+            
+            if task_type == "distance_transform":
+                source_target = aux_config["source_target"]
+                
+                # Check if source target exists in label_patches
+                if source_target not in label_patches:
+                    continue
+                    
+                source_patch = label_patches[source_target]
+                
+                # Compute distance transform for each channel
+                distance_transforms = []
+                for c in range(source_patch.shape[0]):  # Iterate over channels
+                    # Get binary mask from source patch
+                    channel_patch = source_patch[c]
+                    binary_mask = (channel_patch > 0).astype(np.uint8)
+                    
+                    # Compute Euclidean distance transform
+                    # edt.edt computes distance from foreground to background
+                    if np.any(binary_mask):
+                        # Compute distance transform from foreground pixels
+                        distance_map = distance_transform_edt(binary_mask)
+                    else:
+                        # If no foreground pixels, distance map is zero everywhere
+                        distance_map = np.zeros_like(channel_patch)
+                    
+                    distance_transforms.append(distance_map)
+                
+                # Stack distance transforms and ensure proper format
+                if len(distance_transforms) == 1:
+                    # Single channel output
+                    distance_patch = distance_transforms[0][np.newaxis, ...]
+                else:
+                    # Multi-channel output
+                    distance_patch = np.stack(distance_transforms, axis=0)
+                
+                # Ensure contiguous and proper dtype
+                distance_patch = np.ascontiguousarray(distance_patch, dtype=np.float32)
+                
+                # Add to label_patches with the auxiliary task name
+                aux_target_name = f"{aux_task_name}" 
+                label_patches[aux_target_name] = distance_patch
