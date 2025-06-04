@@ -1,8 +1,12 @@
-name: Test Vesuvius Installation
+name: Test vesuvius Python
 
 on:
   push:
+    paths:
+      - 'vesuvius/**'
   pull_request:
+    paths:
+      - 'vesuvius/**'
   workflow_dispatch:
 
 jobs:
@@ -30,4 +34,4 @@ jobs:
     
     - name: Test vesuvius import
       run: |
-        python -c "import vesuvius; print('✅ vesuvius imported successfully')" 
+        python -c "import vesuvius" 
