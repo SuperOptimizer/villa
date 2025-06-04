@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  test-vesuvius-install:
+  test-vesuvius-python:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
