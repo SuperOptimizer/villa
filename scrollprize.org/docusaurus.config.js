@@ -209,6 +209,10 @@ const config = {
             to: "/unwrapping",
             from: "/unrolling",
           },
+          {
+            to: "https://dl.ash2txt.org/LICENSE.txt",
+            from: "/license",
+          },
         ],
       },
     ],
