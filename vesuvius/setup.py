@@ -40,7 +40,6 @@ setup(
         "aiohttp",
         "fsspec",
         "huggingface_hub",
-        "dask",
         "zarr",
         "tqdm",
         "lxml",
