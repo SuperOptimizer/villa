@@ -1,15 +1,10 @@
 name: Test vesuvius Python
 
 on:
-  push:
-    paths:
-      - 'vesuvius/**'
-      - '.github/workflows/test-vesuvius.yml'
   pull_request:
     paths:
       - 'vesuvius/**'
       - '.github/workflows/test-vesuvius.yml'
-  workflow_dispatch:
 
 jobs:
   test-vesuvius-python:
