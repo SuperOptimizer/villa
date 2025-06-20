@@ -72,6 +72,7 @@ class BaseDataset(Dataset):
         # New binarization control parameters
         self.binarize_labels = mgr.binarize_labels
         self.target_value = mgr.target_value
+        self.label_threshold = getattr(mgr, 'label_threshold', None)
         
         # Skip patch validation (defaults to False)
         self.skip_patch_validation = getattr(mgr, 'skip_patch_validation', False)
@@ -336,8 +337,66 @@ class BaseDataset(Dataset):
             'is_2d_dataset': self.is_2d_dataset
         }
     
+    def _load_approved_patches(self):
+        """
+        Load approved patches from vc_proofreader export file.
+        
+        Returns
+        -------
+        bool
+            True if patches were successfully loaded, False otherwise
+        """
+        approved_patches_file = Path(self.mgr.approved_patches_file)
+        
+        if not approved_patches_file.exists():
+            print(f"Approved patches file not found: {approved_patches_file}")
+            return False
+        
+        try:
+            with open(approved_patches_file, 'r') as f:
+                data = json.load(f)
+            
+            # Validate the file format
+            if 'metadata' not in data or 'approved_patches' not in data:
+                print(f"Invalid approved patches file format: missing required keys")
+                return False
+            
+            metadata = data['metadata']
+            approved_patches = data['approved_patches']
+            
+            # Validate patch size compatibility
+            if metadata.get('patch_size') != self.patch_size:
+                print(f"Warning: Patch size mismatch. Expected {self.patch_size}, got {metadata.get('patch_size')}")
+                # Could choose to continue or return False depending on requirements
+            
+            # Convert approved patches to the format expected by BaseDataset
+            self.valid_patches = []
+            for patch_info in approved_patches:
+                self.valid_patches.append({
+                    "volume_index": patch_info.get("volume_index", 0),
+                    "position": patch_info["coords"]
+                })
+            
+            print(f"Successfully loaded {len(self.valid_patches)} approved patches from {approved_patches_file}")
+            print(f"Approved patches metadata:")
+            print(f"  - Patch size: {metadata.get('patch_size')}")
+            print(f"  - Coordinate system: {metadata.get('coordinate_system', 'unknown')}")
+            print(f"  - Total approved: {metadata.get('total_approved', len(approved_patches))}")
+            print(f"  - Export timestamp: {metadata.get('export_timestamp', 'unknown')}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error loading approved patches file: {e}")
+            return False
+    
     def _get_valid_patches(self):
         """Find valid patches based on mask coverage and labeled ratio requirements."""
+        # Check if we should load approved patches from vc_proofreader
+        if hasattr(self.mgr, 'approved_patches_file') and self.mgr.approved_patches_file:
+            if self._load_approved_patches():
+                return
+        
         # Try to load from cache first
         if self.cache_enabled and self.cache_dir is not None and self.data_path is not None:
             print("\nAttempting to load patches from cache...")
@@ -655,6 +714,11 @@ class BaseDataset(Dataset):
                     # Single-channel 2D
                     label_patch = label_arr[y:y+dy, x:x+dx]
                 
+                # Apply threshold if configured (before binarization)
+                if self.label_threshold is not None and not self.targets.get(t_name, {}).get('auxiliary_task', False):
+                    # Apply threshold: values below threshold become 0
+                    label_patch = np.where(label_patch < self.label_threshold, 0, label_patch)
+                
                 # Apply binarization only if configured to do so and not an auxiliary task
                 if self.binarize_labels and not self.targets.get(t_name, {}).get('auxiliary_task', False):
                     target_value = self._get_target_value(t_name)
@@ -714,6 +778,11 @@ class BaseDataset(Dataset):
                 else:
                     # Single-channel 3D
                     label_patch = label_arr[z:z+dz, y:y+dy, x:x+dx]
+                
+                # Apply threshold if configured (before binarization)
+                if self.label_threshold is not None and not self.targets.get(t_name, {}).get('auxiliary_task', False):
+                    # Apply threshold: values below threshold become 0
+                    label_patch = np.where(label_patch < self.label_threshold, 0, label_patch)
                 
                 # Apply binarization only if configured to do so
                 if self.binarize_labels:

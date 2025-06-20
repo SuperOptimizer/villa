@@ -114,6 +114,11 @@ class ConfigManager:
         self.binarize_labels = bool(self.dataset_config.get("binarize_labels", True)) 
         self.target_value = self.dataset_config.get("target_value", "auto")  # "auto", int, or dict
         
+        # Label threshold - values below this will be set to 0, values at or above will be set to target_value
+        self.label_threshold = self.dataset_config.get("label_threshold", None)
+        if self.label_threshold is not None:
+            self.label_threshold = float(self.label_threshold)
+        
         # Spatial transformations control
         self.no_spatial = bool(self.dataset_config.get("no_spatial", False))
 
@@ -130,6 +135,8 @@ class ConfigManager:
 
         if self.verbose:
             print(f"Binarization settings - binarize_labels: {self.binarize_labels}, target_value: {self.target_value}")
+            if self.label_threshold is not None:
+                print(f"Label threshold: {self.label_threshold}")
 
         # Validate configuration consistency
         self._validate_binarization_config()
@@ -326,7 +333,7 @@ class ConfigManager:
 
     def update_config(self, patch_size=None, min_labeled_ratio=None, max_epochs=None, loss_function=None, 
                      binarize_labels=None, target_value=None, skip_patch_validation=None,
-                     normalization_scheme=None, intensity_properties=None):
+                     normalization_scheme=None, intensity_properties=None, label_threshold=None):
         if patch_size is not None:
             if isinstance(patch_size, (list, tuple)) and len(patch_size) >= 2:
                 self.train_patch_size = tuple(patch_size)
@@ -388,6 +395,12 @@ class ConfigManager:
             self.dataset_config["intensity_properties"] = self.intensity_properties
             if self.verbose:
                 print(f"Updated intensity properties: {self.intensity_properties}")
+
+        if label_threshold is not None:
+            self.label_threshold = float(label_threshold) if label_threshold is not None else None
+            self.dataset_config["label_threshold"] = self.label_threshold
+            if self.verbose:
+                print(f"Updated label_threshold: {self.label_threshold}")
 
     def _validate_binarization_config(self):
         """

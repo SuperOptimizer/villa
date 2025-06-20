@@ -14,6 +14,8 @@ class ZarrDataset(BaseDataset):
     
     Supports both regular Zarr files and OME-Zarr files with multiple resolution levels.
     For OME-Zarr files, defaults to using resolution level 0 (highest resolution).
+    
+    Can optionally load approved patches from vc_proofreader instead of computing patches automatically.
     """
     
     
