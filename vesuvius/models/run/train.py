@@ -67,28 +67,9 @@ def _detect_s3_paths(mgr):
 
 
 def _setup_multiprocessing_for_s3():
-    """
-    Set up multiprocessing to use 'spawn' method for S3 compatibility.
-    This must be called before creating any DataLoaders.
-    """
-    try:
-        # Check if the start method has already been set
-        current_method = multiprocessing.get_start_method(allow_none=True)
-        
-        if current_method is None:
-            # No method set yet, we can set it
-            multiprocessing.set_start_method('spawn', force=False)
-            print("Set multiprocessing start method to 'spawn' for S3 compatibility")
-        elif current_method != 'spawn':
-            # A different method is already set
-            print(f"Warning: Multiprocessing start method is already set to '{current_method}'.")
-            print("For S3 paths, 'spawn' is recommended. You may encounter fork-safety issues.")
-        # If it's already 'spawn', we're good
-        
-    except RuntimeError as e:
-        # This can happen if the context has already been used
-        print(f"Warning: Could not set multiprocessing start method: {e}")
-        print("If you encounter fork-safety issues with S3, try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True")
+
+    multiprocessing.set_start_method('spawn', force=True)
+    print(f"multprocessing start method is currently set to {multiprocessing.get_start_method()}")
 
 
 def compute_gradient_norm(model):
