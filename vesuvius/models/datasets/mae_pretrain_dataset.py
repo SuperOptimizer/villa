@@ -168,7 +168,7 @@ class MAEPretrainDataset(ZarrDataset):
         base_params = super()._get_config_params()
         base_params['dataset_type'] = 'mae_pretrain'
         base_params['normalization_scheme'] = 'minmax'  # Always use minmax for MAE
-        base_params['use_bounding_box'] = True  # Flag to indicate we're using bounding box
+        base_params['skip_bounding_box'] = self.skip_bounding_box  # Include skip_bounding_box flag
         return base_params
     
     
