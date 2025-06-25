@@ -114,6 +114,11 @@ class ConfigManager:
         self.binarize_labels = bool(self.dataset_config.get("binarize_labels", True)) 
         self.target_value = self.dataset_config.get("target_value", "auto")  # "auto", int, or dict
         
+        # Volume-task loss configuration
+        self.volume_task_loss_config = self.dataset_config.get("volume_task_loss_config", {})
+        if self.volume_task_loss_config and self.verbose:
+            print(f"Volume-task loss configuration loaded: {self.volume_task_loss_config}")
+        
         # Label threshold - values below this will be set to 0, values at or above will be set to target_value
         self.label_threshold = self.dataset_config.get("label_threshold", None)
         if self.label_threshold is not None:
@@ -132,6 +137,18 @@ class ConfigManager:
             self.targets = self.dataset_config.get("targets", {})
             if self.verbose and self.targets:
                 print(f"Loaded targets from config: {self.targets}")
+                
+        # Process main targets to ensure they support the new multi-loss format
+        for target_name, target_config in self.targets.items():
+            # Skip if already processed (e.g., auxiliary tasks)
+            if "losses" in target_config:
+                continue
+                
+            # If target has old format with loss_fn, keep it for backward compatibility
+            # The train.py will handle both formats
+            if "loss_fn" in target_config:
+                if self.verbose:
+                    print(f"Target '{target_name}' using single loss format (backward compatible)")
 
         if self.verbose:
             print(f"Binarization settings - binarize_labels: {self.binarize_labels}, target_value: {self.target_value}")
@@ -462,7 +479,7 @@ class ConfigManager:
         if not self.auxiliary_tasks:
             return
             
-        supported_task_types = {"distance_transform"}
+        supported_task_types = {"distance_transform", "surface_normals"}
         
         for task_name, task_config in self.auxiliary_tasks.items():
             if not isinstance(task_config, dict):
@@ -496,6 +513,26 @@ class ConfigManager:
                 if not isinstance(loss_weight, (int, float)) or loss_weight < 0:
                     raise ValueError(f"Loss weight for auxiliary task '{task_name}' must be a non-negative number")
                     
+            # Validate surface normals specific settings
+            elif task_type == "surface_normals":
+                source_target = task_config.get("source_target")
+                if not source_target:
+                    raise ValueError(f"Surface normals auxiliary task '{task_name}' must specify a 'source_target'")
+                    
+                # Set default loss function for surface normals if not specified
+                if "loss_fn" not in task_config:
+                    task_config["loss_fn"] = "MSELoss"
+                    if self.verbose:
+                        print(f"Set default loss function 'MSELoss' for surface normals task '{task_name}'")
+                        
+                # Note: out_channels will be set dynamically based on dimensionality (2 for 2D, 3 for 3D)
+                # We don't set it here to allow auto-detection
+                    
+                # Validate loss weight if specified
+                loss_weight = task_config.get("loss_weight", 1.0)
+                if not isinstance(loss_weight, (int, float)) or loss_weight < 0:
+                    raise ValueError(f"Loss weight for auxiliary task '{task_name}' must be a non-negative number")
+                    
         if self.verbose and self.auxiliary_tasks:
             print(f"Validated auxiliary tasks: {list(self.auxiliary_tasks.keys())}")
 
@@ -518,19 +555,72 @@ class ConfigManager:
                 
                 # Create auxiliary target configuration
                 aux_target_name = f"{aux_task_name}"  # dt = distance transform
-                self.targets[aux_target_name] = {
-                    "out_channels": aux_config["out_channels"],
-                    "loss_fn": aux_config["loss_fn"],
+                target_config = {
+                    "out_channels": aux_config.get("out_channels", 1),
                     "activation": "none",  # Distance transforms need raw output
                     "auxiliary_task": True,
                     "task_type": "distance_transform",
                     "source_target": source_target,
-                    "loss_weight": aux_config.get("loss_weight", 1.0),
-                    "weight": aux_config.get("loss_weight", 1.0)  # Also set as 'weight' for loss computation
+                    "weight": aux_config.get("loss_weight", 1.0)  # Overall task weight
                 }
+                
+                # Handle loss configuration - support both old and new format
+                if "losses" in aux_config:
+                    target_config["losses"] = aux_config["losses"]
+                else:
+                    # Convert old format to new format
+                    target_config["losses"] = [{
+                        "name": aux_config.get("loss_fn", "MSELoss"),
+                        "weight": 1.0,  # Loss component weight (within the task)
+                        "kwargs": aux_config.get("loss_kwargs", {})
+                    }]
+                    # For backward compatibility, also keep the old format
+                    target_config["loss_fn"] = aux_config.get("loss_fn", "MSELoss")
+                    target_config["loss_kwargs"] = aux_config.get("loss_kwargs", {})
+                
+                self.targets[aux_target_name] = target_config
                 
                 if self.verbose:
                     print(f"Added distance transform auxiliary task '{aux_target_name}' from source '{source_target}'")
+                    
+            elif task_type == "surface_normals":
+                source_target = aux_config["source_target"]
+                
+                # Check if source target exists
+                if source_target not in self.targets:
+                    raise ValueError(f"Source target '{source_target}' for auxiliary task '{aux_task_name}' not found in targets")
+                
+                # Create auxiliary target configuration
+                # Note: out_channels will be set dynamically based on data dimensionality
+                aux_target_name = f"{aux_task_name}"
+                target_config = {
+                    "out_channels": aux_config.get("out_channels", None),  # Will be set to 2 or 3 based on dimensionality
+                    "activation": "none",  # Surface normals need raw output
+                    "auxiliary_task": True,
+                    "task_type": "surface_normals",
+                    "source_target": source_target,
+                    "weight": aux_config.get("loss_weight", 1.0),  # Overall task weight
+                    "use_source_mask": True  # Always use source target as mask for loss computation
+                }
+                
+                # Handle loss configuration - support both old and new format
+                if "losses" in aux_config:
+                    target_config["losses"] = aux_config["losses"]
+                else:
+                    # Convert old format to new format
+                    target_config["losses"] = [{
+                        "name": aux_config.get("loss_fn", "MSELoss"),
+                        "weight": 1.0,  # Loss component weight (within the task)
+                        "kwargs": aux_config.get("loss_kwargs", {})
+                    }]
+                    # For backward compatibility, also keep the old format
+                    target_config["loss_fn"] = aux_config.get("loss_fn", "MSELoss")
+                    target_config["loss_kwargs"] = aux_config.get("loss_kwargs", {})
+                
+                self.targets[aux_target_name] = target_config
+                
+                if self.verbose:
+                    print(f"Added surface normals auxiliary task '{aux_target_name}' from source '{source_target}'")
                     
         if self.verbose and self.auxiliary_tasks:
             print(f"Applied {len(self.auxiliary_tasks)} auxiliary tasks to targets")
@@ -579,8 +669,8 @@ class ConfigManager:
                     if self.verbose:
                         print(f"Auto-detected {detected_channels} channels for target '{target_name}'")
                     
-                    # Also update loss function if not set
-                    if 'loss_fn' not in self.targets[target_name]:
+                    # Also update loss function if not set (only if losses list is not already specified)
+                    if 'loss_fn' not in self.targets[target_name] and 'losses' not in self.targets[target_name]:
                         self.targets[target_name]['loss_fn'] = 'BCEDiceLoss'
 
         # Rebuild out_channels tuple
