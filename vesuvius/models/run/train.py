@@ -1,3 +1,18 @@
+# IMPORTANT: Set multiprocessing start method before any other imports
+# This is critical for S3/fsspec compatibility
+import multiprocessing
+import sys
+
+# Check if we need to set spawn method (for S3 compatibility)
+# This must happen before torch import
+if __name__ == '__main__' and len(sys.argv) > 1:
+    # Quick check for S3 paths in command line args
+    if any('s3://' in str(arg) for arg in sys.argv) or '--config-path' in sys.argv:
+        try:
+            multiprocessing.set_start_method('spawn', force=True)
+        except RuntimeError:
+            pass
+
 from pathlib import Path
 import os
 from datetime import datetime
@@ -19,7 +34,6 @@ from itertools import cycle
 from contextlib import nullcontext
 from collections import deque   
 import gc
-import multiprocessing
 
 
 def _detect_s3_paths(mgr):
