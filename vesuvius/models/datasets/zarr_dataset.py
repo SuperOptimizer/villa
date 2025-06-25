@@ -106,7 +106,8 @@ class ZarrDataset(BaseDataset):
                         'label': data_array,  # Use image data to satisfy BaseDataset
                         'mask': None    # No masks for MAE
                     },
-                    'volume_id': image_id
+                    'volume_id': image_id,
+                    'zarr_path': image_path  # Store the original path for later use
                 }
                 
                 self.target_volumes['reconstruction'].append(volume_info)

@@ -530,17 +530,10 @@ class MAEPretrainDataset(ZarrDataset):
             resolution_level = 0
             scale_factor = 1
             
-            # Get the zarr path from the volume info
-            volume_id = volume_info.get('volume_id', '')
+            # Get the zarr path from the volume info (stored by zarr_dataset.py)
+            zarr_path = volume_info.get('zarr_path', None)
             
-            # Check if this is a remote path from data_paths
-            data_paths = getattr(self.mgr, 'dataset_config', {}).get('data_paths', [])
-            for path in data_paths:
-                if volume_id in path:
-                    zarr_path = path.rstrip('/')
-                    break
-            
-            # If not found in data_paths, try to extract from store
+            # If not found in volume_info, try to extract from store
             if not zarr_path and hasattr(data_array, 'store'):
                 if hasattr(data_array.store, 'path'):
                     store_path_str = str(data_array.store.path)
@@ -564,9 +557,14 @@ class MAEPretrainDataset(ZarrDataset):
             
             # Check if this is an S3/HTTP path
             is_remote_path = False
-            if hasattr(data_array, 'store') and hasattr(data_array.store, 'path'):
+            if zarr_path:
+                # Check if zarr_path itself is remote
+                is_remote_path = any(prefix in str(zarr_path) for prefix in ['s3://', 'http://', 'https://'])
+                print(f"Volume {vol_idx}: zarr_path = {zarr_path}, is_remote = {is_remote_path}")
+            elif hasattr(data_array, 'store') and hasattr(data_array.store, 'path'):
                 store_path_str = str(data_array.store.path)
                 is_remote_path = any(prefix in store_path_str for prefix in ['s3://', 'http://', 'https://', 's3fs'])
+                print(f"Volume {vol_idx}: store_path = {store_path_str}, is_remote = {is_remote_path}")
             
             if zarr_path:
                 # For remote paths (S3/HTTP), assume multi-resolution exists and try to use it
