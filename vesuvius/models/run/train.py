@@ -18,7 +18,63 @@ from models.training.optimizers import create_optimizer
 from itertools import cycle
 from contextlib import nullcontext
 from collections import deque   
-import gc                      
+import gc
+import multiprocessing
+
+
+def _detect_s3_paths(mgr):
+    """
+    Detect if any data paths are S3 URLs.
+    
+    Parameters
+    ----------
+    mgr : ConfigManager
+        Configuration manager instance
+        
+    Returns
+    -------
+    bool
+        True if S3 paths are detected, False otherwise
+    """
+    # Check data_paths in dataset_config
+    if hasattr(mgr, 'dataset_config') and mgr.dataset_config:
+        data_paths = mgr.dataset_config.get('data_paths', [])
+        if data_paths:
+            for path in data_paths:
+                if isinstance(path, str) and path.startswith('s3://'):
+                    return True
+    
+    # Check data_path
+    if hasattr(mgr, 'data_path') and mgr.data_path:
+        if str(mgr.data_path).startswith('s3://'):
+            return True
+            
+    return False
+
+
+def _setup_multiprocessing_for_s3():
+    """
+    Set up multiprocessing to use 'spawn' method for S3 compatibility.
+    This must be called before creating any DataLoaders.
+    """
+    try:
+        # Check if the start method has already been set
+        current_method = multiprocessing.get_start_method(allow_none=True)
+        
+        if current_method is None:
+            # No method set yet, we can set it
+            multiprocessing.set_start_method('spawn', force=False)
+            print("Set multiprocessing start method to 'spawn' for S3 compatibility")
+        elif current_method != 'spawn':
+            # A different method is already set
+            print(f"Warning: Multiprocessing start method is already set to '{current_method}'.")
+            print("For S3 paths, 'spawn' is recommended. You may encounter fork-safety issues.")
+        # If it's already 'spawn', we're good
+        
+    except RuntimeError as e:
+        # This can happen if the context has already been used
+        print(f"Warning: Could not set multiprocessing start method: {e}")
+        print("If you encounter fork-safety issues with S3, try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True")
 
 
 def compute_gradient_norm(model):
@@ -261,6 +317,10 @@ class BaseTrainer:
 
 
     def train(self):
+        # Check for S3 paths and set up multiprocessing if needed
+        if _detect_s3_paths(self.mgr):
+            print("\nDetected S3 paths in configuration")
+            _setup_multiprocessing_for_s3()
 
         # the is_training flag forces the dataset to perform augmentations
         # we put augmentations in the dataset class so we can use the __getitem__ method

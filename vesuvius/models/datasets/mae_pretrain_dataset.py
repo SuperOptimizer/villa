@@ -134,6 +134,9 @@ class MAEPretrainDataset(ZarrDataset):
         if hasattr(mgr, 'dataset_config'):
             mgr.dataset_config['normalization_scheme'] = 'minmax'
         
+        # Set a flag to prevent base class from running validation
+        self._mae_will_handle_validation = True
+        
         # Call parent init - ZarrDataset will handle MAE mode through _initialize_volumes
         super().__init__(mgr, is_training, **kwargs)
         
@@ -165,6 +168,9 @@ class MAEPretrainDataset(ZarrDataset):
         # Initialize counter for skipped zero patches
         self._zero_patch_count = 0
         self._last_reported_count = 0
+        
+        # Now run our custom validation since parent class skipped it
+        self._get_valid_patches()
     
     def _get_config_params(self):
         """Get configuration parameters for caching, including MAE-specific params."""
@@ -172,6 +178,7 @@ class MAEPretrainDataset(ZarrDataset):
         base_params['dataset_type'] = 'mae_pretrain'
         base_params['normalization_scheme'] = 'minmax'  # Always use minmax for MAE
         base_params['skip_bounding_box'] = self.skip_bounding_box  # Include skip_bounding_box flag
+        base_params['nonzero_validated'] = True  # Flag that patches are pre-validated for non-zero data
         return base_params
     
     
@@ -517,8 +524,13 @@ class MAEPretrainDataset(ZarrDataset):
         if self.cache_enabled and self.cache_dir is not None and self.data_path is not None:
             print("\nAttempting to load MAE patches from cache...")
             config_params = self._get_config_params()
-            config_params['nonzero_validated'] = True  # Flag for pre-validated patches
             print(f"MAE cache configuration: {config_params}")
+            
+            # Generate cache key for debugging
+            from utils.io.patch_cache_utils import compute_cache_key
+            cache_key = compute_cache_key(config_params)
+            print(f"MAE cache key: {cache_key}")
+            
             cache_result = load_cached_patches(
                 self.cache_dir,
                 config_params,
