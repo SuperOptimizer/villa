@@ -38,12 +38,14 @@ def _validate_patch_batch(args):
     # Open the zarr array at the specified resolution
     try:
         if resolution_level > 0:
-            root = zarr.open_group(str(zarr_path), mode='r')
-            data_array = root[str(resolution_level)]
+            # Directly open the path with resolution level appended
+            # This works for both S3 and local paths
+            resolution_path = f"{str(zarr_path).rstrip('/')}/{resolution_level}"
+            data_array = zarr.open_array(resolution_path, mode='r')
         else:
             data_array = zarr.open_array(str(zarr_path), mode='r')
     except Exception as e:
-        print(f"Error opening zarr array: {e}")
+        print(f"Error opening zarr array at resolution {resolution_level}: {e}")
         return [], chunk_idx, len(positions), 0
     
     valid_positions = []
@@ -528,53 +530,73 @@ class MAEPretrainDataset(ZarrDataset):
             resolution_level = 0
             scale_factor = 1
             
-            if hasattr(data_array, 'store'):
+            # Get the zarr path from the volume info
+            volume_id = volume_info.get('volume_id', '')
+            
+            # Check if this is a remote path from data_paths
+            data_paths = getattr(self.mgr, 'dataset_config', {}).get('data_paths', [])
+            for path in data_paths:
+                if volume_id in path:
+                    zarr_path = path.rstrip('/')
+                    break
+            
+            # If not found in data_paths, try to extract from store
+            if not zarr_path and hasattr(data_array, 'store'):
                 if hasattr(data_array.store, 'path'):
-                    store_path = Path(data_array.store.path)
-                    if store_path.name in ['0', '1', '2', '3', '4', '5']:
-                        zarr_path = store_path.parent
+                    store_path_str = str(data_array.store.path)
+                    # For remote paths, use the string directly
+                    if any(prefix in store_path_str for prefix in ['s3://', 'http://', 'https://']):
+                        zarr_path = store_path_str
+                        # Remove resolution suffix if present
+                        if store_path_str.endswith(('/0', '/1', '/2', '/3', '/4', '/5')):
+                            zarr_path = store_path_str.rsplit('/', 1)[0]
                     else:
-                        zarr_path = store_path
-                elif hasattr(data_array, 'path'):
-                    zarr_path = Path(data_array.path)
-                elif hasattr(data_array.store, 'dir_path'):
-                    zarr_path = Path(data_array.store.dir_path())
+                        # For local paths, use Path object
+                        store_path = Path(store_path_str)
+                        if store_path.name in ['0', '1', '2', '3', '4', '5']:
+                            zarr_path = str(store_path.parent)
+                        else:
+                            zarr_path = str(store_path)
             
             # Check if we can use downsampled resolution for validation
             use_downsampled = False
             downsampled_shape = shape  # Default to original shape
             
-            # Check if this is an S3 path
-            is_s3_path = False
+            # Check if this is an S3/HTTP path
+            is_remote_path = False
             if hasattr(data_array, 'store') and hasattr(data_array.store, 'path'):
                 store_path_str = str(data_array.store.path)
-                is_s3_path = 's3://' in store_path_str or 's3fs' in store_path_str.lower()
+                is_remote_path = any(prefix in store_path_str for prefix in ['s3://', 'http://', 'https://', 's3fs'])
             
             if zarr_path:
-                # For S3 paths, assume multi-resolution exists and try to use it
-                if is_s3_path:
+                # For remote paths (S3/HTTP), assume multi-resolution exists and try to use it
+                if is_remote_path:
                     try:
-                        root = zarr.open_group(str(zarr_path), mode='r')
                         # For 3D data, always try resolution level 2 (4x downsample)
                         if not is_2d:
                             resolution_level = 2
                             scale_factor = 4
-                            downsampled_array = root['2']
+                            # Directly open the path with resolution appended
+                            resolution_path = f"{str(zarr_path).rstrip('/')}/2"
+                            downsampled_array = zarr.open_array(resolution_path, mode='r')
                             use_downsampled = True
                             downsampled_shape = downsampled_array.shape
-                            print(f"\nUsing resolution level 2 (4x downsample) for 3D patch validation (S3 path)")
+                            print(f"\nUsing resolution level 2 (4x downsample) for 3D patch validation (remote path)")
                             print(f"Downsampled shape: {downsampled_shape}")
                         else:
                             # For 2D, try resolution level 1
                             resolution_level = 1
                             scale_factor = 2
-                            downsampled_array = root['1']
+                            # Directly open the path with resolution appended
+                            resolution_path = f"{str(zarr_path).rstrip('/')}/1"
+                            downsampled_array = zarr.open_array(resolution_path, mode='r')
                             use_downsampled = True
                             downsampled_shape = downsampled_array.shape
-                            print(f"\nUsing resolution level 1 (2x downsample) for 2D patch validation (S3 path)")
+                            print(f"\nUsing resolution level 1 (2x downsample) for 2D patch validation (remote path)")
                             print(f"Downsampled shape: {downsampled_shape}")
                     except Exception as e:
-                        print(f"Could not access downsampled resolutions for S3 path: {e}")
+                        print(f"Could not access downsampled resolutions for remote path: {e}")
+                        print(f"Falling back to full resolution")
                         use_downsampled = False
                 # For non-S3 paths, check if it's OME-Zarr first
                 elif _is_ome_zarr(zarr_path):

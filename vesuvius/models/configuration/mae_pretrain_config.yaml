@@ -22,14 +22,14 @@ dataset_config:
     - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_HEL_4.320um_1.0m_116keV_binmean_2_PHerc1218_TA_0001_masked.zarr/"
     - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc0009B_TA_0001_masked.zarr/"
     - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc0175B_TA_0001_masked.zarr/"
-    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc0306B_TA_0001_masked.zarr/
-    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc0343_TA_0001_masked.zarr/
-    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc0343P_TA_0001_masked.zarr/
-    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc0483A_TA_0001_masked.zarr/
-    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc0490A_TA_0001_masked.zarr/
-    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc0490B_TA_0001_masked.zarr/
-    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc1447_C_TA_0001_masked.zarr/
-    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc1451_TA_0001_masked.zarr/
+    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc0306B_TA_0001_masked.zarr/"
+    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc0343_TA_0001_masked.zarr/"
+    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc0343P_TA_0001_masked.zarr/"
+    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc0483A_TA_0001_masked.zarr/"
+    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc0490A_TA_0001_masked.zarr/"
+    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc0490B_TA_0001_masked.zarr/"
+    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc1447_C_TA_0001_masked.zarr/"
+    - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc1451_TA_0001_masked.zarr/"
     - "https://dl.ash2txt.org/community-uploads/james/Scroll1/Scroll1_8um.zarr/"
     - "https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s5/s5_masked_ome.zarr/"
 
