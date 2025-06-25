@@ -235,6 +235,18 @@ class MAEPretrainDataset(ZarrDataset):
             else:
                 print(f"Could not determine zarr path, using full resolution")
         
+        # Try to access the downsampled array to verify it works
+        if scale_factor > 1:
+            try:
+                # Test access to the downsampled array
+                test_slice = downsampled_array[0]
+                print(f"Successfully accessed downsampled array")
+            except Exception as e:
+                print(f"Error accessing downsampled array: {e}")
+                print(f"Falling back to full resolution for bounding box computation")
+                downsampled_array = data_array
+                scale_factor = 1
+        
         shape = downsampled_array.shape
         original_shape = data_array.shape
         
@@ -295,7 +307,11 @@ class MAEPretrainDataset(ZarrDataset):
                 if idx % 10 == 0:  # Print progress every 10 slices
                     print(f"  Checking slice {z}/{shape[0]-1} ({idx+1}/{len(slices_to_sample)} samples)...")
                 
-                slice_data = downsampled_array[z]
+                try:
+                    slice_data = downsampled_array[z]
+                except Exception as e:
+                    # Skip this slice if we can't access it
+                    continue
                 
                 # Check if this slice has any data
                 if np.any(slice_data > 0):
@@ -362,20 +378,28 @@ class MAEPretrainDataset(ZarrDataset):
             if refine_start < z_min:
                 print(f"  Checking backwards from {z_min} to {refine_start}...")
                 for z in range(refine_start, z_min):
-                    if np.any(data_array[z] > 0):
-                        z_min = z
-                        print(f"    Found data at Z={z}, updating z_min")
-                        break
+                    try:
+                        if np.any(data_array[z] > 0):
+                            z_min = z
+                            print(f"    Found data at Z={z}, updating z_min")
+                            break
+                    except Exception:
+                        # Skip if we can't access this slice
+                        continue
             
             # Check forwards from z_max
             refine_end = min(original_shape[0] - 1, z_max + sample_step * scale_factor)
             if refine_end > z_max:
                 print(f"  Checking forwards from {z_max} to {refine_end}...")
                 for z in range(refine_end, z_max, -1):
-                    if np.any(data_array[z] > 0):
-                        z_max = z
-                        print(f"    Found data at Z={z}, updating z_max")
-                        break
+                    try:
+                        if np.any(data_array[z] > 0):
+                            z_max = z
+                            print(f"    Found data at Z={z}, updating z_max")
+                            break
+                    except Exception:
+                        # Skip if we can't access this slice
+                        continue
             
             print(f"\nBounding box found: Z[{z_min}:{z_max+1}], Y[{y_min}:{y_max+1}], X[{x_min}:{x_max+1}]")
             print(f"Data spans {z_max-z_min+1} slices in Z, {y_max-y_min+1} pixels in Y, {x_max-x_min+1} pixels in X")
@@ -662,13 +686,13 @@ class MAEPretrainDataset(ZarrDataset):
             
             if is_2d:
                 h, w = self.patch_size[0], self.patch_size[1]
-                stride = (h//2, w//2)  # 50% overlap
+                stride = (h*2, w*2)  # 2x stride (step 2 patch sizes)
                 
                 # Adjust for downsampled resolution
                 if use_downsampled:
                     h_down = h // scale_factor
                     w_down = w // scale_factor
-                    stride_down = (h_down//2, w_down//2)
+                    stride_down = (h_down*2, w_down*2)  # 2x stride at downsampled resolution
                     y_start = bbox['y_min'] // scale_factor
                     y_end = bbox['y_max'] // scale_factor - h_down + 2
                     x_start = bbox['x_min'] // scale_factor
@@ -690,14 +714,14 @@ class MAEPretrainDataset(ZarrDataset):
                         
             else:  # 3D
                 d, h, w = self.patch_size
-                stride = (d//2, h//2, w//2)  # 50% overlap
+                stride = (d*2, h*2, w*2)  # 2x stride (step 2 patch sizes)
                 
                 # Adjust for downsampled resolution
                 if use_downsampled:
                     d_down = d // scale_factor
                     h_down = h // scale_factor
                     w_down = w // scale_factor
-                    stride_down = (d_down//2, h_down//2, w_down//2)
+                    stride_down = (d_down*2, h_down*2, w_down*2)  # 2x stride at downsampled resolution
                     z_start = bbox['z_min'] // scale_factor
                     z_end = bbox['z_max'] // scale_factor - d_down + 2
                     y_start = bbox['y_min'] // scale_factor
