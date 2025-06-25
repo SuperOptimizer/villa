@@ -117,6 +117,7 @@ class MAEPretrainDataset(ZarrDataset):
         # Store MAE-specific parameters - get from config if available
         dataset_config = getattr(mgr, 'dataset_config', {})
         self.mask_ratio = dataset_config.get('mask_ratio', mask_ratio)
+        self.min_mask_ratio = dataset_config.get('min_mask_ratio', 0.10)  # Default to 10%
         self.normalize_targets = dataset_config.get('normalize_targets', normalize_targets)
         self._mask_patch_size = dataset_config.get('mask_patch_size', mask_patch_size)
         
@@ -542,30 +543,64 @@ class MAEPretrainDataset(ZarrDataset):
             # Check if we can use downsampled resolution for validation
             use_downsampled = False
             downsampled_shape = shape  # Default to original shape
-            if zarr_path and _is_ome_zarr(zarr_path):
-                try:
-                    root = zarr.open_group(str(zarr_path), mode='r')
-                    available_resolutions = list(root.keys())
-                    
-                    # Choose resolution based on dimensionality
-                    if is_2d and '1' in available_resolutions:
-                        resolution_level = 1
-                        scale_factor = 2
-                        use_downsampled = True
-                        downsampled_array = root['1']
-                        downsampled_shape = downsampled_array.shape
-                        print(f"\nUsing resolution level 1 (2x downsample) for 2D patch validation")
-                        print(f"Downsampled shape: {downsampled_shape}")
-                    elif not is_2d and '2' in available_resolutions:
-                        resolution_level = 2
-                        scale_factor = 4
-                        use_downsampled = True
-                        downsampled_array = root['2']
-                        downsampled_shape = downsampled_array.shape
-                        print(f"\nUsing resolution level 2 (4x downsample) for 3D patch validation")
-                        print(f"Downsampled shape: {downsampled_shape}")
-                except Exception as e:
-                    print(f"Could not access downsampled resolutions: {e}")
+            
+            # Check if this is an S3 path
+            is_s3_path = False
+            if hasattr(data_array, 'store') and hasattr(data_array.store, 'path'):
+                store_path_str = str(data_array.store.path)
+                is_s3_path = 's3://' in store_path_str or 's3fs' in store_path_str.lower()
+            
+            if zarr_path:
+                # For S3 paths, assume multi-resolution exists and try to use it
+                if is_s3_path:
+                    try:
+                        root = zarr.open_group(str(zarr_path), mode='r')
+                        # For 3D data, always try resolution level 2 (4x downsample)
+                        if not is_2d:
+                            resolution_level = 2
+                            scale_factor = 4
+                            downsampled_array = root['2']
+                            use_downsampled = True
+                            downsampled_shape = downsampled_array.shape
+                            print(f"\nUsing resolution level 2 (4x downsample) for 3D patch validation (S3 path)")
+                            print(f"Downsampled shape: {downsampled_shape}")
+                        else:
+                            # For 2D, try resolution level 1
+                            resolution_level = 1
+                            scale_factor = 2
+                            downsampled_array = root['1']
+                            use_downsampled = True
+                            downsampled_shape = downsampled_array.shape
+                            print(f"\nUsing resolution level 1 (2x downsample) for 2D patch validation (S3 path)")
+                            print(f"Downsampled shape: {downsampled_shape}")
+                    except Exception as e:
+                        print(f"Could not access downsampled resolutions for S3 path: {e}")
+                        use_downsampled = False
+                # For non-S3 paths, check if it's OME-Zarr first
+                elif _is_ome_zarr(zarr_path):
+                    try:
+                        root = zarr.open_group(str(zarr_path), mode='r')
+                        available_resolutions = list(root.keys())
+                        
+                        # Choose resolution based on dimensionality
+                        if is_2d and '1' in available_resolutions:
+                            resolution_level = 1
+                            scale_factor = 2
+                            use_downsampled = True
+                            downsampled_array = root['1']
+                            downsampled_shape = downsampled_array.shape
+                            print(f"\nUsing resolution level 1 (2x downsample) for 2D patch validation")
+                            print(f"Downsampled shape: {downsampled_shape}")
+                        elif not is_2d and '2' in available_resolutions:
+                            resolution_level = 2
+                            scale_factor = 4
+                            use_downsampled = True
+                            downsampled_array = root['2']
+                            downsampled_shape = downsampled_array.shape
+                            print(f"\nUsing resolution level 2 (4x downsample) for 3D patch validation")
+                            print(f"Downsampled shape: {downsampled_shape}")
+                    except Exception as e:
+                        print(f"Could not access downsampled resolutions: {e}")
             
             # Compute bounding box for this volume or use full volume if skip_bounding_box is True
             if self.skip_bounding_box:
@@ -829,6 +864,15 @@ class MAEPretrainDataset(ZarrDataset):
         # 2. Standard augmentations might interfere with reconstruction task
         
         return data_dict
+    
+    def set_mask_ratio(self, mask_ratio: float):
+        """Update the mask ratio dynamically during training.
+        
+        Args:
+            mask_ratio: New mask ratio to use (0-1)
+        """
+        assert 0.0 <= mask_ratio <= 1.0, f"Mask ratio must be between 0 and 1, got {mask_ratio}"
+        self.mask_ratio = mask_ratio
     
     def __len__(self) -> int:
         """Return the number of valid patches."""

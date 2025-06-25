@@ -35,7 +35,8 @@ dataset_config:
 
   
   dataset_class: "MAEPretrainDataset"
-  mask_ratio: 0.75  # Mask 75% of patches
+  mask_ratio: 0.75  # Maximum mask ratio (75% of patches)
+  min_mask_ratio: 0.10  # Starting mask ratio (10% of patches)
   
   targets:
     reconstruction:
