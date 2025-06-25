@@ -541,6 +541,7 @@ class MAEPretrainDataset(ZarrDataset):
             
             # Check if we can use downsampled resolution for validation
             use_downsampled = False
+            downsampled_shape = shape  # Default to original shape
             if zarr_path and _is_ome_zarr(zarr_path):
                 try:
                     root = zarr.open_group(str(zarr_path), mode='r')
@@ -551,31 +552,47 @@ class MAEPretrainDataset(ZarrDataset):
                         resolution_level = 1
                         scale_factor = 2
                         use_downsampled = True
+                        downsampled_array = root['1']
+                        downsampled_shape = downsampled_array.shape
                         print(f"\nUsing resolution level 1 (2x downsample) for 2D patch validation")
+                        print(f"Downsampled shape: {downsampled_shape}")
                     elif not is_2d and '2' in available_resolutions:
                         resolution_level = 2
                         scale_factor = 4
                         use_downsampled = True
+                        downsampled_array = root['2']
+                        downsampled_shape = downsampled_array.shape
                         print(f"\nUsing resolution level 2 (4x downsample) for 3D patch validation")
+                        print(f"Downsampled shape: {downsampled_shape}")
                 except Exception as e:
                     print(f"Could not access downsampled resolutions: {e}")
             
             # Compute bounding box for this volume or use full volume if skip_bounding_box is True
             if self.skip_bounding_box:
                 print(f"\nSkipping bounding box computation for volume {vol_idx} (using full volume)...")
+                # Use downsampled shape if available for displaying dimensions
+                display_shape = downsampled_shape if use_downsampled else shape
                 if is_2d:
                     bbox = {
                         'y_min': 0, 'y_max': shape[0] - 1,
                         'x_min': 0, 'x_max': shape[1] - 1
                     }
-                    print(f"Using full volume: Y[0:{shape[0]}], X[0:{shape[1]}]")
+                    if use_downsampled:
+                        print(f"Using full volume at downsampled resolution: Y[0:{display_shape[0]}], X[0:{display_shape[1]}]")
+                        print(f"Full resolution dimensions: Y[0:{shape[0]}], X[0:{shape[1]}]")
+                    else:
+                        print(f"Using full volume: Y[0:{shape[0]}], X[0:{shape[1]}]")
                 else:
                     bbox = {
                         'z_min': 0, 'z_max': shape[0] - 1,
                         'y_min': 0, 'y_max': shape[1] - 1,
                         'x_min': 0, 'x_max': shape[2] - 1
                     }
-                    print(f"Using full volume: Z[0:{shape[0]}], Y[0:{shape[1]}], X[0:{shape[2]}]")
+                    if use_downsampled:
+                        print(f"Using full volume at downsampled resolution: Z[0:{display_shape[0]}], Y[0:{display_shape[1]}], X[0:{display_shape[2]}]")
+                        print(f"Full resolution dimensions: Z[0:{shape[0]}], Y[0:{shape[1]}], X[0:{shape[2]}]")
+                    else:
+                        print(f"Using full volume: Z[0:{shape[0]}], Y[0:{shape[1]}], X[0:{shape[2]}]")
             else:
                 print(f"\nComputing bounding box for volume {vol_idx}...")
                 bbox = self._compute_data_bounding_box(data_array, is_2d)
