@@ -1269,11 +1269,17 @@ def _create_loss(name, loss_config, weight, ignore_index, pos_weight):
         reduction = loss_config.get('reduction', 'mean')
         eps = loss_config.get('eps', 1e-6)
         variance_threshold = loss_config.get('variance_threshold', 0.1)
+        use_robust_norm = loss_config.get('use_robust_norm', True)
+        max_loss_value = loss_config.get('max_loss_value', 100.0)
+        log_high_losses = loss_config.get('log_high_losses', True)
         base_loss = MaskedReconstructionLoss(base_loss=base_loss_type, 
                                          normalize_targets=normalize_targets,
                                          reduction=reduction,
                                          eps=eps,
-                                         variance_threshold=variance_threshold)
+                                         variance_threshold=variance_threshold,
+                                         use_robust_norm=use_robust_norm,
+                                         max_loss_value=max_loss_value,
+                                         log_high_losses=log_high_losses)
     elif name == 'SmoothL1Loss':
         base_loss = SmoothL1Loss()
     elif name == 'L1Loss':

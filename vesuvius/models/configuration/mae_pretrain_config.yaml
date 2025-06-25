@@ -8,8 +8,8 @@ tr_setup:
 tr_config:
   patch_size: [256, 128, 128]  # 3D patches for pretraining
   batch_size: 3
-  initial_lr: 0.0001
-  normalization_scheme: "minmax"  # Use minmax normalization for MAE
+  initial_lr: 0.01
+  normalization_scheme: "robust"  # Use robust normalization for MAE (median/MAD based)
 
 dataset_config:
   # data_paths:
@@ -29,7 +29,6 @@ dataset_config:
   #   - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc0490B_TA_0001_masked.zarr/
   #   - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc1447_C_TA_0001_masked.zarr/
   #   - "s3://scrollprize-volumes/esrf/20250506/SCROLLS_TA_HEL_4.320um_1.0m_116keV_binmean_2_PHerc1451_TA_0001_masked.zarr/
-  #   - "https://dl.ash2txt.org/full-scrolls/Scroll5/PHerc172.volpkg/volumes_zarr/20241024131838.zarr/"
   #   - "https://dl.ash2txt.org/community-uploads/james/Scroll1/Scroll1_8um.zarr/"
   #   - "https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s5/s5_masked_ome.zarr/"
 
@@ -46,6 +45,9 @@ dataset_config:
           config:
             base_loss: "mse"
             variance_threshold: 0.1  # Skip normalization if std < 0.1 to avoid numerical instability
+            use_robust_norm: true  # Use median/MAD instead of mean/std
+            max_loss_value: 100.0  # Clamp loss to prevent extreme spikes
+            log_high_losses: true  # Log when high losses occur for debugging
 
 model_config:
   # Enable MAE mode - this is the key flag
