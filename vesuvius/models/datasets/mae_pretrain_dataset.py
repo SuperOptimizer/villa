@@ -120,6 +120,9 @@ class MAEPretrainDataset(ZarrDataset):
         self.normalize_targets = dataset_config.get('normalize_targets', normalize_targets)
         self._mask_patch_size = dataset_config.get('mask_patch_size', mask_patch_size)
         
+        # Get skip_bounding_box from mgr
+        self.skip_bounding_box = getattr(mgr, 'skip_bounding_box', False)
+        
         # For MAE, we don't skip patch validation - we'll use our custom validation
         mgr.skip_patch_validation = False
         
@@ -273,7 +276,7 @@ class MAEPretrainDataset(ZarrDataset):
             found_data = False
             
             # Skip first and last 20% of volume
-            skip_percent = 0.2
+            skip_percent = 0.05
             start_slice = int(shape[0] * skip_percent)
             end_slice = int(shape[0] * (1 - skip_percent))
             
@@ -557,14 +560,30 @@ class MAEPretrainDataset(ZarrDataset):
                 except Exception as e:
                     print(f"Could not access downsampled resolutions: {e}")
             
-            # Compute bounding box for this volume
-            print(f"\nComputing bounding box for volume {vol_idx}...")
-            bbox = self._compute_data_bounding_box(data_array, is_2d)
-            
-            if is_2d:
-                print(f"Bounding box: Y[{bbox['y_min']}:{bbox['y_max']+1}], X[{bbox['x_min']}:{bbox['x_max']+1}]")
+            # Compute bounding box for this volume or use full volume if skip_bounding_box is True
+            if self.skip_bounding_box:
+                print(f"\nSkipping bounding box computation for volume {vol_idx} (using full volume)...")
+                if is_2d:
+                    bbox = {
+                        'y_min': 0, 'y_max': shape[0] - 1,
+                        'x_min': 0, 'x_max': shape[1] - 1
+                    }
+                    print(f"Using full volume: Y[0:{shape[0]}], X[0:{shape[1]}]")
+                else:
+                    bbox = {
+                        'z_min': 0, 'z_max': shape[0] - 1,
+                        'y_min': 0, 'y_max': shape[1] - 1,
+                        'x_min': 0, 'x_max': shape[2] - 1
+                    }
+                    print(f"Using full volume: Z[0:{shape[0]}], Y[0:{shape[1]}], X[0:{shape[2]}]")
             else:
-                print(f"Bounding box: Z[{bbox['z_min']}:{bbox['z_max']+1}], Y[{bbox['y_min']}:{bbox['y_max']+1}], X[{bbox['x_min']}:{bbox['x_max']+1}]")
+                print(f"\nComputing bounding box for volume {vol_idx}...")
+                bbox = self._compute_data_bounding_box(data_array, is_2d)
+                
+                if is_2d:
+                    print(f"Bounding box: Y[{bbox['y_min']}:{bbox['y_max']+1}], X[{bbox['x_min']}:{bbox['x_max']+1}]")
+                else:
+                    print(f"Bounding box: Z[{bbox['z_min']}:{bbox['z_max']+1}], Y[{bbox['y_min']}:{bbox['y_max']+1}], X[{bbox['x_min']}:{bbox['x_max']+1}]")
             
             # Generate sliding window positions
             all_positions = []

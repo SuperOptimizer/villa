@@ -108,6 +108,9 @@ class ConfigManager:
 
         # Skip patch validation -- consider all possible patch positions as valid
         self.skip_patch_validation = bool(self.dataset_config.get("skip_patch_validation", False))
+        
+        # Skip bounding box computation for MAE pretraining
+        self.skip_bounding_box = bool(self.dataset_config.get("skip_bounding_box", False))
 
         # Cache valid patches
         self.cache_valid_patches = bool(self.dataset_config.get("cache_valid_patches", True))
@@ -350,7 +353,8 @@ class ConfigManager:
 
     def update_config(self, patch_size=None, min_labeled_ratio=None, max_epochs=None, loss_function=None, 
                      binarize_labels=None, target_value=None, skip_patch_validation=None,
-                     normalization_scheme=None, intensity_properties=None, label_threshold=None):
+                     normalization_scheme=None, intensity_properties=None, label_threshold=None,
+                     skip_bounding_box=None):
         if patch_size is not None:
             if isinstance(patch_size, (list, tuple)) and len(patch_size) >= 2:
                 self.train_patch_size = tuple(patch_size)
@@ -418,6 +422,12 @@ class ConfigManager:
             self.dataset_config["label_threshold"] = self.label_threshold
             if self.verbose:
                 print(f"Updated label_threshold: {self.label_threshold}")
+
+        if skip_bounding_box is not None:
+            self.skip_bounding_box = bool(skip_bounding_box)
+            self.dataset_config["skip_bounding_box"] = self.skip_bounding_box
+            if self.verbose:
+                print(f"Updated skip_bounding_box: {self.skip_bounding_box}")
 
     def _validate_binarization_config(self):
         """

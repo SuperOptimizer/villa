@@ -12,6 +12,7 @@ tr_config:
   normalization_scheme: "robust"  # Use robust normalization for MAE (median/MAD based)
 
 dataset_config:
+  skip_bounding_box: true  # Skip bounding box computation and search entire volume for patches
   data_paths:
     - "s3://scrollprize-volumes/esrf/20250506/2.215um_HEL_TA_0.4m_110keV_scroll-fragment_0500P2_TA_0001_masked.zarr/"
     - "s3://scrollprize-volumes/esrf/20250506/4.317um_HA2200_HEL_111keV_1.2m_scroll-fragment-0500P2_D_0001_masked.zarr/"
