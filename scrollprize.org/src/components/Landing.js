@@ -660,11 +660,6 @@ const team = {
       href: "https://github.com/bruniss",
     },
     {
-      name: "Julian Schilliger",
-      title: "Software Engineer",
-      href: "https://www.linkedin.com/in/julian-schilliger-963b21294/",
-    },
-    {
       name: "Giorgio Angelotti",
       title: "ML Consultant & Research Scientist, PhD",
       href: "https://thegiorgio.org/",
@@ -762,6 +757,11 @@ const team = {
       name: "Ben Kyles",
       title: "Segmentation Team Lead",
       href: "https://twitter.com/ben_kyles",
+    },
+    {
+      name: "Julian Schilliger",
+      title: "Software Engineer",
+      href: "https://www.linkedin.com/in/julian-schilliger-963b21294/",
     },
     {
       name: "Adrionna Fey",
