@@ -19,20 +19,15 @@ from warmup_scheduler import GradualWarmupScheduler
 VESUVIUS_ROOT="/vesuvius"
 
 class CFG:
-    # Paths
     zarr_path = f'{VESUVIUS_ROOT}/fragments.zarr'
     masks_path = f'{VESUVIUS_ROOT}/train_scrolls'
     outputs_path = f'{VESUVIUS_ROOT}/inkdet_outputs/'
     model_dir = f'{outputs_path}/models/'
 
-    # Model
     size = 64
-    stride = 64  # For chunk sampling
+    stride = 64
 
-    # Training
-
-    # bs=16 for 64x64x64 fits well into 8gb vram and 32gb system ram
-    batch_size = 16
+    batch_size = 16 # bs=16 for 64x64x64 fits well into 8gb vram and 32gb system ram
     epochs = 20
     lr = 3e-5
     min_lr = 1e-6
@@ -40,8 +35,7 @@ class CFG:
     num_workers = 2
     seed = 42
 
-    # Validation split
-    valid_ratio = 0.1  # Use 10% of fragments for validation
+    valid_ratio = 0.1
 
 
 def set_seed(seed=42):
@@ -53,15 +47,17 @@ def set_seed(seed=42):
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = False
     torch.set_float32_matmul_precision('medium')
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.cuda.empty_cache()
+    torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
 
 
 class ZarrDataset(Dataset):
-    def __init__(self, zarr_path, fragment_ids, masks_path, size, stride, mode):
+    def __init__(self, zarr_path, fragment_ids, masks_path, mode):
         self.zarr_store = zarr.open(zarr_path, mode='r')
         self.fragment_ids = fragment_ids
         self.masks_path = masks_path
-        self.size = size
-        self.stride = stride
         self.mode = mode
 
         self.ink_mask_cache = {}
@@ -69,6 +65,7 @@ class ZarrDataset(Dataset):
         self.chunks = []
         for frag_id in fragment_ids:
             self._build_chunks_for_fragment(frag_id)
+        print("done loading")
 
     def _load_and_cache_mask(self, frag_id):
         """Load mask once and cache it"""
@@ -110,48 +107,38 @@ class ZarrDataset(Dataset):
 
         frag_mask = cv2.resize(frag_mask, (w, h), interpolation=cv2.INTER_NEAREST)
 
-        for y in range(0, h - CFG.size, self.stride):
-            for x in range(0, w - CFG.size, self.stride):
-                chunk_frag_mask = frag_mask[y:y + self.size, x:x + self.size]
+        for y in range(0, h - CFG.size, CFG.stride):
+            for x in range(0, w - CFG.size, CFG.stride):
+                chunk_frag_mask = frag_mask[y:y + CFG.size, x:x + CFG.size]
                 if np.all(chunk_frag_mask == 0):
                     continue
 
-                # Check if chunk has any ink (>5% coverage)
-                chunk_mask = ink_mask[y:y + self.size, x:x + self.size]
-                #if True:
+                #TODO: we want to train on some chunks that have no ink, bit what's a good ratio of no ink to ink chunks?
+                #for now lets just give a flat 10% chance to train on no ink chunks
+                chunk_mask = ink_mask[y:y + CFG.size, x:x + CFG.size]
                 has_ink = np.mean(chunk_mask) > 0.05
-                if has_ink or self.mode == 'valid':
+                if has_ink or self.mode == 'valid' or random.randint(1,10) == 1:
                     self.chunks.append([frag_id, x, y])
 
     def __len__(self):
         return len(self.chunks)
 
     def __getitem__(self, idx):
-        chunk_info = self.chunks[idx]
-        frag_id = chunk_info[0]
-        x, y = chunk_info[1], chunk_info[2]
+        frag_id, x, y = self.chunks[idx]
 
-        # Load chunk from zarr (all 64 layers) - shape: (z, y, x)
-        chunk_3d = self.zarr_store[frag_id][:, y:y + self.size, x:x + self.size]
+        chunk_3d = self.zarr_store[frag_id][:, y:y + CFG.size, x:x + CFG.size].astype(np.float32) / 255.0
+        ink_mask = self.ink_mask_cache[frag_id][y:y + CFG.size, x:x + CFG.size]
 
-        # Get mask chunk from cache
-        ink_mask = self.ink_mask_cache[frag_id]
-        mask_chunk = ink_mask[y:y + self.size, x:x + self.size]
-
-        # Normalize
-        chunk_3d = chunk_3d.astype(np.float32) / 255.0
-
-        # Convert to pytorch format
-        chunk_tensor = torch.from_numpy(chunk_3d).float()  # Shape: (64, 64, 64)
-        mask_tensor = torch.from_numpy(mask_chunk).float().unsqueeze(0)  # Shape: (1, 64, 64)
+        chunk_tensor = torch.from_numpy(chunk_3d).float()
+        mask_tensor = torch.from_numpy(ink_mask).float().unsqueeze(0)
 
         if self.mode == 'valid':
-            return chunk_tensor, mask_tensor, (x, y, x + self.size, y + self.size)
+            return chunk_tensor, mask_tensor, (x, y, x + CFG.size, y + CFG.size)
         return chunk_tensor, mask_tensor
 
 
 class RegressionPLModel(pl.LightningModule):
-    def __init__(self, size=64):
+    def __init__(self):
         super().__init__()
         self.save_hyperparameters()
 
@@ -196,7 +183,7 @@ class RegressionPLModel(pl.LightningModule):
         y = F.interpolate(y, size=(4, 4), mode='bilinear')
         outputs = self(x)
         loss = self.loss_func(outputs, y)
-        self.log("train/loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True)
+        #self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -205,7 +192,7 @@ class RegressionPLModel(pl.LightningModule):
         y = F.interpolate(y, size=(4, 4), mode='bilinear')
         outputs = self(x)
         loss = self.loss_func(outputs, y)
-        self.log("val/loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True)
+        #self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def configure_optimizers(self):
@@ -255,20 +242,12 @@ def main():
     print(f"Train fragments: {len(train_fragments)}")
     print(f"Valid fragments: {len(valid_fragments)}")
 
-    # Create datasets
-    train_dataset = ZarrDataset(
-        CFG.zarr_path, train_fragments, CFG.masks_path,
-        size=CFG.size, stride=CFG.stride, mode='train'
-    )
-    valid_dataset = ZarrDataset(
-        CFG.zarr_path, valid_fragments, CFG.masks_path,
-        size=CFG.size, stride=CFG.stride, mode='valid'
-    )
+    train_dataset = ZarrDataset(CFG.zarr_path, train_fragments, CFG.masks_path, mode='train')
+    valid_dataset = ZarrDataset(CFG.zarr_path, valid_fragments, CFG.masks_path, mode='valid')
 
     print(f"Train chunks: {len(train_dataset)}")
     print(f"Valid chunks: {len(valid_dataset)}")
 
-    # Create dataloaders
     train_loader = DataLoader(
         train_dataset,
         batch_size=CFG.batch_size,
@@ -287,9 +266,8 @@ def main():
         drop_last=False,
     )
 
-    model = RegressionPLModel(size=CFG.size)
-    #TODO: reenable when my setup isnt broken?
-    #model = torch.compile(model)
+    model = RegressionPLModel()
+    model = torch.compile(model, fullgraph=True, dynamic=False, options={"triton.cudagraphs": False})
 
     #wandb_logger = WandbLogger(project="vesuvius", name="zarr_training")
 
