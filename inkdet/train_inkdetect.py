@@ -17,6 +17,7 @@ import random
 from warmup_scheduler import GradualWarmupScheduler
 
 VESUVIUS_ROOT="/vesuvius"
+COMPILE=True
 
 class CFG:
     zarr_path = f'{VESUVIUS_ROOT}/fragments.zarr'
@@ -183,7 +184,8 @@ class RegressionPLModel(pl.LightningModule):
         y = F.interpolate(y, size=(4, 4), mode='bilinear')
         outputs = self(x)
         loss = self.loss_func(outputs, y)
-        #self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        if not COMPILE:
+            self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -192,7 +194,8 @@ class RegressionPLModel(pl.LightningModule):
         y = F.interpolate(y, size=(4, 4), mode='bilinear')
         outputs = self(x)
         loss = self.loss_func(outputs, y)
-        #self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        if not COMPILE:
+            self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def configure_optimizers(self):
@@ -267,7 +270,8 @@ def main():
     )
 
     model = RegressionPLModel()
-    model = torch.compile(model, fullgraph=True, dynamic=False, options={"triton.cudagraphs": False})
+    if COMPILE:
+        model = torch.compile(model, fullgraph=True, dynamic=False, options={"triton.cudagraphs": False})
 
     #wandb_logger = WandbLogger(project="vesuvius", name="zarr_training")
 
@@ -285,9 +289,9 @@ def main():
             ModelCheckpoint(
                 filename='best_{epoch}_{val/loss:.4f}',
                 dirpath=CFG.model_dir,
-                monitor='val/loss',
-                mode='min',
-                save_top_k=3
+                #monitor='val/loss',
+                #mode='min',
+                save_top_k=-1
             )
         ]
     )
