@@ -16,8 +16,9 @@ import cv2
 import random
 from warmup_scheduler import GradualWarmupScheduler
 
-VESUVIUS_ROOT="/vesuvius"
-COMPILE=True
+VESUVIUS_ROOT = "/vesuvius"
+COMPILE = True
+
 
 class CFG:
     zarr_path = f'{VESUVIUS_ROOT}/fragments.zarr'
@@ -27,8 +28,9 @@ class CFG:
 
     size = 64
     stride = 64
+    voxel_threshold = 64  # Minimum voxel value for valid papyrus
 
-    batch_size = 16 # bs=16 for 64x64x64 fits well into 8gb vram and 32gb system ram
+    batch_size = 16
     epochs = 20
     lr = 3e-5
     min_lr = 1e-6
@@ -46,7 +48,7 @@ def set_seed(seed=42):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = False
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.benchmark = True
     torch.set_float32_matmul_precision('medium')
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
@@ -61,17 +63,17 @@ class ZarrDataset(Dataset):
         self.masks_path = masks_path
         self.mode = mode
 
-        self.ink_mask_cache = {}
+        self.ink_mask_cache_2d = {}
 
         self.chunks = []
         for frag_id in fragment_ids:
             self._build_chunks_for_fragment(frag_id)
         print("done loading")
 
-    def _load_and_cache_mask(self, frag_id):
-        """Load mask once and cache it"""
-        if frag_id in self.ink_mask_cache:
-            return self.ink_mask_cache[frag_id]
+    def _load_and_cache_mask_2d(self, frag_id):
+        """Load 2D mask once and cache it"""
+        if frag_id in self.ink_mask_cache_2d:
+            return self.ink_mask_cache_2d[frag_id]
 
         ink_mask_path = os.path.join(self.masks_path, frag_id, f"{frag_id}_inklabels.png")
         if not os.path.exists(ink_mask_path):
@@ -84,15 +86,15 @@ class ZarrDataset(Dataset):
             h, w = self.zarr_store[frag_id].shape[1:]
             ink_mask = cv2.resize(ink_mask, (w, h), interpolation=cv2.INTER_NEAREST)
             ink_mask = ink_mask.astype(np.float32) / 255.0
-            self.ink_mask_cache[frag_id] = ink_mask
+            self.ink_mask_cache_2d[frag_id] = ink_mask
         return ink_mask
 
     def _build_chunks_for_fragment(self, frag_id):
         frag_data = self.zarr_store[frag_id]
         d, h, w = frag_data.shape
 
-        ink_mask = self._load_and_cache_mask(frag_id)
-        if ink_mask is None:
+        ink_mask_2d = self._load_and_cache_mask_2d(frag_id)
+        if ink_mask_2d is None:
             print(f"No ink mask found for {frag_id}, skipping")
             return
 
@@ -114,11 +116,10 @@ class ZarrDataset(Dataset):
                 if np.all(chunk_frag_mask == 0):
                     continue
 
-                #TODO: we want to train on some chunks that have no ink, bit what's a good ratio of no ink to ink chunks?
-                #for now lets just give a flat 10% chance to train on no ink chunks
-                chunk_mask = ink_mask[y:y + CFG.size, x:x + CFG.size]
-                has_ink = np.mean(chunk_mask) > 0.05
-                if has_ink or self.mode == 'valid' or random.randint(1,10) == 1:
+                # Check 2D ink mask for chunk selection
+                chunk_ink_2d = ink_mask_2d[y:y + CFG.size, x:x + CFG.size]
+                has_ink = np.mean(chunk_ink_2d) > 0.05
+                if has_ink or self.mode == 'valid' or random.randint(1, 10) == 1:
                     self.chunks.append([frag_id, x, y])
 
     def __len__(self):
@@ -127,11 +128,21 @@ class ZarrDataset(Dataset):
     def __getitem__(self, idx):
         frag_id, x, y = self.chunks[idx]
 
-        chunk_3d = self.zarr_store[frag_id][:, y:y + CFG.size, x:x + CFG.size].astype(np.float32) / 255.0
-        ink_mask = self.ink_mask_cache[frag_id][y:y + CFG.size, x:x + CFG.size]
+        # Load 3D chunk
+        chunk_3d = self.zarr_store[frag_id][:, y:y + CFG.size, x:x + CFG.size].astype(np.float32)
+
+        # Get 2D ink mask and broadcast to 3D
+        ink_mask_2d = self.ink_mask_cache_2d[frag_id][y:y + CFG.size, x:x + CFG.size]
+        ink_mask_3d = np.broadcast_to(ink_mask_2d[np.newaxis, :, :], (64, CFG.size, CFG.size)).copy()
+
+        # Apply voxel value threshold - set ink to 0 where voxel value < threshold
+        ink_mask_3d[chunk_3d < CFG.voxel_threshold] = 0
+
+        # Normalize chunk values
+        chunk_3d = chunk_3d / 255.0
 
         chunk_tensor = torch.from_numpy(chunk_3d).float()
-        mask_tensor = torch.from_numpy(ink_mask).float().unsqueeze(0)
+        mask_tensor = torch.from_numpy(ink_mask_3d).float()  # (64, 64, 64)
 
         if self.mode == 'valid':
             return chunk_tensor, mask_tensor, (x, y, x + CFG.size, y + CFG.size)
@@ -147,13 +158,13 @@ class RegressionPLModel(pl.LightningModule):
         self.loss_func2 = smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
         self.loss_func = lambda x, y: 0.5 * self.loss_func1(x, y) + 0.5 * self.loss_func2(x, y)
 
-        # TimeSformer directly outputs 16 values (4x4 spatial)
+        # TimeSformer outputs 64 values for 4x4x4 prediction
         self.backbone = TimeSformer(
             dim=512,
             image_size=64,
             patch_size=16,
             num_frames=64,  # z dimension as time
-            num_classes=16,  # Direct 4x4 output
+            num_classes=64,  # 4*4*4 = 64
             channels=1,
             depth=8,
             heads=6,
@@ -164,35 +175,32 @@ class RegressionPLModel(pl.LightningModule):
 
     def forward(self, x):
         # x shape: (batch, z, y, x) where z=64, y=64, x=64
-        # Add channel dimension: (batch, 1, z, y, x)
         x = x.unsqueeze(1)  # (batch, 1, 64, 64, 64)
+        x = torch.permute(x, (0, 2, 1, 3, 4))  # (batch, 64, 1, 64, 64)
 
-        # Permute to (batch, z, 1, y, x) - z becomes temporal dimension
-        x = torch.permute(x, (0, 2, 1, 3, 4))
+        # TimeSformer outputs 64 values
+        x = self.backbone(x)  # (batch, 64)
 
-        # TimeSformer directly outputs 16 values
-        x = self.backbone(x)  # (batch, 16)
-
-        # Reshape to 2D spatial map
-        x = x.view(-1, 1, 4, 4)  # (batch, 1, 4, 4)
+        # Reshape to 3D spatial map
+        x = x.view(-1, 1, 4, 4, 4)  # (batch, 1, 4, 4, 4)
 
         return x
 
     def training_step(self, batch, batch_idx):
-        x, y = batch  # x: (batch, z, y, x), y: (batch, 1, y, x)
-        # Downsample mask to match output size
-        y = F.interpolate(y, size=(4, 4), mode='bilinear')
-        outputs = self(x)
+        x, y = batch  # x: (batch, z, y, x), y: (batch, z, y, x)
+        # Downsample 3D mask to match output size
+        y = F.interpolate(y.unsqueeze(1), size=(4, 4, 4), mode='trilinear').squeeze(1)
+        outputs = self(x).squeeze(1)  # Remove channel dimension
         loss = self.loss_func(outputs, y)
         if not COMPILE:
             self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        x, y, xyxy = batch  # x: (batch, z, y, x), y: (batch, 1, y, x)
-        # Downsample mask to match output size
-        y = F.interpolate(y, size=(4, 4), mode='bilinear')
-        outputs = self(x)
+        x, y, xyxy = batch  # x: (batch, z, y, x), y: (batch, z, y, x)
+        # Downsample 3D mask to match output size
+        y = F.interpolate(y.unsqueeze(1), size=(4, 4, 4), mode='trilinear').squeeze(1)
+        outputs = self(x).squeeze(1)  # Remove channel dimension
         loss = self.loss_func(outputs, y)
         if not COMPILE:
             self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
@@ -258,6 +266,8 @@ def main():
         num_workers=CFG.num_workers,
         pin_memory=True,
         drop_last=True,
+        persistent_workers=True,
+        prefetch_factor=2
     )
 
     valid_loader = DataLoader(
@@ -267,19 +277,20 @@ def main():
         num_workers=CFG.num_workers,
         pin_memory=True,
         drop_last=False,
+        persistent_workers=True
     )
 
     model = RegressionPLModel()
     if COMPILE:
         model = torch.compile(model, fullgraph=True, dynamic=False, options={"triton.cudagraphs": False})
 
-    #wandb_logger = WandbLogger(project="vesuvius", name="zarr_training")
+    # wandb_logger = WandbLogger(project="vesuvius", name="zarr_training_3d")
 
     trainer = pl.Trainer(
         max_epochs=CFG.epochs,
         accelerator="gpu",
         devices=1,
-        #logger=wandb_logger,
+        # logger=wandb_logger,
         default_root_dir=CFG.outputs_path,
         precision='bf16-mixed',
         gradient_clip_val=1.0,
@@ -289,9 +300,9 @@ def main():
             ModelCheckpoint(
                 filename='best_{epoch}_{val/loss:.4f}',
                 dirpath=CFG.model_dir,
-                #monitor='val/loss',
-                #mode='min',
-                save_top_k=-1
+                monitor='val/loss',
+                mode='min',
+                save_top_k=3
             )
         ]
     )
