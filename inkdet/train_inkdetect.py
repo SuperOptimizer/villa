@@ -27,7 +27,7 @@ class CFG:
 
     # Model
     size = 64
-    stride = 32  # For chunk sampling
+    stride = 64  # For chunk sampling
 
     # Training
 
@@ -50,13 +50,13 @@ def set_seed(seed=42):
     random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = False
     torch.set_float32_matmul_precision('medium')
 
 
 class ZarrDataset(Dataset):
-    def __init__(self, zarr_path, fragment_ids, masks_path, size=64, stride=32, mode='train'):
+    def __init__(self, zarr_path, fragment_ids, masks_path, size, stride, mode):
         self.zarr_store = zarr.open(zarr_path, mode='r')
         self.fragment_ids = fragment_ids
         self.masks_path = masks_path
@@ -64,18 +64,16 @@ class ZarrDataset(Dataset):
         self.stride = stride
         self.mode = mode
 
-        # Cache for masks to avoid repeated disk reads
-        self.mask_cache = {}
+        self.ink_mask_cache = {}
 
-        # Build list of all valid chunks
         self.chunks = []
         for frag_id in fragment_ids:
             self._build_chunks_for_fragment(frag_id)
 
     def _load_and_cache_mask(self, frag_id):
         """Load mask once and cache it"""
-        if frag_id in self.mask_cache:
-            return self.mask_cache[frag_id]
+        if frag_id in self.ink_mask_cache:
+            return self.ink_mask_cache[frag_id]
 
         ink_mask_path = os.path.join(self.masks_path, frag_id, f"{frag_id}_inklabels.png")
         if not os.path.exists(ink_mask_path):
@@ -83,26 +81,23 @@ class ZarrDataset(Dataset):
             if not os.path.exists(ink_mask_path):
                 return None
 
-        mask = cv2.imread(ink_mask_path, 0)
-        if mask is not None:
+        ink_mask = cv2.imread(ink_mask_path, 0)
+        if ink_mask is not None:
             h, w = self.zarr_store[frag_id].shape[1:]
-            mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
-            mask = mask.astype(np.float32) / 255.0
-            self.mask_cache[frag_id] = mask
-        return mask
+            ink_mask = cv2.resize(ink_mask, (w, h), interpolation=cv2.INTER_NEAREST)
+            ink_mask = ink_mask.astype(np.float32) / 255.0
+            self.ink_mask_cache[frag_id] = ink_mask
+        return ink_mask
 
     def _build_chunks_for_fragment(self, frag_id):
-        # Load fragment shape from zarr
         frag_data = self.zarr_store[frag_id]
-        z_size, h, w = frag_data.shape
+        d, h, w = frag_data.shape
 
-        # Load and cache masks
-        mask = self._load_and_cache_mask(frag_id)
-        if mask is None:
+        ink_mask = self._load_and_cache_mask(frag_id)
+        if ink_mask is None:
             print(f"No ink mask found for {frag_id}, skipping")
             return
 
-        # Load fragment mask
         frag_mask_path = os.path.join(self.masks_path, frag_id, f"{frag_id}_mask.png")
         if not os.path.exists(frag_mask_path):
             print(f"No fragment mask found for {frag_id}, skipping")
@@ -115,39 +110,33 @@ class ZarrDataset(Dataset):
 
         frag_mask = cv2.resize(frag_mask, (w, h), interpolation=cv2.INTER_NEAREST)
 
-        # Generate chunk positions
-        for y in range(0, h, self.stride):
-            for x in range(0, w, self.stride):
-                # Check if chunk is entirely outside fragment
+        for y in range(0, h - CFG.size, self.stride):
+            for x in range(0, w - CFG.size, self.stride):
                 chunk_frag_mask = frag_mask[y:y + self.size, x:x + self.size]
                 if np.all(chunk_frag_mask == 0):
                     continue
 
                 # Check if chunk has any ink (>5% coverage)
-                chunk_mask = mask[y:y + self.size, x:x + self.size]
-                if True:
-                #if np.mean(chunk_mask) > 0.05 or self.mode == 'valid':
-                    self.chunks.append({
-                        'fragment_id': frag_id,
-                        'x': x,
-                        'y': y,
-                        'has_ink': True
-                    })
+                chunk_mask = ink_mask[y:y + self.size, x:x + self.size]
+                #if True:
+                has_ink = np.mean(chunk_mask) > 0.05
+                if has_ink or self.mode == 'valid':
+                    self.chunks.append([frag_id, x, y])
 
     def __len__(self):
         return len(self.chunks)
 
     def __getitem__(self, idx):
         chunk_info = self.chunks[idx]
-        frag_id = chunk_info['fragment_id']
-        x, y = chunk_info['x'], chunk_info['y']
+        frag_id = chunk_info[0]
+        x, y = chunk_info[1], chunk_info[2]
 
         # Load chunk from zarr (all 64 layers) - shape: (z, y, x)
         chunk_3d = self.zarr_store[frag_id][:, y:y + self.size, x:x + self.size]
 
         # Get mask chunk from cache
-        mask = self.mask_cache[frag_id]
-        mask_chunk = mask[y:y + self.size, x:x + self.size]
+        ink_mask = self.ink_mask_cache[frag_id]
+        mask_chunk = ink_mask[y:y + self.size, x:x + self.size]
 
         # Normalize
         chunk_3d = chunk_3d.astype(np.float32) / 255.0
@@ -254,11 +243,9 @@ def main():
     set_seed(CFG.seed)
     os.makedirs(CFG.model_dir, exist_ok=True)
 
-    # Get all fragments from zarr
     zarr_store = zarr.open(CFG.zarr_path, mode='r')
     all_fragments = list(zarr_store.keys())
 
-    # Split into train/valid
     random.shuffle(all_fragments)
     n_valid = int(len(all_fragments) * CFG.valid_ratio)
     valid_fragments = all_fragments[:n_valid]
@@ -289,8 +276,6 @@ def main():
         num_workers=CFG.num_workers,
         pin_memory=True,
         drop_last=True,
-    #persistent_workers=True,  # Keep workers alive
-    prefetch_factor=1  # Prefetch batches
     )
 
     valid_loader = DataLoader(
@@ -300,13 +285,9 @@ def main():
         num_workers=CFG.num_workers,
         pin_memory=True,
         drop_last=False,
-    #persistent_workers=True,  # Keep workers alive
-    prefetch_factor=1  # Prefetch batches
     )
 
-    # Setup model and training
     model = RegressionPLModel(size=CFG.size)
-
     #TODO: reenable when my setup isnt broken?
     #model = torch.compile(model)
 
