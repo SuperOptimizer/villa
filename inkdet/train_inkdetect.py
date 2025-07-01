@@ -295,14 +295,14 @@ def main():
         precision='bf16-mixed',
         gradient_clip_val=1.0,
         accumulate_grad_batches=4,
-        val_check_interval=1000,
+        #val_check_interval=1000,
         callbacks=[
             ModelCheckpoint(
                 filename='best_{epoch}_{val/loss:.4f}',
                 dirpath=CFG.model_dir,
-                monitor='val/loss',
-                mode='min',
-                save_top_k=3
+                #monitor='val/loss',
+                #mode='min',
+                save_top_k=-1
             )
         ]
     )
