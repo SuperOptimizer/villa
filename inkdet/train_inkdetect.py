@@ -22,25 +22,23 @@ ZARR_PATH = f'{VESUVIUS_ROOT}/fragments.zarr'
 MASKS_PATH = f'{VESUVIUS_ROOT}/train_scrolls'
 OUTPUT_PATH = f'{VESUVIUS_ROOT}/inkdet_outputs/'
 
-class CFG:
+CHUNK_SIZE = 64
+STRIDE = 64
+ISO_THRESHOLD = 64
+NUM_EPOCHS = 20
+LEARNING_RATE = 3e-5
+MIN_LEARNING_RATE=1e-6
+WEIGHT_DECAY = 1e-6
+NUM_WORKERS=2
+SEED=42
+VALIDATION_SPLIT=0.05
 
-    size = 64
-    stride = 64
-    voxel_threshold = 64  # papyrus ISO value, below is void space
+RESNET_DEPTH=50
+RESNET_NORM=False
+OUTPUT_SIZE=4
 
-    epochs = 20
-    lr = 3e-5
-    min_lr = 1e-6
-    weight_decay = 1e-6
-    num_workers = 2
-    seed = 42
-    valid_ratio = 0.05
+BATCH_SIZE=32
 
-    # resnet 3d Model configs
-    model_depth = 10
-    batch_size = 128
-    with_norm = False
-    output_size = 4
 
 
 
@@ -336,14 +334,14 @@ class ZarrDataset(Dataset):
         frag_mask = cv2.imread(f"{MASKS_PATH}/{frag_id}/{frag_id}_mask.png", 0)
         frag_mask = cv2.resize(frag_mask, (w, h), interpolation=cv2.INTER_NEAREST)
 
-        for y in range(0, h - CFG.size, CFG.stride):
-            for x in range(0, w - CFG.size, CFG.stride):
-                chunk_frag_mask = frag_mask[y:y + CFG.size, x:x + CFG.size]
+        for y in range(0, h - CHUNK_SIZE, STRIDE):
+            for x in range(0, w - CHUNK_SIZE, STRIDE):
+                chunk_frag_mask = frag_mask[y:y + CHUNK_SIZE, x:x + CHUNK_SIZE]
                 if np.any(chunk_frag_mask == 0):
                     continue
 
                 # Check 2D ink mask for chunk selection
-                chunk_ink_2d = ink_mask_2d[y:y + CFG.size, x:x + CFG.size]
+                chunk_ink_2d = ink_mask_2d[y:y + CHUNK_SIZE, x:x + CHUNK_SIZE]
                 has_ink = np.mean(chunk_ink_2d) > 0.05
                 if has_ink or self.mode == 'valid' or random.randint(1, 50) == 1:
                     self.chunks.append([frag_id, x, y])
@@ -354,13 +352,13 @@ class ZarrDataset(Dataset):
     def __getitem__(self, idx):
         frag_id, x, y = self.chunks[idx]
 
-        chunk_3d = self.zarr_store[frag_id][:, y:y + CFG.size, x:x + CFG.size].astype(np.float32)
-        ink_mask_2d = self.ink_mask_cache_2d[frag_id][y:y + CFG.size, x:x + CFG.size].astype(np.float32)
+        chunk_3d = self.zarr_store[frag_id][:, y:y + CHUNK_SIZE, x:x + CHUNK_SIZE].astype(np.float32)
+        ink_mask_2d = self.ink_mask_cache_2d[frag_id][y:y + CHUNK_SIZE, x:x + CHUNK_SIZE].astype(np.float32)
 
-        ink_mask_3d = np.broadcast_to(ink_mask_2d[np.newaxis, :, :], (CFG.size, CFG.size, CFG.size)).copy()
+        ink_mask_3d = np.broadcast_to(ink_mask_2d[np.newaxis, :, :], (CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE)).copy()
 
-        ink_mask_3d[chunk_3d < CFG.voxel_threshold] = 0
-        chunk_3d[chunk_3d < CFG.voxel_threshold] = 0
+        ink_mask_3d[chunk_3d < ISO_THRESHOLD] = 0
+        chunk_3d[chunk_3d < ISO_THRESHOLD] = 0
 
         chunk_3d = np.clip(chunk_3d, 0, 200) / 255.0
         ink_mask_3d = ink_mask_3d / 255.0
@@ -369,7 +367,7 @@ class ZarrDataset(Dataset):
         mask_tensor = torch.from_numpy(ink_mask_3d).float()
 
         if self.mode == 'valid':
-            return chunk_tensor, mask_tensor, (x, y, x + CFG.size, y + CFG.size)
+            return chunk_tensor, mask_tensor, (x, y, x + CHUNK_SIZE, y + CHUNK_SIZE)
         return chunk_tensor, mask_tensor
 
 
@@ -382,29 +380,29 @@ class InkDetectionModel(pl.LightningModule):
         self.loss_func2 = smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
         self.loss_func = lambda x, y: 0.5 * self.loss_func1(x, y) + 0.5 * self.loss_func2(x, y)
 
-        self.backbone = create_volumetric_resnet(depth=CFG.model_depth)
+        self.backbone = create_volumetric_resnet(depth=RESNET_DEPTH)
 
-        print(f"Training volumetric ResNet{CFG.model_depth} from scratch")
+        print(f"Training volumetric ResNet{RESNET_DEPTH} from scratch")
 
         # Get encoder dimensions by doing a forward pass
         with torch.no_grad():
-            dummy_input = torch.rand(1, 1, CFG.size, CFG.size, CFG.size)
+            dummy_input = torch.rand(1, 1, CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE)
             encoder_outputs = self.backbone(dummy_input)
             encoder_dims = [x.size(1) for x in encoder_outputs]
-            print(f"ResNet{CFG.model_depth} encoder dimensions: {encoder_dims}")
-            print(f"Processing {CFG.size}³ chunks -> {CFG.output_size}³ outputs")
+            print(f"ResNet{RESNET_DEPTH} encoder dimensions: {encoder_dims}")
+            print(f"Processing {CHUNK_SIZE}³ chunks -> {OUTPUT_SIZE}³ outputs")
 
             # Show spatial dimension flow through network
             print("\nDimension flow through network:")
-            print(f"Input: 1x{CFG.size}x{CFG.size}x{CFG.size}")
+            print(f"Input: 1x{CHUNK_SIZE}x{CHUNK_SIZE}x{CHUNK_SIZE}")
             print(f"After conv1 (stride=2): {self.backbone.inplanes}x32x32x32")
             for i, feat in enumerate(encoder_outputs):
                 print(f"After layer{i + 1}: {feat.shape[1]}x{feat.shape[2]}x{feat.shape[3]}x{feat.shape[4]}")
 
         # Create decoder
-        self.decoder = Decoder3D(encoder_dims=encoder_dims, output_size=CFG.output_size)
+        self.decoder = Decoder3D(encoder_dims=encoder_dims, output_size=OUTPUT_SIZE)
 
-        if CFG.with_norm:
+        if RESNET_NORM:
             self.normalization = nn.BatchNorm3d(num_features=1)
 
     def forward(self, x):
@@ -412,7 +410,7 @@ class InkDetectionModel(pl.LightningModule):
         if x.ndim == 4:
             x = x.unsqueeze(1)  # (B, D, H, W) -> (B, 1, D, H, W)
 
-        if CFG.with_norm:
+        if RESNET_NORM:
             x = self.normalization(x)
 
         # Get feature maps from backbone
@@ -431,7 +429,7 @@ class InkDetectionModel(pl.LightningModule):
         # Downsample target to match output size
         y = F.interpolate(
             y.unsqueeze(1),
-            size=(CFG.output_size, CFG.output_size, CFG.output_size),
+            size=(OUTPUT_SIZE, OUTPUT_SIZE, OUTPUT_SIZE),
             mode='trilinear',
             align_corners=False
         )
@@ -452,7 +450,7 @@ class InkDetectionModel(pl.LightningModule):
         # Downsample target to match output size
         y = F.interpolate(
             y.unsqueeze(1),
-            size=(CFG.output_size, CFG.output_size, CFG.output_size),
+            size=(OUTPUT_SIZE, OUTPUT_SIZE, OUTPUT_SIZE),
             mode='trilinear',
             align_corners=False
         )
@@ -463,9 +461,9 @@ class InkDetectionModel(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        optimizer = AdamW(self.parameters(), lr=CFG.lr, weight_decay=CFG.weight_decay)
+        optimizer = AdamW(self.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
         scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, CFG.epochs, eta_min=CFG.min_lr
+            optimizer, NUM_EPOCHS, eta_min=MIN_LEARNING_RATE
         )
         scheduler = GradualWarmupSchedulerV2(
             optimizer, multiplier=1.0, total_epoch=1, after_scheduler=scheduler_cosine
@@ -494,16 +492,20 @@ class GradualWarmupSchedulerV2(GradualWarmupScheduler):
 
 
 def main():
-    set_seed(CFG.seed)
+    set_seed(SEED)
     os.makedirs(OUTPUT_PATH, exist_ok=True)
 
     zarr_store = zarr.open(ZARR_PATH, mode='r')
     all_fragments = list(zarr_store.keys())
 
     random.shuffle(all_fragments)
-    n_valid = int(len(all_fragments) * CFG.valid_ratio)
+    n_valid = int(len(all_fragments) * VALIDATION_SPLIT)
     valid_fragments = all_fragments[:n_valid]
     train_fragments = all_fragments[n_valid:]
+
+    if '20231005123336' in train_fragments:
+        train_fragments.remove('20231005123336')
+        valid_fragments.append('20231005123336')
 
     print(f"Total fragments: {len(all_fragments)}")
     print(f"Train fragments: {len(train_fragments)}")
@@ -517,18 +519,18 @@ def main():
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=CFG.batch_size,
+        batch_size=BATCH_SIZE,
         shuffle=True,
-        num_workers=CFG.num_workers,
+        num_workers=NUM_WORKERS,
         pin_memory=True,
         drop_last=True,
     )
 
     valid_loader = DataLoader(
         valid_dataset,
-        batch_size=CFG.batch_size,
+        batch_size=BATCH_SIZE,
         shuffle=False,
-        num_workers=CFG.num_workers,
+        num_workers=NUM_WORKERS,
         pin_memory=True,
         drop_last=False,
     )
@@ -536,16 +538,16 @@ def main():
     model = InkDetectionModel()
     model = torch.compile(model,fullgraph=False, dynamic=False)
 
-    print(f"Using Volumetric ResNet{CFG.model_depth} model for 3D ink detection")
-    print(f"Input: {CFG.size}³ voxel chunks (float32, normalized 0-1)")
-    print(f"Output: {CFG.output_size}³ predictions (logits for ink probability)")
+    print(f"Using Volumetric ResNet{RESNET_DEPTH} model for 3D ink detection")
+    print(f"Input: {CHUNK_SIZE}³ voxel chunks (float32, normalized 0-1)")
+    print(f"Output: {OUTPUT_SIZE}³ predictions (logits for ink probability)")
     print(f"All spatial dimensions (Z, Y, X) are processed equally")
 
     # Uncomment if using Weights & Biases
-    # wandb_logger = WandbLogger(project="vesuvius", name=f"volumetric_resnet{CFG.model_depth}_ink_detection")
+    # wandb_logger = WandbLogger(project="vesuvius", name=f"volumetric_resnet{RESNET_DEPTH}_ink_detection")
 
     trainer = pl.Trainer(
-        max_epochs=CFG.epochs,
+        max_epochs=NUM_EPOCHS,
         accelerator="gpu",
         devices=1,
         # logger=wandb_logger,
@@ -555,7 +557,7 @@ def main():
         accumulate_grad_batches=4,
         callbacks=[
             ModelCheckpoint(
-                filename=f'best_volumetric_resnet{CFG.model_depth}_{{epoch}}_{{loss:.4f}}',
+                filename=f'best_volumetric_resnet{RESNET_DEPTH}_{{epoch}}',
                 dirpath=OUTPUT_PATH,
                 save_top_k=-1  # Save all checkpoints
             )

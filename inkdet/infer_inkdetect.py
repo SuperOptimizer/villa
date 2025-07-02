@@ -8,32 +8,40 @@ import cv2
 from tqdm import tqdm
 
 # Import your model classes (from the training script)
-from train_inkdetect import InkDetectionModel, CFG
+from train_inkdetect import InkDetectionModel, CHUNK_SIZE, STRIDE, ISO_THRESHOLD, ZARR_PATH, OUTPUT_SIZE, MASKS_PATH, \
+    BATCH_SIZE, NUM_WORKERS
 
 
 class InferenceDataset(Dataset):
-    """Simple dataset for inference chunks"""
+    """Lazy-loading dataset for inference chunks"""
 
-    def __init__(self, chunks, xyxys):
-        self.chunks = chunks
+    def __init__(self, zarr_store, fragment_id, xyxys):
+        self.zarr_store = zarr_store
+        self.fragment_id = fragment_id
         self.xyxys = xyxys
+        self.frag_data = self.zarr_store[fragment_id]
 
     def __len__(self):
-        return len(self.chunks)
+        return len(self.xyxys)
 
     def __getitem__(self, idx):
-        chunk = self.chunks[idx]
-        xy = self.xyxys[idx]
+        x1, y1, x2, y2 = self.xyxys[idx]
+
+        # Load chunk on-demand
+        chunk_3d = self.frag_data[:, y1:y2, x1:x2].astype(np.float32)
+
+        # Apply voxel threshold
+        chunk_3d[chunk_3d < ISO_THRESHOLD] = 0
 
         # Normalize
-        chunk = np.clip(chunk, 0, 200) / 255.0
-        chunk_tensor = torch.from_numpy(chunk).float()
+        chunk_3d = np.clip(chunk_3d, 0, 200) / 255.0
+        chunk_tensor = torch.from_numpy(chunk_3d).float()
 
-        return chunk_tensor, xy
+        return chunk_tensor, torch.tensor([x1, y1, x2, y2])
 
 
-def get_fragment_chunks(zarr_path, fragment_id, masks_path):
-    """Extract valid chunks from a fragment"""
+def get_valid_chunk_coords(zarr_path, fragment_id, masks_path):
+    """Get coordinates of valid chunks without loading data"""
     zarr_store = zarr.open(zarr_path, mode='r')
     frag_data = zarr_store[fragment_id]
     d, h, w = frag_data.shape
@@ -47,33 +55,24 @@ def get_fragment_chunks(zarr_path, fragment_id, masks_path):
     frag_mask = cv2.imread(frag_mask_path, 0)
     frag_mask = cv2.resize(frag_mask, (w, h), interpolation=cv2.INTER_NEAREST)
 
-    # Collect valid chunks
-    chunks = []
+    # Collect valid chunk coordinates only
     xyxys = []
 
-    for y in range(0, h - CFG.size, CFG.stride):
-        for x in range(0, w - CFG.size, CFG.stride):
+    for y in range(0, h - CHUNK_SIZE, STRIDE):
+        for x in range(0, w - CHUNK_SIZE, STRIDE):
             # Check if chunk is valid (inside fragment mask)
-            chunk_mask = frag_mask[y:y + CFG.size, x:x + CFG.size]
+            chunk_mask = frag_mask[y:y + CHUNK_SIZE, x:x + CHUNK_SIZE]
             if np.all(chunk_mask > 0):
-                # Extract 3D chunk
-                chunk_3d = frag_data[:, y:y + CFG.size, x:x + CFG.size].astype(np.float32)
+                xyxys.append([x, y, x + CHUNK_SIZE, y + CHUNK_SIZE])
 
-                # Apply voxel threshold
-                chunk_3d[chunk_3d < CFG.voxel_threshold] = 0
-
-                chunks.append(chunk_3d)
-                xyxys.append([x, y, x + CFG.size, y + CFG.size])
-
-    return chunks, xyxys, (h, w)
+    return zarr_store, xyxys, (h, w)
 
 
 @torch.no_grad()
 def run_inference(model, dataloader, output_shape, device):
     """Run inference and assemble 2D output"""
     # Initialize output arrays
-    # Since we predict 4x4x4 and want 2D, we'll average over Z and use 4x4 spatial
-    scale_factor = CFG.size // CFG.output_size  # 64/4 = 16
+    scale_factor = CHUNK_SIZE // OUTPUT_SIZE  # 64/4 = 16
 
     h_out = output_shape[0] // scale_factor
     w_out = output_shape[1] // scale_factor
@@ -98,12 +97,13 @@ def run_inference(model, dataloader, output_shape, device):
         # Move to CPU and process each prediction
         probs_2d = probs_2d.cpu().numpy()
 
-        for i, (x1, y1, x2, y2) in enumerate(xyxys):
+        for i in range(len(xyxys)):
+            x1, y1, x2, y2 = xyxys[i].tolist() if hasattr(xyxys[i], 'tolist') else xyxys[i]
             # Convert to output coordinates
-            x1_out = x1 // scale_factor
-            y1_out = y1 // scale_factor
-            x2_out = x2 // scale_factor
-            y2_out = y2 // scale_factor
+            x1_out = int(x1 // scale_factor)
+            y1_out = int(y1 // scale_factor)
+            x2_out = int(x2 // scale_factor)
+            y2_out = int(y2 // scale_factor)
 
             # Add prediction to output
             pred_sum[y1_out:y2_out, x1_out:x2_out] += probs_2d[i, 0]
@@ -119,7 +119,7 @@ def run_inference(model, dataloader, output_shape, device):
 
 def main():
     # Configuration
-    checkpoint_path = "path/to/your/checkpoint.ckpt"
+    checkpoint_path = "/vesuvius/inkdet_outputs/resnet10.ckpt"
     fragment_id = "20231005123336"
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -129,25 +129,25 @@ def main():
     model.to(device)
     model.eval()
 
-    # Get chunks from fragment
+    # Get chunk coordinates (not loading data yet)
     print(f"Processing fragment {fragment_id}...")
-    chunks, xyxys, output_shape = get_fragment_chunks(
-        CFG.zarr_path, fragment_id, CFG.masks_path
+    zarr_store, xyxys, output_shape = get_valid_chunk_coords(
+        ZARR_PATH, fragment_id, MASKS_PATH
     )
 
-    if chunks is None:
+    if xyxys is None:
         print("Failed to load fragment")
         return
 
-    print(f"Found {len(chunks)} valid chunks")
+    print(f"Found {len(xyxys)} valid chunks")
 
-    # Create dataset and dataloader
-    dataset = InferenceDataset(chunks, xyxys)
+    # Create dataset with lazy loading
+    dataset = InferenceDataset(zarr_store, fragment_id, xyxys)
     dataloader = DataLoader(
         dataset,
-        batch_size=CFG.batch_size,
+        batch_size=BATCH_SIZE,
         shuffle=False,
-        num_workers=CFG.num_workers,
+        num_workers=NUM_WORKERS,
         pin_memory=True
     )
 
