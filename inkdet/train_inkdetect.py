@@ -10,7 +10,7 @@ import zarr
 import cv2
 import random
 from warmup_scheduler import GradualWarmupScheduler
-
+from scipy.ndimage import rotate, zoom, gaussian_filter
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -33,14 +33,122 @@ NUM_WORKERS=2
 SEED=42
 VALIDATION_SPLIT=0.05
 
+#for resnet50 and 24gb vram, bs=24 works well
+
 RESNET_DEPTH=50
 RESNET_NORM=False
 OUTPUT_SIZE=4
 
-BATCH_SIZE=32
+BATCH_SIZE=24
 
 
+class VolumetricAugmentations:
+    """3D augmentations for volumetric data"""
 
+    def __init__(self, p_flip=0.5, p_rotate=0.75, p_brightness=0.75,
+                 p_noise=0.4, p_dropout=0.5):
+        self.p_flip = p_flip
+        self.p_rotate = p_rotate
+        self.p_brightness = p_brightness
+        self.p_noise = p_noise
+        self.p_dropout = p_dropout
+
+    def random_flip_3d(self, volume, mask):
+        """Random flips along each axis"""
+        if random.random() < self.p_flip:
+            if random.random() < 0.5:
+                volume = np.flip(volume, axis=0).copy()
+                mask = np.flip(mask, axis=0).copy()
+        if random.random() < self.p_flip:
+            if random.random() < 0.5:
+                volume = np.flip(volume, axis=1).copy()
+                mask = np.flip(mask, axis=1).copy()
+        if random.random() < self.p_flip:
+            if random.random() < 0.5:
+                volume = np.flip(volume, axis=2).copy()
+                mask = np.flip(mask, axis=2).copy()
+        return volume, mask
+
+    def random_rotation_3d(self, volume, mask):
+        """Random rotation in 3D space"""
+        if random.random() < self.p_rotate:
+            # Random angles for each axis
+            angle_x = random.uniform(-15, 15)
+            angle_y = random.uniform(-15, 15)
+            angle_z = random.uniform(-180, 180)  # Full rotation on Z
+
+            # Rotate volume
+            volume = rotate(volume, angle_x, axes=(1, 2), reshape=False, order=1)
+            volume = rotate(volume, angle_y, axes=(0, 2), reshape=False, order=1)
+            volume = rotate(volume, angle_z, axes=(0, 1), reshape=False, order=1)
+
+            # Rotate mask with nearest neighbor
+            mask = rotate(mask, angle_x, axes=(1, 2), reshape=False, order=0)
+            mask = rotate(mask, angle_y, axes=(0, 2), reshape=False, order=0)
+            mask = rotate(mask, angle_z, axes=(0, 1), reshape=False, order=0)
+
+        return volume, mask
+
+    def random_brightness_contrast_3d(self, volume):
+        """Adjust brightness and contrast"""
+        if random.random() < self.p_brightness:
+            # Brightness
+            brightness = random.uniform(-0.2, 0.2)
+            volume = volume + brightness
+
+            # Contrast
+            contrast = random.uniform(0.8, 1.2)
+            mean = np.mean(volume)
+            volume = (volume - mean) * contrast + mean
+
+        return volume
+
+    def random_noise_3d(self, volume):
+        """Add random noise"""
+        if random.random() < self.p_noise:
+            noise_type = random.choice(['gaussian', 'blur'])
+
+            if noise_type == 'gaussian':
+                noise = np.random.normal(0, random.uniform(0.01, 0.05), volume.shape)
+                volume = volume + noise
+            else:  # blur
+                sigma = random.uniform(0.5, 1.5)
+                volume = gaussian_filter(volume, sigma=sigma)
+
+        return volume
+
+    def coarse_dropout_3d(self, volume):
+        """3D coarse dropout"""
+        if random.random() < self.p_dropout:
+            h, w, d = volume.shape
+            n_holes = random.randint(1, 3)
+
+            for _ in range(n_holes):
+                hole_size = int(0.2 * min(h, w, d))
+                x = random.randint(0, h - hole_size)
+                y = random.randint(0, w - hole_size)
+                z = random.randint(0, d - hole_size)
+
+                volume[x:x + hole_size, y:y + hole_size, z:z + hole_size] = 0
+
+        return volume
+
+    def __call__(self, volume, mask):
+        """Apply augmentations"""
+        # Geometric transforms (apply to both volume and mask)
+        volume, mask = self.random_flip_3d(volume, mask)
+        volume, mask = self.random_rotation_3d(volume, mask)
+
+        # Intensity transforms (apply only to volume, NOT mask)
+        volume = self.random_brightness_contrast_3d(volume)
+        volume = self.random_noise_3d(volume)
+        volume = self.coarse_dropout_3d(volume)
+
+        # Ensure values are in valid range
+        volume = np.clip(volume, 0, 1)
+        mask = np.clip(mask, 0, 1)
+
+        return volume, mask
 
 def conv3x3x3(in_planes, out_planes, stride):
     return nn.Conv3d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
@@ -304,6 +412,11 @@ class ZarrDataset(Dataset):
             self._build_chunks_for_fragment(frag_id)
         print(f"Loaded {len(self.chunks)} chunks for {mode} dataset")
 
+        if mode == 'train':
+            self.augment = VolumetricAugmentations()
+        else:
+            self.augment = None
+
     def _load_and_cache_mask_2d(self, frag_id):
         if frag_id in self.ink_mask_cache_2d:
             return self.ink_mask_cache_2d[frag_id]
@@ -357,11 +470,14 @@ class ZarrDataset(Dataset):
 
         ink_mask_3d = np.broadcast_to(ink_mask_2d[np.newaxis, :, :], (CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE)).copy()
 
-        ink_mask_3d[chunk_3d < ISO_THRESHOLD] = 0
+        #ink_mask_3d[chunk_3d < ISO_THRESHOLD] = 0
         chunk_3d[chunk_3d < ISO_THRESHOLD] = 0
 
         chunk_3d = np.clip(chunk_3d, 0, 200) / 255.0
         ink_mask_3d = ink_mask_3d / 255.0
+
+        if self.augment is not None:
+            chunk_3d, ink_mask_3d = self.augment(chunk_3d, ink_mask_3d)
 
         chunk_tensor = torch.from_numpy(chunk_3d).float()
         mask_tensor = torch.from_numpy(ink_mask_3d).float()
@@ -501,7 +617,7 @@ def main():
     random.shuffle(all_fragments)
     n_valid = int(len(all_fragments) * VALIDATION_SPLIT)
     valid_fragments = all_fragments[:n_valid]
-    train_fragments = all_fragments[n_valid:]
+    train_fragments = all_fragments[n_valid:][:10]
 
     if '20231005123336' in train_fragments:
         train_fragments.remove('20231005123336')
