@@ -13,12 +13,9 @@ def load_and_convert_layer(path, target_shape=None):
     """Load layer and convert to uint8"""
     img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
 
-    # Convert to uint8 if needed
     if img.dtype == np.uint16:
-        # Scale from 16-bit to 8-bit
         img = (img / 256).astype(np.uint8)
     elif img.dtype != np.uint8:
-        # Clip and convert other dtypes
         img = np.clip(img, 0, 255).astype(np.uint8)
 
     # Pad to target shape if specified
@@ -112,6 +109,9 @@ def export_fragment_to_zarr(fragment_path, zarr_group, batch_size=8):
 def main():
     train_scrolls_dir = f"{VESUVIUS_ROOT}/train_scrolls"
     output_path = f"/home/forrest/fragments.zarr"
+
+    if os.path.exists(output_path):
+        raise FileExistsError(f"Output path already exists: {output_path}")
 
     # Create zarr store with initial empty group
     store = zarr.DirectoryStore(output_path)
