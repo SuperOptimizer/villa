@@ -56,7 +56,7 @@ BATCH_SIZE = 40
 # CHUNK_SIZE aligned chunk
 CHUNK_RANDOM_OFFSET = True
 
-COMPILE_FULLGRAPH=False
+COMPILE_FULLGRAPH=True
 
 def preprocess_chunk(chunk):
     chunk = skimage.exposure.equalize_hist(chunk / 255.0)
@@ -612,6 +612,7 @@ class InkDetectionModel(pl.LightningModule):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
+        #torch.compiler.cudagraph_mark_step_begin()
         x, y = batch
         pred = self(x)
         loss = self.loss_fn(pred, y)
@@ -619,18 +620,17 @@ class InkDetectionModel(pl.LightningModule):
         if torch.isnan(loss):
             print("Loss nan encountered")
 
-        if not COMPILE_FULLGRAPH:
-            self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
+        #torch.compiler.cudagraph_mark_step_begin()
         x, y, xyxy = batch
         pred = self(x)
         loss = self.loss_fn(pred, y)
 
         self.val_losses.append(loss.item())
-        if not COMPILE_FULLGRAPH:
-            self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def on_validation_epoch_end(self):
@@ -639,8 +639,7 @@ class InkDetectionModel(pl.LightningModule):
             recent_avg = sum(self.val_losses[-5:]) / 5
             older_avg = sum(self.val_losses[-10:-5]) / 5
             if recent_avg > older_avg * 0.98:  # Not improving
-                if not COMPILE_FULLGRAPH:
-                    self.log('learning_rate', self.trainer.optimizers[0].param_groups[0]['lr'] * 0.5)
+                self.log('learning_rate', self.trainer.optimizers[0].param_groups[0]['lr'] * 0.5)
         self.val_losses = []
 
     def configure_optimizers(self):
@@ -727,10 +726,11 @@ def main():
         prefetch_factor=2,
     )
 
+    # To this:
     model = InkDetectionModel()
     config = Float8LinearConfig.from_recipe_name("tensorwise")
-    convert_to_float8_training(model, config=config)
-    model = torch.compile(model, fullgraph=COMPILE_FULLGRAPH, dynamic=False,mode='max-autotune' if COMPILE_FULLGRAPH else None)
+    convert_to_float8_training(model.model, config=config)  # Apply float8 to the inner model
+    model.model = torch.compile(model.model, fullgraph=True, dynamic=False, mode='max-autotune')
 
     print(f"Using Simple Volumetric Model for 3D ink detection")
     print(f"Input: {CHUNK_SIZE}³ voxel chunks (float32, normalized 0-1)")
@@ -748,7 +748,7 @@ def main():
         default_root_dir=OUTPUT_PATH,
         precision='bf16-mixed',
         gradient_clip_val=1.0,
-        accumulate_grad_batches=32,
+        accumulate_grad_batches=1,
         callbacks=[
             ModelCheckpoint(
                 filename=f'best_simple_volumetric_{{epoch}}',
