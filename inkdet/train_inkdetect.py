@@ -521,13 +521,13 @@ def main():
     train_loader = DataLoader(
         train_dataset, batch_size=BATCH_SIZE, shuffle=True,
         num_workers=NUM_WORKERS, pin_memory=True, drop_last=True,
-        persistent_workers=True, prefetch_factor=2
+        persistent_workers=True, prefetch_factor=8
     )
 
     valid_loader = DataLoader(
         valid_dataset, batch_size=BATCH_SIZE, shuffle=False,
         num_workers=NUM_WORKERS, pin_memory=True, drop_last=False,
-        persistent_workers=True, prefetch_factor=2
+        persistent_workers=True, prefetch_factor=8
     )
 
     # Create model
@@ -535,12 +535,12 @@ def main():
     loss_fn = CombinedLoss()
 
     # Apply float8
-    #config = Float8LinearConfig.from_recipe_name("tensorwise")
-    #convert_to_float8_training(model, config=config)
+    config = Float8LinearConfig.from_recipe_name("tensorwise")
+    convert_to_float8_training(model, config=config)
     model = torch.compile(model, fullgraph=COMPILE_FULLGRAPH, dynamic=False, mode='max-autotune-no-cudagraphs')
 
     # Create optimizer and scheduler
-    optimizer = AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, betas=(0.9, 0.95))
+    optimizer = AdamWFp8(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, betas=(0.9, 0.95))
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=100, T_mult=1, eta_min=MIN_LEARNING_RATE
     )
@@ -615,20 +615,12 @@ def main():
             val_losses.append(avg_val_loss)
             print(f"Epoch {epoch}: Train Loss = {avg_train_loss:.4f}, Val Loss = {avg_val_loss:.4f}")
 
-            # Save best model
-            if avg_val_loss < best_val_loss:
-                best_val_loss = avg_val_loss
-                save_checkpoint(
-                    model, optimizer, scheduler, epoch, train_losses, val_losses,
-                    os.path.join(OUTPUT_PATH, f'best_simple_volumetric_epoch={epoch}.ckpt')
-                )
-        else:
-            print(f"Epoch {epoch}: Train Loss = {avg_train_loss:.4f}")
-            # Save checkpoint every epoch without validation
-            save_checkpoint(
-                model, optimizer, scheduler, epoch, train_losses, val_losses,
-                os.path.join(OUTPUT_PATH, f'best_simple_volumetric_epoch={epoch}.ckpt')
-            )
+        print(f"Epoch {epoch}: Train Loss = {avg_train_loss:.4f}")
+        # Save checkpoint every epoch without validation
+        save_checkpoint(
+            model, optimizer, scheduler, epoch, train_losses, val_losses,
+            os.path.join(OUTPUT_PATH, f'best_simple_volumetric_epoch={epoch}.ckpt')
+        )
 
         scheduler.step()
 

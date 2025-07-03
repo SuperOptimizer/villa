@@ -138,8 +138,8 @@ def main():
     model.to(device)
 
     # Apply Float8 quantization
-    #print("Applying Float8 quantization...")
-    #quantize_(model, Float8DynamicActivationFloat8WeightConfig(granularity=PerTensor()))
+    print("Applying Float8 quantization...")
+    quantize_(model, Float8DynamicActivationFloat8WeightConfig(granularity=PerTensor()))
 
     # Compile the model
     model = torch.compile(model, fullgraph=True, dynamic=False, mode="max-autotune-no-cudagraphs")
