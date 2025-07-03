@@ -58,7 +58,7 @@ def parse_arguments():
                       help='Number of parts to process per GPU. Higher values use less GPU memory but take longer. Default: 1')
     
     # Performance settings
-    parser.add_argument('--tta-type', dest='tta_type', type=str, choices=['mirroring', 'rotation'], default='rotation',
+    parser.add_argument('--tta-type', dest='tta_type', type=str, choices=['mirroring', 'rotation'], default='mirroring',
                       help='Test time augmentation type (mirroring or rotation). Default: rotation')
     parser.add_argument('--disable-tta', dest='disable_tta', action='store_true',
                       help='Disable test time augmentation')
