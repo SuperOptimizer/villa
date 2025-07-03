@@ -7,9 +7,15 @@ import zarr
 import cv2
 from tqdm import tqdm
 
-# Import your model classes (from the training script)
-from train_inkdetect import InkDetectionModel, CHUNK_SIZE, STRIDE, ISO_THRESHOLD, ZARR_PATH, OUTPUT_SIZE, MASKS_PATH, \
-    BATCH_SIZE, NUM_WORKERS, preprocess_chunk
+# Import model classes and quantization
+from train_inkdetect import (
+    InkDetectionModel, SimpleVolumetricModel, CHUNK_SIZE, STRIDE, ISO_THRESHOLD,
+    ZARR_PATH, MASKS_PATH, BATCH_SIZE, NUM_WORKERS, preprocess_chunk
+)
+from torchao.quantization import quantize_, Float8DynamicActivationFloat8WeightConfig, PerTensor
+
+# Updated OUTPUT_SIZE to match new model
+OUTPUT_SIZE = 16  # Changed from 4 to 16
 
 
 class InferenceDataset(Dataset):
@@ -68,7 +74,7 @@ def get_valid_chunk_coords(zarr_path, fragment_id, masks_path):
 def run_inference(model, dataloader, output_shape, device):
     """Run inference and assemble 2D output"""
     # Initialize output arrays
-    scale_factor = CHUNK_SIZE // OUTPUT_SIZE  # 64/4 = 16
+    scale_factor = CHUNK_SIZE // OUTPUT_SIZE  # 64/16 = 4
 
     h_out = output_shape[0] // scale_factor
     w_out = output_shape[1] // scale_factor
@@ -82,13 +88,13 @@ def run_inference(model, dataloader, output_shape, device):
         chunks = chunks.to(device)
 
         # Get predictions
-        outputs = model(chunks)  # (B, 1, 4, 4, 4)
+        outputs = model(chunks)  # (B, 1, 16, 16, 16)
 
         # Apply sigmoid to get probabilities
         probs = torch.sigmoid(outputs)
 
         # Average over Z dimension to get 2D
-        probs_2d = probs.mean(dim=2)  # (B, 1, 4, 4)
+        probs_2d = probs.mean(dim=2)  # (B, 1, 16, 16)
 
         # Move to CPU and process each prediction
         probs_2d = probs_2d.cpu().numpy()
@@ -115,16 +121,28 @@ def run_inference(model, dataloader, output_shape, device):
 
 def main():
     # Configuration
-    checkpoint_path = "/vesuvius/inkdet_outputs/best_volumetric_resnet10_epoch=40.ckpt"
+    checkpoint_path = "/vesuvius/inkdet_outputs/best_simple_volumetric_epoch=3.ckpt"
     fragment_id = "20231005123336"
     device = torch.device('cuda')
 
     # Load model
     print("Loading model...")
-    model = InkDetectionModel.load_from_checkpoint(checkpoint_path, strict=False)
-    model.to(device)
-    model = torch.compile(model,fullgraph=True, dynamic=False)
+    # Load checkpoint manually to handle tensor subclasses
+    checkpoint = torch.load(checkpoint_path, map_location='cuda')
 
+    # Create model instance
+    model = InkDetectionModel()
+
+    # Load state dict
+    model.load_state_dict(checkpoint['state_dict'], strict=False)
+    model.to(device)
+
+    # Apply Float8 quantization
+    print("Applying Float8 quantization...")
+    quantize_(model, Float8DynamicActivationFloat8WeightConfig(granularity=PerTensor()))
+
+    # Compile the model
+    model = torch.compile(model, fullgraph=True, dynamic=False, mode="reduce-overhead")
     model.eval()
 
     # Get chunk coordinates (not loading data yet)
