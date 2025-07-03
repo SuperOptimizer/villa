@@ -6,17 +6,33 @@ from tqdm import tqdm
 import glob
 from multiprocessing import Pool, cpu_count
 from functools import partial
+import skimage
 
 VESUVIUS_ROOT = "/vesuvius"
 
+
 def load_and_convert_layer(path, target_shape=None):
     """Load layer and convert to uint8"""
+    # 1. Read the image
     img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
 
-    if img.dtype == np.uint16:
-        img = (img / 256).astype(np.uint8)
-    elif img.dtype != np.uint8:
-        img = np.clip(img, 0, 255).astype(np.uint8)
+    # 2. Normalize to 0-1 as float32 using min-max
+    img = img.astype(np.float32)
+    img_min, img_max = img.min(), img.max()
+    if img_max > img_min:
+        img = (img - img_min) / (img_max - img_min)
+    else:
+        # Handle case where all pixels have same value
+        img = np.zeros_like(img, dtype=np.float32)
+
+    # 3. Equalize the histogram (works on 0-1 range)
+    img = skimage.exposure.equalize_hist(img)
+
+    # 4. Re-expand range to 0-255
+    img = img * 255.0
+
+    # 5. Convert to uint8
+    img = np.clip(img, 0, 255).astype(np.uint8)
 
     # Pad to target shape if specified
     if target_shape is not None:
@@ -25,6 +41,7 @@ def load_and_convert_layer(path, target_shape=None):
         if pad_y > 0 or pad_x > 0:
             img = np.pad(img, [(0, max(0, pad_y)), (0, max(0, pad_x))], constant_values=0)
 
+    # 6. Apply & 0xf0
     return img & 0xf0
 
 
@@ -50,7 +67,7 @@ def process_fragment(fragment_path, output_path, batch_size=8):
         return fragment_id, False, str(e)
 
 
-def export_fragment_to_zarr(fragment_path, zarr_group, batch_size=8):
+def export_fragment_to_zarr(fragment_path, zarr_group, batch_size=32):
     """Export a single fragment to zarr"""
     fragment_id = os.path.basename(fragment_path)
 
@@ -108,7 +125,7 @@ def export_fragment_to_zarr(fragment_path, zarr_group, batch_size=8):
 
 def main():
     train_scrolls_dir = f"{VESUVIUS_ROOT}/train_scrolls"
-    output_path = f"/home/forrest/fragments.zarr"
+    output_path = f"/home/ubuntu/fragments.zarr"
 
     if os.path.exists(output_path):
         raise FileExistsError(f"Output path already exists: {output_path}")
@@ -124,7 +141,7 @@ def main():
     print(f"Found {len(fragment_dirs)} fragments to export")
 
     # Set up multiprocessing
-    num_workers = 8
+    num_workers = 4
     print(f"Using {num_workers} workers")
 
     # Create partial function with fixed output_path

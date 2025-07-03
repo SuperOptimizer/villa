@@ -26,6 +26,9 @@ import random
 
 from torch.cuda.amp import GradScaler, autocast
 
+from torchao.float8 import convert_to_float8_training, Float8LinearConfig
+from torchao.optim import AdamWFp8
+
 THISDIR = os.path.abspath(os.path.dirname(__file__))
 VESUVIUS_ROOT = "/vesuvius"
 ZARR_PATH = f'{VESUVIUS_ROOT}/fragments.zarr'
@@ -33,30 +36,27 @@ MASKS_PATH = f'{VESUVIUS_ROOT}/train_scrolls'
 OUTPUT_PATH = f'{VESUVIUS_ROOT}/inkdet_outputs/'
 
 CHUNK_SIZE = 64
-STRIDE = 64
-ISO_THRESHOLD = 16
+STRIDE = 128
+ISO_THRESHOLD = 64
 NUM_EPOCHS = 2000
-LEARNING_RATE = 3e-5
-MIN_LEARNING_RATE=1e-6
-WEIGHT_DECAY = 1e-6
-NUM_WORKERS=24
-SEED=42
-VALIDATION_SPLIT=0.05
+LEARNING_RATE = 3e-4  # Increased from 3e-5
+MIN_LEARNING_RATE = 1e-6
+WEIGHT_DECAY = 0.01  # Increased from 1e-6
+NUM_WORKERS = 16
+SEED = 42
+VALIDATION_SPLIT = 0.05
 AUGMENT_CHANCE = 0.5
-INKDETECT_MEAN = .3
+INKDETECT_MEAN = .1
 
-#for resnet50 and 24gb vram, bs=24
-#for resnet10 and 24gb vram, bs=128
+OUTPUT_SIZE = 16  # Changed from 4 to 16
 
-RESNET_DEPTH=10
-RESNET_NORM=True
-OUTPUT_SIZE=4
+BATCH_SIZE = 40
 
-BATCH_SIZE=128
-
-#whether to randomly offset the y x dimensions of our training data so taht we arent always yielding the same
-#CHUNK_SIZE aligned chunk
+# whether to randomly offset the y x dimensions of our training data so taht we arent always yielding the same
+# CHUNK_SIZE aligned chunk
 CHUNK_RANDOM_OFFSET = True
+
+COMPILE_FULLGRAPH=False
 
 def preprocess_chunk(chunk):
     chunk = skimage.exposure.equalize_hist(chunk / 255.0)
@@ -235,7 +235,6 @@ class VolumetricAugmentations:
             volume = volume + shift_map
         return volume
 
-
     def motion_blur_z_axis(self, volume):
         """Fast motion blur along Z-axis (scanning direction)"""
         if random.random() < AUGMENT_CHANCE:
@@ -315,238 +314,166 @@ class VolumetricAugmentations:
 
         return volume, mask
 
-def conv3x3x3(in_planes, out_planes, stride):
-    return nn.Conv3d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
 
+# New model architecture
+class ResBlock3D(nn.Module):
+    """Efficient residual block with GroupNorm for better small-batch training"""
 
-def conv1x1x1(in_planes, out_planes, stride):
-    return nn.Conv3d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
-
-
-class BasicBlock(nn.Module):
-    expansion = 1
-
-    def __init__(self, in_planes, planes, stride, downsample):
+    def __init__(self, channels):
         super().__init__()
-        self.conv1 = conv3x3x3(in_planes, planes, stride)
-        self.bn1 = nn.BatchNorm3d(planes)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = conv3x3x3(planes, planes, 1)
-        self.bn2 = nn.BatchNorm3d(planes)
-        self.downsample = downsample
-        self.stride = stride
+        self.conv1 = nn.Conv3d(channels, channels, 3, padding=1, bias=False)
+        self.conv2 = nn.Conv3d(channels, channels, 3, padding=1, bias=False)
+        self.norm1 = nn.GroupNorm(8, channels)
+        self.norm2 = nn.GroupNorm(8, channels)
+        self.act = nn.GELU()  # GELU often works better than ReLU for 3D
 
     def forward(self, x):
         residual = x
-
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-
-        out = self.conv2(out)
-        out = self.bn2(out)
-
-        if self.downsample is not None:
-            residual = self.downsample(x)
-
-        out += residual
-        out = self.relu(out)
-
-        return out
+        x = self.act(self.norm1(self.conv1(x)))
+        x = self.norm2(self.conv2(x))
+        return self.act(x + residual)
 
 
-class Bottleneck(nn.Module):
-    expansion = 4
+class DenseBlock3D(nn.Module):
+    """Dense connections for more parameters and gradient flow"""
 
-    def __init__(self, in_planes, planes, stride, downsample):
+    def __init__(self, channels, growth_rate=32, num_layers=4):
         super().__init__()
-        self.conv1 = conv1x1x1(in_planes, planes, 1)
-        self.bn1 = nn.BatchNorm3d(planes)
-        self.conv2 = conv3x3x3(planes, planes, stride)
-        self.bn2 = nn.BatchNorm3d(planes)
-        self.conv3 = conv1x1x1(planes, planes * self.expansion, 1)
-        self.bn3 = nn.BatchNorm3d(planes * self.expansion)
-        self.relu = nn.ReLU(inplace=True)
-        self.downsample = downsample
-        self.stride = stride
+        self.layers = nn.ModuleList()
+        for i in range(num_layers):
+            in_ch = channels + i * growth_rate
+            self.layers.append(nn.Sequential(
+                nn.Conv3d(in_ch, growth_rate, 3, padding=1, bias=False),
+                nn.GroupNorm(8, growth_rate),
+                nn.GELU()
+            ))
 
     def forward(self, x):
-        residual = x
-
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out = self.relu(out)
-
-        out = self.conv3(out)
-        out = self.bn3(out)
-
-        if self.downsample is not None:
-            residual = self.downsample(x)
-
-        out += residual
-        out = self.relu(out)
-
-        return out
+        features = [x]
+        for layer in self.layers:
+            new_feat = layer(torch.cat(features, dim=1))
+            features.append(new_feat)
+        return torch.cat(features, dim=1)
 
 
-class VolumetricResNet(nn.Module):
-    def __init__(self, block, layers, base_planes=64):
+class SimpleVolumetricModel(nn.Module):
+    """Larger encoder-decoder that maps 64³ -> 16³"""
+
+    def __init__(self, in_channels=1, base_channels=32):  # Doubled base channels
         super().__init__()
-        self.inplanes = base_planes
 
-        # Feature dimensions for each stage
-        self.planes = [base_planes, base_planes * 2, base_planes * 4, base_planes * 8]
+        # Initial feature extraction with parallel paths
+        self.init_conv = nn.Conv3d(in_channels, base_channels, 7, padding=3, bias=False)
+        self.init_norm = nn.GroupNorm(16, base_channels)
 
-        # Initial convolution - symmetric for all dimensions
-        self.conv1 = nn.Conv3d(
-            1,
-            self.inplanes,
-            kernel_size=7,
-            stride=2,
-            padding=3,
-            bias=False
-        )
-        self.bn1 = nn.BatchNorm3d(self.inplanes)
-        self.relu = nn.ReLU(inplace=True)
+        # Parallel feature extractors for multi-scale
+        self.parallel1 = nn.Conv3d(base_channels, base_channels // 2, 3, padding=1)
+        self.parallel2 = nn.Conv3d(base_channels, base_channels // 2, 5, padding=2)
 
-        # Max pooling - symmetric for all dimensions
-        # Note: This is separate from the downsampling in residual blocks
-        # MaxPool reduces spatial dims in the main path
-        # Downsample adjusts residual connections to match
-        self.maxpool = nn.MaxPool3d(kernel_size=3, stride=2, padding=1)
-
-        # ResNet stages
-        self.layer1 = self._make_layer(block, self.planes[0], layers[0])
-        self.layer2 = self._make_layer(block, self.planes[1], layers[1], stride=2)
-        self.layer3 = self._make_layer(block, self.planes[2], layers[2], stride=2)
-        self.layer4 = self._make_layer(block, self.planes[3], layers[3], stride=2)
-
-        # Initialize weights
-        for m in self.modules():
-            if isinstance(m, nn.Conv3d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, nn.BatchNorm3d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-    def _make_layer(self, block, planes, blocks, stride=1):
-        downsample = None
-
-        # Downsample is needed when:
-        # 1. Spatial dimensions change (stride != 1)
-        # 2. Number of channels change (inplanes != planes * expansion)
-        if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                conv1x1x1(self.inplanes, planes * block.expansion, stride),
-                nn.BatchNorm3d(planes * block.expansion)
-            )
-
-        layers = []
-
-        # First block in layer - may need downsampling
-        layers.append(
-            block(
-                in_planes=self.inplanes,
-                planes=planes,
-                stride=stride,
-                downsample=downsample
-            )
+        # Encoder: 64³ -> 32³ -> 16³
+        self.enc1 = nn.Sequential(
+            ResBlock3D(base_channels),
+            ResBlock3D(base_channels),
+            ResBlock3D(base_channels),
+            DenseBlock3D(base_channels, growth_rate=32, num_layers=4)
         )
 
-        # Update inplanes for subsequent blocks
-        self.inplanes = planes * block.expansion
+        enc1_out = base_channels + 4 * 32  # After DenseBlock
+        self.down1 = nn.Conv3d(enc1_out, base_channels * 2, 4, stride=2, padding=1)
 
-        # Remaining blocks - no downsampling needed (same dims)
-        for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes, 1, None))
+        self.enc2 = nn.Sequential(
+            ResBlock3D(base_channels * 2),
+            ResBlock3D(base_channels * 2),
+            ResBlock3D(base_channels * 2),
+            ResBlock3D(base_channels * 2),
+            DenseBlock3D(base_channels * 2, growth_rate=48, num_layers=6)
+        )
 
-        return nn.Sequential(*layers)
+        enc2_out = base_channels * 2 + 6 * 48  # After DenseBlock
+        self.down2 = nn.Conv3d(enc2_out, base_channels * 4, 4, stride=2, padding=1)
 
-    def forward(self, x):
-        # Initial conv + bn + relu
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
+        # Larger bottleneck at 16³
+        self.bottleneck = nn.Sequential(
+            ResBlock3D(base_channels * 4),
+            ResBlock3D(base_channels * 4),
+            DenseBlock3D(base_channels * 4, growth_rate=64, num_layers=8),
+            ResBlock3D(base_channels * 4 + 8 * 64),
+            ResBlock3D(base_channels * 4 + 8 * 64),
+        )
 
+        bottleneck_out = base_channels * 4 + 8 * 64
 
-        # ResNet stages
-        x1 = self.layer1(x)
-        x2 = self.layer2(x1)
-        x3 = self.layer3(x2)
-        x4 = self.layer4(x3)
-
-        return [x1, x2, x3, x4]
-
-
-def create_volumetric_resnet(depth, **kwargs):
-    assert depth in [10, 18, 34, 50, 101, 152], f"Unsupported depth: {depth}"
-    if depth == 10:
-        return VolumetricResNet(BasicBlock, [1, 1, 1, 1], **kwargs)
-    elif depth == 18:
-        return VolumetricResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
-    elif depth == 34:
-        return VolumetricResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
-    elif depth == 50:
-        return VolumetricResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
-    elif depth == 101:
-        return VolumetricResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
-    elif depth == 152:
-        return VolumetricResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
-
-
-class Decoder3D(nn.Module):
-    def __init__(self, encoder_dims, output_size):
-        super().__init__()
-        self.output_size = output_size
-
-        # Build decoder layers
-        self.convs = nn.ModuleList([
+        # Multi-head output for ensemble-like predictions
+        self.output_heads = nn.ModuleList([
             nn.Sequential(
-                nn.Conv3d(
-                    encoder_dims[i] + encoder_dims[i - 1],
-                    encoder_dims[i - 1],
-                    kernel_size=3,
-                    stride=1,
-                    padding=1,
-                    bias=False
-                ),
-                nn.BatchNorm3d(encoder_dims[i - 1]),
-                nn.ReLU(inplace=True)
-            ) for i in range(1, len(encoder_dims))
+                nn.Conv3d(bottleneck_out, base_channels * 2, 3, padding=1),
+                nn.GroupNorm(16, base_channels * 2),
+                nn.GELU(),
+                nn.Conv3d(base_channels * 2, 1, 1)
+            ) for _ in range(3)
         ])
 
-        # Final logit layer
-        self.logit = nn.Conv3d(encoder_dims[0], 1, kernel_size=1)
+        # Attention-based aggregation
+        self.attention = nn.Sequential(
+            nn.Conv3d(bottleneck_out, 3, 1),
+            nn.Softmax(dim=1)
+        )
 
-    def forward(self, feature_maps):
-        # Decoder with skip connections
-        for i in range(len(feature_maps) - 1, 0, -1):
-            # Upsample higher level features
-            f_up = F.interpolate(feature_maps[i], scale_factor=2, mode='trilinear', align_corners=False)
-            # Concatenate with lower level features
-            f = torch.cat([feature_maps[i - 1], f_up], dim=1)
-            # Process concatenated features
-            f_down = self.convs[i - 1](f)
-            feature_maps[i - 1] = f_down
+    def forward(self, x):
+        # Initial processing
+        x = self.init_conv(x)
+        x = self.init_norm(x)
+        x = F.gelu(x)
 
-        # Generate logits
-        x = self.logit(feature_maps[0])
+        # Parallel paths
+        p1 = self.parallel1(x)
+        p2 = self.parallel2(x)
+        x = torch.cat([p1, p2], dim=1)
 
-        # Resize to desired output size
-        if x.shape[-3:] != (self.output_size, self.output_size, self.output_size):
-            x = F.interpolate(
-                x,
-                size=(self.output_size, self.output_size, self.output_size),
-                mode='trilinear',
-                align_corners=False
-            )
+        # Encode: 64³ -> 32³ -> 16³
+        x1 = self.enc1(x)
+        x2 = self.down1(x1)
+        x2 = self.enc2(x2)
+        x3 = self.down2(x2)
 
-        return x
+        # Process at 16³
+        x = self.bottleneck(x3)
 
+        # Multi-head output with attention weighting
+        outputs = torch.stack([head(x) for head in self.output_heads], dim=1)
+        weights = self.attention(x).unsqueeze(2)
+
+        # Weighted combination
+        return (outputs * weights).sum(dim=1)
+
+
+class CombinedLoss(nn.Module):
+    """Effective loss combination for volumetric segmentation"""
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, pred, target):
+        # Downsample target to 16³
+        target = F.interpolate(target.unsqueeze(1), size=(16, 16, 16), mode='trilinear').squeeze(1)
+        pred = pred.squeeze(1)
+
+        # Weighted BCE for class imbalance
+        pos_weight = (target == 0).sum() / (target == 1).sum().clamp(min=1)
+        bce = F.binary_cross_entropy_with_logits(pred, target, pos_weight=pos_weight)
+
+        # Dice loss for region overlap
+        pred_sigmoid = torch.sigmoid(pred)
+        intersection = (pred_sigmoid * target).sum()
+        dice = 1 - (2 * intersection + 1) / (pred_sigmoid.sum() + target.sum() + 1)
+
+        # Focal loss for hard examples
+        p = torch.sigmoid(pred)
+        ce_loss = F.binary_cross_entropy_with_logits(pred, target, reduction='none')
+        p_t = p * target + (1 - p) * (1 - target)
+        focal = ((1 - p_t) ** 2 * ce_loss).mean()
+
+        return 0.3 * bce + 0.4 * dice + 0.3 * focal
 
 
 def set_seed(seed=42):
@@ -615,13 +542,13 @@ class ZarrDataset(Dataset):
         for y in range(0, h - CHUNK_SIZE, STRIDE):
             for x in range(0, w - CHUNK_SIZE, STRIDE):
                 chunk_frag_mask = frag_mask[y:y + CHUNK_SIZE, x:x + CHUNK_SIZE]
-                if np.any(chunk_frag_mask == 0):
+                if np.all(chunk_frag_mask == 0):
                     continue
 
                 # Check 2D ink mask for chunk selection
                 chunk_ink_2d = ink_mask_2d[y:y + CHUNK_SIZE, x:x + CHUNK_SIZE]
                 has_ink = np.mean(chunk_ink_2d) > INKDETECT_MEAN
-                if has_ink or self.mode == 'valid' or random.randint(1, 5000) == 1:
+                if has_ink or self.mode == 'valid' or random.randint(1, 50) == 1:
                     self.chunks.append([frag_id, x, y])
 
     def __len__(self):
@@ -631,18 +558,19 @@ class ZarrDataset(Dataset):
         frag_id, x, y = self.chunks[idx]
 
         if self.mode == 'train' and (CHUNK_RANDOM_OFFSET and
-                STRIDE < x < self.zarr_store[frag_id].shape[2] - STRIDE and
-                STRIDE < y < self.zarr_store[frag_id].shape[1] - STRIDE):
-            yoff, xoff = random.randint(-STRIDE,STRIDE), random.randint(-STRIDE,STRIDE)
+                                     STRIDE < x < self.zarr_store[frag_id].shape[2] - STRIDE and
+                                     STRIDE < y < self.zarr_store[frag_id].shape[1] - STRIDE):
+            yoff, xoff = random.randint(-STRIDE, STRIDE), random.randint(-STRIDE, STRIDE)
             ystart = yoff + y
             xstart = xoff + x
         else:
             ystart = y
             xstart = x
 
-
-        chunk_3d = self.zarr_store[frag_id][:, ystart:ystart + CHUNK_SIZE, xstart:xstart + CHUNK_SIZE].astype(np.float32)
-        ink_mask_2d = self.ink_mask_cache_2d[frag_id][ystart:ystart + CHUNK_SIZE, xstart:xstart + CHUNK_SIZE].astype(np.float32)
+        chunk_3d = self.zarr_store[frag_id][:, ystart:ystart + CHUNK_SIZE, xstart:xstart + CHUNK_SIZE].astype(
+            np.float32)
+        ink_mask_2d = self.ink_mask_cache_2d[frag_id][ystart:ystart + CHUNK_SIZE, xstart:xstart + CHUNK_SIZE].astype(
+            np.float32)
 
         ink_mask_3d = np.broadcast_to(ink_mask_2d[np.newaxis, :, :], (CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE)).copy()
         ink_mask_3d[chunk_3d < ISO_THRESHOLD] = 0
@@ -667,119 +595,79 @@ class InkDetectionModel(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary')
-        self.loss_func2 = smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
-        self.loss_func = lambda x, y: 0.5 * self.loss_func1(x, y) + 0.5 * self.loss_func2(x, y)
+        self.model = SimpleVolumetricModel()
+        self.loss_fn = CombinedLoss()
 
-        self.backbone = create_volumetric_resnet(depth=RESNET_DEPTH)
+        # Track metrics
+        self.val_losses = []
 
-        print(f"Training volumetric ResNet{RESNET_DEPTH} from scratch")
-
-        # Get encoder dimensions by doing a forward pass
-        with torch.no_grad():
-            dummy_input = torch.rand(1, 1, CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE)
-            encoder_outputs = self.backbone(dummy_input)
-            encoder_dims = [x.size(1) for x in encoder_outputs]
-            print(f"ResNet{RESNET_DEPTH} encoder dimensions: {encoder_dims}")
-            print(f"Processing {CHUNK_SIZE}³ chunks -> {OUTPUT_SIZE}³ outputs")
-
-            # Show spatial dimension flow through network
-            print("\nDimension flow through network:")
-            print(f"Input: 1x{CHUNK_SIZE}x{CHUNK_SIZE}x{CHUNK_SIZE}")
-            print(f"After conv1 (stride=2): {self.backbone.inplanes}x32x32x32")
-            for i, feat in enumerate(encoder_outputs):
-                print(f"After layer{i + 1}: {feat.shape[1]}x{feat.shape[2]}x{feat.shape[3]}x{feat.shape[4]}")
-
-        # Create decoder
-        self.decoder = Decoder3D(encoder_dims=encoder_dims, output_size=OUTPUT_SIZE)
-
-        if RESNET_NORM:
-            self.normalization = nn.BatchNorm3d(num_features=1)
+        print(f"Training Simple Volumetric Model from scratch")
+        print(f"Processing {CHUNK_SIZE}³ chunks -> {OUTPUT_SIZE}³ outputs")
 
     def forward(self, x):
         # Add channel dimension if needed
         if x.ndim == 4:
             x = x.unsqueeze(1)  # (B, D, H, W) -> (B, 1, D, H, W)
 
-        if RESNET_NORM:
-            x = self.normalization(x)
-
-        # Get feature maps from backbone
-        feat_maps = self.backbone(x)
-
-        # Decode to 3D mask
-        pred_mask = self.decoder(feat_maps)
-
-        return pred_mask  # (B, 1, 4, 4, 4)
+        return self.model(x)
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-
-        outputs = self(x)
-
-        # Downsample target to match output size
-        y = F.interpolate(
-            y.unsqueeze(1),
-            size=(OUTPUT_SIZE, OUTPUT_SIZE, OUTPUT_SIZE),
-            mode='trilinear',
-            align_corners=False
-        )
-
-        loss = self.loss_func(outputs, y)
+        pred = self(x)
+        loss = self.loss_fn(pred, y)
 
         if torch.isnan(loss):
             print("Loss nan encountered")
 
-        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        if not COMPILE_FULLGRAPH:
+            self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y, xyxy = batch
+        pred = self(x)
+        loss = self.loss_fn(pred, y)
 
-        outputs = self(x)
-
-        # Downsample target to match output size
-        y = F.interpolate(
-            y.unsqueeze(1),
-            size=(OUTPUT_SIZE, OUTPUT_SIZE, OUTPUT_SIZE),
-            mode='trilinear',
-            align_corners=False
-        )
-
-        loss = self.loss_func(outputs, y)
-
-        self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.val_losses.append(loss.item())
+        if not COMPILE_FULLGRAPH:
+            self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
+    def on_validation_epoch_end(self):
+        # Simple early stopping signal
+        if len(self.val_losses) > 10:
+            recent_avg = sum(self.val_losses[-5:]) / 5
+            older_avg = sum(self.val_losses[-10:-5]) / 5
+            if recent_avg > older_avg * 0.98:  # Not improving
+                if not COMPILE_FULLGRAPH:
+                    self.log('learning_rate', self.trainer.optimizers[0].param_groups[0]['lr'] * 0.5)
+        self.val_losses = []
+
     def configure_optimizers(self):
-        optimizer = AdamW(self.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
-        scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, NUM_EPOCHS, eta_min=MIN_LEARNING_RATE
+        # AdamW with higher weight decay for better generalization
+        optimizer = AdamWFp8(
+            self.parameters(),
+            lr=LEARNING_RATE,
+            weight_decay=WEIGHT_DECAY,
+            betas=(0.9, 0.95)  # Lower beta2 for more stable training
         )
-        scheduler = GradualWarmupSchedulerV2(
-            optimizer, multiplier=1.0, total_epoch=1, after_scheduler=scheduler_cosine
+
+        # Cosine annealing with warm restarts
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer,
+            T_0=100,  # First cycle length
+            T_mult=1,  # Keep cycles same length
+            eta_min=MIN_LEARNING_RATE
         )
-        return [optimizer], [scheduler]
 
+        return {
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                'scheduler': scheduler,
+                'interval': 'epoch'
+            }
+        }
 
-class GradualWarmupSchedulerV2(GradualWarmupScheduler):
-    def __init__(self, optimizer, multiplier, total_epoch, after_scheduler=None):
-        super().__init__(optimizer, multiplier, total_epoch, after_scheduler)
-
-    def get_lr(self):
-        if self.last_epoch > self.total_epoch:
-            if self.after_scheduler:
-                if not self.finished:
-                    self.after_scheduler.base_lrs = [
-                        base_lr * self.multiplier for base_lr in self.base_lrs]
-                    self.finished = True
-                return self.after_scheduler.get_lr()
-            return [base_lr * self.multiplier for base_lr in self.base_lrs]
-        if self.multiplier == 1.0:
-            return [base_lr * (float(self.last_epoch) / self.total_epoch) for base_lr in self.base_lrs]
-        else:
-            return [base_lr * ((self.multiplier - 1.) * self.last_epoch / self.total_epoch + 1.) for base_lr in
-                    self.base_lrs]
 
 def main():
     set_seed(SEED)
@@ -787,7 +675,7 @@ def main():
 
     # Find latest checkpoint
     checkpoint_path = None
-    checkpoints = glob.glob(os.path.join(OUTPUT_PATH, f'best_volumetric_resnet{RESNET_DEPTH}_*.ckpt'))
+    checkpoints = glob.glob(os.path.join(OUTPUT_PATH, f'best_simple_volumetric_*.ckpt'))
     if checkpoints:
         # Sort by epoch number
         checkpoint_path = max(checkpoints, key=lambda x: int(x.split('epoch=')[1].split('.')[0]))
@@ -805,7 +693,7 @@ def main():
 
     if '20231005123336' in train_fragments:
         train_fragments.remove('20231005123336')
-        #valid_fragments.append('20231005123336')
+        # valid_fragments.append('20231005123336')
 
     print(f"Total fragments: {len(all_fragments)}")
     print(f"Train fragments: {len(train_fragments)}")
@@ -840,15 +728,17 @@ def main():
     )
 
     model = InkDetectionModel()
-    model = torch.compile(model,fullgraph=False, dynamic=False)
+    config = Float8LinearConfig.from_recipe_name("tensorwise")
+    convert_to_float8_training(model, config=config)
+    model = torch.compile(model, fullgraph=COMPILE_FULLGRAPH, dynamic=False,mode='max-autotune' if COMPILE_FULLGRAPH else None)
 
-    print(f"Using Volumetric ResNet{RESNET_DEPTH} model for 3D ink detection")
+    print(f"Using Simple Volumetric Model for 3D ink detection")
     print(f"Input: {CHUNK_SIZE}³ voxel chunks (float32, normalized 0-1)")
     print(f"Output: {OUTPUT_SIZE}³ predictions (logits for ink probability)")
     print(f"All spatial dimensions (Z, Y, X) are processed equally")
 
     # Uncomment if using Weights & Biases
-    # wandb_logger = WandbLogger(project="vesuvius", name=f"volumetric_resnet{RESNET_DEPTH}_ink_detection")
+    # wandb_logger = WandbLogger(project="vesuvius", name=f"simple_volumetric_ink_detection")
 
     trainer = pl.Trainer(
         max_epochs=NUM_EPOCHS,
@@ -858,10 +748,10 @@ def main():
         default_root_dir=OUTPUT_PATH,
         precision='bf16-mixed',
         gradient_clip_val=1.0,
-        accumulate_grad_batches=1,
+        accumulate_grad_batches=32,
         callbacks=[
             ModelCheckpoint(
-                filename=f'best_volumetric_resnet{RESNET_DEPTH}_{{epoch}}',
+                filename=f'best_simple_volumetric_{{epoch}}',
                 dirpath=OUTPUT_PATH,
                 save_top_k=-1  # Save all checkpoints
             ),
