@@ -60,8 +60,8 @@ def get_valid_chunk_coords(zarr_path, fragment_id, masks_path):
     # Collect valid chunk coordinates only
     xyxys = []
 
-    for y in range(0, h - CHUNK_SIZE, STRIDE):
-        for x in range(0, w - CHUNK_SIZE, STRIDE):
+    for y in range(0, h - CHUNK_SIZE, CHUNK_SIZE):
+        for x in range(0, w - CHUNK_SIZE, CHUNK_SIZE):
             # Check if chunk is valid (inside fragment mask)
             chunk_mask = frag_mask[y:y + CHUNK_SIZE, x:x + CHUNK_SIZE]
             if np.all(chunk_mask > 0):
@@ -138,8 +138,8 @@ def main():
     model.to(device)
 
     # Apply Float8 quantization
-    print("Applying Float8 quantization...")
-    quantize_(model, Float8DynamicActivationFloat8WeightConfig(granularity=PerTensor()))
+    #print("Applying Float8 quantization...")
+    #quantize_(model, Float8DynamicActivationFloat8WeightConfig(granularity=PerTensor()))
 
     # Compile the model
     model = torch.compile(model, fullgraph=True, dynamic=False, mode="max-autotune-no-cudagraphs")

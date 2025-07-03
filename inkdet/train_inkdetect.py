@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import skimage
 import glob
+from torch.optim import AdamW
 from scipy.ndimage import map_coordinates, gaussian_filter, rotate, convolve1d
 from scipy.interpolate import RegularGridInterpolator
 from torch.amp import GradScaler, autocast
@@ -534,12 +535,12 @@ def main():
     loss_fn = CombinedLoss()
 
     # Apply float8
-    config = Float8LinearConfig.from_recipe_name("tensorwise")
-    convert_to_float8_training(model, config=config)
+    #config = Float8LinearConfig.from_recipe_name("tensorwise")
+    #convert_to_float8_training(model, config=config)
     model = torch.compile(model, fullgraph=COMPILE_FULLGRAPH, dynamic=False, mode='max-autotune-no-cudagraphs')
 
     # Create optimizer and scheduler
-    optimizer = AdamWFp8(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, betas=(0.9, 0.95))
+    optimizer = AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, betas=(0.9, 0.95))
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=100, T_mult=1, eta_min=MIN_LEARNING_RATE
     )
