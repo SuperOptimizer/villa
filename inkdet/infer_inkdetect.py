@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 # Import model classes and quantization
 from train_inkdetect import (
-    InkDetectionModel, SimpleVolumetricModel, CHUNK_SIZE, STRIDE, ISO_THRESHOLD,
+     SimpleVolumetricModel, CHUNK_SIZE, STRIDE,
     ZARR_PATH, MASKS_PATH, BATCH_SIZE, NUM_WORKERS, preprocess_chunk
 )
 from torchao.quantization import quantize_, Float8DynamicActivationFloat8WeightConfig, PerTensor
@@ -131,7 +131,7 @@ def main():
     checkpoint = torch.load(checkpoint_path, map_location='cuda')
 
     # Create model instance
-    model = InkDetectionModel()
+    model = SimpleVolumetricModel()
 
     # Load state dict
     model.load_state_dict(checkpoint['state_dict'], strict=False)
@@ -142,7 +142,7 @@ def main():
     quantize_(model, Float8DynamicActivationFloat8WeightConfig(granularity=PerTensor()))
 
     # Compile the model
-    model = torch.compile(model, fullgraph=True, dynamic=False, mode="reduce-overhead")
+    model = torch.compile(model, fullgraph=True, dynamic=False, mode="max-autotune-no-cudagraphs")
     model.eval()
 
     # Get chunk coordinates (not loading data yet)
@@ -176,8 +176,6 @@ def main():
     cv2.imwrite(output_path, mask_pred_uint8)
     print(f"Saved prediction to {output_path}")
 
-    # Optional: save as numpy for further processing
-    np.save(f"{fragment_id}_ink_prediction.npy", mask_pred)
 
 
 if __name__ == "__main__":
