@@ -9,12 +9,22 @@ import segmentation_models_pytorch as smp
 import zarr
 import cv2
 import random
+
+from tqdm import tqdm
 from warmup_scheduler import GradualWarmupScheduler
 from scipy.ndimage import rotate, zoom, gaussian_filter
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import skimage
+import glob
 
+import numpy as np
+from scipy.ndimage import map_coordinates, gaussian_filter, rotate, convolve1d
+from scipy.interpolate import RegularGridInterpolator
+import random
+
+from torch.cuda.amp import GradScaler, autocast
 
 THISDIR = os.path.abspath(os.path.dirname(__file__))
 VESUVIUS_ROOT = "/vesuvius"
@@ -24,58 +34,161 @@ OUTPUT_PATH = f'{VESUVIUS_ROOT}/inkdet_outputs/'
 
 CHUNK_SIZE = 64
 STRIDE = 64
-ISO_THRESHOLD = 64
-NUM_EPOCHS = 20
+ISO_THRESHOLD = 16
+NUM_EPOCHS = 2000
 LEARNING_RATE = 3e-5
 MIN_LEARNING_RATE=1e-6
 WEIGHT_DECAY = 1e-6
-NUM_WORKERS=2
+NUM_WORKERS=24
 SEED=42
 VALIDATION_SPLIT=0.05
+AUGMENT_CHANCE = 0.5
+INKDETECT_MEAN = .3
 
-#for resnet50 and 24gb vram, bs=24 works well
+#for resnet50 and 24gb vram, bs=24
+#for resnet10 and 24gb vram, bs=128
 
-RESNET_DEPTH=50
-RESNET_NORM=False
+RESNET_DEPTH=10
+RESNET_NORM=True
 OUTPUT_SIZE=4
 
-BATCH_SIZE=24
+BATCH_SIZE=128
+
+#whether to randomly offset the y x dimensions of our training data so taht we arent always yielding the same
+#CHUNK_SIZE aligned chunk
+CHUNK_RANDOM_OFFSET = True
+
+def preprocess_chunk(chunk):
+    chunk = skimage.exposure.equalize_hist(chunk / 255.0)
+    chunk[chunk < ISO_THRESHOLD / 255.0] = 0.0
+    return chunk
+
+
+import numpy as np
+from scipy.ndimage import map_coordinates, gaussian_filter
+import random
 
 
 class VolumetricAugmentations:
     """3D augmentations for volumetric data"""
 
-    def __init__(self, p_flip=0.5, p_rotate=0.75, p_brightness=0.75,
-                 p_noise=0.4, p_dropout=0.5):
-        self.p_flip = p_flip
-        self.p_rotate = p_rotate
-        self.p_brightness = p_brightness
-        self.p_noise = p_noise
-        self.p_dropout = p_dropout
+    def __init__(self):
+        pass
+
+    def elastic_transform_3d(self, volume, mask, alpha=500, sigma=20):
+        """3D Elastic deformation"""
+        if random.random() < .1:
+            shape = volume.shape
+
+            # Generate random displacement fields
+            random_state = np.random.RandomState(None)
+            dz = gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma) * alpha
+            dy = gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma) * alpha
+            dx = gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma) * alpha
+
+            # Create coordinate arrays
+            z, y, x = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]),
+                                  np.arange(shape[2]), indexing='ij')
+
+            # Add displacements
+            indices = np.reshape(z + dz, (-1, 1)), \
+                np.reshape(y + dy, (-1, 1)), \
+                np.reshape(x + dx, (-1, 1))
+
+            # Apply transformation
+            volume = map_coordinates(volume, indices, order=1, mode='reflect').reshape(shape)
+            mask = map_coordinates(mask, indices, order=0, mode='reflect').reshape(shape)
+
+        return volume, mask
+
+    def grid_distortion_3d(self, volume, mask, num_steps=5, distort_limit=0.3):
+        """3D Grid distortion"""
+        if random.random() < .1:
+            shape = volume.shape
+
+            # Create grid of control points
+            grid_z = np.linspace(0, shape[0] - 1, num_steps)
+            grid_y = np.linspace(0, shape[1] - 1, num_steps)
+            grid_x = np.linspace(0, shape[2] - 1, num_steps)
+
+            # Random displacements for control points
+            distort_z = np.random.uniform(-distort_limit, distort_limit, (num_steps, num_steps, num_steps))
+            distort_y = np.random.uniform(-distort_limit, distort_limit, (num_steps, num_steps, num_steps))
+            distort_x = np.random.uniform(-distort_limit, distort_limit, (num_steps, num_steps, num_steps))
+
+            # Create coordinate arrays
+            z_coords = np.arange(shape[0])
+            y_coords = np.arange(shape[1])
+            x_coords = np.arange(shape[2])
+
+            # Interpolate displacements to full resolution
+            # Create interpolators for each displacement field
+            f_z = RegularGridInterpolator((grid_z, grid_y, grid_x), distort_z)
+            f_y = RegularGridInterpolator((grid_z, grid_y, grid_x), distort_y)
+            f_x = RegularGridInterpolator((grid_z, grid_y, grid_x), distort_x)
+
+            # Create full resolution mesh
+            zz, yy, xx = np.meshgrid(z_coords, y_coords, x_coords, indexing='ij')
+            points = np.stack([zz.ravel(), yy.ravel(), xx.ravel()], axis=-1)
+
+            # Get interpolated displacements
+            dz = f_z(points).reshape(shape) * shape[0]
+            dy = f_y(points).reshape(shape) * shape[1]
+            dx = f_x(points).reshape(shape) * shape[2]
+
+            # Apply displacements
+            indices = np.reshape(zz + dz, (-1, 1)), \
+                np.reshape(yy + dy, (-1, 1)), \
+                np.reshape(xx + dx, (-1, 1))
+
+            volume = map_coordinates(volume, indices, order=1, mode='reflect').reshape(shape)
+            mask = map_coordinates(mask, indices, order=0, mode='reflect').reshape(shape)
+
+        return volume, mask
+
+    def anisotropic_gaussian_blur_3d(self, volume):
+        """Gaussian blur with different sigma per axis"""
+        if random.random() < AUGMENT_CHANCE:
+            # Different blur amounts for different axes
+            # Z-axis often has lower resolution, so less blur
+            sigma_z = random.uniform(0.5, 1.0)
+            sigma_xy = random.uniform(0.5, 1.0)
+
+            volume = gaussian_filter(volume, sigma=(sigma_z, sigma_xy, sigma_xy))
+
+        return volume
+
+    def random_gamma_3d(self, volume, gamma_limit=(0.8, 1.2)):
+        """Random gamma correction"""
+        if random.random() < AUGMENT_CHANCE:
+            gamma = random.uniform(gamma_limit[0], gamma_limit[1])
+
+            # Avoid numerical issues with values close to 0
+            volume = np.clip(volume, 1e-7, 1)
+            volume = np.power(volume, gamma)
+
+        return volume
 
     def random_flip_3d(self, volume, mask):
         """Random flips along each axis"""
-        if random.random() < self.p_flip:
-            if random.random() < 0.5:
-                volume = np.flip(volume, axis=0).copy()
-                mask = np.flip(mask, axis=0).copy()
-        if random.random() < self.p_flip:
-            if random.random() < 0.5:
-                volume = np.flip(volume, axis=1).copy()
-                mask = np.flip(mask, axis=1).copy()
-        if random.random() < self.p_flip:
-            if random.random() < 0.5:
-                volume = np.flip(volume, axis=2).copy()
-                mask = np.flip(mask, axis=2).copy()
+        if random.random() < AUGMENT_CHANCE:
+            volume = np.flip(volume, axis=0).copy()
+            mask = np.flip(mask, axis=0).copy()
+        if random.random() < AUGMENT_CHANCE:
+            volume = np.flip(volume, axis=1).copy()
+            mask = np.flip(mask, axis=1).copy()
+        if random.random() < AUGMENT_CHANCE:
+            volume = np.flip(volume, axis=2).copy()
+            mask = np.flip(mask, axis=2).copy()
         return volume, mask
 
     def random_rotation_3d(self, volume, mask):
         """Random rotation in 3D space"""
-        if random.random() < self.p_rotate:
+        if random.random() < AUGMENT_CHANCE:
             # Random angles for each axis
-            angle_x = random.uniform(-15, 15)
-            angle_y = random.uniform(-15, 15)
-            angle_z = random.uniform(-180, 180)  # Full rotation on Z
+            angle_x = random.uniform(-180, 180)
+            angle_y = random.uniform(-180, 180)
+            angle_z = random.uniform(-180, 180)
 
             # Rotate volume
             volume = rotate(volume, angle_x, axes=(1, 2), reshape=False, order=1)
@@ -91,7 +204,7 @@ class VolumetricAugmentations:
 
     def random_brightness_contrast_3d(self, volume):
         """Adjust brightness and contrast"""
-        if random.random() < self.p_brightness:
+        if random.random() < AUGMENT_CHANCE:
             # Brightness
             brightness = random.uniform(-0.2, 0.2)
             volume = volume + brightness
@@ -103,23 +216,69 @@ class VolumetricAugmentations:
 
         return volume
 
+    def random_intensity_shift_3d(self, volume):
+        """Fast intensity shifting with spatial variation"""
+        if random.random() < AUGMENT_CHANCE:
+            # Create smooth random shift field
+            z_size, y_size, x_size = volume.shape
+            # Use larger blocks for efficiency
+            block_size = 16
+            shift_map = np.random.uniform(-0.1, 0.1,
+                                          (z_size // block_size + 1, y_size // block_size + 1,
+                                           x_size // block_size + 1))
+
+            # Upsample efficiently using repeat
+            shift_map = np.repeat(np.repeat(np.repeat(shift_map, block_size, axis=0),
+                                            block_size, axis=1), block_size, axis=2)
+            shift_map = shift_map[:z_size, :y_size, :x_size]
+
+            volume = volume + shift_map
+        return volume
+
+
+    def motion_blur_z_axis(self, volume):
+        """Fast motion blur along Z-axis (scanning direction)"""
+        if random.random() < AUGMENT_CHANCE:
+            kernel_size = random.choice([3, 5, 7])
+            kernel = np.ones(kernel_size) / kernel_size
+
+            # Apply 1D convolution along Z-axis
+            volume = convolve1d(volume, kernel, axis=0, mode='reflect')
+        return volume
+
+    def gradient_based_dropout(self, volume):
+        """Drop regions based on gradient magnitude - targets edges"""
+        if random.random() < AUGMENT_CHANCE:
+            # Fast gradient approximation
+            gz = np.abs(np.diff(volume, axis=0, prepend=volume[0:1]))
+            gy = np.abs(np.diff(volume, axis=1, prepend=volume[:, 0:1]))
+            gx = np.abs(np.diff(volume, axis=2, prepend=volume[:, :, 0:1]))
+
+            gradient_mag = gz + gy + gx
+            threshold = np.percentile(gradient_mag, random.uniform(70, 90))
+
+            # Drop high gradient regions occasionally
+            mask = gradient_mag > threshold
+            if random.random() < 0.5:
+                volume[mask] *= random.uniform(0.3, 0.7)
+        return volume
+
     def random_noise_3d(self, volume):
-        """Add random noise"""
-        if random.random() < self.p_noise:
-            noise_type = random.choice(['gaussian', 'blur'])
+        """Add random noise - now uses anisotropic blur"""
+        if random.random() < AUGMENT_CHANCE:
+            noise_type = random.choice(['gaussian', 'anisotropic_blur'])
 
             if noise_type == 'gaussian':
                 noise = np.random.normal(0, random.uniform(0.01, 0.05), volume.shape)
                 volume = volume + noise
-            else:  # blur
-                sigma = random.uniform(0.5, 1.5)
-                volume = gaussian_filter(volume, sigma=sigma)
+            else:  # anisotropic_blur
+                volume = self.anisotropic_gaussian_blur_3d(volume)
 
         return volume
 
     def coarse_dropout_3d(self, volume):
         """3D coarse dropout"""
-        if random.random() < self.p_dropout:
+        if random.random() < AUGMENT_CHANCE:
             h, w, d = volume.shape
             n_holes = random.randint(1, 3)
 
@@ -138,12 +297,18 @@ class VolumetricAugmentations:
         # Geometric transforms (apply to both volume and mask)
         volume, mask = self.random_flip_3d(volume, mask)
         volume, mask = self.random_rotation_3d(volume, mask)
+        volume, mask = self.elastic_transform_3d(volume, mask)
+        volume, mask = self.grid_distortion_3d(volume, mask)
 
         # Intensity transforms (apply only to volume, NOT mask)
         volume = self.random_brightness_contrast_3d(volume)
+        volume = self.random_gamma_3d(volume)
+        volume = self.random_intensity_shift_3d(volume)
+        volume = self.motion_blur_z_axis(volume)
+        volume = self.gradient_based_dropout(volume)
         volume = self.random_noise_3d(volume)
         volume = self.coarse_dropout_3d(volume)
-
+        volume = skimage.exposure.equalize_hist(volume)
         # Ensure values are in valid range
         volume = np.clip(volume, 0, 1)
         mask = np.clip(mask, 0, 1)
@@ -455,8 +620,8 @@ class ZarrDataset(Dataset):
 
                 # Check 2D ink mask for chunk selection
                 chunk_ink_2d = ink_mask_2d[y:y + CHUNK_SIZE, x:x + CHUNK_SIZE]
-                has_ink = np.mean(chunk_ink_2d) > 0.05
-                if has_ink or self.mode == 'valid' or random.randint(1, 50) == 1:
+                has_ink = np.mean(chunk_ink_2d) > INKDETECT_MEAN
+                if has_ink or self.mode == 'valid' or random.randint(1, 5000) == 1:
                     self.chunks.append([frag_id, x, y])
 
     def __len__(self):
@@ -465,15 +630,25 @@ class ZarrDataset(Dataset):
     def __getitem__(self, idx):
         frag_id, x, y = self.chunks[idx]
 
-        chunk_3d = self.zarr_store[frag_id][:, y:y + CHUNK_SIZE, x:x + CHUNK_SIZE].astype(np.float32)
-        ink_mask_2d = self.ink_mask_cache_2d[frag_id][y:y + CHUNK_SIZE, x:x + CHUNK_SIZE].astype(np.float32)
+        if self.mode == 'train' and (CHUNK_RANDOM_OFFSET and
+                STRIDE < x < self.zarr_store[frag_id].shape[2] - STRIDE and
+                STRIDE < y < self.zarr_store[frag_id].shape[1] - STRIDE):
+            yoff, xoff = random.randint(-STRIDE,STRIDE), random.randint(-STRIDE,STRIDE)
+            ystart = yoff + y
+            xstart = xoff + x
+        else:
+            ystart = y
+            xstart = x
+
+
+        chunk_3d = self.zarr_store[frag_id][:, ystart:ystart + CHUNK_SIZE, xstart:xstart + CHUNK_SIZE].astype(np.float32)
+        ink_mask_2d = self.ink_mask_cache_2d[frag_id][ystart:ystart + CHUNK_SIZE, xstart:xstart + CHUNK_SIZE].astype(np.float32)
 
         ink_mask_3d = np.broadcast_to(ink_mask_2d[np.newaxis, :, :], (CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE)).copy()
+        ink_mask_3d[chunk_3d < ISO_THRESHOLD] = 0
 
-        #ink_mask_3d[chunk_3d < ISO_THRESHOLD] = 0
-        chunk_3d[chunk_3d < ISO_THRESHOLD] = 0
+        chunk_3d = preprocess_chunk(chunk_3d)
 
-        chunk_3d = np.clip(chunk_3d, 0, 200) / 255.0
         ink_mask_3d = ink_mask_3d / 255.0
 
         if self.augment is not None:
@@ -483,7 +658,7 @@ class ZarrDataset(Dataset):
         mask_tensor = torch.from_numpy(ink_mask_3d).float()
 
         if self.mode == 'valid':
-            return chunk_tensor, mask_tensor, (x, y, x + CHUNK_SIZE, y + CHUNK_SIZE)
+            return chunk_tensor, mask_tensor, (xstart, ystart, xstart + CHUNK_SIZE, ystart + CHUNK_SIZE)
         return chunk_tensor, mask_tensor
 
 
@@ -606,22 +781,31 @@ class GradualWarmupSchedulerV2(GradualWarmupScheduler):
             return [base_lr * ((self.multiplier - 1.) * self.last_epoch / self.total_epoch + 1.) for base_lr in
                     self.base_lrs]
 
-
 def main():
     set_seed(SEED)
     os.makedirs(OUTPUT_PATH, exist_ok=True)
+
+    # Find latest checkpoint
+    checkpoint_path = None
+    checkpoints = glob.glob(os.path.join(OUTPUT_PATH, f'best_volumetric_resnet{RESNET_DEPTH}_*.ckpt'))
+    if checkpoints:
+        # Sort by epoch number
+        checkpoint_path = max(checkpoints, key=lambda x: int(x.split('epoch=')[1].split('.')[0]))
+        print(f"Resuming from checkpoint: {checkpoint_path}")
+    else:
+        print("Starting fresh training - no checkpoint found")
 
     zarr_store = zarr.open(ZARR_PATH, mode='r')
     all_fragments = list(zarr_store.keys())
 
     random.shuffle(all_fragments)
     n_valid = int(len(all_fragments) * VALIDATION_SPLIT)
-    valid_fragments = all_fragments[:n_valid]
-    train_fragments = all_fragments[n_valid:][:10]
+    valid_fragments = []
+    train_fragments = all_fragments[n_valid:]
 
     if '20231005123336' in train_fragments:
         train_fragments.remove('20231005123336')
-        valid_fragments.append('20231005123336')
+        #valid_fragments.append('20231005123336')
 
     print(f"Total fragments: {len(all_fragments)}")
     print(f"Train fragments: {len(train_fragments)}")
@@ -640,6 +824,8 @@ def main():
         num_workers=NUM_WORKERS,
         pin_memory=True,
         drop_last=True,
+        persistent_workers=True,
+        prefetch_factor=2,
     )
 
     valid_loader = DataLoader(
@@ -649,6 +835,8 @@ def main():
         num_workers=NUM_WORKERS,
         pin_memory=True,
         drop_last=False,
+        persistent_workers=True,
+        prefetch_factor=2,
     )
 
     model = InkDetectionModel()
@@ -670,17 +858,18 @@ def main():
         default_root_dir=OUTPUT_PATH,
         precision='bf16-mixed',
         gradient_clip_val=1.0,
-        accumulate_grad_batches=4,
+        accumulate_grad_batches=1,
         callbacks=[
             ModelCheckpoint(
                 filename=f'best_volumetric_resnet{RESNET_DEPTH}_{{epoch}}',
                 dirpath=OUTPUT_PATH,
                 save_top_k=-1  # Save all checkpoints
-            )
+            ),
         ]
     )
 
-    trainer.fit(model, train_loader, valid_loader)
+    # Resume from checkpoint if available
+    trainer.fit(model, train_loader, valid_loader, ckpt_path=checkpoint_path)
 
 
 if __name__ == "__main__":

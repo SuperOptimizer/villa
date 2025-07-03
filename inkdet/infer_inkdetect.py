@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 # Import your model classes (from the training script)
 from train_inkdetect import InkDetectionModel, CHUNK_SIZE, STRIDE, ISO_THRESHOLD, ZARR_PATH, OUTPUT_SIZE, MASKS_PATH, \
-    BATCH_SIZE, NUM_WORKERS
+    BATCH_SIZE, NUM_WORKERS, preprocess_chunk
 
 
 class InferenceDataset(Dataset):
@@ -29,12 +29,8 @@ class InferenceDataset(Dataset):
 
         # Load chunk on-demand
         chunk_3d = self.frag_data[:, y1:y2, x1:x2].astype(np.float32)
+        chunk_3d = preprocess_chunk(chunk_3d)
 
-        # Apply voxel threshold
-        chunk_3d[chunk_3d < ISO_THRESHOLD] = 0
-
-        # Normalize
-        chunk_3d = np.clip(chunk_3d, 0, 200) / 255.0
         chunk_tensor = torch.from_numpy(chunk_3d).float()
 
         return chunk_tensor, torch.tensor([x1, y1, x2, y2])
@@ -119,14 +115,16 @@ def run_inference(model, dataloader, output_shape, device):
 
 def main():
     # Configuration
-    checkpoint_path = "/vesuvius/inkdet_outputs/resnet10.ckpt"
+    checkpoint_path = "/vesuvius/inkdet_outputs/best_volumetric_resnet10_epoch=40.ckpt"
     fragment_id = "20231005123336"
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda')
 
     # Load model
     print("Loading model...")
     model = InkDetectionModel.load_from_checkpoint(checkpoint_path, strict=False)
     model.to(device)
+    model = torch.compile(model,fullgraph=True, dynamic=False)
+
     model.eval()
 
     # Get chunk coordinates (not loading data yet)
