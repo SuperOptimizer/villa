@@ -190,8 +190,7 @@ def run_predict(args, part_id, gpu_id, z_min=None, z_max=None):
         cmd.append('--disable_tta')
     else:
         # Default to rotation TTA
-        cmd.extend(['--tta_type', 'rotation'])
-    # Default behavior now uses rotation TTA if neither is specified
+        cmd.extend(['--tta_type', 'mirroring'])
     
     # Add other optional arguments
     if args.patch_size:
