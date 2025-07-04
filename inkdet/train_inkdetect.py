@@ -33,16 +33,14 @@ MIN_LEARNING_RATE = 1e-6
 WEIGHT_DECAY = 0.01
 NUM_WORKERS = 16
 SEED = 42
-VALIDATION_SPLIT = 0.05
+VALIDATION_SPLIT = 0.0
 AUGMENT_CHANCE = 0.5
 INKDETECT_MEAN = .1
-OUTPUT_SIZE = 16
-BATCH_SIZE = 40
-CHUNK_RANDOM_OFFSET = True
-
+BATCH_SIZE = 32
+COMPILE=False
+FP8=False
 
 def setup_distributed():
-
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         rank = int(os.environ["RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
@@ -70,14 +68,7 @@ def setup_distributed():
 
     return rank, world_size, local_rank, is_distributed
 
-
-
-def set_seed(seed=42):
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
+def init_cuda():
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
     torch.set_float32_matmul_precision('medium')
@@ -86,7 +77,12 @@ def set_seed(seed=42):
     torch.cuda.empty_cache()
     torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
 
-
+def set_seed(seed=42):
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
 
 
 def save_checkpoint(model, optimizer, scheduler, epoch, train_losses, val_losses, path, rank, is_distributed):
@@ -172,7 +168,7 @@ def main():
     # Load data
     zarr_store = zarr.open(ZARR_PATH, mode='r')
     all_fragments = list(zarr_store.keys())
-    random.shuffle(all_fragments)
+    #random.shuffle(all_fragments)
     n_valid = int(len(all_fragments) * VALIDATION_SPLIT)
     valid_fragments = []  # all_fragments[:n_valid]
     train_fragments = all_fragments[n_valid:]
@@ -186,7 +182,7 @@ def main():
         print(f"Valid fragments: {len(valid_fragments)}")
 
     train_dataset = ZarrDataset(ZARR_PATH, LABELS_PATH, MASKS_PATH, train_fragments, 'train', CHUNK_SIZE, STRIDE, INKDETECT_MEAN, AUGMENT_CHANCE, ISO_THRESHOLD)
-    valid_dataset = ZarrDataset(ZARR_PATH, LABELS_PATH, MASKS_PATH, train_fragments, 'valid', CHUNK_SIZE, STRIDE, INKDETECT_MEAN, AUGMENT_CHANCE, ISO_THRESHOLD)
+    valid_dataset = ZarrDataset(ZARR_PATH, LABELS_PATH, MASKS_PATH, valid_fragments, 'valid', CHUNK_SIZE, STRIDE, INKDETECT_MEAN, AUGMENT_CHANCE, ISO_THRESHOLD)
 
     if len(train_dataset) == 0:
         raise RuntimeError(f"Rank {rank} has no training data!")
@@ -268,7 +264,8 @@ def main():
         pass  # Skip compilation with DDP for now
     else:
         # Single GPU mode - compile normally
-        model = torch.compile(model, fullgraph=True, dynamic=False, mode='max-autotune')
+        #model = torch.compile(model, fullgraph=True, dynamic=False, mode='max-autotune')
+        pass
 
     loss_fn = CombinedLoss()
     optimizer = AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, betas=(0.9, 0.95))
@@ -399,4 +396,5 @@ def main():
         dist.destroy_process_group()
 
 if __name__ == "__main__":
+    init_cuda()
     main()
