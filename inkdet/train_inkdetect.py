@@ -36,9 +36,10 @@ SEED = 42
 VALIDATION_SPLIT = 0.0
 AUGMENT_CHANCE = 0.5
 INKDETECT_MEAN = .1
-BATCH_SIZE = 32
-COMPILE=False
-FP8=False
+BATCH_SIZE = 16  # per gpu
+COMPILE = False
+FP8 = False
+
 
 def setup_distributed():
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
@@ -46,13 +47,19 @@ def setup_distributed():
         world_size = int(os.environ["WORLD_SIZE"])
         local_rank = int(os.environ["LOCAL_RANK"])
 
-        dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
+        os.environ["NCCL_TIMEOUT"] = "180"
+        os.environ["TORCH_NCCL_BLOCKING_WAIT"] = "1"
+
         torch.cuda.set_device(local_rank)
 
-        is_distributed = True
+        dist.init_process_group(
+            backend="nccl",
+            rank=rank,
+            world_size=world_size,
+            device_id=torch.device(f'cuda:{local_rank}')
+        )
 
-        os.environ["NCCL_TIMEOUT"] = "180"
-        os.environ["NCCL_BLOCKING_WAIT"] = "1"
+        is_distributed = True
     else:
         rank = 0
         world_size = 1
@@ -68,6 +75,7 @@ def setup_distributed():
 
     return rank, world_size, local_rank, is_distributed
 
+
 def init_cuda():
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
@@ -76,6 +84,7 @@ def init_cuda():
     torch.backends.cudnn.allow_tf32 = True
     torch.cuda.empty_cache()
     torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
+
 
 def set_seed(seed=42):
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -168,7 +177,6 @@ def main():
     # Load data
     zarr_store = zarr.open(ZARR_PATH, mode='r')
     all_fragments = list(zarr_store.keys())
-    #random.shuffle(all_fragments)
     n_valid = int(len(all_fragments) * VALIDATION_SPLIT)
     valid_fragments = []  # all_fragments[:n_valid]
     train_fragments = all_fragments[n_valid:]
@@ -181,16 +189,15 @@ def main():
         print(f"Train fragments: {len(train_fragments)}")
         print(f"Valid fragments: {len(valid_fragments)}")
 
-    train_dataset = ZarrDataset(ZARR_PATH, LABELS_PATH, MASKS_PATH, train_fragments, 'train', CHUNK_SIZE, STRIDE, INKDETECT_MEAN, AUGMENT_CHANCE, ISO_THRESHOLD)
-    valid_dataset = ZarrDataset(ZARR_PATH, LABELS_PATH, MASKS_PATH, valid_fragments, 'valid', CHUNK_SIZE, STRIDE, INKDETECT_MEAN, AUGMENT_CHANCE, ISO_THRESHOLD)
+    train_dataset = ZarrDataset(ZARR_PATH, LABELS_PATH, MASKS_PATH, train_fragments, 'train', CHUNK_SIZE, STRIDE,
+                                INKDETECT_MEAN, AUGMENT_CHANCE, ISO_THRESHOLD)
+    valid_dataset = ZarrDataset(ZARR_PATH, LABELS_PATH, MASKS_PATH, valid_fragments, 'valid', CHUNK_SIZE, STRIDE,
+                                INKDETECT_MEAN, AUGMENT_CHANCE, ISO_THRESHOLD)
 
     if len(train_dataset) == 0:
         raise RuntimeError(f"Rank {rank} has no training data!")
 
     if is_distributed:
-        effective_batch_size = BATCH_SIZE // world_size
-
-        # Gather all dataset sizes for distributed mode
         local_size = torch.tensor(len(train_dataset), device=device)
         all_sizes = [torch.zeros_like(local_size) for _ in range(world_size)]
         dist.all_gather(all_sizes, local_size)
@@ -214,22 +221,21 @@ def main():
 
         # Create distributed samplers
         train_sampler = torch.utils.data.distributed.DistributedSampler(
-            train_dataset, num_replicas=world_size, rank=rank, shuffle=True, drop_last=True
+            train_dataset, num_replicas=world_size, rank=rank, shuffle=False, drop_last=True
         )
         valid_sampler = torch.utils.data.distributed.DistributedSampler(
             valid_dataset, num_replicas=world_size, rank=rank, shuffle=False
-        ) if len(valid_dataset) > 0 else None
+        )
     else:
         # Single GPU mode
-        effective_batch_size = BATCH_SIZE
         train_sampler = None
         valid_sampler = None
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=effective_batch_size,
+        batch_size=BATCH_SIZE,
         sampler=train_sampler,
-        shuffle=(train_sampler is None),  # Only shuffle if not using sampler
+        shuffle=False,
         num_workers=NUM_WORKERS,
         pin_memory=True,
         drop_last=True,
@@ -239,7 +245,7 @@ def main():
 
     valid_loader = DataLoader(
         valid_dataset,
-        batch_size=effective_batch_size,
+        batch_size=BATCH_SIZE,
         sampler=valid_sampler,
         shuffle=False,
         num_workers=NUM_WORKERS,
@@ -249,23 +255,21 @@ def main():
         prefetch_factor=8
     )
 
+    # Create model
     model = SimpleVolumetricModel().to(device)
 
     # Wrap with DDP if distributed
     if is_distributed:
         model = DDP(model, device_ids=[local_rank], output_device=local_rank)
 
-    # Compile model - fixed to avoid DDP issues
-    if is_distributed:
-        # For DDP, compile before wrapping or compile the underlying module
-        # Option 1: Don't compile with DDP (recommended for stability)
-        # Option 2: Compile only the underlying module
-        # model.module = torch.compile(model.module, fullgraph=True, dynamic=False, mode='default')
-        pass  # Skip compilation with DDP for now
-    else:
-        # Single GPU mode - compile normally
-        #model = torch.compile(model, fullgraph=True, dynamic=False, mode='max-autotune')
-        pass
+    # Compile model
+    if COMPILE:
+        if is_distributed:
+            # Skip compilation with DDP for stability
+            pass
+        else:
+            # Single GPU mode - compile normally
+            model = torch.compile(model, fullgraph=True, dynamic=False, mode='max-autotune')
 
     loss_fn = CombinedLoss()
     optimizer = AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, betas=(0.9, 0.95))
@@ -276,13 +280,14 @@ def main():
     start_epoch = 0
     train_losses = []
     val_losses = []
-    if checkpoint_path and rank == 0:
-        print(f"Loading checkpoint from {checkpoint_path}")
+    if checkpoint_path:
+        print(f"Rank {rank}: Loading checkpoint from {checkpoint_path}")
         start_epoch, train_losses, val_losses = load_checkpoint(
             checkpoint_path, model, optimizer, scheduler, rank, is_distributed
         )
         start_epoch += 1
-        print(f"Resuming from epoch {start_epoch}")
+        if rank == 0:
+            print(f"Resuming from epoch {start_epoch}")
 
     scaler = GradScaler('cuda')
 
@@ -311,6 +316,7 @@ def main():
         data_iter = iter(train_loader)
 
         optimizer.zero_grad()
+
         for step in pbar:
             try:
                 x, y = next(data_iter)
@@ -394,6 +400,7 @@ def main():
 
     if dist.is_initialized():
         dist.destroy_process_group()
+
 
 if __name__ == "__main__":
     init_cuda()
