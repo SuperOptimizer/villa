@@ -462,19 +462,15 @@ class BaseTrainer:
             
             # Update mask ratio for MAE pretraining if applicable
             if self.mgr.model_config.get('mae_mode', False) and hasattr(train_dataset, 'set_mask_ratio'):
-                # Get min and max mask ratios from dataset config
-                min_mask_ratio = train_dataset.min_mask_ratio
-                max_mask_ratio = train_dataset.mask_ratio  # This is the target/max ratio
-                
-                # Calculate current mask ratio: start at min, increase by 3% per epoch
-                current_mask_ratio = min(min_mask_ratio + (epoch * 0.03), max_mask_ratio)
+                # Use the target mask ratio directly (no curriculum)
+                target_mask_ratio = train_dataset.mask_ratio
                 
                 # Update both train and val datasets
-                train_dataset.set_mask_ratio(current_mask_ratio)
+                train_dataset.set_mask_ratio(target_mask_ratio)
                 if hasattr(val_dataset, 'set_mask_ratio'):
-                    val_dataset.set_mask_ratio(current_mask_ratio)
+                    val_dataset.set_mask_ratio(target_mask_ratio)
                 
-                print(f"\n[MAE] Epoch {epoch + 1}: Mask ratio = {current_mask_ratio:.2%} (min: {min_mask_ratio:.2%}, max: {max_mask_ratio:.2%})")
+                print(f"\n[MAE] Epoch {epoch + 1}: Mask ratio = {target_mask_ratio:.2%}")
 
             model.train()
 

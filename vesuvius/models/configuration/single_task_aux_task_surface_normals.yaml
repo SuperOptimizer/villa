@@ -1,6 +1,9 @@
 # Example configuration for training with surface normals auxiliary task
 # This demonstrates how to use surface normals computed from signed distance transforms
 
+tr_config:
+  initial_lr: 0.01
+
 dataset_config:
   min_labeled_ratio: 0 
   min_bbox_percent: 0 

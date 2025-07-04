@@ -3,7 +3,6 @@ import json
 import numpy as np
 import napari
 import zarr
-import fsspec
 import tifffile
 from magicgui import magicgui
 from skimage.filters import threshold_otsu
@@ -91,7 +90,23 @@ def extract_patch(volume, coord, patch_size):
     slices = tuple(slice(c, c + patch_size) for c in coord)
     if volume.ndim > len(coord):
         slices = slices + (slice(None),) * (volume.ndim - len(coord))
-    return volume[slices]
+    
+    try:
+        return volume[slices]
+    except ValueError as e:
+        if "cannot reshape array of size 0" in str(e):
+            # Handle empty/all-zero chunks
+            # Calculate the shape of the patch
+            shape = []
+            for i, s in enumerate(slices):
+                if s.start is not None and s.stop is not None:
+                    shape.append(s.stop - s.start)
+                else:
+                    # For full slices, use the volume dimension
+                    shape.append(volume.shape[i])
+            return np.zeros(shape, dtype=volume.dtype)
+        else:
+            raise
 
 
 def filter_small_components(binary_patch, min_size=30):
@@ -399,8 +414,18 @@ def load_next_patch():
     while state['current_index'] < len(coords):
         idx = state['current_index']
         coord = coords[idx]
+        print(f"Loading patch {idx} at coordinate {coord}...")
+        print("  Extracting image patch...")
         image_patch = extract_patch(image_volume, coord, patch_size)
+        print("  Extracting label patch...")
         label_patch = extract_patch(label_volume, coord, patch_size)
+        print("  Patches extracted successfully.")
+        
+        # Check if patches are empty (all zeros) due to empty zarr chunks
+        if np.all(image_patch == 0):
+            print("  Warning: Image patch is all zeros (empty zarr chunk)")
+        if np.all(label_patch == 0):
+            print("  Warning: Label patch is all zeros (empty zarr chunk)")
         state['current_index'] += 1
 
         # Calculate the percentage of labeled (nonzero) pixels.
@@ -496,8 +521,8 @@ def save_current_patch():
     else:
         coord_str = "_".join(str(c) for c in coord)
 
-    image_filename = f"img_{coord_str}_0000.tif"
-    label_filename = f"lbl_{coord_str}.tif"
+    image_filename = f"{coord_str}_0000.tif"
+    label_filename = f"{coord_str}.tif"
     image_path = os.path.join(state['images_out_dir'], image_filename)
     label_path = os.path.join(state['labels_out_dir'], label_filename)
 
@@ -544,33 +569,17 @@ def init_volume(
     """
     global state, viewer
 
-    # --- Load image volume ---
-    try:
-        image_mapper = fsspec.get_mapper(image_zarr)
-        image_group = zarr.open_group(image_mapper, mode='r')
-        if "0" in image_group:
-            image_volume = image_group["0"]
-            print("Using resolution '0' for image volume.")
-        else:
-            image_volume = image_group
-            print("No resolution '0' found; using provided array for image volume.")
-    except Exception as e:
-        print(f"Error loading image zarr: {e}")
-        return
 
-    # --- Load label volume ---
-    try:
-        label_mapper = fsspec.get_mapper(label_zarr)
-        label_group = zarr.open_group(label_mapper, mode='r')
-        if "0" in label_group:
-            label_volume = label_group["0"]
-            print("Using resolution '0' for label volume.")
-        else:
-            label_volume = label_group
-            print("No resolution '0' found; using provided array for label volume.")
-    except Exception as e:
-        print(f"Error loading label zarr: {e}")
-        return
+    # Try to open as array first (for zarrs with array at root)
+    image_volume = zarr.open(image_zarr, mode='r')
+    image_volume = image_volume['0'] if isinstance(image_volume, zarr.hierarchy.Group) else image_volume
+    print("Loaded image zarr as array.")
+
+    # Try to open as array first (for zarrs with array at root)
+    label_volume = zarr.open(label_zarr, mode='r')
+    label_volume = label_volume['0'] if isinstance(label_volume, zarr.hierarchy.Group) else label_volume
+    print("Loaded label zarr as array.")
+        
 
     # Save the loaded volumes.
     state['image_volume'] = image_volume
@@ -611,7 +620,7 @@ def init_volume(
             # Check if zarr already exists
             if os.path.exists(output_label_zarr):
                 # Open existing zarr
-                state['output_zarr_array'] = zarr.open_array(output_label_zarr, mode='r+')
+                state['output_zarr_array'] = zarr.open(output_label_zarr, mode='r+')
                 state['output_zarr_index'] = state['output_zarr_array'].shape[0]
                 print(f"Opened existing output zarr with {state['output_zarr_index']} patches.")
             else:
@@ -620,7 +629,7 @@ def init_volume(
                 initial_shape = (0,) + patch_shape
                 chunks = (1,) + patch_shape  # One patch per chunk
                 
-                state['output_zarr_array'] = zarr.open_array(
+                state['output_zarr_array'] = zarr.open(
                     output_label_zarr,
                     mode='w',
                     shape=initial_shape,

@@ -6,9 +6,10 @@ tr_setup:
   autoconfigure: true
 
 tr_config:
-  patch_size: [256, 128, 128]  # 3D patches for pretraining
-  batch_size: 3
+  patch_size: [128, 128, 128]  # 3D patches for pretraining
+  batch_size: 2
   initial_lr: 0.0001
+
   normalization_scheme: "robust"  # Use robust normalization for MAE (median/MAD based)
 
 dataset_config:
@@ -33,7 +34,7 @@ dataset_config:
   #   - "https://dl.ash2txt.org/community-uploads/james/Scroll1/Scroll1_8um.zarr/"
   #   - "https://dl.ash2txt.org/community-uploads/bruniss/scrolls/s5/s5_masked_ome.zarr/"
 
-  
+  skip_bounding_box: true
   dataset_class: "MAEPretrainDataset"
   mask_ratio: 0.75  # Maximum mask ratio (75% of patches)
   min_mask_ratio: 0.10  # Starting mask ratio (10% of patches)

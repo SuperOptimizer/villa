@@ -68,11 +68,10 @@ class BaseDataset(Dataset):
         self.patch_size = mgr.train_patch_size   # Expected to be [z, y, x]
         self.min_labeled_ratio = mgr.min_labeled_ratio
         self.min_bbox_percent = mgr.min_bbox_percent
-        self.dilate_label = mgr.dilate_label
 
         # New binarization control parameters
-        self.binarize_labels = mgr.binarize_labels
-        self.target_value = mgr.target_value
+        self.binarize_labels = getattr(mgr, 'binarize_labels', False)
+        self.target_value = getattr(mgr, 'target_value', 1)
         self.label_threshold = getattr(mgr, 'label_threshold', None)
         
         # Skip patch validation (defaults to False)
@@ -665,7 +664,7 @@ class BaseDataset(Dataset):
                 if img_patch.size == 0:
                     raise ValueError(f"Empty patch extracted at position z={z}, y={y}, x={x}")
                 img_patch = pad_or_crop_3d(img_patch, (dz, dy, dx))
-        except (ValueError, zarr.errors.ArrayNotFoundError) as e:
+        except ValueError as e:
             # Handle corrupt or missing chunks by creating a zero patch
             print(f"Warning: Failed to extract image patch at vol={vol_idx}, z={z}, y={y}, x={x}: {str(e)}")
             print(f"Creating zero patch of size {'('+str(dy)+','+str(dx)+')' if is_2d else '('+str(dz)+','+str(dy)+','+str(dx)+')'}")
