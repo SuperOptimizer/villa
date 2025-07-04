@@ -94,27 +94,30 @@ def set_seed(seed=42):
     torch.cuda.manual_seed(seed)
 
 
-def save_checkpoint(model, optimizer, scheduler, epoch, train_losses, val_losses, path, rank, is_distributed):
-    if rank == 0:
-        save_dict = {
-            'epoch': epoch,
-            'train_losses': train_losses,
-            'val_losses': val_losses,
-            'optimizer_state_dict': optimizer.state_dict(),
-        }
+def save_checkpoint(model, optimizer, scheduler, epoch, train_losses, val_losses, path, is_distributed):
+    import time
+    start_time = time.time()
+    print(f"Epoch {epoch}: Starting checkpoint save...")
 
-        if is_distributed:
-            save_dict['model_state_dict'] = model.module.state_dict()
-        else:
-            save_dict['model_state_dict'] = model.state_dict()
-
-        if scheduler is not None:
-            save_dict['scheduler_state_dict'] = scheduler.state_dict()
-
-        torch.save(save_dict, path)
+    save_dict = {
+        'epoch': epoch,
+        'train_losses': train_losses,
+        'val_losses': val_losses,
+        'optimizer_state_dict': optimizer.state_dict(),
+    }
 
     if is_distributed:
-        dist.barrier()
+        save_dict['model_state_dict'] = model.module.state_dict()
+    else:
+        save_dict['model_state_dict'] = model.state_dict()
+
+    if scheduler is not None:
+        save_dict['scheduler_state_dict'] = scheduler.state_dict()
+
+    torch.save(save_dict, path)
+
+    elapsed = time.time() - start_time
+    print(f"Epoch {epoch}: Checkpoint saved in {elapsed:.2f} seconds")
 
 
 def load_checkpoint(path, model, optimizer=None, scheduler=None, rank=0, is_distributed=False):
@@ -260,7 +263,15 @@ def main():
 
     # Wrap with DDP if distributed
     if is_distributed:
-        model = DDP(model, device_ids=[local_rank], output_device=local_rank)
+        model = DDP(
+            model,
+            device_ids=[local_rank],
+            output_device=local_rank,
+            find_unused_parameters=False,
+            gradient_as_bucket_view=True,
+            static_graph=True,
+            bucket_cap_mb=50
+        )
 
     # Compile model
     if COMPILE:
@@ -301,29 +312,12 @@ def main():
         if is_distributed:
             dist.barrier()
 
-        if is_distributed:
-            local_steps = len(train_loader)
-            steps_tensor = torch.tensor(local_steps, device=device)
-            dist.all_reduce(steps_tensor, op=dist.ReduceOp.MIN)
-            steps_per_epoch = int(steps_tensor.item())
-        else:
-            steps_per_epoch = len(train_loader)
-
         if rank == 0:
-            print(f"Steps per epoch: {steps_per_epoch}")
+            print(f"\nEpoch {epoch}: Starting training...")
 
-        pbar = tqdm(range(steps_per_epoch), desc=f"Epoch {epoch} [Rank {rank}]", disable=(rank != 0))
-        data_iter = iter(train_loader)
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch} [Rank {rank}]", disable=(rank != 0))
 
-        optimizer.zero_grad()
-
-        for step in pbar:
-            try:
-                x, y = next(data_iter)
-            except StopIteration:
-                # If we run out of data, restart the iterator
-                data_iter = iter(train_loader)
-                x, y = next(data_iter)
+        for x, y in pbar:
 
             x, y = x.to(device), y.to(device)
 
@@ -355,6 +349,7 @@ def main():
 
         if rank == 0:
             train_losses.append(avg_train_loss)
+            print(f"Epoch {epoch}: Training completed")
 
         # Validation
         if valid_loader is not None and len(valid_loader) > 0:
@@ -390,7 +385,7 @@ def main():
             save_checkpoint(
                 model, optimizer, scheduler, epoch, train_losses, val_losses,
                 os.path.join(OUTPUT_PATH, f'best_simple_volumetric_epoch={epoch}.ckpt'),
-                rank, is_distributed
+                is_distributed
             )
 
         scheduler.step()
