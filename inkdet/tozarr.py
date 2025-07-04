@@ -67,7 +67,7 @@ def process_fragment(fragment_path, output_path, batch_size=8):
         return fragment_id, False, str(e)
 
 
-def export_fragment_to_zarr(fragment_path, zarr_group, batch_size=32):
+def export_fragment_to_zarr(fragment_path, zarr_group, batch_size=8):
     """Export a single fragment to zarr"""
     fragment_id = os.path.basename(fragment_path)
 
@@ -125,7 +125,7 @@ def export_fragment_to_zarr(fragment_path, zarr_group, batch_size=32):
 
 def main():
     train_scrolls_dir = f"{VESUVIUS_ROOT}/train_scrolls"
-    output_path = f"/home/ubuntu/fragments.zarr"
+    output_path = f"/vesuvius/fragments.zarr"
 
     if os.path.exists(output_path):
         raise FileExistsError(f"Output path already exists: {output_path}")
@@ -141,7 +141,7 @@ def main():
     print(f"Found {len(fragment_dirs)} fragments to export")
 
     # Set up multiprocessing
-    num_workers = 4
+    num_workers = 48
     print(f"Using {num_workers} workers")
 
     # Create partial function with fixed output_path

@@ -9,13 +9,13 @@ from tqdm import tqdm
 
 # Import model classes and quantization
 from train_inkdetect import (
-     SimpleVolumetricModel, CHUNK_SIZE, STRIDE,
-    ZARR_PATH, MASKS_PATH, BATCH_SIZE, NUM_WORKERS, preprocess_chunk
+     SimpleVolumetricModel, CHUNK_SIZE,
+    ZARR_PATH, MASKS_PATH, NUM_WORKERS, preprocess_chunk,OUTPUT_SIZE
 )
-from torchao.quantization import quantize_, Float8DynamicActivationFloat8WeightConfig, PerTensor
 
-# Updated OUTPUT_SIZE to match new model
-OUTPUT_SIZE = 16  # Changed from 4 to 16
+BATCH_SIZE = 80
+
+from torchao.quantization import quantize_, Float8DynamicActivationFloat8WeightConfig, PerTensor
 
 
 class InferenceDataset(Dataset):
