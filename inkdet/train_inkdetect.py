@@ -38,7 +38,7 @@ AUGMENT_CHANCE = 0.5
 INKDETECT_MEAN = .1
 OUTPUT_SIZE = 16
 BATCH_SIZE = 40
-GRADIENT_ACCUMULATION_STEPS = 4  # Effective batch size = 40 * 4 = 160
+GRADIENT_ACCUMULATION_STEPS = 1
 CHUNK_RANDOM_OFFSET = True
 COMPILE_FULLGRAPH = True
 
@@ -537,7 +537,7 @@ def main():
     # Apply float8
     config = Float8LinearConfig.from_recipe_name("tensorwise")
     convert_to_float8_training(model, config=config)
-    model = torch.compile(model, fullgraph=COMPILE_FULLGRAPH, dynamic=False, mode='max-autotune-no-cudagraphs')
+    model = torch.compile(model, fullgraph=True, dynamic=False, mode='max-autotune')
 
     # Create optimizer and scheduler
     optimizer = AdamWFp8(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, betas=(0.9, 0.95))
@@ -551,15 +551,12 @@ def main():
     val_losses = []
     if checkpoint_path:
         print(f"Loading checkpoint from {checkpoint_path}")
-        try:
-            start_epoch, train_losses, val_losses = load_checkpoint(
-                checkpoint_path, model, optimizer, scheduler
-            )
-            start_epoch += 1  # Resume from next epoch
-            print(f"Resuming from epoch {start_epoch}")
-        except Exception as e:
-            print(f"Failed to load checkpoint: {e}")
-            print("Starting fresh training")
+        start_epoch, train_losses, val_losses = load_checkpoint(
+            checkpoint_path, model, optimizer, scheduler
+        )
+        start_epoch += 1  # Resume from next epoch
+        print(f"Resuming from epoch {start_epoch}")
+
 
     # Training loop
     scaler = GradScaler('cuda')

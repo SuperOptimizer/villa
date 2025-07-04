@@ -134,7 +134,7 @@ def main():
     model = SimpleVolumetricModel()
 
     # Load state dict
-    model.load_state_dict(checkpoint['state_dict'], strict=False)
+    model.load_state_dict(checkpoint['model_state_dict'], strict=False)
     model.to(device)
 
     # Apply Float8 quantization
