@@ -36,9 +36,9 @@ SEED = 42
 VALIDATION_SPLIT = 0.0
 AUGMENT_CHANCE = 0.5
 INKDETECT_MEAN = .1
-BATCH_SIZE = 16  # per gpu
-COMPILE = False
-FP8 = False
+BATCH_SIZE = 24  # per gpu
+COMPILE = True  # Changed back to True
+FP8 = True
 
 
 def setup_distributed():
@@ -261,7 +261,23 @@ def main():
     # Create model
     model = SimpleVolumetricModel().to(device)
 
-    # Wrap with DDP if distributed
+    def module_filter_fn(mod: torch.nn.Module, fqn: str):
+        # don't convert the last module
+        if fqn == "1":
+            return False
+        # don't convert linear modules with weight dimensions not divisible by 16
+        if isinstance(mod, torch.nn.Linear):
+            if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
+                return False
+        return True
+
+    if FP8:
+        convert_to_float8_training(model, module_filter_fn=module_filter_fn,
+                                 config=Float8LinearConfig.from_recipe_name("tensorwise"))
+
+    if COMPILE:
+        model = torch.compile(model, fullgraph=True, dynamic=False, mode='max-autotune')
+
     if is_distributed:
         model = DDP(
             model,
@@ -273,17 +289,8 @@ def main():
             bucket_cap_mb=50
         )
 
-    # Compile model
-    if COMPILE:
-        if is_distributed:
-            # Skip compilation with DDP for stability
-            pass
-        else:
-            # Single GPU mode - compile normally
-            model = torch.compile(model, fullgraph=True, dynamic=False, mode='max-autotune')
-
     loss_fn = CombinedLoss()
-    optimizer = AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, betas=(0.9, 0.95))
+    optimizer = AdamWFp8(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, betas=(0.9, 0.95))
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=100, T_mult=1, eta_min=MIN_LEARNING_RATE
     )
