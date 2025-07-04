@@ -35,7 +35,6 @@ VALIDATION_SPLIT = 0.0
 AUGMENT_CHANCE = 0.5
 INKDETECT_MEAN = .1
 BATCH_SIZE = 24  # per gpu
-COMPILE = True  # Changed back to True
 
 
 def setup_distributed():
@@ -124,7 +123,6 @@ def save_checkpoint(model, optimizer, scheduler, epoch, train_losses, val_losses
 
 
 def load_checkpoint(path, model, optimizer=None, scheduler=None, rank=0, is_distributed=False):
-    checkpoint = None
 
     # Each rank loads the checkpoint independently
     checkpoint = torch.load(path, map_location=f'cuda:{rank}' if torch.cuda.is_available() else 'cpu')
@@ -200,28 +198,6 @@ def main():
         raise RuntimeError(f"Rank {rank} has no training data!")
 
     if is_distributed:
-        local_size = torch.tensor(len(train_dataset), device=device)
-        all_sizes = [torch.zeros_like(local_size) for _ in range(world_size)]
-        dist.all_gather(all_sizes, local_size)
-
-        if rank == 0:
-            print(f"Train dataset sizes per rank:")
-            for i, size in enumerate(all_sizes):
-                print(f"  Rank {i}: {size.item()} chunks")
-
-        # Use minimum size for balanced loading
-        min_size = min(s.item() for s in all_sizes)
-        if min_size == 0:
-            raise RuntimeError("At least one rank has no data!")
-
-        # Trim dataset to minimum size
-        if len(train_dataset) > min_size:
-            train_dataset.chunks = train_dataset.chunks[:min_size]
-
-        if rank == 0:
-            print(f"Using balanced size: {min_size} chunks per rank")
-
-        # Create distributed samplers
         train_sampler = torch.utils.data.distributed.DistributedSampler(
             train_dataset, num_replicas=world_size, rank=rank, shuffle=False, drop_last=True
         )
@@ -257,11 +233,8 @@ def main():
         prefetch_factor=8
     )
 
-    # Create model
     model = SimpleVolumetricModel().to(device)
-
-    if COMPILE:
-        model = torch.compile(model, fullgraph=True, dynamic=False, mode='reduce-overhead')
+    model = torch.compile(model, fullgraph=True, dynamic=False, mode='reduce-overhead')
 
     if is_distributed:
         model = DDP(
