@@ -8,8 +8,6 @@ import torch
 import glob
 from torch.optim import AdamW
 from torch.amp import GradScaler, autocast
-from torchao.float8 import convert_to_float8_training, Float8LinearConfig
-from torchao.optim import AdamWFp8
 
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -38,7 +36,6 @@ AUGMENT_CHANCE = 0.5
 INKDETECT_MEAN = .1
 BATCH_SIZE = 24  # per gpu
 COMPILE = True  # Changed back to True
-FP8 = True
 
 
 def setup_distributed():
@@ -99,20 +96,26 @@ def save_checkpoint(model, optimizer, scheduler, epoch, train_losses, val_losses
     start_time = time.time()
     print(f"Epoch {epoch}: Starting checkpoint save...")
 
+    # Get state dicts
+    if is_distributed:
+        model_state = model.module.state_dict()
+    else:
+        model_state = model.state_dict()
+
+    optimizer_state = optimizer.state_dict()
+
+
     save_dict = {
         'epoch': epoch,
         'train_losses': train_losses,
         'val_losses': val_losses,
-        'optimizer_state_dict': optimizer.state_dict(),
+        'model_state_dict': model_state,
+        'optimizer_state_dict': optimizer_state,
     }
 
-    if is_distributed:
-        save_dict['model_state_dict'] = model.module.state_dict()
-    else:
-        save_dict['model_state_dict'] = model.state_dict()
-
     if scheduler is not None:
-        save_dict['scheduler_state_dict'] = scheduler.state_dict()
+        scheduler_state = scheduler.state_dict()
+        save_dict['scheduler_state_dict'] = scheduler_state
 
     torch.save(save_dict, path)
 
@@ -123,15 +126,10 @@ def save_checkpoint(model, optimizer, scheduler, epoch, train_losses, val_losses
 def load_checkpoint(path, model, optimizer=None, scheduler=None, rank=0, is_distributed=False):
     checkpoint = None
 
-    if rank == 0:
-        checkpoint = torch.load(path, map_location='cpu')
+    # Each rank loads the checkpoint independently
+    checkpoint = torch.load(path, map_location=f'cuda:{rank}' if torch.cuda.is_available() else 'cpu')
 
-    if is_distributed:
-        dist.barrier()
-        checkpoint = [checkpoint] if rank == 0 else [None]
-        dist.broadcast_object_list(checkpoint, src=0)
-        checkpoint = checkpoint[0]
-
+    # Load model state
     if is_distributed:
         model.module.load_state_dict(checkpoint['model_state_dict'])
     else:
@@ -141,6 +139,7 @@ def load_checkpoint(path, model, optimizer=None, scheduler=None, rank=0, is_dist
     train_losses = checkpoint.get('train_losses', [])
     val_losses = checkpoint.get('val_losses', [])
 
+    # Load optimizer and scheduler states (each rank loads independently)
     if optimizer is not None and 'optimizer_state_dict' in checkpoint:
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
@@ -261,22 +260,8 @@ def main():
     # Create model
     model = SimpleVolumetricModel().to(device)
 
-    def module_filter_fn(mod: torch.nn.Module, fqn: str):
-        # don't convert the last module
-        if fqn == "1":
-            return False
-        # don't convert linear modules with weight dimensions not divisible by 16
-        if isinstance(mod, torch.nn.Linear):
-            if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
-                return False
-        return True
-
-    if FP8:
-        convert_to_float8_training(model, module_filter_fn=module_filter_fn,
-                                 config=Float8LinearConfig.from_recipe_name("tensorwise"))
-
     if COMPILE:
-        model = torch.compile(model, fullgraph=True, dynamic=False, mode='max-autotune')
+        model = torch.compile(model, fullgraph=True, dynamic=False, mode='reduce-overhead')
 
     if is_distributed:
         model = DDP(
@@ -290,7 +275,7 @@ def main():
         )
 
     loss_fn = CombinedLoss()
-    optimizer = AdamWFp8(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, betas=(0.9, 0.95))
+    optimizer = AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, betas=(0.9, 0.95))
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=100, T_mult=1, eta_min=MIN_LEARNING_RATE
     )
