@@ -670,6 +670,11 @@ const team = {
       href: "https://youssefnader.com/",
     },
     {
+      name: "Hendrik Schilling",
+      title: "Computer Vision & AI Expert, PhD",
+      href: "https://www.linkedin.com/in/dr-hendrik-schilling-a2019418a",
+    },
+    {
       name: "Elian Rafael Dal Prá",
       title: "ML Intern & Annotation Specialist",
       href: "https://twitter.com/elianrafaeldp",
