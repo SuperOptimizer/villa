@@ -475,6 +475,8 @@ parser.add_argument('--zarr_finetune_labels', type=str, default=None,
                     help='Path to zarr labels for finetuning (optional)')
 parser.add_argument('--dataset_path', type=str, default=None,
                     help='Path to the directory that contains the train_scrolls')
+parser.add_argument('--finetune_checkpoint', type=str, default=None,
+                    help='Path to the checkpoint to finetune')
 args = parser.parse_args()
 
 if args.dataset_path:
@@ -542,6 +544,7 @@ for fid in fragments:
                     ],
 
     )
-    trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+
+    trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader, ckpt_path=args.finetune_checkpoint)
     if CFG.use_wandb:
         wandb.finish()
