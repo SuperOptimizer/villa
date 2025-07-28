@@ -29,7 +29,13 @@ config = {
         'label_path'  : '[REDACTED]
         'energy'      : '116',
         'resolution'  : '8.64'
-    }
+    },
+    'PHerc1451': {
+        'volume_path' : '[REDACTED]
+        'label_path'  : '[REDACTED]
+        'energy'      : '116',
+        'resolution'  : '8.64'
+    },
 }
 
 
