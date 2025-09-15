@@ -2002,6 +2002,7 @@ void CWindow::onEditMaskPressed(void)
     QDesktopServices::openUrl(QUrl::fromLocalFile(path.string().c_str()));
 }
 
+
 void CWindow::onRefreshSurfaces()
 {
     LoadSurfacesIncremental();
