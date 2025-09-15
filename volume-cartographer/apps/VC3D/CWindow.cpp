@@ -531,6 +531,10 @@ void CWindow::CreateWidgets(void)
     chkFilterHideUnapproved = ui.chkFilterHideUnapproved;
     connect(chkFilterHideUnapproved, &QCheckBox::toggled, [this]() { onSegFilterChanged(0); });
 
+
+    chkFilterInspectOnly = ui.chkFilterInspectOnly;
+    connect(chkFilterInspectOnly, &QCheckBox::toggled, [this]() { onSegFilterChanged(0); });
+
     cmbSegmentationDir = ui.cmbSegmentationDir;
     connect(cmbSegmentationDir, &QComboBox::currentIndexChanged, this, &CWindow::onSegmentationDirChanged);
 
@@ -561,6 +565,7 @@ void CWindow::CreateWidgets(void)
     _chkDefective = ui.chkDefective;
     _chkReviewed = ui.chkReviewed;
     _chkRevisit = ui.chkRevisit;
+    _chkInspect = ui.chkInspect;
     
     for(int i=0;i<3;i++)
         spNorm[i]->setRange(-10,10);
@@ -574,11 +579,13 @@ void CWindow::CreateWidgets(void)
     connect(_chkDefective, &QCheckBox::stateChanged, this, &CWindow::onTagChanged);
     connect(_chkReviewed, &QCheckBox::stateChanged, this, &CWindow::onTagChanged);
     connect(_chkRevisit, &QCheckBox::stateChanged, this, &CWindow::onTagChanged);
+    connect(_chkInspect, &QCheckBox::stateChanged, this, &CWindow::onTagChanged);
 #else
     connect(_chkApproved, &QCheckBox::checkStateChanged, this, &CWindow::onTagChanged);
     connect(_chkDefective, &QCheckBox::checkStateChanged, this, &CWindow::onTagChanged);
     connect(_chkReviewed, &QCheckBox::checkStateChanged, this, &CWindow::onTagChanged);
     connect(_chkRevisit, &QCheckBox::checkStateChanged, this, &CWindow::onTagChanged);
+    connect(_chkInspect, &QCheckBox::checkStateChanged, this, &CWindow::onTagChanged);
 #endif
 
     connect(ui.btnEditMask, &QPushButton::pressed, this, &CWindow::onEditMaskPressed);
@@ -1476,9 +1483,10 @@ void CWindow::onTagChanged(void)
             sync_tag(surf->meta->at("tags"), _chkDefective->checkState() == Qt::Checked, "defective", username);
             sync_tag(surf->meta->at("tags"), _chkReviewed->checkState() == Qt::Checked, "reviewed", username);
             sync_tag(surf->meta->at("tags"), _chkRevisit->checkState() == Qt::Checked, "revisit", username);
+            sync_tag(surf->meta->at("tags"), _chkInspect->checkState() == Qt::Checked, "inspect", username);
             surf->save_meta();
         }
-        else if (_chkApproved->checkState() || _chkDefective->checkState() || _chkReviewed->checkState() || _chkRevisit->checkState()) {
+        else if (_chkApproved->checkState() || _chkDefective->checkState() || _chkReviewed->checkState() || _chkRevisit->checkState() || _chkInspect->checkState()) {
             surf->meta->push_back({"tags", nlohmann::json::object()});
             if (_chkApproved->checkState()) {
                 if (!username.empty()) {
@@ -1510,6 +1518,14 @@ void CWindow::onTagChanged(void)
                     surf->meta->at("tags")["revisit"]["user"] = username;
                 } else {
                     surf->meta->at("tags")["revisit"] = nullptr;
+                }
+            }
+            if (_chkInspect->checkState()) {
+                if (!username.empty()) {
+                    surf->meta->at("tags")["inspect"] = nlohmann::json::object();
+                    surf->meta->at("tags")["inspect"]["user"] = username;
+                } else {
+                    surf->meta->at("tags")["inspect"] = nullptr;
                 }
             }
             surf->save_meta();
@@ -1611,6 +1627,7 @@ void CWindow::onSurfaceSelected()
             const QSignalBlocker b2{_chkDefective};
             const QSignalBlocker b3{_chkReviewed};
             const QSignalBlocker b4{_chkRevisit};
+            const QSignalBlocker b5{_chkInspect};
             
             std::cout << "surf " << _surf->path << _surfID <<  _surf->meta << std::endl;
             
@@ -1618,11 +1635,13 @@ void CWindow::onSurfaceSelected()
             _chkDefective->setEnabled(true);
             _chkReviewed->setEnabled(true);
             _chkRevisit->setEnabled(true);
+            _chkInspect->setEnabled(true);
             
             _chkApproved->setCheckState(Qt::Unchecked);
             _chkDefective->setCheckState(Qt::Unchecked);
             _chkReviewed->setCheckState(Qt::Unchecked);
             _chkRevisit->setCheckState(Qt::Unchecked);
+            _chkInspect->setCheckState(Qt::Unchecked);
             if (_surf->meta) {
                 if (_surf->meta->value("tags", nlohmann::json::object_t()).count("approved"))
                     _chkApproved->setCheckState(Qt::Checked);
@@ -1632,12 +1651,15 @@ void CWindow::onSurfaceSelected()
                     _chkReviewed->setCheckState(Qt::Checked);
                 if (_surf->meta->value("tags", nlohmann::json::object_t()).count("revisit"))
                     _chkRevisit->setCheckState(Qt::Checked);
+                if (_surf->meta->value("tags", nlohmann::json::object_t()).count("inspect"))
+                    _chkInspect->setCheckState(Qt::Checked);
             }
             else {
                 _chkApproved->setEnabled(false);
                 _chkDefective->setEnabled(false);
                 _chkReviewed->setEnabled(true);
                 _chkRevisit->setEnabled(true);
+                _chkInspect->setEnabled(true);
             }
         }
     }
@@ -1713,7 +1735,8 @@ void CWindow::onSegFilterChanged(int index)
                            chkFilterNoDefective->isChecked() ||
                            chkFilterPartialReview->isChecked() ||
                            chkFilterCurrentOnly->isChecked() ||
-                           chkFilterHideUnapproved->isChecked();
+                               chkFilterHideUnapproved->isChecked() ||
+                               chkFilterInspectOnly->isChecked();
 
     // Check if point set filter has any checked items
     if (!hasActiveFilters && cmbPointSetFilter->count() > 0) {
@@ -1879,6 +1902,15 @@ void CWindow::onSegFilterChanged(int index)
                 if (surface && surface->meta) {
                     auto tags = surface->meta->value("tags", nlohmann::json::object_t());
                     show = show && (tags.count("approved") > 0);
+                } else {
+                    show = show && false;  // Hide segments without metadata when filter is active
+                }
+            }
+            if (chkFilterInspectOnly->isChecked()) {
+                auto* surface = surfMeta->surface();
+                if (surface && surface->meta) {
+                    auto tags = surface->meta->value("tags", nlohmann::json::object_t());
+                    show = show && (tags.count("inspect") > 0);
                 } else {
                     show = show && false;  // Hide segments without metadata when filter is active
                 }
@@ -2125,6 +2157,7 @@ void CWindow::onSegmentationDirChanged(int index)
             _chkDefective->setEnabled(false);
             _chkReviewed->setEnabled(false);
             _chkRevisit->setEnabled(false);
+            _chkInspect->setEnabled(false);
         }
         
         // Set the new directory in the VolumePkg
@@ -2395,14 +2428,17 @@ void CWindow::RemoveSingleSegmentation(const std::string& segId)
         const QSignalBlocker b2{_chkDefective};
         const QSignalBlocker b3{_chkReviewed};
         const QSignalBlocker b4{_chkRevisit};
+        const QSignalBlocker b5{_chkInspect};
         _chkApproved->setCheckState(Qt::Unchecked);
         _chkDefective->setCheckState(Qt::Unchecked);
         _chkReviewed->setCheckState(Qt::Unchecked);
         _chkRevisit->setCheckState(Qt::Unchecked);
+        _chkInspect->setCheckState(Qt::Unchecked);
         _chkApproved->setEnabled(false);
         _chkDefective->setEnabled(false);
         _chkReviewed->setEnabled(false);
         _chkRevisit->setEnabled(false);
+        _chkInspect->setEnabled(false);
 
         // Reset window title
         for (auto &viewer : _viewers) {
