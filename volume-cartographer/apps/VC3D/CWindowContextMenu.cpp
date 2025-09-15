@@ -35,11 +35,23 @@ static bool runProcessBlocking(const QString& program,
     QProcess p;
     if (!workDir.isEmpty()) p.setWorkingDirectory(workDir);
     p.setProcessChannelMode(QProcess::SeparateChannels);
+
+    // Print the entire program invocation
+    std::cout << "Running: " << program.toStdString();
+    for (const QString& arg : args) {
+        std::cout << " " << arg.toStdString();
+    }
+    std::cout << std::endl;
+
     p.start(program, args);
     if (!p.waitForStarted()) { if (err) *err = QObject::tr("Failed to start %1").arg(program); return false; }
     if (!p.waitForFinished(-1)) { if (err) *err = QObject::tr("Timeout running %1").arg(program); return false; }
     if (out) *out = QString::fromLocal8Bit(p.readAllStandardOutput());
     if (err) *err = QString::fromLocal8Bit(p.readAllStandardError());
+
+    std::cout <<QString::fromLocal8Bit(p.readAllStandardOutput()).toStdString() << std::endl;
+    std::cout <<QString::fromLocal8Bit(p.readAllStandardError()).toStdString() << std::endl;
+    std::cout <<"qwerqwerqwerqwerqwer" << std::endl;
     return (p.exitStatus()==QProcess::NormalExit && p.exitCode()==0);
 }
 
@@ -52,11 +64,15 @@ static QString resolvePythonPath()
     const QString env = QString::fromLocal8Bit(qgetenv("VC_PYTHON"));
     if (!env.isEmpty() && QFileInfo::exists(env)) return env;
 
-    // Prefer micromamba env you mentioned
+    // Prefer micromamba env
     if (QFileInfo::exists("/opt/micromamba/envs/py310/bin/python"))
         return "/opt/micromamba/envs/py310/bin/python";
 
-    // Reasonable fallbacks
+    // Check for miniconda3 if available
+    const QString minicondaPath = QDir::homePath() + "/miniconda3/bin/python3";
+    if (QFileInfo::exists(minicondaPath)) return minicondaPath;
+
+    // Reasonable system fallbacks
     if (QFileInfo::exists("/opt/venv/bin/python3"))  return "/opt/venv/bin/python3";
     if (QFileInfo::exists("/usr/local/bin/python3")) return "/usr/local/bin/python3";
     if (QFileInfo::exists("/usr/bin/python3"))       return "/usr/bin/python3";
@@ -85,6 +101,12 @@ static QString resolveFlatboiScript()
     if (QFileInfo::exists(bin.filePath("flatboi.py"))) {
         return bin.filePath("flatboi.py");
     }
+
+    //are we running from a dev branch? if so lets get out of the cmake-build repo and look under scripts/
+    if (QFileInfo::exists(bin.filePath("../../scripts/flatboi.py"))) {
+        return bin.filePath("../../scripts/flatboi.py");
+    }
+
 
     return QDir(bin.filePath("../scripts")).filePath("flatboi.py");
 }
@@ -205,7 +227,9 @@ void CWindow::onSlimFlattenAndRender(const std::string& segmentId)
     statusBar()->showMessage(tr("Converting TIFXYZ to OBJ…"), 0);
     {
         QString err;
-        if (!runProcessBlocking("vc_tifxyz2obj", QStringList() << segDir << objPath, segDir, nullptr, &err)) {
+        QString basePath = QCoreApplication::applicationDirPath() + "/";
+        std::cout << "basepath" << basePath.toStdString() << std::endl;
+        if (!runProcessBlocking(basePath + "vc_tifxyz2obj", QStringList() << segDir << objPath, segDir, nullptr, &err)) {
             QMessageBox::critical(this, tr("Error"), tr("vc_tifxyz2obj failed.\n\n%1").arg(err));
             statusBar()->showMessage(tr("SLIM-flatten failed"), 5000);
             return;
