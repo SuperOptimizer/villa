@@ -233,7 +233,7 @@
              <bool>true</bool>
             </property>
             <property name="columnCount">
-             <number>5</number>
+             <number>6</number>
             </property>
             <attribute name="headerVisible">
              <bool>true</bool>
@@ -273,6 +273,11 @@
             <column>
              <property name="text">
               <string>Overlaps</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Last Modified</string>
              </property>
             </column>
            </widget>
