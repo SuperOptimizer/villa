@@ -224,8 +224,7 @@ void CWindow::onSlimFlattenAndRender(const std::string& segmentId)
     statusBar()->showMessage(tr("Converting TIFXYZ to OBJ…"), 0);
     {
         QString err;
-        QString basePath = QCoreApplication::applicationDirPath() + "/";
-        if (!runProcessBlocking(basePath + "vc_tifxyz2obj", QStringList() << segDir << objPath, segDir, nullptr, &err)) {
+        if (!runProcessBlocking("vc_tifxyz2obj", QStringList() << segDir << objPath, segDir, nullptr, &err)) {
             QMessageBox::critical(this, tr("Error"), tr("vc_tifxyz2obj failed.\n\n%1").arg(err));
             statusBar()->showMessage(tr("SLIM-flatten failed"), 5000);
             return;
