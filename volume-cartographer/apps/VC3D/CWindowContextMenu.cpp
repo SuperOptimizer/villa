@@ -49,9 +49,6 @@ static bool runProcessBlocking(const QString& program,
     if (out) *out = QString::fromLocal8Bit(p.readAllStandardOutput());
     if (err) *err = QString::fromLocal8Bit(p.readAllStandardError());
 
-    std::cout <<QString::fromLocal8Bit(p.readAllStandardOutput()).toStdString() << std::endl;
-    std::cout <<QString::fromLocal8Bit(p.readAllStandardError()).toStdString() << std::endl;
-    std::cout <<"qwerqwerqwerqwerqwer" << std::endl;
     return (p.exitStatus()==QProcess::NormalExit && p.exitCode()==0);
 }
 
@@ -228,7 +225,6 @@ void CWindow::onSlimFlattenAndRender(const std::string& segmentId)
     {
         QString err;
         QString basePath = QCoreApplication::applicationDirPath() + "/";
-        std::cout << "basepath" << basePath.toStdString() << std::endl;
         if (!runProcessBlocking(basePath + "vc_tifxyz2obj", QStringList() << segDir << objPath, segDir, nullptr, &err)) {
             QMessageBox::critical(this, tr("Error"), tr("vc_tifxyz2obj failed.\n\n%1").arg(err));
             statusBar()->showMessage(tr("SLIM-flatten failed"), 5000);
