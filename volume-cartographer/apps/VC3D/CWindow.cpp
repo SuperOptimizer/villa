@@ -2038,6 +2038,12 @@ void CWindow::onSurfaceContextMenuRequested(const QPoint& pos)
         onSlimFlattenAndRender(segmentId);
     });
 
+    // AWS Upload
+    QAction* awsUploadAction = new QAction(tr("Upload artifacts to AWS"), this);
+    connect(awsUploadAction, &QAction::triggered, [this, segmentId]() {
+        onAWSUpload(segmentId);
+    });
+
     // Grow segment from segment action
     QAction* growSegmentAction = new QAction(tr("Run Trace"), this);
     connect(growSegmentAction, &QAction::triggered, [this, segmentId]() {
@@ -2084,6 +2090,7 @@ void CWindow::onSurfaceContextMenuRequested(const QPoint& pos)
     contextMenu.addAction(renderAction);
     contextMenu.addAction(convertToObjAction);
     contextMenu.addAction(slimFlattenAction);
+    contextMenu.addAction(awsUploadAction);
     contextMenu.addSeparator();
     // Telea pipeline (RGB -> inpaint -> back to tifxyz)
     QAction* inpaintTeleaAction = new QAction(tr("Inpaint (Telea) && Rebuild Segment"), this);
