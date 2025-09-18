@@ -803,6 +803,8 @@ void CWindow::CreateMenus(void)
     fFileMenu->addSeparator();
     fFileMenu->addAction(fSettingsAct);
     fFileMenu->addSeparator();
+    fFileMenu->addAction(fImportObjAct);
+    fFileMenu->addSeparator();
     fFileMenu->addAction(fExitAct);
 
     fEditMenu = new QMenu(tr("&Edit"), this);
@@ -852,6 +854,7 @@ void CWindow::CreateMenus(void)
     menuBar()->addMenu(fActionsMenu);
     menuBar()->addMenu(fSelectionMenu);
     menuBar()->addMenu(fHelpMenu);
+
 }
 
 // Create actions
@@ -915,6 +918,10 @@ void CWindow::CreateActions(void)
         fInpaintTeleaAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
     #endif
     connect(fInpaintTeleaAct, &QAction::triggered, this, &CWindow::onInpaintTeleaSelected);
+
+    fImportObjAct = new QAction(tr("Import OBJ as Patch..."), this);
+    connect(fImportObjAct, &QAction::triggered, this, &CWindow::onImportObjAsPatches);
+
 }
 
 void CWindow::UpdateRecentVolpkgActions()
@@ -2888,4 +2895,180 @@ void CWindow::onCopyCoordinates()
         QApplication::clipboard()->setText(coords);
         statusBar()->showMessage(tr("Coordinates copied to clipboard: %1").arg(coords), 2000);
     }
+}
+
+void CWindow::onImportObjAsPatches()
+{
+    if (!fVpkg) {
+        QMessageBox::warning(this, tr("Error"), tr("No volume package loaded."));
+        return;
+    }
+
+    // Open file dialog for selecting OBJ files or directory
+    QFileDialog dialog(this, tr("Select OBJ files or directory"));
+    dialog.setFileMode(QFileDialog::ExistingFiles);
+    dialog.setNameFilter(tr("OBJ Files (*.obj);;All Files (*)"));
+    dialog.setViewMode(QFileDialog::Detail);
+
+    // Add option to select directory
+    dialog.setOption(QFileDialog::ShowDirsOnly, false);
+
+    QStringList objFiles;
+
+    // Custom dialog with directory selection option
+    QMessageBox msgBox;
+    msgBox.setText(tr("Import OBJ Files"));
+    msgBox.setInformativeText(tr("Do you want to select individual files or a directory?"));
+    QPushButton* filesButton = msgBox.addButton(tr("Select Files"), QMessageBox::ActionRole);
+    QPushButton* dirButton = msgBox.addButton(tr("Select Directory"), QMessageBox::ActionRole);
+    msgBox.addButton(QMessageBox::Cancel);
+    msgBox.exec();
+
+    if (msgBox.clickedButton() == filesButton) {
+        // Select individual files
+        objFiles = QFileDialog::getOpenFileNames(this,
+            tr("Select OBJ Files"),
+            QDir::homePath(),
+            tr("OBJ Files (*.obj);;All Files (*)"));
+    } else if (msgBox.clickedButton() == dirButton) {
+        // Select directory
+        QString dir = QFileDialog::getExistingDirectory(this,
+            tr("Select Directory Containing OBJ Files"),
+            QDir::homePath(),
+            QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+
+        if (!dir.isEmpty()) {
+            QDir directory(dir);
+            QStringList filters;
+            filters << "*.obj" << "*.OBJ";
+            directory.setNameFilters(filters);
+            QFileInfoList fileList = directory.entryInfoList(QDir::Files);
+            for (const QFileInfo& fileInfo : fileList) {
+                objFiles.append(fileInfo.absoluteFilePath());
+            }
+        }
+    } else {
+        // Cancelled
+        return;
+    }
+
+    if (objFiles.isEmpty()) {
+        return;
+    }
+
+    // Initialize command runner if needed
+    if (!initializeCommandLineRunner()) {
+        return;
+    }
+
+    // Get the paths directory
+    auto pathsdirfs = std::filesystem::path(fVpkg->getVolpkgDirectory()) / std::filesystem::path(fVpkg->getSegmentationDirectory());
+    QString pathsDir = QString::fromStdString(pathsdirfs.string());
+
+    // Create progress dialog
+    QProgressDialog progress(tr("Importing OBJ files..."), tr("Cancel"), 0, objFiles.size(), this);
+    progress.setWindowModality(Qt::WindowModal);
+
+    int successCount = 0;
+    int failCount = 0;
+    QStringList failedFiles;
+
+    // Process each OBJ file
+    for (int i = 0; i < objFiles.size(); ++i) {
+        if (progress.wasCanceled()) {
+            break;
+        }
+
+        QString objFile = objFiles[i];
+        QFileInfo fileInfo(objFile);
+        QString baseName = fileInfo.completeBaseName();
+
+        // Sanitize the base name (remove spaces, special characters)
+        //baseName = baseName.replace(QRegExp("[^a-zA-Z0-9_-]"), "_");
+
+        progress.setLabelText(tr("Processing: %1").arg(fileInfo.fileName()));
+        progress.setValue(i);
+
+        // Set output directory
+        QString outputDir = pathsDir + "/" + baseName;
+
+        // Check if output directory already exists
+        if (QDir(outputDir).exists()) {
+            QMessageBox::StandardButton reply = QMessageBox::question(this,
+                tr("Directory Exists"),
+                tr("The patch '%1' already exists. Overwrite?").arg(baseName),
+                QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
+
+            if (reply == QMessageBox::Cancel) {
+                break;
+            } else if (reply == QMessageBox::No) {
+                continue;
+            }
+            // If Yes, continue with overwrite
+        }
+
+        // Set parameters for the tool
+        _cmdRunner->setObj2TifxyzParams(objFile, outputDir);
+
+        // Run the tool synchronously
+        bool success = false;
+
+        // We need to run this synchronously, so we'll use QProcess directly
+        QProcess process;
+        process.setProcessChannelMode(QProcess::MergedChannels);
+
+        QStringList args;
+        args << objFile << outputDir;
+        // Add optional parameters if you want to expose them in UI later
+        args << QString::number(1000.0f)  // stretch_factor
+             << QString::number(1.0f)      // mesh_units
+             << QString::number(20);        // step_size
+
+        QString toolPath = QCoreApplication::applicationDirPath() + "/vc_obj2tifxyz_legacy";
+
+        process.start(toolPath, args);
+
+        if (!process.waitForStarted(5000)) {
+            failedFiles.append(fileInfo.fileName() + " - Failed to start");
+            failCount++;
+            continue;
+        }
+
+        // Wait for completion with timeout of 60 seconds per file
+        if (!process.waitForFinished(60000)) {
+            process.terminate();
+            failedFiles.append(fileInfo.fileName() + " - Timeout");
+            failCount++;
+            continue;
+        }
+
+        if (process.exitCode() == 0 && process.exitStatus() == QProcess::NormalExit) {
+            successCount++;
+        } else {
+            QString output = process.readAll();
+            failedFiles.append(fileInfo.fileName() + " - " + output.left(100));
+            failCount++;
+        }
+    }
+
+    progress.setValue(objFiles.size());
+
+    // Refresh segmentations to show the new patches
+    if (successCount > 0) {
+        fVpkg->refreshSegmentations();
+        LoadSurfacesIncremental();
+    }
+
+    // Show result summary
+    QString message = tr("Import completed.\n\nSuccess: %1\nFailed: %2")
+                        .arg(successCount)
+                        .arg(failCount);
+
+    if (!failedFiles.isEmpty()) {
+        message += tr("\n\nFailed files:\n%1").arg(failedFiles.join("\n"));
+    }
+
+    QMessageBox::information(this, tr("Import Results"), message);
+
+    statusBar()->showMessage(tr("Imported %1 OBJ files").arg(successCount), 5000);
 }
