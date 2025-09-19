@@ -780,20 +780,12 @@ void CWindow::onAWSUpload(const std::string& segmentId)
             awsArgs << "--profile" << awsProfile;
         }
 
-        // Add options for better progress reporting
-        awsArgs << "--no-progress"; // We'll handle our own progress
-
         statusBar()->showMessage(tr("Uploading %1...").arg(description), 0);
 
-        // Use QProcess for better control over output
         QProcess p;
         p.setWorkingDirectory(segDir);
         p.setProcessChannelMode(QProcess::MergedChannels);
 
-        // Remove --no-progress to get actual progress
-        awsArgs.removeAll("--no-progress");
-
-        // Start the process
         p.start("aws", awsArgs);
 
         if (!p.waitForStarted()) {
@@ -817,12 +809,9 @@ void CWindow::onAWSUpload(const std::string& segmentId)
                     }
                 }
             }
-
-            // Process events to keep UI responsive
             QCoreApplication::processEvents();
         }
 
-        // Wait for process to finish
         p.waitForFinished(-1);
 
         if (p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0) {
