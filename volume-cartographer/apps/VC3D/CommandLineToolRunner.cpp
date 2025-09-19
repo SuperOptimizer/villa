@@ -580,7 +580,6 @@ QStringList CommandLineToolRunner::buildArguments(Tool tool)
 QString CommandLineToolRunner::toolName(Tool tool) const
 {
     QString basePath = QCoreApplication::applicationDirPath() + "/";
-    std::cout << "basepath" << basePath.toStdString() << std::endl;
     switch (tool) {
         case Tool::RenderTifXYZ:
             return basePath + "vc_render_tifxyz";
