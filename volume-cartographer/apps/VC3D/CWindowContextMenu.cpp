@@ -733,7 +733,7 @@ void CWindow::onAWSUpload(const std::string& segmentId)
 
     // Prompt for AWS profile
     QSettings settings("VC.ini", QSettings::IniFormat);
-    QString defaultProfile = settings.value("aws/default_profile", "AdministratorAccess-585768151128").toString();
+    QString defaultProfile = settings.value("aws/default_profile", "").toString();
 
     QString awsProfile = QInputDialog::getText(
         this,
