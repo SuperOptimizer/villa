@@ -975,7 +975,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 
     // Check if we should use composite rendering
     if (_surf_name == "segmentation" && _composite_enabled && (_composite_layers_front > 0 || _composite_layers_behind > 0)) {
-        return render_composite(roi);
+        img = render_composite(roi);
     }
     else {
         // Standard single-slice rendering
@@ -1028,7 +1028,7 @@ void CVolumeViewer::renderVisible(bool force)
     
     renderPaths();
     
-    curr_img_area = {bbox.left()-128,bbox.top()-128, bbox.width()+256, bbox.height()+256};
+    curr_img_area = {bbox.left(),bbox.top(), bbox.width(), bbox.height()};
     
     cv::Mat img = render_area({curr_img_area.x(), curr_img_area.y(), curr_img_area.width(), curr_img_area.height()});
     
