@@ -2027,6 +2027,7 @@ void CWindow::onAppendMaskPressed(void)
 
                 render_image_from_coords(coords, img, ds, chunk_cache);
             }
+            cv::normalize(img, img, 0, 255, cv::NORM_MINMAX, CV_8U);
 
             // Append the new image layer to existing layers
             existing_layers.push_back(img);
@@ -2052,6 +2053,7 @@ void CWindow::onAppendMaskPressed(void)
                 // Original rendering
                 render_surface_image(_surf, mask, img, ds, chunk_cache);
             }
+            cv::normalize(img, img, 0, 255, cv::NORM_MINMAX, CV_8U);
 
             // Save as new multi-layer TIFF
             std::vector<cv::Mat> layers = {mask, img};
