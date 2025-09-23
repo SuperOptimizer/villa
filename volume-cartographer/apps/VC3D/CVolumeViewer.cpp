@@ -933,29 +933,15 @@ cv::Mat_<uint8_t> CVolumeViewer::renderCompositeForSurface(QuadSurface* surface,
     _scale = 1.0f;
     _z_off = 0.0f;
 
-    // Call recalcScales to set _ds_scale and _ds_sd_idx correctly
     recalcScales();
-
-    // Initialize the surface pointer to its default state
     _ptr = _surf->pointer();
-
-    // The key insight: render_composite expects the ROI to define where
-    // in "scene space" we want to render. Since it moves the pointer to
-    // the ROI center, we need a ROI that's centered around where the
-    // surface naturally sits. For a mask, the surface is typically
-    // centered at (0,0) in its parameter space.
-
-    // We want a ROI that captures the surface centered at origin
     cv::Rect roi(-outputSize.width/2, -outputSize.height/2,
                  outputSize.width, outputSize.height);
 
-    // The vis_center should be (0, 0) since that's where the surface center is
     _vis_center = cv::Vec2f(0, 0);
 
-    // Render composite
     cv::Mat_<uint8_t> result = render_composite(roi);
 
-    // Restore state
     _surf = oldSurf;
     _scale = oldScale;
     _vis_center = oldVisCenter;
