@@ -10,8 +10,8 @@ class Segmentation : public DiskBasedObjectBaseClass
 public:
     explicit Segmentation(std::filesystem::path path);
     Segmentation(std::filesystem::path path, std::string uuid, std::string name);
-    static std::shared_ptr<Segmentation> New(std::filesystem::path path);
-    static std::shared_ptr<Segmentation> New(std::filesystem::path path, std::string uuid, std::string name);
+    static std::shared_ptr<Segmentation> New(const std::filesystem::path& path);
+    static std::shared_ptr<Segmentation> New(const std::filesystem::path& path, const std::string& uuid, const std::string& name);
 
     // Surface management
     [[nodiscard]] bool isSurfaceLoaded() const;

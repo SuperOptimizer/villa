@@ -2,6 +2,11 @@
 
 #include <set>
 #include <utility>
+#include <sys/inotify.h>
+#include <unistd.h>
+#include <poll.h>
+#include <cerrno>
+#include <cstring>
 
 #include "vc/core/util/DateTime.hpp"
 #include "vc/core/util/Logging.hpp"
@@ -156,8 +161,20 @@ void VolumePkg::loadSegmentationsFromDirectory(const std::string& dirName)
 
 void VolumePkg::setSegmentationDirectory(const std::string& dirName)
 {
-    // Just change the current directory - all segmentations are already loaded
+    if (currentSegmentationDir_ == dirName) {
+        return;
+    }
+
+    bool wasWatching = watcherRunning_;
+    if (wasWatching) {
+        stopWatcher();
+    }
+
     currentSegmentationDir_ = dirName;
+
+    if (wasWatching) {
+        startWatcher();
+    }
 }
 
 auto VolumePkg::getSegmentationDirectory() const -> std::string
@@ -355,3 +372,199 @@ void VolumePkg::loadSurfacesBatch(const std::vector<std::string>& ids)
         }
     }
 }
+
+
+// Add to destructor
+VolumePkg::~VolumePkg()
+{
+    stopWatcher();
+}
+
+void VolumePkg::enableFileWatching(bool enable)
+{
+    if (enable && !watcherRunning_) {
+        startWatcher();
+    } else if (!enable && watcherRunning_) {
+        stopWatcher();
+    }
+}
+
+void VolumePkg::startWatcher()
+{
+    if (watcherRunning_) {
+        return;
+    }
+
+    // Initialize inotify
+    inotifyFd_ = inotify_init1(IN_NONBLOCK);
+    if (inotifyFd_ < 0) {
+        Logger()->warn("Failed to initialize inotify: {}. File watching disabled.",
+                      std::strerror(errno));
+        return;
+    }
+
+    // Setup watches for current segmentation directory
+    std::filesystem::path watchPath = rootDir_ / currentSegmentationDir_;
+
+    if (!std::filesystem::exists(watchPath)) {
+        std::filesystem::create_directories(watchPath);
+    }
+
+    // Add watches
+    addWatchesRecursive(watchPath);
+
+    // Start watch thread
+    shouldStopWatcher_ = false;
+    watcherRunning_ = true;
+    watchThread_ = std::thread(&VolumePkg::watchLoop, this);
+
+    Logger()->info("File watching enabled for {}", watchPath.string());
+}
+
+void VolumePkg::stopWatcher()
+{
+    if (!watcherRunning_) {
+        return;
+    }
+
+    shouldStopWatcher_ = true;
+
+    if (watchThread_.joinable()) {
+        watchThread_.join();
+    }
+
+    // Clean up watches
+    {
+        std::lock_guard<std::mutex> lock(watchMutex_);
+        for (const auto& [wd, path] : watchDescriptors_) {
+            inotify_rm_watch(inotifyFd_, wd);
+        }
+        watchDescriptors_.clear();
+    }
+
+    if (inotifyFd_ >= 0) {
+        close(inotifyFd_);
+        inotifyFd_ = -1;
+    }
+
+    watcherRunning_ = false;
+    Logger()->info("File watching disabled");
+}
+
+void VolumePkg::addWatch(const std::filesystem::path& path)
+{
+    if (inotifyFd_ < 0) return;
+
+    int wd = inotify_add_watch(inotifyFd_, path.c_str(),
+                               IN_CREATE | IN_DELETE | IN_MODIFY |
+                               IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE);
+
+    if (wd < 0) {
+        Logger()->warn("Failed to add watch for {}: {}",
+                      path.string(), std::strerror(errno));
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(watchMutex_);
+    watchDescriptors_[wd] = path;
+}
+
+void VolumePkg::addWatchesRecursive(const std::filesystem::path& path)
+{
+    // Add watch for this directory
+    addWatch(path);
+
+    // Add watches for all subdirectories (segmentation directories)
+    try {
+        for (const auto& entry : std::filesystem::directory_iterator(path)) {
+            if (entry.is_directory()) {
+                addWatch(entry.path());
+                // We only go 2 levels deep
+            }
+        }
+    } catch (const std::exception& e) {
+        Logger()->error("Error adding watches: {}", e.what());
+    }
+}
+
+void VolumePkg::watchLoop()
+{
+    constexpr size_t BUFFER_SIZE = 8192;
+    alignas(struct inotify_event) char buffer[BUFFER_SIZE];
+
+    while (!shouldStopWatcher_) {
+        // Poll with timeout
+        struct pollfd pfd = {
+            .fd = inotifyFd_,
+            .events = POLLIN,
+            .revents = 0
+        };
+
+        int ret = poll(&pfd, 1, 250); // 250ms timeout
+
+        if (ret < 0) {
+            if (errno != EINTR) {
+                Logger()->error("Poll error: {}", std::strerror(errno));
+            }
+            continue;
+        } else if (ret == 0) {
+            continue; // Timeout
+        }
+
+        // Read events
+        ssize_t len = read(inotifyFd_, buffer, sizeof(buffer));
+
+        if (len < 0) {
+            if (errno != EAGAIN) {
+                Logger()->error("Read error: {}", std::strerror(errno));
+            }
+            continue;
+        }
+
+        // Process events
+        bool needsRefresh = false;
+        const struct inotify_event* event;
+
+        for (char* ptr = buffer; ptr < buffer + len;
+             ptr += sizeof(struct inotify_event) + event->len) {
+
+            event = reinterpret_cast<const struct inotify_event*>(ptr);
+
+            std::filesystem::path eventPath;
+            {
+                std::lock_guard<std::mutex> lock(watchMutex_);
+                auto it = watchDescriptors_.find(event->wd);
+                if (it != watchDescriptors_.end()) {
+                    eventPath = it->second;
+                } else {
+                    continue;
+                }
+            }
+
+            // Handle new directory creation
+            if ((event->mask & IN_CREATE) && (event->mask & IN_ISDIR) && event->len > 0) {
+                std::filesystem::path newDir = eventPath / event->name;
+                addWatch(newDir);  // Add watch for new directory
+                needsRefresh = true;
+            }
+            // Handle directory/file deletion
+            else if (event->mask & IN_DELETE) {
+                needsRefresh = true;
+            }
+            // Handle file modifications
+            else if (event->mask & (IN_MODIFY | IN_CLOSE_WRITE)) {
+                needsRefresh = true;
+            }
+            // Handle moves
+            else if (event->mask & (IN_MOVED_FROM | IN_MOVED_TO)) {
+                needsRefresh = true;
+            }
+        }
+
+        if (needsRefresh) {
+            Logger()->debug("File system changes detected, refreshing segmentations");
+            refreshSegmentations();
+        }
+    }
+}
+

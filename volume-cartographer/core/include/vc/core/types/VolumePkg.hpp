@@ -3,6 +3,11 @@
 #include <cstddef>
 #include <iostream>
 #include <map>
+#include <memory>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <unordered_map>
 
 #include <filesystem>
 #include "vc/core/types/Metadata.hpp"
@@ -14,7 +19,9 @@ class VolumePkg
 {
 public:
     explicit VolumePkg(const std::filesystem::path& fileLocation);
+    ~VolumePkg();
     static std::shared_ptr<VolumePkg> New(const std::filesystem::path& fileLocation);
+
     [[nodiscard]] std::string name() const;
     [[nodiscard]] int version() const;
     [[nodiscard]] bool hasVolumes() const;
@@ -35,7 +42,11 @@ public:
 
     void refreshSegmentations();
 
-    // Surface management - now delegates to Segmentation objects
+    // File watching control
+    void enableFileWatching(bool enable = true);
+    [[nodiscard]] bool isFileWatchingEnabled() const { return watcherRunning_; }
+
+    // Surface management
     [[nodiscard]] bool isSurfaceLoaded(const std::string& id) const;
     std::shared_ptr<SurfaceMeta> loadSurface(const std::string& id);
     std::shared_ptr<SurfaceMeta> getSurface(const std::string& id);
@@ -52,5 +63,20 @@ private:
     std::string currentSegmentationDir_ = "paths";
     std::map<std::string, std::string> segmentationDirectories_;
 
+    // File watching members
+    int inotifyFd_ = -1;
+    std::thread watchThread_;
+    std::atomic<bool> watcherRunning_{false};
+    std::atomic<bool> shouldStopWatcher_{false};
+    std::unordered_map<int, std::filesystem::path> watchDescriptors_;
+    std::mutex watchMutex_;
+
     void loadSegmentationsFromDirectory(const std::string& dirName);
+
+    // File watching methods
+    void startWatcher();
+    void stopWatcher();
+    void watchLoop();
+    void addWatch(const std::filesystem::path& path);
+    void addWatchesRecursive(const std::filesystem::path& path);
 };

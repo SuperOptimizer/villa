@@ -14,18 +14,16 @@ Segmentation::Segmentation(std::filesystem::path path, std::string uuid, std::st
           std::move(path), std::move(uuid), std::move(name))
 {
     metadata_.set("type", "seg");
-    metadata_.set("vcps", std::string{});
-    metadata_.set("vcano", std::string{});
     metadata_.set("volume", std::string{});
     metadata_.save();
 }
 
-std::shared_ptr<Segmentation> Segmentation::New(std::filesystem::path path)
+std::shared_ptr<Segmentation> Segmentation::New(const std::filesystem::path& path)
 {
     return std::make_shared<Segmentation>(path);
 }
 
-std::shared_ptr<Segmentation> Segmentation::New(std::filesystem::path path, std::string uuid, std::string name)
+std::shared_ptr<Segmentation> Segmentation::New(const std::filesystem::path& path, const std::string& uuid, const std::string& name)
 {
     return std::make_shared<Segmentation>(path, uuid, name);
 }
@@ -43,17 +41,14 @@ bool Segmentation::canLoadSurface() const
 
 std::shared_ptr<SurfaceMeta> Segmentation::loadSurface()
 {
-    // Check if already loaded
     if (surface_) {
         return surface_;
     }
 
-    // Check if it's the right format
     if (!canLoadSurface()) {
         return nullptr;
     }
 
-    // Load the surface
     try {
         surface_ = std::make_shared<SurfaceMeta>(path_);
         surface_->surface();
