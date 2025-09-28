@@ -42,9 +42,6 @@ public:
 
     void refreshSegmentations();
 
-    // File watching control
-    void enableFileWatching(bool enable = true);
-    [[nodiscard]] bool isFileWatchingEnabled() const { return watcherRunning_; }
 
     // Surface management
     [[nodiscard]] bool isSurfaceLoaded(const std::string& id) const;
@@ -54,6 +51,9 @@ public:
     [[nodiscard]] std::vector<std::string> getLoadedSurfaceIDs() const;
     void unloadAllSurfaces();
     void loadSurfacesBatch(const std::vector<std::string>& ids);
+    bool addSingleSegmentation(const std::string& id);
+    bool removeSingleSegmentation(const std::string& id);
+    bool reloadSingleSegmentation(const std::string& id);
 
 private:
     Metadata config_;
@@ -63,20 +63,5 @@ private:
     std::string currentSegmentationDir_ = "paths";
     std::map<std::string, std::string> segmentationDirectories_;
 
-    // File watching members
-    int inotifyFd_ = -1;
-    std::thread watchThread_;
-    std::atomic<bool> watcherRunning_{false};
-    std::atomic<bool> shouldStopWatcher_{false};
-    std::unordered_map<int, std::filesystem::path> watchDescriptors_;
-    std::mutex watchMutex_;
-
     void loadSegmentationsFromDirectory(const std::string& dirName);
-
-    // File watching methods
-    void startWatcher();
-    void stopWatcher();
-    void watchLoop();
-    void addWatch(const std::filesystem::path& path);
-    void addWatchesRecursive(const std::filesystem::path& path);
 };

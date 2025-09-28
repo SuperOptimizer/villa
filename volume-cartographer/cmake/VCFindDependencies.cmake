@@ -1,5 +1,5 @@
 option(VC_BUILD_JSON "Build in-source JSON library" off)
-option(VC_BUILD_Z5 "Build in-source z5 header only library" on)
+option(VC_BUILD_Z5 "Build in-source z5 header only library" off)
 
 if(VC_BUILD_Z5)
     # Declare the project
