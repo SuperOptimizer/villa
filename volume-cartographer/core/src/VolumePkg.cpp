@@ -100,7 +100,11 @@ bool VolumePkg::hasSegmentations() const
 
 std::shared_ptr<Segmentation> VolumePkg::segmentation(const std::string& id)
 {
-    return segmentations_.at(id);
+    auto it = segmentations_.find(id);
+    if (it == segmentations_.end()) {
+        return nullptr;
+    }
+    return it->second;
 }
 
 std::vector<std::string> VolumePkg::segmentationIDs() const
@@ -299,7 +303,8 @@ std::shared_ptr<SurfaceMeta> VolumePkg::loadSurface(const std::string& id)
 {
     auto segIt = segmentations_.find(id);
     if (segIt == segmentations_.end()) {
-        throw std::runtime_error("Segmentation not found: " + id);
+        Logger()->error("Cannot load surface - segmentation {} not found", id);
+        return nullptr;
     }
     return segIt->second->loadSurface();
 }
@@ -398,7 +403,18 @@ bool VolumePkg::removeSingleSegmentation(const std::string& id)
 {
     auto it = segmentations_.find(id);
     if (it == segmentations_.end()) {
-        return false; // Doesn't exist
+        Logger()->warn("Cannot remove segment {} - not found", id);
+        return false; // Don't crash, just return false
+    }
+
+    // Check if this segment belongs to the current directory
+    auto dirIt = segmentationDirectories_.find(id);
+    if (dirIt != segmentationDirectories_.end()) {
+        // Only log if it's from a different directory
+        if (dirIt->second != currentSegmentationDir_) {
+            Logger()->debug("Removing segment {} from {} directory (current is {})",
+                          id, dirIt->second, currentSegmentationDir_);
+        }
     }
 
     // Unload surface if loaded

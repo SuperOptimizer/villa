@@ -12,6 +12,9 @@
 
 #include <QShortcut>
 
+#include <sys/inotify.h>
+#include <QSocketNotifier>
+
 #include "CPointCollectionWidget.hpp"
 #include "CSurfaceCollection.hpp"
 #include "CVolumeViewer.hpp"
@@ -268,18 +271,18 @@ private:
 
     QAction* fImportObjAct;
 
-    QTimer* _watchTimer = nullptr;
-    std::filesystem::path _watchDir;
-    bool _watchingEnabled = false;
+    int _inotifyFd;
+    QSocketNotifier* _inotifyNotifier;
+    std::map<int, std::string> _watchDescriptors; // wd -> directory name
+    std::map<uint32_t, std::string> _pendingMoves; // cookie -> segment ID for rename tracking
 
-    // Watch directory methods
-    void startWatchingDirectory(const std::filesystem::path& watchDir);
-    void stopWatchingDirectory();
-    void checkWatchDirectory();
-    void processWatchFile(const std::filesystem::path& filePath);
-    void setWatchingEnabled(bool enabled);
-    QString getWatchDirectory() const;
-    void onWatchTimerTimeout();
+    void startWatchingWithInotify();
+    void stopWatchingWithInotify();
+    void onInotifyEvent();
+    void processInotifySegmentAddition(const std::string& dirName, const std::string& segmentId);
+    void processInotifySegmentRemoval(const std::string& dirName, const std::string& segmentId);
+    void processInotifySegmentRename(const std::string& dirName, const std::string& oldId, const std::string& newId);
+    void processInotifySegmentUpdate(const std::string& dirName, const std::string& segmentName);
 
 
 };  // class CWindow
