@@ -275,6 +275,7 @@ private:
     void processInotifySegmentRemoval(const std::string& dirName, const std::string& segmentId);
     void processInotifySegmentRename(const std::string& dirName, const std::string& oldId, const std::string& newId);
     void processInotifySegmentUpdate(const std::string& dirName, const std::string& segmentName);
+    void scheduleInotifyProcessing();
 
     // Periodic timer for inotify events
     QTimer* _inotifyProcessTimer;
@@ -292,6 +293,8 @@ private:
 
     // Set to track unique segments that need updating (to avoid duplicates)
     std::set<std::pair<std::string, std::string>> _pendingSegmentUpdates; // (dirName, segmentId)
+    QElapsedTimer _lastInotifyProcessTime;
+    static constexpr int INOTIFY_THROTTLE_MS = 10000;
 
 
 };  // class CWindow
