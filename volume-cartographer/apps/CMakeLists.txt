@@ -9,6 +9,8 @@ endif()
 # CMD Line Apps #
 #################
 
+find_package(CURL REQUIRED)
+
 add_executable(vc_render_video src/vc_render_video.cpp)
 target_link_libraries(vc_render_video z5 opencv_core vc_core)
 
@@ -54,6 +56,7 @@ target_link_libraries(vc_calc_surface_metrics vc_core vc_ui Boost::program_optio
 add_executable(vc_tifxyz_gengt src/vc_tifxyz_gengt.cpp)
 target_link_libraries(vc_tifxyz_gengt vc_core vc_ui Boost::program_options)
 
+if(FALSE)
 set(vc_diffuse_winding_sources
     diffusion/continuous3d.cpp
     diffusion/continous.cpp
@@ -80,6 +83,7 @@ target_link_libraries(vc_diffuse_winding
         OpenMP::OpenMP_CXX
         Ceres::ceres
 )
+endif()
 
 add_executable(vc_render_bench src/ZarrExtract.cpp)
 target_link_libraries(vc_render_bench vc_core)
@@ -102,6 +106,7 @@ target_link_libraries(vc_ced2d
     opencv_imgproc
     Boost::program_options
     OpenMP::OpenMP_CXX
+        ${CURL_LIBRARIES}
 )
 
 # Apply affine + scale to OBJ or TIFXYZ
@@ -136,8 +141,8 @@ target_link_libraries(vc_telea_inpaint
     opencv_photo
 )
 
-add_executable(vc_thinning src/vc_thinning.cpp)
-target_link_libraries(vc_thinning vc_core opencv_highgui opencv_ximgproc)
+#add_executable(vc_thinning src/vc_thinning.cpp)
+#target_link_libraries(vc_thinning vc_core opencv_highgui opencv_ximgproc)
 
 # Install targets
 if(VC_INSTALL_APPS)
@@ -158,12 +163,12 @@ install(
         vc_tifxyz_gengt
         vc_fill_quadmesh
         vc_calc_surface_metrics
-        vc_diffuse_winding
+        #vc_diffuse_winding
         vc_ced2d
         vc_transform_geom
         vc_gen_normalgrids
         vc_telea_inpaint
-        vc_thinning
+        #vc_thinning
         ${extra_apps}
     RUNTIME DESTINATION bin
     COMPONENT Programs
