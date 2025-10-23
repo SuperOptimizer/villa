@@ -97,6 +97,7 @@ public slots:
                                    bool inpaintOnly);
    void onFocusPOIChanged(std::string name, POI* poi);
     void onPointDoubleClicked(uint64_t pointId);
+    void onMoveSegmentToPaths(const QString& segmentId);
 
 public:
     CWindow();

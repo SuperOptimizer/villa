@@ -118,6 +118,7 @@ signals:
     void recalcAreaRequested(const QStringList& segmentIds);
     void exportTifxyzChunksRequested(const QString& segmentId);
     void statusMessageRequested(const QString& message, int timeoutMs);
+    void moveToPathsRequested(const QString& segmentId);
 
 
 private:
