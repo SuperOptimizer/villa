@@ -436,7 +436,7 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
                                       static_cast<float>(context.voxelSize),
                                       directionFields,
                                       context.resumeSurface,
-                                      std::filesystem::path(),
+                                      context.resumeSurface->path,
                                       nlohmann::json{},
                                       correctionCollection);
         result.surface = surface;
