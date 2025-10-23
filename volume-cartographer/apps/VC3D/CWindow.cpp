@@ -441,7 +441,6 @@ CWindow::CWindow() :
 {
     // Initialize periodic timer for inotify events
     _inotifyProcessTimer = new QTimer(this);
-    _inotifyProcessTimer->setInterval(INOTIFY_THROTTLE_MS);
     connect(_inotifyProcessTimer, &QTimer::timeout, this, &CWindow::processPendingInotifyEvents);
 
     _point_collection = new VCCollection(this);
@@ -3009,9 +3008,7 @@ void CWindow::startWatchingWithInotify()
 
     // Set up Qt socket notifier to integrate with event loop
     _inotifyNotifier = new QSocketNotifier(_inotifyFd, QSocketNotifier::Read, this);
-    connect(_inotifyNotifier, &QSocketNotifier::activated, this, &CWindow::onInotifyEvent);
-
-    _inotifyProcessTimer->start();
+    connect(_inotifyNotifier, &QSocketNotifier::activated, this, &CWindow::onInotifyEvent);;
 }
 
 void CWindow::stopWatchingWithInotify()
@@ -3224,10 +3221,6 @@ void CWindow::processInotifySegmentUpdate(const std::string& dirName, const std:
         } catch (const std::exception& e) {
             Logger()->error("Failed to reload segment {}: {}", segmentId, e.what());
         }
-
-        if (_surfacePanel) {
-            _surfacePanel->refreshFiltersOnly();
-        }
     }
 }
 
@@ -3390,22 +3383,44 @@ void CWindow::processPendingInotifyEvents()
         return;
     }
 
-    // Process all pending events
+    // Store current selection to restore later
+    std::string previousSelection = _surfID;
+    QuadSurface* previousSurface = _surf;
+
+    // Sort events to process removals first, then renames, then additions
+    std::vector<InotifyEvent> removals, renames, additions, updates;
     for (const auto& evt : _pendingInotifyEvents) {
         switch (evt.type) {
-            case InotifyEvent::Addition:
-                processInotifySegmentAddition(evt.dirName, evt.segmentId);
-                break;
             case InotifyEvent::Removal:
-                processInotifySegmentRemoval(evt.dirName, evt.segmentId);
+                removals.push_back(evt);
                 break;
             case InotifyEvent::Rename:
-                processInotifySegmentRename(evt.dirName, evt.segmentId, evt.newId);
+                renames.push_back(evt);
+                break;
+            case InotifyEvent::Addition:
+                additions.push_back(evt);
                 break;
             case InotifyEvent::Update:
-                processInotifySegmentUpdate(evt.dirName, evt.segmentId);
+                updates.push_back(evt);
                 break;
         }
+    }
+
+    // Process in order: removals, renames, additions, updates
+    for (const auto& evt : removals) {
+        processInotifySegmentRemoval(evt.dirName, evt.segmentId);
+    }
+
+    for (const auto& evt : renames) {
+        processInotifySegmentRename(evt.dirName, evt.segmentId, evt.newId);
+    }
+
+    for (const auto& evt : additions) {
+        processInotifySegmentAddition(evt.dirName, evt.segmentId);
+    }
+
+    for (const auto& evt : updates) {
+        processInotifySegmentUpdate(evt.dirName, evt.segmentId);
     }
 
     // Process unique segment updates
@@ -3417,6 +3432,29 @@ void CWindow::processPendingInotifyEvents()
     _pendingInotifyEvents.clear();
     _pendingSegmentUpdates.clear();
 
+    // Restore selection if it still exists
+    if (!previousSelection.empty()) {
+        // Check if the segment still exists (might have been renamed)
+        auto seg = fVpkg ? fVpkg->segmentation(previousSelection) : nullptr;
+        if (seg) {
+            _surfID = previousSelection;
+            _surf = previousSurface;
+
+            // Restore UI selection
+            if (_surfacePanel) {
+                auto surface = _surf_col->surface(previousSelection);
+                if (surface) {
+                    _surfacePanel->syncSelectionUi(previousSelection, dynamic_cast<QuadSurface*>(surface));
+                }
+            }
+        }
+    }
+
+    // Refresh filters once at the end instead of multiple times
+    if (_surfacePanel) {
+        _surfacePanel->refreshFiltersOnly();
+    }
+
     // Record processing time
     _lastInotifyProcessTime.restart();
 }
@@ -3427,22 +3465,11 @@ void CWindow::scheduleInotifyProcessing()
         return;
     }
 
-    // Check if enough time has passed since last processing
-    if (!_lastInotifyProcessTime.isValid() ||
-        _lastInotifyProcessTime.elapsed() >= INOTIFY_THROTTLE_MS) {
-        // Process immediately
-        processPendingInotifyEvents();
-        _lastInotifyProcessTime.restart();
-        } else {
-            // Calculate remaining time to wait
-            int remainingTime = INOTIFY_THROTTLE_MS - _lastInotifyProcessTime.elapsed();
+    // Stop any existing timer
+    _inotifyProcessTimer->stop();
 
-            // Only start timer if not already running
-            if (!_inotifyProcessTimer->isActive()) {
-                _inotifyProcessTimer->stop();
-                _inotifyProcessTimer->setInterval(remainingTime);
-                _inotifyProcessTimer->setSingleShot(true);
-                _inotifyProcessTimer->start();
-            }
-        }
+    // Use single-shot timer with short delay
+    _inotifyProcessTimer->setSingleShot(true);
+    _inotifyProcessTimer->setInterval(INOTIFY_THROTTLE_MS);
+    _inotifyProcessTimer->start();
 }

@@ -294,7 +294,7 @@ private:
     // Set to track unique segments that need updating (to avoid duplicates)
     std::set<std::pair<std::string, std::string>> _pendingSegmentUpdates; // (dirName, segmentId)
     QElapsedTimer _lastInotifyProcessTime;
-    static constexpr int INOTIFY_THROTTLE_MS = 10000;
+    static constexpr int INOTIFY_THROTTLE_MS = 100;
 
 
 };  // class CWindow
