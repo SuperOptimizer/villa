@@ -1488,13 +1488,16 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f o
     TraceParameters trace_params;
     int snapshot_interval = params.value("snapshot-interval", 0);
     int stop_gen = params.value("generations", 100);
-    stop_gen = 500;
     float step = params.value("step_size", 20.0f);
     trace_params.unit = step*scale;
     const double sdir_w   = params.value("sdir_weight",  loss_settings[LossType::SDIR]);
     loss_settings[LossType::SDIR] = static_cast<float>(sdir_w);
     std::cout << "GrowPatch snapshot-interval: " << snapshot_interval << " stop_gen: " << stop_gen << " step: " << step << std::endl;
     snapshot_interval=10;
+    int snapshot_num = 0;
+
+    std::cout << "saving snapshots to " << tgt_path << std::endl;
+
     std::cout << "GrowPatch loss weights:\n"
               << "  DIST: " << loss_settings.w[LossType::DIST]
               << " STRAIGHT: " << loss_settings.w[LossType::STRAIGHT]
@@ -1852,7 +1855,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f o
 
             if (!tgt_path.empty() && snapshot_interval > 0) {
                 QuadSurface* surf = create_surface_from_state();
-                surf->save(tgt_path, true);
+                surf->save(tgt_path , true);
                 delete surf;
                 std::cout << "saved snapshot in " << tgt_path << std::endl;
             }
@@ -2255,12 +2258,12 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache *cache, cv::Vec3f o
         timer_gen.unit = succ_gen * vx_per_quad;
         timer_gen.unit_string = "vx^2";
         // print_accessor_stats();
-        std::cout << "asdfasdfasdfasdf " << tgt_path.empty() << " " << snapshot_interval << " " << generation << std::endl;
         if (!tgt_path.empty() && snapshot_interval > 0 && generation % snapshot_interval == 0) {
             QuadSurface* surf = create_surface_from_state();
-            surf->save(tgt_path, true);
+            std::filesystem::path snapshot_dest =tgt_path / "backups" / std::to_string(snapshot_num++);
+            surf->save(snapshot_dest, true);
             delete surf;
-            std::cout << "saved snapshot in " << tgt_path << std::endl;
+            std::cout << "saved snapshot in " << snapshot_dest << std::endl;
         }
 
     }  // end while fringe is non-empty
