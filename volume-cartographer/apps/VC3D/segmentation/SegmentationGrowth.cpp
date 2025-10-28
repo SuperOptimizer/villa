@@ -28,6 +28,100 @@ Q_DECLARE_LOGGING_CATEGORY(lcSegGrowth)
 
 namespace
 {
+
+    void createRotatingBackup(QuadSurface* surface, const std::filesystem::path& surfacePath, int maxBackups = 10)
+{
+    if (!surface) {
+        return;
+    }
+
+    std::filesystem::path backupsDir = surfacePath / "backups";
+
+    // Create backups directory if it doesn't exist
+    std::error_code ec;
+    std::filesystem::create_directories(backupsDir, ec);
+
+    // Find existing backup directories and determine next backup number
+    std::vector<int> existingBackups;
+    if (std::filesystem::exists(backupsDir)) {
+        for (const auto& entry : std::filesystem::directory_iterator(backupsDir)) {
+            if (entry.is_directory()) {
+                try {
+                    int backupNum = std::stoi(entry.path().filename().string());
+                    if (backupNum >= 0 && backupNum < maxBackups) {
+                        existingBackups.push_back(backupNum);
+                    }
+                } catch (...) {
+                    // Skip non-numeric directories
+                }
+            }
+        }
+    }
+
+    std::sort(existingBackups.begin(), existingBackups.end());
+
+    std::filesystem::path snapshot_dest;
+
+    if (existingBackups.size() < static_cast<size_t>(maxBackups)) {
+        // We have room for more backups, find the first available slot
+        int nextBackup = 0;
+        for (int i = 0; i < maxBackups; ++i) {
+            if (std::find(existingBackups.begin(), existingBackups.end(), i) == existingBackups.end()) {
+                nextBackup = i;
+                break;
+            }
+        }
+        snapshot_dest = backupsDir / std::to_string(nextBackup);
+    } else {
+        // We're at the limit, rotate backups
+        // Delete the oldest (0)
+        std::filesystem::remove_all(backupsDir / "0", ec);
+
+        // Rename all backups down by 1 (1->0, 2->1, etc.)
+        for (int i = 1; i < maxBackups; ++i) {
+            std::filesystem::path oldPath = backupsDir / std::to_string(i);
+            std::filesystem::path newPath = backupsDir / std::to_string(i - 1);
+            if (std::filesystem::exists(oldPath)) {
+                std::filesystem::rename(oldPath, newPath, ec);
+            }
+        }
+
+        // New backup goes in the last slot
+        snapshot_dest = backupsDir / std::to_string(maxBackups - 1);
+    }
+
+    // Save the backup
+    surface->save(snapshot_dest, true);
+
+    // Copy mask.tif and generations.tif if they exist
+    std::filesystem::path maskFile = surfacePath / "mask.tif";
+    std::filesystem::path generationsFile = surfacePath / "generations.tif";
+
+    if (std::filesystem::exists(maskFile)) {
+        std::filesystem::path destMask = snapshot_dest / "mask.tif";
+        std::filesystem::copy_file(maskFile, destMask,
+            std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            qCWarning(lcSegGrowth) << "Failed to copy mask.tif to backup:" << QString::fromStdString(ec.message());
+        } else {
+            // Delete the original mask.tif after successful copy
+            std::filesystem::remove(maskFile, ec);
+            if (ec) {
+                qCWarning(lcSegGrowth) << "Failed to delete original mask.tif:" << QString::fromStdString(ec.message());
+            }
+        }
+    }
+
+    if (std::filesystem::exists(generationsFile)) {
+        std::filesystem::path destGenerations = snapshot_dest / "generations.tif";
+        std::filesystem::copy_file(generationsFile, destGenerations,
+            std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            qCWarning(lcSegGrowth) << "Failed to copy generations.tif to backup:" << QString::fromStdString(ec.message());
+        }
+    }
+}
+
 void ensureMetaObject(QuadSurface* surface)
 {
     if (!surface) {
@@ -427,6 +521,8 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
         }
         qCInfo(lcSegGrowth) << "  params:" << QString::fromStdString(params.dump());
 
+        std::filesystem::path surface_path = context.resumeSurface->path;
+        createRotatingBackup(context.resumeSurface, surface_path);
         QuadSurface* surface = tracer(dataset,
                                       1.0f,
                                       context.cache,
@@ -439,6 +535,10 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
                                       context.resumeSurface->path,
                                       nlohmann::json{},
                                       correctionCollection);
+        if (surface) {
+            surface->path = surface_path;
+            surface->id = context.resumeSurface->id;  // Also preserve the ID
+        }
         result.surface = surface;
         result.statusMessage = QStringLiteral("Tracer growth completed");
     } catch (const std::exception& ex) {
