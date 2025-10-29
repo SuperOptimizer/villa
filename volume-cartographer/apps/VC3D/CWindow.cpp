@@ -1544,7 +1544,7 @@ void CWindow::CreateWidgets(void)
 
     chkAxisAlignedSlices = ui.chkAxisAlignedSlices;
     if (chkAxisAlignedSlices) {
-        bool useAxisAligned = settings.value("viewer/use_axis_aligned_slices", false).toBool();
+        bool useAxisAligned = settings.value("viewer/use_axis_aligned_slices", true).toBool();
         QSignalBlocker blocker(chkAxisAlignedSlices);
         chkAxisAlignedSlices->setChecked(useAxisAligned);
         connect(chkAxisAlignedSlices, &QCheckBox::toggled, this, &CWindow::onAxisAlignedSlicesToggled);
