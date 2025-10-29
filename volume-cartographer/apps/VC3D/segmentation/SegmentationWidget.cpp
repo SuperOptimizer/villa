@@ -1,6 +1,7 @@
 #include "SegmentationWidget.hpp"
 
 #include "elements/CollapsibleSettingsGroup.hpp"
+#include "VCSettings.hpp"
 
 #include <QAbstractItemView>
 #include <QByteArray>
@@ -1094,7 +1095,7 @@ void SegmentationWidget::syncUiState()
 
 void SegmentationWidget::restoreSettings()
 {
-    QSettings settings(QStringLiteral("VC.ini"), QSettings::IniFormat);
+    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
     settings.beginGroup(settingsGroup());
 
     _restoringSettings = true;
@@ -1203,7 +1204,7 @@ void SegmentationWidget::restoreSettings()
 
 void SegmentationWidget::writeSetting(const QString& key, const QVariant& value)
 {
-    QSettings settings(QStringLiteral("VC.ini"), QSettings::IniFormat);
+    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
     settings.beginGroup(settingsGroup());
     settings.setValue(key, value);
     settings.endGroup();
