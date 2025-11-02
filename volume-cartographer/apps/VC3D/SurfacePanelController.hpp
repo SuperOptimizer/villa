@@ -98,6 +98,8 @@ public:
     void reloadSurfacesFromDisk();
     void refreshFiltersOnly();
     void setSelectionLocked(bool locked);
+    void addSingleSegmentation(const std::string& segId);
+    void removeSingleSegmentation(const std::string& segId);
 
 signals:
     void surfacesLoaded();
@@ -115,7 +117,10 @@ signals:
     void teleaInpaintRequested();
     void recalcAreaRequested(const QStringList& segmentIds);
     void exportTifxyzChunksRequested(const QString& segmentId);
+    void alphaCompRefineRequested(const QString& segmentId);
     void statusMessageRequested(const QString& message, int timeoutMs);
+    void moveToPathsRequested(const QString& segmentId);
+
 
 private:
     struct SurfaceChanges {
@@ -126,8 +131,6 @@ private:
 
     SurfaceChanges detectSurfaceChanges() const;
     void populateSurfaceTree();
-    void addSingleSegmentation(const std::string& segId);
-    void removeSingleSegmentation(const std::string& segId);
 
     void connectFilterSignals();
     void connectTagSignals();

@@ -41,6 +41,9 @@
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/Surface.hpp"
 
+#include <sys/inotify.h>
+#include <QSocketNotifier>
+
 #define MAX_RECENT_VOLPKG 10
 
 // Volpkg version required by this app
@@ -84,6 +87,7 @@ public slots:
     void onGrowSegmentFromSegment(const std::string& segmentId);
     void onAddOverlap(const std::string& segmentId);
     void onConvertToObj(const std::string& segmentId);
+    void onAlphaCompRefine(const std::string& segmentId);
     void onSlimFlatten(const std::string& segmentId);
     void onAWSUpload(const std::string& segmentId);
     void onExportWidthChunks(const std::string& segmentId);
@@ -92,8 +96,9 @@ public slots:
                                    SegmentationGrowthDirection direction,
                                    int steps,
                                    bool inpaintOnly);
-   void onFocusPOIChanged(std::string name, POI* poi);
+    void onFocusPOIChanged(std::string name, POI* poi);
     void onPointDoubleClicked(uint64_t pointId);
+    void onMoveSegmentToPaths(const QString& segmentId);
 
 public:
     CWindow();
@@ -156,6 +161,7 @@ private slots:
     void onAxisAlignedSliceMouseMove(CVolumeViewer* viewer, const cv::Vec3f& volLoc, Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers);
     void onAxisAlignedSliceMouseRelease(CVolumeViewer* viewer, Qt::MouseButton button, Qt::KeyboardModifiers modifiers);
     void onSegmentationGrowthStatusChanged(bool running);
+    void processPendingInotifyEvents();
 
 private:
     void recalcAreaForSegments(const std::vector<std::string>& ids);
@@ -258,5 +264,39 @@ private:
     std::unordered_map<const CVolumeViewer*, AxisAlignedSliceDragState> _axisAlignedSliceDrags;
     float _axisAlignedSegXZRotationDeg = 0.0f;
     float _axisAlignedSegYZRotationDeg = 0.0f;
+
+    int _inotifyFd;
+    QSocketNotifier* _inotifyNotifier;
+    std::map<int, std::string> _watchDescriptors; // wd -> directory name
+    std::map<uint32_t, std::string> _pendingMoves; // cookie -> segment ID for rename tracking
+
+    void startWatchingWithInotify();
+    void stopWatchingWithInotify();
+    void onInotifyEvent();
+    void processInotifySegmentAddition(const std::string& dirName, const std::string& segmentId);
+    void processInotifySegmentRemoval(const std::string& dirName, const std::string& segmentId);
+    void processInotifySegmentRename(const std::string& dirName, const std::string& oldId, const std::string& newId);
+    void processInotifySegmentUpdate(const std::string& dirName, const std::string& segmentName);
+    void scheduleInotifyProcessing();
+
+    // Periodic timer for inotify events
+    QTimer* _inotifyProcessTimer;
+
+    struct InotifyEvent {
+        enum Type { Addition, Removal, Rename, Update };
+        Type type;
+        std::string dirName;
+        std::string segmentId;
+        std::string newId; // Only used for rename events
+    };
+
+    // Queue of pending inotify events
+    std::vector<InotifyEvent> _pendingInotifyEvents;
+
+    // Set to track unique segments that need updating (to avoid duplicates)
+    std::set<std::pair<std::string, std::string>> _pendingSegmentUpdates; // (dirName, segmentId)
+    QElapsedTimer _lastInotifyProcessTime;
+    static constexpr int INOTIFY_THROTTLE_MS = 100;
+
 
 };  // class CWindow

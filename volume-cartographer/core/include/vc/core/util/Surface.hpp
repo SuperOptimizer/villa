@@ -148,6 +148,8 @@ public:
     cv::Mat channel(const std::string& name, int flags = 0);
     void invalidateCache();
     void saveOverwrite();
+    void saveSnapshot(int maxBackups = 10);
+    std::vector<std::string> channelNames() const;
 protected:
     std::unordered_map<std::string, cv::Mat> _channels;
     cv::Mat_<cv::Vec3f>* _points = nullptr;
