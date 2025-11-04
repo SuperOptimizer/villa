@@ -338,12 +338,12 @@ CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, QWidget* parent)
 
     _overlayUpdateTimer = new QTimer(this);
     _overlayUpdateTimer->setSingleShot(true);
-    _overlayUpdateTimer->setInterval(50);
+    _overlayUpdateTimer->setInterval(5);  // 5ms for near-instant overlay updates
     connect(_overlayUpdateTimer, &QTimer::timeout, this, &CVolumeViewer::updateAllOverlays);
 
     _intersectionUpdateTimer = new QTimer(this);
     _intersectionUpdateTimer->setSingleShot(true);
-    _intersectionUpdateTimer->setInterval(250);  // Wait 250ms after viewport stops changing
+    _intersectionUpdateTimer->setInterval(5);  // 5ms for near-instant intersection updates
     connect(_intersectionUpdateTimer, &QTimer::timeout, this, [this]() {
         _intersectionUpdatePending = false;
         renderIntersections(true);  // Force render when timer fires
@@ -1042,10 +1042,10 @@ void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
         renderVisible(true); // Immediate render of slice
     }
 
-    // If segmentation surface changed, invalidate its intersection lines
-    // so they get redrawn with the new geometry
+    // If segmentation changed, mark for re-render without clearing graphics
+    // (avoids blinking during live editing)
     if (name == "segmentation" || name == "visible_segmentation") {
-        invalidateIntersect(name);
+        _intersectionsInvalidated = true;
     }
 
     // Defer overlay updates
