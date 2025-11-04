@@ -1117,16 +1117,6 @@
        </property>
       </widget>
      </item>
-     <item row="3" column="0" colspan="2">
-      <widget class="QCheckBox" name="chkRenderOverlapOnly">
-       <property name="text">
-        <string>Render overlap only</string>
-       </property>
-       <property name="toolTip">
-        <string>Only render intersections that pass through the focus point (ctrl+click location)</string>
-       </property>
-      </widget>
-     </item>
     </layout>
    </widget>
   </widget>

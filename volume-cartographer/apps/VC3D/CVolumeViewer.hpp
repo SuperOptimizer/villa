@@ -27,6 +27,7 @@ public:
 
     void setCache(ChunkCache *cache);
     void setPointCollection(VCCollection* point_collection);
+    void setViewerManager(class ViewerManager* manager);
     void setSurface(const std::string &name);
     void renderVisible(bool force = false);
     void renderIntersections(bool force = false);
@@ -105,9 +106,6 @@ public:
 
     void setHighlightedSegments(const std::vector<std::string>& segments);
     const std::vector<std::string>& highlightedSegments() const { return _highlightedSegments; }
-
-    void setRenderOverlapOnly(bool enabled);
-    bool renderOverlapOnly() const { return _renderOverlapOnly; }
 
     void setOverlayVolume(std::shared_ptr<Volume> volume);
     std::shared_ptr<Volume> overlayVolume() const { return _overlayVolume; }
@@ -228,14 +226,14 @@ protected:
     Intersection *_ignore_intersect_change = nullptr;
     
     CSurfaceCollection *_surf_col = nullptr;
-    
+    class ViewerManager* _viewer_manager = nullptr;
+
     VCCollection* _point_collection = nullptr;
 
     float _intersectionOpacity{1.0f};
     int _maxIntersections{100};
     int _intersectionLineWidth{2};
     std::vector<std::string> _highlightedSegments;
-    bool _renderOverlapOnly{false};
 
     // Point interaction state
     uint64_t _highlighted_point_id = 0;
@@ -261,6 +259,7 @@ protected:
     QTimer* _overlayUpdateTimer;
     QTimer* _intersectionUpdateTimer;
     bool _intersectionUpdatePending = false;
+    bool _intersectionsInvalidated = false;
 
     // BBox tool state
     bool _bboxMode = false;

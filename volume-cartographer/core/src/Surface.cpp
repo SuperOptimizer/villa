@@ -1287,9 +1287,19 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     // Build list of candidate starting points using grid-based sampling
     std::vector<cv::Vec2f> candidate_points;
 
-    // Use finer grid sampling to ensure we don't miss any intersection curves
-    // The grid needs to be dense enough to catch all curves, especially thin ones
-    int grid_step = std::max(2, std::min(points.cols, points.rows) / 100);
+    // Use adaptive grid sampling based on zoom level (step parameter)
+    // When step is large (zoomed out), use coarser grid for performance
+    // When step is small (zoomed in), use finer grid to catch all curves
+    int base_grid_step = std::max(2, std::min(points.cols, points.rows) / 100);
+
+    // Scale grid step based on tracing step (which reflects zoom level)
+    // When step > 20, we're quite zoomed out, so use coarser sampling
+    int grid_step = base_grid_step;
+    if (step > 50.0f) {
+        grid_step = base_grid_step * 4;  // Very coarse when very zoomed out
+    } else if (step > 20.0f) {
+        grid_step = base_grid_step * 2;  // Coarser when zoomed out
+    }
 
     // Expand the ROI slightly to catch points near the edge
     cv::Rect expanded_roi(
@@ -1299,9 +1309,16 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         plane_roi.height + step * 4
     );
 
-    // Sample with multiple grid offsets to avoid missing curves that fall between grid lines
-    // This ensures better coverage at minimal cost
-    std::vector<std::pair<int, int>> offsets = {{0, 0}, {grid_step/2, 0}, {0, grid_step/2}, {grid_step/2, grid_step/2}};
+    // Use multi-pass offset grid only when zoomed in (step < 10)
+    // When zoomed out, single pass is sufficient and much faster
+    std::vector<std::pair<int, int>> offsets;
+    if (step < 10.0f) {
+        // Fine detail mode: use 4-pass offset grid
+        offsets = {{0, 0}, {grid_step/2, 0}, {0, grid_step/2}, {grid_step/2, grid_step/2}};
+    } else {
+        // Coarse mode: single pass for performance
+        offsets = {{0, 0}};
+    }
 
     for (const auto& [offset_x, offset_y] : offsets) {
         for(int y = offset_y; y < points.rows - 1; y += grid_step) {

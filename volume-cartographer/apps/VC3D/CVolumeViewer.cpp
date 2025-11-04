@@ -3,6 +3,7 @@
 
 #include "VolumeViewerCmaps.hpp"
 #include "VCSettings.hpp"
+#include "ViewerManager.hpp"
 
 #include <QGraphicsView>
 #include <QGraphicsScene>
@@ -342,7 +343,7 @@ CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, QWidget* parent)
 
     _intersectionUpdateTimer = new QTimer(this);
     _intersectionUpdateTimer->setSingleShot(true);
-    _intersectionUpdateTimer->setInterval(150);  // Wait 150ms after viewport stops changing
+    _intersectionUpdateTimer->setInterval(250);  // Wait 250ms after viewport stops changing
     connect(_intersectionUpdateTimer, &QTimer::timeout, this, [this]() {
         _intersectionUpdatePending = false;
         renderIntersections(true);  // Force render when timer fires
@@ -582,6 +583,13 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
                 QScopedValueRollback<bool> focusGuard(_suppressFocusRecentering, true);
                 _surf_col->setPOI("focus", focus);
             }
+
+            // Focus point changed - invalidate cache and force intersection redraw
+            if (_viewer_manager) {
+                _viewer_manager->invalidateCandidateCache();
+            }
+            invalidateIntersect();  // Mark all intersections for redraw
+
             handled = true;
         } else {
             if (_surf_name == "segmentation") {
@@ -724,6 +732,11 @@ void CVolumeViewer::setPointCollection(VCCollection* point_collection)
     emit overlaysUpdated();
 }
 
+void CVolumeViewer::setViewerManager(ViewerManager* manager)
+{
+    _viewer_manager = manager;
+}
+
 Surface* CVolumeViewer::currentSurface() const
 {
     if (!_surf_col) {
@@ -765,6 +778,7 @@ void CVolumeViewer::invalidateIntersect(const std::string &name)
             }
         }
         _intersect_items.clear();
+        _intersectionsInvalidated = true;
     }
     else if (_intersect_items.count(name)) {
         for(auto &item : _intersect_items[name]) {
@@ -772,6 +786,7 @@ void CVolumeViewer::invalidateIntersect(const std::string &name)
             delete item;
         }
         _intersect_items.erase(name);
+        _intersectionsInvalidated = true;
     }
 }
 
@@ -829,13 +844,6 @@ void CVolumeViewer::setIntersectionLineWidth(int lineWidth)
 void CVolumeViewer::setHighlightedSegments(const std::vector<std::string>& segments)
 {
     _highlightedSegments = segments;
-    // Trigger re-render to apply new filter (force immediate update)
-    renderIntersections(true);
-}
-
-void CVolumeViewer::setRenderOverlapOnly(bool enabled)
-{
-    _renderOverlapOnly = enabled;
     // Trigger re-render to apply new filter (force immediate update)
     renderIntersections(true);
 }
@@ -1032,6 +1040,12 @@ void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
     if (name == _surf_name) {
         curr_img_area = {0,0,0,0};
         renderVisible(true); // Immediate render of slice
+    }
+
+    // If segmentation surface changed, invalidate its intersection lines
+    // so they get redrawn with the new geometry
+    if (name == "segmentation" || name == "visible_segmentation") {
+        invalidateIntersect(name);
     }
 
     // Defer overlay updates
@@ -1605,17 +1619,30 @@ void CVolumeViewer::renderIntersections(bool force)
         return;  // Don't render yet, wait for timer
     }
 
-    // If we get here, viewport hasn't changed or timer has fired or forced
-    if (viewportChanged || scaleChanged || force) {
-        // Clear cached intersections when viewport/scale changes or forced
-        for (auto &pair : _intersect_items) {
-            for(auto &item : pair.second) {
-                fScene->removeItem(item);
-                delete item;
-            }
-        }
-        _intersect_items.clear();
+    // If nothing changed and not forced and not invalidated, nothing to do
+    if (!force && !viewportChanged && !scaleChanged && !_intersectionsInvalidated) {
+        return;
     }
+
+    // Reset pending state when forcing render
+    if (force && _intersectionUpdatePending) {
+        _intersectionUpdatePending = false;
+        if (_intersectionUpdateTimer->isActive()) {
+            _intersectionUpdateTimer->stop();
+        }
+    }
+
+    // Clear the invalidation flag - we're about to re-render
+    _intersectionsInvalidated = false;
+
+    // Clear cached intersections when viewport/scale changes or forced
+    for (auto &pair : _intersect_items) {
+        for(auto &item : pair.second) {
+            fScene->removeItem(item);
+            delete item;
+        }
+    }
+    _intersect_items.clear();
 
     _last_intersect_area = curr_img_area;
     _last_intersect_scale = _scale;
@@ -1677,100 +1704,34 @@ void CVolumeViewer::renderIntersections(bool force)
             }
         }
 
-        // Build list of candidates
-        struct SegmentDistance {
-            std::string key;
-            float distance;
-        };
-        std::vector<SegmentDistance> candidates_with_dist;
+        // Get candidates from ViewerManager cache (handles distance calculation and sorting)
+        // Selection is based purely on distance from focus point, not viewport
+        std::vector<ViewerManager::CandidateInfo> candidates_with_dist;
 
-        // If highlighted segments are specified, only render those segments
-        if (!_highlightedSegments.empty()) {
-            // Always include the current segment (segmentation)
-            if (std::find(_intersect_tgts.begin(), _intersect_tgts.end(), "segmentation") != _intersect_tgts.end() &&
-                !_intersect_items.count("segmentation")) {
-                candidates_with_dist.push_back({"segmentation", 0.0f});
-            }
-
-            // Add highlighted segments
-            for (const auto& segName : _highlightedSegments) {
-                if (std::find(_intersect_tgts.begin(), _intersect_tgts.end(), segName) != _intersect_tgts.end() &&
-                    !_intersect_items.count(segName)) {
-                    auto* seg = dynamic_cast<QuadSurface*>(_surf_col->surface(segName));
-                    if (seg) {
-                        candidates_with_dist.push_back({segName, 1.0f});  // Distance doesn't matter here
-                    }
-                }
-            }
-        } else {
-            // Use distance-based filtering if no highlighted segments specified
-            for (auto key : _intersect_tgts) {
-                if (_intersect_items.count(key)) {
-                    continue;  // Already rendered
-                }
-
-                auto* seg = dynamic_cast<QuadSurface*>(_surf_col->surface(key));
-                if (!seg) continue;
-
-                // For the reference segment itself, use distance 0 so it's always included first
-                if (has_reference && key == "segmentation") {
-                    candidates_with_dist.push_back({key, 0.0f});
-                    continue;
-                }
-
-                Rect3D seg_bbox = seg->bbox();
-
-                // Quick cull: Skip segments whose bbox doesn't intersect viewport
-                // Check if bboxes overlap in all 3 dimensions
-                bool overlaps = (seg_bbox.low[0] <= view_bbox.high[0] && seg_bbox.high[0] >= view_bbox.low[0]) &&
-                                (seg_bbox.low[1] <= view_bbox.high[1] && seg_bbox.high[1] >= view_bbox.low[1]) &&
-                                (seg_bbox.low[2] <= view_bbox.high[2] && seg_bbox.high[2] >= view_bbox.low[2]);
-
-                if (!overlaps) {
-                    continue;  // Skip segments outside viewport
-                }
-
-                // If render overlap only mode is enabled, check if segment passes through focus point
-                if (_renderOverlapOnly && focus_poi) {
-                    cv::Vec3f surf_loc;
-
-                    // Try to project focus point onto this segment
-                    // pointTo returns the residual distance
-                    float residual = seg->pointTo(surf_loc, focus_poi->p, 10.0f);
-
-                    // Skip segments that don't pass through the focus point (within 10 voxel tolerance)
-                    if (residual > 10.0f) {
-                        continue;
-                    }
-                }
-
-                // Calculate centroid of segment bbox
-                cv::Vec3f seg_center = {
-                    (seg_bbox.low[0] + seg_bbox.high[0]) / 2.0f,
-                    (seg_bbox.low[1] + seg_bbox.high[1]) / 2.0f,
-                    (seg_bbox.low[2] + seg_bbox.high[2]) / 2.0f
-                };
-
-                // Calculate distance from reference segment center to this segment center
-                float dist = cv::norm(reference_center - seg_center);
-
-                candidates_with_dist.push_back({key, dist});
-            }
-
-            // Sort by distance and take closest N segments
-            std::sort(candidates_with_dist.begin(), candidates_with_dist.end(),
-                      [](const SegmentDistance& a, const SegmentDistance& b) {
-                          return a.distance < b.distance;
-                      });
+        if (_viewer_manager) {
+            candidates_with_dist = _viewer_manager->getCachedCandidates(
+                reference_center,
+                _intersect_tgts,
+                _intersect_items,
+                !_highlightedSegments.empty()
+            );
         }
 
         // Take only the closest segments (configurable via UI)
+        // Scale down max intersections when zoomed out for performance
         // When using highlighted segments, no limit is applied
         int num_to_process;
         if (!_highlightedSegments.empty()) {
             num_to_process = candidates_with_dist.size();
         } else {
-            num_to_process = std::min(_maxIntersections, static_cast<int>(candidates_with_dist.size()));
+            // Reduce max intersections when zoomed out
+            int effective_max_intersections = _maxIntersections;
+            if (_scale < 0.1f) {
+                effective_max_intersections = std::max(10, _maxIntersections / 4);  // 25% when very zoomed out
+            } else if (_scale < 0.3f) {
+                effective_max_intersections = std::max(20, _maxIntersections / 2);  // 50% when zoomed out
+            }
+            num_to_process = std::min(effective_max_intersections, static_cast<int>(candidates_with_dist.size()));
         }
         for (int i = 0; i < num_to_process; i++) {
             intersect_cands.push_back(candidates_with_dist[i].key);
@@ -2464,6 +2425,8 @@ void CVolumeViewer::updateAllOverlays()
     }
 
     invalidateVis();
+
+    // Trigger intersection update check (will debounce if viewport changed)
     renderIntersections();
 
     emit overlaysUpdated();

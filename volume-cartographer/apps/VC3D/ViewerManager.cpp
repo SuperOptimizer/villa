@@ -12,6 +12,7 @@
 #include "CSurfaceCollection.hpp"
 #include "vc/ui/VCCollection.hpp"
 #include "vc/core/types/Volume.hpp"
+#include "vc/core/util/Surface.hpp"
 
 #include <QMdiArea>
 #include <QMdiSubWindow>
@@ -55,6 +56,7 @@ CVolumeViewer* ViewerManager::createViewer(const std::string& surfaceName,
 
     viewer->setCache(_chunkCache);
     viewer->setPointCollection(_points);
+    viewer->setViewerManager(this);
 
     if (_surfaces) {
         connect(_surfaces, &CSurfaceCollection::sendSurfaceChanged, viewer, &CVolumeViewer::onSurfaceChanged);
@@ -103,7 +105,6 @@ CVolumeViewer* ViewerManager::createViewer(const std::string& surfaceName,
     viewer->setMaxIntersections(_maxIntersections);
     viewer->setIntersectionLineWidth(_intersectionLineWidth);
     viewer->setHighlightedSegments(_highlightedSegments);
-    viewer->setRenderOverlapOnly(_renderOverlapOnly);
     viewer->setVolumeWindow(_volumeWindowLow, _volumeWindowHigh);
     viewer->setOverlayVolume(_overlayVolume);
     viewer->setOverlayOpacity(_overlayOpacity);
@@ -241,17 +242,6 @@ void ViewerManager::setHighlightedSegments(const std::vector<std::string>& segme
     }
 }
 
-void ViewerManager::setRenderOverlapOnly(bool enabled)
-{
-    _renderOverlapOnly = enabled;
-
-    for (auto* viewer : _viewers) {
-        if (viewer) {
-            viewer->setRenderOverlapOnly(_renderOverlapOnly);
-        }
-    }
-}
-
 void ViewerManager::setOverlayVolume(std::shared_ptr<Volume> volume, const std::string& volumeId)
 {
     _overlayVolume = std::move(volume);
@@ -374,4 +364,103 @@ void ViewerManager::forEachViewer(const std::function<void(CVolumeViewer*)>& fn)
     for (auto* viewer : _viewers) {
         fn(viewer);
     }
+}
+
+std::vector<ViewerManager::CandidateInfo> ViewerManager::getCachedCandidates(
+    const cv::Vec3f& referenceCenter,
+    const std::set<std::string>& intersectTargets,
+    const std::unordered_map<std::string, std::vector<QGraphicsItem*>>& alreadyRendered,
+    bool useHighlightedSegments)
+{
+    // If using highlighted segments, build a different candidate list
+    if (useHighlightedSegments && !_highlightedSegments.empty()) {
+        std::vector<CandidateInfo> result;
+
+        // Always include the current segment (segmentation)
+        if (intersectTargets.find("segmentation") != intersectTargets.end() &&
+            alreadyRendered.find("segmentation") == alreadyRendered.end()) {
+            result.push_back({"segmentation", 0.0f});
+        }
+
+        // Add highlighted segments
+        for (const auto& segName : _highlightedSegments) {
+            if (intersectTargets.find(segName) != intersectTargets.end() &&
+                alreadyRendered.find(segName) == alreadyRendered.end()) {
+                auto* seg = dynamic_cast<QuadSurface*>(_surfaces->surface(segName));
+                if (seg) {
+                    result.push_back({segName, 1.0f});  // Distance doesn't matter here
+                }
+            }
+        }
+
+        return result;
+    }
+
+    // Check if cache is valid (same reference center)
+    constexpr float epsilon = 1e-6f;
+    const bool sameReference = _candidateCacheValid &&
+                               std::abs(referenceCenter[0] - _cachedReferenceCenter[0]) < epsilon &&
+                               std::abs(referenceCenter[1] - _cachedReferenceCenter[1]) < epsilon &&
+                               std::abs(referenceCenter[2] - _cachedReferenceCenter[2]) < epsilon;
+
+    if (!sameReference) {
+        // Cache miss - rebuild candidate list
+        _cachedCandidates.clear();
+
+        if (!_surfaces) {
+            _candidateCacheValid = false;
+            return {};
+        }
+
+        // Build list of all candidates with their distances
+        for (const auto& key : intersectTargets) {
+            auto* seg = dynamic_cast<QuadSurface*>(_surfaces->surface(key));
+            if (!seg) continue;
+
+            // For the segmentation itself, use distance 0
+            if (key == "segmentation") {
+                _cachedCandidates.push_back({key, 0.0f});
+                continue;
+            }
+
+            Rect3D seg_bbox = seg->bbox();
+
+            // Calculate centroid of segment bbox
+            cv::Vec3f seg_center = {
+                (seg_bbox.low[0] + seg_bbox.high[0]) / 2.0f,
+                (seg_bbox.low[1] + seg_bbox.high[1]) / 2.0f,
+                (seg_bbox.low[2] + seg_bbox.high[2]) / 2.0f
+            };
+
+            // Calculate distance from reference to this segment center
+            float dist = cv::norm(referenceCenter - seg_center);
+            _cachedCandidates.push_back({key, dist});
+        }
+
+        // Sort by distance
+        std::sort(_cachedCandidates.begin(), _cachedCandidates.end(),
+                  [](const CandidateInfo& a, const CandidateInfo& b) {
+                      return a.distance < b.distance;
+                  });
+
+        _cachedReferenceCenter = referenceCenter;
+        _candidateCacheValid = true;
+    }
+
+    // Filter out already rendered segments
+    std::vector<CandidateInfo> result;
+    result.reserve(_cachedCandidates.size());
+    for (const auto& candidate : _cachedCandidates) {
+        if (alreadyRendered.find(candidate.key) == alreadyRendered.end()) {
+            result.push_back(candidate);
+        }
+    }
+
+    return result;
+}
+
+void ViewerManager::invalidateCandidateCache()
+{
+    _candidateCacheValid = false;
+    _cachedCandidates.clear();
 }

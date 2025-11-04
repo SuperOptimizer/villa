@@ -5,11 +5,15 @@
 
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include <opencv2/core.hpp>
+
 class QMdiArea;
+class QGraphicsItem;
 class CVolumeViewer;
 class CSurfaceCollection;
 class VCCollection;
@@ -60,9 +64,6 @@ public:
     void setHighlightedSegments(const std::vector<std::string>& segments);
     const std::vector<std::string>& highlightedSegments() const { return _highlightedSegments; }
 
-    void setRenderOverlapOnly(bool enabled);
-    bool renderOverlapOnly() const { return _renderOverlapOnly; }
-
     void setOverlayVolume(std::shared_ptr<Volume> volume, const std::string& volumeId);
     std::shared_ptr<Volume> overlayVolume() const { return _overlayVolume; }
     const std::string& overlayVolumeId() const { return _overlayVolumeId; }
@@ -88,6 +89,18 @@ public:
 
     void forEachViewer(const std::function<void(CVolumeViewer*)>& fn) const;
 
+    // Cached candidate selection for intersection rendering
+    struct CandidateInfo {
+        std::string key;
+        float distance;
+    };
+    std::vector<CandidateInfo> getCachedCandidates(
+        const cv::Vec3f& referenceCenter,
+        const std::set<std::string>& intersectTargets,
+        const std::unordered_map<std::string, std::vector<QGraphicsItem*>>& alreadyRendered,
+        bool useHighlightedSegments);
+    void invalidateCandidateCache();
+
 signals:
     void viewerCreated(CVolumeViewer* viewer);
     void overlayWindowChanged(float low, float high);
@@ -111,7 +124,6 @@ private:
     int _maxIntersections{100};
     int _intersectionLineWidth{2};
     std::vector<std::string> _highlightedSegments;
-    bool _renderOverlapOnly{false};
     std::shared_ptr<Volume> _overlayVolume;
     std::string _overlayVolumeId;
     float _overlayOpacity{0.5f};
@@ -122,4 +134,9 @@ private:
     float _volumeWindowHigh{255.0f};
 
     VolumeOverlayController* _volumeOverlay{nullptr};
+
+    // Candidate cache for intersection rendering
+    cv::Vec3f _cachedReferenceCenter{0, 0, 0};
+    std::vector<CandidateInfo> _cachedCandidates;
+    bool _candidateCacheValid{false};
 };

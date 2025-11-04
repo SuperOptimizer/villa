@@ -978,6 +978,19 @@ bool CWindow::centerFocusAt(const cv::Vec3f& position, const cv::Vec3f& normal, 
 
     _surf_col->setPOI("focus", focus);
 
+    // Invalidate and re-render intersections on all viewers since focus point changed
+    if (_viewerManager) {
+        // Invalidate the cached candidate list since the reference point changed
+        _viewerManager->invalidateCandidateCache();
+
+        _viewerManager->forEachViewer([](CVolumeViewer* viewer) {
+            if (viewer) {
+                viewer->invalidateIntersect();
+                viewer->renderIntersections(true);
+            }
+        });
+    }
+
     if (addToHistory) {
         recordFocusHistory(*focus);
     }
@@ -1622,23 +1635,6 @@ void CWindow::CreateWidgets(void)
             }
         }
         _viewerManager->setHighlightedSegments(segments);
-    }
-
-    // Wire up render overlap only checkbox
-    auto* chkRenderOverlapOnly = ui.chkRenderOverlapOnly;
-    const bool savedRenderOverlapOnly = settings.value("renderer/render_overlap_only", false).toBool();
-    chkRenderOverlapOnly->setChecked(savedRenderOverlapOnly);
-
-    connect(chkRenderOverlapOnly, &QCheckBox::toggled, this, [this](bool checked) {
-        if (!_viewerManager) {
-            return;
-        }
-        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
-        settings.setValue("renderer/render_overlap_only", checked);
-        _viewerManager->setRenderOverlapOnly(checked);
-    });
-    if (_viewerManager) {
-        _viewerManager->setRenderOverlapOnly(savedRenderOverlapOnly);
     }
 
     chkAxisAlignedSlices = ui.chkAxisAlignedSlices;
