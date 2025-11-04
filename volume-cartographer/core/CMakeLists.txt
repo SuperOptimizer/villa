@@ -30,11 +30,12 @@ target_link_libraries(vc_core
         spdlog::spdlog
         nlohmann_json::nlohmann_json
         z5
-        OpenMP::OpenMP_CXX
         tiff
         #${CURL_LIBRARIES}
         #${OPENSSL_LIBRARIES}
         #${ZLIB_LIBRARIES}
+        PRIVATE
+        OpenMP::OpenMP_CXX
 )
 
 qt6_wrap_cpp(metrics_moc include/vc/ui/VCCollection.hpp)

@@ -100,6 +100,10 @@ CVolumeViewer* ViewerManager::createViewer(const std::string& surfaceName,
     }
 
     viewer->setIntersectionOpacity(_intersectionOpacity);
+    viewer->setMaxIntersections(_maxIntersections);
+    viewer->setIntersectionLineWidth(_intersectionLineWidth);
+    viewer->setHighlightedSegments(_highlightedSegments);
+    viewer->setRenderOverlapOnly(_renderOverlapOnly);
     viewer->setVolumeWindow(_volumeWindowLow, _volumeWindowHigh);
     viewer->setOverlayVolume(_overlayVolume);
     viewer->setOverlayOpacity(_overlayOpacity);
@@ -200,6 +204,50 @@ void ViewerManager::setIntersectionOpacity(float opacity)
     for (auto* viewer : _viewers) {
         if (viewer) {
             viewer->setIntersectionOpacity(_intersectionOpacity);
+        }
+    }
+}
+
+void ViewerManager::setMaxIntersections(int maxIntersections)
+{
+    _maxIntersections = std::clamp(maxIntersections, 1, 500);
+
+    for (auto* viewer : _viewers) {
+        if (viewer) {
+            viewer->setMaxIntersections(_maxIntersections);
+        }
+    }
+}
+
+void ViewerManager::setIntersectionLineWidth(int lineWidth)
+{
+    _intersectionLineWidth = std::clamp(lineWidth, 1, 10);
+
+    for (auto* viewer : _viewers) {
+        if (viewer) {
+            viewer->setIntersectionLineWidth(_intersectionLineWidth);
+        }
+    }
+}
+
+void ViewerManager::setHighlightedSegments(const std::vector<std::string>& segments)
+{
+    _highlightedSegments = segments;
+
+    for (auto* viewer : _viewers) {
+        if (viewer) {
+            viewer->setHighlightedSegments(_highlightedSegments);
+        }
+    }
+}
+
+void ViewerManager::setRenderOverlapOnly(bool enabled)
+{
+    _renderOverlapOnly = enabled;
+
+    for (auto* viewer : _viewers) {
+        if (viewer) {
+            viewer->setRenderOverlapOnly(_renderOverlapOnly);
         }
     }
 }

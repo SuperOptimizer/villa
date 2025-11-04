@@ -222,6 +222,19 @@
            </widget>
           </item>
           <item>
+           <widget class="QLineEdit" name="segmentFilterInput">
+            <property name="placeholderText">
+             <string>Filter segments...</string>
+            </property>
+            <property name="clearButtonEnabled">
+             <bool>true</bool>
+            </property>
+            <property name="toolTip">
+             <string>Enter text to filter the segment list (e.g., 1234)</string>
+            </property>
+           </widget>
+          </item>
+          <item>
            <widget class="SurfaceTreeWidget" name="treeWidgetSurfaces">
             <property name="alternatingRowColors">
              <bool>true</bool>
@@ -1023,6 +1036,94 @@
       <widget class="QCheckBox" name="chkAxisOverlays">
        <property name="text">
         <string>Show axis overlays in XY view</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+  <widget class="QDockWidget" name="dockWidgetOverlaps">
+   <property name="windowTitle">
+    <string>Overlaps</string>
+   </property>
+   <attribute name="dockWidgetArea">
+    <number>1</number>
+   </attribute>
+   <widget class="QWidget" name="dockWidgetOverlapsContents">
+    <layout class="QGridLayout" name="gridLayoutOverlaps">
+     <item row="0" column="0">
+      <widget class="QLabel" name="labelMaxIntersections">
+       <property name="text">
+        <string>Max intersections</string>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QSpinBox" name="spinMaxIntersections">
+       <property name="minimum">
+        <number>1</number>
+       </property>
+       <property name="maximum">
+        <number>500</number>
+       </property>
+       <property name="value">
+        <number>100</number>
+       </property>
+       <property name="toolTip">
+        <string>Maximum number of nearby segments to show intersections for</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="labelIntersectionLineWidth">
+       <property name="text">
+        <string>Intersection line width</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QSpinBox" name="spinIntersectionLineWidth">
+       <property name="minimum">
+        <number>1</number>
+       </property>
+       <property name="maximum">
+        <number>10</number>
+       </property>
+       <property name="value">
+        <number>2</number>
+       </property>
+       <property name="toolTip">
+        <string>Line width for intersection overlays</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="labelHighlightedSegments">
+       <property name="text">
+        <string>Highlighted segments</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="QPlainTextEdit" name="highlightedSegmentsInput">
+       <property name="toolTip">
+        <string>Enter segment names to highlight (one per line, e.g., auto_grown_1234)</string>
+       </property>
+       <property name="placeholderText">
+        <string>Enter segment names (one per line)</string>
+       </property>
+       <property name="maximumHeight">
+        <number>100</number>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="0" colspan="2">
+      <widget class="QCheckBox" name="chkRenderOverlapOnly">
+       <property name="text">
+        <string>Render overlap only</string>
+       </property>
+       <property name="toolTip">
+        <string>Only render intersections that pass through the focus point (ctrl+click location)</string>
        </property>
       </widget>
      </item>

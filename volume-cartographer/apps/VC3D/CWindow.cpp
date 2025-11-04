@@ -1028,6 +1028,7 @@ void CWindow::CreateWidgets(void)
     SurfacePanelController::UiRefs surfaceUi{
         .treeWidget = treeWidgetSurfaces,
         .reloadButton = btnReloadSurfaces,
+        .filterInput = ui.segmentFilterInput,
     };
     _surfacePanel = std::make_unique<SurfacePanelController>(
         surfaceUi,
@@ -1541,6 +1542,103 @@ void CWindow::CreateWidgets(void)
     });
     if (_viewerManager) {
         _viewerManager->setIntersectionOpacity(spinIntersectionOpacity->value() / 100.0f);
+    }
+
+    // Wire up max intersections control
+    auto* spinMaxIntersections = ui.spinMaxIntersections;
+    const int savedMaxIntersections = settings.value("renderer/max_intersections",
+                                                      spinMaxIntersections->value()).toInt();
+    const int boundedMaxIntersections = std::clamp(savedMaxIntersections,
+                                                    spinMaxIntersections->minimum(),
+                                                    spinMaxIntersections->maximum());
+    spinMaxIntersections->setValue(boundedMaxIntersections);
+
+    connect(spinMaxIntersections, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        if (!_viewerManager) {
+            return;
+        }
+        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+        settings.setValue("renderer/max_intersections", value);
+        _viewerManager->setMaxIntersections(value);
+    });
+    if (_viewerManager) {
+        _viewerManager->setMaxIntersections(spinMaxIntersections->value());
+    }
+
+    // Wire up intersection line width control
+    auto* spinIntersectionLineWidth = ui.spinIntersectionLineWidth;
+    const int savedLineWidth = settings.value("renderer/intersection_line_width",
+                                               spinIntersectionLineWidth->value()).toInt();
+    const int boundedLineWidth = std::clamp(savedLineWidth,
+                                            spinIntersectionLineWidth->minimum(),
+                                            spinIntersectionLineWidth->maximum());
+    spinIntersectionLineWidth->setValue(boundedLineWidth);
+
+    connect(spinIntersectionLineWidth, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        if (!_viewerManager) {
+            return;
+        }
+        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+        settings.setValue("renderer/intersection_line_width", value);
+        _viewerManager->setIntersectionLineWidth(value);
+    });
+    if (_viewerManager) {
+        _viewerManager->setIntersectionLineWidth(spinIntersectionLineWidth->value());
+    }
+
+    // Wire up highlighted segments input
+    auto* highlightedSegmentsInput = ui.highlightedSegmentsInput;
+    const QString savedSegments = settings.value("renderer/highlighted_segments", "").toString();
+    highlightedSegmentsInput->setPlainText(savedSegments);
+
+    connect(highlightedSegmentsInput, &QPlainTextEdit::textChanged, this, [this, highlightedSegmentsInput]() {
+        if (!_viewerManager) {
+            return;
+        }
+        QString text = highlightedSegmentsInput->toPlainText();
+        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+        settings.setValue("renderer/highlighted_segments", text);
+
+        // Parse segments (one per line, trim whitespace)
+        QStringList lines = text.split('\n', Qt::SkipEmptyParts);
+        std::vector<std::string> segments;
+        for (const QString& line : lines) {
+            QString trimmed = line.trimmed();
+            if (!trimmed.isEmpty()) {
+                segments.push_back(trimmed.toStdString());
+            }
+        }
+        _viewerManager->setHighlightedSegments(segments);
+    });
+
+    // Initialize with saved segments
+    if (_viewerManager) {
+        QStringList lines = savedSegments.split('\n', Qt::SkipEmptyParts);
+        std::vector<std::string> segments;
+        for (const QString& line : lines) {
+            QString trimmed = line.trimmed();
+            if (!trimmed.isEmpty()) {
+                segments.push_back(trimmed.toStdString());
+            }
+        }
+        _viewerManager->setHighlightedSegments(segments);
+    }
+
+    // Wire up render overlap only checkbox
+    auto* chkRenderOverlapOnly = ui.chkRenderOverlapOnly;
+    const bool savedRenderOverlapOnly = settings.value("renderer/render_overlap_only", false).toBool();
+    chkRenderOverlapOnly->setChecked(savedRenderOverlapOnly);
+
+    connect(chkRenderOverlapOnly, &QCheckBox::toggled, this, [this](bool checked) {
+        if (!_viewerManager) {
+            return;
+        }
+        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+        settings.setValue("renderer/render_overlap_only", checked);
+        _viewerManager->setRenderOverlapOnly(checked);
+    });
+    if (_viewerManager) {
+        _viewerManager->setRenderOverlapOnly(savedRenderOverlapOnly);
     }
 
     chkAxisAlignedSlices = ui.chkAxisAlignedSlices;

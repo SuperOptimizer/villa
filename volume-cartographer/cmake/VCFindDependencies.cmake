@@ -92,6 +92,13 @@ else()
     add_library(openmp_stub INTERFACE)
     add_library(OpenMP::OpenMP_CXX ALIAS openmp_stub)
     add_library(OpenMP::OpenMP_C  ALIAS openmp_stub)
+
+    # Export openmp_stub so it can be used by installed targets
+    if(VC_INSTALL_LIBS)
+        install(TARGETS openmp_stub
+                EXPORT "${targets_export_name}"
+                COMPONENT "Libraries")
+    endif()
 endif()
 
 # ---- xtensor/xsimd toggle used by your code ---------------------------------

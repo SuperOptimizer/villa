@@ -89,6 +89,10 @@ SurfacePanelController::SurfacePanelController(const UiRefs& ui,
         connect(_ui.treeWidget, &QWidget::customContextMenuRequested,
                 this, &SurfacePanelController::showContextMenu);
     }
+
+    if (_ui.filterInput) {
+        connect(_ui.filterInput, &QLineEdit::textChanged, this, &SurfacePanelController::applySegmentFilter);
+    }
 }
 
 void SurfacePanelController::setVolumePkg(const std::shared_ptr<VolumePkg>& pkg)
@@ -870,6 +874,31 @@ void SurfacePanelController::applyFilters()
     }
     applyFiltersInternal();
     updateFilterSummary();
+}
+
+void SurfacePanelController::applySegmentFilter(const QString& filterText)
+{
+    if (!_ui.treeWidget) {
+        return;
+    }
+
+    QString lowerFilter = filterText.toLower();
+    bool hasFilter = !lowerFilter.isEmpty();
+
+    // Iterate through all top-level items
+    for (int i = 0; i < _ui.treeWidget->topLevelItemCount(); ++i) {
+        QTreeWidgetItem* item = _ui.treeWidget->topLevelItem(i);
+        if (!item) {
+            continue;
+        }
+
+        // Get the segment ID from column 1 (Surface ID column)
+        QString segmentId = item->text(1);
+
+        // Show item if no filter or if segment ID contains the filter text
+        bool shouldShow = !hasFilter || segmentId.toLower().contains(lowerFilter);
+        item->setHidden(!shouldShow);
+    }
 }
 
 void SurfacePanelController::syncSelectionUi(const std::string& surfaceId, QuadSurface* surface)

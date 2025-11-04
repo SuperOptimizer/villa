@@ -21,6 +21,7 @@ class QTreeWidget;
 class QCheckBox;
 class QComboBox;
 class QPushButton;
+class QLineEdit;
 class QStandardItemModel;
 class QuadSurface;
 class DropdownChecklistButton;
@@ -33,6 +34,7 @@ public:
     struct UiRefs {
         QTreeWidget* treeWidget{nullptr};
         QPushButton* reloadButton{nullptr};
+        QLineEdit* filterInput{nullptr};
     };
 
     struct FilterUiRefs {
@@ -89,6 +91,7 @@ public:
 
     void refreshPointSetFilterOptions();
     void applyFilters();
+    void applySegmentFilter(const QString& filterText);
 
     void syncSelectionUi(const std::string& surfaceId, QuadSurface* surface);
     void resetTagUi();

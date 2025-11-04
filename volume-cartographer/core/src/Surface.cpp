@@ -1273,7 +1273,7 @@ static uint8_t get_block(const cv::Mat_<uint8_t> &block, const cv::Vec3f &loc, c
 
 void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step, int min_tries)
 {
-    //start with random points and search for a plane intersection
+    //Use grid-based sampling to search for plane intersections
 
     float block_step = 0.5*step;
 
@@ -1284,12 +1284,50 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     std::vector<std::vector<cv::Vec3f>> seg_vol_raw;
     std::vector<std::vector<cv::Vec2f>> seg_grid_raw;
 
-    for(int r=0;r<std::max(min_tries, std::max(points.cols,points.rows)/100);r++) {
+    // Build list of candidate starting points using grid-based sampling
+    std::vector<cv::Vec2f> candidate_points;
+
+    // Use finer grid sampling to ensure we don't miss any intersection curves
+    // The grid needs to be dense enough to catch all curves, especially thin ones
+    int grid_step = std::max(2, std::min(points.cols, points.rows) / 100);
+
+    // Expand the ROI slightly to catch points near the edge
+    cv::Rect expanded_roi(
+        plane_roi.x - step * 2,
+        plane_roi.y - step * 2,
+        plane_roi.width + step * 4,
+        plane_roi.height + step * 4
+    );
+
+    // Sample with multiple grid offsets to avoid missing curves that fall between grid lines
+    // This ensures better coverage at minimal cost
+    std::vector<std::pair<int, int>> offsets = {{0, 0}, {grid_step/2, 0}, {0, grid_step/2}, {grid_step/2, grid_step/2}};
+
+    for (const auto& [offset_x, offset_y] : offsets) {
+        for(int y = offset_y; y < points.rows - 1; y += grid_step) {
+            for(int x = offset_x; x < points.cols - 1; x += grid_step) {
+                cv::Vec2f loc(x, y);
+                if (!grid_bounds.contains(cv::Point(loc))) {
+                    continue;
+                }
+
+                // Quick check: is this point's 3D position near the plane ROI?
+                cv::Vec3f test_point = at_int(points, loc);
+                cv::Vec3f plane_loc = plane->project(test_point);
+
+                if (expanded_roi.contains(cv::Point(plane_loc[0], plane_loc[1]))) {
+                    candidate_points.push_back(loc);
+                }
+            }
+        }
+    }
+
+    for(const auto& candidate_loc : candidate_points) {
         std::vector<cv::Vec3f> seg;
         std::vector<cv::Vec2f> seg_loc;
         std::vector<cv::Vec3f> seg2;
         std::vector<cv::Vec2f> seg_loc2;
-        cv::Vec2f loc;
+        cv::Vec2f loc = candidate_loc;
         cv::Vec2f loc2;
         cv::Vec2f loc3;
         cv::Vec3f point;
@@ -1299,33 +1337,39 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         cv::Vec3f last_plane_loc;
         float dist = -1;
 
-
-        //initial points
-        for(int i=0;i<std::max(min_tries, std::max(points.cols,points.rows)/100);i++) {
-            loc = {std::rand() % (points.cols-1), std::rand() % (points.rows-1)};
-            point = at_int(points, loc);
-
-            plane_loc = plane->project(point);
-            if (!plane_roi.contains(cv::Point(plane_loc[0],plane_loc[1])))
-                continue;
-
-                dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.01);
-
-                plane_loc = plane->project(point);
-                if (!plane_roi.contains(cv::Point(plane_loc[0],plane_loc[1])))
-                    dist = -1;
-
-                if (get_block(block, plane_loc, plane_roi, block_step))
-                    dist = -1;
-
-            if (dist >= 0 && dist <= 1 || !loc_valid_xy(points, loc))
-                break;
+        // Check if this candidate point is a valid starting point
+        if (!grid_bounds.contains(cv::Point(loc))) {
+            continue;
         }
 
+        point = at_int(points, loc);
+        plane_loc = plane->project(point);
 
-        if (dist < 0 || dist > 1)
+        if (!plane_roi.contains(cv::Point(plane_loc[0],plane_loc[1]))) {
             continue;
+        }
 
+        // Check if this area has already been traced
+        if (get_block(block, plane_loc, plane_roi, block_step)) {
+            continue;
+        }
+
+        dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.01);
+
+        plane_loc = plane->project(point);
+        if (!plane_roi.contains(cv::Point(plane_loc[0],plane_loc[1]))) {
+            continue;
+        }
+
+        if (!loc_valid_xy(points, loc)) {
+            continue;
+        }
+
+        if (dist < 0 || dist > 1) {
+            continue;
+        }
+
+        // Found a valid starting point, begin tracing the intersection segment
         seg.push_back(point);
         seg_loc.push_back(loc);
 
@@ -1364,16 +1408,17 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc))
                     break;
 
+            // Check if point is within plane_roi BEFORE adding to segment
+            plane_loc = plane->project(point3);
+            if (get_block(block, plane_loc, plane_roi, block_step))
+                break;
+
             seg.push_back(point3);
             seg_loc.push_back(loc3);
             point = point2;
             point2 = point3;
             loc = loc2;
             loc2 = loc3;
-
-            plane_loc = plane->project(point3);
-            if (get_block(block, plane_loc, plane_roi, block_step))
-                break;
 
             set_block(block, last_plane_loc, plane_loc, plane_roi, block_step);
             last_plane_loc = plane_loc;
@@ -1406,16 +1451,17 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc))
                     break;
 
+            // Check if point is within plane_roi BEFORE adding to segment
+            plane_loc = plane->project(point3);
+            if (get_block(block, plane_loc, plane_roi, block_step))
+                break;
+
             seg2.push_back(point3);
             seg_loc2.push_back(loc3);
             point = point2;
             point2 = point3;
             loc = loc2;
             loc2 = loc3;
-
-            plane_loc = plane->project(point3);
-            if (get_block(block, plane_loc, plane_roi, block_step))
-                break;
 
             set_block(block, last_plane_loc, plane_loc, plane_roi, block_step);
             last_plane_loc = plane_loc;

@@ -29,7 +29,7 @@ public:
     void setPointCollection(VCCollection* point_collection);
     void setSurface(const std::string &name);
     void renderVisible(bool force = false);
-    void renderIntersections();
+    void renderIntersections(bool force = false);
     cv::Mat render_area(const cv::Rect &roi);
     cv::Mat_<uint8_t> render_composite(const cv::Rect &roi);
     cv::Mat_<uint8_t> renderCompositeForSurface(QuadSurface* surface, cv::Size outputSize);
@@ -96,6 +96,18 @@ public:
 
     void setIntersectionOpacity(float opacity);
     float intersectionOpacity() const { return _intersectionOpacity; }
+
+    void setMaxIntersections(int maxIntersections);
+    int maxIntersections() const { return _maxIntersections; }
+
+    void setIntersectionLineWidth(int lineWidth);
+    int intersectionLineWidth() const { return _intersectionLineWidth; }
+
+    void setHighlightedSegments(const std::vector<std::string>& segments);
+    const std::vector<std::string>& highlightedSegments() const { return _highlightedSegments; }
+
+    void setRenderOverlapOnly(bool enabled);
+    bool renderOverlapOnly() const { return _renderOverlapOnly; }
 
     void setOverlayVolume(std::shared_ptr<Volume> volume);
     std::shared_ptr<Volume> overlayVolume() const { return _overlayVolume; }
@@ -181,6 +193,8 @@ protected:
     
     ChunkCache *cache = nullptr;
     QRect curr_img_area = {0,0,1000,1000};
+    QRect _last_intersect_area = {0,0,0,0};
+    float _last_intersect_scale = 0.0f;
     float _scale = 0.5;
     float _scene_scale = 1.0;
     float _ds_scale = 0.5;
@@ -218,7 +232,11 @@ protected:
     VCCollection* _point_collection = nullptr;
 
     float _intersectionOpacity{1.0f};
-    
+    int _maxIntersections{100};
+    int _intersectionLineWidth{2};
+    std::vector<std::string> _highlightedSegments;
+    bool _renderOverlapOnly{false};
+
     // Point interaction state
     uint64_t _highlighted_point_id = 0;
     uint64_t _selected_point_id = 0;
@@ -241,6 +259,8 @@ protected:
 
     int _downscale_override = 0;  // 0=auto, 1=2x, 2=4x, 3=8x, 4=16x, 5=32x
     QTimer* _overlayUpdateTimer;
+    QTimer* _intersectionUpdateTimer;
+    bool _intersectionUpdatePending = false;
 
     // BBox tool state
     bool _bboxMode = false;
