@@ -2221,31 +2221,7 @@ void MultiSpatialIndex::insert(const std::string& segmentName, const Rect3D& bbo
     CellKey minCell = worldToCell(bbox.low);
     CellKey maxCell = worldToCell(bbox.high);
 
-    // Calculate how many cells this would span
-    int xRange = maxCell.x - minCell.x + 1;
-    int yRange = maxCell.y - minCell.y + 1;
-    int zRange = maxCell.z - minCell.z + 1;
-    int totalCells = xRange * yRange * zRange;
-
-    // If segment spans too many cells, skip detailed insertion and just mark a coarse region
-    // This prevents huge segments from causing O(n^3) insertions
-    constexpr int MAX_CELLS_PER_SEGMENT = 1000;
-
-    if (totalCells > MAX_CELLS_PER_SEGMENT) {
-        // For very large segments, only insert into corner cells + a sparse sampling
-        // This is a fallback to prevent pathological cases
-        _grid[minCell].insert(segmentName);
-        _grid[maxCell].insert(segmentName);
-        _grid[{minCell.x, minCell.y, maxCell.z}].insert(segmentName);
-        _grid[{minCell.x, maxCell.y, minCell.z}].insert(segmentName);
-        _grid[{minCell.x, maxCell.y, maxCell.z}].insert(segmentName);
-        _grid[{maxCell.x, minCell.y, minCell.z}].insert(segmentName);
-        _grid[{maxCell.x, minCell.y, maxCell.z}].insert(segmentName);
-        _grid[{maxCell.x, maxCell.y, minCell.z}].insert(segmentName);
-        return;
-    }
-
-    // Insert directly into grid without creating intermediate vector
+    // Insert directly into all cells that bbox overlaps
     for (int z = minCell.z; z <= maxCell.z; ++z) {
         for (int y = minCell.y; y <= maxCell.y; ++y) {
             for (int x = minCell.x; x <= maxCell.x; ++x) {

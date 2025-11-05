@@ -534,10 +534,6 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
         return;
     }
 
-    for (auto& col : _intersect_items)
-        for (auto& item : col.second)
-            item->setVisible(false);
-
     bool handled = false;
 
     if (modifiers & Qt::ShiftModifier) {
@@ -590,6 +586,7 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
                 _viewer_manager->invalidateCandidateCache();
             }
             invalidateIntersect();  // Mark all intersections for redraw
+            renderIntersections();  // Recompute intersections after z-slice change
 
             handled = true;
         } else {
@@ -606,6 +603,7 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
             }
 
             renderVisible(true);
+            renderIntersections();  // Recompute intersections after z-offset change
             handled = true;
         }
     }
@@ -632,6 +630,7 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
             fGraphicsView->setSceneRect(-max_size/2, -max_size/2, max_size, max_size);
         }
         renderVisible();
+        renderIntersections();  // Recompute intersections after zoom
         emit overlaysUpdated();
     }
 
@@ -842,21 +841,55 @@ void CVolumeViewer::setIntersectionOpacity(float opacity)
 void CVolumeViewer::setMaxIntersections(int maxIntersections)
 {
     _maxIntersections = std::clamp(maxIntersections, 1, 500);
-    // Trigger re-render to apply new limit (force immediate update)
+    // Trigger rerender to apply new intersection limit
+    // This limits how many intersection line segments are shown per surface
     renderIntersections(true);
 }
 
 void CVolumeViewer::setIntersectionLineWidth(int lineWidth)
 {
     _intersectionLineWidth = std::clamp(lineWidth, 1, 10);
-    // Trigger re-render to apply new line width (force immediate update)
-    renderIntersections(true);
+
+    // Update existing graphics items with new line width without recomputing intersections
+    for (auto& pair : _intersect_items) {
+        const std::string& key = pair.first;
+
+        // Determine color and z-value for this segment
+        std::hash<std::string> str_hasher;
+        size_t hash = str_hasher(key);
+        int prim = hash % 3;
+        cv::Vec3i cvcol = {
+            100 + static_cast<int>((hash >> 8) % 156),
+            100 + static_cast<int>((hash >> 16) % 156),
+            100 + static_cast<int>((hash >> 24) % 156)
+        };
+        cvcol[prim] = 200 + static_cast<int>((hash >> 32) % 56);
+        QColor col(cvcol[0], cvcol[1], cvcol[2]);
+        float width = _intersectionLineWidth;
+
+        if (key == "segmentation") {
+            col = (_surf_name == "seg yz" ? COLOR_SEG_YZ
+                   : _surf_name == "seg xz" ? COLOR_SEG_XZ
+                   : COLOR_SEG_XY);
+            width = _intersectionLineWidth + 1;
+        }
+
+        QPen pen(col, width);
+
+        // Update pen on all items for this segment
+        for (auto* item : pair.second) {
+            if (auto* pathItem = dynamic_cast<QGraphicsPathItem*>(item)) {
+                pathItem->setPen(pen);
+            }
+        }
+    }
 }
 
 void CVolumeViewer::setHighlightedSegments(const std::vector<std::string>& segments)
 {
     _highlightedSegments = segments;
-    // Trigger re-render to apply new filter (force immediate update)
+    // Highlighted segments filtering would require recomputing which segments to show
+    // For now, trigger a full rerender (could be optimized later)
     renderIntersections(true);
 }
 
@@ -1625,22 +1658,18 @@ void CVolumeViewer::renderIntersections(bool force)
     bool viewportChanged = (_last_intersect_area != curr_img_area);
     bool scaleChanged = (std::abs(_last_intersect_scale - _scale) > 0.01f);
 
-    if (!force && (viewportChanged || scaleChanged)) {
-        // Viewport has changed - debounce the update unless forced
-        if (!_intersectionUpdatePending) {
-            _intersectionUpdatePending = true;
-            _intersectionUpdateTimer->start();
-        } else {
-            // Already pending, just restart the timer
-            _intersectionUpdateTimer->start();
-        }
-        return;  // Don't render yet, wait for timer
-    }
+    qDebug() << "[INTERSECTION] viewportChanged=" << viewportChanged << "scaleChanged=" << scaleChanged
+             << "invalidated=" << _intersectionsInvalidated << "force=" << force
+             << "scale=" << _scale << "lastScale=" << _last_intersect_scale;
 
     // If nothing changed and not forced and not invalidated, nothing to do
     if (!force && !viewportChanged && !scaleChanged && !_intersectionsInvalidated) {
+        qDebug() << "[INTERSECTION] No changes detected, skipping render";
         return;
     }
+
+    // For viewport/scale changes, render immediately using cached 3D data
+    // Don't debounce because it causes old lines to show in stale positions during pan/zoom
 
     // Reset pending state when forcing render
     if (force && _intersectionUpdatePending) {
@@ -1650,9 +1679,21 @@ void CVolumeViewer::renderIntersections(bool force)
         }
     }
 
-    // Determine if we need full rerender or partial update
-    bool fullRerender = _invalidatedSegments.empty();  // Empty set means rerender everything
+    // Determine rendering mode:
+    // - Full rerender: Segment invalidation (requery spatial index, pick different segments)
+    // - Viewport reproject: Pan/zoom (keep same segments, just reproject to new screen coords)
+    // - Partial update: Single segment edit (only recompute that segment)
+    bool isViewportChange = (viewportChanged || scaleChanged) && _invalidatedSegments.empty();
+    bool fullRerender = !isViewportChange && _invalidatedSegments.empty();
     std::set<std::string> segmentsToRecompute = _invalidatedSegments;
+
+    // For viewport changes: keep existing segment list, collect which segments to rerender
+    std::vector<std::string> existingSegments;
+    if (isViewportChange) {
+        for (const auto& pair : _intersect_items) {
+            existingSegments.push_back(pair.first);
+        }
+    }
 
     // Clear the invalidation flags
     _intersectionsInvalidated = false;
@@ -1662,8 +1703,8 @@ void CVolumeViewer::renderIntersections(bool force)
     bool scenePreviouslyEnabled = fGraphicsView->updatesEnabled();
     fGraphicsView->setUpdatesEnabled(false);
 
-    if (fullRerender) {
-        // Full rerender: Clear ALL cached intersections
+    if (fullRerender || isViewportChange) {
+        // Clear cached Qt graphics items (will be regenerated at new viewport/scale)
         for (auto &pair : _intersect_items) {
             for(auto &item : pair.second) {
                 fScene->removeItem(item);
@@ -1704,9 +1745,13 @@ void CVolumeViewer::renderIntersections(bool force)
         view_bbox = expand_rect(view_bbox, plane->coord(cv::Vec3f(0,0,0), {plane_roi.x, plane_roi.br().y, 0}));
         view_bbox = expand_rect(view_bbox, plane->coord(cv::Vec3f(0,0,0), {plane_roi.br().x, plane_roi.br().y, 0}));
 
-        // Query global spatial index to find segments near this plane (only needed for full rerender)
+        qDebug() << "[INTERSECTION] Viewport bbox: low=(" << view_bbox.low[0] << "," << view_bbox.low[1] << "," << view_bbox.low[2]
+                 << ") high=(" << view_bbox.high[0] << "," << view_bbox.high[1] << "," << view_bbox.high[2] << ")";
+
+        // Query global spatial index to find segments near this plane
+        // Only needed for full rerender or initial viewport render (when no existing segments)
         std::vector<std::string> spatially_relevant_segments;
-        if (fullRerender && _viewer_manager) {
+        if ((fullRerender || (isViewportChange && existingSegments.empty())) && _viewer_manager) {
             spatially_relevant_segments = _viewer_manager->querySegmentsNearPlane(view_bbox);
             qDebug() << "[INTERSECTION] Spatial query found" << spatially_relevant_segments.size() << "relevant segments (out of" << _intersect_tgts.size() << "enabled)";
         }
@@ -1715,8 +1760,17 @@ void CVolumeViewer::renderIntersections(bool force)
         std::vector<std::string> intersect_cands;
         std::set<std::string> added;
 
-        if (fullRerender) {
-            // Full rerender: compute all spatially relevant segments
+        if (isViewportChange && !existingSegments.empty()) {
+            // Viewport change: use existing segment list, just reproject cached 3D data
+            for (const auto& seg : existingSegments) {
+                intersect_cands.push_back(seg);
+            }
+
+            qDebug() << "[INTERSECTION] Viewport change: reprojecting" << intersect_cands.size() << "existing segments";
+        } else if (fullRerender || (isViewportChange && existingSegments.empty())) {
+            // Full rerender: compute spatially relevant segments with distance-based limiting
+
+            // 1. Always include special surfaces (current segment and axis-aligned planes)
             const std::vector<std::string> always_render = {
                 "segmentation",
                 "seg xz",
@@ -1726,22 +1780,66 @@ void CVolumeViewer::renderIntersections(bool force)
                 "yz plane"
             };
 
+            int alwaysCount = 0;
             for (const auto& name : always_render) {
                 if (_surf_col->surface(name) && _intersect_tgts.count(name)) {
                     intersect_cands.push_back(name);
                     added.insert(name);
+                    alwaysCount++;
                 }
             }
 
-            // Add spatially relevant segments that are enabled
+            // 2. Always include highlighted segments
+            int highlightedCount = 0;
+            for (const auto& name : _highlightedSegments) {
+                if (_surf_col->surface(name) && _intersect_tgts.count(name) && !added.count(name)) {
+                    intersect_cands.push_back(name);
+                    added.insert(name);
+                    highlightedCount++;
+                }
+            }
+
+            // 3. Add remaining segments up to _maxIntersections, sorted by distance to focus point
+            cv::Vec3f focusPoint = plane->origin();
+            if (_surf_col) {
+                POI* focus = _surf_col->poi("focus");
+                if (focus) {
+                    focusPoint = focus->p;
+                }
+            }
+
+            // Build list of candidates with their distances
+            std::vector<std::pair<std::string, float>> candidatesWithDistance;
             for (const auto& seg : spatially_relevant_segments) {
                 if (_intersect_tgts.count(seg) && !added.count(seg)) {
-                    intersect_cands.push_back(seg);
-                    added.insert(seg);
+                    // Calculate distance from segment center to focus point
+                    QuadSurface* quadSurf = dynamic_cast<QuadSurface*>(_surf_col->surface(seg));
+                    if (quadSurf) {
+                        Rect3D bbox = quadSurf->bbox();
+                        cv::Vec3f center = (bbox.low + bbox.high) * 0.5f;
+                        float distance = cv::norm(center - focusPoint);
+                        candidatesWithDistance.push_back({seg, distance});
+                    }
                 }
             }
 
-            qDebug() << "[INTERSECTION] Full rerender: processing" << intersect_cands.size() << "segments";
+            // Sort by distance (closest first)
+            std::sort(candidatesWithDistance.begin(), candidatesWithDistance.end(),
+                      [](const auto& a, const auto& b) { return a.second < b.second; });
+
+            // Take up to _maxIntersections closest segments
+            int otherCount = 0;
+            for (const auto& [seg, dist] : candidatesWithDistance) {
+                if (otherCount >= _maxIntersections) {
+                    break;
+                }
+                intersect_cands.push_back(seg);
+                added.insert(seg);
+                otherCount++;
+            }
+
+            qDebug() << "[INTERSECTION] Full rerender: processing" << intersect_cands.size() << "segments"
+                     << "(" << alwaysCount << "special +" << highlightedCount << "highlighted +" << otherCount << "closest, limit=" << _maxIntersections << ")";
         } else {
             // Partial update: only compute the segments that were invalidated
             for (const auto& seg : segmentsToRecompute) {
@@ -1826,35 +1924,27 @@ void CVolumeViewer::renderIntersections(bool force)
                 QPainterPath path;
 
                 bool first = true;
-                cv::Vec3f last = {-1,-1,-1};
                 for (auto wp : seg)
                 {
                     len++;
                     cv::Vec3f p = plane->project(wp, 1.0, _scale);
 
-                    // Skip points outside visible screen area
-                    if (!curr_img_area.contains(QPoint(p[0], p[1])))
-                        continue;
-
-                    if (last[0] != -1 && cv::norm(p-last) >= 8) {
-                        auto item = fGraphicsView->scene()->addPath(path, pen);
-                        item->setZValue(z_value);
-                        item->setOpacity(_intersectionOpacity);
-                        items.push_back(item);
-                        first = true;
-                    }
-                    last = p;
-
+                    // Draw continuous lines - Qt will handle clipping to viewport
+                    // Don't skip points or break lines, segments don't change so lines should be solid
                     if (first)
                         path.moveTo(p[0],p[1]);
                     else
                         path.lineTo(p[0],p[1]);
                     first = false;
                 }
-                auto item = fGraphicsView->scene()->addPath(path, pen);
-                item->setZValue(z_value);
-                item->setOpacity(_intersectionOpacity);
-                items.push_back(item);
+
+                // Only add non-empty paths
+                if (!path.isEmpty()) {
+                    auto item = fGraphicsView->scene()->addPath(path, pen);
+                    item->setZValue(z_value);
+                    item->setOpacity(_intersectionOpacity);
+                    items.push_back(item);
+                }
             }
             _intersect_items[key] = items;
             _ignore_intersect_change = new Intersection({intersections[n]});
@@ -1913,39 +2003,31 @@ void CVolumeViewer::renderIntersections(bool force)
             std::vector<QGraphicsItem*> items;
             for (auto seg : _surf_col->intersection(pair.first, pair.second)->lines) {
                 QPainterPath path;
-                
+
                 bool first = true;
-                cv::Vec3f last = {-1,-1,-1};
                 for (auto wp : seg)
                 {
                     cv::Vec3f p = location_cache[wp];
 
+                    // Skip points that failed pointTo convergence
                     if (p[0] == -1)
                         continue;
 
-                    // Skip points outside visible screen area
-                    if (!screen_bounds.contains(QPoint(p[0], p[1])))
-                        continue;
-
-                    if (last[0] != -1 && cv::norm(p-last) >= 8) {
-                        auto item = fGraphicsView->scene()->addPath(path, QPen(key == "seg yz" ? COLOR_SEG_YZ: COLOR_SEG_XZ, _intersectionLineWidth));
-                        item->setZValue(5);
-                        item->setOpacity(_intersectionOpacity);
-                        items.push_back(item);
-                        first = true;
-                    }
-                    last = p;
-
+                    // Draw continuous lines - Qt will handle clipping
                     if (first)
                         path.moveTo(p[0],p[1]);
                     else
                         path.lineTo(p[0],p[1]);
                     first = false;
                 }
-                auto item = fGraphicsView->scene()->addPath(path, QPen(key == "seg yz" ? COLOR_SEG_YZ: COLOR_SEG_XZ, _intersectionLineWidth));
-                item->setZValue(5);
-                item->setOpacity(_intersectionOpacity);
-                items.push_back(item);
+
+                // Only add non-empty paths
+                if (!path.isEmpty()) {
+                    auto item = fGraphicsView->scene()->addPath(path, QPen(key == "seg yz" ? COLOR_SEG_YZ: COLOR_SEG_XZ, _intersectionLineWidth));
+                    item->setZValue(5);
+                    item->setOpacity(_intersectionOpacity);
+                    items.push_back(item);
+                }
             }
             _intersect_items[key] = items;
         }
