@@ -1271,9 +1271,10 @@ static uint8_t get_block(const cv::Mat_<uint8_t> &block, const cv::Vec3f &loc, c
 }
 
 
-void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step, int min_tries)
+void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step, int min_tries, const std::vector<SubPatchHint>* subpatch_hints)
 {
     //Use grid-based sampling to search for plane intersections
+    //If subpatch_hints provided, only sample within those regions for massive speedup
 
     float block_step = 0.5*step;
 
@@ -1320,23 +1321,58 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         offsets = {{0, 0}};
     }
 
-    for (const auto& [offset_x, offset_y] : offsets) {
-        for(int y = offset_y; y < points.rows - 1; y += grid_step) {
-            for(int x = offset_x; x < points.cols - 1; x += grid_step) {
-                cv::Vec2f loc(x, y);
-                if (!grid_bounds.contains(cv::Point(loc))) {
-                    continue;
-                }
+    // Use spatial hints to dramatically reduce search space if available
+    if (subpatch_hints && !subpatch_hints->empty()) {
+        // Only sample within provided sub-patch regions (typically 200-500 points vs 10,000+)
+        std::cout << "[SPATIAL INDEX] Using " << subpatch_hints->size() << " sub-patch hints" << std::endl;
+        for (const auto& hint : *subpatch_hints) {
+            for (const auto& [offset_x, offset_y] : offsets) {
+                int y_start = std::max(offset_y, hint.row_start);
+                int y_end = std::min(points.rows - 1, hint.row_end);
+                int x_start = std::max(offset_x, hint.col_start);
+                int x_end = std::min(points.cols - 1, hint.col_end);
 
-                // Quick check: is this point's 3D position near the plane ROI?
-                cv::Vec3f test_point = at_int(points, loc);
-                cv::Vec3f plane_loc = plane->project(test_point);
+                for(int y = y_start; y < y_end; y += grid_step) {
+                    for(int x = x_start; x < x_end; x += grid_step) {
+                        cv::Vec2f loc(x, y);
+                        if (!grid_bounds.contains(cv::Point(loc))) {
+                            continue;
+                        }
 
-                if (expanded_roi.contains(cv::Point(plane_loc[0], plane_loc[1]))) {
-                    candidate_points.push_back(loc);
+                        // Quick check: is this point's 3D position near the plane ROI?
+                        cv::Vec3f test_point = at_int(points, loc);
+                        cv::Vec3f plane_loc = plane->project(test_point);
+
+                        if (expanded_roi.contains(cv::Point(plane_loc[0], plane_loc[1]))) {
+                            candidate_points.push_back(loc);
+                        }
+                    }
                 }
             }
         }
+        std::cout << "[SPATIAL INDEX] Generated " << candidate_points.size() << " candidate points (WITH spatial index)" << std::endl;
+    } else {
+        // Fall back to full grid sampling when no spatial hints available
+        std::cout << "[SPATIAL INDEX] NO spatial hints, using full grid search" << std::endl;
+        for (const auto& [offset_x, offset_y] : offsets) {
+            for(int y = offset_y; y < points.rows - 1; y += grid_step) {
+                for(int x = offset_x; x < points.cols - 1; x += grid_step) {
+                    cv::Vec2f loc(x, y);
+                    if (!grid_bounds.contains(cv::Point(loc))) {
+                        continue;
+                    }
+
+                    // Quick check: is this point's 3D position near the plane ROI?
+                    cv::Vec3f test_point = at_int(points, loc);
+                    cv::Vec3f plane_loc = plane->project(test_point);
+
+                    if (expanded_roi.contains(cv::Point(plane_loc[0], plane_loc[1]))) {
+                        candidate_points.push_back(loc);
+                    }
+                }
+            }
+        }
+        std::cout << "[SPATIAL INDEX] Generated " << candidate_points.size() << " candidate points (NO spatial index)" << std::endl;
     }
 
     for(const auto& candidate_loc : candidate_points) {
@@ -2147,6 +2183,105 @@ bool intersect(const Rect3D &a, const Rect3D &b)
     }
 
     return true;
+}
+
+// MultiSpatialIndex implementation
+MultiSpatialIndex::CellKey MultiSpatialIndex::worldToCell(const cv::Vec3f& point) const
+{
+    return {
+        static_cast<int>(std::floor(point[0] / _cellSize)),
+        static_cast<int>(std::floor(point[1] / _cellSize)),
+        static_cast<int>(std::floor(point[2] / _cellSize))
+    };
+}
+
+std::vector<MultiSpatialIndex::CellKey> MultiSpatialIndex::getCellsForBBox(const Rect3D& bbox) const
+{
+    std::vector<CellKey> cells;
+
+    // Get cell range that bbox spans
+    CellKey minCell = worldToCell(bbox.low);
+    CellKey maxCell = worldToCell(bbox.high);
+
+    // Iterate through all cells in the range
+    for (int z = minCell.z; z <= maxCell.z; ++z) {
+        for (int y = minCell.y; y <= maxCell.y; ++y) {
+            for (int x = minCell.x; x <= maxCell.x; ++x) {
+                cells.push_back({x, y, z});
+            }
+        }
+    }
+
+    return cells;
+}
+
+void MultiSpatialIndex::insert(const std::string& segmentName, const Rect3D& bbox)
+{
+    // Get cell range that bbox spans
+    CellKey minCell = worldToCell(bbox.low);
+    CellKey maxCell = worldToCell(bbox.high);
+
+    // Calculate how many cells this would span
+    int xRange = maxCell.x - minCell.x + 1;
+    int yRange = maxCell.y - minCell.y + 1;
+    int zRange = maxCell.z - minCell.z + 1;
+    int totalCells = xRange * yRange * zRange;
+
+    // If segment spans too many cells, skip detailed insertion and just mark a coarse region
+    // This prevents huge segments from causing O(n^3) insertions
+    constexpr int MAX_CELLS_PER_SEGMENT = 1000;
+
+    if (totalCells > MAX_CELLS_PER_SEGMENT) {
+        // For very large segments, only insert into corner cells + a sparse sampling
+        // This is a fallback to prevent pathological cases
+        _grid[minCell].insert(segmentName);
+        _grid[maxCell].insert(segmentName);
+        _grid[{minCell.x, minCell.y, maxCell.z}].insert(segmentName);
+        _grid[{minCell.x, maxCell.y, minCell.z}].insert(segmentName);
+        _grid[{minCell.x, maxCell.y, maxCell.z}].insert(segmentName);
+        _grid[{maxCell.x, minCell.y, minCell.z}].insert(segmentName);
+        _grid[{maxCell.x, minCell.y, maxCell.z}].insert(segmentName);
+        _grid[{maxCell.x, maxCell.y, minCell.z}].insert(segmentName);
+        return;
+    }
+
+    // Insert directly into grid without creating intermediate vector
+    for (int z = minCell.z; z <= maxCell.z; ++z) {
+        for (int y = minCell.y; y <= maxCell.y; ++y) {
+            for (int x = minCell.x; x <= maxCell.x; ++x) {
+                _grid[{x, y, z}].insert(segmentName);
+            }
+        }
+    }
+}
+
+std::vector<std::string> MultiSpatialIndex::query(const Rect3D& region) const
+{
+    // Get cell range that query region spans
+    CellKey minCell = worldToCell(region.low);
+    CellKey maxCell = worldToCell(region.high);
+
+    // Collect all unique segments from cells in this range
+    std::set<std::string> uniqueSegments;
+
+    for (int z = minCell.z; z <= maxCell.z; ++z) {
+        for (int y = minCell.y; y <= maxCell.y; ++y) {
+            for (int x = minCell.x; x <= maxCell.x; ++x) {
+                auto it = _grid.find({x, y, z});
+                if (it != _grid.end()) {
+                    uniqueSegments.insert(it->second.begin(), it->second.end());
+                }
+            }
+        }
+    }
+
+    // Return as vector
+    return std::vector<std::string>(uniqueSegments.begin(), uniqueSegments.end());
+}
+
+void MultiSpatialIndex::clear()
+{
+    _grid.clear();
 }
 
 static Rect3D rect_from_json(const nlohmann::json &json)

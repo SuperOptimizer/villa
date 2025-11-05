@@ -260,6 +260,7 @@ protected:
     QTimer* _intersectionUpdateTimer;
     bool _intersectionUpdatePending = false;
     bool _intersectionsInvalidated = false;
+    std::set<std::string> _invalidatedSegments;  // Track which specific segments need recomputing
 
     // BBox tool state
     bool _bboxMode = false;

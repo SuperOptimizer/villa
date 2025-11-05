@@ -24,6 +24,7 @@
 #include <QPainter>
 #include <QScopedValueRollback>
 
+#include <chrono>
 #include <cstdint>
 #include <list>
 #include <mutex>
@@ -771,6 +772,7 @@ void CVolumeViewer::invalidateVis()
 void CVolumeViewer::invalidateIntersect(const std::string &name)
 {
     if (!name.size() || name == _surf_name) {
+        // Invalidate ALL segments - clear everything
         for(auto &pair : _intersect_items) {
             for(auto &item : pair.second) {
                 fScene->removeItem(item);
@@ -779,13 +781,16 @@ void CVolumeViewer::invalidateIntersect(const std::string &name)
         }
         _intersect_items.clear();
         _intersectionsInvalidated = true;
+        _invalidatedSegments.clear();  // When invalidating all, clear the specific set
     }
     else if (_intersect_items.count(name)) {
+        // Invalidate specific segment - remove its cached items and mark it for recompute
         for(auto &item : _intersect_items[name]) {
             fScene->removeItem(item);
             delete item;
         }
         _intersect_items.erase(name);
+        _invalidatedSegments.insert(name);  // Mark this specific segment for recomputing
         _intersectionsInvalidated = true;
     }
 }
@@ -1600,6 +1605,12 @@ void CVolumeViewer::renderVisible(bool force)
 
 void CVolumeViewer::renderIntersections(bool force)
 {
+    static int callCount = 0;
+    callCount++;
+    qDebug() << "[INTERSECTION TIMING] renderIntersections called (call #" << callCount << ", force=" << force << ")";
+
+    auto startTime = std::chrono::high_resolution_clock::now();
+
     if (!volume || !volume->zarrDataset() || !_surf)
         return;
 
@@ -1632,21 +1643,32 @@ void CVolumeViewer::renderIntersections(bool force)
         }
     }
 
-    // Clear the invalidation flag - we're about to re-render
-    _intersectionsInvalidated = false;
+    // Determine if we need full rerender or partial update
+    bool fullRerender = _invalidatedSegments.empty();  // Empty set means rerender everything
+    std::set<std::string> segmentsToRecompute = _invalidatedSegments;
 
-    // Clear cached intersections when viewport/scale changes or forced
-    for (auto &pair : _intersect_items) {
-        for(auto &item : pair.second) {
-            fScene->removeItem(item);
-            delete item;
+    // Clear the invalidation flags
+    _intersectionsInvalidated = false;
+    _invalidatedSegments.clear();
+
+    if (fullRerender) {
+        // Full rerender: Clear ALL cached intersections
+        for (auto &pair : _intersect_items) {
+            for(auto &item : pair.second) {
+                fScene->removeItem(item);
+                delete item;
+            }
         }
+        _intersect_items.clear();
+    } else {
+        // Partial update: Only clear the segments that were invalidated (already done in invalidateIntersect)
+        qDebug() << "[INTERSECTION] Partial update: recomputing only" << segmentsToRecompute.size() << "invalidated segments";
     }
-    _intersect_items.clear();
 
     _last_intersect_area = curr_img_area;
     _last_intersect_scale = _scale;
 
+    // Remove any cached items that are no longer enabled for intersection rendering
     std::vector<std::string> remove;
     for (auto &pair : _intersect_items)
         if (!_intersect_tgts.count(pair.first)) {
@@ -1671,72 +1693,56 @@ void CVolumeViewer::renderIntersections(bool force)
         view_bbox = expand_rect(view_bbox, plane->coord(cv::Vec3f(0,0,0), {plane_roi.x, plane_roi.br().y, 0}));
         view_bbox = expand_rect(view_bbox, plane->coord(cv::Vec3f(0,0,0), {plane_roi.br().x, plane_roi.br().y, 0}));
 
+        // Query global spatial index to find segments near this plane (only needed for full rerender)
+        std::vector<std::string> spatially_relevant_segments;
+        if (fullRerender && _viewer_manager) {
+            spatially_relevant_segments = _viewer_manager->querySegmentsNearPlane(view_bbox);
+            qDebug() << "[INTERSECTION] Spatial query found" << spatially_relevant_segments.size() << "relevant segments (out of" << _intersect_tgts.size() << "enabled)";
+        }
+
+        // Build final candidate list:
         std::vector<std::string> intersect_cands;
-        std::vector<std::string> intersect_tgts_v;
+        std::set<std::string> added;
 
-        // Get reference point for distance calculations
-        cv::Vec3f reference_center;
-        bool has_reference = false;
+        if (fullRerender) {
+            // Full rerender: compute all spatially relevant segments
+            const std::vector<std::string> always_render = {
+                "segmentation",
+                "seg xz",
+                "seg yz",
+                "xy plane",
+                "xz plane",
+                "yz plane"
+            };
 
-        // Priority 1: Use the focus point from ctrl-click
-        POI* focus_poi = _surf_col->poi("focus");
-        if (focus_poi) {
-            reference_center = focus_poi->p;
-            has_reference = true;
-        } else {
-            // Priority 2: Try to get the current/selected segment's bbox center
-            auto* current_seg = dynamic_cast<QuadSurface*>(_surf_col->surface("segmentation"));
-            if (current_seg) {
-                Rect3D current_bbox = current_seg->bbox();
-                reference_center = {
-                    (current_bbox.low[0] + current_bbox.high[0]) / 2.0f,
-                    (current_bbox.low[1] + current_bbox.high[1]) / 2.0f,
-                    (current_bbox.low[2] + current_bbox.high[2]) / 2.0f
-                };
-                has_reference = true;
-            } else {
-                // Priority 3: Fallback to view center if no focus or current segment
-                reference_center = {
-                    (view_bbox.low[0] + view_bbox.high[0]) / 2.0f,
-                    (view_bbox.low[1] + view_bbox.high[1]) / 2.0f,
-                    (view_bbox.low[2] + view_bbox.high[2]) / 2.0f
-                };
+            for (const auto& name : always_render) {
+                if (_surf_col->surface(name) && _intersect_tgts.count(name)) {
+                    intersect_cands.push_back(name);
+                    added.insert(name);
+                }
             }
-        }
 
-        // Get candidates from ViewerManager cache (handles distance calculation and sorting)
-        // Selection is based purely on distance from focus point, not viewport
-        std::vector<ViewerManager::CandidateInfo> candidates_with_dist;
-
-        if (_viewer_manager) {
-            candidates_with_dist = _viewer_manager->getCachedCandidates(
-                reference_center,
-                _intersect_tgts,
-                _intersect_items,
-                !_highlightedSegments.empty()
-            );
-        }
-
-        // Take only the closest segments (configurable via UI)
-        // Scale down max intersections when zoomed out for performance
-        // When using highlighted segments, no limit is applied
-        int num_to_process;
-        if (!_highlightedSegments.empty()) {
-            num_to_process = candidates_with_dist.size();
-        } else {
-            // Reduce max intersections when zoomed out
-            int effective_max_intersections = _maxIntersections;
-            if (_scale < 0.1f) {
-                effective_max_intersections = std::max(10, _maxIntersections / 4);  // 25% when very zoomed out
-            } else if (_scale < 0.3f) {
-                effective_max_intersections = std::max(20, _maxIntersections / 2);  // 50% when zoomed out
+            // Add spatially relevant segments that are enabled
+            for (const auto& seg : spatially_relevant_segments) {
+                if (_intersect_tgts.count(seg) && !added.count(seg)) {
+                    intersect_cands.push_back(seg);
+                    added.insert(seg);
+                }
             }
-            num_to_process = std::min(effective_max_intersections, static_cast<int>(candidates_with_dist.size()));
-        }
-        for (int i = 0; i < num_to_process; i++) {
-            intersect_cands.push_back(candidates_with_dist[i].key);
+
+            qDebug() << "[INTERSECTION] Full rerender: processing" << intersect_cands.size() << "segments";
+        } else {
+            // Partial update: only compute the segments that were invalidated
+            for (const auto& seg : segmentsToRecompute) {
+                if (_surf_col->surface(seg) && _intersect_tgts.count(seg)) {
+                    intersect_cands.push_back(seg);
+                }
+            }
+
+            qDebug() << "[INTERSECTION] Partial update: processing" << intersect_cands.size() << "invalidated segments";
         }
 
+        auto computeStart = std::chrono::high_resolution_clock::now();
         std::vector<std::vector<std::vector<cv::Vec3f>>> intersections(intersect_cands.size());
 
 #pragma omp parallel for
@@ -1749,13 +1755,12 @@ void CVolumeViewer::renderIntersections(bool force)
             }
 
             std::vector<std::vector<cv::Vec2f>> xy_seg_;
-            if (key == "segmentation") {
-                find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_scale, 1000);
-            }
-            else
-                find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_scale);
-
+            find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_scale);
         }
+
+        auto computeEnd = std::chrono::high_resolution_clock::now();
+        auto computeDuration = std::chrono::duration_cast<std::chrono::milliseconds>(computeEnd - computeStart);
+        qDebug() << "[INTERSECTION TIMING] Intersection computation took" << computeDuration.count() << "ms for" << intersect_cands.size() << "segments";
 
         std::hash<std::string> str_hasher;
 
@@ -1842,6 +1847,10 @@ void CVolumeViewer::renderIntersections(bool force)
             _surf_col->setIntersection(_surf_name, key, _ignore_intersect_change);
             _ignore_intersect_change = nullptr;
         }
+
+        auto renderEnd = std::chrono::high_resolution_clock::now();
+        auto totalDuration = std::chrono::duration_cast<std::chrono::milliseconds>(renderEnd - startTime);
+        qDebug() << "[INTERSECTION TIMING] Total renderIntersections took" << totalDuration.count() << "ms";
     }
     else if (_surf_name == "segmentation" /*&& dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"))*/) {
         // QuadSurface *crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));

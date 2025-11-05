@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <opencv2/core.hpp>
+#include "vc/core/util/Surface.hpp"
 
 class QMdiArea;
 class QGraphicsItem;
@@ -32,6 +33,7 @@ class ViewerManager : public QObject
     Q_OBJECT
 
 public:
+
     ViewerManager(CSurfaceCollection* surfaces,
                   VCCollection* points,
                   ChunkCache* cache,
@@ -101,6 +103,11 @@ public:
         bool useHighlightedSegments);
     void invalidateCandidateCache();
 
+    // Global spatial index for fast segment culling
+    void buildGlobalSpatialIndex();
+    void invalidateGlobalSpatialIndex();
+    std::vector<std::string> querySegmentsNearPlane(const Rect3D& planeBounds) const;
+
 signals:
     void viewerCreated(CVolumeViewer* viewer);
     void overlayWindowChanged(float low, float high);
@@ -139,4 +146,7 @@ private:
     cv::Vec3f _cachedReferenceCenter{0, 0, 0};
     std::vector<CandidateInfo> _cachedCandidates;
     bool _candidateCacheValid{false};
+
+    // Global spatial index covering entire volume (cells of 500 voxels)
+    MultiSpatialIndex _globalSpatialIndex{500.0f};
 };

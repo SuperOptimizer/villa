@@ -1055,6 +1055,10 @@ void CWindow::CreateWidgets(void)
         _segmentationGrower->setSurfacePanel(_surfacePanel.get());
     }
     connect(_surfacePanel.get(), &SurfacePanelController::surfacesLoaded, this, [this]() {
+        // Build global spatial index for fast segment culling during intersection rendering
+        if (_viewerManager) {
+            _viewerManager->buildGlobalSpatialIndex();
+        }
         emit sendSurfacesLoaded();
     });
     connect(_surfacePanel.get(), &SurfacePanelController::surfaceSelectionCleared, this, [this]() {

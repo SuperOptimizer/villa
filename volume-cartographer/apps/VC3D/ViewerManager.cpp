@@ -18,6 +18,7 @@
 #include <QMdiSubWindow>
 #include <QSettings>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 ViewerManager::ViewerManager(CSurfaceCollection* surfaces,
@@ -463,4 +464,80 @@ void ViewerManager::invalidateCandidateCache()
 {
     _candidateCacheValid = false;
     _cachedCandidates.clear();
+}
+
+void ViewerManager::buildGlobalSpatialIndex()
+{
+    if (!_surfaces) {
+        qDebug() << "[GLOBAL SPATIAL INDEX] No surfaces collection";
+        return;
+    }
+
+    auto startTime = std::chrono::high_resolution_clock::now();
+
+    // Clear existing index
+    _globalSpatialIndex.clear();
+
+    auto surfaceNames = _surfaces->surfaceNames();
+    qDebug() << "[GLOBAL SPATIAL INDEX] Building index for" << surfaceNames.size() << "surfaces";
+
+    int successCount = 0;
+    int skippedCount = 0;
+    for (const auto& name : surfaceNames) {
+        auto* surface = _surfaces->surface(name);
+        if (!surface) {
+            skippedCount++;
+            continue;
+        }
+
+        // Try to get QuadSurface - either directly or from DeltaSurface base
+        QuadSurface* quadSurf = dynamic_cast<QuadSurface*>(surface);
+        if (!quadSurf) {
+            auto* deltaSurf = dynamic_cast<DeltaSurface*>(surface);
+            if (deltaSurf && deltaSurf->getBase()) {
+                quadSurf = dynamic_cast<QuadSurface*>(deltaSurf->getBase());
+            }
+        }
+
+        if (!quadSurf) {
+            skippedCount++;
+            continue;
+        }
+
+        // Insert segment into spatial index with its bounding box
+        Rect3D bbox = quadSurf->bbox();
+        _globalSpatialIndex.insert(name, bbox);
+        successCount++;
+
+        // Log progress every 100 segments
+        if (successCount % 100 == 0) {
+            qDebug() << "[GLOBAL SPATIAL INDEX] Indexed" << successCount << "segments so far...";
+        }
+    }
+
+    auto endTime = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+
+    qDebug() << "[GLOBAL SPATIAL INDEX] Indexed" << successCount << "segments in" << duration.count() << "ms"
+             << "using" << _globalSpatialIndex.cellCount() << "cells";
+}
+
+void ViewerManager::invalidateGlobalSpatialIndex()
+{
+    _globalSpatialIndex.clear();
+}
+
+std::vector<std::string> ViewerManager::querySegmentsNearPlane(const Rect3D& planeBounds) const
+{
+    // Query spatial index for segments in this region (fast, no linear search!)
+    auto startTime = std::chrono::high_resolution_clock::now();
+
+    std::vector<std::string> result = _globalSpatialIndex.query(planeBounds);
+
+    auto endTime = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+
+    qDebug() << "[GLOBAL SPATIAL INDEX] Query returned" << result.size() << "segments in" << duration.count() << "μs";
+
+    return result;
 }

@@ -23,6 +23,49 @@ struct Rect3D {
 bool intersect(const Rect3D &a, const Rect3D &b);
 Rect3D expand_rect(const Rect3D &a, const cv::Vec3f &p);
 
+// Spatial hash grid for fast segment culling
+// Divides 3D space into cells of cellSize voxels
+// Each cell contains list of segment names whose bboxes overlap that cell
+class MultiSpatialIndex {
+public:
+    explicit MultiSpatialIndex(float cellSize = 50.0f) : _cellSize(cellSize) {}
+
+    // Add a segment with its bounding box to the index
+    void insert(const std::string& segmentName, const Rect3D& bbox);
+
+    // Query which segments intersect the given region
+    std::vector<std::string> query(const Rect3D& region) const;
+
+    // Remove all entries
+    void clear();
+
+    // Get total number of cells in use
+    size_t cellCount() const { return _grid.size(); }
+
+private:
+    struct CellKey {
+        int x, y, z;
+
+        bool operator==(const CellKey& other) const {
+            return x == other.x && y == other.y && z == other.z;
+        }
+    };
+
+    struct CellKeyHash {
+        std::size_t operator()(const CellKey& k) const {
+            // Simple hash combining x, y, z
+            return std::hash<int>()(k.x) ^
+                   (std::hash<int>()(k.y) << 1) ^
+                   (std::hash<int>()(k.z) << 2);
+        }
+    };
+
+    CellKey worldToCell(const cv::Vec3f& point) const;
+    std::vector<CellKey> getCellsForBBox(const Rect3D& bbox) const;
+
+    float _cellSize;
+    std::unordered_map<CellKey, std::set<std::string>, CellKeyHash> _grid;
+};
 
 
 //base surface class
@@ -180,6 +223,9 @@ public:
     void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, const cv::Vec3f &ptr, float scale, const cv::Vec3f &offset) override = 0;
     float pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int max_iters = 1000) override;
 
+    Surface* getBase() { return _base; }
+    const Surface* getBase() const { return _base; }
+
 protected:
     Surface *_base = nullptr;
 };
@@ -259,8 +305,16 @@ bool contains(SurfaceMeta &a, const cv::Vec3f &loc, int max_iters = 1000);
 bool contains(SurfaceMeta &a, const std::vector<cv::Vec3f> &locs);
 bool contains_any(SurfaceMeta &a, const std::vector<cv::Vec3f> &locs);
 
+// Sub-patch hint for accelerated starting point search
+struct SubPatchHint {
+    int row_start;
+    int row_end;
+    int col_start;
+    int col_end;
+};
+
 //TODO constrain to visible area? or add visible area display?
-void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step, int min_tries = 10);
+void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step, int min_tries = 10, const std::vector<SubPatchHint>* subpatch_hints = nullptr);
 
 float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, float init_step = 16.0, float min_step = 0.125);
 
