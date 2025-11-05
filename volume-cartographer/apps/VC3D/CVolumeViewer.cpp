@@ -339,12 +339,12 @@ CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, QWidget* parent)
 
     _overlayUpdateTimer = new QTimer(this);
     _overlayUpdateTimer->setSingleShot(true);
-    _overlayUpdateTimer->setInterval(50);
+    _overlayUpdateTimer->setInterval(6);
     connect(_overlayUpdateTimer, &QTimer::timeout, this, &CVolumeViewer::updateAllOverlays);
 
     _intersectionUpdateTimer = new QTimer(this);
     _intersectionUpdateTimer->setSingleShot(true);
-    _intersectionUpdateTimer->setInterval(250);  // Wait 250ms after viewport stops changing
+    _intersectionUpdateTimer->setInterval(6);
     connect(_intersectionUpdateTimer, &QTimer::timeout, this, [this]() {
         _intersectionUpdatePending = false;
         renderIntersections(true);  // Force render when timer fires
@@ -771,6 +771,10 @@ void CVolumeViewer::invalidateVis()
 
 void CVolumeViewer::invalidateIntersect(const std::string &name)
 {
+    // Disable scene updates during batch removal for better performance
+    bool updatesEnabled = fGraphicsView->updatesEnabled();
+    fGraphicsView->setUpdatesEnabled(false);
+
     if (!name.size() || name == _surf_name) {
         // Invalidate ALL segments - clear everything
         for(auto &pair : _intersect_items) {
@@ -793,6 +797,9 @@ void CVolumeViewer::invalidateIntersect(const std::string &name)
         _invalidatedSegments.insert(name);  // Mark this specific segment for recomputing
         _intersectionsInvalidated = true;
     }
+
+    // Re-enable scene updates
+    fGraphicsView->setUpdatesEnabled(updatesEnabled);
 }
 
 
@@ -1651,6 +1658,10 @@ void CVolumeViewer::renderIntersections(bool force)
     _intersectionsInvalidated = false;
     _invalidatedSegments.clear();
 
+    // Disable scene updates during batch operations for better performance
+    bool scenePreviouslyEnabled = fGraphicsView->updatesEnabled();
+    fGraphicsView->setUpdatesEnabled(false);
+
     if (fullRerender) {
         // Full rerender: Clear ALL cached intersections
         for (auto &pair : _intersect_items) {
@@ -1807,6 +1818,9 @@ void CVolumeViewer::renderIntersections(bool force)
 
             std::vector<QGraphicsItem*> items;
 
+            // Create pen once for this segment to avoid repeated allocations
+            QPen pen(col, width);
+
             int len = 0;
             for (auto seg : intersections[n]) {
                 QPainterPath path;
@@ -1823,7 +1837,7 @@ void CVolumeViewer::renderIntersections(bool force)
                         continue;
 
                     if (last[0] != -1 && cv::norm(p-last) >= 8) {
-                        auto item = fGraphicsView->scene()->addPath(path, QPen(col, width));
+                        auto item = fGraphicsView->scene()->addPath(path, pen);
                         item->setZValue(z_value);
                         item->setOpacity(_intersectionOpacity);
                         items.push_back(item);
@@ -1837,7 +1851,7 @@ void CVolumeViewer::renderIntersections(bool force)
                         path.lineTo(p[0],p[1]);
                     first = false;
                 }
-                auto item = fGraphicsView->scene()->addPath(path, QPen(col, width));
+                auto item = fGraphicsView->scene()->addPath(path, pen);
                 item->setZValue(z_value);
                 item->setOpacity(_intersectionOpacity);
                 items.push_back(item);
@@ -1851,6 +1865,9 @@ void CVolumeViewer::renderIntersections(bool force)
         auto renderEnd = std::chrono::high_resolution_clock::now();
         auto totalDuration = std::chrono::duration_cast<std::chrono::milliseconds>(renderEnd - startTime);
         qDebug() << "[INTERSECTION TIMING] Total renderIntersections took" << totalDuration.count() << "ms";
+
+        // Re-enable scene updates now that we're done with batch operations
+        fGraphicsView->setUpdatesEnabled(scenePreviouslyEnabled);
     }
     else if (_surf_name == "segmentation" /*&& dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"))*/) {
         // QuadSurface *crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
@@ -1932,6 +1949,9 @@ void CVolumeViewer::renderIntersections(bool force)
             }
             _intersect_items[key] = items;
         }
+
+        // Re-enable scene updates now that we're done with batch operations
+        fGraphicsView->setUpdatesEnabled(scenePreviouslyEnabled);
     }
 }
 
