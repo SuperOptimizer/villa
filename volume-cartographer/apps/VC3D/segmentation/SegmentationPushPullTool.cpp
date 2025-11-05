@@ -28,7 +28,7 @@ Q_LOGGING_CATEGORY(lcSegPushPull, "vc.segmentation.pushpull")
 
 namespace
 {
-constexpr int kPushPullIntervalMs = 30;
+constexpr int kPushPullIntervalMs = 5;
 constexpr float kAlphaMinStep = 0.05f;
 constexpr float kAlphaMaxStep = 20.0f;
 constexpr float kAlphaMinRange = 0.01f;
