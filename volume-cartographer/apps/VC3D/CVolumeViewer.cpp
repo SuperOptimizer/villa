@@ -1820,7 +1820,14 @@ void CVolumeViewer::renderIntersections(bool force)
                 }
             }
 
-            // 3. Add remaining segments up to _maxIntersections, sorted by distance to reference point
+            // 3. If highlighted segments specified, ONLY show those + current segment
+            // Otherwise add remaining segments up to _maxIntersections, sorted by distance to reference point
+            int otherCount = 0;
+            if (!_highlightedSegments.empty()) {
+                // Highlighted segments act as filter - don't add any others
+                qDebug() << "[INTERSECTION] Highlighted filter active: showing only" << alwaysCount << "special +" << highlightedCount << "highlighted";
+            } else {
+                // No filter - add closest segments
             // Priority: 1) POI center if selected, 2) selected segment bbox center, 3) plane origin
             cv::Vec3f focusPoint = plane->origin();
             if (_surf_col) {
@@ -1858,7 +1865,6 @@ void CVolumeViewer::renderIntersections(bool force)
                       [](const auto& a, const auto& b) { return a.second < b.second; });
 
             // Take up to _maxIntersections closest segments
-            int otherCount = 0;
             for (const auto& [seg, dist] : candidatesWithDistance) {
                 if (otherCount >= _maxIntersections) {
                     break;
@@ -1868,8 +1874,9 @@ void CVolumeViewer::renderIntersections(bool force)
                 otherCount++;
             }
 
-            qDebug() << "[INTERSECTION] Full rerender: processing" << intersect_cands.size() << "segments"
-                     << "(" << alwaysCount << "special +" << highlightedCount << "highlighted +" << otherCount << "closest, limit=" << _maxIntersections << ")";
+                qDebug() << "[INTERSECTION] Full rerender: processing" << intersect_cands.size() << "segments"
+                         << "(" << alwaysCount << "special +" << highlightedCount << "highlighted +" << otherCount << "closest, limit=" << _maxIntersections << ")";
+            }  // end else (no highlighted filter)
         } else {
             // Partial update: only compute the segments that were invalidated
             for (const auto& seg : segmentsToRecompute) {
