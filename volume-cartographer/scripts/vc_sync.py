@@ -162,7 +162,7 @@ class S3SyncManager:
             print(f"Exit code: {e.returncode}")
             if e.stdout:
                 print(f"Stdout: {e.stdout}")
-            if e.stderr:a
+            if e.stderr:
                 print(f"Stderr: {e.stderr}")
             raise
 
