@@ -128,7 +128,7 @@ private:
     std::vector<CVolumeViewer*> _viewers;
     std::unordered_map<CVolumeViewer*, bool> _resetDefaults;
     float _intersectionOpacity{1.0f};
-    int _maxIntersections{100};
+    int _maxIntersections{250};
     int _intersectionLineWidth{2};
     std::vector<std::string> _highlightedSegments;
     std::shared_ptr<Volume> _overlayVolume;

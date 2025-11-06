@@ -1256,7 +1256,7 @@ static void set_block(cv::Mat_<uint8_t> &block, const cv::Vec3f &last_loc, const
     if (x1 == x2 && y1 == y2)
         block(y1, x1) = 1;
     else
-        cv::line(block, {x1,y1},{x2,y2}, 3);
+        cv::line(block, {x1,y1},{x2,y2}, 1);  // Thickness 1 for precise blocking
 }
 
 static uint8_t get_block(const cv::Mat_<uint8_t> &block, const cv::Vec3f &loc, const cv::Rect &roi, float step)
@@ -1276,7 +1276,9 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     //Use grid-based sampling to search for plane intersections
     //If subpatch_hints provided, only sample within those regions for massive speedup
 
-    float block_step = 0.5*step;
+    // Use finer block grid to reduce false blocking of valid curve continuations
+    // With spatial hints, we have fewer redundant traces so less aggressive blocking needed
+    float block_step = std::max(0.1f * step, 0.5f);  // At least 0.5 voxel resolution, scales with step
 
     cv::Mat_<uint8_t> block(cv::Size(plane_roi.width/block_step, plane_roi.height/block_step), 0);
 
@@ -1288,38 +1290,31 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     // Build list of candidate starting points using grid-based sampling
     std::vector<cv::Vec2f> candidate_points;
 
-    // Use adaptive grid sampling based on zoom level (step parameter)
-    // When step is large (zoomed out), use coarser grid for performance
-    // When step is small (zoomed in), use finer grid to catch all curves
-    int base_grid_step = std::max(2, std::min(points.cols, points.rows) / 100);
+    // Use aggressive coarse grid sampling for performance
+    // We only need to find ONE starting point per curve, not thousands
+    int base_grid_step = std::max(20, std::min(points.cols, points.rows) / 20);
 
     // Scale grid step based on tracing step (which reflects zoom level)
-    // When step > 20, we're quite zoomed out, so use coarser sampling
     int grid_step = base_grid_step;
     if (step > 50.0f) {
-        grid_step = base_grid_step * 4;  // Very coarse when very zoomed out
+        grid_step = base_grid_step * 8;  // Extremely coarse when very zoomed out
     } else if (step > 20.0f) {
-        grid_step = base_grid_step * 2;  // Coarser when zoomed out
+        grid_step = base_grid_step * 4;  // Very coarse when zoomed out
+    } else if (step > 10.0f) {
+        grid_step = base_grid_step * 2;  // Coarse at normal zoom
     }
 
-    // Expand the ROI slightly to catch points near the edge
+    // Minimal ROI expansion - just enough to avoid edge clipping
     cv::Rect expanded_roi(
-        plane_roi.x - step * 2,
-        plane_roi.y - step * 2,
-        plane_roi.width + step * 4,
-        plane_roi.height + step * 4
+        plane_roi.x - step,
+        plane_roi.y - step,
+        plane_roi.width + step * 2,
+        plane_roi.height + step * 2
     );
 
-    // Use multi-pass offset grid only when zoomed in (step < 10)
-    // When zoomed out, single pass is sufficient and much faster
-    std::vector<std::pair<int, int>> offsets;
-    if (step < 10.0f) {
-        // Fine detail mode: use 4-pass offset grid
-        offsets = {{0, 0}, {grid_step/2, 0}, {0, grid_step/2}, {grid_step/2, grid_step/2}};
-    } else {
-        // Coarse mode: single pass for performance
-        offsets = {{0, 0}};
-    }
+    // Always use single-pass grid for performance
+    // The blocking mechanism will connect nearby traces
+    std::vector<std::pair<int, int>> offsets = {{0, 0}};
 
     // Use spatial hints to dramatically reduce search space if available
     if (subpatch_hints && !subpatch_hints->empty()) {
@@ -1443,11 +1438,13 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         last_plane_loc = plane_loc;
 
         //go one direction
-        for(int n=0;n<100;n++) {
+        for(int n=0;n<500;n++) {  // Increased from 100 to handle longer curves
             //now search following points
             cv::Vec2f loc3 = loc2+loc2-loc;
 
-            if (!grid_bounds.contains(cv::Point(loc3)))
+            // Use float precision for bounds check to avoid truncation issues
+            if (loc3[0] < grid_bounds.x || loc3[0] >= grid_bounds.x + grid_bounds.width ||
+                loc3[1] < grid_bounds.y || loc3[1] >= grid_bounds.y + grid_bounds.height)
                 break;
 
                 point3 = at_int(points, loc3);
@@ -1458,13 +1455,14 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 //then refine
                 dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
 
-                if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc))
+                // Relaxed distance threshold to handle surface irregularities
+                // Fixed bug: check loc3 (new position) not loc (old position)
+                if (dist < 0 || dist > 3 || !loc_valid_xy(points, loc3))
                     break;
 
-            // Check if point is within plane_roi BEFORE adding to segment
+            // Don't stop based on blocking during tracing - prevents artificial gaps
+            // We mark areas as we go for duplicate detection at START points only
             plane_loc = plane->project(point3);
-            if (get_block(block, plane_loc, plane_roi, block_step))
-                break;
 
             seg.push_back(point3);
             seg_loc.push_back(loc3);
@@ -1486,11 +1484,13 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         last_plane_loc = plane->project(point2);
 
         //FIXME repeat by not copying code ...
-        for(int n=0;n<100;n++) {
+        for(int n=0;n<500;n++) {  // Increased from 100 to handle longer curves
             //now search following points
             cv::Vec2f loc3 = loc2+loc2-loc;
 
-            if (!grid_bounds.contains(cv::Point(loc3[0])))
+            // Use float precision for bounds check to avoid truncation issues
+            if (loc3[0] < grid_bounds.x || loc3[0] >= grid_bounds.x + grid_bounds.width ||
+                loc3[1] < grid_bounds.y || loc3[1] >= grid_bounds.y + grid_bounds.height)
                 break;
 
                 point3 = at_int(points, loc3);
@@ -1501,13 +1501,13 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 //then refine
                 dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
 
-                if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc))
+                // Relaxed distance threshold to handle surface irregularities
+                // Fixed bug: check loc3 (new position) not loc (old position)
+                if (dist < 0 || dist > 3 || !loc_valid_xy(points, loc3))
                     break;
 
-            // Check if point is within plane_roi BEFORE adding to segment
+            // Don't stop based on blocking during tracing - prevents artificial gaps
             plane_loc = plane->project(point3);
-            if (get_block(block, plane_loc, plane_roi, block_step))
-                break;
 
             seg2.push_back(point3);
             seg_loc2.push_back(loc3);
@@ -1531,25 +1531,12 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         seg_grid_raw.push_back(seg_loc2);
     }
 
-    //split up into disconnected segments
+    // Keep traced segments as-is without distance-based splitting
+    // Only break when tracing naturally fails (out of bounds, optimization failure, etc.)
     for(int s=0;s<seg_vol_raw.size();s++) {
-        std::vector<cv::Vec3f> seg_vol_curr;
-        std::vector<cv::Vec2f> seg_grid_curr;
-        cv::Vec3f last = {-1,-1,-1};
-        for(int n=0;n<seg_vol_raw[s].size();n++) {
-                if (last[0] != -1 && cv::norm(last-seg_vol_raw[s][n]) >= 2*step) {
-                seg_vol.push_back(seg_vol_curr);
-                seg_grid.push_back(seg_grid_curr);
-                seg_vol_curr.resize(0);
-                seg_grid_curr.resize(0);
-            }
-            last = seg_vol_raw[s][n];
-            seg_vol_curr.push_back(seg_vol_raw[s][n]);
-            seg_grid_curr.push_back(seg_grid_raw[s][n]);
-        }
-        if (seg_vol_curr.size() >= 2) {
-            seg_vol.push_back(seg_vol_curr);
-            seg_grid.push_back(seg_grid_curr);
+        if (seg_vol_raw[s].size() >= 2) {
+            seg_vol.push_back(seg_vol_raw[s]);
+            seg_grid.push_back(seg_grid_raw[s]);
         }
     }
 }

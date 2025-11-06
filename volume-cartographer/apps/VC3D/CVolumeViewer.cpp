@@ -347,7 +347,7 @@ CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, QWidget* parent)
     _intersectionUpdateTimer->setInterval(6);
     connect(_intersectionUpdateTimer, &QTimer::timeout, this, [this]() {
         _intersectionUpdatePending = false;
-        renderIntersections(true);  // Force render when timer fires
+        renderIntersections();  // Don't force - allow cache to work on viewport changes
     });
 
     _lbl = new QLabel(this);
@@ -581,12 +581,12 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
                 _surf_col->setPOI("focus", focus);
             }
 
-            // Focus point changed - invalidate cache and force intersection redraw
+            // Focus point changed - recompute candidate distances but keep 3D curves cached
             if (_viewer_manager) {
                 _viewer_manager->invalidateCandidateCache();
             }
-            invalidateIntersect();  // Mark all intersections for redraw
-            renderIntersections();  // Recompute intersections after z-slice change
+            // Don't invalidate intersections - 3D curves don't change with z-slice
+            renderIntersections();  // Redraw intersections after z-slice change
 
             handled = true;
         } else {
@@ -783,6 +783,7 @@ void CVolumeViewer::invalidateIntersect(const std::string &name)
             }
         }
         _intersect_items.clear();
+        _intersect_curves_3d.clear();  // Clear 3D curve cache
         _intersectionsInvalidated = true;
         _invalidatedSegments.clear();  // When invalidating all, clear the specific set
     }
@@ -793,6 +794,7 @@ void CVolumeViewer::invalidateIntersect(const std::string &name)
             delete item;
         }
         _intersect_items.erase(name);
+        _intersect_curves_3d.erase(name);  // Clear cached 3D curves for this segment
         _invalidatedSegments.insert(name);  // Mark this specific segment for recomputing
         _intersectionsInvalidated = true;
     }
@@ -1712,6 +1714,11 @@ void CVolumeViewer::renderIntersections(bool force)
             }
         }
         _intersect_items.clear();
+
+        // Only clear 3D curve cache on full rerender, not viewport change
+        if (fullRerender) {
+            _intersect_curves_3d.clear();
+        }
     } else {
         // Partial update: Only clear the segments that were invalidated (already done in invalidateIntersect)
         qDebug() << "[INTERSECTION] Partial update: recomputing only" << segmentsToRecompute.size() << "invalidated segments";
@@ -1737,7 +1744,21 @@ void CVolumeViewer::renderIntersections(bool force)
 
 
     if (plane) {
-        cv::Rect plane_roi = {curr_img_area.x()/_scale, curr_img_area.y()/_scale, curr_img_area.width()/_scale, curr_img_area.height()/_scale};
+        // Expand ROI beyond viewport so curves trace to natural endpoints
+        // Scale expansion with viewport size, but cap to reasonable limits
+        int viewport_width = curr_img_area.width()/_scale;
+        int viewport_height = curr_img_area.height()/_scale;
+
+        // Minimal margin for performance - viewport reprojection handles the rest
+        // Just enough to avoid hard edge clipping
+        int expand_margin = 20;  // Fixed 20 voxel margin
+
+        cv::Rect plane_roi = {
+            curr_img_area.x()/_scale - expand_margin,
+            curr_img_area.y()/_scale - expand_margin,
+            viewport_width + 2*expand_margin,
+            viewport_height + 2*expand_margin
+        };
 
         cv::Vec3f corner = plane->coord(cv::Vec3f(0,0,0), {plane_roi.x, plane_roi.y, 0.0});
         Rect3D view_bbox = {corner, corner};
@@ -1799,12 +1820,21 @@ void CVolumeViewer::renderIntersections(bool force)
                 }
             }
 
-            // 3. Add remaining segments up to _maxIntersections, sorted by distance to focus point
+            // 3. Add remaining segments up to _maxIntersections, sorted by distance to reference point
+            // Priority: 1) POI center if selected, 2) selected segment bbox center, 3) plane origin
             cv::Vec3f focusPoint = plane->origin();
             if (_surf_col) {
                 POI* focus = _surf_col->poi("focus");
                 if (focus) {
+                    // Use POI center if it exists and is selected
                     focusPoint = focus->p;
+                } else {
+                    // Fallback to selected segment's bounding box center
+                    QuadSurface* selectedSurf = dynamic_cast<QuadSurface*>(_surf_col->surface(_surf_name));
+                    if (selectedSurf) {
+                        Rect3D bbox = selectedSurf->bbox();
+                        focusPoint = (bbox.low + bbox.high) * 0.5f;
+                    }
                 }
             }
 
@@ -1854,6 +1884,72 @@ void CVolumeViewer::renderIntersections(bool force)
         auto computeStart = std::chrono::high_resolution_clock::now();
         std::vector<std::vector<std::vector<cv::Vec3f>>> intersections(intersect_cands.size());
 
+        // On viewport change with cached data, skip recomputation
+        bool skipComputation = isViewportChange && !existingSegments.empty();
+
+        if (skipComputation) {
+            // Use cached 3D curves
+            for(int n=0; n<intersect_cands.size(); n++) {
+                std::string key = intersect_cands[n];
+                if (_intersect_curves_3d.count(key)) {
+                    intersections[n] = _intersect_curves_3d[key];
+                }
+            }
+            qDebug() << "[INTERSECTION] Using cached 3D curves for" << intersect_cands.size() << "segments";
+        } else {
+            // Compute intersections from scratch
+
+        // Helper lambda to generate spatial hints for a segment
+        auto generateSubPatchHints = [&plane, &plane_roi](const cv::Mat_<cv::Vec3f>& points) -> std::vector<SubPatchHint> {
+            std::vector<SubPatchHint> hints;
+            if (points.empty()) return hints;
+
+            // Sample grid at intervals to find regions near the plane
+            // Use fine sampling to catch thin curves that might be missed
+            const int sample_step = 5;  // Sample every 5th row/col
+            const int rows = points.rows;
+            const int cols = points.cols;
+
+            // Expand ROI for sampling to catch nearby patches
+            cv::Rect expanded_sample_roi(
+                plane_roi.x - 200,
+                plane_roi.y - 200,
+                plane_roi.width + 400,
+                plane_roi.height + 400
+            );
+
+            // Track which grid cells contain points near the plane
+            std::vector<std::vector<bool>> near_plane((rows + sample_step - 1) / sample_step,
+                                                       std::vector<bool>((cols + sample_step - 1) / sample_step, false));
+
+            for (int r = 0; r < rows; r += sample_step) {
+                for (int c = 0; c < cols; c += sample_step) {
+                    cv::Vec3f pt = points(r, c);
+                    cv::Vec3f projected = plane->project(pt);
+                    if (expanded_sample_roi.contains(cv::Point(projected[0], projected[1]))) {
+                        near_plane[r / sample_step][c / sample_step] = true;
+                    }
+                }
+            }
+
+            // Build rectangular hints covering contiguous regions
+            // Simple approach: for each true cell, create a hint covering sample_step range
+            for (int r_idx = 0; r_idx < near_plane.size(); ++r_idx) {
+                for (int c_idx = 0; c_idx < near_plane[r_idx].size(); ++c_idx) {
+                    if (near_plane[r_idx][c_idx]) {
+                        SubPatchHint hint;
+                        hint.row_start = r_idx * sample_step;
+                        hint.row_end = std::min((r_idx + 1) * sample_step, rows);
+                        hint.col_start = c_idx * sample_step;
+                        hint.col_end = std::min((c_idx + 1) * sample_step, cols);
+                        hints.push_back(hint);
+                    }
+                }
+            }
+
+            return hints;
+        };
+
 #pragma omp parallel for
         for(int n=0;n<intersect_cands.size();n++) {
             std::string key = intersect_cands[n];
@@ -1863,9 +1959,21 @@ void CVolumeViewer::renderIntersections(bool force)
                 continue;  // Skip if surface doesn't exist or isn't a QuadSurface
             }
 
+            cv::Mat_<cv::Vec3f> seg_points = segmentation->rawPoints();
+            // Don't use spatial hints - they create too many tiny regions and slow things down
+            // Let find_intersect_segments do its own adaptive grid sampling
+
             std::vector<std::vector<cv::Vec2f>> xy_seg_;
-            find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_scale);
+            find_intersect_segments(intersections[n], xy_seg_, seg_points, plane, plane_roi, 4/_scale, 10, nullptr);
         }
+
+            // Cache the computed 3D curves for future viewport changes
+            for(int n=0; n<intersect_cands.size(); n++) {
+                std::string key = intersect_cands[n];
+                _intersect_curves_3d[key] = intersections[n];
+            }
+
+        }  // end of else block (computation)
 
         auto computeEnd = std::chrono::high_resolution_clock::now();
         auto computeDuration = std::chrono::duration_cast<std::chrono::milliseconds>(computeEnd - computeStart);

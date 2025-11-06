@@ -1561,27 +1561,6 @@ void CWindow::CreateWidgets(void)
         _viewerManager->setIntersectionOpacity(spinIntersectionOpacity->value() / 100.0f);
     }
 
-    // Wire up max intersections control
-    auto* spinMaxIntersections = ui.spinMaxIntersections;
-    const int savedMaxIntersections = settings.value("renderer/max_intersections",
-                                                      spinMaxIntersections->value()).toInt();
-    const int boundedMaxIntersections = std::clamp(savedMaxIntersections,
-                                                    spinMaxIntersections->minimum(),
-                                                    spinMaxIntersections->maximum());
-    spinMaxIntersections->setValue(boundedMaxIntersections);
-
-    connect(spinMaxIntersections, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
-        if (!_viewerManager) {
-            return;
-        }
-        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
-        settings.setValue("renderer/max_intersections", value);
-        _viewerManager->setMaxIntersections(value);
-    });
-    if (_viewerManager) {
-        _viewerManager->setMaxIntersections(spinMaxIntersections->value());
-    }
-
     // Wire up intersection line width control
     auto* spinIntersectionLineWidth = ui.spinIntersectionLineWidth;
     const int savedLineWidth = settings.value("renderer/intersection_line_width",

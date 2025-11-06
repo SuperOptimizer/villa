@@ -223,6 +223,7 @@ protected:
 
     std::set<std::string> _intersect_tgts = {"visible_segmentation"};
     std::unordered_map<std::string,std::vector<QGraphicsItem*>> _intersect_items;
+    std::unordered_map<std::string,std::vector<std::vector<cv::Vec3f>>> _intersect_curves_3d;  // Cached 3D curves
     Intersection *_ignore_intersect_change = nullptr;
     
     CSurfaceCollection *_surf_col = nullptr;
@@ -231,7 +232,7 @@ protected:
     VCCollection* _point_collection = nullptr;
 
     float _intersectionOpacity{1.0f};
-    int _maxIntersections{100};
+    int _maxIntersections{250};
     int _intersectionLineWidth{2};
     std::vector<std::string> _highlightedSegments;
 
