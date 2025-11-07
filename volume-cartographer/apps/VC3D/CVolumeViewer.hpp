@@ -97,6 +97,9 @@ public:
     void setIntersectionOpacity(float opacity);
     float intersectionOpacity() const { return _intersectionOpacity; }
 
+    void setIntersectionLineWidth(float width);
+    float intersectionLineWidth() const { return _intersectionLineWidth; }
+
     void setOverlayVolume(std::shared_ptr<Volume> volume);
     std::shared_ptr<Volume> overlayVolume() const { return _overlayVolume; }
     void setOverlayOpacity(float opacity);
@@ -209,16 +212,22 @@ protected:
     
     std::vector<QGraphicsItem*> slice_vis_items; 
 
-    std::set<std::string> _intersect_tgts = {"visible_segmentation"};
+    std::set<std::string> _intersect_tgts = {"segmentation"};
     std::unordered_map<std::string,std::vector<QGraphicsItem*>> _intersect_items;
     Intersection *_ignore_intersect_change = nullptr;
-    
+
     CSurfaceCollection *_surf_col = nullptr;
+
+    // Spatial index for fast intersection queries
+    MultiSurfaceIndex _intersect_index;
+    std::unordered_map<std::string, int> _intersect_index_map; // segment name -> index
+    void rebuildIntersectionIndex();
     
     VCCollection* _point_collection = nullptr;
 
     float _intersectionOpacity{1.0f};
-    
+    float _intersectionLineWidth{2.0f};
+
     // Point interaction state
     uint64_t _highlighted_point_id = 0;
     uint64_t _selected_point_id = 0;

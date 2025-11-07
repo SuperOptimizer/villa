@@ -13,6 +13,7 @@ add_library(vc_core
         src/Logging.cpp
         src/Slicing.cpp
         src/Surface.cpp
+        src/intersection.cpp
         src/Render.cpp
         src/Thinning.cpp
         src/Umbilicus.cpp

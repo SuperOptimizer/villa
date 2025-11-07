@@ -17,7 +17,7 @@ set(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin)
 set(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
-option(VC_USE_OPENMP "Enable OpenMP support" ON)
+option(VC_USE_OPENMP "Enable OpenMP support" OFF)
 option(VC_USE_VALGRIND "Enable Valgrind support" off)
 
 set(CMAKE_CXX_FLAGS " ${CMAKE_CXX_FLAGS} -fPIC -Wno-narrowing -std=c++23 -DWITH_BLOSC=1 -DWITH_ZLIB=1 " )
@@ -36,8 +36,8 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "QuickBuild")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O1")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3  -flto=auto")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -flto=auto ")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O1 -w ")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=lld ")
 elseif(CMAKE_BUILD_TYPE STREQUAL "ReleaseUnsafe")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3   -flto=auto")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -flto=auto -fuse-ld=lld")
@@ -142,9 +142,9 @@ option(VC_BUILD_GUI      "Compile GUI programs"        on)
 option(VC_BUILD_UTILS    "Compile VC utility programs" on)
 
 # Choose what to install
-option(VC_INSTALL_APPS      "Install VC core programs"    on)
-option(VC_INSTALL_LIBS      "Install VC libraries"        on)
-option(VC_INSTALL_UTILS     "Install VC utility programs" on)
+option(VC_INSTALL_APPS      "Install VC core programs"    off)
+option(VC_INSTALL_LIBS      "Install VC libraries"        off)
+option(VC_INSTALL_UTILS     "Install VC utility programs" off)
 
 # Some helpful constants to be used in subprojects.
 include(VCConstants)

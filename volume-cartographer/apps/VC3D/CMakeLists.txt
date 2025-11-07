@@ -8,11 +8,14 @@ set(srcs
     CWindow.cpp
     CWindowContextMenu.cpp
     CVolumeViewer.cpp
+    CVolumeViewerIntersect.cpp
     CVolumeViewerView.cpp
     VolumeViewerCmaps.cpp
     VolumeViewerCmaps.hpp
     WindowRangeWidget.cpp
     WindowRangeWidget.hpp
+    OverlaysWidget.cpp
+    OverlaysWidget.hpp
     elements/CollapsibleSettingsGroup.cpp
     elements/CollapsibleSettingsGroup.hpp
     elements/DropdownChecklistButton.cpp

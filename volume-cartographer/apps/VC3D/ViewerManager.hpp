@@ -51,6 +51,9 @@ public:
     void setIntersectionOpacity(float opacity);
     float intersectionOpacity() const { return _intersectionOpacity; }
 
+    void setIntersectionLineWidth(float width);
+    float intersectionLineWidth() const { return _intersectionLineWidth; }
+
     void setOverlayVolume(std::shared_ptr<Volume> volume, const std::string& volumeId);
     std::shared_ptr<Volume> overlayVolume() const { return _overlayVolume; }
     const std::string& overlayVolumeId() const { return _overlayVolumeId; }
@@ -96,6 +99,7 @@ private:
     std::vector<CVolumeViewer*> _viewers;
     std::unordered_map<CVolumeViewer*, bool> _resetDefaults;
     float _intersectionOpacity{1.0f};
+    float _intersectionLineWidth{2.0f};
     std::shared_ptr<Volume> _overlayVolume;
     std::string _overlayVolumeId;
     float _overlayOpacity{0.5f};

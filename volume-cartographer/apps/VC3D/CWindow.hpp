@@ -22,6 +22,7 @@
 #include "CSurfaceCollection.hpp"
 #include "CVolumeViewer.hpp"
 #include "DrawingWidget.hpp"
+#include "OverlaysWidget.hpp"
 #include "segmentation/SegmentationEditManager.hpp"
 #include "overlays/SegmentationOverlayController.hpp"
 #include "overlays/PointsOverlayController.hpp"
@@ -182,6 +183,7 @@ private:
     SegmentationWidget* _segmentationWidget{nullptr};
     DrawingWidget* _drawingWidget;
     CPointCollectionWidget* _point_collection_widget;
+    OverlaysWidget* _overlaysWidget{nullptr};
 
     VCCollection* _point_collection;
     

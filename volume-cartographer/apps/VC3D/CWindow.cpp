@@ -7,6 +7,7 @@
 #include <QKeyEvent>
 #include <QSettings>
 #include <QMdiArea>
+#include <QDockWidget>
 #include <QApplication>
 #include <QClipboard>
 #include <QDateTime>
@@ -71,6 +72,7 @@
 #include "SurfaceTreeWidget.hpp"
 #include "SeedingWidget.hpp"
 #include "DrawingWidget.hpp"
+#include "OverlaysWidget.hpp"
 #include "CommandLineToolRunner.hpp"
 #include "segmentation/SegmentationModule.hpp"
 #include "segmentation/SegmentationGrowth.hpp"
@@ -1541,6 +1543,25 @@ void CWindow::CreateWidgets(void)
     });
     if (_viewerManager) {
         _viewerManager->setIntersectionOpacity(spinIntersectionOpacity->value() / 100.0f);
+    }
+
+    // Create Overlays Widget for intersection line width control
+    _overlaysWidget = new OverlaysWidget();
+    auto* overlaysDock = new QDockWidget(tr("Overlays"), this);
+    overlaysDock->setWidget(_overlaysWidget);
+    addDockWidget(Qt::RightDockWidgetArea, overlaysDock);
+
+    // Connect to viewer manager
+    if (_viewerManager) {
+        connect(_overlaysWidget, &OverlaysWidget::intersectionLineWidthChanged,
+                _viewerManager.get(), &ViewerManager::setIntersectionLineWidth);
+    }
+
+    // Load saved settings
+    const float savedLineWidth = settings.value("viewer/intersection_line_width", 2.0f).toFloat();
+    _overlaysWidget->setIntersectionLineWidth(savedLineWidth);
+    if (_viewerManager) {
+        _viewerManager->setIntersectionLineWidth(savedLineWidth);
     }
 
     chkAxisAlignedSlices = ui.chkAxisAlignedSlices;

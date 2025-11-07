@@ -33,6 +33,9 @@ ViewerManager::ViewerManager(CSurfaceCollection* surfaces,
     const float normalized = static_cast<float>(savedOpacityPercent) / 100.0f;
     _intersectionOpacity = std::clamp(normalized, 0.0f, 1.0f);
 
+    const float savedLineWidth = settings.value("viewer/intersection_line_width", 2.0f).toFloat();
+    _intersectionLineWidth = std::clamp(savedLineWidth, 1.0f, 10.0f);
+
     const float storedBaseLow = settings.value("viewer/base_window_low", 0.0f).toFloat();
     const float storedBaseHigh = settings.value("viewer/base_window_high", 255.0f).toFloat();
     _volumeWindowLow = std::clamp(storedBaseLow, 0.0f, 255.0f);
@@ -100,6 +103,7 @@ CVolumeViewer* ViewerManager::createViewer(const std::string& surfaceName,
     }
 
     viewer->setIntersectionOpacity(_intersectionOpacity);
+    viewer->setIntersectionLineWidth(_intersectionLineWidth);
     viewer->setVolumeWindow(_volumeWindowLow, _volumeWindowHigh);
     viewer->setOverlayVolume(_overlayVolume);
     viewer->setOverlayOpacity(_overlayOpacity);
@@ -200,6 +204,20 @@ void ViewerManager::setIntersectionOpacity(float opacity)
     for (auto* viewer : _viewers) {
         if (viewer) {
             viewer->setIntersectionOpacity(_intersectionOpacity);
+        }
+    }
+}
+
+void ViewerManager::setIntersectionLineWidth(float width)
+{
+    _intersectionLineWidth = std::clamp(width, 1.0f, 10.0f);
+
+    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+    settings.setValue("viewer/intersection_line_width", _intersectionLineWidth);
+
+    for (auto* viewer : _viewers) {
+        if (viewer) {
+            viewer->setIntersectionLineWidth(_intersectionLineWidth);
         }
     }
 }
