@@ -18,6 +18,8 @@
 #include <vector>
 #include <chrono>
 #include <iostream>
+#include <memory>
+#include <mutex>
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -905,8 +907,7 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
     return best;
 }
 
-template <typename E>
-static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt, cv::Vec2f init_step, float min_step_x)
+static float search_min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const cv::Vec3f& tgt, const cv::Vec2f& init_step, float min_step_x, float epsilon = 0.0f, bool use_8way = true)
 {
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
     if (!boundary.contains(cv::Point(loc))) {
@@ -915,14 +916,15 @@ static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f
     }
 
     bool changed = true;
-    E val = at_int(points, loc);
+    cv::Vec3f val = at_int(points, loc);
     out = val;
     float best = sdist(val, tgt);
     float res;
 
-    //TODO check maybe add more search patterns, compare motion estimatino for video compression, x264/x265, ...
-    std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
-    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
+    // Choose search pattern: 8-way or 4-way
+    std::vector<cv::Vec2f> search = use_8way ?
+        std::vector<cv::Vec2f>{{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}} :
+        std::vector<cv::Vec2f>{{0,-1},{0,1},{-1,0},{1,0}};
     cv::Vec2f step = init_step;
 
     while (changed) {
@@ -938,6 +940,14 @@ static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f
             val = at_int(points, cand);
             res = sdist(val, tgt);
             if (res < best) {
+                float improvement = best - res;
+                // Early termination if improvement is negligible
+                if (epsilon > 0.0f && improvement < epsilon) {
+                    best = res;
+                    loc = cand;
+                    out = val;
+                    return sqrt(best);
+                }
                 changed = true;
                 best = res;
                 loc = cand;
@@ -1906,7 +1916,25 @@ Rect3D QuadSurface::bbox()
 
 QuadSurface *load_quad_from_tifxyz(const std::string &path, int flags)
 {
-    auto read_band_into = [](const std::filesystem::path& fpath,
+    // Memoization cache for loaded surfaces
+    static std::unordered_map<std::string, std::shared_ptr<QuadSurface>> cache;
+    static std::mutex cache_mutex;
+
+    // Check cache first
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        auto it = cache.find(path);
+        if (it != cache.end()) {
+            // Return a raw pointer to the cached surface (caller doesn't own it)
+            return it->second.get();
+        }
+    }
+
+    // Reusable buffers to avoid allocations
+    std::vector<uint8_t> tileBuf;
+    std::vector<uint8_t> scanBuf;
+
+    auto read_band_into = [&tileBuf, &scanBuf](const std::filesystem::path& fpath,
                              cv::Mat_<cv::Vec3f>& points,
                              int channel,
                              int& outW, int& outH) -> void
@@ -1988,7 +2016,7 @@ QuadSurface *load_quad_from_tifxyz(const std::string &path, int flags)
                 throw std::runtime_error("Invalid tile geometry in " + fpath.string());
             }
             const tmsize_t tileBytes = TIFFTileSize(tif);
-            std::vector<uint8_t> tileBuf(static_cast<size_t>(tileBytes));
+            tileBuf.resize(static_cast<size_t>(tileBytes));
 
             for (uint32_t y0=0; y0<H; y0+=tileH) {
                 const uint32_t dy = std::min(tileH, H - y0);
@@ -2012,7 +2040,7 @@ QuadSurface *load_quad_from_tifxyz(const std::string &path, int flags)
             }
         } else {
             const tmsize_t scanBytes = TIFFScanlineSize(tif);
-            std::vector<uint8_t> scanBuf(static_cast<size_t>(scanBytes));
+            scanBuf.resize(static_cast<size_t>(scanBytes));
             for (uint32_t y=0; y<H; ++y) {
                 if (TIFFReadScanline(tif, scanBuf.data(), y, 0) != 1) {
                     std::fill(scanBuf.begin(), scanBuf.end(), 0);
@@ -2124,7 +2152,7 @@ QuadSurface *load_quad_from_tifxyz(const std::string &path, int flags)
                         TIFFGetField(mtif, TIFFTAG_TILEWIDTH,  &tileW);
                         TIFFGetField(mtif, TIFFTAG_TILELENGTH, &tileH);
                         const tmsize_t tileBytes = TIFFTileSize(mtif);
-                        std::vector<uint8_t> tileBuf(static_cast<size_t>(tileBytes));
+                        tileBuf.resize(static_cast<size_t>(tileBytes));
                         for (uint32_t y0=0; y0<mH; y0+=tileH) {
                             const uint32_t dy = std::min(tileH, mH - y0);
                             for (uint32_t x0=0; x0<mW; x0+=tileW) {
@@ -2146,7 +2174,7 @@ QuadSurface *load_quad_from_tifxyz(const std::string &path, int flags)
                         }
                     } else {
                         const tmsize_t scanBytes = TIFFScanlineSize(mtif);
-                        std::vector<uint8_t> scanBuf(static_cast<size_t>(scanBytes));
+                        scanBuf.resize(static_cast<size_t>(scanBytes));
                         for (uint32_t y=0; y<mH; ++y) {
                             if (TIFFReadScanline(mtif, scanBuf.data(), y, 0) != 1) {
                                 std::fill(scanBuf.begin(), scanBuf.end(), 0);
@@ -2180,6 +2208,13 @@ QuadSurface *load_quad_from_tifxyz(const std::string &path, int flags)
             }
         }
     }
+
+    // Insert into cache before returning
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        cache[path] = std::shared_ptr<QuadSurface>(surf);
+    }
+
     return surf;
 }
 

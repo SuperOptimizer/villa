@@ -337,7 +337,7 @@ CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, QWidget* parent)
 
     _overlayUpdateTimer = new QTimer(this);
     _overlayUpdateTimer->setSingleShot(true);
-    _overlayUpdateTimer->setInterval(5);
+    _overlayUpdateTimer->setInterval(50);
     connect(_overlayUpdateTimer, &QTimer::timeout, this, &CVolumeViewer::updateAllOverlays);
 
     _lbl = new QLabel(this);
