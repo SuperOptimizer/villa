@@ -816,7 +816,7 @@ static float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, c
 //search location in points where we minimize error to multiple objectives using iterated local search
 //tgts,tds -> distance to some POIs
 //plane -> stay on plane
-float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, float init_step, float min_step, float early_exit_threshold)
+float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, float init_step, float min_step, float early_exit_threshold, float epsilon, bool use_8way)
 {
     if (!loc_valid(points, {loc[1],loc[0]})) {
         out = {-1,-1,-1};
@@ -835,8 +835,10 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
     }
     float res;
 
-    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
-    std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
+    // Choose search pattern: 8-way or 4-way
+    std::vector<cv::Vec2f> search = use_8way ?
+        std::vector<cv::Vec2f>{{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}} :
+        std::vector<cv::Vec2f>{{0,-1},{0,1},{-1,0},{1,0}};
     float step = init_step;
 
     int max_iterations = 100;  // Prevent infinite loops
@@ -864,6 +866,14 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
                 res += d*d;
             }
             if (res < best) {
+                float improvement = best - res;
+                // Early termination if improvement is negligible
+                if (epsilon > 0.0f && improvement < epsilon) {
+                    best = res;
+                    loc = cand;
+                    out = val;
+                    break;  // Exit the search loop
+                }
                 // std::cout << res << val << step << cand << "\n";
                 changed = true;
                 best = res;
@@ -1408,7 +1418,8 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 continue;
 
                 // Relaxed threshold for pixel-scale rendering: 1.0 squared
-                dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.01, 1.0);
+                // Use 4-way search and epsilon=0.01 for faster convergence in intersection rendering
+                dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.01, 1.0, 0.01, false);
 
                 plane_loc = plane->project(point);
                 if (!plane_roi.contains(cv::Point(plane_loc[0],plane_loc[1])))
@@ -1442,7 +1453,8 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         //point2
         loc2 = loc;
         //search point at distance of 1 to init point
-        dist = min_loc(points, loc2, point2, {point}, {1}, plane, 0.01, 0.0001, 1.0);
+        // Use optimized parameters for intersection rendering
+        dist = min_loc(points, loc2, point2, {point}, {1}, plane, 0.01, 0.0001, 1.0, 0.01, false);
 
         if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc)) {
             consecutive_failures++;
@@ -1473,10 +1485,11 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 point3 = at_int(points, loc3);
 
                 //search point close to prediction + dist 1 to last point
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001, 1.0);
+                // Use optimized parameters for intersection rendering
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001, 1.0, 0.01, false);
 
                 //then refine
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001, 1.0);
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001, 1.0, 0.01, false);
 
                 if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc3))
                     break;
@@ -1515,10 +1528,11 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 point3 = at_int(points, loc3);
 
                 //search point close to prediction + dist 1 to last point
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001, 1.0);
+                // Use optimized parameters for intersection rendering
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001, 1.0, 0.01, false);
 
                 //then refine
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001, 1.0);
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001, 1.0, 0.01, false);
 
                 if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc3))
                     break;

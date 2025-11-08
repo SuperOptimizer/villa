@@ -278,7 +278,11 @@ std::vector<std::string> IntersectionOverlayController::findVisibleSegments(
 
                     float distA = cv::norm(centerA - currentCenter);
                     float distB = cv::norm(centerB - currentCenter);
-                    return distA < distB;
+                    // Use UUID as tiebreaker for stable sorting when distances are equal
+                    if (distA != distB) {
+                        return distA < distB;
+                    }
+                    return a < b;
                 });
         }
     }
