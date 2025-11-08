@@ -334,13 +334,28 @@ void IntersectionOverlayController::renderSegmentIntersection(
     std::vector<std::vector<cv::Vec3f>> intersectionSegments3D;
     std::vector<std::vector<cv::Vec2f>> intersectionSegments2D;
 
-    int minTries = (segmentId == _currentSegmentId) ? 1000 : 10;
+    // Get POI hint if available - use it as a starting point for search
+    cv::Vec3f poiHint{0, 0, 0};
+    bool havePOI = false;
+    if (_surfaceCollection) {
+        POI* poi = _surfaceCollection->poi("focus");
+        if (poi) {
+            poiHint = poi->p;
+            havePOI = true;
+            Logger()->info("  Using POI hint: ({:.2f}, {:.2f}, {:.2f})", poiHint[0], poiHint[1], poiHint[2]);
+        }
+    }
+
+    // Use fewer starting points but trace longer curves
+    // Each trace goes up to 100 steps in each direction = 200 total points per curve
+    int minTries = (segmentId == _currentSegmentId) ? 20 : 10;
     Logger()->info("  Computing intersection with planeRoi ({},{} {}x{}), tolerance {}, minTries {}",
                    planeRoi.x, planeRoi.y, planeRoi.width, planeRoi.height,
                    4.0f / viewerScale, minTries);
 
     find_intersect_segments(intersectionSegments3D, intersectionSegments2D,
-                           rawPoints, plane, planeRoi, 4.0f / viewerScale, minTries);
+                           rawPoints, plane, planeRoi, 4.0f / viewerScale, minTries,
+                           havePOI ? &poiHint : nullptr);
 
     Logger()->info("  Found {} intersection segments", intersectionSegments3D.size());
 
@@ -362,35 +377,17 @@ void IntersectionOverlayController::renderSegmentIntersection(
             segmentPoints.push_back(QPointF(screenPos[0], screenPos[1]));
         }
 
-        // Break into sub-segments if points are too far apart
+        // Render each segment as a continuous line
+        // The curve tracer already handles segment splitting based on valid data
         OverlayStyle style;
         style.penColor = color;
         style.penWidth = (segmentId == _currentSegmentId) ? _lineWidth * 1.5f : _lineWidth;
         style.z = (segmentId == _currentSegmentId) ? 20 : 5;
 
-        std::vector<QPointF> linePoints;
-        QPointF lastPt(-1, -1);
-        for (const auto& pt : segmentPoints) {
-            if (lastPt.x() >= 0) {
-                float dist = QLineF(lastPt, pt).length();
-                if (dist >= 8.0) {
-                    // Gap too large, finish this segment and start new one
-                    if (!linePoints.empty()) {
-                        builder.addLineStrip(linePoints, false, style);
-                        allPoints.insert(allPoints.end(), linePoints.begin(), linePoints.end());
-                    }
-                    linePoints.clear();
-                }
-            }
-            linePoints.push_back(pt);
-            lastPt = pt;
-        }
-
-        // Add final segment
-        if (!linePoints.empty()) {
-            Logger()->info("    Adding line strip with {} points", linePoints.size());
-            builder.addLineStrip(linePoints, false, style);
-            allPoints.insert(allPoints.end(), linePoints.begin(), linePoints.end());
+        if (!segmentPoints.empty()) {
+            Logger()->info("    Adding line strip with {} points", segmentPoints.size());
+            builder.addLineStrip(segmentPoints, false, style);
+            allPoints.insert(allPoints.end(), segmentPoints.begin(), segmentPoints.end());
         }
     }
 

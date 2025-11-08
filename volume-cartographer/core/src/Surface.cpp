@@ -16,6 +16,8 @@
 #include <cerrno>
 #include <algorithm>
 #include <vector>
+#include <chrono>
+#include <iostream>
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -1271,9 +1273,14 @@ static uint8_t get_block(const cv::Mat_<uint8_t> &block, const cv::Vec3f &loc, c
 }
 
 
-void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step, int min_tries)
+void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step, int min_tries, const cv::Vec3f* poi_hint)
 {
     //start with random points and search for a plane intersection
+    auto t_func_start = std::chrono::high_resolution_clock::now();
+
+    if (poi_hint) {
+        std::cout << "[INTERSECT_TRACE] POI hint provided: (" << (*poi_hint)[0] << ", " << (*poi_hint)[1] << ", " << (*poi_hint)[2] << ")" << std::endl;
+    }
 
     float block_step = 0.5*step;
 
@@ -1284,7 +1291,26 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     std::vector<std::vector<cv::Vec3f>> seg_vol_raw;
     std::vector<std::vector<cv::Vec2f>> seg_grid_raw;
 
-    for(int r=0;r<std::max(min_tries, std::max(points.cols,points.rows)/100);r++) {
+    int max_iterations = std::max(min_tries, std::max(points.cols,points.rows)/100);
+    std::cout << "[INTERSECT_TRACE] Starting find_intersect_segments: min_tries=" << min_tries << ", max_iterations=" << max_iterations << std::endl;
+
+    int total_search_attempts = 0;
+    int successful_traces = 0;
+    auto t_search_start = std::chrono::high_resolution_clock::now();
+
+    // Build grid candidate list ONCE (not inside the loop!)
+    std::vector<cv::Vec2f> grid_candidates;
+    int grid_step = std::max(3, std::max(points.cols, points.rows) / 40);
+    for(int y = 1; y < points.rows - 1; y += grid_step) {
+        for(int x = 1; x < points.cols - 1; x += grid_step) {
+            grid_candidates.push_back({static_cast<float>(x), static_cast<float>(y)});
+        }
+    }
+    // Shuffle once
+    std::random_shuffle(grid_candidates.begin(), grid_candidates.end());
+    std::cout << "[INTERSECT_TRACE] Built " << grid_candidates.size() << " grid candidates with spacing " << grid_step << std::endl;
+
+    for(int r=0;r<max_iterations;r++) {
         std::vector<cv::Vec3f> seg;
         std::vector<cv::Vec2f> seg_loc;
         std::vector<cv::Vec3f> seg2;
@@ -1301,8 +1327,29 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
 
         //initial points
-        for(int i=0;i<std::max(min_tries, std::max(points.cols,points.rows)/100);i++) {
-            loc = {std::rand() % (points.cols-1), std::rand() % (points.rows-1)};
+        int search_attempts = 0;
+        int max_search_attempts = 1000;
+
+        // Use the pre-built grid candidates, optionally prepending POI on first iteration
+        std::vector<cv::Vec2f> candidate_locs = grid_candidates;
+
+        // If we have a POI hint, insert it at the front for the first curve
+        if (poi_hint && r == 0) {
+            // Use pointTo to find grid location nearest to POI in 3D space
+            cv::Vec2f poi_loc = {static_cast<float>(points.cols / 2), static_cast<float>(points.rows / 2)};
+            float poi_dist = pointTo(poi_loc, points, *poi_hint, 100.0f, 100, 1.0f);
+            if (poi_dist >= 0 && poi_dist < 100.0f) {
+                candidate_locs.insert(candidate_locs.begin(), poi_loc);
+                std::cout << "[INTERSECT_TRACE] POI mapped to grid location (" << poi_loc[0] << ", " << poi_loc[1] << "), dist=" << poi_dist << std::endl;
+            }
+        }
+
+        // Search through candidates
+        for(int i=0;i<std::min(max_search_attempts, static_cast<int>(candidate_locs.size()));i++) {
+            search_attempts++;
+            total_search_attempts++;
+
+            loc = candidate_locs[i];
             point = at_int(points, loc);
 
             plane_loc = plane->project(point);
@@ -1326,6 +1373,9 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         if (dist < 0 || dist > 1)
             continue;
 
+        // Found a valid starting point
+        auto t_trace_start = std::chrono::high_resolution_clock::now();
+
         seg.push_back(point);
         seg_loc.push_back(loc);
 
@@ -1346,7 +1396,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         last_plane_loc = plane_loc;
 
         //go one direction
-        for(int n=0;n<25;n++) {
+        for(int n=0;n<100;n++) {
             //now search following points
             cv::Vec2f loc3 = loc2+loc2-loc;
 
@@ -1361,7 +1411,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 //then refine
                 dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
 
-                if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc))
+                if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc3))
                     break;
 
             seg.push_back(point3);
@@ -1388,11 +1438,11 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         last_plane_loc = plane->project(point2);
 
         //FIXME repeat by not copying code ...
-        for(int n=0;n<25;n++) {
+        for(int n=0;n<100;n++) {
             //now search following points
             cv::Vec2f loc3 = loc2+loc2-loc;
 
-            if (!grid_bounds.contains(cv::Point(loc3[0])))
+            if (!grid_bounds.contains(cv::Point(loc3)))
                 break;
 
                 point3 = at_int(points, loc3);
@@ -1403,7 +1453,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 //then refine
                 dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
 
-                if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc))
+                if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc3))
                     break;
 
             seg2.push_back(point3);
@@ -1430,29 +1480,42 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
         seg_vol_raw.push_back(seg2);
         seg_grid_raw.push_back(seg_loc2);
+
+        auto t_trace_end = std::chrono::high_resolution_clock::now();
+        auto trace_ms = std::chrono::duration<double, std::milli>(t_trace_end - t_trace_start).count();
+        successful_traces++;
+
+        if (successful_traces <= 5 || successful_traces % 100 == 0) {
+            std::cout << "[INTERSECT_TRACE] Trace #" << successful_traces << ": " << search_attempts
+                      << " search attempts, traced " << seg2.size() << " points in " << trace_ms << "ms" << std::endl;
+        }
+
+        // Early exit: if we've found enough curves, stop searching
+        if (successful_traces >= min_tries) {
+            std::cout << "[INTERSECT_TRACE] Found " << successful_traces << " curves (>= min_tries=" << min_tries << "), stopping early" << std::endl;
+            break;
+        }
     }
 
-    //split up into disconnected segments
+    auto t_search_end = std::chrono::high_resolution_clock::now();
+    auto search_ms = std::chrono::duration<double, std::milli>(t_search_end - t_search_start).count();
+
+    // Each traced curve is already continuous - the tracer stops at invalid grid points
+    // Don't split based on 3D distance since curved surfaces can have large 3D distances
+    // between consecutive grid points while still being validly connected
     for(int s=0;s<seg_vol_raw.size();s++) {
-        std::vector<cv::Vec3f> seg_vol_curr;
-        std::vector<cv::Vec2f> seg_grid_curr;
-        cv::Vec3f last = {-1,-1,-1};
-        for(int n=0;n<seg_vol_raw[s].size();n++) {
-                if (last[0] != -1 && cv::norm(last-seg_vol_raw[s][n]) >= 2*step) {
-                seg_vol.push_back(seg_vol_curr);
-                seg_grid.push_back(seg_grid_curr);
-                seg_vol_curr.resize(0);
-                seg_grid_curr.resize(0);
-            }
-            last = seg_vol_raw[s][n];
-            seg_vol_curr.push_back(seg_vol_raw[s][n]);
-            seg_grid_curr.push_back(seg_grid_raw[s][n]);
-        }
-        if (seg_vol_curr.size() >= 2) {
-            seg_vol.push_back(seg_vol_curr);
-            seg_grid.push_back(seg_grid_curr);
+        if (seg_vol_raw[s].size() >= 2) {
+            seg_vol.push_back(seg_vol_raw[s]);
+            seg_grid.push_back(seg_grid_raw[s]);
         }
     }
+
+    auto t_func_end = std::chrono::high_resolution_clock::now();
+    auto total_ms = std::chrono::duration<double, std::milli>(t_func_end - t_func_start).count();
+
+    std::cout << "[INTERSECT_TRACE] SUMMARY: " << successful_traces << " successful traces from "
+              << total_search_attempts << " search attempts in " << total_ms << "ms" << std::endl;
+    std::cout << "[INTERSECT_TRACE]   Search phase: " << search_ms << "ms, Final segments: " << seg_vol.size() << std::endl;
 }
 
 struct DSReader
