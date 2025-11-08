@@ -342,20 +342,20 @@ void IntersectionOverlayController::renderSegmentIntersection(
     float stepSizeMultiplier;
 
     if (viewerScale < 0.5f) {
-        // Very zoomed out (0.03x - 0.5x): minimal detail
-        minTries = (segmentId == _currentSegmentId) ? 5 : 3;
+        // Very zoomed out (0.03x - 0.5x): minimal detail but more segments for consistency
+        minTries = (segmentId == _currentSegmentId) ? 15 : 10;
         stepSizeMultiplier = 8.0f;  // Larger steps, faster tracing
     } else if (viewerScale < 1.0f) {
         // Zoomed out (0.5x - 1.0x): reduced detail
-        minTries = (segmentId == _currentSegmentId) ? 10 : 5;
+        minTries = (segmentId == _currentSegmentId) ? 20 : 15;
         stepSizeMultiplier = 6.0f;
     } else if (viewerScale < 2.0f) {
         // Normal zoom (1.0x - 2.0x): standard detail
-        minTries = (segmentId == _currentSegmentId) ? 20 : 10;
+        minTries = (segmentId == _currentSegmentId) ? 25 : 20;
         stepSizeMultiplier = 4.0f;
     } else {
         // Zoomed in (2.0x - 4.0x): maximum detail
-        minTries = (segmentId == _currentSegmentId) ? 30 : 15;
+        minTries = (segmentId == _currentSegmentId) ? 35 : 25;
         stepSizeMultiplier = 3.0f;  // Smaller steps, smoother curves
     }
 

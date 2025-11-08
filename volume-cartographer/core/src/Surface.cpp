@@ -1393,18 +1393,9 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         int search_attempts = 0;
         int max_search_attempts = 1000;
 
-        // Use the pre-built grid candidates, optionally prepending POI on first iteration
+        // Use the pre-built grid candidates in deterministic order
+        // Note: POI hint is not used to reorder candidates to maintain deterministic rendering
         std::vector<cv::Vec2f> candidate_locs = grid_candidates;
-
-        // If we have a POI hint, insert it at the front for the first curve
-        if (poi_hint && r == 0) {
-            // Use pointTo to find grid location nearest to POI in 3D space
-            cv::Vec2f poi_loc = {static_cast<float>(points.cols / 2), static_cast<float>(points.rows / 2)};
-            float poi_dist = pointTo(poi_loc, points, *poi_hint, 100.0f, 100, 1.0f);
-            if (poi_dist >= 0 && poi_dist < 100.0f) {
-                candidate_locs.insert(candidate_locs.begin(), poi_loc);
-            }
-        }
 
         // Search through candidates
         for(int i=0;i<std::min(max_search_attempts, static_cast<int>(candidate_locs.size()));i++) {
