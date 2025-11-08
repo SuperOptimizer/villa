@@ -206,16 +206,25 @@ std::vector<std::string> IntersectionOverlayController::findVisibleSegments(
     viewBbox = expand_rect(viewBbox, plane->coord(cv::Vec3f(0,0,0),
         {static_cast<float>(viewport.right()), static_cast<float>(viewport.bottom()), 0}));
 
-    // Calculate bbox center and diagonal for spatial query
+    // Add proportional margin to viewBbox for hysteresis (prevents popping)
+    // Use 20% of viewport size on each side
+    cv::Vec3f bboxSize = viewBbox.high - viewBbox.low;
+    cv::Vec3f margin = bboxSize * 0.2f;
+    Rect3D expandedViewBbox = viewBbox;
+    expandedViewBbox.low = viewBbox.low - margin;
+    expandedViewBbox.high = viewBbox.high + margin;
+
+    // Calculate center and radius for spatial query
     cv::Vec3f bboxCenter = {
-        (viewBbox.low[0] + viewBbox.high[0]) / 2.0f,
-        (viewBbox.low[1] + viewBbox.high[1]) / 2.0f,
-        (viewBbox.low[2] + viewBbox.high[2]) / 2.0f
+        (expandedViewBbox.low[0] + expandedViewBbox.high[0]) / 2.0f,
+        (expandedViewBbox.low[1] + expandedViewBbox.high[1]) / 2.0f,
+        (expandedViewBbox.low[2] + expandedViewBbox.high[2]) / 2.0f
     };
-    float bboxDiagonal = cv::norm(viewBbox.high - viewBbox.low);
+    // Radius is half the diagonal of expanded bbox
+    float searchRadius = cv::norm(expandedViewBbox.high - expandedViewBbox.low) / 2.0f;
 
     // Query spatial index for candidates
-    std::vector<int> candidateIndices = _spatialIndex.getCandidatePatches(bboxCenter, bboxDiagonal / 2.0f);
+    std::vector<int> candidateIndices = _spatialIndex.getCandidatePatches(bboxCenter, searchRadius);
 
     // Convert indices to segment IDs and filter by bbox intersection
     std::vector<std::string> visibleSegments;
@@ -229,7 +238,7 @@ std::vector<std::string> IntersectionOverlayController::findVisibleSegments(
         Surface* baseSurf = _surfaceCollection->surface(segmentId);
         QuadSurface* surf = dynamic_cast<QuadSurface*>(baseSurf);
 
-        if (surf && intersect(viewBbox, surf->bbox())) {
+        if (surf && intersect(expandedViewBbox, surf->bbox())) {
             visibleSegments.push_back(segmentId);
         }
     }
@@ -417,12 +426,6 @@ void IntersectionOverlayController::collectPrimitives(CVolumeViewer* viewer, Ove
         Logger()->info("IntersectionOverlayController: Plane viewer '{}', current segment '{}'",
                       viewer->surfName(), _currentSegmentId);
 
-        // For now, just render the current segment (ignore other segments)
-        if (_currentSegmentId.empty()) {
-            Logger()->warn("IntersectionOverlayController: No current segment set");
-            return;
-        }
-
         // Get viewport
         QRectF viewport = viewer->currentImageArea();
         float scale = viewer->scale();
@@ -430,8 +433,21 @@ void IntersectionOverlayController::collectPrimitives(CVolumeViewer* viewer, Ove
         Logger()->info("IntersectionOverlayController: Viewport ({}, {}, {}x{}), scale {}",
                       viewport.x(), viewport.y(), viewport.width(), viewport.height(), scale);
 
-        // Render just the current segment
-        renderSegmentIntersection(viewer, _currentSegmentId, plane, viewport, builder);
+        // Find all visible segments (sorted by distance, limited to 100)
+        std::vector<std::string> visibleSegments = findVisibleSegments(plane, viewport);
+        Logger()->info("  Found {} visible segments", visibleSegments.size());
+
+        // Render non-current segments first (so current segment draws on top)
+        for (const auto& segmentId : visibleSegments) {
+            if (segmentId != _currentSegmentId) {
+                renderSegmentIntersection(viewer, segmentId, plane, viewport, builder);
+            }
+        }
+
+        // Render current segment last (on top with higher z-order)
+        if (!_currentSegmentId.empty()) {
+            renderSegmentIntersection(viewer, _currentSegmentId, plane, viewport, builder);
+        }
     }
     // Handle flattened view (segmentation viewer)
     else if (QuadSurface* quadSurf = dynamic_cast<QuadSurface*>(surf)) {
