@@ -814,7 +814,7 @@ static float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, c
 //search location in points where we minimize error to multiple objectives using iterated local search
 //tgts,tds -> distance to some POIs
 //plane -> stay on plane
-float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, float init_step, float min_step)
+float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, float init_step, float min_step, float early_exit_threshold)
 {
     if (!loc_valid(points, {loc[1],loc[0]})) {
         out = {-1,-1,-1};
@@ -825,8 +825,10 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
     cv::Vec3f val = at_int(points, loc);
     out = val;
     float best = tdist_sum(val, tgts, tds);
+    float initial_plane_dist = 0.0f;
     if (plane) {
         float d = plane->pointDist(val);
+        initial_plane_dist = std::abs(d);
         best += d*d;
     }
     float res;
@@ -835,9 +837,11 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
     std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
     float step = init_step;
 
+    int max_iterations = 100;  // Prevent infinite loops
+    int iterations = 0;
 
-
-    while (changed) {
+    while (changed && iterations < max_iterations) {
+        iterations++;
         changed = false;
 
         for(auto &off : search) {
@@ -868,6 +872,11 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
                 // std::cout << "(" << res << val << step << cand << "\n";
         }
 
+        // Early exit: if we're already close enough to the plane, we're done
+        if (plane && best < early_exit_threshold) {
+            break;
+        }
+
         if (changed)
             continue;
 
@@ -876,6 +885,20 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
 
         if (step < min_step)
             break;
+    }
+
+    // Log statistics to understand optimization behavior
+    static int call_count = 0;
+    call_count++;
+    if (plane && call_count % 100 == 0) {
+        float final_plane_dist = std::abs(plane->pointDist(out));
+        std::cout << "[MIN_LOC] Sample " << call_count << ": init_dist=" << initial_plane_dist
+                  << ", final_dist=" << final_plane_dist
+                  << ", iterations=" << iterations
+                  << ", init_step=" << init_step
+                  << ", final_step=" << step
+                  << ", converged=" << (best <= 1.0 ? "YES" : "NO")
+                  << std::endl;
     }
 
     // std::cout << "best" << best << out << "\n" <<  std::endl;
@@ -1296,6 +1319,8 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
     int total_search_attempts = 0;
     int successful_traces = 0;
+    int consecutive_failures = 0;  // Track iterations without finding a curve
+    const int max_consecutive_failures = 3;  // Stop after 3 iterations with no curves found
     auto t_search_start = std::chrono::high_resolution_clock::now();
 
     // Build grid candidate list ONCE (not inside the loop!)
@@ -1356,7 +1381,8 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             if (!plane_roi.contains(cv::Point(plane_loc[0],plane_loc[1])))
                 continue;
 
-                dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.01);
+                // Relaxed threshold for pixel-scale rendering: 0.1 squared = 0.01
+                dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.01, 0.01);
 
                 plane_loc = plane->project(point);
                 if (!plane_roi.contains(cv::Point(plane_loc[0],plane_loc[1])))
@@ -1370,8 +1396,16 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         }
 
 
-        if (dist < 0 || dist > 1)
+        if (dist < 0 || dist > 1) {
+            // Failed to find a starting point in this iteration
+            consecutive_failures++;
+            if (consecutive_failures >= max_consecutive_failures) {
+                std::cout << "[INTERSECT_TRACE] No curves found in " << consecutive_failures
+                          << " consecutive iterations, stopping search" << std::endl;
+                break;
+            }
             continue;
+        }
 
         // Found a valid starting point
         auto t_trace_start = std::chrono::high_resolution_clock::now();
@@ -1382,10 +1416,17 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         //point2
         loc2 = loc;
         //search point at distance of 1 to init point
-        dist = min_loc(points, loc2, point2, {point}, {1}, plane, 0.01, 0.0001);
+        dist = min_loc(points, loc2, point2, {point}, {1}, plane, 0.01, 0.0001, 0.01);
 
-        if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc))
+        if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc)) {
+            consecutive_failures++;
+            if (consecutive_failures >= max_consecutive_failures) {
+                std::cout << "[INTERSECT_TRACE] No curves found in " << consecutive_failures
+                          << " consecutive iterations, stopping search" << std::endl;
+                break;
+            }
             continue;
+        }
 
         seg.push_back(point2);
         seg_loc.push_back(loc2);
@@ -1406,10 +1447,10 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 point3 = at_int(points, loc3);
 
                 //search point close to prediction + dist 1 to last point
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001);
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001, 0.01);
 
                 //then refine
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001, 0.01);
 
                 if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc3))
                     break;
@@ -1448,10 +1489,10 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 point3 = at_int(points, loc3);
 
                 //search point close to prediction + dist 1 to last point
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001);
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001, 0.01);
 
                 //then refine
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001, 0.01);
 
                 if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc3))
                     break;
@@ -1484,6 +1525,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         auto t_trace_end = std::chrono::high_resolution_clock::now();
         auto trace_ms = std::chrono::duration<double, std::milli>(t_trace_end - t_trace_start).count();
         successful_traces++;
+        consecutive_failures = 0;  // Reset failure counter on successful trace
 
         if (successful_traces <= 5 || successful_traces % 100 == 0) {
             std::cout << "[INTERSECT_TRACE] Trace #" << successful_traces << ": " << search_attempts
