@@ -1324,16 +1324,29 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     auto t_search_start = std::chrono::high_resolution_clock::now();
 
     // Build grid candidate list ONCE (not inside the loop!)
+    // Filter to only candidates visible in the viewport
     std::vector<cv::Vec2f> grid_candidates;
     int grid_step = std::max(3, std::max(points.cols, points.rows) / 40);
+    int total_candidates = 0;
+
+    // Expand plane_roi slightly to avoid clipping at edges
+    cv::Rect expanded_roi(plane_roi.x - 50, plane_roi.y - 50,
+                          plane_roi.width + 100, plane_roi.height + 100);
+
     for(int y = 1; y < points.rows - 1; y += grid_step) {
         for(int x = 1; x < points.cols - 1; x += grid_step) {
-            grid_candidates.push_back({static_cast<float>(x), static_cast<float>(y)});
+            total_candidates++;
+            cv::Vec3f pt = at_int(points, {static_cast<float>(x), static_cast<float>(y)});
+            cv::Vec3f plane_loc = plane->project(pt);
+            if (expanded_roi.contains(cv::Point(plane_loc[0], plane_loc[1]))) {
+                grid_candidates.push_back({static_cast<float>(x), static_cast<float>(y)});
+            }
         }
     }
     // Shuffle once
     std::random_shuffle(grid_candidates.begin(), grid_candidates.end());
-    std::cout << "[INTERSECT_TRACE] Built " << grid_candidates.size() << " grid candidates with spacing " << grid_step << std::endl;
+    std::cout << "[INTERSECT_TRACE] Built " << grid_candidates.size() << " viewport-filtered candidates (from "
+              << total_candidates << " total) with spacing " << grid_step << std::endl;
 
     for(int r=0;r<max_iterations;r++) {
         std::vector<cv::Vec3f> seg;
@@ -1381,8 +1394,8 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             if (!plane_roi.contains(cv::Point(plane_loc[0],plane_loc[1])))
                 continue;
 
-                // Relaxed threshold for pixel-scale rendering: 0.1 squared = 0.01
-                dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.01, 0.01);
+                // Relaxed threshold for pixel-scale rendering: 1.0 squared
+                dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.01, 1.0);
 
                 plane_loc = plane->project(point);
                 if (!plane_roi.contains(cv::Point(plane_loc[0],plane_loc[1])))
@@ -1416,7 +1429,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         //point2
         loc2 = loc;
         //search point at distance of 1 to init point
-        dist = min_loc(points, loc2, point2, {point}, {1}, plane, 0.01, 0.0001, 0.01);
+        dist = min_loc(points, loc2, point2, {point}, {1}, plane, 0.01, 0.0001, 1.0);
 
         if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc)) {
             consecutive_failures++;
@@ -1447,10 +1460,10 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 point3 = at_int(points, loc3);
 
                 //search point close to prediction + dist 1 to last point
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001, 0.01);
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001, 1.0);
 
                 //then refine
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001, 0.01);
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001, 1.0);
 
                 if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc3))
                     break;
@@ -1489,10 +1502,10 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 point3 = at_int(points, loc3);
 
                 //search point close to prediction + dist 1 to last point
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001, 0.01);
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001, 1.0);
 
                 //then refine
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001, 0.01);
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001, 1.0);
 
                 if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc3))
                     break;
