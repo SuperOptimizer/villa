@@ -335,12 +335,32 @@ void IntersectionOverlayController::renderSegmentIntersection(
         }
     }
 
-    // Use fewer starting points but trace longer curves
-    // Each trace goes up to 100 steps in each direction = 200 total points per curve
-    int minTries = (segmentId == _currentSegmentId) ? 20 : 10;
+    // Zoom-based optimizations:
+    // - Low zoom (< 1.0): zoomed out, need less detail
+    // - High zoom (> 1.0): zoomed in, need more detail
+    int minTries;
+    float stepSizeMultiplier;
+
+    if (viewerScale < 0.5f) {
+        // Very zoomed out (0.03x - 0.5x): minimal detail
+        minTries = (segmentId == _currentSegmentId) ? 5 : 3;
+        stepSizeMultiplier = 8.0f;  // Larger steps, faster tracing
+    } else if (viewerScale < 1.0f) {
+        // Zoomed out (0.5x - 1.0x): reduced detail
+        minTries = (segmentId == _currentSegmentId) ? 10 : 5;
+        stepSizeMultiplier = 6.0f;
+    } else if (viewerScale < 2.0f) {
+        // Normal zoom (1.0x - 2.0x): standard detail
+        minTries = (segmentId == _currentSegmentId) ? 20 : 10;
+        stepSizeMultiplier = 4.0f;
+    } else {
+        // Zoomed in (2.0x - 4.0x): maximum detail
+        minTries = (segmentId == _currentSegmentId) ? 30 : 15;
+        stepSizeMultiplier = 3.0f;  // Smaller steps, smoother curves
+    }
 
     find_intersect_segments(intersectionSegments3D, intersectionSegments2D,
-                           rawPoints, plane, planeRoi, 4.0f / viewerScale, minTries,
+                           rawPoints, plane, planeRoi, stepSizeMultiplier / viewerScale, minTries,
                            havePOI ? &poiHint : nullptr);
 
     if (intersectionSegments3D.empty()) {
@@ -351,11 +371,25 @@ void IntersectionOverlayController::renderSegmentIntersection(
     QColor color = getSegmentColor(segmentId, viewer->surfName());
     std::vector<QPointF> allPoints;
 
+    // Determine point decimation factor based on zoom
+    int decimation = 1;  // Keep all points by default
+    if (viewerScale < 0.5f) {
+        decimation = 4;  // Keep every 4th point when very zoomed out
+    } else if (viewerScale < 1.0f) {
+        decimation = 2;  // Keep every 2nd point when zoomed out
+    }
+
     for (const auto& segment : intersectionSegments3D) {
         std::vector<QPointF> segmentPoints;
 
-        for (const auto& wp : segment) {
-            cv::Vec3f screenPos = plane->project(wp, 1.0, viewerScale);
+        for (size_t i = 0; i < segment.size(); i += decimation) {
+            cv::Vec3f screenPos = plane->project(segment[i], 1.0, viewerScale);
+            segmentPoints.push_back(QPointF(screenPos[0], screenPos[1]));
+        }
+
+        // Always include the last point to ensure segment endpoints are preserved
+        if (segment.size() > 1 && (segment.size() - 1) % decimation != 0) {
+            cv::Vec3f screenPos = plane->project(segment.back(), 1.0, viewerScale);
             segmentPoints.push_back(QPointF(screenPos[0], screenPos[1]));
         }
 
