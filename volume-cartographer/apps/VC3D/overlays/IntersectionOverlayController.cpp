@@ -364,8 +364,13 @@ void IntersectionOverlayController::renderSegmentIntersection(
                            havePOI ? &poiHint : nullptr);
 
     if (intersectionSegments3D.empty()) {
+        Logger()->warn("No intersection segments found for '{}' on plane '{}' (scale={:.2f}, minTries={})",
+                      segmentId, viewer->surfName(), viewerScale, minTries);
         return;
     }
+
+    Logger()->info("Found {} intersection segments for '{}' on plane '{}' (scale={:.2f}, minTries={})",
+                  intersectionSegments3D.size(), segmentId, viewer->surfName(), viewerScale, minTries);
 
     // Convert 3D segments to screen coordinates and render
     QColor color = getSegmentColor(segmentId, viewer->surfName());
