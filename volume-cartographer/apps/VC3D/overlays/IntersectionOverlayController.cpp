@@ -207,9 +207,9 @@ std::vector<std::string> IntersectionOverlayController::findVisibleSegments(
         {static_cast<float>(viewport.right()), static_cast<float>(viewport.bottom()), 0}));
 
     // Add proportional margin to viewBbox for hysteresis (prevents popping)
-    // Use 20% of viewport size on each side
+    // Use 50% of viewport size on each side for strong anti-popping
     cv::Vec3f bboxSize = viewBbox.high - viewBbox.low;
-    cv::Vec3f margin = bboxSize * 0.2f;
+    cv::Vec3f margin = bboxSize * 0.5f;
     Rect3D expandedViewBbox = viewBbox;
     expandedViewBbox.low = viewBbox.low - margin;
     expandedViewBbox.high = viewBbox.high + margin;

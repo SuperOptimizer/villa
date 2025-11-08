@@ -1329,9 +1329,12 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     int grid_step = std::max(3, std::max(points.cols, points.rows) / 40);
     int total_candidates = 0;
 
-    // Expand plane_roi slightly to avoid clipping at edges
-    cv::Rect expanded_roi(plane_roi.x - 50, plane_roi.y - 50,
-                          plane_roi.width + 100, plane_roi.height + 100);
+    // Expand plane_roi proportionally to avoid clipping at edges and prevent pop-in/pop-out
+    // Use 50% margin like in IntersectionOverlayController for consistency
+    int margin_x = plane_roi.width * 0.5;
+    int margin_y = plane_roi.height * 0.5;
+    cv::Rect expanded_roi(plane_roi.x - margin_x, plane_roi.y - margin_y,
+                          plane_roi.width + 2*margin_x, plane_roi.height + 2*margin_y);
 
     for(int y = 1; y < points.rows - 1; y += grid_step) {
         for(int x = 1; x < points.cols - 1; x += grid_step) {
