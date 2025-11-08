@@ -1330,9 +1330,9 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     int total_candidates = 0;
 
     // Expand plane_roi proportionally to avoid clipping at edges and prevent pop-in/pop-out
-    // Use 50% margin like in IntersectionOverlayController for consistency
-    int margin_x = plane_roi.width * 0.5;
-    int margin_y = plane_roi.height * 0.5;
+    // Use 200% margin (3x viewport size) for strong anti-popping - grid points can be very sparse
+    int margin_x = plane_roi.width * 2.0;
+    int margin_y = plane_roi.height * 2.0;
     cv::Rect expanded_roi(plane_roi.x - margin_x, plane_roi.y - margin_y,
                           plane_roi.width + 2*margin_x, plane_roi.height + 2*margin_y);
 
