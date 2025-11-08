@@ -1343,8 +1343,35 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             }
         }
     }
-    // Shuffle once
-    std::random_shuffle(grid_candidates.begin(), grid_candidates.end());
+
+    // Sort candidates deterministically by distance from viewport center
+    // This ensures consistent results across renders
+    cv::Vec2f viewport_center_plane = {
+        static_cast<float>(plane_roi.x + plane_roi.width / 2),
+        static_cast<float>(plane_roi.y + plane_roi.height / 2)
+    };
+
+    std::sort(grid_candidates.begin(), grid_candidates.end(),
+        [&](const cv::Vec2f& a, const cv::Vec2f& b) {
+            cv::Vec3f pt_a = at_int(points, a);
+            cv::Vec3f pt_b = at_int(points, b);
+            cv::Vec3f plane_a = plane->project(pt_a);
+            cv::Vec3f plane_b = plane->project(pt_b);
+
+            float dist_a = (plane_a[0] - viewport_center_plane[0]) * (plane_a[0] - viewport_center_plane[0]) +
+                          (plane_a[1] - viewport_center_plane[1]) * (plane_a[1] - viewport_center_plane[1]);
+            float dist_b = (plane_b[0] - viewport_center_plane[0]) * (plane_b[0] - viewport_center_plane[0]) +
+                          (plane_b[1] - viewport_center_plane[1]) * (plane_b[1] - viewport_center_plane[1]);
+
+            // Sort by distance, then by grid position for determinism
+            if (std::abs(dist_a - dist_b) < 0.01f) {
+                if (std::abs(a[0] - b[0]) < 0.01f) {
+                    return a[1] < b[1];
+                }
+                return a[0] < b[0];
+            }
+            return dist_a < dist_b;
+        });
 
     for(int r=0;r<max_iterations;r++) {
         std::vector<cv::Vec3f> seg;
