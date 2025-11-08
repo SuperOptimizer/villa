@@ -364,7 +364,7 @@ void IntersectionOverlayController::renderSegmentIntersection(
         OverlayStyle style;
         style.penColor = color;
         style.penWidth = (segmentId == _currentSegmentId) ? _lineWidth * 1.5f : _lineWidth;
-        style.z = (segmentId == _currentSegmentId) ? 20 : 5;
+        style.z = (segmentId == _currentSegmentId) ? 100 : 5;
 
         if (!segmentPoints.empty()) {
             builder.addLineStrip(segmentPoints, false, style);
