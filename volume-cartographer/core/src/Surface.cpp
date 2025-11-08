@@ -899,21 +899,6 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
             break;
     }
 
-    // Log statistics to understand optimization behavior
-    static int call_count = 0;
-    call_count++;
-    if (plane && call_count % 100 == 0) {
-        float final_plane_dist = std::abs(plane->pointDist(out));
-        std::cout << "[MIN_LOC] Sample " << call_count << ": init_dist=" << initial_plane_dist
-                  << ", final_dist=" << final_plane_dist
-                  << ", iterations=" << iterations
-                  << ", init_step=" << init_step
-                  << ", final_step=" << step
-                  << ", converged=" << (best <= 1.0 ? "YES" : "NO")
-                  << std::endl;
-    }
-
-    // std::cout << "best" << best << out << "\n" <<  std::endl;
     return best;
 }
 
@@ -1319,12 +1304,6 @@ static uint8_t get_block(const cv::Mat_<uint8_t> &block, const cv::Vec3f &loc, c
 void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step, int min_tries, const cv::Vec3f* poi_hint)
 {
     //start with random points and search for a plane intersection
-    auto t_func_start = std::chrono::high_resolution_clock::now();
-
-    if (poi_hint) {
-        std::cout << "[INTERSECT_TRACE] POI hint provided: (" << (*poi_hint)[0] << ", " << (*poi_hint)[1] << ", " << (*poi_hint)[2] << ")" << std::endl;
-    }
-
     float block_step = 0.5*step;
 
     cv::Mat_<uint8_t> block(cv::Size(plane_roi.width/block_step, plane_roi.height/block_step), 0);
@@ -1335,13 +1314,11 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     std::vector<std::vector<cv::Vec2f>> seg_grid_raw;
 
     int max_iterations = std::max(min_tries, std::max(points.cols,points.rows)/100);
-    std::cout << "[INTERSECT_TRACE] Starting find_intersect_segments: min_tries=" << min_tries << ", max_iterations=" << max_iterations << std::endl;
 
     int total_search_attempts = 0;
     int successful_traces = 0;
     int consecutive_failures = 0;  // Track iterations without finding a curve
     const int max_consecutive_failures = 3;  // Stop after 3 iterations with no curves found
-    auto t_search_start = std::chrono::high_resolution_clock::now();
 
     // Build grid candidate list ONCE (not inside the loop!)
     // Filter to only candidates visible in the viewport
@@ -1368,8 +1345,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     }
     // Shuffle once
     std::random_shuffle(grid_candidates.begin(), grid_candidates.end());
-    std::cout << "[INTERSECT_TRACE] Built " << grid_candidates.size() << " viewport-filtered candidates (from "
-              << total_candidates << " total) with spacing " << grid_step << std::endl;
 
     for(int r=0;r<max_iterations;r++) {
         std::vector<cv::Vec3f> seg;
@@ -1401,7 +1376,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             float poi_dist = pointTo(poi_loc, points, *poi_hint, 100.0f, 100, 1.0f);
             if (poi_dist >= 0 && poi_dist < 100.0f) {
                 candidate_locs.insert(candidate_locs.begin(), poi_loc);
-                std::cout << "[INTERSECT_TRACE] POI mapped to grid location (" << poi_loc[0] << ", " << poi_loc[1] << "), dist=" << poi_dist << std::endl;
             }
         }
 
@@ -1437,16 +1411,12 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             // Failed to find a starting point in this iteration
             consecutive_failures++;
             if (consecutive_failures >= max_consecutive_failures) {
-                std::cout << "[INTERSECT_TRACE] No curves found in " << consecutive_failures
-                          << " consecutive iterations, stopping search" << std::endl;
                 break;
             }
             continue;
         }
 
         // Found a valid starting point
-        auto t_trace_start = std::chrono::high_resolution_clock::now();
-
         seg.push_back(point);
         seg_loc.push_back(loc);
 
@@ -1459,8 +1429,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc)) {
             consecutive_failures++;
             if (consecutive_failures >= max_consecutive_failures) {
-                std::cout << "[INTERSECT_TRACE] No curves found in " << consecutive_failures
-                          << " consecutive iterations, stopping search" << std::endl;
                 break;
             }
             continue;
@@ -1562,25 +1530,14 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         seg_vol_raw.push_back(seg2);
         seg_grid_raw.push_back(seg_loc2);
 
-        auto t_trace_end = std::chrono::high_resolution_clock::now();
-        auto trace_ms = std::chrono::duration<double, std::milli>(t_trace_end - t_trace_start).count();
         successful_traces++;
         consecutive_failures = 0;  // Reset failure counter on successful trace
 
-        if (successful_traces <= 5 || successful_traces % 100 == 0) {
-            std::cout << "[INTERSECT_TRACE] Trace #" << successful_traces << ": " << search_attempts
-                      << " search attempts, traced " << seg2.size() << " points in " << trace_ms << "ms" << std::endl;
-        }
-
         // Early exit: if we've found enough curves, stop searching
         if (successful_traces >= min_tries) {
-            std::cout << "[INTERSECT_TRACE] Found " << successful_traces << " curves (>= min_tries=" << min_tries << "), stopping early" << std::endl;
             break;
         }
     }
-
-    auto t_search_end = std::chrono::high_resolution_clock::now();
-    auto search_ms = std::chrono::duration<double, std::milli>(t_search_end - t_search_start).count();
 
     // Each traced curve is already continuous - the tracer stops at invalid grid points
     // Don't split based on 3D distance since curved surfaces can have large 3D distances
@@ -1592,12 +1549,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         }
     }
 
-    auto t_func_end = std::chrono::high_resolution_clock::now();
-    auto total_ms = std::chrono::duration<double, std::milli>(t_func_end - t_func_start).count();
-
-    std::cout << "[INTERSECT_TRACE] SUMMARY: " << successful_traces << " successful traces from "
-              << total_search_attempts << " search attempts in " << total_ms << "ms" << std::endl;
-    std::cout << "[INTERSECT_TRACE]   Search phase: " << search_ms << "ms, Final segments: " << seg_vol.size() << std::endl;
 }
 
 struct DSReader

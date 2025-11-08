@@ -29,15 +29,11 @@ IntersectionOverlayController::IntersectionOverlayController(ViewerManager* mana
 
 void IntersectionOverlayController::setCurrentSegment(const std::string& segmentId)
 {
-    Logger()->info("IntersectionOverlayController::setCurrentSegment called with '{}'", segmentId);
-
     if (_currentSegmentId == segmentId) {
-        Logger()->info("  Segment unchanged, skipping");
         return;
     }
 
     _currentSegmentId = segmentId;
-    Logger()->info("  Current segment set to '{}'", _currentSegmentId);
 
     // Invalidate all caches since current segment changed (affects colors)
     for (auto& [viewer, cache] : _viewerCaches) {
@@ -302,30 +298,18 @@ void IntersectionOverlayController::renderSegmentIntersection(
     const QRectF& viewport,
     OverlayBuilder& builder)
 {
-    Logger()->info("IntersectionOverlayController::renderSegmentIntersection for segment '{}'", segmentId);
-
     // ALWAYS redraw - caching disabled for now
-    Logger()->info("  Computing intersection (caching disabled)...");
 
     // Need to compute intersection
     Surface* baseSurf = _surfaceCollection->surface(segmentId);
     QuadSurface* surf = dynamic_cast<QuadSurface*>(baseSurf);
     if (!surf) {
-        Logger()->warn("  Segment '{}' not found or not a QuadSurface", segmentId);
+        Logger()->warn("Segment '{}' not found or not a QuadSurface", segmentId);
         return;
     }
 
-    Logger()->info("  Got QuadSurface for segment '{}'", segmentId);
-
     // Get the raw points
     const cv::Mat_<cv::Vec3f>& rawPoints = surf->rawPoints();
-    Logger()->info("  Raw points size: {}x{}", rawPoints.rows, rawPoints.cols);
-
-    // Log segment bounding box
-    Rect3D bbox = surf->bbox();
-    Logger()->info("  Segment bbox: ({:.2f},{:.2f},{:.2f}) to ({:.2f},{:.2f},{:.2f})",
-                   bbox.low[0], bbox.low[1], bbox.low[2],
-                   bbox.high[0], bbox.high[1], bbox.high[2]);
 
     // Convert viewport to plane ROI
     float viewerScale = viewer->scale();
@@ -335,13 +319,6 @@ void IntersectionOverlayController::renderSegmentIntersection(
         static_cast<int>(viewport.width() / viewerScale),
         static_cast<int>(viewport.height() / viewerScale)
     };
-
-    // Log plane info
-    cv::Vec3f planeOrigin = plane->origin();
-    cv::Vec3f ptr = plane->pointer();
-    cv::Vec3f planeNormal = plane->normal(ptr, {0,0,0});
-    Logger()->info("  Plane origin: ({:.2f}, {:.2f}, {:.2f})", planeOrigin[0], planeOrigin[1], planeOrigin[2]);
-    Logger()->info("  Plane normal: ({:.2f}, {:.2f}, {:.2f})", planeNormal[0], planeNormal[1], planeNormal[2]);
 
     // Compute intersection segments
     std::vector<std::vector<cv::Vec3f>> intersectionSegments3D;
@@ -355,31 +332,23 @@ void IntersectionOverlayController::renderSegmentIntersection(
         if (poi) {
             poiHint = poi->p;
             havePOI = true;
-            Logger()->info("  Using POI hint: ({:.2f}, {:.2f}, {:.2f})", poiHint[0], poiHint[1], poiHint[2]);
         }
     }
 
     // Use fewer starting points but trace longer curves
     // Each trace goes up to 100 steps in each direction = 200 total points per curve
     int minTries = (segmentId == _currentSegmentId) ? 20 : 10;
-    Logger()->info("  Computing intersection with planeRoi ({},{} {}x{}), tolerance {}, minTries {}",
-                   planeRoi.x, planeRoi.y, planeRoi.width, planeRoi.height,
-                   4.0f / viewerScale, minTries);
 
     find_intersect_segments(intersectionSegments3D, intersectionSegments2D,
                            rawPoints, plane, planeRoi, 4.0f / viewerScale, minTries,
                            havePOI ? &poiHint : nullptr);
 
-    Logger()->info("  Found {} intersection segments", intersectionSegments3D.size());
-
     if (intersectionSegments3D.empty()) {
-        Logger()->warn("  No intersection found for segment '{}'", segmentId);
         return;
     }
 
     // Convert 3D segments to screen coordinates and render
     QColor color = getSegmentColor(segmentId, viewer->surfName());
-    Logger()->info("  Segment color: ({},{},{})", color.red(), color.green(), color.blue());
     std::vector<QPointF> allPoints;
 
     for (const auto& segment : intersectionSegments3D) {
@@ -398,21 +367,16 @@ void IntersectionOverlayController::renderSegmentIntersection(
         style.z = (segmentId == _currentSegmentId) ? 20 : 5;
 
         if (!segmentPoints.empty()) {
-            Logger()->info("    Adding line strip with {} points", segmentPoints.size());
             builder.addLineStrip(segmentPoints, false, style);
             allPoints.insert(allPoints.end(), segmentPoints.begin(), segmentPoints.end());
         }
     }
 
-    Logger()->info("  Total points rendered: {}", allPoints.size());
     // No caching - always redraw
 }
 
 void IntersectionOverlayController::collectPrimitives(CVolumeViewer* viewer, OverlayBuilder& builder)
 {
-    Logger()->info("IntersectionOverlayController::collectPrimitives called for viewer {}",
-                   viewer ? viewer->surfName() : "null");
-
     if (!viewer || !_surfaceCollection) {
         Logger()->warn("IntersectionOverlayController: No viewer or surface collection");
         return;
@@ -427,19 +391,12 @@ void IntersectionOverlayController::collectPrimitives(CVolumeViewer* viewer, Ove
 
     // Handle plane surfaces (xy, xz, yz viewers)
     if (PlaneSurface* plane = dynamic_cast<PlaneSurface*>(surf)) {
-        Logger()->info("IntersectionOverlayController: Plane viewer '{}', current segment '{}'",
-                      viewer->surfName(), _currentSegmentId);
-
         // Get viewport
         QRectF viewport = viewer->currentImageArea();
         float scale = viewer->scale();
 
-        Logger()->info("IntersectionOverlayController: Viewport ({}, {}, {}x{}), scale {}",
-                      viewport.x(), viewport.y(), viewport.width(), viewport.height(), scale);
-
         // Find all visible segments (sorted by distance, limited to 100)
         std::vector<std::string> visibleSegments = findVisibleSegments(plane, viewport);
-        Logger()->info("  Found {} visible segments", visibleSegments.size());
 
         // Render non-current segments first (so current segment draws on top)
         for (const auto& segmentId : visibleSegments) {
