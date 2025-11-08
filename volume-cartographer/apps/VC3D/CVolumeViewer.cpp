@@ -3,6 +3,7 @@
 
 #include "VolumeViewerCmaps.hpp"
 #include "VCSettings.hpp"
+#include "vc/core/util/Logging.hpp"
 
 #include <QGraphicsView>
 #include <QGraphicsScene>
@@ -17,7 +18,6 @@
 
 #include <omp.h>
 
-#include "OpChain.hpp"
 #include "vc/core/util/Render.hpp"
 
 #include <QPainter>
@@ -337,7 +337,7 @@ CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, QWidget* parent)
 
     _overlayUpdateTimer = new QTimer(this);
     _overlayUpdateTimer->setSingleShot(true);
-    _overlayUpdateTimer->setInterval(50);
+    _overlayUpdateTimer->setInterval(5);
     connect(_overlayUpdateTimer, &QTimer::timeout, this, &CVolumeViewer::updateAllOverlays);
 
     _lbl = new QLabel(this);
@@ -738,14 +738,6 @@ void CVolumeViewer::setSurface(const std::string &name)
 }
 
 
-void CVolumeViewer::invalidateVis()
-{
-    for(auto &item : slice_vis_items) {
-        fScene->removeItem(item);
-        delete item;
-    }
-    slice_vis_items.resize(0);
-}
 
 
 void CVolumeViewer::setOverlayVolume(std::shared_ptr<Volume> volume)
@@ -859,12 +851,6 @@ void CVolumeViewer::fitSurfaceInView()
     if (auto* quadSurf = dynamic_cast<QuadSurface*>(_surf)) {
         bbox = quadSurf->bbox();
         haveBounds = true;
-    } else if (auto* opChain = dynamic_cast<OpChain*>(_surf)) {
-        QuadSurface* src = opChain->src();
-        if (src) {
-            bbox = src->bbox();
-            haveBounds = true;
-        }
     }
 
     if (!haveBounds) {
@@ -921,7 +907,6 @@ void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
             clearAllOverlayGroups();
             fScene->clear();
             _intersect_items.clear();
-            slice_vis_items.clear();
             _paths.clear();
             emit overlaysUpdated();
             _cursor = nullptr;
@@ -929,18 +914,11 @@ void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
             fBaseImageItem = nullptr;
         }
         else {
-            invalidateVis();
             _z_off = 0.0f;
             if (name == "segmentation" && _resetViewOnSurfaceChange) {
                 fitSurfaceInView();
             }
         }
-    }
-
-    // If a surface in our intersection targets changed, rebuild the index and invalidate intersections
-    if (_intersect_tgts.count(name)) {
-        rebuildIntersectionIndex();
-        invalidateIntersect(name);
     }
 
     if (name == _surf_name) {
@@ -1018,31 +996,46 @@ QGraphicsItem *crossItem()
 
 //TODO make poi tracking optional and configurable
 void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
-{    
+{
+    auto t_start = std::chrono::high_resolution_clock::now();
+
     if (!poi || !_surf)
         return;
-    
+
     if (name == "focus") {
         // Add safety check before dynamic_cast
         if (!_surf) {
             return;
         }
-        
+
         if (auto* plane = dynamic_cast<PlaneSurface*>(_surf)) {
             if (!_suppressFocusRecentering) {
                 fGraphicsView->centerOn(0, 0);
             }
             if (poi->p == plane->origin())
                 return;
-            
+
             plane->setOrigin(poi->p);
             emit overlaysUpdated();
-            
-            _surf_col->setSurface(_surf_name, plane);
+
+            // Use updateSurface() instead of setSurface() to avoid signal cascade
+            // We're only updating the plane origin, not changing surfaces
+            auto t_before_updateSurface = std::chrono::high_resolution_clock::now();
+            _surf_col->updateSurface(_surf_name, plane);
+            auto t_after_updateSurface = std::chrono::high_resolution_clock::now();
+            auto updateSurface_ms = std::chrono::duration<double, std::milli>(t_after_updateSurface - t_before_updateSurface).count();
+            Logger()->info("CVolumeViewer::onPOIChanged({}): updateSurface took {:.2f}ms", _surf_name, updateSurface_ms);
+
+            // Don't render here - applySlicePlaneOrientation() will handle rendering
+            // with the correct normals/rotations. This avoids double-rendering.
+
+            auto t_end = std::chrono::high_resolution_clock::now();
+            auto total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+            Logger()->info("CVolumeViewer::onPOIChanged({}): TOTAL took {:.2f}ms", _surf_name, total_ms);
         } else if (auto* quad = dynamic_cast<QuadSurface*>(_surf)) {
             auto ptr = quad->pointer();
             float dist = quad->pointTo(ptr, poi->p, 4.0, 100);
-            
+
             if (dist < 4.0) {
                 cv::Vec3f sp = quad->loc(ptr) * _scale;
                 if (_center_marker) {
@@ -1056,7 +1049,18 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
                 }
             }
 
+            auto t_before_render = std::chrono::high_resolution_clock::now();
             renderVisible(true);
+            auto t_after_render = std::chrono::high_resolution_clock::now();
+            auto render_ms = std::chrono::duration<double, std::milli>(t_after_render - t_before_render).count();
+            Logger()->info("CVolumeViewer::onPOIChanged({}): renderVisible took {:.2f}ms", _surf_name, render_ms);
+
+            // Notify overlays to update (e.g., POI markers, arrows, text)
+            emit overlaysUpdated();
+
+            auto t_end = std::chrono::high_resolution_clock::now();
+            auto total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+            Logger()->info("CVolumeViewer::onPOIChanged({}): TOTAL took {:.2f}ms", _surf_name, total_ms);
         }
     }
     else if (name == "cursor") {
@@ -1131,7 +1135,13 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
         float z_step = z * _ds_scale;  // Scale the step to maintain consistent physical distance
         _surf->gen(&slice_coords, nullptr, roi.size(), _ptr, _scale, {-roi.width/2, -roi.height/2, _z_off + z_step});
 
+        auto t_before_read = std::chrono::high_resolution_clock::now();
         readInterpolated3D(slice_img, volume->zarrDataset(_ds_sd_idx), slice_coords*_ds_scale, cache, _useFastInterpolation);
+        auto t_after_read = std::chrono::high_resolution_clock::now();
+        auto read_ms = std::chrono::duration<double, std::milli>(t_after_read - t_before_read).count();
+        if (z == z_start) {  // Only log first slice to avoid spam
+            Logger()->info("  readInterpolated3D[composite,z={}]: {:.2f}ms", z, read_ms);
+        }
 
         // Convert to float for accumulation
         cv::Mat_<float> slice_float;
@@ -1325,7 +1335,11 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
             if (!baseDataset) {
                 return cv::Mat();
             }
+            auto t_before_read = std::chrono::high_resolution_clock::now();
             readInterpolated3D(baseGray, baseDataset, coords * _ds_scale, cache, _useFastInterpolation);
+            auto t_after_read = std::chrono::high_resolution_clock::now();
+            auto read_ms = std::chrono::duration<double, std::milli>(t_after_read - t_before_read).count();
+            Logger()->info("  readInterpolated3D[base,{}]: {:.2f}ms", _surf_name, read_ms);
         }
     }
 
@@ -1377,7 +1391,11 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 
             cv::Mat_<uint8_t> overlayValues;
             z5::Dataset* overlayDataset = _overlayVolume->zarrDataset(overlayIdx);
+            auto t_before_read = std::chrono::high_resolution_clock::now();
             readInterpolated3D(overlayValues, overlayDataset, coords * overlayScale, cache, /*nearest_neighbor=*/true);
+            auto t_after_read = std::chrono::high_resolution_clock::now();
+            auto read_ms = std::chrono::duration<double, std::milli>(t_after_read - t_before_read).count();
+            Logger()->info("  readInterpolated3D[overlay,{}]: {:.2f}ms", _surf_name, read_ms);
 
             if (!overlayValues.empty()) {
                 const int windowLow = static_cast<int>(std::clamp(_overlayWindowLow, 0.0f, 255.0f));
@@ -1448,6 +1466,8 @@ private:
 
 void CVolumeViewer::renderVisible(bool force)
 {
+    auto t_start = std::chrono::high_resolution_clock::now();
+
     if (_surf && _surf_col) {
         Surface* currentSurface = _surf_col->surface(_surf_name);
         if (!currentSurface) {
@@ -1461,16 +1481,23 @@ void CVolumeViewer::renderVisible(bool force)
         return;
 
     QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->viewport()->geometry()).boundingRect();
-    
+
     if (!force && QRectF(curr_img_area).contains(bbox))
         return;
-    
-    
+
+
     curr_img_area = {bbox.left(),bbox.top(), bbox.width(), bbox.height()};
-    
+
+    auto t_before_render = std::chrono::high_resolution_clock::now();
     cv::Mat img = render_area({curr_img_area.x(), curr_img_area.y(), curr_img_area.width(), curr_img_area.height()});
-    
+    auto t_after_render = std::chrono::high_resolution_clock::now();
+    auto render_ms = std::chrono::duration<double, std::milli>(t_after_render - t_before_render).count();
+
+    auto t_before_mat2qimg = std::chrono::high_resolution_clock::now();
     QImage qimg = Mat2QImage(img);
+    auto t_after_mat2qimg = std::chrono::high_resolution_clock::now();
+    auto mat2qimg_ms = std::chrono::duration<double, std::milli>(t_after_mat2qimg - t_before_mat2qimg).count();
+
     if (_overlayImageValid && !_overlayImage.isNull()) {
         qimg = qimg.convertToFormat(QImage::Format_RGBA8888);
         QPainter painter(&qimg);
@@ -1478,22 +1505,31 @@ void CVolumeViewer::renderVisible(bool force)
         painter.drawImage(0, 0, _overlayImage);
     }
 
+    auto t_before_pixmap = std::chrono::high_resolution_clock::now();
     QPixmap pixmap = QPixmap::fromImage(qimg, fSkipImageFormatConv ? Qt::NoFormatConversion : Qt::AutoColor);
- 
+
     // Add the QPixmap to the scene as a QGraphicsPixmapItem
     if (!fBaseImageItem)
         fBaseImageItem = fScene->addPixmap(pixmap);
     else
         fBaseImageItem->setPixmap(pixmap);
-    
+
     if (!_center_marker) {
         _center_marker = fScene->addEllipse({-10,-10,20,20}, QPen(COLOR_FOCUS, 3, Qt::DashDotLine, Qt::RoundCap, Qt::RoundJoin));
         _center_marker->setZValue(11);
     }
 
     _center_marker->setParentItem(fBaseImageItem);
-    
+
     fBaseImageItem->setOffset(curr_img_area.topLeft());
+    auto t_after_scene = std::chrono::high_resolution_clock::now();
+    auto scene_ms = std::chrono::duration<double, std::milli>(t_after_scene - t_before_pixmap).count();
+
+    auto t_end = std::chrono::high_resolution_clock::now();
+    auto total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+
+    Logger()->info("renderVisible[{}]: total={:.2f}ms (render_area={:.2f}ms, Mat2QImage={:.2f}ms, scene={:.2f}ms)",
+                   _surf_name, total_ms, render_ms, mat2qimg_ms, scene_ms);
 }
 
 
@@ -1518,9 +1554,7 @@ void CVolumeViewer::onPanRelease(Qt::MouseButton buttons, Qt::KeyboardModifiers 
 
 void CVolumeViewer::onScrolled()
 {
-    // if (!dynamic_cast<OpChain*>(_surf) && !dynamic_cast<OpChain*>(_surf)->slow() && _min_scale == 1.0)
         // renderVisible();
-    // if ((!dynamic_cast<OpChain*>(_surf) || !dynamic_cast<OpChain*>(_surf)->slow()) && _min_scale < 1.0)
         // renderVisible();
 }
 
@@ -1887,7 +1921,6 @@ void CVolumeViewer::onVolumeClosing()
         }
         // Clear all item collections
         _intersect_items.clear();
-        slice_vis_items.clear();
         _paths.clear();
         emit overlaysUpdated();
         _cursor = nullptr;
@@ -1997,8 +2030,8 @@ void CVolumeViewer::updateAllOverlays()
 
     }
 
-    invalidateVis();
-    invalidateIntersect();
+    // Don't invalidate intersection cache here - it's only invalidated when surfaces change
+    // invalidateIntersect();
     renderIntersections();
 
     emit overlaysUpdated();

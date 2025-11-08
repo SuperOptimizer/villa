@@ -33,6 +33,7 @@ class CSurfaceCollection : public QObject
 public:
     ~CSurfaceCollection();
     void setSurface(const std::string &name, Surface*, bool noSignalSend = false, bool takeOwnership = true);
+    void updateSurface(const std::string &name, Surface*, bool takeOwnership = true);
     void setPOI(const std::string &name, POI *poi);
     void setIntersection(const std::string &a, const std::string &b, Intersection *intersect);
     Surface *surface(const std::string &name);

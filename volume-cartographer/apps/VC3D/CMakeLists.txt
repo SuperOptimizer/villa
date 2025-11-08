@@ -24,10 +24,6 @@ set(srcs
     elements/RangeSlider.hpp
     SettingsDialog.cpp
     CSurfaceCollection.cpp
-    OpChain.cpp
-    OpsList.cpp
-    OpsSettings.cpp
-    formsetsrc.cpp
     SurfaceTreeWidget.hpp
     SurfaceTreeWidget.cpp
     SeedingWidget.cpp
@@ -65,6 +61,8 @@ set(srcs
     overlays/PlaneSlicingOverlayController.hpp
     overlays/VolumeOverlayController.cpp
     overlays/VolumeOverlayController.hpp
+    overlays/IntersectionOverlayController.cpp
+    overlays/IntersectionOverlayController.hpp
     overlays/ViewerOverlayControllerBase.cpp
     overlays/ViewerOverlayControllerBase.hpp
     SurfacePanelController.cpp

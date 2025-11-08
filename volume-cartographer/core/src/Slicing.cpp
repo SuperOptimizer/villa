@@ -24,6 +24,9 @@
 
 #include <algorithm>
 #include <random>
+#include <chrono>
+
+#include "vc/core/util/Logging.hpp"
 
 
 template<typename T>
@@ -358,6 +361,8 @@ bool ChunkCache::has16(const cv::Vec4i &idx)
 }
 
 void readNearestNeighbor(cv::Mat_<uint8_t> &out, const z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache *cache) {
+    auto t_start = std::chrono::high_resolution_clock::now();
+
     out = cv::Mat_<uint8_t>(coords.size(), 0);
     int group_idx = cache->groupIdx(ds->path());
 
@@ -376,14 +381,112 @@ void readNearestNeighbor(cv::Mat_<uint8_t> &out, const z5::Dataset *ds, const cv
     int w = coords.cols;
     int h = coords.rows;
 
+    auto t_after_setup = std::chrono::high_resolution_clock::now();
+    auto setup_ms = std::chrono::duration<double, std::milli>(t_after_setup - t_start).count();
+
+    // Phase 1: Determine needed chunks via bounding box (optimized)
+    // Find min/max coordinates to determine chunk bounding box
+    int min_x = std::numeric_limits<int>::max();
+    int min_y = std::numeric_limits<int>::max();
+    int min_z = std::numeric_limits<int>::max();
+    int max_x = std::numeric_limits<int>::min();
+    int max_y = std::numeric_limits<int>::min();
+    int max_z = std::numeric_limits<int>::min();
+
+    for(int y = 0; y < h; y++) {
+        for(int x = 0; x < w; x++) {
+            int ox = static_cast<int>(coords(y,x)[2] + 0.5f);
+            int oy = static_cast<int>(coords(y,x)[1] + 0.5f);
+            int oz = static_cast<int>(coords(y,x)[0] + 0.5f);
+
+            if ((ox | oy | oz) < 0)
+                continue;
+
+            min_x = std::min(min_x, ox);
+            min_y = std::min(min_y, oy);
+            min_z = std::min(min_z, oz);
+            max_x = std::max(max_x, ox);
+            max_y = std::max(max_y, oy);
+            max_z = std::max(max_z, oz);
+        }
+    }
+
+    // Calculate chunk index range
+    std::unordered_map<cv::Vec4i, std::shared_ptr<xt::xarray<uint8_t>>, vec4i_hash> chunks;
+
+    if (min_x <= max_x && min_y <= max_y && min_z <= max_z) {
+        int chunk_min_x = min_x / chunk_size_x;
+        int chunk_min_y = min_y / chunk_size_y;
+        int chunk_min_z = min_z / chunk_size_z;
+        int chunk_max_x = max_x / chunk_size_x;
+        int chunk_max_y = max_y / chunk_size_y;
+        int chunk_max_z = max_z / chunk_size_z;
+
+        // Pre-allocate based on chunk count
+        size_t chunk_count = (chunk_max_x - chunk_min_x + 1) *
+                            (chunk_max_y - chunk_min_y + 1) *
+                            (chunk_max_z - chunk_min_z + 1);
+        chunks.reserve(chunk_count);
+
+        // Generate all chunks in bounding box
+        for(int iz = chunk_min_z; iz <= chunk_max_z; iz++) {
+            for(int iy = chunk_min_y; iy <= chunk_max_y; iy++) {
+                for(int ix = chunk_min_x; ix <= chunk_max_x; ix++) {
+                    cv::Vec4i idx = {group_idx, ix, iy, iz};
+                    chunks[idx] = nullptr;
+                }
+            }
+        }
+    }
+
+    auto t_after_scan = std::chrono::high_resolution_clock::now();
+    auto scan_ms = std::chrono::duration<double, std::milli>(t_after_scan - t_after_setup).count();
+
+    // Phase 2: Check cache and identify chunks needing I/O
+    std::vector<std::pair<cv::Vec4i, xt::xarray<uint8_t>*>> needs_io;
+    size_t total_chunks = chunks.size();
+    size_t cache_hits = 0;
+
+    for(auto &it : chunks) {
+        cv::Vec4i idx = it.first;
+        if (!cache->has(idx)) {
+            needs_io.push_back({idx, nullptr});
+        } else {
+            chunks[idx] = cache->get(idx);
+            cache_hits++;
+        }
+    }
+
+    auto t_after_cache_check = std::chrono::high_resolution_clock::now();
+    auto cache_check_ms = std::chrono::duration<double, std::milli>(t_after_cache_check - t_after_scan).count();
+
+    // Phase 3: Load missing chunks in parallel
+    #pragma omp parallel for schedule(dynamic, 1)
+    for(auto &it : needs_io) {
+        cv::Vec4i idx = it.first;
+        it.second = readChunk<uint8_t>(*ds, {size_t(idx[1]), size_t(idx[2]), size_t(idx[3])});
+    }
+
+    auto t_after_io = std::chrono::high_resolution_clock::now();
+    auto io_ms = std::chrono::duration<double, std::milli>(t_after_io - t_after_cache_check).count();
+
+    // Insert loaded chunks into cache
+    for(auto &it : needs_io) {
+        cv::Vec4i idx = it.first;
+        cache->put(idx, it.second);
+        chunks[idx] = cache->get(idx);
+    }
+
+    auto t_after_cache_insert = std::chrono::high_resolution_clock::now();
+    auto cache_insert_ms = std::chrono::duration<double, std::milli>(t_after_cache_insert - t_after_io).count();
+
+    // Phase 4: Sample all pixels with all chunks in cache
     constexpr int TILE_SIZE = 32;
 
     #pragma omp parallel
     {
-        // Thread-local variables
         cv::Vec4i last_idx = {-1,-1,-1,-1};
         xt::xarray<uint8_t> *chunk = nullptr;
-        std::shared_ptr<xt::xarray<uint8_t>> chunk_ref;
 
         #pragma omp for schedule(static, 1) collapse(2)
         for(size_t tile_y = 0; tile_y < static_cast<size_t>(h); tile_y += TILE_SIZE) {
@@ -412,18 +515,8 @@ void readNearestNeighbor(cv::Mat_<uint8_t> &out, const z5::Dataset *ds, const cv
 
                         if (idx != last_idx) {
                             last_idx = idx;
-
-                            #pragma omp critical(cache_access)
-                            {
-                                if (!cache->has(idx)) {
-                                    auto* new_chunk = readChunk<uint8_t>(*ds, {size_t(ix), size_t(iy), size_t(iz)});
-                                    cache->put(idx, new_chunk);
-                                    chunk_ref = cache->get(idx);
-                                } else {
-                                    chunk_ref = cache->get(idx);
-                                }
-                            }
-                            chunk = chunk_ref.get();
+                            auto it = chunks.find(idx);
+                            chunk = (it != chunks.end() && it->second) ? it->second.get() : nullptr;
                         }
 
                         if (!chunk)
@@ -444,9 +537,19 @@ void readNearestNeighbor(cv::Mat_<uint8_t> &out, const z5::Dataset *ds, const cv
             }
         }
     }
+
+    auto t_end = std::chrono::high_resolution_clock::now();
+    auto sampling_ms = std::chrono::duration<double, std::milli>(t_end - t_after_cache_insert).count();
+    auto total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+
+    float hit_rate = total_chunks > 0 ? (100.0f * cache_hits / total_chunks) : 0.0f;
+    Logger()->info("    readNearestNeighbor[uint8]: total={:.2f}ms (setup={:.2f}ms, scan={:.2f}ms, cache_check={:.2f}ms, I/O={:.2f}ms, cache_insert={:.2f}ms, sampling={:.2f}ms) | chunks: {}/{} cached ({:.1f}% hit rate)",
+                   total_ms, setup_ms, scan_ms, cache_check_ms, io_ms, cache_insert_ms, sampling_ms, cache_hits, total_chunks, hit_rate);
 }
 
 static void readNearestNeighbor16(cv::Mat_<uint16_t> &out, const z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache *cache) {
+    auto t_start = std::chrono::high_resolution_clock::now();
+
     out = cv::Mat_<uint16_t>(coords.size(), 0);
     int group_idx = cache->groupIdx(ds->path());
 
@@ -456,13 +559,107 @@ static void readNearestNeighbor16(cv::Mat_<uint16_t> &out, const z5::Dataset *ds
     const int chunk_size_z = static_cast<int>(blockShape[2]);
 
     int w = coords.cols, h = coords.rows;
+
+    auto t_after_setup = std::chrono::high_resolution_clock::now();
+    auto setup_ms = std::chrono::duration<double, std::milli>(t_after_setup - t_start).count();
+
+    // Phase 1: Determine needed chunks via bounding box (optimized)
+    int min_x = std::numeric_limits<int>::max();
+    int min_y = std::numeric_limits<int>::max();
+    int min_z = std::numeric_limits<int>::max();
+    int max_x = std::numeric_limits<int>::min();
+    int max_y = std::numeric_limits<int>::min();
+    int max_z = std::numeric_limits<int>::min();
+
+    for(int y = 0; y < h; y++) {
+        for(int x = 0; x < w; x++) {
+            int ox = static_cast<int>(coords(y,x)[2] + 0.5f);
+            int oy = static_cast<int>(coords(y,x)[1] + 0.5f);
+            int oz = static_cast<int>(coords(y,x)[0] + 0.5f);
+            if ((ox | oy | oz) < 0) continue;
+
+            min_x = std::min(min_x, ox);
+            min_y = std::min(min_y, oy);
+            min_z = std::min(min_z, oz);
+            max_x = std::max(max_x, ox);
+            max_y = std::max(max_y, oy);
+            max_z = std::max(max_z, oz);
+        }
+    }
+
+    std::unordered_map<cv::Vec4i, std::shared_ptr<xt::xarray<uint16_t>>, vec4i_hash> chunks;
+
+    if (min_x <= max_x && min_y <= max_y && min_z <= max_z) {
+        int chunk_min_x = min_x / chunk_size_x;
+        int chunk_min_y = min_y / chunk_size_y;
+        int chunk_min_z = min_z / chunk_size_z;
+        int chunk_max_x = max_x / chunk_size_x;
+        int chunk_max_y = max_y / chunk_size_y;
+        int chunk_max_z = max_z / chunk_size_z;
+
+        size_t chunk_count = (chunk_max_x - chunk_min_x + 1) *
+                            (chunk_max_y - chunk_min_y + 1) *
+                            (chunk_max_z - chunk_min_z + 1);
+        chunks.reserve(chunk_count);
+
+        for(int iz = chunk_min_z; iz <= chunk_max_z; iz++) {
+            for(int iy = chunk_min_y; iy <= chunk_max_y; iy++) {
+                for(int ix = chunk_min_x; ix <= chunk_max_x; ix++) {
+                    cv::Vec4i idx = {group_idx, ix, iy, iz};
+                    chunks[idx] = nullptr;
+                }
+            }
+        }
+    }
+
+    auto t_after_scan = std::chrono::high_resolution_clock::now();
+    auto scan_ms = std::chrono::duration<double, std::milli>(t_after_scan - t_after_setup).count();
+
+    // Phase 2: Check cache and identify chunks needing I/O
+    std::vector<std::pair<cv::Vec4i, xt::xarray<uint16_t>*>> needs_io;
+    size_t total_chunks = chunks.size();
+    size_t cache_hits = 0;
+
+    for(auto &it : chunks) {
+        cv::Vec4i idx = it.first;
+        if (!cache->has16(idx)) {
+            needs_io.push_back({idx, nullptr});
+        } else {
+            chunks[idx] = cache->get16(idx);
+            cache_hits++;
+        }
+    }
+
+    auto t_after_cache_check = std::chrono::high_resolution_clock::now();
+    auto cache_check_ms = std::chrono::duration<double, std::milli>(t_after_cache_check - t_after_scan).count();
+
+    // Phase 3: Load missing chunks in parallel
+    #pragma omp parallel for schedule(dynamic, 1)
+    for(auto &it : needs_io) {
+        cv::Vec4i idx = it.first;
+        it.second = readChunk<uint16_t>(*ds, {size_t(idx[1]), size_t(idx[2]), size_t(idx[3])});
+    }
+
+    auto t_after_io = std::chrono::high_resolution_clock::now();
+    auto io_ms = std::chrono::duration<double, std::milli>(t_after_io - t_after_cache_check).count();
+
+    // Insert loaded chunks into cache
+    for(auto &it : needs_io) {
+        cv::Vec4i idx = it.first;
+        cache->put16(idx, it.second);
+        chunks[idx] = cache->get16(idx);
+    }
+
+    auto t_after_cache_insert = std::chrono::high_resolution_clock::now();
+    auto cache_insert_ms = std::chrono::duration<double, std::milli>(t_after_cache_insert - t_after_io).count();
+
+    // Phase 4: Sample all pixels with all chunks in cache
     constexpr int TILE_SIZE = 32;
 
     #pragma omp parallel
     {
         cv::Vec4i last_idx = {-1,-1,-1,-1};
         xt::xarray<uint16_t> *chunk = nullptr;
-        std::shared_ptr<xt::xarray<uint16_t>> chunk_ref;
 
         #pragma omp for schedule(static, 1) collapse(2)
         for(size_t tile_y = 0; tile_y < static_cast<size_t>(h); tile_y += TILE_SIZE) {
@@ -487,17 +684,8 @@ static void readNearestNeighbor16(cv::Mat_<uint16_t> &out, const z5::Dataset *ds
 
                         if (idx != last_idx) {
                             last_idx = idx;
-                            #pragma omp critical(cache_access)
-                            {
-                                if (!cache->has16(idx)) {
-                                    auto* new_chunk = readChunk<uint16_t>(*ds, {size_t(ix), size_t(iy), size_t(iz)});
-                                    cache->put16(idx, new_chunk);
-                                    chunk_ref = cache->get16(idx);
-                                } else {
-                                    chunk_ref = cache->get16(idx);
-                                }
-                            }
-                            chunk = chunk_ref.get();
+                            auto it = chunks.find(idx);
+                            chunk = (it != chunks.end() && it->second) ? it->second.get() : nullptr;
                         }
                         if (!chunk) continue;
 
@@ -514,14 +702,24 @@ static void readNearestNeighbor16(cv::Mat_<uint16_t> &out, const z5::Dataset *ds
             }
         }
     }
+
+    auto t_end = std::chrono::high_resolution_clock::now();
+    auto sampling_ms = std::chrono::duration<double, std::milli>(t_end - t_after_cache_insert).count();
+    auto total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+
+    float hit_rate = total_chunks > 0 ? (100.0f * cache_hits / total_chunks) : 0.0f;
+    Logger()->info("    readNearestNeighbor[uint16]: total={:.2f}ms (setup={:.2f}ms, scan={:.2f}ms, cache_check={:.2f}ms, I/O={:.2f}ms, cache_insert={:.2f}ms, sampling={:.2f}ms) | chunks: {}/{} cached ({:.1f}% hit rate)",
+                   total_ms, setup_ms, scan_ms, cache_check_ms, io_ms, cache_insert_ms, sampling_ms, cache_hits, total_chunks, hit_rate);
 }
 
 void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds,
                                const cv::Mat_<cv::Vec3f> &coords, ChunkCache *cache, bool nearest_neighbor) {
+    auto t_start = std::chrono::high_resolution_clock::now();
+
     if (nearest_neighbor) {
         return readNearestNeighbor(out,ds,coords,cache);
     }
-  
+
     out = cv::Mat_<uint8_t>(coords.size(), 0);
 
     if (!cache) {
@@ -546,8 +744,73 @@ void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds,
     int w = coords.cols;
     int h = coords.rows;
 
+    auto t_after_setup = std::chrono::high_resolution_clock::now();
+    auto setup_ms = std::chrono::duration<double, std::milli>(t_after_setup - t_start).count();
+
     std::shared_mutex mutex;
+
+    // Phase 1: Determine needed chunks via bounding box (optimized for trilinear)
+    // Find min/max coordinates - need to account for interpolation accessing +1
+    float min_x = std::numeric_limits<float>::max();
+    float min_y = std::numeric_limits<float>::max();
+    float min_z = std::numeric_limits<float>::max();
+    float max_x = std::numeric_limits<float>::lowest();
+    float max_y = std::numeric_limits<float>::lowest();
+    float max_z = std::numeric_limits<float>::lowest();
+
+    for(int y = 0; y < h; y++) {
+        for(int x = 0; x < w; x++) {
+            float ox = coords(y,x)[2];
+            float oy = coords(y,x)[1];
+            float oz = coords(y,x)[0];
+
+            if (ox < 0 || oy < 0 || oz < 0)
+                continue;
+            if (ox >= sx || oy >= sy || oz >= sz)
+                continue;
+
+            min_x = std::min(min_x, ox);
+            min_y = std::min(min_y, oy);
+            min_z = std::min(min_z, oz);
+            max_x = std::max(max_x, ox);
+            max_y = std::max(max_y, oy);
+            max_z = std::max(max_z, oz);
+        }
+    }
+
     std::unordered_map<cv::Vec4i,std::shared_ptr<xt::xarray<uint8_t>>,vec4i_hash> chunks;
+
+    if (min_x <= max_x && min_y <= max_y && min_z <= max_z) {
+        // For interpolation, we access up to floor(coord)+1, so extend bounding box
+        int chunk_min_x = static_cast<int>(min_x) / cw;
+        int chunk_min_y = static_cast<int>(min_y) / ch;
+        int chunk_min_z = static_cast<int>(min_z) / cd;
+        int chunk_max_x = (static_cast<int>(max_x) + 1) / cw;
+        int chunk_max_y = (static_cast<int>(max_y) + 1) / ch;
+        int chunk_max_z = (static_cast<int>(max_z) + 1) / cd;
+
+        // Clamp to valid chunk range
+        chunk_min_x = std::max(0, chunk_min_x);
+        chunk_min_y = std::max(0, chunk_min_y);
+        chunk_min_z = std::max(0, chunk_min_z);
+        chunk_max_x = std::min(chunksX - 1, chunk_max_x);
+        chunk_max_y = std::min(chunksY - 1, chunk_max_y);
+        chunk_max_z = std::min(chunksZ - 1, chunk_max_z);
+
+        size_t chunk_count = (chunk_max_x - chunk_min_x + 1) *
+                            (chunk_max_y - chunk_min_y + 1) *
+                            (chunk_max_z - chunk_min_z + 1);
+        chunks.reserve(chunk_count);
+
+        for(int iz = chunk_min_z; iz <= chunk_max_z; iz++) {
+            for(int iy = chunk_min_y; iy <= chunk_max_y; iy++) {
+                for(int ix = chunk_min_x; ix <= chunk_max_x; ix++) {
+                    cv::Vec4i idx = {group_idx, ix, iy, iz};
+                    chunks[idx] = nullptr;
+                }
+            }
+        }
+    }
 
     // Lambda for retrieving single values (unchanged)
     auto retrieve_single_value_cached = [&cw,&ch,&cd,&group_idx,&chunks,&sx,&sy,&sz](
@@ -580,84 +843,13 @@ void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds,
             return chunk->operator()(lx,ly,lz);
         };
 
-        // size_t done = 0;
-
-        #pragma omp parallel
-        {
-            cv::Vec4i last_idx = {-1,-1,-1,-1};
-            std::shared_ptr<xt::xarray<uint8_t>> chunk_ref;
-            xt::xarray<uint8_t> *chunk = nullptr;
-            std::unordered_map<cv::Vec4i,std::shared_ptr<xt::xarray<uint8_t>>,vec4i_hash> chunks_local;
-
-            #pragma omp for collapse(2)
-            for(size_t y = 0;y<h;y++) {
-                for(size_t x = 0;x<w;x++) {
-                    float ox = coords(y,x)[2];
-                    float oy = coords(y,x)[1];
-                    float oz = coords(y,x)[0];
-
-                    if (ox < 0 || oy < 0 || oz < 0)
-                        continue;
-
-                    if (ox >= sx || oy >= sy || oz >= sz) {
-                        continue;
-                    }
-
-                    int ix = int(ox)/cw;
-                    int iy = int(oy)/ch;
-                    int iz = int(oz)/cd;
-
-                    cv::Vec4i idx = {group_idx,ix,iy,iz};
-
-                    if (idx != last_idx) {
-                        last_idx = idx;
-                        if (ix >= 0 && ix < chunksX &&
-                            iy >= 0 && iy < chunksY &&
-                            iz >= 0 && iz < chunksZ) {
-                            chunks_local[idx] = nullptr;
-                        }
-                    }
-
-                    int lx = ox-ix*cw;
-                    int ly = oy-iy*ch;
-                    int lz = oz-iz*cd;
-
-                    if (lx+1 >= cw || ly+1 >= ch || lz+1 >= cd) {
-                        if (lx+1>=cw) {
-                            cv::Vec4i idx2 = idx;
-                            idx2[1]++;
-                            if (idx2[1] >= 0 && idx2[1] < chunksX) {
-                                chunks_local[idx2] = nullptr;
-                            }
-                        }
-                        if (ly+1>=ch) {
-                            cv::Vec4i idx2 = idx;
-                            idx2[2]++;
-                            if (idx2[2] >= 0 && idx2[2] < chunksY) {
-                                chunks_local[idx2] = nullptr;
-                            }
-                        }
-
-                        if (lz+1>=cd) {
-                            cv::Vec4i idx2 = idx;
-                            idx2[3]++;
-                            if (idx2[3] >= 0 && idx2[3] < chunksZ) {
-                                chunks_local[idx2] = nullptr;
-                            }
-                        }
-                    }
-                }
-            }
-
-#pragma omp barrier
-#pragma omp critical
-            chunks.merge(chunks_local);
-
-        }
+    auto t_after_scan = std::chrono::high_resolution_clock::now();
+    auto scan_ms = std::chrono::duration<double, std::milli>(t_after_scan - t_after_setup).count();
 
     std::vector<std::pair<cv::Vec4i,xt::xarray<uint8_t>*>> needs_io;
+    size_t total_chunks = chunks.size();
+    size_t cache_hits = 0;
 
-    cache->mutex.lock();
     for(auto &it : chunks) {
         xt::xarray<uint8_t> *chunk = nullptr;
         std::shared_ptr<xt::xarray<uint8_t>> chunk_ref;
@@ -669,9 +861,12 @@ void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds,
         } else {
             chunk_ref = cache->get(idx);
             chunks[idx] = chunk_ref;
+            cache_hits++;
         }
     }
-    cache->mutex.unlock();
+
+    auto t_after_cache_check = std::chrono::high_resolution_clock::now();
+    auto cache_check_ms = std::chrono::duration<double, std::milli>(t_after_cache_check - t_after_scan).count();
 
     #pragma omp parallel for schedule(dynamic, 1)
     for(auto &it : needs_io) {
@@ -680,13 +875,17 @@ void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds,
         it.second = readChunk<uint8_t>(*ds, {size_t(idx[1]),size_t(idx[2]),size_t(idx[3])});
     }
 
-    cache->mutex.lock();
+    auto t_after_io = std::chrono::high_resolution_clock::now();
+    auto io_ms = std::chrono::duration<double, std::milli>(t_after_io - t_after_cache_check).count();
+
     for(auto &it : needs_io) {
         cv::Vec4i idx = it.first;
         cache->put(idx, it.second);
         chunks[idx] = cache->get(idx);
     }
-    cache->mutex.unlock();
+
+    auto t_after_cache_insert = std::chrono::high_resolution_clock::now();
+    auto cache_insert_ms = std::chrono::duration<double, std::milli>(t_after_cache_insert - t_after_io).count();
 
 
     #pragma omp parallel
@@ -786,10 +985,20 @@ void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds,
             }
         }
     }
+
+    auto t_end = std::chrono::high_resolution_clock::now();
+    auto interp_ms = std::chrono::duration<double, std::milli>(t_end - t_after_cache_insert).count();
+    auto total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+
+    float hit_rate = total_chunks > 0 ? (100.0f * cache_hits / total_chunks) : 0.0f;
+    Logger()->info("    readInterpolated3D[uint8,trilinear]: total={:.2f}ms (setup={:.2f}ms, scan={:.2f}ms, cache_check={:.2f}ms, I/O={:.2f}ms, cache_insert={:.2f}ms, interp={:.2f}ms) | chunks: {}/{} cached ({:.1f}% hit rate)",
+                   total_ms, setup_ms, scan_ms, cache_check_ms, io_ms, cache_insert_ms, interp_ms, cache_hits, total_chunks, hit_rate);
 }
 
 void readInterpolated3D(cv::Mat_<uint16_t> &out, z5::Dataset *ds,
                                const cv::Mat_<cv::Vec3f> &coords, ChunkCache *cache, bool nearest_neighbor) {
+    auto t_start = std::chrono::high_resolution_clock::now();
+
     if (nearest_neighbor) {
         return readNearestNeighbor16(out,ds,coords,cache);
     }
@@ -815,8 +1024,67 @@ void readInterpolated3D(cv::Mat_<uint16_t> &out, z5::Dataset *ds,
 
     int w = coords.cols, h = coords.rows;
 
+    auto t_after_setup = std::chrono::high_resolution_clock::now();
+    auto setup_ms = std::chrono::duration<double, std::milli>(t_after_setup - t_start).count();
+
     std::shared_mutex mutex;
+
+    // Phase 1: Determine needed chunks via bounding box (optimized for trilinear)
+    float min_x = std::numeric_limits<float>::max();
+    float min_y = std::numeric_limits<float>::max();
+    float min_z = std::numeric_limits<float>::max();
+    float max_x = std::numeric_limits<float>::lowest();
+    float max_y = std::numeric_limits<float>::lowest();
+    float max_z = std::numeric_limits<float>::lowest();
+
+    for(int y = 0; y < h; y++) {
+        for(int x = 0; x < w; x++) {
+            float ox = coords(y,x)[2];
+            float oy = coords(y,x)[1];
+            float oz = coords(y,x)[0];
+            if (ox < 0 || oy < 0 || oz < 0) continue;
+            if (ox >= sx || oy >= sy || oz >= sz) continue;
+
+            min_x = std::min(min_x, ox);
+            min_y = std::min(min_y, oy);
+            min_z = std::min(min_z, oz);
+            max_x = std::max(max_x, ox);
+            max_y = std::max(max_y, oy);
+            max_z = std::max(max_z, oz);
+        }
+    }
+
     std::unordered_map<cv::Vec4i,std::shared_ptr<xt::xarray<uint16_t>>,vec4i_hash> chunks;
+
+    if (min_x <= max_x && min_y <= max_y && min_z <= max_z) {
+        int chunk_min_x = static_cast<int>(min_x) / cw;
+        int chunk_min_y = static_cast<int>(min_y) / ch;
+        int chunk_min_z = static_cast<int>(min_z) / cd;
+        int chunk_max_x = (static_cast<int>(max_x) + 1) / cw;
+        int chunk_max_y = (static_cast<int>(max_y) + 1) / ch;
+        int chunk_max_z = (static_cast<int>(max_z) + 1) / cd;
+
+        chunk_min_x = std::max(0, chunk_min_x);
+        chunk_min_y = std::max(0, chunk_min_y);
+        chunk_min_z = std::max(0, chunk_min_z);
+        chunk_max_x = std::min(chunksX - 1, chunk_max_x);
+        chunk_max_y = std::min(chunksY - 1, chunk_max_y);
+        chunk_max_z = std::min(chunksZ - 1, chunk_max_z);
+
+        size_t chunk_count = (chunk_max_x - chunk_min_x + 1) *
+                            (chunk_max_y - chunk_min_y + 1) *
+                            (chunk_max_z - chunk_min_z + 1);
+        chunks.reserve(chunk_count);
+
+        for(int iz = chunk_min_z; iz <= chunk_max_z; iz++) {
+            for(int iy = chunk_min_y; iy <= chunk_max_y; iy++) {
+                for(int ix = chunk_min_x; ix <= chunk_max_x; ix++) {
+                    cv::Vec4i idx = {group_idx, ix, iy, iz};
+                    chunks[idx] = nullptr;
+                }
+            }
+        }
+    }
 
     auto retrieve_single_value_cached = [&cw,&ch,&cd,&group_idx,&chunks,&sx,&sy,&sz](
         int ox, int oy, int oz) -> uint16_t {
@@ -831,44 +1099,13 @@ void readInterpolated3D(cv::Mat_<uint16_t> &out, z5::Dataset *ds,
             return chunk->operator()(lx,ly,lz);
         };
 
-    #pragma omp parallel
-    {
-        cv::Vec4i last_idx = {-1,-1,-1,-1};
-        std::shared_ptr<xt::xarray<uint16_t>> chunk_ref;
-        xt::xarray<uint16_t> *chunk = nullptr;
-        std::unordered_map<cv::Vec4i,std::shared_ptr<xt::xarray<uint16_t>>,vec4i_hash> chunks_local;
-
-        #pragma omp for collapse(2)
-        for(size_t y = 0;y<h;y++) {
-            for(size_t x = 0;x<w;x++) {
-                float ox = coords(y,x)[2];
-                float oy = coords(y,x)[1];
-                float oz = coords(y,x)[0];
-                if (ox < 0 || oy < 0 || oz < 0) continue;
-                if (ox >= sx || oy >= sy || oz >= sz) continue;
-                int ix = int(ox)/cw, iy = int(oy)/ch, iz = int(oz)/cd;
-                cv::Vec4i idx = {group_idx,ix,iy,iz};
-                if (idx != last_idx) {
-                    last_idx = idx;
-                    if (ix >= 0 && ix < chunksX && iy >= 0 && iy < chunksY && iz >= 0 && iz < chunksZ) {
-                        chunks_local[idx] = nullptr;
-                    }
-                }
-                int lx = ox-ix*cw, ly = oy-iy*ch, lz = oz-iz*cd;
-                if (lx+1 >= cw || ly+1 >= ch || lz+1 >= cd) {
-                    if (lx+1>=cw) { cv::Vec4i idx2 = idx; idx2[1]++; if (idx2[1] >= 0 && idx2[1] < chunksX) chunks_local[idx2] = nullptr; }
-                    if (ly+1>=ch) { cv::Vec4i idx2 = idx; idx2[2]++; if (idx2[2] >= 0 && idx2[2] < chunksY) chunks_local[idx2] = nullptr; }
-                    if (lz+1>=cd) { cv::Vec4i idx2 = idx; idx2[3]++; if (idx2[3] >= 0 && idx2[3] < chunksZ) chunks_local[idx2] = nullptr; }
-                }
-            }
-        }
-#pragma omp barrier
-#pragma omp critical
-        chunks.merge(chunks_local);
-    }
+    auto t_after_scan = std::chrono::high_resolution_clock::now();
+    auto scan_ms = std::chrono::duration<double, std::milli>(t_after_scan - t_after_setup).count();
 
     std::vector<std::pair<cv::Vec4i,xt::xarray<uint16_t>*>> needs_io;
-    cache->mutex.lock();
+    size_t total_chunks = chunks.size();
+    size_t cache_hits = 0;
+
     for(auto &it : chunks) {
         std::shared_ptr<xt::xarray<uint16_t>> chunk_ref;
         cv::Vec4i idx = it.first;
@@ -877,22 +1114,30 @@ void readInterpolated3D(cv::Mat_<uint16_t> &out, z5::Dataset *ds,
         } else {
             chunk_ref = cache->get16(idx);
             chunks[idx] = chunk_ref;
+            cache_hits++;
         }
     }
-    cache->mutex.unlock();
+
+    auto t_after_cache_check = std::chrono::high_resolution_clock::now();
+    auto cache_check_ms = std::chrono::duration<double, std::milli>(t_after_cache_check - t_after_scan).count();
 
     #pragma omp parallel for schedule(dynamic, 1)
     for(auto &it : needs_io) {
         cv::Vec4i idx = it.first;
         it.second = readChunk<uint16_t>(*ds, {size_t(idx[1]),size_t(idx[2]),size_t(idx[3])});
     }
-    cache->mutex.lock();
+
+    auto t_after_io = std::chrono::high_resolution_clock::now();
+    auto io_ms = std::chrono::duration<double, std::milli>(t_after_io - t_after_cache_check).count();
+
     for(auto &it : needs_io) {
         cv::Vec4i idx = it.first;
         cache->put16(idx, it.second);
         chunks[idx] = cache->get16(idx);
     }
-    cache->mutex.unlock();
+
+    auto t_after_cache_insert = std::chrono::high_resolution_clock::now();
+    auto cache_insert_ms = std::chrono::duration<double, std::milli>(t_after_cache_insert - t_after_io).count();
 
     #pragma omp parallel
     {
@@ -950,6 +1195,14 @@ void readInterpolated3D(cv::Mat_<uint16_t> &out, z5::Dataset *ds,
             }
         }
     }
+
+    auto t_end = std::chrono::high_resolution_clock::now();
+    auto interp_ms = std::chrono::duration<double, std::milli>(t_end - t_after_cache_insert).count();
+    auto total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+
+    float hit_rate = total_chunks > 0 ? (100.0f * cache_hits / total_chunks) : 0.0f;
+    Logger()->info("    readInterpolated3D[uint16,trilinear]: total={:.2f}ms (setup={:.2f}ms, scan={:.2f}ms, cache_check={:.2f}ms, I/O={:.2f}ms, cache_insert={:.2f}ms, interp={:.2f}ms) | chunks: {}/{} cached ({:.1f}% hit rate)",
+                   total_ms, setup_ms, scan_ms, cache_check_ms, io_ms, cache_insert_ms, interp_ms, cache_hits, total_chunks, hit_rate);
 }
 
 //somehow opencvs functions are pretty slow

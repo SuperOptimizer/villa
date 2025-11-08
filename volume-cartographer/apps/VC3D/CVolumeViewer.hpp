@@ -33,7 +33,6 @@ public:
     cv::Mat render_area(const cv::Rect &roi);
     cv::Mat_<uint8_t> render_composite(const cv::Rect &roi);
     cv::Mat_<uint8_t> renderCompositeForSurface(QuadSurface* surface, cv::Size outputSize);
-    void invalidateVis();
     void invalidateIntersect(const std::string &name = "");
     
     void setIntersects(const std::set<std::string> &set);
@@ -62,6 +61,11 @@ public:
     uint64_t selectedCollectionId() const { return _selected_collection_id; }
     bool isPointDragActive() const { return _dragged_point_id != 0; }
     const std::vector<ViewerOverlayControllerBase::PathPrimitive>& drawingPaths() const { return _paths; }
+
+    // Accessor methods for intersection rendering
+    float scale() const { return _scale; }
+    Surface* surf() const { return _surf; }
+    QRectF currentImageArea() const { return curr_img_area; }
 
     // Direction hints toggle
     void setShowDirectionHints(bool on) { _showDirectionHints = on; updateAllOverlays(); }
@@ -208,20 +212,13 @@ protected:
     bool _composite_reverse_direction = false;
     
     QGraphicsItem *_center_marker = nullptr;
-    QGraphicsItem *_cursor = nullptr;
-    
-    std::vector<QGraphicsItem*> slice_vis_items; 
+    QGraphicsItem *_cursor = nullptr; 
 
     std::set<std::string> _intersect_tgts = {"segmentation"};
     std::unordered_map<std::string,std::vector<QGraphicsItem*>> _intersect_items;
     Intersection *_ignore_intersect_change = nullptr;
 
     CSurfaceCollection *_surf_col = nullptr;
-
-    // Spatial index for fast intersection queries
-    MultiSurfaceIndex _intersect_index;
-    std::unordered_map<std::string, int> _intersect_index_map; // segment name -> index
-    void rebuildIntersectionIndex();
     
     VCCollection* _point_collection = nullptr;
 
@@ -270,5 +267,10 @@ protected:
     bool _overlayImageValid{false};
     QImage _overlayImage;
 
+    // Track viewport state for smart cache invalidation
+    cv::Vec3f _last_surface_origin{0, 0, 0};
+    cv::Vec2f _last_vis_center{0, 0};
+    float _last_scale{0.0f};
+    Surface* _last_surf{nullptr};
 
 };  // class CVolumeViewer

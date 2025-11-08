@@ -66,9 +66,6 @@
 #include "SettingsDialog.hpp"
 #include "CSurfaceCollection.hpp"
 #include "CPointCollectionWidget.hpp"
-#include "OpChain.hpp"
-#include "OpsList.hpp"
-#include "OpsSettings.hpp"
 #include "SurfaceTreeWidget.hpp"
 #include "SeedingWidget.hpp"
 #include "DrawingWidget.hpp"
@@ -489,6 +486,9 @@ CWindow::CWindow() :
     });
     _planeSlicingOverlay->setAxisAlignedEnabled(_useAxisAlignedSlices);
 
+    _intersectionOverlay = std::make_unique<IntersectionOverlayController>(_viewerManager.get(), this);
+    _intersectionOverlay->setSurfaceCollection(_surf_col);
+
     _volumeOverlay = std::make_unique<VolumeOverlayController>(_viewerManager.get(), this);
     connect(_volumeOverlay.get(), &VolumeOverlayController::requestStatusMessage, this,
             [this](const QString& message, int timeout) {
@@ -549,8 +549,6 @@ CWindow::CWindow() :
     for (QDockWidget* dock : { ui.dockWidgetSegmentation,
                                ui.dockWidgetDistanceTransform,
                                ui.dockWidgetDrawing,
-                               ui.dockWidgetOpList,
-                               ui.dockWidgetOpSettings,
                                ui.dockWidgetComposite,
                                ui.dockWidgetVolumes,
                                ui.dockWidgetView,
@@ -785,7 +783,6 @@ void CWindow::clearSurfaceSelection()
         treeWidgetSurfaces->clearSelection();
     }
 
-    sendOpChainSelected(nullptr);
 }
 
 void CWindow::setVolume(std::shared_ptr<Volume> newvol)
@@ -826,9 +823,7 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
     sendVolumeChanged(currentVolume, currentVolumeId);
 
     if (currentVolume && currentVolume->numScales() >= 2) {
-        wOpsList->setDataset(currentVolume->zarrDataset(1), chunk_cache, 0.5);
     } else if (currentVolume) {
-        wOpsList->setDataset(currentVolume->zarrDataset(0), chunk_cache, 1.0);
     }
 
     if (currentVolume && _surf_col) {
@@ -959,6 +954,8 @@ bool CWindow::stepFocusHistory(int direction)
 
 bool CWindow::centerFocusAt(const cv::Vec3f& position, const cv::Vec3f& normal, Surface* source, bool addToHistory)
 {
+    auto t_start = std::chrono::high_resolution_clock::now();
+
     if (!_surf_col) {
         return false;
     }
@@ -978,14 +975,30 @@ bool CWindow::centerFocusAt(const cv::Vec3f& position, const cv::Vec3f& normal, 
         focus->src = _surf_col->surface("segmentation");
     }
 
+    // Set flag BEFORE setPOI because Qt signals are synchronous!
+    _updatingSlicePlanes = true;
+
+    auto t_before_setPOI = std::chrono::high_resolution_clock::now();
     _surf_col->setPOI("focus", focus);
+    auto t_after_setPOI = std::chrono::high_resolution_clock::now();
+    auto setPOI_ms = std::chrono::duration<double, std::milli>(t_after_setPOI - t_before_setPOI).count();
+    Logger()->info("centerFocusAt: setPOI took {:.2f}ms", setPOI_ms);
 
     if (addToHistory) {
         recordFocusHistory(*focus);
     }
 
     Surface* orientationSource = focus->src ? focus->src : _surf_col->surface("segmentation");
+    auto t_before_applySlice = std::chrono::high_resolution_clock::now();
     applySlicePlaneOrientation(orientationSource);
+    auto t_after_applySlice = std::chrono::high_resolution_clock::now();
+    auto applySlice_ms = std::chrono::duration<double, std::milli>(t_after_applySlice - t_before_applySlice).count();
+    Logger()->info("centerFocusAt: applySlicePlaneOrientation took {:.2f}ms", applySlice_ms);
+    _updatingSlicePlanes = false;
+
+    auto t_end = std::chrono::high_resolution_clock::now();
+    auto total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+    Logger()->info("centerFocusAt: TOTAL took {:.2f}ms", total_ms);
 
     return true;
 }
@@ -1035,7 +1048,6 @@ void CWindow::CreateWidgets(void)
         surfaceUi,
         _surf_col,
         _viewerManager.get(),
-        &_opchains,
         [this]() { return segmentationViewer(); },
         std::function<void()>{},
         this);
@@ -1123,11 +1135,6 @@ void CWindow::CreateWidgets(void)
             this, [this](const QString& message, int timeoutMs) {
                 statusBar()->showMessage(message, timeoutMs);
             });
-
-    wOpsList = new OpsList(ui.dockWidgetOpList);
-    ui.dockWidgetOpList->setWidget(wOpsList);
-    wOpsSettings = new OpsSettings(ui.dockWidgetOpSettings);
-    ui.dockWidgetOpSettings->setWidget(wOpsSettings);
 
     // i recognize that having both a seeding widget and a drawing widget that both handle mouse events and paths is redundant,
     // but i can't find an easy way yet to merge them and maintain the path iteration that the seeding widget currently uses
@@ -1330,11 +1337,7 @@ void CWindow::CreateWidgets(void)
         }
     });
 
-    connect(this, &CWindow::sendOpChainSelected, wOpsList, &OpsList::onOpChainSelected);
-    connect(wOpsList, &OpsList::sendOpSelected, wOpsSettings, &OpsSettings::onOpSelected);
 
-    connect(wOpsList, &OpsList::sendOpChainChanged, this, &CWindow::onOpChainChanged);
-    connect(wOpsSettings, &OpsSettings::sendOpChainChanged, this, &CWindow::onOpChainChanged);
 
     connect(_surfacePanel.get(), &SurfacePanelController::surfaceActivated,
             this, &CWindow::onSurfaceActivated);
@@ -2046,11 +2049,6 @@ void CWindow::CloseVolume(void)
         fVpkg->unloadAllSurfaces();
     }
 
-    // Clean up OpChains (still owned by CWindow)
-    for (auto& pair : _opchains) {
-        delete pair.second;
-    }
-    _opchains.clear();
 
     // Clear the volume package
     fVpkg = nullptr;
@@ -2129,12 +2127,8 @@ void CWindow::onManualPlaneChanged(void)
     _surf_col->setSurface("manual plane", plane);
 }
 
-void CWindow::onOpChainChanged(OpChain *chain)
-{
-    _surf_col->setSurface("segmentation", chain, false, false);
-}
 
-void CWindow::onSurfaceActivated(const QString& surfaceId, QuadSurface* surface, OpChain* chain)
+void CWindow::onSurfaceActivated(const QString& surfaceId, QuadSurface* surface)
 {
     const std::string previousSurfId = _surfID;
     _surfID = surfaceId.toStdString();
@@ -2146,12 +2140,18 @@ void CWindow::onSurfaceActivated(const QString& surfaceId, QuadSurface* surface,
         } else if (_segmentationWidget && _segmentationWidget->isEditingEnabled()) {
             _segmentationWidget->setEditingEnabled(false);
         }
-    }
 
-    if (chain) {
-        sendOpChainSelected(chain);
-    } else {
-        sendOpChainSelected(nullptr);
+        // Update intersection overlay with current segment
+        if (_intersectionOverlay) {
+            _intersectionOverlay->setCurrentSegment(_surfID);
+
+            // Set intersection targets to all segments in collection
+            std::set<std::string> targets;
+            for (const auto& id : _surf_col->surfaceNames()) {
+                targets.insert(id);
+            }
+            _intersectionOverlay->setIntersectionTargets(targets);
+        }
     }
 
     if (_surf) {
@@ -2316,7 +2316,6 @@ void CWindow::onSegmentationDirChanged(int index)
         _surf = nullptr;
         _surfID.clear();
         treeWidgetSurfaces->clearSelection();
-        wOpsList->onOpChainSelected(nullptr);
 
         if (_surfacePanel) {
             _surfacePanel->resetTagUi();
@@ -2426,6 +2425,8 @@ void CWindow::onZoomIn()
 
 void CWindow::onFocusPOIChanged(std::string name, POI* poi)
 {
+    auto t_start = std::chrono::high_resolution_clock::now();
+
     if (name == "focus" && poi) {
         lblLocFocus->setText(QString("%1, %2, %3")
             .arg(static_cast<int>(poi->p[0]))
@@ -2433,10 +2434,24 @@ void CWindow::onFocusPOIChanged(std::string name, POI* poi)
             .arg(static_cast<int>(poi->p[2])));
 
         if (_surfacePanel) {
+            auto t_before_refresh = std::chrono::high_resolution_clock::now();
             _surfacePanel->refreshFiltersOnly();
+            auto t_after_refresh = std::chrono::high_resolution_clock::now();
+            auto refresh_ms = std::chrono::duration<double, std::milli>(t_after_refresh - t_before_refresh).count();
+            Logger()->info("onFocusPOIChanged: refreshFiltersOnly took {:.2f}ms", refresh_ms);
         }
 
-        applySlicePlaneOrientation();
+        // Only update slice planes if not already being updated directly
+        if (!_updatingSlicePlanes) {
+            Logger()->info("onFocusPOIChanged: calling applySlicePlaneOrientation (duplicate!)");
+            applySlicePlaneOrientation();
+        } else {
+            Logger()->info("onFocusPOIChanged: skipped applySlicePlaneOrientation (already updating)");
+        }
+
+        auto t_end = std::chrono::high_resolution_clock::now();
+        auto total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+        Logger()->info("onFocusPOIChanged: TOTAL took {:.2f}ms", total_ms);
     }
 }
 
@@ -2686,9 +2701,7 @@ void CWindow::onSegmentationEditingModeChanged(bool enabled)
 
     if (enabled) {
         QuadSurface* activeSurface = dynamic_cast<QuadSurface*>(_surf_col->surface("segmentation"));
-        if (!activeSurface && _opchains.count(_surfID) && _opchains[_surfID]) {
-            activeSurface = _opchains[_surfID]->src();
-        }
+
 
         if (!_segmentationModule->beginEditingSession(activeSurface)) {
             statusBar()->showMessage(tr("Unable to start segmentation editing"), 3000);
@@ -2890,6 +2903,8 @@ void CWindow::onAxisAlignedSliceMouseRelease(CVolumeViewer* viewer, Qt::MouseBut
 
 void CWindow::applySlicePlaneOrientation(Surface* sourceOverride)
 {
+    auto t_start = std::chrono::high_resolution_clock::now();
+
     if (!_surf_col) {
         return;
     }
@@ -2947,11 +2962,60 @@ void CWindow::applySlicePlaneOrientation(Surface* sourceOverride)
             segYZ->setAxisAlignedRotationKey(axisAlignedRotationCacheKey(_axisAlignedSegYZRotationDeg));
         }
 
-        _surf_col->setSurface("seg xz", segXZ);
-        _surf_col->setSurface("seg yz", segYZ);
+        // Use updateSurface() instead of setSurface() - we're only moving the plane origins, not changing surfaces
+        auto t_before_update = std::chrono::high_resolution_clock::now();
+        _surf_col->updateSurface("seg xz", segXZ);
+        _surf_col->updateSurface("seg yz", segYZ);
+        auto t_after_update = std::chrono::high_resolution_clock::now();
+        auto update_ms = std::chrono::duration<double, std::milli>(t_after_update - t_before_update).count();
+        Logger()->info("applySlicePlaneOrientation: updateSurface calls took {:.2f}ms", update_ms);
+
+        // Manually update viewers since updateSurface() doesn't emit signals
+        auto t_before_viewers = std::chrono::high_resolution_clock::now();
+        _viewerManager->forEachViewer([segXZ, segYZ, this](CVolumeViewer* viewer) {
+            const std::string& name = viewer->surfName();
+            if (name == "seg xz") {
+                auto t_xz_start = std::chrono::high_resolution_clock::now();
+                viewer->onSurfaceChanged("seg xz", segXZ);
+                viewer->renderVisible(false);  // Don't force - only render if viewport changed
+                auto t_xz_end = std::chrono::high_resolution_clock::now();
+                auto xz_ms = std::chrono::duration<double, std::milli>(t_xz_end - t_xz_start).count();
+                Logger()->info("  seg xz viewer update took {:.2f}ms", xz_ms);
+            } else if (name == "seg yz") {
+                auto t_yz_start = std::chrono::high_resolution_clock::now();
+                viewer->onSurfaceChanged("seg yz", segYZ);
+                viewer->renderVisible(false);  // Don't force - only render if viewport changed
+                auto t_yz_end = std::chrono::high_resolution_clock::now();
+                auto yz_ms = std::chrono::duration<double, std::milli>(t_yz_end - t_yz_start).count();
+                Logger()->info("  seg yz viewer update took {:.2f}ms", yz_ms);
+            } else if (name == "xy plane") {
+                // xy plane's origin was already updated in onPOIChanged, notify viewer of the change
+                auto t_xy_start = std::chrono::high_resolution_clock::now();
+                PlaneSurface* xyPlane = dynamic_cast<PlaneSurface*>(_surf_col->surface("xy plane"));
+                if (xyPlane) {
+                    viewer->onSurfaceChanged("xy plane", xyPlane);
+                    viewer->renderVisible(false);  // Don't force - only render if viewport changed
+                }
+                auto t_xy_end = std::chrono::high_resolution_clock::now();
+                auto xy_ms = std::chrono::duration<double, std::milli>(t_xy_end - t_xy_start).count();
+                Logger()->info("  xy plane viewer update took {:.2f}ms", xy_ms);
+            }
+        });
+        auto t_after_viewers = std::chrono::high_resolution_clock::now();
+        auto viewers_ms = std::chrono::duration<double, std::milli>(t_after_viewers - t_before_viewers).count();
+        Logger()->info("applySlicePlaneOrientation: viewer updates took {:.2f}ms", viewers_ms);
+
         if (_planeSlicingOverlay) {
+            auto t_before_refresh = std::chrono::high_resolution_clock::now();
             _planeSlicingOverlay->refreshAll();
+            auto t_after_refresh = std::chrono::high_resolution_clock::now();
+            auto refresh_ms = std::chrono::duration<double, std::milli>(t_after_refresh - t_before_refresh).count();
+            Logger()->info("applySlicePlaneOrientation: refreshAll took {:.2f}ms", refresh_ms);
         }
+
+        auto t_end = std::chrono::high_resolution_clock::now();
+        auto total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+        Logger()->info("applySlicePlaneOrientation (axis-aligned): TOTAL took {:.2f}ms", total_ms);
         return;
     } else {
         auto* segment = dynamic_cast<QuadSurface*>(sourceOverride ? sourceOverride : _surf_col->surface("segmentation"));
@@ -2972,11 +3036,16 @@ void CWindow::applySlicePlaneOrientation(Surface* sourceOverride)
         segXZ->setOrigin(origin);
         segYZ->setOrigin(origin);
 
+        auto t_before_pointTo = std::chrono::high_resolution_clock::now();
         auto ptr = segment->pointer();
         segment->pointTo(ptr, origin, 1.0f);
 
         cv::Vec3f xDir = segment->coord(ptr, {1, 0, 0});
         cv::Vec3f yDir = segment->coord(ptr, {0, 1, 0});
+        auto t_after_pointTo = std::chrono::high_resolution_clock::now();
+        auto pointTo_ms = std::chrono::duration<double, std::milli>(t_after_pointTo - t_before_pointTo).count();
+        Logger()->info("applySlicePlaneOrientation: pointTo/coord calculations took {:.2f}ms", pointTo_ms);
+
         segXZ->setNormal(xDir - origin);
         segYZ->setNormal(yDir - origin);
         segXZ->setInPlaneRotation(0.0f);
@@ -2984,11 +3053,60 @@ void CWindow::applySlicePlaneOrientation(Surface* sourceOverride)
         segXZ->setAxisAlignedRotationKey(-1);
         segYZ->setAxisAlignedRotationKey(-1);
 
-        _surf_col->setSurface("seg xz", segXZ);
-        _surf_col->setSurface("seg yz", segYZ);
+        // Use updateSurface() instead of setSurface() - we're only updating plane parameters, not changing surfaces
+        auto t_before_update = std::chrono::high_resolution_clock::now();
+        _surf_col->updateSurface("seg xz", segXZ);
+        _surf_col->updateSurface("seg yz", segYZ);
+        auto t_after_update = std::chrono::high_resolution_clock::now();
+        auto update_ms = std::chrono::duration<double, std::milli>(t_after_update - t_before_update).count();
+        Logger()->info("applySlicePlaneOrientation: updateSurface calls took {:.2f}ms", update_ms);
+
+        // Manually update viewers since updateSurface() doesn't emit signals
+        auto t_before_viewers = std::chrono::high_resolution_clock::now();
+        _viewerManager->forEachViewer([segXZ, segYZ, this](CVolumeViewer* viewer) {
+            const std::string& name = viewer->surfName();
+            if (name == "seg xz") {
+                auto t_xz_start = std::chrono::high_resolution_clock::now();
+                viewer->onSurfaceChanged("seg xz", segXZ);
+                viewer->renderVisible(false);  // Don't force - only render if viewport changed
+                auto t_xz_end = std::chrono::high_resolution_clock::now();
+                auto xz_ms = std::chrono::duration<double, std::milli>(t_xz_end - t_xz_start).count();
+                Logger()->info("  seg xz viewer update took {:.2f}ms", xz_ms);
+            } else if (name == "seg yz") {
+                auto t_yz_start = std::chrono::high_resolution_clock::now();
+                viewer->onSurfaceChanged("seg yz", segYZ);
+                viewer->renderVisible(false);  // Don't force - only render if viewport changed
+                auto t_yz_end = std::chrono::high_resolution_clock::now();
+                auto yz_ms = std::chrono::duration<double, std::milli>(t_yz_end - t_yz_start).count();
+                Logger()->info("  seg yz viewer update took {:.2f}ms", yz_ms);
+            } else if (name == "xy plane") {
+                // xy plane's origin was already updated in onPOIChanged, notify viewer of the change
+                auto t_xy_start = std::chrono::high_resolution_clock::now();
+                PlaneSurface* xyPlane = dynamic_cast<PlaneSurface*>(_surf_col->surface("xy plane"));
+                if (xyPlane) {
+                    viewer->onSurfaceChanged("xy plane", xyPlane);
+                    viewer->renderVisible(false);  // Don't force - only render if viewport changed
+                }
+                auto t_xy_end = std::chrono::high_resolution_clock::now();
+                auto xy_ms = std::chrono::duration<double, std::milli>(t_xy_end - t_xy_start).count();
+                Logger()->info("  xy plane viewer update took {:.2f}ms", xy_ms);
+            }
+        });
+        auto t_after_viewers = std::chrono::high_resolution_clock::now();
+        auto viewers_ms = std::chrono::duration<double, std::milli>(t_after_viewers - t_before_viewers).count();
+        Logger()->info("applySlicePlaneOrientation: viewer updates took {:.2f}ms", viewers_ms);
+
         if (_planeSlicingOverlay) {
+            auto t_before_refresh = std::chrono::high_resolution_clock::now();
             _planeSlicingOverlay->refreshAll();
+            auto t_after_refresh = std::chrono::high_resolution_clock::now();
+            auto refresh_ms = std::chrono::duration<double, std::milli>(t_after_refresh - t_before_refresh).count();
+            Logger()->info("applySlicePlaneOrientation: refreshAll took {:.2f}ms", refresh_ms);
         }
+
+        auto t_end = std::chrono::high_resolution_clock::now();
+        auto total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+        Logger()->info("applySlicePlaneOrientation (surface-aligned): TOTAL took {:.2f}ms", total_ms);
         return;
     }
 }
@@ -3677,11 +3795,6 @@ void CWindow::onMoveSegmentToPaths(const QString& segmentId)
         _surf_col->setSurface(idStd, nullptr, false, false);
     }
 
-    // Clear from opchains if present - FIX: use direct member access, not pointer
-    if (_opchains.count(idStd)) {
-        delete _opchains[idStd];
-        _opchains.erase(idStd);
-    }
 
     // Unload the surface from VolumePkg
     fVpkg->unloadSurface(idStd);

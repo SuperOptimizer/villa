@@ -39,6 +39,25 @@ void CSurfaceCollection::setSurface(const std::string &name, Surface* surf, bool
     }
 }
 
+void CSurfaceCollection::updateSurface(const std::string &name, Surface* surf, bool takeOwnership)
+{
+    // Update surface parameters without triggering heavy re-renders
+    // Use this when only surface parameters changed (e.g., plane origin, rotation)
+    // NOT when switching to a different surface or loading new geometry
+    auto it = _surfs.find(name);
+    if (it != _surfs.end()) {
+        if (it->second.owns && it->second.ptr && it->second.ptr != surf) {
+            delete it->second.ptr;
+        }
+        it->second.ptr = surf;
+        it->second.owns = takeOwnership;
+    } else {
+        _surfs[name] = {surf, takeOwnership};
+    }
+    // NOTE: Does NOT emit sendSurfaceChanged() - that's the whole point!
+    // If we need a lighter signal in the future, emit it here
+}
+
 void CSurfaceCollection::setPOI(const std::string &name, POI *poi)
 {
     _pois[name] = poi;

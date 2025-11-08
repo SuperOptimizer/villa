@@ -1,0 +1,1033 @@
+/home/forrest/CLionProjects/villa/volume-cartographer/cmake-build-releasegcc/bin/VC3D
+chunk cache size is 10 gigabytes 
+using nearest neighbor interpolation
+[2025-11-08 18:58:24.644] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg xz
+[2025-11-08 18:58:24.644] [volcart] [warning] IntersectionOverlayController: Viewer has no surface
+using nearest neighbor interpolation
+[2025-11-08 18:58:24.649] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg yz
+[2025-11-08 18:58:24.649] [volcart] [warning] IntersectionOverlayController: Viewer has no surface
+using nearest neighbor interpolation
+[2025-11-08 18:58:24.653] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer xy plane
+[2025-11-08 18:58:24.653] [volcart] [info] IntersectionOverlayController: Plane viewer 'xy plane', current segment ''
+[2025-11-08 18:58:24.653] [volcart] [warning] IntersectionOverlayController: No current segment set
+using nearest neighbor interpolation
+[2025-11-08 18:58:24.657] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:24.657] [volcart] [warning] IntersectionOverlayController: Viewer has no surface
+[2025-11-08 18:58:24.730] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg xz
+[2025-11-08 18:58:24.730] [volcart] [warning] IntersectionOverlayController: Viewer has no surface
+[2025-11-08 18:58:24.730] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg yz
+[2025-11-08 18:58:24.730] [volcart] [warning] IntersectionOverlayController: Viewer has no surface
+[2025-11-08 18:58:24.730] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer xy plane
+[2025-11-08 18:58:24.730] [volcart] [info] IntersectionOverlayController: Plane viewer 'xy plane', current segment ''
+[2025-11-08 18:58:24.730] [volcart] [warning] IntersectionOverlayController: No current segment set
+[2025-11-08 18:58:24.730] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:24.730] [volcart] [warning] IntersectionOverlayController: Viewer has no surface
+vc.axis_aligned: Axis-aligned slices enabled
+vc.axis_aligned: Middle-button pan set "seg xz" enabled false
+vc.axis_aligned: Middle-button pan set "seg yz" enabled false
+[2025-11-08 18:58:26.058] [volcart] [info] applySlicePlaneOrientation: updateSurface calls took 0.00ms
+[2025-11-08 18:58:26.058] [volcart] [info]   seg xz viewer update took 0.01ms
+[2025-11-08 18:58:26.058] [volcart] [info]   seg yz viewer update took 0.00ms
+[2025-11-08 18:58:26.058] [volcart] [info]   xy plane viewer update took 0.00ms
+[2025-11-08 18:58:26.058] [volcart] [info] applySlicePlaneOrientation: viewer updates took 0.03ms
+[2025-11-08 18:58:26.058] [volcart] [info] applySlicePlaneOrientation: refreshAll took 0.00ms
+[2025-11-08 18:58:26.058] [volcart] [info] applySlicePlaneOrientation (axis-aligned): TOTAL took 0.55ms
+[2025-11-08 18:58:26.177] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg xz
+[2025-11-08 18:58:26.177] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg xz', current segment ''
+[2025-11-08 18:58:26.177] [volcart] [warning] IntersectionOverlayController: No current segment set
+[2025-11-08 18:58:26.177] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg yz
+[2025-11-08 18:58:26.177] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg yz', current segment ''
+[2025-11-08 18:58:26.177] [volcart] [warning] IntersectionOverlayController: No current segment set
+[2025-11-08 18:58:26.177] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer xy plane
+[2025-11-08 18:58:26.177] [volcart] [info] IntersectionOverlayController: Plane viewer 'xy plane', current segment ''
+[2025-11-08 18:58:26.177] [volcart] [warning] IntersectionOverlayController: No current segment set
+[2025-11-08 18:58:26.177] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:26.177] [volcart] [warning] IntersectionOverlayController: Viewer has no surface
+[2025-11-08 18:58:26.181] [volcart] [info]     readNearestNeighbor[uint8]: total=0.05ms (setup=0.01ms, scan=0.01ms, cache_check=0.00ms, I/O=0.02ms, cache_insert=0.00ms, sampling=0.01ms) | chunks: 0/1 cached (0.0% hit rate)
+[2025-11-08 18:58:26.181] [volcart] [info]   readInterpolated3D[base,seg xz]: 0.11ms
+[2025-11-08 18:58:26.181] [volcart] [info] renderVisible[seg xz]: total=0.36ms (render_area=0.29ms, Mat2QImage=0.02ms, scene=0.05ms)
+[2025-11-08 18:58:26.181] [volcart] [info]     readNearestNeighbor[uint8]: total=0.02ms (setup=0.00ms, scan=0.01ms, cache_check=0.00ms, I/O=0.00ms, cache_insert=0.00ms, sampling=0.01ms) | chunks: 1/1 cached (100.0% hit rate)
+[2025-11-08 18:58:26.181] [volcart] [info]   readInterpolated3D[base,seg yz]: 0.04ms
+[2025-11-08 18:58:26.181] [volcart] [info] renderVisible[seg yz]: total=0.11ms (render_area=0.09ms, Mat2QImage=0.00ms, scene=0.01ms)
+[2025-11-08 18:58:26.196] [volcart] [info]     readNearestNeighbor[uint8]: total=15.25ms (setup=0.00ms, scan=0.01ms, cache_check=0.00ms, I/O=15.20ms, cache_insert=0.00ms, sampling=0.03ms) | chunks: 0/2 cached (0.0% hit rate)
+[2025-11-08 18:58:26.196] [volcart] [info]   readInterpolated3D[base,xy plane]: 15.29ms
+[2025-11-08 18:58:26.196] [volcart] [info] renderVisible[xy plane]: total=15.38ms (render_area=15.34ms, Mat2QImage=0.01ms, scene=0.03ms)
+SeedingWidget::onVolumeChanged called - volume: valid, volumeId: 20241024131838--pred-055-ome-zarr
+vc.segmentation.growth: Normal grid lookup skipped (no volume package loaded)
+vc.segmentation.growth: Normal grid lookup skipped (no volume package loaded)
+vc.segmentation.growth: Normal grid lookup at "/home/forrest/scroll5.volpkg/normal_grids" : missing
+[2025-11-08 18:58:26.197] [volcart] [info] onFocusPOIChanged: refreshFiltersOnly took 0.01ms
+[2025-11-08 18:58:26.197] [volcart] [info] onFocusPOIChanged: calling applySlicePlaneOrientation (duplicate!)
+[2025-11-08 18:58:26.197] [volcart] [info] applySlicePlaneOrientation: updateSurface calls took 0.00ms
+[2025-11-08 18:58:26.214] [volcart] [info]     readNearestNeighbor[uint8]: total=16.15ms (setup=0.00ms, scan=0.01ms, cache_check=0.00ms, I/O=16.09ms, cache_insert=0.01ms, sampling=0.04ms) | chunks: 0/2 cached (0.0% hit rate)
+[2025-11-08 18:58:26.214] [volcart] [info]   readInterpolated3D[base,seg xz]: 16.18ms
+[2025-11-08 18:58:26.214] [volcart] [info] renderVisible[seg xz]: total=16.28ms (render_area=16.25ms, Mat2QImage=0.01ms, scene=0.02ms)
+[2025-11-08 18:58:26.214] [volcart] [info]   seg xz viewer update took 16.30ms
+[2025-11-08 18:58:26.214] [volcart] [info]     readNearestNeighbor[uint8]: total=0.05ms (setup=0.00ms, scan=0.01ms, cache_check=0.00ms, I/O=0.00ms, cache_insert=0.00ms, sampling=0.04ms) | chunks: 1/1 cached (100.0% hit rate)
+[2025-11-08 18:58:26.214] [volcart] [info]   readInterpolated3D[base,seg yz]: 0.07ms
+[2025-11-08 18:58:26.214] [volcart] [info] renderVisible[seg yz]: total=0.11ms (render_area=0.10ms, Mat2QImage=0.00ms, scene=0.00ms)
+[2025-11-08 18:58:26.214] [volcart] [info]   seg yz viewer update took 0.12ms
+[2025-11-08 18:58:26.214] [volcart] [info]     readNearestNeighbor[uint8]: total=0.04ms (setup=0.00ms, scan=0.01ms, cache_check=0.00ms, I/O=0.00ms, cache_insert=0.00ms, sampling=0.03ms) | chunks: 2/2 cached (100.0% hit rate)
+[2025-11-08 18:58:26.214] [volcart] [info]   readInterpolated3D[base,xy plane]: 0.06ms
+[2025-11-08 18:58:26.214] [volcart] [info] renderVisible[xy plane]: total=0.09ms (render_area=0.09ms, Mat2QImage=0.00ms, scene=0.00ms)
+[2025-11-08 18:58:26.214] [volcart] [info]   xy plane viewer update took 0.10ms
+[2025-11-08 18:58:26.214] [volcart] [info] applySlicePlaneOrientation: viewer updates took 16.55ms
+[2025-11-08 18:58:26.214] [volcart] [info] applySlicePlaneOrientation: refreshAll took 0.10ms
+[2025-11-08 18:58:26.214] [volcart] [info] applySlicePlaneOrientation (axis-aligned): TOTAL took 17.00ms
+[2025-11-08 18:58:26.214] [volcart] [info] onFocusPOIChanged: TOTAL took 17.52ms
+[2025-11-08 18:58:26.214] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer xy plane
+[2025-11-08 18:58:26.214] [volcart] [info] IntersectionOverlayController: Plane viewer 'xy plane', current segment ''
+[2025-11-08 18:58:26.214] [volcart] [warning] IntersectionOverlayController: No current segment set
+[2025-11-08 18:58:26.214] [volcart] [info] CVolumeViewer::onPOIChanged(xy plane): updateSurface took 0.00ms
+[2025-11-08 18:58:26.214] [volcart] [info] CVolumeViewer::onPOIChanged(xy plane): TOTAL took 0.16ms
+[2025-11-08 18:58:26.215] [volcart] [info] applySlicePlaneOrientation: updateSurface calls took 0.00ms
+[2025-11-08 18:58:26.231] [volcart] [info]     readNearestNeighbor[uint8]: total=16.18ms (setup=0.00ms, scan=0.01ms, cache_check=0.00ms, I/O=16.13ms, cache_insert=0.01ms, sampling=0.04ms) | chunks: 2/4 cached (50.0% hit rate)
+[2025-11-08 18:58:26.231] [volcart] [info]   readInterpolated3D[base,seg xz]: 16.23ms
+[2025-11-08 18:58:26.231] [volcart] [info] renderVisible[seg xz]: total=16.34ms (render_area=16.31ms, Mat2QImage=0.02ms, scene=0.02ms)
+[2025-11-08 18:58:26.231] [volcart] [info]   seg xz viewer update took 16.36ms
+[2025-11-08 18:58:26.248] [volcart] [info]     readNearestNeighbor[uint8]: total=17.36ms (setup=0.00ms, scan=0.01ms, cache_check=0.00ms, I/O=17.30ms, cache_insert=0.00ms, sampling=0.04ms) | chunks: 2/4 cached (50.0% hit rate)
+[2025-11-08 18:58:26.248] [volcart] [info]   readInterpolated3D[base,seg yz]: 17.39ms
+[2025-11-08 18:58:26.248] [volcart] [info] renderVisible[seg yz]: total=17.46ms (render_area=17.44ms, Mat2QImage=0.01ms, scene=0.01ms)
+[2025-11-08 18:58:26.248] [volcart] [info]   seg yz viewer update took 17.48ms
+[2025-11-08 18:58:26.249] [volcart] [info]     readNearestNeighbor[uint8]: total=0.04ms (setup=0.00ms, scan=0.01ms, cache_check=0.00ms, I/O=0.00ms, cache_insert=0.00ms, sampling=0.03ms) | chunks: 2/2 cached (100.0% hit rate)
+[2025-11-08 18:58:26.249] [volcart] [info]   readInterpolated3D[base,xy plane]: 0.06ms
+[2025-11-08 18:58:26.249] [volcart] [info] renderVisible[xy plane]: total=0.09ms (render_area=0.08ms, Mat2QImage=0.00ms, scene=0.00ms)
+[2025-11-08 18:58:26.249] [volcart] [info]   xy plane viewer update took 0.10ms
+[2025-11-08 18:58:26.249] [volcart] [info] applySlicePlaneOrientation: viewer updates took 33.96ms
+[2025-11-08 18:58:26.249] [volcart] [info] applySlicePlaneOrientation: refreshAll took 0.11ms
+[2025-11-08 18:58:26.249] [volcart] [info] applySlicePlaneOrientation (axis-aligned): TOTAL took 34.33ms
+[2025-11-08 18:58:26.249] [volcart] [info] renderVisible[seg xz]: total=0.02ms (render_area=0.01ms, Mat2QImage=0.01ms, scene=0.01ms)
+[2025-11-08 18:58:26.249] [volcart] [info] renderVisible[seg yz]: total=0.01ms (render_area=0.01ms, Mat2QImage=0.00ms, scene=0.00ms)
+[2025-11-08 18:58:26.249] [volcart] [info]     readNearestNeighbor[uint8]: total=0.04ms (setup=0.00ms, scan=0.01ms, cache_check=0.00ms, I/O=0.00ms, cache_insert=0.00ms, sampling=0.03ms) | chunks: 2/2 cached (100.0% hit rate)
+[2025-11-08 18:58:26.250] [volcart] [info]   readInterpolated3D[base,xy plane]: 0.06ms
+[2025-11-08 18:58:26.250] [volcart] [info] renderVisible[xy plane]: total=0.09ms (render_area=0.08ms, Mat2QImage=0.00ms, scene=0.00ms)
+SeedingWidget::onVolumeChanged called - volume: valid, volumeId: 20241024131838--pred-055-ome-zarr
+[2025-11-08 18:58:26.250] [volcart] [info] onFocusPOIChanged: refreshFiltersOnly took 0.01ms
+[2025-11-08 18:58:26.250] [volcart] [info] onFocusPOIChanged: calling applySlicePlaneOrientation (duplicate!)
+[2025-11-08 18:58:26.250] [volcart] [info] applySlicePlaneOrientation: updateSurface calls took 0.00ms
+[2025-11-08 18:58:26.250] [volcart] [info] renderVisible[seg xz]: total=0.03ms (render_area=0.01ms, Mat2QImage=0.02ms, scene=0.00ms)
+[2025-11-08 18:58:26.250] [volcart] [info]   seg xz viewer update took 0.04ms
+[2025-11-08 18:58:26.250] [volcart] [info] renderVisible[seg yz]: total=0.01ms (render_area=0.00ms, Mat2QImage=0.00ms, scene=0.00ms)
+[2025-11-08 18:58:26.250] [volcart] [info]   seg yz viewer update took 0.02ms
+[2025-11-08 18:58:26.250] [volcart] [info]     readNearestNeighbor[uint8]: total=0.04ms (setup=0.00ms, scan=0.01ms, cache_check=0.00ms, I/O=0.00ms, cache_insert=0.00ms, sampling=0.03ms) | chunks: 2/2 cached (100.0% hit rate)
+[2025-11-08 18:58:26.250] [volcart] [info]   readInterpolated3D[base,xy plane]: 0.05ms
+[2025-11-08 18:58:26.250] [volcart] [info] renderVisible[xy plane]: total=0.08ms (render_area=0.07ms, Mat2QImage=0.00ms, scene=0.00ms)
+[2025-11-08 18:58:26.250] [volcart] [info]   xy plane viewer update took 0.09ms
+[2025-11-08 18:58:26.250] [volcart] [info] applySlicePlaneOrientation: viewer updates took 0.16ms
+[2025-11-08 18:58:26.250] [volcart] [info] applySlicePlaneOrientation: refreshAll took 0.04ms
+[2025-11-08 18:58:26.250] [volcart] [info] applySlicePlaneOrientation (axis-aligned): TOTAL took 0.50ms
+[2025-11-08 18:58:26.250] [volcart] [info] onFocusPOIChanged: TOTAL took 0.53ms
+[2025-11-08 18:58:26.250] [volcart] [info] applySlicePlaneOrientation: updateSurface calls took 0.00ms
+[2025-11-08 18:58:26.250] [volcart] [info] renderVisible[seg xz]: total=0.01ms (render_area=0.00ms, Mat2QImage=0.00ms, scene=0.00ms)
+[2025-11-08 18:58:26.250] [volcart] [info]   seg xz viewer update took 0.02ms
+[2025-11-08 18:58:26.250] [volcart] [info] renderVisible[seg yz]: total=0.01ms (render_area=0.01ms, Mat2QImage=0.00ms, scene=0.00ms)
+[2025-11-08 18:58:26.250] [volcart] [info]   seg yz viewer update took 0.02ms
+[2025-11-08 18:58:26.250] [volcart] [info]     readNearestNeighbor[uint8]: total=0.04ms (setup=0.00ms, scan=0.01ms, cache_check=0.00ms, I/O=0.00ms, cache_insert=0.00ms, sampling=0.03ms) | chunks: 2/2 cached (100.0% hit rate)
+[2025-11-08 18:58:26.250] [volcart] [info]   readInterpolated3D[base,xy plane]: 0.05ms
+[2025-11-08 18:58:26.251] [volcart] [info] renderVisible[xy plane]: total=0.08ms (render_area=0.07ms, Mat2QImage=0.00ms, scene=0.00ms)
+[2025-11-08 18:58:26.251] [volcart] [info]   xy plane viewer update took 0.09ms
+[2025-11-08 18:58:26.251] [volcart] [info] applySlicePlaneOrientation: viewer updates took 0.14ms
+[2025-11-08 18:58:26.251] [volcart] [info] applySlicePlaneOrientation: refreshAll took 0.02ms
+[2025-11-08 18:58:26.251] [volcart] [info] applySlicePlaneOrientation (axis-aligned): TOTAL took 0.42ms
+vc.segmentation.growth: Normal grid lookup at "/home/forrest/scroll5.volpkg/normal_grids" : missing
+SeedingWidget::setVolumePkg called - vpkg: valid
+[2025-11-08 18:58:26.636] [volcart] [info] Started inotify watch for paths directory (wd=1)
+[2025-11-08 18:58:26.636] [volcart] [info] Started inotify watch for traces directory (wd=2)
+[2025-11-08 18:58:26.646] [volcart] [info]     readNearestNeighbor[uint8]: total=0.14ms (setup=0.01ms, scan=0.03ms, cache_check=0.00ms, I/O=0.00ms, cache_insert=0.00ms, sampling=0.10ms) | chunks: 4/4 cached (100.0% hit rate)
+[2025-11-08 18:58:26.646] [volcart] [info]   readInterpolated3D[base,seg xz]: 0.22ms
+[2025-11-08 18:58:26.647] [volcart] [info] renderVisible[seg xz]: total=0.38ms (render_area=0.33ms, Mat2QImage=0.02ms, scene=0.02ms)
+[2025-11-08 18:58:26.648] [volcart] [info]     readNearestNeighbor[uint8]: total=0.15ms (setup=0.00ms, scan=0.03ms, cache_check=0.00ms, I/O=0.00ms, cache_insert=0.00ms, sampling=0.12ms) | chunks: 4/4 cached (100.0% hit rate)
+[2025-11-08 18:58:26.648] [volcart] [info]   readInterpolated3D[base,seg yz]: 0.19ms
+[2025-11-08 18:58:26.648] [volcart] [info] renderVisible[seg yz]: total=0.30ms (render_area=0.27ms, Mat2QImage=0.02ms, scene=0.01ms)
+[2025-11-08 18:58:26.656] [volcart] [info]     readNearestNeighbor[uint8]: total=7.38ms (setup=0.00ms, scan=0.04ms, cache_check=0.00ms, I/O=7.25ms, cache_insert=0.00ms, sampling=0.08ms) | chunks: 3/4 cached (75.0% hit rate)
+[2025-11-08 18:58:26.656] [volcart] [info]   readInterpolated3D[base,xy plane]: 7.43ms
+[2025-11-08 18:58:26.656] [volcart] [info] renderVisible[xy plane]: total=7.57ms (render_area=7.52ms, Mat2QImage=0.02ms, scene=0.02ms)
+[2025-11-08 18:58:26.831] [volcart] [info]     readNearestNeighbor[uint8]: total=169.27ms (setup=0.19ms, scan=2.60ms, cache_check=0.01ms, I/O=160.07ms, cache_insert=0.03ms, sampling=6.37ms) | chunks: 4/28 cached (14.3% hit rate)
+[2025-11-08 18:58:26.832] [volcart] [info]   readInterpolated3D[base,xy plane]: 171.68ms
+[2025-11-08 18:58:26.833] [volcart] [info] renderVisible[xy plane]: total=174.58ms (render_area=174.18ms, Mat2QImage=0.27ms, scene=0.13ms)
+[2025-11-08 18:58:27.087] [volcart] [info]     readNearestNeighbor[uint8]: total=250.96ms (setup=0.02ms, scan=2.39ms, cache_check=0.01ms, I/O=239.58ms, cache_insert=0.04ms, sampling=8.92ms) | chunks: 4/35 cached (11.4% hit rate)
+[2025-11-08 18:58:27.087] [volcart] [info]   readInterpolated3D[base,seg yz]: 253.05ms
+[2025-11-08 18:58:27.089] [volcart] [info] renderVisible[seg yz]: total=255.33ms (render_area=254.76ms, Mat2QImage=0.42ms, scene=0.14ms)
+[2025-11-08 18:58:27.277] [volcart] [info]     readNearestNeighbor[uint8]: total=184.24ms (setup=0.02ms, scan=2.40ms, cache_check=0.01ms, I/O=174.45ms, cache_insert=0.03ms, sampling=7.33ms) | chunks: 7/30 cached (23.3% hit rate)
+[2025-11-08 18:58:27.277] [volcart] [info]   readInterpolated3D[base,seg xz]: 186.75ms
+[2025-11-08 18:58:27.278] [volcart] [info] renderVisible[seg xz]: total=188.84ms (render_area=188.14ms, Mat2QImage=0.53ms, scene=0.16ms)
+[2025-11-08 18:58:27.316] [volcart] [info]     readNearestNeighbor[uint8]: total=36.19ms (setup=0.01ms, scan=1.20ms, cache_check=0.01ms, I/O=31.55ms, cache_insert=0.01ms, sampling=3.41ms) | chunks: 16/20 cached (80.0% hit rate)
+[2025-11-08 18:58:27.316] [volcart] [info]   readInterpolated3D[base,xy plane]: 36.41ms
+[2025-11-08 18:58:27.317] [volcart] [info] renderVisible[xy plane]: total=37.40ms (render_area=37.12ms, Mat2QImage=0.17ms, scene=0.10ms)
+[2025-11-08 18:58:27.324] [volcart] [info]     readNearestNeighbor[uint8]: total=5.82ms (setup=0.02ms, scan=1.25ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=4.54ms) | chunks: 20/20 cached (100.0% hit rate)
+[2025-11-08 18:58:27.324] [volcart] [info]   readInterpolated3D[base,seg yz]: 6.01ms
+[2025-11-08 18:58:27.325] [volcart] [info] renderVisible[seg yz]: total=7.04ms (render_area=6.76ms, Mat2QImage=0.18ms, scene=0.09ms)
+[2025-11-08 18:58:27.330] [volcart] [info]     readNearestNeighbor[uint8]: total=5.20ms (setup=0.01ms, scan=1.25ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.93ms) | chunks: 15/15 cached (100.0% hit rate)
+[2025-11-08 18:58:27.330] [volcart] [info]   readInterpolated3D[base,seg xz]: 5.39ms
+[2025-11-08 18:58:27.331] [volcart] [info] renderVisible[seg xz]: total=6.54ms (render_area=6.16ms, Mat2QImage=0.30ms, scene=0.08ms)
+[2025-11-08 18:58:27.360] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:27.360] [volcart] [warning] IntersectionOverlayController: Viewer has no surface
+[2025-11-08 18:58:27.360] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg xz
+[2025-11-08 18:58:27.360] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg xz', current segment ''
+[2025-11-08 18:58:27.360] [volcart] [warning] IntersectionOverlayController: No current segment set
+[2025-11-08 18:58:27.360] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg yz
+[2025-11-08 18:58:27.360] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg yz', current segment ''
+[2025-11-08 18:58:27.360] [volcart] [warning] IntersectionOverlayController: No current segment set
+[2025-11-08 18:58:27.360] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer xy plane
+[2025-11-08 18:58:27.360] [volcart] [info] IntersectionOverlayController: Plane viewer 'xy plane', current segment ''
+[2025-11-08 18:58:27.360] [volcart] [warning] IntersectionOverlayController: No current segment set
+[2025-11-08 18:58:28.723] [volcart] [info]     readNearestNeighbor[uint8]: total=64.58ms (setup=0.02ms, scan=1.18ms, cache_check=0.01ms, I/O=59.52ms, cache_insert=0.02ms, sampling=3.83ms) | chunks: 0/8 cached (0.0% hit rate)
+[2025-11-08 18:58:28.723] [volcart] [info]   readInterpolated3D[base,segmentation]: 64.91ms
+[2025-11-08 18:58:28.724] [volcart] [info] renderVisible[segmentation]: total=72.52ms (render_area=72.19ms, Mat2QImage=0.13ms, scene=0.19ms)
+[2025-11-08 18:58:28.724] [volcart] [info] IntersectionOverlayController::setCurrentSegment called with 'auto_grown_20250926112011918'
+[2025-11-08 18:58:28.724] [volcart] [info]   Current segment set to 'auto_grown_20250926112011918'
+[2025-11-08 18:58:28.724] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg xz
+[2025-11-08 18:58:28.724] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg xz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:28.724] [volcart] [info] IntersectionOverlayController: Viewport (-41, -6, 306x456), scale 0.5
+[2025-11-08 18:58:28.724] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:28.724] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:28.724] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:28.724] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:28.724] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:28.724] [volcart] [info]   Plane origin: (3350.00, 4550.00, 10500.00)
+[2025-11-08 18:58:28.724] [volcart] [info]   Plane normal: (0.00, 1.00, 0.00)
+[2025-11-08 18:58:28.724] [volcart] [info]   Computing intersection with planeRoi (-82,-12 612x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:29.061] [volcart] [info]   Found 0 intersection segments
+[2025-11-08 18:58:29.061] [volcart] [warning]   No intersection found for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.061] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg yz
+[2025-11-08 18:58:29.061] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg yz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.061] [volcart] [info] IntersectionOverlayController: Viewport (-41, -6, 308x456), scale 0.5
+[2025-11-08 18:58:29.061] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.061] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:29.061] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.061] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:29.061] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:29.061] [volcart] [info]   Plane origin: (3350.00, 4550.00, 10500.00)
+[2025-11-08 18:58:29.061] [volcart] [info]   Plane normal: (1.00, 0.00, 0.00)
+[2025-11-08 18:58:29.061] [volcart] [info]   Computing intersection with planeRoi (-82,-12 616x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:29.205] [volcart] [info]   Found 0 intersection segments
+[2025-11-08 18:58:29.205] [volcart] [warning]   No intersection found for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.205] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer xy plane
+[2025-11-08 18:58:29.205] [volcart] [info] IntersectionOverlayController: Plane viewer 'xy plane', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.205] [volcart] [info] IntersectionOverlayController: Viewport (-41, -6, 306x458), scale 0.5
+[2025-11-08 18:58:29.205] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.205] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:29.205] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.205] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:29.205] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:29.205] [volcart] [info]   Plane origin: (3350.00, 4550.00, 10500.00)
+[2025-11-08 18:58:29.205] [volcart] [info]   Plane normal: (0.00, 0.00, 1.00)
+[2025-11-08 18:58:29.205] [volcart] [info]   Computing intersection with planeRoi (-82,-12 612x916), tolerance 8, minTries 1000
+[2025-11-08 18:58:29.401] [volcart] [info]   Found 0 intersection segments
+[2025-11-08 18:58:29.401] [volcart] [warning]   No intersection found for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.401] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:29.654] [volcart] [info] IntersectionOverlayController: Rebuilt index with 4 segments in 252.51ms
+[2025-11-08 18:58:29.654] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg xz
+[2025-11-08 18:58:29.654] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg xz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.654] [volcart] [info] IntersectionOverlayController: Viewport (-41, -6, 306x456), scale 0.5
+[2025-11-08 18:58:29.654] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.654] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:29.654] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.654] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:29.654] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:29.654] [volcart] [info]   Plane origin: (3350.00, 4550.00, 10500.00)
+[2025-11-08 18:58:29.654] [volcart] [info]   Plane normal: (0.00, 1.00, 0.00)
+[2025-11-08 18:58:29.654] [volcart] [info]   Computing intersection with planeRoi (-82,-12 612x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:29.974] [volcart] [info]   Found 0 intersection segments
+[2025-11-08 18:58:29.974] [volcart] [warning]   No intersection found for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.974] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg yz
+[2025-11-08 18:58:29.974] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg yz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.974] [volcart] [info] IntersectionOverlayController: Viewport (-41, -6, 308x456), scale 0.5
+[2025-11-08 18:58:29.974] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.974] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:29.974] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:29.974] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:29.974] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:29.974] [volcart] [info]   Plane origin: (3350.00, 4550.00, 10500.00)
+[2025-11-08 18:58:29.974] [volcart] [info]   Plane normal: (1.00, 0.00, 0.00)
+[2025-11-08 18:58:29.974] [volcart] [info]   Computing intersection with planeRoi (-82,-12 616x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:30.119] [volcart] [info]   Found 0 intersection segments
+[2025-11-08 18:58:30.119] [volcart] [warning]   No intersection found for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:30.119] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer xy plane
+[2025-11-08 18:58:30.119] [volcart] [info] IntersectionOverlayController: Plane viewer 'xy plane', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:30.119] [volcart] [info] IntersectionOverlayController: Viewport (-41, -6, 306x458), scale 0.5
+[2025-11-08 18:58:30.119] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:30.119] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:30.119] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:30.119] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:30.119] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:30.119] [volcart] [info]   Plane origin: (3350.00, 4550.00, 10500.00)
+[2025-11-08 18:58:30.119] [volcart] [info]   Plane normal: (0.00, 0.00, 1.00)
+[2025-11-08 18:58:30.119] [volcart] [info]   Computing intersection with planeRoi (-82,-12 612x916), tolerance 8, minTries 1000
+[2025-11-08 18:58:30.311] [volcart] [info]   Found 0 intersection segments
+[2025-11-08 18:58:30.311] [volcart] [warning]   No intersection found for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:30.311] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:30.312] [volcart] [info] applySlicePlaneOrientation: updateSurface calls took 0.00ms
+[2025-11-08 18:58:30.314] [volcart] [info] renderVisible[seg xz]: total=2.00ms (render_area=1.67ms, Mat2QImage=0.19ms, scene=0.13ms)
+[2025-11-08 18:58:30.314] [volcart] [info]   seg xz viewer update took 2.06ms
+[2025-11-08 18:58:30.315] [volcart] [info] renderVisible[seg yz]: total=1.49ms (render_area=1.22ms, Mat2QImage=0.17ms, scene=0.10ms)
+[2025-11-08 18:58:30.315] [volcart] [info]   seg yz viewer update took 1.52ms
+[2025-11-08 18:58:30.321] [volcart] [info]     readNearestNeighbor[uint8]: total=4.41ms (setup=0.02ms, scan=1.20ms, cache_check=0.02ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.17ms) | chunks: 20/20 cached (100.0% hit rate)
+[2025-11-08 18:58:30.321] [volcart] [info]   readInterpolated3D[base,xy plane]: 5.70ms
+[2025-11-08 18:58:30.322] [volcart] [info] renderVisible[xy plane]: total=6.62ms (render_area=6.39ms, Mat2QImage=0.14ms, scene=0.09ms)
+[2025-11-08 18:58:30.322] [volcart] [info]   xy plane viewer update took 6.67ms
+[2025-11-08 18:58:30.322] [volcart] [info] applySlicePlaneOrientation: viewer updates took 10.30ms
+[2025-11-08 18:58:30.322] [volcart] [info] applySlicePlaneOrientation: refreshAll took 0.21ms
+[2025-11-08 18:58:30.322] [volcart] [info] applySlicePlaneOrientation (axis-aligned): TOTAL took 10.89ms
+[2025-11-08 18:58:30.365] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:30.427] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg xz
+[2025-11-08 18:58:30.427] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg xz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:30.427] [volcart] [info] IntersectionOverlayController: Viewport (-41, -6, 306x456), scale 0.5
+[2025-11-08 18:58:30.427] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:30.427] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:30.427] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:30.427] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:30.427] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:30.427] [volcart] [info]   Plane origin: (3350.00, 4550.00, 10500.00)
+[2025-11-08 18:58:30.427] [volcart] [info]   Plane normal: (0.00, 1.00, 0.00)
+[2025-11-08 18:58:30.427] [volcart] [info]   Computing intersection with planeRoi (-82,-12 612x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:30.796] [volcart] [info]   Found 0 intersection segments
+[2025-11-08 18:58:30.796] [volcart] [warning]   No intersection found for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:30.810] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg yz
+[2025-11-08 18:58:30.810] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg yz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:30.810] [volcart] [info] IntersectionOverlayController: Viewport (-41, -6, 308x456), scale 0.5
+[2025-11-08 18:58:30.810] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:30.810] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:30.810] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:30.810] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:30.810] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:30.810] [volcart] [info]   Plane origin: (3350.00, 4550.00, 10500.00)
+[2025-11-08 18:58:30.810] [volcart] [info]   Plane normal: (1.00, 0.00, 0.00)
+[2025-11-08 18:58:30.810] [volcart] [info]   Computing intersection with planeRoi (-82,-12 616x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:31.002] [volcart] [info]   Found 0 intersection segments
+[2025-11-08 18:58:31.002] [volcart] [warning]   No intersection found for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:31.017] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer xy plane
+[2025-11-08 18:58:31.017] [volcart] [info] IntersectionOverlayController: Plane viewer 'xy plane', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:31.017] [volcart] [info] IntersectionOverlayController: Viewport (-41, -6, 306x458), scale 0.5
+[2025-11-08 18:58:31.017] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:31.017] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:31.017] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:31.017] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:31.017] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:31.017] [volcart] [info]   Plane origin: (3350.00, 4550.00, 10500.00)
+[2025-11-08 18:58:31.017] [volcart] [info]   Plane normal: (0.00, 0.00, 1.00)
+[2025-11-08 18:58:31.017] [volcart] [info]   Computing intersection with planeRoi (-82,-12 612x916), tolerance 8, minTries 1000
+[2025-11-08 18:58:31.270] [volcart] [info]   Found 0 intersection segments
+[2025-11-08 18:58:31.270] [volcart] [warning]   No intersection found for segment 'auto_grown_20250926112011918'
+clicked on vol loc [2915.02, 1375.48, 5566.57]
+[2025-11-08 18:58:32.153] [volcart] [info] onFocusPOIChanged: refreshFiltersOnly took 0.04ms
+[2025-11-08 18:58:32.153] [volcart] [info] onFocusPOIChanged: skipped applySlicePlaneOrientation (already updating)
+[2025-11-08 18:58:32.153] [volcart] [info] onFocusPOIChanged: TOTAL took 0.15ms
+[2025-11-08 18:58:32.153] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg xz
+[2025-11-08 18:58:32.153] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg xz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:32.153] [volcart] [info] IntersectionOverlayController: Viewport (-41, -6, 306x456), scale 0.5
+[2025-11-08 18:58:32.153] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:32.153] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:32.153] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:32.153] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:32.153] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:32.153] [volcart] [info]   Plane origin: (2915.02, 1375.48, 5566.57)
+[2025-11-08 18:58:32.153] [volcart] [info]   Plane normal: (0.00, 1.00, 0.00)
+[2025-11-08 18:58:32.153] [volcart] [info]   Computing intersection with planeRoi (-82,-12 612x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:32.536] [volcart] [info]   Found 11 intersection segments
+[2025-11-08 18:58:32.536] [volcart] [info]   Segment color: (255,0,0)
+[2025-11-08 18:58:32.536] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:32.536] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:32.536] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:32.536] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:32.536] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:32.536] [volcart] [info]     Adding line strip with 13 points
+[2025-11-08 18:58:32.536] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:32.536] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:32.536] [volcart] [info]     Adding line strip with 9 points
+[2025-11-08 18:58:32.536] [volcart] [info]     Adding line strip with 8 points
+[2025-11-08 18:58:32.536] [volcart] [info]     Adding line strip with 7 points
+[2025-11-08 18:58:32.536] [volcart] [info]   Total points rendered: 130
+[2025-11-08 18:58:32.536] [volcart] [info] CVolumeViewer::onPOIChanged(seg xz): updateSurface took 0.00ms
+[2025-11-08 18:58:32.536] [volcart] [info] CVolumeViewer::onPOIChanged(seg xz): TOTAL took 382.98ms
+[2025-11-08 18:58:32.537] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg yz
+[2025-11-08 18:58:32.537] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg yz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:32.537] [volcart] [info] IntersectionOverlayController: Viewport (-41, -6, 308x456), scale 0.5
+[2025-11-08 18:58:32.537] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:32.537] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:32.537] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:32.537] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:32.537] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:32.537] [volcart] [info]   Plane origin: (2915.02, 1375.48, 5566.57)
+[2025-11-08 18:58:32.537] [volcart] [info]   Plane normal: (1.00, 0.00, 0.00)
+[2025-11-08 18:58:32.537] [volcart] [info]   Computing intersection with planeRoi (-82,-12 616x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:33.053] [volcart] [info]   Found 10 intersection segments
+[2025-11-08 18:58:33.053] [volcart] [info]   Segment color: (255,255,0)
+[2025-11-08 18:58:33.053] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:33.053] [volcart] [info]     Adding line strip with 8 points
+[2025-11-08 18:58:33.053] [volcart] [info]     Adding line strip with 19 points
+[2025-11-08 18:58:33.053] [volcart] [info]     Adding line strip with 9 points
+[2025-11-08 18:58:33.053] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:33.053] [volcart] [info]     Adding line strip with 25 points
+[2025-11-08 18:58:33.053] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:33.053] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:33.053] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:33.053] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:33.053] [volcart] [info]   Total points rendered: 129
+[2025-11-08 18:58:33.053] [volcart] [info] CVolumeViewer::onPOIChanged(seg yz): updateSurface took 0.00ms
+[2025-11-08 18:58:33.053] [volcart] [info] CVolumeViewer::onPOIChanged(seg yz): TOTAL took 517.33ms
+[2025-11-08 18:58:33.055] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer xy plane
+[2025-11-08 18:58:33.055] [volcart] [info] IntersectionOverlayController: Plane viewer 'xy plane', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:33.055] [volcart] [info] IntersectionOverlayController: Viewport (-41, -6, 306x458), scale 0.5
+[2025-11-08 18:58:33.055] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:33.055] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:33.055] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:33.055] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:33.055] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:33.055] [volcart] [info]   Plane origin: (2915.02, 1375.48, 5566.57)
+[2025-11-08 18:58:33.055] [volcart] [info]   Plane normal: (0.00, 0.00, 1.00)
+[2025-11-08 18:58:33.055] [volcart] [info]   Computing intersection with planeRoi (-82,-12 612x916), tolerance 8, minTries 1000
+[2025-11-08 18:58:33.582] [volcart] [info]   Found 7 intersection segments
+[2025-11-08 18:58:33.582] [volcart] [info]   Segment color: (255,140,0)
+[2025-11-08 18:58:33.582] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:33.582] [volcart] [info]     Adding line strip with 8 points
+[2025-11-08 18:58:33.582] [volcart] [info]     Adding line strip with 12 points
+[2025-11-08 18:58:33.582] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:33.582] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:33.582] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:33.582] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:33.582] [volcart] [info]   Total points rendered: 36
+[2025-11-08 18:58:33.582] [volcart] [info] CVolumeViewer::onPOIChanged(xy plane): updateSurface took 0.00ms
+[2025-11-08 18:58:33.582] [volcart] [info] CVolumeViewer::onPOIChanged(xy plane): TOTAL took 528.98ms
+[2025-11-08 18:58:33.620] [volcart] [info]     readNearestNeighbor[uint8]: total=30.79ms (setup=0.01ms, scan=1.05ms, cache_check=0.01ms, I/O=26.48ms, cache_insert=0.01ms, sampling=3.23ms) | chunks: 6/12 cached (50.0% hit rate)
+[2025-11-08 18:58:33.620] [volcart] [info]   readInterpolated3D[base,segmentation]: 31.02ms
+[2025-11-08 18:58:33.621] [volcart] [info] renderVisible[segmentation]: total=38.48ms (render_area=38.24ms, Mat2QImage=0.11ms, scene=0.12ms)
+[2025-11-08 18:58:33.621] [volcart] [info] CVolumeViewer::onPOIChanged(segmentation): renderVisible took 38.51ms
+[2025-11-08 18:58:33.622] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:33.622] [volcart] [info] CVolumeViewer::onPOIChanged(segmentation): TOTAL took 39.53ms
+[2025-11-08 18:58:33.622] [volcart] [info] centerFocusAt: setPOI took 1469.04ms
+[2025-11-08 18:58:33.622] [volcart] [info] applySlicePlaneOrientation: updateSurface calls took 0.00ms
+[2025-11-08 18:58:33.749] [volcart] [info]     readNearestNeighbor[uint8]: total=125.87ms (setup=0.01ms, scan=1.19ms, cache_check=0.01ms, I/O=121.07ms, cache_insert=0.03ms, sampling=3.57ms) | chunks: 0/15 cached (0.0% hit rate)
+[2025-11-08 18:58:33.749] [volcart] [info]   readInterpolated3D[base,seg xz]: 126.05ms
+[2025-11-08 18:58:33.749] [volcart] [info] renderVisible[seg xz]: total=127.03ms (render_area=126.77ms, Mat2QImage=0.13ms, scene=0.12ms)
+[2025-11-08 18:58:33.749] [volcart] [info]   seg xz viewer update took 127.08ms
+[2025-11-08 18:58:33.835] [volcart] [info]     readNearestNeighbor[uint8]: total=85.17ms (setup=0.01ms, scan=1.33ms, cache_check=0.01ms, I/O=79.35ms, cache_insert=0.06ms, sampling=4.41ms) | chunks: 5/15 cached (33.3% hit rate)
+[2025-11-08 18:58:33.835] [volcart] [info]   readInterpolated3D[base,seg yz]: 85.39ms
+[2025-11-08 18:58:33.836] [volcart] [info] renderVisible[seg yz]: total=86.52ms (render_area=86.14ms, Mat2QImage=0.26ms, scene=0.12ms)
+[2025-11-08 18:58:33.836] [volcart] [info]   seg yz viewer update took 86.59ms
+[2025-11-08 18:58:33.929] [volcart] [info]     readNearestNeighbor[uint8]: total=92.57ms (setup=0.02ms, scan=1.27ms, cache_check=0.01ms, I/O=88.07ms, cache_insert=0.03ms, sampling=3.18ms) | chunks: 5/15 cached (33.3% hit rate)
+[2025-11-08 18:58:33.929] [volcart] [info]   readInterpolated3D[base,xy plane]: 92.80ms
+[2025-11-08 18:58:33.930] [volcart] [info] renderVisible[xy plane]: total=93.96ms (render_area=93.52ms, Mat2QImage=0.31ms, scene=0.12ms)
+[2025-11-08 18:58:33.930] [volcart] [info]   xy plane viewer update took 94.02ms
+[2025-11-08 18:58:33.930] [volcart] [info] applySlicePlaneOrientation: viewer updates took 307.77ms
+[2025-11-08 18:58:33.930] [volcart] [info] applySlicePlaneOrientation: refreshAll took 0.16ms
+[2025-11-08 18:58:33.930] [volcart] [info] applySlicePlaneOrientation (axis-aligned): TOTAL took 308.34ms
+[2025-11-08 18:58:33.930] [volcart] [info] centerFocusAt: applySlicePlaneOrientation took 308.35ms
+[2025-11-08 18:58:33.930] [volcart] [info] centerFocusAt: TOTAL took 1777.41ms
+[2025-11-08 18:58:35.413] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg xz
+[2025-11-08 18:58:35.413] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg xz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:35.413] [volcart] [info] IntersectionOverlayController: Viewport (-152, -227, 306x456), scale 0.5
+[2025-11-08 18:58:35.413] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:35.413] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:35.413] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:35.413] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:35.413] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:35.413] [volcart] [info]   Plane origin: (2915.02, 1375.48, 5566.57)
+[2025-11-08 18:58:35.413] [volcart] [info]   Plane normal: (0.00, 1.00, 0.00)
+[2025-11-08 18:58:35.413] [volcart] [info]   Computing intersection with planeRoi (-304,-454 612x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:35.673] [volcart] [info]   Found 10 intersection segments
+[2025-11-08 18:58:35.673] [volcart] [info]   Segment color: (255,0,0)
+[2025-11-08 18:58:35.674] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:35.674] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:35.674] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:35.674] [volcart] [info]     Adding line strip with 9 points
+[2025-11-08 18:58:35.674] [volcart] [info]     Adding line strip with 15 points
+[2025-11-08 18:58:35.674] [volcart] [info]     Adding line strip with 7 points
+[2025-11-08 18:58:35.674] [volcart] [info]     Adding line strip with 10 points
+[2025-11-08 18:58:35.674] [volcart] [info]     Adding line strip with 12 points
+[2025-11-08 18:58:35.674] [volcart] [info]     Adding line strip with 9 points
+[2025-11-08 18:58:35.674] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:35.674] [volcart] [info]   Total points rendered: 123
+[2025-11-08 18:58:35.688] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg yz
+[2025-11-08 18:58:35.688] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg yz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:35.688] [volcart] [info] IntersectionOverlayController: Viewport (-153, -227, 308x456), scale 0.5
+[2025-11-08 18:58:35.688] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:35.688] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:35.688] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:35.688] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:35.688] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:35.688] [volcart] [info]   Plane origin: (2915.02, 1375.48, 5566.57)
+[2025-11-08 18:58:35.688] [volcart] [info]   Plane normal: (1.00, 0.00, 0.00)
+[2025-11-08 18:58:35.688] [volcart] [info]   Computing intersection with planeRoi (-306,-454 616x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:36.057] [volcart] [info]   Found 10 intersection segments
+[2025-11-08 18:58:36.057] [volcart] [info]   Segment color: (255,255,0)
+[2025-11-08 18:58:36.057] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:36.057] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:36.057] [volcart] [info]     Adding line strip with 8 points
+[2025-11-08 18:58:36.057] [volcart] [info]     Adding line strip with 7 points
+[2025-11-08 18:58:36.057] [volcart] [info]     Adding line strip with 22 points
+[2025-11-08 18:58:36.057] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:36.057] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:36.057] [volcart] [info]     Adding line strip with 11 points
+[2025-11-08 18:58:36.057] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:36.057] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:36.057] [volcart] [info]   Total points rendered: 115
+[2025-11-08 18:58:36.071] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer xy plane
+[2025-11-08 18:58:36.071] [volcart] [info] IntersectionOverlayController: Plane viewer 'xy plane', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:36.071] [volcart] [info] IntersectionOverlayController: Viewport (-152, -228, 306x458), scale 0.5
+[2025-11-08 18:58:36.071] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:36.071] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:36.071] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:36.071] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:36.071] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:36.071] [volcart] [info]   Plane origin: (2915.02, 1375.48, 5566.57)
+[2025-11-08 18:58:36.071] [volcart] [info]   Plane normal: (0.00, 0.00, 1.00)
+[2025-11-08 18:58:36.071] [volcart] [info]   Computing intersection with planeRoi (-304,-456 612x916), tolerance 8, minTries 1000
+[2025-11-08 18:58:37.463] [volcart] [info]   Found 35 intersection segments
+[2025-11-08 18:58:37.463] [volcart] [info]   Segment color: (255,140,0)
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 21 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 19 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 8 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:37.463] [volcart] [info]     Adding line strip with 7 points
+[2025-11-08 18:58:37.463] [volcart] [info]   Total points rendered: 207
+[2025-11-08 18:58:40.237] [volcart] [info]     readNearestNeighbor[uint8]: total=4.27ms (setup=0.01ms, scan=1.03ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.21ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:40.238] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.51ms
+[2025-11-08 18:58:40.238] [volcart] [info] renderVisible[segmentation]: total=10.58ms (render_area=10.33ms, Mat2QImage=0.13ms, scene=0.12ms)
+[2025-11-08 18:58:40.239] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.251] [volcart] [info]     readNearestNeighbor[uint8]: total=4.19ms (setup=0.01ms, scan=1.03ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.14ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:40.251] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.35ms
+[2025-11-08 18:58:40.251] [volcart] [info] renderVisible[segmentation]: total=12.29ms (render_area=12.06ms, Mat2QImage=0.14ms, scene=0.08ms)
+[2025-11-08 18:58:40.252] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.263] [volcart] [info]     readNearestNeighbor[uint8]: total=4.40ms (setup=0.02ms, scan=1.10ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.28ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:40.263] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.59ms
+[2025-11-08 18:58:40.264] [volcart] [info] renderVisible[segmentation]: total=11.70ms (render_area=11.51ms, Mat2QImage=0.11ms, scene=0.08ms)
+[2025-11-08 18:58:40.264] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.276] [volcart] [info]     readNearestNeighbor[uint8]: total=4.67ms (setup=0.03ms, scan=1.16ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.48ms) | chunks: 6/6 cached (100.0% hit rate)
+[2025-11-08 18:58:40.276] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.90ms
+[2025-11-08 18:58:40.277] [volcart] [info] renderVisible[segmentation]: total=11.87ms (render_area=11.65ms, Mat2QImage=0.12ms, scene=0.09ms)
+[2025-11-08 18:58:40.277] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.289] [volcart] [info]     readNearestNeighbor[uint8]: total=4.49ms (setup=0.01ms, scan=1.18ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.29ms) | chunks: 6/6 cached (100.0% hit rate)
+[2025-11-08 18:58:40.289] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.66ms
+[2025-11-08 18:58:40.290] [volcart] [info] renderVisible[segmentation]: total=12.21ms (render_area=11.97ms, Mat2QImage=0.14ms, scene=0.09ms)
+[2025-11-08 18:58:40.290] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.302] [volcart] [info]     readNearestNeighbor[uint8]: total=4.49ms (setup=0.01ms, scan=1.30ms, cache_check=0.00ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.18ms) | chunks: 6/6 cached (100.0% hit rate)
+[2025-11-08 18:58:40.302] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.67ms
+[2025-11-08 18:58:40.302] [volcart] [info] renderVisible[segmentation]: total=11.78ms (render_area=11.53ms, Mat2QImage=0.17ms, scene=0.08ms)
+[2025-11-08 18:58:40.303] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.423] [volcart] [info]     readNearestNeighbor[uint8]: total=113.46ms (setup=0.01ms, scan=1.19ms, cache_check=0.00ms, I/O=108.34ms, cache_insert=0.02ms, sampling=3.90ms) | chunks: 0/16 cached (0.0% hit rate)
+[2025-11-08 18:58:40.423] [volcart] [info]   readInterpolated3D[base,segmentation]: 113.67ms
+[2025-11-08 18:58:40.423] [volcart] [info] renderVisible[segmentation]: total=120.45ms (render_area=120.23ms, Mat2QImage=0.12ms, scene=0.09ms)
+[2025-11-08 18:58:40.424] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.437] [volcart] [info]     readNearestNeighbor[uint8]: total=4.80ms (setup=0.01ms, scan=1.19ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.59ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:40.438] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.99ms
+[2025-11-08 18:58:40.438] [volcart] [info] renderVisible[segmentation]: total=13.68ms (render_area=13.44ms, Mat2QImage=0.16ms, scene=0.08ms)
+[2025-11-08 18:58:40.439] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.450] [volcart] [info]     readNearestNeighbor[uint8]: total=4.78ms (setup=0.01ms, scan=1.19ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.57ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:40.450] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.97ms
+[2025-11-08 18:58:40.451] [volcart] [info] renderVisible[segmentation]: total=11.87ms (render_area=11.64ms, Mat2QImage=0.15ms, scene=0.09ms)
+[2025-11-08 18:58:40.451] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.463] [volcart] [info]     readNearestNeighbor[uint8]: total=5.04ms (setup=0.01ms, scan=1.19ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.83ms) | chunks: 16/16 cached (100.0% hit rate)
+[2025-11-08 18:58:40.463] [volcart] [info]   readInterpolated3D[base,segmentation]: 5.24ms
+[2025-11-08 18:58:40.463] [volcart] [info] renderVisible[segmentation]: total=11.90ms (render_area=11.68ms, Mat2QImage=0.13ms, scene=0.09ms)
+[2025-11-08 18:58:40.464] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.477] [volcart] [info]     readNearestNeighbor[uint8]: total=6.11ms (setup=0.02ms, scan=1.88ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=4.21ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:40.477] [volcart] [info]   readInterpolated3D[base,segmentation]: 6.33ms
+[2025-11-08 18:58:40.478] [volcart] [info] renderVisible[segmentation]: total=13.76ms (render_area=13.50ms, Mat2QImage=0.16ms, scene=0.10ms)
+[2025-11-08 18:58:40.479] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.490] [volcart] [info]     readNearestNeighbor[uint8]: total=4.60ms (setup=0.01ms, scan=1.20ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.38ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:40.491] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.78ms
+[2025-11-08 18:58:40.491] [volcart] [info] renderVisible[segmentation]: total=12.25ms (render_area=12.04ms, Mat2QImage=0.12ms, scene=0.08ms)
+[2025-11-08 18:58:40.492] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.505] [volcart] [info]     readNearestNeighbor[uint8]: total=6.35ms (setup=0.02ms, scan=1.56ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=4.77ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:40.506] [volcart] [info]   readInterpolated3D[base,segmentation]: 6.60ms
+[2025-11-08 18:58:40.506] [volcart] [info] renderVisible[segmentation]: total=14.66ms (render_area=14.36ms, Mat2QImage=0.16ms, scene=0.14ms)
+[2025-11-08 18:58:40.507] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.520] [volcart] [info]     readNearestNeighbor[uint8]: total=4.69ms (setup=0.02ms, scan=1.23ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.43ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:40.520] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.90ms
+[2025-11-08 18:58:40.521] [volcart] [info] renderVisible[segmentation]: total=13.10ms (render_area=12.88ms, Mat2QImage=0.13ms, scene=0.09ms)
+[2025-11-08 18:58:40.521] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.533] [volcart] [info]     readNearestNeighbor[uint8]: total=4.66ms (setup=0.01ms, scan=1.21ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.44ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:40.533] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.83ms
+[2025-11-08 18:58:40.534] [volcart] [info] renderVisible[segmentation]: total=12.10ms (render_area=11.89ms, Mat2QImage=0.12ms, scene=0.08ms)
+[2025-11-08 18:58:40.534] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.546] [volcart] [info]     readNearestNeighbor[uint8]: total=4.67ms (setup=0.02ms, scan=1.20ms, cache_check=0.01ms, I/O=0.02ms, cache_insert=0.00ms, sampling=3.43ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:40.546] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.88ms
+[2025-11-08 18:58:40.547] [volcart] [info] renderVisible[segmentation]: total=12.68ms (render_area=12.37ms, Mat2QImage=0.20ms, scene=0.10ms)
+[2025-11-08 18:58:40.548] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.560] [volcart] [info]     readNearestNeighbor[uint8]: total=4.62ms (setup=0.01ms, scan=1.21ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.39ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:40.560] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.79ms
+[2025-11-08 18:58:40.561] [volcart] [info] renderVisible[segmentation]: total=12.45ms (render_area=12.20ms, Mat2QImage=0.13ms, scene=0.11ms)
+[2025-11-08 18:58:40.561] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.573] [volcart] [info]     readNearestNeighbor[uint8]: total=4.66ms (setup=0.01ms, scan=1.23ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.41ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:40.573] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.85ms
+[2025-11-08 18:58:40.574] [volcart] [info] renderVisible[segmentation]: total=11.67ms (render_area=11.42ms, Mat2QImage=0.15ms, scene=0.10ms)
+[2025-11-08 18:58:40.574] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.586] [volcart] [info]     readNearestNeighbor[uint8]: total=4.62ms (setup=0.01ms, scan=1.19ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.41ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:40.586] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.88ms
+[2025-11-08 18:58:40.586] [volcart] [info] renderVisible[segmentation]: total=11.75ms (render_area=11.56ms, Mat2QImage=0.10ms, scene=0.08ms)
+[2025-11-08 18:58:40.587] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.598] [volcart] [info]     readNearestNeighbor[uint8]: total=4.82ms (setup=0.01ms, scan=1.21ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.59ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:40.598] [volcart] [info]   readInterpolated3D[base,segmentation]: 5.00ms
+[2025-11-08 18:58:40.599] [volcart] [info] renderVisible[segmentation]: total=12.21ms (render_area=12.01ms, Mat2QImage=0.11ms, scene=0.09ms)
+[2025-11-08 18:58:40.599] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:40.607] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+clicked on vol loc [2549.96, 1749.93, 5679.95]
+[2025-11-08 18:58:41.683] [volcart] [info] onFocusPOIChanged: refreshFiltersOnly took 0.04ms
+[2025-11-08 18:58:41.683] [volcart] [info] onFocusPOIChanged: skipped applySlicePlaneOrientation (already updating)
+[2025-11-08 18:58:41.683] [volcart] [info] onFocusPOIChanged: TOTAL took 0.24ms
+[2025-11-08 18:58:41.683] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg xz
+[2025-11-08 18:58:41.683] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg xz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:41.683] [volcart] [info] IntersectionOverlayController: Viewport (-152, -227, 306x456), scale 0.5
+[2025-11-08 18:58:41.683] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:41.683] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:41.683] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:41.683] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:41.683] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:41.683] [volcart] [info]   Plane origin: (2549.96, 1749.93, 5679.95)
+[2025-11-08 18:58:41.683] [volcart] [info]   Plane normal: (0.00, 1.00, 0.00)
+[2025-11-08 18:58:41.683] [volcart] [info]   Computing intersection with planeRoi (-304,-454 612x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:42.017] [volcart] [info]   Found 8 intersection segments
+[2025-11-08 18:58:42.017] [volcart] [info]   Segment color: (255,0,0)
+[2025-11-08 18:58:42.017] [volcart] [info]     Adding line strip with 11 points
+[2025-11-08 18:58:42.017] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:42.017] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:42.017] [volcart] [info]     Adding line strip with 14 points
+[2025-11-08 18:58:42.017] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:42.017] [volcart] [info]     Adding line strip with 11 points
+[2025-11-08 18:58:42.017] [volcart] [info]     Adding line strip with 18 points
+[2025-11-08 18:58:42.017] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:42.017] [volcart] [info]   Total points rendered: 114
+[2025-11-08 18:58:42.017] [volcart] [info] CVolumeViewer::onPOIChanged(seg xz): updateSurface took 0.00ms
+[2025-11-08 18:58:42.017] [volcart] [info] CVolumeViewer::onPOIChanged(seg xz): TOTAL took 334.44ms
+[2025-11-08 18:58:42.018] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg yz
+[2025-11-08 18:58:42.018] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg yz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:42.018] [volcart] [info] IntersectionOverlayController: Viewport (-153, -227, 308x456), scale 0.5
+[2025-11-08 18:58:42.018] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:42.018] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:42.018] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:42.018] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:42.018] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:42.018] [volcart] [info]   Plane origin: (2549.96, 1749.93, 5679.95)
+[2025-11-08 18:58:42.018] [volcart] [info]   Plane normal: (1.00, 0.00, 0.00)
+[2025-11-08 18:58:42.018] [volcart] [info]   Computing intersection with planeRoi (-306,-454 616x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:42.367] [volcart] [info]   Found 13 intersection segments
+[2025-11-08 18:58:42.367] [volcart] [info]   Segment color: (255,255,0)
+[2025-11-08 18:58:42.367] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:42.367] [volcart] [info]     Adding line strip with 15 points
+[2025-11-08 18:58:42.367] [volcart] [info]     Adding line strip with 21 points
+[2025-11-08 18:58:42.367] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:42.367] [volcart] [info]     Adding line strip with 7 points
+[2025-11-08 18:58:42.367] [volcart] [info]     Adding line strip with 15 points
+[2025-11-08 18:58:42.367] [volcart] [info]     Adding line strip with 21 points
+[2025-11-08 18:58:42.367] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:42.367] [volcart] [info]     Adding line strip with 11 points
+[2025-11-08 18:58:42.367] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:42.367] [volcart] [info]     Adding line strip with 9 points
+[2025-11-08 18:58:42.367] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:42.367] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:42.367] [volcart] [info]   Total points rendered: 147
+[2025-11-08 18:58:42.368] [volcart] [info] CVolumeViewer::onPOIChanged(seg yz): updateSurface took 0.00ms
+[2025-11-08 18:58:42.368] [volcart] [info] CVolumeViewer::onPOIChanged(seg yz): TOTAL took 350.41ms
+[2025-11-08 18:58:42.368] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer xy plane
+[2025-11-08 18:58:42.368] [volcart] [info] IntersectionOverlayController: Plane viewer 'xy plane', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:42.368] [volcart] [info] IntersectionOverlayController: Viewport (-152, -228, 306x458), scale 0.5
+[2025-11-08 18:58:42.368] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:42.368] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:42.368] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:42.368] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:42.368] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:42.368] [volcart] [info]   Plane origin: (2549.96, 1749.93, 5679.95)
+[2025-11-08 18:58:42.369] [volcart] [info]   Plane normal: (0.00, 0.00, 1.00)
+[2025-11-08 18:58:42.369] [volcart] [info]   Computing intersection with planeRoi (-304,-456 612x916), tolerance 8, minTries 1000
+[2025-11-08 18:58:43.561] [volcart] [info]   Found 69 intersection segments
+[2025-11-08 18:58:43.561] [volcart] [info]   Segment color: (255,140,0)
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 13 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 13 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 8 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 14 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 10 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 8 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 10 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 7 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 7 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 8 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 6 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:43.561] [volcart] [info]   Total points rendered: 345
+[2025-11-08 18:58:43.562] [volcart] [info] CVolumeViewer::onPOIChanged(xy plane): updateSurface took 0.00ms
+[2025-11-08 18:58:43.562] [volcart] [info] CVolumeViewer::onPOIChanged(xy plane): TOTAL took 1194.13ms
+[2025-11-08 18:58:43.573] [volcart] [info]     readNearestNeighbor[uint8]: total=4.64ms (setup=0.01ms, scan=1.20ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.43ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:43.573] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.85ms
+[2025-11-08 18:58:43.574] [volcart] [info] renderVisible[segmentation]: total=11.65ms (render_area=11.42ms, Mat2QImage=0.12ms, scene=0.11ms)
+[2025-11-08 18:58:43.574] [volcart] [info] CVolumeViewer::onPOIChanged(segmentation): renderVisible took 11.68ms
+[2025-11-08 18:58:43.574] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:43.574] [volcart] [info] CVolumeViewer::onPOIChanged(segmentation): TOTAL took 12.63ms
+[2025-11-08 18:58:43.574] [volcart] [info] centerFocusAt: setPOI took 1891.91ms
+[2025-11-08 18:58:43.575] [volcart] [info] applySlicePlaneOrientation: updateSurface calls took 0.00ms
+[2025-11-08 18:58:43.668] [volcart] [info]     readNearestNeighbor[uint8]: total=92.55ms (setup=0.01ms, scan=1.18ms, cache_check=0.01ms, I/O=87.66ms, cache_insert=0.02ms, sampling=3.67ms) | chunks: 5/16 cached (31.2% hit rate)
+[2025-11-08 18:58:43.668] [volcart] [info]   readInterpolated3D[base,seg xz]: 92.71ms
+[2025-11-08 18:58:43.668] [volcart] [info] renderVisible[seg xz]: total=93.66ms (render_area=93.43ms, Mat2QImage=0.14ms, scene=0.10ms)
+[2025-11-08 18:58:43.668] [volcart] [info]   seg xz viewer update took 93.70ms
+[2025-11-08 18:58:43.773] [volcart] [info]     readNearestNeighbor[uint8]: total=103.70ms (setup=0.01ms, scan=1.37ms, cache_check=0.01ms, I/O=97.77ms, cache_insert=0.03ms, sampling=4.51ms) | chunks: 4/16 cached (25.0% hit rate)
+[2025-11-08 18:58:43.773] [volcart] [info]   readInterpolated3D[base,seg yz]: 103.89ms
+[2025-11-08 18:58:43.773] [volcart] [info] renderVisible[seg yz]: total=104.85ms (render_area=104.63ms, Mat2QImage=0.12ms, scene=0.10ms)
+[2025-11-08 18:58:43.773] [volcart] [info]   seg yz viewer update took 104.89ms
+[2025-11-08 18:58:43.833] [volcart] [info]     readNearestNeighbor[uint8]: total=59.51ms (setup=0.01ms, scan=1.39ms, cache_check=0.01ms, I/O=54.91ms, cache_insert=0.02ms, sampling=3.17ms) | chunks: 9/16 cached (56.2% hit rate)
+[2025-11-08 18:58:43.833] [volcart] [info]   readInterpolated3D[base,xy plane]: 59.72ms
+[2025-11-08 18:58:43.834] [volcart] [info] renderVisible[xy plane]: total=60.64ms (render_area=60.40ms, Mat2QImage=0.14ms, scene=0.11ms)
+[2025-11-08 18:58:43.834] [volcart] [info]   xy plane viewer update took 60.69ms
+[2025-11-08 18:58:43.834] [volcart] [info] applySlicePlaneOrientation: viewer updates took 259.33ms
+[2025-11-08 18:58:43.834] [volcart] [info] applySlicePlaneOrientation: refreshAll took 0.14ms
+[2025-11-08 18:58:43.834] [volcart] [info] applySlicePlaneOrientation (axis-aligned): TOTAL took 259.85ms
+[2025-11-08 18:58:43.834] [volcart] [info] centerFocusAt: applySlicePlaneOrientation took 259.86ms
+[2025-11-08 18:58:43.834] [volcart] [info] centerFocusAt: TOTAL took 2151.79ms
+[2025-11-08 18:58:48.290] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg xz
+[2025-11-08 18:58:48.290] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg xz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:48.290] [volcart] [info] IntersectionOverlayController: Viewport (-152, -227, 306x456), scale 0.5
+[2025-11-08 18:58:48.290] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:48.290] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:48.290] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:48.290] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:48.290] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:48.290] [volcart] [info]   Plane origin: (2549.96, 1749.93, 5679.95)
+[2025-11-08 18:58:48.290] [volcart] [info]   Plane normal: (0.00, 1.00, 0.00)
+[2025-11-08 18:58:48.290] [volcart] [info]   Computing intersection with planeRoi (-304,-454 612x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:48.658] [volcart] [info]   Found 8 intersection segments
+[2025-11-08 18:58:48.658] [volcart] [info]   Segment color: (255,0,0)
+[2025-11-08 18:58:48.658] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:48.658] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:48.658] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:48.658] [volcart] [info]     Adding line strip with 11 points
+[2025-11-08 18:58:48.658] [volcart] [info]     Adding line strip with 20 points
+[2025-11-08 18:58:48.658] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:48.658] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:48.658] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:48.658] [volcart] [info]   Total points rendered: 121
+[2025-11-08 18:58:48.676] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg yz
+[2025-11-08 18:58:48.676] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg yz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:48.676] [volcart] [info] IntersectionOverlayController: Viewport (-153, -227, 308x456), scale 0.5
+[2025-11-08 18:58:48.676] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:48.676] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:48.676] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:48.676] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:48.676] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:48.676] [volcart] [info]   Plane origin: (2549.96, 1749.93, 5679.95)
+[2025-11-08 18:58:48.676] [volcart] [info]   Plane normal: (1.00, 0.00, 0.00)
+[2025-11-08 18:58:48.676] [volcart] [info]   Computing intersection with planeRoi (-306,-454 616x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:49.053] [volcart] [info]   Found 10 intersection segments
+[2025-11-08 18:58:49.053] [volcart] [info]   Segment color: (255,255,0)
+[2025-11-08 18:58:49.053] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:49.053] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:49.053] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:49.053] [volcart] [info]     Adding line strip with 7 points
+[2025-11-08 18:58:49.053] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:49.053] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:49.053] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:49.053] [volcart] [info]     Adding line strip with 9 points
+[2025-11-08 18:58:49.053] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:49.053] [volcart] [info]     Adding line strip with 11 points
+[2025-11-08 18:58:49.053] [volcart] [info]   Total points rendered: 124
+[2025-11-08 18:58:49.073] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer xy plane
+[2025-11-08 18:58:49.073] [volcart] [info] IntersectionOverlayController: Plane viewer 'xy plane', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:49.073] [volcart] [info] IntersectionOverlayController: Viewport (-152, -228, 306x458), scale 0.5
+[2025-11-08 18:58:49.073] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:49.073] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:49.073] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:49.073] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:49.073] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:49.073] [volcart] [info]   Plane origin: (2549.96, 1749.93, 5679.95)
+[2025-11-08 18:58:49.073] [volcart] [info]   Plane normal: (0.00, 0.00, 1.00)
+[2025-11-08 18:58:49.073] [volcart] [info]   Computing intersection with planeRoi (-304,-456 612x916), tolerance 8, minTries 1000
+[2025-11-08 18:58:50.328] [volcart] [info]   Found 69 intersection segments
+[2025-11-08 18:58:50.328] [volcart] [info]   Segment color: (255,140,0)
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 25 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 10 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 25 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 10 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 7 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:50.328] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 7 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:50.329] [volcart] [info]   Total points rendered: 346
+QMainWindow::saveState(): 'objectName' not set for QDockWidget 0x62a1dd347180 'Overlays;
+[2025-11-08 18:58:51.921] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg xz
+[2025-11-08 18:58:51.921] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg xz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:51.921] [volcart] [info] IntersectionOverlayController: Viewport (-152, -227, 306x456), scale 0.5
+[2025-11-08 18:58:51.921] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:51.921] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:51.921] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:51.921] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:51.921] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:51.921] [volcart] [info]   Plane origin: (2549.96, 1749.93, 5679.95)
+[2025-11-08 18:58:51.921] [volcart] [info]   Plane normal: (0.00, 1.00, 0.00)
+[2025-11-08 18:58:51.921] [volcart] [info]   Computing intersection with planeRoi (-304,-454 612x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:52.255] [volcart] [info]   Found 7 intersection segments
+[2025-11-08 18:58:52.255] [volcart] [info]   Segment color: (255,0,0)
+[2025-11-08 18:58:52.255] [volcart] [info]     Adding line strip with 20 points
+[2025-11-08 18:58:52.255] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:52.255] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:52.255] [volcart] [info]     Adding line strip with 18 points
+[2025-11-08 18:58:52.255] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:52.255] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:52.255] [volcart] [info]     Adding line strip with 16 points
+[2025-11-08 18:58:52.255] [volcart] [info]   Total points rendered: 114
+[2025-11-08 18:58:52.256] [volcart] [info] renderVisible[seg xz]: total=0.68ms (render_area=0.33ms, Mat2QImage=0.22ms, scene=0.12ms)
+[2025-11-08 18:58:52.257] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer seg yz
+[2025-11-08 18:58:52.257] [volcart] [info] IntersectionOverlayController: Plane viewer 'seg yz', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:52.257] [volcart] [info] IntersectionOverlayController: Viewport (-153, -227, 308x456), scale 0.5
+[2025-11-08 18:58:52.257] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:52.257] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:52.257] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:52.257] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:52.257] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:52.257] [volcart] [info]   Plane origin: (2549.96, 1749.93, 5679.95)
+[2025-11-08 18:58:52.257] [volcart] [info]   Plane normal: (1.00, 0.00, 0.00)
+[2025-11-08 18:58:52.257] [volcart] [info]   Computing intersection with planeRoi (-306,-454 616x912), tolerance 8, minTries 1000
+[2025-11-08 18:58:52.586] [volcart] [info]   Found 11 intersection segments
+[2025-11-08 18:58:52.586] [volcart] [info]   Segment color: (255,255,0)
+[2025-11-08 18:58:52.586] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:52.586] [volcart] [info]     Adding line strip with 20 points
+[2025-11-08 18:58:52.586] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:52.586] [volcart] [info]     Adding line strip with 9 points
+[2025-11-08 18:58:52.586] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:52.586] [volcart] [info]     Adding line strip with 7 points
+[2025-11-08 18:58:52.586] [volcart] [info]     Adding line strip with 21 points
+[2025-11-08 18:58:52.586] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:52.586] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:52.586] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:52.586] [volcart] [info]     Adding line strip with 11 points
+[2025-11-08 18:58:52.586] [volcart] [info]   Total points rendered: 139
+[2025-11-08 18:58:52.587] [volcart] [info] renderVisible[seg yz]: total=0.68ms (render_area=0.33ms, Mat2QImage=0.23ms, scene=0.12ms)
+[2025-11-08 18:58:52.589] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer xy plane
+[2025-11-08 18:58:52.589] [volcart] [info] IntersectionOverlayController: Plane viewer 'xy plane', current segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:52.589] [volcart] [info] IntersectionOverlayController: Viewport (-152, -228, 306x458), scale 0.5
+[2025-11-08 18:58:52.589] [volcart] [info] IntersectionOverlayController::renderSegmentIntersection for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:52.589] [volcart] [info]   Computing intersection (caching disabled)...
+[2025-11-08 18:58:52.589] [volcart] [info]   Got QuadSurface for segment 'auto_grown_20250926112011918'
+[2025-11-08 18:58:52.589] [volcart] [info]   Raw points size: 640x456
+[2025-11-08 18:58:52.589] [volcart] [info]   Segment bbox: (1517.35,847.31,1192.00) to (7608.36,4276.01,13674.08)
+[2025-11-08 18:58:52.589] [volcart] [info]   Plane origin: (2549.96, 1749.93, 5679.95)
+[2025-11-08 18:58:52.589] [volcart] [info]   Plane normal: (0.00, 0.00, 1.00)
+[2025-11-08 18:58:52.589] [volcart] [info]   Computing intersection with planeRoi (-304,-456 612x916), tolerance 8, minTries 1000
+[2025-11-08 18:58:53.885] [volcart] [info]   Found 73 intersection segments
+[2025-11-08 18:58:53.885] [volcart] [info]   Segment color: (255,140,0)
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 27 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 12 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 11 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 12 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 11 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 14 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 17 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 6 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 12 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 6 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 13 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 5 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 6 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 6 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:53.885] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.886] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.886] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.886] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.886] [volcart] [info]     Adding line strip with 4 points
+[2025-11-08 18:58:53.886] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.886] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.886] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.886] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.886] [volcart] [info]     Adding line strip with 3 points
+[2025-11-08 18:58:53.886] [volcart] [info]   Total points rendered: 350
+[2025-11-08 18:58:53.887] [volcart] [info] IntersectionOverlayController::collectPrimitives called for viewer segmentation
+[2025-11-08 18:58:53.898] [volcart] [info]     readNearestNeighbor[uint8]: total=4.77ms (setup=0.02ms, scan=1.20ms, cache_check=0.01ms, I/O=0.00ms, cache_insert=0.00ms, sampling=3.54ms) | chunks: 12/12 cached (100.0% hit rate)
+[2025-11-08 18:58:53.898] [volcart] [info]   readInterpolated3D[base,segmentation]: 4.97ms
+[2025-11-08 18:58:53.899] [volcart] [info] renderVisible[segmentation]: total=12.52ms (render_area=12.22ms, Mat2QImage=0.16ms, scene=0.14ms)
+vc.segmentation.growth: Normal grid lookup skipped (no volume package loaded)
+
+Process finished with exit code 0

@@ -126,7 +126,6 @@ void refreshSegmentationViewers(ViewerManager* manager)
         }
 
         if (viewer->surfName() == "segmentation") {
-            viewer->invalidateVis();
             viewer->renderVisible(true);
         }
     });
