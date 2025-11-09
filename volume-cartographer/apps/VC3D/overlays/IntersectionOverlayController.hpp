@@ -90,13 +90,6 @@ private:
     // Per-viewer caching
     std::unordered_map<CVolumeViewer*, ViewerCache> _viewerCaches;
 
-    // Bounding box cache (in raw surface coordinates, independent of plane)
-    struct SurfaceBounds {
-        float minX, maxX, minY, maxY, minZ, maxZ;
-        bool valid = false;
-    };
-    std::unordered_map<std::string, SurfaceBounds> _surfaceBoundsCache;  // segmentId -> bounds
-
     // Spatial index for fast segment lookup
     MultiSurfaceIndex _spatialIndex;
     std::unordered_map<std::string, int> _segmentToIndexMap;  // segmentId -> spatial index
