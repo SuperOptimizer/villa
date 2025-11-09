@@ -206,10 +206,9 @@ protected:
     QGraphicsItem *_center_marker = nullptr;
     QGraphicsItem *_cursor = nullptr;
     
-    std::vector<QGraphicsItem*> slice_vis_items; 
+    std::vector<QGraphicsItem*> slice_vis_items;
 
-    std::set<std::string> _intersect_tgts = {"visible_segmentation"};
-    std::unordered_map<std::string,std::vector<QGraphicsItem*>> _intersect_items;
+    std::set<std::string> _intersect_tgts = {"segmentation"};
 
     CSurfaceCollection *_surf_col = nullptr;
     

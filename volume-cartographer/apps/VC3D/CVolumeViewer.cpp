@@ -524,9 +524,7 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
         return;
     }
 
-    for (auto& col : _intersect_items)
-        for (auto& item : col.second)
-            item->setVisible(false);
+    // Intersection visibility handled by re-rendering
 
     bool handled = false;
 
@@ -749,13 +747,8 @@ void CVolumeViewer::invalidateVis()
 
 void CVolumeViewer::invalidateIntersections()
 {
-    for(auto &pair : _intersect_items) {
-        for(auto &item : pair.second) {
-            fScene->removeItem(item);
-            delete item;
-        }
-    }
-    _intersect_items.clear();
+    // Just trigger a re-render - no cache to clear
+    renderIntersections();
 }
 
 void CVolumeViewer::setIntersects(const std::set<std::string> &set)
@@ -768,13 +761,7 @@ void CVolumeViewer::setIntersects(const std::set<std::string> &set)
 void CVolumeViewer::setIntersectionOpacity(float opacity)
 {
     _intersectionOpacity = std::clamp(opacity, 0.0f, 1.0f);
-    for (auto& pair : _intersect_items) {
-        for (auto* item : pair.second) {
-            if (item) {
-                item->setOpacity(_intersectionOpacity);
-            }
-        }
-    }
+    renderIntersections(); // Re-render with new opacity
 }
 
 void CVolumeViewer::setOverlayVolume(std::shared_ptr<Volume> volume)
@@ -943,7 +930,6 @@ void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
         if (!_surf) {
             clearAllOverlayGroups();
             fScene->clear();
-            _intersect_items.clear();
             slice_vis_items.clear();
             _paths.clear();
             emit overlaysUpdated();
@@ -1515,158 +1501,7 @@ void CVolumeViewer::renderVisible(bool force)
 
 
 
-void CVolumeViewer::renderIntersections()
-{
-    if (!volume || !volume->zarrDataset() || !_surf)
-        return;
-    
-    std::vector<std::string> remove;
-    for (auto &pair : _intersect_items)
-        if (!_intersect_tgts.count(pair.first)) {
-            for(auto &item : pair.second) {
-                fScene->removeItem(item);
-                delete item;
-            }
-            remove.push_back(pair.first);
-        }
-    for(auto key : remove)
-        _intersect_items.erase(key);
-
-    PlaneSurface *plane = dynamic_cast<PlaneSurface*>(_surf);
-
-    
-    if (plane) {
-        cv::Rect plane_roi = {curr_img_area.x()/_scale, curr_img_area.y()/_scale, curr_img_area.width()/_scale, curr_img_area.height()/_scale};
-
-        cv::Vec3f corner = plane->coord(cv::Vec3f(0,0,0), {plane_roi.x, plane_roi.y, 0.0});
-        Rect3D view_bbox = {corner, corner};
-        view_bbox = expand_rect(view_bbox, plane->coord(cv::Vec3f(0,0,0), {plane_roi.br().x, plane_roi.y, 0}));
-        view_bbox = expand_rect(view_bbox, plane->coord(cv::Vec3f(0,0,0), {plane_roi.x, plane_roi.br().y, 0}));
-        view_bbox = expand_rect(view_bbox, plane->coord(cv::Vec3f(0,0,0), {plane_roi.br().x, plane_roi.br().y, 0}));
-
-        std::vector<std::string> intersect_cands;
-        std::vector<std::string> intersect_tgts_v;
-
-        for (auto key : _intersect_tgts)
-            intersect_tgts_v.push_back(key);
-
-#pragma omp parallel for
-        for(int n=0;n<intersect_tgts_v.size();n++) {
-            std::string key = intersect_tgts_v[n];
-            bool haskey;
-#pragma omp critical
-            haskey = _intersect_items.count(key);
-            if (!haskey && dynamic_cast<QuadSurface*>(_surf_col->surface(key))) {
-                QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface(key));
-
-                if (intersect(view_bbox, segmentation->bbox()))
-#pragma omp critical
-                    intersect_cands.push_back(key);
-                else
-#pragma omp critical
-                    _intersect_items[key] = {};
-            }
-        }
-
-        // STUBBED OUT: Intersection line rendering
-        // This code was computing and rendering red/orange/yellow intersection lines
-        // but the rendering was broken, so it's been disabled.
-        /*
-        std::vector<std::vector<std::vector<cv::Vec3f>>> intersections(intersect_cands.size());
-
-#pragma omp parallel for
-        for(int n=0;n<intersect_cands.size();n++) {
-            std::string key = intersect_cands[n];
-            QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface(key));
-
-            std::vector<std::vector<cv::Vec2f>> xy_seg_;
-            if (key == "segmentation") {
-                find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_scale, 1000);
-            }
-            else
-                find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_scale);
-
-        }
-
-        std::hash<std::string> str_hasher;
-
-        for(int n=0;n<intersect_cands.size();n++) {
-            std::string key = intersect_cands[n];
-
-            if (!intersections.size()) {
-                _intersect_items[key] = {};
-                continue;
-            }
-
-            size_t seed = str_hasher(key);
-            srand(seed);
-
-            int prim = rand() % 3;
-            cv::Vec3i cvcol = {100 + rand() % 255, 100 + rand() % 255, 100 + rand() % 255};
-            cvcol[prim] = 200 + rand() % 55;
-
-            QColor col(cvcol[0],cvcol[1],cvcol[2]);
-            float width = 2;
-            int z_value = 5;
-
-            if (key == "segmentation") {
-                col =
-                    (_surf_name == "seg yz"   ? COLOR_SEG_YZ
-                     : _surf_name == "seg xz" ? COLOR_SEG_XZ
-                                              : COLOR_SEG_XY);
-                width = 3;
-                z_value = 20;
-            }
-
-
-            QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface(intersect_cands[n]));
-            std::vector<QGraphicsItem*> items;
-
-            int len = 0;
-            for (auto seg : intersections[n]) {
-                QPainterPath path;
-
-                bool first = true;
-                cv::Vec3f last = {-1,-1,-1};
-                for (auto wp : seg)
-                {
-                    len++;
-                    cv::Vec3f p = plane->project(wp, 1.0, _scale);
-
-                    if (last[0] != -1 && cv::norm(p-last) >= 8) {
-                        auto item = fGraphicsView->scene()->addPath(path, QPen(col, width));
-                        item->setZValue(z_value);
-                        item->setOpacity(_intersectionOpacity);
-                        items.push_back(item);
-                        first = true;
-                    }
-                    last = p;
-
-                    if (first)
-                        path.moveTo(p[0],p[1]);
-                    else
-                        path.lineTo(p[0],p[1]);
-                    first = false;
-                }
-                auto item = fGraphicsView->scene()->addPath(path, QPen(col, width));
-                item->setZValue(z_value);
-                item->setOpacity(_intersectionOpacity);
-                items.push_back(item);
-            }
-            _intersect_items[key] = items;
-        }
-        */
-
-        // Clear out any existing intersection items since we're not rendering them anymore
-        for (auto& [key, items] : _intersect_items) {
-            for (auto item : items) {
-                fGraphicsView->scene()->removeItem(item);
-                delete item;
-            }
-        }
-        _intersect_items.clear();
-    }
-}
+// NOTE: renderIntersections() implementation moved to CVolumeViewerIntersections.cpp
 
 
 void CVolumeViewer::onPanStart(Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
@@ -2051,7 +1886,6 @@ void CVolumeViewer::onVolumeClosing()
             fScene->clear();
         }
         // Clear all item collections
-        _intersect_items.clear();
         slice_vis_items.clear();
         _paths.clear();
         emit overlaysUpdated();

@@ -56,7 +56,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>>& seg_vol, std::
         std::vector<cv::Vec2f> seg_loc2;
         cv::Vec2f loc;
         cv::Vec2f loc2;
-        cv::Vec2f loc3;
         cv::Vec3f point;
         cv::Vec3f point2;
         cv::Vec3f point3;
@@ -239,7 +238,6 @@ float min_loc(const cv::Mat_<cv::Vec3f>& points, cv::Vec2f& loc, cv::Vec3f& out,
     cv::Vec3f val = at_int(points, loc);
     out = val;
     float best = tdist_sum(val, tgts, tds);
-    float res;
 
     std::vector<cv::Vec2f> search = {{0, -1}, {0, 1}, {-1, -1}, {-1, 0}, {-1, 1}, {1, -1}, {1, 0}, {1, 1}};
     float step = init_step;
@@ -255,7 +253,7 @@ float min_loc(const cv::Mat_<cv::Vec3f>& points, cv::Vec2f& loc, cv::Vec3f& out,
             }
 
             val = at_int(points, cand);
-            res = tdist_sum(val, tgts, tds);
+            float res = tdist_sum(val, tgts, tds);
             if (res < best) {
                 changed = true;
                 best = res;
@@ -274,5 +272,5 @@ float min_loc(const cv::Mat_<cv::Vec3f>& points, cv::Vec2f& loc, cv::Vec3f& out,
             break;
     }
 
-    return sqrt(best);
+    return sqrtf(best);
 }
