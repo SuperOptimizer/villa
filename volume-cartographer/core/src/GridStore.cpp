@@ -4,7 +4,6 @@
 #include <unordered_set>
 #include <fstream>
 #include <stdexcept>
-#include <numeric>
 
 #include <arpa/inet.h>
 

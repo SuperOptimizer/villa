@@ -33,9 +33,6 @@
 #include "ViewerManager.hpp"
 #include "segmentation/SegmentationWidget.hpp"
 #include "segmentation/SegmentationGrowth.hpp"
-#include "OpChain.hpp"
-#include "OpsList.hpp"
-#include "OpsSettings.hpp"
 #include "SeedingWidget.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
@@ -73,7 +70,6 @@ public:
 
 signals:
     void sendVolumeChanged(std::shared_ptr<Volume> vol, const std::string& volumeId);
-    void sendOpChainSelected(OpChain*);
     void sendSurfacesLoaded();
     void sendVolumeClosing(); // Signal to notify viewers before closing volume
 
@@ -82,7 +78,6 @@ public slots:
     void onLocChanged(void);
     void onManualPlaneChanged(void);
     void onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
-    void onOpChainChanged(OpChain *chain);
     void onRenderSegment(const std::string& segmentId);
     void onGrowSegmentFromSegment(const std::string& segmentId);
     void onAddOverlap(const std::string& segmentId);
@@ -156,7 +151,7 @@ private slots:
     void configureViewerConnections(CVolumeViewer* viewer);
     CVolumeViewer* segmentationViewer() const;
     void clearSurfaceSelection();
-    void onSurfaceActivated(const QString& surfaceId, QuadSurface* surface, OpChain* chain);
+    void onSurfaceActivated(const QString& surfaceId, QuadSurface* surface);
     void onAxisAlignedSliceMousePress(CVolumeViewer* viewer, const cv::Vec3f& volLoc, Qt::MouseButton button, Qt::KeyboardModifiers modifiers);
     void onAxisAlignedSliceMouseMove(CVolumeViewer* viewer, const cv::Vec3f& volLoc, Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers);
     void onAxisAlignedSliceMouseRelease(CVolumeViewer* viewer, Qt::MouseButton button, Qt::KeyboardModifiers modifiers);
@@ -184,10 +179,8 @@ private:
     CPointCollectionWidget* _point_collection_widget;
 
     VCCollection* _point_collection;
-    
+
     SurfaceTreeWidget *treeWidgetSurfaces;
-    OpsList *wOpsList;
-    OpsSettings *wOpsSettings;
     QPushButton *btnReloadSurfaces;
     
     //TODO abstract these into separate QWidget class?
@@ -214,8 +207,6 @@ private:
     CSurfaceCollection *_surf_col;
     bool _useAxisAlignedSlices{false};
     std::unique_ptr<SegmentationGrower> _segmentationGrower;
-
-    std::unordered_map<std::string, OpChain*> _opchains;
 
     std::unique_ptr<SegmentationEditManager> _segmentationEdit;
     std::unique_ptr<SegmentationOverlayController> _segmentationOverlay;

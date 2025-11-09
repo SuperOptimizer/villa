@@ -14,10 +14,10 @@
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/Intersection.hpp"
 
 #include <omp.h>
 
-#include "OpChain.hpp"
 #include "vc/core/util/Render.hpp"
 
 #include <QPainter>
@@ -747,42 +747,15 @@ void CVolumeViewer::invalidateVis()
     slice_vis_items.resize(0);
 }
 
-void CVolumeViewer::invalidateIntersect(const std::string &name)
+void CVolumeViewer::invalidateIntersections()
 {
-    if (!name.size() || name == _surf_name) {
-        for(auto &pair : _intersect_items) {
-            for(auto &item : pair.second) {
-                fScene->removeItem(item);
-                delete item;
-            }
-        }
-        _intersect_items.clear();
-    }
-    else if (_intersect_items.count(name)) {
-        for(auto &item : _intersect_items[name]) {
+    for(auto &pair : _intersect_items) {
+        for(auto &item : pair.second) {
             fScene->removeItem(item);
             delete item;
         }
-        _intersect_items.erase(name);
     }
-}
-
-
-void CVolumeViewer::onIntersectionChanged(std::string a, std::string b, Intersection *intersection)
-{
-    if (_ignore_intersect_change && intersection == _ignore_intersect_change)
-        return;
-
-    if (!_intersect_tgts.count(a) || !_intersect_tgts.count(b))
-        return;
-
-    //FIXME fix segmentation vs visible_segmentation naming and usage ..., think about dependency chain ..
-    if (a == _surf_name || (_surf_name == "segmentation" && a == "visible_segmentation"))
-        invalidateIntersect(b);
-    else if (b == _surf_name || (_surf_name == "segmentation" && b == "visible_segmentation"))
-        invalidateIntersect(a);
-    
-    renderIntersections();
+    _intersect_items.clear();
 }
 
 void CVolumeViewer::setIntersects(const std::set<std::string> &set)
@@ -915,12 +888,6 @@ void CVolumeViewer::fitSurfaceInView()
     if (auto* quadSurf = dynamic_cast<QuadSurface*>(_surf)) {
         bbox = quadSurf->bbox();
         haveBounds = true;
-    } else if (auto* opChain = dynamic_cast<OpChain*>(_surf)) {
-        QuadSurface* src = opChain->src();
-        if (src) {
-            bbox = src->bbox();
-            haveBounds = true;
-        }
     }
 
     if (!haveBounds) {
@@ -1601,6 +1568,10 @@ void CVolumeViewer::renderIntersections()
             }
         }
 
+        // STUBBED OUT: Intersection line rendering
+        // This code was computing and rendering red/orange/yellow intersection lines
+        // but the rendering was broken, so it's been disabled.
+        /*
         std::vector<std::vector<std::vector<cv::Vec3f>>> intersections(intersect_cands.size());
 
 #pragma omp parallel for
@@ -1683,85 +1654,17 @@ void CVolumeViewer::renderIntersections()
                 items.push_back(item);
             }
             _intersect_items[key] = items;
-            _ignore_intersect_change = new Intersection({intersections[n]});
-            _surf_col->setIntersection(_surf_name, key, _ignore_intersect_change);
-            _ignore_intersect_change = nullptr;
         }
-    }
-    else if (_surf_name == "segmentation" /*&& dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"))*/) {
-        // QuadSurface *crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
+        */
 
-        //TODO make configurable, for now just show everything!
-        std::vector<std::pair<std::string,std::string>> intersects = _surf_col->intersections("segmentation");
-        for(auto pair : intersects) {
-            std::string key = pair.first;
-            if (key == "segmentation")
-                key = pair.second;
-            
-            if (_intersect_items.count(key) || !_intersect_tgts.count(key))
-                continue;
-            
-            std::unordered_map<cv::Vec3f,cv::Vec3f,vec3f_hash> location_cache;
-            std::vector<cv::Vec3f> src_locations;
-
-            for (auto seg : _surf_col->intersection(pair.first, pair.second)->lines)
-                for (auto wp : seg)
-                    src_locations.push_back(wp);
-            
-#pragma omp parallel
-            {
-                // SurfacePointer *ptr = crop->pointer();
-                auto ptr = _surf->pointer();
-#pragma omp for
-                for (auto wp : src_locations) {
-                    // float res = crop->pointTo(ptr, wp, 2.0, 100);
-                    // cv::Vec3f p = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
-                    float res = _surf->pointTo(ptr, wp, 2.0, 100);
-                    cv::Vec3f p = _surf->loc(ptr)*_scale ;//+ cv::Vec3f(_vis_center[0],_vis_center[1],0);
-                    //FIXME still happening?
-                    if (res >= 2.0)
-                        p = {-1,-1,-1};
-                        // std::cout << "WARNING pointTo() high residual in renderIntersections()" << std::endl;
-#pragma omp critical
-                    location_cache[wp] = p;
-                }
+        // Clear out any existing intersection items since we're not rendering them anymore
+        for (auto& [key, items] : _intersect_items) {
+            for (auto item : items) {
+                fGraphicsView->scene()->removeItem(item);
+                delete item;
             }
-            
-            std::vector<QGraphicsItem*> items;
-            for (auto seg : _surf_col->intersection(pair.first, pair.second)->lines) {
-                QPainterPath path;
-                
-                bool first = true;
-                cv::Vec3f last = {-1,-1,-1};
-                for (auto wp : seg)
-                {
-                    cv::Vec3f p = location_cache[wp];
-                    
-                    if (p[0] == -1)
-                        continue;
-
-                    if (last[0] != -1 && cv::norm(p-last) >= 8) {
-                        auto item = fGraphicsView->scene()->addPath(path, QPen(key == "seg yz" ? COLOR_SEG_YZ: COLOR_SEG_XZ, 2));
-                        item->setZValue(5);
-                        item->setOpacity(_intersectionOpacity);
-                        items.push_back(item);
-                        first = true;
-                    }
-                    last = p;
-
-                    if (first)
-                        path.moveTo(p[0],p[1]);
-                    else
-                        path.lineTo(p[0],p[1]);
-                    first = false;
-                }
-                auto item = fGraphicsView->scene()->addPath(path, QPen(key == "seg yz" ? COLOR_SEG_YZ: COLOR_SEG_XZ, 2));
-                item->setZValue(5);
-                item->setOpacity(_intersectionOpacity);
-                items.push_back(item);
-            }
-            _intersect_items[key] = items;
         }
+        _intersect_items.clear();
     }
 }
 
@@ -1784,10 +1687,6 @@ void CVolumeViewer::onPanRelease(Qt::MouseButton buttons, Qt::KeyboardModifiers 
 
 void CVolumeViewer::onScrolled()
 {
-    // if (!dynamic_cast<OpChain*>(_surf) && !dynamic_cast<OpChain*>(_surf)->slow() && _min_scale == 1.0)
-        // renderVisible();
-    // if ((!dynamic_cast<OpChain*>(_surf) || !dynamic_cast<OpChain*>(_surf)->slow()) && _min_scale < 1.0)
-        // renderVisible();
 }
 
 void CVolumeViewer::onResized()
@@ -2264,7 +2163,7 @@ void CVolumeViewer::updateAllOverlays()
     }
 
     invalidateVis();
-    invalidateIntersect();
+    invalidateIntersections();
     renderIntersections();
 
     emit overlaysUpdated();

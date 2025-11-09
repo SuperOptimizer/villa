@@ -34,7 +34,7 @@ public:
     cv::Mat_<uint8_t> render_composite(const cv::Rect &roi);
     cv::Mat_<uint8_t> renderCompositeForSurface(QuadSurface* surface, cv::Size outputSize);
     void invalidateVis();
-    void invalidateIntersect(const std::string &name = "");
+    void invalidateIntersections();
     
     void setIntersects(const std::set<std::string> &set);
     std::string surfName() const { return _surf_name; };
@@ -130,7 +130,6 @@ public slots:
     void onCollectionSelected(uint64_t collectionId);
     void onSurfaceChanged(std::string name, Surface *surf);
     void onPOIChanged(std::string name, POI *poi);
-    void onIntersectionChanged(std::string a, std::string b, Intersection *intersection);
     void onScrolled();
     void onResized();
     void onZoom(int steps, QPointF scene_point, Qt::KeyboardModifiers modifiers);
@@ -211,8 +210,7 @@ protected:
 
     std::set<std::string> _intersect_tgts = {"visible_segmentation"};
     std::unordered_map<std::string,std::vector<QGraphicsItem*>> _intersect_items;
-    Intersection *_ignore_intersect_change = nullptr;
-    
+
     CSurfaceCollection *_surf_col = nullptr;
     
     VCCollection* _point_collection = nullptr;

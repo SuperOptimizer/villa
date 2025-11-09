@@ -1,28 +1,33 @@
 #include "vc/core/util/Logging.hpp"
 
 #include <memory>
+#include <algorithm>
+#include <cctype>
 
-#include <spdlog/sinks/basic_file_sink.h>
-#include <spdlog/sinks/dist_sink.h>
-#include <spdlog/sinks/stdout_sinks.h>
-
-
-auto DistSink() -> std::shared_ptr<spdlog::sinks::dist_sink_mt>;
-auto DistSink() -> std::shared_ptr<spdlog::sinks::dist_sink_mt>
+std::shared_ptr<SimpleLogger> Logger()
 {
-    static auto loggers = std::make_shared<spdlog::sinks::dist_sink_mt>();
-    return loggers;
-}
-
-static auto Init() -> std::shared_ptr<spdlog::sinks::dist_sink_mt>
-{
-    DistSink()->add_sink(std::make_shared<spdlog::sinks::stdout_sink_mt>());
-    return DistSink();
-}
-
-
-auto Logger() -> std::shared_ptr<spdlog::logger>
-{
-    static auto logger = std::make_shared<spdlog::logger>("volcart", Init());
+    static auto logger = std::make_shared<SimpleLogger>();
     return logger;
+}
+
+void AddLogFile(const std::filesystem::path& path)
+{
+    Logger()->addFileSink(path);
+}
+
+void SetLogLevel(const std::string& s)
+{
+    std::string lower = s;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+
+    if (lower == "debug") {
+        Logger()->setLevel(SimpleLogger::Level::DEBUG);
+    } else if (lower == "info") {
+        Logger()->setLevel(SimpleLogger::Level::INFO);
+    } else if (lower == "warn" || lower == "warning") {
+        Logger()->setLevel(SimpleLogger::Level::WARN);
+    } else if (lower == "error") {
+        Logger()->setLevel(SimpleLogger::Level::ERROR);
+    }
 }
