@@ -69,6 +69,9 @@ void IntersectionOverlayController::segmentChanged(const std::string& segmentId)
         cache.invalidateSegment(segmentId);
     }
 
+    // Invalidate bounds cache for this segment
+    _surfaceBoundsCache.erase(segmentId);
+
     // Mark index as dirty (will rebuild on next render)
     for (auto& [viewer, cache] : _viewerCaches) {
         cache.indexDirty = true;
@@ -353,6 +356,84 @@ void IntersectionOverlayController::renderSegmentIntersection(
         static_cast<int>(viewport.height() / viewerScale)
     };
 
+    // Viewport culling: use cached surface bounding box to skip segments far from viewport
+    // IMPORTANT: Never cull the current segment - always render it
+    const bool isCurrentSegment = (segmentId == _currentSegmentId);
+
+    if (!isCurrentSegment) {
+        // Check cache first
+        auto boundsIt = _surfaceBoundsCache.find(segmentId);
+        if (boundsIt == _surfaceBoundsCache.end() || !boundsIt->second.valid) {
+        // Compute and cache bounding box (in raw 3D volume coordinates)
+        SurfaceBounds bounds;
+        bounds.minX = bounds.minY = bounds.minZ = std::numeric_limits<float>::max();
+        bounds.maxX = bounds.maxY = bounds.maxZ = std::numeric_limits<float>::lowest();
+        int validPoints = 0;
+
+        // Sample every 20th point to build bounding box quickly (for 1000x1000 = 2500 samples)
+        for (int row = 0; row < rawPoints.rows; row += 20) {
+            for (int col = 0; col < rawPoints.cols; col += 20) {
+                cv::Vec3f pt = rawPoints(row, col);
+                // Skip undefined points
+                if (pt[0] == -1 && pt[1] == -1 && pt[2] == -1) continue;
+
+                bounds.minX = std::min(bounds.minX, pt[0]);
+                bounds.maxX = std::max(bounds.maxX, pt[0]);
+                bounds.minY = std::min(bounds.minY, pt[1]);
+                bounds.maxY = std::max(bounds.maxY, pt[1]);
+                bounds.minZ = std::min(bounds.minZ, pt[2]);
+                bounds.maxZ = std::max(bounds.maxZ, pt[2]);
+                validPoints++;
+            }
+        }
+
+            bounds.valid = (validPoints > 0);
+            _surfaceBoundsCache[segmentId] = bounds;
+            boundsIt = _surfaceBoundsCache.find(segmentId);
+        }
+
+        // Use cached bounds to check if segment intersects viewport
+        if (boundsIt->second.valid) {
+            // Project bounding box corners to plane coordinates
+            cv::Vec3f corners[8] = {
+                {boundsIt->second.minX, boundsIt->second.minY, boundsIt->second.minZ},
+                {boundsIt->second.maxX, boundsIt->second.minY, boundsIt->second.minZ},
+                {boundsIt->second.minX, boundsIt->second.maxY, boundsIt->second.minZ},
+                {boundsIt->second.maxX, boundsIt->second.maxY, boundsIt->second.minZ},
+                {boundsIt->second.minX, boundsIt->second.minY, boundsIt->second.maxZ},
+                {boundsIt->second.maxX, boundsIt->second.minY, boundsIt->second.maxZ},
+                {boundsIt->second.minX, boundsIt->second.maxY, boundsIt->second.maxZ},
+                {boundsIt->second.maxX, boundsIt->second.maxY, boundsIt->second.maxZ}
+            };
+
+            float minProjX = std::numeric_limits<float>::max();
+            float maxProjX = std::numeric_limits<float>::lowest();
+            float minProjY = std::numeric_limits<float>::max();
+            float maxProjY = std::numeric_limits<float>::lowest();
+
+            for (const auto& corner : corners) {
+                cv::Vec3f planePt = plane->project(corner);
+                minProjX = std::min(minProjX, planePt[0]);
+                maxProjX = std::max(maxProjX, planePt[0]);
+                minProjY = std::min(minProjY, planePt[1]);
+                maxProjY = std::max(maxProjY, planePt[1]);
+            }
+
+            // Use 3x viewport size as margin to be very conservative
+            const float margin = std::max(planeRoi.width, planeRoi.height) * 3.0f;
+            const float vpMinX = planeRoi.x - margin;
+            const float vpMaxX = planeRoi.x + planeRoi.width + margin;
+            const float vpMinY = planeRoi.y - margin;
+            const float vpMaxY = planeRoi.y + planeRoi.height + margin;
+
+            // Check if bounding boxes overlap
+            if (maxProjX < vpMinX || minProjX > vpMaxX || maxProjY < vpMinY || minProjY > vpMaxY) {
+                // No overlap - skip this segment
+                return;
+            }
+        }
+    }  // end if (!isCurrentSegment)
+
     // Compute intersection segments
     std::vector<std::vector<cv::Vec3f>> intersectionSegments3D;
     std::vector<std::vector<cv::Vec2f>> intersectionSegments2D;
@@ -376,19 +457,20 @@ void IntersectionOverlayController::renderSegmentIntersection(
 
     if (viewerScale < 0.5f) {
         // Very zoomed out (0.03x - 0.5x): dense grid sampling provides excellent coverage
-        minTries = (segmentId == _currentSegmentId) ? 20 : 12;
+        // Non-current segments: only 3-5 curves needed for context
+        minTries = (segmentId == _currentSegmentId) ? 20 : 3;
         stepSizeMultiplier = 4.0f;
     } else if (viewerScale < 1.0f) {
         // Zoomed out (0.5x - 1.0x): moderate tries with dense grid
-        minTries = (segmentId == _currentSegmentId) ? 25 : 15;
+        minTries = (segmentId == _currentSegmentId) ? 25 : 5;
         stepSizeMultiplier = 3.0f;
     } else if (viewerScale < 2.0f) {
         // Normal zoom (1.0x - 2.0x): more tries for complete coverage
-        minTries = (segmentId == _currentSegmentId) ? 30 : 20;
+        minTries = (segmentId == _currentSegmentId) ? 30 : 8;
         stepSizeMultiplier = 2.5f;
     } else {
         // Zoomed in (2.0x - 4.0x): maximum tries for finest detail
-        minTries = (segmentId == _currentSegmentId) ? 40 : 25;
+        minTries = (segmentId == _currentSegmentId) ? 40 : 10;
         stepSizeMultiplier = 2.0f;
     }
 
