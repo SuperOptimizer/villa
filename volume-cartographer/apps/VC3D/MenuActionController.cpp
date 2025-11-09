@@ -5,7 +5,6 @@
 #include "SurfacePanelController.hpp"
 #include "ViewerManager.hpp"
 #include "segmentation/SegmentationModule.hpp"
-#include "OpChain.hpp"
 #include "OpsList.hpp"
 #include "OpsSettings.hpp"
 #include "CVolumeViewer.hpp"

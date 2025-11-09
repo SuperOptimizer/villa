@@ -160,70 +160,6 @@ protected:
 };
 
 
-//surface representing some operation on top of a base surface
-//by default all ops but gen() are forwarded to the base
-class DeltaSurface : public Surface
-{
-public:
-    //default - just assign base ptr, override if additional processing necessary
-    //like relocate ctrl points, mark as dirty, ...
-    virtual void setBase(Surface *base);
-    DeltaSurface(Surface *base);
-
-    virtual cv::Vec3f pointer() override;
-
-    void move(cv::Vec3f &ptr, const cv::Vec3f &offset) override;
-    bool valid(const cv::Vec3f &ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    cv::Vec3f loc(const cv::Vec3f &ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    cv::Vec3f coord(const cv::Vec3f &ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    cv::Vec3f normal(const cv::Vec3f &ptr, const cv::Vec3f &offset = {0,0,0}) override;
-    void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, const cv::Vec3f &ptr, float scale, const cv::Vec3f &offset) override = 0;
-    float pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int max_iters = 1000) override;
-
-protected:
-    Surface *_base = nullptr;
-};
-
-//might in the future have more properties! or those props are handled in whatever class manages a set of control points ...
-class SurfaceControlPoint
-{
-public:
-    SurfaceControlPoint(Surface *base, const cv::Vec3f &ptr_, const cv::Vec3f &control);
-    cv::Vec3f ptr; //location of control point in base surface
-    cv::Vec3f orig_wp; //the original 3d location where the control point was created
-    cv::Vec3f normal; //original normal
-    cv::Vec3f control_point; //actual control point location - should be in line with _orig_wp along the normal, but could change if the underlaying surface changes!
-};
-
-class ControlPointSurface : public DeltaSurface
-{
-public:
-    ControlPointSurface(Surface *base) : DeltaSurface(base) {};
-    void addControlPoint(const cv::Vec3f &base_ptr, cv::Vec3f control_point);
-    void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, const cv::Vec3f &ptr, float scale, const cv::Vec3f &offset) override;
-
-    void setBase(Surface *base);
-
-protected:
-    std::vector<SurfaceControlPoint> _controls;
-};
-
-class RefineCompSurface : public DeltaSurface
-{
-public:
-    RefineCompSurface(z5::Dataset *ds, ChunkCache *cache, QuadSurface *base = nullptr);
-    void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, const cv::Vec3f &ptr, float scale, const cv::Vec3f &offset) override;
-
-    float start = 0;
-    float stop = -100;
-    float step = 2.0;
-    float low = 0.1;
-    float high = 1.0;
-protected:
-    z5::Dataset *_ds;
-    ChunkCache *_cache;
-};
-
 class SurfaceMeta
 {
 public:
@@ -294,89 +230,144 @@ private:
     float cell_size;
     std::vector<Rect3D> patch_bboxes;
 
-    uint64_t hash(int x, int y, int z) const {
-        // Ensure non-negative values for hashing
-        uint32_t ux = static_cast<uint32_t>(x + 1000000);
-        uint32_t uy = static_cast<uint32_t>(y + 1000000);
-        uint32_t uz = static_cast<uint32_t>(z + 1000000);
-        return (static_cast<uint64_t>(ux) << 40) |
-               (static_cast<uint64_t>(uy) << 20) |
-               static_cast<uint64_t>(uz);
-    }
-
+    uint64_t hash(int x, int y, int z) const;
 public:
-    MultiSurfaceIndex(float cell_sz = 100.0f) : cell_size(cell_sz) {}
-
-    void addPatch(int idx, QuadSurface* patch) {
-        Rect3D bbox = patch->bbox();
-        patch_bboxes.push_back(bbox);
-
-        // Expand bbox slightly to handle edge cases
-        int x0 = std::floor((bbox.low[0] - cell_size) / cell_size);
-        int y0 = std::floor((bbox.low[1] - cell_size) / cell_size);
-        int z0 = std::floor((bbox.low[2] - cell_size) / cell_size);
-        int x1 = std::ceil((bbox.high[0] + cell_size) / cell_size);
-        int y1 = std::ceil((bbox.high[1] + cell_size) / cell_size);
-        int z1 = std::ceil((bbox.high[2] + cell_size) / cell_size);
-
-        for (int z = z0; z <= z1; z++) {
-            for (int y = y0; y <= y1; y++) {
-                for (int x = x0; x <= x1; x++) {
-                    grid[hash(x, y, z)].patch_indices.push_back(idx);
-                }
-            }
-        }
-    }
-
-    std::vector<int> getCandidatePatches(const cv::Vec3f& point, float tolerance = 0.0f) const {
-        // Get the cell containing this point
-        int x = std::floor(point[0] / cell_size);
-        int y = std::floor(point[1] / cell_size);
-        int z = std::floor(point[2] / cell_size);
-
-        // If tolerance is specified, check neighboring cells too
-        std::set<int> unique_patches;
-
-        if (tolerance > 0) {
-            int cell_radius = std::ceil(tolerance / cell_size);
-            for (int dz = -cell_radius; dz <= cell_radius; dz++) {
-                for (int dy = -cell_radius; dy <= cell_radius; dy++) {
-                    for (int dx = -cell_radius; dx <= cell_radius; dx++) {
-                        auto it = grid.find(hash(x + dx, y + dy, z + dz));
-                        if (it != grid.end()) {
-                            for (int idx : it->second.patch_indices) {
-                                unique_patches.insert(idx);
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            auto it = grid.find(hash(x, y, z));
-            if (it != grid.end()) {
-                for (int idx : it->second.patch_indices) {
-                    unique_patches.insert(idx);
-                }
-            }
-        }
-
-        // Filter by bounding box for extra safety
-        std::vector<int> result;
-        for (int idx : unique_patches) {
-            const Rect3D& bbox = patch_bboxes[idx];
-            if (point[0] >= bbox.low[0] - tolerance &&
-                point[0] <= bbox.high[0] + tolerance &&
-                point[1] >= bbox.low[1] - tolerance &&
-                point[1] <= bbox.high[1] + tolerance &&
-                point[2] >= bbox.low[2] - tolerance &&
-                point[2] <= bbox.high[2] + tolerance) {
-                result.push_back(idx);
-            }
-        }
-
-        return result;
-    }
-
-    size_t getCellCount() const { return grid.size(); }
-    size_t getPatchCount() const { return patch_bboxes.size(); }
+    MultiSurfaceIndex(float cell_sz = 100.0f);
+    void addPatch(int idx, QuadSurface* patch);
+    std::vector<int> getCandidatePatches(const cv::Vec3f& point, float tolerance = 0.0f) const;
+    size_t getCellCount() const;
+    size_t getPatchCount() const;
 };
+
+struct DSReader
+{
+    z5::Dataset *ds;
+    float scale;
+    ChunkCache *cache;
+};
+
+void writeFloatBigTiff(const std::filesystem::path& outPath,
+                              const cv::Mat& img,
+                              uint32_t tileW = 1024,
+                              uint32_t tileH = 1024);
+
+void writeSingleChannelBigTiff(const std::filesystem::path& outPath,
+                                      const cv::Mat& img,
+                                      uint32_t tileW = 1024,
+                                      uint32_t tileH = 1024);
+
+Rect3D rect_from_json(const nlohmann::json &json);
+void vxy_from_normal(cv::Vec3f orig, cv::Vec3f normal, cv::Vec3f &vx, cv::Vec3f &vy);
+cv::Vec3f vy_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n);
+cv::Vec3f rotateAroundAxis(const cv::Vec3f& vector, const cv::Vec3f& axis, float angle);
+cv::Vec3f internal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal, const cv::Vec2f &scale);
+cv::Vec3f nominal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal, const cv::Vec2f &scale);
+float sdist(const cv::Vec3f &a, const cv::Vec3f &b);
+cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b);
+void normalizeMaskChannel(cv::Mat& mask);
+
+
+template <typename E>
+static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f &out, const cv::Vec3f& tgt, const cv::Vec2f& init_step, float min_step_x)
+{
+    cv::Rect boundary(1,1,points.cols-2,points.rows-2);
+    if (!boundary.contains(cv::Point(loc))) {
+        out = {-1,-1,-1};
+        return -1;
+    }
+
+    bool changed = true;
+    E val = at_int(points, loc);
+    out = val;
+    float best = sdist(val, tgt);
+    float res;
+
+    //TODO check maybe add more search patterns, compare motion estimatino for video compression, x264/x265, ...
+    std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
+    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
+    cv::Vec2f step = init_step;
+
+    while (changed) {
+        changed = false;
+
+        for(auto &off : search) {
+            cv::Vec2f cand = loc+mul(off,step);
+
+            //just skip if out of bounds
+            if (!boundary.contains(cv::Point(cand)))
+                continue;
+
+            val = at_int(points, cand);
+            res = sdist(val, tgt);
+            if (res < best) {
+                changed = true;
+                best = res;
+                loc = cand;
+                out = val;
+            }
+        }
+
+        if (changed)
+            continue;
+
+        step *= 0.5;
+        changed = true;
+
+        if (step[0] < min_step_x)
+            break;
+    }
+
+    return sqrt(best);
+}
+
+
+//search the surface point that is closest to th tgt coord
+template <typename E>
+static float pointTo_(cv::Vec2f &loc, const cv::Mat_<E> &points, const cv::Vec3f &tgt, float th, int max_iters, float scale)
+{
+    loc = cv::Vec2f(points.cols/2,points.rows/2);
+    cv::Vec3f _out;
+
+    cv::Vec2f step_small = {std::max(1.0f,scale),std::max(1.0f,scale)};
+    float min_mul = std::min(0.1*points.cols/scale,0.1*points.rows/scale);
+    cv::Vec2f step_large = {min_mul*scale,min_mul*scale};
+
+    assert(points.cols > 3);
+    assert(points.rows > 3);
+
+    float dist = search_min_loc(points, loc, _out, tgt, step_small, scale*0.1);
+
+    if (dist < th && dist >= 0) {
+        return dist;
+    }
+
+    cv::Vec2f min_loc = loc;
+    float min_dist = dist;
+    if (min_dist < 0)
+        min_dist = 10*(points.cols/scale+points.rows/scale);
+
+    //FIXME is this excessive?
+    int r_full = 0;
+    for(int r=0;r<10*max_iters && r_full < max_iters;r++) {
+        //FIXME skipn invalid init locs!
+        loc = {1 + (rand() % (points.cols-3)), 1 + (rand() % (points.rows-3))};
+
+        if (points(loc[1],loc[0])[0] == -1)
+            continue;
+
+        r_full++;
+
+        float dist = search_min_loc(points, loc, _out, tgt, step_large, scale*0.1);
+
+        if (dist < th && dist >= 0) {
+            dist = search_min_loc(points, loc, _out, tgt, step_small, scale*0.1);
+            return dist;
+        } else if (dist >= 0 && dist < min_dist) {
+            min_loc = loc;
+            min_dist = dist;
+        }
+    }
+
+    loc = min_loc;
+    return min_dist;
+}

@@ -3,7 +3,6 @@
 #include <QWidget>
 #include <ui_OpsSettings.h>
 
-#include "OpChain.hpp"
 #include "vc/core/util/Surface.hpp"
 
 
@@ -16,19 +15,11 @@ public:
     ~OpsSettings();
 
 public slots:
-    void onOpSelected(Surface *op, OpChain *chain);
-    void onEnabledChanged();
-
-signals:
-    void sendOpChainChanged(OpChain *chain);
+    void onOpSelected(Surface *op);
 
 private:
     Ui::OpsSettings* ui;
     QGroupBox *_box = nullptr;
-    QCheckBox *_enable = nullptr;
 
     Surface *_op = nullptr;
-    OpChain *_chain = nullptr;
-    
-    QWidget *_form = nullptr;
 };

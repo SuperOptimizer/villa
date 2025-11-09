@@ -13,6 +13,11 @@ add_library(vc_core
         src/Logging.cpp
         src/Slicing.cpp
         src/Surface.cpp
+        src/QuadSurface.cpp
+        src/PlaneSurface.cpp
+        src/SurfaceMeta.cpp
+        src/Tiff.cpp
+        src/Intersection.cpp
         src/Render.cpp
         src/Thinning.cpp
         src/Umbilicus.cpp
@@ -27,7 +32,6 @@ target_link_libraries(vc_core
         opencv_highgui
         opencv_calib3d
         opencv_video
-        spdlog::spdlog
         nlohmann_json::nlohmann_json
         z5
         OpenMP::OpenMP_CXX
