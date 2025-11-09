@@ -17,7 +17,6 @@ add_library(vc_core
         src/PlaneSurface.cpp
         src/QuadSurface.cpp
         src/SurfaceMeta.cpp
-        src/intersection.cpp
         src/Render.cpp
         src/Thinning.cpp
         src/Umbilicus.cpp

@@ -6,9 +6,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
-#include <chrono>
 #include <iomanip>
-#include <sstream>
 
 enum class LogLevel {
     trace = 0,
@@ -77,25 +75,12 @@ private:
     void log_string(LogLevel level, const std::string& message) {
         if (level < level_) return;
 
-        std::string level_str = level_to_string(level);
-
-        auto now = std::chrono::system_clock::now();
-        auto time_t = std::chrono::system_clock::to_time_t(now);
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()) % 1000;
-
-        std::stringstream timestamp;
-        timestamp << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
-        timestamp << '.' << std::setfill('0') << std::setw(3) << ms.count();
-
-        std::string full_message = std::format("[{}] [{}] [{}] {}\n",
-            timestamp.str(), name_, level_str, message);
 
         std::lock_guard<std::mutex> lock(mutex_);
-        std::cout << full_message << std::flush;
+        std::cout << message << std::endl << std::flush;
 
         if (file_stream_ && file_stream_->is_open()) {
-            *file_stream_ << full_message << std::flush;
+            *file_stream_ << message << std::flush;
         }
     }
 

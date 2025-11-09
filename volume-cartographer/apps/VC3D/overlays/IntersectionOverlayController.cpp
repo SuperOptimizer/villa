@@ -215,9 +215,9 @@ std::vector<std::string> IntersectionOverlayController::findVisibleSegments(
         {static_cast<float>(viewport.right()), static_cast<float>(viewport.bottom()), 0}));
 
     // Add proportional margin to viewBbox for hysteresis (prevents popping)
-    // Use 10% margin for spatial culling
+    // Use larger margin to ensure segments near edges are included
     cv::Vec3f bboxSize = viewBbox.high - viewBbox.low;
-    cv::Vec3f margin = bboxSize * 0.1f;
+    cv::Vec3f margin = bboxSize * 0.5f;
     Rect3D expandedViewBbox = viewBbox;
     expandedViewBbox.low = viewBbox.low - margin;
     expandedViewBbox.high = viewBbox.high + margin;
@@ -340,7 +340,8 @@ void IntersectionOverlayController::renderSegmentIntersection(
     // Get the raw points
     const cv::Mat_<cv::Vec3f>& rawPoints = surf->rawPoints();
 
-    // Convert viewport to plane ROI
+    // Convert viewport to plane/surface ROI by dividing by scale
+    // The viewport is in screen coordinates, we need surface coordinates
     float viewerScale = viewer->scale();
     cv::Rect planeRoi = {
         static_cast<int>(viewport.x() / viewerScale),
@@ -348,6 +349,8 @@ void IntersectionOverlayController::renderSegmentIntersection(
         static_cast<int>(viewport.width() / viewerScale),
         static_cast<int>(viewport.height() / viewerScale)
     };
+
+    Logger()->info("  -> planeRoi=({},{} {}x{})", planeRoi.x, planeRoi.y, planeRoi.width, planeRoi.height);
 
     // Note: Spatial culling is already handled by findVisibleSegments() using the spatial index
     // No need for redundant bounding box checks here
@@ -367,29 +370,15 @@ void IntersectionOverlayController::renderSegmentIntersection(
         }
     }
 
-    // Zoom-based optimizations:
-    // - Low zoom (< 1.0): zoomed out, need less detail
-    // - High zoom (> 1.0): zoomed in, need more detail
-    int minTries;
-    float stepSizeMultiplier;
-
     // Use high minTries to find complete curves
     // Smart early exit in Surface.cpp prevents wasting time
-    minTries = 500;
+    const int minTries = 500;
 
-    if (viewerScale < 0.5f) {
-        stepSizeMultiplier = 4.0f;
-    } else if (viewerScale < 1.0f) {
-        stepSizeMultiplier = 3.0f;
-    } else if (viewerScale < 2.0f) {
-        stepSizeMultiplier = 2.5f;
-    } else {
-        stepSizeMultiplier = 2.0f;
-    }
+    // Use constant step size - no adaptive zoom behavior
+    const float stepSize = 3.0f;
 
-    // Double the step size to trace half as many points (2x faster with minimal visual difference)
     find_intersect_segments(intersectionSegments3D, intersectionSegments2D,
-                           rawPoints, plane, planeRoi, (stepSizeMultiplier * 4.0f) / viewerScale, minTries,
+                           rawPoints, plane, planeRoi, stepSize, minTries,
                            havePOI ? &poiHint : nullptr);
 
     if (intersectionSegments3D.empty()) {
@@ -463,6 +452,11 @@ void IntersectionOverlayController::collectPrimitives(CVolumeViewer* viewer, Ove
         QRectF viewport = viewer->currentImageArea();
         float scale = viewer->scale();
 
+        // Log viewport info for debugging
+        Logger()->info("IntersectionRender[{}]: viewport=({:.1f},{:.1f} {}x{}), scale={:.2f}",
+                      viewer->surfName(), viewport.x(), viewport.y(),
+                      viewport.width(), viewport.height(), scale);
+
         // Find all visible segments (sorted by distance, limited to 100)
         std::vector<std::string> visibleSegments = findVisibleSegments(plane, viewport);
 
@@ -480,7 +474,11 @@ void IntersectionOverlayController::collectPrimitives(CVolumeViewer* viewer, Ove
     }
     // Handle flattened view (segmentation viewer)
     else if (QuadSurface* quadSurf = dynamic_cast<QuadSurface*>(surf)) {
-        Logger()->debug("IntersectionOverlayController: Flattened view - skipping for now");
+        QRectF viewport = viewer->currentImageArea();
+        float scale = viewer->scale();
+        Logger()->info("IntersectionRender[{}]: viewport=({:.1f},{:.1f} {}x{}), scale={:.2f} (flattened - skipping)",
+                      viewer->surfName(), viewport.x(), viewport.y(),
+                      viewport.width(), viewport.height(), scale);
     }
     else {
         Logger()->debug("IntersectionOverlayController: Unknown surface type");
