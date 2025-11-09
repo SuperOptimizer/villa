@@ -29,12 +29,33 @@ OverlaysWidget::OverlaysWidget(QWidget* parent)
     lineWidthLayout->addWidget(intersectionLineWidthSlider);
     
     mainLayout->addLayout(lineWidthLayout);
+
+    // Highlighted Segments control
+    auto* highlightedSegmentsLayout = new QVBoxLayout();
+
+    highlightedSegmentsLabel = new QLabel("Highlighted Segments (one per line, empty = all):", this);
+    highlightedSegmentsLayout->addWidget(highlightedSegmentsLabel);
+
+    highlightedSegmentsEdit = new QPlainTextEdit(this);
+    highlightedSegmentsEdit->setPlaceholderText("Enter segment names, one per line...");
+    highlightedSegmentsEdit->setMaximumHeight(150);
+
+    connect(highlightedSegmentsEdit, &QPlainTextEdit::textChanged,
+            this, &OverlaysWidget::onHighlightedSegmentsTextChanged);
+
+    highlightedSegmentsLayout->addWidget(highlightedSegmentsEdit);
+
+    mainLayout->addLayout(highlightedSegmentsLayout);
     mainLayout->addStretch();
 
-    // Load saved value
+    // Load saved values
     QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
     const float savedWidth = settings.value("viewer/intersection_line_width", 2.0f).toFloat();
     setIntersectionLineWidth(savedWidth);
+
+    const QString savedSegments = settings.value("viewer/highlighted_segments", "").toString();
+    highlightedSegmentsEdit->setPlainText(savedSegments);
+    onHighlightedSegmentsTextChanged(); // Initialize the set
 }
 
 void OverlaysWidget::setIntersectionLineWidth(float width)
@@ -56,6 +77,41 @@ void OverlaysWidget::onIntersectionLineWidthSliderChanged(int value)
     intersectionLineWidth = static_cast<float>(value) / 10.0f;
     intersectionLineWidthLabel->setText(
         QString("Intersection Line Width: %1").arg(intersectionLineWidth, 0, 'f', 1));
-    
+
+    // Save to settings
+    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+    settings.setValue("viewer/intersection_line_width", intersectionLineWidth);
+
     emit intersectionLineWidthChanged(intersectionLineWidth);
+}
+
+void OverlaysWidget::setHighlightedSegments(const QSet<QString>& segments)
+{
+    highlightedSegments = segments;
+
+    // Update text edit without triggering signal
+    highlightedSegmentsEdit->blockSignals(true);
+    QStringList segmentList = segments.values();
+    highlightedSegmentsEdit->setPlainText(segmentList.join('\n'));
+    highlightedSegmentsEdit->blockSignals(false);
+}
+
+void OverlaysWidget::onHighlightedSegmentsTextChanged()
+{
+    QString text = highlightedSegmentsEdit->toPlainText();
+    QStringList lines = text.split('\n', Qt::SkipEmptyParts);
+
+    highlightedSegments.clear();
+    for (const QString& line : lines) {
+        QString trimmed = line.trimmed();
+        if (!trimmed.isEmpty()) {
+            highlightedSegments.insert(trimmed);
+        }
+    }
+
+    // Save to settings
+    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+    settings.setValue("viewer/highlighted_segments", text);
+
+    emit highlightedSegmentsChanged(highlightedSegments);
 }

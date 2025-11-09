@@ -8,6 +8,7 @@
 #include "overlays/BBoxOverlayController.hpp"
 #include "overlays/VectorOverlayController.hpp"
 #include "overlays/VolumeOverlayController.hpp"
+#include "overlays/IntersectionOverlayController.hpp"
 #include "segmentation/SegmentationModule.hpp"
 #include "CSurfaceCollection.hpp"
 #include "vc/ui/VCCollection.hpp"
@@ -193,6 +194,11 @@ void ViewerManager::setVolumeOverlay(VolumeOverlayController* overlay)
     }
 }
 
+void ViewerManager::setIntersectionOverlay(IntersectionOverlayController* overlay)
+{
+    _intersectionOverlay = overlay;
+}
+
 void ViewerManager::setIntersectionOpacity(float opacity)
 {
     _intersectionOpacity = std::clamp(opacity, 0.0f, 1.0f);
@@ -219,6 +225,13 @@ void ViewerManager::setIntersectionLineWidth(float width)
         if (viewer) {
             viewer->setIntersectionLineWidth(_intersectionLineWidth);
         }
+    }
+}
+
+void ViewerManager::setHighlightedSegments(const QSet<QString>& segments)
+{
+    if (_intersectionOverlay) {
+        _intersectionOverlay->setHighlightedSegments(segments);
     }
 }
 

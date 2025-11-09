@@ -488,6 +488,7 @@ CWindow::CWindow() :
 
     _intersectionOverlay = std::make_unique<IntersectionOverlayController>(_viewerManager.get(), this);
     _intersectionOverlay->setSurfaceCollection(_surf_col);
+    _viewerManager->setIntersectionOverlay(_intersectionOverlay.get());
 
     _volumeOverlay = std::make_unique<VolumeOverlayController>(_viewerManager.get(), this);
     connect(_volumeOverlay.get(), &VolumeOverlayController::requestStatusMessage, this,
@@ -1558,6 +1559,8 @@ void CWindow::CreateWidgets(void)
     if (_viewerManager) {
         connect(_overlaysWidget, &OverlaysWidget::intersectionLineWidthChanged,
                 _viewerManager.get(), &ViewerManager::setIntersectionLineWidth);
+        connect(_overlaysWidget, &OverlaysWidget::highlightedSegmentsChanged,
+                _viewerManager.get(), &ViewerManager::setHighlightedSegments);
     }
 
     // Load saved settings
@@ -1565,6 +1568,7 @@ void CWindow::CreateWidgets(void)
     _overlaysWidget->setIntersectionLineWidth(savedLineWidth);
     if (_viewerManager) {
         _viewerManager->setIntersectionLineWidth(savedLineWidth);
+        _viewerManager->setHighlightedSegments(_overlaysWidget->getHighlightedSegments());
     }
 
     chkAxisAlignedSlices = ui.chkAxisAlignedSlices;

@@ -4,6 +4,7 @@
 #include "vc/core/util/Surface.hpp"
 
 #include <QColor>
+#include <QSet>
 #include <QString>
 #include <opencv2/core.hpp>
 
@@ -47,6 +48,9 @@ public:
     // Set rendering parameters
     void setLineWidth(float width);
     void setOpacity(float opacity);
+
+    // Set which segments to highlight (empty = all segments)
+    void setHighlightedSegments(const QSet<QString>& segments);
 
     // Rebuild the spatial index (call when segments added/removed/modified)
     void rebuildIndex();
@@ -95,6 +99,7 @@ private:
     std::string _currentSegmentId;
     std::set<std::string> _intersectionTargets;
     CSurfaceCollection* _surfaceCollection = nullptr;
+    QSet<QString> _highlightedSegments;  // Empty = render all segments
 
     // Rendering parameters
     float _lineWidth = 5.0f;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QSet>
 #include <QString>
 
 #include <functional>
@@ -19,6 +20,7 @@ class PathsOverlayController;
 class BBoxOverlayController;
 class VectorOverlayController;
 class VolumeOverlayController;
+class IntersectionOverlayController;
 class ChunkCache;
 class SegmentationModule;
 class Volume;
@@ -47,12 +49,15 @@ public:
     void setBBoxOverlay(BBoxOverlayController* overlay);
     void setVectorOverlay(VectorOverlayController* overlay);
     void setVolumeOverlay(VolumeOverlayController* overlay);
+    void setIntersectionOverlay(IntersectionOverlayController* overlay);
 
     void setIntersectionOpacity(float opacity);
     float intersectionOpacity() const { return _intersectionOpacity; }
 
     void setIntersectionLineWidth(float width);
     float intersectionLineWidth() const { return _intersectionLineWidth; }
+
+    void setHighlightedSegments(const QSet<QString>& segments);
 
     void setOverlayVolume(std::shared_ptr<Volume> volume, const std::string& volumeId);
     std::shared_ptr<Volume> overlayVolume() const { return _overlayVolume; }
@@ -94,6 +99,7 @@ private:
     PathsOverlayController* _pathsOverlay{nullptr};
     BBoxOverlayController* _bboxOverlay{nullptr};
     VectorOverlayController* _vectorOverlay{nullptr};
+    IntersectionOverlayController* _intersectionOverlay{nullptr};
     bool _segmentationEditActive{false};
     SegmentationModule* _segmentationModule{nullptr};
     std::vector<CVolumeViewer*> _viewers;

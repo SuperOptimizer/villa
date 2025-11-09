@@ -1323,7 +1323,9 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     // Build grid candidate list ONCE (not inside the loop!)
     // Filter to only candidates visible in the viewport
     std::vector<cv::Vec2f> grid_candidates;
-    int grid_step = std::max(3, std::max(points.cols, points.rows) / 40);
+    // Use much denser sampling: surfaces are typically ~20x downsampled from volume,
+    // so sampling every 1-2 surface pixels gives good coverage (~20-40 voxels in volume)
+    int grid_step = std::max(1, std::max(points.cols, points.rows) / 200);
     int total_candidates = 0;
 
     // Expand plane_roi proportionally to avoid clipping at edges and prevent pop-in/pop-out

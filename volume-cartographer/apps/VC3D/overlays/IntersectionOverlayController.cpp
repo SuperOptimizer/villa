@@ -89,6 +89,22 @@ void IntersectionOverlayController::setOpacity(float opacity)
     refreshAll();
 }
 
+void IntersectionOverlayController::setHighlightedSegments(const QSet<QString>& segments)
+{
+    if (_highlightedSegments == segments) {
+        return;
+    }
+
+    _highlightedSegments = segments;
+
+    // Invalidate all caches since filtering changed
+    for (auto& [viewer, cache] : _viewerCaches) {
+        cache.invalidate();
+    }
+
+    refreshAll();
+}
+
 void IntersectionOverlayController::rebuildIndex()
 {
     auto t_start = std::chrono::high_resolution_clock::now();
@@ -288,6 +304,23 @@ std::vector<std::string> IntersectionOverlayController::findVisibleSegments(
         visibleSegments.resize(100);
     }
 
+    // Filter by highlighted segments if specified
+    if (!_highlightedSegments.isEmpty()) {
+        std::vector<std::string> filteredSegments;
+        for (const auto& segmentId : visibleSegments) {
+            // Always include current segment
+            if (segmentId == _currentSegmentId) {
+                filteredSegments.push_back(segmentId);
+                continue;
+            }
+            // Include if in highlighted list
+            if (_highlightedSegments.contains(QString::fromStdString(segmentId))) {
+                filteredSegments.push_back(segmentId);
+            }
+        }
+        return filteredSegments;
+    }
+
     return visibleSegments;
 }
 
@@ -342,21 +375,21 @@ void IntersectionOverlayController::renderSegmentIntersection(
     float stepSizeMultiplier;
 
     if (viewerScale < 0.5f) {
-        // Very zoomed out (0.03x - 0.5x): need many segments to cover gaps
-        minTries = (segmentId == _currentSegmentId) ? 50 : 40;
-        stepSizeMultiplier = 8.0f;  // Larger steps, faster tracing
-    } else if (viewerScale < 1.0f) {
-        // Zoomed out (0.5x - 1.0x): need many segments
-        minTries = (segmentId == _currentSegmentId) ? 60 : 50;
-        stepSizeMultiplier = 6.0f;
-    } else if (viewerScale < 2.0f) {
-        // Normal zoom (1.0x - 2.0x): maximum segments for complete coverage
-        minTries = (segmentId == _currentSegmentId) ? 80 : 70;
+        // Very zoomed out (0.03x - 0.5x): dense grid sampling provides good coverage
+        minTries = (segmentId == _currentSegmentId) ? 80 : 50;
         stepSizeMultiplier = 4.0f;
+    } else if (viewerScale < 1.0f) {
+        // Zoomed out (0.5x - 1.0x): moderate tries with dense grid
+        minTries = (segmentId == _currentSegmentId) ? 100 : 60;
+        stepSizeMultiplier = 3.0f;
+    } else if (viewerScale < 2.0f) {
+        // Normal zoom (1.0x - 2.0x): more tries for complete coverage
+        minTries = (segmentId == _currentSegmentId) ? 120 : 80;
+        stepSizeMultiplier = 2.5f;
     } else {
-        // Zoomed in (2.0x - 4.0x): maximum segments and detail
-        minTries = (segmentId == _currentSegmentId) ? 100 : 80;
-        stepSizeMultiplier = 3.0f;  // Smaller steps, smoother curves
+        // Zoomed in (2.0x - 4.0x): maximum tries for finest detail
+        minTries = (segmentId == _currentSegmentId) ? 150 : 100;
+        stepSizeMultiplier = 2.0f;
     }
 
     find_intersect_segments(intersectionSegments3D, intersectionSegments2D,
