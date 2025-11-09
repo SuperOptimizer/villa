@@ -1,6 +1,7 @@
 #include "vc/core/util/Surface.hpp"
 
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/Logging.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
 
 #include <opencv2/imgproc.hpp>
@@ -1303,6 +1304,8 @@ static uint8_t get_block(const cv::Mat_<uint8_t> &block, const cv::Vec3f &loc, c
 
 void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step, int min_tries, const cv::Vec3f* poi_hint)
 {
+    auto t_total_start = std::chrono::high_resolution_clock::now();
+
     //start with random points and search for a plane intersection
     float block_step = 0.5*step;
 
@@ -1322,10 +1325,12 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
     // Build grid candidate list ONCE (not inside the loop!)
     // Filter to only candidates visible in the viewport
+    auto t_grid_start = std::chrono::high_resolution_clock::now();
     std::vector<cv::Vec2f> grid_candidates;
-    // Use much denser sampling: surfaces are typically ~20x downsampled from volume,
-    // so sampling every 1-2 surface pixels gives good coverage (~20-40 voxels in volume)
-    int grid_step = std::max(1, std::max(points.cols, points.rows) / 200);
+    // Use dense sampling: surfaces are typically ~20x downsampled from volume,
+    // so sampling every 2-4 surface pixels gives good coverage (~40-80 voxels in volume)
+    // Balance between coverage and performance
+    int grid_step = std::max(2, std::max(points.cols, points.rows) / 150);
     int total_candidates = 0;
 
     // Expand plane_roi proportionally to avoid clipping at edges and prevent pop-in/pop-out
@@ -1346,35 +1351,60 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         }
     }
 
+    auto t_grid_end = std::chrono::high_resolution_clock::now();
+    auto grid_build_ms = std::chrono::duration<double, std::milli>(t_grid_end - t_grid_start).count();
+
     // Sort candidates deterministically by distance from viewport center
     // This ensures consistent results across renders
+    auto t_sort_start = std::chrono::high_resolution_clock::now();
     cv::Vec2f viewport_center_plane = {
         static_cast<float>(plane_roi.x + plane_roi.width / 2),
         static_cast<float>(plane_roi.y + plane_roi.height / 2)
     };
 
-    std::sort(grid_candidates.begin(), grid_candidates.end(),
-        [&](const cv::Vec2f& a, const cv::Vec2f& b) {
-            cv::Vec3f pt_a = at_int(points, a);
-            cv::Vec3f pt_b = at_int(points, b);
-            cv::Vec3f plane_a = plane->project(pt_a);
-            cv::Vec3f plane_b = plane->project(pt_b);
+    // Cache plane projections to avoid recomputing in sort comparisons
+    // Each comparison would do 4 expensive calls (2x at_int + 2x project)
+    struct CandidateWithDist {
+        cv::Vec2f grid_loc;
+        float dist_sq;
+    };
+    std::vector<CandidateWithDist> candidates_with_dist;
+    candidates_with_dist.reserve(grid_candidates.size());
 
-            float dist_a = (plane_a[0] - viewport_center_plane[0]) * (plane_a[0] - viewport_center_plane[0]) +
-                          (plane_a[1] - viewport_center_plane[1]) * (plane_a[1] - viewport_center_plane[1]);
-            float dist_b = (plane_b[0] - viewport_center_plane[0]) * (plane_b[0] - viewport_center_plane[0]) +
-                          (plane_b[1] - viewport_center_plane[1]) * (plane_b[1] - viewport_center_plane[1]);
+    for (const auto& grid_loc : grid_candidates) {
+        cv::Vec3f pt = at_int(points, grid_loc);
+        cv::Vec3f plane_loc = plane->project(pt);
+        float dist_sq = (plane_loc[0] - viewport_center_plane[0]) * (plane_loc[0] - viewport_center_plane[0]) +
+                       (plane_loc[1] - viewport_center_plane[1]) * (plane_loc[1] - viewport_center_plane[1]);
+        candidates_with_dist.push_back({grid_loc, dist_sq});
+    }
 
+    std::sort(candidates_with_dist.begin(), candidates_with_dist.end(),
+        [](const CandidateWithDist& a, const CandidateWithDist& b) {
             // Sort by distance, then by grid position for determinism
-            if (std::abs(dist_a - dist_b) < 0.01f) {
-                if (std::abs(a[0] - b[0]) < 0.01f) {
-                    return a[1] < b[1];
+            if (std::abs(a.dist_sq - b.dist_sq) < 0.01f) {
+                if (std::abs(a.grid_loc[0] - b.grid_loc[0]) < 0.01f) {
+                    return a.grid_loc[1] < b.grid_loc[1];
                 }
-                return a[0] < b[0];
+                return a.grid_loc[0] < b.grid_loc[0];
             }
-            return dist_a < dist_b;
+            return a.dist_sq < b.dist_sq;
         });
 
+    // Extract sorted grid locations
+    grid_candidates.clear();
+    grid_candidates.reserve(candidates_with_dist.size());
+    for (const auto& cwd : candidates_with_dist) {
+        grid_candidates.push_back(cwd.grid_loc);
+    }
+
+    auto t_sort_end = std::chrono::high_resolution_clock::now();
+    auto sort_ms = std::chrono::duration<double, std::milli>(t_sort_end - t_sort_start).count();
+
+    Logger()->info("find_intersect: grid_step={}, candidates={}, grid_build={:.2f}ms, sort={:.2f}ms, max_iterations={}",
+                   grid_step, grid_candidates.size(), grid_build_ms, sort_ms, max_iterations);
+
+    auto t_loop_start = std::chrono::high_resolution_clock::now();
     for(int r=0;r<max_iterations;r++) {
         std::vector<cv::Vec3f> seg;
         std::vector<cv::Vec2f> seg_loc;
@@ -1479,7 +1509,21 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 //then refine
                 dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001, 1.0, 0.01, false);
 
-                if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc3))
+                // If large step failed, try a half-step to avoid discontinuities
+                // Use higher threshold (4.0) to allow larger steps without breaking
+                if ((dist < 0 || dist > 4.0) && n > 0) {
+                    // Try intermediate point (half-step)
+                    loc3 = loc2 + (loc2 - loc) * 0.5f;
+                    if (!grid_bounds.contains(cv::Point(loc3)))
+                        break;
+
+                    point3 = at_int(points, loc3);
+                    dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001, 1.0, 0.01, false);
+                    dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001, 1.0, 0.01, false);
+                }
+
+                // Allow higher error tolerance (4.0) for larger step sizes
+                if (dist < 0 || dist > 4.0 || !loc_valid_xy(points, loc3))
                     break;
 
             seg.push_back(point3);
@@ -1490,6 +1534,13 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             loc2 = loc3;
 
             plane_loc = plane->project(point3);
+
+            // Early exit if we've traced outside the viewport
+            if (plane_loc[0] < plane_roi.x || plane_loc[0] > plane_roi.x + plane_roi.width ||
+                plane_loc[1] < plane_roi.y || plane_loc[1] > plane_roi.y + plane_roi.height) {
+                break;
+            }
+
             if (get_block(block, plane_loc, plane_roi, block_step))
                 break;
 
@@ -1522,7 +1573,21 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 //then refine
                 dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001, 1.0, 0.01, false);
 
-                if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc3))
+                // If large step failed, try a half-step to avoid discontinuities
+                // Use higher threshold (4.0) to allow larger steps without breaking
+                if ((dist < 0 || dist > 4.0) && n > 0) {
+                    // Try intermediate point (half-step)
+                    loc3 = loc2 + (loc2 - loc) * 0.5f;
+                    if (!grid_bounds.contains(cv::Point(loc3)))
+                        break;
+
+                    point3 = at_int(points, loc3);
+                    dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001, 1.0, 0.01, false);
+                    dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001, 1.0, 0.01, false);
+                }
+
+                // Allow higher error tolerance (4.0) for larger step sizes
+                if (dist < 0 || dist > 4.0 || !loc_valid_xy(points, loc3))
                     break;
 
             seg2.push_back(point3);
@@ -1533,6 +1598,13 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             loc2 = loc3;
 
             plane_loc = plane->project(point3);
+
+            // Early exit if we've traced outside the viewport
+            if (plane_loc[0] < plane_roi.x || plane_loc[0] > plane_roi.x + plane_roi.width ||
+                plane_loc[1] < plane_roi.y || plane_loc[1] > plane_roi.y + plane_roi.height) {
+                break;
+            }
+
             if (get_block(block, plane_loc, plane_roi, block_step))
                 break;
 
@@ -1568,6 +1640,14 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             seg_grid.push_back(seg_grid_raw[s]);
         }
     }
+
+    auto t_loop_end = std::chrono::high_resolution_clock::now();
+    auto loop_ms = std::chrono::duration<double, std::milli>(t_loop_end - t_loop_start).count();
+    auto t_total_end = std::chrono::high_resolution_clock::now();
+    auto total_ms = std::chrono::duration<double, std::milli>(t_total_end - t_total_start).count();
+
+    Logger()->info("find_intersect: loop={:.2f}ms, total={:.2f}ms, successful_traces={}, output_segments={}",
+                   loop_ms, total_ms, successful_traces, seg_vol.size());
 
 }
 

@@ -375,25 +375,26 @@ void IntersectionOverlayController::renderSegmentIntersection(
     float stepSizeMultiplier;
 
     if (viewerScale < 0.5f) {
-        // Very zoomed out (0.03x - 0.5x): dense grid sampling provides good coverage
-        minTries = (segmentId == _currentSegmentId) ? 80 : 50;
+        // Very zoomed out (0.03x - 0.5x): dense grid sampling provides excellent coverage
+        minTries = (segmentId == _currentSegmentId) ? 20 : 12;
         stepSizeMultiplier = 4.0f;
     } else if (viewerScale < 1.0f) {
         // Zoomed out (0.5x - 1.0x): moderate tries with dense grid
-        minTries = (segmentId == _currentSegmentId) ? 100 : 60;
+        minTries = (segmentId == _currentSegmentId) ? 25 : 15;
         stepSizeMultiplier = 3.0f;
     } else if (viewerScale < 2.0f) {
         // Normal zoom (1.0x - 2.0x): more tries for complete coverage
-        minTries = (segmentId == _currentSegmentId) ? 120 : 80;
+        minTries = (segmentId == _currentSegmentId) ? 30 : 20;
         stepSizeMultiplier = 2.5f;
     } else {
         // Zoomed in (2.0x - 4.0x): maximum tries for finest detail
-        minTries = (segmentId == _currentSegmentId) ? 150 : 100;
+        minTries = (segmentId == _currentSegmentId) ? 40 : 25;
         stepSizeMultiplier = 2.0f;
     }
 
+    // Double the step size to trace half as many points (2x faster with minimal visual difference)
     find_intersect_segments(intersectionSegments3D, intersectionSegments2D,
-                           rawPoints, plane, planeRoi, stepSizeMultiplier / viewerScale, minTries,
+                           rawPoints, plane, planeRoi, (stepSizeMultiplier * 2.0f) / viewerScale, minTries,
                            havePOI ? &poiHint : nullptr);
 
     if (intersectionSegments3D.empty()) {
