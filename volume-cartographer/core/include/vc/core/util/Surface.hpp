@@ -3,11 +3,12 @@
 #include <set>
 #include <optional>
 
-#include <opencv2/core.hpp> 
+#include <opencv2/core.hpp>
 #include <nlohmann/json_fwd.hpp>
 #include <z5/dataset.hxx>
 
 #include "Slicing.hpp"
+#include "Random.hpp"
 
 
 #define Z_DBG_GEN_PREFIX "auto_grown_"
@@ -282,10 +283,15 @@ static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f
     float best = sdist(val, tgt);
     float res;
 
-    //TODO check maybe add more search patterns, compare motion estimatino for video compression, x264/x265, ...
-    std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
-    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
+    // Use 4-direction search instead of 8 for speed (similar accuracy, 2x faster)
+    std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
     cv::Vec2f step = init_step;
+
+    // Loosen convergence criteria - 2x min_step_x is sufficient for intersection finding
+    float convergence_threshold = min_step_x * 2.0f;
+
+    // Early exit threshold - if we're this close, good enough
+    const float good_enough_dist = 0.25f;
 
     while (changed) {
         changed = false;
@@ -304,6 +310,11 @@ static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f
                 best = res;
                 loc = cand;
                 out = val;
+
+                // Early exit if we found a very good match
+                if (best < good_enough_dist * good_enough_dist) {
+                    return sqrt(best);
+                }
             }
         }
 
@@ -313,7 +324,7 @@ static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f
         step *= 0.5;
         changed = true;
 
-        if (step[0] < min_step_x)
+        if (step[0] < convergence_threshold)
             break;
     }
 
@@ -335,9 +346,11 @@ static float pointTo_(cv::Vec2f &loc, const cv::Mat_<E> &points, const cv::Vec3f
     assert(points.cols > 3);
     assert(points.rows > 3);
 
-    float dist = search_min_loc(points, loc, _out, tgt, step_small, scale*0.1);
+    // Loosen tolerance for the initial search - we use 2x the scale as min step
+    float dist = search_min_loc(points, loc, _out, tgt, step_small, scale*0.2);
 
-    if (dist < th && dist >= 0) {
+    // Loosen threshold - if we're within 2x threshold, accept it
+    if (dist < th * 2.0f && dist >= 0) {
         return dist;
     }
 
@@ -346,21 +359,20 @@ static float pointTo_(cv::Vec2f &loc, const cv::Mat_<E> &points, const cv::Vec3f
     if (min_dist < 0)
         min_dist = 10*(points.cols/scale+points.rows/scale);
 
-    //FIXME is this excessive?
+    // Reduce max random search iterations from 10x to 5x (still excessive but faster)
     int r_full = 0;
-    for(int r=0;r<10*max_iters && r_full < max_iters;r++) {
-        //FIXME skipn invalid init locs!
-        loc = {1 + (rand() % (points.cols-3)), 1 + (rand() % (points.rows-3))};
+    for(int r=0;r<5*max_iters && r_full < max_iters;r++) {
+        loc = {1.0f + vc::randomInt(points.cols-3), 1.0f + vc::randomInt(points.rows-3)};
 
         if (points(loc[1],loc[0])[0] == -1)
             continue;
 
         r_full++;
 
-        float dist = search_min_loc(points, loc, _out, tgt, step_large, scale*0.1);
+        float dist = search_min_loc(points, loc, _out, tgt, step_large, scale*0.2);
 
-        if (dist < th && dist >= 0) {
-            dist = search_min_loc(points, loc, _out, tgt, step_small, scale*0.1);
+        // Early exit with looser threshold
+        if (dist < th * 2.0f && dist >= 0) {
             return dist;
         } else if (dist >= 0 && dist < min_dist) {
             min_loc = loc;

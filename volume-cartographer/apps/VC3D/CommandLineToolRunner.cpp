@@ -1,14 +1,13 @@
 #include "CommandLineToolRunner.hpp"
 #include "CWindow.hpp"
-#include <QDir>
-#include <QFileInfo>
-#include <QStatusBar>
-#include <QVBoxLayout>
-#include <QCoreApplication>
-#include <QDateTime>
-#include <QTextStream>
 
-
+class QDir;
+class QFileInfo;
+class QStatusBar;
+class QVBoxLayout;
+class QCoreApplication;
+class QDateTime;
+class QTestStream;
 
 CommandLineToolRunner::CommandLineToolRunner(QStatusBar* statusBar, CWindow* mainWindow, QObject* parent)
     : QObject(parent)

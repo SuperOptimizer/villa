@@ -1,6 +1,7 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
+#include "vc/core/util/Random.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -326,7 +327,7 @@ int main(int argc, char *argv[])
     // }
     
     for(auto &iv : intersects) {
-        cv::Vec3b col = {50+rand() % 155,50+rand() % 155,50+rand() % 155};
+        cv::Vec3b col = {50+vc::randomInt(155),50+vc::randomInt(155),50+vc::randomInt(155)};
         for(auto &pair : iv) {
             // img(pair.second[1],pair.second[0]) = col;
             // std::cout << pair.first << pair.second << std::endl;
@@ -393,8 +394,8 @@ int main(int argc, char *argv[])
     
     std::vector<cv::Vec3b> wind_cols;
     for(int i=0;i<400;i++) {
-        cv::Vec3b col = {50+rand() % 127,50+rand() % 127,50+rand() % 127};
-        col[rand()%3] = 192+rand()%63;
+        cv::Vec3b col = {50+vc::randomInt(127),50+vc::randomInt(127),50+vc::randomInt(127)};
+        col[vc::randomInt(3)] = 192+vc::randomInt(63);
         if (i%2 == 0)
             col *= 0.5;
         wind_cols.push_back(col);

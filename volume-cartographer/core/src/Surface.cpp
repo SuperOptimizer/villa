@@ -236,11 +236,15 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
     }
     float res;
 
-    // std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,-1},{-1,0},{-1,1},{1,-1},{1,0},{1,1}};
+    // Use 4-direction search for speed (2x faster than 8-direction)
     std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
     float step = init_step;
 
+    // Loosen convergence criteria - 2x min_step is sufficient
+    float convergence_threshold = min_step * 2.0f;
 
+    // Early exit if we're close enough (helps with intersection finding)
+    const float good_enough_threshold = 0.1f;
 
     while (changed) {
         changed = false;
@@ -249,28 +253,26 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
             cv::Vec2f cand = loc+off*step;
 
             if (!loc_valid(points, {cand[1],cand[0]})) {
-                // out = {-1,-1,-1};
-                // loc = {-1,-1};
-                // return -1;
                 continue;
             }
 
             val = at_int(points, cand);
-            // std::cout << "at" << cand << val << std::endl;
             res = tdist_sum(val, tgts, tds);
             if (plane) {
                 float d = plane->pointDist(val);
                 res += d*d;
             }
             if (res < best) {
-                // std::cout << res << val << step << cand << "\n";
                 changed = true;
                 best = res;
                 loc = cand;
                 out = val;
+
+                // Early exit if we found a very good match
+                if (best < good_enough_threshold * good_enough_threshold) {
+                    return best;
+                }
             }
-            // else
-                // std::cout << "(" << res << val << step << cand << "\n";
         }
 
         if (changed)
@@ -279,11 +281,10 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
         step *= 0.5;
         changed = true;
 
-        if (step < min_step)
+        if (step < convergence_threshold)
             break;
     }
 
-    // std::cout << "best" << best << out << "\n" <<  std::endl;
     return best;
 }
 

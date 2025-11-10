@@ -1,4 +1,6 @@
 #include "vc/core/util/Surface.hpp"
+#include "vc/core/util/Logging.hpp"
+#include "vc/core/util/Random.hpp"
 
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
@@ -47,6 +49,8 @@ static uint8_t get_block(const cv::Mat_<uint8_t> &block, const cv::Vec3f &loc, c
 
 void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step, int min_tries)
 {
+    ScopedTimer timer("find_intersect_segments");
+
     //start with random points and search for a plane intersection
 
     float block_step = 0.5*step;
@@ -76,14 +80,15 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
         //initial points
         for(int i=0;i<std::max(min_tries, std::max(points.cols,points.rows)/100);i++) {
-            loc = {std::rand() % (points.cols-1), std::rand() % (points.rows-1)};
+            loc = {static_cast<float>(vc::randomInt(points.cols-1)), static_cast<float>(vc::randomInt(points.rows-1))};
             point = at_int(points, loc);
 
             plane_loc = plane->project(point);
             if (!plane_roi.contains(cv::Point(plane_loc[0],plane_loc[1])))
                 continue;
 
-                dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.01);
+                // Loosen tolerance from 0.01 to 0.05 for faster convergence
+                dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.05);
 
                 plane_loc = plane->project(point);
                 if (!plane_roi.contains(cv::Point(plane_loc[0],plane_loc[1])))
@@ -106,7 +111,8 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         //point2
         loc2 = loc;
         //search point at distance of 1 to init point
-        dist = min_loc(points, loc2, point2, {point}, {1}, plane, 0.01, 0.0001);
+        // Loosen tolerances for faster convergence
+        dist = min_loc(points, loc2, point2, {point}, {1}, plane, 0.05, 0.001);
 
         if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc))
             continue;
@@ -130,10 +136,11 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 point3 = at_int(points, loc3);
 
                 //search point close to prediction + dist 1 to last point
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001);
+                // Loosen tolerances for faster convergence
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.05, 0.001);
 
                 //then refine
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.05, 0.001);
 
                 if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc))
                     break;
@@ -172,10 +179,11 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 point3 = at_int(points, loc3);
 
                 //search point close to prediction + dist 1 to last point
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001);
+                // Loosen tolerances for faster convergence
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.05, 0.001);
 
                 //then refine
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.05, 0.001);
 
                 if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc))
                     break;

@@ -1,11 +1,10 @@
 #pragma once
 
-#include <QObject>
-#include <QString>
-#include <QStringList>
-#include <QProcess>
-#include <QDialog>
-#include <QFile>
+class QObject;
+class QString;
+class QProcess;
+class QDialog;
+class QFile;
 
 #include "CWindow.hpp"
 #include "elements/ProgressUtil.hpp"

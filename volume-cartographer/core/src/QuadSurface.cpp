@@ -1,4 +1,5 @@
 #include "vc/core/util/Surface.hpp"
+#include "vc/core/util/Random.hpp"
 
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
@@ -226,8 +227,8 @@ bool QuadSurface::containsPoint(const cv::Vec3f& point, float tolerance) const {
         } else {
             // Random starting points
             loc = cv::Vec2f(
-                1 + (rand() % (_points->cols-3)),
-                1 + (rand() % (_points->rows-3))
+                1 + vc::randomInt(_points->cols-3),
+                1 + vc::randomInt(_points->rows-3)
             );
         }
 
@@ -902,12 +903,12 @@ float QuadSurface::pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int m
     int r_full = 0;
     int skip_count = 0;
     for(int r=0; r<10*max_iters && r_full<max_iters; r++) {
-        loc = {1 + (rand() % (_points->cols-3)), 1 + (rand() % (_points->rows-3))};
+        loc = {1.0f + vc::randomInt(_points->cols-3), 1.0f + vc::randomInt(_points->rows-3)};
 
         if ((*_points)(loc[1],loc[0])[0] == -1) {
             skip_count++;
             if (skip_count > max_iters / 10) {
-                cv::Vec2f dir = { (float)(rand() % 3 - 1), (float)(rand() % 3 - 1) };
+                cv::Vec2f dir = { static_cast<float>(vc::randomInt(3) - 1), static_cast<float>(vc::randomInt(3) - 1) };
                 if (dir[0] == 0 && dir[1] == 0) dir = {1, 0};
 
                 cv::Vec2f current_pos = loc;

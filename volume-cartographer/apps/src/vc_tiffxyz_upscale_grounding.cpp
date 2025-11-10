@@ -2,6 +2,7 @@
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/SurfaceModeling.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
+#include "vc/core/util/Random.hpp"
 
 #include "z5/factory.hxx"
 #include <nlohmann/json.hpp>
@@ -315,7 +316,7 @@ int main(int argc, char *argv[])
         std::vector<float> offsets_rev;
         
         for(int r=0;r<1000;r++) {
-            cv::Vec2i p = {rand() % wind_lr.rows, rand() % wind_lr.cols};
+            cv::Vec2i p = {vc::randomInt(wind_lr.rows), vc::randomInt(wind_lr.cols)};
             if (points_lr(p)[0] == -1)
                 continue;
             

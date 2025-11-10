@@ -5,6 +5,7 @@
 #include "vc/core/types/ChunkedTensor.hpp"
 #include "vc/core/util/StreamOperators.hpp"
 #include "vc/tracer/Tracer.hpp"
+#include "vc/core/util/Random.hpp"
 
 
 #include "z5/factory.hxx"
@@ -263,7 +264,7 @@ int main(int argc, char *argv[])
 
     auto chunk_size = ds->chunking().blockShape();
 
-    srand(clock());
+    vc::randomSeed(clock());
 
     std::string name_prefix = "auto_grown_";
     int tgt_overlap_count = params.value("tgt_overlap_count", 20);
@@ -351,10 +352,10 @@ int main(int argc, char *argv[])
 
             bool found = false;
             for (int r=0;r<10;r++) {
-                if ((rand() % 2) == 0)
+                if ((vc::randomInt(2)) == 0)
                 {
-                    cv::Vec2i p = {rand() % h, rand() % w};
-                    
+                    cv::Vec2i p = {vc::randomInt(h), vc::randomInt(w)};
+
                     if (points(p)[0] != -1 && get_val<double,CachedChunked3dInterpolator<uint8_t,passTroughComputor>>(interpolator, points(p)) >= 128) {
                         found = true;
                         origin = points(p);
@@ -363,15 +364,15 @@ int main(int argc, char *argv[])
                 }
                 else {
                     cv::Vec2f p;
-                    int side = rand() % 4;
+                    int side = vc::randomInt(4);
                     if (side == 0)
-                        p = {rand() % h, 0};
+                        p = {vc::randomInt(h), 0};
                     else if (side == 1)
-                        p = {0, rand() % w};
+                        p = {0, vc::randomInt(w)};
                     else if (side == 2)
-                        p = {rand() % h, w-1};
+                        p = {vc::randomInt(h), w-1};
                     else if (side == 3)
-                        p = {h-1, rand() % w};
+                        p = {h-1, vc::randomInt(w)};
 
                     cv::Vec2f searchdir = cv::Vec2f(h/2,w/2) - p;
                     cv::normalize(searchdir, searchdir);
@@ -434,9 +435,9 @@ int main(int argc, char *argv[])
             int max_attempts = 1000;
             
             while(count < max_attempts && !succ) {
-                origin = {128 + (rand() % (ds->shape(2)-384)), 
-                         128 + (rand() % (ds->shape(1)-384)), 
-                         128 + (rand() % (ds->shape(0)-384))};
+                origin = {128 + (vc::randomInt(ds->shape(2)-384)),
+                         128 + (vc::randomInt(ds->shape(1)-384)),
+                         128 + (vc::randomInt(ds->shape(0)-384))};
 
                 count++;
                 auto chunk_id = chunk_size;
@@ -447,9 +448,9 @@ int main(int argc, char *argv[])
                 if (!ds->chunkExists(chunk_id))
                     continue;
 
-                cv::Vec3d dir = {(rand() % 1024) - 512,
-                                (rand() % 1024) - 512,
-                                (rand() % 1024) - 512};
+                cv::Vec3d dir = {(vc::randomInt(1024)) - 512,
+                                (vc::randomInt(1024)) - 512,
+                                (vc::randomInt(1024)) - 512};
                 cv::normalize(dir, dir);
 
                 for(int i=0;i<128;i++) {

@@ -4,10 +4,6 @@
 #include <cstdint>
 
 #include <opencv2/core.hpp>
-#include <QComboBox>
-#include <QCheckBox>
-#include <QFutureWatcher>
-#include <QPointF>
 #include <memory>
 #include <vector>
 #include <deque>
@@ -15,7 +11,6 @@
 
 #include "vc/ui/VCCollection.hpp"
 
-#include <QShortcut>
 #include <unordered_map>
 
 #include "CPointCollectionWidget.hpp"
@@ -41,7 +36,6 @@
 #include "vc/core/util/Surface.hpp"
 
 #include <sys/inotify.h>
-#include <QSocketNotifier>
 
 #define MAX_RECENT_VOLPKG 10
 
@@ -58,6 +52,11 @@ class MenuActionController;
 class SegmentationGrower;
 class WindowRangeWidget;
 class QLabel;
+class QComboBox;
+class QCheckBox;
+class QPointF;
+class QSocketNotifier;
+class QShortcut;
 
 class CWindow : public QMainWindow
 {

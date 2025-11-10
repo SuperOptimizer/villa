@@ -1,5 +1,6 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Surface.hpp"
+#include "vc/core/util/Random.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
 
@@ -19,7 +20,7 @@ int main(int argc, char *argv[])
     std::filesystem::path tgt_dir = argv[1];
     std::filesystem::path seg_dir = argv[2];
     int search_iters = 10;
-    srand(clock());
+    vc::randomSeed(clock());
 
     SurfaceMeta current(seg_dir);
 

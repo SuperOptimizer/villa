@@ -1,6 +1,7 @@
 #include "vc/ui/VCCollection.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/Random.hpp"
 #include <opencv2/imgcodecs.hpp>
 #include <boost/program_options.hpp>
 #include <nlohmann/json.hpp>
@@ -169,7 +170,7 @@ int main(int argc, char** argv) {
 
     std::cout << "wtf "  << std::endl;
     for (int i = 0; i < num_collections; ++i) {
-        cv::Point seed_loc(rand() % points.cols, rand() % points.rows);
+        cv::Point seed_loc(vc::randomInt(points.cols), vc::randomInt(points.rows));
 
         std::cout << "try " << seed_loc << std::endl;
 

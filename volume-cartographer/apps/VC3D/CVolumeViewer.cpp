@@ -1,5 +1,6 @@
 #include "CVolumeViewer.hpp"
 #include "vc/ui/UDataManipulateUtils.hpp"
+#include "vc/core/util/Random.hpp"
 
 #include "VolumeViewerCmaps.hpp"
 #include "VCSettings.hpp"
@@ -1621,11 +1622,11 @@ void CVolumeViewer::renderIntersections()
             }
 
             size_t seed = str_hasher(key);
-            srand(seed);
+            vc::randomSeed(seed);
 
-            int prim = rand() % 3;
-            cv::Vec3i cvcol = {100 + rand() % 255, 100 + rand() % 255, 100 + rand() % 255};
-            cvcol[prim] = 200 + rand() % 55;
+            int prim = vc::randomInt(3);
+            cv::Vec3i cvcol = {100 + vc::randomInt(255), 100 + vc::randomInt(255), 100 + vc::randomInt(255)};
+            cvcol[prim] = 200 + vc::randomInt(55);
 
             QColor col(cvcol[0],cvcol[1],cvcol[2]);
             float width = 2;

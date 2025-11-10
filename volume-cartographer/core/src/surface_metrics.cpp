@@ -84,12 +84,12 @@ static cv::Vec2f find_closest_intersection(QuadSurface* surface, const cv::Vec3f
     cv::Vec3f zero_ptr(0, 0, 0);
     cv::Vec3f center_in_points = surface->loc_raw(zero_ptr);
 
-    srand(time(NULL));
+    vc::randomSeed(time(NULL));
 
     for (int i = 0; i < 1000; ++i) { // 1000 random trials
         cv::Vec2f nominal_loc = {
-            (float)(rand() % s_size.width),
-            (float)(rand() % s_size.height)
+            static_cast<float>(vc::randomInt(s_size.width)),
+            static_cast<float>(vc::randomInt(s_size.height))
         };
 
         cv::Vec2f cand_loc_abs = { nominal_loc[0] * scale[0], nominal_loc[1] * scale[1] };

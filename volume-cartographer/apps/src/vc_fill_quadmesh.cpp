@@ -2,6 +2,7 @@
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/SurfaceModeling.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
+#include "vc/core/util/Random.hpp"
 
 #include "z5/factory.hxx"
 #include <nlohmann/json.hpp>
@@ -822,7 +823,7 @@ int main(int argc, char *argv[])
             std::vector<float> offsets_rev;
             
             for(int r=0;r<1000;r++) {
-                cv::Vec2i p = {rand() % surf_points[0].rows, rand() % surf_points[0].cols};
+                cv::Vec2i p = {vc::randomInt(surf_points[0].rows), vc::randomInt(surf_points[0].cols)};
                 if (surf_points[0](p)[0] == -1)
                     continue;
                 
@@ -1084,10 +1085,10 @@ int main(int argc, char *argv[])
                 surf_locs[0](j,i) = {j*trace_mul,i*trace_mul};
             }
             else {
-                if (points(j-1,i)[0] != -1) 
+                if (points(j-1,i)[0] != -1)
                     points(j, i) = points(j-1,i) + cv::Vec3d(0.1,0.1,0.1);
                 else
-                    points(j, i) = {rand()%1000,rand()%1000,rand()%1000};
+                    points(j, i) = {vc::randomInt(1000),vc::randomInt(1000),vc::randomInt(1000)};
                 state(j,i) = STATE_COORD_VALID;
             }
         }

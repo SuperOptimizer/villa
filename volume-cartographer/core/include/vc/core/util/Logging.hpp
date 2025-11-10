@@ -5,6 +5,7 @@
 #include <string>
 #include <sstream>
 #include <cstdio>
+#include <chrono>
 
 enum class LogLevel {
     Trace,
@@ -146,3 +147,22 @@ private:
 void AddLogFile(const std::filesystem::path& path);
 void SetLogLevel(const std::string& s);
 auto Logger() -> std::shared_ptr<SimpleLogger>;
+
+// Timing helper for performance profiling
+class ScopedTimer {
+public:
+    ScopedTimer(const char* name)
+        : name_(name)
+        , start_(std::chrono::high_resolution_clock::now())
+    {}
+
+    ~ScopedTimer() {
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start_);
+        Logger()->info("[TIMING] {} took {} μs", name_, duration.count());
+    }
+
+private:
+    const char* name_;
+    std::chrono::time_point<std::chrono::high_resolution_clock> start_;
+};

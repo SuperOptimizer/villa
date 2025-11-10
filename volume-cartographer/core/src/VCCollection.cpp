@@ -1,4 +1,5 @@
 #include "vc/ui/VCCollection.hpp"
+#include "vc/core/util/Random.hpp"
 #include <QDebug>
 #include <algorithm>
 #include <vector>
@@ -424,9 +425,9 @@ uint64_t VCCollection::findOrCreateCollectionByName(const std::string& name)
 
     uint64_t new_id = getNextCollectionId();
     cv::Vec3f color = {
-        (float)rand() / RAND_MAX,
-        (float)rand() / RAND_MAX,
-        (float)rand() / RAND_MAX
+        vc::randomFloat(),
+        vc::randomFloat(),
+        vc::randomFloat()
     };
     _collections[new_id] = {new_id, name, {}, {}, color};
     emit collectionAdded(new_id);
