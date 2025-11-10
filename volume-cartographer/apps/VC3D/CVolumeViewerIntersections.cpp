@@ -12,7 +12,10 @@
 #include <omp.h>
 
 #include <algorithm>
+#include <chrono>
 #include <functional>
+#include <iomanip>
+#include <iostream>
 #include <random>
 #include <unordered_map>
 #include <vector>
@@ -61,7 +64,13 @@ void CVolumeViewer::onIntersectionChanged(std::string a, std::string b, Intersec
 
 void CVolumeViewer::setIntersects(const std::set<std::string> &set)
 {
+    bool segments_changed = (set != _intersect_tgts);
     _intersect_tgts = set;
+
+    // Rebuild spatial index ONLY when segments actually change
+    if (_surf_col && segments_changed) {
+        _surf_col->rebuildSpatialIndex();
+    }
 
     renderIntersections();
 }
@@ -80,21 +89,11 @@ void CVolumeViewer::setIntersectionOpacity(float opacity)
 
 void CVolumeViewer::renderIntersections()
 {
-    std::cout << "\n=== CVolumeViewer::renderIntersections ===" << std::endl;
-    std::cout << "Surface name: " << _surf_name << std::endl;
+    auto total_start = std::chrono::high_resolution_clock::now();
 
     if (!volume || !volume->zarrDataset() || !_surf) {
-        std::cout << "Early return: volume=" << (volume ? "yes" : "no")
-                  << ", zarrDataset=" << (volume && volume->zarrDataset() ? "yes" : "no")
-                  << ", _surf=" << (_surf ? "yes" : "no") << std::endl;
         return;
     }
-
-    std::cout << "Intersection targets: ";
-    for (auto& tgt : _intersect_tgts) {
-        std::cout << tgt << " ";
-    }
-    std::cout << std::endl;
 
     std::vector<std::string> remove;
     for (auto &pair : _intersect_items)
@@ -112,14 +111,10 @@ void CVolumeViewer::renderIntersections()
 
 
     if (plane) {
-        std::cout << "Processing as PlaneSurface" << std::endl;
         cv::Rect plane_roi = {curr_img_area.x()/_scale, curr_img_area.y()/_scale, curr_img_area.width()/_scale, curr_img_area.height()/_scale};
-        std::cout << "Plane ROI: (" << plane_roi.x << "," << plane_roi.y << ","
-                  << plane_roi.width << "x" << plane_roi.height << "), scale=" << _scale << std::endl;
 
         // Clear all cached intersections for plane surfaces since they depend on the view ROI
         // When the view changes (pan/zoom), we need to recompute all intersections
-        std::cout << "Clearing " << _intersect_items.size() << " cached intersection items (view-dependent)" << std::endl;
         for (auto &pair : _intersect_items) {
             for (auto &item : pair.second) {
                 fScene->removeItem(item);
@@ -128,25 +123,109 @@ void CVolumeViewer::renderIntersections()
         }
         _intersect_items.clear();
 
-        // Don't use view_bbox for filtering - it's too conservative and causes pop-in/pop-out
-        // A segment's 3D bbox might not intersect the view, but its plane intersection could still be visible
-        // Instead, compute intersections for all segments and let plane_roi filter what's actually rendered
+        // Use spatial index to filter segments that might intersect with the viewport
+        auto spatial_start = std::chrono::high_resolution_clock::now();
+        std::set<std::string> spatial_candidates;
+
+        int total_quad_surfaces = 0;
+        for (auto key : _intersect_tgts) {
+            if (dynamic_cast<QuadSurface*>(_surf_col->surface(key))) {
+                total_quad_surfaces++;
+            }
+        }
+
+        bool use_spatial_filter = false;
+
+        if (_surf_col->spatialIndex()) {
+            use_spatial_filter = true;
+            std::cout << "Spatial filter: ON, checking " << total_quad_surfaces << " segments" << std::endl;
+
+            auto roi_corners_start = std::chrono::high_resolution_clock::now();
+            // Convert plane ROI corners to 3D to find the bounding region
+            std::vector<cv::Vec3f> roi_corners_3d = {
+                plane->origin() + plane_roi.x * plane->basisX() + plane_roi.y * plane->basisY(),
+                plane->origin() + (plane_roi.x + plane_roi.width) * plane->basisX() + plane_roi.y * plane->basisY(),
+                plane->origin() + plane_roi.x * plane->basisX() + (plane_roi.y + plane_roi.height) * plane->basisY(),
+                plane->origin() + (plane_roi.x + plane_roi.width) * plane->basisX() + (plane_roi.y + plane_roi.height) * plane->basisY()
+            };
+
+            // Find 3D bounding box of the viewport region
+            cv::Vec3f min_3d = roi_corners_3d[0];
+            cv::Vec3f max_3d = roi_corners_3d[0];
+            for (const auto& corner : roi_corners_3d) {
+                for (int i = 0; i < 3; i++) {
+                    min_3d[i] = std::min(min_3d[i], corner[i]);
+                    max_3d[i] = std::max(max_3d[i], corner[i]);
+                }
+            }
+
+            // Add padding to the viewport bounds to catch nearby surface points
+            // This handles sparse/curved surfaces that might not have points exactly in the viewport cells
+            float padding = 200.0f;  // About 4 grid cells (50.0f cell size)
+            cv::Vec3f padded_min = min_3d - cv::Vec3f(padding, padding, padding);
+            cv::Vec3f padded_max = max_3d + cv::Vec3f(padding, padding, padding);
+
+            auto roi_corners_end = std::chrono::high_resolution_clock::now();
+            double roi_corners_time = std::chrono::duration<double, std::milli>(roi_corners_end - roi_corners_start).count();
+
+            auto normal_start = std::chrono::high_resolution_clock::now();
+            cv::Vec3f plane_normal = plane->basisX().cross(plane->basisY());
+            plane_normal = plane_normal / cv::norm(plane_normal);  // normalize
+
+            auto normal_end = std::chrono::high_resolution_clock::now();
+            double normal_time = std::chrono::duration<double, std::milli>(normal_end - normal_start).count();
+
+            // Query all grid cells within the bounding box
+            // For axis-aligned planes, use plane-aware query (filters by 2D, not 3D)
+            auto query_start = std::chrono::high_resolution_clock::now();
+            std::vector<std::string> result;
+
+            // Detect which plane and call appropriate filter
+            if (std::abs(plane_normal[0]) > 0.9f) {  // YZ plane (X normal)
+                result = _surf_col->getSegmentsInYZPlane(padded_min[1], padded_max[1], padded_min[2], padded_max[2]);
+            } else if (std::abs(plane_normal[1]) > 0.9f) {  // XZ plane (Y normal)
+                result = _surf_col->getSegmentsInXZPlane(padded_min[0], padded_max[0], padded_min[2], padded_max[2]);
+            } else if (std::abs(plane_normal[2]) > 0.9f) {  // XY plane (Z normal)
+                result = _surf_col->getSegmentsInXYPlane(padded_min[0], padded_max[0], padded_min[1], padded_max[1]);
+            } else {
+                // Non-axis-aligned plane, use regular 3D bbox query
+                result = _surf_col->getSegmentsInBoundingBox(padded_min, padded_max);
+            }
+            auto query_end = std::chrono::high_resolution_clock::now();
+            double query_time = std::chrono::duration<double, std::milli>(query_end - query_start).count();
+
+            auto set_convert_start = std::chrono::high_resolution_clock::now();
+            spatial_candidates = std::set<std::string>(result.begin(), result.end());
+            auto set_convert_end = std::chrono::high_resolution_clock::now();
+            double set_convert_time = std::chrono::duration<double, std::milli>(set_convert_end - set_convert_start).count();
+
+            std::cout << "Spatial filter: found " << spatial_candidates.size() << "/" << total_quad_surfaces
+                      << " segments (roi=" << std::fixed << std::setprecision(1) << roi_corners_time
+                      << "ms, normal=" << normal_time << "ms, query=" << query_time
+                      << "ms, set=" << set_convert_time << "ms)" << std::endl;
+        } else {
+            std::cout << "Spatial filter: OFF (no index)" << std::endl;
+        }
+
+        // Build final candidate list from targets that passed spatial filtering
         std::vector<std::string> intersect_cands;
 
         for (auto key : _intersect_tgts) {
             if (dynamic_cast<QuadSurface*>(_surf_col->surface(key))) {
-                intersect_cands.push_back(key);
-                std::cout << "  Will compute intersections for '" << key << "'" << std::endl;
+                // If spatial filtering was used, only include segments that passed
+                // Otherwise, include all segments
+                if (!use_spatial_filter || spatial_candidates.count(key)) {
+                    intersect_cands.push_back(key);
+                }
             }
         }
 
-        std::cout << "Intersection candidates (" << intersect_cands.size() << "): ";
-        for (auto& cand : intersect_cands) {
-            std::cout << cand << " ";
-        }
-        std::cout << std::endl;
+        auto spatial_end = std::chrono::high_resolution_clock::now();
+        double spatial_time = std::chrono::duration<double, std::milli>(spatial_end - spatial_start).count();
 
         std::vector<std::vector<std::vector<cv::Vec3f>>> intersections(intersect_cands.size());
+
+        auto compute_start = std::chrono::high_resolution_clock::now();
 
 #pragma omp parallel for
         for(int n=0;n<intersect_cands.size();n++) {
@@ -156,27 +235,24 @@ void CVolumeViewer::renderIntersections()
             std::vector<std::vector<cv::Vec2f>> xy_seg_;
             // Use min_tries=1000 for all segments to ensure we find intersections
             // With systematic sampling (~1845 points), we need enough attempts to try them all
-#pragma omp critical
-            std::cout << "  Calling find_intersect_segments for '" << key << "' (min_tries=1000)" << std::endl;
             find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_scale, 1000);
-#pragma omp critical
-            std::cout << "  Result: " << intersections[n].size() << " segments found" << std::endl;
-
         }
 
+        auto compute_end = std::chrono::high_resolution_clock::now();
+        double compute_time = std::chrono::duration<double, std::milli>(compute_end - compute_start).count();
+
+        auto render_start = std::chrono::high_resolution_clock::now();
         std::hash<std::string> str_hasher;
 
         for(int n=0;n<intersect_cands.size();n++) {
             std::string key = intersect_cands[n];
 
             if (!intersections.size()) {
-                std::cout << "  No intersections array for '" << key << "', skipping" << std::endl;
                 _intersect_items[key] = {};
                 continue;
             }
 
             if (!intersections[n].size()) {
-                std::cout << "  No intersection segments for '" << key << "', skipping" << std::endl;
                 _intersect_items[key] = {};
                 continue;
             }
@@ -199,19 +275,21 @@ void CVolumeViewer::renderIntersections()
             float width = 6;  // 3x thicker than original 2
             int z_value = 5;
 
-            if (key == "segmentation") {
+            // Check if this segment is the currently active "segmentation" surface
+            // The segment might have a different name (e.g., "auto_grown_...") but be aliased as "segmentation"
+            Surface* seg_surface = _surf_col->surface("segmentation");
+            Surface* current_surface = _surf_col->surface(key);
+            bool is_current_segmentation = (seg_surface && current_surface && seg_surface == current_surface);
+
+            if (is_current_segmentation && (_surf_name == "seg yz" || _surf_name == "seg xz" ||
+                                           _surf_name.find("plane") != std::string::npos)) {
+                // Assign special colors for segmentation in plane viewers
                 col =
                     (_surf_name == "seg yz"   ? COLOR_SEG_YZ
                      : _surf_name == "seg xz" ? COLOR_SEG_XZ
                                               : COLOR_SEG_XY);
                 width = 9;  // 3x thicker than original 3
                 z_value = 20;
-                std::cout << "  Rendering segmentation for '" << key << "' on surface '" << _surf_name
-                          << "', color=" << (col == COLOR_SEG_YZ ? "YELLOW" : (col == COLOR_SEG_XZ ? "RED" : "ORANGE"))
-                          << std::endl;
-            } else {
-                std::cout << "  Rendering '" << key << "' with deterministic color RGB("
-                          << r << "," << g << "," << b << "), hash=" << hash << std::endl;
             }
 
 
@@ -239,31 +317,33 @@ void CVolumeViewer::renderIntersections()
                 item->setOpacity(_intersectionOpacity);
                 items.push_back(item);
             }
-            std::cout << "  Created " << items.size() << " graphics items with " << len << " total points for '" << key << "'" << std::endl;
             _intersect_items[key] = items;
             _ignore_intersect_change = new Intersection({intersections[n]});
             _surf_col->setIntersection(_surf_name, key, _ignore_intersect_change);
             _ignore_intersect_change = nullptr;
         }
-        std::cout << "=== renderIntersections complete ===" << std::endl;
+
+        auto render_end = std::chrono::high_resolution_clock::now();
+        double render_time = std::chrono::duration<double, std::milli>(render_end - render_start).count();
+
+        auto total_end = std::chrono::high_resolution_clock::now();
+        double total_time = std::chrono::duration<double, std::milli>(total_end - total_start).count();
+
+        std::cout << "RENDER PROFILE: spatial=" << std::fixed << std::setprecision(1) << spatial_time
+                  << "ms, compute=" << compute_time << "ms, qt_render=" << render_time
+                  << "ms, TOTAL=" << total_time << "ms" << std::endl;
     }
     else if (_surf_name == "segmentation" /*&& dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"))*/) {
-        std::cout << "Processing as segmentation surface (reverse rendering)" << std::endl;
         // QuadSurface *crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
 
         //TODO make configurable, for now just show everything!
         std::vector<std::pair<std::string,std::string>> intersects = _surf_col->intersections("segmentation");
-        std::cout << "Found " << intersects.size() << " stored intersections" << std::endl;
         for(auto pair : intersects) {
             std::string key = pair.first;
             if (key == "segmentation")
                 key = pair.second;
 
-            std::cout << "  Processing stored intersection: " << pair.first << " <-> " << pair.second << " (key='" << key << "')" << std::endl;
-
             if (_intersect_items.count(key) || !_intersect_tgts.count(key)) {
-                std::cout << "    Skipping: already_rendered=" << (_intersect_items.count(key) ? "yes" : "no")
-                          << ", in_targets=" << (_intersect_tgts.count(key) ? "yes" : "no") << std::endl;
                 continue;
             }
 
@@ -320,12 +400,8 @@ void CVolumeViewer::renderIntersections()
                 item->setZValue(5);
                 item->setOpacity(_intersectionOpacity);
                 items.push_back(item);
-                std::cout << "    Created path with " << point_count << " points, color="
-                          << (col == COLOR_SEG_YZ ? "YELLOW" : "RED") << std::endl;
             }
-            std::cout << "  Created " << items.size() << " graphics items from " << line_count << " segments for '" << key << "'" << std::endl;
             _intersect_items[key] = items;
         }
-        std::cout << "=== renderIntersections complete (segmentation path) ===" << std::endl;
     }
 }

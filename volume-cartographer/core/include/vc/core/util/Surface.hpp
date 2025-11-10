@@ -226,15 +226,33 @@ private:
         std::vector<int> patch_indices;
     };
 
-    std::unordered_map<uint64_t, Cell> grid;
+    // 3D array: grid[x][y][z]
+    std::vector<std::vector<std::vector<Cell>>> grid;
     float cell_size;
+    int grid_size_x, grid_size_y, grid_size_z;
+    cv::Vec3f grid_origin;  // Minimum bounds of the volume
     std::vector<Rect3D> patch_bboxes;
 
-    uint64_t hash(int x, int y, int z) const;
+    // Convert world coordinates to grid indices
+    inline int worldToGridX(float x) const { return std::floor((x - grid_origin[0]) / cell_size); }
+    inline int worldToGridY(float y) const { return std::floor((y - grid_origin[1]) / cell_size); }
+    inline int worldToGridZ(float z) const { return std::floor((z - grid_origin[2]) / cell_size); }
+
+    // Check if grid indices are valid
+    inline bool validGrid(int x, int y, int z) const {
+        return x >= 0 && x < grid_size_x && y >= 0 && y < grid_size_y && z >= 0 && z < grid_size_z;
+    }
+
 public:
     MultiSurfaceIndex(float cell_sz = 100.0f);
     void addPatch(int idx, QuadSurface* patch);
+    void removePatch(int idx);
+    void updatePatch(int idx, QuadSurface* patch);
     std::vector<int> getCandidatePatches(const cv::Vec3f& point, float tolerance = 0.0f) const;
+    std::vector<int> getCandidatePatchesByRegion(const cv::Vec3f& min_bound, const cv::Vec3f& max_bound) const;
+    std::vector<int> getCandidatePatchesInYZPlane(float y_min, float y_max, float z_min, float z_max) const;
+    std::vector<int> getCandidatePatchesInXZPlane(float x_min, float x_max, float z_min, float z_max) const;
+    std::vector<int> getCandidatePatchesInXYPlane(float x_min, float x_max, float y_min, float y_max) const;
     size_t getCellCount() const;
     size_t getPatchCount() const;
 };

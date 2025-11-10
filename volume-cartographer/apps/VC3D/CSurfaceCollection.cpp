@@ -3,6 +3,10 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Surface.hpp"
 
+#include <chrono>
+#include <iomanip>
+#include <iostream>
+
 
 
 CSurfaceCollection::~CSurfaceCollection()
@@ -139,4 +143,199 @@ std::vector<std::pair<std::string,std::string>> CSurfaceCollection::intersection
                 res.push_back(item.first);
         }
     return res;
+}
+
+void CSurfaceCollection::rebuildSpatialIndex()
+{
+    // Create new spatial index with 50x50x50 effective grid size
+    _spatial_index = std::make_unique<MultiSurfaceIndex>(50.0f);
+    _segment_indices.clear();
+    _next_segment_index = 0;
+
+    // Add all QuadSurfaces to the spatial index with stable indices
+    int quad_count = 0;
+    for (auto& pair : _surfs) {
+        QuadSurface* quad = dynamic_cast<QuadSurface*>(pair.second.ptr);
+        if (quad) {
+            int idx = _next_segment_index++;
+            _segment_indices[pair.first] = idx;
+            _spatial_index->addPatch(idx, quad);
+            quad_count++;
+        }
+    }
+    std::cout << "Spatial index rebuilt: indexed " << quad_count << " segments" << std::endl;
+}
+
+void CSurfaceCollection::updateSegmentInSpatialIndex(const std::string& name)
+{
+    if (!_spatial_index) {
+        // Index doesn't exist yet, create it
+        rebuildSpatialIndex();
+        return;
+    }
+
+    QuadSurface* quad = dynamic_cast<QuadSurface*>(surface(name));
+    if (!quad) {
+        return;
+    }
+
+    // Check if this segment already has an index
+    auto it = _segment_indices.find(name);
+    if (it != _segment_indices.end()) {
+        // Update existing segment
+        _spatial_index->updatePatch(it->second, quad);
+    } else {
+        // Add new segment
+        int idx = _next_segment_index++;
+        _segment_indices[name] = idx;
+        _spatial_index->addPatch(idx, quad);
+    }
+}
+
+std::vector<std::string> CSurfaceCollection::getSegmentsInRegion(const cv::Vec3f& center, float radius) const
+{
+    if (!_spatial_index) {
+        return {};
+    }
+
+    // Query spatial index for segments near this point
+    std::vector<int> candidate_indices = _spatial_index->getCandidatePatches(center, radius);
+
+    // Build reverse lookup cache if needed (only once)
+    static std::vector<std::string> index_to_name;
+    if (index_to_name.size() != _segment_indices.size()) {
+        index_to_name.resize(_segment_indices.size());
+        for (const auto& pair : _segment_indices) {
+            if (pair.second < index_to_name.size()) {
+                index_to_name[pair.second] = pair.first;
+            }
+        }
+    }
+
+    // Convert indices back to segment names using fast array lookup
+    std::vector<std::string> result;
+    result.reserve(candidate_indices.size());
+    for (int idx : candidate_indices) {
+        if (idx >= 0 && idx < index_to_name.size() && !index_to_name[idx].empty()) {
+            result.push_back(index_to_name[idx]);
+        }
+    }
+
+    return result;
+}
+
+std::vector<std::string> CSurfaceCollection::getSegmentsInBoundingBox(const cv::Vec3f& min_bound, const cv::Vec3f& max_bound) const
+{
+    if (!_spatial_index) {
+        return {};
+    }
+
+    // Query spatial index for segments in this bounding box
+    std::vector<int> candidate_indices = _spatial_index->getCandidatePatchesByRegion(min_bound, max_bound);
+
+    // Build reverse lookup cache if needed (only once)
+    static std::vector<std::string> index_to_name;
+    if (index_to_name.size() != _segment_indices.size()) {
+        index_to_name.resize(_segment_indices.size());
+        for (const auto& pair : _segment_indices) {
+            if (pair.second < index_to_name.size()) {
+                index_to_name[pair.second] = pair.first;
+            }
+        }
+    }
+
+    // Convert indices back to segment names using fast array lookup
+    std::vector<std::string> result;
+    result.reserve(candidate_indices.size());
+    for (int idx : candidate_indices) {
+        if (idx >= 0 && idx < index_to_name.size() && !index_to_name[idx].empty()) {
+            result.push_back(index_to_name[idx]);
+        }
+    }
+
+    return result;
+}
+
+std::vector<std::string> CSurfaceCollection::getSegmentsInYZPlane(float y_min, float y_max, float z_min, float z_max) const
+{
+    if (!_spatial_index) {
+        return {};
+    }
+    auto result = _spatial_index->getCandidatePatchesInYZPlane(y_min, y_max, z_min, z_max);
+
+    // Build reverse lookup cache if needed (only once)
+    static std::vector<std::string> index_to_name;
+    if (index_to_name.size() != _segment_indices.size()) {
+        index_to_name.resize(_segment_indices.size());
+        for (const auto& pair : _segment_indices) {
+            if (pair.second < index_to_name.size()) {
+                index_to_name[pair.second] = pair.first;
+            }
+        }
+    }
+
+    // Convert indices to names
+    std::vector<std::string> names;
+    for (int idx : result) {
+        if (idx >= 0 && idx < index_to_name.size() && !index_to_name[idx].empty()) {
+            names.push_back(index_to_name[idx]);
+        }
+    }
+    return names;
+}
+
+std::vector<std::string> CSurfaceCollection::getSegmentsInXZPlane(float x_min, float x_max, float z_min, float z_max) const
+{
+    if (!_spatial_index) {
+        return {};
+    }
+    auto result = _spatial_index->getCandidatePatchesInXZPlane(x_min, x_max, z_min, z_max);
+
+    // Build reverse lookup cache if needed (only once)
+    static std::vector<std::string> index_to_name;
+    if (index_to_name.size() != _segment_indices.size()) {
+        index_to_name.resize(_segment_indices.size());
+        for (const auto& pair : _segment_indices) {
+            if (pair.second < index_to_name.size()) {
+                index_to_name[pair.second] = pair.first;
+            }
+        }
+    }
+
+    // Convert indices to names
+    std::vector<std::string> names;
+    for (int idx : result) {
+        if (idx >= 0 && idx < index_to_name.size() && !index_to_name[idx].empty()) {
+            names.push_back(index_to_name[idx]);
+        }
+    }
+    return names;
+}
+
+std::vector<std::string> CSurfaceCollection::getSegmentsInXYPlane(float x_min, float x_max, float y_min, float y_max) const
+{
+    if (!_spatial_index) {
+        return {};
+    }
+    auto result = _spatial_index->getCandidatePatchesInXYPlane(x_min, x_max, y_min, y_max);
+
+    // Build reverse lookup cache if needed (only once)
+    static std::vector<std::string> index_to_name;
+    if (index_to_name.size() != _segment_indices.size()) {
+        index_to_name.resize(_segment_indices.size());
+        for (const auto& pair : _segment_indices) {
+            if (pair.second < index_to_name.size()) {
+                index_to_name[pair.second] = pair.first;
+            }
+        }
+    }
+
+    // Convert indices to names
+    std::vector<std::string> names;
+    for (int idx : result) {
+        if (idx >= 0 && idx < index_to_name.size() && !index_to_name[idx].empty()) {
+            names.push_back(index_to_name[idx]);
+        }
+    }
+    return names;
 }

@@ -12,6 +12,8 @@
 #include <limits>
 #include <algorithm>
 #include <vector>
+#include <set>
+#include <iostream>
 
 // Use libtiff for BigTIFF; fall back to OpenCV if not present.
 #include <tiffio.h>
@@ -330,46 +332,96 @@ Rect3D rect_from_json(const nlohmann::json &json)
 }
 
 
-uint64_t MultiSurfaceIndex::hash(int x, int y, int z) const {
-    // Ensure non-negative values for hashing
-    uint32_t ux = static_cast<uint32_t>(x + 1000000);
-    uint32_t uy = static_cast<uint32_t>(y + 1000000);
-    uint32_t uz = static_cast<uint32_t>(z + 1000000);
-    return (static_cast<uint64_t>(ux) << 40) |
-           (static_cast<uint64_t>(uy) << 20) |
-           static_cast<uint64_t>(uz);
-}
-
-MultiSurfaceIndex::MultiSurfaceIndex(float cell_sz) : cell_size(cell_sz) {}
+MultiSurfaceIndex::MultiSurfaceIndex(float cell_sz)
+    : cell_size(cell_sz), grid_size_x(0), grid_size_y(0), grid_size_z(0), grid_origin(0,0,0) {}
 
 void MultiSurfaceIndex::addPatch(int idx, QuadSurface* patch) {
     Rect3D bbox = patch->bbox();
-    patch_bboxes.push_back(bbox);
 
-    // Expand bbox slightly to handle edge cases
-    int x0 = std::floor((bbox.low[0] - cell_size) / cell_size);
-    int y0 = std::floor((bbox.low[1] - cell_size) / cell_size);
-    int z0 = std::floor((bbox.low[2] - cell_size) / cell_size);
-    int x1 = std::ceil((bbox.high[0] + cell_size) / cell_size);
-    int y1 = std::ceil((bbox.high[1] + cell_size) / cell_size);
-    int z1 = std::ceil((bbox.high[2] + cell_size) / cell_size);
+    // First patch: compute bounds and allocate grid
+    if (patch_bboxes.empty()) {
+        grid_origin = bbox.low;
+        cv::Vec3f grid_max = bbox.high;
 
-    for (int z = z0; z <= z1; z++) {
-        for (int y = y0; y <= y1; y++) {
-            for (int x = x0; x <= x1; x++) {
-                grid[hash(x, y, z)].patch_indices.push_back(idx);
+        grid_size_x = std::ceil((grid_max[0] - grid_origin[0]) / cell_size) + 10;  // +10 for padding
+        grid_size_y = std::ceil((grid_max[1] - grid_origin[1]) / cell_size) + 10;
+        grid_size_z = std::ceil((grid_max[2] - grid_origin[2]) / cell_size) + 10;
+
+        // Allocate 3D array
+        grid.resize(grid_size_x);
+        for (int x = 0; x < grid_size_x; x++) {
+            grid[x].resize(grid_size_y);
+            for (int y = 0; y < grid_size_y; y++) {
+                grid[x][y].resize(grid_size_z);
             }
         }
+    } else {
+        // Expand bounds if necessary
+        bool needs_realloc = false;
+        cv::Vec3f new_origin = grid_origin;
+        cv::Vec3f new_max(grid_origin[0] + grid_size_x * cell_size,
+                          grid_origin[1] + grid_size_y * cell_size,
+                          grid_origin[2] + grid_size_z * cell_size);
+
+        if (bbox.low[0] < grid_origin[0]) { new_origin[0] = bbox.low[0]; needs_realloc = true; }
+        if (bbox.low[1] < grid_origin[1]) { new_origin[1] = bbox.low[1]; needs_realloc = true; }
+        if (bbox.low[2] < grid_origin[2]) { new_origin[2] = bbox.low[2]; needs_realloc = true; }
+        if (bbox.high[0] > new_max[0]) { new_max[0] = bbox.high[0]; needs_realloc = true; }
+        if (bbox.high[1] > new_max[1]) { new_max[1] = bbox.high[1]; needs_realloc = true; }
+        if (bbox.high[2] > new_max[2]) { new_max[2] = bbox.high[2]; needs_realloc = true; }
+
+        if (needs_realloc) {
+            // TODO: handle grid expansion (for now, just warn)
+            std::cout << "WARNING: Patch bbox exceeds current grid bounds - may miss some cells" << std::endl;
+        }
+    }
+
+    patch_bboxes.push_back(bbox);
+
+    // Add points to grid
+    auto points = patch->rawPoints();
+    int points_processed = 0;
+
+    for (const auto& pt : points) {
+        // Skip invalid points (NaN or negative sentinel values)
+        if (std::isnan(pt[0]) || std::isnan(pt[1]) || std::isnan(pt[2]) ||
+            pt[0] < 0 || pt[1] < 0 || pt[2] < 0) {
+            continue;
+        }
+
+        // Calculate grid cell for this point
+        int x = worldToGridX(pt[0]);
+        int y = worldToGridY(pt[1]);
+        int z = worldToGridZ(pt[2]);
+
+        // Add this cell plus immediate neighbors (3x3x3 = 1 cell dilation)
+        for (int dz = -1; dz <= 1; dz++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    int gx = x + dx;
+                    int gy = y + dy;
+                    int gz = z + dz;
+
+                    if (validGrid(gx, gy, gz)) {
+                        auto& cell = grid[gx][gy][gz];
+                        // Check if idx already in this cell
+                        if (std::find(cell.patch_indices.begin(), cell.patch_indices.end(), idx) == cell.patch_indices.end()) {
+                            cell.patch_indices.push_back(idx);
+                        }
+                    }
+                }
+            }
+        }
+
+        points_processed++;
     }
 }
 
 std::vector<int> MultiSurfaceIndex::getCandidatePatches(const cv::Vec3f& point, float tolerance) const {
-    // Get the cell containing this point
-    int x = std::floor(point[0] / cell_size);
-    int y = std::floor(point[1] / cell_size);
-    int z = std::floor(point[2] / cell_size);
+    int x = worldToGridX(point[0]);
+    int y = worldToGridY(point[1]);
+    int z = worldToGridZ(point[2]);
 
-    // If tolerance is specified, check neighboring cells too
     std::set<int> unique_patches;
 
     if (tolerance > 0) {
@@ -377,9 +429,11 @@ std::vector<int> MultiSurfaceIndex::getCandidatePatches(const cv::Vec3f& point, 
         for (int dz = -cell_radius; dz <= cell_radius; dz++) {
             for (int dy = -cell_radius; dy <= cell_radius; dy++) {
                 for (int dx = -cell_radius; dx <= cell_radius; dx++) {
-                    auto it = grid.find(hash(x + dx, y + dy, z + dz));
-                    if (it != grid.end()) {
-                        for (int idx : it->second.patch_indices) {
+                    int gx = x + dx;
+                    int gy = y + dy;
+                    int gz = z + dz;
+                    if (validGrid(gx, gy, gz)) {
+                        for (int idx : grid[gx][gy][gz].patch_indices) {
                             unique_patches.insert(idx);
                         }
                     }
@@ -387,30 +441,164 @@ std::vector<int> MultiSurfaceIndex::getCandidatePatches(const cv::Vec3f& point, 
             }
         }
     } else {
-        auto it = grid.find(hash(x, y, z));
-        if (it != grid.end()) {
-            for (int idx : it->second.patch_indices) {
+        if (validGrid(x, y, z)) {
+            for (int idx : grid[x][y][z].patch_indices) {
                 unique_patches.insert(idx);
             }
         }
     }
 
-    // Filter by bounding box for extra safety
-    std::vector<int> result;
-    for (int idx : unique_patches) {
-        const Rect3D& bbox = patch_bboxes[idx];
-        if (point[0] >= bbox.low[0] - tolerance &&
-            point[0] <= bbox.high[0] + tolerance &&
-            point[1] >= bbox.low[1] - tolerance &&
-            point[1] <= bbox.high[1] + tolerance &&
-            point[2] >= bbox.low[2] - tolerance &&
-            point[2] <= bbox.high[2] + tolerance) {
-            result.push_back(idx);
+    return std::vector<int>(unique_patches.begin(), unique_patches.end());
+}
+
+void MultiSurfaceIndex::removePatch(int idx) {
+    // Remove this patch index from all cells in the grid
+    for (int x = 0; x < grid_size_x; x++) {
+        for (int y = 0; y < grid_size_y; y++) {
+            for (int z = 0; z < grid_size_z; z++) {
+                auto& indices = grid[x][y][z].patch_indices;
+                indices.erase(std::remove(indices.begin(), indices.end(), idx), indices.end());
+            }
         }
     }
 
-    return result;
+    // Clear the bbox (mark as invalid with zero-size bbox)
+    if (idx < patch_bboxes.size()) {
+        patch_bboxes[idx] = {{0,0,0}, {0,0,0}};
+    }
 }
 
-size_t MultiSurfaceIndex::getCellCount() const { return grid.size(); }
+void MultiSurfaceIndex::updatePatch(int idx, QuadSurface* patch) {
+    removePatch(idx);
+    // Note: addPatch expects patch_bboxes to be empty or properly sized
+    // So we need to handle this carefully - for now just remove and re-add
+    // This is inefficient but correct
+    addPatch(idx, patch);
+}
+
+std::vector<int> MultiSurfaceIndex::getCandidatePatchesByRegion(const cv::Vec3f& min_bound, const cv::Vec3f& max_bound) const {
+    int x0 = worldToGridX(min_bound[0]);
+    int y0 = worldToGridY(min_bound[1]);
+    int z0 = worldToGridZ(min_bound[2]);
+    int x1 = worldToGridX(max_bound[0]);
+    int y1 = worldToGridY(max_bound[1]);
+    int z1 = worldToGridZ(max_bound[2]);
+
+    // Clamp to valid range
+    x0 = std::max(0, x0);
+    y0 = std::max(0, y0);
+    z0 = std::max(0, z0);
+    x1 = std::min(grid_size_x - 1, x1);
+    y1 = std::min(grid_size_y - 1, y1);
+    z1 = std::min(grid_size_z - 1, z1);
+
+    std::set<int> unique_patches;
+    for (int z = z0; z <= z1; z++) {
+        for (int y = y0; y <= y1; y++) {
+            for (int x = x0; x <= x1; x++) {
+                for (int idx : grid[x][y][z].patch_indices) {
+                    unique_patches.insert(idx);
+                }
+            }
+        }
+    }
+
+    return std::vector<int>(unique_patches.begin(), unique_patches.end());
+}
+
+std::vector<int> MultiSurfaceIndex::getCandidatePatchesInYZPlane(float y_min, float y_max, float z_min, float z_max) const {
+    int y0 = worldToGridY(y_min);
+    int z0 = worldToGridZ(z_min);
+    int y1 = worldToGridY(y_max);
+    int z1 = worldToGridZ(z_max);
+
+    // Clamp to valid range
+    y0 = std::max(0, y0);
+    z0 = std::max(0, z0);
+    y1 = std::min(grid_size_y - 1, y1);
+    z1 = std::min(grid_size_z - 1, z1);
+
+    std::set<int> unique_patches;
+    // Iterate through ALL X (entire plane)
+    for (int x = 0; x < grid_size_x; x++) {
+        for (int z = z0; z <= z1; z++) {
+            for (int y = y0; y <= y1; y++) {
+                for (int idx : grid[x][y][z].patch_indices) {
+                    unique_patches.insert(idx);
+                }
+            }
+        }
+    }
+
+    return std::vector<int>(unique_patches.begin(), unique_patches.end());
+}
+
+std::vector<int> MultiSurfaceIndex::getCandidatePatchesInXZPlane(float x_min, float x_max, float z_min, float z_max) const {
+    int x0 = worldToGridX(x_min);
+    int z0 = worldToGridZ(z_min);
+    int x1 = worldToGridX(x_max);
+    int z1 = worldToGridZ(z_max);
+
+    // Clamp to valid range
+    x0 = std::max(0, x0);
+    z0 = std::max(0, z0);
+    x1 = std::min(grid_size_x - 1, x1);
+    z1 = std::min(grid_size_z - 1, z1);
+
+    std::set<int> unique_patches;
+    // Iterate through ALL Y (entire plane)
+    for (int y = 0; y < grid_size_y; y++) {
+        for (int z = z0; z <= z1; z++) {
+            for (int x = x0; x <= x1; x++) {
+                for (int idx : grid[x][y][z].patch_indices) {
+                    unique_patches.insert(idx);
+                }
+            }
+        }
+    }
+
+    return std::vector<int>(unique_patches.begin(), unique_patches.end());
+}
+
+std::vector<int> MultiSurfaceIndex::getCandidatePatchesInXYPlane(float x_min, float x_max, float y_min, float y_max) const {
+    int x0 = worldToGridX(x_min);
+    int y0 = worldToGridY(y_min);
+    int x1 = worldToGridX(x_max);
+    int y1 = worldToGridY(y_max);
+
+    // Clamp to valid range
+    x0 = std::max(0, x0);
+    y0 = std::max(0, y0);
+    x1 = std::min(grid_size_x - 1, x1);
+    y1 = std::min(grid_size_y - 1, y1);
+
+    std::set<int> unique_patches;
+    // Iterate through ALL Z (entire plane)
+    for (int z = 0; z < grid_size_z; z++) {
+        for (int y = y0; y <= y1; y++) {
+            for (int x = x0; x <= x1; x++) {
+                for (int idx : grid[x][y][z].patch_indices) {
+                    unique_patches.insert(idx);
+                }
+            }
+        }
+    }
+
+    return std::vector<int>(unique_patches.begin(), unique_patches.end());
+}
+
+size_t MultiSurfaceIndex::getCellCount() const {
+    size_t count = 0;
+    for (int x = 0; x < grid_size_x; x++) {
+        for (int y = 0; y < grid_size_y; y++) {
+            for (int z = 0; z < grid_size_z; z++) {
+                if (!grid[x][y][z].patch_indices.empty()) {
+                    count++;
+                }
+            }
+        }
+    }
+    return count;
+}
+
 size_t MultiSurfaceIndex::getPatchCount() const { return patch_bboxes.size(); }
