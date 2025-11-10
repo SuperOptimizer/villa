@@ -8,6 +8,7 @@ set(srcs
     CWindow.cpp
     CWindowContextMenu.cpp
     CVolumeViewer.cpp
+    CVolumeViewerIntersections.cpp
     CVolumeViewerView.cpp
     VolumeViewerCmaps.cpp
     VolumeViewerCmaps.hpp
