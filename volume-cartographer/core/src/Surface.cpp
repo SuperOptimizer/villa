@@ -335,11 +335,29 @@ Rect3D rect_from_json(const nlohmann::json &json)
 MultiSurfaceIndex::MultiSurfaceIndex(float cell_sz)
     : cell_size(cell_sz), grid_size_x(0), grid_size_y(0), grid_size_z(0), grid_origin(0,0,0) {}
 
+MultiSurfaceIndex::MultiSurfaceIndex(float cell_sz, const cv::Vec3f& min_bound, const cv::Vec3f& max_bound)
+    : cell_size(cell_sz), grid_origin(min_bound)
+{
+    // Calculate grid dimensions to encompass the bounding box
+    grid_size_x = std::ceil((max_bound[0] - min_bound[0]) / cell_size) + 1;
+    grid_size_y = std::ceil((max_bound[1] - min_bound[1]) / cell_size) + 1;
+    grid_size_z = std::ceil((max_bound[2] - min_bound[2]) / cell_size) + 1;
+
+    // Allocate 3D array
+    grid.resize(grid_size_x);
+    for (int x = 0; x < grid_size_x; x++) {
+        grid[x].resize(grid_size_y);
+        for (int y = 0; y < grid_size_y; y++) {
+            grid[x][y].resize(grid_size_z);
+        }
+    }
+}
+
 void MultiSurfaceIndex::addPatch(int idx, QuadSurface* patch) {
     Rect3D bbox = patch->bbox();
 
-    // First patch: compute bounds and allocate grid
-    if (patch_bboxes.empty()) {
+    // First patch AND grid not pre-allocated: compute bounds and allocate grid
+    if (patch_bboxes.empty() && grid.empty()) {
         grid_origin = bbox.low;
         cv::Vec3f grid_max = bbox.high;
 
@@ -355,32 +373,17 @@ void MultiSurfaceIndex::addPatch(int idx, QuadSurface* patch) {
                 grid[x][y].resize(grid_size_z);
             }
         }
-    } else {
-        // Expand bounds if necessary
-        bool needs_realloc = false;
-        cv::Vec3f new_origin = grid_origin;
-        cv::Vec3f new_max(grid_origin[0] + grid_size_x * cell_size,
-                          grid_origin[1] + grid_size_y * cell_size,
-                          grid_origin[2] + grid_size_z * cell_size);
-
-        if (bbox.low[0] < grid_origin[0]) { new_origin[0] = bbox.low[0]; needs_realloc = true; }
-        if (bbox.low[1] < grid_origin[1]) { new_origin[1] = bbox.low[1]; needs_realloc = true; }
-        if (bbox.low[2] < grid_origin[2]) { new_origin[2] = bbox.low[2]; needs_realloc = true; }
-        if (bbox.high[0] > new_max[0]) { new_max[0] = bbox.high[0]; needs_realloc = true; }
-        if (bbox.high[1] > new_max[1]) { new_max[1] = bbox.high[1]; needs_realloc = true; }
-        if (bbox.high[2] > new_max[2]) { new_max[2] = bbox.high[2]; needs_realloc = true; }
-
-        if (needs_realloc) {
-            // TODO: handle grid expansion (for now, just warn)
-            std::cout << "WARNING: Patch bbox exceeds current grid bounds - may miss some cells" << std::endl;
-        }
     }
+    // If grid is pre-allocated (from constructor with bounds), just use it as-is
+    // Segments can extend beyond volume bounds, which is fine - we just won't index those points
 
     patch_bboxes.push_back(bbox);
 
     // Add points to grid
     auto points = patch->rawPoints();
     int points_processed = 0;
+    int points_out_of_bounds = 0;
+    std::vector<cv::Vec3f> out_of_bounds_samples;  // Store first 10 for logging
 
     for (const auto& pt : points) {
         // Skip invalid points (NaN or negative sentinel values)
@@ -393,6 +396,15 @@ void MultiSurfaceIndex::addPatch(int idx, QuadSurface* patch) {
         int x = worldToGridX(pt[0]);
         int y = worldToGridY(pt[1]);
         int z = worldToGridZ(pt[2]);
+
+        // Check if the point's primary cell is out of bounds
+        if (!validGrid(x, y, z)) {
+            points_out_of_bounds++;
+            if (out_of_bounds_samples.size() < 10) {
+                out_of_bounds_samples.push_back(pt);
+            }
+            continue;  // Skip this point entirely if its center cell is out of bounds
+        }
 
         // Add this cell plus immediate neighbors (3x3x3 = 1 cell dilation)
         for (int dz = -1; dz <= 1; dz++) {
@@ -414,6 +426,19 @@ void MultiSurfaceIndex::addPatch(int idx, QuadSurface* patch) {
         }
 
         points_processed++;
+    }
+
+    if (points_out_of_bounds > 0) {
+        std::cout << "  Patch " << idx << ": " << points_out_of_bounds << " points outside grid bounds (total: "
+                  << (points_processed + points_out_of_bounds) << ")" << std::endl;
+        std::cout << "    Grid bounds: [0, 0, 0] to ["
+                  << (grid_origin[0] + grid_size_x * cell_size) << ", "
+                  << (grid_origin[1] + grid_size_y * cell_size) << ", "
+                  << (grid_origin[2] + grid_size_z * cell_size) << "]" << std::endl;
+        std::cout << "    First " << out_of_bounds_samples.size() << " out-of-bounds points:" << std::endl;
+        for (const auto& pt : out_of_bounds_samples) {
+            std::cout << "      [" << pt[0] << ", " << pt[1] << ", " << pt[2] << "]" << std::endl;
+        }
     }
 }
 
@@ -602,3 +627,49 @@ size_t MultiSurfaceIndex::getCellCount() const {
 }
 
 size_t MultiSurfaceIndex::getPatchCount() const { return patch_bboxes.size(); }
+
+std::vector<MultiSurfaceIndex::GridCellBounds> MultiSurfaceIndex::getGridCellBoundsInRegion(
+    const cv::Vec3f& min_bound, const cv::Vec3f& max_bound) const {
+
+    int x0 = worldToGridX(min_bound[0]);
+    int y0 = worldToGridY(min_bound[1]);
+    int z0 = worldToGridZ(min_bound[2]);
+    int x1 = worldToGridX(max_bound[0]);
+    int y1 = worldToGridY(max_bound[1]);
+    int z1 = worldToGridZ(max_bound[2]);
+
+    // Clamp to valid range
+    x0 = std::max(0, x0);
+    y0 = std::max(0, y0);
+    z0 = std::max(0, z0);
+    x1 = std::min(grid_size_x - 1, x1);
+    y1 = std::min(grid_size_y - 1, y1);
+    z1 = std::min(grid_size_z - 1, z1);
+
+    std::vector<GridCellBounds> bounds;
+    bounds.reserve((x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1));
+
+    for (int z = z0; z <= z1; z++) {
+        for (int y = y0; y <= y1; y++) {
+            for (int x = x0; x <= x1; x++) {
+                // Only add cells that have content (not empty)
+                if (!grid[x][y][z].patch_indices.empty()) {
+                    GridCellBounds cell;
+                    cell.min = cv::Vec3f(
+                        grid_origin[0] + x * cell_size,
+                        grid_origin[1] + y * cell_size,
+                        grid_origin[2] + z * cell_size
+                    );
+                    cell.max = cv::Vec3f(
+                        cell.min[0] + cell_size,
+                        cell.min[1] + cell_size,
+                        cell.min[2] + cell_size
+                    );
+                    bounds.push_back(cell);
+                }
+            }
+        }
+    }
+
+    return bounds;
+}

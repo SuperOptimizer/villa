@@ -69,7 +69,12 @@ void CVolumeViewer::setIntersects(const std::set<std::string> &set)
 
     // Rebuild spatial index ONLY when segments actually change
     if (_surf_col && segments_changed) {
-        _surf_col->rebuildSpatialIndex();
+        // Pass volume dimensions to spatial index if available
+        cv::Vec3f vol_dims(0, 0, 0);
+        if (volume) {
+            vol_dims = cv::Vec3f(volume->sliceWidth(), volume->sliceHeight(), volume->numSlices());
+        }
+        _surf_col->rebuildSpatialIndex(vol_dims);
     }
 
     renderIntersections();
@@ -135,6 +140,7 @@ void CVolumeViewer::renderIntersections()
         }
 
         bool use_spatial_filter = false;
+        cv::Vec3f padded_min, padded_max;  // Declare here so they're available later
 
         if (_surf_col->spatialIndex()) {
             use_spatial_filter = true;
@@ -162,8 +168,8 @@ void CVolumeViewer::renderIntersections()
             // Add padding to the viewport bounds to catch nearby surface points
             // This handles sparse/curved surfaces that might not have points exactly in the viewport cells
             float padding = 200.0f;  // About 4 grid cells (50.0f cell size)
-            cv::Vec3f padded_min = min_3d - cv::Vec3f(padding, padding, padding);
-            cv::Vec3f padded_max = max_3d + cv::Vec3f(padding, padding, padding);
+            padded_min = min_3d - cv::Vec3f(padding, padding, padding);
+            padded_max = max_3d + cv::Vec3f(padding, padding, padding);
 
             auto roi_corners_end = std::chrono::high_resolution_clock::now();
             double roi_corners_time = std::chrono::duration<double, std::milli>(roi_corners_end - roi_corners_start).count();
@@ -234,8 +240,8 @@ void CVolumeViewer::renderIntersections()
 
             std::vector<std::vector<cv::Vec2f>> xy_seg_;
             // Use min_tries=1000 for all segments to ensure we find intersections
-            // With systematic sampling (~1845 points), we need enough attempts to try them all
-            find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_scale, 1000);
+            // Pass viewport bounds to constrain sampling to visible region only
+            find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_scale, 1000, nullptr, &padded_min, &padded_max);
         }
 
         auto compute_end = std::chrono::high_resolution_clock::now();

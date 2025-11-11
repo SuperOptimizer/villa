@@ -6,6 +6,7 @@
 #include <chrono>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 
 
 
@@ -145,25 +146,69 @@ std::vector<std::pair<std::string,std::string>> CSurfaceCollection::intersection
     return res;
 }
 
-void CSurfaceCollection::rebuildSpatialIndex()
+void CSurfaceCollection::rebuildSpatialIndex(const cv::Vec3f& volume_dimensions)
 {
-    // Create new spatial index with 50x50x50 effective grid size
-    _spatial_index = std::make_unique<MultiSurfaceIndex>(50.0f);
     _segment_indices.clear();
     _next_segment_index = 0;
 
-    // Add all QuadSurfaces to the spatial index with stable indices
-    int quad_count = 0;
+    // Collect all QuadSurfaces
+    std::vector<std::pair<std::string, QuadSurface*>> quads;
     for (auto& pair : _surfs) {
         QuadSurface* quad = dynamic_cast<QuadSurface*>(pair.second.ptr);
         if (quad) {
-            int idx = _next_segment_index++;
-            _segment_indices[pair.first] = idx;
-            _spatial_index->addPatch(idx, quad);
-            quad_count++;
+            quads.push_back({pair.first, quad});
         }
     }
-    std::cout << "Spatial index rebuilt: indexed " << quad_count << " segments" << std::endl;
+
+    if (quads.empty()) {
+        std::cout << "Spatial index rebuilt: indexed 0 segments" << std::endl;
+        return;
+    }
+
+    // Use volume dimensions if provided, otherwise compute from segment bboxes
+    cv::Vec3f global_min, global_max;
+    float cell_size = 50.0f;
+
+    if (volume_dimensions[0] > 0 && volume_dimensions[1] > 0 && volume_dimensions[2] > 0) {
+        // Use volume dimensions to set grid bounds
+        global_min = cv::Vec3f(0, 0, 0);
+        global_max = volume_dimensions;
+        std::cout << "Spatial index: using volume dimensions ("
+                  << volume_dimensions[0] << "x" << volume_dimensions[1] << "x" << volume_dimensions[2] << ")" << std::endl;
+    } else {
+        // Fallback: compute bounds from segment bounding boxes
+        global_min = cv::Vec3f(std::numeric_limits<float>::max(),
+                               std::numeric_limits<float>::max(),
+                               std::numeric_limits<float>::max());
+        global_max = cv::Vec3f(std::numeric_limits<float>::lowest(),
+                               std::numeric_limits<float>::lowest(),
+                               std::numeric_limits<float>::lowest());
+
+        for (auto& [name, quad] : quads) {
+            Rect3D bbox = quad->bbox();
+            for (int i = 0; i < 3; i++) {
+                global_min[i] = std::min(global_min[i], bbox.low[i]);
+                global_max[i] = std::max(global_max[i], bbox.high[i]);
+            }
+        }
+
+        // Add padding
+        float padding = cell_size * 5;
+        global_min = global_min - cv::Vec3f(padding, padding, padding);
+        global_max = global_max + cv::Vec3f(padding, padding, padding);
+        std::cout << "Spatial index: computed from segments" << std::endl;
+    }
+
+    _spatial_index = std::make_unique<MultiSurfaceIndex>(cell_size, global_min, global_max);
+
+    // Add all segments to the index
+    for (auto& [name, quad] : quads) {
+        int idx = _next_segment_index++;
+        _segment_indices[name] = idx;
+        _spatial_index->addPatch(idx, quad);
+    }
+
+    std::cout << "Spatial index rebuilt: indexed " << quads.size() << " segments" << std::endl;
 }
 
 void CSurfaceCollection::updateSegmentInSpatialIndex(const std::string& name)

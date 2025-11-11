@@ -45,7 +45,7 @@ public:
     std::vector<std::pair<std::string,std::string>> intersections(const std::string &a = "");
 
     // Spatial index for accelerating intersection queries
-    void rebuildSpatialIndex();
+    void rebuildSpatialIndex(const cv::Vec3f& volume_dimensions = cv::Vec3f(0,0,0));
     void updateSegmentInSpatialIndex(const std::string& name);
     std::vector<std::string> getSegmentsInRegion(const cv::Vec3f& center, float radius) const;
     std::vector<std::string> getSegmentsInBoundingBox(const cv::Vec3f& min_bound, const cv::Vec3f& max_bound) const;

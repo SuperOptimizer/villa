@@ -48,7 +48,7 @@ static uint8_t get_block(const cv::Mat_<uint8_t> &block, const cv::Vec3f &loc, c
 }
 
 
-void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step, int min_tries)
+void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step, int min_tries, const cv::Mat_<uint8_t> *sample_mask, const cv::Vec3f *viewport_min, const cv::Vec3f *viewport_max)
 {
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -78,14 +78,19 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
     int consecutive_failures = 0;
     int cumulative_failures = 0;
-    int max_consecutive_failures = 100;
-    int max_cumulative_failures = 500;  // Increased - with smart sampling we can afford more attempts
+    int max_consecutive_failures = 50;
+    int max_cumulative_failures = 100;  // Increased - with smart sampling we can afford more attempts
 
     // Smart sampling strategies
     std::vector<cv::Vec2f> systematic_sample_points;
     std::vector<cv::Vec2f> seed_based_samples;  // Points near successful segments
-    // Use denser grid spacing to ensure we catch intersections even with small ROI overlap
+
+    // Determine grid spacing based on whether we have a mask
     int systematic_grid_spacing = std::max(3, std::min(points.cols, points.rows) / 40);
+
+    // Build systematic sample points, optionally constrained by viewport bounds
+    int viewport_constrained_count = 0;
+    int viewport_skipped_count = 0;
 
     // Generate systematic grid sampling points
     // IMPORTANT: Only sample within grid_bounds to ensure at_int() can safely
@@ -96,8 +101,28 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         for (int x = grid_bounds.x + systematic_grid_spacing/2;
              x < grid_bounds.x + grid_bounds.width;
              x += systematic_grid_spacing) {
-            systematic_sample_points.push_back({(float)x, (float)y});
+
+            // If viewport bounds provided, only sample points within viewport
+            if (viewport_min && viewport_max) {
+                const cv::Vec3f& pt = at_int(points, {(float)x, (float)y});
+                if (pt[0] >= (*viewport_min)[0] && pt[0] <= (*viewport_max)[0] &&
+                    pt[1] >= (*viewport_min)[1] && pt[1] <= (*viewport_max)[1] &&
+                    pt[2] >= (*viewport_min)[2] && pt[2] <= (*viewport_max)[2]) {
+                    systematic_sample_points.push_back({(float)x, (float)y});
+                    viewport_constrained_count++;
+                } else {
+                    viewport_skipped_count++;
+                }
+            } else {
+                // No viewport constraint, add all systematic points
+                systematic_sample_points.push_back({(float)x, (float)y});
+            }
         }
+    }
+
+    if (viewport_min && viewport_max) {
+        std::cout << "  Viewport-constrained sampling: " << viewport_constrained_count
+                  << " points in viewport (skipped " << viewport_skipped_count << ")" << std::endl;
     }
     std::random_shuffle(systematic_sample_points.begin(), systematic_sample_points.end());
 
@@ -126,7 +151,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         std::vector<cv::Vec2f> seg_loc2;
         cv::Vec2f loc;
         cv::Vec2f loc2;
-        cv::Vec2f loc3;
         cv::Vec3f point;
         cv::Vec3f point2;
         cv::Vec3f point3;
@@ -141,7 +165,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         int inner_consecutive_failures = 0;
         int inner_roi_misses = 0;
         int inner_already_visited = 0;
-        int max_inner_consecutive_failures = 100;  // Early exit much sooner
+        int max_inner_consecutive_failures = 50;  // Early exit much sooner
 
         for(int i=0; i < min_tries; i++) {
             init_attempts++;
@@ -161,8 +185,39 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 seed_samples_used++;
             } else {
                 // Priority 3: Fall back to random sampling within safe grid bounds
-                loc = {grid_bounds.x + (std::rand() % grid_bounds.width),
-                       grid_bounds.y + (std::rand() % grid_bounds.height)};
+                // If viewport bounds provided, only sample points within viewport
+                bool found_valid_random = false;
+                int random_attempts = 0;
+                const int max_random_attempts = 50;  // Limit attempts to avoid infinite loop
+
+                while (!found_valid_random && random_attempts < max_random_attempts) {
+                    loc = {grid_bounds.x + (std::rand() % grid_bounds.width),
+                           grid_bounds.y + (std::rand() % grid_bounds.height)};
+
+                    if (viewport_min && viewport_max) {
+                        const cv::Vec3f& pt = at_int(points, loc);
+                        if (pt[0] >= (*viewport_min)[0] && pt[0] <= (*viewport_max)[0] &&
+                            pt[1] >= (*viewport_min)[1] && pt[1] <= (*viewport_max)[1] &&
+                            pt[2] >= (*viewport_min)[2] && pt[2] <= (*viewport_max)[2]) {
+                            found_valid_random = true;
+                        }
+                    } else {
+                        // No viewport constraint, accept any point
+                        found_valid_random = true;
+                    }
+                    random_attempts++;
+                }
+
+                if (!found_valid_random) {
+                    // Couldn't find a valid random point in viewport after max_attempts
+                    // This means we've exhausted the search space
+                    inner_consecutive_failures++;
+                    if (inner_consecutive_failures >= max_inner_consecutive_failures) {
+                        break;
+                    }
+                    continue;
+                }
+
                 random_samples_used++;
             }
 
@@ -196,7 +251,8 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             }
 
                 auto minloc_start = std::chrono::high_resolution_clock::now();
-                dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.01);
+            std::cout << "points.cols " << points.cols << " points.rows " << points.rows << std::endl;
+                dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.1);
                 auto minloc_end = std::chrono::high_resolution_clock::now();
                 double minloc_time = std::chrono::duration<double, std::milli>(minloc_end - minloc_start).count();
                 total_minloc_time_ms += minloc_time;
@@ -223,7 +279,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                     continue;
                 }
 
-            if (dist >= 0 && dist <= 1 || !loc_valid_xy(points, loc)) {
+            if (dist >= 0 && dist <= 4 || !loc_valid_xy(points, loc)) {
                 inner_consecutive_failures = 0;  // Reset on success
                 break;
             }
@@ -239,7 +295,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         bool inner_early_exit = inner_consecutive_failures >= max_inner_consecutive_failures;
         bool inner_roi_only_exit = (inner_roi_misses >= max_inner_consecutive_failures);
 
-        if (dist < 0 || dist > 1) {
+        if (dist < 0 || dist > 4) {
             // Only count as a real failure if we actually tried min_loc and it failed
             // Don't count exits due to all ROI misses as failures
             bool is_real_failure = !inner_roi_only_exit;
@@ -263,13 +319,13 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         loc2 = loc;
         //search point at distance of 1 to init point
         auto minloc_start = std::chrono::high_resolution_clock::now();
-        dist = min_loc(points, loc2, point2, {point}, {1}, plane, 0.01, 0.0001);
+        dist = min_loc(points, loc2, point2, {point}, {1}, plane, 0.1, 0.01);
         auto minloc_end = std::chrono::high_resolution_clock::now();
         double minloc_time = std::chrono::duration<double, std::milli>(minloc_end - minloc_start).count();
         total_minloc_time_ms += minloc_time;
         minloc_call_count++;
 
-        if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc)) {
+        if (dist < 0 || dist > 4 || !loc_valid_xy(points, loc)) {
             consecutive_failures++;
             cumulative_failures++;
             continue;
@@ -298,7 +354,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
                 //search point close to prediction + dist 1 to last point
                 minloc_start = std::chrono::high_resolution_clock::now();
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001);
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.1, 0.001);
                 minloc_end = std::chrono::high_resolution_clock::now();
                 minloc_time = std::chrono::duration<double, std::milli>(minloc_end - minloc_start).count();
                 total_minloc_time_ms += minloc_time;
@@ -307,13 +363,13 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
                 //then refine
                 minloc_start = std::chrono::high_resolution_clock::now();
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.1, 0.001);
                 minloc_end = std::chrono::high_resolution_clock::now();
                 minloc_time = std::chrono::duration<double, std::milli>(minloc_end - minloc_start).count();
                 total_minloc_time_ms += minloc_time;
                 minloc_call_count++;
 
-                if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc)) {
+                if (dist < 0 || dist > 4 || !loc_valid_xy(points, loc)) {
                     break;
                 }
 
@@ -354,7 +410,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
                 //search point close to prediction + dist 1 to last point
                 minloc_start = std::chrono::high_resolution_clock::now();
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.01, 0.0001);
+                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.1, 0.001);
                 minloc_end = std::chrono::high_resolution_clock::now();
                 minloc_time = std::chrono::duration<double, std::milli>(minloc_end - minloc_start).count();
                 total_minloc_time_ms += minloc_time;
@@ -363,13 +419,13 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
                 //then refine
                 minloc_start = std::chrono::high_resolution_clock::now();
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.01, 0.0001);
+                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.1, 0.001);
                 minloc_end = std::chrono::high_resolution_clock::now();
                 minloc_time = std::chrono::duration<double, std::milli>(minloc_end - minloc_start).count();
                 total_minloc_time_ms += minloc_time;
                 minloc_call_count++;
 
-                if (dist < 0 || dist > 1 || !loc_valid_xy(points, loc)) {
+                if (dist < 0 || dist > 4 || !loc_valid_xy(points, loc)) {
                     break;
                 }
 
