@@ -44,17 +44,6 @@ public:
     std::vector<std::string> poiNames();
     std::vector<std::pair<std::string,std::string>> intersections(const std::string &a = "");
 
-    // Spatial index for accelerating intersection queries
-    void rebuildSpatialIndex(const cv::Vec3f& volume_dimensions = cv::Vec3f(0,0,0));
-    void updateSegmentInSpatialIndex(const std::string& name);
-    std::vector<std::string> getSegmentsInRegion(const cv::Vec3f& center, float radius) const;
-    std::vector<std::string> getSegmentsInBoundingBox(const cv::Vec3f& min_bound, const cv::Vec3f& max_bound) const;
-    // Plane-aware queries: filter by 2D coordinates only (much faster for axis-aligned planes)
-    std::vector<std::string> getSegmentsInYZPlane(float y_min, float y_max, float z_min, float z_max) const;
-    std::vector<std::string> getSegmentsInXZPlane(float x_min, float x_max, float z_min, float z_max) const;
-    std::vector<std::string> getSegmentsInXYPlane(float x_min, float x_max, float y_min, float y_max) const;
-    MultiSurfaceIndex* spatialIndex() { return _spatial_index.get(); }
-    
 signals:
     void sendSurfaceChanged(std::string, Surface*);
     void sendPOIChanged(std::string, POI*);
@@ -70,9 +59,4 @@ protected:
     std::unordered_map<std::string, SurfaceEntry> _surfs;
     std::unordered_map<std::string, POI*> _pois;
     std::unordered_map<std::pair<std::string,std::string>, Intersection*, string_pair_hash> _intersections;
-
-    // Spatial index mapping segment names to indices and accelerating spatial queries
-    std::unique_ptr<MultiSurfaceIndex> _spatial_index;
-    std::unordered_map<std::string, int> _segment_indices;  // Maps segment name -> index
-    int _next_segment_index = 0;  // Next available index for new segments
 };
