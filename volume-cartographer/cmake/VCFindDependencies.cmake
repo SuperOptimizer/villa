@@ -90,8 +90,25 @@ else()
     set(XTENSOR_USE_OPENMP 0)
     include_directories(${CMAKE_SOURCE_DIR}/core/openmp_stub)
     add_library(openmp_stub INTERFACE)
+    target_include_directories(openmp_stub INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/core/openmp_stub>
+        $<INSTALL_INTERFACE:include>
+    )
     add_library(OpenMP::OpenMP_CXX ALIAS openmp_stub)
     add_library(OpenMP::OpenMP_C  ALIAS openmp_stub)
+
+    # Install openmp_stub so it can be exported with vc_core
+    if(VC_INSTALL_LIBS)
+        install(TARGETS openmp_stub
+            EXPORT "${targets_export_name}"
+            COMPONENT Libraries
+        )
+        install(DIRECTORY ${CMAKE_SOURCE_DIR}/core/openmp_stub/
+            DESTINATION "${include_install_dir}"
+            COMPONENT Libraries
+            FILES_MATCHING PATTERN "*.h"
+        )
+    endif()
 endif()
 
 # ---- xtensor/xsimd toggle used by your code ---------------------------------

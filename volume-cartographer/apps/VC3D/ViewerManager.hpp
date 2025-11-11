@@ -71,6 +71,9 @@ public:
     float volumeWindowLow() const { return _volumeWindowLow; }
     float volumeWindowHigh() const { return _volumeWindowHigh; }
 
+    void setSurfacePatchSamplingStride(int stride);
+    int surfacePatchSamplingStride() const { return _surfacePatchSamplingStride; }
+
     bool resetDefaultFor(CVolumeViewer* viewer) const;
     void setResetDefaultFor(CVolumeViewer* viewer, bool value);
 
@@ -78,6 +81,9 @@ public:
     bool segmentationCursorMirroring() const { return _mirrorCursorToSegmentation; }
 
     void forEachViewer(const std::function<void(CVolumeViewer*)>& fn) const;
+    void setIntersectionThickness(float thickness);
+    float intersectionThickness() const { return _intersectionThickness; }
+    void setHighlightedSurfaceIds(const std::vector<std::string>& ids);
 
 signals:
     void viewerCreated(CVolumeViewer* viewer);
@@ -99,6 +105,7 @@ private:
     std::vector<CVolumeViewer*> _viewers;
     std::unordered_map<CVolumeViewer*, bool> _resetDefaults;
     float _intersectionOpacity{1.0f};
+    float _intersectionThickness{0.0f};
     std::shared_ptr<Volume> _overlayVolume;
     std::string _overlayVolumeId;
     float _overlayOpacity{0.5f};
@@ -108,6 +115,7 @@ private:
     float _volumeWindowLow{0.0f};
     float _volumeWindowHigh{255.0f};
     bool _mirrorCursorToSegmentation{false};
+    int _surfacePatchSamplingStride{1};
 
     VolumeOverlayController* _volumeOverlay{nullptr};
 };
