@@ -8,9 +8,6 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
-#include <chrono>
-#include <iostream>
-#include <iomanip>
 
 
 // Use libtiff for BigTIFF; fall back to OpenCV if not present.
@@ -50,10 +47,6 @@ static uint8_t get_block(const cv::Mat_<uint8_t> &block, const cv::Vec3f &loc, c
 
 void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::vector<std::vector<cv::Vec2f>> &seg_grid, const cv::Mat_<cv::Vec3f> &points, PlaneSurface *plane, const cv::Rect &plane_roi, float step, int min_tries, const cv::Mat_<uint8_t> *sample_mask, const cv::Vec3f *viewport_min, const cv::Vec3f *viewport_max)
 {
-    auto start_time = std::chrono::high_resolution_clock::now();
-
-    // Removed verbose logging - keeping only summary
-
     //start with random points and search for a plane intersection
 
     // Adaptive min_tries based on grid size - don't waste time on small grids
@@ -88,10 +81,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
     // Determine grid spacing based on whether we have a mask
     int systematic_grid_spacing = std::max(3, std::min(points.cols, points.rows) / 40);
 
-    // Build systematic sample points, optionally constrained by viewport bounds
-    int viewport_constrained_count = 0;
-    int viewport_skipped_count = 0;
-
     // Generate systematic grid sampling points
     // IMPORTANT: Only sample within grid_bounds to ensure at_int() can safely
     // access (y+1, x+1) for bilinear interpolation without going out of bounds
@@ -109,9 +98,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                     pt[1] >= (*viewport_min)[1] && pt[1] <= (*viewport_max)[1] &&
                     pt[2] >= (*viewport_min)[2] && pt[2] <= (*viewport_max)[2]) {
                     systematic_sample_points.push_back({(float)x, (float)y});
-                    viewport_constrained_count++;
-                } else {
-                    viewport_skipped_count++;
                 }
             } else {
                 // No viewport constraint, add all systematic points
@@ -120,24 +106,11 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         }
     }
 
-    if (viewport_min && viewport_max) {
-        std::cout << "  Viewport-constrained sampling: " << viewport_constrained_count
-                  << " points in viewport (skipped " << viewport_skipped_count << ")" << std::endl;
-    }
     std::random_shuffle(systematic_sample_points.begin(), systematic_sample_points.end());
 
     int systematic_samples_used = 0;
     int seed_samples_used = 0;
     int random_samples_used = 0;
-
-    // Statistics tracking
-    int initial_point_search_attempts = 0;
-    int successful_segments = 0;
-    double total_minloc_time_ms = 0;
-    int minloc_call_count = 0;
-    int inner_early_exits = 0;
-    int total_inner_roi_misses = 0;
-    int total_inner_already_visited = 0;
 
     for(int r = 0; r < min_tries; r++) {
         // Early exit if we've had too many consecutive failures or too many total failures
@@ -160,16 +133,12 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
 
 
         //initial points
-        auto init_search_start = std::chrono::high_resolution_clock::now();
-        int init_attempts = 0;
         int inner_consecutive_failures = 0;
         int inner_roi_misses = 0;
         int inner_already_visited = 0;
         int max_inner_consecutive_failures = 50;  // Early exit much sooner
 
         for(int i=0; i < min_tries; i++) {
-            init_attempts++;
-            initial_point_search_attempts++;
 
             // Smart sampling strategy with prioritization:
             // 1. Systematic grid points (cover the space methodically)
@@ -250,15 +219,9 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 continue;
             }
 
-                auto minloc_start = std::chrono::high_resolution_clock::now();
-            std::cout << "points.cols " << points.cols << " points.rows " << points.rows << std::endl;
-                dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.1);
-                auto minloc_end = std::chrono::high_resolution_clock::now();
-                double minloc_time = std::chrono::duration<double, std::milli>(minloc_end - minloc_start).count();
-                total_minloc_time_ms += minloc_time;
-                minloc_call_count++;
+            dist = min_loc(points, loc, point, {}, {}, plane, std::min(points.cols,points.rows)*0.1, 0.1);
 
-                plane_loc = plane->project(point);
+            plane_loc = plane->project(point);
                 if (!plane_roi.contains(cv::Point(plane_loc[0],plane_loc[1]))) {
                     dist = -1;
                     inner_roi_misses++;
@@ -289,10 +252,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 break;
             }
         }
-        auto init_search_end = std::chrono::high_resolution_clock::now();
-        double init_search_time = std::chrono::duration<double, std::milli>(init_search_end - init_search_start).count();
 
-        bool inner_early_exit = inner_consecutive_failures >= max_inner_consecutive_failures;
         bool inner_roi_only_exit = (inner_roi_misses >= max_inner_consecutive_failures);
 
         if (dist < 0 || dist > 4) {
@@ -300,11 +260,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             // Don't count exits due to all ROI misses as failures
             bool is_real_failure = !inner_roi_only_exit;
 
-            if (inner_early_exit) {
-                inner_early_exits++;
-            }
-            total_inner_roi_misses += inner_roi_misses;
-            total_inner_already_visited += inner_already_visited;
             if (is_real_failure) {
                 consecutive_failures++;
                 cumulative_failures++;
@@ -318,12 +273,7 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         //point2
         loc2 = loc;
         //search point at distance of 1 to init point
-        auto minloc_start = std::chrono::high_resolution_clock::now();
         dist = min_loc(points, loc2, point2, {point}, {1}, plane, 0.1, 0.01);
-        auto minloc_end = std::chrono::high_resolution_clock::now();
-        double minloc_time = std::chrono::duration<double, std::milli>(minloc_end - minloc_start).count();
-        total_minloc_time_ms += minloc_time;
-        minloc_call_count++;
 
         if (dist < 0 || dist > 4 || !loc_valid_xy(points, loc)) {
             consecutive_failures++;
@@ -340,8 +290,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         last_plane_loc = plane_loc;
 
         //go one direction
-        auto forward_trace_start = std::chrono::high_resolution_clock::now();
-        int forward_points = 0;
         for(int n=0;n<100;n++) {
             //now search following points
             cv::Vec2f loc3 = loc2+loc2-loc;
@@ -350,28 +298,18 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 break;
             }
 
-                point3 = at_int(points, loc3);
+            point3 = at_int(points, loc3);
 
-                //search point close to prediction + dist 1 to last point
-                minloc_start = std::chrono::high_resolution_clock::now();
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.1, 0.001);
-                minloc_end = std::chrono::high_resolution_clock::now();
-                minloc_time = std::chrono::duration<double, std::milli>(minloc_end - minloc_start).count();
-                total_minloc_time_ms += minloc_time;
-                minloc_call_count++;
-                float dist1 = dist;
+            //search point close to prediction + dist 1 to last point
+            dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.1, 0.001);
+            float dist1 = dist;
 
-                //then refine
-                minloc_start = std::chrono::high_resolution_clock::now();
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.1, 0.001);
-                minloc_end = std::chrono::high_resolution_clock::now();
-                minloc_time = std::chrono::duration<double, std::milli>(minloc_end - minloc_start).count();
-                total_minloc_time_ms += minloc_time;
-                minloc_call_count++;
+            //then refine
+            dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.1, 0.001);
 
-                if (dist < 0 || dist > 4 || !loc_valid_xy(points, loc)) {
-                    break;
-                }
+            if (dist < 0 || dist > 4 || !loc_valid_xy(points, loc)) {
+                break;
+            }
 
             seg.push_back(point3);
             seg_loc.push_back(loc3);
@@ -379,13 +317,10 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             point2 = point3;
             loc = loc2;
             loc2 = loc3;
-            forward_points++;
 
             // Note: Removed block checking during trace - it was causing premature termination
             // The iteration limit (100) and dist checks are sufficient to prevent infinite loops
         }
-        auto forward_trace_end = std::chrono::high_resolution_clock::now();
-        double forward_trace_time = std::chrono::duration<double, std::milli>(forward_trace_end - forward_trace_start).count();
 
         //now the other direction
         loc2 = seg_loc[0];
@@ -396,8 +331,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         last_plane_loc = plane->project(point2);
 
         //FIXME repeat by not copying code ...
-        auto backward_trace_start = std::chrono::high_resolution_clock::now();
-        int backward_points = 0;
         for(int n=0;n<100;n++) {
             //now search following points
             cv::Vec2f loc3 = loc2+loc2-loc;
@@ -406,28 +339,18 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
                 break;
             }
 
-                point3 = at_int(points, loc3);
+            point3 = at_int(points, loc3);
 
-                //search point close to prediction + dist 1 to last point
-                minloc_start = std::chrono::high_resolution_clock::now();
-                dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.1, 0.001);
-                minloc_end = std::chrono::high_resolution_clock::now();
-                minloc_time = std::chrono::duration<double, std::milli>(minloc_end - minloc_start).count();
-                total_minloc_time_ms += minloc_time;
-                minloc_call_count++;
-                float dist1 = dist;
+            //search point close to prediction + dist 1 to last point
+            dist = min_loc(points, loc3, point3, {point,point2,point3}, {2*step,step,0}, plane, 0.1, 0.001);
+            float dist1 = dist;
 
-                //then refine
-                minloc_start = std::chrono::high_resolution_clock::now();
-                dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.1, 0.001);
-                minloc_end = std::chrono::high_resolution_clock::now();
-                minloc_time = std::chrono::duration<double, std::milli>(minloc_end - minloc_start).count();
-                total_minloc_time_ms += minloc_time;
-                minloc_call_count++;
+            //then refine
+            dist = min_loc(points, loc3, point3, {point2}, {step}, plane, 0.1, 0.001);
 
-                if (dist < 0 || dist > 4 || !loc_valid_xy(points, loc)) {
-                    break;
-                }
+            if (dist < 0 || dist > 4 || !loc_valid_xy(points, loc)) {
+                break;
+            }
 
             seg2.push_back(point3);
             seg_loc2.push_back(loc3);
@@ -435,13 +358,10 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             point2 = point3;
             loc = loc2;
             loc2 = loc3;
-            backward_points++;
 
             // Note: Removed block checking during trace - it was causing premature termination
             // The iteration limit (100) and dist checks are sufficient to prevent infinite loops
         }
-        auto backward_trace_end = std::chrono::high_resolution_clock::now();
-        double backward_trace_time = std::chrono::duration<double, std::milli>(backward_trace_end - backward_trace_start).count();
 
         std::reverse(seg2.begin(), seg2.end());
         std::reverse(seg_loc2.begin(), seg_loc2.end());
@@ -453,7 +373,6 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
         seg_vol_raw.push_back(seg2);
         seg_grid_raw.push_back(seg_loc2);
         consecutive_failures = 0;  // Reset on success
-        successful_segments++;
 
         // Generate seed-based samples around this successful segment
         // Sample every few points along the segment and add nearby search points
@@ -481,54 +400,4 @@ void find_intersect_segments(std::vector<std::vector<cv::Vec3f>> &seg_vol, std::
             seg_grid.push_back(seg_grid_raw[s]);
         }
     }
-
-    auto end_time = std::chrono::high_resolution_clock::now();
-    double total_time = std::chrono::duration<double, std::milli>(end_time - start_time).count();
-
-    std::cout << "\n=== find_intersect_segments SUMMARY ===" << std::endl;
-    std::cout << "Total time: " << std::fixed << std::setprecision(2) << total_time << "ms" << std::endl;
-    std::cout << "Successful segments: " << successful_segments << std::endl;
-    std::cout << "Output segments (after filtering): " << seg_vol.size() << std::endl;
-    std::cout << "Consecutive failures at exit: " << consecutive_failures << std::endl;
-    std::cout << "Cumulative failures: " << cumulative_failures << std::endl;
-    std::cout << "Initial point search attempts: " << initial_point_search_attempts << std::endl;
-    std::cout << "\nOPTIMIZATION EFFECTIVENESS:" << std::endl;
-    std::cout << "  Inner loop early exits: " << inner_early_exits << std::endl;
-    std::cout << "  Total ROI misses avoided: " << total_inner_roi_misses << std::endl;
-    std::cout << "  Already visited checks: " << total_inner_already_visited << std::endl;
-    double time_saved_estimate = inner_early_exits * 0.15;  // Rough estimate of 0.15ms per avoided full search
-    std::cout << "  Estimated time saved: ~" << std::fixed << std::setprecision(1)
-              << time_saved_estimate << "ms" << std::endl;
-    std::cout << "\nSMART SAMPLING STRATEGY USAGE:" << std::endl;
-    std::cout << "  Systematic grid samples: " << systematic_samples_used
-              << "/" << systematic_sample_points.size() << std::endl;
-    std::cout << "  Seed-based samples: " << seed_samples_used
-              << "/" << seed_based_samples.size() << std::endl;
-    std::cout << "  Random samples: " << random_samples_used << std::endl;
-    int total_samples = systematic_samples_used + seed_samples_used + random_samples_used;
-    if (total_samples > 0) {
-        std::cout << "  Distribution: "
-                  << (systematic_samples_used * 100.0 / total_samples) << "% systematic, "
-                  << (seed_samples_used * 100.0 / total_samples) << "% seed-based, "
-                  << (random_samples_used * 100.0 / total_samples) << "% random" << std::endl;
-    }
-    std::cout << "\nmin_loc PERFORMANCE:" << std::endl;
-    std::cout << "  Calls: " << minloc_call_count << std::endl;
-    std::cout << "  Total time: " << std::fixed << std::setprecision(2) << total_minloc_time_ms << "ms"
-              << " (" << std::fixed << std::setprecision(1) << (total_minloc_time_ms / total_time * 100) << "% of total)" << std::endl;
-    std::cout << "  Avg time: " << std::fixed << std::setprecision(3)
-              << (minloc_call_count > 0 ? total_minloc_time_ms / minloc_call_count : 0) << "ms" << std::endl;
-
-    // Calculate total points in all segments
-    int total_points = 0;
-    for (const auto& seg : seg_vol) {
-        total_points += seg.size();
-    }
-    std::cout << "\nRESULTS:" << std::endl;
-    std::cout << "  Total points in all segments: " << total_points << std::endl;
-    if (total_points > 0) {
-        std::cout << "  Avg points per segment: " << std::fixed << std::setprecision(1)
-                  << (double)total_points / seg_vol.size() << std::endl;
-    }
-    std::cout << "========================================\n" << std::endl;
 }
