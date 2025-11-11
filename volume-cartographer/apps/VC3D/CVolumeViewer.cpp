@@ -1795,11 +1795,11 @@ void CVolumeViewer::renderIntersections()
                               static_cast<int>(viewRect.width()/_scale),
                               static_cast<int>(viewRect.height()/_scale)};
         // Enlarge the sampled region so nearby intersections outside the viewport still get clipped.
-        constexpr float roiExpansionFactor = 3.0f; // Covers ~3x the viewed area.
+        constexpr float roiExpansionFactor = 1.1f; // Covers ~10% beyond the viewed area.
         const int dominantSpan = std::max(plane_roi.width, plane_roi.height);
         const int dynamicPadding = static_cast<int>(
             std::ceil(std::max(0.0f, (roiExpansionFactor - 1.0f) * 0.5f) * dominantSpan));
-        const int planeRoiPadding = std::max(128, dynamicPadding);
+        const int planeRoiPadding = std::max(16, dynamicPadding);
         plane_roi.x -= planeRoiPadding;
         plane_roi.y -= planeRoiPadding;
         plane_roi.width += planeRoiPadding * 2;
@@ -1813,7 +1813,7 @@ void CVolumeViewer::renderIntersections()
         const cv::Vec3f bboxExtent = view_bbox.high - view_bbox.low;
         const float maxExtent = std::max(std::abs(bboxExtent[0]),
                               std::max(std::abs(bboxExtent[1]), std::abs(bboxExtent[2])));
-        const float viewPadding = std::max(64.0f, maxExtent * 0.25f);
+        const float viewPadding = std::max(8.0f, maxExtent * 0.05f);
         view_bbox.low -= cv::Vec3f(viewPadding, viewPadding, viewPadding);
         view_bbox.high += cv::Vec3f(viewPadding, viewPadding, viewPadding);
 

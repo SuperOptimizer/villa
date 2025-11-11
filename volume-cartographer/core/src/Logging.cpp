@@ -1,28 +1,39 @@
 #include "vc/core/util/Logging.hpp"
 
 #include <memory>
+#include <algorithm>
 
-#include <spdlog/sinks/basic_file_sink.h>
-#include <spdlog/sinks/dist_sink.h>
-#include <spdlog/sinks/stdout_sinks.h>
-
-
-auto DistSink() -> std::shared_ptr<spdlog::sinks::dist_sink_mt>;
-auto DistSink() -> std::shared_ptr<spdlog::sinks::dist_sink_mt>
-{
-    static auto loggers = std::make_shared<spdlog::sinks::dist_sink_mt>();
-    return loggers;
+void MinimalLogger::add_file(const std::filesystem::path& path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (file_.is_open()) {
+        file_.close();
+    }
+    file_.open(path, std::ios::out | std::ios::app);
 }
 
-static auto Init() -> std::shared_ptr<spdlog::sinks::dist_sink_mt>
+auto Logger() -> std::shared_ptr<MinimalLogger>
 {
-    DistSink()->add_sink(std::make_shared<spdlog::sinks::stdout_sink_mt>());
-    return DistSink();
-}
-
-
-auto Logger() -> std::shared_ptr<spdlog::logger>
-{
-    static auto logger = std::make_shared<spdlog::logger>("volcart", Init());
+    static auto logger = std::make_shared<MinimalLogger>("volcart");
     return logger;
+}
+
+void AddLogFile(const std::filesystem::path& path)
+{
+    Logger()->add_file(path);
+}
+
+void SetLogLevel(const std::string& s)
+{
+    std::string lower = s;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+
+    if (lower == "debug") {
+        Logger()->set_level(MinimalLogger::Level::Debug);
+    } else if (lower == "info") {
+        Logger()->set_level(MinimalLogger::Level::Info);
+    } else if (lower == "warn" || lower == "warning") {
+        Logger()->set_level(MinimalLogger::Level::Warn);
+    } else if (lower == "error") {
+        Logger()->set_level(MinimalLogger::Level::Error);
+    }
 }
