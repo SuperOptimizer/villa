@@ -125,6 +125,7 @@ public:
     float pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int max_iters = 1000) override;
     cv::Size size();
     [[nodiscard]] cv::Vec2f scale() const;
+    [[nodiscard]] cv::Vec3f center() const;
 
     void save(const std::string &path, const std::string &uuid, bool force_overwrite = false);
     void save(const std::filesystem::path &path, bool force_overwrite = false);

@@ -1318,6 +1318,36 @@ void SurfacePanelController::applyFiltersInternal()
         }
     }
 
+    std::unordered_set<std::string> treeSurfaceIds;
+    {
+        QTreeWidgetItemIterator it(_ui.treeWidget);
+        while (*it) {
+            const auto qid = (*it)->data(SURFACE_ID_COLUMN, Qt::UserRole).toString();
+            if (!qid.isEmpty()) {
+                treeSurfaceIds.insert(qid.toStdString());
+            }
+            ++it;
+        }
+    }
+
+    auto appendExtraQuadSurfaces = [this, &treeSurfaceIds](std::set<std::string>& intersects) {
+        if (!_surfaces) {
+            return;
+        }
+        for (const auto& name : _surfaces->surfaceNames()) {
+            if (intersects.count(name)) {
+                continue;
+            }
+            if (treeSurfaceIds.count(name)) {
+                continue;
+            }
+            Surface* surf = _surfaces->surface(name);
+            if (surf && dynamic_cast<QuadSurface*>(surf)) {
+                intersects.insert(name);
+            }
+        }
+    };
+
     if (!hasActiveFilters) {
         QTreeWidgetItemIterator it(_ui.treeWidget);
         while (*it) {
@@ -1327,8 +1357,20 @@ void SurfacePanelController::applyFiltersInternal()
 
         std::set<std::string> intersects = {"segmentation"};
         for (const auto& id : _volumePkg->getLoadedSurfaceIDs()) {
-            intersects.insert(id);
+                bool loaded = _volumePkg->isSurfaceLoaded(id);
+                Surface* surfPtr = _surfaces ? _surfaces->surface(id) : nullptr;
+                bool isQuad = surfPtr && dynamic_cast<QuadSurface*>(surfPtr);
+                if (!loaded) {
+                    std::cout << "[SurfacePanelController] skipping " << id << " (not loaded)\n";
+                } else if (!surfPtr) {
+                    std::cout << "[SurfacePanelController] skipping " << id << " (surface pointer missing)\n";
+                } else if (!isQuad) {
+                    std::cout << "[SurfacePanelController] skipping " << id << " (not QuadSurface)\n";
+                } else {
+                    intersects.insert(id);
+                }
         }
+        appendExtraQuadSurfaces(intersects);
 
         if (_viewerManager) {
             _viewerManager->forEachViewer([&intersects](CVolumeViewer* viewer) {
@@ -1464,13 +1506,32 @@ void SurfacePanelController::applyFiltersInternal()
         item->setHidden(!show);
 
         if (show && !currentOnly && surfMeta) {
-            intersects.insert(id);
+            bool loaded = _volumePkg->isSurfaceLoaded(id);
+            Surface* surfPtr = _surfaces ? _surfaces->surface(id) : nullptr;
+            bool isQuad = surfPtr && dynamic_cast<QuadSurface*>(surfPtr);
+            if (!loaded) {
+                std::cout << "[SurfacePanelController] skipping " << id << " (not loaded)\n";
+            } else if (!surfPtr) {
+                std::cout << "[SurfacePanelController] skipping " << id << " (surface pointer missing)\n";
+            } else if (!isQuad) {
+                std::cout << "[SurfacePanelController] skipping " << id << " (not QuadSurface)\n";
+            } else {
+                intersects.insert(id);
+            }
         } else if (!show) {
             filterCounter++;
         }
 
         ++it;
     }
+
+    appendExtraQuadSurfaces(intersects);
+
+    std::cout << "[SurfacePanelController] intersects:";
+    for (const auto& name : intersects) {
+        std::cout << " " << name;
+    }
+    std::cout << std::endl;
 
     if (_viewerManager) {
         _viewerManager->forEachViewer([&intersects](CVolumeViewer* viewer) {

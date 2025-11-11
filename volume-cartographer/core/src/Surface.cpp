@@ -592,6 +592,11 @@ cv::Vec2f QuadSurface::scale() const
     return _scale;
 }
 
+cv::Vec3f QuadSurface::center() const
+{
+    return _center;
+}
+
 cv::Vec3f QuadSurface::normal(const cv::Vec3f &ptr, const cv::Vec3f &offset)
 {
     cv::Vec3f p = internal_loc(offset+_center, ptr, _scale);

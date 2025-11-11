@@ -13,6 +13,7 @@
 #include "CSurfaceCollection.hpp"
 #include "CVolumeViewerView.hpp"
 #include "vc/core/types/Volume.hpp"
+#include "vc/core/util/SurfacePatchIndex.hpp"
 
 class QImage;
 
@@ -264,6 +265,10 @@ protected:
     bool _mirrorCursorToSegmentation{false};
     bool _overlayImageValid{false};
     QImage _overlayImage;
+
+    SurfacePatchIndex _surfacePatchIndex;
+    bool _surfacePatchIndexDirty{true};
+    void rebuildSurfacePatchIndexIfNeeded();
 
 
 };  // class CVolumeViewer

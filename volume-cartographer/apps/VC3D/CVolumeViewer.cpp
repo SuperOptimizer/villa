@@ -789,6 +789,33 @@ void CVolumeViewer::setIntersects(const std::set<std::string> &set)
     renderIntersections();
 }
 
+void CVolumeViewer::rebuildSurfacePatchIndexIfNeeded()
+{
+    if (!_surfacePatchIndexDirty) {
+        return;
+    }
+    _surfacePatchIndexDirty = false;
+
+    if (!_surf_col) {
+        _surfacePatchIndex.clear();
+        return;
+    }
+
+    std::vector<QuadSurface*> surfaces;
+    for (Surface* surf : _surf_col->surfaces()) {
+        if (auto* quad = dynamic_cast<QuadSurface*>(surf)) {
+            surfaces.push_back(quad);
+        }
+    }
+
+    if (surfaces.empty()) {
+        _surfacePatchIndex.clear();
+        return;
+    }
+
+    _surfacePatchIndex.rebuild(surfaces);
+}
+
 void CVolumeViewer::setIntersectionOpacity(float opacity)
 {
     _intersectionOpacity = std::clamp(opacity, 0.0f, 1.0f);
@@ -968,6 +995,8 @@ void CVolumeViewer::fitSurfaceInView()
 
 void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
 {
+    _surfacePatchIndexDirty = true;
+
     if (_surf_name == name) {
         _surf = surf;
         if (!_surf) {
@@ -1556,17 +1585,13 @@ void CVolumeViewer::renderIntersections()
     if (!volume || !volume->zarrDataset() || !_surf)
         return;
     
-    std::vector<std::string> remove;
-    for (auto &pair : _intersect_items)
-        if (!_intersect_tgts.count(pair.first)) {
-            for(auto &item : pair.second) {
-                fScene->removeItem(item);
-                delete item;
-            }
-            remove.push_back(pair.first);
+    for (auto &pair : _intersect_items) {
+        for(auto &item : pair.second) {
+            fScene->removeItem(item);
+            delete item;
         }
-    for(auto key : remove)
-        _intersect_items.erase(key);
+    }
+    _intersect_items.clear();
 
     PlaneSurface *plane = dynamic_cast<PlaneSurface*>(_surf);
 
@@ -1581,43 +1606,59 @@ void CVolumeViewer::renderIntersections()
         view_bbox = expand_rect(view_bbox, plane->coord(cv::Vec3f(0,0,0), {plane_roi.br().x, plane_roi.br().y, 0}));
 
         std::vector<std::string> intersect_cands;
-        std::vector<std::string> intersect_tgts_v;
+        for (const auto& key : _intersect_tgts) {
+            Surface* surfacePtr = _surf_col->surface(key);
+            if (!surfacePtr) {
+                std::cout << "[CVolumeViewer] skip candidate '" << key << "' (surface missing)\n";
+                continue;
+            }
+            auto* segmentation = dynamic_cast<QuadSurface*>(surfacePtr);
+            if (!segmentation) {
+                std::cout << "[CVolumeViewer] skip candidate '" << key << "' (not QuadSurface)\n";
+                continue;
+            }
 
-        for (auto key : _intersect_tgts)
-            intersect_tgts_v.push_back(key);
+            Rect3D bbox = segmentation->bbox();
+            bool overlaps = intersect(view_bbox, bbox);
+            std::cout << "[CVolumeViewer] candidate '" << key << "' overlaps=" << overlaps
+                      << " bbox=[" << bbox.low[0] << "," << bbox.low[1] << "," << bbox.low[2]
+                      << " -> " << bbox.high[0] << "," << bbox.high[1] << "," << bbox.high[2] << "]\n";
 
-#pragma omp parallel for
-        for(int n=0;n<intersect_tgts_v.size();n++) {
-            std::string key = intersect_tgts_v[n];
-            bool haskey;
-#pragma omp critical
-            haskey = _intersect_items.count(key);
-            if (!haskey && dynamic_cast<QuadSurface*>(_surf_col->surface(key))) {
-                QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface(key));
-
-                if (intersect(view_bbox, segmentation->bbox()))
-#pragma omp critical
-                    intersect_cands.push_back(key);
-                else
-#pragma omp critical
-                    _intersect_items[key] = {};
+            if (overlaps) {
+                intersect_cands.push_back(key);
             }
         }
 
         std::vector<std::vector<std::vector<cv::Vec3f>>> intersections(intersect_cands.size());
 
-#pragma omp parallel for
         for(int n=0;n<intersect_cands.size();n++) {
             std::string key = intersect_cands[n];
             QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface(key));
 
-            std::vector<std::vector<cv::Vec2f>> xy_seg_;
-            if (key == "segmentation") {
-                find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_scale, 1000);
+            if (!segmentation) {
+                std::cout << "[CVolumeViewer] candidate '" << key << "' missing QuadSurface during intersection generation\n";
+                continue;
             }
-            else
-                find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, 4/_scale);
 
+            auto attemptSegments = [&](float stepMul, int minTries) {
+                std::vector<std::vector<cv::Vec2f>> xy_seg_;
+                intersections[n].clear();
+                const float step = (4.0f / _scale) * stepMul;
+                find_intersect_segments(intersections[n], xy_seg_, segmentation->rawPoints(), plane, plane_roi, step, minTries);
+                return !intersections[n].empty();
+            };
+
+            const int baseMinTries = (key == "segmentation") ? 1000 : 350;
+            bool success = attemptSegments(1.0f, baseMinTries);
+            if (!success) success = attemptSegments(0.5f, baseMinTries * 2);
+            if (!success) success = attemptSegments(0.25f, baseMinTries * 4);
+            if (!success) success = attemptSegments(0.25f, baseMinTries * 8);
+
+            if (!success) {
+                std::cout << "[CVolumeViewer] candidate '" << key << "' produced no intersections after retries\n";
+            } else {
+                std::cout << "[CVolumeViewer] candidate '" << key << "' lineCount=" << intersections[n].size() << std::endl;
+            }
         }
 
         std::hash<std::string> str_hasher;
@@ -1692,8 +1733,6 @@ void CVolumeViewer::renderIntersections()
         }
     }
     else if (_surf_name == "segmentation" /*&& dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"))*/) {
-        // QuadSurface *crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
-
         //TODO make configurable, for now just show everything!
         std::vector<std::pair<std::string,std::string>> intersects = _surf_col->intersections("segmentation");
         for(auto pair : intersects) {
@@ -1701,34 +1740,18 @@ void CVolumeViewer::renderIntersections()
             if (key == "segmentation")
                 key = pair.second;
             
-            if (_intersect_items.count(key) || !_intersect_tgts.count(key))
+            if (!_intersect_tgts.count(key))
                 continue;
             
-            std::unordered_map<cv::Vec3f,cv::Vec3f,vec3f_hash> location_cache;
-            std::vector<cv::Vec3f> src_locations;
-
-            for (auto seg : _surf_col->intersection(pair.first, pair.second)->lines)
-                for (auto wp : seg)
-                    src_locations.push_back(wp);
-            
-#pragma omp parallel
-            {
-                // SurfacePointer *ptr = crop->pointer();
-                auto ptr = _surf->pointer();
-#pragma omp for
-                for (auto wp : src_locations) {
-                    // float res = crop->pointTo(ptr, wp, 2.0, 100);
-                    // cv::Vec3f p = crop->loc(ptr)*_ds_scale + cv::Vec3f(_vis_center[0],_vis_center[1],0);
-                    float res = _surf->pointTo(ptr, wp, 2.0, 100);
-                    cv::Vec3f p = _surf->loc(ptr)*_scale ;//+ cv::Vec3f(_vis_center[0],_vis_center[1],0);
-                    //FIXME still happening?
-                    if (res >= 2.0)
-                        p = {-1,-1,-1};
-                        // std::cout << "WARNING pointTo() high residual in renderIntersections()" << std::endl;
-#pragma omp critical
-                    location_cache[wp] = p;
-                }
+            QuadSurface* quadSurface = dynamic_cast<QuadSurface*>(_surf);
+            if (!quadSurface) {
+                continue;
             }
+
+            rebuildSurfacePatchIndexIfNeeded();
+            
+            const float intersectionTolerance = 2.0f;
+            auto ptr = quadSurface->pointer();
             
             std::vector<QGraphicsItem*> items;
             for (auto seg : _surf_col->intersection(pair.first, pair.second)->lines) {
@@ -1736,9 +1759,25 @@ void CVolumeViewer::renderIntersections()
                 
                 bool first = true;
                 cv::Vec3f last = {-1,-1,-1};
-                for (auto wp : seg)
-                {
-                    cv::Vec3f p = location_cache[wp];
+                for (auto wp : seg) {
+                    cv::Vec3f p = {-1, -1, -1};
+                    bool rtreeMiss = false;
+
+                    auto lookup = _surfacePatchIndex.locate(wp, intersectionTolerance, quadSurface);
+                    if (lookup && lookup->surface == quadSurface) {
+                        p = quadSurface->loc(lookup->ptr) * _scale;
+                    } else {
+                        rtreeMiss = true;
+                        float res = quadSurface->pointTo(ptr, wp, intersectionTolerance, 100);
+                        if (res < intersectionTolerance) {
+                            p = quadSurface->loc(ptr) * _scale;
+                        }
+                    }
+
+                    if (rtreeMiss) {
+                        std::cout << "[SurfacePatchIndex] R-tree miss for intersection point ("
+                                  << wp[0] << ", " << wp[1] << ", " << wp[2] << ")\n";
+                    }
                     
                     if (p[0] == -1)
                         continue;
