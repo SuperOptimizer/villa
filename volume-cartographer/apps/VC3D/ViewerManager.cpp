@@ -38,6 +38,11 @@ ViewerManager::ViewerManager(CSurfaceCollection* surfaces,
     _volumeWindowLow = std::clamp(storedBaseLow, 0.0f, 255.0f);
     const float minHigh = std::min(_volumeWindowLow + 1.0f, 255.0f);
     _volumeWindowHigh = std::clamp(storedBaseHigh, minHigh, 255.0f);
+
+    const int storedSampling = settings.value("viewer/intersection_sampling_stride", 1).toInt();
+    _surfacePatchSamplingStride = std::max(1, storedSampling);
+    const float storedThickness = settings.value("viewer/intersection_thickness", 0.0f).toFloat();
+    _intersectionThickness = std::max(0.0f, storedThickness);
 }
 
 CVolumeViewer* ViewerManager::createViewer(const std::string& surfaceName,
@@ -101,6 +106,8 @@ CVolumeViewer* ViewerManager::createViewer(const std::string& surfaceName,
     }
 
     viewer->setIntersectionOpacity(_intersectionOpacity);
+    viewer->setIntersectionThickness(_intersectionThickness);
+    viewer->setSurfacePatchSamplingStride(_surfacePatchSamplingStride);
     viewer->setVolumeWindow(_volumeWindowLow, _volumeWindowHigh);
     viewer->setOverlayVolume(_overlayVolume);
     viewer->setOverlayOpacity(_overlayOpacity);
@@ -205,6 +212,33 @@ void ViewerManager::setIntersectionOpacity(float opacity)
     }
 }
 
+void ViewerManager::setIntersectionThickness(float thickness)
+{
+    const float clamped = std::clamp(thickness, 0.0f, 100.0f);
+    if (std::abs(clamped - _intersectionThickness) < 1e-6f) {
+        return;
+    }
+    _intersectionThickness = clamped;
+
+    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+    settings.setValue("viewer/intersection_thickness", _intersectionThickness);
+
+    for (auto* viewer : _viewers) {
+        if (viewer) {
+            viewer->setIntersectionThickness(_intersectionThickness);
+        }
+    }
+}
+
+void ViewerManager::setHighlightedSurfaceIds(const std::vector<std::string>& ids)
+{
+    for (auto* viewer : _viewers) {
+        if (viewer) {
+            viewer->setHighlightedSurfaceIds(ids);
+        }
+    }
+}
+
 void ViewerManager::setOverlayVolume(std::shared_ptr<Volume> volume, const std::string& volumeId)
 {
     _overlayVolume = std::move(volume);
@@ -303,6 +337,24 @@ void ViewerManager::setVolumeWindow(float low, float high)
     }
 
     emit volumeWindowChanged(_volumeWindowLow, _volumeWindowHigh);
+}
+
+void ViewerManager::setSurfacePatchSamplingStride(int stride)
+{
+    stride = std::max(1, stride);
+    if (_surfacePatchSamplingStride == stride) {
+        return;
+    }
+    _surfacePatchSamplingStride = stride;
+
+    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+    settings.setValue("viewer/intersection_sampling_stride", _surfacePatchSamplingStride);
+
+    for (auto* viewer : _viewers) {
+        if (viewer) {
+            viewer->setSurfacePatchSamplingStride(_surfacePatchSamplingStride);
+        }
+    }
 }
 
 bool ViewerManager::resetDefaultFor(CVolumeViewer* viewer) const
