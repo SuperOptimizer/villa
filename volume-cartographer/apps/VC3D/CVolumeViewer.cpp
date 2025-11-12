@@ -1659,8 +1659,9 @@ void CVolumeViewer::renderIntersections()
         }
         const float clipTolerance = std::max(_intersectionThickness, 1e-4f);
 
-        std::vector<std::string> intersect_cands;
-        intersect_cands.reserve(_intersect_tgts.size());
+        using IntersectionCandidate = std::pair<std::string, QuadSurface*>;
+        std::vector<IntersectionCandidate> intersectCandidates;
+        intersectCandidates.reserve(_intersect_tgts.size());
         for (const auto& key : _intersect_tgts) {
             Surface* surfacePtr = _surf_col->surface(key);
             if (!surfacePtr) {
@@ -1673,24 +1674,40 @@ void CVolumeViewer::renderIntersections()
                 continue;
             }
 
-            intersect_cands.push_back(key);
+            intersectCandidates.emplace_back(key, segmentation);
         }
 
-        std::hash<std::string> str_hasher;
+        std::vector<SurfacePatchIndex::TriangleCandidate> triangleCandidates;
+        patchIndex->queryTriangles(view_bbox, nullptr, triangleCandidates);
+
+        std::unordered_map<QuadSurface*, std::vector<size_t>> trianglesBySurface;
+        trianglesBySurface.reserve(intersectCandidates.size());
+        for (size_t idx = 0; idx < triangleCandidates.size(); ++idx) {
+            auto* surface = triangleCandidates[idx].surface;
+            if (!surface) {
+                continue;
+            }
+            trianglesBySurface[surface].push_back(idx);
+        }
+
         size_t colorIndex = 0;
-        for (const auto& key : intersect_cands) {
-            QuadSurface *segmentation = dynamic_cast<QuadSurface*>(_surf_col->surface(key));
-            if (!segmentation) {
+        for (const auto& candidate : intersectCandidates) {
+            const auto& key = candidate.first;
+            QuadSurface* segmentation = candidate.second;
+
+            const auto trianglesIt = trianglesBySurface.find(segmentation);
+            if (trianglesIt == trianglesBySurface.end()) {
+                removeItemsForKey(key);
                 continue;
             }
 
-            std::vector<SurfacePatchIndex::TriangleCandidate> triangleCandidates;
-            patchIndex->queryTriangles(view_bbox, segmentation, triangleCandidates);
+            const auto& candidateIndices = trianglesIt->second;
 
             std::vector<IntersectionLine> intersectionLines;
-            intersectionLines.reserve(triangleCandidates.size());
-            for (const auto& candidate : triangleCandidates) {
-                auto segment = SurfacePatchIndex::clipTriangleToPlane(candidate, *plane, clipTolerance);
+            intersectionLines.reserve(candidateIndices.size());
+            for (size_t candidateIndex : candidateIndices) {
+                const auto& triCandidate = triangleCandidates[candidateIndex];
+                auto segment = SurfacePatchIndex::clipTriangleToPlane(triCandidate, *plane, clipTolerance);
                 if (!segment) {
                     continue;
                 }
@@ -1705,14 +1722,7 @@ void CVolumeViewer::renderIntersections()
                 intersectionLines.push_back(std::move(line));
             }
 
-            size_t seed = str_hasher(key);
-            srand(seed);
-
-            int prim = rand() % 3;
-            cv::Vec3i cvcol = {100 + rand() % 255, 100 + rand() % 255, 100 + rand() % 255};
-            cvcol[prim] = 200 + rand() % 55;
-
-            QColor col(cvcol[0],cvcol[1],cvcol[2]);
+            QColor col;
             float width = 3;
             int z_value = 5;
 
