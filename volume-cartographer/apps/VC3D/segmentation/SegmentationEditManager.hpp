@@ -92,7 +92,9 @@ public:
 
     [[nodiscard]] bool hasPendingChanges() const { return _dirty; }
     [[nodiscard]] const cv::Mat_<cv::Vec3f>& previewPoints() const;
-    bool setPreviewPoints(const cv::Mat_<cv::Vec3f>& points, bool dirtyState);
+    bool setPreviewPoints(const cv::Mat_<cv::Vec3f>& points,
+                          bool dirtyState,
+                          std::optional<cv::Rect>* outDiffBounds = nullptr);
 
     void resetPreview();
     void applyPreview();

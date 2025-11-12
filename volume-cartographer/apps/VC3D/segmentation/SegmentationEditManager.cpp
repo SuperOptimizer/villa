@@ -131,13 +131,50 @@ const cv::Mat_<cv::Vec3f>& SegmentationEditManager::previewPoints() const
     return kEmpty;
 }
 
-bool SegmentationEditManager::setPreviewPoints(const cv::Mat_<cv::Vec3f>& points, bool dirtyState)
+bool SegmentationEditManager::setPreviewPoints(const cv::Mat_<cv::Vec3f>& points,
+                                               bool dirtyState,
+                                               std::optional<cv::Rect>* outDiffBounds)
 {
+    if (outDiffBounds) {
+        outDiffBounds->reset();
+    }
     if (!_previewPoints) {
         return false;
     }
     if (points.rows != _previewPoints->rows || points.cols != _previewPoints->cols) {
         return false;
+    }
+
+    bool diffFound = false;
+    int minRow = points.rows;
+    int maxRow = -1;
+    int minCol = points.cols;
+    int maxCol = -1;
+
+    const int rows = points.rows;
+    const int cols = points.cols;
+    for (int r = 0; r < rows; ++r) {
+        const cv::Vec3f* srcRow = points.ptr<cv::Vec3f>(r);
+        const cv::Vec3f* dstRow = _previewPoints->ptr<cv::Vec3f>(r);
+        for (int c = 0; c < cols; ++c) {
+            const cv::Vec3f& next = srcRow[c];
+            const cv::Vec3f& current = dstRow[c];
+            if (next[0] == current[0] &&
+                next[1] == current[1] &&
+                next[2] == current[2]) {
+                continue;
+            }
+            if (!diffFound) {
+                diffFound = true;
+                minRow = maxRow = r;
+                minCol = maxCol = c;
+            } else {
+                minRow = std::min(minRow, r);
+                maxRow = std::max(maxRow, r);
+                minCol = std::min(minCol, c);
+                maxCol = std::max(maxCol, c);
+            }
+        }
     }
 
     points.copyTo(*_previewPoints);
@@ -147,6 +184,18 @@ bool SegmentationEditManager::setPreviewPoints(const cv::Mat_<cv::Vec3f>& points
     _editedVertices.clear();
     _dirty = dirtyState;
     _editedBounds.reset();
+
+    if (outDiffBounds) {
+        if (diffFound) {
+            *outDiffBounds = cv::Rect(minCol,
+                                      minRow,
+                                      maxCol - minCol + 1,
+                                      maxRow - minRow + 1);
+        } else {
+            outDiffBounds->reset();
+        }
+    }
+
     return true;
 }
 
