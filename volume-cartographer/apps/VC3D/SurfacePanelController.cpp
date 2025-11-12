@@ -138,6 +138,9 @@ void SurfacePanelController::loadSurfaces(bool reload)
     if (_filtersUpdated) {
         _filtersUpdated();
     }
+    if (_viewerManager) {
+        _viewerManager->primeSurfacePatchIndicesAsync();
+    }
     emit surfacesLoaded();
 }
 
@@ -226,6 +229,9 @@ void SurfacePanelController::loadSurfacesIncremental()
     logSurfaceLoadSummary();
     if (_filtersUpdated) {
         _filtersUpdated();
+    }
+    if (_viewerManager) {
+        _viewerManager->primeSurfacePatchIndicesAsync();
     }
     emit surfacesLoaded();
     std::cout << "Incremental surface load completed." << std::endl;

@@ -357,6 +357,26 @@ void ViewerManager::setSurfacePatchSamplingStride(int stride)
     }
 }
 
+void ViewerManager::primeSurfacePatchIndicesAsync()
+{
+    if (!_surfaces) {
+        return;
+    }
+    auto allSurfaces = _surfaces->surfaces();
+    std::vector<QuadSurface*> quadSurfaces;
+    quadSurfaces.reserve(allSurfaces.size());
+    for (Surface* surface : allSurfaces) {
+        if (auto* quad = dynamic_cast<QuadSurface*>(surface)) {
+            quadSurfaces.push_back(quad);
+        }
+    }
+    for (auto* viewer : _viewers) {
+        if (viewer) {
+            viewer->primeSurfacePatchIndexAsync(quadSurfaces);
+        }
+    }
+}
+
 bool ViewerManager::resetDefaultFor(CVolumeViewer* viewer) const
 {
     auto it = _resetDefaults.find(viewer);

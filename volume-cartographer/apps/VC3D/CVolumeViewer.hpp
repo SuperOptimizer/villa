@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtWidgets>
+#include <QFutureWatcher>
 
 #include <memory>
 #include <set>
@@ -39,6 +40,7 @@ public:
     void invalidateIntersect(const std::string &name = "");
     
     void setIntersects(const std::set<std::string> &set);
+    void primeSurfacePatchIndexAsync(const std::vector<QuadSurface*>& surfaces);
     std::string surfName() const { return _surf_name; };
     void recalcScales();
     
@@ -281,7 +283,11 @@ protected:
     bool _surfacePatchIndexDirty{true};
     int _surfacePatchSamplingStride{1};
     std::unordered_map<const QuadSurface*, int> _surfaceDirtyBoundsVersions;
+    std::unordered_set<QuadSurface*> _indexedSurfaces;
+    std::vector<QuadSurface*> _pendingSurfacePatchIndexSurfaces;
+    QFutureWatcher<std::shared_ptr<SurfacePatchIndex>>* _surfacePatchIndexWatcher{nullptr};
     void rebuildSurfacePatchIndexIfNeeded();
+    void handleSurfacePatchIndexPrimeFinished();
 
 
 };  // class CVolumeViewer

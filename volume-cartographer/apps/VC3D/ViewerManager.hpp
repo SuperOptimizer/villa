@@ -73,6 +73,7 @@ public:
 
     void setSurfacePatchSamplingStride(int stride);
     int surfacePatchSamplingStride() const { return _surfacePatchSamplingStride; }
+    void primeSurfacePatchIndicesAsync();
 
     bool resetDefaultFor(CVolumeViewer* viewer) const;
     void setResetDefaultFor(CVolumeViewer* viewer, bool value);
