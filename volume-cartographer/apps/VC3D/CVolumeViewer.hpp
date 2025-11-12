@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QtWidgets>
-#include <QFutureWatcher>
 
 #include <memory>
 #include <set>
@@ -18,6 +17,7 @@
 #include "vc/core/util/SurfacePatchIndex.hpp"
 
 class QImage;
+class ViewerManager;
 
 
 class CVolumeViewer : public QWidget
@@ -25,7 +25,7 @@ class CVolumeViewer : public QWidget
     Q_OBJECT
 
 public:
-    CVolumeViewer(CSurfaceCollection *col, QWidget* parent = 0);
+    CVolumeViewer(CSurfaceCollection *col, ViewerManager* manager, QWidget* parent = 0);
     ~CVolumeViewer(void);
 
     void setCache(ChunkCache *cache);
@@ -40,7 +40,6 @@ public:
     void invalidateIntersect(const std::string &name = "");
     
     void setIntersects(const std::set<std::string> &set);
-    void primeSurfacePatchIndexAsync(const std::vector<QuadSurface*>& surfaces);
     std::string surfName() const { return _surf_name; };
     void recalcScales();
     
@@ -229,6 +228,7 @@ protected:
     cv::Vec3f _lastPlaneOrigin = {0.0f, 0.0f, 0.0f};
     
     CSurfaceCollection *_surf_col = nullptr;
+    ViewerManager* _viewerManager = nullptr;
     
     VCCollection* _point_collection = nullptr;
 
@@ -279,15 +279,5 @@ protected:
     bool _overlayImageValid{false};
     QImage _overlayImage;
 
-    SurfacePatchIndex _surfacePatchIndex;
-    bool _surfacePatchIndexDirty{true};
     int _surfacePatchSamplingStride{1};
-    std::unordered_map<const QuadSurface*, int> _surfaceDirtyBoundsVersions;
-    std::unordered_set<QuadSurface*> _indexedSurfaces;
-    std::vector<QuadSurface*> _pendingSurfacePatchIndexSurfaces;
-    QFutureWatcher<std::shared_ptr<SurfacePatchIndex>>* _surfacePatchIndexWatcher{nullptr};
-    void rebuildSurfacePatchIndexIfNeeded();
-    void handleSurfacePatchIndexPrimeFinished();
-
-
 };  // class CVolumeViewer

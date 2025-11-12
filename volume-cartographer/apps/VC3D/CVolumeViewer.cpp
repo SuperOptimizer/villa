@@ -3,10 +3,10 @@
 
 #include "VolumeViewerCmaps.hpp"
 #include "VCSettings.hpp"
+#include "ViewerManager.hpp"
 
 #include <QGraphicsView>
 #include <QGraphicsScene>
-#include <QtConcurrent/QtConcurrent>
 
 #include "CVolumeViewerView.hpp"
 #include "CSurfaceCollection.hpp"
@@ -28,7 +28,6 @@
 #include <list>
 #include <mutex>
 #include <optional>
-#include <nlohmann/json.hpp>
 #include <cstdlib>
 #include <unordered_map>
 #include <unordered_set>
@@ -66,18 +65,6 @@ constexpr float kScaleQuantization = 1000.0f;
 constexpr float kZOffsetQuantization = 1000.0f;
 constexpr float kDsScaleQuantization = 1000.0f;
 
-struct CellRegion {
-    int rowStart = 0;
-   int rowEnd = 0;
-   int colStart = 0;
-   int colEnd = 0;
-};
-
-struct DirtyBoundsInfo {
-    cv::Rect rect;
-    int version = 0;
-};
-
 inline int quantizeFloat(float value, float multiplier)
 {
     return static_cast<int>(std::lround(value * multiplier));
@@ -94,68 +81,6 @@ inline bool planeIdForSurface(const std::string& name, uint8_t& outId)
         return true;
     }
     return false;
-}
-
-std::optional<DirtyBoundsInfo> readDirtyBounds(QuadSurface* surface)
-{
-    if (!surface || !surface->meta || !surface->meta->is_object()) {
-        return std::nullopt;
-    }
-
-    nlohmann::json& meta = *surface->meta;
-    auto it = meta.find("dirty_bounds");
-    if (it == meta.end() || !it->is_object()) {
-        return std::nullopt;
-    }
-
-    const int rowStart = it->value("row_start", -1);
-    const int rowEnd = it->value("row_end", -1);
-    const int colStart = it->value("col_start", -1);
-    const int colEnd = it->value("col_end", -1);
-
-    if (rowStart < 0 || colStart < 0 || rowEnd <= rowStart || colEnd <= colStart) {
-        return std::nullopt;
-    }
-
-    int version = it->value("version", 0);
-    if (version <= 0) {
-        auto versionIt = meta.find("dirty_bounds_version");
-        if (versionIt != meta.end() && versionIt->is_number_integer()) {
-            version = versionIt->get<int>();
-        }
-    }
-
-    DirtyBoundsInfo info;
-    info.rect = cv::Rect(colStart, rowStart, colEnd - colStart, rowEnd - rowStart);
-    info.version = std::max(version, 1);
-    return info;
-}
-
-std::optional<CellRegion> vertexRectToCellRegion(const cv::Rect& vertexRect,
-                                                 QuadSurface* surface)
-{
-    if (!surface) {
-        return std::nullopt;
-    }
-    const cv::Mat_<cv::Vec3f>* points = surface->rawPointsPtr();
-    if (!points || points->rows < 2 || points->cols < 2) {
-        return std::nullopt;
-    }
-
-    const int cellRowCount = points->rows - 1;
-    const int cellColCount = points->cols - 1;
-
-    CellRegion region;
-    region.rowStart = std::max(0, vertexRect.y - 1);
-    region.rowEnd = std::min(cellRowCount, vertexRect.y + vertexRect.height);
-    region.colStart = std::max(0, vertexRect.x - 1);
-    region.colEnd = std::min(cellColCount, vertexRect.x + vertexRect.width);
-
-    if (region.rowStart >= region.rowEnd || region.colStart >= region.colEnd) {
-        return std::nullopt;
-    }
-
-    return region;
 }
 
 struct AxisAlignedSliceCacheKey
@@ -362,11 +287,12 @@ static cv::Mat_<cv::Vec3f> clean_surface_outliers(const cv::Mat_<cv::Vec3f>& poi
 }
 
 
-CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, QWidget* parent)
+CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, ViewerManager* manager, QWidget* parent)
     : QWidget(parent)
     , fGraphicsView(nullptr)
     , fBaseImageItem(nullptr)
     , _surf_col(col)
+    , _viewerManager(manager)
     , _highlighted_point_id(0)
     , _selected_point_id(0)
     , _dragged_point_id(0)
@@ -421,20 +347,11 @@ CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, QWidget* parent)
     _lbl = new QLabel(this);
     _lbl->setStyleSheet("QLabel { color : white; }");
     _lbl->move(10,5);
-    _surfacePatchIndexWatcher = new QFutureWatcher<std::shared_ptr<SurfacePatchIndex>>(this);
-    connect(_surfacePatchIndexWatcher,
-            &QFutureWatcher<std::shared_ptr<SurfacePatchIndex>>::finished,
-            this,
-            &CVolumeViewer::handleSurfacePatchIndexPrimeFinished);
 }
 
 // Destructor
 CVolumeViewer::~CVolumeViewer(void)
 {
-    if (_surfacePatchIndexWatcher) {
-        _surfacePatchIndexWatcher->cancel();
-        _surfacePatchIndexWatcher->waitForFinished();
-    }
     delete fGraphicsView;
     delete fScene;
 }
@@ -882,81 +799,6 @@ void CVolumeViewer::setIntersects(const std::set<std::string> &set)
     renderIntersections();
 }
 
-void CVolumeViewer::primeSurfacePatchIndexAsync(const std::vector<QuadSurface*>& surfaces)
-{
-    if (!_surfacePatchIndexWatcher) {
-        return;
-    }
-    if (_surfacePatchIndexWatcher->isRunning()) {
-        _surfacePatchIndexWatcher->waitForFinished();
-    }
-
-    _pendingSurfacePatchIndexSurfaces.assign(surfaces.begin(), surfaces.end());
-    if (_pendingSurfacePatchIndexSurfaces.empty()) {
-        _surfacePatchIndex.clear();
-        _indexedSurfaces.clear();
-        _surfacePatchIndexDirty = false;
-        return;
-    }
-
-    auto surfacesForTask = _pendingSurfacePatchIndexSurfaces;
-    auto future = QtConcurrent::run([surfacesForTask]() mutable -> std::shared_ptr<SurfacePatchIndex> {
-        auto index = std::make_shared<SurfacePatchIndex>();
-        index->rebuild(surfacesForTask);
-        return index;
-    });
-    _surfacePatchIndexWatcher->setFuture(future);
-}
-
-void CVolumeViewer::handleSurfacePatchIndexPrimeFinished()
-{
-    if (!_surfacePatchIndexWatcher) {
-        return;
-    }
-    auto result = _surfacePatchIndexWatcher->future().result();
-    if (!result) {
-        _pendingSurfacePatchIndexSurfaces.clear();
-        return;
-    }
-    _surfacePatchIndex = std::move(*result);
-    _surfacePatchIndexDirty = false;
-    _indexedSurfaces.clear();
-    _indexedSurfaces.insert(_pendingSurfacePatchIndexSurfaces.begin(),
-                            _pendingSurfacePatchIndexSurfaces.end());
-    _pendingSurfacePatchIndexSurfaces.clear();
-}
-
-void CVolumeViewer::rebuildSurfacePatchIndexIfNeeded()
-{
-    if (!_surfacePatchIndexDirty) {
-        return;
-    }
-    _surfacePatchIndexDirty = false;
-
-    if (!_surf_col) {
-        _surfacePatchIndex.clear();
-        _indexedSurfaces.clear();
-        return;
-    }
-
-    std::vector<QuadSurface*> surfaces;
-    for (Surface* surf : _surf_col->surfaces()) {
-        if (auto* quad = dynamic_cast<QuadSurface*>(surf)) {
-            surfaces.push_back(quad);
-        }
-    }
-
-    if (surfaces.empty()) {
-        _surfacePatchIndex.clear();
-        _indexedSurfaces.clear();
-        return;
-    }
-
-    _surfacePatchIndex.rebuild(surfaces);
-    _indexedSurfaces.clear();
-    _indexedSurfaces.insert(surfaces.begin(), surfaces.end());
-}
-
 void CVolumeViewer::setIntersectionOpacity(float opacity)
 {
     _intersectionOpacity = std::clamp(opacity, 0.0f, 1.0f);
@@ -996,10 +838,7 @@ void CVolumeViewer::setSurfacePatchSamplingStride(int stride)
         return;
     }
     _surfacePatchSamplingStride = stride;
-    if (_surfacePatchIndex.setSamplingStride(stride)) {
-        _surfacePatchIndexDirty = true;
-        _indexedSurfaces.clear();
-    }
+    renderIntersections();
 }
 
 void CVolumeViewer::setOverlayVolume(std::shared_ptr<Volume> volume)
@@ -1169,95 +1008,6 @@ void CVolumeViewer::fitSurfaceInView()
 
 void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
 {
-    bool affectsSurfaceIndex = false;
-    bool regionUpdated = false;
-    bool indexUpdated = false;
-
-    if (auto* quad = dynamic_cast<QuadSurface*>(surf)) {
-        affectsSurfaceIndex = true;
-        std::optional<cv::Rect> dirtyVertices;
-        bool dirtyBoundsRegressed = false;
-        const bool alreadyIndexed = _indexedSurfaces.count(quad) != 0;
-        if (auto dirtyInfo = readDirtyBounds(quad)) {
-            int lastVersion = 0;
-            auto it = _surfaceDirtyBoundsVersions.find(quad);
-            if (it != _surfaceDirtyBoundsVersions.end()) {
-                lastVersion = it->second;
-            }
-            if (dirtyInfo->version > lastVersion) {
-                dirtyVertices = dirtyInfo->rect;
-            } else if (dirtyInfo->version < lastVersion) {
-                dirtyBoundsRegressed = true;
-            }
-            _surfaceDirtyBoundsVersions[quad] = dirtyInfo->version;
-        } else {
-            _surfaceDirtyBoundsVersions.erase(quad);
-        }
-
-        bool skippedDueToExistingIndex = false;
-        if (!_surfacePatchIndexDirty) {
-            if (dirtyVertices) {
-                if (auto cellRegion = vertexRectToCellRegion(*dirtyVertices, quad)) {
-                    regionUpdated = _surfacePatchIndex.updateSurfaceRegion(
-                        quad,
-                        cellRegion->rowStart,
-                        cellRegion->rowEnd,
-                        cellRegion->colStart,
-                        cellRegion->colEnd);
-                }
-            }
-            if (!regionUpdated && (!alreadyIndexed || dirtyBoundsRegressed)) {
-                indexUpdated = _surfacePatchIndex.updateSurface(quad);
-            } else if (!regionUpdated && alreadyIndexed && !dirtyBoundsRegressed) {
-                skippedDueToExistingIndex = true;
-            }
-        }
-        if (dirtyBoundsRegressed) {
-            _surfacePatchIndexDirty = true;
-            _indexedSurfaces.erase(quad);
-        }
-        if (skippedDueToExistingIndex) {
-            regionUpdated = true;
-        }
-        if (regionUpdated || indexUpdated) {
-            _indexedSurfaces.insert(quad);
-        }
-    } else if (!surf) {
-        affectsSurfaceIndex = true;
-        if (_surf_col) {
-            std::unordered_set<const QuadSurface*> liveSurfaces;
-            auto surfaces = _surf_col->surfaces();
-            liveSurfaces.reserve(surfaces.size());
-            for (Surface* candidate : surfaces) {
-                if (auto* quadSurface = dynamic_cast<QuadSurface*>(candidate)) {
-                    liveSurfaces.insert(quadSurface);
-                }
-            }
-            for (auto it = _surfaceDirtyBoundsVersions.begin();
-                 it != _surfaceDirtyBoundsVersions.end();) {
-                if (!liveSurfaces.count(it->first)) {
-                    it = _surfaceDirtyBoundsVersions.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-            for (auto it = _indexedSurfaces.begin(); it != _indexedSurfaces.end();) {
-                if (!liveSurfaces.count(*it)) {
-                    it = _indexedSurfaces.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-        } else {
-            _surfaceDirtyBoundsVersions.clear();
-            _indexedSurfaces.clear();
-        }
-    }
-
-    if (affectsSurfaceIndex) {
-        _surfacePatchIndexDirty = _surfacePatchIndexDirty || !(regionUpdated || indexUpdated);
-    }
-
     if (_surf_name == name) {
         _surf = surf;
         if (!_surf) {
@@ -1901,7 +1651,12 @@ void CVolumeViewer::renderIntersections()
         view_bbox.low -= cv::Vec3f(viewPadding, viewPadding, viewPadding);
         view_bbox.high += cv::Vec3f(viewPadding, viewPadding, viewPadding);
 
-        rebuildSurfacePatchIndexIfNeeded();
+        const SurfacePatchIndex* patchIndex =
+            _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
+        if (!patchIndex) {
+            clearAllIntersectionItems();
+            return;
+        }
         const float clipTolerance = std::max(_intersectionThickness, 1e-4f);
 
         std::vector<std::string> intersect_cands;
@@ -1930,7 +1685,7 @@ void CVolumeViewer::renderIntersections()
             }
 
             std::vector<SurfacePatchIndex::TriangleCandidate> triangleCandidates;
-            _surfacePatchIndex.queryTriangles(view_bbox, segmentation, triangleCandidates);
+            patchIndex->queryTriangles(view_bbox, segmentation, triangleCandidates);
 
             std::vector<IntersectionLine> intersectionLines;
             intersectionLines.reserve(triangleCandidates.size());
