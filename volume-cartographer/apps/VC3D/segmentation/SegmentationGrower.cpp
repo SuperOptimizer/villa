@@ -19,7 +19,9 @@
 #include <QLoggingCategory>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
+#include <limits>
 #include <utility>
 #include <cstdint>
 
@@ -76,6 +78,237 @@ void ensureSurfaceMetaObject(QuadSurface* surface)
     }
 
     surface->meta = new nlohmann::json(nlohmann::json::object());
+}
+
+bool isInvalidPoint(const cv::Vec3f& value)
+{
+    return !std::isfinite(value[0]) || !std::isfinite(value[1]) || !std::isfinite(value[2]) ||
+           (value[0] == -1.0f && value[1] == -1.0f && value[2] == -1.0f);
+}
+
+std::optional<std::pair<int, int>> worldToGridIndexApprox(QuadSurface* surface,
+                                                          const cv::Vec3f& worldPos,
+                                                          cv::Vec3f& pointerSeed,
+                                                          bool& pointerSeedValid)
+{
+    if (!surface) {
+        return std::nullopt;
+    }
+
+    const cv::Mat_<cv::Vec3f>* points = surface->rawPointsPtr();
+    if (!points || points->empty()) {
+        return std::nullopt;
+    }
+
+    if (!pointerSeedValid) {
+        pointerSeed = surface->pointer();
+        pointerSeedValid = true;
+    }
+
+    surface->pointTo(pointerSeed, worldPos, std::numeric_limits<float>::max(), 400);
+    cv::Vec3f raw = surface->loc_raw(pointerSeed);
+
+    const int rows = points->rows;
+    const int cols = points->cols;
+    if (rows <= 0 || cols <= 0) {
+        return std::nullopt;
+    }
+
+    int approxCol = static_cast<int>(std::lround(raw[0]));
+    int approxRow = static_cast<int>(std::lround(raw[1]));
+    approxRow = std::clamp(approxRow, 0, rows - 1);
+    approxCol = std::clamp(approxCol, 0, cols - 1);
+
+    if (isInvalidPoint((*points)(approxRow, approxCol))) {
+        constexpr int kMaxRadius = 12;
+        float bestDistSq = std::numeric_limits<float>::max();
+        int bestRow = -1;
+        int bestCol = -1;
+
+        auto accumulateCandidate = [&](int r, int c) {
+            const cv::Vec3f& candidate = (*points)(r, c);
+            if (isInvalidPoint(candidate)) {
+                return;
+            }
+            const cv::Vec3f diff = candidate - worldPos;
+            const float distSq = diff.dot(diff);
+            if (distSq < bestDistSq) {
+                bestDistSq = distSq;
+                bestRow = r;
+                bestCol = c;
+            }
+        };
+
+        for (int radius = 1; radius <= kMaxRadius; ++radius) {
+            const int rowStart = std::max(0, approxRow - radius);
+            const int rowEnd = std::min(rows - 1, approxRow + radius);
+            const int colStart = std::max(0, approxCol - radius);
+            const int colEnd = std::min(cols - 1, approxCol + radius);
+            for (int r = rowStart; r <= rowEnd; ++r) {
+                for (int c = colStart; c <= colEnd; ++c) {
+                    accumulateCandidate(r, c);
+                }
+            }
+            if (bestRow != -1) {
+                approxRow = bestRow;
+                approxCol = bestCol;
+                break;
+            }
+        }
+
+        if (bestRow == -1) {
+            return std::nullopt;
+        }
+    }
+
+    return std::make_pair(approxRow, approxCol);
+}
+
+std::optional<cv::Rect> computeCorrectionsDirtyBounds(QuadSurface* surface,
+                                                      const SegmentationCorrectionsPayload& corrections)
+{
+    if (!surface || corrections.empty()) {
+        return std::nullopt;
+    }
+
+    const cv::Mat_<cv::Vec3f>* points = surface->rawPointsPtr();
+    if (!points || points->empty()) {
+        return std::nullopt;
+    }
+
+    cv::Vec3f pointerSeed{0.0f, 0.0f, 0.0f};
+    bool pointerSeedValid = false;
+
+    const int rows = points->rows;
+    const int cols = points->cols;
+
+    int overallMinRow = rows;
+    int overallMaxRow = -1;
+    int overallMinCol = cols;
+    int overallMaxCol = -1;
+
+    bool haveCollectionRect = false;
+    int unionRowStart = rows;
+    int unionRowEnd = 0;
+    int unionColStart = cols;
+    int unionColEnd = 0;
+
+    constexpr float kCollectionRadiusPadding = 8.0f;
+    constexpr int kFallbackPadding = 16;
+
+    for (const auto& collection : corrections.collections) {
+        if (collection.points.empty()) {
+            continue;
+        }
+
+        std::vector<cv::Point2f> gridPoints;
+        gridPoints.reserve(collection.points.size());
+
+        for (const auto& colPoint : collection.points) {
+            auto gridIndex = worldToGridIndexApprox(surface, colPoint.p, pointerSeed, pointerSeedValid);
+            if (!gridIndex) {
+                continue;
+            }
+            const auto [row, col] = *gridIndex;
+            overallMinRow = std::min(overallMinRow, row);
+            overallMaxRow = std::max(overallMaxRow, row);
+            overallMinCol = std::min(overallMinCol, col);
+            overallMaxCol = std::max(overallMaxCol, col);
+            gridPoints.emplace_back(static_cast<float>(col), static_cast<float>(row));
+        }
+
+        if (gridPoints.empty()) {
+            continue;
+        }
+
+        cv::Point2f center(0.0f, 0.0f);
+        for (const auto& pt : gridPoints) {
+            center += pt;
+        }
+        center *= (1.0f / static_cast<float>(gridPoints.size()));
+
+        float maxDist = 0.0f;
+        for (const auto& pt : gridPoints) {
+            const float dx = pt.x - center.x;
+            const float dy = pt.y - center.y;
+            maxDist = std::max(maxDist, std::sqrt(dx * dx + dy * dy));
+        }
+
+        const float paddedRadius = std::max(0.0f, maxDist) + kCollectionRadiusPadding;
+        const int rowStart = std::max(0, static_cast<int>(std::floor(center.y - paddedRadius)));
+        const int rowEndExclusive = std::min(rows, static_cast<int>(std::ceil(center.y + paddedRadius)));
+        const int colStart = std::max(0, static_cast<int>(std::floor(center.x - paddedRadius)));
+        const int colEndExclusive = std::min(cols, static_cast<int>(std::ceil(center.x + paddedRadius)));
+
+        if (rowStart < rowEndExclusive && colStart < colEndExclusive) {
+            haveCollectionRect = true;
+            unionRowStart = std::min(unionRowStart, rowStart);
+            unionRowEnd = std::max(unionRowEnd, rowEndExclusive);
+            unionColStart = std::min(unionColStart, colStart);
+            unionColEnd = std::max(unionColEnd, colEndExclusive);
+        }
+    }
+
+    int finalRowStart = rows;
+    int finalRowEnd = 0;
+    int finalColStart = cols;
+    int finalColEnd = 0;
+
+    if (haveCollectionRect) {
+        finalRowStart = unionRowStart;
+        finalRowEnd = unionRowEnd;
+        finalColStart = unionColStart;
+        finalColEnd = unionColEnd;
+    } else if (overallMaxRow >= 0 && overallMaxCol >= 0) {
+        finalRowStart = std::max(0, overallMinRow - kFallbackPadding);
+        finalRowEnd = std::min(rows, overallMaxRow + kFallbackPadding + 1);
+        finalColStart = std::max(0, overallMinCol - kFallbackPadding);
+        finalColEnd = std::min(cols, overallMaxCol + kFallbackPadding + 1);
+    } else {
+        return std::nullopt;
+    }
+
+    const int width = std::max(0, finalColEnd - finalColStart);
+    const int height = std::max(0, finalRowEnd - finalRowStart);
+    if (width == 0 || height == 0) {
+        return std::nullopt;
+    }
+
+    return cv::Rect(finalColStart, finalRowStart, width, height);
+}
+
+void applyDirtyBoundsToSurface(QuadSurface* surface, const cv::Rect& vertexRect)
+{
+    if (!surface || vertexRect.width <= 0 || vertexRect.height <= 0) {
+        return;
+    }
+
+    ensureSurfaceMetaObject(surface);
+    nlohmann::json& meta = *surface->meta;
+
+    int version = 0;
+    if (meta.contains("dirty_bounds_version") && meta["dirty_bounds_version"].is_number_integer()) {
+        version = meta["dirty_bounds_version"].get<int>();
+    } else if (meta.contains("dirty_bounds")) {
+        const auto& boundsObj = meta["dirty_bounds"];
+        if (boundsObj.contains("version") && boundsObj["version"].is_number_integer()) {
+            version = boundsObj["version"].get<int>();
+        }
+    }
+    if (version == std::numeric_limits<int>::max()) {
+        version = 0;
+    }
+    ++version;
+
+    meta["dirty_bounds_version"] = version;
+    nlohmann::json bounds = {
+        {"row_start", vertexRect.y},
+        {"row_end", vertexRect.y + vertexRect.height},
+        {"col_start", vertexRect.x},
+        {"col_end", vertexRect.x + vertexRect.width},
+        {"version", version}
+    };
+    meta["dirty_bounds"] = std::move(bounds);
 }
 
 void synchronizeSurfaceMeta(const std::shared_ptr<VolumePkg>& pkg,
@@ -295,6 +528,20 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
         }
     }
 
+    std::optional<cv::Rect> correctionDirtyBounds;
+    if (usingCorrections) {
+        correctionDirtyBounds = computeCorrectionsDirtyBounds(segmentationSurface, corrections);
+        if (correctionDirtyBounds) {
+            const int rowEnd = correctionDirtyBounds->y + correctionDirtyBounds->height;
+            const int colEnd = correctionDirtyBounds->x + correctionDirtyBounds->width;
+            qCInfo(lcSegGrowth) << "Computed correction dirty bounds:"
+                                << "rows" << correctionDirtyBounds->y << "to" << rowEnd
+                                << "cols" << correctionDirtyBounds->x << "to" << colEnd;
+        } else {
+            qCInfo(lcSegGrowth) << "Unable to compute correction dirty bounds; falling back to full surface rebuild.";
+        }
+    }
+
     TracerGrowthContext ctx;
     ctx.resumeSurface = segmentationSurface;
     ctx.volume = growthVolume.get();
@@ -347,6 +594,7 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
     pending.growthVoxelSize = growthVolume->voxelSize();
     pending.usingCorrections = usingCorrections;
     pending.inpaintOnly = inpaintOnly;
+    pending.correctionsDirtyBounds = correctionDirtyBounds;
     _activeRequest = std::move(pending);
 
     auto future = QtConcurrent::run(runTracerGrowth, request, ctx);
@@ -476,6 +724,9 @@ void SegmentationGrower::onFutureFinished()
         }
 
         updateSegmentationSurfaceMetadata(targetSurface, voxelSize);
+        if (request.usingCorrections && request.correctionsDirtyBounds) {
+            applyDirtyBoundsToSurface(targetSurface, *request.correctionsDirtyBounds);
+        }
     }
 
     QuadSurface* surfaceToPersist = nullptr;

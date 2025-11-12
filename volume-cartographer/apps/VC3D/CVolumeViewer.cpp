@@ -1117,6 +1117,7 @@ void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
     if (auto* quad = dynamic_cast<QuadSurface*>(surf)) {
         affectsSurfaceIndex = true;
         std::optional<cv::Rect> dirtyVertices;
+        bool dirtyBoundsRegressed = false;
         if (auto dirtyInfo = readDirtyBounds(quad)) {
             int lastVersion = 0;
             auto it = _surfaceDirtyBoundsVersions.find(quad);
@@ -1125,8 +1126,12 @@ void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
             }
             if (dirtyInfo->version > lastVersion) {
                 dirtyVertices = dirtyInfo->rect;
-                _surfaceDirtyBoundsVersions[quad] = dirtyInfo->version;
+            } else if (dirtyInfo->version < lastVersion) {
+                dirtyBoundsRegressed = true;
             }
+            _surfaceDirtyBoundsVersions[quad] = dirtyInfo->version;
+        } else {
+            _surfaceDirtyBoundsVersions.erase(quad);
         }
         if (!_surfacePatchIndexDirty) {
             if (dirtyVertices) {
@@ -1142,6 +1147,9 @@ void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
             if (!regionUpdated) {
                 indexUpdated = _surfacePatchIndex.updateSurface(quad);
             }
+        }
+        if (dirtyBoundsRegressed) {
+            _surfacePatchIndexDirty = true;
         }
     } else if (!surf) {
         affectsSurfaceIndex = true;
@@ -1795,11 +1803,8 @@ void CVolumeViewer::renderIntersections()
                               static_cast<int>(viewRect.width()/_scale),
                               static_cast<int>(viewRect.height()/_scale)};
         // Enlarge the sampled region so nearby intersections outside the viewport still get clipped.
-        constexpr float roiExpansionFactor = 3.0f; // Covers ~3x the viewed area.
         const int dominantSpan = std::max(plane_roi.width, plane_roi.height);
-        const int dynamicPadding = static_cast<int>(
-            std::ceil(std::max(0.0f, (roiExpansionFactor - 1.0f) * 0.5f) * dominantSpan));
-        const int planeRoiPadding = std::max(128, dynamicPadding);
+        const int planeRoiPadding = 8;
         plane_roi.x -= planeRoiPadding;
         plane_roi.y -= planeRoiPadding;
         plane_roi.width += planeRoiPadding * 2;

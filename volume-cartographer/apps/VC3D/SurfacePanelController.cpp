@@ -679,6 +679,10 @@ void SurfacePanelController::showContextMenu(const QPoint& pos)
     connect(convertToObjAction, &QAction::triggered, this, [this, segmentId]() {
         emit convertToObjRequested(segmentId);
     });
+    QAction* cropBoundsAction = contextMenu.addAction(tr("Crop bounds to valid region"));
+    connect(cropBoundsAction, &QAction::triggered, this, [this, segmentId]() {
+        emit cropBoundsRequested(segmentId);
+    });
 
     QAction* refineAlphaCompAction = contextMenu.addAction(tr("Refine (Alpha-comp)"));
     connect(refineAlphaCompAction, &QAction::triggered, this, [this, segmentId]() {
