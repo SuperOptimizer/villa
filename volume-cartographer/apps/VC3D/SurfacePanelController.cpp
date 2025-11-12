@@ -138,6 +138,9 @@ void SurfacePanelController::loadSurfaces(bool reload)
     if (_filtersUpdated) {
         _filtersUpdated();
     }
+    if (_viewerManager) {
+        _viewerManager->primeSurfacePatchIndicesAsync();
+    }
     emit surfacesLoaded();
 }
 
@@ -226,6 +229,9 @@ void SurfacePanelController::loadSurfacesIncremental()
     logSurfaceLoadSummary();
     if (_filtersUpdated) {
         _filtersUpdated();
+    }
+    if (_viewerManager) {
+        _viewerManager->primeSurfacePatchIndicesAsync();
     }
     emit surfacesLoaded();
     std::cout << "Incremental surface load completed." << std::endl;
@@ -678,6 +684,10 @@ void SurfacePanelController::showContextMenu(const QPoint& pos)
     QAction* convertToObjAction = contextMenu.addAction(tr("Convert to OBJ"));
     connect(convertToObjAction, &QAction::triggered, this, [this, segmentId]() {
         emit convertToObjRequested(segmentId);
+    });
+    QAction* cropBoundsAction = contextMenu.addAction(tr("Crop bounds to valid region"));
+    connect(cropBoundsAction, &QAction::triggered, this, [this, segmentId]() {
+        emit cropBoundsRequested(segmentId);
     });
 
     QAction* refineAlphaCompAction = contextMenu.addAction(tr("Refine (Alpha-comp)"));

@@ -3,6 +3,7 @@
 
 #include "VolumeViewerCmaps.hpp"
 #include "VCSettings.hpp"
+#include "ViewerManager.hpp"
 
 #include <QGraphicsView>
 #include <QGraphicsScene>
@@ -27,7 +28,6 @@
 #include <list>
 #include <mutex>
 #include <optional>
-#include <nlohmann/json.hpp>
 #include <cstdlib>
 #include <unordered_map>
 #include <unordered_set>
@@ -65,18 +65,6 @@ constexpr float kScaleQuantization = 1000.0f;
 constexpr float kZOffsetQuantization = 1000.0f;
 constexpr float kDsScaleQuantization = 1000.0f;
 
-struct CellRegion {
-    int rowStart = 0;
-   int rowEnd = 0;
-   int colStart = 0;
-   int colEnd = 0;
-};
-
-struct DirtyBoundsInfo {
-    cv::Rect rect;
-    int version = 0;
-};
-
 inline int quantizeFloat(float value, float multiplier)
 {
     return static_cast<int>(std::lround(value * multiplier));
@@ -93,68 +81,6 @@ inline bool planeIdForSurface(const std::string& name, uint8_t& outId)
         return true;
     }
     return false;
-}
-
-std::optional<DirtyBoundsInfo> readDirtyBounds(QuadSurface* surface)
-{
-    if (!surface || !surface->meta || !surface->meta->is_object()) {
-        return std::nullopt;
-    }
-
-    nlohmann::json& meta = *surface->meta;
-    auto it = meta.find("dirty_bounds");
-    if (it == meta.end() || !it->is_object()) {
-        return std::nullopt;
-    }
-
-    const int rowStart = it->value("row_start", -1);
-    const int rowEnd = it->value("row_end", -1);
-    const int colStart = it->value("col_start", -1);
-    const int colEnd = it->value("col_end", -1);
-
-    if (rowStart < 0 || colStart < 0 || rowEnd <= rowStart || colEnd <= colStart) {
-        return std::nullopt;
-    }
-
-    int version = it->value("version", 0);
-    if (version <= 0) {
-        auto versionIt = meta.find("dirty_bounds_version");
-        if (versionIt != meta.end() && versionIt->is_number_integer()) {
-            version = versionIt->get<int>();
-        }
-    }
-
-    DirtyBoundsInfo info;
-    info.rect = cv::Rect(colStart, rowStart, colEnd - colStart, rowEnd - rowStart);
-    info.version = std::max(version, 1);
-    return info;
-}
-
-std::optional<CellRegion> vertexRectToCellRegion(const cv::Rect& vertexRect,
-                                                 QuadSurface* surface)
-{
-    if (!surface) {
-        return std::nullopt;
-    }
-    const cv::Mat_<cv::Vec3f>* points = surface->rawPointsPtr();
-    if (!points || points->rows < 2 || points->cols < 2) {
-        return std::nullopt;
-    }
-
-    const int cellRowCount = points->rows - 1;
-    const int cellColCount = points->cols - 1;
-
-    CellRegion region;
-    region.rowStart = std::max(0, vertexRect.y - 1);
-    region.rowEnd = std::min(cellRowCount, vertexRect.y + vertexRect.height);
-    region.colStart = std::max(0, vertexRect.x - 1);
-    region.colEnd = std::min(cellColCount, vertexRect.x + vertexRect.width);
-
-    if (region.rowStart >= region.rowEnd || region.colStart >= region.colEnd) {
-        return std::nullopt;
-    }
-
-    return region;
 }
 
 struct AxisAlignedSliceCacheKey
@@ -361,11 +287,12 @@ static cv::Mat_<cv::Vec3f> clean_surface_outliers(const cv::Mat_<cv::Vec3f>& poi
 }
 
 
-CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, QWidget* parent)
+CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, ViewerManager* manager, QWidget* parent)
     : QWidget(parent)
     , fGraphicsView(nullptr)
     , fBaseImageItem(nullptr)
     , _surf_col(col)
+    , _viewerManager(manager)
     , _highlighted_point_id(0)
     , _selected_point_id(0)
     , _dragged_point_id(0)
@@ -872,33 +799,6 @@ void CVolumeViewer::setIntersects(const std::set<std::string> &set)
     renderIntersections();
 }
 
-void CVolumeViewer::rebuildSurfacePatchIndexIfNeeded()
-{
-    if (!_surfacePatchIndexDirty) {
-        return;
-    }
-    _surfacePatchIndexDirty = false;
-
-    if (!_surf_col) {
-        _surfacePatchIndex.clear();
-        return;
-    }
-
-    std::vector<QuadSurface*> surfaces;
-    for (Surface* surf : _surf_col->surfaces()) {
-        if (auto* quad = dynamic_cast<QuadSurface*>(surf)) {
-            surfaces.push_back(quad);
-        }
-    }
-
-    if (surfaces.empty()) {
-        _surfacePatchIndex.clear();
-        return;
-    }
-
-    _surfacePatchIndex.rebuild(surfaces);
-}
-
 void CVolumeViewer::setIntersectionOpacity(float opacity)
 {
     _intersectionOpacity = std::clamp(opacity, 0.0f, 1.0f);
@@ -938,9 +838,7 @@ void CVolumeViewer::setSurfacePatchSamplingStride(int stride)
         return;
     }
     _surfacePatchSamplingStride = stride;
-    if (_surfacePatchIndex.setSamplingStride(stride)) {
-        _surfacePatchIndexDirty = true;
-    }
+    renderIntersections();
 }
 
 void CVolumeViewer::setOverlayVolume(std::shared_ptr<Volume> volume)
@@ -1110,67 +1008,6 @@ void CVolumeViewer::fitSurfaceInView()
 
 void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
 {
-    bool affectsSurfaceIndex = false;
-    bool regionUpdated = false;
-    bool indexUpdated = false;
-
-    if (auto* quad = dynamic_cast<QuadSurface*>(surf)) {
-        affectsSurfaceIndex = true;
-        std::optional<cv::Rect> dirtyVertices;
-        if (auto dirtyInfo = readDirtyBounds(quad)) {
-            int lastVersion = 0;
-            auto it = _surfaceDirtyBoundsVersions.find(quad);
-            if (it != _surfaceDirtyBoundsVersions.end()) {
-                lastVersion = it->second;
-            }
-            if (dirtyInfo->version > lastVersion) {
-                dirtyVertices = dirtyInfo->rect;
-                _surfaceDirtyBoundsVersions[quad] = dirtyInfo->version;
-            }
-        }
-        if (!_surfacePatchIndexDirty) {
-            if (dirtyVertices) {
-                if (auto cellRegion = vertexRectToCellRegion(*dirtyVertices, quad)) {
-                    regionUpdated = _surfacePatchIndex.updateSurfaceRegion(
-                        quad,
-                        cellRegion->rowStart,
-                        cellRegion->rowEnd,
-                        cellRegion->colStart,
-                        cellRegion->colEnd);
-                }
-            }
-            if (!regionUpdated) {
-                indexUpdated = _surfacePatchIndex.updateSurface(quad);
-            }
-        }
-    } else if (!surf) {
-        affectsSurfaceIndex = true;
-        if (_surf_col) {
-            std::unordered_set<const QuadSurface*> liveSurfaces;
-            auto surfaces = _surf_col->surfaces();
-            liveSurfaces.reserve(surfaces.size());
-            for (Surface* candidate : surfaces) {
-                if (auto* quadSurface = dynamic_cast<QuadSurface*>(candidate)) {
-                    liveSurfaces.insert(quadSurface);
-                }
-            }
-            for (auto it = _surfaceDirtyBoundsVersions.begin();
-                 it != _surfaceDirtyBoundsVersions.end();) {
-                if (!liveSurfaces.count(it->first)) {
-                    it = _surfaceDirtyBoundsVersions.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-        } else {
-            _surfaceDirtyBoundsVersions.clear();
-        }
-    }
-
-    if (affectsSurfaceIndex) {
-        _surfacePatchIndexDirty = _surfacePatchIndexDirty || !(regionUpdated || indexUpdated);
-    }
-
     if (_surf_name == name) {
         _surf = surf;
         if (!_surf) {
@@ -1795,11 +1632,8 @@ void CVolumeViewer::renderIntersections()
                               static_cast<int>(viewRect.width()/_scale),
                               static_cast<int>(viewRect.height()/_scale)};
         // Enlarge the sampled region so nearby intersections outside the viewport still get clipped.
-        constexpr float roiExpansionFactor = 1.1f; // Covers ~10% beyond the viewed area.
         const int dominantSpan = std::max(plane_roi.width, plane_roi.height);
-        const int dynamicPadding = static_cast<int>(
-            std::ceil(std::max(0.0f, (roiExpansionFactor - 1.0f) * 0.5f) * dominantSpan));
-        const int planeRoiPadding = std::max(16, dynamicPadding);
+        const int planeRoiPadding = 8;
         plane_roi.x -= planeRoiPadding;
         plane_roi.y -= planeRoiPadding;
         plane_roi.width += planeRoiPadding * 2;
@@ -1813,11 +1647,16 @@ void CVolumeViewer::renderIntersections()
         const cv::Vec3f bboxExtent = view_bbox.high - view_bbox.low;
         const float maxExtent = std::max(std::abs(bboxExtent[0]),
                               std::max(std::abs(bboxExtent[1]), std::abs(bboxExtent[2])));
-        const float viewPadding = std::max(8.0f, maxExtent * 0.05f);
+        const float viewPadding = std::max(64.0f, maxExtent * 0.1f);
         view_bbox.low -= cv::Vec3f(viewPadding, viewPadding, viewPadding);
         view_bbox.high += cv::Vec3f(viewPadding, viewPadding, viewPadding);
 
-        rebuildSurfacePatchIndexIfNeeded();
+        const SurfacePatchIndex* patchIndex =
+            _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
+        if (!patchIndex) {
+            clearAllIntersectionItems();
+            return;
+        }
         const float clipTolerance = std::max(_intersectionThickness, 1e-4f);
 
         std::vector<std::string> intersect_cands;
@@ -1846,7 +1685,7 @@ void CVolumeViewer::renderIntersections()
             }
 
             std::vector<SurfacePatchIndex::TriangleCandidate> triangleCandidates;
-            _surfacePatchIndex.queryTriangles(view_bbox, segmentation, triangleCandidates);
+            patchIndex->queryTriangles(view_bbox, segmentation, triangleCandidates);
 
             std::vector<IntersectionLine> intersectionLines;
             intersectionLines.reserve(triangleCandidates.size());

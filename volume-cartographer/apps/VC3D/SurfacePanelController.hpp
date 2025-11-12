@@ -112,6 +112,7 @@ signals:
     void growSegmentRequested(const QString& segmentId);
     void addOverlapRequested(const QString& segmentId);
     void convertToObjRequested(const QString& segmentId);
+    void cropBoundsRequested(const QString& segmentId);
     void slimFlattenRequested(const QString& segmentId);
     void awsUploadRequested(const QString& segmentId);
     void growSeedsRequested(const QString& segmentId, bool isExpand, bool isRandomSeed);

@@ -79,7 +79,7 @@ TriangleHit closestPointOnTriangle(const cv::Vec3f& p,
     if (d1 <= 0.0f && d2 <= 0.0f) {
         hit.closest = a;
         hit.bary = {1.0f, 0.0f, 0.0f};
-        hit.distSq = ap.dot(ap);
+        hit.distSq = cv::norm(p - hit.closest, cv::NORM_L2SQR);
         return hit;
     }
 
@@ -89,7 +89,7 @@ TriangleHit closestPointOnTriangle(const cv::Vec3f& p,
     if (d3 >= 0.0f && d4 <= d3) {
         hit.closest = b;
         hit.bary = {0.0f, 1.0f, 0.0f};
-        hit.distSq = bp.dot(bp);
+        hit.distSq = cv::norm(p - hit.closest, cv::NORM_L2SQR);
         return hit;
     }
 
@@ -97,9 +97,8 @@ TriangleHit closestPointOnTriangle(const cv::Vec3f& p,
     if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
         float v = d1 / (d1 - d3);
         hit.closest = a + v * ab;
-        const cv::Vec3f diff = p - hit.closest;
         hit.bary = {1.0f - v, v, 0.0f};
-        hit.distSq = diff.dot(diff);
+        hit.distSq = cv::norm(p - hit.closest, cv::NORM_L2SQR);
         return hit;
     }
 
@@ -109,7 +108,7 @@ TriangleHit closestPointOnTriangle(const cv::Vec3f& p,
     if (d6 >= 0.0f && d5 <= d6) {
         hit.closest = c;
         hit.bary = {0.0f, 0.0f, 1.0f};
-        hit.distSq = cp.dot(cp);
+        hit.distSq = cv::norm(p - hit.closest, cv::NORM_L2SQR);
         return hit;
     }
 
@@ -117,9 +116,8 @@ TriangleHit closestPointOnTriangle(const cv::Vec3f& p,
     if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
         float w = d2 / (d2 - d6);
         hit.closest = a + w * ac;
-        const cv::Vec3f diff = p - hit.closest;
         hit.bary = {1.0f - w, 0.0f, w};
-        hit.distSq = diff.dot(diff);
+        hit.distSq = cv::norm(p - hit.closest, cv::NORM_L2SQR);
         return hit;
     }
 
@@ -127,9 +125,8 @@ TriangleHit closestPointOnTriangle(const cv::Vec3f& p,
     if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f) {
         float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
         hit.closest = b + w * (c - b);
-        const cv::Vec3f diff = p - hit.closest;
         hit.bary = {0.0f, 1.0f - w, w};
-        hit.distSq = diff.dot(diff);
+        hit.distSq = cv::norm(p - hit.closest, cv::NORM_L2SQR);
         return hit;
     }
 
@@ -138,9 +135,8 @@ TriangleHit closestPointOnTriangle(const cv::Vec3f& p,
     float w = vc * denom;
     float u = 1.0f - v - w;
     hit.closest = a + ab * v + ac * w;
-    const cv::Vec3f diff = p - hit.closest;
     hit.bary = {u, v, w};
-    hit.distSq = diff.dot(diff);
+    hit.distSq = cv::norm(p - hit.closest, cv::NORM_L2SQR);
     return hit;
 }
 
@@ -214,7 +210,7 @@ struct SurfacePatchIndex::Impl {
     std::unique_ptr<TriangleTree> triangleTree;
     struct CellEntry {
         bool hasPatch = false;
-        Entry patch = std::make_pair(Box3(Point3(0,0,0), Point3(0,0,0)), PatchRecord());
+        Entry patch;
         std::vector<TriangleEntry> triangles;
     };
 
@@ -340,11 +336,6 @@ SurfacePatchIndex::Impl::collectEntriesForSurface(QuadSurface* surface,
 
     samplingStride = std::max(1, samplingStride);
 
-    // Reserve approximate capacity (may be slightly larger than needed due to striding)
-    const size_t estimatedSize = static_cast<size_t>((rowEnd - rowStart) * (colEnd - colStart)) /
-                                 (samplingStride * samplingStride) + 2;
-    result.reserve(estimatedSize);
-
     for (int j = rowStart; j < rowEnd; ++j) {
         if (!shouldSampleIndex(j, cellRowCount, samplingStride)) {
             continue;
@@ -389,7 +380,7 @@ void SurfacePatchIndex::rebuild(const std::vector<QuadSurface*>& surfaces, float
     std::vector<std::vector<std::pair<CellKey, Impl::CellEntry>>> cellsPerSurface(surfaceCount);
 
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) if(surfaceCount > 1)
+#pragma omp parallel for schedule(dynamic, 1) if(surfaceCount > 1)
 #endif
     for (int idx = 0; idx < static_cast<int>(surfaceCount); ++idx) {
         QuadSurface* surface = surfaces[idx];
@@ -418,10 +409,10 @@ void SurfacePatchIndex::rebuild(const std::vector<QuadSurface*>& surfaces, float
     for (auto& cells : cellsPerSurface) {
         for (auto& cell : cells) {
             if (cell.second.hasPatch) {
-                entries.emplace_back(cell.second.patch);
+                entries.push_back(cell.second.patch);
             }
             for (const auto& tri : cell.second.triangles) {
-                triangleEntries.emplace_back(tri);
+                triangleEntries.push_back(tri);
             }
             impl_->cellEntries.emplace(cell.first, std::move(cell.second));
         }
@@ -443,7 +434,7 @@ void SurfacePatchIndex::rebuild(const std::vector<QuadSurface*>& surfaces, float
     }
 }
 
-void SurfacePatchIndex::clear() const
+void SurfacePatchIndex::clear()
 {
     if (impl_) {
         impl_->tree.reset();
@@ -517,7 +508,7 @@ SurfacePatchIndex::locate(const cv::Vec3f& worldPoint, float tolerance, QuadSurf
 }
 
 void SurfacePatchIndex::queryBox(const Rect3D& bounds,
-                                 const QuadSurface* targetSurface,
+                                 QuadSurface* targetSurface,
                                  std::vector<PatchCandidate>& outCandidates) const
 {
     outCandidates.clear();
@@ -544,12 +535,12 @@ void SurfacePatchIndex::queryBox(const Rect3D& bounds,
         candidate.i = rec.i;
         candidate.j = rec.j;
         candidate.corners = rec.corners;
-        outCandidates.emplace_back(std::move(candidate));
+        outCandidates.push_back(candidate);
     }
 }
 
 void SurfacePatchIndex::queryTriangles(const Rect3D& bounds,
-                                       const QuadSurface* targetSurface,
+                                       QuadSurface* targetSurface,
                                        std::vector<TriangleCandidate>& outCandidates) const
 {
     outCandidates.clear();
@@ -578,7 +569,7 @@ void SurfacePatchIndex::queryTriangles(const Rect3D& bounds,
         candidate.triangleIndex = rec.triangleIndex;
         candidate.world = rec.world;
         candidate.surfaceParams = rec.surfaceParams;
-        outCandidates.emplace_back(std::move(candidate));
+        outCandidates.push_back(candidate);
     }
 }
 
@@ -635,9 +626,7 @@ struct IntersectionEndpoint {
 
 bool pointsApproximatelyEqual(const cv::Vec3f& a, const cv::Vec3f& b, float epsilon)
 {
-    const cv::Vec3f diff = a - b;
-    const float distSq = diff.dot(diff);
-    return distSq <= epsilon * epsilon;
+    return cv::norm(a - b) <= epsilon;
 }
 } // namespace
 
@@ -681,7 +670,6 @@ SurfacePatchIndex::clipTriangleToPlane(const TriangleCandidate& tri,
     }
 
     std::vector<IntersectionEndpoint> endpoints;
-    endpoints.reserve(6); // Maximum: 2 endpoints per edge (3 edges)
     const float mergeDistance = epsilon * 4.0f;
 
     auto addEndpoint = [&](const cv::Vec3f& world, const cv::Vec3f& param) {
@@ -690,7 +678,7 @@ SurfacePatchIndex::clipTriangleToPlane(const TriangleCandidate& tri,
                 return;
             }
         }
-        endpoints.emplace_back(IntersectionEndpoint{world, param});
+        endpoints.push_back({world, param});
     };
 
     auto addVertexIfOnPlane = [&](int idx) {
@@ -741,14 +729,13 @@ SurfacePatchIndex::clipTriangleToPlane(const TriangleCandidate& tri,
     }
 
     if (endpoints.size() > 2) {
-        float bestDistSq = -1.0f;
+        float bestDist = -1.0f;
         std::pair<size_t, size_t> bestPair = {0, 1};
         for (size_t a = 0; a < endpoints.size(); ++a) {
             for (size_t b = a + 1; b < endpoints.size(); ++b) {
-                const cv::Vec3f diff = endpoints[a].world - endpoints[b].world;
-                const float distSq = diff.dot(diff);
-                if (distSq > bestDistSq) {
-                    bestDistSq = distSq;
+                float dist = cv::norm(endpoints[a].world - endpoints[b].world);
+                if (dist > bestDist) {
+                    bestDist = dist;
                     bestPair = {a, b};
                 }
             }
@@ -756,8 +743,8 @@ SurfacePatchIndex::clipTriangleToPlane(const TriangleCandidate& tri,
         IntersectionEndpoint first = endpoints[bestPair.first];
         IntersectionEndpoint second = endpoints[bestPair.second];
         endpoints.clear();
-        endpoints.emplace_back(std::move(first));
-        endpoints.emplace_back(std::move(second));
+        endpoints.push_back(first);
+        endpoints.push_back(second);
     }
 
     TriangleSegment segment;

@@ -17,6 +17,7 @@
 #include "vc/core/util/SurfacePatchIndex.hpp"
 
 class QImage;
+class ViewerManager;
 
 
 class CVolumeViewer : public QWidget
@@ -24,7 +25,7 @@ class CVolumeViewer : public QWidget
     Q_OBJECT
 
 public:
-    CVolumeViewer(CSurfaceCollection *col, QWidget* parent = 0);
+    CVolumeViewer(CSurfaceCollection *col, ViewerManager* manager, QWidget* parent = 0);
     ~CVolumeViewer(void);
 
     void setCache(ChunkCache *cache);
@@ -227,6 +228,7 @@ protected:
     cv::Vec3f _lastPlaneOrigin = {0.0f, 0.0f, 0.0f};
     
     CSurfaceCollection *_surf_col = nullptr;
+    ViewerManager* _viewerManager = nullptr;
     
     VCCollection* _point_collection = nullptr;
 
@@ -277,11 +279,5 @@ protected:
     bool _overlayImageValid{false};
     QImage _overlayImage;
 
-    SurfacePatchIndex _surfacePatchIndex;
-    bool _surfacePatchIndexDirty{true};
     int _surfacePatchSamplingStride{1};
-    std::unordered_map<const QuadSurface*, int> _surfaceDirtyBoundsVersions;
-    void rebuildSurfacePatchIndexIfNeeded();
-
-
 };  // class CVolumeViewer

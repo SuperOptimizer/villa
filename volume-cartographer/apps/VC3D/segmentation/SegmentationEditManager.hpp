@@ -81,6 +81,9 @@ public:
     [[nodiscard]] QuadSurface* baseSurface() const { return _baseSurface; }
     [[nodiscard]] QuadSurface* previewSurface() const { return _previewSurface.get(); }
 
+    // Synchronize a rectangular region with the latest base-surface data without rebuilding the session.
+    bool applyExternalSurfaceUpdate(const cv::Rect& vertexRect);
+
     void setRadius(float radiusSteps);
     void setSigma(float sigmaSteps);
 
@@ -89,7 +92,9 @@ public:
 
     [[nodiscard]] bool hasPendingChanges() const { return _dirty; }
     [[nodiscard]] const cv::Mat_<cv::Vec3f>& previewPoints() const;
-    bool setPreviewPoints(const cv::Mat_<cv::Vec3f>& points, bool dirtyState);
+    bool setPreviewPoints(const cv::Mat_<cv::Vec3f>& points,
+                          bool dirtyState,
+                          std::optional<cv::Rect>* outDiffBounds = nullptr);
 
     void resetPreview();
     void applyPreview();
