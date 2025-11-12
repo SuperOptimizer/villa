@@ -799,6 +799,15 @@ void CVolumeViewer::setIntersects(const std::set<std::string> &set)
     renderIntersections();
 }
 
+void CVolumeViewer::setSegmentationEditActive(bool active)
+{
+    if (_segmentationEditActive == active) {
+        return;
+    }
+    _segmentationEditActive = active;
+    renderIntersections();
+}
+
 void CVolumeViewer::setIntersectionOpacity(float opacity)
 {
     _intersectionOpacity = std::clamp(opacity, 0.0f, 1.0f);
@@ -1033,6 +1042,11 @@ void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
     if (name == _surf_name) {
         curr_img_area = {0,0,0,0};
         renderVisible(true); // Immediate render of slice
+    }
+
+    if (_intersect_tgts.count(name)) {
+        invalidateIntersect(name);
+        renderIntersections();
     }
 
     // Defer overlay updates
@@ -1624,6 +1638,9 @@ void CVolumeViewer::renderIntersections()
     };
 
     PlaneSurface *plane = dynamic_cast<PlaneSurface*>(_surf);
+    QuadSurface* activeSegSurface =
+        _surf_col ? dynamic_cast<QuadSurface*>(_surf_col->surface("segmentation")) : nullptr;
+    const bool segmentationAliasRequested = _intersect_tgts.count("segmentation") > 0;
 
     
     if (plane) {
@@ -1671,6 +1688,12 @@ void CVolumeViewer::renderIntersections()
             auto* segmentation = dynamic_cast<QuadSurface*>(surfacePtr);
             if (!segmentation) {
                 std::cout << "[CVolumeViewer] skip candidate '" << key << "' (not QuadSurface)\n";
+                continue;
+            }
+
+            if (_segmentationEditActive && activeSegSurface && segmentationAliasRequested &&
+                segmentation == activeSegSurface && key != "segmentation") {
+                removeItemsForKey(key);
                 continue;
             }
 
@@ -1789,11 +1812,12 @@ void CVolumeViewer::renderIntersections()
             col = palette[colorIndex % std::size(palette)];
             ++colorIndex;
 
-            if (key == "segmentation") {
-                col =
-                    (_surf_name == "seg yz"   ? COLOR_SEG_YZ
-                     : _surf_name == "seg xz" ? COLOR_SEG_XZ
-                                              : COLOR_SEG_XY);
+            const bool isActiveSegmentation =
+                activeSegSurface && segmentation == activeSegSurface;
+            if (isActiveSegmentation) {
+                col = (_surf_name == "seg yz"   ? COLOR_SEG_YZ
+                       : _surf_name == "seg xz" ? COLOR_SEG_XZ
+                                                : COLOR_SEG_XY);
                 width = 3;
                 z_value = 20;
             }
