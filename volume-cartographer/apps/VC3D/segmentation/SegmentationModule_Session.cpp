@@ -198,3 +198,21 @@ void SegmentationModule::refreshSessionFromSurface(QuadSurface* surface)
     refreshOverlay();
     emitPendingChanges();
 }
+
+bool SegmentationModule::applySurfaceUpdateFromGrowth(const cv::Rect& vertexRect)
+{
+    if (!_editManager || !_editManager->hasSession()) {
+        return false;
+    }
+    if (!_editManager->applyExternalSurfaceUpdate(vertexRect)) {
+        return false;
+    }
+    refreshOverlay();
+    emitPendingChanges();
+    return true;
+}
+
+void SegmentationModule::requestAutosaveFromGrowth()
+{
+    markAutosaveNeeded();
+}

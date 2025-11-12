@@ -81,6 +81,9 @@ public:
     [[nodiscard]] QuadSurface* baseSurface() const { return _baseSurface; }
     [[nodiscard]] QuadSurface* previewSurface() const { return _previewSurface.get(); }
 
+    // Synchronize a rectangular region with the latest base-surface data without rebuilding the session.
+    bool applyExternalSurfaceUpdate(const cv::Rect& vertexRect);
+
     void setRadius(float radiusSteps);
     void setSigma(float sigmaSteps);
 

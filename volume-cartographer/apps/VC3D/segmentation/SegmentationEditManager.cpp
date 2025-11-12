@@ -207,6 +207,81 @@ void SegmentationEditManager::refreshFromBaseSurface()
     _dirty = !_editedVertices.empty();
 }
 
+bool SegmentationEditManager::applyExternalSurfaceUpdate(const cv::Rect& vertexRect)
+{
+    if (!_baseSurface || !_originalPoints) {
+        return false;
+    }
+
+    auto* basePoints = _baseSurface->rawPointsPtr();
+    if (!basePoints || basePoints->empty()) {
+        return false;
+    }
+
+    cv::Rect surfaceBounds(0, 0, basePoints->cols, basePoints->rows);
+    cv::Rect clipped = vertexRect & surfaceBounds;
+    if (clipped.width <= 0 || clipped.height <= 0) {
+        return false;
+    }
+
+    const cv::Mat baseRegion(*basePoints, clipped);
+    cv::Mat originalRegion(*_originalPoints, clipped);
+    baseRegion.copyTo(originalRegion);
+
+    cv::Mat_<cv::Vec3f>* previewMatrix = _previewPoints;
+    if (!previewMatrix && _previewSurface) {
+        previewMatrix = _previewSurface->rawPointsPtr();
+        _previewPoints = previewMatrix;
+    }
+    if (previewMatrix) {
+        cv::Mat previewRegion(*previewMatrix, clipped);
+        baseRegion.copyTo(previewRegion);
+    }
+
+    auto containsKey = [&](const GridKey& key) {
+        return key.row >= clipped.y && key.row < clipped.y + clipped.height &&
+               key.col >= clipped.x && key.col < clipped.x + clipped.width;
+    };
+
+    bool removedEdits = false;
+    for (auto it = _editedVertices.begin(); it != _editedVertices.end();) {
+        if (containsKey(it->first)) {
+            it = _editedVertices.erase(it);
+            removedEdits = true;
+        } else {
+            ++it;
+        }
+    }
+
+    if (removedEdits) {
+        _editedBounds.reset();
+        for (const auto& entry : _editedVertices) {
+            expandEditedBounds(entry.first.row, entry.first.col);
+        }
+        _dirty = !_editedVertices.empty();
+    }
+
+    if (!_recentTouched.empty()) {
+        std::vector<GridKey> retained;
+        retained.reserve(_recentTouched.size());
+        for (const auto& key : _recentTouched) {
+            if (!containsKey(key)) {
+                retained.push_back(key);
+            }
+        }
+        if (retained.size() != _recentTouched.size()) {
+            _recentTouched = std::move(retained);
+        }
+    }
+
+    if (_activeDrag.active && containsKey(_activeDrag.center)) {
+        cancelActiveDrag();
+    }
+
+    resetPointerSeed();
+    return true;
+}
+
 namespace
 {
 struct StridedSearchProfile

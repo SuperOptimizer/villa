@@ -670,18 +670,49 @@ void SegmentationGrower::onFutureFinished()
     cv::Mat generations = result.surface->channel("generations");
 
     std::vector<QuadSurface*> surfacesToUpdate;
-    if (_context.module && _context.module->hasActiveSession()) {
-        if (auto* baseSurface = _context.module->activeBaseSurface()) {
-            surfacesToUpdate.push_back(baseSurface);
+    surfacesToUpdate.reserve(3);
+    auto appendUniqueSurface = [&](QuadSurface* surface) {
+        if (!surface) {
+            return;
         }
+        if (std::find(surfacesToUpdate.begin(), surfacesToUpdate.end(), surface) == surfacesToUpdate.end()) {
+            surfacesToUpdate.push_back(surface);
+        }
+    };
+
+    appendUniqueSurface(request.segmentationSurface);
+    if (_context.module && _context.module->hasActiveSession()) {
+        appendUniqueSurface(_context.module->activeBaseSurface());
     }
-    if (std::find(surfacesToUpdate.begin(), surfacesToUpdate.end(), request.segmentationSurface) == surfacesToUpdate.end()) {
-        surfacesToUpdate.push_back(request.segmentationSurface);
+
+    QuadSurface* primarySurface = surfacesToUpdate.empty() ? nullptr : surfacesToUpdate.front();
+    cv::Mat_<cv::Vec3f>* primaryPoints = primarySurface ? primarySurface->rawPointsPtr() : nullptr;
+    cv::Mat_<cv::Vec3f>* resultPoints = result.surface->rawPointsPtr();
+
+    if (primarySurface && primaryPoints && resultPoints) {
+        std::swap(*primaryPoints, *resultPoints);
+        primarySurface->invalidateCache();
+    } else if (primarySurface && primaryPoints) {
+        result.surface->rawPoints().copyTo(*primaryPoints);
+        primarySurface->invalidateCache();
     }
 
     for (QuadSurface* targetSurface : surfacesToUpdate) {
         if (!targetSurface) {
             continue;
+        }
+
+        if (targetSurface != primarySurface) {
+            if (auto* destPoints = targetSurface->rawPointsPtr()) {
+                if (primaryPoints) {
+                    primaryPoints->copyTo(*destPoints);
+                } else if (resultPoints) {
+                    resultPoints->copyTo(*destPoints);
+                } else {
+                    result.surface->rawPoints().copyTo(*destPoints);
+                }
+            }
+            targetSurface->invalidateCache();
         }
 
         nlohmann::json preservedTags = nlohmann::json::object();
@@ -694,15 +725,9 @@ void SegmentationGrower::onFutureFinished()
             }
         }
 
-        if (auto* destPoints = targetSurface->rawPointsPtr()) {
-            result.surface->rawPoints().copyTo(*destPoints);
-        }
-
         if (!generations.empty()) {
             targetSurface->setChannel("generations", generations);
         }
-
-        targetSurface->invalidateCache();
 
         if (result.surface->meta) {
             if (targetSurface->meta) {
@@ -730,21 +755,26 @@ void SegmentationGrower::onFutureFinished()
     }
 
     QuadSurface* surfaceToPersist = nullptr;
-    if (_context.module && _context.module->hasActiveSession()) {
+    const bool sessionActive = _context.module && _context.module->hasActiveSession();
+    if (sessionActive) {
         surfaceToPersist = _context.module->activeBaseSurface();
     }
     if (!surfaceToPersist) {
         surfaceToPersist = request.segmentationSurface;
     }
 
-    try {
-        if (surfaceToPersist) {
-            ensureSurfaceMetaObject(surfaceToPersist);
-            surfaceToPersist->saveOverwrite();
+    if (!sessionActive) {
+        try {
+            if (surfaceToPersist) {
+                ensureSurfaceMetaObject(surfaceToPersist);
+                surfaceToPersist->saveOverwrite();
+            }
+        } catch (const std::exception& ex) {
+            qCInfo(lcSegGrowth) << "Failed to save tracer result" << ex.what();
+            showStatus(tr("Failed to save segmentation: %1").arg(ex.what()), kStatusLong);
         }
-    } catch (const std::exception& ex) {
-        qCInfo(lcSegGrowth) << "Failed to save tracer result" << ex.what();
-        showStatus(tr("Failed to save segmentation: %1").arg(ex.what()), kStatusLong);
+    } else if (_context.module) {
+        _context.module->requestAutosaveFromGrowth();
     }
 
     std::vector<std::pair<CVolumeViewer*, bool>> resetDefaults;
@@ -779,10 +809,16 @@ void SegmentationGrower::onFutureFinished()
         }
     }
 
-    if (_context.module && _context.module->hasActiveSession()) {
+    if (sessionActive && _context.module) {
         _context.module->markNextHandlesFromGrowth();
-        qCInfo(lcSegGrowth) << "Refreshing active segmentation session after tracer growth";
-        _context.module->refreshSessionFromSurface(surfaceToPersist);
+        bool appliedIncremental = false;
+        if (request.correctionsDirtyBounds) {
+            appliedIncremental = _context.module->applySurfaceUpdateFromGrowth(*request.correctionsDirtyBounds);
+        }
+        if (!appliedIncremental) {
+            qCInfo(lcSegGrowth) << "Refreshing active segmentation session after tracer growth";
+            _context.module->refreshSessionFromSurface(surfaceToPersist);
+        }
     }
 
     QuadSurface* currentSegSurface = nullptr;
