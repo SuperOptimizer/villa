@@ -1690,6 +1690,32 @@ void CVolumeViewer::renderIntersections()
             trianglesBySurface[surface].push_back(idx);
         }
 
+        auto intersectionLinesEqual = [](const std::vector<IntersectionLine>& lhs,
+                                         const std::vector<IntersectionLine>& rhs) {
+            if (lhs.size() != rhs.size()) {
+                return false;
+            }
+            for (size_t idx = 0; idx < lhs.size(); ++idx) {
+                const auto& a = lhs[idx];
+                const auto& b = rhs[idx];
+                if (a.world.size() != b.world.size() ||
+                    a.surfaceParams.size() != b.surfaceParams.size()) {
+                    return false;
+                }
+                for (size_t pointIdx = 0; pointIdx < a.world.size(); ++pointIdx) {
+                    if (a.world[pointIdx] != b.world[pointIdx]) {
+                        return false;
+                    }
+                }
+                for (size_t pointIdx = 0; pointIdx < a.surfaceParams.size(); ++pointIdx) {
+                    if (a.surfaceParams[pointIdx] != b.surfaceParams[pointIdx]) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        };
+
         size_t colorIndex = 0;
         for (const auto& candidate : intersectCandidates) {
             const auto& key = candidate.first;
@@ -1810,7 +1836,15 @@ void CVolumeViewer::renderIntersections()
                 removeItemsForKey(key);
             }
 
-            if (_surf_col && !intersectionLines.empty()) {
+            bool shouldUpdateIntersection = _surf_col && !intersectionLines.empty();
+            if (shouldUpdateIntersection) {
+                if (auto* existing = _surf_col->intersection(_surf_name, key)) {
+                    shouldUpdateIntersection =
+                        !intersectionLinesEqual(existing->lines, intersectionLines);
+                }
+            }
+
+            if (shouldUpdateIntersection) {
                 auto* intersection = new Intersection();
                 intersection->lines = std::move(intersectionLines);
                 _ignore_intersect_change = intersection;

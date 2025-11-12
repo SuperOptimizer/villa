@@ -238,6 +238,7 @@ struct SurfacePatchIndex::Impl {
     int samplingStride = 1;
 
     std::unordered_map<CellKey, CellRecord, CellKeyHash> cellEntries;
+    std::unordered_map<QuadSurface*, std::vector<CellKey>> surfaceCellKeys;
 
     struct PatchHit {
         bool valid = false;
@@ -266,6 +267,8 @@ struct SurfacePatchIndex::Impl {
     static bool loadTriangleGeometry(const TriangleRecord& rec,
                                      std::array<cv::Vec3f, 3>& world,
                                      std::array<cv::Vec3f, 3>& surfaceParams);
+    void recordCellKey(const CellKey& key);
+    void forgetCellKey(const CellKey& key);
 
     void removeCellEntry(const CellKey& key);
     void insertCells(const std::vector<std::pair<CellKey, CellEntry>>& cells);
@@ -393,6 +396,7 @@ void SurfacePatchIndex::rebuild(const std::vector<QuadSurface*>& surfaces, float
     }
     impl_->bboxPadding = bboxPadding;
     impl_->cellEntries.clear();
+    impl_->surfaceCellKeys.clear();
     impl_->patchCount = 0;
     impl_->triangleCount = 0;
 
@@ -444,6 +448,7 @@ void SurfacePatchIndex::rebuild(const std::vector<QuadSurface*>& surfaces, float
                 triangleEntries.push_back(cell.second.triangles[triIdx]);
             }
             impl_->cellEntries.emplace(cell.first, Impl::makeCellRecord(cell.second));
+            impl_->surfaceCellKeys[cell.first.surface].push_back(cell.first);
         }
     }
 
@@ -473,6 +478,7 @@ void SurfacePatchIndex::clear()
         impl_->cellEntries.clear();
         impl_->samplingStride = 1;
         impl_->triangleCount = 0;
+        impl_->surfaceCellKeys.clear();
     }
 }
 
@@ -611,20 +617,16 @@ bool SurfacePatchIndex::Impl::removeSurfaceEntries(QuadSurface* surface)
         return false;
     }
 
-    std::vector<CellKey> keys;
-    keys.reserve(cellEntries.size());
-    for (const auto& entry : cellEntries) {
-        if (entry.first.surface == surface) {
-            keys.push_back(entry.first);
-        }
-    }
-
-    if (keys.empty()) {
+    auto it = surfaceCellKeys.find(surface);
+    if (it == surfaceCellKeys.end() || it->second.empty()) {
         return false;
     }
 
+    std::vector<CellKey> keys = it->second;
     for (const auto& key : keys) {
-        removeCellEntry(key);
+        if (cellEntries.find(key) != cellEntries.end()) {
+            removeCellEntry(key);
+        }
     }
 
     if (tree && patchCount == 0) {
@@ -701,16 +703,19 @@ SurfacePatchIndex::clipTriangleToPlane(const TriangleCandidate& tri,
         return std::nullopt;
     }
 
-    std::vector<IntersectionEndpoint> endpoints;
+    std::array<IntersectionEndpoint, 6> endpoints{};
+    size_t endpointCount = 0;
     const float mergeDistance = epsilon * 4.0f;
 
     auto addEndpoint = [&](const cv::Vec3f& world, const cv::Vec3f& param) {
-        for (const auto& existing : endpoints) {
-            if (pointsApproximatelyEqual(existing.world, world, mergeDistance)) {
+        for (size_t idx = 0; idx < endpointCount; ++idx) {
+            if (pointsApproximatelyEqual(endpoints[idx].world, world, mergeDistance)) {
                 return;
             }
         }
-        endpoints.push_back({world, param});
+        if (endpointCount < endpoints.size()) {
+            endpoints[endpointCount++] = {world, param};
+        }
     };
 
     auto addVertexIfOnPlane = [&](int idx) {
@@ -756,15 +761,15 @@ SurfacePatchIndex::clipTriangleToPlane(const TriangleCandidate& tri,
     addEdgeIntersection(1, 2);
     addEdgeIntersection(2, 0);
 
-    if (endpoints.size() < 2) {
+    if (endpointCount < 2) {
         return std::nullopt;
     }
 
-    if (endpoints.size() > 2) {
+    if (endpointCount > 2) {
         float bestDist = -1.0f;
         std::pair<size_t, size_t> bestPair = {0, 1};
-        for (size_t a = 0; a < endpoints.size(); ++a) {
-            for (size_t b = a + 1; b < endpoints.size(); ++b) {
+        for (size_t a = 0; a < endpointCount; ++a) {
+            for (size_t b = a + 1; b < endpointCount; ++b) {
                 float dist = cv::norm(endpoints[a].world - endpoints[b].world);
                 if (dist > bestDist) {
                     bestDist = dist;
@@ -774,9 +779,9 @@ SurfacePatchIndex::clipTriangleToPlane(const TriangleCandidate& tri,
         }
         IntersectionEndpoint first = endpoints[bestPair.first];
         IntersectionEndpoint second = endpoints[bestPair.second];
-        endpoints.clear();
-        endpoints.push_back(first);
-        endpoints.push_back(second);
+        endpoints[0] = first;
+        endpoints[1] = second;
+        endpointCount = 2;
     }
 
     TriangleSegment segment;
@@ -866,6 +871,7 @@ bool SurfacePatchIndex::setSamplingStride(int stride)
     impl_->cellEntries.clear();
     impl_->patchCount = 0;
     impl_->triangleCount = 0;
+    impl_->surfaceCellKeys.clear();
     return true;
 }
 
@@ -965,6 +971,35 @@ bool SurfacePatchIndex::Impl::loadTriangleGeometry(const TriangleRecord& rec,
     }
 
     return true;
+}
+
+void SurfacePatchIndex::Impl::recordCellKey(const CellKey& key)
+{
+    if (!key.surface) {
+        return;
+    }
+    surfaceCellKeys[key.surface].push_back(key);
+}
+
+void SurfacePatchIndex::Impl::forgetCellKey(const CellKey& key)
+{
+    if (!key.surface) {
+        return;
+    }
+    auto it = surfaceCellKeys.find(key.surface);
+    if (it == surfaceCellKeys.end()) {
+        return;
+    }
+    auto& keys = it->second;
+    auto removeIt = std::remove_if(keys.begin(), keys.end(), [&](const CellKey& existing) {
+        return existing.packed == key.packed;
+    });
+    if (removeIt != keys.end()) {
+        keys.erase(removeIt, keys.end());
+    }
+    if (keys.empty()) {
+        surfaceCellKeys.erase(it);
+    }
 }
 bool SurfacePatchIndex::Impl::buildCellEntry(QuadSurface* surface,
                                              const cv::Mat_<cv::Vec3f>& points,
@@ -1083,6 +1118,7 @@ void SurfacePatchIndex::Impl::removeCellEntry(const CellKey& key)
     }
 
     cellEntries.erase(it);
+    forgetCellKey(key);
 }
 
 void SurfacePatchIndex::Impl::insertCells(const std::vector<std::pair<CellKey, CellEntry>>& cells)
@@ -1107,6 +1143,7 @@ void SurfacePatchIndex::Impl::insertCells(const std::vector<std::pair<CellKey, C
         }
 
         cellEntries[cell.first] = makeCellRecord(cell.second);
+        recordCellKey(cell.first);
     }
 }
 
@@ -1117,6 +1154,10 @@ void SurfacePatchIndex::Impl::removeCells(QuadSurface* surface,
                                           int colEnd)
 {
     if (!surface) {
+        return;
+    }
+    auto surfaceIt = surfaceCellKeys.find(surface);
+    if (surfaceIt == surfaceCellKeys.end() || surfaceIt->second.empty()) {
         return;
     }
     const cv::Mat_<cv::Vec3f>* points = surface->rawPointsPtr();
@@ -1137,20 +1178,12 @@ void SurfacePatchIndex::Impl::removeCells(QuadSurface* surface,
     }
 
     std::vector<CellKey> keys;
-    keys.reserve(static_cast<size_t>(rowEnd - rowStart) * static_cast<size_t>(colEnd - colStart));
-
-    for (int row = rowStart; row < rowEnd; ++row) {
-        if (!shouldSampleIndex(row, cellRowCount, samplingStride)) {
-            continue;
-        }
-        for (int col = colStart; col < colEnd; ++col) {
-            if (!shouldSampleIndex(col, cellColCount, samplingStride)) {
-                continue;
-            }
-            CellKey key(surface, row, col);
-            if (cellEntries.find(key) != cellEntries.end()) {
-                keys.push_back(key);
-            }
+    keys.reserve(surfaceIt->second.size());
+    for (const auto& key : surfaceIt->second) {
+        int row = key.rowIndex();
+        int col = key.colIndex();
+        if (row >= rowStart && row < rowEnd && col >= colStart && col < colEnd) {
+            keys.push_back(key);
         }
     }
 
