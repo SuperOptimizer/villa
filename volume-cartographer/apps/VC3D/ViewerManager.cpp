@@ -465,6 +465,26 @@ SurfacePatchIndex* ViewerManager::surfacePatchIndex()
     return &_surfacePatchIndex;
 }
 
+void ViewerManager::refreshSurfacePatchIndex(QuadSurface* surface)
+{
+    if (!surface) {
+        return;
+    }
+    if (_surfacePatchIndexDirty || _surfacePatchIndex.empty()) {
+        _surfacePatchIndexDirty = true;
+        _indexedSurfaces.erase(surface);
+        return;
+    }
+
+    if (_surfacePatchIndex.updateSurface(surface)) {
+        _indexedSurfaces.insert(surface);
+        return;
+    }
+
+    _surfacePatchIndexDirty = true;
+    _indexedSurfaces.erase(surface);
+}
+
 void ViewerManager::primeSurfacePatchIndicesAsync()
 {
     if (!_surfacePatchIndexWatcher) {

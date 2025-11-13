@@ -1809,17 +1809,42 @@ void CVolumeViewer::renderIntersections()
                 QColor(91, 50, 255),
                 QColor(201, 50, 255),
             };
-            col = palette[colorIndex % std::size(palette)];
-            ++colorIndex;
+
+            const auto paletteSize = std::size(palette);
+            const QColor activeSegColor =
+                (_surf_name == "seg yz"   ? COLOR_SEG_YZ
+                 : _surf_name == "seg xz" ? COLOR_SEG_XZ
+                                          : COLOR_SEG_XY);
+            const bool activeSegPresent = static_cast<bool>(activeSegSurface);
+            const auto colorDistanceSq = [](const QColor& lhs, const QColor& rhs) {
+                const int dr = lhs.red() - rhs.red();
+                const int dg = lhs.green() - rhs.green();
+                const int db = lhs.blue() - rhs.blue();
+                return dr * dr + dg * dg + db * db;
+            };
 
             const bool isActiveSegmentation =
                 activeSegSurface && segmentation == activeSegSurface;
             if (isActiveSegmentation) {
-                col = (_surf_name == "seg yz"   ? COLOR_SEG_YZ
-                       : _surf_name == "seg xz" ? COLOR_SEG_XZ
-                                                : COLOR_SEG_XY);
+                col = activeSegColor;
+                ++colorIndex;
                 width = 3;
                 z_value = 20;
+            } else {
+                size_t paletteIndex = colorIndex;
+                QColor candidate = palette[paletteIndex % paletteSize];
+                if (activeSegPresent) {
+                    constexpr int kMinActiveDistanceSq = 80 * 80;
+                    size_t tries = 0;
+                    while (tries < paletteSize &&
+                           colorDistanceSq(candidate, activeSegColor) < kMinActiveDistanceSq) {
+                        ++paletteIndex;
+                        candidate = palette[paletteIndex % paletteSize];
+                        ++tries;
+                    }
+                }
+                col = candidate;
+                colorIndex = paletteIndex + 1;
             }
 
             if (!_highlightedSurfaceIds.empty() && _highlightedSurfaceIds.count(key)) {
