@@ -1433,6 +1433,19 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
                 return cv::Mat();
             }
             readInterpolated3D(baseGray, baseDataset, coords * _ds_scale, cache, _useFastInterpolation);
+
+            // Stretch values to full uint8 range for better visualization of masks
+            if (!baseGray.empty()) {
+                double minVal, maxVal;
+                cv::minMaxLoc(baseGray, &minVal, &maxVal);
+                // Only stretch if the data doesn't already span the full range
+                if (maxVal > minVal && (minVal > 0 || maxVal < 255)) {
+                    cv::Mat temp;
+                    baseGray.convertTo(temp, CV_32F);
+                    temp = (temp - minVal) * (255.0 / (maxVal - minVal));
+                    temp.convertTo(baseGray, CV_8U);
+                }
+            }
         }
     }
 
@@ -1485,6 +1498,19 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
             cv::Mat_<uint8_t> overlayValues;
             z5::Dataset* overlayDataset = _overlayVolume->zarrDataset(overlayIdx);
             readInterpolated3D(overlayValues, overlayDataset, coords * overlayScale, cache, /*nearest_neighbor=*/true);
+
+            // Stretch values to full uint8 range for better visualization of masks
+            if (!overlayValues.empty()) {
+                double minVal, maxVal;
+                cv::minMaxLoc(overlayValues, &minVal, &maxVal);
+                // Only stretch if the data doesn't already span the full range
+                if (maxVal > minVal && (minVal > 0 || maxVal < 255)) {
+                    cv::Mat temp;
+                    overlayValues.convertTo(temp, CV_32F);
+                    temp = (temp - minVal) * (255.0 / (maxVal - minVal));
+                    temp.convertTo(overlayValues, CV_8U);
+                }
+            }
 
             if (!overlayValues.empty()) {
                 const int windowLow = static_cast<int>(std::clamp(_overlayWindowLow, 0.0f, 255.0f));
