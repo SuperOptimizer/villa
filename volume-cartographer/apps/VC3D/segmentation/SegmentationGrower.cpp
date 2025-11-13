@@ -80,6 +80,42 @@ void ensureSurfaceMetaObject(QuadSurface* surface)
     surface->meta = new nlohmann::json(nlohmann::json::object());
 }
 
+int readDirtyBoundsVersion(const nlohmann::json* meta)
+{
+    if (!meta || !meta->is_object()) {
+        return 0;
+    }
+
+    if (auto versionIt = meta->find("dirty_bounds_version");
+        versionIt != meta->end() && versionIt->is_number_integer()) {
+        return versionIt->get<int>();
+    }
+
+    if (auto boundsIt = meta->find("dirty_bounds");
+        boundsIt != meta->end() && boundsIt->is_object()) {
+        if (auto versionIt = boundsIt->find("version");
+            versionIt != boundsIt->end() && versionIt->is_number_integer()) {
+            return versionIt->get<int>();
+        }
+    }
+
+    return 0;
+}
+
+void restoreDirtyBoundsVersion(nlohmann::json& meta, int version)
+{
+    if (version <= 0) {
+        return;
+    }
+
+    meta["dirty_bounds_version"] = version;
+
+    if (auto boundsIt = meta.find("dirty_bounds");
+        boundsIt != meta.end() && boundsIt->is_object()) {
+        (*boundsIt)["version"] = version;
+    }
+}
+
 bool isInvalidPoint(const cv::Vec3f& value)
 {
     return !std::isfinite(value[0]) || !std::isfinite(value[1]) || !std::isfinite(value[2]) ||
@@ -724,6 +760,10 @@ void SegmentationGrower::onFutureFinished()
             targetSurface->invalidateCache();
         }
 
+        const int existingDirtyBoundsVersion = readDirtyBoundsVersion(targetSurface->meta);
+        const int resultDirtyBoundsVersion =
+            readDirtyBoundsVersion(result.surface ? result.surface->meta : nullptr);
+
         nlohmann::json preservedTags = nlohmann::json::object();
         bool hadPreservedTags = false;
         if (targetSurface->meta && targetSurface->meta->is_object()) {
@@ -746,6 +786,11 @@ void SegmentationGrower::onFutureFinished()
             targetSurface->meta = new nlohmann::json(*result.surface->meta);
         } else {
             ensureSurfaceMetaObject(targetSurface);
+        }
+
+        if (targetSurface->meta && targetSurface->meta->is_object()) {
+            const int restoredVersion = std::max(existingDirtyBoundsVersion, resultDirtyBoundsVersion);
+            restoreDirtyBoundsVersion(*targetSurface->meta, restoredVersion);
         }
 
         if (hadPreservedTags && targetSurface->meta && targetSurface->meta->is_object()) {
