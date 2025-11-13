@@ -769,29 +769,6 @@ void CVolumeViewer::invalidateIntersect(const std::string &name)
 }
 
 
-void CVolumeViewer::onIntersectionChanged(std::string a, std::string b, Intersection *intersection)
-{
-    if (_ignore_intersect_change && intersection == _ignore_intersect_change)
-        return;
-
-    const bool tracksVisibleSeg = (_surf_name == "segmentation" && (a == "visible_segmentation" || b == "visible_segmentation"));
-    const bool involvesSurfName = (a == _surf_name || b == _surf_name);
-
-    if (!involvesSurfName && !tracksVisibleSeg) {
-        return;
-    }
-
-    //FIXME fix segmentation vs visible_segmentation naming and usage ..., think about dependency chain ..
-    if (a == _surf_name || (_surf_name == "segmentation" && a == "visible_segmentation"))
-        invalidateIntersect(b);
-    else if (b == _surf_name || (_surf_name == "segmentation" && b == "visible_segmentation"))
-        invalidateIntersect(a);
-    
-    if (a == _surf_name || b == _surf_name) {
-        renderIntersections();
-    }
-}
-
 void CVolumeViewer::setIntersects(const std::set<std::string> &set)
 {
     _intersect_tgts = set;
@@ -1700,75 +1677,31 @@ void CVolumeViewer::renderIntersections()
             intersectCandidates.emplace_back(key, segmentation);
         }
 
-        std::vector<SurfacePatchIndex::TriangleCandidate> triangleCandidates;
-        patchIndex->queryTriangles(view_bbox, nullptr, triangleCandidates);
-
-        std::unordered_map<QuadSurface*, std::vector<size_t>> trianglesBySurface;
-        trianglesBySurface.reserve(intersectCandidates.size());
-        for (size_t idx = 0; idx < triangleCandidates.size(); ++idx) {
-            auto* surface = triangleCandidates[idx].surface;
-            if (!surface) {
-                continue;
-            }
-            trianglesBySurface[surface].push_back(idx);
-        }
-
-        auto intersectionLinesEqual = [](const std::vector<IntersectionLine>& lhs,
-                                         const std::vector<IntersectionLine>& rhs) {
-            if (lhs.size() != rhs.size()) {
-                return false;
-            }
-            for (size_t idx = 0; idx < lhs.size(); ++idx) {
-                const auto& a = lhs[idx];
-                const auto& b = rhs[idx];
-                if (a.world.size() != b.world.size() ||
-                    a.surfaceParams.size() != b.surfaceParams.size()) {
-                    return false;
-                }
-                for (size_t pointIdx = 0; pointIdx < a.world.size(); ++pointIdx) {
-                    if (a.world[pointIdx] != b.world[pointIdx]) {
-                        return false;
-                    }
-                }
-                for (size_t pointIdx = 0; pointIdx < a.surfaceParams.size(); ++pointIdx) {
-                    if (a.surfaceParams[pointIdx] != b.surfaceParams[pointIdx]) {
-                        return false;
-                    }
-                }
-            }
-            return true;
-        };
-
         size_t colorIndex = 0;
         for (const auto& candidate : intersectCandidates) {
             const auto& key = candidate.first;
             QuadSurface* segmentation = candidate.second;
 
-            const auto trianglesIt = trianglesBySurface.find(segmentation);
-            if (trianglesIt == trianglesBySurface.end()) {
+            std::vector<IntersectionLine> intersectionLines;
+            patchIndex->forEachTriangle(
+                view_bbox,
+                segmentation,
+                [&](const SurfacePatchIndex::TriangleCandidate& triCandidate) {
+                    auto segment = SurfacePatchIndex::clipTriangleToPlane(triCandidate, *plane, clipTolerance);
+                    if (!segment) {
+                        return;
+                    }
+
+                    IntersectionLine line;
+                    for (int i = 0; i < 2; ++i) {
+                        line.world[static_cast<size_t>(i)] = segment->world[i];
+                        line.surfaceParams[static_cast<size_t>(i)] = segment->surfaceParams[i];
+                    }
+                    intersectionLines.push_back(std::move(line));
+                });
+            if (intersectionLines.empty()) {
                 removeItemsForKey(key);
                 continue;
-            }
-
-            const auto& candidateIndices = trianglesIt->second;
-
-            std::vector<IntersectionLine> intersectionLines;
-            intersectionLines.reserve(candidateIndices.size());
-            for (size_t candidateIndex : candidateIndices) {
-                const auto& triCandidate = triangleCandidates[candidateIndex];
-                auto segment = SurfacePatchIndex::clipTriangleToPlane(triCandidate, *plane, clipTolerance);
-                if (!segment) {
-                    continue;
-                }
-
-                IntersectionLine line;
-                line.world.reserve(2);
-                line.surfaceParams.reserve(2);
-                for (int i = 0; i < 2; ++i) {
-                    line.world.push_back(segment->world[i]);
-                    line.surfaceParams.push_back(segment->surfaceParams[i]);
-                }
-                intersectionLines.push_back(std::move(line));
             }
 
             QColor col;
@@ -1885,21 +1818,6 @@ void CVolumeViewer::renderIntersections()
                 removeItemsForKey(key);
             }
 
-            bool shouldUpdateIntersection = _surf_col && !intersectionLines.empty();
-            if (shouldUpdateIntersection) {
-                if (auto* existing = _surf_col->intersection(_surf_name, key)) {
-                    shouldUpdateIntersection =
-                        !intersectionLinesEqual(existing->lines, intersectionLines);
-                }
-            }
-
-            if (shouldUpdateIntersection) {
-                auto* intersection = new Intersection();
-                intersection->lines = std::move(intersectionLines);
-                _ignore_intersect_change = intersection;
-                _surf_col->setIntersection(_surf_name, key, intersection);
-                _ignore_intersect_change = nullptr;
-            }
         }
 
         // Remove stale intersections that are no longer requested.
@@ -1914,32 +1832,101 @@ void CVolumeViewer::renderIntersections()
         }
 
     }
-    else if (_surf_name == "segmentation" /*&& dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"))*/) {
-        //TODO make configurable, for now just show everything!
-        std::vector<std::pair<std::string,std::string>> intersects = _surf_col->intersections("segmentation");
+    else if (_surf_name == "segmentation") {
         QuadSurface* quadSurface = dynamic_cast<QuadSurface*>(_surf);
         if (!quadSurface) {
+            clearAllIntersectionItems();
             return;
         }
 
-        for (auto pair : intersects) {
-            std::string key = pair.first;
-            if (key == "segmentation")
-                key = pair.second;
-            
-            if (!_intersect_tgts.count(key))
-                continue;
+        const SurfacePatchIndex* patchIndex =
+            _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
+        if (!patchIndex) {
+            clearAllIntersectionItems();
+            return;
+        }
 
-            Intersection* storedIntersection = _surf_col->intersection(pair.first, pair.second);
-            if (!storedIntersection || storedIntersection->lines.empty()) {
+        const float clipTolerance = std::max(_intersectionThickness, 1e-4f);
+
+        auto computeSegmentationViewBounds = [&]() {
+            Rect3D bounds{};
+            bool initialized = false;
+            auto samplePoint = [&](const QPointF& point) {
+                cv::Vec3f world;
+                cv::Vec3f normal;
+                if (!scene2vol(world,
+                               normal,
+                               quadSurface,
+                               _surf_name,
+                               _surf_col,
+                               point,
+                               _vis_center,
+                               _scale)) {
+                    return;
+                }
+                if (!initialized) {
+                    bounds.low = world;
+                    bounds.high = world;
+                    initialized = true;
+                } else {
+                    bounds = expand_rect(bounds, world);
+                }
+            };
+
+            samplePoint(viewRect.topLeft());
+            samplePoint(viewRect.topRight());
+            samplePoint(viewRect.bottomLeft());
+            samplePoint(viewRect.bottomRight());
+
+            if (!initialized) {
+                bounds = quadSurface->bbox();
+            }
+
+            const float viewPadding = 64.0f;
+            bounds.low -= cv::Vec3f(viewPadding, viewPadding, viewPadding);
+            bounds.high += cv::Vec3f(viewPadding, viewPadding, viewPadding);
+            return bounds;
+        };
+
+        const Rect3D segViewBounds = computeSegmentationViewBounds();
+
+        for (const auto& key : _intersect_tgts) {
+            Surface* surfacePtr = _surf_col->surface(key);
+            auto* planeTarget = dynamic_cast<PlaneSurface*>(surfacePtr);
+            if (!planeTarget) {
+                removeItemsForKey(key);
+                continue;
+            }
+
+            std::vector<IntersectionLine> intersectionLines;
+            patchIndex->forEachTriangle(
+                segViewBounds,
+                quadSurface,
+                [&](const SurfacePatchIndex::TriangleCandidate& triCandidate) {
+                    auto segment =
+                        SurfacePatchIndex::clipTriangleToPlane(triCandidate,
+                                                               *planeTarget,
+                                                               clipTolerance);
+                    if (!segment) {
+                        return;
+                    }
+                    IntersectionLine line;
+                    for (int i = 0; i < 2; ++i) {
+                        line.world[static_cast<std::size_t>(i)] = segment->world[i];
+                        line.surfaceParams[static_cast<std::size_t>(i)] =
+                            segment->surfaceParams[i];
+                    }
+                    intersectionLines.push_back(std::move(line));
+                });
+
+            if (intersectionLines.empty()) {
+                removeItemsForKey(key);
                 continue;
             }
 
             std::vector<QGraphicsItem*> items;
-            for (const auto& line : storedIntersection->lines) {
-                if (line.surfaceParams.size() < 2 || line.surfaceParams.size() != line.world.size()) {
-                    continue;
-                }
+            items.reserve(intersectionLines.size());
+            for (const auto& line : intersectionLines) {
                 QPainterPath path;
                 bool first = true;
                 for (const auto& param : line.surfaceParams) {
@@ -1947,10 +1934,11 @@ void CVolumeViewer::renderIntersections()
                     if (p[0] == -1) {
                         continue;
                     }
-                    if (first)
+                    if (first) {
                         path.moveTo(p[0], p[1]);
-                    else
+                    } else {
                         path.lineTo(p[0], p[1]);
+                    }
                     first = false;
                 }
 
@@ -1958,7 +1946,8 @@ void CVolumeViewer::renderIntersections()
                     continue;
                 }
 
-                auto item = fGraphicsView->scene()->addPath(path, QPen(key == "seg yz" ? COLOR_SEG_YZ: COLOR_SEG_XZ, 2));
+                QColor color = (key == "seg yz") ? COLOR_SEG_YZ : COLOR_SEG_XZ;
+                auto* item = fGraphicsView->scene()->addPath(path, QPen(color, 2));
                 item->setZValue(5);
                 item->setOpacity(_intersectionOpacity);
                 if (fBaseImageItem) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -65,6 +66,10 @@ public:
     void queryTriangles(const Rect3D& bounds,
                         QuadSurface* targetSurface,
                         std::vector<TriangleCandidate>& outCandidates) const;
+
+    void forEachTriangle(const Rect3D& bounds,
+                         QuadSurface* targetSurface,
+                         const std::function<void(const TriangleCandidate&)>& visitor) const;
 
     static std::optional<TriangleSegment> clipTriangleToPlane(const TriangleCandidate& tri,
                                                               const PlaneSurface& plane,

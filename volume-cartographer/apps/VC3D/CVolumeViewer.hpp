@@ -141,7 +141,6 @@ public slots:
     void onCollectionSelected(uint64_t collectionId);
     void onSurfaceChanged(std::string name, Surface *surf);
     void onPOIChanged(std::string name, POI *poi);
-    void onIntersectionChanged(std::string a, std::string b, Intersection *intersection);
     void onScrolled();
     void onResized();
     void onZoom(int steps, QPointF scene_point, Qt::KeyboardModifiers modifiers);
@@ -222,7 +221,6 @@ protected:
 
     std::set<std::string> _intersect_tgts = {"visible_segmentation"};
     std::unordered_map<std::string,std::vector<QGraphicsItem*>> _intersect_items;
-    Intersection *_ignore_intersect_change = nullptr;
     bool _autoRefocusOnOffscreenIntersections = true;
     bool _hasLastPlaneOrigin = false;
     cv::Vec3f _lastPlaneOrigin = {0.0f, 0.0f, 0.0f};
