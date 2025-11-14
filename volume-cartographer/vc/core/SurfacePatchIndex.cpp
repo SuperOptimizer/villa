@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdint>
 #include <cmath>
 #include <limits>
 #include <utility>
@@ -279,10 +278,10 @@ struct SurfacePatchIndex::Impl {
                      int colStart,
                      int colEnd);
 
-    bool replaceSurfaceEntries(QuadSurface* surface,
+    bool replaceSurfaceEntries(const QuadSurface* surface,
                                std::vector<std::pair<CellKey, CellEntry>>&& newCells);
 
-    bool removeSurfaceEntries(QuadSurface* surface);
+    bool removeSurfaceEntries(const QuadSurface* surface);
 
     static PatchHit evaluatePatch(const PatchRecord& rec, const cv::Vec3f& point) {
         PatchHit best;
@@ -433,8 +432,8 @@ void SurfacePatchIndex::rebuild(const std::vector<QuadSurface*>& surfaces, float
     size_t estimatedTriangles = 0;
     for (const auto& cells : cellsPerSurface) {
         estimatedPatches += cells.size();
-        for (const auto& cell : cells) {
-            estimatedTriangles += cell.second.triangleCount;
+        for (const auto &val: cells | std::views::values) {
+            estimatedTriangles += val.triangleCount;
         }
     }
     entries.reserve(estimatedPatches);
@@ -469,8 +468,7 @@ void SurfacePatchIndex::rebuild(const std::vector<QuadSurface*>& surfaces, float
     }
 }
 
-void SurfacePatchIndex::clear()
-{
+void SurfacePatchIndex::clear() const {
     if (impl_) {
         impl_->tree.reset();
         impl_->triangleTree.reset();
@@ -489,7 +487,7 @@ bool SurfacePatchIndex::empty() const
 }
 
 std::optional<SurfacePatchIndex::LookupResult>
-SurfacePatchIndex::locate(const cv::Vec3f& worldPoint, float tolerance, QuadSurface* targetSurface) const
+SurfacePatchIndex::locate(const cv::Vec3f& worldPoint, float tolerance, const QuadSurface* targetSurface) const
 {
     if (!impl_ || !impl_->tree || tolerance <= 0.0f) {
         return std::nullopt;
@@ -508,8 +506,8 @@ SurfacePatchIndex::locate(const cv::Vec3f& worldPoint, float tolerance, QuadSurf
     float bestDistSq = toleranceSq;
     bool found = false;
 
-    for (const auto& entry : candidates) {
-        const Impl::PatchRecord& rec = entry.second;
+    for (const auto &val: candidates | std::views::values) {
+        const Impl::PatchRecord& rec = val;
         if (targetSurface && rec.surface != targetSurface) {
             continue;
         }
@@ -544,7 +542,7 @@ SurfacePatchIndex::locate(const cv::Vec3f& worldPoint, float tolerance, QuadSurf
 }
 
 void SurfacePatchIndex::queryBox(const Rect3D& bounds,
-                                 QuadSurface* targetSurface,
+                                 const QuadSurface* targetSurface,
                                  std::vector<PatchCandidate>& outCandidates) const
 {
     outCandidates.clear();
@@ -560,8 +558,8 @@ void SurfacePatchIndex::queryBox(const Rect3D& bounds,
     impl_->tree->query(bgi::intersects(query), std::back_inserter(candidates));
 
     outCandidates.reserve(outCandidates.size() + candidates.size());
-    for (const auto& entry : candidates) {
-        const Impl::PatchRecord& rec = entry.second;
+    for (const auto &val: candidates | std::views::values) {
+        const Impl::PatchRecord& rec = val;
         if (targetSurface && rec.surface != targetSurface) {
             continue;
         }
@@ -578,7 +576,7 @@ void SurfacePatchIndex::queryBox(const Rect3D& bounds,
 }
 
 void SurfacePatchIndex::queryTriangles(const Rect3D& bounds,
-                                       QuadSurface* targetSurface,
+                                       const QuadSurface* targetSurface,
                                        std::vector<TriangleCandidate>& outCandidates) const
 {
     outCandidates.clear();
@@ -594,8 +592,8 @@ void SurfacePatchIndex::queryTriangles(const Rect3D& bounds,
     impl_->triangleTree->query(bgi::intersects(query), std::back_inserter(candidates));
 
     outCandidates.reserve(outCandidates.size() + candidates.size());
-    for (const auto& entry : candidates) {
-        const Impl::TriangleRecord& rec = entry.second;
+    for (const auto &val: candidates | std::views::values) {
+        const Impl::TriangleRecord& rec = val;
         if (targetSurface && rec.surface != targetSurface) {
             continue;
         }
@@ -612,20 +610,20 @@ void SurfacePatchIndex::queryTriangles(const Rect3D& bounds,
     }
 }
 
-bool SurfacePatchIndex::Impl::removeSurfaceEntries(QuadSurface* surface)
+bool SurfacePatchIndex::Impl::removeSurfaceEntries(const QuadSurface* surface)
 {
     if (!surface) {
         return false;
     }
 
-    auto it = surfaceCellKeys.find(surface);
+    auto it = surfaceCellKeys.find(const_cast<QuadSurface*>(surface));
     if (it == surfaceCellKeys.end() || it->second.empty()) {
         return false;
     }
 
     std::vector<CellKey> keys = it->second;
     for (const auto& key : keys) {
-        if (cellEntries.find(key) != cellEntries.end()) {
+        if (cellEntries.contains(key)) {
             removeCellEntry(key);
         }
     }
@@ -641,7 +639,7 @@ bool SurfacePatchIndex::Impl::removeSurfaceEntries(QuadSurface* surface)
 }
 
 bool SurfacePatchIndex::Impl::replaceSurfaceEntries(
-    QuadSurface* surface,
+    const QuadSurface* surface,
     std::vector<std::pair<CellKey, CellEntry>>&& newCells)
 {
     if (!surface) {
@@ -792,8 +790,7 @@ SurfacePatchIndex::clipTriangleToPlane(const TriangleCandidate& tri,
     return segment;
 }
 
-bool SurfacePatchIndex::updateSurface(QuadSurface* surface)
-{
+bool SurfacePatchIndex::updateSurface(QuadSurface* surface) const {
     if (!impl_ || !surface) {
         return false;
     }
@@ -816,8 +813,7 @@ bool SurfacePatchIndex::updateSurfaceRegion(QuadSurface* surface,
                                             int rowStart,
                                             int rowEnd,
                                             int colStart,
-                                            int colEnd)
-{
+                                            int colEnd) const {
     if (!impl_ || !surface) {
         return false;
     }
@@ -849,8 +845,7 @@ bool SurfacePatchIndex::updateSurfaceRegion(QuadSurface* surface,
     return !cells.empty();
 }
 
-bool SurfacePatchIndex::removeSurface(QuadSurface* surface)
-{
+bool SurfacePatchIndex::removeSurface(const QuadSurface* surface) const {
     if (!impl_ || !surface) {
         return false;
     }
@@ -992,9 +987,9 @@ void SurfacePatchIndex::Impl::forgetCellKey(const CellKey& key)
         return;
     }
     auto& keys = it->second;
-    auto removeIt = std::remove_if(keys.begin(), keys.end(), [&](const CellKey& existing) {
+    auto removeIt = std::ranges::remove_if(keys, [&](const CellKey& existing) {
         return existing.packed == key.packed;
-    });
+    }).begin();
     if (removeIt != keys.end()) {
         keys.erase(removeIt, keys.end());
     }

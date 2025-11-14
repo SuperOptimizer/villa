@@ -68,7 +68,7 @@ bool loc_valid_nan_xy(const cv::Mat_<cv::Vec3f>& m, const cv::Vec2f& l);
 /// out: resulting 3D point, loc: 2D location in grid, tgt: target point
 /// z_search: whether to search in z direction
 void min_loc(const cv::Mat_<cv::Vec3f>& points, cv::Vec2f& loc, cv::Vec3f& out,
-             cv::Vec3f tgt, bool z_search = true);
+             const cv::Vec3f &tgt, bool z_search = true);
 
 /// Templated version for different element types
 template<typename E>

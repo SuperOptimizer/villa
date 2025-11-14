@@ -3,10 +3,6 @@
 #include <fstream>
 #include <set>
 #include <utility>
-#include <sys/inotify.h>
-#include <unistd.h>
-#include <poll.h>
-#include <cerrno>
 #include <cstring>
 
 #include "vc/core/util/DateTime.hpp"
@@ -75,7 +71,7 @@ bool VolumePkg::hasVolumes() const { return !volumes_.empty(); }
 
 bool VolumePkg::hasVolume(const std::string& id) const
 {
-    return volumes_.count(id) > 0;
+    return volumes_.contains(id);
 }
 
 std::size_t VolumePkg::numberOfVolumes() const
@@ -86,8 +82,8 @@ std::size_t VolumePkg::numberOfVolumes() const
 std::vector<std::string> VolumePkg::volumeIDs() const
 {
     std::vector<std::string> ids;
-    for (const auto& v : volumes_) {
-        ids.emplace_back(v.first);
+    for (const auto &key: volumes_ | std::views::keys) {
+        ids.emplace_back(key);
     }
     return ids;
 }
@@ -124,10 +120,10 @@ std::vector<std::string> VolumePkg::segmentationIDs() const
 {
     std::vector<std::string> ids;
     // Only return IDs from the current directory
-    for (const auto& s : segmentations_) {
-        auto it = segmentationDirectories_.find(s.first);
+    for (const auto &key: segmentations_ | std::views::keys) {
+        auto it = segmentationDirectories_.find(key);
         if (it != segmentationDirectories_.end() && it->second == currentSegmentationDir_) {
-            ids.emplace_back(s.first);
+            ids.emplace_back(key);
         }
     }
     return ids;
@@ -254,7 +250,7 @@ void VolumePkg::refreshSegmentations()
         if (dirIt != segmentationDirectories_.end() && dirIt->second == currentSegmentationDir_) {
             // This segmentation belongs to the current directory
             // Check if it still exists on disk
-            if (diskPaths.find(seg.second->path()) == diskPaths.end()) {
+            if (!diskPaths.contains(seg.second->path())) {
                 // Not on disk anymore - mark for removal
                 toRemove.push_back(seg.first);
             }
@@ -264,13 +260,6 @@ void VolumePkg::refreshSegmentations()
     // Remove segmentations that no longer exist
     for (const auto& id : toRemove) {
         Logger()->info("Removing segmentation '{}' - no longer exists on disk", id);
-
-        // Get the path before removing the segmentation
-        std::filesystem::path segPath;
-        auto segIt = segmentations_.find(id);
-        if (segIt != segmentations_.end()) {
-            segPath = segIt->second->path();
-        }
 
         // Remove from segmentations map
         segmentations_.erase(id);
@@ -282,12 +271,12 @@ void VolumePkg::refreshSegmentations()
     // Find and add new segmentations (on disk but not in memory)
     // Build a set of currently loaded paths for O(1) lookup
     std::set<std::filesystem::path> loadedPaths;
-    for (const auto& seg : segmentations_) {
-        loadedPaths.insert(seg.second->path());
+    for (const auto &val: segmentations_ | std::views::values) {
+        loadedPaths.insert(val->path());
     }
 
     for (const auto& diskPath : diskPaths) {
-        if (loadedPaths.find(diskPath) == loadedPaths.end()) {
+        if (!loadedPaths.contains(diskPath)) {
             try {
                 auto s = Segmentation::New(diskPath);
                 segmentations_.emplace(s->id(), s);
@@ -343,7 +332,7 @@ std::vector<std::string> VolumePkg::getLoadedSurfaceIDs() const
 
 void VolumePkg::unloadAllSurfaces()
 {
-    for (auto& [id, seg] : segmentations_) {
+    for (auto &seg: segmentations_ | std::views::values) {
         seg->unloadSurface();
     }
 }
@@ -379,14 +368,12 @@ void VolumePkg::loadSurfacesBatch(const std::vector<std::string>& ids)
     }
 }
 
-VolumePkg::~VolumePkg()
-{
-}
+VolumePkg::~VolumePkg() = default;
 
 bool VolumePkg::addSingleSegmentation(const std::string& id)
 {
     // Check if already loaded
-    if (segmentations_.find(id) != segmentations_.end()) {
+    if (segmentations_.contains(id)) {
         return false; // Already exists
     }
 

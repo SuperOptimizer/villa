@@ -21,9 +21,9 @@ public:
     ~Volume() = default;
 
 
-    static std::shared_ptr<Volume> New(std::filesystem::path path);
+    static std::shared_ptr<Volume> New(const std::filesystem::path& path);
 
-    static std::shared_ptr<Volume> New(std::filesystem::path path, std::string uuid, std::string name);
+    static std::shared_ptr<Volume> New(const std::filesystem::path& path, const std::string& uuid, const std::string& name);
 
     [[nodiscard]] std::string id() const { return metadata_.at("uuid").get<std::string>(); }
     [[nodiscard]] std::string name() const { return metadata_.at("name").get<std::string>(); }

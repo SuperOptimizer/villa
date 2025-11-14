@@ -151,7 +151,7 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
 }
 
 template <typename E>
-static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt, cv::Vec2f init_step, float min_step_x)
+static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f &out, const cv::Vec3f& tgt, const cv::Vec2f& init_step, float min_step_x)
 {
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
     if (!boundary.contains(cv::Point(loc))) {
@@ -519,7 +519,7 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
     if (need_normals && ul[2] != 0.0f) {
         for (int j = 0; j < h; ++j) {
             for (int i = 0; i < w; ++i) {
-                const cv::Vec3f n = (*normals)(j, i);
+                const cv::Vec3f& n = (*normals)(j, i);
                 if (std::isfinite(n[0]) && std::isfinite(n[1]) && std::isfinite(n[2])) {
                     (*coords)(j, i) += n * ul[2];
                 }
@@ -1327,7 +1327,7 @@ QuadSurface* surface_union(QuadSurface* a, QuadSurface* b, float tolerance) {
     // Add points from b that don't exist in a
     for (int j = 0; j < b_points.rows; j++) {
         for (int i = 0; i < b_points.cols; i++) {
-            cv::Vec3f point_b = b_points(j, i);
+            const cv::Vec3f& point_b = b_points(j, i);
 
             // Skip invalid points
             if (point_b[0] == -1) {

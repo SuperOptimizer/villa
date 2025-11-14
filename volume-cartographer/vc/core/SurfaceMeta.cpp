@@ -166,7 +166,7 @@ bool overlap(SurfaceMeta& a, SurfaceMeta& b, int max_iters)
     cv::Mat_<cv::Vec3f> points = a.surface()->rawPoints();
     for (int r = 0; r < std::max(10, max_iters / 10); r++) {
         cv::Vec2f p = {rand() % points.cols, rand() % points.rows};
-        cv::Vec3f loc = points(p[1], p[0]);
+        const cv::Vec3f& loc = points(p[1], p[0]);
         if (loc[0] == -1)
             continue;
 

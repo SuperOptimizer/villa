@@ -17,7 +17,7 @@ namespace {
 
 std::string TrimCopy(const std::string& value)
 {
-    auto begin = std::find_if_not(value.begin(), value.end(), [](unsigned char ch) { return std::isspace(ch) != 0; });
+    auto begin = std::ranges::find_if_not(value, [](unsigned char ch) { return std::isspace(ch) != 0; });
     auto end = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char ch) { return std::isspace(ch) != 0; }).base();
     if (begin >= end) {
         return {};
@@ -178,7 +178,7 @@ Umbilicus::Umbilicus(std::vector<cv::Vec3f> control_points, const cv::Vec3i& vol
         throw std::invalid_argument("Umbilicus requires at least one control point");
     }
 
-    std::sort(control_points_.begin(), control_points_.end(), [](const auto& a, const auto& b) {
+    std::ranges::sort(control_points_, [](const auto& a, const auto& b) {
         return a[2] < b[2];
     });
 
@@ -190,7 +190,7 @@ std::vector<cv::Vec3f> Umbilicus::LoadFile(const std::filesystem::path& path)
     const std::string extension = path.extension().string();
     std::string lowered_ext;
     lowered_ext.resize(extension.size());
-    std::transform(extension.begin(), extension.end(), lowered_ext.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    std::ranges::transform(extension, lowered_ext.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 
     if (lowered_ext == ".json") {
         return LoadJsonFile(path);
@@ -351,7 +351,7 @@ cv::Vec3f Umbilicus::interpolate_center(double z) const
         return result;
     }
 
-    const float target = static_cast<float>(z);
+    const auto target = static_cast<float>(z);
     auto upper = std::lower_bound(control_points_.begin(), control_points_.end(), target,
                                   [](const cv::Vec3f& lhs, float value) { return lhs[2] < value; });
     if (upper == control_points_.begin()) {
@@ -423,17 +423,17 @@ void Umbilicus::compute_seam_endpoints()
         return;
     }
 
-    const float min_x = 0.0f;
-    const float min_y = 0.0f;
-    const float max_x = static_cast<float>(volume_shape_[2] - 1);
-    const float max_y = static_cast<float>(volume_shape_[1] - 1);
+    const auto max_x = static_cast<float>(volume_shape_[2] - 1);
+    const auto max_y = static_cast<float>(volume_shape_[1] - 1);
 
     const cv::Vec2f& dir = *seam_direction_xy_;
     const float dx = dir[0];
     const float dy = dir[1];
-    constexpr float eps = 1e-6f;
 
     for (std::size_t idx = 0; idx < dense_centers_.size(); ++idx) {
+        constexpr float eps = 1e-6f;
+        const float min_x = 0.0f;
+        const float min_y = 0.0f;
         const cv::Vec3f& center = dense_centers_[idx];
         float best_t = std::numeric_limits<float>::infinity();
 

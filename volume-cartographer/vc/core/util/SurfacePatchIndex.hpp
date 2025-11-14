@@ -51,32 +51,32 @@ public:
     SurfacePatchIndex& operator=(const SurfacePatchIndex&) = delete;
 
     void rebuild(const std::vector<QuadSurface*>& surfaces, float bboxPadding = 0.0f);
-    void clear();
+    void clear() const;
     bool empty() const;
 
     std::optional<LookupResult> locate(const cv::Vec3f& worldPoint,
                                        float tolerance,
-                                       QuadSurface* targetSurface = nullptr) const;
+                                       const QuadSurface* targetSurface = nullptr) const;
 
     void queryBox(const Rect3D& bounds,
-                  QuadSurface* targetSurface,
+                  const QuadSurface* targetSurface,
                   std::vector<PatchCandidate>& outCandidates) const;
 
     void queryTriangles(const Rect3D& bounds,
-                        QuadSurface* targetSurface,
+                        const QuadSurface* targetSurface,
                         std::vector<TriangleCandidate>& outCandidates) const;
 
     static std::optional<TriangleSegment> clipTriangleToPlane(const TriangleCandidate& tri,
                                                               const PlaneSurface& plane,
                                                               float epsilon = 1e-4f);
 
-    bool updateSurface(QuadSurface* surface);
+    bool updateSurface(QuadSurface* surface) const;
     bool updateSurfaceRegion(QuadSurface* surface,
                              int rowStart,
                              int rowEnd,
                              int colStart,
-                             int colEnd);
-    bool removeSurface(QuadSurface* surface);
+                             int colEnd) const;
+    bool removeSurface(const QuadSurface* surface) const;
     bool setSamplingStride(int stride);
     int samplingStride() const;
 

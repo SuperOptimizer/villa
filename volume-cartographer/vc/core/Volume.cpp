@@ -70,10 +70,10 @@ void Volume::zarrOpen()
 
     std::vector<std::string> groups;
     zarrFile_->keys(groups);
-    std::sort(groups.begin(), groups.end());
+    std::ranges::sort(groups);
 
     //FIXME hardcoded assumption that groups correspond to power-2 scaledowns ...
-    for(auto name : groups) {
+    for(const auto& name : groups) {
         z5::filesystem::handle::Dataset ds_handle(group, name, nlohmann::json::parse(std::ifstream(path_/name/".zarray")).value<std::string>("dimension_separator","."));
 
         zarrDs_.push_back(z5::filesystem::openDataset(ds_handle));
@@ -82,12 +82,12 @@ void Volume::zarrOpen()
     }
 }
 
-std::shared_ptr<Volume> Volume::New(std::filesystem::path path)
+std::shared_ptr<Volume> Volume::New(const std::filesystem::path& path)
 {
     return std::make_shared<Volume>(path);
 }
 
-std::shared_ptr<Volume> Volume::New(std::filesystem::path path, std::string uuid, std::string name)
+std::shared_ptr<Volume> Volume::New(const std::filesystem::path& path, const std::string& uuid, const std::string& name)
 {
     return std::make_shared<Volume>(path, uuid, name);
 }

@@ -1,5 +1,7 @@
 #include "vc/core/util/ChunkCache.hpp"
 
+#include <ranges>
+
 template<typename T>
 ChunkCache<T>::~ChunkCache()
 {
@@ -10,7 +12,7 @@ ChunkCache<T>::~ChunkCache()
 template<typename T>
 int ChunkCache<T>::groupIdx(const std::string &name)
 {
-    if (!_group_store.count(name))
+    if (!_group_store.contains(name))
         _group_store[name] = _group_store.size()+1;
 
      return _group_store[name];
@@ -34,15 +36,14 @@ void ChunkCache<T>::put(const cv::Vec4i &idx, xt::xarray<T> *ar)
         using KP = std::pair<cv::Vec4i, uint64_t>;
         std::vector<KP> gen_list(_gen_store.begin(), _gen_store.end());
         std::sort(gen_list.begin(), gen_list.end(), [](const KP &a, const KP &b){ return a.second < b.second; });
-        for(const auto& it : gen_list) {
-            std::shared_ptr<xt::xarray<T>> cached_ar = _store[it.first];
-            if (cached_ar.get()) {
+        for(const auto &key: gen_list | std::views::keys) {
+            if (std::shared_ptr<xt::xarray<T>> cached_ar = _store[key]; cached_ar.get()) {
                 size_t size = cached_ar.get()->storage().size() * sizeof(T);
                 cached_ar.reset();
                 _stored -= size;
 
-                _store.erase(it.first);
-                _gen_store.erase(it.first);
+                _store.erase(key);
+                _gen_store.erase(key);
             }
 
             //we delete 10% of cache content to amortize sorting costs

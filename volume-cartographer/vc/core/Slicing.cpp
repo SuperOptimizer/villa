@@ -28,7 +28,7 @@
 
 
 template<typename T>
-static xt::xarray<T> *readChunk(const z5::Dataset & ds, z5::types::ShapeType chunkId)
+static xt::xarray<T> *readChunk(const z5::Dataset & ds, const z5::types::ShapeType& chunkId)
 {
     if (!ds.chunkExists(chunkId)) {
         return nullptr;
@@ -76,7 +76,7 @@ static xt::xarray<T> *readChunk(const z5::Dataset & ds, z5::types::ShapeType chu
 }
 
 template<typename T>
-void readArea3D(xt::xtensor<T, 3, xt::layout_type::column_major>& out, const cv::Vec3i offset, z5::Dataset* ds, ChunkCache<T>* cache) {
+void readArea3D(xt::xtensor<T, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<T>* cache) {
     int group_idx = cache->groupIdx(ds->path());
     cv::Vec3i size = {(int)out.shape()[0], (int)out.shape()[1], (int)out.shape()[2]};
     auto chunksize = ds->chunking().blockShape();

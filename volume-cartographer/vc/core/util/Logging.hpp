@@ -96,11 +96,11 @@ private:
         return result;
     }
 
-    std::string formatMessage(const std::string& fmt) {
+    static std::string formatMessage(const std::string& fmt) {
         return fmt;
     }
 
-    std::string levelPrefix(Level level);
+    static std::string levelPrefix(Level level);
 
     Level currentLevel_ = Level::Info;
     std::mutex mutex_;

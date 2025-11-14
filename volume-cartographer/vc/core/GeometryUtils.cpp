@@ -134,7 +134,7 @@ bool loc_valid_nan_xy(const cv::Mat_<cv::Vec3f>& m, const cv::Vec2f& l)
 // ============================================================================
 
 void min_loc(const cv::Mat_<cv::Vec3f>& points, cv::Vec2f& loc, cv::Vec3f& out,
-             cv::Vec3f tgt, bool z_search)
+             const cv::Vec3f &tgt, bool z_search)
 {
     cv::Rect boundary(1, 1, points.cols-2, points.rows-2);
     if (!boundary.contains(cv::Point(loc))) {
@@ -147,7 +147,6 @@ void min_loc(const cv::Mat_<cv::Vec3f>& points, cv::Vec2f& loc, cv::Vec3f& out,
     cv::Vec3f val = at_int(points, loc);
     out = val;
     float best = sdist(val, tgt);
-    float res;
 
     std::vector<cv::Vec2f> search;
     if (z_search)
@@ -170,7 +169,7 @@ void min_loc(const cv::Mat_<cv::Vec3f>& points, cv::Vec2f& loc, cv::Vec3f& out,
             }
 
             val = at_int(points, cand);
-            res = sdist(val, tgt);
+            float res = sdist(val, tgt);
             if (res < best) {
                 changed = true;
                 best = res;
@@ -200,7 +199,6 @@ void min_loc_t(const cv::Mat_<E>& points, cv::Vec2f& loc, E& out, E tgt, bool z_
     E val = at_int(points, loc);
     out = val;
     float best = sdist(val, tgt);
-    float res;
 
     std::vector<cv::Vec2f> search;
     if (z_search)
@@ -223,7 +221,7 @@ void min_loc_t(const cv::Mat_<E>& points, cv::Vec2f& loc, E& out, E tgt, bool z_
             }
 
             val = at_int(points, cand);
-            res = sdist(val, tgt);
+            float res = sdist(val, tgt);
             if (res < best) {
                 changed = true;
                 best = res;
@@ -259,11 +257,10 @@ void min_loc_multi(const cv::Mat_<cv::Vec3f>& points, cv::Vec2f& loc, cv::Vec3f&
     out = val;
     float best = tdist_sum(val, tgts, tds);
     // Plane distance would be added here if plane is not null
-    float res;
 
     std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
     float step = 1.0;
-    const float min_step = 0.125;
+    constexpr float min_step = 0.125;
 
     while (changed) {
         changed = false;
@@ -276,7 +273,7 @@ void min_loc_multi(const cv::Mat_<cv::Vec3f>& points, cv::Vec2f& loc, cv::Vec3f&
             }
 
             val = at_int(points, cand);
-            res = tdist_sum(val, tgts, tds);
+            float res = tdist_sum(val, tgts, tds);
             // Plane distance would be added here if plane is not null
 
             if (res < best) {

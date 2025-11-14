@@ -8,8 +8,8 @@
 #include <stdexcept>
 #include <vector>
 
-namespace vc {
-namespace tiff {
+
+namespace vc::tiff {
 
 // Write a 32-bit float single-channel image as tiled BigTIFF with LZW compression
 void writeFloatBigTiff(const std::filesystem::path& outPath,
@@ -27,8 +27,8 @@ void writeFloatBigTiff(const std::filesystem::path& outPath,
     if (!tf)
         throw std::runtime_error("Failed to open BigTIFF for writing: " + outPath.string());
 
-    const uint32_t W = static_cast<uint32_t>(img.cols);
-    const uint32_t H = static_cast<uint32_t>(img.rows);
+    const auto W = static_cast<uint32_t>(img.cols);
+    const auto H = static_cast<uint32_t>(img.rows);
 
     // Core tags
     TIFFSetField(tf, TIFFTAG_IMAGEWIDTH,      W);
@@ -69,7 +69,7 @@ void writeFloatBigTiff(const std::filesystem::path& outPath,
                     if (dx > 0) std::memcpy(dst, src, sizeof(float) * dx);
                     if (dx < tileW) std::fill(dst + dx, dst + tileW, -1.0f);
                 } else {
-                    std::fill(dst, dst + tileW, -1.0f);
+                    std::fill_n(dst, tileW, -1.0f);
                 }
             }
 
@@ -104,10 +104,10 @@ void writeSingleChannelBigTiff(const std::filesystem::path& outPath,
     if (!tf)
         throw std::runtime_error("Failed to open TIFF: " + outPath.string());
 
-    const uint32_t W = static_cast<uint32_t>(img.cols);
-    const uint32_t H = static_cast<uint32_t>(img.rows);
-    const uint32_t tileW = static_cast<uint32_t>(opts.tileSize);
-    const uint32_t tileH = static_cast<uint32_t>(opts.tileSize);
+    const auto W = static_cast<uint32_t>(img.cols);
+    const auto H = static_cast<uint32_t>(img.rows);
+    const auto tileW = static_cast<uint32_t>(opts.tileSize);
+    const auto tileH = static_cast<uint32_t>(opts.tileSize);
 
     TIFFSetField(tf, TIFFTAG_IMAGEWIDTH,      W);
     TIFFSetField(tf, TIFFTAG_IMAGELENGTH,     H);
@@ -181,7 +181,7 @@ void writeSingleChannelBigTiff(const std::filesystem::path& outPath,
             const uint32_t dx = std::min(tileW, W - x0);
 
             // Fill tile (pad with zeros)
-            std::fill(tileBuf.begin(), tileBuf.end(), 0);
+            std::ranges::fill(tileBuf, 0);
             for (uint32_t ty = 0; ty < dy; ++ty) {
                 const uint8_t* src = img.ptr<uint8_t>(static_cast<int>(y0 + ty)) + x0 * elem;
                 std::memcpy(tileBuf.data() + (static_cast<size_t>(ty) * tileW * elem),
@@ -236,5 +236,5 @@ void normalizeMaskChannel(cv::Mat& mask)
     mask = singleChannel;
 }
 
-} // namespace tiff
-} // namespace vc
+} // namespace vc::tiff
+

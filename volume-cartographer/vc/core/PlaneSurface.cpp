@@ -10,7 +10,7 @@
 namespace {
 
 //given origin and normal, return the normalized vector v which describes a point : origin + v which lies in the plane and maximizes v.x at the cost of v.y,v.z
-static cv::Vec3f vx_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
+ cv::Vec3f vx_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
 {
     //impossible
     if (n[1] == 0 && n[2] == 0)
@@ -45,13 +45,13 @@ static cv::Vec3f vx_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
     return v;
 }
 
-static cv::Vec3f vy_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
+cv::Vec3f vy_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
 {
     cv::Vec3f v = vx_from_orig_norm({o[1],o[0],o[2]}, {n[1],n[0],n[2]});
     return {v[1],v[0],v[2]};
 }
 
-static void vxy_from_normal(cv::Vec3f orig, cv::Vec3f normal, cv::Vec3f &vx, cv::Vec3f &vy)
+void vxy_from_normal(const cv::Vec3f &orig, const cv::Vec3f &normal, cv::Vec3f &vx, cv::Vec3f &vy)
 {
     vx = vx_from_orig_norm(orig, normal);
     vy = vy_from_orig_norm(orig, normal);
@@ -69,7 +69,7 @@ static void vxy_from_normal(cv::Vec3f orig, cv::Vec3f normal, cv::Vec3f &vx, cv:
         vy *= -1;
 }
 
-static cv::Vec3f rotateAroundAxis(const cv::Vec3f& vector, const cv::Vec3f& axis, float angle)
+cv::Vec3f rotateAroundAxis(const cv::Vec3f& vector, const cv::Vec3f& axis, float angle)
 {
     if (std::abs(angle) <= std::numeric_limits<float>::epsilon()) {
         return vector;
@@ -98,19 +98,19 @@ static cv::Vec3f rotateAroundAxis(const cv::Vec3f& vector, const cv::Vec3f& axis
 
 } // namespace
 
-PlaneSurface::PlaneSurface(cv::Vec3f origin_, cv::Vec3f normal) : _origin(origin_)
+PlaneSurface::PlaneSurface(const cv::Vec3f &origin_, const cv::Vec3f &normal) : _origin(origin_)
 {
     cv::normalize(normal, _normal);
     update();
 }
 
-void PlaneSurface::setNormal(cv::Vec3f normal)
+void PlaneSurface::setNormal(const cv::Vec3f &normal)
 {
     cv::normalize(normal, _normal);
     update();
 }
 
-void PlaneSurface::setOrigin(cv::Vec3f origin)
+void PlaneSurface::setOrigin(const cv::Vec3f &origin)
 {
     _origin = origin;
     update();
@@ -121,8 +121,7 @@ cv::Vec3f PlaneSurface::origin()
     return _origin;
 }
 
-float PlaneSurface::pointDist(cv::Vec3f wp)
-{
+float PlaneSurface::pointDist(const cv::Vec3f &wp) const {
     float plane_off = _origin.dot(_normal);
     float scalarp = wp.dot(_normal) - plane_off /*- _z_off*/;
 
@@ -168,15 +167,14 @@ void PlaneSurface::update()
     _T = transf({3,0,1,3});
 }
 
-cv::Vec3f PlaneSurface::project(cv::Vec3f wp, float render_scale, float coord_scale)
-{
+cv::Vec3f PlaneSurface::project(const cv::Vec3f &wp, float render_scale, float coord_scale) const {
     cv::Vec3d res = _M*cv::Vec3d(wp)+_T;
     res *= render_scale*coord_scale;
 
     return {res(0), res(1), res(2)};
 }
 
-float PlaneSurface::scalarp(cv::Vec3f point) const
+float PlaneSurface::scalarp(const cv::Vec3f &point) const
 {
     return point.dot(_normal) - _origin.dot(_normal);
 }
@@ -217,7 +215,7 @@ void PlaneSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals
 
 cv::Vec3f PlaneSurface::pointer()
 {
-    return cv::Vec3f(0, 0, 0);
+    return {0, 0, 0};
 }
 
 void PlaneSurface::move(cv::Vec3f &ptr, const cv::Vec3f &offset)
