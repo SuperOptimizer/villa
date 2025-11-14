@@ -4,8 +4,8 @@ include(FetchContent)
 option(VC_BUILD_JSON "Build in-source JSON library" OFF)
 option(VC_BUILD_Z5   "Build (vendor) z5 header-only library" ON)
 
-#find_package(CURL REQUIRED)
-#find_package(OpenSSL REQUIRED)
+find_package(CURL REQUIRED)
+find_package(OpenSSL REQUIRED)
 #find_package(ZLIB REQUIRED)
 #find_package(glog REQUIRED)
 
@@ -43,18 +43,16 @@ else()
 endif()
 
 # ---- Qt (apps / utils) -------------------------------------------------------
-if ((VC_BUILD_APPS OR VC_BUILD_UTILS) AND VC_BUILD_GUI)
-    find_package(Qt6 QUIET REQUIRED COMPONENTS Widgets Gui Core Network)
-    set(CMAKE_AUTOMOC ON)
-    set(CMAKE_AUTORCC ON)
-    set(CMAKE_AUTOUIC ON)
+find_package(Qt6 QUIET REQUIRED COMPONENTS Widgets Gui Core Network)
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_AUTOUIC ON)
 
-    # Guard old qt cmake helper on distros with Qt < 6.3
-    if(NOT DEFINED qt_generate_deploy_app_script)
-        message(WARNING "WARNING qt_generate_deploy_app_script MISSING!")
-        function(qt_generate_deploy_app_script)
-        endfunction()
-    endif()
+# Guard old qt cmake helper on distros with Qt < 6.3
+if(NOT DEFINED qt_generate_deploy_app_script)
+    message(WARNING "WARNING qt_generate_deploy_app_script MISSING!")
+    function(qt_generate_deploy_app_script)
+    endfunction()
 endif()
 
 # ---- CUDA sparse toggle ------------------------------------------------------
@@ -88,10 +86,17 @@ if (VC_USE_OPENMP)
 else()
     message(STATUS "OpenMP support disabled")
     set(XTENSOR_USE_OPENMP 0)
-    include_directories(${CMAKE_SOURCE_DIR}/core/openmp_stub)
-    add_library(openmp_stub INTERFACE)
+    add_library(openmp_stub ${CMAKE_SOURCE_DIR}/vc/misc/openmp_stub/openmp_stub.c)
+    target_include_directories(openmp_stub PUBLIC ${CMAKE_SOURCE_DIR}/vc/misc/openmp_stub)
     add_library(OpenMP::OpenMP_CXX ALIAS openmp_stub)
     add_library(OpenMP::OpenMP_C  ALIAS openmp_stub)
+
+    # Export openmp_stub so that vc_core can be installed without errors
+    if(VC_INSTALL_LIBS)
+        install(TARGETS openmp_stub
+                EXPORT "${targets_export_name}"
+                COMPONENT "Libraries")
+    endif()
 endif()
 
 # ---- xtensor/xsimd toggle used by your code ---------------------------------
@@ -120,9 +125,7 @@ else()
 endif()
 
 # ---- Boost (apps/utils only) -------------------------------------------------
-if (VC_BUILD_APPS OR VC_BUILD_UTILS)
-    find_package(Boost 1.58 REQUIRED COMPONENTS program_options)
-endif()
+find_package(Boost 1.58 REQUIRED COMPONENTS program_options)
 
 # ---- PaStiX ------------------------------------------------------------------
 if (VC_WITH_PASTIX)

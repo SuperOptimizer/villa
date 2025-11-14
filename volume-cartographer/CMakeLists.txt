@@ -17,12 +17,12 @@ set(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin)
 set(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
-option(VC_USE_OPENMP "Enable OpenMP support" ON)
+option(VC_USE_OPENMP "Enable OpenMP support" OFF)
 option(VC_USE_VALGRIND "Enable Valgrind support" off)
 
 set(CMAKE_CXX_FLAGS " ${CMAKE_CXX_FLAGS} -fPIC -Wno-narrowing -std=c++23 -DWITH_BLOSC=1 -DWITH_ZLIB=1 " )
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ")
-include_directories(core/include)
+include_directories(./)
 
 if(NOT CMAKE_BUILD_TYPE)
     message(STATUS "Setting build type to 'Release' as none was specified.")
@@ -128,23 +128,19 @@ else()
     message(STATUS "Valgrind support disabled")
 endif()
 
-find_program(CCACHE_PROGRAM ccache)
-if(CCACHE_PROGRAM)
-    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
-endif()
+#find_program(CCACHE_PROGRAM ccache)
+#if(CCACHE_PROGRAM)
+#    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
+#endif()
 
 # Use modern C++ for everything and generate compile_commands database.
 set(CMAKE_EXPORT_COMPILE_COMMANDS on)
 
-# Choose what to build
-option(VC_BUILD_APPS     "Compile VC core programs"    on)
-option(VC_BUILD_GUI      "Compile GUI programs"        on)
-option(VC_BUILD_UTILS    "Compile VC utility programs" on)
 
 # Choose what to install
-option(VC_INSTALL_APPS      "Install VC core programs"    on)
-option(VC_INSTALL_LIBS      "Install VC libraries"        on)
-option(VC_INSTALL_UTILS     "Install VC utility programs" on)
+option(VC_INSTALL_APPS      "Install VC core programs"    off)
+option(VC_INSTALL_LIBS      "Install VC libraries"        off)
+option(VC_INSTALL_UTILS     "Install VC utility programs" off)
 
 # Some helpful constants to be used in subprojects.
 include(VCConstants)
@@ -155,14 +151,6 @@ option(VC_WITH_PASTIX "Build with PaStiX support" OFF)
 # Look for external dependencies.
 include(VCFindDependencies)
 
-# Weird bug on macOS where system includes aren't included with the right flag
-if (APPLE)
-    set(CMAKE_INCLUDE_SYSTEM_FLAG_CXX "-isystem ")
-endif()
-
-if (VC_BUILD_TESTS)
-    enable_testing()
-endif()
 
 option(VC_DEVELOPER_WARNINGS "For developers: Enable extensive compiler warnings" OFF)
 mark_as_advanced(VC_DEVELOPER_WARNINGS)
@@ -170,14 +158,7 @@ if(VC_DEVELOPER_WARNINGS)
     include(VCWarnings)
 endif()
 
-add_subdirectory(misc)
-add_subdirectory(core)
-
-
-if (VC_BUILD_APPS)
-    add_subdirectory(apps)
-endif()
-
+add_subdirectory(vc)
 include(VCPackageConfig)
 include(VCInstall)
 include(Packing)
