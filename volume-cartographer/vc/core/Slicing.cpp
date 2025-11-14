@@ -163,8 +163,8 @@ void readArea3D(xt::xtensor<T, 3, xt::layout_type::column_major>& out, const cv:
 }
 
 // Explicit template instantiations
-template void readArea3D<uint8_t>(xt::xtensor<uint8_t, 3, xt::layout_type::column_major>&, const cv::Vec3i, z5::Dataset*, ChunkCache<uint8_t>*);
-template void readArea3D<uint16_t>(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>&, const cv::Vec3i, z5::Dataset*, ChunkCache<uint16_t>*);
+template void readArea3D<uint8_t>(xt::xtensor<uint8_t, 3, xt::layout_type::column_major>&, const cv::Vec3i&, z5::Dataset*, ChunkCache<uint8_t>*);
+template void readArea3D<uint16_t>(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>&, const cv::Vec3i&, z5::Dataset*, ChunkCache<uint16_t>*);
 
 template<typename T>
 static void readNearestNeighbor(cv::Mat_<T> &out, const z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache<T> *cache) {
