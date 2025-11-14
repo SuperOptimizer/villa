@@ -7,6 +7,7 @@
 
 #include <QGraphicsView>
 #include <QGraphicsScene>
+#include <QGraphicsPathItem>
 
 #include "CVolumeViewerView.hpp"
 #include "CSurfaceCollection.hpp"
@@ -209,6 +210,37 @@ AxisAlignedSliceCache& axisAlignedSliceCache()
 }
 
 } // namespace
+
+const CVolumeViewer::ActiveSegmentationHandle& CVolumeViewer::activeSegmentationHandle() const
+{
+    if (!_activeSegHandleDirty) {
+        return _activeSegHandle;
+    }
+
+    ActiveSegmentationHandle handle;
+    handle.slotName = "segmentation";
+    handle.viewerIsSegmentationView = (_surf_name == "segmentation");
+    handle.accentColor =
+        (_surf_name == "seg yz"   ? COLOR_SEG_YZ
+         : _surf_name == "seg xz" ? COLOR_SEG_XZ
+                                   : COLOR_SEG_XY);
+    if (_surf_col) {
+        handle.surface = dynamic_cast<QuadSurface*>(_surf_col->surface(handle.slotName));
+    }
+    if (!handle.surface) {
+        handle.slotName.clear();
+    }
+
+    _activeSegHandle = handle;
+    _activeSegHandleDirty = false;
+    return _activeSegHandle;
+}
+
+void CVolumeViewer::markActiveSegmentationDirty()
+{
+    _activeSegHandleDirty = true;
+    _activeSegHandle.reset();
+}
 
 // Helper: remove spatial outliers based on robust neighbor-distance stats
 static cv::Mat_<cv::Vec3f> clean_surface_outliers(const cv::Mat_<cv::Vec3f>& points, float distance_threshold = 5.0f)
@@ -697,13 +729,18 @@ void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, 
         }
     }
 
+    const auto& segmentation = activeSegmentationHandle();
+
     // Forward the click for focus
-    if (dynamic_cast<PlaneSurface*>(_surf))
+    if (dynamic_cast<PlaneSurface*>(_surf)) {
         sendVolumeClicked(p, n, _surf, buttons, modifiers);
-    else if (_surf_name == "segmentation")
-        sendVolumeClicked(p, n, _surf_col->surface("segmentation"), buttons, modifiers);
-    else
+    }
+    else if (segmentation.viewerIsSegmentationView && segmentation.surface) {
+        sendVolumeClicked(p, n, segmentation.surface, buttons, modifiers);
+    }
+    else {
         std::cout << "FIXME: onVolumeClicked()" << std::endl;
+    }
 }
 
 void CVolumeViewer::setCache(ChunkCache *cache_)
@@ -735,6 +772,7 @@ void CVolumeViewer::setSurface(const std::string &name)
 {
     _surf_name = name;
     _surf = nullptr;
+    markActiveSegmentationDirty();
     onSurfaceChanged(name, _surf_col->surface(name));
 }
 
@@ -994,6 +1032,10 @@ void CVolumeViewer::fitSurfaceInView()
 
 void CVolumeViewer::onSurfaceChanged(std::string name, Surface *surf)
 {
+    if (name == "segmentation" || name == _surf_name) {
+        markActiveSegmentationDirty();
+    }
+
     if (_surf_name == name) {
         _surf = surf;
         if (!_surf) {
@@ -1150,8 +1192,8 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
         }
 
         PlaneSurface *slice_plane = dynamic_cast<PlaneSurface*>(_surf);
-        // QuadSurface *crop = dynamic_cast<QuadSurface*>(_surf_col->surface("visible_segmentation"));
-        QuadSurface *crop = dynamic_cast<QuadSurface*>(_surf_col->surface("segmentation"));
+        const auto& segmentation = activeSegmentationHandle();
+        QuadSurface *crop = segmentation.surface;
         
         cv::Vec3f sp;
         float dist = -1;
@@ -1159,7 +1201,7 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
             dist = slice_plane->pointDist(poi->p);
             sp = slice_plane->project(poi->p, 1.0, _scale);
         }
-        else if (_surf_name == "segmentation" && crop)
+        else if (segmentation.viewerIsSegmentationView && crop)
         {
             auto ptr = crop->pointer();
             dist = crop->pointTo(ptr, poi->p, 2.0);
@@ -1532,16 +1574,8 @@ private:
 
 void CVolumeViewer::renderVisible(bool force)
 {
-    if (_surf && _surf_col) {
-        Surface* currentSurface = _surf_col->surface(_surf_name);
-        if (!currentSurface) {
-            // Surface was cleared (e.g. during volume reload) without a change signal
-            // reaching this viewer yet; drop the dangling pointer before rendering.
-            _surf = nullptr;
-        }
-    }
-
-    if (!volume || !volume->zarrDataset() || !_surf)
+    Surface* surface = currentSurface();
+    if (!volume || !volume->zarrDataset() || !surface)
         return;
 
     QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->viewport()->geometry()).boundingRect();
@@ -1584,7 +1618,8 @@ void CVolumeViewer::renderVisible(bool force)
 
 void CVolumeViewer::renderIntersections()
 {
-    if (!volume || !volume->zarrDataset() || !_surf)
+    Surface* surface = currentSurface();
+    if (!volume || !volume->zarrDataset() || !surface)
         return;
 
     const QRectF viewRect = fGraphicsView
@@ -1603,6 +1638,57 @@ void CVolumeViewer::renderIntersections()
         _intersect_items.erase(it);
     };
 
+    auto updateItemsForKey = [&](const std::string& key,
+                                 const std::vector<QPainterPath>& paths,
+                                 const QColor& color,
+                                 float width,
+                                 int zValue) {
+        if (paths.empty()) {
+            removeItemsForKey(key);
+            return;
+        }
+
+        QPen pen(color, width);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+
+        auto& items = _intersect_items[key];
+        const size_t pathCount = paths.size();
+        for (size_t idx = 0; idx < pathCount; ++idx) {
+            QGraphicsPathItem* pathItem = nullptr;
+            if (idx < items.size()) {
+                pathItem = qgraphicsitem_cast<QGraphicsPathItem*>(items[idx]);
+            }
+            if (!pathItem) {
+                pathItem = fGraphicsView->scene()->addPath(paths[idx], pen);
+                if (idx < items.size()) {
+                    items[idx] = pathItem;
+                } else {
+                    items.push_back(pathItem);
+                }
+            } else {
+                pathItem->setPath(paths[idx]);
+                pathItem->setPen(pen);
+            }
+            pathItem->setZValue(zValue);
+            pathItem->setOpacity(_intersectionOpacity);
+            pathItem->setVisible(true);
+            if (fBaseImageItem) {
+                pathItem->setParentItem(fBaseImageItem);
+            } else {
+                pathItem->setParentItem(nullptr);
+            }
+        }
+
+        while (items.size() > pathCount) {
+            if (auto* item = items.back()) {
+                fScene->removeItem(item);
+                delete item;
+            }
+            items.pop_back();
+        }
+    };
+
     auto clearAllIntersectionItems = [&]() {
         std::vector<std::string> keys;
         keys.reserve(_intersect_items.size());
@@ -1615,8 +1701,11 @@ void CVolumeViewer::renderIntersections()
     };
 
     PlaneSurface *plane = dynamic_cast<PlaneSurface*>(_surf);
-    QuadSurface* activeSegSurface =
-        _surf_col ? dynamic_cast<QuadSurface*>(_surf_col->surface("segmentation")) : nullptr;
+    const auto& segmentationHandle = activeSegmentationHandle();
+    QuadSurface* activeSegSurface = segmentationHandle.surface;
+    const QColor activeSegColor = segmentationHandle.accentColor.isValid()
+                                      ? segmentationHandle.accentColor
+                                      : COLOR_SEG_XY;
     const bool segmentationAliasRequested = _intersect_tgts.count("segmentation") > 0;
 
     
@@ -1677,32 +1766,42 @@ void CVolumeViewer::renderIntersections()
             intersectCandidates.emplace_back(key, segmentation);
         }
 
+        std::unordered_set<QuadSurface*> candidateSurfaces;
+        candidateSurfaces.reserve(intersectCandidates.size());
+        for (const auto& candidate : intersectCandidates) {
+            candidateSurfaces.insert(candidate.second);
+        }
+
+        std::unordered_map<QuadSurface*, std::vector<IntersectionLine>> intersectionsBySurface;
+        intersectionsBySurface.reserve(intersectCandidates.size());
+        patchIndex->forEachTriangle(
+            view_bbox,
+            candidateSurfaces,
+            [&](const SurfacePatchIndex::TriangleCandidate& triCandidate) {
+                auto segment = SurfacePatchIndex::clipTriangleToPlane(triCandidate, *plane, clipTolerance);
+                if (!segment) {
+                    return;
+                }
+
+                IntersectionLine line;
+                for (int i = 0; i < 2; ++i) {
+                    line.world[static_cast<size_t>(i)] = segment->world[i];
+                    line.surfaceParams[static_cast<size_t>(i)] = segment->surfaceParams[i];
+                }
+                intersectionsBySurface[triCandidate.surface].push_back(std::move(line));
+            });
+
         size_t colorIndex = 0;
         for (const auto& candidate : intersectCandidates) {
             const auto& key = candidate.first;
             QuadSurface* segmentation = candidate.second;
 
-            std::vector<IntersectionLine> intersectionLines;
-            patchIndex->forEachTriangle(
-                view_bbox,
-                segmentation,
-                [&](const SurfacePatchIndex::TriangleCandidate& triCandidate) {
-                    auto segment = SurfacePatchIndex::clipTriangleToPlane(triCandidate, *plane, clipTolerance);
-                    if (!segment) {
-                        return;
-                    }
-
-                    IntersectionLine line;
-                    for (int i = 0; i < 2; ++i) {
-                        line.world[static_cast<size_t>(i)] = segment->world[i];
-                        line.surfaceParams[static_cast<size_t>(i)] = segment->surfaceParams[i];
-                    }
-                    intersectionLines.push_back(std::move(line));
-                });
-            if (intersectionLines.empty()) {
+            auto linesIt = intersectionsBySurface.find(segmentation);
+            if (linesIt == intersectionsBySurface.end() || linesIt->second.empty()) {
                 removeItemsForKey(key);
                 continue;
             }
+            const auto& intersectionLines = linesIt->second;
 
             QColor col;
             float width = 3;
@@ -1744,10 +1843,6 @@ void CVolumeViewer::renderIntersections()
             };
 
             const auto paletteSize = std::size(palette);
-            const QColor activeSegColor =
-                (_surf_name == "seg yz"   ? COLOR_SEG_YZ
-                 : _surf_name == "seg xz" ? COLOR_SEG_XZ
-                                          : COLOR_SEG_XY);
             const bool activeSegPresent = static_cast<bool>(activeSegSurface);
             const auto colorDistanceSq = [](const QColor& lhs, const QColor& rhs) {
                 const int dr = lhs.red() - rhs.red();
@@ -1786,37 +1881,26 @@ void CVolumeViewer::renderIntersections()
                 z_value = 30;
             }
 
-            std::vector<QGraphicsItem*> items;
-            items.reserve(intersectionLines.size());
+            std::vector<QPainterPath> paths;
+            paths.reserve(intersectionLines.size());
             for (const auto& line : intersectionLines) {
-                if (line.world.size() < 2) {
-                    continue;
-                }
                 QPainterPath path;
                 bool first = true;
                 for (const auto& wp : line.world) {
                     cv::Vec3f p = plane->project(wp, 1.0, _scale);
-                    if (first)
+                    if (first) {
                         path.moveTo(p[0], p[1]);
-                    else
+                    } else {
                         path.lineTo(p[0], p[1]);
+                    }
                     first = false;
                 }
-                auto* item = fGraphicsView->scene()->addPath(path, QPen(col, width));
-                item->setZValue(z_value);
-                item->setOpacity(_intersectionOpacity);
-                if (fBaseImageItem) {
-                    item->setParentItem(fBaseImageItem);
+                if (!path.isEmpty()) {
+                    paths.push_back(std::move(path));
                 }
-                items.push_back(item);
             }
 
-            if (!items.empty()) {
-                removeItemsForKey(key);
-                _intersect_items[key] = items;
-            } else {
-                removeItemsForKey(key);
-            }
+            updateItemsForKey(key, paths, col, width, z_value);
 
         }
 
@@ -1890,6 +1974,9 @@ void CVolumeViewer::renderIntersections()
 
         const Rect3D segViewBounds = computeSegmentationViewBounds();
 
+        std::vector<SurfacePatchIndex::TriangleCandidate> segTriangles;
+        patchIndex->queryTriangles(segViewBounds, quadSurface, segTriangles);
+
         for (const auto& key : _intersect_tgts) {
             Surface* surfacePtr = _surf_col->surface(key);
             auto* planeTarget = dynamic_cast<PlaneSurface*>(surfacePtr);
@@ -1898,41 +1985,24 @@ void CVolumeViewer::renderIntersections()
                 continue;
             }
 
-            std::vector<IntersectionLine> intersectionLines;
-            patchIndex->forEachTriangle(
-                segViewBounds,
-                quadSurface,
-                [&](const SurfacePatchIndex::TriangleCandidate& triCandidate) {
-                    auto segment =
-                        SurfacePatchIndex::clipTriangleToPlane(triCandidate,
-                                                               *planeTarget,
-                                                               clipTolerance);
-                    if (!segment) {
-                        return;
-                    }
-                    IntersectionLine line;
-                    for (int i = 0; i < 2; ++i) {
-                        line.world[static_cast<std::size_t>(i)] = segment->world[i];
-                        line.surfaceParams[static_cast<std::size_t>(i)] =
-                            segment->surfaceParams[i];
-                    }
-                    intersectionLines.push_back(std::move(line));
-                });
+            std::vector<QPainterPath> paths;
+            paths.reserve(segTriangles.size());
+            for (const auto& triCandidate : segTriangles) {
+                auto segment = SurfacePatchIndex::clipTriangleToPlane(triCandidate,
+                                                                      *planeTarget,
+                                                                      clipTolerance);
+                if (!segment) {
+                    continue;
+                }
 
-            if (intersectionLines.empty()) {
-                removeItemsForKey(key);
-                continue;
-            }
-
-            std::vector<QGraphicsItem*> items;
-            items.reserve(intersectionLines.size());
-            for (const auto& line : intersectionLines) {
                 QPainterPath path;
                 bool first = true;
-                for (const auto& param : line.surfaceParams) {
+                for (const auto& param : segment->surfaceParams) {
                     cv::Vec3f p = quadSurface->loc(param) * _scale;
                     if (p[0] == -1) {
-                        continue;
+                        first = true;
+                        path = QPainterPath();
+                        break;
                     }
                     if (first) {
                         path.moveTo(p[0], p[1]);
@@ -1942,26 +2012,13 @@ void CVolumeViewer::renderIntersections()
                     first = false;
                 }
 
-                if (path.isEmpty()) {
-                    continue;
+                if (!path.isEmpty()) {
+                    paths.push_back(std::move(path));
                 }
-
-                QColor color = (key == "seg yz") ? COLOR_SEG_YZ : COLOR_SEG_XZ;
-                auto* item = fGraphicsView->scene()->addPath(path, QPen(color, 2));
-                item->setZValue(5);
-                item->setOpacity(_intersectionOpacity);
-                if (fBaseImageItem) {
-                    item->setParentItem(fBaseImageItem);
-                }
-                items.push_back(item);
             }
 
-            if (!items.empty()) {
-                removeItemsForKey(key);
-                _intersect_items[key] = items;
-            } else {
-                removeItemsForKey(key);
-            }
+            QColor color = (key == "seg yz") ? COLOR_SEG_YZ : COLOR_SEG_XZ;
+            updateItemsForKey(key, paths, color, 2.0f, 5);
         }
 
         // Remove intersection drawings for keys that are no longer being tracked.
@@ -2128,12 +2185,16 @@ void CVolumeViewer::onMouseRelease(QPointF scene_loc, Qt::MouseButton button, Qt
     // Forward for drawing widgets
     cv::Vec3f p, n;
     if (scene2vol(p, n, _surf, _surf_name, _surf_col, scene_loc, _vis_center, _scale)) {
-        if (dynamic_cast<PlaneSurface*>(_surf))
+        const auto& segmentation = activeSegmentationHandle();
+        if (dynamic_cast<PlaneSurface*>(_surf)) {
             emit sendMouseReleaseVolume(p, button, modifiers);
-        else if (_surf_name == "segmentation")
+        }
+        else if (segmentation.viewerIsSegmentationView) {
             emit sendMouseReleaseVolume(p, button, modifiers);
-        else
+        }
+        else {
             std::cout << "FIXME: onMouseRelease()" << std::endl;
+        }
     }
 }
 

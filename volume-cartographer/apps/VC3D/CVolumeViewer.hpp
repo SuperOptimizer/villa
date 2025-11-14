@@ -125,6 +125,25 @@ public:
     float volumeWindowLow() const { return _baseWindowLow; }
     float volumeWindowHigh() const { return _baseWindowHigh; }
 
+    struct ActiveSegmentationHandle {
+        QuadSurface* surface{nullptr};
+        std::string slotName;
+        QColor accentColor;
+        bool viewerIsSegmentationView{false};
+
+        bool valid() const { return surface != nullptr; }
+        explicit operator bool() const { return valid(); }
+        void reset()
+        {
+            surface = nullptr;
+            slotName.clear();
+            accentColor = QColor();
+            viewerIsSegmentationView = false;
+        }
+    };
+
+    const ActiveSegmentationHandle& activeSegmentationHandle() const;
+
     struct OverlayColormapEntry {
         QString label;
         std::string id;
@@ -278,4 +297,8 @@ protected:
     QImage _overlayImage;
 
     int _surfacePatchSamplingStride{1};
+
+    void markActiveSegmentationDirty();
+    mutable ActiveSegmentationHandle _activeSegHandle;
+    mutable bool _activeSegHandleDirty{true};
 };  // class CVolumeViewer

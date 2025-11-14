@@ -848,7 +848,7 @@ void SegmentationGrower::onFutureFinished()
         _context.surfaces->setSurface("segmentation", request.segmentationSurface, false, false);
     }
 
-    if (_context.viewerManager && request.segmentationSurface && !request.correctionsDirtyBounds) {
+    if (_context.viewerManager && request.segmentationSurface) {
         _context.viewerManager->refreshSurfacePatchIndex(request.segmentationSurface);
     }
 

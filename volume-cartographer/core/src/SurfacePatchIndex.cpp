@@ -665,6 +665,25 @@ void SurfacePatchIndex::forEachTriangle(const Rect3D& bounds,
                                         QuadSurface* targetSurface,
                                         const std::function<void(const TriangleCandidate&)>& visitor) const
 {
+    forEachTriangleImpl(bounds, targetSurface, nullptr, visitor);
+}
+
+void SurfacePatchIndex::forEachTriangle(const Rect3D& bounds,
+                                        const std::unordered_set<QuadSurface*>& targetSurfaces,
+                                        const std::function<void(const TriangleCandidate&)>& visitor) const
+{
+    if (targetSurfaces.empty()) {
+        return;
+    }
+    forEachTriangleImpl(bounds, nullptr, &targetSurfaces, visitor);
+}
+
+void SurfacePatchIndex::forEachTriangleImpl(
+    const Rect3D& bounds,
+    QuadSurface* targetSurface,
+    const std::unordered_set<QuadSurface*>* filterSurfaces,
+    const std::function<void(const TriangleCandidate&)>& visitor) const
+{
     if (!visitor || !impl_ || !impl_->tree) {
         return;
     }
@@ -676,6 +695,9 @@ void SurfacePatchIndex::forEachTriangle(const Rect3D& bounds,
     auto emitFromPatch = [&](const Impl::Entry& entry) {
         const Impl::PatchRecord& rec = entry.second;
         if (targetSurface && rec.surface != targetSurface) {
+            return;
+        }
+        if (filterSurfaces && filterSurfaces->find(rec.surface) == filterSurfaces->end()) {
             return;
         }
 
@@ -938,9 +960,17 @@ bool SurfacePatchIndex::updateSurfaceRegion(QuadSurface* surface,
     }
 
     impl_->removeCells(surface, rowStart, rowEnd, colStart, colEnd);
+    int samplingStride = impl_->samplingStride;
+    const int rowSpan = rowEnd - rowStart;
+    const int colSpan = colEnd - colStart;
+    if (samplingStride > 1 && (rowSpan < samplingStride || colSpan < samplingStride)) {
+        // Small dirty regions can otherwise end up deleting sampled cells without
+        // re-inserting replacements because the stride skips every local index.
+        samplingStride = 1;
+    }
     auto cells = Impl::collectEntriesForSurface(surface,
                                                 impl_->bboxPadding,
-                                                impl_->samplingStride,
+                                                samplingStride,
                                                 rowStart,
                                                 rowEnd,
                                                 colStart,
