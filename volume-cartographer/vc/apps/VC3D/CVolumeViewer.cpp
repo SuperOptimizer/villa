@@ -382,7 +382,7 @@ QPointF CVolumeViewer::volumeToScene(const cv::Vec3f& vol_point)
     if (plane) {
         p = plane->project(vol_point, 1.0, _scale);
     } else if (quad) {
-        auto ptr = quad->pointer();
+        cv::Vec3f ptr{0, 0, 0};
         _surf->pointTo(ptr, vol_point, 4.0, 100);
         p = _surf->loc(ptr) * _scale;
     }
@@ -402,7 +402,7 @@ bool scene2vol(cv::Vec3f &p, cv::Vec3f &n, Surface *_surf, const std::string &_s
     try {
         cv::Vec3f surf_loc = {scene_loc.x()/_ds_scale, scene_loc.y()/_ds_scale,0};
         
-        auto ptr = _surf->pointer();
+        cv::Vec3f ptr{0, 0, 0};
         
         n = _surf->normal(ptr, surf_loc);
         p = _surf->coord(ptr, surf_loc);
@@ -544,10 +544,10 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
             if (!focus) {
                 focus = new POI;
                 focus->p = plane->origin();
-                focus->n = plane->normal(plane->pointer(), {});
+                focus->n = plane->normal(cv::Vec3f{0, 0, 0}, {});
             }
 
-            cv::Vec3f normal = plane->normal(plane->pointer(), {});
+            cv::Vec3f normal = plane->normal(cv::Vec3f{0, 0, 0}, {});
             const double length = cv::norm(normal);
             if (length > 0.0) {
                 normal *= static_cast<float>(1.0 / length);
@@ -1135,7 +1135,7 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
             
             _surf_col->setSurface(_surf_name, plane);
         } else if (auto* quad = dynamic_cast<QuadSurface*>(_surf)) {
-            auto ptr = quad->pointer();
+            cv::Vec3f ptr{0, 0, 0};
             float dist = quad->pointTo(ptr, poi->p, 4.0, 100);
             
             if (dist < 4.0) {
@@ -1178,7 +1178,7 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
         }
         else if (_surf_name == "segmentation" && crop)
         {
-            auto ptr = crop->pointer();
+            cv::Vec3f ptr{0, 0, 0};
             dist = crop->pointTo(ptr, poi->p, 2.0);
             sp = crop->loc(ptr)*_scale ;//+ cv::Vec3f(_vis_center[0],_vis_center[1],0);
         }
@@ -1225,7 +1225,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
         cv::Mat_<uint8_t> slice_img;
 
         cv::Vec2f roi_c = {roi.x+roi.width/2, roi.y + roi.height/2};
-        _ptr = _surf->pointer();
+        _ptr = cv::Vec3f{0, 0, 0};
         cv::Vec3f diff = {roi_c[0],roi_c[1],0};
         _surf->move(_ptr, diff/_scale);
         _vis_center = roi_c;
@@ -1335,7 +1335,7 @@ cv::Mat_<uint8_t> CVolumeViewer::renderCompositeForSurface(QuadSurface* surface,
     _z_off = 0.0f;
 
     recalcScales();
-    _ptr = _surf->pointer();
+    _ptr = cv::Vec3f{0, 0, 0};
     cv::Rect roi(-outputSize.width/2, -outputSize.height/2,
                  outputSize.width, outputSize.height);
 
@@ -1415,7 +1415,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
             }
         } else {
             cv::Vec2f roi_c = {roi.x + roi.width / 2.0f, roi.y + roi.height / 2.0f};
-            _ptr = _surf->pointer();
+            _ptr = cv::Vec3f{0, 0, 0};
             cv::Vec3f diff = {roi_c[0], roi_c[1], 0};
             _surf->move(_ptr, diff / _scale);
             _vis_center = roi_c;
@@ -1460,7 +1460,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
                 _surf->gen(&coords, nullptr, roi.size(), cv::Vec3f(0, 0, 0), _scale, {roi.x, roi.y, _z_off});
             } else {
                 cv::Vec2f roi_c = {roi.x + roi.width / 2.0f, roi.y + roi.height / 2.0f};
-                _ptr = _surf->pointer();
+                _ptr = cv::Vec3f{0, 0, 0};
                 cv::Vec3f diff = {roi_c[0], roi_c[1], 0};
                 _surf->move(_ptr, diff / _scale);
                 _vis_center = roi_c;
@@ -1986,7 +1986,7 @@ void CVolumeViewer::onMousePress(QPointF scene_loc, Qt::MouseButton button, Qt::
             if (!scene2vol(p, n, _surf, _surf_name, _surf_col, scene_loc, _vis_center, _scale)) return;
             auto* quad = dynamic_cast<QuadSurface*>(_surf);
             if (!quad) return;
-            auto ptr = quad->pointer();
+            cv::Vec3f ptr{0, 0, 0};
             quad->pointTo(ptr, p, 2.0f, 100);
             cv::Vec3f sp = quad->loc(ptr); // unscaled surface coords
             _bboxStart = QPointF(sp[0], sp[1]);
@@ -2026,7 +2026,7 @@ void CVolumeViewer::onMouseMove(QPointF scene_loc, Qt::MouseButtons buttons, Qt:
             if (!scene2vol(p, n, _surf, _surf_name, _surf_col, scene_loc, _vis_center, _scale)) return;
             auto* quad = dynamic_cast<QuadSurface*>(_surf);
             if (!quad) return;
-            auto ptr = quad->pointer();
+            cv::Vec3f ptr{0, 0, 0};
             quad->pointTo(ptr, p, 2.0f, 100);
             cv::Vec3f sp = quad->loc(ptr); // unscaled
             QPointF cur(sp[0], sp[1]);

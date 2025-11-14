@@ -2269,7 +2269,7 @@ void CWindow::onAppendMaskPressed(void)
                 img = segViewer->renderCompositeForSurface(_surf, maskSize);
             } else {
                 // Original single-layer rendering
-                cv::Vec3f ptr = _surf->pointer();
+                cv::Vec3f ptr{0, 0, 0};
                 cv::Vec3f offset(-maskSize.width/2.0f, -maskSize.height/2.0f, 0);
 
                 cv::Mat_<cv::Vec3f> coords;
@@ -2488,7 +2488,7 @@ void CWindow::onPointDoubleClicked(uint64_t pointId)
         // Find the closest normal on the segmentation surface
         Surface* seg_surface = _surf_col->surface("segmentation");
         if (auto* quad_surface = dynamic_cast<QuadSurface*>(seg_surface)) {
-            auto ptr = quad_surface->pointer();
+            cv::Vec3f ptr{0, 0, 0};
             quad_surface->pointTo(ptr, point_opt->p, 4.0, 100);
             poi->n = quad_surface->normal(ptr, quad_surface->loc(ptr));
         } else {
@@ -3020,7 +3020,7 @@ void CWindow::applySlicePlaneOrientation(Surface* sourceOverride)
         segXZ->setOrigin(origin);
         segYZ->setOrigin(origin);
 
-        auto ptr = segment->pointer();
+        cv::Vec3f ptr{0, 0, 0};
         segment->pointTo(ptr, origin, 1.0f);
 
         cv::Vec3f xDir = segment->coord(ptr, {1, 0, 0});

@@ -571,7 +571,7 @@ bool SegmentationPushPullTool::applyStepInternal()
         return false;
     }
 
-    cv::Vec3f ptr = baseSurface->pointer();
+    cv::Vec3f ptr{0, 0, 0};
     baseSurface->pointTo(ptr, centerWorld, std::numeric_limits<float>::max(), 400);
     cv::Vec3f normal = baseSurface->normal(ptr);
     if (std::isnan(normal[0]) || std::isnan(normal[1]) || std::isnan(normal[2])) {
@@ -627,7 +627,7 @@ bool SegmentationPushPullTool::applyStepInternal()
             for (const auto& sample : activeSamples) {
                 const cv::Vec3f& baseWorld = sample.baseWorld;
                 cv::Vec3f sampleNormal = normal;
-                cv::Vec3f samplePtr = baseSurface->pointer();
+                cv::Vec3f samplePtr = cv::Vec3f{0, 0, 0};
                 baseSurface->pointTo(samplePtr, baseWorld, std::numeric_limits<float>::max(), 400);
                 cv::Vec3f candidateNormal = baseSurface->normal(samplePtr);
                 if (std::isfinite(candidateNormal[0]) &&

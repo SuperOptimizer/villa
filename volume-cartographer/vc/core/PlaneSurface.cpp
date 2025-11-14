@@ -213,11 +213,6 @@ void PlaneSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals
         }
 }
 
-cv::Vec3f PlaneSurface::pointer()
-{
-    return {0, 0, 0};
-}
-
 void PlaneSurface::move(cv::Vec3f &ptr, const cv::Vec3f &offset)
 {
     ptr += offset;

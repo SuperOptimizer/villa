@@ -10,7 +10,7 @@ void render_binary_mask(QuadSurface* surf,
     cv::Size nominalSize = surf->size();
     cv::Size outputSize = nominalSize;
 
-    cv::Vec3f ptr = surf->pointer();
+    cv::Vec3f ptr{0, 0, 0};
     cv::Vec3f offset(-nominalSize.width/2.0f, -nominalSize.height/2.0f, 0);
 
     surf->gen(&coords_out, nullptr, outputSize, ptr, 1.0f, offset);

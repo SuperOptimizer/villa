@@ -101,7 +101,7 @@ std::optional<std::pair<int, int>> worldToGridIndexApprox(QuadSurface* surface,
     }
 
     if (!pointerSeedValid) {
-        pointerSeed = surface->pointer();
+        pointerSeed = cv::Vec3f{0, 0, 0};
         pointerSeedValid = true;
     }
 

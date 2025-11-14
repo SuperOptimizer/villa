@@ -355,7 +355,7 @@ std::optional<std::pair<int, int>> SegmentationEditManager::worldToGridIndex(con
     if (_pointerSeedValid) {
         ptr = _pointerSeed;
     } else {
-        ptr = _baseSurface->pointer();
+        ptr = cv::Vec3f{0, 0, 0};
         _pointerSeed = ptr;
         _pointerSeedValid = true;
     }

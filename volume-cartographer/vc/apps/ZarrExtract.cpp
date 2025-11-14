@@ -49,7 +49,7 @@ void timed_plane_slice(Surface &plane, z5::Dataset *ds, int size, ChunkCache<uin
     cv::Mat_<uint8_t> img;
 
     auto start = std::chrono::high_resolution_clock::now();
-    plane.gen(&coords, &normals, {size, size}, plane.pointer(), 1.0, {0,0,0});
+    plane.gen(&coords, &normals, {size, size}, cv::Vec3f{0, 0, 0}, 1.0, {0,0,0});
     auto end = std::chrono::high_resolution_clock::now();
     std::cout << std::chrono::duration<double>(end-start).count() << "s gen_coords() " << msg << std::endl;
     start = std::chrono::high_resolution_clock::now();
@@ -97,7 +97,7 @@ int main(int argc, char *argv[])
   PlaneSurface plane_z({2000,2000,2000},{0.0,0.0,1.0});
   
   // gen_plane.gen_coords(coords, 1000, 1000);
-  // gen_grid.gen(&coords, &normals, {1000, 1000}, gen_grid.pointer(), 1.0, {0,0,0});
+  // gen_grid.gen(&coords, &normals, {1000, 1000}, cv::Vec3f{0, 0, 0}, 1.0, {0,0,0});
 
     ChunkCache<uint8_t> chunk_cache(10*10e9);
 
@@ -141,7 +141,7 @@ int main(int argc, char *argv[])
         cv::Mat_<cv::Vec3f> normals;
         cv::Mat_<uint8_t> img;
 
-        plane_s.gen(&coords, &normals, {size, size}, plane_s.pointer(), 1.0, {0,0,0});
+        plane_s.gen(&coords, &normals, {size, size}, cv::Vec3f{0, 0, 0}, 1.0, {0,0,0});
 
         readInterpolated3D(img, ds.get(), coords, &chunk_cache);
     }
@@ -160,7 +160,7 @@ int main(int argc, char *argv[])
           cv::Mat_<cv::Vec3f> normals;
           cv::Mat_<uint8_t> img;
 
-          plane_s.gen(&coords, &normals, {size, size}, plane_s.pointer(), 1.0, {0,0,0});
+          plane_s.gen(&coords, &normals, {size, size}, cv::Vec3f{0, 0, 0}, 1.0, {0,0,0});
 
           readInterpolated3D(img, ds.get(), coords, &chunk_cache);
       }

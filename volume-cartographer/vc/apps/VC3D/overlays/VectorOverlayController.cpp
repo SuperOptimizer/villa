@@ -136,7 +136,7 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
             return;
         }
         if (auto* poi = _surfaces->poi("focus")) {
-            auto ptr = segSurface->pointer();
+            cv::Vec3f ptr{0, 0, 0};
             float dist = segSurface->pointTo(ptr, poi->p, 4.0, 100);
             if (dist >= 0 && dist < 20.0f / scale) {
                 cv::Vec3f sp = segSurface->loc(ptr) * scale;
@@ -162,7 +162,7 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
         addLabel(anchorScene + upOffset + QPointF(8.0, -8.0), QStringLiteral("false"), kArrowFalseColor);
         addLabel(anchorScene + downOffset + QPointF(8.0, -8.0), QStringLiteral("true"), kArrowTrueColor);
 
-        auto ptr = quad->pointer();
+        cv::Vec3f ptr{0, 0, 0};
         if (_surfaces) {
             if (auto* poi = _surfaces->poi("focus")) {
                 quad->pointTo(ptr, poi->p, 4.0, 100);
@@ -217,7 +217,7 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
             }
         }
 
-        auto segPtr = segSurface->pointer();
+        auto segPtr = cv::Vec3f{0, 0, 0};
         segSurface->pointTo(segPtr, targetWP, 4.0, 100);
 
         cv::Vec3f p0 = segSurface->coord(segPtr, {0, 0, 0});

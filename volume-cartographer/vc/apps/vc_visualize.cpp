@@ -285,7 +285,7 @@ private:
         cv::Size gen_size(native_width / gen_scale, native_height / gen_scale);
 
         cv::Mat_<cv::Vec3f> coords;
-        cv::Vec3f center = target_surf->pointer();
+        cv::Vec3f center{0, 0, 0};
         cv::Vec3f offset = {
             -(float)(gen_size.width / 2),
             -(float)(gen_size.height / 2),

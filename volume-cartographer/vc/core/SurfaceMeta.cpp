@@ -170,7 +170,7 @@ bool overlap(SurfaceMeta& a, SurfaceMeta& b, int max_iters)
         if (loc[0] == -1)
             continue;
 
-        cv::Vec3f ptr = b.surface()->pointer();
+        cv::Vec3f ptr{0, 0, 0};
         if (b.surface()->pointTo(ptr, loc, 2.0, max_iters) <= 2.0) {
             return true;
         }
@@ -183,7 +183,7 @@ bool contains(SurfaceMeta& a, const cv::Vec3f& loc, int max_iters)
     if (!intersect(a.bbox, {loc, loc}))
         return false;
 
-    cv::Vec3f ptr = a.surface()->pointer();
+    cv::Vec3f ptr{0, 0, 0};
     if (a.surface()->pointTo(ptr, loc, 2.0, max_iters) <= 2.0) {
         return true;
     }

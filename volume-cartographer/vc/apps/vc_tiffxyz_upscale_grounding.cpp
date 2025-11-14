@@ -315,7 +315,7 @@ int main(int argc, char *argv[])
             if (points_lr(p)[0] == -1)
                 continue;
             
-            auto ptr = surfs[i]->pointer();
+            cv::Vec3f ptr{0, 0, 0};
             float res = surfs[i]->pointTo(ptr, points_lr(p), 2.0);
             
             if (res < 0 || res >= 2)

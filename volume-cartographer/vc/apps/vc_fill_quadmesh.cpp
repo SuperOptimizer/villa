@@ -828,7 +828,7 @@ int main(int argc, char *argv[])
                     continue;
                 
                 
-                cv::Vec3f ptr = surfs[i]->pointer();
+                cv::Vec3f ptr{0, 0, 0};
                 float res = surfs[i]->pointTo(ptr, surf_points[0](p), 2.0);
                 
                 if (res < 0 || res >= 2)

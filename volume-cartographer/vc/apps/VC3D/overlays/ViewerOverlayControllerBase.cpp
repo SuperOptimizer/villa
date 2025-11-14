@@ -360,7 +360,7 @@ ViewerOverlayControllerBase::filterPoints(CVolumeViewer* viewer,
         }
 
         if (keep && quadSurface) {
-            auto ptr = quadSurface->pointer();
+            cv::Vec3f ptr{0, 0, 0};
             float res = quadSurface->pointTo(ptr, point, options.quadDistanceTolerance, 100);
             if (res > options.quadDistanceTolerance) {
                 keep = false;

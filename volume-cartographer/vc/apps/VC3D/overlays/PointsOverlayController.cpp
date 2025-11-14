@@ -150,7 +150,7 @@ void PointsOverlayController::collectPrimitives(CVolumeViewer* viewer, OverlayBu
                     opacity = 1.0f - (dist / kFadeThreshold);
                 }
             } else if (quadSurface) {
-                auto ptr = quadSurface->pointer();
+                cv::Vec3f ptr{0, 0, 0};
                 float dist = quadSurface->pointTo(ptr, entry.world, 10.0, 100);
                 if (dist >= kFadeThreshold) {
                     opacity = 0.0f;

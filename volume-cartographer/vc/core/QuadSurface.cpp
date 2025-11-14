@@ -288,12 +288,6 @@ QuadSurface::~QuadSurface()
     }
 }
 
-
-cv::Vec3f QuadSurface::pointer()
-{
-    return cv::Vec3f(0, 0, 0);
-}
-
 void QuadSurface::move(cv::Vec3f &ptr, const cv::Vec3f &offset)
 {
     ptr += cv::Vec3f(offset[0]*_scale[0], offset[1]*_scale[1], offset[2]);

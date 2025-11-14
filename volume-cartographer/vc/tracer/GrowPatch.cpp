@@ -140,7 +140,7 @@ public:
         QuadSurface tmp(points, {1.0f, 1.0f});
         
         for (auto& collection : collections_) {
-            cv::Vec3f ptr = tmp.pointer();
+            cv::Vec3f ptr{0, 0, 0};
 
             // Initialize anchor point (lowest ID)
             float d = tmp.pointTo(ptr, collection.tgts_[0], 1.0f);
@@ -613,7 +613,7 @@ static int gen_reference_ray_loss(ceres::Problem &problem, const cv::Vec2i &p,
     if (candidate[0] == -1.0 && candidate[1] == -1.0 && candidate[2] == -1.0)
         return 0;
 
-    cv::Vec3f ptr = trace_data.reference_raycast.surface->pointer();
+    cv::Vec3f ptr{0, 0, 0};
     const cv::Vec3f candidate_f(static_cast<float>(candidate[0]),
                                 static_cast<float>(candidate[1]),
                                 static_cast<float>(candidate[2]));

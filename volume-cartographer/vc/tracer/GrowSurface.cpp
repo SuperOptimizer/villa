@@ -1215,7 +1215,7 @@ static void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &s
                     const float approved_attach_relax = hr_attach_relax_factor;
 
                     for (auto& s : surfs) {
-                        auto ptr = s->surface()->pointer();
+                        cv::Vec3f ptr{0, 0, 0};
                         const bool is_locally_approved = approved_neighborhood.contains(s);
                         const float thr = same_surface_th * (is_locally_approved ? approved_attach_relax : 1.0f);
                         // use relaxed thr also inside pointTo
@@ -1237,7 +1237,7 @@ static void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &s
                         float best_res = std::numeric_limits<float>::max();
                         cv::Vec3f best_loc_raw;
                         for (auto s : approved_neighborhood) {
-                            auto ptr = s->surface()->pointer();
+                            cv::Vec3f ptr{0, 0, 0};
                             float thr = same_surface_th * approved_attach_relax;
                             float res = s->surface()->pointTo(ptr, points_out(j, i), thr, 10); //
                             if (res < best_res) {
@@ -1304,7 +1304,7 @@ static void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &s
                         }
                         mutex.unlock_shared();
 
-                        auto ptr = test_surf->surface()->pointer();
+                        cv::Vec3f ptr{0, 0, 0};
                         if (test_surf->surface()->pointTo(ptr, points_out(j, i), same_surface_th, 10) > same_surface_th)
                             continue;
 
@@ -1599,7 +1599,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
         cv::Vec3f coord = points(p);
         std::cout << "testing " << p << " from cands: " << seed->overlapping.size() << coord << std::endl;
         for(auto s : seed->overlapping) {
-            auto ptr = s->surface()->pointer();
+            cv::Vec3f ptr{0, 0, 0};
             if (s->surface()->pointTo(ptr, coord, same_surface_th) <= same_surface_th) {
                 cv::Vec3f loc = s->surface()->loc_raw(ptr);
                 data.surfs(p).insert(s);
@@ -1835,7 +1835,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                 }
 
                 for(auto test_surf : test_surfs) {
-                    auto ptr = test_surf->surface()->pointer();
+                    cv::Vec3f ptr{0, 0, 0};
                     //FIXME this does not check geometry, only if its also on the surfaces (which might be good enough...)
                     if (test_surf->surface()->pointTo(ptr, coord, same_surface_th, 10) <= same_surface_th) {
                         int count = 0;
@@ -1920,7 +1920,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
                     if (test_surf == best_surf)
                         continue;
 
-                    auto ptr = test_surf->surface()->pointer();
+                    cv::Vec3f ptr{0, 0, 0};
                     if (test_surf->surface()->pointTo(ptr, best_coord, same_surface_th, 10) <= same_surface_th) {
                         cv::Vec3f loc = test_surf->surface()->loc_raw(ptr);
                         cv::Vec3f coord = SurfTrackerData::lookup_int_loc(test_surf, {loc[1], loc[0]});
@@ -1946,7 +1946,7 @@ QuadSurface *grow_surf_from_surfs(SurfaceMeta *seed, const std::vector<SurfaceMe
 
                 //TODO only add/test if we have 2 neighs which both find locations
                 for(auto test_surf : test_surfs) {
-                    auto ptr = test_surf->surface()->pointer();
+                    cv::Vec3f ptr{0, 0, 0};
                     float res = test_surf->surface()->pointTo(ptr, best_coord, same_surface_th, 10);
                     if (res <= same_surface_th) {
                         cv::Vec3f loc = test_surf->surface()->loc_raw(ptr);

@@ -41,7 +41,6 @@ Rect3D expand_rect(const Rect3D &a, const cv::Vec3f &p);
 class QuadSurface : public Surface
 {
 public:
-    cv::Vec3f pointer() override;
     QuadSurface() = default;
     // points will be cloned in constructor
     QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &scale);
