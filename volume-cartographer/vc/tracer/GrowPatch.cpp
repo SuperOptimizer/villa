@@ -10,7 +10,7 @@
 #include "vc/core/types/ChunkedTensor.hpp"
 #include <nlohmann/json.hpp>
 
-#include "vc/core/util/NormalGridVolume.hpp"
+#include "NormalGridVolume.hpp"
 #include "vc/core/util/GridStore.hpp"
 #include "vc/tracer/CostFunctions.hpp"
 #include "vc/core/util/HashFunctions.hpp"

@@ -11,7 +11,7 @@
 #include "vc/tracer/SurfaceModeling.hpp"
 #include "vc/core/util/SurfaceArea.hpp"
 #include "vc/core/util/OMPThreadPointCollection.hpp"
-#include "vc/core/util/NormalGridVolume.hpp"
+#include "NormalGridVolume.hpp"
 #include "vc/core/util/GridStore.hpp"
 #include "vc/core/util/DateTime.hpp"
 #include "vc/core/util/HashFunctions.hpp"

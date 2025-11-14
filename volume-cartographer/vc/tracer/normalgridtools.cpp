@@ -4,7 +4,7 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
 
-#include "vc/core/util/normalgridtools.hpp"
+#include "normalgridtools.hpp"
 
 namespace vc::core::util {
 

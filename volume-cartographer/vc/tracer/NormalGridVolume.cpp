@@ -1,4 +1,4 @@
-#include "vc/core/util/NormalGridVolume.hpp"
+#include "NormalGridVolume.hpp"
 #include "vc/core/util/HashFunctions.hpp"
  
  #include <filesystem>
