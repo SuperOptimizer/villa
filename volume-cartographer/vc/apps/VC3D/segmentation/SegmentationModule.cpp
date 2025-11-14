@@ -12,7 +12,7 @@
 #include "ViewerManager.hpp"
 #include "overlays/SegmentationOverlayController.hpp"
 
-#include "../../../ui/VCCollection.hpp"
+#include "vc/ui/VCCollection.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 
 #include <QLoggingCategory>

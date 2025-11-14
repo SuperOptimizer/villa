@@ -74,7 +74,7 @@ CommandLineToolRunner::CommandLineToolRunner(QStatusBar* statusBar, CWindow* mai
     _consoleDialog->setWindowTitle(tr("Command Output"));
     _consoleDialog->resize(700, 500);
 
-    QVBoxLayout* layout = new QVBoxLayout(_consoleDialog);
+    auto* layout = new QVBoxLayout(_consoleDialog);
     layout->addWidget(_consoleOutput);
     _consoleDialog->setLayout(layout);
 }
@@ -126,7 +126,7 @@ void CommandLineToolRunner::setRenderParams(float scale, int resolution, int lay
     _layers = layers;
 }
 
-void CommandLineToolRunner::setGrowParams(QString volumePath, QString tgtDir, QString jsonParams, int seed_x, int seed_y, int seed_z, bool useExpandMode, bool useRandomSeed)
+void CommandLineToolRunner::setGrowParams(const QString& volumePath, const QString &tgtDir, const QString &jsonParams, int seed_x, int seed_y, int seed_z, bool useExpandMode, bool useRandomSeed)
 {
     setVolumePath(volumePath);
     _tgtDir = tgtDir;
@@ -163,7 +163,7 @@ void CommandLineToolRunner::setGrowParams(QString volumePath, QString tgtDir, QS
     }
 }
 
-void CommandLineToolRunner::setTraceParams(QString volumePath, QString srcDir, QString tgtDir, QString jsonParams, QString srcSegment)
+void CommandLineToolRunner::setTraceParams(const QString& volumePath, const QString &srcDir, const QString &tgtDir, const QString &jsonParams, const QString &srcSegment)
 {
     setVolumePath(volumePath);
     _srcDir = srcDir;
@@ -172,13 +172,13 @@ void CommandLineToolRunner::setTraceParams(QString volumePath, QString srcDir, Q
     _srcSegment = srcSegment;
 }
 
-void CommandLineToolRunner::setAddOverlapParams(QString tgtDir, QString tifxyzPath)
+void CommandLineToolRunner::setAddOverlapParams(const QString &tgtDir, const QString &tifxyzPath)
 {
     _tgtDir = tgtDir;
     _tifxyzPath = tifxyzPath;
 }
 
-void CommandLineToolRunner::setToObjParams(QString tifxyzPath, QString objPath)
+void CommandLineToolRunner::setToObjParams(const QString &tifxyzPath, const QString &objPath)
 {
     _tifxyzPath = tifxyzPath;
     _objPath = objPath;
@@ -401,8 +401,7 @@ bool CommandLineToolRunner::execute(Tool tool)
     return true;
 }
 
-void CommandLineToolRunner::cancel()
-{
+void CommandLineToolRunner::cancel() const {
     if (_process && _process->state() != QProcess::NotRunning) {
         _process->terminate();
     }
@@ -413,8 +412,7 @@ bool CommandLineToolRunner::isRunning() const
     return (_process && _process->state() != QProcess::NotRunning);
 }
 
-void CommandLineToolRunner::showConsoleOutput()
-{
+void CommandLineToolRunner::showConsoleOutput() const {
     if (_consoleDialog) {
         _consoleDialog->show();
         _consoleDialog->raise();
@@ -422,8 +420,7 @@ void CommandLineToolRunner::showConsoleOutput()
     }
 }
 
-void CommandLineToolRunner::hideConsoleOutput()
-{
+void CommandLineToolRunner::hideConsoleOutput() const {
     if (_consoleDialog) {
         _consoleDialog->hide();
     }
@@ -461,8 +458,7 @@ void CommandLineToolRunner::onProcessReadyRead()
     }
 }
 
-void CommandLineToolRunner::onProcessStarted()
-{
+void CommandLineToolRunner::onProcessStarted() const {
     QString message = tr("Running %1...").arg(toolName(_currentTool));
     if (_progressUtil) _progressUtil->startAnimation(message);
 }
@@ -516,7 +512,7 @@ void CommandLineToolRunner::onProcessFinished(int exitCode, QProcess::ExitStatus
     }
 }
 
-void CommandLineToolRunner::onProcessError(QProcess::ProcessError error)
+void CommandLineToolRunner::onProcessError(const QProcess::ProcessError error)
 {
     QString errorMessage = tr("Error running %1: ").arg(toolName(_currentTool));
 
@@ -562,8 +558,7 @@ void CommandLineToolRunner::onProcessError(QProcess::ProcessError error)
     showConsoleOutput();
 }
 
-QStringList CommandLineToolRunner::buildArguments(Tool tool)
-{
+QStringList CommandLineToolRunner::buildArguments(Tool tool) const {
     QStringList args;
 
     switch (tool) {
@@ -658,8 +653,7 @@ QStringList CommandLineToolRunner::buildArguments(Tool tool)
     return args;
 }
 
-QString CommandLineToolRunner::toolName(Tool tool) const
-{
+QString CommandLineToolRunner::toolName(Tool tool) {
     QString basePath = QCoreApplication::applicationDirPath() + "/";
     switch (tool) {
         case Tool::RenderTifXYZ:

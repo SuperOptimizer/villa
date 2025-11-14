@@ -23,7 +23,7 @@
 #include <nlohmann/json.hpp>
 
 #include "vc/core/util/GridStore.hpp"
-#include "../../ui/VCCollection.hpp"
+#include "vc/ui/VCCollection.hpp"
 
 class VideoCallback : public ceres::IterationCallback {
 public:

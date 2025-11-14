@@ -49,10 +49,10 @@ public:
     void setRenderAdvanced(int cropX, int cropY, int cropWidth, int cropHeight,
                            const QString& affinePath, bool invertAffine,
                            float scaleSegmentation, double rotateDegrees, int flipAxis);
-    void setGrowParams(QString volumePath, QString tgtDir, QString jsonParams, int seed_x = 0, int seed_y = 0, int seed_z = 0, bool useExpandMode = false, bool useRandomSeed = false);
-    void setTraceParams(QString volumePath, QString srcDir, QString tgtDir, QString jsonParams, QString srcSegment);
-    void setAddOverlapParams(QString tgtDir, QString tifxyzPath);
-    void setToObjParams(QString tifxyzPath, QString objPath);
+    void setGrowParams(const QString& volumePath, const QString& tgtDir, const QString& jsonParams, int seed_x = 0, int seed_y = 0, int seed_z = 0, bool useExpandMode = false, bool useRandomSeed = false);
+    void setTraceParams(const QString& volumePath, const QString& srcDir, const QString& tgtDir, const QString& jsonParams, const QString& srcSegment);
+    void setAddOverlapParams(const QString &tgtDir, const QString &tifxyzPath);
+    void setToObjParams(const QString &tifxyzPath, const QString &objPath);
     void setToObjOptions(bool normalizeUV, bool alignGrid);
     void setObj2TifxyzParams(const QString& objPath, const QString& outputDir,
                              float stretchFactor = 1000.0f,
@@ -68,11 +68,11 @@ public:
                                const QString& outputDir,
                                const QString& resumeOpt);
     bool execute(Tool tool);
-    void cancel();
+    void cancel() const;
     bool isRunning() const;
     
-    void showConsoleOutput();
-    void hideConsoleOutput();
+    void showConsoleOutput() const;
+    void hideConsoleOutput() const;
     void setAutoShowConsoleOutput(bool autoShow);
     void setParallelProcesses(int count);
     void setIterationCount(int count);
@@ -85,14 +85,15 @@ signals:
     void consoleOutputReceived(const QString& output);
 
 private slots:
-    void onProcessStarted();
+    void onProcessStarted() const;
     void onProcessFinished(int exitCode, QProcess::ExitStatus exitStatus);
     void onProcessError(QProcess::ProcessError error);
     void onProcessReadyRead();
 
 private:
-    QStringList buildArguments(Tool tool);
-    QString toolName(Tool tool) const;
+    QStringList buildArguments(Tool tool) const;
+
+    static QString toolName(Tool tool);
     QString getOutputPath() const;
 
     CWindow* _mainWindow;
@@ -121,8 +122,8 @@ private:
     int _seed_x;
     int _seed_y;
     int _seed_z;
-    bool _useExpandMode;
-    bool _useRandomSeed;
+    bool _useExpandMode{};
+    bool _useRandomSeed{};
     int _parallelProcesses;  // processes for xargs
     int _iterationCount;     // iterations for xargs
 

@@ -19,7 +19,7 @@
 #include "vc/core/types/ChunkedTensor.hpp"
 #include "vc/core/util/DateTime.hpp"
 #include "vc/core/util/StreamOperators.hpp"
-#include "../tracer/Tracer.hpp"
+#include "vc/tracer/Tracer.hpp"
 
 
 using shape = z5::types::ShapeType;

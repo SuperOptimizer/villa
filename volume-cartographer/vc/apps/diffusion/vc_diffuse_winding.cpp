@@ -29,7 +29,7 @@
 #include "z5/common.hxx"
 #include "z5/multiarray/xtensor_access.hxx"
 
-#include "../../ui/VCCollection.hpp"
+#include "vc/ui/VCCollection.hpp"
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/GridStore.hpp"
 

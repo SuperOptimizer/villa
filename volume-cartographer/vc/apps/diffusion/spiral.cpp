@@ -27,7 +27,7 @@
 #include "z5/multiarray/xtensor_access.hxx"
 
 #include "vc/core/util/GridStore.hpp"
-#include "../../ui/VCCollection.hpp"
+#include "vc/ui/VCCollection.hpp"
 
 
 using SkeletonGraph = boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, SkeletonVertex, SkeletonEdge>;

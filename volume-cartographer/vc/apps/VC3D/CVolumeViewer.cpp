@@ -1,5 +1,5 @@
 #include "CVolumeViewer.hpp"
-#include "../../ui/UDataManipulateUtils.hpp"
+#include "vc/ui/UDataManipulateUtils.hpp"
 
 #include "VolumeViewerCmaps.hpp"
 #include "VCSettings.hpp"

@@ -11,7 +11,7 @@
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/DateTime.hpp"
 #include "vc/core/util/JsonSafe.hpp"
-#include "../../ui/VCCollection.hpp"
+#include "vc/ui/VCCollection.hpp"
 
 #include <QCheckBox>
 #include <QComboBox>

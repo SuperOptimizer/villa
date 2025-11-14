@@ -30,7 +30,7 @@
 #include <omp.h>  // ensure omp_get_max_threads() is declared
 
 #include "vc/tracer/Tracer.hpp"
-#include "../ui/VCCollection.hpp"
+#include "vc/ui/VCCollection.hpp"
 
 #define LOSS_STRAIGHT 1
 #define LOSS_DIST 2

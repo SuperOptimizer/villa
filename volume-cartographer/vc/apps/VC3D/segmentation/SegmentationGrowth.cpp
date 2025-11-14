@@ -21,8 +21,8 @@
 #include "vc/core/util/SurfaceArea.hpp"
 #include "vc/core/util/JsonSafe.hpp"
 #include "vc/core/util/DateTime.hpp"
-#include "../../../tracer/Tracer.hpp"
-#include "../../../ui/VCCollection.hpp"
+#include "vc/tracer/Tracer.hpp"
+#include "vc/ui/VCCollection.hpp"
 
 Q_DECLARE_LOGGING_CATEGORY(lcSegGrowth)
 

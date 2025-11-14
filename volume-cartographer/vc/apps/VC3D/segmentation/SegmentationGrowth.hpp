@@ -12,7 +12,7 @@
 
 #include <opencv2/core.hpp>
 
-#include "../../../ui/VCCollection.hpp"
+#include "vc/ui/VCCollection.hpp"
 
 class QuadSurface;
 class Volume;

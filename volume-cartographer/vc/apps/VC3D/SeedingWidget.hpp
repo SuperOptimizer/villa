@@ -19,7 +19,7 @@
 
 using PathPrimitive = ViewerOverlayControllerBase::PathPrimitive;
 #include "vc/core/types/VolumePkg.hpp"
-#include "../../ui/VCCollection.hpp"
+#include "vc/ui/VCCollection.hpp"
 
 
 class SeedingWidget : public QWidget {

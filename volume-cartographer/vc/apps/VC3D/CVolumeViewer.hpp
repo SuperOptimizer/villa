@@ -10,7 +10,7 @@
 #include <vector>
 #include <optional>
 #include "overlays/ViewerOverlayControllerBase.hpp"
-#include "../../ui/VCCollection.hpp"
+#include "vc/ui/VCCollection.hpp"
 #include "CSurfaceCollection.hpp"
 #include "CVolumeViewerView.hpp"
 #include "vc/core/types/Volume.hpp"

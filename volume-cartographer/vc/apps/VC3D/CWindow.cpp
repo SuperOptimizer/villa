@@ -61,7 +61,7 @@
 
 #include "CVolumeViewer.hpp"
 #include "CVolumeViewerView.hpp"
-#include "../../ui/UDataManipulateUtils.hpp"
+#include "vc/ui/UDataManipulateUtils.hpp"
 #include "SettingsDialog.hpp"
 #include "CSurfaceCollection.hpp"
 #include "CPointCollectionWidget.hpp"

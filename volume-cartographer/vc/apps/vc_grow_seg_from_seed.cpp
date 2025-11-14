@@ -4,7 +4,7 @@
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
 #include "vc/core/util/StreamOperators.hpp"
-#include "../tracer/Tracer.hpp"
+#include "vc/tracer/Tracer.hpp"
 
 
 #include "z5/factory.hxx"

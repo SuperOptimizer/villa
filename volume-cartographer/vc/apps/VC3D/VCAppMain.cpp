@@ -1,7 +1,7 @@
 #include <qapplication.h>
 
 #include "CWindow.hpp"
-#include "../../core/Version.hpp"
+#include "vc/core/Version.hpp"
 
 #include <opencv2/core.hpp>
 #include <thread>

@@ -14,7 +14,7 @@
 #include <optional>
 #include "ui_VCMain.h"
 
-#include "../../ui/VCCollection.hpp"
+#include "vc/ui/VCCollection.hpp"
 
 #include <QShortcut>
 #include <QSet>

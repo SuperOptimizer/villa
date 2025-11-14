@@ -10,7 +10,7 @@
 #include "overlays/VolumeOverlayController.hpp"
 #include "segmentation/SegmentationModule.hpp"
 #include "CSurfaceCollection.hpp"
-#include "../../ui/VCCollection.hpp"
+#include "vc/ui/VCCollection.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 

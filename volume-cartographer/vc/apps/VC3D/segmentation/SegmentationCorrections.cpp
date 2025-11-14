@@ -3,7 +3,7 @@
 #include "SegmentationModule.hpp"
 #include "SegmentationWidget.hpp"
 
-#include "../../../ui/VCCollection.hpp"
+#include "vc/ui/VCCollection.hpp"
 
 #include <QCoreApplication>
 
