@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <vector>
 #include <unordered_map>
