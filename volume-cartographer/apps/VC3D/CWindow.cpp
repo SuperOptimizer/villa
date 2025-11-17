@@ -78,7 +78,6 @@
 #include "SurfacePanelController.hpp"
 #include "MenuActionController.hpp"
 
-#include "vc/core/types/Exceptions.hpp"
 #include "vc/core/util/Logging.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
@@ -2250,8 +2249,8 @@ void CWindow::onEditMaskPressed(void)
         cv::Mat_<uint8_t> mask;
         cv::Mat_<cv::Vec3f> coords; // Not used after generation
 
-        // Generate only the binary mask
-        render_binary_mask(_surf, mask, coords);
+        // Generate the binary mask at raw points resolution
+        render_binary_mask(_surf, mask, coords, 1.0f);
 
         // Save just the mask as single layer
         cv::imwrite(path.string(), mask);
@@ -2307,11 +2306,17 @@ void CWindow::onAppendMaskPressed(void)
                 img = segViewer->renderCompositeForSurface(_surf, maskSize);
             } else {
                 // Original single-layer rendering
+                cv::Size nominalSize = _surf->size();
+
                 cv::Vec3f ptr = _surf->pointer();
+                // Offset is in PIXEL coordinates (gets multiplied by scale internally)
                 cv::Vec3f offset(-maskSize.width/2.0f, -maskSize.height/2.0f, 0);
 
+                // Calculate pixel size in UV space from mask size vs nominal size
+                float pixelSizeInUV = static_cast<float>(nominalSize.width) / static_cast<float>(maskSize.width);
+
                 cv::Mat_<cv::Vec3f> coords;
-                _surf->gen(&coords, nullptr, maskSize, ptr, 1.0f, offset);
+                _surf->gen(&coords, nullptr, maskSize, ptr, pixelSizeInUV, offset);
 
                 render_image_from_coords(coords, img, ds, chunk_cache);
             }
@@ -2329,9 +2334,9 @@ void CWindow::onAppendMaskPressed(void)
             statusBar()->showMessage(message, 3000);
 
         } else {
-            // No existing mask, generate both mask and image
+            // No existing mask, generate both mask and image at raw points resolution
             cv::Mat_<cv::Vec3f> coords;
-            render_binary_mask(_surf, mask, coords);
+            render_binary_mask(_surf, mask, coords, 1.0f);
             cv::Size maskSize = mask.size();
 
             if (useComposite) {
@@ -2339,7 +2344,7 @@ void CWindow::onAppendMaskPressed(void)
                 img = segViewer->renderCompositeForSurface(_surf, maskSize);
             } else {
                 // Original rendering
-                render_surface_image(_surf, mask, img, ds, chunk_cache);
+                render_surface_image(_surf, mask, img, ds, chunk_cache, 1.0f);
             }
             cv::normalize(img, img, 0, 255, cv::NORM_MINMAX, CV_8U);
 
@@ -2606,8 +2611,8 @@ void CWindow::recalcAreaForSegments(const std::vector<std::string>& ids)
     // Linear voxel size (µm/voxel) for cm² conversion
     float voxelsize = 1.0f;
     try {
-        if (currentVolume && currentVolume->metadata().hasKey("voxelsize")) {
-            voxelsize = currentVolume->metadata().get<float>("voxelsize");
+        if (currentVolume) {
+            voxelsize = static_cast<float>(currentVolume->voxelSize());
         }
     } catch (...) { voxelsize = 1.0f; }
     if (!std::isfinite(voxelsize) || voxelsize <= 0.f) voxelsize = 1.0f;

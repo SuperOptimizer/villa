@@ -1,11 +1,9 @@
 configure_file(src/Version.cpp.in Version.cpp)
 
 add_library(vc_core
-        src/DiskBasedObjectBaseClass.cpp
         src/GridStore.cpp
         src/NormalGridVolume.cpp
         src/normalgridtools.cpp
-        src/Metadata.cpp
         src/Segmentation.cpp
         src/Volume.cpp
         src/VolumePkg.cpp
@@ -29,7 +27,6 @@ target_link_libraries(vc_core
         opencv_highgui
         opencv_calib3d
         opencv_video
-        spdlog::spdlog
         nlohmann_json::nlohmann_json
         z5
         OpenMP::OpenMP_CXX
