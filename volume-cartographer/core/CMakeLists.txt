@@ -13,6 +13,10 @@ add_library(vc_core
         src/SurfacePatchIndex.cpp
         src/Logging.cpp
         src/Slicing.cpp
+        src/Tiff.cpp
+        src/PlaneSurface.cpp
+        src/QuadSurface.cpp
+        src/SurfaceMeta.cpp
         src/Surface.cpp
         src/Render.cpp
         src/Thinning.cpp

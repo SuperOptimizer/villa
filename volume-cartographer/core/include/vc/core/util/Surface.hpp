@@ -3,11 +3,12 @@
 #include <set>
 #include <optional>
 
-#include <opencv2/core.hpp> 
+#include <opencv2/core.hpp>
 #include <nlohmann/json_fwd.hpp>
 #include <z5/dataset.hxx>
 
 #include "Slicing.hpp"
+#include "Tiff.hpp"
 
 
 #define Z_DBG_GEN_PREFIX "auto_grown_"
@@ -91,17 +92,6 @@ protected:
     cv::Matx33d _M;
     cv::Vec3d _T;
     int _axisAlignedRotationKey = -1;
-};
-
-// Options for writing TIFF from QuadSurface
-struct TiffWriteOptions {
-    enum class Compression { NONE, LZW, DEFLATE };
-    enum class Predictor  { NONE, HORIZONTAL, FLOATINGPOINT };
-
-    bool forceBigTiff = false;
-    int  tileSize = 1024;                 // square tiles
-    Compression compression = Compression::LZW;
-    Predictor  predictor   = Predictor::FLOATINGPOINT; // for float32
 };
 
 //quads based surface class with a pointer implementing a nominal scale of 1 voxel
