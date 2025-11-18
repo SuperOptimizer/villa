@@ -912,6 +912,62 @@ void CVolumeViewer::setVolumeWindow(float low, float high)
     }
 }
 
+void CVolumeViewer::setBaseColormap(const std::string& colormapId)
+{
+    if (_baseColormapId == colormapId) {
+        return;
+    }
+    _baseColormapId = colormapId;
+    if (volume) {
+        renderVisible(true);
+    }
+}
+
+void CVolumeViewer::setStretchValues(bool enabled)
+{
+    if (_stretchValues == enabled) {
+        return;
+    }
+    _stretchValues = enabled;
+    if (volume) {
+        renderVisible(true);
+    }
+}
+
+void CVolumeViewer::setSurfaceOverlayEnabled(bool enabled)
+{
+    if (_surfaceOverlayEnabled == enabled) {
+        return;
+    }
+    _surfaceOverlayEnabled = enabled;
+    if (volume) {
+        renderVisible(true);
+    }
+}
+
+void CVolumeViewer::setSurfaceOverlay(const std::string& surfaceName)
+{
+    if (_surfaceOverlayName == surfaceName) {
+        return;
+    }
+    _surfaceOverlayName = surfaceName;
+    if (volume && _surfaceOverlayEnabled) {
+        renderVisible(true);
+    }
+}
+
+void CVolumeViewer::setSurfaceOverlapThreshold(float threshold)
+{
+    threshold = std::max(0.1f, threshold);
+    if (std::abs(threshold - _surfaceOverlapThreshold) < 1e-6f) {
+        return;
+    }
+    _surfaceOverlapThreshold = threshold;
+    if (volume && _surfaceOverlayEnabled) {
+        renderVisible(true);
+    }
+}
+
 void CVolumeViewer::setOverlayWindow(float low, float high)
 {
     constexpr float kMaxOverlayValue = 255.0f;
@@ -1522,6 +1578,66 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
                         QImage overlayImage(overlayBGRA.data, overlayBGRA.cols, overlayBGRA.rows, overlayBGRA.step, QImage::Format_RGBA8888);
                         _overlayImage = overlayImage.copy();
                         _overlayImageValid = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // Surface overlap detection
+    if (_surfaceOverlayEnabled && !_surfaceOverlayName.empty() && _surf_col && !baseColor.empty()) {
+        Surface* overlaySurf = _surf_col->surface(_surfaceOverlayName);
+        if (overlaySurf && overlaySurf != _surf) {
+            cv::Mat_<cv::Vec3f> overlayCoords;
+
+            // Generate coordinates for overlay surface using the same ROI parameters
+            if (auto* plane = dynamic_cast<PlaneSurface*>(_surf)) {
+                overlaySurf->gen(&overlayCoords, nullptr, roi.size(), cv::Vec3f(0, 0, 0), _scale,
+                               {static_cast<float>(roi.x), static_cast<float>(roi.y), _z_off});
+            } else {
+                cv::Vec2f roi_c = {roi.x + roi.width / 2.0f, roi.y + roi.height / 2.0f};
+                auto overlayPtr = overlaySurf->pointer();
+                cv::Vec3f diff = {roi_c[0], roi_c[1], 0};
+                overlaySurf->move(overlayPtr, diff / _scale);
+                overlaySurf->gen(&overlayCoords, nullptr, roi.size(), overlayPtr, _scale,
+                               {-roi.width / 2.0f, -roi.height / 2.0f, _z_off});
+            }
+
+            // Compute distances and create overlap mask
+            if (!overlayCoords.empty() && overlayCoords.size() == coords.size()) {
+                cv::Mat_<uint8_t> overlapMask(baseColor.size(), uint8_t(0));
+
+                #pragma omp parallel for collapse(2)
+                for (int y = 0; y < coords.rows; ++y) {
+                    for (int x = 0; x < coords.cols; ++x) {
+                        const cv::Vec3f& basePos = coords(y, x);
+                        const cv::Vec3f& overlayPos = overlayCoords(y, x);
+
+                        // Check if both positions are valid (not -1)
+                        if (basePos[0] >= 0 && overlayPos[0] >= 0) {
+                            // Compute Euclidean distance
+                            cv::Vec3f diff = basePos - overlayPos;
+                            float distance = std::sqrt(diff.dot(diff));
+
+                            if (distance < _surfaceOverlapThreshold) {
+                                overlapMask(y, x) = 255;
+                            }
+                        }
+                    }
+                }
+
+                // Blend yellow highlight where surfaces overlap
+                if (cv::countNonZero(overlapMask) > 0) {
+                    const cv::Vec3b highlightColor(0, 255, 255); // Yellow in BGR
+                    const float blendFactor = 0.5f; // 50% blend
+
+                    for (int y = 0; y < baseColor.rows; ++y) {
+                        for (int x = 0; x < baseColor.cols; ++x) {
+                            if (overlapMask(y, x) > 0) {
+                                cv::Vec3b& pixel = baseColor.at<cv::Vec3b>(y, x);
+                                pixel = pixel * (1.0f - blendFactor) + highlightColor * blendFactor;
+                            }
+                        }
                     }
                 }
             }

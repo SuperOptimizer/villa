@@ -126,6 +126,18 @@ public:
     float volumeWindowLow() const { return _baseWindowLow; }
     float volumeWindowHigh() const { return _baseWindowHigh; }
 
+    void setBaseColormap(const std::string& colormapId);
+    const std::string& baseColormap() const { return _baseColormapId; }
+    void setStretchValues(bool enabled);
+    bool stretchValues() const { return _stretchValues; }
+
+    void setSurfaceOverlayEnabled(bool enabled);
+    bool surfaceOverlayEnabled() const { return _surfaceOverlayEnabled; }
+    void setSurfaceOverlay(const std::string& surfaceName);
+    const std::string& surfaceOverlay() const { return _surfaceOverlayName; }
+    void setSurfaceOverlapThreshold(float threshold);
+    float surfaceOverlapThreshold() const { return _surfaceOverlapThreshold; }
+
     struct OverlayColormapEntry {
         QString label;
         std::string id;
@@ -276,9 +288,15 @@ protected:
     float _overlayWindowHigh{255.0f};
     float _baseWindowLow{0.0f};
     float _baseWindowHigh{255.0f};
+    std::string _baseColormapId;
+    bool _stretchValues{false};
     bool _mirrorCursorToSegmentation{false};
     bool _overlayImageValid{false};
     QImage _overlayImage;
+
+    bool _surfaceOverlayEnabled{false};
+    std::string _surfaceOverlayName;
+    float _surfaceOverlapThreshold{5.0f};
 
     int _surfacePatchSamplingStride{1};
 };  // class CVolumeViewer
