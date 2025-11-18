@@ -1068,14 +1068,6 @@ float QuadSurface::pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int m
 
 
 
-struct DSReader
-{
-    z5::Dataset *ds;
-    float scale;
-    ChunkCache<uint8_t> *cache;
-};
-
-
 void QuadSurface::save(const std::filesystem::path &path_, bool force_overwrite)
 {
     if (path_.filename().empty())
