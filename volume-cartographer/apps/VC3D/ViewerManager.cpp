@@ -24,6 +24,8 @@
 #include <nlohmann/json.hpp>
 #include <opencv2/core.hpp>
 
+#include "vc/core/util/QuadSurface.hpp"
+
 Q_LOGGING_CATEGORY(lcViewerManager, "vc.viewer.manager")
 
 namespace {
