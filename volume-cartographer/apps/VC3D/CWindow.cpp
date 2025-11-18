@@ -551,7 +551,8 @@ CWindow::CWindow() :
                                ui.dockWidgetComposite,
                                ui.dockWidgetVolumes,
                                ui.dockWidgetView,
-                               ui.dockWidgetOverlay }) {
+                               ui.dockWidgetOverlay,
+                               ui.dockWidgetRenderSettings }) {
         ensureDockWidgetFeatures(dock);
     }
     ensureDockWidgetFeatures(_point_collection_widget);
@@ -1316,6 +1317,7 @@ void CWindow::CreateWidgets(void)
     // Keep the view-related docks on the left and grouped together as tabs
     addDockWidget(Qt::LeftDockWidgetArea, ui.dockWidgetView);
     addDockWidget(Qt::LeftDockWidgetArea, ui.dockWidgetOverlay);
+    addDockWidget(Qt::LeftDockWidgetArea, ui.dockWidgetRenderSettings);
     addDockWidget(Qt::LeftDockWidgetArea, ui.dockWidgetComposite);
 
     auto ensureTabified = [this](QDockWidget* primary, QDockWidget* candidate) {
@@ -1327,6 +1329,7 @@ void CWindow::CreateWidgets(void)
     };
 
     ensureTabified(ui.dockWidgetView, ui.dockWidgetOverlay);
+    ensureTabified(ui.dockWidgetView, ui.dockWidgetRenderSettings);
     ensureTabified(ui.dockWidgetView, ui.dockWidgetComposite);
 
     const auto tabOrder = tabifiedDockWidgets(ui.dockWidgetView);
@@ -1361,6 +1364,32 @@ void CWindow::CreateWidgets(void)
         };
         _volumeOverlay->setUi(overlayUi);
     }
+
+    // Setup base colormap selector
+    {
+        const auto& entries = CVolumeViewer::overlayColormapEntries();
+        ui.baseColormapSelect->clear();
+        ui.baseColormapSelect->addItem(tr("None (Grayscale)"), QString());
+        for (const auto& entry : entries) {
+            ui.baseColormapSelect->addItem(entry.label, QString::fromStdString(entry.id));
+        }
+        ui.baseColormapSelect->setCurrentIndex(0);
+    }
+
+    connect(ui.baseColormapSelect, qOverload<int>(&QComboBox::currentIndexChanged), [this](int index) {
+        if (index < 0 || !_viewerManager) return;
+        const QString id = ui.baseColormapSelect->currentData().toString();
+        _viewerManager->forEachViewer([&id](CVolumeViewer* viewer) {
+            viewer->setBaseColormap(id.toStdString());
+        });
+    });
+
+    connect(ui.chkStretchValues, &QCheckBox::toggled, [this](bool checked) {
+        if (!_viewerManager) return;
+        _viewerManager->forEachViewer([checked](CVolumeViewer* viewer) {
+            viewer->setStretchValues(checked);
+        });
+    });
 
     connect(
         volSelect, &QComboBox::currentIndexChanged, [this](const int& index) {

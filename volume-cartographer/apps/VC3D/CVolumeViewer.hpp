@@ -126,6 +126,11 @@ public:
     float volumeWindowLow() const { return _baseWindowLow; }
     float volumeWindowHigh() const { return _baseWindowHigh; }
 
+    void setBaseColormap(const std::string& colormapId);
+    const std::string& baseColormap() const { return _baseColormapId; }
+    void setStretchValues(bool enabled);
+    bool stretchValues() const { return _stretchValues; }
+
     struct OverlayColormapEntry {
         QString label;
         std::string id;
@@ -276,6 +281,8 @@ protected:
     float _overlayWindowHigh{255.0f};
     float _baseWindowLow{0.0f};
     float _baseWindowHigh{255.0f};
+    std::string _baseColormapId;
+    bool _stretchValues{false};
     bool _mirrorCursorToSegmentation{false};
     bool _overlayImageValid{false};
     QImage _overlayImage;
