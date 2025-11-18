@@ -1072,7 +1072,7 @@ struct DSReader
 {
     z5::Dataset *ds;
     float scale;
-    ChunkCache *cache;
+    ChunkCache<uint8_t> *cache;
 };
 
 
@@ -1858,7 +1858,7 @@ void generate_mask(QuadSurface* surf,
                             cv::Mat_<uint8_t>& img,
                             z5::Dataset* ds_high,
                             z5::Dataset* ds_low,
-                            ChunkCache* cache) {
+                            ChunkCache<uint8_t>* cache) {
     cv::Mat_<cv::Vec3f> points = surf->rawPoints();
 
     // Choose resolution based on surface size

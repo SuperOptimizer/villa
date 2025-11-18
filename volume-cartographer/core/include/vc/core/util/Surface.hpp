@@ -211,4 +211,4 @@ void generate_mask(QuadSurface* surf,
                             cv::Mat_<uint8_t>& img,
                             z5::Dataset* ds_high = nullptr,
                             z5::Dataset* ds_low = nullptr,
-                            ChunkCache* cache = nullptr);
+                            ChunkCache<uint8_t>* cache = nullptr);
