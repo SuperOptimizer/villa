@@ -66,9 +66,6 @@
 #include "SettingsDialog.hpp"
 #include "CSurfaceCollection.hpp"
 #include "CPointCollectionWidget.hpp"
-#include "OpChain.hpp"
-#include "OpsList.hpp"
-#include "OpsSettings.hpp"
 #include "SurfaceTreeWidget.hpp"
 #include "SeedingWidget.hpp"
 #include "DrawingWidget.hpp"
@@ -559,8 +556,6 @@ CWindow::CWindow() :
     for (QDockWidget* dock : { ui.dockWidgetSegmentation,
                                ui.dockWidgetDistanceTransform,
                                ui.dockWidgetDrawing,
-                               ui.dockWidgetOpList,
-                               ui.dockWidgetOpSettings,
                                ui.dockWidgetComposite,
                                ui.dockWidgetVolumes,
                                ui.dockWidgetView,
@@ -794,8 +789,6 @@ void CWindow::clearSurfaceSelection()
     if (treeWidgetSurfaces) {
         treeWidgetSurfaces->clearSelection();
     }
-
-    sendOpChainSelected(nullptr);
 }
 
 void CWindow::setVolume(std::shared_ptr<Volume> newvol)
@@ -834,12 +827,6 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
     updateNormalGridAvailability();
 
     sendVolumeChanged(currentVolume, currentVolumeId);
-
-    if (currentVolume && currentVolume->numScales() >= 2) {
-        wOpsList->setDataset(currentVolume->zarrDataset(1), chunk_cache, 0.5);
-    } else if (currentVolume) {
-        wOpsList->setDataset(currentVolume->zarrDataset(0), chunk_cache, 1.0);
-    }
 
     if (currentVolume && _surf_col) {
         const int w = currentVolume->sliceWidth();
@@ -1066,7 +1053,6 @@ void CWindow::CreateWidgets(void)
         surfaceUi,
         _surf_col,
         _viewerManager.get(),
-        &_opchains,
         [this]() { return segmentationViewer(); },
         std::function<void()>{},
         this);
@@ -1162,11 +1148,6 @@ void CWindow::CreateWidgets(void)
             this, [this](const QString& message, int timeoutMs) {
                 statusBar()->showMessage(message, timeoutMs);
             });
-
-    wOpsList = new OpsList(ui.dockWidgetOpList);
-    ui.dockWidgetOpList->setWidget(wOpsList);
-    wOpsSettings = new OpsSettings(ui.dockWidgetOpSettings);
-    ui.dockWidgetOpSettings->setWidget(wOpsSettings);
 
     // i recognize that having both a seeding widget and a drawing widget that both handle mouse events and paths is redundant,
     // but i can't find an easy way yet to merge them and maintain the path iteration that the seeding widget currently uses
@@ -1368,12 +1349,6 @@ void CWindow::CreateWidgets(void)
             ui.dockWidgetView->raise();
         }
     });
-
-    connect(this, &CWindow::sendOpChainSelected, wOpsList, &OpsList::onOpChainSelected);
-    connect(wOpsList, &OpsList::sendOpSelected, wOpsSettings, &OpsSettings::onOpSelected);
-
-    connect(wOpsList, &OpsList::sendOpChainChanged, this, &CWindow::onOpChainChanged);
-    connect(wOpsSettings, &OpsSettings::sendOpChainChanged, this, &CWindow::onOpChainChanged);
 
     connect(_surfacePanel.get(), &SurfacePanelController::surfaceActivated,
             this, &CWindow::onSurfaceActivated);
@@ -2130,12 +2105,6 @@ void CWindow::CloseVolume(void)
         fVpkg->unloadAllSurfaces();
     }
 
-    // Clean up OpChains (still owned by CWindow)
-    for (auto& pair : _opchains) {
-        delete pair.second;
-    }
-    _opchains.clear();
-
     // Clear the volume package
     fVpkg = nullptr;
     currentVolume = nullptr;
@@ -2213,12 +2182,7 @@ void CWindow::onManualPlaneChanged(void)
     _surf_col->setSurface("manual plane", plane);
 }
 
-void CWindow::onOpChainChanged(OpChain *chain)
-{
-    _surf_col->setSurface("segmentation", chain, false, false);
-}
-
-void CWindow::onSurfaceActivated(const QString& surfaceId, QuadSurface* surface, OpChain* chain)
+void CWindow::onSurfaceActivated(const QString& surfaceId, QuadSurface* surface)
 {
     const std::string previousSurfId = _surfID;
     _surfID = surfaceId.toStdString();
@@ -2230,12 +2194,6 @@ void CWindow::onSurfaceActivated(const QString& surfaceId, QuadSurface* surface,
         } else if (_segmentationWidget && _segmentationWidget->isEditingEnabled()) {
             _segmentationWidget->setEditingEnabled(false);
         }
-    }
-
-    if (chain) {
-        sendOpChainSelected(chain);
-    } else {
-        sendOpChainSelected(nullptr);
     }
 
     if (_surf) {
@@ -2406,7 +2364,6 @@ void CWindow::onSegmentationDirChanged(int index)
         _surf = nullptr;
         _surfID.clear();
         treeWidgetSurfaces->clearSelection();
-        wOpsList->onOpChainSelected(nullptr);
 
         if (_surfacePanel) {
             _surfacePanel->resetTagUi();
@@ -2783,9 +2740,6 @@ void CWindow::onSegmentationEditingModeChanged(bool enabled)
 
     if (enabled) {
         QuadSurface* activeSurface = dynamic_cast<QuadSurface*>(_surf_col->surface("segmentation"));
-        if (!activeSurface && _opchains.count(_surfID) && _opchains[_surfID]) {
-            activeSurface = _opchains[_surfID]->src();
-        }
 
         if (!_segmentationModule->beginEditingSession(activeSurface)) {
             statusBar()->showMessage(tr("Unable to start segmentation editing"), 3000);
@@ -3971,12 +3925,6 @@ void CWindow::onMoveSegmentToPaths(const QString& segmentId)
 
         // Clear the surface from the collection
         _surf_col->setSurface(idStd, nullptr, false, false);
-    }
-
-    // Clear from opchains if present - FIX: use direct member access, not pointer
-    if (_opchains.count(idStd)) {
-        delete _opchains[idStd];
-        _opchains.erase(idStd);
     }
 
     // Unload the surface from VolumePkg

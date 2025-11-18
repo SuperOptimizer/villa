@@ -19,7 +19,6 @@
 
 #include <omp.h>
 
-#include "OpChain.hpp"
 #include "vc/core/util/Render.hpp"
 
 #include <QPainter>
@@ -976,12 +975,6 @@ void CVolumeViewer::fitSurfaceInView()
     if (auto* quadSurf = dynamic_cast<QuadSurface*>(_surf)) {
         bbox = quadSurf->bbox();
         haveBounds = true;
-    } else if (auto* opChain = dynamic_cast<OpChain*>(_surf)) {
-        QuadSurface* src = opChain->src();
-        if (src) {
-            bbox = src->bbox();
-            haveBounds = true;
-        }
     }
 
     if (!haveBounds) {
@@ -2053,10 +2046,7 @@ void CVolumeViewer::onPanRelease(Qt::MouseButton buttons, Qt::KeyboardModifiers 
 
 void CVolumeViewer::onScrolled()
 {
-    // if (!dynamic_cast<OpChain*>(_surf) && !dynamic_cast<OpChain*>(_surf)->slow() && _min_scale == 1.0)
-        // renderVisible();
-    // if ((!dynamic_cast<OpChain*>(_surf) || !dynamic_cast<OpChain*>(_surf)->slow()) && _min_scale < 1.0)
-        // renderVisible();
+    // renderVisible();
 }
 
 void CVolumeViewer::onResized()
