@@ -6,6 +6,7 @@
 #include <string>
 
 #include "Surface.hpp"
+#include "Tiff.hpp"
 
 // Forward declarations
 template<typename T>
@@ -26,16 +27,7 @@ struct Rect3D {
 bool intersect(const Rect3D &a, const Rect3D &b);
 Rect3D expand_rect(const Rect3D &a, const cv::Vec3f &p);
 
-// Options for writing TIFF from QuadSurface
-struct TiffWriteOptions {
-    enum class Compression { NONE, LZW, DEFLATE };
-    enum class Predictor  { NONE, HORIZONTAL, FLOATINGPOINT };
 
-    bool forceBigTiff = false;
-    int  tileSize = 1024;                 // square tiles
-    Compression compression = Compression::LZW;
-    Predictor  predictor   = Predictor::FLOATINGPOINT; // for float32
-};
 
 //quads based surface class with a pointer implementing a nominal scale of 1 voxel
 class QuadSurface : public Surface
