@@ -11,17 +11,17 @@
 #include <random>
 
 //somehow opencvs functions are pretty slow
-cv::Vec3f normed(const cv::Vec3f& v)
+static cv::Vec3f normed(const cv::Vec3f& v)
 {
     return v/sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);
 }
 
-cv::Vec2f vmin(const cv::Vec2f &a, const cv::Vec2f &b)
+static cv::Vec2f vmin(const cv::Vec2f &a, const cv::Vec2f &b)
 {
     return {std::min(a[0],b[0]),std::min(a[1],b[1])};
 }
 
-cv::Vec2f vmax(const cv::Vec2f &a, const cv::Vec2f &b)
+static cv::Vec2f vmax(const cv::Vec2f &a, const cv::Vec2f &b)
 {
     return {std::max(a[0],b[0]),std::max(a[1],b[1])};
 }
@@ -165,4 +165,24 @@ bool loc_valid_xy(const cv::Mat_<cv::Vec3d> &m, const cv::Vec2d &l) {
 
 bool loc_valid_xy(const cv::Mat_<float> &m, const cv::Vec2d &l) {
     return loc_valid_xy_scalar(m, l);
+}
+
+
+float tdist(const cv::Vec3f &a, const cv::Vec3f &b, float t_dist)
+{
+    cv::Vec3f d = a-b;
+    float l = sqrtf(d.dot(d));
+
+    return abs(l-t_dist);
+}
+
+float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds)
+{
+    float sum = 0;
+    for(int i=0;i<tgts.size();i++) {
+        float d = tdist(v, tgts[i], tds[i]);
+        sum += d*d;
+    }
+
+    return sum;
 }
