@@ -1,25 +1,15 @@
 #include "vc/core/util/Slicing.hpp"
 
-#include <nlohmann/json.hpp>
-
 #include "vc/core/util/xtensor_include.hpp"
 #include XTENSORINCLUDE(containers, xarray.hpp)
-#include XTENSORINCLUDE(views, xaxis_slice_iterator.hpp)
 #include XTENSORINCLUDE(io, xio.hpp)
 #include XTENSORINCLUDE(generators, xbuilder.hpp)
 #include XTENSORINCLUDE(views, xview.hpp)
 
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/filesystem/dataset.hxx"
-#include "z5/common.hxx"
 #include "z5/multiarray/xtensor_access.hxx"
-#include "z5/attributes.hxx"
 
-#include <opencv2/highgui.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/calib3d.hpp>
-#include <opencv2/imgproc.hpp>
 #include <shared_mutex>
 
 #include <algorithm>

@@ -3,6 +3,8 @@
 #include <opencv2/core.hpp>
 
 // Geometry utility functions
+cv::Vec3f grid_normal(const cv::Mat_<cv::Vec3f> &points, const cv::Vec3f &loc);
+
 
 // Bilinear interpolation at fractional coordinates
 cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &p);
