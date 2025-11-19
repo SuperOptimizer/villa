@@ -22,3 +22,12 @@ void render_image_from_coords(const cv::Mat_<cv::Vec3f>& coords,
                               cv::Mat_<uint8_t>& img,
                               z5::Dataset* ds,
                               ChunkCache<uint8_t>* cache);
+
+// Generate unique mask for an inspect surface, masking out areas covered by other surfaces
+void render_unique_mask(QuadSurface* inspect_surf,
+                       const std::vector<QuadSurface*>& other_surfs,
+                       cv::Mat_<uint8_t>& unique_mask,
+                       cv::Mat_<uint8_t>& img,
+                       z5::Dataset* ds,
+                       ChunkCache<uint8_t>* cache,
+                       float scale = 1.0f);

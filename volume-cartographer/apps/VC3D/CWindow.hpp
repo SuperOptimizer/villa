@@ -146,6 +146,7 @@ private slots:
     void onSegmentationDirChanged(int index);
     void onEditMaskPressed();
     void onAppendMaskPressed();
+    void onGenerateInspectUniqueMasksPressed();
     void onManualLocationChanged();
     void onZoomIn();
     void onZoomOut();

@@ -444,6 +444,16 @@
             </property>
            </widget>
           </item>
+          <item>
+           <widget class="QPushButton" name="btnGenerateInspectUniqueMasks">
+            <property name="text">
+             <string>Generate Inspect Unique Masks</string>
+            </property>
+            <property name="icon">
+             <iconset theme="applications-graphics"/>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>

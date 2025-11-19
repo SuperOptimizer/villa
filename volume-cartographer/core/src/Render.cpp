@@ -81,3 +81,62 @@ void render_surface_image(QuadSurface* surf,
 
     std::cout << "render_surface_image: completed" << std::endl;
 }
+
+// Generate unique mask - blacks out areas already traced by other surfaces
+void render_unique_mask(QuadSurface* inspect_surf,
+                       const std::vector<QuadSurface*>& other_surfs,
+                       cv::Mat_<uint8_t>& unique_mask,
+                       cv::Mat_<uint8_t>& img,
+                       z5::Dataset* ds,
+                       ChunkCache<uint8_t>* cache,
+                       float scale) {
+
+    cv::Mat_<cv::Vec3f> coords;
+
+    // First, generate the base mask for the inspect surface
+    render_binary_mask(inspect_surf, unique_mask, coords, scale);
+
+    std::cout << "render_unique_mask: checking against " << other_surfs.size() << " other surfaces" << std::endl;
+
+    // Now black out any pixels that are covered by other surfaces
+    int blackedOut = 0;
+    int total = 0;
+
+    #pragma omp parallel for schedule(dynamic, 1) reduction(+:blackedOut, total)
+    for(int j = 0; j < unique_mask.rows; j++) {
+        for(int i = 0; i < unique_mask.cols; i++) {
+            // Skip pixels that are already black (invalid in the inspect surface)
+            if (unique_mask(j, i) == 0) {
+                continue;
+            }
+
+            total++;
+            const cv::Vec3f& point = coords(j, i);
+
+            // Skip invalid coordinates
+            if (!std::isfinite(point[0]) || !std::isfinite(point[1]) || !std::isfinite(point[2]) ||
+                (point[0] == -1.0f && point[1] == -1.0f && point[2] == -1.0f)) {
+                continue;
+            }
+
+            // Check if this point is contained in any other surface
+            for (const auto* other : other_surfs) {
+                if (other && other->containsPoint(point, 2.0f)) {
+                    unique_mask(j, i) = 0;  // Black out this pixel
+                    blackedOut++;
+                    break;
+                }
+            }
+        }
+    }
+
+    std::cout << "  Blacked out " << blackedOut << " / " << total << " pixels"
+              << " (" << (total > 0 ? (100.0 * blackedOut / total) : 0.0) << "%)" << std::endl;
+
+    // Generate the image if requested
+    if (ds && cache) {
+        render_image_from_coords(coords, img, ds, cache);
+    }
+
+    std::cout << "render_unique_mask: completed" << std::endl;
+}

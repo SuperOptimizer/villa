@@ -1636,7 +1636,8 @@ void CWindow::CreateWidgets(void)
     connect(spNorm[2], &QDoubleSpinBox::valueChanged, this, &CWindow::onManualPlaneChanged);
 
     connect(ui.btnEditMask, &QPushButton::pressed, this, &CWindow::onEditMaskPressed);
-    connect(ui.btnAppendMask, &QPushButton::pressed, this, &CWindow::onAppendMaskPressed);  // Add this
+    connect(ui.btnAppendMask, &QPushButton::pressed, this, &CWindow::onAppendMaskPressed);
+    connect(ui.btnGenerateInspectUniqueMasks, &QPushButton::pressed, this, &CWindow::onGenerateInspectUniqueMasksPressed);
     // Connect composite view controls
     connect(ui.chkCompositeEnabled, &QCheckBox::toggled, this, [this](bool checked) {
         if (auto* viewer = segmentationViewer()) {
@@ -2329,6 +2330,127 @@ void CWindow::onAppendMaskPressed(void)
         QMessageBox::critical(this, tr("Error"),
                             tr("Failed to render surface: %1").arg(e.what()));
     }
+}
+
+void CWindow::onGenerateInspectUniqueMasksPressed(void)
+{
+    if (!fVpkg || !currentVolume) {
+        if (!fVpkg) {
+            QMessageBox::warning(this, tr("Error"), tr("No volpkg loaded."));
+        } else {
+            QMessageBox::warning(this, tr("Error"), tr("No volume loaded."));
+        }
+        return;
+    }
+
+    // Find all inspect segments
+    auto seg_ids = fVpkg->segmentationIDs();
+    std::vector<std::string> inspect_segments;
+
+    for (const auto& seg_id : seg_ids) {
+        auto surf_meta = fVpkg->loadSurface(seg_id);
+        if (surf_meta && surf_meta->surface() && surf_meta->surface()->meta) {
+            if (vc::json_safe::has_tag(surf_meta->surface()->meta, "inspect")) {
+                inspect_segments.push_back(seg_id);
+            }
+        }
+    }
+
+    if (inspect_segments.empty()) {
+        QMessageBox::information(this, tr("No Inspect Segments"),
+                                tr("No segments with 'inspect' tag found."));
+        return;
+    }
+
+    // Confirm with user
+    QString message = tr("Found %1 inspect segment(s). Generate unique_mask.tif for each?\n\n"
+                        "This will black out areas already traced by other segments.")
+                        .arg(inspect_segments.size());
+    auto reply = QMessageBox::question(this, tr("Generate Unique Masks"), message,
+                                      QMessageBox::Yes | QMessageBox::No);
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
+
+    // Process each inspect segment
+    z5::Dataset* ds = currentVolume->zarrDataset(0);
+    int success_count = 0;
+    int skip_count = 0;
+    QString errors;
+
+    statusBar()->showMessage(tr("Generating unique masks for inspect segments..."));
+
+    for (const auto& seg_id : inspect_segments) {
+        try {
+            auto inspect_meta = fVpkg->loadSurface(seg_id);
+            if (!inspect_meta || !inspect_meta->surface()) {
+                continue;
+            }
+
+            QuadSurface* inspect_surf = inspect_meta->surface();
+            std::filesystem::path mask_path = inspect_meta->path / "unique_mask.tif";
+
+            // Check if mask already exists
+            if (std::filesystem::exists(mask_path)) {
+                auto reply = QMessageBox::question(this, tr("File Exists"),
+                                                  tr("unique_mask.tif already exists for %1. Overwrite?")
+                                                  .arg(QString::fromStdString(seg_id)),
+                                                  QMessageBox::Yes | QMessageBox::No);
+                if (reply != QMessageBox::Yes) {
+                    skip_count++;
+                    continue;
+                }
+            }
+
+            // Load all other surfaces
+            std::vector<QuadSurface*> other_surfs;
+            for (const auto& other_id : seg_ids) {
+                if (other_id != seg_id) {
+                    auto other_meta = fVpkg->loadSurface(other_id);
+                    if (other_meta && other_meta->surface()) {
+                        other_surfs.push_back(other_meta->surface());
+                    }
+                }
+            }
+
+            cv::Mat_<uint8_t> mask;
+            cv::Mat_<uint8_t> img;
+
+            // Generate unique mask
+            render_unique_mask(inspect_surf, other_surfs, mask, img, ds, chunk_cache, 1.0f);
+
+            // Normalize and save
+            cv::normalize(img, img, 0, 255, cv::NORM_MINMAX, CV_8U);
+            std::vector<cv::Mat> layers = {mask, img};
+
+            if (!cv::imwritemulti(mask_path.string(), layers)) {
+                errors += tr("Failed to write mask for %1\n").arg(QString::fromStdString(seg_id));
+                continue;
+            }
+
+            success_count++;
+
+        } catch (const std::exception& e) {
+            errors += tr("Error processing %1: %2\n")
+                        .arg(QString::fromStdString(seg_id))
+                        .arg(e.what());
+        }
+    }
+
+    // Show results
+    QString result_message = tr("Generated %1 unique mask(s)").arg(success_count);
+    if (skip_count > 0) {
+        result_message += tr(", %1 skipped").arg(skip_count);
+    }
+
+    if (!errors.isEmpty()) {
+        result_message += tr("\n\nErrors:\n%1").arg(errors);
+        QMessageBox::warning(this, tr("Unique Masks Generated"), result_message);
+    } else {
+        QMessageBox::information(this, tr("Success"), result_message);
+    }
+
+    statusBar()->showMessage(tr("Unique mask generation complete"), 3000);
 }
 
 QString CWindow::getCurrentVolumePath() const
