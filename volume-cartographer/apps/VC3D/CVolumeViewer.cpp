@@ -103,6 +103,8 @@ struct AxisAlignedSliceCacheKey
     uint8_t fastInterpolation = 0;
     uint8_t baseWindowLow = 0;
     uint8_t baseWindowHigh = 0;
+    size_t colormapHash = 0;
+    uint8_t stretchValues = 0;
 
     bool operator==(const AxisAlignedSliceCacheKey& other) const noexcept
     {
@@ -113,7 +115,8 @@ struct AxisAlignedSliceCacheKey
                scaleMilli == other.scaleMilli && dsScaleMilli == other.dsScaleMilli &&
                zOffsetMilli == other.zOffsetMilli && dsIndex == other.dsIndex &&
                datasetPtr == other.datasetPtr && fastInterpolation == other.fastInterpolation &&
-               baseWindowLow == other.baseWindowLow && baseWindowHigh == other.baseWindowHigh;
+               baseWindowLow == other.baseWindowLow && baseWindowHigh == other.baseWindowHigh &&
+               colormapHash == other.colormapHash && stretchValues == other.stretchValues;
     }
 };
 
@@ -139,6 +142,8 @@ struct AxisAlignedSliceCacheKeyHasher
         hashCombine(seed, key.fastInterpolation);
         hashCombine(seed, key.baseWindowLow);
         hashCombine(seed, key.baseWindowHigh);
+        hashCombine(seed, key.colormapHash);
+        hashCombine(seed, key.stretchValues);
         return seed;
     }
 
@@ -1463,6 +1468,8 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
                 cacheKey.fastInterpolation = _useFastInterpolation ? 1 : 0;
                 cacheKey.baseWindowLow = static_cast<uint8_t>(baseWindowLowInt);
                 cacheKey.baseWindowHigh = static_cast<uint8_t>(baseWindowHighInt);
+                cacheKey.colormapHash = std::hash<std::string>{}(_baseColormapId);
+                cacheKey.stretchValues = _stretchValues ? 1 : 0;
                 cacheKeyValid = true;
 
                 if (auto cached = axisAlignedSliceCache().get(cacheKey)) {
@@ -1492,18 +1499,41 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
     }
 
     if (!usedCache) {
-        cv::Mat baseFloat;
-        baseGray.convertTo(baseFloat, CV_32F);
-        baseFloat -= static_cast<float>(baseWindowLowInt);
-        baseFloat /= baseWindowSpan;
-        cv::max(baseFloat, 0.0f, baseFloat);
-        cv::min(baseFloat, 1.0f, baseFloat);
-        baseFloat.convertTo(baseGray, CV_8U, 255.0f);
+        cv::Mat baseProcessed;
 
-        if (baseGray.channels() == 1) {
-            cv::cvtColor(baseGray, baseColor, cv::COLOR_GRAY2BGR);
+        // Apply stretching if enabled
+        if (_stretchValues) {
+            double minVal, maxVal;
+            cv::minMaxLoc(baseGray, &minVal, &maxVal);
+            const double range = std::max(1.0, maxVal - minVal);
+
+            cv::Mat baseFloat;
+            baseGray.convertTo(baseFloat, CV_32F);
+            baseFloat -= static_cast<float>(minVal);
+            baseFloat /= static_cast<float>(range);
+            baseFloat.convertTo(baseProcessed, CV_8U, 255.0f);
         } else {
-            baseColor = baseGray.clone();
+            // Apply window/level transformation
+            cv::Mat baseFloat;
+            baseGray.convertTo(baseFloat, CV_32F);
+            baseFloat -= static_cast<float>(baseWindowLowInt);
+            baseFloat /= baseWindowSpan;
+            cv::max(baseFloat, 0.0f, baseFloat);
+            cv::min(baseFloat, 1.0f, baseFloat);
+            baseFloat.convertTo(baseProcessed, CV_8U, 255.0f);
+        }
+
+        // Apply colormap if specified
+        if (!_baseColormapId.empty()) {
+            const auto& spec = volume_viewer_cmaps::resolve(_baseColormapId);
+            baseColor = volume_viewer_cmaps::makeColors(baseProcessed, spec);
+        } else {
+            // Convert to BGR
+            if (baseProcessed.channels() == 1) {
+                cv::cvtColor(baseProcessed, baseColor, cv::COLOR_GRAY2BGR);
+            } else {
+                baseColor = baseProcessed.clone();
+            }
         }
 
         if (cacheKeyValid && !baseColor.empty()) {

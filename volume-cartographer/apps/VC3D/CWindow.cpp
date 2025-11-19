@@ -551,7 +551,8 @@ CWindow::CWindow() :
                                ui.dockWidgetComposite,
                                ui.dockWidgetVolumes,
                                ui.dockWidgetView,
-                               ui.dockWidgetOverlay }) {
+                               ui.dockWidgetOverlay,
+                               ui.dockWidgetRenderSettings }) {
         ensureDockWidgetFeatures(dock);
     }
     ensureDockWidgetFeatures(_point_collection_widget);
@@ -1353,6 +1354,7 @@ void CWindow::CreateWidgets(void)
     // Keep the view-related docks on the left and grouped together as tabs
     addDockWidget(Qt::LeftDockWidgetArea, ui.dockWidgetView);
     addDockWidget(Qt::LeftDockWidgetArea, ui.dockWidgetOverlay);
+    addDockWidget(Qt::LeftDockWidgetArea, ui.dockWidgetRenderSettings);
     addDockWidget(Qt::LeftDockWidgetArea, ui.dockWidgetComposite);
 
     auto ensureTabified = [this](QDockWidget* primary, QDockWidget* candidate) {
@@ -1364,6 +1366,7 @@ void CWindow::CreateWidgets(void)
     };
 
     ensureTabified(ui.dockWidgetView, ui.dockWidgetOverlay);
+    ensureTabified(ui.dockWidgetView, ui.dockWidgetRenderSettings);
     ensureTabified(ui.dockWidgetView, ui.dockWidgetComposite);
 
     const auto tabOrder = tabifiedDockWidgets(ui.dockWidgetView);
