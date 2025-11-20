@@ -477,20 +477,20 @@ void ViewerManager::refreshSurfacePatchIndex(QuadSurface* surface)
     if (_surfacePatchIndexDirty || _surfacePatchIndex.empty()) {
         _surfacePatchIndexDirty = true;
         _indexedSurfaces.erase(surface);
-        qCInfo(lcViewerManager) << "Deferred surface index refresh for" << surface->id
+        qCInfo(lcViewerManager) << "Deferred surface index refresh for" << surface->id.c_str()
                                 << "(global rebuild pending)";
         return;
     }
 
     if (_surfacePatchIndex.updateSurface(surface)) {
         _indexedSurfaces.insert(surface);
-        qCInfo(lcViewerManager) << "Rebuilt SurfacePatchIndex entries for surface" << surface->id;
+        qCInfo(lcViewerManager) << "Rebuilt SurfacePatchIndex entries for surface" << surface->id.c_str();
         return;
     }
 
     _surfacePatchIndexDirty = true;
     _indexedSurfaces.erase(surface);
-    qCInfo(lcViewerManager) << "Failed to rebuild SurfacePatchIndex for surface" << surface->id
+    qCInfo(lcViewerManager) << "Failed to rebuild SurfacePatchIndex for surface" << surface->id.c_str()
                             << "- marking index dirty";
 }
 
@@ -623,7 +623,7 @@ void ViewerManager::handleSurfaceChanged(std::string /*name*/, Surface* surf)
                         cellRegion->colEnd);
                     if (regionUpdated) {
                         qCInfo(lcViewerManager)
-                            << "Updated SurfacePatchIndex region for surface" << quad->id
+                            << "Updated SurfacePatchIndex region for surface" << quad->id.c_str()
                             << "rows" << cellRegion->rowStart << "to" << cellRegion->rowEnd
                             << "cols" << cellRegion->colStart << "to" << cellRegion->colEnd;
                     }
@@ -633,7 +633,7 @@ void ViewerManager::handleSurfaceChanged(std::string /*name*/, Surface* surf)
                 indexUpdated = _surfacePatchIndex.updateSurface(quad);
                 if (indexUpdated) {
                     qCInfo(lcViewerManager)
-                        << "Rebuilt SurfacePatchIndex entries for surface" << quad->id
+                        << "Rebuilt SurfacePatchIndex entries for surface" << quad->id.c_str()
                         << "due to missing or regressed dirty bounds";
                 }
             } else if (!regionUpdated && alreadyIndexed && !dirtyBoundsRegressed) {
@@ -644,7 +644,7 @@ void ViewerManager::handleSurfaceChanged(std::string /*name*/, Surface* surf)
             _surfacePatchIndexDirty = true;
             _indexedSurfaces.erase(quad);
             qCInfo(lcViewerManager)
-                << "Dirty bounds regressed for surface" << quad->id
+                << "Dirty bounds regressed for surface" << quad->id.c_str()
                 << "- scheduling global SurfacePatchIndex rebuild";
         }
         if (skippedDueToExistingIndex) {
@@ -652,7 +652,7 @@ void ViewerManager::handleSurfaceChanged(std::string /*name*/, Surface* surf)
         }
         if (regionUpdated || indexUpdated) {
             _indexedSurfaces.insert(quad);
-            qCInfo(lcViewerManager) << "SurfacePatchIndex updated for surface" << quad->id;
+            qCInfo(lcViewerManager) << "SurfacePatchIndex updated for surface" << quad->id.c_str();
         }
     } else if (!surf) {
         affectsSurfaceIndex = true;
