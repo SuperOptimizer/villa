@@ -39,6 +39,40 @@ constexpr auto COLOR_CURSOR =  Qt::cyan;
 constexpr float MIN_ZOOM = 0.03125f;
 constexpr float MAX_ZOOM = 4.0f;
 
+#define COLOR_SEG_YZ Qt::yellow
+#define COLOR_SEG_XZ Qt::red
+#define COLOR_SEG_XY QColor(255, 140, 0)
+
+const CVolumeViewer::ActiveSegmentationHandle& CVolumeViewer::activeSegmentationHandle() const
+{
+    if (!_activeSegHandleDirty) {
+        return _activeSegHandle;
+    }
+
+    ActiveSegmentationHandle handle;
+    handle.slotName = "segmentation";
+    handle.viewerIsSegmentationView = (_surf_name == "segmentation");
+    handle.accentColor =
+        (_surf_name == "seg yz"   ? COLOR_SEG_YZ
+         : _surf_name == "seg xz" ? COLOR_SEG_XZ
+                                   : COLOR_SEG_XY);
+    if (_surf_col) {
+        handle.surface = dynamic_cast<QuadSurface*>(_surf_col->surface(handle.slotName));
+    }
+    if (!handle.surface) {
+        handle.slotName.clear();
+    }
+
+    _activeSegHandle = handle;
+    _activeSegHandleDirty = false;
+    return _activeSegHandle;
+}
+
+void CVolumeViewer::markActiveSegmentationDirty()
+{
+    _activeSegHandleDirty = true;
+    _activeSegHandle.reset();
+}
 
 CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, ViewerManager* manager, QWidget* parent)
     : QWidget(parent)

@@ -212,7 +212,7 @@ struct SurfacePatchIndex::Impl {
     std::unique_ptr<PatchTree> tree;
     struct CellEntry {
         bool hasPatch = false;
-        Entry patch;
+        std::optional<Entry> patch;
     };
 
     struct SurfaceCellMask {
@@ -312,7 +312,7 @@ struct SurfacePatchIndex::Impl {
             if (!validIndex(row, col)) {
                 return;
             }
-            cachedEntries[index(row, col)] = entry;
+            cachedEntries.insert_or_assign(index(row, col), entry);
         }
 
         void eraseEntry(int row, int col)
@@ -520,7 +520,7 @@ void SurfacePatchIndex::rebuild(const std::vector<QuadSurface*>& surfaces, float
 
         for (auto& cell : cells) {
             if (cell.second.hasPatch) {
-                entries.push_back(cell.second.patch);
+                entries.push_back(*cell.second.patch);
             }
             auto& mask = impl_->ensureMask(cell.first.surface);
             mask.setActive(cell.first.rowIndex(), cell.first.colIndex(), cell.second.hasPatch);
@@ -1231,10 +1231,10 @@ void SurfacePatchIndex::Impl::insertCells(const std::vector<std::pair<CellKey, C
             if (!tree) {
                 tree = std::make_unique<PatchTree>();
             }
-            tree->insert(cell.second.patch);
+            tree->insert(*cell.second.patch);
             ++patchCount;
             mask.setActive(row, col, true);
-            mask.storeEntry(row, col, cell.second.patch);
+            mask.storeEntry(row, col, *cell.second.patch);
         } else {
             mask.setActive(row, col, false);
             mask.eraseEntry(row, col);
