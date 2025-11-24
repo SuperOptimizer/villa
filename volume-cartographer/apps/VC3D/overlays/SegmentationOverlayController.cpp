@@ -148,7 +148,8 @@ void SegmentationOverlayController::applyState(const State& state)
 void SegmentationOverlayController::loadApprovalMaskImage(QuadSurface* surface)
 {
     if (!surface) {
-        _approvalMaskImage = QImage();
+        _savedApprovalMaskImage = QImage();
+        _pendingApprovalMaskImage = QImage();
         return;
     }
 
@@ -157,29 +158,35 @@ void SegmentationOverlayController::loadApprovalMaskImage(QuadSurface* surface)
         // Create new empty mask
         const cv::Mat_<cv::Vec3f>* points = surface->rawPointsPtr();
         if (!points || points->empty()) {
-            _approvalMaskImage = QImage();
+            _savedApprovalMaskImage = QImage();
+            _pendingApprovalMaskImage = QImage();
             return;
         }
         approvalMask = cv::Mat_<uint8_t>(points->size(), static_cast<uint8_t>(0));
     }
 
-    // Convert to ARGB32_Premultiplied format (standard Qt graphics format)
-    QImage image(approvalMask.cols, approvalMask.rows, QImage::Format_ARGB32_Premultiplied);
+    // Convert saved mask to ARGB32_Premultiplied format with DARK GREEN, semi-transparent
+    QImage savedImage(approvalMask.cols, approvalMask.rows, QImage::Format_ARGB32_Premultiplied);
     for (int row = 0; row < approvalMask.rows; ++row) {
         const uint8_t* maskRow = approvalMask.ptr<uint8_t>(row);
-        QRgb* imageRow = reinterpret_cast<QRgb*>(image.scanLine(row));
+        QRgb* imageRow = reinterpret_cast<QRgb*>(savedImage.scanLine(row));
         for (int col = 0; col < approvalMask.cols; ++col) {
             uint8_t val = maskRow[col];
             if (val > 0) {
-                // Bright green, fully opaque for debugging
-                imageRow[col] = qRgba(0, 255, 0, 255);
+                // DARK GREEN: RGB(0, 100, 0) with 60% opacity (alpha = 153)
+                // Premultiply: R=0, G=60, B=0, A=153
+                imageRow[col] = qRgba(0, 60, 0, 153);
             } else {
                 imageRow[col] = qRgba(0, 0, 0, 0);  // Fully transparent
             }
         }
     }
 
-    _approvalMaskImage = image;
+    _savedApprovalMaskImage = savedImage;
+
+    // Initialize empty pending mask with same dimensions
+    _pendingApprovalMaskImage = QImage(approvalMask.cols, approvalMask.rows, QImage::Format_ARGB32_Premultiplied);
+    _pendingApprovalMaskImage.fill(qRgba(0, 0, 0, 0));  // Fully transparent
 }
 
 void SegmentationOverlayController::paintApprovalMaskDirect(
@@ -187,7 +194,7 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
     float radiusSteps,
     uint8_t paintValue)
 {
-    if (_approvalMaskImage.isNull()) {
+    if (_pendingApprovalMaskImage.isNull()) {
         return;
     }
 
@@ -202,16 +209,15 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
         return std::exp(-(distance * distance) / (2.0f * sigma * sigma));
     };
 
-    // Paint directly into the QImage
-    int pixelsPainted = 0;
+    // Paint directly into the PENDING QImage
     for (const auto& [centerRow, centerCol] : gridPositions) {
         for (int dr = -radius; dr <= radius; ++dr) {
             for (int dc = -radius; dc <= radius; ++dc) {
                 const int row = centerRow + dr;
                 const int col = centerCol + dc;
 
-                if (row < 0 || row >= _approvalMaskImage.height() ||
-                    col < 0 || col >= _approvalMaskImage.width()) {
+                if (row < 0 || row >= _pendingApprovalMaskImage.height() ||
+                    col < 0 || col >= _pendingApprovalMaskImage.width()) {
                     continue;
                 }
 
@@ -221,7 +227,7 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
                 }
 
                 const float falloff = gaussianFalloff(distance, sigma);
-                QRgb pixel = _approvalMaskImage.pixel(col, row);
+                QRgb pixel = _pendingApprovalMaskImage.pixel(col, row);
 
                 // Extract current green value
                 float currentGreen = static_cast<float>(qGreen(pixel));
@@ -229,12 +235,13 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
                 float blendedGreen = currentGreen * (1.0f - falloff) + targetGreen * falloff;
                 uint8_t newVal = static_cast<uint8_t>(std::clamp(blendedGreen, 0.0f, 255.0f));
 
-                // Update pixel (bright green, fully opaque for debugging)
-                // For ARGB32_Premultiplied, we need to premultiply RGB by alpha
+                // Update pixel with LIGHT GREEN, semi-transparent
+                // LIGHT GREEN: RGB(0, 200, 0) with 50% opacity (alpha = 128)
+                // Premultiply: R=0, G=100, B=0, A=128
                 if (newVal > 0) {
-                    _approvalMaskImage.setPixel(col, row, qRgba(0, 255, 0, 255));  // Bright green, fully opaque
+                    _pendingApprovalMaskImage.setPixel(col, row, qRgba(0, 100, 0, 128));
                 } else {
-                    _approvalMaskImage.setPixel(col, row, qRgba(0, 0, 0, 0));  // Fully transparent
+                    _pendingApprovalMaskImage.setPixel(col, row, qRgba(0, 0, 0, 0));  // Fully transparent
                 }
             }
         }
@@ -243,22 +250,59 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
 
 void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surface)
 {
-    if (!surface || _approvalMaskImage.isNull()) {
+    if (!surface || (_savedApprovalMaskImage.isNull() && _pendingApprovalMaskImage.isNull())) {
         return;
     }
 
-    // Convert QImage back to cv::Mat
-    cv::Mat_<uint8_t> approvalMask(_approvalMaskImage.height(), _approvalMaskImage.width());
-    for (int row = 0; row < _approvalMaskImage.height(); ++row) {
-        const QRgb* imageRow = reinterpret_cast<const QRgb*>(_approvalMaskImage.constScanLine(row));
+    // Merge pending into saved, then convert to cv::Mat
+    int width = !_savedApprovalMaskImage.isNull() ? _savedApprovalMaskImage.width() : _pendingApprovalMaskImage.width();
+    int height = !_savedApprovalMaskImage.isNull() ? _savedApprovalMaskImage.height() : _pendingApprovalMaskImage.height();
+
+    cv::Mat_<uint8_t> approvalMask(height, width, static_cast<uint8_t>(0));
+
+    for (int row = 0; row < height; ++row) {
         uint8_t* maskRow = approvalMask.ptr<uint8_t>(row);
-        for (int col = 0; col < _approvalMaskImage.width(); ++col) {
-            maskRow[col] = qGreen(imageRow[col]);  // Extract green channel
+        for (int col = 0; col < width; ++col) {
+            uint8_t savedVal = 0;
+            uint8_t pendingVal = 0;
+
+            // Get saved value
+            if (!_savedApprovalMaskImage.isNull() && row < _savedApprovalMaskImage.height() && col < _savedApprovalMaskImage.width()) {
+                const QRgb* savedRow = reinterpret_cast<const QRgb*>(_savedApprovalMaskImage.constScanLine(row));
+                savedVal = qGreen(savedRow[col]);
+            }
+
+            // Get pending value
+            if (!_pendingApprovalMaskImage.isNull() && row < _pendingApprovalMaskImage.height() && col < _pendingApprovalMaskImage.width()) {
+                const QRgb* pendingRow = reinterpret_cast<const QRgb*>(_pendingApprovalMaskImage.constScanLine(row));
+                pendingVal = qGreen(pendingRow[col]);
+            }
+
+            // Merge: take max value (approved = 255)
+            maskRow[col] = std::max(savedVal, pendingVal);
         }
     }
 
+    // Save to surface
     surface->setChannel("approval", approvalMask);
     surface->saveOverwrite();
+
+    // Merge pending into saved and clear pending
+    for (int row = 0; row < height; ++row) {
+        QRgb* savedRow = reinterpret_cast<QRgb*>(_savedApprovalMaskImage.scanLine(row));
+        for (int col = 0; col < width; ++col) {
+            uint8_t mergedVal = approvalMask(row, col);
+            if (mergedVal > 0) {
+                // Update saved image with dark green
+                savedRow[col] = qRgba(0, 60, 0, 153);
+            } else {
+                savedRow[col] = qRgba(0, 0, 0, 0);
+            }
+        }
+    }
+
+    // Clear pending
+    _pendingApprovalMaskImage.fill(qRgba(0, 0, 0, 0));
 }
 
 bool SegmentationOverlayController::isOverlayEnabledFor(CVolumeViewer* viewer) const
@@ -276,8 +320,10 @@ void SegmentationOverlayController::collectPrimitives(CVolumeViewer* viewer,
 
     const State& state = *_currentState;
 
-    // Approval mask rendering removed for now - approval data is saved to disk
-    // TODO: Implement efficient overlay visualization later
+    // Render approval mask overlays (dark green for saved, light green for pending)
+    if (state.approvalMaskMode && state.surface) {
+        buildApprovalMaskOverlay(state, viewer, builder);
+    }
 
     if (shouldShowMask(state)) {
         builder.addPath(buildMaskPrimitive(state));
@@ -393,5 +439,101 @@ void SegmentationOverlayController::buildVertexMarkers(const State& state,
         auto active = *state.activeMarker;
         active.isActive = true;
         appendMarker(active);
+    }
+}
+
+void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
+                                                              CVolumeViewer* viewer,
+                                                              ViewerOverlayControllerBase::OverlayBuilder& builder) const
+{
+    if (!state.surface) {
+        return;
+    }
+
+    const cv::Mat_<cv::Vec3f>* points = state.surface->rawPointsPtr();
+    if (!points || points->empty()) {
+        return;
+    }
+
+    // Get surface grid dimensions
+    const int gridRows = points->rows;
+    const int gridCols = points->cols;
+
+    // Check if we have valid images
+    const bool hasSaved = !_savedApprovalMaskImage.isNull() &&
+                         _savedApprovalMaskImage.width() == gridCols &&
+                         _savedApprovalMaskImage.height() == gridRows;
+    const bool hasPending = !_pendingApprovalMaskImage.isNull() &&
+                           _pendingApprovalMaskImage.width() == gridCols &&
+                           _pendingApprovalMaskImage.height() == gridRows;
+
+    if (!hasSaved && !hasPending) {
+        return;
+    }
+
+    // Collect world points for saved (dark green) approval mask
+    std::vector<cv::Vec3f> savedPoints;
+    if (hasSaved) {
+        savedPoints.reserve(gridRows * gridCols / 10);  // Rough estimate
+        for (int row = 0; row < gridRows; ++row) {
+            for (int col = 0; col < gridCols; ++col) {
+                // Check if this pixel is painted (non-transparent)
+                QRgb pixel = _savedApprovalMaskImage.pixel(col, row);
+                if (qAlpha(pixel) > 0) {
+                    const cv::Vec3f& worldPos = (*points)(row, col);
+                    // Skip invalid points
+                    if (std::isfinite(worldPos[0]) && std::isfinite(worldPos[1]) && std::isfinite(worldPos[2]) &&
+                        !(worldPos[0] == -1.0f && worldPos[1] == -1.0f && worldPos[2] == -1.0f)) {
+                        savedPoints.push_back(worldPos);
+                    }
+                }
+            }
+        }
+    }
+
+    // Collect world points for pending (light green) approval mask
+    std::vector<cv::Vec3f> pendingPoints;
+    if (hasPending) {
+        pendingPoints.reserve(gridRows * gridCols / 10);  // Rough estimate
+        for (int row = 0; row < gridRows; ++row) {
+            for (int col = 0; col < gridCols; ++col) {
+                // Check if this pixel is painted (non-transparent)
+                QRgb pixel = _pendingApprovalMaskImage.pixel(col, row);
+                if (qAlpha(pixel) > 0) {
+                    const cv::Vec3f& worldPos = (*points)(row, col);
+                    // Skip invalid points
+                    if (std::isfinite(worldPos[0]) && std::isfinite(worldPos[1]) && std::isfinite(worldPos[2]) &&
+                        !(worldPos[0] == -1.0f && worldPos[1] == -1.0f && worldPos[2] == -1.0f)) {
+                        pendingPoints.push_back(worldPos);
+                    }
+                }
+            }
+        }
+    }
+
+    // Render saved approval mask as PathPrimitive (dark green)
+    if (!savedPoints.empty()) {
+        ViewerOverlayControllerBase::PathPrimitive savedPath;
+        savedPath.points = savedPoints;
+        savedPath.renderMode = ViewerOverlayControllerBase::PathRenderMode::Points;
+        savedPath.brushShape = ViewerOverlayControllerBase::PathBrushShape::Square;
+        savedPath.pointRadius = 1.5f;  // Small squares
+        savedPath.color = QColor(0, 100, 0);  // Dark green
+        savedPath.opacity = 0.6f;
+        savedPath.z = 10.0;
+        builder.addPath(savedPath);
+    }
+
+    // Render pending approval mask as PathPrimitive (light green)
+    if (!pendingPoints.empty()) {
+        ViewerOverlayControllerBase::PathPrimitive pendingPath;
+        pendingPath.points = pendingPoints;
+        pendingPath.renderMode = ViewerOverlayControllerBase::PathRenderMode::Points;
+        pendingPath.brushShape = ViewerOverlayControllerBase::PathBrushShape::Square;
+        pendingPath.pointRadius = 1.5f;  // Small squares
+        pendingPath.color = QColor(0, 200, 0);  // Light green
+        pendingPath.opacity = 0.5f;
+        pendingPath.z = 15.0;
+        builder.addPath(pendingPath);
     }
 }

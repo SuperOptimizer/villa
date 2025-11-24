@@ -96,6 +96,9 @@ private:
     void buildVertexMarkers(const State& state,
                             CVolumeViewer* viewer,
                             ViewerOverlayControllerBase::OverlayBuilder& builder) const;
+    void buildApprovalMaskOverlay(const State& state,
+                                  CVolumeViewer* viewer,
+                                  ViewerOverlayControllerBase::OverlayBuilder& builder) const;
 
     ViewerOverlayControllerBase::PathPrimitive buildMaskPrimitive(const State& state) const;
     bool shouldShowMask(const State& state) const;
@@ -105,6 +108,7 @@ private:
     bool _editingEnabled{false};
     std::optional<State> _currentState;
 
-    // Approval mask working buffer - paint directly into this
-    QImage _approvalMaskImage;
+    // Approval mask images - separate saved and pending
+    QImage _savedApprovalMaskImage;   // Dark green: what's saved to disk
+    QImage _pendingApprovalMaskImage; // Light green: pending strokes
 };
