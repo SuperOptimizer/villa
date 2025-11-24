@@ -2,6 +2,7 @@
 
 #include <opencv2/core.hpp>
 #include <QElapsedTimer>
+#include <QPointF>
 #include <unordered_set>
 #include <vector>
 
@@ -39,8 +40,10 @@ public:
     [[nodiscard]] bool strokeActive() const { return _strokeActive; }
     [[nodiscard]] bool hasPendingStrokes() const { return !_pendingStrokes.empty(); }
 
-    void startStroke(const cv::Vec3f& worldPos);
-    void extendStroke(const cv::Vec3f& worldPos, bool forceSample);
+    // scenePos is the raw scene position, dsScale is the viewer's dataset scale factor
+    // Grid position is computed as: (scenePos / dsScale + surface_center) * surface_scale
+    void startStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float dsScale);
+    void extendStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float dsScale, bool forceSample);
     void finishStroke();
     bool applyPending(float dragRadiusSteps);
     void clear();
@@ -53,8 +56,9 @@ public:
     [[nodiscard]] bool isActive() const { return brushActive() || strokeActive(); }
 
 private:
-    // Convert world position to grid indices on current surface
-    std::optional<std::pair<int, int>> worldToGridIndex(const cv::Vec3f& worldPos) const;
+    // Convert scene position to integer grid indices using surface coordinate transform
+    // Formula: gridPos = (scenePos / dsScale + center) * surfaceScale
+    std::optional<std::pair<int, int>> sceneToGridIndex(const QPointF& scenePos, float dsScale) const;
 
     // Paint accumulated points into QImage (for real-time painting)
     void paintAccumulatedPointsToImage();

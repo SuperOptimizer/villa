@@ -237,8 +237,12 @@ void SegmentationModule::handleMousePress(CVolumeViewer* viewer,
             return;
         }
         if (_approvalTool) {
-            qCInfo(lcSegModule) << "  Starting approval stroke at:" << worldPos[0] << worldPos[1] << worldPos[2];
-            _approvalTool->startStroke(worldPos);
+            // Pass scene position and ds_scale for proper grid coordinate computation
+            const QPointF scenePos = viewer->lastScenePosition();
+            const float dsScale = viewer->dsScale();
+            qCInfo(lcSegModule) << "  Starting approval stroke at:" << worldPos[0] << worldPos[1] << worldPos[2]
+                                << "scenePos:" << scenePos.x() << scenePos.y() << "dsScale:" << dsScale;
+            _approvalTool->startStroke(worldPos, scenePos, dsScale);
         } else {
             qCWarning(lcSegModule) << "  ERROR: Approval tool is null!";
         }
@@ -324,7 +328,10 @@ void SegmentationModule::handleMouseMove(CVolumeViewer* viewer,
     if (approvalStrokeActive) {
         if (buttons.testFlag(Qt::LeftButton)) {
             if (_approvalTool) {
-                _approvalTool->extendStroke(worldPos, false);
+                // Pass scene position and ds_scale for proper grid coordinate computation
+                const QPointF scenePos = viewer->lastScenePosition();
+                const float dsScale = viewer->dsScale();
+                _approvalTool->extendStroke(worldPos, scenePos, dsScale, false);
             }
         } else {
             if (_approvalTool) {
@@ -377,7 +384,7 @@ void SegmentationModule::handleMouseMove(CVolumeViewer* viewer,
     }
 }
 
-void SegmentationModule::handleMouseRelease(CVolumeViewer* /*viewer*/,
+void SegmentationModule::handleMouseRelease(CVolumeViewer* viewer,
                                             const cv::Vec3f& worldPos,
                                             Qt::MouseButton button,
                                             Qt::KeyboardModifiers /*modifiers*/)
@@ -385,8 +392,11 @@ void SegmentationModule::handleMouseRelease(CVolumeViewer* /*viewer*/,
     // Handle approval mask mode
     const bool approvalStrokeActive = _approvalTool && _approvalTool->strokeActive();
     if (approvalStrokeActive && button == Qt::LeftButton) {
-        if (_approvalTool) {
-            _approvalTool->extendStroke(worldPos, true);
+        if (_approvalTool && viewer) {
+            // Pass scene position and ds_scale for proper grid coordinate computation
+            const QPointF scenePos = viewer->lastScenePosition();
+            const float dsScale = viewer->dsScale();
+            _approvalTool->extendStroke(worldPos, scenePos, dsScale, true);
             _approvalTool->finishStroke();
             // Don't apply immediately - wait for user to press Apply button
         }

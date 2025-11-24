@@ -82,9 +82,10 @@ void ApprovalMaskBrushTool::setActive(bool active)
     _module.refreshOverlay();
 }
 
-void ApprovalMaskBrushTool::startStroke(const cv::Vec3f& worldPos)
+void ApprovalMaskBrushTool::startStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float dsScale)
 {
-    qCInfo(lcApprovalMask) << "Starting approval stroke at:" << worldPos[0] << worldPos[1] << worldPos[2];
+    qCInfo(lcApprovalMask) << "Starting approval stroke at:" << worldPos[0] << worldPos[1] << worldPos[2]
+                           << "scenePos:" << scenePos.x() << scenePos.y() << "dsScale:" << dsScale;
     qCInfo(lcApprovalMask) << "  Surface:" << (_surface ? "valid" : "NULL");
     _strokeActive = true;
     _currentStroke.clear();
@@ -108,25 +109,28 @@ void ApprovalMaskBrushTool::startStroke(const cv::Vec3f& worldPos)
     _accumulatedGridPositions.clear();
     _accumulatedGridPosSet.clear();
 
-    // Add the starting point for painting
-    auto gridIdx = worldToGridIndex(worldPos);
+    // Add the starting point for painting - compute grid position from scene coordinates
+    auto gridIdx = sceneToGridIndex(scenePos, dsScale);
     if (gridIdx) {
+        qCInfo(lcApprovalMask) << "  Grid index:" << gridIdx->first << gridIdx->second;
         const uint64_t hash = (static_cast<uint64_t>(gridIdx->first) << 32) | static_cast<uint64_t>(gridIdx->second);
         _accumulatedGridPosSet.insert(hash);
         _accumulatedGridPositions.push_back(*gridIdx);
+    } else {
+        qCInfo(lcApprovalMask) << "  Grid index: OUT OF BOUNDS";
     }
 
     _module.refreshOverlay();
 }
 
-void ApprovalMaskBrushTool::extendStroke(const cv::Vec3f& worldPos, bool forceSample)
+void ApprovalMaskBrushTool::extendStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float dsScale, bool forceSample)
 {
     if (!_strokeActive) {
         return;
     }
 
-    // Check if position is within valid surface bounds
-    auto gridIdx = worldToGridIndex(worldPos);
+    // Check if position is within valid surface bounds using scene coordinates
+    auto gridIdx = sceneToGridIndex(scenePos, dsScale);
     if (!gridIdx) {
         // Outside valid surface area - break the current stroke segment
         // but keep stroke active so we can start a new segment when back in bounds
@@ -375,89 +379,56 @@ void ApprovalMaskBrushTool::paintAccumulatedPointsToImage()
     _module.refreshOverlay();
 }
 
-std::optional<std::pair<int, int>> ApprovalMaskBrushTool::worldToGridIndex(const cv::Vec3f& worldPos) const
+std::optional<std::pair<int, int>> ApprovalMaskBrushTool::sceneToGridIndex(const QPointF& scenePos, float dsScale) const
 {
-    // For approval mask, we must use the base surface directly, NOT the editManager's worldToGridIndex
-    // which may use preview points from an active session with different dimensions/positions.
+    // Convert scene coordinates to grid indices using the same formula as scene2vol/coord:
+    // surfLoc = scenePos / dsScale (this is the "offset" in coord())
+    // gridPos = (surfLoc + center) * surfaceScale = internal_loc(surfLoc + center, ptr=0, scale)
     if (!_surface) {
-        qCWarning(lcApprovalMask) << "No surface available for worldToGridIndex";
         return std::nullopt;
     }
 
     const cv::Mat_<cv::Vec3f>* points = _surface->rawPointsPtr();
     if (!points || points->empty()) {
-        qCWarning(lcApprovalMask) << "No points on surface for worldToGridIndex";
         return std::nullopt;
     }
 
-    static bool loggedOnce = false;
-    if (!loggedOnce) {
-        qCInfo(lcApprovalMask) << "  [worldToGridIndex] Surface grid size:" << points->cols << "x" << points->rows;
-        qCInfo(lcApprovalMask) << "  [worldToGridIndex] Surface scale:" << _surface->scale()[0] << _surface->scale()[1] << _surface->scale()[2];
-        // Log a few sample grid points
-        if (points->rows > 0 && points->cols > 0) {
-            qCInfo(lcApprovalMask) << "  [worldToGridIndex] Grid point (0,0):" << (*points)(0, 0)[0] << (*points)(0, 0)[1] << (*points)(0, 0)[2];
-            qCInfo(lcApprovalMask) << "  [worldToGridIndex] Grid point (0," << (points->cols-1) << "):" << (*points)(0, points->cols-1)[0] << (*points)(0, points->cols-1)[1] << (*points)(0, points->cols-1)[2];
-            int midRow = points->rows / 2;
-            int midCol = points->cols / 2;
-            qCInfo(lcApprovalMask) << "  [worldToGridIndex] Grid point (" << midRow << "," << midCol << "):" << (*points)(midRow, midCol)[0] << (*points)(midRow, midCol)[1] << (*points)(midRow, midCol)[2];
-        }
-        loggedOnce = true;
+    // Get surface parameters
+    const cv::Vec3f center = _surface->center();
+    const cv::Vec2f surfScale = _surface->scale();
+
+    // Compute grid position: (scenePos / dsScale + center) * surfaceScale
+    const float surfLocX = static_cast<float>(scenePos.x()) / dsScale;
+    const float surfLocY = static_cast<float>(scenePos.y()) / dsScale;
+    const float gridX = (surfLocX + center[0]) * surfScale[0];
+    const float gridY = (surfLocY + center[1]) * surfScale[1];
+
+    const int col = static_cast<int>(std::round(gridX));
+    const int row = static_cast<int>(std::round(gridY));
+
+    // Check bounds
+    if (row < 0 || row >= points->rows || col < 0 || col >= points->cols) {
+        return std::nullopt;
     }
 
-    // Use surface's pointTo to find closest point
-    cv::Vec3f ptr = _surface->pointer();
-    _surface->pointTo(ptr, worldPos, std::numeric_limits<float>::max(), 400);  // High iteration count for accuracy
-    cv::Vec3f raw = _surface->loc_raw(ptr);
-
-    // Convert to approximate grid indices
-    int approxCol = static_cast<int>(std::round(raw[0]));
-    int approxRow = static_cast<int>(std::round(raw[1]));
-
-    // Clamp to valid range for initial search
-    approxRow = std::clamp(approxRow, 0, points->rows - 1);
-    approxCol = std::clamp(approxCol, 0, points->cols - 1);
-
-    // Search for the closest VALID point in a radius around the approximate position
-    constexpr int kSearchRadius = 12;
-    int bestRow = -1;
-    int bestCol = -1;
-    float bestDistSq = std::numeric_limits<float>::max();
-
-    for (int radius = 0; radius <= kSearchRadius; ++radius) {
-        const int rowStart = std::max(0, approxRow - radius);
-        const int rowEnd = std::min(points->rows - 1, approxRow + radius);
-        const int colStart = std::max(0, approxCol - radius);
-        const int colEnd = std::min(points->cols - 1, approxCol + radius);
-
-        for (int r = rowStart; r <= rowEnd; ++r) {
-            for (int c = colStart; c <= colEnd; ++c) {
-                const cv::Vec3f& candidate = (*points)(r, c);
-
-                // Skip invalid points (e.g., -1, -1, -1 or NaN)
-                if (isInvalidPoint(candidate)) {
-                    continue;
-                }
-
-                // Track the closest valid point in grid space
-                const int dr = r - approxRow;
-                const int dc = c - approxCol;
-                const float gridDistSq = static_cast<float>(dr * dr + dc * dc);
-
-                if (gridDistSq < bestDistSq) {
-                    bestDistSq = gridDistSq;
-                    bestRow = r;
-                    bestCol = c;
+    // Check if the point at this location is valid
+    const cv::Vec3f& point = (*points)(row, col);
+    if (isInvalidPoint(point)) {
+        // Search nearby for a valid point (small radius since we have precise coordinates)
+        constexpr int kSearchRadius = 3;
+        for (int dr = -kSearchRadius; dr <= kSearchRadius; ++dr) {
+            for (int dc = -kSearchRadius; dc <= kSearchRadius; ++dc) {
+                const int r = row + dr;
+                const int c = col + dc;
+                if (r >= 0 && r < points->rows && c >= 0 && c < points->cols) {
+                    if (!isInvalidPoint((*points)(r, c))) {
+                        return std::make_pair(r, c);
+                    }
                 }
             }
         }
-
-        // Early exit if we found a valid point - don't keep searching
-        if (bestRow != -1) {
-            return std::make_pair(bestRow, bestCol);
-        }
+        return std::nullopt;
     }
 
-    // No valid point found in search area - user is over a hole or out of bounds
-    return std::nullopt;
+    return std::make_pair(row, col);
 }

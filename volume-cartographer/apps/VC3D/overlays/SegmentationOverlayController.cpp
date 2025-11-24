@@ -176,9 +176,9 @@ void SegmentationOverlayController::loadApprovalMaskImage(QuadSurface* surface)
         for (int col = 0; col < approvalMask.cols; ++col) {
             uint8_t val = maskRow[col];
             if (val > 0) {
-                // DARK GREEN: RGB(0, 100, 0) with 60% opacity (alpha = 153)
-                // Premultiply: R=0, G=60, B=0, A=153
-                imageRow[col] = qRgba(0, 60, 0, 153);
+                // GREEN for saved approval: RGB(0, 200, 0) with 60% opacity (alpha = 153)
+                // Premultiply: R=0, G=120, B=0, A=153
+                imageRow[col] = qRgba(0, 120, 0, 153);
             } else {
                 imageRow[col] = qRgba(0, 0, 0, 0);  // Fully transparent
             }
@@ -242,11 +242,11 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
                 float blendedGreen = currentGreen * (1.0f - falloff) + targetGreen * falloff;
                 uint8_t newVal = static_cast<uint8_t>(std::clamp(blendedGreen, 0.0f, 255.0f));
 
-                // Update pixel with LIGHT GREEN, semi-transparent
-                // LIGHT GREEN: RGB(0, 200, 0) with 50% opacity (alpha = 128)
-                // Premultiply: R=0, G=100, B=0, A=128
+                // Update pixel with BLUE for pending approval, semi-transparent
+                // BLUE: RGB(0, 100, 255) with 50% opacity (alpha = 128)
+                // Premultiply: R=0, G=50, B=127, A=128
                 if (newVal > 0) {
-                    _pendingApprovalMaskImage.setPixel(col, row, qRgba(0, 100, 0, 128));
+                    _pendingApprovalMaskImage.setPixel(col, row, qRgba(0, 50, 127, 128));
                 } else {
                     _pendingApprovalMaskImage.setPixel(col, row, qRgba(0, 0, 0, 0));  // Fully transparent
                 }
@@ -480,7 +480,11 @@ void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, Qu
                            _pendingApprovalMaskImage.width() == gridCols &&
                            _pendingApprovalMaskImage.height() == gridRows;
 
-    qDebug() << "[ApprovalCache] hasSaved:" << hasSaved << "hasPending:" << hasPending;
+    qDebug() << "[ApprovalCache] hasSaved:" << hasSaved << "hasPending:" << hasPending
+             << "savedIsNull:" << _savedApprovalMaskImage.isNull()
+             << "savedSize:" << _savedApprovalMaskImage.width() << "x" << _savedApprovalMaskImage.height()
+             << "pendingIsNull:" << _pendingApprovalMaskImage.isNull()
+             << "pendingSize:" << _pendingApprovalMaskImage.width() << "x" << _pendingApprovalMaskImage.height();
 
     if (!hasSaved && !hasPending) {
         qDebug() << "[ApprovalCache] No masks to render, returning";
@@ -511,46 +515,36 @@ void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, Qu
 
     qDebug() << "[ApprovalCache] Merge took:" << mergeTimer.elapsed() << "ms";
 
-    // Calculate scene-space bounds to determine scale
-    QElapsedTimer boundsTimer;
-    boundsTimer.start();
+    // Calculate scene-space bounds using direct grid-to-scene formula (no pointTo!)
+    // The relationship between scene coords and grid coords:
+    // - scene2vol: surfLoc = scenePos / dsScale, then coord() uses (surfLoc + center) * surfScale
+    // - So: gridPos = (scenePos/dsScale + center) * surfScale
+    // - Inverting: scenePos = (gridPos/surfScale - center) * dsScale
+    const cv::Vec3f center = surface->center();
+    const cv::Vec2f surfScale = surface->scale();
+    const float dsScale = viewer->dsScale();
+
+    qDebug() << "[ApprovalCache] Surface params: center=(" << center[0] << "," << center[1] << ")"
+             << "surfScale=(" << surfScale[0] << "," << surfScale[1] << ")"
+             << "dsScale=" << dsScale;
+
+    auto gridToScene = [&](int row, int col) -> QPointF {
+        const float sceneX = (static_cast<float>(col) / surfScale[0] - center[0]) * dsScale;
+        const float sceneY = (static_cast<float>(row) / surfScale[1] - center[1]) * dsScale;
+        return QPointF(sceneX, sceneY);
+    };
+
+    // Calculate corners directly
+    QPointF topLeft = gridToScene(0, 0);
+    QPointF topRight = gridToScene(0, gridCols - 1);
+    QPointF bottomLeft = gridToScene(gridRows - 1, 0);
+    QPointF bottomRight = gridToScene(gridRows - 1, gridCols - 1);
 
     QRectF sceneBounds;
-    bool foundAny = false;
-
-    // Sample corners and edges to find scene bounds
-    std::vector<std::pair<int, int>> samplePoints;
-    for (int row = 0; row < gridRows; row += std::max(1, gridRows / 20)) {
-        for (int col = 0; col < gridCols; col += std::max(1, gridCols / 20)) {
-            samplePoints.push_back({row, col});
-        }
-    }
-
-    for (const auto& [row, col] : samplePoints) {
-        const cv::Vec3f& worldPos = (*points)(row, col);
-        if (!std::isfinite(worldPos[0]) || !std::isfinite(worldPos[1]) || !std::isfinite(worldPos[2]) ||
-            (worldPos[0] == -1.0f && worldPos[1] == -1.0f && worldPos[2] == -1.0f)) {
-            continue;
-        }
-
-        QPointF scenePos = viewer->volumePointToScene(worldPos);
-        if (!foundAny) {
-            sceneBounds = QRectF(scenePos, QSizeF(1, 1));
-            foundAny = true;
-        } else {
-            if (scenePos.x() < sceneBounds.left()) sceneBounds.setLeft(scenePos.x());
-            if (scenePos.x() > sceneBounds.right()) sceneBounds.setRight(scenePos.x());
-            if (scenePos.y() < sceneBounds.top()) sceneBounds.setTop(scenePos.y());
-            if (scenePos.y() > sceneBounds.bottom()) sceneBounds.setBottom(scenePos.y());
-        }
-    }
-
-    qDebug() << "[ApprovalCache] Bounds calc took:" << boundsTimer.elapsed() << "ms";
-
-    if (!foundAny) {
-        qDebug() << "[ApprovalCache] No valid scene bounds found, returning";
-        return;
-    }
+    sceneBounds.setLeft(std::min({topLeft.x(), topRight.x(), bottomLeft.x(), bottomRight.x()}));
+    sceneBounds.setRight(std::max({topLeft.x(), topRight.x(), bottomLeft.x(), bottomRight.x()}));
+    sceneBounds.setTop(std::min({topLeft.y(), topRight.y(), bottomLeft.y(), bottomRight.y()}));
+    sceneBounds.setBottom(std::max({topLeft.y(), topRight.y(), bottomLeft.y(), bottomRight.y()}));
 
     // Calculate scale to map from grid-space to scene-space
     const qreal sceneWidth = sceneBounds.width();
@@ -610,6 +604,13 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
 
     const ViewerImageCache& cache = it->second;
 
+    // Get surface parameters for direct grid-to-scene coordinate conversion
+    // The relationship: gridPos = (scenePos/dsScale + center) * surfScale
+    // Inverting: scenePos = (gridPos/surfScale - center) * dsScale
+    const cv::Vec3f center = state.surface->center();
+    const cv::Vec2f surfScale = state.surface->scale();
+    const float dsScale = viewer->dsScale();
+
     // Find valid reference points and calculate the current grid-to-scene scale dynamically
     const cv::Mat_<cv::Vec3f>* points = state.surface->rawPointsPtr();
     if (!points || points->empty()) {
@@ -619,89 +620,74 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
     const int gridRows = points->rows;
     const int gridCols = points->cols;
 
-    // Find two adjacent valid points to calculate the current scale
-    QPointF refScenePos;
-    int refRow = -1;
-    int refCol = -1;
-    bool foundRef = false;
+    // Lambda to convert grid index directly to scene position (no pointTo!)
+    // Formula: scenePos = (gridPos/surfScale - center) * dsScale
+    auto gridToScene = [&](int row, int col) -> QPointF {
+        const float sceneX = (static_cast<float>(col) / surfScale[0] - center[0]) * dsScale;
+        const float sceneY = (static_cast<float>(row) / surfScale[1] - center[1]) * dsScale;
+        return QPointF(sceneX, sceneY);
+    };
 
-    // Start from center and spiral outward
-    for (int offset = 0; offset < std::max(gridRows, gridCols) / 2 && !foundRef; offset += 10) {
-        int row = gridRows / 2 + offset;
-        int col = gridCols / 2 + offset;
+    // Calculate grid-to-scene scale from adjacent cells
+    QPointF p0 = gridToScene(0, 0);
+    QPointF p1 = gridToScene(0, 1);
+    qreal gridToSceneScale = std::hypot(p1.x() - p0.x(), p1.y() - p0.y());
 
-        if (row >= 0 && row < gridRows && col >= 0 && col < gridCols) {
-            const cv::Vec3f& worldPos = (*points)(row, col);
-            if (std::isfinite(worldPos[0]) && std::isfinite(worldPos[1]) && std::isfinite(worldPos[2]) &&
-                !(worldPos[0] == -1.0f && worldPos[1] == -1.0f && worldPos[2] == -1.0f)) {
-                refScenePos = viewer->volumePointToScene(worldPos);
-                refRow = row;
-                refCol = col;
-                foundRef = true;
-            }
-        }
-    }
-
-    if (!foundRef) {
-        qDebug() << "[ApprovalOverlay] No valid reference point found";
+    if (gridToSceneScale < 1e-6) {
+        qDebug() << "[ApprovalOverlay] Invalid gridToSceneScale, returning";
         return;
     }
 
-    // Find an adjacent valid point to calculate scale
-    qreal gridToSceneScale = 1.0;
-    bool foundAdjacent = false;
+    // Render approval mask as individual colored rectangles at each grid cell's scene position
+    QElapsedTimer renderTimer;
+    renderTimer.start();
 
-    // Try right neighbor first
-    if (refCol + 1 < gridCols) {
-        const cv::Vec3f& adjWorldPos = (*points)(refRow, refCol + 1);
-        if (std::isfinite(adjWorldPos[0]) && std::isfinite(adjWorldPos[1]) && std::isfinite(adjWorldPos[2]) &&
-            !(adjWorldPos[0] == -1.0f && adjWorldPos[1] == -1.0f && adjWorldPos[2] == -1.0f)) {
-            QPointF adjScenePos = viewer->volumePointToScene(adjWorldPos);
-            gridToSceneScale = std::hypot(adjScenePos.x() - refScenePos.x(), adjScenePos.y() - refScenePos.y());
-            foundAdjacent = true;
-        }
-    }
+    // Downsample to improve performance - render every Nth grid cell
+    constexpr int kStride = 3;  // Render every 3rd cell (adjust if too slow/sparse)
 
-    // If no right neighbor, try down neighbor
-    if (!foundAdjacent && refRow + 1 < gridRows) {
-        const cv::Vec3f& adjWorldPos = (*points)(refRow + 1, refCol);
-        if (std::isfinite(adjWorldPos[0]) && std::isfinite(adjWorldPos[1]) && std::isfinite(adjWorldPos[2]) &&
-            !(adjWorldPos[0] == -1.0f && adjWorldPos[1] == -1.0f && adjWorldPos[2] == -1.0f)) {
-            QPointF adjScenePos = viewer->volumePointToScene(adjWorldPos);
-            gridToSceneScale = std::hypot(adjScenePos.x() - refScenePos.x(), adjScenePos.y() - refScenePos.y());
-            foundAdjacent = true;
-        }
-    }
+    // Calculate rectangle size
+    qreal rectSize = gridToSceneScale * kStride * 0.95;  // 0.95 to create small gaps between rects
 
-    if (!foundAdjacent) {
-        qDebug() << "[ApprovalOverlay] Could not find adjacent point to calculate scale";
-        return;
-    }
+    // Prepare styles for green (saved to disk) and blue (pending)
+    ViewerOverlayControllerBase::OverlayStyle savedStyle;
+    savedStyle.penColor = Qt::transparent;
+    savedStyle.brushColor = QColor(0, 200, 0, 153);  // Green for saved approval, 60% opacity
+    savedStyle.z = kApprovalMaskZ;
 
-    // Calculate the scene position of grid origin (0,0) from the reference point
-    // In grid-space: each pixel is 1x1
-    // In scene-space: each pixel is gridToSceneScale x gridToSceneScale
-    QPointF gridOriginScene = refScenePos;
-    gridOriginScene.rx() -= refCol * gridToSceneScale;
-    gridOriginScene.ry() -= refRow * gridToSceneScale;
+    ViewerOverlayControllerBase::OverlayStyle pendingStyle;
+    pendingStyle.penColor = Qt::transparent;
+    pendingStyle.brushColor = QColor(0, 100, 255, 128);  // Blue for pending approval, 50% opacity
+    pendingStyle.z = kApprovalMaskZ;
 
-    // Count non-transparent pixels for debugging
-    int nonTransparentCount = 0;
-    for (int y = 0; y < cache.compositeImage.height() && y < 10; ++y) {
-        for (int x = 0; x < cache.compositeImage.width() && x < 10; ++x) {
-            if (qAlpha(cache.compositeImage.pixel(x, y)) > 0) {
-                nonTransparentCount++;
+    int renderedCount = 0;
+    for (int row = 0; row < gridRows; row += kStride) {
+        for (int col = 0; col < gridCols; col += kStride) {
+            // Check if this grid cell has approval mask data
+            if (row >= cache.compositeImage.height() || col >= cache.compositeImage.width()) {
+                continue;
             }
+
+            QRgb pixelValue = cache.compositeImage.pixel(col, row);
+            int alpha = qAlpha(pixelValue);
+
+            if (alpha == 0) {
+                continue;  // Transparent, skip
+            }
+
+            // Convert grid position directly to scene position (no pointTo!)
+            QPointF scenePos = gridToScene(row, col);
+
+            // Determine style based on color (blue = pending, green = saved)
+            int blue = qBlue(pixelValue);
+            const ViewerOverlayControllerBase::OverlayStyle& style = (blue > 100) ? pendingStyle : savedStyle;
+
+            // Render as a filled rectangle
+            QRectF rect(scenePos.x() - rectSize/2, scenePos.y() - rectSize/2, rectSize, rectSize);
+            builder.addRect(rect, true, style);
+            renderedCount++;
         }
     }
 
-    qDebug() << "[ApprovalOverlay] Rendering: gridOrigin=" << gridOriginScene << "gridToSceneScale=" << gridToSceneScale << "imageSize=" << cache.compositeImage.size();
-    qDebug() << "[ApprovalOverlay]   refPoint: grid(" << refCol << "," << refRow << ") -> scene" << refScenePos;
-    qDebug() << "[ApprovalOverlay]   Image format:" << cache.compositeImage.format() << "nonTransparent(sampled):" << nonTransparentCount;
-    qDebug() << "[ApprovalOverlay]   Adding image with opacity=1.0 z=" << kApprovalMaskZ;
-
-    // Render the cached composite image with the correct grid-to-scene scale
-    builder.addImage(cache.compositeImage, gridOriginScene, gridToSceneScale, 1.0, kApprovalMaskZ);
-
+    qDebug() << "[ApprovalOverlay] Rendered" << renderedCount << "approval rects (stride=" << kStride << ") in" << renderTimer.elapsed() << "ms";
     qDebug() << "[ApprovalOverlay] buildApprovalMaskOverlay complete in" << buildTimer.elapsed() << "ms";
 }
