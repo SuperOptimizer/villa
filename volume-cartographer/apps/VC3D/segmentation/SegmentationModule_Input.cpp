@@ -2,6 +2,7 @@
 
 #include "CVolumeViewer.hpp"
 #include "SegmentationBrushTool.hpp"
+#include "ApprovalMaskBrushTool.hpp"
 #include "SegmentationCorrections.hpp"
 #include "SegmentationEditManager.hpp"
 #include "SegmentationLineTool.hpp"
@@ -228,6 +229,22 @@ void SegmentationModule::handleMousePress(CVolumeViewer* viewer,
         return;
     }
 
+    // Handle approval mask mode
+    if (_approvalMaskMode && isLeftButton) {
+        qCInfo(lcSegModule) << "Approval mask mode: handling mouse press";
+        if (modifiers.testFlag(Qt::ControlModifier) || modifiers.testFlag(Qt::AltModifier)) {
+            qCInfo(lcSegModule) << "  Skipping: Ctrl or Alt modifier held";
+            return;
+        }
+        if (_approvalTool) {
+            qCInfo(lcSegModule) << "  Starting approval stroke at:" << worldPos[0] << worldPos[1] << worldPos[2];
+            _approvalTool->startStroke(worldPos);
+        } else {
+            qCWarning(lcSegModule) << "  ERROR: Approval tool is null!";
+        }
+        return;
+    }
+
     if (_corrections && _corrections->annotateMode()) {
         if (!isLeftButton) {
             return;
@@ -302,6 +319,21 @@ void SegmentationModule::handleMouseMove(CVolumeViewer* viewer,
 {
     Q_UNUSED(modifiers);
 
+    // Handle approval mask mode
+    const bool approvalStrokeActive = _approvalTool && _approvalTool->strokeActive();
+    if (approvalStrokeActive) {
+        if (buttons.testFlag(Qt::LeftButton)) {
+            if (_approvalTool) {
+                _approvalTool->extendStroke(worldPos, false);
+            }
+        } else {
+            if (_approvalTool) {
+                _approvalTool->finishStroke();
+            }
+        }
+        return;
+    }
+
     const bool lineStrokeActive = _lineTool && _lineTool->strokeActive();
     if (lineStrokeActive) {
         if (buttons.testFlag(Qt::LeftButton)) {
@@ -350,6 +382,17 @@ void SegmentationModule::handleMouseRelease(CVolumeViewer* /*viewer*/,
                                             Qt::MouseButton button,
                                             Qt::KeyboardModifiers /*modifiers*/)
 {
+    // Handle approval mask mode
+    const bool approvalStrokeActive = _approvalTool && _approvalTool->strokeActive();
+    if (approvalStrokeActive && button == Qt::LeftButton) {
+        if (_approvalTool) {
+            _approvalTool->extendStroke(worldPos, true);
+            _approvalTool->finishStroke();
+            // Don't apply immediately - wait for user to press Apply button
+        }
+        return;
+    }
+
     const bool lineStrokeActive = _lineTool && _lineTool->strokeActive();
     if (lineStrokeActive && button == Qt::LeftButton) {
         if (_lineTool) {

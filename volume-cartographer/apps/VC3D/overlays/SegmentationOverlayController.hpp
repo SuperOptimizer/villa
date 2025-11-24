@@ -11,6 +11,7 @@
 class CSurfaceCollection;
 class SegmentationEditManager;
 class Surface;
+class QuadSurface;
 
 class SegmentationOverlayController : public ViewerOverlayControllerBase
 {
@@ -50,6 +51,15 @@ public:
         float displayRadiusSteps{0.0f};
         float gridStepWorld{1.0f};
 
+        // Approval mask state
+        bool approvalMaskMode{false};
+        bool approvalStrokeActive{false};
+        std::vector<std::vector<cv::Vec3f>> approvalStrokeSegments;  // Completed segments
+        std::vector<cv::Vec3f> approvalCurrentStroke;  // Current active stroke
+        float approvalBrushRadius{5.0f};
+        bool paintingApproval{true};
+        QuadSurface* surface{nullptr};
+
         bool operator==(const State& rhs) const;
         bool operator!=(const State& rhs) const { return !(*this == rhs); }
     };
@@ -59,6 +69,17 @@ public:
     void setEditingEnabled(bool enabled);
     void setEditManager(SegmentationEditManager* manager);
     void applyState(const State& state);
+
+    // Load approval mask from surface into QImage (call once when entering approval mode)
+    void loadApprovalMaskImage(QuadSurface* surface);
+
+    // Paint directly into the approval mask QImage (fast, in-place editing)
+    void paintApprovalMaskDirect(const std::vector<std::pair<int, int>>& gridPositions,
+                                  float radiusSteps,
+                                  uint8_t paintValue);
+
+    // Save the approval mask QImage back to the surface
+    void saveApprovalMaskToSurface(QuadSurface* surface);
 
 protected:
     bool isOverlayEnabledFor(CVolumeViewer* viewer) const override;
@@ -83,4 +104,7 @@ private:
     SegmentationEditManager* _editManager{nullptr};
     bool _editingEnabled{false};
     std::optional<State> _currentState;
+
+    // Approval mask working buffer - paint directly into this
+    QImage _approvalMaskImage;
 };

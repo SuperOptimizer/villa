@@ -4,10 +4,13 @@
 #include "../CVolumeViewer.hpp"
 
 #include <QColor>
+#include <QDebug>
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 
+#include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Surface.hpp"
 
 namespace
@@ -96,7 +99,14 @@ bool SegmentationOverlayController::State::operator==(const State& rhs) const
            floatEqual(gaussianRadiusSteps, rhs.gaussianRadiusSteps) &&
            floatEqual(gaussianSigmaSteps, rhs.gaussianSigmaSteps) &&
            floatEqual(displayRadiusSteps, rhs.displayRadiusSteps) &&
-           floatEqual(gridStepWorld, rhs.gridStepWorld);
+           floatEqual(gridStepWorld, rhs.gridStepWorld) &&
+           approvalMaskMode == rhs.approvalMaskMode &&
+           approvalStrokeActive == rhs.approvalStrokeActive &&
+           approvalStrokeSegments == rhs.approvalStrokeSegments &&
+           maskEqual(approvalCurrentStroke, rhs.approvalCurrentStroke) &&
+           floatEqual(approvalBrushRadius, rhs.approvalBrushRadius) &&
+           paintingApproval == rhs.paintingApproval &&
+           surface == rhs.surface;
 }
 
 SegmentationOverlayController::SegmentationOverlayController(CSurfaceCollection* surfaces, QObject* parent)
@@ -131,12 +141,124 @@ void SegmentationOverlayController::applyState(const State& state)
     sanitized.displayRadiusSteps = std::max(sanitized.displayRadiusSteps, 0.0f);
     sanitized.gridStepWorld = std::max(sanitized.gridStepWorld, 1e-4f);
 
-    if (_currentState && *_currentState == sanitized) {
+    _currentState = std::move(sanitized);
+    refreshAll();
+}
+
+void SegmentationOverlayController::loadApprovalMaskImage(QuadSurface* surface)
+{
+    if (!surface) {
+        _approvalMaskImage = QImage();
         return;
     }
 
-    _currentState = std::move(sanitized);
-    refreshAll();
+    cv::Mat approvalMask = surface->channel("approval", SURF_CHANNEL_NORESIZE);
+    if (approvalMask.empty()) {
+        // Create new empty mask
+        const cv::Mat_<cv::Vec3f>* points = surface->rawPointsPtr();
+        if (!points || points->empty()) {
+            _approvalMaskImage = QImage();
+            return;
+        }
+        approvalMask = cv::Mat_<uint8_t>(points->size(), static_cast<uint8_t>(0));
+    }
+
+    // Convert to ARGB32_Premultiplied format (standard Qt graphics format)
+    QImage image(approvalMask.cols, approvalMask.rows, QImage::Format_ARGB32_Premultiplied);
+    for (int row = 0; row < approvalMask.rows; ++row) {
+        const uint8_t* maskRow = approvalMask.ptr<uint8_t>(row);
+        QRgb* imageRow = reinterpret_cast<QRgb*>(image.scanLine(row));
+        for (int col = 0; col < approvalMask.cols; ++col) {
+            uint8_t val = maskRow[col];
+            if (val > 0) {
+                // Bright green, fully opaque for debugging
+                imageRow[col] = qRgba(0, 255, 0, 255);
+            } else {
+                imageRow[col] = qRgba(0, 0, 0, 0);  // Fully transparent
+            }
+        }
+    }
+
+    _approvalMaskImage = image;
+}
+
+void SegmentationOverlayController::paintApprovalMaskDirect(
+    const std::vector<std::pair<int, int>>& gridPositions,
+    float radiusSteps,
+    uint8_t paintValue)
+{
+    if (_approvalMaskImage.isNull()) {
+        return;
+    }
+
+    const int radius = static_cast<int>(std::ceil(radiusSteps));
+    const float sigma = radiusSteps / 2.0f;
+
+    // Gaussian falloff function
+    auto gaussianFalloff = [](float distance, float sigma) -> float {
+        if (sigma <= 0.0f) {
+            return distance <= 0.0f ? 1.0f : 0.0f;
+        }
+        return std::exp(-(distance * distance) / (2.0f * sigma * sigma));
+    };
+
+    // Paint directly into the QImage
+    int pixelsPainted = 0;
+    for (const auto& [centerRow, centerCol] : gridPositions) {
+        for (int dr = -radius; dr <= radius; ++dr) {
+            for (int dc = -radius; dc <= radius; ++dc) {
+                const int row = centerRow + dr;
+                const int col = centerCol + dc;
+
+                if (row < 0 || row >= _approvalMaskImage.height() ||
+                    col < 0 || col >= _approvalMaskImage.width()) {
+                    continue;
+                }
+
+                const float distance = std::sqrt(static_cast<float>(dr * dr + dc * dc));
+                if (distance > radiusSteps) {
+                    continue;
+                }
+
+                const float falloff = gaussianFalloff(distance, sigma);
+                QRgb pixel = _approvalMaskImage.pixel(col, row);
+
+                // Extract current green value
+                float currentGreen = static_cast<float>(qGreen(pixel));
+                float targetGreen = static_cast<float>(paintValue);
+                float blendedGreen = currentGreen * (1.0f - falloff) + targetGreen * falloff;
+                uint8_t newVal = static_cast<uint8_t>(std::clamp(blendedGreen, 0.0f, 255.0f));
+
+                // Update pixel (bright green, fully opaque for debugging)
+                // For ARGB32_Premultiplied, we need to premultiply RGB by alpha
+                if (newVal > 0) {
+                    _approvalMaskImage.setPixel(col, row, qRgba(0, 255, 0, 255));  // Bright green, fully opaque
+                } else {
+                    _approvalMaskImage.setPixel(col, row, qRgba(0, 0, 0, 0));  // Fully transparent
+                }
+            }
+        }
+    }
+}
+
+void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surface)
+{
+    if (!surface || _approvalMaskImage.isNull()) {
+        return;
+    }
+
+    // Convert QImage back to cv::Mat
+    cv::Mat_<uint8_t> approvalMask(_approvalMaskImage.height(), _approvalMaskImage.width());
+    for (int row = 0; row < _approvalMaskImage.height(); ++row) {
+        const QRgb* imageRow = reinterpret_cast<const QRgb*>(_approvalMaskImage.constScanLine(row));
+        uint8_t* maskRow = approvalMask.ptr<uint8_t>(row);
+        for (int col = 0; col < _approvalMaskImage.width(); ++col) {
+            maskRow[col] = qGreen(imageRow[col]);  // Extract green channel
+        }
+    }
+
+    surface->setChannel("approval", approvalMask);
+    surface->saveOverwrite();
 }
 
 bool SegmentationOverlayController::isOverlayEnabledFor(CVolumeViewer* viewer) const
@@ -153,6 +275,9 @@ void SegmentationOverlayController::collectPrimitives(CVolumeViewer* viewer,
     }
 
     const State& state = *_currentState;
+
+    // Approval mask rendering removed for now - approval data is saved to disk
+    // TODO: Implement efficient overlay visualization later
 
     if (shouldShowMask(state)) {
         builder.addPath(buildMaskPrimitive(state));
