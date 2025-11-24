@@ -3,6 +3,7 @@
 #include "ViewerOverlayControllerBase.hpp"
 
 #include <QColor>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -111,4 +112,19 @@ private:
     // Approval mask images - separate saved and pending
     QImage _savedApprovalMaskImage;   // Dark green: what's saved to disk
     QImage _pendingApprovalMaskImage; // Light green: pending strokes
+
+    // Per-viewer cached scene-space rasterized images
+    struct ViewerImageCache {
+        QImage compositeImage;
+        QPointF topLeft;
+        qreal scale{1.0};
+        QuadSurface* surface{nullptr};
+        uint64_t savedImageVersion{0};
+        uint64_t pendingImageVersion{0};
+    };
+    mutable std::map<CVolumeViewer*, ViewerImageCache> _viewerCaches;
+    mutable uint64_t _savedImageVersion{0};
+    mutable uint64_t _pendingImageVersion{0};
+
+    void rebuildViewerCache(CVolumeViewer* viewer, QuadSurface* surface) const;
 };
