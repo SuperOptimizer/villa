@@ -237,12 +237,12 @@ void SegmentationModule::handleMousePress(CVolumeViewer* viewer,
             return;
         }
         if (_approvalTool) {
-            // Pass scene position and ds_scale for proper grid coordinate computation
+            // Pass scene position and viewerScale for proper grid coordinate computation
             const QPointF scenePos = viewer->lastScenePosition();
-            const float dsScale = viewer->dsScale();
+            const float viewerScale = viewer->getCurrentScale();
             qCInfo(lcSegModule) << "  Starting approval stroke at:" << worldPos[0] << worldPos[1] << worldPos[2]
-                                << "scenePos:" << scenePos.x() << scenePos.y() << "dsScale:" << dsScale;
-            _approvalTool->startStroke(worldPos, scenePos, dsScale);
+                                << "scenePos:" << scenePos.x() << scenePos.y() << "viewerScale:" << viewerScale;
+            _approvalTool->startStroke(worldPos, scenePos, viewerScale);
         } else {
             qCWarning(lcSegModule) << "  ERROR: Approval tool is null!";
         }
@@ -328,10 +328,10 @@ void SegmentationModule::handleMouseMove(CVolumeViewer* viewer,
     if (approvalStrokeActive) {
         if (buttons.testFlag(Qt::LeftButton)) {
             if (_approvalTool) {
-                // Pass scene position and ds_scale for proper grid coordinate computation
+                // Pass scene position and viewerScale for proper grid coordinate computation
                 const QPointF scenePos = viewer->lastScenePosition();
-                const float dsScale = viewer->dsScale();
-                _approvalTool->extendStroke(worldPos, scenePos, dsScale, false);
+                const float viewerScale = viewer->getCurrentScale();
+                _approvalTool->extendStroke(worldPos, scenePos, viewerScale, false);
             }
         } else {
             if (_approvalTool) {
@@ -393,10 +393,10 @@ void SegmentationModule::handleMouseRelease(CVolumeViewer* viewer,
     const bool approvalStrokeActive = _approvalTool && _approvalTool->strokeActive();
     if (approvalStrokeActive && button == Qt::LeftButton) {
         if (_approvalTool && viewer) {
-            // Pass scene position and ds_scale for proper grid coordinate computation
+            // Pass scene position and viewerScale for proper grid coordinate computation
             const QPointF scenePos = viewer->lastScenePosition();
-            const float dsScale = viewer->dsScale();
-            _approvalTool->extendStroke(worldPos, scenePos, dsScale, true);
+            const float viewerScale = viewer->getCurrentScale();
+            _approvalTool->extendStroke(worldPos, scenePos, viewerScale, true);
             _approvalTool->finishStroke();
             // Don't apply immediately - wait for user to press Apply button
         }

@@ -82,10 +82,10 @@ void ApprovalMaskBrushTool::setActive(bool active)
     _module.refreshOverlay();
 }
 
-void ApprovalMaskBrushTool::startStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float dsScale)
+void ApprovalMaskBrushTool::startStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float viewerScale)
 {
     qCInfo(lcApprovalMask) << "Starting approval stroke at:" << worldPos[0] << worldPos[1] << worldPos[2]
-                           << "scenePos:" << scenePos.x() << scenePos.y() << "dsScale:" << dsScale;
+                           << "scenePos:" << scenePos.x() << scenePos.y() << "viewerScale:" << viewerScale;
     qCInfo(lcApprovalMask) << "  Surface:" << (_surface ? "valid" : "NULL");
     _strokeActive = true;
     _currentStroke.clear();
@@ -110,7 +110,7 @@ void ApprovalMaskBrushTool::startStroke(const cv::Vec3f& worldPos, const QPointF
     _accumulatedGridPosSet.clear();
 
     // Add the starting point for painting - compute grid position from scene coordinates
-    auto gridIdx = sceneToGridIndex(scenePos, dsScale);
+    auto gridIdx = sceneToGridIndex(scenePos, viewerScale);
     if (gridIdx) {
         qCInfo(lcApprovalMask) << "  Grid index:" << gridIdx->first << gridIdx->second;
         const uint64_t hash = (static_cast<uint64_t>(gridIdx->first) << 32) | static_cast<uint64_t>(gridIdx->second);
@@ -123,19 +123,18 @@ void ApprovalMaskBrushTool::startStroke(const cv::Vec3f& worldPos, const QPointF
     _module.refreshOverlay();
 }
 
-void ApprovalMaskBrushTool::extendStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float dsScale, bool forceSample)
+void ApprovalMaskBrushTool::extendStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float viewerScale, bool forceSample)
 {
     if (!_strokeActive) {
         return;
     }
 
     // Check if position is within valid surface bounds using scene coordinates
-    auto gridIdx = sceneToGridIndex(scenePos, dsScale);
+    auto gridIdx = sceneToGridIndex(scenePos, viewerScale);
     if (!gridIdx) {
         // Outside valid surface area - break the current stroke segment
         // but keep stroke active so we can start a new segment when back in bounds
         if (!_currentStroke.empty()) {
-            qCInfo(lcApprovalMask) << "Stroke went out of bounds, saving current segment with" << _currentStroke.size() << "points";
             _pendingStrokes.push_back(_currentStroke);
             _currentStroke.clear();
         }
@@ -153,9 +152,7 @@ void ApprovalMaskBrushTool::extendStroke(const cv::Vec3f& worldPos, const QPoint
     }
 
     // Back in bounds - if we were out of bounds, this starts a new stroke segment
-    if (_currentStroke.empty() && !_hasLastSample) {
-        qCInfo(lcApprovalMask) << "Back in bounds, starting new stroke segment";
-    }
+    // (no logging needed here)
 
     const float spacing = kBrushSampleSpacing;
     const float spacingSq = spacing * spacing;
@@ -225,23 +222,12 @@ void ApprovalMaskBrushTool::extendStroke(const cv::Vec3f& worldPos, const QPoint
         constexpr qint64 kMinRefreshIntervalMs = 50;  // 20 FPS max
 
         if (timeSinceLastRefresh >= kMinRefreshIntervalMs) {
-            QElapsedTimer refreshTimer;
-            refreshTimer.start();
-
-            qCInfo(lcApprovalMask) << "[PERF] extendStroke: overlay points count:" << _overlayPoints.size()
-                                   << "current stroke:" << _currentStroke.size()
-                                   << "pending strokes:" << _pendingStrokes.size()
-                                   << "| time since last:" << timeSinceLastRefresh << "ms";
-
             _module.refreshOverlay();
             _lastRefreshTime = currentTime;
             _pendingRefresh = false;
-
-            qCInfo(lcApprovalMask) << "[PERF] extendStroke: refreshOverlay took:" << refreshTimer.elapsed() << "ms";
         } else {
             // Refresh was skipped due to throttling, mark as pending
             _pendingRefresh = true;
-            qCInfo(lcApprovalMask) << "[PERF] extendStroke: THROTTLED (only" << timeSinceLastRefresh << "ms since last refresh)";
         }
     }
 }
@@ -368,9 +354,6 @@ void ApprovalMaskBrushTool::paintAccumulatedPointsToImage()
     // Paint the accumulated points into the QImage
     overlay->paintApprovalMaskDirect(_accumulatedGridPositions, clampedRadius, paintValue);
 
-    qCInfo(lcApprovalMask) << "[REALTIME] Painted" << _accumulatedGridPositions.size()
-                           << "grid positions into QImage";
-
     // Clear for next batch
     _accumulatedGridPositions.clear();
     _accumulatedGridPosSet.clear();
@@ -379,11 +362,11 @@ void ApprovalMaskBrushTool::paintAccumulatedPointsToImage()
     _module.refreshOverlay();
 }
 
-std::optional<std::pair<int, int>> ApprovalMaskBrushTool::sceneToGridIndex(const QPointF& scenePos, float dsScale) const
+std::optional<std::pair<int, int>> ApprovalMaskBrushTool::sceneToGridIndex(const QPointF& scenePos, float viewerScale) const
 {
-    // Convert scene coordinates to grid indices using the same formula as scene2vol/coord:
-    // surfLoc = scenePos / dsScale (this is the "offset" in coord())
-    // gridPos = (surfLoc + center) * surfaceScale = internal_loc(surfLoc + center, ptr=0, scale)
+    // Convert scene coordinates to grid indices
+    // The overlay rendering uses: scenePos = (gridPos/surfScale - center) * viewerScale
+    // Inverting: gridPos = (scenePos/viewerScale + center) * surfScale
     if (!_surface) {
         return std::nullopt;
     }
@@ -397,9 +380,9 @@ std::optional<std::pair<int, int>> ApprovalMaskBrushTool::sceneToGridIndex(const
     const cv::Vec3f center = _surface->center();
     const cv::Vec2f surfScale = _surface->scale();
 
-    // Compute grid position: (scenePos / dsScale + center) * surfaceScale
-    const float surfLocX = static_cast<float>(scenePos.x()) / dsScale;
-    const float surfLocY = static_cast<float>(scenePos.y()) / dsScale;
+    // Compute grid position: (scenePos / viewerScale + center) * surfaceScale
+    const float surfLocX = static_cast<float>(scenePos.x()) / viewerScale;
+    const float surfLocY = static_cast<float>(scenePos.y()) / viewerScale;
     const float gridX = (surfLocX + center[0]) * surfScale[0];
     const float gridY = (surfLocY + center[1]) * surfScale[1];
 

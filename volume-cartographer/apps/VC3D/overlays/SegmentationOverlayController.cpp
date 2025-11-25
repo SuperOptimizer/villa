@@ -458,20 +458,13 @@ void SegmentationOverlayController::buildVertexMarkers(const State& state,
 
 void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, QuadSurface* surface) const
 {
-    QElapsedTimer totalTimer;
-    totalTimer.start();
-
-    qDebug() << "[ApprovalCache] ===== REBUILD CACHE START =====";
-
     const cv::Mat_<cv::Vec3f>* points = surface->rawPointsPtr();
     if (!points || points->empty()) {
-        qDebug() << "[ApprovalCache] No points, returning";
         return;
     }
 
     const int gridRows = points->rows;
     const int gridCols = points->cols;
-    qDebug() << "[ApprovalCache] Grid size:" << gridCols << "x" << gridRows;
 
     const bool hasSaved = !_savedApprovalMaskImage.isNull() &&
                          _savedApprovalMaskImage.width() == gridCols &&
@@ -480,21 +473,11 @@ void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, Qu
                            _pendingApprovalMaskImage.width() == gridCols &&
                            _pendingApprovalMaskImage.height() == gridRows;
 
-    qDebug() << "[ApprovalCache] hasSaved:" << hasSaved << "hasPending:" << hasPending
-             << "savedIsNull:" << _savedApprovalMaskImage.isNull()
-             << "savedSize:" << _savedApprovalMaskImage.width() << "x" << _savedApprovalMaskImage.height()
-             << "pendingIsNull:" << _pendingApprovalMaskImage.isNull()
-             << "pendingSize:" << _pendingApprovalMaskImage.width() << "x" << _pendingApprovalMaskImage.height();
-
     if (!hasSaved && !hasPending) {
-        qDebug() << "[ApprovalCache] No masks to render, returning";
         return;
     }
 
     // Simple approach: composite saved and pending images using QPainter (fast!)
-    QElapsedTimer mergeTimer;
-    mergeTimer.start();
-
     QImage compositeImage(gridCols, gridRows, QImage::Format_ARGB32_Premultiplied);
     compositeImage.fill(Qt::transparent);
 
@@ -513,24 +496,22 @@ void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, Qu
 
     painter.end();
 
-    qDebug() << "[ApprovalCache] Merge took:" << mergeTimer.elapsed() << "ms";
-
     // Calculate scene-space bounds using direct grid-to-scene formula (no pointTo!)
     // The relationship between scene coords and grid coords:
     // - scene2vol: surfLoc = scenePos / dsScale, then coord() uses (surfLoc + center) * surfScale
     // - So: gridPos = (scenePos/dsScale + center) * surfScale
     // - Inverting: scenePos = (gridPos/surfScale - center) * dsScale
+    // BUT the rendering uses viewerScale (_scale), so we need to use that for overlay positioning
     const cv::Vec3f center = surface->center();
     const cv::Vec2f surfScale = surface->scale();
-    const float dsScale = viewer->dsScale();
+    const float viewerScale = viewer->getCurrentScale();
 
-    qDebug() << "[ApprovalCache] Surface params: center=(" << center[0] << "," << center[1] << ")"
-             << "surfScale=(" << surfScale[0] << "," << surfScale[1] << ")"
-             << "dsScale=" << dsScale;
-
+    // Formula: scenePos = (gridPos/surfScale - center) * viewerScale
     auto gridToScene = [&](int row, int col) -> QPointF {
-        const float sceneX = (static_cast<float>(col) / surfScale[0] - center[0]) * dsScale;
-        const float sceneY = (static_cast<float>(row) / surfScale[1] - center[1]) * dsScale;
+        const float surfLocalX = static_cast<float>(col) / surfScale[0] - center[0];
+        const float surfLocalY = static_cast<float>(row) / surfScale[1] - center[1];
+        const float sceneX = surfLocalX * viewerScale;
+        const float sceneY = surfLocalY * viewerScale;
         return QPointF(sceneX, sceneY);
     };
 
@@ -553,10 +534,6 @@ void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, Qu
     const qreal scaleY = sceneHeight / static_cast<qreal>(gridRows);
     const qreal scale = std::max(scaleX, scaleY);
 
-    qDebug() << "[ApprovalCache] Scene bounds:" << sceneBounds;
-    qDebug() << "[ApprovalCache] Grid size:" << gridCols << "x" << gridRows;
-    qDebug() << "[ApprovalCache] Calculated scale:" << scale << "(scaleX=" << scaleX << "scaleY=" << scaleY << ")";
-
     // Store in cache
     ViewerImageCache& cache = _viewerCaches[viewer];
     cache.compositeImage = compositeImage;
@@ -565,9 +542,6 @@ void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, Qu
     cache.surface = surface;
     cache.savedImageVersion = _savedImageVersion;
     cache.pendingImageVersion = _pendingImageVersion;
-
-    qDebug() << "[ApprovalCache] Storing: topLeft=" << cache.topLeft << "imageSize=" << compositeImage.size() << "scale=" << cache.scale;
-    qDebug() << "[ApprovalCache] ===== REBUILD CACHE COMPLETE: TOTAL" << totalTimer.elapsed() << "ms =====";
 }
 
 void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
@@ -589,27 +563,22 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
                        (it->second.pendingImageVersion != _pendingImageVersion);
 
     if (needsRebuild) {
-        qDebug() << "[ApprovalOverlay] Cache miss, rebuilding composite image...";
         rebuildViewerCache(viewer, state.surface);
         it = _viewerCaches.find(viewer);
-    } else {
-        qDebug() << "[ApprovalOverlay] Cache HIT, using cached composite image";
     }
 
     // If cache still doesn't exist or is empty, nothing to render
     if (it == _viewerCaches.end() || it->second.compositeImage.isNull()) {
-        qDebug() << "[ApprovalOverlay] No cache available, returning";
         return;
     }
 
     const ViewerImageCache& cache = it->second;
 
     // Get surface parameters for direct grid-to-scene coordinate conversion
-    // The relationship: gridPos = (scenePos/dsScale + center) * surfScale
-    // Inverting: scenePos = (gridPos/surfScale - center) * dsScale
+    // The rendering uses viewerScale, so we need to use that for overlay positioning
     const cv::Vec3f center = state.surface->center();
     const cv::Vec2f surfScale = state.surface->scale();
-    const float dsScale = viewer->dsScale();
+    const float viewerScale = viewer->getCurrentScale();
 
     // Find valid reference points and calculate the current grid-to-scene scale dynamically
     const cv::Mat_<cv::Vec3f>* points = state.surface->rawPointsPtr();
@@ -621,10 +590,10 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
     const int gridCols = points->cols;
 
     // Lambda to convert grid index directly to scene position (no pointTo!)
-    // Formula: scenePos = (gridPos/surfScale - center) * dsScale
+    // Formula: scenePos = (gridPos/surfScale - center) * viewerScale
     auto gridToScene = [&](int row, int col) -> QPointF {
-        const float sceneX = (static_cast<float>(col) / surfScale[0] - center[0]) * dsScale;
-        const float sceneY = (static_cast<float>(row) / surfScale[1] - center[1]) * dsScale;
+        const float sceneX = (static_cast<float>(col) / surfScale[0] - center[0]) * viewerScale;
+        const float sceneY = (static_cast<float>(row) / surfScale[1] - center[1]) * viewerScale;
         return QPointF(sceneX, sceneY);
     };
 
@@ -634,7 +603,6 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
     qreal gridToSceneScale = std::hypot(p1.x() - p0.x(), p1.y() - p0.y());
 
     if (gridToSceneScale < 1e-6) {
-        qDebug() << "[ApprovalOverlay] Invalid gridToSceneScale, returning";
         return;
     }
 
@@ -688,6 +656,4 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
         }
     }
 
-    qDebug() << "[ApprovalOverlay] Rendered" << renderedCount << "approval rects (stride=" << kStride << ") in" << renderTimer.elapsed() << "ms";
-    qDebug() << "[ApprovalOverlay] buildApprovalMaskOverlay complete in" << buildTimer.elapsed() << "ms";
 }

@@ -40,10 +40,10 @@ public:
     [[nodiscard]] bool strokeActive() const { return _strokeActive; }
     [[nodiscard]] bool hasPendingStrokes() const { return !_pendingStrokes.empty(); }
 
-    // scenePos is the raw scene position, dsScale is the viewer's dataset scale factor
-    // Grid position is computed as: (scenePos / dsScale + surface_center) * surface_scale
-    void startStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float dsScale);
-    void extendStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float dsScale, bool forceSample);
+    // scenePos is the raw scene position, viewerScale is the viewer's current scale (_scale member)
+    // Grid position is computed as: (scenePos / viewerScale + surface_center) * surface_scale
+    void startStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float viewerScale);
+    void extendStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float viewerScale, bool forceSample);
     void finishStroke();
     bool applyPending(float dragRadiusSteps);
     void clear();
@@ -57,8 +57,8 @@ public:
 
 private:
     // Convert scene position to integer grid indices using surface coordinate transform
-    // Formula: gridPos = (scenePos / dsScale + center) * surfaceScale
-    std::optional<std::pair<int, int>> sceneToGridIndex(const QPointF& scenePos, float dsScale) const;
+    // Formula: gridPos = (scenePos / viewerScale + center) * surfaceScale
+    std::optional<std::pair<int, int>> sceneToGridIndex(const QPointF& scenePos, float viewerScale) const;
 
     // Paint accumulated points into QImage (for real-time painting)
     void paintAccumulatedPointsToImage();
