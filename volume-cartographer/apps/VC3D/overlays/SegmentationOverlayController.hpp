@@ -86,7 +86,7 @@ public:
     void saveApprovalMaskToSurface(QuadSurface* surface);
 
     // Query approval status for a grid position
-    // Returns: 0 = not approved, 1 = saved approved, 2 = pending approved
+    // Returns: 0 = not approved, 1 = saved approved, 2 = pending approved, 3 = pending unapproved
     int queryApprovalStatus(int row, int col) const;
 
     // Check if approval mask mode is active and we have mask data

@@ -248,13 +248,26 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
                 float blendedGreen = currentGreen * (1.0f - falloff) + targetGreen * falloff;
                 uint8_t newVal = static_cast<uint8_t>(std::clamp(blendedGreen, 0.0f, 255.0f));
 
-                // Update pixel with BLUE for pending approval, semi-transparent
-                // BLUE: RGB(0, 100, 255) with 50% opacity (alpha = 128)
-                // Premultiply: R=0, G=50, B=127, A=128
-                if (newVal > 0) {
-                    _pendingApprovalMaskImage.setPixel(col, row, qRgba(0, 50, 127, 128));
+                // Update pixel color based on paint mode:
+                // - Blue for pending approval (paintValue = 255)
+                // - Red for pending unapproval (paintValue = 0)
+                if (paintValue > 0) {
+                    // Approving: BLUE with 50% opacity
+                    // Premultiply: R=0, G=50, B=127, A=128
+                    if (newVal > 0) {
+                        _pendingApprovalMaskImage.setPixel(col, row, qRgba(0, 50, 127, 128));
+                    } else {
+                        _pendingApprovalMaskImage.setPixel(col, row, qRgba(0, 0, 0, 0));
+                    }
                 } else {
-                    _pendingApprovalMaskImage.setPixel(col, row, qRgba(0, 0, 0, 0));  // Fully transparent
+                    // Unapproving: RED with 50% opacity
+                    // Premultiply: R=127, G=25, B=25, A=128
+                    // Use falloff to show where we're painting unapproval
+                    if (falloff > 0.1f) {
+                        _pendingApprovalMaskImage.setPixel(col, row, qRgba(127, 25, 25, 128));
+                    }
+                    // Note: we don't clear to transparent here because we want to show the red overlay
+                    // The actual clearing happens in saveApprovalMaskToSurface
                 }
             }
         }
@@ -283,22 +296,40 @@ void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surfa
         uint8_t* maskRow = approvalMask.ptr<uint8_t>(row);
         for (int col = 0; col < width; ++col) {
             uint8_t savedVal = 0;
-            uint8_t pendingVal = 0;
 
-            // Get saved value
+            // Get saved value (green channel indicates approval)
             if (!_savedApprovalMaskImage.isNull() && row < _savedApprovalMaskImage.height() && col < _savedApprovalMaskImage.width()) {
                 const QRgb* savedRow = reinterpret_cast<const QRgb*>(_savedApprovalMaskImage.constScanLine(row));
-                savedVal = qGreen(savedRow[col]);
+                QRgb pixel = savedRow[col];
+                if (qAlpha(pixel) > 0 && qGreen(pixel) > 0) {
+                    savedVal = 255;  // Was approved
+                }
             }
 
-            // Get pending value
+            // Check pending state - can be approval (blue) or unapproval (red)
+            bool hasPending = false;
+            bool pendingIsApproval = false;
             if (!_pendingApprovalMaskImage.isNull() && row < _pendingApprovalMaskImage.height() && col < _pendingApprovalMaskImage.width()) {
                 const QRgb* pendingRow = reinterpret_cast<const QRgb*>(_pendingApprovalMaskImage.constScanLine(row));
-                pendingVal = qGreen(pendingRow[col]);
+                QRgb pixel = pendingRow[col];
+                if (qAlpha(pixel) > 0) {
+                    hasPending = true;
+                    // Blue (approval) has higher blue than red, Red (unapproval) has higher red than blue
+                    pendingIsApproval = qBlue(pixel) > qRed(pixel);
+                }
             }
 
-            // Merge: take max value (approved = 255)
-            maskRow[col] = std::max(savedVal, pendingVal);
+            // Apply pending changes
+            if (hasPending) {
+                if (pendingIsApproval) {
+                    maskRow[col] = 255;  // Approve
+                } else {
+                    maskRow[col] = 0;    // Unapprove (clear)
+                }
+            } else {
+                // No pending change, keep saved value
+                maskRow[col] = savedVal;
+            }
         }
     }
 
@@ -559,12 +590,18 @@ void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, Qu
 int SegmentationOverlayController::queryApprovalStatus(int row, int col) const
 {
     // Check pending first (takes priority for display)
+    // Returns: 0 = not approved, 1 = saved approved, 2 = pending approved, 3 = pending unapproved
     if (!_pendingApprovalMaskImage.isNull() &&
         row >= 0 && row < _pendingApprovalMaskImage.height() &&
         col >= 0 && col < _pendingApprovalMaskImage.width()) {
         QRgb pixel = _pendingApprovalMaskImage.pixel(col, row);
         if (qAlpha(pixel) > 0) {
-            return 2;  // Pending
+            // Distinguish between pending approve (blue) and pending unapprove (red)
+            // Blue has high blue component, red has high red component
+            if (qRed(pixel) > qBlue(pixel)) {
+                return 3;  // Pending unapproval (red)
+            }
+            return 2;  // Pending approval (blue)
         }
     }
 

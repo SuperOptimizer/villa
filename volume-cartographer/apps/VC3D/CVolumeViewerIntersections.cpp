@@ -32,6 +32,7 @@
 #define COLOR_SEG_XY QColor(255, 140, 0)
 #define COLOR_APPROVED QColor(0, 200, 0)
 #define COLOR_PENDING QColor(0, 150, 255)
+#define COLOR_PENDING_UNAPPROVE QColor(255, 50, 50)
 
 #include <algorithm>
 #include <cmath>
@@ -311,7 +312,12 @@ void CVolumeViewer::renderIntersections()
                         ++logCount;
                     }
 
-                    if (approvalState == 2) {
+                    if (approvalState == 3) {
+                        // Pending unapproval - red, thicker
+                        lineColor = COLOR_PENDING_UNAPPROVE;
+                        lineWidth = width + 6.0f;
+                        lineZ = z_value + 5;
+                    } else if (approvalState == 2) {
                         // Pending approval - blue, thicker
                         lineColor = COLOR_PENDING;
                         lineWidth = width + 6.0f;
