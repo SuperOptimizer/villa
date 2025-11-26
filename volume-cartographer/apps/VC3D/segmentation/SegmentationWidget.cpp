@@ -552,7 +552,7 @@ void SegmentationWidget::buildUi()
     auto* brushRadiusLabel = new QLabel(tr("Brush radius:"), approvalParent);
     _spinApprovalBrushRadius = new QDoubleSpinBox(approvalParent);
     _spinApprovalBrushRadius->setDecimals(1);
-    _spinApprovalBrushRadius->setRange(0.5, 100.0);
+    _spinApprovalBrushRadius->setRange(0.5, 500.0);
     _spinApprovalBrushRadius->setSingleStep(1.0);
     _spinApprovalBrushRadius->setValue(_approvalBrushRadius);
     _spinApprovalBrushRadius->setToolTip(tr("Radius of the approval mask brush in surface pixels. Larger values paint wider regions."));

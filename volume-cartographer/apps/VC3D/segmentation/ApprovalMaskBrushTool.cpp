@@ -349,7 +349,7 @@ void ApprovalMaskBrushTool::paintAccumulatedPointsToImage()
 
     // Get the current brush radius from the module
     const float brushRadius = _module.approvalMaskBrushRadius();
-    const float clampedRadius = std::clamp(brushRadius, 0.5f, 10.0f);
+    const float clampedRadius = std::clamp(brushRadius, 0.5f, 500.0f);
 
     // Paint the accumulated points into the QImage
     overlay->paintApprovalMaskDirect(_accumulatedGridPositions, clampedRadius, paintValue);

@@ -606,54 +606,8 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
         return;
     }
 
-    // Render approval mask as individual colored rectangles at each grid cell's scene position
-    QElapsedTimer renderTimer;
-    renderTimer.start();
-
-    // Downsample to improve performance - render every Nth grid cell
-    constexpr int kStride = 3;  // Render every 3rd cell (adjust if too slow/sparse)
-
-    // Calculate rectangle size
-    qreal rectSize = gridToSceneScale * kStride * 0.95;  // 0.95 to create small gaps between rects
-
-    // Prepare styles for green (saved to disk) and blue (pending)
-    ViewerOverlayControllerBase::OverlayStyle savedStyle;
-    savedStyle.penColor = Qt::transparent;
-    savedStyle.brushColor = QColor(0, 200, 0, 153);  // Green for saved approval, 60% opacity
-    savedStyle.z = kApprovalMaskZ;
-
-    ViewerOverlayControllerBase::OverlayStyle pendingStyle;
-    pendingStyle.penColor = Qt::transparent;
-    pendingStyle.brushColor = QColor(0, 100, 255, 128);  // Blue for pending approval, 50% opacity
-    pendingStyle.z = kApprovalMaskZ;
-
-    int renderedCount = 0;
-    for (int row = 0; row < gridRows; row += kStride) {
-        for (int col = 0; col < gridCols; col += kStride) {
-            // Check if this grid cell has approval mask data
-            if (row >= cache.compositeImage.height() || col >= cache.compositeImage.width()) {
-                continue;
-            }
-
-            QRgb pixelValue = cache.compositeImage.pixel(col, row);
-            int alpha = qAlpha(pixelValue);
-
-            if (alpha == 0) {
-                continue;  // Transparent, skip
-            }
-
-            // Convert grid position directly to scene position (no pointTo!)
-            QPointF scenePos = gridToScene(row, col);
-
-            // Determine style based on color (blue = pending, green = saved)
-            int blue = qBlue(pixelValue);
-            const ViewerOverlayControllerBase::OverlayStyle& style = (blue > 100) ? pendingStyle : savedStyle;
-
-            // Render as a filled rectangle
-            QRectF rect(scenePos.x() - rectSize/2, scenePos.y() - rectSize/2, rectSize, rectSize);
-            builder.addRect(rect, true, style);
-            renderedCount++;
-        }
-    }
-
+    // Render the composite image as a single scaled image overlay
+    // This is much faster than rendering individual rectangles
+    QPointF topLeft = gridToScene(0, 0);
+    builder.addImage(cache.compositeImage, topLeft, gridToSceneScale, 1.0, kApprovalMaskZ);
 }
