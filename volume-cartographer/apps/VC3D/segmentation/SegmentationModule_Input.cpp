@@ -9,6 +9,8 @@
 #include "SegmentationPushPullTool.hpp"
 #include "SegmentationWidget.hpp"
 
+#include "vc/core/util/PlaneSurface.hpp"
+
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QPointF>
@@ -237,12 +239,29 @@ void SegmentationModule::handleMousePress(CVolumeViewer* viewer,
             return;
         }
         if (_approvalTool) {
-            // Pass scene position and viewerScale for proper grid coordinate computation
-            const QPointF scenePos = viewer->lastScenePosition();
-            const float viewerScale = viewer->getCurrentScale();
-            qCInfo(lcSegModule) << "  Starting approval stroke at:" << worldPos[0] << worldPos[1] << worldPos[2]
-                                << "scenePos:" << scenePos.x() << scenePos.y() << "viewerScale:" << viewerScale;
-            _approvalTool->startStroke(worldPos, scenePos, viewerScale);
+            // Check if this is a plane viewer (XY/XZ/YZ) or segmentation view
+            Surface* viewerSurf = viewer->currentSurface();
+            const bool isPlaneViewer = dynamic_cast<PlaneSurface*>(viewerSurf) != nullptr;
+
+            if (isPlaneViewer) {
+                // For plane viewers, use world-based painting with sphere intersection
+                // Convert the 2D brush radius (in grid steps) to a 3D world radius
+                // The brush radius is in "steps" which roughly corresponds to grid cells
+                const float brushRadiusSteps = _approvalMaskBrushRadius;
+                // A grid step is approximately 1 unit in world space (varies by surface)
+                // Use a reasonable approximation for the world radius
+                const float worldRadius = brushRadiusSteps * 1.0f;  // 1:1 mapping for now
+                qCInfo(lcSegModule) << "  Plane viewer: Starting world stroke at:" << worldPos[0] << worldPos[1] << worldPos[2]
+                                    << "worldRadius:" << worldRadius;
+                _approvalTool->startStrokeFromWorld(worldPos, worldRadius);
+            } else {
+                // Pass scene position and viewerScale for proper grid coordinate computation
+                const QPointF scenePos = viewer->lastScenePosition();
+                const float viewerScale = viewer->getCurrentScale();
+                qCInfo(lcSegModule) << "  Starting approval stroke at:" << worldPos[0] << worldPos[1] << worldPos[2]
+                                    << "scenePos:" << scenePos.x() << scenePos.y() << "viewerScale:" << viewerScale;
+                _approvalTool->startStroke(worldPos, scenePos, viewerScale);
+            }
         } else {
             qCWarning(lcSegModule) << "  ERROR: Approval tool is null!";
         }
@@ -328,14 +347,32 @@ void SegmentationModule::handleMouseMove(CVolumeViewer* viewer,
     if (approvalStrokeActive) {
         if (buttons.testFlag(Qt::LeftButton)) {
             if (_approvalTool) {
-                // Pass scene position and viewerScale for proper grid coordinate computation
-                const QPointF scenePos = viewer->lastScenePosition();
-                const float viewerScale = viewer->getCurrentScale();
-                _approvalTool->extendStroke(worldPos, scenePos, viewerScale, false);
+                // Check if this is a plane viewer (XY/XZ/YZ) or segmentation view
+                Surface* viewerSurf = viewer->currentSurface();
+                const bool isPlaneViewer = dynamic_cast<PlaneSurface*>(viewerSurf) != nullptr;
+
+                if (isPlaneViewer) {
+                    // For plane viewers, use world-based painting
+                    const float brushRadiusSteps = _approvalMaskBrushRadius;
+                    const float worldRadius = brushRadiusSteps * 1.0f;
+                    _approvalTool->extendStrokeFromWorld(worldPos, worldRadius, false);
+                } else {
+                    // Pass scene position and viewerScale for proper grid coordinate computation
+                    const QPointF scenePos = viewer->lastScenePosition();
+                    const float viewerScale = viewer->getCurrentScale();
+                    _approvalTool->extendStroke(worldPos, scenePos, viewerScale, false);
+                }
             }
         } else {
             if (_approvalTool) {
-                _approvalTool->finishStroke();
+                // Check viewer type to call appropriate finish method
+                Surface* viewerSurf = viewer->currentSurface();
+                const bool isPlaneViewer = dynamic_cast<PlaneSurface*>(viewerSurf) != nullptr;
+                if (isPlaneViewer) {
+                    _approvalTool->finishStrokeFromWorld();
+                } else {
+                    _approvalTool->finishStroke();
+                }
             }
         }
         return;
@@ -393,11 +430,23 @@ void SegmentationModule::handleMouseRelease(CVolumeViewer* viewer,
     const bool approvalStrokeActive = _approvalTool && _approvalTool->strokeActive();
     if (approvalStrokeActive && button == Qt::LeftButton) {
         if (_approvalTool && viewer) {
-            // Pass scene position and viewerScale for proper grid coordinate computation
-            const QPointF scenePos = viewer->lastScenePosition();
-            const float viewerScale = viewer->getCurrentScale();
-            _approvalTool->extendStroke(worldPos, scenePos, viewerScale, true);
-            _approvalTool->finishStroke();
+            // Check if this is a plane viewer (XY/XZ/YZ) or segmentation view
+            Surface* viewerSurf = viewer->currentSurface();
+            const bool isPlaneViewer = dynamic_cast<PlaneSurface*>(viewerSurf) != nullptr;
+
+            if (isPlaneViewer) {
+                // For plane viewers, use world-based painting
+                const float brushRadiusSteps = _approvalMaskBrushRadius;
+                const float worldRadius = brushRadiusSteps * 1.0f;
+                _approvalTool->extendStrokeFromWorld(worldPos, worldRadius, true);
+                _approvalTool->finishStrokeFromWorld();
+            } else {
+                // Pass scene position and viewerScale for proper grid coordinate computation
+                const QPointF scenePos = viewer->lastScenePosition();
+                const float viewerScale = viewer->getCurrentScale();
+                _approvalTool->extendStroke(worldPos, scenePos, viewerScale, true);
+                _approvalTool->finishStroke();
+            }
             // Don't apply immediately - wait for user to press Apply button
         }
         return;

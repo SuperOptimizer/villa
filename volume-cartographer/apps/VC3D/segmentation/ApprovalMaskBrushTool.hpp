@@ -45,6 +45,12 @@ public:
     void startStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float viewerScale);
     void extendStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float viewerScale, bool forceSample);
     void finishStroke();
+
+    // For plane viewers: paint approval based on 3D world position and radius
+    // Finds all grid cells whose 3D positions are within the given radius of worldPos
+    void startStrokeFromWorld(const cv::Vec3f& worldPos, float worldRadius);
+    void extendStrokeFromWorld(const cv::Vec3f& worldPos, float worldRadius, bool forceSample);
+    void finishStrokeFromWorld();
     bool applyPending(float dragRadiusSteps);
     void clear();
 
@@ -59,6 +65,9 @@ private:
     // Convert scene position to integer grid indices using surface coordinate transform
     // Formula: gridPos = (scenePos / viewerScale + center) * surfaceScale
     std::optional<std::pair<int, int>> sceneToGridIndex(const QPointF& scenePos, float viewerScale) const;
+
+    // Find all grid cells whose 3D world positions are within radius of the given world position
+    std::vector<std::pair<int, int>> findGridCellsInSphere(const cv::Vec3f& worldPos, float radius) const;
 
     // Paint accumulated points into QImage (for real-time painting)
     void paintAccumulatedPointsToImage();

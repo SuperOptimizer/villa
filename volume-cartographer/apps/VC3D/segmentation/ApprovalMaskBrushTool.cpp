@@ -362,6 +362,194 @@ void ApprovalMaskBrushTool::paintAccumulatedPointsToImage()
     _module.refreshOverlay();
 }
 
+std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInSphere(const cv::Vec3f& worldPos, float radius) const
+{
+    std::vector<std::pair<int, int>> result;
+
+    if (!_surface) {
+        return result;
+    }
+
+    const cv::Mat_<cv::Vec3f>* points = _surface->rawPointsPtr();
+    if (!points || points->empty()) {
+        return result;
+    }
+
+    const float radiusSq = radius * radius;
+    const int rows = points->rows;
+    const int cols = points->cols;
+
+    // For efficiency, we use the SurfacePatchIndex if available, but for now
+    // we'll do a simple scan of all points. This can be optimized later.
+    // Since the brush radius is typically small relative to the surface,
+    // we could use a spatial index, but a full scan works for moderate surfaces.
+
+    for (int row = 0; row < rows; ++row) {
+        for (int col = 0; col < cols; ++col) {
+            const cv::Vec3f& pt = (*points)(row, col);
+
+            // Skip invalid points
+            if (isInvalidPoint(pt)) {
+                continue;
+            }
+
+            // Check if point is within sphere
+            const cv::Vec3f delta = pt - worldPos;
+            const float distSq = delta.dot(delta);
+            if (distSq <= radiusSq) {
+                result.emplace_back(row, col);
+            }
+        }
+    }
+
+    return result;
+}
+
+void ApprovalMaskBrushTool::startStrokeFromWorld(const cv::Vec3f& worldPos, float worldRadius)
+{
+    qCInfo(lcApprovalMask) << "Starting approval stroke from world pos:" << worldPos[0] << worldPos[1] << worldPos[2]
+                           << "radius:" << worldRadius;
+    _strokeActive = true;
+    _currentStroke.clear();
+    _currentStroke.push_back(worldPos);
+
+    _overlayPoints.clear();
+    _overlayPoints.push_back(worldPos);
+
+    _lastSample = worldPos;
+    _hasLastSample = true;
+    _lastOverlaySample = worldPos;
+    _hasLastOverlaySample = true;
+
+    _lastRefreshTimer.start();
+    _lastRefreshTime = 0;
+    _pendingRefresh = false;
+
+    _accumulatedGridPositions.clear();
+    _accumulatedGridPosSet.clear();
+
+    // Find all grid cells within the sphere and add them
+    auto cells = findGridCellsInSphere(worldPos, worldRadius);
+    qCInfo(lcApprovalMask) << "  Found" << cells.size() << "grid cells in sphere";
+
+    for (const auto& cell : cells) {
+        const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
+        if (_accumulatedGridPosSet.insert(hash).second) {
+            _accumulatedGridPositions.push_back(cell);
+        }
+    }
+
+    // Paint immediately
+    if (!_accumulatedGridPositions.empty()) {
+        paintAccumulatedPointsToImage();
+    }
+
+    _module.refreshOverlay();
+}
+
+void ApprovalMaskBrushTool::extendStrokeFromWorld(const cv::Vec3f& worldPos, float worldRadius, bool forceSample)
+{
+    if (!_strokeActive) {
+        return;
+    }
+
+    const float spacing = kBrushSampleSpacing;
+    const float spacingSq = spacing * spacing;
+
+    // Check if we've moved enough to sample
+    if (_hasLastSample && !forceSample) {
+        const cv::Vec3f delta = worldPos - _lastSample;
+        const float distanceSq = delta.dot(delta);
+        if (distanceSq < spacingSq) {
+            return;
+        }
+    }
+
+    _currentStroke.push_back(worldPos);
+    _lastSample = worldPos;
+    _hasLastSample = true;
+
+    // Find cells in sphere and add to accumulated
+    auto cells = findGridCellsInSphere(worldPos, worldRadius);
+    for (const auto& cell : cells) {
+        const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
+        if (_accumulatedGridPosSet.insert(hash).second) {
+            _accumulatedGridPositions.push_back(cell);
+        }
+    }
+
+    // Paint periodically
+    constexpr size_t kPaintBatchSize = 20;
+    if (forceSample || _accumulatedGridPositions.size() >= kPaintBatchSize) {
+        paintAccumulatedPointsToImage();
+    }
+
+    // Update overlay points for visualization
+    const float overlaySpacing = kOverlayPointSpacing;
+    const float overlaySpacingSq = overlaySpacing * overlaySpacing;
+
+    bool overlayNeedsRefresh = false;
+    if (_hasLastOverlaySample) {
+        const cv::Vec3f overlayDelta = worldPos - _lastOverlaySample;
+        const float overlayDistSq = overlayDelta.dot(overlayDelta);
+        if (forceSample || overlayDistSq >= overlaySpacingSq) {
+            _overlayPoints.push_back(worldPos);
+            _lastOverlaySample = worldPos;
+            overlayNeedsRefresh = true;
+        }
+    } else {
+        _overlayPoints.push_back(worldPos);
+        _lastOverlaySample = worldPos;
+        _hasLastOverlaySample = true;
+        overlayNeedsRefresh = true;
+    }
+
+    if (overlayNeedsRefresh) {
+        const qint64 currentTime = _lastRefreshTimer.elapsed();
+        const qint64 timeSinceLastRefresh = currentTime - _lastRefreshTime;
+        constexpr qint64 kMinRefreshIntervalMs = 50;
+
+        if (timeSinceLastRefresh >= kMinRefreshIntervalMs) {
+            _module.refreshOverlay();
+            _lastRefreshTime = currentTime;
+            _pendingRefresh = false;
+        } else {
+            _pendingRefresh = true;
+        }
+    }
+}
+
+void ApprovalMaskBrushTool::finishStrokeFromWorld()
+{
+    if (!_strokeActive) {
+        return;
+    }
+
+    // Paint any remaining accumulated points
+    if (!_accumulatedGridPositions.empty()) {
+        paintAccumulatedPointsToImage();
+    }
+
+    _strokeActive = false;
+    if (!_currentStroke.empty()) {
+        _pendingStrokes.push_back(_currentStroke);
+    }
+    _currentStroke.clear();
+
+    if (!_overlayPoints.empty()) {
+        _overlayStrokeSegments.push_back(_overlayPoints);
+        _overlayPoints.clear();
+    }
+
+    _hasLastSample = false;
+    _hasLastOverlaySample = false;
+
+    if (_pendingRefresh) {
+        _pendingRefresh = false;
+    }
+    _module.refreshOverlay();
+}
+
 std::optional<std::pair<int, int>> ApprovalMaskBrushTool::sceneToGridIndex(const QPointF& scenePos, float viewerScale) const
 {
     // Convert scene coordinates to grid indices
