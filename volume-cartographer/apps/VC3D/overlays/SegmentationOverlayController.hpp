@@ -13,6 +13,8 @@ class CSurfaceCollection;
 class SegmentationEditManager;
 class Surface;
 class QuadSurface;
+class PlaneSurface;
+class ViewerManager;
 
 class SegmentationOverlayController : public ViewerOverlayControllerBase
 {
@@ -69,6 +71,7 @@ public:
 
     void setEditingEnabled(bool enabled);
     void setEditManager(SegmentationEditManager* manager);
+    void setViewerManager(ViewerManager* manager) { _viewerManager = manager; }
     void applyState(const State& state);
 
     // Load approval mask from surface into QImage (call once when entering approval mode)
@@ -81,6 +84,16 @@ public:
 
     // Save the approval mask QImage back to the surface
     void saveApprovalMaskToSurface(QuadSurface* surface);
+
+    // Query approval status for a grid position
+    // Returns: 0 = not approved, 1 = saved approved, 2 = pending approved
+    int queryApprovalStatus(int row, int col) const;
+
+    // Check if approval mask mode is active and we have mask data
+    bool hasApprovalMaskData() const;
+
+    // Trigger re-rendering of intersections on all plane viewers
+    void invalidatePlaneIntersections();
 
 protected:
     bool isOverlayEnabledFor(CVolumeViewer* viewer) const override;
@@ -106,6 +119,7 @@ private:
 
     CSurfaceCollection* _surfaces{nullptr};
     SegmentationEditManager* _editManager{nullptr};
+    ViewerManager* _viewerManager{nullptr};
     bool _editingEnabled{false};
     std::optional<State> _currentState;
 

@@ -2,6 +2,7 @@
 
 #include "../CSurfaceCollection.hpp"
 #include "../CVolumeViewer.hpp"
+#include "../ViewerManager.hpp"
 
 #include <QColor>
 #include <QDebug>
@@ -12,8 +13,10 @@
 #include <cmath>
 #include <chrono>
 
+#include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Surface.hpp"
+#include "vc/core/util/SurfacePatchIndex.hpp"
 
 namespace
 {
@@ -194,6 +197,9 @@ void SegmentationOverlayController::loadApprovalMaskImage(QuadSurface* surface)
     // Invalidate all viewer caches
     ++_savedImageVersion;
     ++_pendingImageVersion;
+
+    // Trigger re-rendering of intersection lines on plane viewers
+    invalidatePlaneIntersections();
 }
 
 void SegmentationOverlayController::paintApprovalMaskDirect(
@@ -256,6 +262,9 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
 
     // Invalidate pending version since we modified the pending image
     ++_pendingImageVersion;
+
+    // Trigger re-rendering of intersection lines on plane viewers
+    invalidatePlaneIntersections();
 }
 
 void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surface)
@@ -317,6 +326,9 @@ void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surfa
     // Invalidate both versions
     ++_savedImageVersion;
     ++_pendingImageVersion;
+
+    // Trigger re-rendering of intersection lines on plane viewers
+    invalidatePlaneIntersections();
 }
 
 bool SegmentationOverlayController::isOverlayEnabledFor(CVolumeViewer* viewer) const
@@ -544,16 +556,89 @@ void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, Qu
     cache.pendingImageVersion = _pendingImageVersion;
 }
 
+int SegmentationOverlayController::queryApprovalStatus(int row, int col) const
+{
+    // Check pending first (takes priority for display)
+    if (!_pendingApprovalMaskImage.isNull() &&
+        row >= 0 && row < _pendingApprovalMaskImage.height() &&
+        col >= 0 && col < _pendingApprovalMaskImage.width()) {
+        QRgb pixel = _pendingApprovalMaskImage.pixel(col, row);
+        if (qAlpha(pixel) > 0) {
+            return 2;  // Pending
+        }
+    }
+
+    // Check saved
+    if (!_savedApprovalMaskImage.isNull() &&
+        row >= 0 && row < _savedApprovalMaskImage.height() &&
+        col >= 0 && col < _savedApprovalMaskImage.width()) {
+        QRgb pixel = _savedApprovalMaskImage.pixel(col, row);
+        if (qAlpha(pixel) > 0) {
+            return 1;  // Saved
+        }
+    }
+
+    return 0;  // Not approved
+}
+
+bool SegmentationOverlayController::hasApprovalMaskData() const
+{
+    bool hasState = _currentState.has_value();
+    bool approvalMode = hasState && _currentState->approvalMaskMode;
+    bool hasSaved = !_savedApprovalMaskImage.isNull();
+    bool hasPending = !_pendingApprovalMaskImage.isNull();
+
+    qDebug() << "hasApprovalMaskData: hasState=" << hasState
+             << "approvalMode=" << approvalMode
+             << "hasSaved=" << hasSaved
+             << "hasPending=" << hasPending;
+
+    if (!hasState || !approvalMode) {
+        return false;
+    }
+    return hasSaved || hasPending;
+}
+
+void SegmentationOverlayController::invalidatePlaneIntersections()
+{
+    qDebug() << "invalidatePlaneIntersections called, _viewerManager=" << (_viewerManager != nullptr);
+    if (!_viewerManager) {
+        return;
+    }
+
+    _viewerManager->forEachViewer([](CVolumeViewer* viewer) {
+        if (!viewer) {
+            return;
+        }
+        // Only invalidate for plane surface viewers (XY, XZ, YZ)
+        Surface* surf = viewer->currentSurface();
+        qDebug() << "  viewer surface exists:" << (surf != nullptr)
+                 << "isPlaneSurface=" << (dynamic_cast<PlaneSurface*>(surf) != nullptr);
+        if (dynamic_cast<PlaneSurface*>(surf)) {
+            viewer->renderIntersections();
+        }
+    });
+}
+
 void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
                                                               CVolumeViewer* viewer,
                                                               ViewerOverlayControllerBase::OverlayBuilder& builder) const
 {
-    QElapsedTimer buildTimer;
-    buildTimer.start();
-
     if (!state.surface) {
         return;
     }
+
+    // Check if this viewer is displaying a PlaneSurface (XY/XZ/YZ orthogonal view)
+    // For plane viewers, the approval mask is rendered via modified intersection lines
+    // in CVolumeViewerIntersections.cpp, not here
+    Surface* viewerSurf = viewer->currentSurface();
+    if (dynamic_cast<PlaneSurface*>(viewerSurf)) {
+        return;  // Handled by renderIntersections()
+    }
+
+    // For segmentation view (QuadSurface), render as image overlay
+    QElapsedTimer buildTimer;
+    buildTimer.start();
 
     // Check if we need to rebuild the COMPOSITE IMAGE (only when masks change, not when view changes)
     auto it = _viewerCaches.find(viewer);
@@ -586,7 +671,6 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
         return;
     }
 
-    const int gridRows = points->rows;
     const int gridCols = points->cols;
 
     // Lambda to convert grid index directly to scene position (no pointTo!)
@@ -611,3 +695,4 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
     QPointF topLeft = gridToScene(0, 0);
     builder.addImage(cache.compositeImage, topLeft, gridToSceneScale, 1.0, kApprovalMaskZ);
 }
+
