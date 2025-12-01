@@ -452,7 +452,7 @@ void SegmentationModule::setApprovalMaskPaintMode(bool approve)
 
 void SegmentationModule::setApprovalMaskBrushRadius(float radiusSteps)
 {
-    _approvalMaskBrushRadius = std::max(0.5f, radiusSteps);
+    _approvalMaskBrushRadius = std::max(1.0f, radiusSteps);
 }
 
 void SegmentationModule::applyApprovalStrokes()

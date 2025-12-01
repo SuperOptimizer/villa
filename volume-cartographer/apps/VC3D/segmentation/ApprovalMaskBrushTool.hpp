@@ -46,8 +46,14 @@ public:
     void extendStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float viewerScale, bool forceSample);
     void finishStroke();
 
-    // For plane viewers: paint approval based on 3D world position and radius
-    // Finds all grid cells whose 3D positions are within the given radius of worldPos
+    // For plane viewers: paint approval based on 3D world position, plane normal, and radius
+    // Finds all grid cells within a cylinder: within `radius` of the plane AND within `radius`
+    // (in 2D plane space) of the mouse position
+    void startStrokeFromPlane(const cv::Vec3f& worldPos, const cv::Vec3f& planeNormal, float worldRadius);
+    void extendStrokeFromPlane(const cv::Vec3f& worldPos, const cv::Vec3f& planeNormal, float worldRadius, bool forceSample);
+    void finishStrokeFromPlane();
+
+    // Legacy methods (for compatibility) - delegate to plane methods with zero normal (sphere mode)
     void startStrokeFromWorld(const cv::Vec3f& worldPos, float worldRadius);
     void extendStrokeFromWorld(const cv::Vec3f& worldPos, float worldRadius, bool forceSample);
     void finishStrokeFromWorld();
@@ -68,6 +74,13 @@ private:
 
     // Find all grid cells whose 3D world positions are within radius of the given world position
     std::vector<std::pair<int, int>> findGridCellsInSphere(const cv::Vec3f& worldPos, float radius) const;
+
+    // Find all grid cells within a sphere centered at worldPos with given radius.
+    // For plane viewers. If outMinDist is provided, returns the minimum distance to any surface point.
+    std::vector<std::pair<int, int>> findGridCellsInCylinder(const cv::Vec3f& worldPos,
+                                                              const cv::Vec3f& planeNormal,
+                                                              float radius,
+                                                              float* outMinDist = nullptr) const;
 
     // Paint accumulated points into QImage (for real-time painting)
     void paintAccumulatedPointsToImage();
@@ -97,4 +110,8 @@ private:
     // Accumulated grid positions for real-time painting
     std::vector<std::pair<int, int>> _accumulatedGridPositions;
     std::unordered_set<uint64_t> _accumulatedGridPosSet;  // For deduplication
+
+    // For plane viewer strokes: effective paint radius = brushRadius - distanceFromLine
+    float _effectivePaintRadiusNative{0.0f};
+    bool _usePlaneEffectiveRadius{false};
 };

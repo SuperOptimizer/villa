@@ -233,37 +233,26 @@ void SegmentationModule::handleMousePress(CVolumeViewer* viewer,
 
     // Handle approval mask mode
     if (_approvalMaskMode && isLeftButton) {
-        qCInfo(lcSegModule) << "Approval mask mode: handling mouse press";
         if (modifiers.testFlag(Qt::ControlModifier) || modifiers.testFlag(Qt::AltModifier)) {
-            qCInfo(lcSegModule) << "  Skipping: Ctrl or Alt modifier held";
             return;
         }
         if (_approvalTool) {
             // Check if this is a plane viewer (XY/XZ/YZ) or segmentation view
             Surface* viewerSurf = viewer->currentSurface();
-            const bool isPlaneViewer = dynamic_cast<PlaneSurface*>(viewerSurf) != nullptr;
+            auto* planeSurf = dynamic_cast<PlaneSurface*>(viewerSurf);
 
-            if (isPlaneViewer) {
-                // For plane viewers, use world-based painting with sphere intersection
-                // Convert the 2D brush radius (in grid steps) to a 3D world radius
-                // The brush radius is in "steps" which roughly corresponds to grid cells
+            if (planeSurf) {
+                // For plane viewers, use cylinder-based painting
                 const float brushRadiusSteps = _approvalMaskBrushRadius;
-                // A grid step is approximately 1 unit in world space (varies by surface)
-                // Use a reasonable approximation for the world radius
-                const float worldRadius = brushRadiusSteps * 1.0f;  // 1:1 mapping for now
-                qCInfo(lcSegModule) << "  Plane viewer: Starting world stroke at:" << worldPos[0] << worldPos[1] << worldPos[2]
-                                    << "worldRadius:" << worldRadius;
-                _approvalTool->startStrokeFromWorld(worldPos, worldRadius);
+                const float worldRadius = brushRadiusSteps * 1.0f;
+                const cv::Vec3f planeNormal = planeSurf->normal({0, 0, 0});
+                _approvalTool->startStrokeFromPlane(worldPos, planeNormal, worldRadius);
             } else {
-                // Pass scene position and viewerScale for proper grid coordinate computation
+                // Flattened view - use scene coordinates
                 const QPointF scenePos = viewer->lastScenePosition();
                 const float viewerScale = viewer->getCurrentScale();
-                qCInfo(lcSegModule) << "  Starting approval stroke at:" << worldPos[0] << worldPos[1] << worldPos[2]
-                                    << "scenePos:" << scenePos.x() << scenePos.y() << "viewerScale:" << viewerScale;
                 _approvalTool->startStroke(worldPos, scenePos, viewerScale);
             }
-        } else {
-            qCWarning(lcSegModule) << "  ERROR: Approval tool is null!";
         }
         return;
     }
@@ -349,13 +338,14 @@ void SegmentationModule::handleMouseMove(CVolumeViewer* viewer,
             if (_approvalTool) {
                 // Check if this is a plane viewer (XY/XZ/YZ) or segmentation view
                 Surface* viewerSurf = viewer->currentSurface();
-                const bool isPlaneViewer = dynamic_cast<PlaneSurface*>(viewerSurf) != nullptr;
+                auto* planeSurf = dynamic_cast<PlaneSurface*>(viewerSurf);
 
-                if (isPlaneViewer) {
-                    // For plane viewers, use world-based painting
+                if (planeSurf) {
+                    // For plane viewers, use cylinder-based painting
                     const float brushRadiusSteps = _approvalMaskBrushRadius;
                     const float worldRadius = brushRadiusSteps * 1.0f;
-                    _approvalTool->extendStrokeFromWorld(worldPos, worldRadius, false);
+                    const cv::Vec3f planeNormal = planeSurf->normal({0, 0, 0});
+                    _approvalTool->extendStrokeFromPlane(worldPos, planeNormal, worldRadius, false);
                 } else {
                     // Pass scene position and viewerScale for proper grid coordinate computation
                     const QPointF scenePos = viewer->lastScenePosition();
@@ -367,9 +357,9 @@ void SegmentationModule::handleMouseMove(CVolumeViewer* viewer,
             if (_approvalTool) {
                 // Check viewer type to call appropriate finish method
                 Surface* viewerSurf = viewer->currentSurface();
-                const bool isPlaneViewer = dynamic_cast<PlaneSurface*>(viewerSurf) != nullptr;
-                if (isPlaneViewer) {
-                    _approvalTool->finishStrokeFromWorld();
+                auto* planeSurf = dynamic_cast<PlaneSurface*>(viewerSurf);
+                if (planeSurf) {
+                    _approvalTool->finishStrokeFromPlane();
                 } else {
                     _approvalTool->finishStroke();
                 }
@@ -432,14 +422,15 @@ void SegmentationModule::handleMouseRelease(CVolumeViewer* viewer,
         if (_approvalTool && viewer) {
             // Check if this is a plane viewer (XY/XZ/YZ) or segmentation view
             Surface* viewerSurf = viewer->currentSurface();
-            const bool isPlaneViewer = dynamic_cast<PlaneSurface*>(viewerSurf) != nullptr;
+            auto* planeSurf = dynamic_cast<PlaneSurface*>(viewerSurf);
 
-            if (isPlaneViewer) {
-                // For plane viewers, use world-based painting
+            if (planeSurf) {
+                // For plane viewers, use cylinder-based painting
                 const float brushRadiusSteps = _approvalMaskBrushRadius;
                 const float worldRadius = brushRadiusSteps * 1.0f;
-                _approvalTool->extendStrokeFromWorld(worldPos, worldRadius, true);
-                _approvalTool->finishStrokeFromWorld();
+                const cv::Vec3f planeNormal = planeSurf->normal({0, 0, 0});
+                _approvalTool->extendStrokeFromPlane(worldPos, planeNormal, worldRadius, true);
+                _approvalTool->finishStrokeFromPlane();
             } else {
                 // Pass scene position and viewerScale for proper grid coordinate computation
                 const QPointF scenePos = viewer->lastScenePosition();

@@ -298,7 +298,7 @@ private:
     std::unique_ptr<ApprovalMaskBrushTool> _approvalTool;
 
     bool _approvalMaskMode{false};
-    float _approvalMaskBrushRadius{5.0f};
+    float _approvalMaskBrushRadius{50.0f};
 
     segmentation::UndoHistory _undoHistory;
     bool _suppressUndoCapture{false};

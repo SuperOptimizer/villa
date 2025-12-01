@@ -57,14 +57,7 @@ void ApprovalMaskBrushTool::setDependencies(SegmentationWidget* widget)
 void ApprovalMaskBrushTool::setSurface(QuadSurface* surface)
 {
     _surface = surface;
-    qCInfo(lcApprovalMask) << "Surface set on approval tool:" << (surface ? "valid" : "null");
-    if (surface) {
-        qCInfo(lcApprovalMask) << "  Surface ID:" << QString::fromStdString(surface->id);
-        const auto* points = surface->rawPointsPtr();
-        if (points) {
-            qCInfo(lcApprovalMask) << "  Surface size:" << points->cols << "x" << points->rows;
-        }
-    }
+    qCDebug(lcApprovalMask) << "Surface set on approval tool:" << (surface ? "valid" : "null");
 }
 
 void ApprovalMaskBrushTool::setActive(bool active)
@@ -74,7 +67,7 @@ void ApprovalMaskBrushTool::setActive(bool active)
     }
 
     _brushActive = active;
-    qCInfo(lcApprovalMask) << "Approval brush active:" << active;
+    qCDebug(lcApprovalMask) << "Approval brush active:" << active;
     if (!_brushActive) {
         _hasLastSample = false;
     }
@@ -84,9 +77,8 @@ void ApprovalMaskBrushTool::setActive(bool active)
 
 void ApprovalMaskBrushTool::startStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float viewerScale)
 {
-    qCInfo(lcApprovalMask) << "Starting approval stroke at:" << worldPos[0] << worldPos[1] << worldPos[2]
+    qCDebug(lcApprovalMask) << "Starting approval stroke at:" << worldPos[0] << worldPos[1] << worldPos[2]
                            << "scenePos:" << scenePos.x() << scenePos.y() << "viewerScale:" << viewerScale;
-    qCInfo(lcApprovalMask) << "  Surface:" << (_surface ? "valid" : "NULL");
     _strokeActive = true;
     _currentStroke.clear();
     _currentStroke.push_back(worldPos);
@@ -112,12 +104,12 @@ void ApprovalMaskBrushTool::startStroke(const cv::Vec3f& worldPos, const QPointF
     // Add the starting point for painting - compute grid position from scene coordinates
     auto gridIdx = sceneToGridIndex(scenePos, viewerScale);
     if (gridIdx) {
-        qCInfo(lcApprovalMask) << "  Grid index:" << gridIdx->first << gridIdx->second;
+        qCDebug(lcApprovalMask) << "  Grid index:" << gridIdx->first << gridIdx->second;
         const uint64_t hash = (static_cast<uint64_t>(gridIdx->first) << 32) | static_cast<uint64_t>(gridIdx->second);
         _accumulatedGridPosSet.insert(hash);
         _accumulatedGridPositions.push_back(*gridIdx);
     } else {
-        qCInfo(lcApprovalMask) << "  Grid index: OUT OF BOUNDS";
+        qCDebug(lcApprovalMask) << "  Grid index: OUT OF BOUNDS";
     }
 
     _module.refreshOverlay();
@@ -289,7 +281,7 @@ bool ApprovalMaskBrushTool::applyPending(float /*dragRadiusSteps*/)
     // Save the approval mask QImage to disk
     overlay->saveApprovalMaskToSurface(_surface);
 
-    qCInfo(lcApprovalMask) << "Saved approval mask to disk in" << totalTimer.elapsed() << "ms";
+    qCDebug(lcApprovalMask) << "Saved approval mask to disk in" << totalTimer.elapsed() << "ms";
 
     // Clear pending strokes and overlay segments (but keep the painted QImage)
     _strokeActive = false;
@@ -325,7 +317,7 @@ void ApprovalMaskBrushTool::clear()
     auto overlay = _module.overlay();
     if (overlay && _surface) {
         overlay->loadApprovalMaskImage(_surface);
-        qCInfo(lcApprovalMask) << "Reloaded approval mask from disk (discarded pending changes)";
+        qCDebug(lcApprovalMask) << "Reloaded approval mask from disk (discarded pending changes)";
     }
 
     _module.refreshOverlay();
@@ -347,9 +339,23 @@ void ApprovalMaskBrushTool::paintAccumulatedPointsToImage()
 
     const uint8_t paintValue = (_paintMode == PaintMode::Approve) ? 255 : 0;
 
-    // Get the current brush radius from the module
-    const float brushRadius = _module.approvalMaskBrushRadius();
-    const float clampedRadius = std::clamp(brushRadius, 0.5f, 500.0f);
+    // Get the brush radius in native voxels
+    float brushRadiusNative = _module.approvalMaskBrushRadius();
+
+    // For plane viewer strokes, use the effective radius (brushRadius - distanceFromLine)
+    if (_usePlaneEffectiveRadius && _effectivePaintRadiusNative > 0.0f) {
+        brushRadiusNative = _effectivePaintRadiusNative;
+    }
+
+    // Convert from native voxels to grid units for painting into the QImage
+    // Grid units = native voxels * scale (since grid = world * scale)
+    float gridRadius = brushRadiusNative;
+    if (_surface) {
+        const cv::Vec2f scale = _surface->scale();
+        const float avgScale = (scale[0] + scale[1]) * 0.5f;
+        gridRadius = brushRadiusNative * avgScale;
+    }
+    const float clampedRadius = std::clamp(gridRadius, 0.5f, 500.0f);
 
     // Paint the accumulated points into the QImage
     overlay->paintApprovalMaskDirect(_accumulatedGridPositions, clampedRadius, paintValue);
@@ -379,13 +385,52 @@ std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInSphere(co
     const int rows = points->rows;
     const int cols = points->cols;
 
-    // For efficiency, we use the SurfacePatchIndex if available, but for now
-    // we'll do a simple scan of all points. This can be optimized later.
-    // Since the brush radius is typically small relative to the surface,
-    // we could use a spatial index, but a full scan works for moderate surfaces.
+    // Use pointTo to find the approximate grid center for the world position.
+    // This gives us a starting point for a local search instead of scanning all points.
+    cv::Vec3f ptr{0, 0, 0};
+    const float dist = _surface->pointTo(ptr, worldPos, radius * 2.0f, 100);
 
-    for (int row = 0; row < rows; ++row) {
-        for (int col = 0; col < cols; ++col) {
+    // If pointTo failed to find a close point, fall back to full scan
+    // (this should be rare - only if the worldPos is far from the surface)
+    if (dist < 0 || dist > radius * 4.0f) {
+        // Fallback: scan all points (old behavior)
+        for (int row = 0; row < rows; ++row) {
+            for (int col = 0; col < cols; ++col) {
+                const cv::Vec3f& pt = (*points)(row, col);
+                if (isInvalidPoint(pt)) {
+                    continue;
+                }
+                const cv::Vec3f delta = pt - worldPos;
+                const float distSq = delta.dot(delta);
+                if (distSq <= radiusSq) {
+                    result.emplace_back(row, col);
+                }
+            }
+        }
+        return result;
+    }
+
+    // ptr is in "pointer" space: ptr = loc - center*scale
+    // So loc (actual grid position) = ptr + center*scale
+    const cv::Vec2f scale = _surface->scale();
+    const cv::Vec3f center = _surface->center();
+    const float locX = ptr[0] + center[0] * scale[0];  // column in grid space
+    const float locY = ptr[1] + center[1] * scale[1];  // row in grid space
+    const int centerCol = static_cast<int>(std::round(locX));
+    const int centerRow = static_cast<int>(std::round(locY));
+
+    // Estimate the search window size based on brush radius and surface scale
+    // Add extra margin to ensure we don't miss edge cases
+    const int windowRadius = static_cast<int>(std::ceil(radius * std::max(scale[0], scale[1]))) + 5;
+
+    const int rowStart = std::max(0, centerRow - windowRadius);
+    const int rowEnd = std::min(rows, centerRow + windowRadius + 1);
+    const int colStart = std::max(0, centerCol - windowRadius);
+    const int colEnd = std::min(cols, centerCol + windowRadius + 1);
+
+    // Search only within the local window
+    for (int row = rowStart; row < rowEnd; ++row) {
+        for (int col = colStart; col < colEnd; ++col) {
             const cv::Vec3f& pt = (*points)(row, col);
 
             // Skip invalid points
@@ -405,9 +450,221 @@ std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInSphere(co
     return result;
 }
 
+std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInCylinder(
+    const cv::Vec3f& worldPos,
+    const cv::Vec3f& planeNormal,
+    float radius,
+    float* outMinDist) const
+{
+    std::vector<std::pair<int, int>> result;
+
+    if (outMinDist) {
+        *outMinDist = std::numeric_limits<float>::max();
+    }
+
+    if (!_surface) {
+        return result;
+    }
+
+    const cv::Mat_<cv::Vec3f>* points = _surface->rawPointsPtr();
+    if (!points || points->empty()) {
+        return result;
+    }
+
+    // The radius is in native voxels (world units), so use it directly.
+    const float radiusSq = radius * radius;
+
+    const int rows = points->rows;
+    const int cols = points->cols;
+
+    // Sphere intersection: find all surface points within `radius` of worldPos
+    float minDistSq = std::numeric_limits<float>::max();
+
+    for (int row = 0; row < rows; ++row) {
+        for (int col = 0; col < cols; ++col) {
+            const cv::Vec3f& pt = (*points)(row, col);
+
+            if (isInvalidPoint(pt)) {
+                continue;
+            }
+
+            const cv::Vec3f delta = pt - worldPos;
+            const float distSq = delta.dot(delta);
+
+            if (distSq < minDistSq) {
+                minDistSq = distSq;
+            }
+
+            if (distSq <= radiusSq) {
+                result.emplace_back(row, col);
+            }
+        }
+    }
+
+    const float minDist = std::sqrt(minDistSq);
+    if (outMinDist) {
+        *outMinDist = minDist;
+    }
+
+    qCInfo(lcApprovalMask) << "  Sphere search: minDist=" << minDist
+                           << "radius=" << radius << "found=" << result.size();
+
+    return result;
+}
+
+void ApprovalMaskBrushTool::startStrokeFromPlane(const cv::Vec3f& worldPos, const cv::Vec3f& planeNormal, float worldRadius)
+{
+    // Determine which plane based on normal
+    QString planeType = "unknown";
+    if (std::abs(planeNormal[2]) > 0.9f) planeType = "XY";
+    else if (std::abs(planeNormal[1]) > 0.9f) planeType = "XZ";
+    else if (std::abs(planeNormal[0]) > 0.9f) planeType = "YZ";
+
+    qCInfo(lcApprovalMask) << "Plane stroke START -" << planeType << "plane"
+                           << "| pos: x=" << worldPos[0] << "y=" << worldPos[1] << "z=" << worldPos[2]
+                           << "| radius:" << worldRadius;
+    _strokeActive = true;
+    _currentStroke.clear();
+    _currentStroke.push_back(worldPos);
+
+    _overlayPoints.clear();
+    _overlayPoints.push_back(worldPos);
+
+    _lastSample = worldPos;
+    _hasLastSample = true;
+    _lastOverlaySample = worldPos;
+    _hasLastOverlaySample = true;
+
+    _lastRefreshTimer.start();
+    _lastRefreshTime = 0;
+    _pendingRefresh = false;
+
+    _accumulatedGridPositions.clear();
+    _accumulatedGridPosSet.clear();
+
+    // Enable plane effective radius mode
+    _usePlaneEffectiveRadius = true;
+    _effectivePaintRadiusNative = 0.0f;
+
+    // Find all grid cells within the sphere and get the minimum distance
+    float minDist = 0.0f;
+    auto cells = findGridCellsInCylinder(worldPos, planeNormal, worldRadius, &minDist);
+
+    // Effective paint radius = brushRadius - distance from line
+    if (!cells.empty()) {
+        _effectivePaintRadiusNative = std::max(1.0f, worldRadius - minDist);
+        qCInfo(lcApprovalMask) << "  Found" << cells.size() << "cells, minDist=" << minDist
+                               << "effectiveRadius=" << _effectivePaintRadiusNative;
+    }
+
+    for (const auto& cell : cells) {
+        const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
+        if (_accumulatedGridPosSet.insert(hash).second) {
+            _accumulatedGridPositions.push_back(cell);
+        }
+    }
+
+    // Paint immediately
+    if (!_accumulatedGridPositions.empty()) {
+        paintAccumulatedPointsToImage();
+    }
+
+    _module.refreshOverlay();
+}
+
+void ApprovalMaskBrushTool::extendStrokeFromPlane(const cv::Vec3f& worldPos, const cv::Vec3f& planeNormal, float worldRadius, bool forceSample)
+{
+    if (!_strokeActive) {
+        return;
+    }
+
+    const float spacing = kBrushSampleSpacing;
+    const float spacingSq = spacing * spacing;
+
+    // Check if we've moved enough to sample
+    if (_hasLastSample && !forceSample) {
+        const cv::Vec3f delta = worldPos - _lastSample;
+        const float distanceSq = delta.dot(delta);
+        if (distanceSq < spacingSq) {
+            return;
+        }
+    }
+
+    _currentStroke.push_back(worldPos);
+    _lastSample = worldPos;
+    _hasLastSample = true;
+
+    // Find cells in sphere and update effective radius
+    float minDist = 0.0f;
+    auto cells = findGridCellsInCylinder(worldPos, planeNormal, worldRadius, &minDist);
+
+    // Update effective paint radius = brushRadius - distance from line
+    if (!cells.empty()) {
+        const float newEffectiveRadius = std::max(1.0f, worldRadius - minDist);
+        // Use the maximum effective radius seen during this stroke
+        _effectivePaintRadiusNative = std::max(_effectivePaintRadiusNative, newEffectiveRadius);
+    }
+
+    for (const auto& cell : cells) {
+        const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
+        if (_accumulatedGridPosSet.insert(hash).second) {
+            _accumulatedGridPositions.push_back(cell);
+        }
+    }
+
+    // Paint periodically
+    constexpr size_t kPaintBatchSize = 20;
+    if (forceSample || _accumulatedGridPositions.size() >= kPaintBatchSize) {
+        paintAccumulatedPointsToImage();
+    }
+
+    // Update overlay points for visualization
+    const float overlaySpacing = kOverlayPointSpacing;
+    const float overlaySpacingSq = overlaySpacing * overlaySpacing;
+
+    bool overlayNeedsRefresh = false;
+    if (_hasLastOverlaySample) {
+        const cv::Vec3f overlayDelta = worldPos - _lastOverlaySample;
+        const float overlayDistSq = overlayDelta.dot(overlayDelta);
+        if (forceSample || overlayDistSq >= overlaySpacingSq) {
+            _overlayPoints.push_back(worldPos);
+            _lastOverlaySample = worldPos;
+            overlayNeedsRefresh = true;
+        }
+    } else {
+        _overlayPoints.push_back(worldPos);
+        _lastOverlaySample = worldPos;
+        _hasLastOverlaySample = true;
+        overlayNeedsRefresh = true;
+    }
+
+    if (overlayNeedsRefresh) {
+        const qint64 currentTime = _lastRefreshTimer.elapsed();
+        const qint64 timeSinceLastRefresh = currentTime - _lastRefreshTime;
+        constexpr qint64 kMinRefreshIntervalMs = 50;
+
+        if (timeSinceLastRefresh >= kMinRefreshIntervalMs) {
+            _module.refreshOverlay();
+            _lastRefreshTime = currentTime;
+            _pendingRefresh = false;
+        } else {
+            _pendingRefresh = true;
+        }
+    }
+}
+
+void ApprovalMaskBrushTool::finishStrokeFromPlane()
+{
+    // Reset plane effective radius mode
+    _usePlaneEffectiveRadius = false;
+    _effectivePaintRadiusNative = 0.0f;
+
+    finishStrokeFromWorld();
+}
+
 void ApprovalMaskBrushTool::startStrokeFromWorld(const cv::Vec3f& worldPos, float worldRadius)
 {
-    qCInfo(lcApprovalMask) << "Starting approval stroke from world pos:" << worldPos[0] << worldPos[1] << worldPos[2]
+    qCDebug(lcApprovalMask) << "Starting approval stroke from world pos:" << worldPos[0] << worldPos[1] << worldPos[2]
                            << "radius:" << worldRadius;
     _strokeActive = true;
     _currentStroke.clear();
@@ -430,7 +687,7 @@ void ApprovalMaskBrushTool::startStrokeFromWorld(const cv::Vec3f& worldPos, floa
 
     // Find all grid cells within the sphere and add them
     auto cells = findGridCellsInSphere(worldPos, worldRadius);
-    qCInfo(lcApprovalMask) << "  Found" << cells.size() << "grid cells in sphere";
+    qCDebug(lcApprovalMask) << "  Found" << cells.size() << "grid cells in sphere";
 
     for (const auto& cell : cells) {
         const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);

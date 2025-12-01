@@ -551,11 +551,11 @@ void SegmentationWidget::buildUi()
     brushRadiusRow->setSpacing(8);
     auto* brushRadiusLabel = new QLabel(tr("Brush radius:"), approvalParent);
     _spinApprovalBrushRadius = new QDoubleSpinBox(approvalParent);
-    _spinApprovalBrushRadius->setDecimals(1);
-    _spinApprovalBrushRadius->setRange(0.5, 500.0);
-    _spinApprovalBrushRadius->setSingleStep(1.0);
+    _spinApprovalBrushRadius->setDecimals(0);
+    _spinApprovalBrushRadius->setRange(1.0, 1000.0);
+    _spinApprovalBrushRadius->setSingleStep(10.0);
     _spinApprovalBrushRadius->setValue(_approvalBrushRadius);
-    _spinApprovalBrushRadius->setToolTip(tr("Radius of the approval mask brush in surface pixels. Larger values paint wider regions."));
+    _spinApprovalBrushRadius->setToolTip(tr("Radius of the approval mask brush in native volume resolution (voxels)."));
     brushRadiusRow->addWidget(brushRadiusLabel);
     brushRadiusRow->addWidget(_spinApprovalBrushRadius);
     brushRadiusRow->addStretch(1);
@@ -1436,7 +1436,7 @@ void SegmentationWidget::setApprovalPaintMode(bool approve)
 
 void SegmentationWidget::setApprovalBrushRadius(float radius)
 {
-    const float sanitized = std::clamp(radius, 0.5f, 100.0f);
+    const float sanitized = std::clamp(radius, 1.0f, 1000.0f);
     if (std::abs(_approvalBrushRadius - sanitized) < 1e-4f) {
         return;
     }

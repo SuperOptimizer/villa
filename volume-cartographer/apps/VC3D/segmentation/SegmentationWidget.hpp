@@ -273,7 +273,7 @@ private:
     // Approval mask state and UI
     bool _approvalMaskMode{false};
     bool _approvalPaintModeApprove{true};  // true = approve, false = unapprove
-    float _approvalBrushRadius{5.0f};
+    float _approvalBrushRadius{50.0f};
     CollapsibleSettingsGroup* _groupApprovalMask{nullptr};
     QCheckBox* _chkApprovalMaskMode{nullptr};
     QPushButton* _btnMarkApproved{nullptr};
