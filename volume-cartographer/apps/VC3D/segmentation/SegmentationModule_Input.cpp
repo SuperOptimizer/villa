@@ -368,6 +368,22 @@ void SegmentationModule::handleMouseMove(CVolumeViewer* viewer,
         return;
     }
 
+    // Update hover position for approval brush circle when in approval mode but not stroking
+    // Only update if position changed significantly to avoid expensive refreshOverlay on every mouse move
+    if (_approvalMaskMode && _approvalTool && !buttons.testFlag(Qt::LeftButton)) {
+        const auto lastHover = _approvalTool->hoverWorldPos();
+        const float minMoveThreshold = 2.0f;  // Native voxels
+        bool shouldUpdate = !lastHover.has_value();
+        if (lastHover) {
+            const cv::Vec3f delta = worldPos - *lastHover;
+            shouldUpdate = delta.dot(delta) >= minMoveThreshold * minMoveThreshold;
+        }
+        if (shouldUpdate) {
+            _approvalTool->setHoverWorldPos(worldPos, _approvalMaskBrushRadius);
+            refreshOverlay();
+        }
+    }
+
     const bool lineStrokeActive = _lineTool && _lineTool->strokeActive();
     if (lineStrokeActive) {
         if (buttons.testFlag(Qt::LeftButton)) {

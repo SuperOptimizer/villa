@@ -365,21 +365,35 @@ void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surfa
 bool SegmentationOverlayController::isOverlayEnabledFor(CVolumeViewer* viewer) const
 {
     Q_UNUSED(viewer);
-    return _editingEnabled;
+    // Enable overlay rendering if editing is enabled OR if approval mask mode is active
+    // (approval mask can be viewed without editing enabled)
+    const bool approvalMaskActive = _currentState && _currentState->approvalMaskMode;
+    return _editingEnabled || approvalMaskActive;
 }
 
 void SegmentationOverlayController::collectPrimitives(CVolumeViewer* viewer,
                                                       ViewerOverlayControllerBase::OverlayBuilder& builder)
 {
-    if (!viewer || !_editingEnabled || !_currentState) {
+    if (!viewer || !_currentState) {
+        qDebug() << "collectPrimitives: early return - viewer:" << viewer << "hasState:" << _currentState.has_value();
         return;
     }
 
     const State& state = *_currentState;
 
-    // Render approval mask overlays (dark green for saved, light green for pending)
+    qDebug() << "collectPrimitives: approvalMaskMode=" << state.approvalMaskMode
+             << "surface=" << (void*)state.surface << "_editingEnabled=" << _editingEnabled;
+
+    // Render approval mask overlays regardless of editing enabled
+    // (but painting requires editing to be enabled - handled in SegmentationModule)
     if (state.approvalMaskMode && state.surface) {
+        qDebug() << "collectPrimitives: calling buildApprovalMaskOverlay";
         buildApprovalMaskOverlay(state, viewer, builder);
+    }
+
+    // Other overlays require editing to be enabled
+    if (!_editingEnabled) {
+        return;
     }
 
     if (shouldShowMask(state)) {
@@ -669,8 +683,40 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
     // For plane viewers, the approval mask is rendered via modified intersection lines
     // in CVolumeViewerIntersections.cpp, not here
     Surface* viewerSurf = viewer->currentSurface();
-    if (dynamic_cast<PlaneSurface*>(viewerSurf)) {
-        return;  // Handled by renderIntersections()
+    const bool isPlaneViewer = dynamic_cast<PlaneSurface*>(viewerSurf) != nullptr;
+
+    // Draw brush circle at hover position (for both plane and segmentation viewers)
+    // Only show when editing is enabled (painting requires edit mode)
+    if (state.approvalHoverWorld && _editingEnabled) {
+        const cv::Vec3f& hoverWorld = *state.approvalHoverWorld;
+        const QPointF sceneCenter = viewer->volumePointToScene(hoverWorld);
+
+        // Use effective radius for plane viewers, full brush radius for segmentation view
+        const float brushRadius = (isPlaneViewer && state.approvalEffectiveRadius > 0.0f)
+            ? state.approvalEffectiveRadius
+            : state.approvalBrushRadius;
+
+        // Convert brush radius from native voxels to scene pixels using viewer's scale
+        // This is much faster than calling volumePointToScene multiple times
+        // Scale by 1.5x to match actual painted area (grid cell spacing effect)
+        const qreal viewerScale = viewer->getCurrentScale();
+        const qreal radiusPixels = brushRadius * viewerScale * 1.5;
+
+        if (radiusPixels > 1.0) {
+            ViewerOverlayControllerBase::OverlayStyle style;
+            style.penColor = state.paintingApproval ? QColor(0, 100, 255, 200) : QColor(255, 80, 80, 200);
+            style.penWidth = 2.0;
+            style.brushColor = Qt::transparent;
+            style.penStyle = Qt::DashLine;
+            style.dashPattern = {4.0, 4.0};  // Dashed pattern
+            style.z = kApprovalMaskZ + 10.0;
+
+            builder.addCircle(sceneCenter, radiusPixels, false, style);
+        }
+    }
+
+    if (isPlaneViewer) {
+        return;  // Mask image handled by renderIntersections()
     }
 
     // For segmentation view (QuadSurface), render as image overlay

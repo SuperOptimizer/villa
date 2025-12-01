@@ -408,18 +408,26 @@ void SegmentationModule::setApprovalMaskMode(bool enabled)
         if (_approvalTool) {
             _approvalTool->setActive(true);
 
-            // Set surface on approval tool
+            // Set surface on approval tool - from edit session if available, otherwise from surfaces collection
+            QuadSurface* surface = nullptr;
             if (_editManager && _editManager->hasSession()) {
                 qCInfo(lcSegModule) << "  Setting surface on approval tool (has active session)";
-                _approvalTool->setSurface(_editManager->baseSurface());
+                surface = _editManager->baseSurface();
+            } else if (_surfaces) {
+                qCInfo(lcSegModule) << "  Setting surface on approval tool (from surfaces collection, view-only mode)";
+                surface = dynamic_cast<QuadSurface*>(_surfaces->surface("segmentation"));
+            }
 
-                // Load approval mask into QImage for direct painting
+            if (surface) {
+                _approvalTool->setSurface(surface);
+
+                // Load approval mask into QImage for display
                 if (_overlay) {
-                    _overlay->loadApprovalMaskImage(_editManager->baseSurface());
+                    _overlay->loadApprovalMaskImage(surface);
                     qCInfo(lcSegModule) << "  Loaded approval mask into QImage";
                 }
             } else {
-                qCWarning(lcSegModule) << "  WARNING: No active editing session!";
+                qCWarning(lcSegModule) << "  WARNING: No surface available for approval mask!";
             }
         } else {
             qCWarning(lcSegModule) << "  ERROR: Approval tool is null!";
@@ -648,6 +656,34 @@ void SegmentationModule::refreshOverlay()
     state.falloff = toFalloffMode(_activeFalloff);
 
     const bool hasSession = _editManager && _editManager->hasSession();
+
+    // Get surface for approval mask - from edit session if available, otherwise from surfaces collection
+    QuadSurface* approvalSurface = nullptr;
+    if (hasSession && _editManager) {
+        approvalSurface = _editManager->baseSurface();
+    } else if (_surfaces) {
+        approvalSurface = dynamic_cast<QuadSurface*>(_surfaces->surface("segmentation"));
+    }
+
+    // Set approval mask state even without editing session (for view-only mode)
+    if (_approvalMaskMode && approvalSurface) {
+        state.approvalMaskMode = true;
+        state.approvalBrushRadius = _approvalMaskBrushRadius;
+        state.surface = approvalSurface;
+        if (_approvalTool) {
+            state.approvalStrokeActive = _approvalTool->strokeActive();
+            state.approvalStrokeSegments = _approvalTool->overlayStrokeSegments();
+            state.approvalCurrentStroke = _approvalTool->overlayPoints();
+            state.paintingApproval = (_approvalTool->paintMode() == ApprovalMaskBrushTool::PaintMode::Approve);
+            state.approvalHoverWorld = _approvalTool->hoverWorldPos();
+            if (_approvalTool->strokeActive() && _approvalTool->effectivePaintRadius() > 0.0f) {
+                state.approvalEffectiveRadius = _approvalTool->effectivePaintRadius();
+            } else {
+                state.approvalEffectiveRadius = _approvalTool->hoverEffectiveRadius();
+            }
+        }
+    }
+
     if (!hasSession) {
         _overlay->applyState(state);
         return;
@@ -738,24 +774,6 @@ void SegmentationModule::refreshOverlay()
     }
 
     state.displayRadiusSteps = falloffRadius(overlayTool);
-
-    stepTimer.restart();
-
-    // Approval mask state
-    state.approvalMaskMode = _approvalMaskMode;
-    state.approvalBrushRadius = _approvalMaskBrushRadius;
-    state.surface = (hasSession && _editManager) ? _editManager->baseSurface() : nullptr;
-    if (_approvalTool) {
-        state.approvalStrokeActive = _approvalTool->strokeActive();
-        state.approvalStrokeSegments = _approvalTool->overlayStrokeSegments();
-        state.approvalCurrentStroke = _approvalTool->overlayPoints();
-        state.paintingApproval = (_approvalTool->paintMode() == ApprovalMaskBrushTool::PaintMode::Approve);
-
-        qCInfo(lcSegModule) << "[PERF] refreshOverlay: copy approval overlay ("
-                            << state.approvalStrokeSegments.size() << " segments, "
-                            << state.approvalCurrentStroke.size() << " current points):"
-                            << stepTimer.elapsed() << "ms";
-    }
 
     stepTimer.restart();
     _overlay->applyState(state);

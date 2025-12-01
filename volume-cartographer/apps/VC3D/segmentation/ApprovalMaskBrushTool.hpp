@@ -63,6 +63,12 @@ public:
     [[nodiscard]] const std::vector<cv::Vec3f>& overlayPoints() const { return _overlayPoints; }
     [[nodiscard]] const std::vector<std::vector<cv::Vec3f>>& overlayStrokeSegments() const { return _overlayStrokeSegments; }
     [[nodiscard]] const std::vector<cv::Vec3f>& currentStrokePoints() const { return _currentStroke; }
+    [[nodiscard]] float effectivePaintRadius() const { return _effectivePaintRadiusNative; }
+    [[nodiscard]] std::optional<cv::Vec3f> hoverWorldPos() const { return _hoverWorldPos; }
+    [[nodiscard]] float hoverEffectiveRadius() const { return _hoverEffectiveRadius; }
+
+    void setHoverWorldPos(const cv::Vec3f& pos, float brushRadius);
+    void clearHoverWorldPos() { _hoverWorldPos = std::nullopt; _hoverEffectiveRadius = 0.0f; }
 
     void cancel() { clear(); }
     [[nodiscard]] bool isActive() const { return brushActive() || strokeActive(); }
@@ -114,4 +120,8 @@ private:
     // For plane viewer strokes: effective paint radius = brushRadius - distanceFromLine
     float _effectivePaintRadiusNative{0.0f};
     bool _usePlaneEffectiveRadius{false};
+
+    // Current hover position for brush circle visualization
+    std::optional<cv::Vec3f> _hoverWorldPos;
+    float _hoverEffectiveRadius{0.0f};  // Cached effective radius for hover preview
 };

@@ -101,6 +101,13 @@ void ApprovalMaskBrushTool::startStroke(const cv::Vec3f& worldPos, const QPointF
     _accumulatedGridPositions.clear();
     _accumulatedGridPosSet.clear();
 
+    // Disable plane effective radius mode for flattened view
+    _usePlaneEffectiveRadius = false;
+
+    // Update hover position for brush circle display
+    _hoverWorldPos = worldPos;
+    _hoverEffectiveRadius = _module.approvalMaskBrushRadius();
+
     // Add the starting point for painting - compute grid position from scene coordinates
     auto gridIdx = sceneToGridIndex(scenePos, viewerScale);
     if (gridIdx) {
@@ -172,6 +179,11 @@ void ApprovalMaskBrushTool::extendStroke(const cv::Vec3f& worldPos, const QPoint
     _currentStroke.push_back(worldPos);
     _lastSample = worldPos;
     _hasLastSample = true;
+
+    // Update hover position for brush circle display during drag
+    _hoverWorldPos = worldPos;
+    // For flattened view, use full brush radius (no effective radius calculation needed)
+    _hoverEffectiveRadius = _module.approvalMaskBrushRadius();
 
     // Accumulate grid position for real-time painting (reuse gridIdx from above)
     // We know gridIdx is valid here because we would have returned early if it was nullopt
@@ -339,21 +351,23 @@ void ApprovalMaskBrushTool::paintAccumulatedPointsToImage()
 
     const uint8_t paintValue = (_paintMode == PaintMode::Approve) ? 255 : 0;
 
-    // Get the brush radius in native voxels
-    float brushRadiusNative = _module.approvalMaskBrushRadius();
+    float gridRadius;
+    if (_usePlaneEffectiveRadius) {
+        // For plane viewer strokes: we already found the exact grid cells within the
+        // effective radius sphere. Just paint those cells directly with minimal radius.
+        gridRadius = 1.0f;
+    } else {
+        // For segmentation view strokes: paint a brush circle around each accumulated point
+        float brushRadiusNative = _module.approvalMaskBrushRadius();
 
-    // For plane viewer strokes, use the effective radius (brushRadius - distanceFromLine)
-    if (_usePlaneEffectiveRadius && _effectivePaintRadiusNative > 0.0f) {
-        brushRadiusNative = _effectivePaintRadiusNative;
-    }
-
-    // Convert from native voxels to grid units for painting into the QImage
-    // Grid units = native voxels * scale (since grid = world * scale)
-    float gridRadius = brushRadiusNative;
-    if (_surface) {
-        const cv::Vec2f scale = _surface->scale();
-        const float avgScale = (scale[0] + scale[1]) * 0.5f;
-        gridRadius = brushRadiusNative * avgScale;
+        // Convert from native voxels to grid units for painting into the QImage
+        // Grid units = native voxels * scale (since grid = world * scale)
+        gridRadius = brushRadiusNative;
+        if (_surface) {
+            const cv::Vec2f scale = _surface->scale();
+            const float avgScale = (scale[0] + scale[1]) * 0.5f;
+            gridRadius = brushRadiusNative * avgScale;
+        }
     }
     const float clampedRadius = std::clamp(gridRadius, 0.5f, 500.0f);
 
@@ -477,11 +491,40 @@ std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInCylinder(
     const int rows = points->rows;
     const int cols = points->cols;
 
+    // Use pointTo to find the approximate grid center for the world position.
+    // This gives us a starting point for a local search instead of scanning all points.
+    cv::Vec3f ptr{0, 0, 0};
+    const float dist = _surface->pointTo(ptr, worldPos, radius * 2.0f, 100);
+
+    int rowStart = 0, rowEnd = rows;
+    int colStart = 0, colEnd = cols;
+
+    // If pointTo found a nearby point, limit search to a local window
+    if (dist >= 0 && dist <= radius * 4.0f) {
+        // ptr is in "pointer" space: ptr = loc - center*scale
+        // So loc (actual grid position) = ptr + center*scale
+        const cv::Vec2f scale = _surface->scale();
+        const cv::Vec3f center = _surface->center();
+        const float locX = ptr[0] + center[0] * scale[0];  // column in grid space
+        const float locY = ptr[1] + center[1] * scale[1];  // row in grid space
+        const int centerCol = static_cast<int>(std::round(locX));
+        const int centerRow = static_cast<int>(std::round(locY));
+
+        // Estimate the search window size based on brush radius and surface scale
+        // Add extra margin to ensure we don't miss edge cases
+        const int windowRadius = static_cast<int>(std::ceil(radius * std::max(scale[0], scale[1]))) + 5;
+
+        rowStart = std::max(0, centerRow - windowRadius);
+        rowEnd = std::min(rows, centerRow + windowRadius + 1);
+        colStart = std::max(0, centerCol - windowRadius);
+        colEnd = std::min(cols, centerCol + windowRadius + 1);
+    }
+
     // Sphere intersection: find all surface points within `radius` of worldPos
     float minDistSq = std::numeric_limits<float>::max();
 
-    for (int row = 0; row < rows; ++row) {
-        for (int col = 0; col < cols; ++col) {
+    for (int row = rowStart; row < rowEnd; ++row) {
+        for (int col = colStart; col < colEnd; ++col) {
             const cv::Vec3f& pt = (*points)(row, col);
 
             if (isInvalidPoint(pt)) {
@@ -506,23 +549,17 @@ std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInCylinder(
         *outMinDist = minDist;
     }
 
-    qCInfo(lcApprovalMask) << "  Sphere search: minDist=" << minDist
-                           << "radius=" << radius << "found=" << result.size();
+    qCDebug(lcApprovalMask) << "  Sphere search: minDist=" << minDist
+                           << "radius=" << radius << "found=" << result.size()
+                           << "window:" << (rowEnd - rowStart) << "x" << (colEnd - colStart);
 
     return result;
 }
 
 void ApprovalMaskBrushTool::startStrokeFromPlane(const cv::Vec3f& worldPos, const cv::Vec3f& planeNormal, float worldRadius)
 {
-    // Determine which plane based on normal
-    QString planeType = "unknown";
-    if (std::abs(planeNormal[2]) > 0.9f) planeType = "XY";
-    else if (std::abs(planeNormal[1]) > 0.9f) planeType = "XZ";
-    else if (std::abs(planeNormal[0]) > 0.9f) planeType = "YZ";
-
-    qCInfo(lcApprovalMask) << "Plane stroke START -" << planeType << "plane"
-                           << "| pos: x=" << worldPos[0] << "y=" << worldPos[1] << "z=" << worldPos[2]
-                           << "| radius:" << worldRadius;
+    qCDebug(lcApprovalMask) << "Plane stroke start at:" << worldPos[0] << worldPos[1] << worldPos[2]
+                           << "radius:" << worldRadius;
     _strokeActive = true;
     _currentStroke.clear();
     _currentStroke.push_back(worldPos);
@@ -546,21 +583,29 @@ void ApprovalMaskBrushTool::startStrokeFromPlane(const cv::Vec3f& worldPos, cons
     _usePlaneEffectiveRadius = true;
     _effectivePaintRadiusNative = 0.0f;
 
-    // Find all grid cells within the sphere and get the minimum distance
+    // First, find the minimum distance to the surface to compute effective radius
     float minDist = 0.0f;
-    auto cells = findGridCellsInCylinder(worldPos, planeNormal, worldRadius, &minDist);
+    findGridCellsInCylinder(worldPos, planeNormal, worldRadius, &minDist);
 
-    // Effective paint radius = brushRadius - distance from line
-    if (!cells.empty()) {
-        _effectivePaintRadiusNative = std::max(1.0f, worldRadius - minDist);
-        qCInfo(lcApprovalMask) << "  Found" << cells.size() << "cells, minDist=" << minDist
-                               << "effectiveRadius=" << _effectivePaintRadiusNative;
+    // Effective paint radius = sphere-plane intersection chord half-length
+    // sqrt(R² - d²) gives the radius of the circle where a sphere intersects a plane
+    if (minDist < worldRadius) {
+        _effectivePaintRadiusNative = std::sqrt(worldRadius * worldRadius - minDist * minDist);
     }
 
-    for (const auto& cell : cells) {
-        const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
-        if (_accumulatedGridPosSet.insert(hash).second) {
-            _accumulatedGridPositions.push_back(cell);
+    // Update hover position for brush circle display
+    _hoverWorldPos = worldPos;
+    _hoverEffectiveRadius = _effectivePaintRadiusNative;
+
+    // Now find cells within the EFFECTIVE radius, not the full brush radius
+    // This ensures the painted area matches the preview circle
+    if (_effectivePaintRadiusNative > 0.0f) {
+        auto cells = findGridCellsInCylinder(worldPos, planeNormal, _effectivePaintRadiusNative, nullptr);
+        for (const auto& cell : cells) {
+            const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
+            if (_accumulatedGridPosSet.insert(hash).second) {
+                _accumulatedGridPositions.push_back(cell);
+            }
         }
     }
 
@@ -594,21 +639,30 @@ void ApprovalMaskBrushTool::extendStrokeFromPlane(const cv::Vec3f& worldPos, con
     _lastSample = worldPos;
     _hasLastSample = true;
 
-    // Find cells in sphere and update effective radius
+    // First, find the minimum distance to compute effective radius
     float minDist = 0.0f;
-    auto cells = findGridCellsInCylinder(worldPos, planeNormal, worldRadius, &minDist);
+    findGridCellsInCylinder(worldPos, planeNormal, worldRadius, &minDist);
 
-    // Update effective paint radius = brushRadius - distance from line
-    if (!cells.empty()) {
-        const float newEffectiveRadius = std::max(1.0f, worldRadius - minDist);
-        // Use the maximum effective radius seen during this stroke
-        _effectivePaintRadiusNative = std::max(_effectivePaintRadiusNative, newEffectiveRadius);
+    // Compute effective paint radius = sphere-plane intersection chord half-length
+    float currentEffectiveRadius = 0.0f;
+    if (minDist < worldRadius) {
+        currentEffectiveRadius = std::sqrt(worldRadius * worldRadius - minDist * minDist);
+        // Track maximum effective radius seen during this stroke
+        _effectivePaintRadiusNative = std::max(_effectivePaintRadiusNative, currentEffectiveRadius);
     }
 
-    for (const auto& cell : cells) {
-        const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
-        if (_accumulatedGridPosSet.insert(hash).second) {
-            _accumulatedGridPositions.push_back(cell);
+    // Update hover position for brush circle display during drag
+    _hoverWorldPos = worldPos;
+    _hoverEffectiveRadius = currentEffectiveRadius;
+
+    // Find cells within the EFFECTIVE radius, not the full brush radius
+    if (currentEffectiveRadius > 0.0f) {
+        auto cells = findGridCellsInCylinder(worldPos, planeNormal, currentEffectiveRadius, nullptr);
+        for (const auto& cell : cells) {
+            const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
+            if (_accumulatedGridPosSet.insert(hash).second) {
+                _accumulatedGridPositions.push_back(cell);
+            }
         }
     }
 
@@ -859,4 +913,26 @@ std::optional<std::pair<int, int>> ApprovalMaskBrushTool::sceneToGridIndex(const
     }
 
     return std::make_pair(row, col);
+}
+
+void ApprovalMaskBrushTool::setHoverWorldPos(const cv::Vec3f& pos, float brushRadius)
+{
+    _hoverWorldPos = pos;
+
+    // Compute and cache effective radius for hover preview
+    if (!_surface) {
+        _hoverEffectiveRadius = brushRadius;
+        return;
+    }
+
+    // Use pointTo to find the minimum distance to the surface
+    cv::Vec3f ptr{0, 0, 0};
+    const float dist = _surface->pointTo(ptr, pos, brushRadius * 2.0f, 100);
+
+    // Sphere-plane intersection: effective radius = sqrt(R² - d²)
+    if (dist >= 0 && dist < brushRadius) {
+        _hoverEffectiveRadius = std::sqrt(brushRadius * brushRadius - dist * dist);
+    } else {
+        _hoverEffectiveRadius = 0.0f;  // No intersection
+    }
 }

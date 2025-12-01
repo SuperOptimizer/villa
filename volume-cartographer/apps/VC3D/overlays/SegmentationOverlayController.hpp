@@ -60,8 +60,10 @@ public:
         std::vector<std::vector<cv::Vec3f>> approvalStrokeSegments;  // Completed segments
         std::vector<cv::Vec3f> approvalCurrentStroke;  // Current active stroke
         float approvalBrushRadius{5.0f};
+        float approvalEffectiveRadius{0.0f};  // For plane viewers: brush radius adjusted for distance
         bool paintingApproval{true};
         QuadSurface* surface{nullptr};
+        std::optional<cv::Vec3f> approvalHoverWorld;  // Current hover position for brush circle
 
         bool operator==(const State& rhs) const;
         bool operator!=(const State& rhs) const { return !(*this == rhs); }
