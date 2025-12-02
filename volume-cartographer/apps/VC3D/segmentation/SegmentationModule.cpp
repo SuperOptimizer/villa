@@ -303,6 +303,10 @@ void SegmentationModule::bindWidgetSignals()
             this, &SegmentationModule::setApprovalMaskPaintMode);
     connect(_widget, &SegmentationWidget::approvalBrushRadiusChanged,
             this, &SegmentationModule::setApprovalMaskBrushRadius);
+    connect(_widget, &SegmentationWidget::approvalRectWidthChanged,
+            this, &SegmentationModule::setApprovalRectWidth);
+    connect(_widget, &SegmentationWidget::approvalRectHeightChanged,
+            this, &SegmentationModule::setApprovalRectHeight);
     connect(_widget, &SegmentationWidget::approvalStrokesApplyRequested,
             this, &SegmentationModule::applyApprovalStrokes);
     connect(_widget, &SegmentationWidget::approvalStrokesClearRequested,
@@ -461,6 +465,16 @@ void SegmentationModule::setApprovalMaskPaintMode(bool approve)
 void SegmentationModule::setApprovalMaskBrushRadius(float radiusSteps)
 {
     _approvalMaskBrushRadius = std::max(1.0f, radiusSteps);
+}
+
+void SegmentationModule::setApprovalRectWidth(float width)
+{
+    _approvalRectWidth = std::clamp(width, 1.0f, 2000.0f);
+}
+
+void SegmentationModule::setApprovalRectHeight(float height)
+{
+    _approvalRectHeight = std::clamp(height, 1.0f, 500.0f);
 }
 
 void SegmentationModule::applyApprovalStrokes()
@@ -669,6 +683,8 @@ void SegmentationModule::refreshOverlay()
     if (_approvalMaskMode && approvalSurface) {
         state.approvalMaskMode = true;
         state.approvalBrushRadius = _approvalMaskBrushRadius;
+        state.approvalRectWidth = _approvalRectWidth;
+        state.approvalRectHeight = _approvalRectHeight;
         state.surface = approvalSurface;
         if (_approvalTool) {
             state.approvalStrokeActive = _approvalTool->strokeActive();

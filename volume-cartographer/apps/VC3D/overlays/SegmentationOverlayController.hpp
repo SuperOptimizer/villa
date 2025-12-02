@@ -59,7 +59,9 @@ public:
         bool approvalStrokeActive{false};
         std::vector<std::vector<cv::Vec3f>> approvalStrokeSegments;  // Completed segments
         std::vector<cv::Vec3f> approvalCurrentStroke;  // Current active stroke
-        float approvalBrushRadius{5.0f};
+        float approvalBrushRadius{5.0f};      // Circle radius for XY/XZ/YZ plane views (native voxels)
+        float approvalRectWidth{100.0f};      // Rectangle width for flattened view (native voxels)
+        float approvalRectHeight{15.0f};      // Rectangle height for flattened view (native voxels)
         float approvalEffectiveRadius{0.0f};  // For plane viewers: brush radius adjusted for distance
         bool paintingApproval{true};
         QuadSurface* surface{nullptr};
@@ -80,12 +82,14 @@ public:
     void loadApprovalMaskImage(QuadSurface* surface);
 
     // Paint directly into the approval mask QImage (fast, in-place editing)
-    // If useRectangle is true, paints a short rectangle (flat cylinder side view for flattened viewer)
-    // If useRectangle is false, paints a circle (flat cylinder cross-section for plane viewers)
+    // If useRectangle is true, paints a rectangle using widthSteps x heightSteps dimensions
+    // If useRectangle is false, paints a circle using radiusSteps
     void paintApprovalMaskDirect(const std::vector<std::pair<int, int>>& gridPositions,
                                   float radiusSteps,
                                   uint8_t paintValue,
-                                  bool useRectangle = false);
+                                  bool useRectangle = false,
+                                  float widthSteps = 0.0f,
+                                  float heightSteps = 0.0f);
 
     // Save the approval mask QImage back to the surface
     void saveApprovalMaskToSurface(QuadSurface* surface);

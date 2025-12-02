@@ -362,6 +362,8 @@ void ApprovalMaskBrushTool::paintAccumulatedPointsToImage()
     const uint8_t paintValue = (_paintMode == PaintMode::Approve) ? 255 : 0;
 
     float gridRadius;
+    float gridWidth = 0.0f;
+    float gridHeight = 0.0f;
     bool useRectangle = false;
 
     if (_usePlaneEffectiveRadius) {
@@ -370,23 +372,27 @@ void ApprovalMaskBrushTool::paintAccumulatedPointsToImage()
         gridRadius = 1.0f;
         useRectangle = false;  // Plane views use circles (cylinder cross-section)
     } else {
-        // For segmentation/flattened view strokes: paint a rectangle (cylinder side view)
-        float brushRadiusNative = _module.approvalMaskBrushRadius();
+        // For segmentation/flattened view strokes: paint a rectangle using explicit width/height
+        const float rectWidthNative = _module.approvalRectWidth();
+        const float rectHeightNative = _module.approvalRectHeight();
 
         // Convert from native voxels to grid units for painting into the QImage
         // Grid units = native voxels * scale (since grid = world * scale)
-        gridRadius = brushRadiusNative;
+        float avgScale = 1.0f;
         if (_surface) {
             const cv::Vec2f scale = _surface->scale();
-            const float avgScale = (scale[0] + scale[1]) * 0.5f;
-            gridRadius = brushRadiusNative * avgScale;
+            avgScale = (scale[0] + scale[1]) * 0.5f;
         }
-        useRectangle = true;  // Flattened view uses rectangle (cylinder side view)
+        gridWidth = rectWidthNative * avgScale;
+        gridHeight = rectHeightNative * avgScale;
+        gridRadius = std::max(gridWidth, gridHeight) / 2.0f;  // For fallback
+        useRectangle = true;  // Flattened view uses rectangle
     }
     const float clampedRadius = std::clamp(gridRadius, 0.5f, 500.0f);
 
     // Paint the accumulated points into the QImage
-    overlay->paintApprovalMaskDirect(_accumulatedGridPositions, clampedRadius, paintValue, useRectangle);
+    overlay->paintApprovalMaskDirect(_accumulatedGridPositions, clampedRadius, paintValue,
+                                      useRectangle, gridWidth, gridHeight);
 
     // Clear for next batch
     _accumulatedGridPositions.clear();

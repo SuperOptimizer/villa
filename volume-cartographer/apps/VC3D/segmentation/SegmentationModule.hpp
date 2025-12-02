@@ -81,9 +81,13 @@ public:
     [[nodiscard]] bool approvalMaskMode() const { return _approvalMaskMode; }
     void setApprovalMaskPaintMode(bool approve);
     void setApprovalMaskBrushRadius(float radiusSteps);
+    void setApprovalRectWidth(float width);
+    void setApprovalRectHeight(float height);
     void applyApprovalStrokes();
     [[nodiscard]] SegmentationOverlayController* overlay() const { return _overlay; }
     [[nodiscard]] float approvalMaskBrushRadius() const { return _approvalMaskBrushRadius; }
+    [[nodiscard]] float approvalRectWidth() const { return _approvalRectWidth; }
+    [[nodiscard]] float approvalRectHeight() const { return _approvalRectHeight; }
     void clearApprovalStrokes();
 
     void applyEdits();
@@ -299,6 +303,8 @@ private:
 
     bool _approvalMaskMode{false};
     float _approvalMaskBrushRadius{50.0f};
+    float _approvalRectWidth{100.0f};
+    float _approvalRectHeight{15.0f};
 
     segmentation::UndoHistory _undoHistory;
     bool _suppressUndoCapture{false};

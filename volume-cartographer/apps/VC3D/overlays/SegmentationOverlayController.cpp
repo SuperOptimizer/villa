@@ -206,7 +206,9 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
     const std::vector<std::pair<int, int>>& gridPositions,
     float radiusSteps,
     uint8_t paintValue,
-    bool useRectangle)
+    bool useRectangle,
+    float widthSteps,
+    float heightSteps)
 {
     if (_pendingApprovalMaskImage.isNull()) {
         return;
@@ -215,12 +217,13 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
     const int radius = static_cast<int>(std::ceil(radiusSteps));
     const float sigma = radiusSteps / 2.0f;
 
-    // For rectangle mode (flattened view), use a short height
-    // The rectangle is wide (2 * radius) and short (height = 15% of diameter = 30% of radius)
-    constexpr float cylinderHeightRatio = 0.15f;
-    const int rectHalfHeight = useRectangle
-        ? std::max(1, static_cast<int>(std::ceil(radiusSteps * 2.0f * cylinderHeightRatio / 2.0f)))
-        : radius;  // rectHalfHeight = diameter * 0.15 / 2 = radius * 0.15
+    // For rectangle mode (flattened view), use explicit width and height
+    const int rectHalfWidth = useRectangle && widthSteps > 0
+        ? static_cast<int>(std::ceil(widthSteps / 2.0f))
+        : radius;
+    const int rectHalfHeight = useRectangle && heightSteps > 0
+        ? static_cast<int>(std::ceil(heightSteps / 2.0f))
+        : radius;
 
     // Gaussian falloff function (for smooth edges)
     auto gaussianFalloff = [](float distance, float sigma) -> float {
@@ -230,14 +233,19 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
         return std::exp(-(distance * distance) / (2.0f * sigma * sigma));
     };
 
+    // Compute sigma for falloff (different for each axis in rectangle mode)
+    const float widthSigma = useRectangle && widthSteps > 0 ? widthSteps / 4.0f : sigma;
+    const float heightSigma = useRectangle && heightSteps > 0 ? heightSteps / 4.0f : sigma;
+
     // Paint directly into the PENDING QImage
     for (const auto& [centerRow, centerCol] : gridPositions) {
-        // For rectangle: iterate over full width but limited height
+        // For rectangle: iterate over explicit width/height
         // For circle: iterate over full radius in both dimensions
+        const int colRange = useRectangle ? rectHalfWidth : radius;
         const int rowRange = useRectangle ? rectHalfHeight : radius;
 
         for (int dr = -rowRange; dr <= rowRange; ++dr) {
-            for (int dc = -radius; dc <= radius; ++dc) {
+            for (int dc = -colRange; dc <= colRange; ++dc) {
                 const int row = centerRow + dr;
                 const int col = centerCol + dc;
 
@@ -249,18 +257,12 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
                 float falloff;
                 if (useRectangle) {
                     // Rectangle mode: use separate falloff for each axis
-                    // Horizontal (col) uses full radius, vertical (row) uses short height
                     const float colDist = std::abs(static_cast<float>(dc));
                     const float rowDist = std::abs(static_cast<float>(dr));
 
-                    // Check bounds
-                    if (colDist > radiusSteps) {
-                        continue;
-                    }
-
                     // Compute falloff based on distance to nearest edge
-                    const float colFalloff = gaussianFalloff(colDist, sigma);
-                    const float rowFalloff = gaussianFalloff(rowDist, rectHalfHeight / 2.0f);
+                    const float colFalloff = gaussianFalloff(colDist, widthSigma);
+                    const float rowFalloff = gaussianFalloff(rowDist, heightSigma);
                     falloff = colFalloff * rowFalloff;
                 } else {
                     // Circle mode: use radial distance
@@ -787,20 +789,28 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
 
     // Draw brush reticle at hover position
     // Only show when editing is enabled (painting requires edit mode)
-    // Flat cylinder model: circle in XY/XZ/YZ planes, short rectangle in flattened view
+    // Flat cylinder model: circle in XY/XZ/YZ planes, rectangle in flattened view
     if (state.approvalHoverWorld && _editingEnabled) {
         const cv::Vec3f& hoverWorld = *state.approvalHoverWorld;
         const QPointF sceneCenter = viewer->volumePointToScene(hoverWorld);
 
-        // Always use full brush radius (flat cylinder model)
+        // For circle (plane views): use brush radius
+        // For rectangle (flattened view): use explicit rect width/height
         const float brushRadiusNative = state.approvalBrushRadius;
 
         // Convert brush radius from native voxels to scene pixels
-        // Use volumePointToScene to get the correct scale transformation
+        // Use both X and Y offsets to handle different plane orientations
         const cv::Vec3f& hoverPos = hoverWorld;
-        const cv::Vec3f offsetPos = hoverPos + cv::Vec3f(brushRadiusNative, 0, 0);
-        const QPointF sceneOffset = viewer->volumePointToScene(offsetPos);
-        const qreal radiusPixels = std::abs(sceneOffset.x() - sceneCenter.x());
+        const cv::Vec3f offsetPosX = hoverPos + cv::Vec3f(brushRadiusNative, 0, 0);
+        const cv::Vec3f offsetPosY = hoverPos + cv::Vec3f(0, brushRadiusNative, 0);
+        const QPointF sceneOffsetX = viewer->volumePointToScene(offsetPosX);
+        const QPointF sceneOffsetY = viewer->volumePointToScene(offsetPosY);
+        const qreal radiusPixelsX = std::hypot(sceneOffsetX.x() - sceneCenter.x(),
+                                                sceneOffsetX.y() - sceneCenter.y());
+        const qreal radiusPixelsY = std::hypot(sceneOffsetY.x() - sceneCenter.x(),
+                                                sceneOffsetY.y() - sceneCenter.y());
+        // Use whichever axis projects into the view (the other will be ~0)
+        const qreal radiusPixels = std::max(radiusPixelsX, radiusPixelsY);
 
         if (radiusPixels > 1.0) {
             ViewerOverlayControllerBase::OverlayStyle style;
@@ -815,39 +825,27 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
                 // XY/XZ/YZ planes: draw a circle (cylinder cross-section)
                 builder.addCircle(sceneCenter, radiusPixels, false, style);
             } else {
-                // Flattened/segmentation view: draw a short rectangle (cylinder side view)
-                // Match the painting dimensions exactly:
-                // - Width = 2 * gridRadius (in grid units)
-                // - Height = 2 * max(1, ceil(gridRadius * 0.15)) (in grid units)
+                // Flattened/segmentation view: draw a rectangle using explicit width/height
+                const float rectWidthNative = state.approvalRectWidth;
+                const float rectHeightNative = state.approvalRectHeight;
 
-                // Compute gridRadius (same as paintAccumulatedPointsToImage)
-                float gridRadius = brushRadiusNative;
+                // Convert from native voxels to grid units
                 float surfaceScale = 1.0f;
                 if (state.surface) {
                     const cv::Vec2f scale = state.surface->scale();
                     surfaceScale = (scale[0] + scale[1]) * 0.5f;
-                    gridRadius = brushRadiusNative * surfaceScale;
                 }
+                const float gridWidth = rectWidthNative * surfaceScale;
+                const float gridHeight = rectHeightNative * surfaceScale;
 
-                // Compute rectangle dimensions in grid units (same as paintApprovalMaskDirect)
-                constexpr float cylinderHeightRatio = 0.15f;
-                const float gridRectHalfHeight = std::max(1.0f, std::ceil(gridRadius * cylinderHeightRatio));
-                const float gridRectHalfWidth = gridRadius;
-
-                // Use radiusPixels (from volumePointToScene) to compute grid-to-scene scale
-                // radiusPixels = scene distance for brushRadiusNative in native voxels
-                // We need scene distance for gridRadius in grid units
-                // gridRadius = brushRadiusNative * surfaceScale
-                // So: gridToScene = radiusPixels / brushRadiusNative (scene pixels per native voxel)
-                //     then multiply grid units by (1/surfaceScale) to get native, then by gridToScene
-                // Simplified: scenePixels = gridUnits * (radiusPixels / gridRadius)
+                // Compute grid-to-scene scale using brush radius as reference
+                const float gridRadius = brushRadiusNative * surfaceScale;
                 const qreal gridToScene = (gridRadius > 0) ? (radiusPixels / gridRadius) : 1.0;
 
-                // Add a fixed offset (in grid units) to account for painting extending to cell edges
-                // This matters more at small radii where the offset is a larger percentage
+                // Add a small offset to account for painting extending to cell edges
                 constexpr float gridOffset = 0.5f;
-                const qreal rectHalfWidth = (gridRectHalfWidth + gridOffset) * gridToScene;
-                const qreal rectHalfHeight = (gridRectHalfHeight + gridOffset) * gridToScene;
+                const qreal rectHalfWidth = (gridWidth / 2.0f + gridOffset) * gridToScene;
+                const qreal rectHalfHeight = (gridHeight / 2.0f + gridOffset) * gridToScene;
 
                 const QRectF rect(sceneCenter.x() - rectHalfWidth,
                                   sceneCenter.y() - rectHalfHeight,

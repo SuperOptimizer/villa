@@ -546,20 +546,45 @@ void SegmentationWidget::buildUi()
     paintModeRow->addStretch(1);
     approvalLayout->addLayout(paintModeRow);
 
-    // Brush radius spinner
+    // Brush radius spinner (for XY/XZ/YZ plane viewers - circle)
     auto* brushRadiusRow = new QHBoxLayout();
     brushRadiusRow->setSpacing(8);
-    auto* brushRadiusLabel = new QLabel(tr("Brush radius:"), approvalParent);
+    auto* brushRadiusLabel = new QLabel(tr("Circle radius:"), approvalParent);
     _spinApprovalBrushRadius = new QDoubleSpinBox(approvalParent);
     _spinApprovalBrushRadius->setDecimals(0);
     _spinApprovalBrushRadius->setRange(1.0, 1000.0);
     _spinApprovalBrushRadius->setSingleStep(10.0);
     _spinApprovalBrushRadius->setValue(_approvalBrushRadius);
-    _spinApprovalBrushRadius->setToolTip(tr("Radius of the approval mask brush in native volume resolution (voxels)."));
+    _spinApprovalBrushRadius->setToolTip(tr("Radius of the brush circle in XY/XZ/YZ plane views (native voxels)."));
     brushRadiusRow->addWidget(brushRadiusLabel);
     brushRadiusRow->addWidget(_spinApprovalBrushRadius);
     brushRadiusRow->addStretch(1);
     approvalLayout->addLayout(brushRadiusRow);
+
+    // Rectangle width/height spinners (for flattened view)
+    auto* rectRow = new QHBoxLayout();
+    rectRow->setSpacing(8);
+    auto* rectWidthLabel = new QLabel(tr("Rect width:"), approvalParent);
+    _spinApprovalRectWidth = new QDoubleSpinBox(approvalParent);
+    _spinApprovalRectWidth->setDecimals(0);
+    _spinApprovalRectWidth->setRange(1.0, 2000.0);
+    _spinApprovalRectWidth->setSingleStep(10.0);
+    _spinApprovalRectWidth->setValue(_approvalRectWidth);
+    _spinApprovalRectWidth->setToolTip(tr("Width of the brush rectangle in the flattened segment view (native voxels)."));
+    rectRow->addWidget(rectWidthLabel);
+    rectRow->addWidget(_spinApprovalRectWidth);
+
+    auto* rectHeightLabel = new QLabel(tr("height:"), approvalParent);
+    _spinApprovalRectHeight = new QDoubleSpinBox(approvalParent);
+    _spinApprovalRectHeight->setDecimals(0);
+    _spinApprovalRectHeight->setRange(1.0, 500.0);
+    _spinApprovalRectHeight->setSingleStep(5.0);
+    _spinApprovalRectHeight->setValue(_approvalRectHeight);
+    _spinApprovalRectHeight->setToolTip(tr("Height of the brush rectangle in the flattened segment view (native voxels)."));
+    rectRow->addWidget(rectHeightLabel);
+    rectRow->addWidget(_spinApprovalRectHeight);
+    rectRow->addStretch(1);
+    approvalLayout->addLayout(rectRow);
 
     // Apply and Clear buttons
     auto* buttonRow = new QHBoxLayout();
@@ -751,6 +776,14 @@ void SegmentationWidget::buildUi()
 
     connect(_spinApprovalBrushRadius, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
         setApprovalBrushRadius(static_cast<float>(value));
+    });
+
+    connect(_spinApprovalRectWidth, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
+        setApprovalRectWidth(static_cast<float>(value));
+    });
+
+    connect(_spinApprovalRectHeight, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
+        setApprovalRectHeight(static_cast<float>(value));
     });
 
     connect(_btnApplyApprovalStrokes, &QPushButton::clicked, this, &SegmentationWidget::approvalStrokesApplyRequested);
@@ -1320,6 +1353,13 @@ void SegmentationWidget::restoreSettings()
     _customParamsText = settings.value(QStringLiteral("custom_params_text"), QString()).toString();
     validateCustomParamsText();
 
+    _approvalBrushRadius = settings.value(QStringLiteral("approval_brush_radius"), _approvalBrushRadius).toFloat();
+    _approvalBrushRadius = std::clamp(_approvalBrushRadius, 1.0f, 1000.0f);
+    _approvalRectWidth = settings.value(QStringLiteral("approval_rect_width"), _approvalRectWidth).toFloat();
+    _approvalRectWidth = std::clamp(_approvalRectWidth, 1.0f, 2000.0f);
+    _approvalRectHeight = settings.value(QStringLiteral("approval_rect_height"), _approvalRectHeight).toFloat();
+    _approvalRectHeight = std::clamp(_approvalRectHeight, 1.0f, 500.0f);
+
     const bool editingExpanded = settings.value(QStringLiteral("group_editing_expanded"), true).toBool();
     const bool dragExpanded = settings.value(QStringLiteral("group_drag_expanded"), true).toBool();
     const bool lineExpanded = settings.value(QStringLiteral("group_line_expanded"), true).toBool();
@@ -1448,6 +1488,40 @@ void SegmentationWidget::setApprovalBrushRadius(float radius)
     if (_spinApprovalBrushRadius) {
         const QSignalBlocker blocker(_spinApprovalBrushRadius);
         _spinApprovalBrushRadius->setValue(static_cast<double>(_approvalBrushRadius));
+    }
+}
+
+void SegmentationWidget::setApprovalRectWidth(float width)
+{
+    const float sanitized = std::clamp(width, 1.0f, 2000.0f);
+    if (std::abs(_approvalRectWidth - sanitized) < 1e-4f) {
+        return;
+    }
+    _approvalRectWidth = sanitized;
+    if (!_restoringSettings) {
+        writeSetting(QStringLiteral("approval_rect_width"), _approvalRectWidth);
+        emit approvalRectWidthChanged(_approvalRectWidth);
+    }
+    if (_spinApprovalRectWidth) {
+        const QSignalBlocker blocker(_spinApprovalRectWidth);
+        _spinApprovalRectWidth->setValue(static_cast<double>(_approvalRectWidth));
+    }
+}
+
+void SegmentationWidget::setApprovalRectHeight(float height)
+{
+    const float sanitized = std::clamp(height, 1.0f, 500.0f);
+    if (std::abs(_approvalRectHeight - sanitized) < 1e-4f) {
+        return;
+    }
+    _approvalRectHeight = sanitized;
+    if (!_restoringSettings) {
+        writeSetting(QStringLiteral("approval_rect_height"), _approvalRectHeight);
+        emit approvalRectHeightChanged(_approvalRectHeight);
+    }
+    if (_spinApprovalRectHeight) {
+        const QSignalBlocker blocker(_spinApprovalRectHeight);
+        _spinApprovalRectHeight->setValue(static_cast<double>(_approvalRectHeight));
     }
 }
 
