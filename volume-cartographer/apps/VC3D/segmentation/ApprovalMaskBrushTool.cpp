@@ -115,11 +115,14 @@ void ApprovalMaskBrushTool::startStroke(const cv::Vec3f& worldPos, const QPointF
         const uint64_t hash = (static_cast<uint64_t>(gridIdx->first) << 32) | static_cast<uint64_t>(gridIdx->second);
         _accumulatedGridPosSet.insert(hash);
         _accumulatedGridPositions.push_back(*gridIdx);
+
+        // Paint immediately for instant feedback on first click
+        paintAccumulatedPointsToImage();
     } else {
         qCDebug(lcApprovalMask) << "  Grid index: OUT OF BOUNDS";
     }
 
-    _module.refreshOverlay();
+    // Note: paintAccumulatedPointsToImage already calls refreshOverlay
 }
 
 void ApprovalMaskBrushTool::extendStroke(const cv::Vec3f& worldPos, const QPointF& scenePos, float viewerScale, bool forceSample)
@@ -192,10 +195,17 @@ void ApprovalMaskBrushTool::extendStroke(const cv::Vec3f& worldPos, const QPoint
         _accumulatedGridPositions.push_back(*gridIdx);
     }
 
-    // Paint accumulated points periodically (every 20 points or forceSample)
-    constexpr size_t kPaintBatchSize = 20;
-    if (forceSample || _accumulatedGridPositions.size() >= kPaintBatchSize) {
-        paintAccumulatedPointsToImage();
+    // Paint with time-based throttling to avoid performance issues
+    // Paint every 50ms or when we have accumulated enough points
+    constexpr qint64 kPaintIntervalMs = 50;
+    constexpr size_t kPaintBatchSize = 10;
+    const qint64 elapsed = _lastRefreshTimer.elapsed();
+    if (forceSample || _accumulatedGridPositions.size() >= kPaintBatchSize ||
+        elapsed - _lastRefreshTime >= kPaintIntervalMs) {
+        if (!_accumulatedGridPositions.empty()) {
+            paintAccumulatedPointsToImage();
+            _lastRefreshTime = elapsed;
+        }
     }
 
     // Sample overlay points at much lower resolution (every 20.0 units) for performance
@@ -352,12 +362,15 @@ void ApprovalMaskBrushTool::paintAccumulatedPointsToImage()
     const uint8_t paintValue = (_paintMode == PaintMode::Approve) ? 255 : 0;
 
     float gridRadius;
+    bool useRectangle = false;
+
     if (_usePlaneEffectiveRadius) {
         // For plane viewer strokes: we already found the exact grid cells within the
-        // effective radius sphere. Just paint those cells directly with minimal radius.
+        // cylinder radius. Just paint those cells directly with minimal radius (circle).
         gridRadius = 1.0f;
+        useRectangle = false;  // Plane views use circles (cylinder cross-section)
     } else {
-        // For segmentation view strokes: paint a brush circle around each accumulated point
+        // For segmentation/flattened view strokes: paint a rectangle (cylinder side view)
         float brushRadiusNative = _module.approvalMaskBrushRadius();
 
         // Convert from native voxels to grid units for painting into the QImage
@@ -368,11 +381,12 @@ void ApprovalMaskBrushTool::paintAccumulatedPointsToImage()
             const float avgScale = (scale[0] + scale[1]) * 0.5f;
             gridRadius = brushRadiusNative * avgScale;
         }
+        useRectangle = true;  // Flattened view uses rectangle (cylinder side view)
     }
     const float clampedRadius = std::clamp(gridRadius, 0.5f, 500.0f);
 
     // Paint the accumulated points into the QImage
-    overlay->paintApprovalMaskDirect(_accumulatedGridPositions, clampedRadius, paintValue);
+    overlay->paintApprovalMaskDirect(_accumulatedGridPositions, clampedRadius, paintValue, useRectangle);
 
     // Clear for next batch
     _accumulatedGridPositions.clear();
@@ -583,29 +597,20 @@ void ApprovalMaskBrushTool::startStrokeFromPlane(const cv::Vec3f& worldPos, cons
     _usePlaneEffectiveRadius = true;
     _effectivePaintRadiusNative = 0.0f;
 
-    // First, find the minimum distance to the surface to compute effective radius
-    float minDist = 0.0f;
-    findGridCellsInCylinder(worldPos, planeNormal, worldRadius, &minDist);
-
-    // Effective paint radius = sphere-plane intersection chord half-length
-    // sqrt(R² - d²) gives the radius of the circle where a sphere intersects a plane
-    if (minDist < worldRadius) {
-        _effectivePaintRadiusNative = std::sqrt(worldRadius * worldRadius - minDist * minDist);
-    }
+    // For flat cylinder model: use full brush radius in plane views
+    // The cylinder has full radius in the XY/XZ/YZ planes
+    _effectivePaintRadiusNative = worldRadius;
 
     // Update hover position for brush circle display
     _hoverWorldPos = worldPos;
-    _hoverEffectiveRadius = _effectivePaintRadiusNative;
+    _hoverEffectiveRadius = worldRadius;
 
-    // Now find cells within the EFFECTIVE radius, not the full brush radius
-    // This ensures the painted area matches the preview circle
-    if (_effectivePaintRadiusNative > 0.0f) {
-        auto cells = findGridCellsInCylinder(worldPos, planeNormal, _effectivePaintRadiusNative, nullptr);
-        for (const auto& cell : cells) {
-            const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
-            if (_accumulatedGridPosSet.insert(hash).second) {
-                _accumulatedGridPositions.push_back(cell);
-            }
+    // Find cells within the full brush radius (flat cylinder model)
+    auto cells = findGridCellsInCylinder(worldPos, planeNormal, worldRadius, nullptr);
+    for (const auto& cell : cells) {
+        const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
+        if (_accumulatedGridPosSet.insert(hash).second) {
+            _accumulatedGridPositions.push_back(cell);
         }
     }
 
@@ -639,30 +644,19 @@ void ApprovalMaskBrushTool::extendStrokeFromPlane(const cv::Vec3f& worldPos, con
     _lastSample = worldPos;
     _hasLastSample = true;
 
-    // First, find the minimum distance to compute effective radius
-    float minDist = 0.0f;
-    findGridCellsInCylinder(worldPos, planeNormal, worldRadius, &minDist);
-
-    // Compute effective paint radius = sphere-plane intersection chord half-length
-    float currentEffectiveRadius = 0.0f;
-    if (minDist < worldRadius) {
-        currentEffectiveRadius = std::sqrt(worldRadius * worldRadius - minDist * minDist);
-        // Track maximum effective radius seen during this stroke
-        _effectivePaintRadiusNative = std::max(_effectivePaintRadiusNative, currentEffectiveRadius);
-    }
+    // For flat cylinder model: use full brush radius in plane views
+    _effectivePaintRadiusNative = worldRadius;
 
     // Update hover position for brush circle display during drag
     _hoverWorldPos = worldPos;
-    _hoverEffectiveRadius = currentEffectiveRadius;
+    _hoverEffectiveRadius = worldRadius;
 
-    // Find cells within the EFFECTIVE radius, not the full brush radius
-    if (currentEffectiveRadius > 0.0f) {
-        auto cells = findGridCellsInCylinder(worldPos, planeNormal, currentEffectiveRadius, nullptr);
-        for (const auto& cell : cells) {
-            const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
-            if (_accumulatedGridPosSet.insert(hash).second) {
-                _accumulatedGridPositions.push_back(cell);
-            }
+    // Find cells within the full brush radius (flat cylinder model)
+    auto cells = findGridCellsInCylinder(worldPos, planeNormal, worldRadius, nullptr);
+    for (const auto& cell : cells) {
+        const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
+        if (_accumulatedGridPosSet.insert(hash).second) {
+            _accumulatedGridPositions.push_back(cell);
         }
     }
 
@@ -919,20 +913,7 @@ void ApprovalMaskBrushTool::setHoverWorldPos(const cv::Vec3f& pos, float brushRa
 {
     _hoverWorldPos = pos;
 
-    // Compute and cache effective radius for hover preview
-    if (!_surface) {
-        _hoverEffectiveRadius = brushRadius;
-        return;
-    }
-
-    // Use pointTo to find the minimum distance to the surface
-    cv::Vec3f ptr{0, 0, 0};
-    const float dist = _surface->pointTo(ptr, pos, brushRadius * 2.0f, 100);
-
-    // Sphere-plane intersection: effective radius = sqrt(R² - d²)
-    if (dist >= 0 && dist < brushRadius) {
-        _hoverEffectiveRadius = std::sqrt(brushRadius * brushRadius - dist * dist);
-    } else {
-        _hoverEffectiveRadius = 0.0f;  // No intersection
-    }
+    // For flat cylinder model: always use full brush radius
+    // The cylinder has full radius in all orthogonal plane views (XY, XZ, YZ)
+    _hoverEffectiveRadius = brushRadius;
 }

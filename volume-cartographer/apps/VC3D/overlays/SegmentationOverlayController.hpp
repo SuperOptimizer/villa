@@ -80,16 +80,24 @@ public:
     void loadApprovalMaskImage(QuadSurface* surface);
 
     // Paint directly into the approval mask QImage (fast, in-place editing)
+    // If useRectangle is true, paints a short rectangle (flat cylinder side view for flattened viewer)
+    // If useRectangle is false, paints a circle (flat cylinder cross-section for plane viewers)
     void paintApprovalMaskDirect(const std::vector<std::pair<int, int>>& gridPositions,
                                   float radiusSteps,
-                                  uint8_t paintValue);
+                                  uint8_t paintValue,
+                                  bool useRectangle = false);
 
     // Save the approval mask QImage back to the surface
     void saveApprovalMaskToSurface(QuadSurface* surface);
 
-    // Query approval status for a grid position
+    // Query approval status for a grid position (integer coords, nearest neighbor)
     // Returns: 0 = not approved, 1 = saved approved, 2 = pending approved, 3 = pending unapproved
     int queryApprovalStatus(int row, int col) const;
+
+    // Query approval value with bilinear interpolation (float coords)
+    // Returns approval intensity 0.0-1.0 using bilinear interpolation for smooth edges
+    // Also returns status: 0 = not approved, 1 = saved, 2 = pending approve, 3 = pending unapprove
+    float queryApprovalBilinear(float row, float col, int* outStatus = nullptr) const;
 
     // Check if approval mask mode is active and we have mask data
     bool hasApprovalMaskData() const;
@@ -143,4 +151,8 @@ private:
     mutable uint64_t _pendingImageVersion{0};
 
     void rebuildViewerCache(CVolumeViewer* viewer, QuadSurface* surface) const;
+
+    // Bilinear interpolation helper for QImage alpha channel
+    // Returns interpolated alpha value (0.0-255.0) at floating point coordinates
+    static float sampleImageBilinear(const QImage& image, float row, float col);
 };

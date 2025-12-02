@@ -205,7 +205,8 @@ void SegmentationOverlayController::loadApprovalMaskImage(QuadSurface* surface)
 void SegmentationOverlayController::paintApprovalMaskDirect(
     const std::vector<std::pair<int, int>>& gridPositions,
     float radiusSteps,
-    uint8_t paintValue)
+    uint8_t paintValue,
+    bool useRectangle)
 {
     if (_pendingApprovalMaskImage.isNull()) {
         return;
@@ -214,7 +215,14 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
     const int radius = static_cast<int>(std::ceil(radiusSteps));
     const float sigma = radiusSteps / 2.0f;
 
-    // Gaussian falloff function
+    // For rectangle mode (flattened view), use a short height
+    // The rectangle is wide (2 * radius) and short (height = 15% of diameter = 30% of radius)
+    constexpr float cylinderHeightRatio = 0.15f;
+    const int rectHalfHeight = useRectangle
+        ? std::max(1, static_cast<int>(std::ceil(radiusSteps * 2.0f * cylinderHeightRatio / 2.0f)))
+        : radius;  // rectHalfHeight = diameter * 0.15 / 2 = radius * 0.15
+
+    // Gaussian falloff function (for smooth edges)
     auto gaussianFalloff = [](float distance, float sigma) -> float {
         if (sigma <= 0.0f) {
             return distance <= 0.0f ? 1.0f : 0.0f;
@@ -224,7 +232,11 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
 
     // Paint directly into the PENDING QImage
     for (const auto& [centerRow, centerCol] : gridPositions) {
-        for (int dr = -radius; dr <= radius; ++dr) {
+        // For rectangle: iterate over full width but limited height
+        // For circle: iterate over full radius in both dimensions
+        const int rowRange = useRectangle ? rectHalfHeight : radius;
+
+        for (int dr = -rowRange; dr <= rowRange; ++dr) {
             for (int dc = -radius; dc <= radius; ++dc) {
                 const int row = centerRow + dr;
                 const int col = centerCol + dc;
@@ -234,12 +246,31 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
                     continue;
                 }
 
-                const float distance = std::sqrt(static_cast<float>(dr * dr + dc * dc));
-                if (distance > radiusSteps) {
-                    continue;
+                float falloff;
+                if (useRectangle) {
+                    // Rectangle mode: use separate falloff for each axis
+                    // Horizontal (col) uses full radius, vertical (row) uses short height
+                    const float colDist = std::abs(static_cast<float>(dc));
+                    const float rowDist = std::abs(static_cast<float>(dr));
+
+                    // Check bounds
+                    if (colDist > radiusSteps) {
+                        continue;
+                    }
+
+                    // Compute falloff based on distance to nearest edge
+                    const float colFalloff = gaussianFalloff(colDist, sigma);
+                    const float rowFalloff = gaussianFalloff(rowDist, rectHalfHeight / 2.0f);
+                    falloff = colFalloff * rowFalloff;
+                } else {
+                    // Circle mode: use radial distance
+                    const float distance = std::sqrt(static_cast<float>(dr * dr + dc * dc));
+                    if (distance > radiusSteps) {
+                        continue;
+                    }
+                    falloff = gaussianFalloff(distance, sigma);
                 }
 
-                const float falloff = gaussianFalloff(distance, sigma);
                 QRgb pixel = _pendingApprovalMaskImage.pixel(col, row);
 
                 // Extract current green value
@@ -375,19 +406,14 @@ void SegmentationOverlayController::collectPrimitives(CVolumeViewer* viewer,
                                                       ViewerOverlayControllerBase::OverlayBuilder& builder)
 {
     if (!viewer || !_currentState) {
-        qDebug() << "collectPrimitives: early return - viewer:" << viewer << "hasState:" << _currentState.has_value();
         return;
     }
 
     const State& state = *_currentState;
 
-    qDebug() << "collectPrimitives: approvalMaskMode=" << state.approvalMaskMode
-             << "surface=" << (void*)state.surface << "_editingEnabled=" << _editingEnabled;
-
     // Render approval mask overlays regardless of editing enabled
     // (but painting requires editing to be enabled - handled in SegmentationModule)
     if (state.approvalMaskMode && state.surface) {
-        qDebug() << "collectPrimitives: calling buildApprovalMaskOverlay";
         buildApprovalMaskOverlay(state, viewer, builder);
     }
 
@@ -632,6 +658,80 @@ int SegmentationOverlayController::queryApprovalStatus(int row, int col) const
     return 0;  // Not approved
 }
 
+float SegmentationOverlayController::sampleImageBilinear(const QImage& image, float row, float col)
+{
+    if (image.isNull()) {
+        return 0.0f;
+    }
+
+    const int width = image.width();
+    const int height = image.height();
+
+    // Get the four surrounding pixel coordinates
+    const int col0 = static_cast<int>(std::floor(col));
+    const int col1 = col0 + 1;
+    const int row0 = static_cast<int>(std::floor(row));
+    const int row1 = row0 + 1;
+
+    // Compute interpolation weights
+    const float colFrac = col - static_cast<float>(col0);
+    const float rowFrac = row - static_cast<float>(row0);
+
+    // Sample the four corners (clamped to image bounds)
+    auto sampleAlpha = [&](int r, int c) -> float {
+        if (r < 0 || r >= height || c < 0 || c >= width) {
+            return 0.0f;
+        }
+        return static_cast<float>(qAlpha(image.pixel(c, r)));
+    };
+
+    const float v00 = sampleAlpha(row0, col0);
+    const float v01 = sampleAlpha(row0, col1);
+    const float v10 = sampleAlpha(row1, col0);
+    const float v11 = sampleAlpha(row1, col1);
+
+    // Bilinear interpolation
+    const float v0 = v00 * (1.0f - colFrac) + v01 * colFrac;
+    const float v1 = v10 * (1.0f - colFrac) + v11 * colFrac;
+    return v0 * (1.0f - rowFrac) + v1 * rowFrac;
+}
+
+float SegmentationOverlayController::queryApprovalBilinear(float row, float col, int* outStatus) const
+{
+    // First check pending mask (takes priority)
+    const float pendingAlpha = sampleImageBilinear(_pendingApprovalMaskImage, row, col);
+    if (pendingAlpha > 0.5f) {  // Threshold to determine if we're "in" pending region
+        // Determine if pending approve or unapprove by checking nearest pixel color
+        const int nearestRow = static_cast<int>(std::round(row));
+        const int nearestCol = static_cast<int>(std::round(col));
+        if (!_pendingApprovalMaskImage.isNull() &&
+            nearestRow >= 0 && nearestRow < _pendingApprovalMaskImage.height() &&
+            nearestCol >= 0 && nearestCol < _pendingApprovalMaskImage.width()) {
+            QRgb pixel = _pendingApprovalMaskImage.pixel(nearestCol, nearestRow);
+            if (qAlpha(pixel) > 0) {
+                if (outStatus) {
+                    *outStatus = (qRed(pixel) > qBlue(pixel)) ? 3 : 2;  // 3 = unapprove, 2 = approve
+                }
+                return pendingAlpha / 255.0f;
+            }
+        }
+    }
+
+    // Check saved mask with bilinear interpolation
+    const float savedAlpha = sampleImageBilinear(_savedApprovalMaskImage, row, col);
+    if (savedAlpha > 0.0f) {
+        if (outStatus) {
+            *outStatus = 1;  // Saved
+        }
+        return savedAlpha / 255.0f;
+    }
+
+    if (outStatus) {
+        *outStatus = 0;  // Not approved
+    }
+    return 0.0f;
+}
+
 bool SegmentationOverlayController::hasApprovalMaskData() const
 {
     bool hasState = _currentState.has_value();
@@ -685,22 +785,22 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
     Surface* viewerSurf = viewer->currentSurface();
     const bool isPlaneViewer = dynamic_cast<PlaneSurface*>(viewerSurf) != nullptr;
 
-    // Draw brush circle at hover position (for both plane and segmentation viewers)
+    // Draw brush reticle at hover position
     // Only show when editing is enabled (painting requires edit mode)
+    // Flat cylinder model: circle in XY/XZ/YZ planes, short rectangle in flattened view
     if (state.approvalHoverWorld && _editingEnabled) {
         const cv::Vec3f& hoverWorld = *state.approvalHoverWorld;
         const QPointF sceneCenter = viewer->volumePointToScene(hoverWorld);
 
-        // Use effective radius for plane viewers, full brush radius for segmentation view
-        const float brushRadius = (isPlaneViewer && state.approvalEffectiveRadius > 0.0f)
-            ? state.approvalEffectiveRadius
-            : state.approvalBrushRadius;
+        // Always use full brush radius (flat cylinder model)
+        const float brushRadiusNative = state.approvalBrushRadius;
 
-        // Convert brush radius from native voxels to scene pixels using viewer's scale
-        // This is much faster than calling volumePointToScene multiple times
-        // Scale by 1.5x to match actual painted area (grid cell spacing effect)
-        const qreal viewerScale = viewer->getCurrentScale();
-        const qreal radiusPixels = brushRadius * viewerScale * 1.5;
+        // Convert brush radius from native voxels to scene pixels
+        // Use volumePointToScene to get the correct scale transformation
+        const cv::Vec3f& hoverPos = hoverWorld;
+        const cv::Vec3f offsetPos = hoverPos + cv::Vec3f(brushRadiusNative, 0, 0);
+        const QPointF sceneOffset = viewer->volumePointToScene(offsetPos);
+        const qreal radiusPixels = std::abs(sceneOffset.x() - sceneCenter.x());
 
         if (radiusPixels > 1.0) {
             ViewerOverlayControllerBase::OverlayStyle style;
@@ -711,7 +811,50 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
             style.dashPattern = {4.0, 4.0};  // Dashed pattern
             style.z = kApprovalMaskZ + 10.0;
 
-            builder.addCircle(sceneCenter, radiusPixels, false, style);
+            if (isPlaneViewer) {
+                // XY/XZ/YZ planes: draw a circle (cylinder cross-section)
+                builder.addCircle(sceneCenter, radiusPixels, false, style);
+            } else {
+                // Flattened/segmentation view: draw a short rectangle (cylinder side view)
+                // Match the painting dimensions exactly:
+                // - Width = 2 * gridRadius (in grid units)
+                // - Height = 2 * max(1, ceil(gridRadius * 0.15)) (in grid units)
+
+                // Compute gridRadius (same as paintAccumulatedPointsToImage)
+                float gridRadius = brushRadiusNative;
+                float surfaceScale = 1.0f;
+                if (state.surface) {
+                    const cv::Vec2f scale = state.surface->scale();
+                    surfaceScale = (scale[0] + scale[1]) * 0.5f;
+                    gridRadius = brushRadiusNative * surfaceScale;
+                }
+
+                // Compute rectangle dimensions in grid units (same as paintApprovalMaskDirect)
+                constexpr float cylinderHeightRatio = 0.15f;
+                const float gridRectHalfHeight = std::max(1.0f, std::ceil(gridRadius * cylinderHeightRatio));
+                const float gridRectHalfWidth = gridRadius;
+
+                // Use radiusPixels (from volumePointToScene) to compute grid-to-scene scale
+                // radiusPixels = scene distance for brushRadiusNative in native voxels
+                // We need scene distance for gridRadius in grid units
+                // gridRadius = brushRadiusNative * surfaceScale
+                // So: gridToScene = radiusPixels / brushRadiusNative (scene pixels per native voxel)
+                //     then multiply grid units by (1/surfaceScale) to get native, then by gridToScene
+                // Simplified: scenePixels = gridUnits * (radiusPixels / gridRadius)
+                const qreal gridToScene = (gridRadius > 0) ? (radiusPixels / gridRadius) : 1.0;
+
+                // Add a fixed offset (in grid units) to account for painting extending to cell edges
+                // This matters more at small radii where the offset is a larger percentage
+                constexpr float gridOffset = 0.5f;
+                const qreal rectHalfWidth = (gridRectHalfWidth + gridOffset) * gridToScene;
+                const qreal rectHalfHeight = (gridRectHalfHeight + gridOffset) * gridToScene;
+
+                const QRectF rect(sceneCenter.x() - rectHalfWidth,
+                                  sceneCenter.y() - rectHalfHeight,
+                                  rectHalfWidth * 2.0,
+                                  rectHalfHeight * 2.0);
+                builder.addRect(rect, false, style);
+            }
         }
     }
 

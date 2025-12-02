@@ -288,44 +288,46 @@ void CVolumeViewer::renderIntersections()
                     const cv::Vec3f center = segmentation->center();
                     const cv::Vec2f scale = segmentation->scale();
 
-                    // Convert ptr-space back to absolute grid coords
+                    // Convert ptr-space back to absolute grid coords (keep as float for bilinear)
                     // ptr = abs - center * scale, so abs = ptr + center * scale
                     const float absCol0 = line.surfaceParams[0][0] + center[0] * scale[0];
                     const float absRow0 = line.surfaceParams[0][1] + center[1] * scale[1];
                     const float absCol1 = line.surfaceParams[1][0] + center[0] * scale[0];
                     const float absRow1 = line.surfaceParams[1][1] + center[1] * scale[1];
 
-                    const int row0 = static_cast<int>(std::round(absRow0));
-                    const int col0 = static_cast<int>(std::round(absCol0));
-                    const int row1 = static_cast<int>(std::round(absRow1));
-                    const int col1 = static_cast<int>(std::round(absCol1));
+                    // Use bilinear interpolation for sub-pixel accuracy
+                    int status0 = 0, status1 = 0;
+                    const float intensity0 = segOverlay->queryApprovalBilinear(absRow0, absCol0, &status0);
+                    const float intensity1 = segOverlay->queryApprovalBilinear(absRow1, absCol1, &status1);
 
-                    int approval0 = segOverlay->queryApprovalStatus(row0, col0);
-                    int approval1 = segOverlay->queryApprovalStatus(row1, col1);
-                    int approvalState = std::max(approval0, approval1);
+                    // Use max status for color, average intensity for blending
+                    const int approvalState = std::max(status0, status1);
+                    const float approvalIntensity = std::max(intensity0, intensity1);
 
-                    static int logCount = 0;
-                    if (logCount < 20) {
-                        qDebug() << "  line gridCoords: p0=(" << col0 << "," << row0 << ") p1=(" << col1 << "," << row1 << ")"
-                                 << "approval0=" << approval0 << "approval1=" << approval1 << "state=" << approvalState
-                                 << "center=(" << center[0] << "," << center[1] << ") scale=(" << scale[0] << "," << scale[1] << ")";
-                        ++logCount;
-                    }
+                    if (approvalState > 0 && approvalIntensity > 0.0f) {
+                        // Select base color based on status
+                        QColor baseColor;
+                        if (approvalState == 3) {
+                            baseColor = COLOR_PENDING_UNAPPROVE;  // Red for pending unapproval
+                        } else if (approvalState == 2) {
+                            baseColor = COLOR_PENDING;  // Blue for pending approval
+                        } else {
+                            baseColor = COLOR_APPROVED;  // Green for saved
+                        }
 
-                    if (approvalState == 3) {
-                        // Pending unapproval - red, thicker
-                        lineColor = COLOR_PENDING_UNAPPROVE;
-                        lineWidth = width + 6.0f;
-                        lineZ = z_value + 5;
-                    } else if (approvalState == 2) {
-                        // Pending approval - blue, thicker
-                        lineColor = COLOR_PENDING;
-                        lineWidth = width + 6.0f;
-                        lineZ = z_value + 5;
-                    } else if (approvalState == 1) {
-                        // Saved approval - green, thicker
-                        lineColor = COLOR_APPROVED;
-                        lineWidth = width + 6.0f;
+                        // Blend the color based on bilinear intensity (smooth edges)
+                        // At edges (low intensity), blend toward the original line color
+                        const float blendFactor = std::min(1.0f, approvalIntensity * 2.0f);  // Scale up for faster transition
+                        lineColor = QColor(
+                            static_cast<int>(col.red() * (1.0f - blendFactor) + baseColor.red() * blendFactor),
+                            static_cast<int>(col.green() * (1.0f - blendFactor) + baseColor.green() * blendFactor),
+                            static_cast<int>(col.blue() * (1.0f - blendFactor) + baseColor.blue() * blendFactor),
+                            baseColor.alpha()
+                        );
+
+                        // Width scales with intensity for smoother edge appearance
+                        const float extraWidth = 6.0f * blendFactor;
+                        lineWidth = width + extraWidth;
                         lineZ = z_value + 5;
                     }
                 }
