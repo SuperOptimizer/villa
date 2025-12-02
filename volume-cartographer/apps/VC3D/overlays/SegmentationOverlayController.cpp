@@ -839,17 +839,15 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
                 // XY/XZ/YZ planes: draw a circle (cylinder cross-section)
                 builder.addCircle(sceneCenter, radiusPixels, false, style);
             }
-        } else if (state.approvalHoverScenePos) {
-            // For segmentation/flattened view: use cached scene position to avoid expensive pointTo()
+        } else {
+            // For segmentation/flattened view: convert world position to scene coordinates
             // Draw a rectangle (cylinder side view): Width = 2 * radius (diameter), Height = depth
             const float brushDepthNative = state.approvalBrushDepth;
-            const float hoverViewerScale = state.approvalHoverViewerScale;
             const float thisViewerScale = viewer->getCurrentScale();
 
-            // Scale the cached scene position to this viewer's scale
-            const QPointF& cachedScenePos = *state.approvalHoverScenePos;
-            const qreal scaleRatio = (hoverViewerScale > 0) ? (thisViewerScale / hoverViewerScale) : 1.0;
-            const QPointF sceneCenter(cachedScenePos.x() * scaleRatio, cachedScenePos.y() * scaleRatio);
+            // Convert world position to scene coordinates
+            // This uses volumePointToScene which calls pointTo for QuadSurface
+            const QPointF sceneCenter = viewer->volumePointToScene(hoverWorld);
 
             // Convert from native voxels to grid units
             float surfaceScale = 1.0f;
