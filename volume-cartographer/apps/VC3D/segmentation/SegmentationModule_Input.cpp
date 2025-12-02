@@ -8,6 +8,7 @@
 #include "SegmentationLineTool.hpp"
 #include "SegmentationPushPullTool.hpp"
 #include "SegmentationWidget.hpp"
+#include "../overlays/SegmentationOverlayController.hpp"
 
 #include "vc/core/util/PlaneSurface.hpp"
 
@@ -23,6 +24,46 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
 {
     if (!event) {
         return false;
+    }
+
+    // B: Toggle edit approved mask (only if show approval mask is enabled)
+    if (event->key() == Qt::Key_B && !event->isAutoRepeat() && event->modifiers() == Qt::NoModifier) {
+        if (_showApprovalMask) {
+            setEditApprovedMask(!_editApprovedMask);
+            if (_widget) {
+                _widget->setEditApprovedMask(_editApprovedMask);
+            }
+            emit statusMessageRequested(
+                _editApprovedMask ? tr("Approval painting enabled.") : tr("Approval painting disabled."),
+                kStatusShort);
+            event->accept();
+            return true;
+        }
+    }
+
+    // N: Toggle edit unapproved mask (only if show approval mask is enabled)
+    if (event->key() == Qt::Key_N && !event->isAutoRepeat() && event->modifiers() == Qt::NoModifier) {
+        if (_showApprovalMask) {
+            setEditUnapprovedMask(!_editUnapprovedMask);
+            if (_widget) {
+                _widget->setEditUnapprovedMask(_editUnapprovedMask);
+            }
+            emit statusMessageRequested(
+                _editUnapprovedMask ? tr("Unapproval painting enabled.") : tr("Unapproval painting disabled."),
+                kStatusShort);
+            event->accept();
+            return true;
+        }
+    }
+
+    // Ctrl+B: Undo approval mask stroke (only when editing approval mask)
+    if (event->key() == Qt::Key_B && !event->isAutoRepeat() &&
+        event->modifiers() == Qt::ControlModifier) {
+        if (isEditingApprovalMask() && _overlay && _overlay->canUndoApprovalMaskPaint()) {
+            undoApprovalStroke();
+            event->accept();
+            return true;
+        }
     }
 
     if (!event->isAutoRepeat()) {
@@ -225,7 +266,7 @@ void SegmentationModule::handleMousePress(CVolumeViewer* viewer,
     const bool isLeftButton = (button == Qt::LeftButton);
 
     // Handle approval mask editing mode - works independently of surface editing
-    if (_editApprovalMask && isLeftButton) {
+    if (isEditingApprovalMask() && isLeftButton) {
         if (modifiers.testFlag(Qt::ControlModifier) || modifiers.testFlag(Qt::AltModifier)) {
             return;
         }
@@ -372,7 +413,7 @@ void SegmentationModule::handleMouseMove(CVolumeViewer* viewer,
 
     // Update hover position for approval brush circle when in edit approval mode but not stroking
     // Only update if position changed significantly to avoid expensive refreshOverlay on every mouse move
-    if (_editApprovalMask && _approvalTool && !buttons.testFlag(Qt::LeftButton)) {
+    if (isEditingApprovalMask() && _approvalTool && !buttons.testFlag(Qt::LeftButton)) {
         const auto lastHover = _approvalTool->hoverWorldPos();
         const float minMoveThreshold = 2.0f;  // Native voxels
         bool shouldUpdate = !lastHover.has_value();

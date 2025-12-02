@@ -78,17 +78,19 @@ public:
     void setHoverPreviewEnabled(bool enabled);
 
     void setShowApprovalMask(bool enabled);
-    void setEditApprovalMask(bool enabled);
+    void setEditApprovedMask(bool enabled);
+    void setEditUnapprovedMask(bool enabled);
+    void onActiveSegmentChanged(QuadSurface* newSurface);
     [[nodiscard]] bool showApprovalMask() const { return _showApprovalMask; }
-    [[nodiscard]] bool editApprovalMask() const { return _editApprovalMask; }
-    void setApprovalMaskPaintMode(bool approve);
+    [[nodiscard]] bool editApprovedMask() const { return _editApprovedMask; }
+    [[nodiscard]] bool editUnapprovedMask() const { return _editUnapprovedMask; }
+    [[nodiscard]] bool isEditingApprovalMask() const { return _editApprovedMask || _editUnapprovedMask; }
     void setApprovalMaskBrushRadius(float radiusSteps);
     void setApprovalBrushDepth(float depth);
-    void applyApprovalStrokes();
     [[nodiscard]] SegmentationOverlayController* overlay() const { return _overlay; }
     [[nodiscard]] float approvalMaskBrushRadius() const { return _approvalMaskBrushRadius; }
     [[nodiscard]] float approvalBrushDepth() const { return _approvalBrushDepth; }
-    void clearApprovalStrokes();
+    void undoApprovalStroke();
 
     void applyEdits();
     void resetEdits();
@@ -145,6 +147,7 @@ signals:
                               int steps,
                               bool inpaintOnly);
     void growthInProgressChanged(bool running);
+    void approvalMaskSaved(const std::string& segmentId);
 
 private:
     friend class SegmentationBrushTool;
@@ -261,6 +264,7 @@ private:
     void performAutosave();
     void ensureAutosaveTimer();
     void updateAutosaveState();
+    void saveApprovalMaskToDisk();
 
     SegmentationWidget* _widget{nullptr};
     SegmentationEditManager* _editManager{nullptr};
@@ -302,7 +306,8 @@ private:
     std::unique_ptr<ApprovalMaskBrushTool> _approvalTool;
 
     bool _showApprovalMask{false};
-    bool _editApprovalMask{false};
+    bool _editApprovedMask{false};
+    bool _editUnapprovedMask{false};
     float _approvalMaskBrushRadius{50.0f};  // Cylinder radius
     float _approvalBrushDepth{15.0f};       // Cylinder depth
 

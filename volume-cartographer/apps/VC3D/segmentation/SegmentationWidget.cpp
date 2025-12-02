@@ -528,29 +528,22 @@ void SegmentationWidget::buildUi()
     _chkShowApprovalMask->setToolTip(tr("Display the approval mask overlay on the surface."));
     approvalLayout->addWidget(_chkShowApprovalMask);
 
-    // Edit approval mask checkbox
-    _chkEditApprovalMask = new QCheckBox(tr("Edit Approval Mask"), approvalParent);
-    _chkEditApprovalMask->setToolTip(tr("Enable editing of the approval mask. "
-                                         "When enabled, brush strokes paint approved/unapproved regions instead of modifying the surface."));
-    _chkEditApprovalMask->setEnabled(false);  // Only enabled when show is checked
-    approvalLayout->addWidget(_chkEditApprovalMask);
+    // Edit checkboxes row - mutually exclusive approve/unapprove modes
+    auto* editRow = new QHBoxLayout();
+    editRow->setSpacing(8);
 
-    // Paint mode buttons (Approve / Unapprove)
-    auto* paintModeRow = new QHBoxLayout();
-    paintModeRow->setSpacing(8);
-    auto* paintModeLabel = new QLabel(tr("Paint mode:"), approvalParent);
-    _btnMarkApproved = new QPushButton(tr("Mark Approved"), approvalParent);
-    _btnMarkApproved->setCheckable(true);
-    _btnMarkApproved->setChecked(true);
-    _btnMarkApproved->setToolTip(tr("Paint regions as approved (green). Click to select this mode."));
-    _btnMarkUnapproved = new QPushButton(tr("Mark Unapproved"), approvalParent);
-    _btnMarkUnapproved->setCheckable(true);
-    _btnMarkUnapproved->setToolTip(tr("Paint regions as unapproved (red). Click to select this mode."));
-    paintModeRow->addWidget(paintModeLabel);
-    paintModeRow->addWidget(_btnMarkApproved);
-    paintModeRow->addWidget(_btnMarkUnapproved);
-    paintModeRow->addStretch(1);
-    approvalLayout->addLayout(paintModeRow);
+    _chkEditApprovedMask = new QCheckBox(tr("Edit Approved (B)"), approvalParent);
+    _chkEditApprovedMask->setToolTip(tr("Paint regions as approved. Saves to disk when toggled off."));
+    _chkEditApprovedMask->setEnabled(false);  // Only enabled when show is checked
+
+    _chkEditUnapprovedMask = new QCheckBox(tr("Edit Unapproved (N)"), approvalParent);
+    _chkEditUnapprovedMask->setToolTip(tr("Paint regions as unapproved. Saves to disk when toggled off."));
+    _chkEditUnapprovedMask->setEnabled(false);  // Only enabled when show is checked
+
+    editRow->addWidget(_chkEditApprovedMask);
+    editRow->addWidget(_chkEditUnapprovedMask);
+    editRow->addStretch(1);
+    approvalLayout->addLayout(editRow);
 
     // Cylinder brush controls: radius and depth
     // Radius = circle in plane views, width of rectangle in flattened view
@@ -580,15 +573,12 @@ void SegmentationWidget::buildUi()
     approvalBrushRow->addStretch(1);
     approvalLayout->addLayout(approvalBrushRow);
 
-    // Apply and Clear buttons
+    // Undo button
     auto* buttonRow = new QHBoxLayout();
     buttonRow->setSpacing(8);
-    _btnApplyApprovalStrokes = new QPushButton(tr("Apply"), approvalParent);
-    _btnApplyApprovalStrokes->setToolTip(tr("Apply pending approval strokes to the surface. This permanently saves the painted regions."));
-    _btnClearApprovalStrokes = new QPushButton(tr("Clear"), approvalParent);
-    _btnClearApprovalStrokes->setToolTip(tr("Clear all pending approval strokes without applying them."));
-    buttonRow->addWidget(_btnApplyApprovalStrokes);
-    buttonRow->addWidget(_btnClearApprovalStrokes);
+    _btnUndoApprovalStroke = new QPushButton(tr("Undo (Ctrl+B)"), approvalParent);
+    _btnUndoApprovalStroke->setToolTip(tr("Undo the last approval mask brush stroke."));
+    buttonRow->addWidget(_btnUndoApprovalStroke);
     buttonRow->addStretch(1);
     approvalLayout->addLayout(buttonRow);
 
@@ -748,32 +738,23 @@ void SegmentationWidget::buildUi()
     // Approval mask signal connections
     connect(_chkShowApprovalMask, &QCheckBox::toggled, this, [this](bool enabled) {
         setShowApprovalMask(enabled);
-        // If show is being unchecked and edit is checked, uncheck edit too
-        if (!enabled && _editApprovalMask) {
-            setEditApprovalMask(false);
+        // If show is being unchecked and edit modes are active, turn them off
+        if (!enabled) {
+            if (_editApprovedMask) {
+                setEditApprovedMask(false);
+            }
+            if (_editUnapprovedMask) {
+                setEditUnapprovedMask(false);
+            }
         }
     });
 
-    connect(_chkEditApprovalMask, &QCheckBox::toggled, this, [this](bool enabled) {
-        setEditApprovalMask(enabled);
+    connect(_chkEditApprovedMask, &QCheckBox::toggled, this, [this](bool enabled) {
+        setEditApprovedMask(enabled);
     });
 
-    connect(_btnMarkApproved, &QPushButton::clicked, this, [this]() {
-        if (!_btnMarkApproved->isChecked()) {
-            _btnMarkApproved->setChecked(true);
-            return;
-        }
-        _btnMarkUnapproved->setChecked(false);
-        setApprovalPaintMode(true);  // true = approve
-    });
-
-    connect(_btnMarkUnapproved, &QPushButton::clicked, this, [this]() {
-        if (!_btnMarkUnapproved->isChecked()) {
-            _btnMarkUnapproved->setChecked(true);
-            return;
-        }
-        _btnMarkApproved->setChecked(false);
-        setApprovalPaintMode(false);  // false = unapprove
+    connect(_chkEditUnapprovedMask, &QCheckBox::toggled, this, [this](bool enabled) {
+        setEditUnapprovedMask(enabled);
     });
 
     connect(_spinApprovalBrushRadius, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
@@ -784,8 +765,7 @@ void SegmentationWidget::buildUi()
         setApprovalBrushDepth(static_cast<float>(value));
     });
 
-    connect(_btnApplyApprovalStrokes, &QPushButton::clicked, this, &SegmentationWidget::approvalStrokesApplyRequested);
-    connect(_btnClearApprovalStrokes, &QPushButton::clicked, this, &SegmentationWidget::approvalStrokesClearRequested);
+    connect(_btnUndoApprovalStroke, &QPushButton::clicked, this, &SegmentationWidget::approvalStrokesUndoRequested);
 
     auto connectDirectionCheckbox = [this](QCheckBox* box) {
         if (!box) {
@@ -1263,11 +1243,17 @@ void SegmentationWidget::syncUiState()
         const QSignalBlocker blocker(_chkShowApprovalMask);
         _chkShowApprovalMask->setChecked(_showApprovalMask);
     }
-    if (_chkEditApprovalMask) {
-        const QSignalBlocker blocker(_chkEditApprovalMask);
-        _chkEditApprovalMask->setChecked(_editApprovalMask);
-        // Edit checkbox only enabled when show is checked
-        _chkEditApprovalMask->setEnabled(_showApprovalMask);
+    if (_chkEditApprovedMask) {
+        const QSignalBlocker blocker(_chkEditApprovedMask);
+        _chkEditApprovedMask->setChecked(_editApprovedMask);
+        // Edit checkboxes only enabled when show is checked
+        _chkEditApprovedMask->setEnabled(_showApprovalMask);
+    }
+    if (_chkEditUnapprovedMask) {
+        const QSignalBlocker blocker(_chkEditUnapprovedMask);
+        _chkEditUnapprovedMask->setChecked(_editUnapprovedMask);
+        // Edit checkboxes only enabled when show is checked
+        _chkEditUnapprovedMask->setEnabled(_showApprovalMask);
     }
 
     updateGrowthUiState();
@@ -1368,11 +1354,7 @@ void SegmentationWidget::restoreSettings()
     _approvalBrushDepth = settings.value(QStringLiteral("approval_brush_depth"), _approvalBrushDepth).toFloat();
     _approvalBrushDepth = std::clamp(_approvalBrushDepth, 1.0f, 500.0f);
     _showApprovalMask = settings.value(QStringLiteral("show_approval_mask"), _showApprovalMask).toBool();
-    _editApprovalMask = settings.value(QStringLiteral("edit_approval_mask"), _editApprovalMask).toBool();
-    // Ensure edit is not enabled if show is not enabled
-    if (!_showApprovalMask && _editApprovalMask) {
-        _editApprovalMask = false;
-    }
+    // Don't restore edit states - user must explicitly enable editing each session
 
     const bool editingExpanded = settings.value(QStringLiteral("group_editing_expanded"), true).toBool();
     const bool dragExpanded = settings.value(QStringLiteral("group_drag_expanded"), true).toBool();
@@ -1470,41 +1452,54 @@ void SegmentationWidget::setShowApprovalMask(bool enabled)
     syncUiState();
 }
 
-void SegmentationWidget::setEditApprovalMask(bool enabled)
+void SegmentationWidget::setEditApprovedMask(bool enabled)
 {
-    if (_editApprovalMask == enabled) {
+    if (_editApprovedMask == enabled) {
         return;
     }
-    _editApprovalMask = enabled;
-    qInfo() << "SegmentationWidget: Edit approval mask changed to:" << enabled;
-    if (!_restoringSettings) {
-        writeSetting(QStringLiteral("edit_approval_mask"), _editApprovalMask);
-        qInfo() << "  Emitting editApprovalMaskChanged signal";
-        emit editApprovalMaskChanged(_editApprovalMask);
+    _editApprovedMask = enabled;
+    qInfo() << "SegmentationWidget: Edit approved mask changed to:" << enabled;
+
+    // Mutual exclusion: if enabling approved, disable unapproved
+    if (enabled && _editUnapprovedMask) {
+        setEditUnapprovedMask(false);
     }
-    if (_chkEditApprovalMask) {
-        const QSignalBlocker blocker(_chkEditApprovalMask);
-        _chkEditApprovalMask->setChecked(_editApprovalMask);
+
+    if (!_restoringSettings) {
+        writeSetting(QStringLiteral("edit_approved_mask"), _editApprovedMask);
+        qInfo() << "  Emitting editApprovedMaskChanged signal";
+        emit editApprovedMaskChanged(_editApprovedMask);
+    }
+    if (_chkEditApprovedMask) {
+        const QSignalBlocker blocker(_chkEditApprovedMask);
+        _chkEditApprovedMask->setChecked(_editApprovedMask);
     }
     syncUiState();
 }
 
-void SegmentationWidget::setApprovalPaintMode(bool approve)
+void SegmentationWidget::setEditUnapprovedMask(bool enabled)
 {
-    if (_approvalPaintModeApprove == approve) {
+    if (_editUnapprovedMask == enabled) {
         return;
     }
-    _approvalPaintModeApprove = approve;
+    _editUnapprovedMask = enabled;
+    qInfo() << "SegmentationWidget: Edit unapproved mask changed to:" << enabled;
+
+    // Mutual exclusion: if enabling unapproved, disable approved
+    if (enabled && _editApprovedMask) {
+        setEditApprovedMask(false);
+    }
+
     if (!_restoringSettings) {
-        writeSetting(QStringLiteral("approval_paint_mode_approve"), _approvalPaintModeApprove);
-        emit approvalPaintModeChanged(_approvalPaintModeApprove);
+        writeSetting(QStringLiteral("edit_unapproved_mask"), _editUnapprovedMask);
+        qInfo() << "  Emitting editUnapprovedMaskChanged signal";
+        emit editUnapprovedMaskChanged(_editUnapprovedMask);
     }
-    if (_btnMarkApproved && _btnMarkUnapproved) {
-        const QSignalBlocker blocker1(_btnMarkApproved);
-        const QSignalBlocker blocker2(_btnMarkUnapproved);
-        _btnMarkApproved->setChecked(_approvalPaintModeApprove);
-        _btnMarkUnapproved->setChecked(!_approvalPaintModeApprove);
+    if (_chkEditUnapprovedMask) {
+        const QSignalBlocker blocker(_chkEditUnapprovedMask);
+        _chkEditUnapprovedMask->setChecked(_editUnapprovedMask);
     }
+    syncUiState();
 }
 
 void SegmentationWidget::setApprovalBrushRadius(float radius)

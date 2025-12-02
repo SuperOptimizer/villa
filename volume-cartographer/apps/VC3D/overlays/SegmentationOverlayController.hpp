@@ -95,6 +95,14 @@ public:
     // Save the approval mask QImage back to the surface
     void saveApprovalMaskToSurface(QuadSurface* surface);
 
+    // Undo support for approval mask painting
+    // Undo the last paint stroke (repaints with inverse value)
+    bool undoLastApprovalMaskPaint();
+    // Check if there are any undo operations available
+    [[nodiscard]] bool canUndoApprovalMaskPaint() const;
+    // Clear all undo history (e.g., when applying changes to disk)
+    void clearApprovalMaskUndoHistory();
+
     // Query approval status for a grid position (integer coords, nearest neighbor)
     // Returns: 0 = not approved, 1 = saved approved, 2 = pending approved, 3 = pending unapproved
     int queryApprovalStatus(int row, int col) const;
@@ -160,4 +168,12 @@ private:
     // Bilinear interpolation helper for QImage alpha channel
     // Returns interpolated alpha value (0.0-255.0) at floating point coordinates
     static float sampleImageBilinear(const QImage& image, float row, float col);
+
+    // Undo stack for approval mask painting - stores affected region before painting
+    struct ApprovalMaskUndoEntry {
+        QImage savedRegion;  // Copy of the affected region before painting
+        QPoint topLeft;      // Position of the saved region in the full image
+    };
+    std::vector<ApprovalMaskUndoEntry> _approvalMaskUndoStack;
+    static constexpr size_t kMaxUndoEntries = 1000;
 };

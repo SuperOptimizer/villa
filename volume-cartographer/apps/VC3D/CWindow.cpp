@@ -1241,6 +1241,8 @@ void CWindow::CreateWidgets(void)
             });
     connect(_segmentationModule.get(), &SegmentationModule::growSurfaceRequested,
             this, &CWindow::onGrowSegmentationSurface);
+    connect(_segmentationModule.get(), &SegmentationModule::approvalMaskSaved,
+            this, &CWindow::markSegmentRecentlyEdited);
 
     SegmentationGrower::Context growerContext{
         _segmentationModule.get(),
@@ -2267,6 +2269,11 @@ void CWindow::onSurfaceActivated(const QString& surfaceId, QuadSurface* surface)
             _segmentationModule->setEditingEnabled(false);
         } else if (_segmentationWidget && _segmentationWidget->isEditingEnabled()) {
             _segmentationWidget->setEditingEnabled(false);
+        }
+
+        // Handle approval mask when switching segments
+        if (_segmentationModule) {
+            _segmentationModule->onActiveSegmentChanged(_surf);
         }
     }
 
@@ -3852,6 +3859,18 @@ bool CWindow::shouldSkipInotifyForSegment(const std::string& segmentId, const ch
         if (auto* activeBaseSurface = _segmentationModule->activeBaseSurface()) {
             if (activeBaseSurface->id == segmentId) {
                 Logger()->info("Skipping {} for {} - currently being edited", category, segmentId);
+                return true;
+            }
+        }
+    }
+
+    // Also skip if approval mask editing is active for this segment
+    if (_segmentationModule && _segmentationModule->isEditingApprovalMask()) {
+        // Get the segment being used for approval mask (the active segmentation surface)
+        if (_surf_col) {
+            Surface* segSurface = _surf_col->surface("segmentation");
+            if (segSurface && segSurface->id == segmentId) {
+                Logger()->info("Skipping {} for {} - approval mask being edited", category, segmentId);
                 return true;
             }
         }

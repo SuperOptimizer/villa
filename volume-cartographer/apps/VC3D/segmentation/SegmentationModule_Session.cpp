@@ -38,7 +38,7 @@ bool SegmentationModule::beginEditingSession(QuadSurface* surface)
     useFalloff(_activeFalloff);
 
     // Set surface on approval tool if edit approval mask mode is active
-    if (_editApprovalMask && _approvalTool) {
+    if (isEditingApprovalMask() && _approvalTool) {
         _approvalTool->setSurface(_editManager->baseSurface());
     }
 

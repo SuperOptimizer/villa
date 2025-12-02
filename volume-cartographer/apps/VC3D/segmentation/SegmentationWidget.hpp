@@ -89,15 +89,15 @@ public:
 
     // Approval mask getters
     [[nodiscard]] bool showApprovalMask() const { return _showApprovalMask; }
-    [[nodiscard]] bool editApprovalMask() const { return _editApprovalMask; }
-    [[nodiscard]] bool approvalPaintModeApprove() const { return _approvalPaintModeApprove; }
+    [[nodiscard]] bool editApprovedMask() const { return _editApprovedMask; }
+    [[nodiscard]] bool editUnapprovedMask() const { return _editUnapprovedMask; }
     [[nodiscard]] float approvalBrushRadius() const { return _approvalBrushRadius; }
     [[nodiscard]] float approvalBrushDepth() const { return _approvalBrushDepth; }
 
     // Approval mask setters
     void setShowApprovalMask(bool enabled);
-    void setEditApprovalMask(bool enabled);
-    void setApprovalPaintMode(bool approve);
+    void setEditApprovedMask(bool enabled);
+    void setEditUnapprovedMask(bool enabled);
     void setApprovalBrushRadius(float radius);
     void setApprovalBrushDepth(float depth);
 
@@ -128,12 +128,11 @@ signals:
     void correctionsZRangeChanged(bool enabled, int zMin, int zMax);
     void hoverMarkerToggled(bool enabled);
     void showApprovalMaskChanged(bool enabled);
-    void editApprovalMaskChanged(bool enabled);
-    void approvalPaintModeChanged(bool approve);
+    void editApprovedMaskChanged(bool enabled);
+    void editUnapprovedMaskChanged(bool enabled);
     void approvalBrushRadiusChanged(float radius);
     void approvalBrushDepthChanged(float depth);
-    void approvalStrokesApplyRequested();
-    void approvalStrokesClearRequested();
+    void approvalStrokesUndoRequested();
 
 private:
     void buildUi();
@@ -279,17 +278,15 @@ private:
     // Approval mask state and UI
     // Cylinder brush model: radius defines circle in plane views, depth defines cylinder height
     bool _showApprovalMask{false};
-    bool _editApprovalMask{false};
-    bool _approvalPaintModeApprove{true};  // true = approve, false = unapprove
+    bool _editApprovedMask{false};    // Editing in approve mode (mutually exclusive with unapprove)
+    bool _editUnapprovedMask{false};  // Editing in unapprove mode (mutually exclusive with approve)
     float _approvalBrushRadius{50.0f};     // Cylinder radius (circle in plane views, rect width in flattened)
     float _approvalBrushDepth{15.0f};      // Cylinder depth (rect height in flattened view)
     CollapsibleSettingsGroup* _groupApprovalMask{nullptr};
     QCheckBox* _chkShowApprovalMask{nullptr};
-    QCheckBox* _chkEditApprovalMask{nullptr};
-    QPushButton* _btnMarkApproved{nullptr};
-    QPushButton* _btnMarkUnapproved{nullptr};
+    QCheckBox* _chkEditApprovedMask{nullptr};
+    QCheckBox* _chkEditUnapprovedMask{nullptr};
     QDoubleSpinBox* _spinApprovalBrushRadius{nullptr};
     QDoubleSpinBox* _spinApprovalBrushDepth{nullptr};
-    QPushButton* _btnApplyApprovalStrokes{nullptr};
-    QPushButton* _btnClearApprovalStrokes{nullptr};
+    QPushButton* _btnUndoApprovalStroke{nullptr};
 };

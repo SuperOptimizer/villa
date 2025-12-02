@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <limits>
 
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
@@ -210,12 +211,11 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
     float widthSteps,
     float heightSteps)
 {
-    if (_pendingApprovalMaskImage.isNull()) {
+    if (_pendingApprovalMaskImage.isNull() || gridPositions.empty()) {
         return;
     }
 
     const int radius = static_cast<int>(std::ceil(radiusSteps));
-    const float sigma = radiusSteps / 2.0f;
 
     // For rectangle mode (flattened view), use explicit width and height
     const int rectHalfWidth = useRectangle && widthSteps > 0
@@ -225,17 +225,40 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
         ? static_cast<int>(std::ceil(heightSteps / 2.0f))
         : radius;
 
-    // Gaussian falloff function (for smooth edges)
-    auto gaussianFalloff = [](float distance, float sigma) -> float {
-        if (sigma <= 0.0f) {
-            return distance <= 0.0f ? 1.0f : 0.0f;
-        }
-        return std::exp(-(distance * distance) / (2.0f * sigma * sigma));
-    };
+    // Compute bounding box of affected region
+    int minRow = std::numeric_limits<int>::max();
+    int maxRow = std::numeric_limits<int>::min();
+    int minCol = std::numeric_limits<int>::max();
+    int maxCol = std::numeric_limits<int>::min();
 
-    // Compute sigma for falloff (different for each axis in rectangle mode)
-    const float widthSigma = useRectangle && widthSteps > 0 ? widthSteps / 4.0f : sigma;
-    const float heightSigma = useRectangle && heightSteps > 0 ? heightSteps / 4.0f : sigma;
+    for (const auto& [row, col] : gridPositions) {
+        minRow = std::min(minRow, row - rectHalfHeight);
+        maxRow = std::max(maxRow, row + rectHalfHeight);
+        minCol = std::min(minCol, col - rectHalfWidth);
+        maxCol = std::max(maxCol, col + rectHalfWidth);
+    }
+
+    // Clamp to image bounds
+    minRow = std::max(0, minRow);
+    maxRow = std::min(_pendingApprovalMaskImage.height() - 1, maxRow);
+    minCol = std::max(0, minCol);
+    maxCol = std::min(_pendingApprovalMaskImage.width() - 1, maxCol);
+
+    const int regionWidth = maxCol - minCol + 1;
+    const int regionHeight = maxRow - minRow + 1;
+
+    // Save the affected region for undo
+    if (regionWidth > 0 && regionHeight > 0) {
+        ApprovalMaskUndoEntry undoEntry;
+        undoEntry.topLeft = QPoint(minCol, minRow);
+        undoEntry.savedRegion = _pendingApprovalMaskImage.copy(minCol, minRow, regionWidth, regionHeight);
+        _approvalMaskUndoStack.push_back(std::move(undoEntry));
+
+        // Limit undo stack size
+        if (_approvalMaskUndoStack.size() > kMaxUndoEntries) {
+            _approvalMaskUndoStack.erase(_approvalMaskUndoStack.begin());
+        }
+    }
 
     // Paint directly into the PENDING QImage
     for (const auto& [centerRow, centerCol] : gridPositions) {
@@ -254,53 +277,23 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
                     continue;
                 }
 
-                float falloff;
-                if (useRectangle) {
-                    // Rectangle mode: use separate falloff for each axis
-                    const float colDist = std::abs(static_cast<float>(dc));
-                    const float rowDist = std::abs(static_cast<float>(dr));
-
-                    // Compute falloff based on distance to nearest edge
-                    const float colFalloff = gaussianFalloff(colDist, widthSigma);
-                    const float rowFalloff = gaussianFalloff(rowDist, heightSigma);
-                    falloff = colFalloff * rowFalloff;
-                } else {
-                    // Circle mode: use radial distance
+                // For circle mode, skip pixels outside the radius
+                if (!useRectangle) {
                     const float distance = std::sqrt(static_cast<float>(dr * dr + dc * dc));
                     if (distance > radiusSteps) {
                         continue;
                     }
-                    falloff = gaussianFalloff(distance, sigma);
                 }
-
-                QRgb pixel = _pendingApprovalMaskImage.pixel(col, row);
-
-                // Extract current green value
-                float currentGreen = static_cast<float>(qGreen(pixel));
-                float targetGreen = static_cast<float>(paintValue);
-                float blendedGreen = currentGreen * (1.0f - falloff) + targetGreen * falloff;
-                uint8_t newVal = static_cast<uint8_t>(std::clamp(blendedGreen, 0.0f, 255.0f));
 
                 // Update pixel color based on paint mode:
                 // - Blue for pending approval (paintValue = 255)
                 // - Red for pending unapproval (paintValue = 0)
                 if (paintValue > 0) {
                     // Approving: BLUE with 50% opacity
-                    // Premultiply: R=0, G=50, B=127, A=128
-                    if (newVal > 0) {
-                        _pendingApprovalMaskImage.setPixel(col, row, qRgba(0, 50, 127, 128));
-                    } else {
-                        _pendingApprovalMaskImage.setPixel(col, row, qRgba(0, 0, 0, 0));
-                    }
+                    _pendingApprovalMaskImage.setPixel(col, row, qRgba(0, 50, 127, 128));
                 } else {
                     // Unapproving: RED with 50% opacity
-                    // Premultiply: R=127, G=25, B=25, A=128
-                    // Use falloff to show where we're painting unapproval
-                    if (falloff > 0.1f) {
-                        _pendingApprovalMaskImage.setPixel(col, row, qRgba(127, 25, 25, 128));
-                    }
-                    // Note: we don't clear to transparent here because we want to show the red overlay
-                    // The actual clearing happens in saveApprovalMaskToSurface
+                    _pendingApprovalMaskImage.setPixel(col, row, qRgba(127, 25, 25, 128));
                 }
             }
         }
@@ -393,6 +386,40 @@ void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surfa
 
     // Trigger re-rendering of intersection lines on plane viewers
     invalidatePlaneIntersections();
+
+    // Clear undo history since changes are now persisted
+    clearApprovalMaskUndoHistory();
+}
+
+bool SegmentationOverlayController::undoLastApprovalMaskPaint()
+{
+    if (_approvalMaskUndoStack.empty() || _pendingApprovalMaskImage.isNull()) {
+        return false;
+    }
+
+    // Pop the last entry
+    ApprovalMaskUndoEntry entry = std::move(_approvalMaskUndoStack.back());
+    _approvalMaskUndoStack.pop_back();
+
+    // Restore the saved region
+    QPainter painter(&_pendingApprovalMaskImage);
+    painter.setCompositionMode(QPainter::CompositionMode_Source);
+    painter.drawImage(entry.topLeft, entry.savedRegion);
+    painter.end();
+
+    ++_pendingImageVersion;
+    invalidatePlaneIntersections();
+    return true;
+}
+
+bool SegmentationOverlayController::canUndoApprovalMaskPaint() const
+{
+    return !_approvalMaskUndoStack.empty();
+}
+
+void SegmentationOverlayController::clearApprovalMaskUndoHistory()
+{
+    _approvalMaskUndoStack.clear();
 }
 
 bool SegmentationOverlayController::isOverlayEnabledFor(CVolumeViewer* viewer) const

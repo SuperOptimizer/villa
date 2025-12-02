@@ -299,18 +299,16 @@ void SegmentationModule::bindWidgetSignals()
             this, &SegmentationModule::onCorrectionsZRangeChanged);
     connect(_widget, &SegmentationWidget::showApprovalMaskChanged,
             this, &SegmentationModule::setShowApprovalMask);
-    connect(_widget, &SegmentationWidget::editApprovalMaskChanged,
-            this, &SegmentationModule::setEditApprovalMask);
-    connect(_widget, &SegmentationWidget::approvalPaintModeChanged,
-            this, &SegmentationModule::setApprovalMaskPaintMode);
+    connect(_widget, &SegmentationWidget::editApprovedMaskChanged,
+            this, &SegmentationModule::setEditApprovedMask);
+    connect(_widget, &SegmentationWidget::editUnapprovedMaskChanged,
+            this, &SegmentationModule::setEditUnapprovedMask);
     connect(_widget, &SegmentationWidget::approvalBrushRadiusChanged,
             this, &SegmentationModule::setApprovalMaskBrushRadius);
     connect(_widget, &SegmentationWidget::approvalBrushDepthChanged,
             this, &SegmentationModule::setApprovalBrushDepth);
-    connect(_widget, &SegmentationWidget::approvalStrokesApplyRequested,
-            this, &SegmentationModule::applyApprovalStrokes);
-    connect(_widget, &SegmentationWidget::approvalStrokesClearRequested,
-            this, &SegmentationModule::clearApprovalStrokes);
+    connect(_widget, &SegmentationWidget::approvalStrokesUndoRequested,
+            this, &SegmentationModule::undoApprovalStroke);
 
     _widget->setEraseBrushActive(false);
 }
@@ -426,62 +424,193 @@ void SegmentationModule::setShowApprovalMask(bool enabled)
     refreshOverlay();
 }
 
-void SegmentationModule::setEditApprovalMask(bool enabled)
+void SegmentationModule::onActiveSegmentChanged(QuadSurface* newSurface)
 {
-    if (_editApprovalMask == enabled) {
-        return;
+    qCInfo(lcSegModule) << "Active segment changed";
+
+    // Turn off any approval mask editing when switching segments
+    if (isEditingApprovalMask()) {
+        qCInfo(lcSegModule) << "  Turning off approval mask editing";
+        if (_editApprovedMask) {
+            setEditApprovedMask(false);
+            if (_widget) {
+                _widget->setEditApprovedMask(false);
+            }
+        }
+        if (_editUnapprovedMask) {
+            setEditUnapprovedMask(false);
+            if (_widget) {
+                _widget->setEditUnapprovedMask(false);
+            }
+        }
     }
 
-    _editApprovalMask = enabled;
-    qCInfo(lcSegModule) << "=== Edit Approval Mask:" << (enabled ? "ENABLED" : "DISABLED") << "===";
+    // Sync show approval mask state from widget (handles restored settings case)
+    if (_widget && _widget->showApprovalMask() != _showApprovalMask) {
+        qCInfo(lcSegModule) << "  Syncing showApprovalMask from widget:" << _widget->showApprovalMask();
+        _showApprovalMask = _widget->showApprovalMask();
+    }
 
-    if (_editApprovalMask) {
-        // Entering approval mask editing mode
-        qCInfo(lcSegModule) << "  Activating approval brush tool";
-        if (_approvalTool) {
-            _approvalTool->setActive(true);
+    // Check if new surface has an approval mask
+    bool hasApprovalMask = false;
+    if (newSurface) {
+        cv::Mat approvalChannel = newSurface->channel("approval", SURF_CHANNEL_NORESIZE);
+        hasApprovalMask = !approvalChannel.empty();
+        qCInfo(lcSegModule) << "  New surface has approval mask:" << hasApprovalMask;
+    }
 
-            // Set surface on approval tool - from edit session if available, otherwise from surfaces collection
-            QuadSurface* surface = nullptr;
-            if (_editManager && _editManager->hasSession()) {
-                qCInfo(lcSegModule) << "  Setting surface on approval tool (has active session)";
-                surface = _editManager->baseSurface();
-            } else if (_surfaces) {
-                qCInfo(lcSegModule) << "  Setting surface on approval tool (from surfaces collection, view-only mode)";
-                surface = dynamic_cast<QuadSurface*>(_surfaces->surface("segmentation"));
-            }
-
-            if (surface) {
-                _approvalTool->setSurface(surface);
-            } else {
-                qCWarning(lcSegModule) << "  WARNING: No surface available for approval mask!";
-            }
+    if (_showApprovalMask) {
+        if (hasApprovalMask && newSurface && _overlay) {
+            // Load the new surface's approval mask
+            qCInfo(lcSegModule) << "  Loading approval mask for new surface";
+            _overlay->loadApprovalMaskImage(newSurface);
         } else {
-            qCWarning(lcSegModule) << "  ERROR: Approval tool is null!";
-        }
-
-        // Deactivate regular editing tools
-        deactivateInvalidationBrush();
-        clearLineDragStroke();
-        stopAllPushPull();
-    } else {
-        // Exiting approval mask editing mode
-        qCInfo(lcSegModule) << "  Deactivating approval brush tool";
-        if (_approvalTool) {
-            _approvalTool->setActive(false);
-            _approvalTool->clear();
+            // No approval mask on new surface - turn off show mode
+            qCInfo(lcSegModule) << "  No approval mask on new surface, turning off show mode";
+            _showApprovalMask = false;
+            if (_widget) {
+                _widget->setShowApprovalMask(false);
+            }
+            if (_overlay) {
+                _overlay->loadApprovalMaskImage(nullptr);  // Clear the mask
+            }
         }
     }
 
     refreshOverlay();
 }
 
-void SegmentationModule::setApprovalMaskPaintMode(bool approve)
+void SegmentationModule::setEditApprovedMask(bool enabled)
 {
-    if (_approvalTool) {
-        _approvalTool->setPaintMode(approve
-            ? ApprovalMaskBrushTool::PaintMode::Approve
-            : ApprovalMaskBrushTool::PaintMode::Unapprove);
+    if (_editApprovedMask == enabled) {
+        return;
+    }
+
+    // If enabling, ensure unapproved mode is off (mutual exclusion)
+    if (enabled && _editUnapprovedMask) {
+        setEditUnapprovedMask(false);
+    }
+
+    const bool wasEditing = isEditingApprovalMask();
+    _editApprovedMask = enabled;
+    qCInfo(lcSegModule) << "=== Edit Approved Mask:" << (enabled ? "ENABLED" : "DISABLED") << "===";
+
+    if (_editApprovedMask) {
+        // Entering approval mask editing mode (approve)
+        qCInfo(lcSegModule) << "  Activating approval brush tool (approve mode)";
+        if (_approvalTool) {
+            _approvalTool->setActive(true);
+            _approvalTool->setPaintMode(ApprovalMaskBrushTool::PaintMode::Approve);
+
+            // Set surface on approval tool
+            QuadSurface* surface = nullptr;
+            if (_editManager && _editManager->hasSession()) {
+                surface = _editManager->baseSurface();
+            } else if (_surfaces) {
+                surface = dynamic_cast<QuadSurface*>(_surfaces->surface("segmentation"));
+            }
+
+            if (surface) {
+                _approvalTool->setSurface(surface);
+            }
+        }
+
+        // Deactivate regular editing tools
+        deactivateInvalidationBrush();
+        clearLineDragStroke();
+        stopAllPushPull();
+    } else if (!isEditingApprovalMask()) {
+        // Exiting all approval mask editing - save to disk
+        qCInfo(lcSegModule) << "  Deactivating approval brush tool and saving";
+        if (_approvalTool) {
+            _approvalTool->setActive(false);
+        }
+
+        // Save changes to disk when exiting edit mode
+        if (wasEditing) {
+            saveApprovalMaskToDisk();
+        }
+    }
+
+    refreshOverlay();
+}
+
+void SegmentationModule::setEditUnapprovedMask(bool enabled)
+{
+    if (_editUnapprovedMask == enabled) {
+        return;
+    }
+
+    // If enabling, ensure approved mode is off (mutual exclusion)
+    if (enabled && _editApprovedMask) {
+        setEditApprovedMask(false);
+    }
+
+    const bool wasEditing = isEditingApprovalMask();
+    _editUnapprovedMask = enabled;
+    qCInfo(lcSegModule) << "=== Edit Unapproved Mask:" << (enabled ? "ENABLED" : "DISABLED") << "===";
+
+    if (_editUnapprovedMask) {
+        // Entering approval mask editing mode (unapprove)
+        qCInfo(lcSegModule) << "  Activating approval brush tool (unapprove mode)";
+        if (_approvalTool) {
+            _approvalTool->setActive(true);
+            _approvalTool->setPaintMode(ApprovalMaskBrushTool::PaintMode::Unapprove);
+
+            // Set surface on approval tool
+            QuadSurface* surface = nullptr;
+            if (_editManager && _editManager->hasSession()) {
+                surface = _editManager->baseSurface();
+            } else if (_surfaces) {
+                surface = dynamic_cast<QuadSurface*>(_surfaces->surface("segmentation"));
+            }
+
+            if (surface) {
+                _approvalTool->setSurface(surface);
+            }
+        }
+
+        // Deactivate regular editing tools
+        deactivateInvalidationBrush();
+        clearLineDragStroke();
+        stopAllPushPull();
+    } else if (!isEditingApprovalMask()) {
+        // Exiting all approval mask editing - save to disk
+        qCInfo(lcSegModule) << "  Deactivating approval brush tool and saving";
+        if (_approvalTool) {
+            _approvalTool->setActive(false);
+        }
+
+        // Save changes to disk when exiting edit mode
+        if (wasEditing) {
+            saveApprovalMaskToDisk();
+        }
+    }
+
+    refreshOverlay();
+}
+
+void SegmentationModule::saveApprovalMaskToDisk()
+{
+    qCInfo(lcSegModule) << "Saving approval mask to disk...";
+
+    QuadSurface* surface = nullptr;
+    if (_editManager && _editManager->hasSession()) {
+        surface = _editManager->baseSurface();
+    } else if (_surfaces) {
+        surface = dynamic_cast<QuadSurface*>(_surfaces->surface("segmentation"));
+    }
+
+    if (_overlay && surface) {
+        _overlay->saveApprovalMaskToSurface(surface);
+        emit statusMessageRequested(tr("Saved approval mask."), kStatusShort);
+        qCInfo(lcSegModule) << "  Approval mask saved to disk";
+
+        // Emit signal so CWindow can mark this segment as recently edited
+        // (to prevent inotify from triggering unwanted removals/reloads)
+        if (!surface->id.empty()) {
+            emit approvalMaskSaved(surface->id);
+        }
     }
 }
 
@@ -495,53 +624,25 @@ void SegmentationModule::setApprovalBrushDepth(float depth)
     _approvalBrushDepth = std::clamp(depth, 1.0f, 500.0f);
 }
 
-void SegmentationModule::applyApprovalStrokes()
+void SegmentationModule::undoApprovalStroke()
 {
-    qCInfo(lcSegModule) << "Applying approval strokes...";
-    if (!_approvalTool) {
-        qCWarning(lcSegModule) << "  No approval tool available";
+    qCInfo(lcSegModule) << "Undoing last approval stroke...";
+    if (!_overlay) {
+        qCWarning(lcSegModule) << "  No overlay controller available";
         return;
     }
 
-    if (!_approvalTool->hasPendingStrokes()) {
-        qCInfo(lcSegModule) << "  No pending strokes to apply";
-        emit statusMessageRequested(tr("No pending approval strokes to apply."), kStatusShort);
+    if (!_overlay->canUndoApprovalMaskPaint()) {
+        qCInfo(lcSegModule) << "  Nothing to undo";
+        emit statusMessageRequested(tr("Nothing to undo."), kStatusShort);
         return;
     }
 
-    const bool success = _approvalTool->applyPending(_approvalMaskBrushRadius);
-    if (success) {
-        qCInfo(lcSegModule) << "  Successfully applied approval strokes";
-
-        // Save the QImage back to disk
-        if (_overlay && _editManager && _editManager->hasSession()) {
-            _overlay->saveApprovalMaskToSurface(_editManager->baseSurface());
-            qCInfo(lcSegModule) << "  Saved approval mask to disk";
-        }
-
-        // Refresh to show the painted result
+    if (_overlay->undoLastApprovalMaskPaint()) {
         refreshOverlay();
-    } else {
-        qCWarning(lcSegModule) << "  Failed to apply approval strokes";
+        emit statusMessageRequested(tr("Undid last approval stroke."), kStatusShort);
+        qCInfo(lcSegModule) << "  Approval stroke undone";
     }
-}
-
-void SegmentationModule::clearApprovalStrokes()
-{
-    qCInfo(lcSegModule) << "Clearing approval strokes...";
-    if (!_approvalTool) {
-        qCWarning(lcSegModule) << "  No approval tool available";
-        return;
-    }
-
-    if (!_approvalTool->hasPendingStrokes()) {
-        qCInfo(lcSegModule) << "  No pending strokes to clear";
-        return;
-    }
-
-    _approvalTool->clear();
-    emit statusMessageRequested(tr("Cleared pending approval strokes."), kStatusShort);
-    qCInfo(lcSegModule) << "  Approval strokes cleared";
 }
 
 void SegmentationModule::applyEdits()
@@ -705,7 +806,7 @@ void SegmentationModule::refreshOverlay()
     }
 
     // Populate brush/stroke info when editing is enabled
-    if (_editApprovalMask && approvalSurface) {
+    if (isEditingApprovalMask() && approvalSurface) {
         state.approvalMaskMode = true;  // Must be true to render brush
         state.approvalBrushRadius = _approvalMaskBrushRadius;
         state.approvalBrushDepth = _approvalBrushDepth;
