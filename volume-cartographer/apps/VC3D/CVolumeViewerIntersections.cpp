@@ -265,11 +265,6 @@ void CVolumeViewer::renderIntersections()
             }
             const bool checkApproval = segOverlay && segOverlay->hasApprovalMaskData();
 
-            qDebug() << "renderIntersections: key=" << QString::fromStdString(key)
-                     << "isActiveSegmentation=" << isActiveSegmentation
-                     << "segOverlay=" << (segOverlay != nullptr)
-                     << "checkApproval=" << checkApproval;
-
             std::vector<QGraphicsItem*> items;
             items.reserve(intersectionLines.size());
             for (const auto& line : intersectionLines) {

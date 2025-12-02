@@ -757,22 +757,14 @@ void SegmentationModule::emitPendingChanges()
 
 void SegmentationModule::refreshOverlay()
 {
-    QElapsedTimer totalTimer;
-    totalTimer.start();
-
     if (!_overlay) {
         return;
     }
-
-    QElapsedTimer stepTimer;
-    stepTimer.start();
 
     SegmentationOverlayController::State state;
     state.gaussianRadiusSteps = falloffRadius(_activeFalloff);
     state.gaussianSigmaSteps = falloffSigma(_activeFalloff);
     state.gridStepWorld = gridStepWorld();
-
-    qCInfo(lcSegModule) << "[PERF] refreshOverlay: init state:" << stepTimer.elapsed() << "ms";
 
     const auto toFalloffMode = [](FalloffTool tool) {
         using Mode = SegmentationOverlayController::State::FalloffMode;
@@ -863,8 +855,6 @@ void SegmentationModule::refreshOverlay()
         }
     }
 
-    stepTimer.restart();
-
     std::vector<cv::Vec3f> maskPoints;
     std::size_t maskReserve = 0;
     const bool brushHasOverlay = _brushTool &&
@@ -888,8 +878,6 @@ void SegmentationModule::refreshOverlay()
         const auto& linePts = _lineTool->overlayPoints();
         maskPoints.insert(maskPoints.end(), linePts.begin(), linePts.end());
     }
-
-    qCInfo(lcSegModule) << "[PERF] refreshOverlay: build maskPoints (" << maskPoints.size() << " points):" << stepTimer.elapsed() << "ms";
 
     const bool hasLineStroke = _lineTool && !_lineTool->overlayPoints().empty();
     const bool lineStrokeActive = _lineTool && _lineTool->strokeActive();
@@ -916,11 +904,7 @@ void SegmentationModule::refreshOverlay()
 
     state.displayRadiusSteps = falloffRadius(overlayTool);
 
-    stepTimer.restart();
     _overlay->applyState(state);
-    qCInfo(lcSegModule) << "[PERF] refreshOverlay: applyState took:" << stepTimer.elapsed() << "ms";
-
-    qCInfo(lcSegModule) << "[PERF] refreshOverlay: TOTAL:" << totalTimer.elapsed() << "ms";
 }
 
 

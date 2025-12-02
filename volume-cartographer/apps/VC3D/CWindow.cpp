@@ -3208,6 +3208,13 @@ void CWindow::startWatchingWithInotify()
         return;
     }
 
+    // Check if file watching is enabled in settings
+    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+    if (!settings.value("perf/enable_file_watching", true).toBool()) {
+        Logger()->info("File watching is disabled in settings");
+        return;
+    }
+
     // Stop any existing watches
     stopWatchingWithInotify();
 

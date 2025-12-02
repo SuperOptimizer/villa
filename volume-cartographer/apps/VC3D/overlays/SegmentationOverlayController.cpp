@@ -763,25 +763,14 @@ float SegmentationOverlayController::queryApprovalBilinear(float row, float col,
 
 bool SegmentationOverlayController::hasApprovalMaskData() const
 {
-    bool hasState = _currentState.has_value();
-    bool approvalMode = hasState && _currentState->approvalMaskMode;
-    bool hasSaved = !_savedApprovalMaskImage.isNull();
-    bool hasPending = !_pendingApprovalMaskImage.isNull();
-
-    qDebug() << "hasApprovalMaskData: hasState=" << hasState
-             << "approvalMode=" << approvalMode
-             << "hasSaved=" << hasSaved
-             << "hasPending=" << hasPending;
-
-    if (!hasState || !approvalMode) {
+    if (!_currentState.has_value() || !_currentState->approvalMaskMode) {
         return false;
     }
-    return hasSaved || hasPending;
+    return !_savedApprovalMaskImage.isNull() || !_pendingApprovalMaskImage.isNull();
 }
 
 void SegmentationOverlayController::invalidatePlaneIntersections()
 {
-    qDebug() << "invalidatePlaneIntersections called, _viewerManager=" << (_viewerManager != nullptr);
     if (!_viewerManager) {
         return;
     }
@@ -791,10 +780,7 @@ void SegmentationOverlayController::invalidatePlaneIntersections()
             return;
         }
         // Only invalidate for plane surface viewers (XY, XZ, YZ)
-        Surface* surf = viewer->currentSurface();
-        qDebug() << "  viewer surface exists:" << (surf != nullptr)
-                 << "isPlaneSurface=" << (dynamic_cast<PlaneSurface*>(surf) != nullptr);
-        if (dynamic_cast<PlaneSurface*>(surf)) {
+        if (dynamic_cast<PlaneSurface*>(viewer->currentSurface())) {
             viewer->renderIntersections();
         }
     });
