@@ -361,38 +361,44 @@ void ApprovalMaskBrushTool::paintAccumulatedPointsToImage()
 
     const uint8_t paintValue = (_paintMode == PaintMode::Approve) ? 255 : 0;
 
-    float gridRadius;
-    float gridWidth = 0.0f;
-    float gridHeight = 0.0f;
+    // Cylinder brush model:
+    // - Radius = circle in plane views, rectangle width in flattened view (diameter = 2*radius)
+    // - Depth = cylinder thickness, rectangle height in flattened view
+    const float brushRadiusNative = _module.approvalMaskBrushRadius();
+    const float brushDepthNative = _module.approvalBrushDepth();
+
+    // Convert from native voxels to grid units for painting into the QImage
+    float avgScale = 1.0f;
+    if (_surface) {
+        const cv::Vec2f scale = _surface->scale();
+        avgScale = (scale[0] + scale[1]) * 0.5f;
+    }
+    const float gridRadius = brushRadiusNative * avgScale;
+    const float gridDepth = brushDepthNative * avgScale;
+
+    float paintRadius;
+    float paintWidth = 0.0f;
+    float paintHeight = 0.0f;
     bool useRectangle = false;
 
     if (_usePlaneEffectiveRadius) {
         // For plane viewer strokes: we already found the exact grid cells within the
-        // cylinder radius. Just paint those cells directly with minimal radius (circle).
-        gridRadius = 1.0f;
-        useRectangle = false;  // Plane views use circles (cylinder cross-section)
+        // cylinder. Just paint those cells directly with minimal radius.
+        paintRadius = 1.0f;
+        useRectangle = false;  // Plane views paint individual cells
     } else {
-        // For segmentation/flattened view strokes: paint a rectangle using explicit width/height
-        const float rectWidthNative = _module.approvalRectWidth();
-        const float rectHeightNative = _module.approvalRectHeight();
-
-        // Convert from native voxels to grid units for painting into the QImage
-        // Grid units = native voxels * scale (since grid = world * scale)
-        float avgScale = 1.0f;
-        if (_surface) {
-            const cv::Vec2f scale = _surface->scale();
-            avgScale = (scale[0] + scale[1]) * 0.5f;
-        }
-        gridWidth = rectWidthNative * avgScale;
-        gridHeight = rectHeightNative * avgScale;
-        gridRadius = std::max(gridWidth, gridHeight) / 2.0f;  // For fallback
-        useRectangle = true;  // Flattened view uses rectangle
+        // For segmentation/flattened view strokes: paint a rectangle (cylinder side view)
+        // Width = diameter (2 * radius), Height = depth
+        paintWidth = gridRadius * 2.0f;
+        paintHeight = gridDepth;
+        paintRadius = gridRadius;
+        useRectangle = true;
     }
-    const float clampedRadius = std::clamp(gridRadius, 0.5f, 500.0f);
+    const float clampedRadius = std::clamp(paintRadius, 0.5f, 500.0f);
 
     // Paint the accumulated points into the QImage
     overlay->paintApprovalMaskDirect(_accumulatedGridPositions, clampedRadius, paintValue,
-                                      useRectangle, gridWidth, gridHeight);
+                                      useRectangle, paintWidth, paintHeight);
 
     // Clear for next batch
     _accumulatedGridPositions.clear();
@@ -488,6 +494,7 @@ std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInCylinder(
     const cv::Vec3f& worldPos,
     const cv::Vec3f& planeNormal,
     float radius,
+    float depth,
     float* outMinDist) const
 {
     std::vector<std::pair<int, int>> result;
@@ -505,34 +512,37 @@ std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInCylinder(
         return result;
     }
 
-    // The radius is in native voxels (world units), so use it directly.
+    // Cylinder parameters: axis along planeNormal, radius perpendicular, depth along axis
     const float radiusSq = radius * radius;
+    const float halfDepth = depth / 2.0f;
+
+    // Normalize the plane normal for projection calculations
+    const float normalLen = std::sqrt(planeNormal.dot(planeNormal));
+    const cv::Vec3f normal = (normalLen > 1e-6f) ? planeNormal / normalLen : cv::Vec3f(0, 0, 1);
 
     const int rows = points->rows;
     const int cols = points->cols;
 
     // Use pointTo to find the approximate grid center for the world position.
-    // This gives us a starting point for a local search instead of scanning all points.
+    // Use larger search distance to account for cylinder depth
+    const float searchDist = std::max(radius, depth) * 2.0f;
     cv::Vec3f ptr{0, 0, 0};
-    const float dist = _surface->pointTo(ptr, worldPos, radius * 2.0f, 100);
+    const float dist = _surface->pointTo(ptr, worldPos, searchDist, 100);
 
     int rowStart = 0, rowEnd = rows;
     int colStart = 0, colEnd = cols;
 
     // If pointTo found a nearby point, limit search to a local window
-    if (dist >= 0 && dist <= radius * 4.0f) {
-        // ptr is in "pointer" space: ptr = loc - center*scale
-        // So loc (actual grid position) = ptr + center*scale
+    if (dist >= 0 && dist <= searchDist * 2.0f) {
         const cv::Vec2f scale = _surface->scale();
         const cv::Vec3f center = _surface->center();
-        const float locX = ptr[0] + center[0] * scale[0];  // column in grid space
-        const float locY = ptr[1] + center[1] * scale[1];  // row in grid space
+        const float locX = ptr[0] + center[0] * scale[0];
+        const float locY = ptr[1] + center[1] * scale[1];
         const int centerCol = static_cast<int>(std::round(locX));
         const int centerRow = static_cast<int>(std::round(locY));
 
-        // Estimate the search window size based on brush radius and surface scale
-        // Add extra margin to ensure we don't miss edge cases
-        const int windowRadius = static_cast<int>(std::ceil(radius * std::max(scale[0], scale[1]))) + 5;
+        // Use larger window to account for cylinder extent
+        const int windowRadius = static_cast<int>(std::ceil(searchDist * std::max(scale[0], scale[1]))) + 5;
 
         rowStart = std::max(0, centerRow - windowRadius);
         rowEnd = std::min(rows, centerRow + windowRadius + 1);
@@ -540,7 +550,10 @@ std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInCylinder(
         colEnd = std::min(cols, centerCol + windowRadius + 1);
     }
 
-    // Sphere intersection: find all surface points within `radius` of worldPos
+    // Cylinder intersection: find all surface points within the cylinder
+    // Point is inside cylinder if:
+    // 1. Distance along normal (axis) <= halfDepth
+    // 2. Distance perpendicular to normal <= radius
     float minDistSq = std::numeric_limits<float>::max();
 
     for (int row = rowStart; row < rowEnd; ++row) {
@@ -558,7 +571,14 @@ std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInCylinder(
                 minDistSq = distSq;
             }
 
-            if (distSq <= radiusSq) {
+            // Project delta onto the normal (axial distance)
+            const float axialDist = std::abs(delta.dot(normal));
+
+            // Perpendicular distance squared = total distance squared - axial distance squared
+            const float perpDistSq = distSq - axialDist * axialDist;
+
+            // Check if point is within the cylinder
+            if (axialDist <= halfDepth && perpDistSq <= radiusSq) {
                 result.emplace_back(row, col);
             }
         }
@@ -569,8 +589,8 @@ std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInCylinder(
         *outMinDist = minDist;
     }
 
-    qCDebug(lcApprovalMask) << "  Sphere search: minDist=" << minDist
-                           << "radius=" << radius << "found=" << result.size()
+    qCDebug(lcApprovalMask) << "  Cylinder search: minDist=" << minDist
+                           << "radius=" << radius << "depth=" << depth << "found=" << result.size()
                            << "window:" << (rowEnd - rowStart) << "x" << (colEnd - colStart);
 
     return result;
@@ -611,8 +631,9 @@ void ApprovalMaskBrushTool::startStrokeFromPlane(const cv::Vec3f& worldPos, cons
     _hoverWorldPos = worldPos;
     _hoverEffectiveRadius = worldRadius;
 
-    // Find cells within the full brush radius (flat cylinder model)
-    auto cells = findGridCellsInCylinder(worldPos, planeNormal, worldRadius, nullptr);
+    // Find cells within the cylinder (radius perpendicular to plane, depth along plane normal)
+    const float brushDepth = _module.approvalBrushDepth();
+    auto cells = findGridCellsInCylinder(worldPos, planeNormal, worldRadius, brushDepth, nullptr);
     for (const auto& cell : cells) {
         const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
         if (_accumulatedGridPosSet.insert(hash).second) {
@@ -650,15 +671,16 @@ void ApprovalMaskBrushTool::extendStrokeFromPlane(const cv::Vec3f& worldPos, con
     _lastSample = worldPos;
     _hasLastSample = true;
 
-    // For flat cylinder model: use full brush radius in plane views
+    // For cylinder model: use full brush radius in plane views
     _effectivePaintRadiusNative = worldRadius;
 
     // Update hover position for brush circle display during drag
     _hoverWorldPos = worldPos;
     _hoverEffectiveRadius = worldRadius;
 
-    // Find cells within the full brush radius (flat cylinder model)
-    auto cells = findGridCellsInCylinder(worldPos, planeNormal, worldRadius, nullptr);
+    // Find cells within the cylinder (radius perpendicular to plane, depth along plane normal)
+    const float brushDepth = _module.approvalBrushDepth();
+    auto cells = findGridCellsInCylinder(worldPos, planeNormal, worldRadius, brushDepth, nullptr);
     for (const auto& cell : cells) {
         const uint64_t hash = (static_cast<uint64_t>(cell.first) << 32) | static_cast<uint64_t>(cell.second);
         if (_accumulatedGridPosSet.insert(hash).second) {

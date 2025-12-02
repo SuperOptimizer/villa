@@ -81,11 +81,13 @@ private:
     // Find all grid cells whose 3D world positions are within radius of the given world position
     std::vector<std::pair<int, int>> findGridCellsInSphere(const cv::Vec3f& worldPos, float radius) const;
 
-    // Find all grid cells within a sphere centered at worldPos with given radius.
+    // Find all grid cells within a cylinder centered at worldPos.
+    // The cylinder has its axis along planeNormal, with given radius and depth (half-depth on each side).
     // For plane viewers. If outMinDist is provided, returns the minimum distance to any surface point.
     std::vector<std::pair<int, int>> findGridCellsInCylinder(const cv::Vec3f& worldPos,
                                                               const cv::Vec3f& planeNormal,
                                                               float radius,
+                                                              float depth,
                                                               float* outMinDist = nullptr) const;
 
     // Paint accumulated points into QImage (for real-time painting)

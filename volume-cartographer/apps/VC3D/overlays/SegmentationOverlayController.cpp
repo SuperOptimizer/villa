@@ -825,9 +825,9 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
                 // XY/XZ/YZ planes: draw a circle (cylinder cross-section)
                 builder.addCircle(sceneCenter, radiusPixels, false, style);
             } else {
-                // Flattened/segmentation view: draw a rectangle using explicit width/height
-                const float rectWidthNative = state.approvalRectWidth;
-                const float rectHeightNative = state.approvalRectHeight;
+                // Flattened/segmentation view: draw a rectangle (cylinder side view)
+                // Width = 2 * radius (diameter), Height = depth
+                const float brushDepthNative = state.approvalBrushDepth;
 
                 // Convert from native voxels to grid units
                 float surfaceScale = 1.0f;
@@ -835,17 +835,16 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
                     const cv::Vec2f scale = state.surface->scale();
                     surfaceScale = (scale[0] + scale[1]) * 0.5f;
                 }
-                const float gridWidth = rectWidthNative * surfaceScale;
-                const float gridHeight = rectHeightNative * surfaceScale;
+                const float gridRadius = brushRadiusNative * surfaceScale;
+                const float gridDepth = brushDepthNative * surfaceScale;
 
                 // Compute grid-to-scene scale using brush radius as reference
-                const float gridRadius = brushRadiusNative * surfaceScale;
                 const qreal gridToScene = (gridRadius > 0) ? (radiusPixels / gridRadius) : 1.0;
 
                 // Add a small offset to account for painting extending to cell edges
                 constexpr float gridOffset = 0.5f;
-                const qreal rectHalfWidth = (gridWidth / 2.0f + gridOffset) * gridToScene;
-                const qreal rectHalfHeight = (gridHeight / 2.0f + gridOffset) * gridToScene;
+                const qreal rectHalfWidth = (gridRadius + gridOffset) * gridToScene;
+                const qreal rectHalfHeight = (gridDepth / 2.0f + gridOffset) * gridToScene;
 
                 const QRectF rect(sceneCenter.x() - rectHalfWidth,
                                   sceneCenter.y() - rectHalfHeight,

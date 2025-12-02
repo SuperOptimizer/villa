@@ -54,14 +54,15 @@ public:
         float displayRadiusSteps{0.0f};
         float gridStepWorld{1.0f};
 
-        // Approval mask state
+        // Approval mask state - cylinder brush model
+        // Radius = circle in plane views (XY/XZ/YZ), rectangle width in flattened view
+        // Depth = cylinder thickness, rectangle height in flattened view
         bool approvalMaskMode{false};
         bool approvalStrokeActive{false};
         std::vector<std::vector<cv::Vec3f>> approvalStrokeSegments;  // Completed segments
         std::vector<cv::Vec3f> approvalCurrentStroke;  // Current active stroke
-        float approvalBrushRadius{5.0f};      // Circle radius for XY/XZ/YZ plane views (native voxels)
-        float approvalRectWidth{100.0f};      // Rectangle width for flattened view (native voxels)
-        float approvalRectHeight{15.0f};      // Rectangle height for flattened view (native voxels)
+        float approvalBrushRadius{50.0f};     // Cylinder radius (native voxels)
+        float approvalBrushDepth{15.0f};      // Cylinder depth (native voxels)
         float approvalEffectiveRadius{0.0f};  // For plane viewers: brush radius adjusted for distance
         bool paintingApproval{true};
         QuadSurface* surface{nullptr};
