@@ -113,7 +113,9 @@ bool SegmentationOverlayController::State::operator==(const State& rhs) const
            maskEqual(approvalCurrentStroke, rhs.approvalCurrentStroke) &&
            floatEqual(approvalBrushRadius, rhs.approvalBrushRadius) &&
            paintingApproval == rhs.paintingApproval &&
-           surface == rhs.surface;
+           surface == rhs.surface &&
+           approvalHoverScenePos == rhs.approvalHoverScenePos &&
+           floatEqual(approvalHoverViewerScale, rhs.approvalHoverViewerScale);
 }
 
 SegmentationOverlayController::SegmentationOverlayController(CSurfaceCollection* surfaces, QObject* parent)
@@ -805,59 +807,75 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
     // Flat cylinder model: circle in XY/XZ/YZ planes, rectangle in flattened view
     if (state.approvalHoverWorld) {
         const cv::Vec3f& hoverWorld = *state.approvalHoverWorld;
-        const QPointF sceneCenter = viewer->volumePointToScene(hoverWorld);
-
-        // For circle (plane views): use brush radius
-        // For rectangle (flattened view): use explicit rect width/height
         const float brushRadiusNative = state.approvalBrushRadius;
 
-        // Convert brush radius from native voxels to scene pixels
-        // Use both X and Y offsets to handle different plane orientations
-        const cv::Vec3f& hoverPos = hoverWorld;
-        const cv::Vec3f offsetPosX = hoverPos + cv::Vec3f(brushRadiusNative, 0, 0);
-        const cv::Vec3f offsetPosY = hoverPos + cv::Vec3f(0, brushRadiusNative, 0);
-        const QPointF sceneOffsetX = viewer->volumePointToScene(offsetPosX);
-        const QPointF sceneOffsetY = viewer->volumePointToScene(offsetPosY);
-        const qreal radiusPixelsX = std::hypot(sceneOffsetX.x() - sceneCenter.x(),
-                                                sceneOffsetX.y() - sceneCenter.y());
-        const qreal radiusPixelsY = std::hypot(sceneOffsetY.x() - sceneCenter.x(),
-                                                sceneOffsetY.y() - sceneCenter.y());
-        // Use whichever axis projects into the view (the other will be ~0)
-        const qreal radiusPixels = std::max(radiusPixelsX, radiusPixelsY);
+        if (isPlaneViewer) {
+            // For plane viewers: use volumePointToScene which is fast (O(1) for PlaneSurface)
+            // Compute center and radius consistently using the same projection
+            const QPointF sceneCenter = viewer->volumePointToScene(hoverWorld);
 
-        if (radiusPixels > 1.0) {
-            ViewerOverlayControllerBase::OverlayStyle style;
-            style.penColor = state.paintingApproval ? QColor(0, 100, 255, 200) : QColor(255, 80, 80, 200);
-            style.penWidth = 2.0;
-            style.brushColor = Qt::transparent;
-            style.penStyle = Qt::DashLine;
-            style.dashPattern = {4.0, 4.0};  // Dashed pattern
-            style.z = kApprovalMaskZ + 10.0;
+            // Convert brush radius from native voxels to scene pixels
+            // Use both X and Y offsets to handle different plane orientations
+            const cv::Vec3f offsetPosX = hoverWorld + cv::Vec3f(brushRadiusNative, 0, 0);
+            const cv::Vec3f offsetPosY = hoverWorld + cv::Vec3f(0, brushRadiusNative, 0);
+            const QPointF sceneOffsetX = viewer->volumePointToScene(offsetPosX);
+            const QPointF sceneOffsetY = viewer->volumePointToScene(offsetPosY);
+            const qreal radiusPixelsX = std::hypot(sceneOffsetX.x() - sceneCenter.x(),
+                                                    sceneOffsetX.y() - sceneCenter.y());
+            const qreal radiusPixelsY = std::hypot(sceneOffsetY.x() - sceneCenter.x(),
+                                                    sceneOffsetY.y() - sceneCenter.y());
+            // Use whichever axis projects into the view (the other will be ~0)
+            const qreal radiusPixels = std::max(radiusPixelsX, radiusPixelsY);
 
-            if (isPlaneViewer) {
+            if (radiusPixels > 1.0) {
+                ViewerOverlayControllerBase::OverlayStyle style;
+                style.penColor = state.paintingApproval ? QColor(0, 100, 255, 200) : QColor(255, 80, 80, 200);
+                style.penWidth = 2.0;
+                style.brushColor = Qt::transparent;
+                style.penStyle = Qt::DashLine;
+                style.dashPattern = {4.0, 4.0};  // Dashed pattern
+                style.z = kApprovalMaskZ + 10.0;
+
                 // XY/XZ/YZ planes: draw a circle (cylinder cross-section)
                 builder.addCircle(sceneCenter, radiusPixels, false, style);
-            } else {
-                // Flattened/segmentation view: draw a rectangle (cylinder side view)
-                // Width = 2 * radius (diameter), Height = depth
-                const float brushDepthNative = state.approvalBrushDepth;
+            }
+        } else if (state.approvalHoverScenePos) {
+            // For segmentation/flattened view: use cached scene position to avoid expensive pointTo()
+            // Draw a rectangle (cylinder side view): Width = 2 * radius (diameter), Height = depth
+            const float brushDepthNative = state.approvalBrushDepth;
+            const float hoverViewerScale = state.approvalHoverViewerScale;
+            const float thisViewerScale = viewer->getCurrentScale();
 
-                // Convert from native voxels to grid units
-                float surfaceScale = 1.0f;
-                if (state.surface) {
-                    const cv::Vec2f scale = state.surface->scale();
-                    surfaceScale = (scale[0] + scale[1]) * 0.5f;
-                }
-                const float gridRadius = brushRadiusNative * surfaceScale;
-                const float gridDepth = brushDepthNative * surfaceScale;
+            // Scale the cached scene position to this viewer's scale
+            const QPointF& cachedScenePos = *state.approvalHoverScenePos;
+            const qreal scaleRatio = (hoverViewerScale > 0) ? (thisViewerScale / hoverViewerScale) : 1.0;
+            const QPointF sceneCenter(cachedScenePos.x() * scaleRatio, cachedScenePos.y() * scaleRatio);
 
-                // Compute grid-to-scene scale using brush radius as reference
-                const qreal gridToScene = (gridRadius > 0) ? (radiusPixels / gridRadius) : 1.0;
+            // Convert from native voxels to grid units
+            float surfaceScale = 1.0f;
+            if (state.surface) {
+                const cv::Vec2f scale = state.surface->scale();
+                surfaceScale = (scale[0] + scale[1]) * 0.5f;
+            }
+            const float gridRadius = brushRadiusNative * surfaceScale;
+            const float gridDepth = brushDepthNative * surfaceScale;
 
-                // Add a small offset to account for painting extending to cell edges
-                constexpr float gridOffset = 0.5f;
-                const qreal rectHalfWidth = (gridRadius + gridOffset) * gridToScene;
-                const qreal rectHalfHeight = (gridDepth / 2.0f + gridOffset) * gridToScene;
+            // Convert grid units to scene pixels using viewer scale
+            const qreal gridToScene = thisViewerScale / surfaceScale;
+
+            // Add a small offset to account for painting extending to cell edges
+            constexpr float gridOffset = 0.5f;
+            const qreal rectHalfWidth = (gridRadius + gridOffset) * gridToScene;
+            const qreal rectHalfHeight = (gridDepth / 2.0f + gridOffset) * gridToScene;
+
+            if (rectHalfWidth > 1.0 && rectHalfHeight > 1.0) {
+                ViewerOverlayControllerBase::OverlayStyle style;
+                style.penColor = state.paintingApproval ? QColor(0, 100, 255, 200) : QColor(255, 80, 80, 200);
+                style.penWidth = 2.0;
+                style.brushColor = Qt::transparent;
+                style.penStyle = Qt::DashLine;
+                style.dashPattern = {4.0, 4.0};  // Dashed pattern
+                style.z = kApprovalMaskZ + 10.0;
 
                 const QRectF rect(sceneCenter.x() - rectHalfWidth,
                                   sceneCenter.y() - rectHalfHeight,

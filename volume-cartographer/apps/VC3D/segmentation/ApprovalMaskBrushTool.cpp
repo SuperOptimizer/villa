@@ -589,17 +589,11 @@ std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInCylinder(
         *outMinDist = minDist;
     }
 
-    qCDebug(lcApprovalMask) << "  Cylinder search: minDist=" << minDist
-                           << "radius=" << radius << "depth=" << depth << "found=" << result.size()
-                           << "window:" << (rowEnd - rowStart) << "x" << (colEnd - colStart);
-
     return result;
 }
 
 void ApprovalMaskBrushTool::startStrokeFromPlane(const cv::Vec3f& worldPos, const cv::Vec3f& planeNormal, float worldRadius)
 {
-    qCDebug(lcApprovalMask) << "Plane stroke start at:" << worldPos[0] << worldPos[1] << worldPos[2]
-                           << "radius:" << worldRadius;
     _strokeActive = true;
     _currentStroke.clear();
     _currentStroke.push_back(worldPos);
@@ -937,9 +931,11 @@ std::optional<std::pair<int, int>> ApprovalMaskBrushTool::sceneToGridIndex(const
     return std::make_pair(row, col);
 }
 
-void ApprovalMaskBrushTool::setHoverWorldPos(const cv::Vec3f& pos, float brushRadius)
+void ApprovalMaskBrushTool::setHoverWorldPos(const cv::Vec3f& pos, float brushRadius, const QPointF& scenePos, float viewerScale)
 {
     _hoverWorldPos = pos;
+    _hoverScenePos = scenePos;
+    _hoverViewerScale = viewerScale;
 
     // For flat cylinder model: always use full brush radius
     // The cylinder has full radius in all orthogonal plane views (XY, XZ, YZ)

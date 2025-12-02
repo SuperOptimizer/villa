@@ -67,6 +67,8 @@ public:
         bool paintingApproval{true};
         QuadSurface* surface{nullptr};
         std::optional<cv::Vec3f> approvalHoverWorld;  // Current hover position for brush circle
+        std::optional<QPointF> approvalHoverScenePos; // Scene position (avoids expensive pointTo)
+        float approvalHoverViewerScale{1.0f};         // Viewer scale for the hover position
 
         bool operator==(const State& rhs) const;
         bool operator!=(const State& rhs) const { return !(*this == rhs); }

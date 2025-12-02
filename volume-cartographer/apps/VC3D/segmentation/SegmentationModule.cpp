@@ -809,6 +809,8 @@ void SegmentationModule::refreshOverlay()
             state.approvalCurrentStroke = _approvalTool->overlayPoints();
             state.paintingApproval = (_approvalTool->paintMode() == ApprovalMaskBrushTool::PaintMode::Approve);
             state.approvalHoverWorld = _approvalTool->hoverWorldPos();
+            state.approvalHoverScenePos = _approvalTool->hoverScenePos();
+            state.approvalHoverViewerScale = _approvalTool->hoverViewerScale();
             if (_approvalTool->strokeActive() && _approvalTool->effectivePaintRadius() > 0.0f) {
                 state.approvalEffectiveRadius = _approvalTool->effectivePaintRadius();
             } else {
@@ -1140,11 +1142,6 @@ float SegmentationModule::gridStepWorld() const
         if (surface) {
             result = averageScale(surface->scale());
         }
-    }
-
-    static int logCounter = 0;
-    if (logCounter++ % 100 == 0) {  // Log every 100th call to avoid spam
-        qDebug() << "[gridStepWorld] result:" << result << "surface:" << (surface ? "valid" : "NULL");
     }
 
     return result;

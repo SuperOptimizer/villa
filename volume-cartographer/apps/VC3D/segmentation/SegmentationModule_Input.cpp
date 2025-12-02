@@ -422,7 +422,9 @@ void SegmentationModule::handleMouseMove(CVolumeViewer* viewer,
             shouldUpdate = delta.dot(delta) >= minMoveThreshold * minMoveThreshold;
         }
         if (shouldUpdate) {
-            _approvalTool->setHoverWorldPos(worldPos, _approvalMaskBrushRadius);
+            const QPointF scenePos = viewer->lastScenePosition();
+            const float viewerScale = viewer->getCurrentScale();
+            _approvalTool->setHoverWorldPos(worldPos, _approvalMaskBrushRadius, scenePos, viewerScale);
             refreshOverlay();
         }
     }

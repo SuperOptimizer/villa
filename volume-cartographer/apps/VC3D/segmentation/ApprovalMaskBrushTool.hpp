@@ -66,9 +66,11 @@ public:
     [[nodiscard]] float effectivePaintRadius() const { return _effectivePaintRadiusNative; }
     [[nodiscard]] std::optional<cv::Vec3f> hoverWorldPos() const { return _hoverWorldPos; }
     [[nodiscard]] float hoverEffectiveRadius() const { return _hoverEffectiveRadius; }
+    [[nodiscard]] std::optional<QPointF> hoverScenePos() const { return _hoverScenePos; }
+    [[nodiscard]] float hoverViewerScale() const { return _hoverViewerScale; }
 
-    void setHoverWorldPos(const cv::Vec3f& pos, float brushRadius);
-    void clearHoverWorldPos() { _hoverWorldPos = std::nullopt; _hoverEffectiveRadius = 0.0f; }
+    void setHoverWorldPos(const cv::Vec3f& pos, float brushRadius, const QPointF& scenePos, float viewerScale);
+    void clearHoverWorldPos() { _hoverWorldPos = std::nullopt; _hoverEffectiveRadius = 0.0f; _hoverScenePos = std::nullopt; _hoverViewerScale = 0.0f; }
 
     void cancel() { clear(); }
     [[nodiscard]] bool isActive() const { return brushActive() || strokeActive(); }
@@ -126,4 +128,6 @@ private:
     // Current hover position for brush circle visualization
     std::optional<cv::Vec3f> _hoverWorldPos;
     float _hoverEffectiveRadius{0.0f};  // Cached effective radius for hover preview
+    std::optional<QPointF> _hoverScenePos;  // Cached scene position (avoids expensive pointTo)
+    float _hoverViewerScale{0.0f};          // Viewer scale for the cached scene position
 };
