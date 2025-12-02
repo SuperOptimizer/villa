@@ -130,4 +130,10 @@ private:
     float _hoverEffectiveRadius{0.0f};  // Cached effective radius for hover preview
     std::optional<QPointF> _hoverScenePos;  // Cached scene position (avoids expensive pointTo)
     float _hoverViewerScale{0.0f};          // Viewer scale for the cached scene position
+
+    // Cache for grid search optimization - avoids expensive pointTo calls during continuous painting
+    mutable cv::Vec3f _lastSearchWorldPos{0.0f, 0.0f, 0.0f};
+    mutable int _lastSearchGridRow{-1};
+    mutable int _lastSearchGridCol{-1};
+    mutable bool _hasLastSearchCache{false};
 };

@@ -57,6 +57,8 @@ void ApprovalMaskBrushTool::setDependencies(SegmentationWidget* widget)
 void ApprovalMaskBrushTool::setSurface(QuadSurface* surface)
 {
     _surface = surface;
+    // Clear the search cache when surface changes
+    _hasLastSearchCache = false;
     qCDebug(lcApprovalMask) << "Surface set on approval tool:" << (surface ? "valid" : "null");
 }
 
@@ -334,6 +336,7 @@ void ApprovalMaskBrushTool::clear()
     _accumulatedGridPosSet.clear();
     _hasLastSample = false;
     _hasLastOverlaySample = false;
+    _hasLastSearchCache = false;
 
     // Reload approval mask from disk to discard pending changes
     auto overlay = _module.overlay();
@@ -523,24 +526,52 @@ std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInCylinder(
     const int rows = points->rows;
     const int cols = points->cols;
 
-    // Use pointTo to find the approximate grid center for the world position.
-    // Use larger search distance to account for cylinder depth
     const float searchDist = std::max(radius, depth) * 2.0f;
-    cv::Vec3f ptr{0, 0, 0};
-    const float dist = _surface->pointTo(ptr, worldPos, searchDist, 100);
+    const cv::Vec2f scale = _surface->scale();
+    const cv::Vec3f center = _surface->center();
+
+    int centerRow = -1, centerCol = -1;
+    bool foundCenter = false;
+
+    // Optimization: if we have a cached search position close to the current one,
+    // skip the expensive pointTo call and reuse the cached grid center
+    constexpr float kCacheDistanceThreshold = 50.0f; // Max distance to reuse cache
+    if (_hasLastSearchCache) {
+        const cv::Vec3f cacheDelta = worldPos - _lastSearchWorldPos;
+        const float cacheDistSq = cacheDelta.dot(cacheDelta);
+        if (cacheDistSq < kCacheDistanceThreshold * kCacheDistanceThreshold) {
+            // Close enough to last search - estimate new center based on world position delta
+            // This avoids the expensive pointTo call during continuous brush strokes
+            centerRow = _lastSearchGridRow;
+            centerCol = _lastSearchGridCol;
+            foundCenter = true;
+        }
+    }
+
+    // If cache miss or first call, use pointTo to find the grid center
+    if (!foundCenter) {
+        cv::Vec3f ptr{0, 0, 0};
+        const float dist = _surface->pointTo(ptr, worldPos, searchDist, 100);
+
+        if (dist >= 0 && dist <= searchDist * 2.0f) {
+            const float locX = ptr[0] + center[0] * scale[0];
+            const float locY = ptr[1] + center[1] * scale[1];
+            centerCol = static_cast<int>(std::round(locX));
+            centerRow = static_cast<int>(std::round(locY));
+            foundCenter = true;
+
+            // Update cache
+            _lastSearchWorldPos = worldPos;
+            _lastSearchGridRow = centerRow;
+            _lastSearchGridCol = centerCol;
+            _hasLastSearchCache = true;
+        }
+    }
 
     int rowStart = 0, rowEnd = rows;
     int colStart = 0, colEnd = cols;
 
-    // If pointTo found a nearby point, limit search to a local window
-    if (dist >= 0 && dist <= searchDist * 2.0f) {
-        const cv::Vec2f scale = _surface->scale();
-        const cv::Vec3f center = _surface->center();
-        const float locX = ptr[0] + center[0] * scale[0];
-        const float locY = ptr[1] + center[1] * scale[1];
-        const int centerCol = static_cast<int>(std::round(locX));
-        const int centerRow = static_cast<int>(std::round(locY));
-
+    if (foundCenter) {
         // Use larger window to account for cylinder extent
         const int windowRadius = static_cast<int>(std::ceil(searchDist * std::max(scale[0], scale[1]))) + 5;
 
@@ -555,6 +586,7 @@ std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInCylinder(
     // 1. Distance along normal (axis) <= halfDepth
     // 2. Distance perpendicular to normal <= radius
     float minDistSq = std::numeric_limits<float>::max();
+    int bestRow = -1, bestCol = -1;
 
     for (int row = rowStart; row < rowEnd; ++row) {
         for (int col = colStart; col < colEnd; ++col) {
@@ -569,6 +601,8 @@ std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInCylinder(
 
             if (distSq < minDistSq) {
                 minDistSq = distSq;
+                bestRow = row;
+                bestCol = col;
             }
 
             // Project delta onto the normal (axial distance)
@@ -582,6 +616,14 @@ std::vector<std::pair<int, int>> ApprovalMaskBrushTool::findGridCellsInCylinder(
                 result.emplace_back(row, col);
             }
         }
+    }
+
+    // Update cache with the closest point found (better approximation for next call)
+    if (bestRow >= 0 && bestCol >= 0) {
+        _lastSearchWorldPos = worldPos;
+        _lastSearchGridRow = bestRow;
+        _lastSearchGridCol = bestCol;
+        _hasLastSearchCache = true;
     }
 
     const float minDist = std::sqrt(minDistSq);
