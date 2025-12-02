@@ -88,13 +88,15 @@ public:
     [[nodiscard]] std::vector<SegmentationDirectionFieldConfig> directionFieldConfigs() const;
 
     // Approval mask getters
-    [[nodiscard]] bool approvalMaskMode() const { return _approvalMaskMode; }
+    [[nodiscard]] bool showApprovalMask() const { return _showApprovalMask; }
+    [[nodiscard]] bool editApprovalMask() const { return _editApprovalMask; }
     [[nodiscard]] bool approvalPaintModeApprove() const { return _approvalPaintModeApprove; }
     [[nodiscard]] float approvalBrushRadius() const { return _approvalBrushRadius; }
     [[nodiscard]] float approvalBrushDepth() const { return _approvalBrushDepth; }
 
     // Approval mask setters
-    void setApprovalMaskMode(bool enabled);
+    void setShowApprovalMask(bool enabled);
+    void setEditApprovalMask(bool enabled);
     void setApprovalPaintMode(bool approve);
     void setApprovalBrushRadius(float radius);
     void setApprovalBrushDepth(float depth);
@@ -125,7 +127,8 @@ signals:
     void correctionsAnnotateToggled(bool enabled);
     void correctionsZRangeChanged(bool enabled, int zMin, int zMax);
     void hoverMarkerToggled(bool enabled);
-    void approvalMaskModeChanged(bool enabled);
+    void showApprovalMaskChanged(bool enabled);
+    void editApprovalMaskChanged(bool enabled);
     void approvalPaintModeChanged(bool approve);
     void approvalBrushRadiusChanged(float radius);
     void approvalBrushDepthChanged(float depth);
@@ -275,12 +278,14 @@ private:
 
     // Approval mask state and UI
     // Cylinder brush model: radius defines circle in plane views, depth defines cylinder height
-    bool _approvalMaskMode{false};
+    bool _showApprovalMask{false};
+    bool _editApprovalMask{false};
     bool _approvalPaintModeApprove{true};  // true = approve, false = unapprove
     float _approvalBrushRadius{50.0f};     // Cylinder radius (circle in plane views, rect width in flattened)
     float _approvalBrushDepth{15.0f};      // Cylinder depth (rect height in flattened view)
     CollapsibleSettingsGroup* _groupApprovalMask{nullptr};
-    QCheckBox* _chkApprovalMaskMode{nullptr};
+    QCheckBox* _chkShowApprovalMask{nullptr};
+    QCheckBox* _chkEditApprovalMask{nullptr};
     QPushButton* _btnMarkApproved{nullptr};
     QPushButton* _btnMarkUnapproved{nullptr};
     QDoubleSpinBox* _spinApprovalBrushRadius{nullptr};

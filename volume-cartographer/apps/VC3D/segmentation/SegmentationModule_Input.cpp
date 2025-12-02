@@ -222,17 +222,10 @@ void SegmentationModule::handleMousePress(CVolumeViewer* viewer,
                                           Qt::MouseButton button,
                                           Qt::KeyboardModifiers modifiers)
 {
-    if (!_editingEnabled) {
-        return;
-    }
-
     const bool isLeftButton = (button == Qt::LeftButton);
-    if (isLeftButton && isNearRotationHandle(viewer, worldPos)) {
-        return;
-    }
 
-    // Handle approval mask mode
-    if (_approvalMaskMode && isLeftButton) {
+    // Handle approval mask editing mode - works independently of surface editing
+    if (_editApprovalMask && isLeftButton) {
         if (modifiers.testFlag(Qt::ControlModifier) || modifiers.testFlag(Qt::AltModifier)) {
             return;
         }
@@ -254,6 +247,15 @@ void SegmentationModule::handleMousePress(CVolumeViewer* viewer,
                 _approvalTool->startStroke(worldPos, scenePos, viewerScale);
             }
         }
+        return;
+    }
+
+    // Surface editing requires _editingEnabled
+    if (!_editingEnabled) {
+        return;
+    }
+
+    if (isLeftButton && isNearRotationHandle(viewer, worldPos)) {
         return;
     }
 
@@ -368,9 +370,9 @@ void SegmentationModule::handleMouseMove(CVolumeViewer* viewer,
         return;
     }
 
-    // Update hover position for approval brush circle when in approval mode but not stroking
+    // Update hover position for approval brush circle when in edit approval mode but not stroking
     // Only update if position changed significantly to avoid expensive refreshOverlay on every mouse move
-    if (_approvalMaskMode && _approvalTool && !buttons.testFlag(Qt::LeftButton)) {
+    if (_editApprovalMask && _approvalTool && !buttons.testFlag(Qt::LeftButton)) {
         const auto lastHover = _approvalTool->hoverWorldPos();
         const float minMoveThreshold = 2.0f;  // Native voxels
         bool shouldUpdate = !lastHover.has_value();

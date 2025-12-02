@@ -788,9 +788,9 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
     const bool isPlaneViewer = dynamic_cast<PlaneSurface*>(viewerSurf) != nullptr;
 
     // Draw brush reticle at hover position
-    // Only show when editing is enabled (painting requires edit mode)
+    // Show when we have a hover position (which only exists in edit approval mask mode)
     // Flat cylinder model: circle in XY/XZ/YZ planes, rectangle in flattened view
-    if (state.approvalHoverWorld && _editingEnabled) {
+    if (state.approvalHoverWorld) {
         const cv::Vec3f& hoverWorld = *state.approvalHoverWorld;
         const QPointF sceneCenter = viewer->volumePointToScene(hoverWorld);
 

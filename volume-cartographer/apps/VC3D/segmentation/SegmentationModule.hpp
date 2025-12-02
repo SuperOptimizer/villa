@@ -77,8 +77,10 @@ public:
     void setAlphaPushPullConfig(const AlphaPushPullConfig& config);
     void setHoverPreviewEnabled(bool enabled);
 
-    void setApprovalMaskMode(bool enabled);
-    [[nodiscard]] bool approvalMaskMode() const { return _approvalMaskMode; }
+    void setShowApprovalMask(bool enabled);
+    void setEditApprovalMask(bool enabled);
+    [[nodiscard]] bool showApprovalMask() const { return _showApprovalMask; }
+    [[nodiscard]] bool editApprovalMask() const { return _editApprovalMask; }
     void setApprovalMaskPaintMode(bool approve);
     void setApprovalMaskBrushRadius(float radiusSteps);
     void setApprovalBrushDepth(float depth);
@@ -299,7 +301,8 @@ private:
     std::unique_ptr<SegmentationPushPullTool> _pushPullTool;
     std::unique_ptr<ApprovalMaskBrushTool> _approvalTool;
 
-    bool _approvalMaskMode{false};
+    bool _showApprovalMask{false};
+    bool _editApprovalMask{false};
     float _approvalMaskBrushRadius{50.0f};  // Cylinder radius
     float _approvalBrushDepth{15.0f};       // Cylinder depth
 
