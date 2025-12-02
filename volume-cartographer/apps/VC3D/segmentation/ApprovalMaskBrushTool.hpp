@@ -68,9 +68,11 @@ public:
     [[nodiscard]] float hoverEffectiveRadius() const { return _hoverEffectiveRadius; }
     [[nodiscard]] std::optional<QPointF> hoverScenePos() const { return _hoverScenePos; }
     [[nodiscard]] float hoverViewerScale() const { return _hoverViewerScale; }
+    [[nodiscard]] std::optional<cv::Vec3f> hoverPlaneNormal() const { return _hoverPlaneNormal; }
 
-    void setHoverWorldPos(const cv::Vec3f& pos, float brushRadius, const QPointF& scenePos, float viewerScale);
-    void clearHoverWorldPos() { _hoverWorldPos = std::nullopt; _hoverEffectiveRadius = 0.0f; _hoverScenePos = std::nullopt; _hoverViewerScale = 0.0f; }
+    void setHoverWorldPos(const cv::Vec3f& pos, float brushRadius, const QPointF& scenePos, float viewerScale,
+                          const std::optional<cv::Vec3f>& planeNormal = std::nullopt);
+    void clearHoverWorldPos() { _hoverWorldPos = std::nullopt; _hoverEffectiveRadius = 0.0f; _hoverScenePos = std::nullopt; _hoverViewerScale = 0.0f; _hoverPlaneNormal = std::nullopt; }
 
     void cancel() { clear(); }
     [[nodiscard]] bool isActive() const { return brushActive() || strokeActive(); }
@@ -130,6 +132,7 @@ private:
     float _hoverEffectiveRadius{0.0f};  // Cached effective radius for hover preview
     std::optional<QPointF> _hoverScenePos;  // Cached scene position (avoids expensive pointTo)
     float _hoverViewerScale{0.0f};          // Viewer scale for the cached scene position
+    std::optional<cv::Vec3f> _hoverPlaneNormal;  // Plane normal when hovering in XY/XZ/YZ viewers
 
     // Cache for grid search optimization - avoids expensive pointTo calls during continuous painting
     mutable cv::Vec3f _lastSearchWorldPos{0.0f, 0.0f, 0.0f};

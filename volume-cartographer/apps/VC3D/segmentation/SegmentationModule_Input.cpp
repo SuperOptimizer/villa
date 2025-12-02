@@ -424,7 +424,15 @@ void SegmentationModule::handleMouseMove(CVolumeViewer* viewer,
         if (shouldUpdate) {
             const QPointF scenePos = viewer->lastScenePosition();
             const float viewerScale = viewer->getCurrentScale();
-            _approvalTool->setHoverWorldPos(worldPos, _approvalMaskBrushRadius, scenePos, viewerScale);
+
+            // Get plane normal if this is a plane viewer (XY/XZ/YZ)
+            std::optional<cv::Vec3f> planeNormal;
+            Surface* viewerSurf = viewer->currentSurface();
+            if (auto* planeSurf = dynamic_cast<PlaneSurface*>(viewerSurf)) {
+                planeNormal = planeSurf->normal({0, 0, 0});
+            }
+
+            _approvalTool->setHoverWorldPos(worldPos, _approvalMaskBrushRadius, scenePos, viewerScale, planeNormal);
             refreshOverlay();
         }
     }

@@ -93,6 +93,12 @@ bool SegmentationOverlayController::State::operator==(const State& rhs) const
         return std::fabs(lhs - rhs) < 1e-4f;
     };
 
+    const auto vec3fOptEqual = [&](const std::optional<cv::Vec3f>& lhs, const std::optional<cv::Vec3f>& rhs) {
+        if (!lhs && !rhs) return true;
+        if (static_cast<bool>(lhs) != static_cast<bool>(rhs)) return false;
+        return cv::norm(*lhs - *rhs) < 1e-4f;
+    };
+
     return optionalEqual(activeMarker, rhs.activeMarker) &&
            vectorEqual(neighbours, rhs.neighbours) &&
            maskEqual(maskPoints, rhs.maskPoints) &&
@@ -115,7 +121,8 @@ bool SegmentationOverlayController::State::operator==(const State& rhs) const
            paintingApproval == rhs.paintingApproval &&
            surface == rhs.surface &&
            approvalHoverScenePos == rhs.approvalHoverScenePos &&
-           floatEqual(approvalHoverViewerScale, rhs.approvalHoverViewerScale);
+           floatEqual(approvalHoverViewerScale, rhs.approvalHoverViewerScale) &&
+           vec3fOptEqual(approvalHoverPlaneNormal, rhs.approvalHoverPlaneNormal);
 }
 
 SegmentationOverlayController::SegmentationOverlayController(CSurfaceCollection* surfaces, QObject* parent)
@@ -875,11 +882,57 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
                 style.dashPattern = {4.0, 4.0};  // Dashed pattern
                 style.z = kApprovalMaskZ + 10.0;
 
-                const QRectF rect(sceneCenter.x() - rectHalfWidth,
-                                  sceneCenter.y() - rectHalfHeight,
-                                  rectHalfWidth * 2.0,
-                                  rectHalfHeight * 2.0);
-                builder.addRect(rect, false, style);
+                // Determine rectangle orientation based on cylinder axis (plane normal)
+                qreal rotationDegrees = 0.0;
+                if (state.approvalHoverPlaneNormal) {
+                    // When hovering in XY/XZ/YZ planes, orient the rectangle along the cylinder axis
+                    // Project the cylinder axis (plane normal) into the flattened view
+                    const cv::Vec3f& normal = *state.approvalHoverPlaneNormal;
+                    const cv::Vec3f axisEndWorld = hoverWorld + normal * brushDepthNative;
+                    const QPointF axisEndScene = viewer->volumePointToScene(axisEndWorld);
+
+                    // Compute angle from center to axis end
+                    const qreal dx = axisEndScene.x() - sceneCenter.x();
+                    const qreal dy = axisEndScene.y() - sceneCenter.y();
+                    if (std::abs(dx) > 0.1 || std::abs(dy) > 0.1) {
+                        // atan2 gives angle from positive X axis, we want rotation where
+                        // the rectangle's height (Y) aligns with the cylinder axis
+                        rotationDegrees = std::atan2(dy, dx) * 180.0 / M_PI - 90.0;
+                    }
+                }
+
+                if (std::abs(rotationDegrees) < 0.1) {
+                    // No rotation needed - draw axis-aligned rectangle
+                    const QRectF rect(sceneCenter.x() - rectHalfWidth,
+                                      sceneCenter.y() - rectHalfHeight,
+                                      rectHalfWidth * 2.0,
+                                      rectHalfHeight * 2.0);
+                    builder.addRect(rect, false, style);
+                } else {
+                    // Draw rotated rectangle as a closed line strip
+                    const qreal angleRad = rotationDegrees * M_PI / 180.0;
+                    const qreal cosA = std::cos(angleRad);
+                    const qreal sinA = std::sin(angleRad);
+
+                    // Rectangle corners before rotation (centered at origin)
+                    // Width along X, Height along Y
+                    const std::array<QPointF, 4> corners = {{
+                        {-rectHalfWidth, -rectHalfHeight},
+                        { rectHalfWidth, -rectHalfHeight},
+                        { rectHalfWidth,  rectHalfHeight},
+                        {-rectHalfWidth,  rectHalfHeight}
+                    }};
+
+                    std::vector<QPointF> points;
+                    points.reserve(4);
+                    for (const auto& corner : corners) {
+                        // Rotate and translate
+                        const qreal rx = corner.x() * cosA - corner.y() * sinA + sceneCenter.x();
+                        const qreal ry = corner.x() * sinA + corner.y() * cosA + sceneCenter.y();
+                        points.emplace_back(rx, ry);
+                    }
+                    builder.addLineStrip(points, true, style);
+                }
             }
         }
     }

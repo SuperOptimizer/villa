@@ -69,6 +69,7 @@ public:
         std::optional<cv::Vec3f> approvalHoverWorld;  // Current hover position for brush circle
         std::optional<QPointF> approvalHoverScenePos; // Scene position (avoids expensive pointTo)
         float approvalHoverViewerScale{1.0f};         // Viewer scale for the hover position
+        std::optional<cv::Vec3f> approvalHoverPlaneNormal;  // Plane normal when hovering in XY/XZ/YZ viewers
 
         bool operator==(const State& rhs) const;
         bool operator!=(const State& rhs) const { return !(*this == rhs); }

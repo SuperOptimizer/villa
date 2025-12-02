@@ -973,11 +973,13 @@ std::optional<std::pair<int, int>> ApprovalMaskBrushTool::sceneToGridIndex(const
     return std::make_pair(row, col);
 }
 
-void ApprovalMaskBrushTool::setHoverWorldPos(const cv::Vec3f& pos, float brushRadius, const QPointF& scenePos, float viewerScale)
+void ApprovalMaskBrushTool::setHoverWorldPos(const cv::Vec3f& pos, float brushRadius, const QPointF& scenePos, float viewerScale,
+                                             const std::optional<cv::Vec3f>& planeNormal)
 {
     _hoverWorldPos = pos;
     _hoverScenePos = scenePos;
     _hoverViewerScale = viewerScale;
+    _hoverPlaneNormal = planeNormal;
 
     // For flat cylinder model: always use full brush radius
     // The cylinder has full radius in all orthogonal plane views (XY, XZ, YZ)
