@@ -80,6 +80,10 @@ protected:
     TiffWriteOptions _tiff_opts;
     cv::Vec3f _center;
     Rect3D _bbox = {{-1,-1,-1},{-1,-1,-1}};
+
+private:
+    // Write surface data to directory without modifying state. skipChannel can be used to exclude a channel.
+    void writeDataToDirectory(const std::filesystem::path& dir, const std::string& skipChannel = "");
 };
 
 QuadSurface *load_quad_from_tifxyz(const std::string &path, int flags = 0);
