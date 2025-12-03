@@ -72,6 +72,7 @@ public:
     void invalidateCache();
     void saveOverwrite();
     void saveSnapshot(int maxBackups = 10);
+    void invalidateMask();
     std::vector<std::string> channelNames() const;
 protected:
     std::unordered_map<std::string, cv::Mat> _channels;

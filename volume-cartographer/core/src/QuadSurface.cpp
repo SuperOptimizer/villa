@@ -564,6 +564,19 @@ void QuadSurface::saveOverwrite()
     id = uuid;
 }
 
+void QuadSurface::invalidateMask()
+{
+    // Clear from memory
+    _channels.erase("mask");
+
+    // Delete from disk
+    if (!path.empty()) {
+        std::filesystem::path maskFile = path / "mask.tif";
+        std::error_code ec;
+        std::filesystem::remove(maskFile, ec);
+    }
+}
+
 void QuadSurface::writeDataToDirectory(const std::filesystem::path& dir, const std::string& skipChannel)
 {
     // Split the points matrix into x, y, z channels
@@ -704,12 +717,6 @@ void QuadSurface::saveSnapshot(int maxBackups)
         std::filesystem::path destMask = snapshot_dest / "mask.tif";
         std::filesystem::copy_file(maskFile, destMask,
             std::filesystem::copy_options::overwrite_existing, ec);
-        if (!ec) {
-            // Delete the original mask.tif after successful copy
-            std::filesystem::remove(maskFile, ec);
-            // Clear the mask channel from memory so it doesn't get re-saved later
-            _channels.erase("mask");
-        }
     }
 
     if (std::filesystem::exists(generationsFile)) {
