@@ -837,7 +837,7 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
             if (radiusPixels > 1.0) {
                 ViewerOverlayControllerBase::OverlayStyle style;
                 style.penColor = state.paintingApproval ? QColor(0, 100, 255, 200) : QColor(255, 80, 80, 200);
-                style.penWidth = 2.0;
+                style.penWidth = 6.0;
                 style.brushColor = Qt::transparent;
                 style.penStyle = Qt::DashLine;
                 style.dashPattern = {4.0, 4.0};  // Dashed pattern
@@ -876,7 +876,7 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
             if (rectHalfWidth > 1.0 && rectHalfHeight > 1.0) {
                 ViewerOverlayControllerBase::OverlayStyle style;
                 style.penColor = state.paintingApproval ? QColor(0, 100, 255, 200) : QColor(255, 80, 80, 200);
-                style.penWidth = 2.0;
+                style.penWidth = 6.0;
                 style.brushColor = Qt::transparent;
                 style.penStyle = Qt::DashLine;
                 style.dashPattern = {4.0, 4.0};  // Dashed pattern
