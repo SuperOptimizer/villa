@@ -1473,6 +1473,7 @@ void CWindow::CreateWidgets(void)
     filterUi.pointSetAll = btnPointSetFilterAll;
     filterUi.pointSetNone = btnPointSetFilterNone;
     filterUi.pointSetMode = cmbPointSetFilterMode;
+    filterUi.surfaceIdFilter = ui.lineEditSurfaceFilter;
     _surfacePanel->configureFilters(filterUi, _point_collection);
 
     SurfacePanelController::TagUiRefs tagUi{
