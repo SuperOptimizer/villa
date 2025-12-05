@@ -157,6 +157,21 @@ void SegmentationOverlayController::applyState(const State& state)
     sanitized.displayRadiusSteps = std::max(sanitized.displayRadiusSteps, 0.0f);
     sanitized.gridStepWorld = std::max(sanitized.gridStepWorld, 1e-4f);
 
+    // skip refresh if state hasn't changed
+    if (_currentState && *_currentState == sanitized) {
+        return;
+    }
+
+    // throttle the overlay refresh a bit
+    static constexpr auto kMinRefreshInterval = std::chrono::milliseconds(32);
+    auto now = std::chrono::steady_clock::now();
+    if (now - _lastRefreshTime < kMinRefreshInterval) {
+        // state changed but we're throttling - save state for next refresh
+        _currentState = std::move(sanitized);
+        return;
+    }
+    _lastRefreshTime = now;
+
     _currentState = std::move(sanitized);
     refreshAll();
 }
@@ -837,7 +852,8 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
             if (radiusPixels > 1.0) {
                 ViewerOverlayControllerBase::OverlayStyle style;
                 style.penColor = state.paintingApproval ? QColor(0, 0, 255) : QColor(255, 0, 0);
-                style.penWidth = 2.0;
+                style.penWidth = 6.0;
+
                 style.brushColor = Qt::transparent;
                 style.penStyle = Qt::DashLine;
                 style.dashPattern = {4.0, 4.0};  // Dashed pattern
@@ -876,7 +892,7 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
             if (rectHalfWidth > 1.0 && rectHalfHeight > 1.0) {
                 ViewerOverlayControllerBase::OverlayStyle style;
                 style.penColor = state.paintingApproval ? QColor(0, 0, 255) : QColor(255, 0, 0);
-                style.penWidth = 2.0;
+                style.penWidth = 6.0;
                 style.brushColor = Qt::transparent;
                 style.penStyle = Qt::DashLine;
                 style.dashPattern = {4.0, 4.0};  // Dashed pattern
