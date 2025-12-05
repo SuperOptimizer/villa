@@ -107,21 +107,6 @@ void Volume::zarrOpen()
         if (zarrDs_.back()->getDtype() != z5::types::Datatype::uint8 && zarrDs_.back()->getDtype() != z5::types::Datatype::uint16)
             throw std::runtime_error("only uint8 & uint16 is currently supported for zarr datasets incompatible type found in "+path_.string()+" / " +name);
 
-        // Verify level 0 shape matches meta.json dimensions
-        // zarr shape is [z, y, x] = [slices, height, width]
-        if (zarrDs_.size() == 1 && !skipShapeCheck) {
-            const auto& shape = zarrDs_[0]->shape();
-            if (static_cast<int>(shape[0]) != _slices ||
-                static_cast<int>(shape[1]) != _height ||
-                static_cast<int>(shape[2]) != _width) {
-                throw std::runtime_error(
-                    "zarr level 0 shape [z,y,x]=(" + std::to_string(shape[0]) + ", " +
-                    std::to_string(shape[1]) + ", " + std::to_string(shape[2]) +
-                    ") does not match meta.json dimensions (slices=" + std::to_string(_slices) +
-                    ", height=" + std::to_string(_height) + ", width=" + std::to_string(_width) +
-                    ") in " + path_.string());
-            }
-        }
     }
 }
 
