@@ -773,6 +773,7 @@ void SegmentationModule::applyEdits()
             constexpr uint8_t kApproved = 255;
             constexpr float kRadius = 1.0f;
             _overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved);
+            _overlay->scheduleDebouncedSave(_editManager->baseSurface().get());
             qCInfo(lcSegModule) << "Auto-approved" << gridPositions.size() << "edited vertices";
         }
     }
@@ -1330,6 +1331,7 @@ void SegmentationModule::finishDrag()
                 constexpr uint8_t kApproved = 255;
                 constexpr float kRadius = 1.0f;
                 _overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved);
+                _overlay->scheduleDebouncedSave(_editManager->baseSurface().get());
                 qCInfo(lcSegModule) << "Auto-approved" << gridPositions.size() << "drag edited vertices";
             }
         }

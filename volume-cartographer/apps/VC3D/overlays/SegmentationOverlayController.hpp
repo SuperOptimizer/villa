@@ -17,6 +17,7 @@ class Surface;
 class QuadSurface;
 class PlaneSurface;
 class ViewerManager;
+class QTimer;
 
 class SegmentationOverlayController : public ViewerOverlayControllerBase
 {
@@ -99,6 +100,9 @@ public:
 
     // Save the approval mask QImage back to the surface
     void saveApprovalMaskToSurface(QuadSurface* surface);
+
+    // Schedule a debounced save of the approval mask (saves after kApprovalSaveDelayMs of inactivity)
+    void scheduleDebouncedSave(QuadSurface* surface);
 
     // Undo support for approval mask painting
     // Undo the last paint stroke (repaints with inverse value)
@@ -203,6 +207,13 @@ private:
     };
     std::deque<ApprovalMaskUndoEntry> _approvalMaskUndoStack;
     static constexpr size_t kMaxUndoEntries = 100;
+
+    // Debounce timer for auto-saving approval mask after painting
+    QTimer* _approvalSaveTimer{nullptr};
+    QuadSurface* _approvalSaveSurface{nullptr};  // Surface to save to when timer fires
+    static constexpr int kApprovalSaveDelayMs = 500;
+    void scheduleApprovalMaskSave(QuadSurface* surface);
+    void performDebouncedApprovalSave();
 
     // Edit mask state - baseline points for comparison
     bool _showEditMask{false};

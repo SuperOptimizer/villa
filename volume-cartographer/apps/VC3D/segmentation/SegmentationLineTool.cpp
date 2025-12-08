@@ -192,6 +192,7 @@ bool SegmentationLineTool::applyStroke(const std::vector<cv::Vec3f>& stroke)
             constexpr uint8_t kApproved = 255;
             constexpr float kRadius = 1.0f;
             overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved);
+            overlay->scheduleDebouncedSave(_editManager->baseSurface().get());
             qCInfo(lcSegModule) << "Auto-approved" << gridPositions.size() << "line tool edited vertices";
         }
     }
