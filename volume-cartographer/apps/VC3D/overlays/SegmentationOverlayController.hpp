@@ -123,6 +123,10 @@ public:
     // Trigger re-rendering of intersections on all plane viewers
     void invalidatePlaneIntersections();
 
+    // Set the opacity of the approval mask overlay (0-100, where 0 is transparent and 100 is opaque)
+    void setApprovalMaskOpacity(int opacity);
+    [[nodiscard]] int approvalMaskOpacity() const { return _approvalMaskOpacity; }
+
 protected:
     bool isOverlayEnabledFor(CVolumeViewer* viewer) const override;
     void collectPrimitives(CVolumeViewer* viewer,
@@ -152,9 +156,19 @@ private:
     std::optional<State> _currentState;
     std::chrono::steady_clock::time_point _lastRefreshTime;
 
+    // Approval mask resolution scale factor relative to surface grid
+    // Mask dimensions = surface grid dimensions * kApprovalMaskScale
+    // This provides higher resolution painting without changing surface grid
+    static constexpr int kApprovalMaskScale = 4;
+
     // Approval mask images - separate saved and pending
+    // These are at kApprovalMaskScale times the surface grid resolution
     QImage _savedApprovalMaskImage;   // Dark green: what's saved to disk
     QImage _pendingApprovalMaskImage; // Light green: pending strokes
+
+    // Surface grid dimensions (stored for coordinate conversions)
+    int _maskGridRows{0};
+    int _maskGridCols{0};
 
     // Per-viewer cached scene-space rasterized images
     struct ViewerImageCache {
@@ -180,6 +194,9 @@ private:
         QImage savedRegion;  // Copy of the affected region before painting
         QPoint topLeft;      // Position of the saved region in the full image
     };
-    std::deque<ApprovalMaskUndoEntry> _approvalMaskUndoStack;
-    static constexpr size_t kMaxUndoEntries = 100;
+    std::vector<ApprovalMaskUndoEntry> _approvalMaskUndoStack;
+    static constexpr size_t kMaxUndoEntries = 1000;
+
+    // Approval mask overlay opacity (0-100, where 50 is default)
+    int _approvalMaskOpacity{50};
 };

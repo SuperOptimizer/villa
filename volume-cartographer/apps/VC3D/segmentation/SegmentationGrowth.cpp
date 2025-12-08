@@ -82,36 +82,70 @@ void preserveApprovalMask(QuadSurface* oldSurface, QuadSurface* newSurface)
         return;
     }
 
+    // Approval mask scale factor (must match SegmentationOverlayController::kApprovalMaskScale)
+    constexpr int kApprovalMaskScale = 4;
+
     // Load old approval mask without auto-resize
     cv::Mat old_approval = oldSurface->channel("approval", SURF_CHANNEL_NORESIZE);
     if (old_approval.empty()) {
         return;  // No approval mask to preserve
     }
 
-    // Get new surface dimensions
+    // Get old and new surface grid dimensions
+    const cv::Mat_<cv::Vec3f>* old_points = oldSurface->rawPointsPtr();
     const cv::Mat_<cv::Vec3f>* new_points = newSurface->rawPointsPtr();
-    if (!new_points || new_points->empty()) {
+    if (!old_points || old_points->empty() || !new_points || new_points->empty()) {
         return;
     }
 
-    cv::Size new_size = new_points->size();
+    const int oldGridRows = old_points->rows;
+    const int oldGridCols = old_points->cols;
+    const int newGridRows = new_points->rows;
+    const int newGridCols = new_points->cols;
 
-    // Create new approval mask with default value (0 = unapproved)
-    cv::Mat_<uint8_t> new_approval(new_size, static_cast<uint8_t>(0));
+    // Expected mask dimensions at kApprovalMaskScale times grid resolution
+    const int oldExpectedWidth = oldGridCols * kApprovalMaskScale;
+    const int oldExpectedHeight = oldGridRows * kApprovalMaskScale;
+    const int newExpectedWidth = newGridCols * kApprovalMaskScale;
+    const int newExpectedHeight = newGridRows * kApprovalMaskScale;
 
-    // Copy old approval values to same grid positions
-    // Grid expansion preserves old point indices, so old[r,c] == new[r,c]
-    int copy_rows = std::min(old_approval.rows, new_approval.rows);
-    int copy_cols = std::min(old_approval.cols, new_approval.cols);
+    // Handle legacy 1x masks - upscale to expected resolution
+    cv::Mat scaled_old_approval;
+    if (old_approval.cols == oldGridCols && old_approval.rows == oldGridRows) {
+        // Legacy 1x mask - upscale
+        cv::resize(old_approval, scaled_old_approval,
+                   cv::Size(oldExpectedWidth, oldExpectedHeight), 0, 0, cv::INTER_NEAREST);
+        qCInfo(lcSegGrowth) << "Upscaled legacy 1x approval mask from"
+                            << old_approval.cols << "x" << old_approval.rows
+                            << "to" << oldExpectedWidth << "x" << oldExpectedHeight;
+    } else if (old_approval.cols == oldExpectedWidth && old_approval.rows == oldExpectedHeight) {
+        // Already at expected resolution
+        scaled_old_approval = old_approval;
+    } else {
+        // Unexpected size - try to resize to expected
+        cv::resize(old_approval, scaled_old_approval,
+                   cv::Size(oldExpectedWidth, oldExpectedHeight), 0, 0, cv::INTER_NEAREST);
+        qCWarning(lcSegGrowth) << "Resized approval mask from unexpected size"
+                               << old_approval.cols << "x" << old_approval.rows;
+    }
+
+    // Create new approval mask at expected resolution with default value (0 = unapproved)
+    cv::Mat_<uint8_t> new_approval(newExpectedHeight, newExpectedWidth, static_cast<uint8_t>(0));
+
+    // Copy old approval values to same mask positions
+    // Grid expansion preserves old point indices, so old mask region maps to same region in new mask
+    int copy_rows = std::min(scaled_old_approval.rows, new_approval.rows);
+    int copy_cols = std::min(scaled_old_approval.cols, new_approval.cols);
 
     if (copy_rows > 0 && copy_cols > 0) {
         cv::Rect src_roi(0, 0, copy_cols, copy_rows);
         cv::Rect dst_roi(0, 0, copy_cols, copy_rows);
-        old_approval(src_roi).copyTo(new_approval(dst_roi));
+        scaled_old_approval(src_roi).copyTo(new_approval(dst_roi));
 
         qCInfo(lcSegGrowth) << "Preserved approval mask from"
-                            << old_approval.cols << "x" << old_approval.rows
-                            << "to" << new_approval.cols << "x" << new_approval.rows;
+                            << scaled_old_approval.cols << "x" << scaled_old_approval.rows
+                            << "to" << new_approval.cols << "x" << new_approval.rows
+                            << "(grid:" << newGridCols << "x" << newGridRows << ")";
     }
 
     // Set preserved approval mask on new surface

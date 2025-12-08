@@ -14,6 +14,8 @@
 #include <chrono>
 #include <limits>
 
+#include <opencv2/imgproc.hpp>
+
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Surface.hpp"
@@ -157,8 +159,14 @@ void SegmentationOverlayController::applyState(const State& state)
     sanitized.displayRadiusSteps = std::max(sanitized.displayRadiusSteps, 0.0f);
     sanitized.gridStepWorld = std::max(sanitized.gridStepWorld, 1e-4f);
 
-    // skip refresh if state hasn't changed
-    if (_currentState && *_currentState == sanitized) {
+    // Track last known image versions to detect changes from painting
+    static uint64_t lastSavedVersion = 0;
+    static uint64_t lastPendingVersion = 0;
+    const bool imageVersionChanged = (_savedImageVersion != lastSavedVersion) ||
+                                     (_pendingImageVersion != lastPendingVersion);
+
+    // skip refresh if state hasn't changed AND image versions haven't changed
+    if (_currentState && *_currentState == sanitized && !imageVersionChanged) {
         return;
     }
 
@@ -172,6 +180,10 @@ void SegmentationOverlayController::applyState(const State& state)
     }
     _lastRefreshTime = now;
 
+    // Update tracked versions
+    lastSavedVersion = _savedImageVersion;
+    lastPendingVersion = _pendingImageVersion;
+
     _currentState = std::move(sanitized);
     refreshAll();
 }
@@ -184,32 +196,62 @@ void SegmentationOverlayController::loadApprovalMaskImage(QuadSurface* surface)
     if (!surface) {
         _savedApprovalMaskImage = QImage();
         _pendingApprovalMaskImage = QImage();
+        _maskGridRows = 0;
+        _maskGridCols = 0;
         return;
     }
 
+    // Get surface grid dimensions
+    const cv::Mat_<cv::Vec3f>* points = surface->rawPointsPtr();
+    if (!points || points->empty()) {
+        _savedApprovalMaskImage = QImage();
+        _pendingApprovalMaskImage = QImage();
+        _maskGridRows = 0;
+        _maskGridCols = 0;
+        return;
+    }
+
+    _maskGridRows = points->rows;
+    _maskGridCols = points->cols;
+
+    // Target mask dimensions at kApprovalMaskScale times grid resolution
+    const int targetWidth = _maskGridCols * kApprovalMaskScale;
+    const int targetHeight = _maskGridRows * kApprovalMaskScale;
+
     cv::Mat approvalMask = surface->channel("approval", SURF_CHANNEL_NORESIZE);
+
+    // Handle legacy masks at 1x resolution or create new mask at target resolution
+    cv::Mat scaledMask;
     if (approvalMask.empty()) {
-        // Create new empty mask
-        const cv::Mat_<cv::Vec3f>* points = surface->rawPointsPtr();
-        if (!points || points->empty()) {
-            _savedApprovalMaskImage = QImage();
-            _pendingApprovalMaskImage = QImage();
-            return;
-        }
-        approvalMask = cv::Mat_<uint8_t>(points->size(), static_cast<uint8_t>(0));
+        // Create new empty mask at target resolution
+        scaledMask = cv::Mat_<uint8_t>(targetHeight, targetWidth, static_cast<uint8_t>(0));
+    } else if (approvalMask.cols == _maskGridCols && approvalMask.rows == _maskGridRows) {
+        // Legacy 1x mask - upscale to target resolution using nearest neighbor
+        // This preserves sharp edges of approval regions
+        cv::resize(approvalMask, scaledMask, cv::Size(targetWidth, targetHeight), 0, 0, cv::INTER_NEAREST);
+        qInfo() << "Upscaled legacy 1x approval mask from" << approvalMask.cols << "x" << approvalMask.rows
+                << "to" << targetWidth << "x" << targetHeight;
+    } else if (approvalMask.cols == targetWidth && approvalMask.rows == targetHeight) {
+        // Already at target resolution
+        scaledMask = approvalMask;
+    } else {
+        // Unknown resolution - resize to target
+        cv::resize(approvalMask, scaledMask, cv::Size(targetWidth, targetHeight), 0, 0, cv::INTER_NEAREST);
+        qWarning() << "Resized approval mask from unexpected size" << approvalMask.cols << "x" << approvalMask.rows
+                   << "to" << targetWidth << "x" << targetHeight;
     }
 
     // Convert saved mask to ARGB32_Premultiplied format with DARK GREEN, semi-transparent
-    QImage savedImage(approvalMask.cols, approvalMask.rows, QImage::Format_ARGB32_Premultiplied);
-    for (int row = 0; row < approvalMask.rows; ++row) {
-        const uint8_t* maskRow = approvalMask.ptr<uint8_t>(row);
+    QImage savedImage(scaledMask.cols, scaledMask.rows, QImage::Format_ARGB32_Premultiplied);
+    for (int row = 0; row < scaledMask.rows; ++row) {
+        const uint8_t* maskRow = scaledMask.ptr<uint8_t>(row);
         QRgb* imageRow = reinterpret_cast<QRgb*>(savedImage.scanLine(row));
-        for (int col = 0; col < approvalMask.cols; ++col) {
+        for (int col = 0; col < scaledMask.cols; ++col) {
             uint8_t val = maskRow[col];
             if (val > 0) {
-                // GREEN for saved approval: RGB(0, 200, 0) with 60% opacity (alpha = 153)
-                // Premultiply: R=0, G=120, B=0, A=153
-                imageRow[col] = qRgba(0, 120, 0, 153);
+                // GREEN for saved approval: RGB(0, 200, 0) with full alpha
+                // Opacity is controlled by the overlay opacity slider
+                imageRow[col] = qRgba(0, 200, 0, 255);
             } else {
                 imageRow[col] = qRgba(0, 0, 0, 0);  // Fully transparent
             }
@@ -219,8 +261,12 @@ void SegmentationOverlayController::loadApprovalMaskImage(QuadSurface* surface)
     _savedApprovalMaskImage = savedImage;
 
     // Initialize empty pending mask with same dimensions
-    _pendingApprovalMaskImage = QImage(approvalMask.cols, approvalMask.rows, QImage::Format_ARGB32_Premultiplied);
+    _pendingApprovalMaskImage = QImage(scaledMask.cols, scaledMask.rows, QImage::Format_ARGB32_Premultiplied);
     _pendingApprovalMaskImage.fill(qRgba(0, 0, 0, 0));  // Fully transparent
+
+    qInfo() << "loadApprovalMaskImage: grid" << _maskGridCols << "x" << _maskGridRows
+            << "mask" << _savedApprovalMaskImage.width() << "x" << _savedApprovalMaskImage.height()
+            << "(scale:" << kApprovalMaskScale << ")";
 
     // Invalidate all viewer caches
     ++_savedImageVersion;
@@ -246,27 +292,44 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
         return;
     }
 
-    const int radius = static_cast<int>(std::ceil(radiusSteps));
+    // Scale brush sizes by kApprovalMaskScale for the higher resolution mask
+    const float scaledRadiusSteps = radiusSteps * kApprovalMaskScale;
+    const float scaledWidthSteps = widthSteps * kApprovalMaskScale;
+    const float scaledHeightSteps = heightSteps * kApprovalMaskScale;
+
+    if (!gridPositions.empty()) {
+        const auto& first = gridPositions.front();
+        qDebug() << "paintApprovalMaskDirect:" << gridPositions.size() << "positions"
+                 << "first grid:" << first.first << first.second
+                 << "-> mask:" << (first.first * kApprovalMaskScale) << (first.second * kApprovalMaskScale)
+                 << "radius:" << radiusSteps << "->" << scaledRadiusSteps
+                 << "mask size:" << _pendingApprovalMaskImage.width() << "x" << _pendingApprovalMaskImage.height();
+    }
+
+    const int radius = static_cast<int>(std::ceil(scaledRadiusSteps));
 
     // For rectangle mode (flattened view), use explicit width and height
-    const int rectHalfWidth = useRectangle && widthSteps > 0
-        ? static_cast<int>(std::ceil(widthSteps / 2.0f))
+    const int rectHalfWidth = useRectangle && scaledWidthSteps > 0
+        ? static_cast<int>(std::ceil(scaledWidthSteps / 2.0f))
         : radius;
-    const int rectHalfHeight = useRectangle && heightSteps > 0
-        ? static_cast<int>(std::ceil(heightSteps / 2.0f))
+    const int rectHalfHeight = useRectangle && scaledHeightSteps > 0
+        ? static_cast<int>(std::ceil(scaledHeightSteps / 2.0f))
         : radius;
 
-    // Compute bounding box of affected region
+    // Compute bounding box of affected region (in scaled mask coordinates)
     int minRow = std::numeric_limits<int>::max();
     int maxRow = std::numeric_limits<int>::min();
     int minCol = std::numeric_limits<int>::max();
     int maxCol = std::numeric_limits<int>::min();
 
-    for (const auto& [row, col] : gridPositions) {
-        minRow = std::min(minRow, row - rectHalfHeight);
-        maxRow = std::max(maxRow, row + rectHalfHeight);
-        minCol = std::min(minCol, col - rectHalfWidth);
-        maxCol = std::max(maxCol, col + rectHalfWidth);
+    for (const auto& [gridRow, gridCol] : gridPositions) {
+        // Scale grid coordinates to mask coordinates
+        const int maskRow = gridRow * kApprovalMaskScale;
+        const int maskCol = gridCol * kApprovalMaskScale;
+        minRow = std::min(minRow, maskRow - rectHalfHeight);
+        maxRow = std::max(maxRow, maskRow + rectHalfHeight);
+        minCol = std::min(minCol, maskCol - rectHalfWidth);
+        maxCol = std::max(maxCol, maskCol + rectHalfWidth);
     }
 
     // Clamp to image bounds
@@ -287,12 +350,17 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
 
         // Limit undo stack size
         if (_approvalMaskUndoStack.size() > kMaxUndoEntries) {
-            _approvalMaskUndoStack.pop_front();
+            _approvalMaskUndoStack.erase(_approvalMaskUndoStack.begin());
         }
     }
 
     // Paint directly into the PENDING QImage
-    for (const auto& [centerRow, centerCol] : gridPositions) {
+    int pixelsPainted = 0;
+    for (const auto& [gridRow, gridCol] : gridPositions) {
+        // Scale grid coordinates to mask coordinates
+        const int centerRow = gridRow * kApprovalMaskScale;
+        const int centerCol = gridCol * kApprovalMaskScale;
+
         // For rectangle: iterate over explicit width/height
         // For circle: iterate over full radius in both dimensions
         const int colRange = useRectangle ? rectHalfWidth : radius;
@@ -311,7 +379,7 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
                 // For circle mode, skip pixels outside the radius
                 if (!useRectangle) {
                     const float distance = std::sqrt(static_cast<float>(dr * dr + dc * dc));
-                    if (distance > radiusSteps) {
+                    if (distance > scaledRadiusSteps) {
                         continue;
                     }
                 }
@@ -319,13 +387,34 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
                 // Update pixel color based on paint mode:
                 // - Blue for pending approval (paintValue = 255)
                 // - Red for pending unapproval (paintValue = 0)
+                // Use full alpha - opacity is controlled by the overlay opacity slider
                 if (paintValue > 0) {
-                    // Approving: BLUE with 50% opacity
-                    _pendingApprovalMaskImage.setPixel(col, row, qRgba(0, 50, 127, 128));
+                    // Approving: BLUE (0, 150, 255)
+                    _pendingApprovalMaskImage.setPixel(col, row, qRgba(0, 150, 255, 255));
                 } else {
-                    // Unapproving: RED with 50% opacity
-                    _pendingApprovalMaskImage.setPixel(col, row, qRgba(127, 25, 25, 128));
+                    // Unapproving: RED (255, 50, 50)
+                    _pendingApprovalMaskImage.setPixel(col, row, qRgba(255, 50, 50, 255));
                 }
+                ++pixelsPainted;
+            }
+        }
+    }
+
+    static int totalPainted = 0;
+    totalPainted += pixelsPainted;
+    if (pixelsPainted > 0) {
+        qDebug() << "Painted" << pixelsPainted << "pixels (total:" << totalPainted << ")";
+
+        // Verify: read back a painted pixel to confirm it was set
+        if (!gridPositions.empty()) {
+            const auto& first = gridPositions.front();
+            const int verifyRow = first.first * kApprovalMaskScale;
+            const int verifyCol = first.second * kApprovalMaskScale;
+            if (verifyRow >= 0 && verifyRow < _pendingApprovalMaskImage.height() &&
+                verifyCol >= 0 && verifyCol < _pendingApprovalMaskImage.width()) {
+                QRgb pixel = _pendingApprovalMaskImage.pixel(verifyCol, verifyRow);
+                qDebug() << "Verify pixel at mask" << verifyCol << verifyRow
+                         << "RGBA:" << qRed(pixel) << qGreen(pixel) << qBlue(pixel) << qAlpha(pixel);
             }
         }
     }
@@ -400,8 +489,8 @@ void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surfa
         for (int col = 0; col < width; ++col) {
             uint8_t mergedVal = approvalMask(row, col);
             if (mergedVal > 0) {
-                // Update saved image with dark green
-                savedRow[col] = qRgba(0, 60, 0, 153);
+                // Update saved image with green (full alpha - opacity controlled by slider)
+                savedRow[col] = qRgba(0, 200, 0, 255);
             } else {
                 savedRow[col] = qRgba(0, 0, 0, 0);
             }
@@ -609,19 +698,31 @@ void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, Qu
     const int gridRows = points->rows;
     const int gridCols = points->cols;
 
+    // Mask is at kApprovalMaskScale times grid resolution
+    const int expectedMaskWidth = gridCols * kApprovalMaskScale;
+    const int expectedMaskHeight = gridRows * kApprovalMaskScale;
+
     const bool hasSaved = !_savedApprovalMaskImage.isNull() &&
-                         _savedApprovalMaskImage.width() == gridCols &&
-                         _savedApprovalMaskImage.height() == gridRows;
+                         _savedApprovalMaskImage.width() == expectedMaskWidth &&
+                         _savedApprovalMaskImage.height() == expectedMaskHeight;
     const bool hasPending = !_pendingApprovalMaskImage.isNull() &&
-                           _pendingApprovalMaskImage.width() == gridCols &&
-                           _pendingApprovalMaskImage.height() == gridRows;
+                           _pendingApprovalMaskImage.width() == expectedMaskWidth &&
+                           _pendingApprovalMaskImage.height() == expectedMaskHeight;
 
     if (!hasSaved && !hasPending) {
+        // Debug: log why we're returning early
+        if (!_savedApprovalMaskImage.isNull() || !_pendingApprovalMaskImage.isNull()) {
+            qWarning() << "rebuildViewerCache: dimension mismatch!"
+                       << "grid:" << gridCols << "x" << gridRows
+                       << "expected mask:" << expectedMaskWidth << "x" << expectedMaskHeight
+                       << "saved:" << _savedApprovalMaskImage.width() << "x" << _savedApprovalMaskImage.height()
+                       << "pending:" << _pendingApprovalMaskImage.width() << "x" << _pendingApprovalMaskImage.height();
+        }
         return;
     }
 
-    // Simple approach: composite saved and pending images using QPainter (fast!)
-    QImage compositeImage(gridCols, gridRows, QImage::Format_ARGB32_Premultiplied);
+    // Composite saved and pending images at full mask resolution
+    QImage compositeImage(expectedMaskWidth, expectedMaskHeight, QImage::Format_ARGB32_Premultiplied);
     compositeImage.fill(Qt::transparent);
 
     QPainter painter(&compositeImage);
@@ -658,7 +759,7 @@ void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, Qu
         return QPointF(sceneX, sceneY);
     };
 
-    // Calculate corners directly
+    // Calculate corners directly using grid coordinates
     QPointF topLeft = gridToScene(0, 0);
     QPointF topRight = gridToScene(0, gridCols - 1);
     QPointF bottomLeft = gridToScene(gridRows - 1, 0);
@@ -670,11 +771,12 @@ void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, Qu
     sceneBounds.setTop(std::min({topLeft.y(), topRight.y(), bottomLeft.y(), bottomRight.y()}));
     sceneBounds.setBottom(std::max({topLeft.y(), topRight.y(), bottomLeft.y(), bottomRight.y()}));
 
-    // Calculate scale to map from grid-space to scene-space
+    // Calculate scale to map from mask-space to scene-space
+    // The mask is kApprovalMaskScale times larger than the grid, so we need to account for that
     const qreal sceneWidth = sceneBounds.width();
     const qreal sceneHeight = sceneBounds.height();
-    const qreal scaleX = sceneWidth / static_cast<qreal>(gridCols);
-    const qreal scaleY = sceneHeight / static_cast<qreal>(gridRows);
+    const qreal scaleX = sceneWidth / static_cast<qreal>(expectedMaskWidth);
+    const qreal scaleY = sceneHeight / static_cast<qreal>(expectedMaskHeight);
     const qreal scale = std::max(scaleX, scaleY);
 
     // Store in cache
@@ -689,12 +791,16 @@ void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, Qu
 
 int SegmentationOverlayController::queryApprovalStatus(int row, int col) const
 {
+    // Scale grid coordinates to mask coordinates
+    const int maskRow = row * kApprovalMaskScale;
+    const int maskCol = col * kApprovalMaskScale;
+
     // Check pending first (takes priority for display)
     // Returns: 0 = not approved, 1 = saved approved, 2 = pending approved, 3 = pending unapproved
     if (!_pendingApprovalMaskImage.isNull() &&
-        row >= 0 && row < _pendingApprovalMaskImage.height() &&
-        col >= 0 && col < _pendingApprovalMaskImage.width()) {
-        QRgb pixel = _pendingApprovalMaskImage.pixel(col, row);
+        maskRow >= 0 && maskRow < _pendingApprovalMaskImage.height() &&
+        maskCol >= 0 && maskCol < _pendingApprovalMaskImage.width()) {
+        QRgb pixel = _pendingApprovalMaskImage.pixel(maskCol, maskRow);
         if (qAlpha(pixel) > 0) {
             // Distinguish between pending approve (blue) and pending unapprove (red)
             // Blue has high blue component, red has high red component
@@ -707,9 +813,9 @@ int SegmentationOverlayController::queryApprovalStatus(int row, int col) const
 
     // Check saved
     if (!_savedApprovalMaskImage.isNull() &&
-        row >= 0 && row < _savedApprovalMaskImage.height() &&
-        col >= 0 && col < _savedApprovalMaskImage.width()) {
-        QRgb pixel = _savedApprovalMaskImage.pixel(col, row);
+        maskRow >= 0 && maskRow < _savedApprovalMaskImage.height() &&
+        maskCol >= 0 && maskCol < _savedApprovalMaskImage.width()) {
+        QRgb pixel = _savedApprovalMaskImage.pixel(maskCol, maskRow);
         if (qAlpha(pixel) > 0) {
             return 1;  // Saved
         }
@@ -758,12 +864,32 @@ float SegmentationOverlayController::sampleImageBilinear(const QImage& image, fl
 
 float SegmentationOverlayController::queryApprovalBilinear(float row, float col, int* outStatus) const
 {
+    // Scale grid coordinates to mask coordinates
+    const float maskRow = row * static_cast<float>(kApprovalMaskScale);
+    const float maskCol = col * static_cast<float>(kApprovalMaskScale);
+
     // First check pending mask (takes priority)
-    const float pendingAlpha = sampleImageBilinear(_pendingApprovalMaskImage, row, col);
+    const float pendingAlpha = sampleImageBilinear(_pendingApprovalMaskImage, maskRow, maskCol);
+
+    static int queryCount = 0;
+    static int foundCount = 0;
+    ++queryCount;
+    // Log more frequently when we find something, or every 10000 queries
+    if (pendingAlpha > 0.0f) {
+        ++foundCount;
+        if (foundCount <= 10 || foundCount % 1000 == 0) {
+            qDebug() << "queryApprovalBilinear FOUND: grid" << col << row << "-> mask" << maskCol << maskRow
+                     << "pendingAlpha:" << pendingAlpha << "(found" << foundCount << "of" << queryCount << ")";
+        }
+    } else if (queryCount % 50000 == 1) {
+        qDebug() << "queryApprovalBilinear: grid" << col << row << "-> mask" << maskCol << maskRow
+                 << "pendingAlpha:" << pendingAlpha
+                 << "maskSize:" << _pendingApprovalMaskImage.width() << "x" << _pendingApprovalMaskImage.height();
+    }
     if (pendingAlpha > 0.5f) {  // Threshold to determine if we're "in" pending region
         // Determine if pending approve or unapprove by checking nearest pixel color
-        const int nearestRow = static_cast<int>(std::round(row));
-        const int nearestCol = static_cast<int>(std::round(col));
+        const int nearestRow = static_cast<int>(std::round(maskRow));
+        const int nearestCol = static_cast<int>(std::round(maskCol));
         if (!_pendingApprovalMaskImage.isNull() &&
             nearestRow >= 0 && nearestRow < _pendingApprovalMaskImage.height() &&
             nearestCol >= 0 && nearestCol < _pendingApprovalMaskImage.width()) {
@@ -778,7 +904,7 @@ float SegmentationOverlayController::queryApprovalBilinear(float row, float col,
     }
 
     // Check saved mask with bilinear interpolation
-    const float savedAlpha = sampleImageBilinear(_savedApprovalMaskImage, row, col);
+    const float savedAlpha = sampleImageBilinear(_savedApprovalMaskImage, maskRow, maskCol);
     if (savedAlpha > 0.0f) {
         if (outStatus) {
             *outStatus = 1;  // Saved
@@ -815,6 +941,19 @@ void SegmentationOverlayController::invalidatePlaneIntersections()
             viewer->renderIntersections();
         }
     });
+}
+
+void SegmentationOverlayController::setApprovalMaskOpacity(int opacity)
+{
+    const int clamped = std::clamp(opacity, 0, 100);
+    if (_approvalMaskOpacity == clamped) {
+        return;
+    }
+    _approvalMaskOpacity = clamped;
+    // Trigger redraw by invalidating all viewer caches
+    ++_savedImageVersion;
+    invalidatePlaneIntersections();
+    refreshAll();
 }
 
 void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
@@ -976,6 +1115,8 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
                        (it->second.pendingImageVersion != _pendingImageVersion);
 
     if (needsRebuild) {
+        qDebug() << "buildApprovalMaskOverlay: rebuilding cache for flattened view"
+                 << "savedVer:" << _savedImageVersion << "pendingVer:" << _pendingImageVersion;
         rebuildViewerCache(viewer, state.surface);
         it = _viewerCaches.find(viewer);
     }
@@ -1020,7 +1161,12 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
 
     // Render the composite image as a single scaled image overlay
     // This is much faster than rendering individual rectangles
+    // The mask image is at kApprovalMaskScale times the grid resolution,
+    // so each mask pixel represents 1/kApprovalMaskScale grid cells.
+    // The scale factor maps each pixel to scene space.
     QPointF topLeft = gridToScene(0, 0);
-    builder.addImage(cache.compositeImage, topLeft, gridToSceneScale, 1.0, kApprovalMaskZ);
+    const qreal maskPixelScale = gridToSceneScale / static_cast<qreal>(kApprovalMaskScale);
+    const qreal opacity = static_cast<qreal>(_approvalMaskOpacity) / 100.0;
+    builder.addImage(cache.compositeImage, topLeft, maskPixelScale, opacity, kApprovalMaskZ);
 }
 
