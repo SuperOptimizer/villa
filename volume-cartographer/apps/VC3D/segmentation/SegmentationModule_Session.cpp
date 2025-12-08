@@ -244,14 +244,34 @@ bool SegmentationModule::applySurfaceUpdateFromGrowth(const cv::Rect& vertexRect
         return false;
     }
 
+    // Auto-approve the growth region if approval mask is active (growth = reviewed/corrected)
+    // We paint into pending, then save immediately so the changes persist after reload
+    auto* baseSurf = _editManager->baseSurface().get();
+    if (_overlay && _overlay->hasApprovalMaskData() && vertexRect.area() > 0) {
+        std::vector<std::pair<int, int>> gridPositions;
+        gridPositions.reserve(static_cast<size_t>(vertexRect.area()));
+        for (int row = vertexRect.y; row < vertexRect.y + vertexRect.height; ++row) {
+            for (int col = vertexRect.x; col < vertexRect.x + vertexRect.width; ++col) {
+                gridPositions.emplace_back(row, col);
+            }
+        }
+        constexpr uint8_t kApproved = 255;
+        constexpr float kRadius = 1.0f;
+        _overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved);
+        // Save immediately to persist through the upcoming reload
+        _overlay->saveApprovalMaskToSurface(baseSurf);
+        _overlay->clearApprovalMaskUndoHistory();
+        qCInfo(lcSegModule) << "Auto-approved growth region:" << vertexRect.width << "x" << vertexRect.height;
+    }
+
     // Update approval tool surface if editing approval mask
     if (isEditingApprovalMask() && _approvalTool) {
-        _approvalTool->setSurface(_editManager->baseSurface().get());
+        _approvalTool->setSurface(baseSurf);
     }
 
     // Reload approval mask image if showing approval mask
     if (_showApprovalMask && _overlay) {
-        _overlay->loadApprovalMaskImage(_editManager->baseSurface().get());
+        _overlay->loadApprovalMaskImage(baseSurf);
     }
 
     refreshOverlay();

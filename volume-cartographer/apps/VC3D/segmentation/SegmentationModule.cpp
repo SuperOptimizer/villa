@@ -307,6 +307,16 @@ void SegmentationModule::bindWidgetSignals()
     connect(_widget, &SegmentationWidget::approvalStrokesUndoRequested,
             this, &SegmentationModule::undoApprovalStroke);
 
+    // Edit mask connections
+    connect(_widget, &SegmentationWidget::showEditMaskChanged,
+            this, &SegmentationModule::setShowEditMask);
+    connect(_widget, &SegmentationWidget::generateEditMaskRequested,
+            this, &SegmentationModule::generateEditMask);
+    connect(_widget, &SegmentationWidget::deleteEditMaskRequested,
+            this, &SegmentationModule::deleteEditMask);
+    connect(_widget, &SegmentationWidget::editMaskThresholdChanged,
+            this, &SegmentationModule::setEditMaskThreshold);
+
     _widget->setEraseBrushActive(false);
 }
 
@@ -662,6 +672,81 @@ void SegmentationModule::undoApprovalStroke()
     }
 }
 
+void SegmentationModule::setShowEditMask(bool show)
+{
+    if (_overlay) {
+        _overlay->setShowEditMask(show);
+    }
+}
+
+void SegmentationModule::generateEditMask()
+{
+    qCInfo(lcSegModule) << "Generating edit mask baseline...";
+    auto* surface = activeBaseSurface();
+    if (!surface) {
+        qCWarning(lcSegModule) << "  No surface selected";
+        emit statusMessageRequested(tr("No surface selected."), kStatusShort);
+        return;
+    }
+
+    if (SegmentationOverlayController::editMaskExists(surface)) {
+        qCWarning(lcSegModule) << "  Edit mask already exists";
+        emit statusMessageRequested(tr("Edit mask baseline already exists."), kStatusShort);
+        return;
+    }
+
+    if (SegmentationOverlayController::generateEditMask(surface)) {
+        emit statusMessageRequested(tr("Generated edit mask baseline."), kStatusShort);
+        checkEditMaskExists();
+        // Load the baseline into the overlay
+        if (_overlay) {
+            _overlay->loadEditMaskBaseline(surface);
+        }
+    } else {
+        emit statusMessageRequested(tr("Failed to generate edit mask baseline."), kStatusShort);
+    }
+}
+
+void SegmentationModule::deleteEditMask()
+{
+    qCInfo(lcSegModule) << "Deleting edit mask baseline...";
+    auto* surface = activeBaseSurface();
+    if (!surface) {
+        return;
+    }
+
+    if (SegmentationOverlayController::deleteEditMask(surface)) {
+        emit statusMessageRequested(tr("Deleted edit mask baseline."), kStatusShort);
+        checkEditMaskExists();
+        // Clear the baseline from the overlay
+        if (_overlay) {
+            _overlay->clearEditMaskBaseline();
+            _overlay->setShowEditMask(false);
+        }
+        if (_widget) {
+            _widget->setShowEditMask(false);
+        }
+    } else {
+        emit statusMessageRequested(tr("Failed to delete edit mask baseline."), kStatusShort);
+    }
+}
+
+void SegmentationModule::setEditMaskThreshold(float threshold)
+{
+    if (_overlay) {
+        _overlay->setEditMaskThreshold(threshold);
+    }
+}
+
+void SegmentationModule::checkEditMaskExists()
+{
+    auto* surface = activeBaseSurface();
+    const bool exists = surface && SegmentationOverlayController::editMaskExists(surface);
+    if (_widget) {
+        _widget->setEditMaskExists(exists);
+    }
+}
+
 void SegmentationModule::applyEdits()
 {
     if (!_editManager || !_editManager->hasSession()) {
@@ -674,6 +759,24 @@ void SegmentationModule::applyEdits()
         }
     }
     clearInvalidationBrush();
+
+    // Auto-approve edited regions if approval mask is active (you edited it, so it's reviewed)
+    if (_overlay && _overlay->hasApprovalMaskData() && hadPendingChanges) {
+        const auto editedVerts = _editManager->editedVertices();
+        if (!editedVerts.empty()) {
+            std::vector<std::pair<int, int>> gridPositions;
+            gridPositions.reserve(editedVerts.size());
+            for (const auto& edit : editedVerts) {
+                gridPositions.emplace_back(edit.row, edit.col);
+            }
+            // Paint with value 255 (approved), radius 1 to mark just the edited vertices
+            constexpr uint8_t kApproved = 255;
+            constexpr float kRadius = 1.0f;
+            _overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved);
+            qCInfo(lcSegModule) << "Auto-approved" << gridPositions.size() << "edited vertices";
+        }
+    }
+
     _editManager->applyPreview();
     if (_surfaces) {
         auto preview = _editManager->previewSurface();

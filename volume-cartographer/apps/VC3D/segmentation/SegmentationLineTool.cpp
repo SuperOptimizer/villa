@@ -3,8 +3,10 @@
 #include "SegmentationModule.hpp"
 #include "SegmentationEditManager.hpp"
 #include "CSurfaceCollection.hpp"
+#include "overlays/SegmentationOverlayController.hpp"
 
 #include <QCoreApplication>
+#include <QLoggingCategory>
 #include <QObject>
 
 #include <algorithm>
@@ -12,6 +14,8 @@
 #include <unordered_set>
 
 #include "vc/core/util/QuadSurface.hpp"
+
+Q_DECLARE_LOGGING_CATEGORY(lcSegModule)
 
 namespace
 {
@@ -173,6 +177,23 @@ bool SegmentationLineTool::applyStroke(const std::vector<cv::Vec3f>& stroke)
             _module.discardLastUndoSnapshot();
         }
         return false;
+    }
+
+    // Auto-approve edited regions before applyPreview() clears them
+    auto* overlay = _module.overlay();
+    if (overlay && overlay->hasApprovalMaskData()) {
+        const auto editedVerts = _editManager->editedVertices();
+        if (!editedVerts.empty()) {
+            std::vector<std::pair<int, int>> gridPositions;
+            gridPositions.reserve(editedVerts.size());
+            for (const auto& edit : editedVerts) {
+                gridPositions.emplace_back(edit.row, edit.col);
+            }
+            constexpr uint8_t kApproved = 255;
+            constexpr float kRadius = 1.0f;
+            overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved);
+            qCInfo(lcSegModule) << "Auto-approved" << gridPositions.size() << "line tool edited vertices";
+        }
     }
 
     _editManager->applyPreview();
