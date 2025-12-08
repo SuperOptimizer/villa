@@ -753,12 +753,12 @@ void SegmentationModule::applyEdits()
         return;
     }
     const bool hadPendingChanges = _editManager->hasPendingChanges();
-    if (hadPendingChanges) {
-        if (!captureUndoSnapshot()) {
-            qCWarning(lcSegModule) << "Failed to capture undo snapshot before applying edits.";
-        }
-    }
     clearInvalidationBrush();
+
+    // Capture delta for undo before applyPreview() clears edited vertices
+    if (hadPendingChanges) {
+        captureUndoDelta();
+    }
 
     // Auto-approve edited regions if approval mask is active (you edited it, so it's reviewed)
     if (_overlay && _overlay->hasApprovalMaskData() && hadPendingChanges) {
@@ -772,7 +772,8 @@ void SegmentationModule::applyEdits()
             // Paint with value 255 (approved), radius 1 to mark just the edited vertices
             constexpr uint8_t kApproved = 255;
             constexpr float kRadius = 1.0f;
-            _overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved);
+            constexpr bool kIsAutoApproval = true;
+            _overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved, false, 0.0f, 0.0f, kIsAutoApproval);
             _overlay->scheduleDebouncedSave(_editManager->baseSurface().get());
             qCInfo(lcSegModule) << "Auto-approved" << gridPositions.size() << "edited vertices";
         }
@@ -796,11 +797,6 @@ void SegmentationModule::resetEdits()
         return;
     }
     const bool hadPendingChanges = _editManager->hasPendingChanges();
-    if (hadPendingChanges) {
-        if (!captureUndoSnapshot()) {
-            qCWarning(lcSegModule) << "Failed to capture undo snapshot before resetting edits.";
-        }
-    }
     cancelDrag();
     clearInvalidationBrush();
     clearLineDragStroke();
@@ -1284,15 +1280,7 @@ void SegmentationModule::updateDrag(const cv::Vec3f& worldPos)
         return;
     }
 
-    bool snapshotCaptured = false;
-    if (!_drag.moved) {
-        snapshotCaptured = captureUndoSnapshot();
-    }
-
     if (!_editManager->updateActiveDrag(worldPos)) {
-        if (!_drag.moved && snapshotCaptured) {
-            discardLastUndoSnapshot();
-        }
         return;
     }
 
@@ -1319,6 +1307,9 @@ void SegmentationModule::finishDrag()
     _drag.reset();
 
     if (moved) {
+        // Capture delta for undo before applyPreview() clears edited vertices
+        captureUndoDelta();
+
         // Auto-approve edited regions before applyPreview() clears them
         if (_overlay && _overlay->hasApprovalMaskData()) {
             const auto editedVerts = _editManager->editedVertices();
@@ -1330,7 +1321,8 @@ void SegmentationModule::finishDrag()
                 }
                 constexpr uint8_t kApproved = 255;
                 constexpr float kRadius = 1.0f;
-                _overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved);
+                constexpr bool kIsAutoApproval = true;
+                _overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved, false, 0.0f, 0.0f, kIsAutoApproval);
                 _overlay->scheduleDebouncedSave(_editManager->baseSurface().get());
                 qCInfo(lcSegModule) << "Auto-approved" << gridPositions.size() << "drag edited vertices";
             }

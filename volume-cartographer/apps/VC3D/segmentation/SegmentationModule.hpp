@@ -243,6 +243,7 @@ private:
     void onSurfaceCollectionChanged(std::string name, std::shared_ptr<Surface> surface);
 
     [[nodiscard]] bool captureUndoSnapshot();
+    [[nodiscard]] bool captureUndoDelta();  // Capture delta from current edited vertices
     void discardLastUndoSnapshot();
     bool restoreUndoSnapshot();
     void clearUndoStack();

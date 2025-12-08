@@ -246,7 +246,8 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
     uint8_t paintValue,
     bool useRectangle,
     float widthSteps,
-    float heightSteps)
+    float heightSteps,
+    bool isAutoApproval)
 {
     if (_pendingApprovalMaskImage.isNull()) {
         qWarning() << "paintApprovalMaskDirect: pending image is NULL!";
@@ -288,11 +289,15 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
     const int regionWidth = maxCol - minCol + 1;
     const int regionHeight = maxRow - minRow + 1;
 
-    // Save the affected region for undo
+    // Save the affected regions for undo (both pending and saved images)
     if (regionWidth > 0 && regionHeight > 0) {
         ApprovalMaskUndoEntry undoEntry;
         undoEntry.topLeft = QPoint(minCol, minRow);
-        undoEntry.savedRegion = _pendingApprovalMaskImage.copy(minCol, minRow, regionWidth, regionHeight);
+        undoEntry.pendingRegion = _pendingApprovalMaskImage.copy(minCol, minRow, regionWidth, regionHeight);
+        if (!_savedApprovalMaskImage.isNull()) {
+            undoEntry.savedRegion = _savedApprovalMaskImage.copy(minCol, minRow, regionWidth, regionHeight);
+        }
+        undoEntry.isAutoApproval = isAutoApproval;
         _approvalMaskUndoStack.push_back(std::move(undoEntry));
 
         // Limit undo stack size
@@ -438,20 +443,77 @@ bool SegmentationOverlayController::undoLastApprovalMaskPaint()
     ApprovalMaskUndoEntry entry = std::move(_approvalMaskUndoStack.back());
     _approvalMaskUndoStack.pop_back();
 
-    // Restore the saved region
-    QPainter painter(&_pendingApprovalMaskImage);
-    painter.setCompositionMode(QPainter::CompositionMode_Source);
-    painter.drawImage(entry.topLeft, entry.savedRegion);
-    painter.end();
+    // Restore the pending image region
+    {
+        QPainter painter(&_pendingApprovalMaskImage);
+        painter.setCompositionMode(QPainter::CompositionMode_Source);
+        painter.drawImage(entry.topLeft, entry.pendingRegion);
+        painter.end();
+    }
+
+    // Restore the saved image region (for unapprovals that modified it directly)
+    if (!entry.savedRegion.isNull() && !_savedApprovalMaskImage.isNull()) {
+        QPainter painter(&_savedApprovalMaskImage);
+        painter.setCompositionMode(QPainter::CompositionMode_Source);
+        painter.drawImage(entry.topLeft, entry.savedRegion);
+        painter.end();
+        ++_savedImageVersion;
+    }
 
     ++_pendingImageVersion;
     invalidatePlaneIntersections();
+    forceRefreshAllOverlays();
     return true;
+}
+
+bool SegmentationOverlayController::undoLastAutoApproval()
+{
+    // Find and undo the most recent auto-approval entry
+    for (auto it = _approvalMaskUndoStack.rbegin(); it != _approvalMaskUndoStack.rend(); ++it) {
+        if (it->isAutoApproval) {
+            // Found an auto-approval entry - restore it
+            ApprovalMaskUndoEntry entry = std::move(*it);
+            _approvalMaskUndoStack.erase(std::next(it).base());
+
+            // Restore the pending image region
+            {
+                QPainter painter(&_pendingApprovalMaskImage);
+                painter.setCompositionMode(QPainter::CompositionMode_Source);
+                painter.drawImage(entry.topLeft, entry.pendingRegion);
+                painter.end();
+            }
+
+            // Restore the saved image region
+            if (!entry.savedRegion.isNull() && !_savedApprovalMaskImage.isNull()) {
+                QPainter painter(&_savedApprovalMaskImage);
+                painter.setCompositionMode(QPainter::CompositionMode_Source);
+                painter.drawImage(entry.topLeft, entry.savedRegion);
+                painter.end();
+                ++_savedImageVersion;
+            }
+
+            ++_pendingImageVersion;
+            invalidatePlaneIntersections();
+            forceRefreshAllOverlays();
+            return true;
+        }
+    }
+    return false;
 }
 
 bool SegmentationOverlayController::canUndoApprovalMaskPaint() const
 {
     return !_approvalMaskUndoStack.empty();
+}
+
+bool SegmentationOverlayController::canUndoAutoApproval() const
+{
+    for (const auto& entry : _approvalMaskUndoStack) {
+        if (entry.isAutoApproval) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void SegmentationOverlayController::clearApprovalMaskUndoHistory()
@@ -838,6 +900,12 @@ bool SegmentationOverlayController::hasApprovalMaskData() const
         return false;
     }
     return !_savedApprovalMaskImage.isNull() || !_pendingApprovalMaskImage.isNull();
+}
+
+void SegmentationOverlayController::forceRefreshAllOverlays()
+{
+    // Force rebuild all viewer overlays, bypassing state comparison
+    refreshAll();
 }
 
 void SegmentationOverlayController::invalidatePlaneIntersections()

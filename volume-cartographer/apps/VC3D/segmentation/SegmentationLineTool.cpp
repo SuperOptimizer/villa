@@ -129,7 +129,6 @@ bool SegmentationLineTool::applyStroke(const std::vector<cv::Vec3f>& stroke)
     std::unordered_set<GridKey, GridKeyHash> visited;
     visited.reserve(stroke.size());
 
-    bool snapshotCaptured = false;
     bool anyMoved = false;
 
     for (const auto& world : stroke) {
@@ -147,18 +146,8 @@ bool SegmentationLineTool::applyStroke(const std::vector<cv::Vec3f>& stroke)
             continue;
         }
 
-        bool capturedThisSample = false;
-        if (!snapshotCaptured) {
-            snapshotCaptured = _module.captureUndoSnapshot();
-            capturedThisSample = snapshotCaptured;
-        }
-
         if (!_editManager->updateActiveDrag(world)) {
             _editManager->cancelActiveDrag();
-            if (capturedThisSample) {
-                _module.discardLastUndoSnapshot();
-                snapshotCaptured = false;
-            }
             continue;
         }
 
@@ -173,11 +162,11 @@ bool SegmentationLineTool::applyStroke(const std::vector<cv::Vec3f>& stroke)
     }
 
     if (!anyMoved) {
-        if (snapshotCaptured) {
-            _module.discardLastUndoSnapshot();
-        }
         return false;
     }
+
+    // Capture delta for undo before applyPreview() clears edited vertices
+    _module.captureUndoDelta();
 
     // Auto-approve edited regions before applyPreview() clears them
     auto* overlay = _module.overlay();
@@ -191,7 +180,8 @@ bool SegmentationLineTool::applyStroke(const std::vector<cv::Vec3f>& stroke)
             }
             constexpr uint8_t kApproved = 255;
             constexpr float kRadius = 1.0f;
-            overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved);
+            constexpr bool kIsAutoApproval = true;
+            overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved, false, 0.0f, 0.0f, kIsAutoApproval);
             overlay->scheduleDebouncedSave(_editManager->baseSurface().get());
             qCInfo(lcSegModule) << "Auto-approved" << gridPositions.size() << "line tool edited vertices";
         }

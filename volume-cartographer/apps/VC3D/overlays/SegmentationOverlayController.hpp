@@ -91,12 +91,14 @@ public:
     // Paint directly into the approval mask QImage (fast, in-place editing)
     // If useRectangle is true, paints a rectangle using widthSteps x heightSteps dimensions
     // If useRectangle is false, paints a circle using radiusSteps
+    // If isAutoApproval is true, marks this as auto-approval from surface edit (for separate undo)
     void paintApprovalMaskDirect(const std::vector<std::pair<int, int>>& gridPositions,
                                   float radiusSteps,
                                   uint8_t paintValue,
                                   bool useRectangle = false,
                                   float widthSteps = 0.0f,
-                                  float heightSteps = 0.0f);
+                                  float heightSteps = 0.0f,
+                                  bool isAutoApproval = false);
 
     // Save the approval mask QImage back to the surface
     void saveApprovalMaskToSurface(QuadSurface* surface);
@@ -107,8 +109,12 @@ public:
     // Undo support for approval mask painting
     // Undo the last paint stroke (repaints with inverse value)
     bool undoLastApprovalMaskPaint();
+    // Undo the last auto-approval entry (from surface edits) - does not undo manual brush strokes
+    bool undoLastAutoApproval();
     // Check if there are any undo operations available
     [[nodiscard]] bool canUndoApprovalMaskPaint() const;
+    // Check if there are any auto-approval undo operations available
+    [[nodiscard]] bool canUndoAutoApproval() const;
     // Clear all undo history (e.g., when applying changes to disk)
     void clearApprovalMaskUndoHistory();
 
@@ -123,6 +129,9 @@ public:
 
     // Check if approval mask mode is active and we have mask data
     bool hasApprovalMaskData() const;
+
+    // Force refresh of all viewer overlays (bypasses state comparison optimization)
+    void forceRefreshAllOverlays();
 
     // Trigger re-rendering of intersections on all plane viewers
     void invalidatePlaneIntersections();
@@ -200,13 +209,17 @@ private:
     // Returns interpolated alpha value (0.0-255.0) at floating point coordinates
     static float sampleImageBilinear(const QImage& image, float row, float col);
 
-    // Undo stack for approval mask painting - stores affected region before painting
+    // Undo stack for approval mask painting - stores affected regions before painting
     struct ApprovalMaskUndoEntry {
-        QImage savedRegion;  // Copy of the affected region before painting
-        QPoint topLeft;      // Position of the saved region in the full image
+        QImage pendingRegion;  // Copy of the pending image region before painting
+        QImage savedRegion;    // Copy of the saved image region before painting (for unapprovals)
+        QPoint topLeft;        // Position of the saved region in the full image
+        bool isAutoApproval{false};  // True if this was auto-approval from surface edit
     };
     std::deque<ApprovalMaskUndoEntry> _approvalMaskUndoStack;
-    static constexpr size_t kMaxUndoEntries = 100;
+    // Match segmentation undo history size (SegmentationUndoHistory::kMaxEntries = 1000)
+    // to keep auto-approval undo in sync with surface edit undo
+    static constexpr size_t kMaxUndoEntries = 1000;
 
     // Debounce timer for auto-saving approval mask after painting
     QTimer* _approvalSaveTimer{nullptr};
