@@ -301,7 +301,7 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
         }
     }
 
-    // Paint directly into the PENDING QImage
+    // Paint directly into the images
     for (const auto& [centerRow, centerCol] : gridPositions) {
         // For rectangle: iterate over explicit width/height
         // For circle: iterate over full radius in both dimensions
@@ -327,16 +327,26 @@ void SegmentationOverlayController::paintApprovalMaskDirect(
                 }
 
                 // Update pixel color based on paint mode:
-                // - Green for approval (same as saved, paintValue = 255)
-                // - Red for unapproval (paintValue = 0)
+                // - Green for approval (paintValue = 255): paint green in pending
+                // - Unapproval (paintValue = 0): clear both saved and pending immediately
                 if (paintValue > 0) {
                     _pendingApprovalMaskImage.setPixel(col, row, qRgba(kApprovalGreenR, kApprovalGreenG, kApprovalGreenB, kApprovalGreenA));
                 } else {
-                    // Unapproving: Mark for removal (red tint to show pending removal)
-                    _pendingApprovalMaskImage.setPixel(col, row, qRgba(127, 25, 25, 128));
+                    // Unapproving: Clear both saved and pending images immediately (no red preview)
+                    _pendingApprovalMaskImage.setPixel(col, row, qRgba(0, 0, 0, 0));
+                    if (!_savedApprovalMaskImage.isNull() &&
+                        row < _savedApprovalMaskImage.height() &&
+                        col < _savedApprovalMaskImage.width()) {
+                        _savedApprovalMaskImage.setPixel(col, row, qRgba(0, 0, 0, 0));
+                    }
                 }
             }
         }
+    }
+
+    // If unapproving, also invalidate saved version since we modified it directly
+    if (paintValue == 0) {
+        ++_savedImageVersion;
     }
 
     // Invalidate pending version since we modified the pending image
@@ -352,7 +362,9 @@ void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surfa
         return;
     }
 
-    // Merge pending into saved, then convert to cv::Mat
+    // Merge pending approvals into saved, then convert to cv::Mat
+    // Note: Unapprovals are applied immediately to saved image in paintApprovalMaskDirect(),
+    // so pending only contains green approval pixels
     int width = !_savedApprovalMaskImage.isNull() ? _savedApprovalMaskImage.width() : _pendingApprovalMaskImage.width();
     int height = !_savedApprovalMaskImage.isNull() ? _savedApprovalMaskImage.height() : _pendingApprovalMaskImage.height();
 
@@ -361,41 +373,27 @@ void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surfa
     for (int row = 0; row < height; ++row) {
         uint8_t* maskRow = approvalMask.ptr<uint8_t>(row);
         for (int col = 0; col < width; ++col) {
-            uint8_t savedVal = 0;
+            bool isApproved = false;
 
-            // Get saved value (green channel indicates approval)
+            // Check saved value (green channel indicates approval)
             if (!_savedApprovalMaskImage.isNull() && row < _savedApprovalMaskImage.height() && col < _savedApprovalMaskImage.width()) {
                 const QRgb* savedRow = reinterpret_cast<const QRgb*>(_savedApprovalMaskImage.constScanLine(row));
                 QRgb pixel = savedRow[col];
                 if (qAlpha(pixel) > 0 && qGreen(pixel) > 0) {
-                    savedVal = 255;  // Was approved
+                    isApproved = true;
                 }
             }
 
-            // Check pending state - can be approval (green) or unapproval (red)
-            bool hasPending = false;
-            bool pendingIsApproval = false;
+            // Check pending for new approvals (green pixels)
             if (!_pendingApprovalMaskImage.isNull() && row < _pendingApprovalMaskImage.height() && col < _pendingApprovalMaskImage.width()) {
                 const QRgb* pendingRow = reinterpret_cast<const QRgb*>(_pendingApprovalMaskImage.constScanLine(row));
                 QRgb pixel = pendingRow[col];
-                if (qAlpha(pixel) > 0) {
-                    hasPending = true;
-                    // Green (approval) has higher green than red, Red (unapproval) has higher red than green
-                    pendingIsApproval = qGreen(pixel) > qRed(pixel);
+                if (qAlpha(pixel) > 0 && qGreen(pixel) > 0) {
+                    isApproved = true;
                 }
             }
 
-            // Apply pending changes
-            if (hasPending) {
-                if (pendingIsApproval) {
-                    maskRow[col] = 255;  // Approve
-                } else {
-                    maskRow[col] = 0;    // Unapprove (clear)
-                }
-            } else {
-                // No pending change, keep saved value
-                maskRow[col] = savedVal;
-            }
+            maskRow[col] = isApproved ? 255 : 0;
         }
     }
 
@@ -403,7 +401,7 @@ void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surfa
     surface->setChannel("approval", approvalMask);
     surface->saveOverwrite();
 
-    // Merge pending into saved and clear pending
+    // Update saved image to match what we just wrote and clear pending
     for (int row = 0; row < height; ++row) {
         QRgb* savedRow = reinterpret_cast<QRgb*>(_savedApprovalMaskImage.scanLine(row));
         for (int col = 0; col < width; ++col) {
@@ -736,17 +734,13 @@ void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, Qu
 int SegmentationOverlayController::queryApprovalStatus(int row, int col) const
 {
     // Check pending first (takes priority for display)
-    // Returns: 0 = not approved, 1 = saved approved, 2 = pending approved, 3 = pending unapproved
+    // Returns: 0 = not approved, 1 = saved approved, 2 = pending approved
+    // Note: Unapprovals are applied immediately (no pending unapproval state)
     if (!_pendingApprovalMaskImage.isNull() &&
         row >= 0 && row < _pendingApprovalMaskImage.height() &&
         col >= 0 && col < _pendingApprovalMaskImage.width()) {
         QRgb pixel = _pendingApprovalMaskImage.pixel(col, row);
-        if (qAlpha(pixel) > 0) {
-            // Distinguish between pending approve (green) and pending unapprove (red)
-            // Green has high green component, red has high red component
-            if (qRed(pixel) > qGreen(pixel)) {
-                return 3;  // Pending unapproval (red)
-            }
+        if (qAlpha(pixel) > 0 && qGreen(pixel) > 0) {
             return 2;  // Pending approval (green)
         }
     }
@@ -756,7 +750,7 @@ int SegmentationOverlayController::queryApprovalStatus(int row, int col) const
         row >= 0 && row < _savedApprovalMaskImage.height() &&
         col >= 0 && col < _savedApprovalMaskImage.width()) {
         QRgb pixel = _savedApprovalMaskImage.pixel(col, row);
-        if (qAlpha(pixel) > 0) {
+        if (qAlpha(pixel) > 0 && qGreen(pixel) > 0) {
             return 1;  // Saved
         }
     }
@@ -804,19 +798,19 @@ float SegmentationOverlayController::sampleImageBilinear(const QImage& image, fl
 
 float SegmentationOverlayController::queryApprovalBilinear(float row, float col, int* outStatus) const
 {
-    // First check pending mask (takes priority)
+    // First check pending mask (takes priority) - only contains green approvals
+    // Note: Unapprovals are applied immediately (no pending unapproval state)
     const float pendingAlpha = sampleImageBilinear(_pendingApprovalMaskImage, row, col);
     if (pendingAlpha > 0.5f) {  // Threshold to determine if we're "in" pending region
-        // Determine if pending approve or unapprove by checking nearest pixel color
         const int nearestRow = static_cast<int>(std::round(row));
         const int nearestCol = static_cast<int>(std::round(col));
         if (!_pendingApprovalMaskImage.isNull() &&
             nearestRow >= 0 && nearestRow < _pendingApprovalMaskImage.height() &&
             nearestCol >= 0 && nearestCol < _pendingApprovalMaskImage.width()) {
             QRgb pixel = _pendingApprovalMaskImage.pixel(nearestCol, nearestRow);
-            if (qAlpha(pixel) > 0) {
+            if (qAlpha(pixel) > 0 && qGreen(pixel) > 0) {
                 if (outStatus) {
-                    *outStatus = (qRed(pixel) > qGreen(pixel)) ? 3 : 2;  // 3 = unapprove, 2 = approve
+                    *outStatus = 2;  // Pending approval
                 }
                 return pendingAlpha / 255.0f;
             }
