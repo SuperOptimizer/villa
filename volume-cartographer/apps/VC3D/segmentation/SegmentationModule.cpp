@@ -1318,6 +1318,22 @@ void SegmentationModule::finishDrag()
     _drag.reset();
 
     if (moved) {
+        // Auto-approve edited regions before applyPreview() clears them
+        if (_overlay && _overlay->hasApprovalMaskData()) {
+            const auto editedVerts = _editManager->editedVertices();
+            if (!editedVerts.empty()) {
+                std::vector<std::pair<int, int>> gridPositions;
+                gridPositions.reserve(editedVerts.size());
+                for (const auto& edit : editedVerts) {
+                    gridPositions.emplace_back(edit.row, edit.col);
+                }
+                constexpr uint8_t kApproved = 255;
+                constexpr float kRadius = 1.0f;
+                _overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved);
+                qCInfo(lcSegModule) << "Auto-approved" << gridPositions.size() << "drag edited vertices";
+            }
+        }
+
         _editManager->applyPreview();
         if (_surfaces) {
             _surfaces->setSurface("segmentation", _editManager->previewSurface(), false, true);

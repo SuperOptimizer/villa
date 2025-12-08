@@ -1423,8 +1423,7 @@ void SegmentationWidget::restoreSettings()
     _approvalBrushRadius = std::clamp(_approvalBrushRadius, 1.0f, 1000.0f);
     _approvalBrushDepth = settings.value(QStringLiteral("approval_brush_depth"), _approvalBrushDepth).toFloat();
     _approvalBrushDepth = std::clamp(_approvalBrushDepth, 1.0f, 500.0f);
-    _showApprovalMask = settings.value(QStringLiteral("show_approval_mask"), _showApprovalMask).toBool();
-    // Don't restore edit states - user must explicitly enable editing each session
+    // Don't restore approval mask show/edit states - user must explicitly enable each session
 
     // Edit mask settings
     _editMaskThreshold = settings.value(QStringLiteral("edit_mask_threshold"), _editMaskThreshold).toFloat();
