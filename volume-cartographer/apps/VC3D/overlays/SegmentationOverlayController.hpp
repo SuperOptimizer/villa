@@ -154,6 +154,10 @@ public:
     [[nodiscard]] bool showEditMask() const { return _showEditMask; }
     [[nodiscard]] float editMaskThreshold() const { return _editMaskThreshold; }
 
+    // Set the opacity of the approval mask overlay (0-100, where 0 is transparent and 100 is opaque)
+    void setApprovalMaskOpacity(int opacity);
+    [[nodiscard]] int approvalMaskOpacity() const { return _approvalMaskOpacity; }
+
 protected:
     bool isOverlayEnabledFor(CVolumeViewer* viewer) const override;
     void collectPrimitives(CVolumeViewer* viewer,
@@ -233,5 +237,8 @@ private:
     float _editMaskThreshold{1.0f};
     cv::Mat_<cv::Vec3f> _editMaskBaseline;  // Baseline points loaded from x_editmask.tif etc
     QImage _editMaskOverlayImage;           // Cached overlay showing differences
-    mutable uint64_t _editMaskVersion{0};   // Version counter for cache invalidation
+
+
+    // Approval mask overlay opacity (0-100, where 50 is default)
+    int _approvalMaskOpacity{50};
 };

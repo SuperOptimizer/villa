@@ -399,7 +399,8 @@ void CVolumeViewer::renderIntersections()
                     // Status: 0 = not approved, 1 = saved approved, 2 = pending approved
                     // All approval states show as green (unapprovals are applied immediately)
                     if (approvalState > 0 && approvalIntensity > 0.0f) {
-                        const float blendFactor = std::min(1.0f, approvalIntensity * 2.0f);
+                        const float opacityFactor = static_cast<float>(segOverlay->approvalMaskOpacity()) / 100.0f;
+                        const float blendFactor = std::min(1.0f, approvalIntensity * 2.0f) * opacityFactor;
                         lineColor = QColor(
                             static_cast<int>(col.red() * (1.0f - blendFactor) + COLOR_APPROVED.red() * blendFactor),
                             static_cast<int>(col.green() * (1.0f - blendFactor) + COLOR_APPROVED.green() * blendFactor),

@@ -26,6 +26,7 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QSlider>
 #include <QSpinBox>
 #include <QToolButton>
 #include <QVariant>
@@ -573,6 +574,24 @@ void SegmentationWidget::buildUi()
     approvalBrushRow->addStretch(1);
     approvalLayout->addLayout(approvalBrushRow);
 
+    // Opacity slider row
+    auto* opacityRow = new QHBoxLayout();
+    opacityRow->setSpacing(8);
+
+    auto* opacityLabel = new QLabel(tr("Opacity:"), approvalParent);
+    _sliderApprovalMaskOpacity = new QSlider(Qt::Horizontal, approvalParent);
+    _sliderApprovalMaskOpacity->setRange(0, 100);
+    _sliderApprovalMaskOpacity->setValue(_approvalMaskOpacity);
+    _sliderApprovalMaskOpacity->setToolTip(tr("Mask overlay transparency (0 = transparent, 100 = opaque)."));
+
+    _lblApprovalMaskOpacity = new QLabel(QString::number(_approvalMaskOpacity) + QStringLiteral("%"), approvalParent);
+    _lblApprovalMaskOpacity->setMinimumWidth(35);
+
+    opacityRow->addWidget(opacityLabel);
+    opacityRow->addWidget(_sliderApprovalMaskOpacity, 1);
+    opacityRow->addWidget(_lblApprovalMaskOpacity);
+    approvalLayout->addLayout(opacityRow);
+
     // Undo button
     auto* buttonRow = new QHBoxLayout();
     buttonRow->setSpacing(8);
@@ -804,6 +823,10 @@ void SegmentationWidget::buildUi()
 
     connect(_spinApprovalBrushDepth, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
         setApprovalBrushDepth(static_cast<float>(value));
+    });
+
+    connect(_sliderApprovalMaskOpacity, &QSlider::valueChanged, this, [this](int value) {
+        setApprovalMaskOpacity(value);
     });
 
     connect(_btnUndoApprovalStroke, &QPushButton::clicked, this, &SegmentationWidget::approvalStrokesUndoRequested);
@@ -1308,6 +1331,13 @@ void SegmentationWidget::syncUiState()
         // Edit checkboxes only enabled when show is checked
         _chkEditUnapprovedMask->setEnabled(_showApprovalMask);
     }
+    if (_sliderApprovalMaskOpacity) {
+        const QSignalBlocker blocker(_sliderApprovalMaskOpacity);
+        _sliderApprovalMaskOpacity->setValue(_approvalMaskOpacity);
+    }
+    if (_lblApprovalMaskOpacity) {
+        _lblApprovalMaskOpacity->setText(QString::number(_approvalMaskOpacity) + QStringLiteral("%"));
+    }
 
     // Edit mask UI state
     if (_chkShowEditMask) {
@@ -1429,6 +1459,11 @@ void SegmentationWidget::restoreSettings()
     _editMaskThreshold = settings.value(QStringLiteral("edit_mask_threshold"), _editMaskThreshold).toFloat();
     _editMaskThreshold = std::clamp(_editMaskThreshold, 0.1f, 100.0f);
     // Don't restore show state - will be set when surface is loaded based on whether baseline exists
+
+    _approvalMaskOpacity = settings.value(QStringLiteral("approval_mask_opacity"), _approvalMaskOpacity).toInt();
+    _approvalMaskOpacity = std::clamp(_approvalMaskOpacity, 0, 100);
+    _showApprovalMask = settings.value(QStringLiteral("show_approval_mask"), _showApprovalMask).toBool();
+    // Don't restore edit states - user must explicitly enable editing each session
 
     const bool editingExpanded = settings.value(QStringLiteral("group_editing_expanded"), true).toBool();
     const bool dragExpanded = settings.value(QStringLiteral("group_drag_expanded"), true).toBool();
@@ -1662,6 +1697,26 @@ void SegmentationWidget::setEditMaskThreshold(float threshold)
     if (_spinEditMaskThreshold) {
         const QSignalBlocker blocker(_spinEditMaskThreshold);
         _spinEditMaskThreshold->setValue(static_cast<double>(_editMaskThreshold));
+    }
+}
+
+void SegmentationWidget::setApprovalMaskOpacity(int opacity)
+{
+    const int sanitized = std::clamp(opacity, 0, 100);
+    if (_approvalMaskOpacity == sanitized) {
+        return;
+    }
+    _approvalMaskOpacity = sanitized;
+    if (!_restoringSettings) {
+        writeSetting(QStringLiteral("approval_mask_opacity"), _approvalMaskOpacity);
+        emit approvalMaskOpacityChanged(_approvalMaskOpacity);
+    }
+    if (_sliderApprovalMaskOpacity) {
+        const QSignalBlocker blocker(_sliderApprovalMaskOpacity);
+        _sliderApprovalMaskOpacity->setValue(_approvalMaskOpacity);
+    }
+    if (_lblApprovalMaskOpaciyou should ty) {
+        _lblApprovalMaskOpacity->setText(QString::number(_approvalMaskOpacity) + QStringLiteral("%"));
     }
 }
 
