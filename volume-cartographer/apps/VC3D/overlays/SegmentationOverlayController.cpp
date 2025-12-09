@@ -429,8 +429,10 @@ void SegmentationOverlayController::saveApprovalMaskToSurface(QuadSurface* surfa
     // Trigger re-rendering of intersection lines on plane viewers
     invalidatePlaneIntersections();
 
-    // Clear undo history since changes are now persisted
-    clearApprovalMaskUndoHistory();
+    // NOTE: We intentionally do NOT clear undo history here.
+    // The undo entries store pre-paint image regions, which remain valid for undo
+    // even after save merges pending into saved. This allows surface edit undo
+    // to also undo the corresponding auto-approval that was painted.
 }
 
 bool SegmentationOverlayController::undoLastApprovalMaskPaint()
