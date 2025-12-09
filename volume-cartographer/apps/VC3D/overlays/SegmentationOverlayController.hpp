@@ -237,7 +237,7 @@ private:
     float _editMaskThreshold{1.0f};
     cv::Mat_<cv::Vec3f> _editMaskBaseline;  // Baseline points loaded from x_editmask.tif etc
     QImage _editMaskOverlayImage;           // Cached overlay showing differences
-
+    mutable uint64_t _editMaskVersion{0};   // Version counter for cache invalidation
 
     // Approval mask overlay opacity (0-100, where 50 is default)
     int _approvalMaskOpacity{50};

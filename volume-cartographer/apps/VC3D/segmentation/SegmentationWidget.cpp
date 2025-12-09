@@ -1715,7 +1715,7 @@ void SegmentationWidget::setApprovalMaskOpacity(int opacity)
         const QSignalBlocker blocker(_sliderApprovalMaskOpacity);
         _sliderApprovalMaskOpacity->setValue(_approvalMaskOpacity);
     }
-    if (_lblApprovalMaskOpaciyou should ty) {
+    if (_lblApprovalMaskOpacity) {
         _lblApprovalMaskOpacity->setText(QString::number(_approvalMaskOpacity) + QStringLiteral("%"));
     }
 }
