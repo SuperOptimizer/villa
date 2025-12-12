@@ -1,9 +1,9 @@
 #include <omp.h>
 #include <random>
 
-#include <opencv2/highgui.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
 
 #include "vc/core/util/DateTime.hpp"
 #include "vc/core/util/Geometry.hpp"

@@ -564,7 +564,72 @@
          </item>
          <item>
           <property name="text">
+           <string>Median</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
            <string>Alpha</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Std Dev</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Range</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Local Contrast</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Entropy</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Gradient</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Gradient Sum</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Laplacian</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Sobel</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Percentile</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Weighted Mean</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Peak Count</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Threshold Count</string>
           </property>
          </item>
         </widget>
@@ -586,7 +651,7 @@
           <number>0</number>
          </property>
          <property name="maximum">
-          <number>21</number>
+          <number>100</number>
          </property>
          <property name="value">
           <number>8</number>
@@ -606,7 +671,7 @@
           <number>0</number>
          </property>
          <property name="maximum">
-          <number>21</number>
+          <number>100</number>
          </property>
          <property name="value">
           <number>0</number>
@@ -709,10 +774,184 @@
          </property>
         </widget>
        </item>
+       <item row="3" column="2" colspan="2">
+        <widget class="QCheckBox" name="chkHistogramEqualize">
+         <property name="text">
+          <string>Histogram Equalize</string>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="0">
+        <widget class="QLabel" name="lblIsoCutoff">
+         <property name="text">
+          <string>ISO Cutoff</string>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="1" colspan="3">
+        <widget class="QSlider" name="sliderIsoCutoff">
+         <property name="minimum">
+          <number>0</number>
+         </property>
+         <property name="maximum">
+          <number>255</number>
+         </property>
+         <property name="value">
+          <number>0</number>
+         </property>
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+        </widget>
+       </item>
+       <item row="5" column="0">
+        <widget class="QLabel" name="lblMethodScale">
+         <property name="text">
+          <string>Scale</string>
+         </property>
+        </widget>
+       </item>
+       <item row="5" column="1" colspan="2">
+        <widget class="QSlider" name="sliderMethodScale">
+         <property name="minimum">
+          <number>1</number>
+         </property>
+         <property name="maximum">
+          <number>100</number>
+         </property>
+         <property name="value">
+          <number>20</number>
+         </property>
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+        </widget>
+       </item>
+       <item row="5" column="3">
+        <widget class="QLabel" name="lblMethodScaleValue">
+         <property name="text">
+          <string>2.0</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignRight|Qt::AlignVCenter</set>
+         </property>
+        </widget>
+       </item>
+       <item row="6" column="0">
+        <widget class="QLabel" name="lblMethodParam">
+         <property name="text">
+          <string>Parameter</string>
+         </property>
+        </widget>
+       </item>
+       <item row="6" column="1" colspan="2">
+        <widget class="QSlider" name="sliderMethodParam">
+         <property name="minimum">
+          <number>0</number>
+         </property>
+         <property name="maximum">
+          <number>100</number>
+         </property>
+         <property name="value">
+          <number>50</number>
+         </property>
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+        </widget>
+       </item>
+       <item row="6" column="3">
+        <widget class="QLabel" name="lblMethodParamValue">
+         <property name="text">
+          <string>50</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignRight|Qt::AlignVCenter</set>
+         </property>
+        </widget>
+       </item>
       </layout>
      </item>
      <item>
       <spacer name="verticalSpacer_2">
+       <property name="orientation">
+        <enum>Qt::Vertical</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>20</width>
+         <height>40</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+  <widget class="QDockWidget" name="dockWidgetPostprocessing">
+   <property name="minimumSize">
+    <size>
+     <width>250</width>
+     <height>100</height>
+    </size>
+   </property>
+   <property name="windowTitle">
+    <string>Postprocessing</string>
+   </property>
+   <attribute name="dockWidgetArea">
+    <number>1</number>
+   </attribute>
+   <widget class="QWidget" name="dockWidgetPostprocessingContents">
+    <layout class="QVBoxLayout" name="verticalLayoutPostprocessing">
+     <item>
+      <widget class="QCheckBox" name="chkStretchValuesPost">
+       <property name="text">
+        <string>Auto-stretch to full range</string>
+       </property>
+       <property name="toolTip">
+        <string>Automatically stretch volume values to 0-255 range</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <layout class="QFormLayout" name="formLayoutPostprocessing">
+       <item row="0" column="0">
+        <widget class="QCheckBox" name="chkRemoveSmallComponents">
+         <property name="text">
+          <string>Remove small components</string>
+         </property>
+         <property name="toolTip">
+          <string>Remove connected components with fewer pixels than the threshold</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="0">
+        <widget class="QLabel" name="lblMinComponentSize">
+         <property name="text">
+          <string>Min pixels</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QSpinBox" name="spinMinComponentSize">
+         <property name="minimum">
+          <number>1</number>
+         </property>
+         <property name="maximum">
+          <number>10000</number>
+         </property>
+         <property name="value">
+          <number>50</number>
+         </property>
+         <property name="toolTip">
+          <string>Minimum number of connected pixels to keep</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <spacer name="verticalSpacerPostprocessing">
        <property name="orientation">
         <enum>Qt::Vertical</enum>
        </property>

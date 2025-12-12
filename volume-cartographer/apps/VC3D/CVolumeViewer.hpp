@@ -22,6 +22,7 @@
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/util/SurfacePatchIndex.hpp"
 #include "vc/core/util/ChunkCache.hpp"
+#include "vc/core/util/Slicing.hpp"
 
 class QGraphicsScene;
 class QGraphicsItem;
@@ -64,7 +65,31 @@ public:
     void setCompositeAlphaThreshold(int value);
     void setCompositeMaterial(int value);
     void setCompositeReverseDirection(bool reverse);
+    void setCompositeHistogramEqualize(bool equalize);
+    void setCompositeIsoCutoff(int value);
+    void setCompositeGradientScale(float scale);
+    void setCompositeStddevScale(float scale);
+    void setCompositeLaplacianScale(float scale);
+    void setCompositeRangeScale(float scale);
+    void setCompositeGradientSumScale(float scale);
+    void setCompositeSobelScale(float scale);
+    void setCompositeLocalContrastScale(float scale);
+    void setCompositeEntropyScale(float scale);
+    void setCompositePeakThreshold(float threshold);
+    void setCompositePeakCountScale(float scale);
+    void setCompositeCountThreshold(float threshold);
+    void setCompositeThresholdCountScale(float scale);
+    void setCompositePercentile(float percentile);
+    void setCompositeWeightedMeanSigma(float sigma);
     void setResetViewOnSurfaceChange(bool reset);
+
+    // Postprocessing settings
+    void setPostStretchValues(bool enabled);
+    bool postStretchValues() const { return _postStretchValues; }
+    void setPostRemoveSmallComponents(bool enabled);
+    bool postRemoveSmallComponents() const { return _postRemoveSmallComponents; }
+    void setPostMinComponentSize(int size);
+    int postMinComponentSize() const { return _postMinComponentSize; }
     bool isCompositeEnabled() const { return _composite_enabled; }
     std::shared_ptr<Volume> currentVolume() const { return volume; }
     ChunkCache<uint8_t>* chunkCachePtr() const { return cache; }
@@ -261,7 +286,23 @@ protected:
     int _composite_alpha_threshold = 9950;
     int _composite_material = 230;
     bool _composite_reverse_direction = false;
-    
+    bool _composite_histogram_equalize = false;
+    int _composite_iso_cutoff = 0;
+    float _composite_gradient_scale = 2.0f;
+    float _composite_stddev_scale = 2.0f;
+    float _composite_laplacian_scale = 2.0f;
+    float _composite_range_scale = 1.0f;
+    float _composite_gradient_sum_scale = 1.0f;
+    float _composite_sobel_scale = 2.0f;
+    float _composite_local_contrast_scale = 255.0f;
+    float _composite_entropy_scale = 32.0f;
+    float _composite_peak_threshold = 10.0f;
+    float _composite_peak_count_scale = 25.0f;
+    float _composite_count_threshold = 128.0f;
+    float _composite_threshold_count_scale = 15.0f;
+    float _composite_percentile = 0.5f;
+    float _composite_weighted_mean_sigma = 0.5f;
+
     QGraphicsItem *_center_marker = nullptr;
     QGraphicsItem *_cursor = nullptr;
     
@@ -347,5 +388,22 @@ protected:
     bool _surfaceOverlayEnabled{false};
     std::string _surfaceOverlayName;
     float _surfaceOverlapThreshold{5.0f};
+
+    // Postprocessing settings
+    bool _postStretchValues{false};
+    bool _postRemoveSmallComponents{false};
+    int _postMinComponentSize{50};
+
+    // Fast composite rendering cache - no mutex, specialized for composite
+    FastCompositeCache _fastCompositeCache;
+
+    // Cached normals for composite rendering - invalidated on surface/ptr change
+    cv::Mat_<cv::Vec3f> _cachedNormals;
+    cv::Mat_<cv::Vec3f> _cachedBaseCoords;
+    cv::Size _cachedNormalsSize;
+    float _cachedNormalsScale{0.0f};
+    cv::Vec3f _cachedNormalsPtr{0, 0, 0};
+    float _cachedNormalsZOff{0.0f};
+    std::weak_ptr<Surface> _cachedNormalsSurf;
 
 };  // class CVolumeViewer

@@ -118,126 +118,137 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
     if (!surf)
         return img;
 
-    // Composite rendering for segmentation view
-    cv::Mat_<float> accumulator;
-    int count = 0;
+    cv::Vec2f roi_c = {static_cast<float>(roi.x + roi.width / 2), static_cast<float>(roi.y + roi.height / 2)};
+    cv::Vec3f ptr = surf->pointer();
+    cv::Vec3f diff = {roi_c[0], roi_c[1], 0};
+    surf->move(ptr, diff / _scale);
+    _ptr = ptr;
+    _vis_center = roi_c;
 
-    // Alpha composition state for each pixel
-    cv::Mat_<float> alpha_accumulator;
-    cv::Mat_<float> value_accumulator;
+    // Check if we can reuse cached normals
+    // Cache key: roi size, scale, ptr position, z_off, and surface instance
+    bool cacheValid = (!_cachedNormals.empty() &&
+                       _cachedNormalsSize == roi.size() &&
+                       std::abs(_cachedNormalsScale - _scale) < 1e-6f &&
+                       cv::norm(_cachedNormalsPtr - ptr) < 1e-6f &&
+                       std::abs(_cachedNormalsZOff - _z_off) < 1e-6f &&
+                       _cachedNormalsSurf.lock() == surf);
 
-    // Alpha composition parameters using the new settings
-    const float alpha_min = _composite_alpha_min / 255.0f;
-    const float alpha_max = _composite_alpha_max / 255.0f;
-    const float alpha_opacity = _composite_material / 255.0f;
-    const float alpha_cutoff = _composite_alpha_threshold / 10000.0f;
+    cv::Mat_<cv::Vec3f> base_coords;
+    cv::Mat_<cv::Vec3f> normals;
+
+    if (cacheValid) {
+        // Reuse cached coordinates and normals
+        base_coords = _cachedBaseCoords;
+        normals = _cachedNormals;
+    } else {
+        // Generate coordinates and normals for base layer (z=0)
+        surf->gen(&base_coords, &normals, roi.size(), ptr, _scale,
+                  {static_cast<float>(-roi.width / 2), static_cast<float>(-roi.height / 2), _z_off});
+
+        // Cache for next render
+        _cachedBaseCoords = base_coords.clone();
+        _cachedNormals = normals.clone();
+        _cachedNormalsSize = roi.size();
+        _cachedNormalsScale = _scale;
+        _cachedNormalsPtr = ptr;
+        _cachedNormalsZOff = _z_off;
+        _cachedNormalsSurf = surf;
+    }
 
     // Determine the z range based on front and behind layers
     int z_start = _composite_reverse_direction ? -_composite_layers_behind : -_composite_layers_front;
     int z_end = _composite_reverse_direction ? _composite_layers_front : _composite_layers_behind;
 
-    for (int z = z_start; z <= z_end; z++) {
-        cv::Mat_<cv::Vec3f> slice_coords;
-        cv::Mat_<uint8_t> slice_img;
+    // Setup compositing parameters
+    CompositeParams params;
+    params.method = _composite_method;
+    params.alphaMin = _composite_alpha_min / 255.0f;
+    params.alphaMax = _composite_alpha_max / 255.0f;
+    params.alphaOpacity = _composite_material / 255.0f;
+    params.alphaCutoff = _composite_alpha_threshold / 10000.0f;
+    params.histogramEqualize = _composite_histogram_equalize;
+    params.isoCutoff = static_cast<uint8_t>(_composite_iso_cutoff);
+    // Scale parameters
+    params.gradientScale = _composite_gradient_scale;
+    params.stddevScale = _composite_stddev_scale;
+    params.laplacianScale = _composite_laplacian_scale;
+    params.rangeScale = _composite_range_scale;
+    params.gradientSumScale = _composite_gradient_sum_scale;
+    params.sobelScale = _composite_sobel_scale;
+    params.localContrastScale = _composite_local_contrast_scale;
+    params.entropyScale = _composite_entropy_scale;
+    params.peakThreshold = _composite_peak_threshold;
+    params.peakCountScale = _composite_peak_count_scale;
+    params.countThreshold = _composite_count_threshold;
+    params.thresholdCountScale = _composite_threshold_count_scale;
+    params.percentile = _composite_percentile;
+    params.weightedMeanSigma = _composite_weighted_mean_sigma;
 
-        cv::Vec2f roi_c = {static_cast<float>(roi.x+roi.width/2), static_cast<float>(roi.y + roi.height/2)};
-        _ptr = surf->pointer();
-        cv::Vec3f diff = {roi_c[0],roi_c[1],0};
-        surf->move(_ptr, diff/_scale);
-        _vis_center = roi_c;
-        float z_step = z * _ds_scale;  // Scale the step to maintain consistent physical distance
-        surf->gen(&slice_coords, nullptr, roi.size(), _ptr, _scale, {static_cast<float>(-roi.width/2), static_cast<float>(-roi.height/2), _z_off + z_step});
+    // Use fast path for nearest neighbor (no mutex, specialized cache)
+    if (_useFastInterpolation) {
+        readCompositeFast(
+            img,
+            volume->zarrDataset(_ds_sd_idx),
+            base_coords * _ds_scale,
+            normals,
+            _ds_scale,  // z step per layer (in dataset coordinates)
+            z_start, z_end,
+            params,
+            _fastCompositeCache
+        );
+    } else {
+        // Standard path with trilinear interpolation
+        readInterpolated3DComposite(
+            img,
+            volume->zarrDataset(_ds_sd_idx),
+            base_coords * _ds_scale,
+            normals,    // surface normals for layer offset direction
+            _ds_scale,  // z step per layer (in dataset coordinates)
+            z_start, z_end,
+            params,
+            cache,
+            false  // trilinear interpolation
+        );
+    }
 
-        if (z == z_start) {
-            std::cout << "[render_composite] z=" << z << ", roi=" << roi.width << "x" << roi.height
-                      << ", _scale=" << _scale << ", _ds_scale=" << _ds_scale
-                      << ", slice_coords size=" << slice_coords.cols << "x" << slice_coords.rows << std::endl;
-            if (slice_coords.rows > 4 && slice_coords.cols > 4) {
-                std::cout << "[render_composite] coords[0,0]: " << slice_coords(4,4)
-                          << ", coords[center]: " << slice_coords(slice_coords.rows/2, slice_coords.cols/2)
-                          << ", coords[end]: " << slice_coords(slice_coords.rows-5, slice_coords.cols-5) << std::endl;
+    // Apply postprocessing
+    if (!img.empty()) {
+        // Stretch values to full range
+        if (_postStretchValues) {
+            double minVal, maxVal;
+            cv::minMaxLoc(img, &minVal, &maxVal);
+            if (maxVal > minVal) {
+                img.convertTo(img, CV_8U, 255.0 / (maxVal - minVal), -minVal * 255.0 / (maxVal - minVal));
             }
         }
 
-        readInterpolated3D(slice_img, volume->zarrDataset(_ds_sd_idx), slice_coords*_ds_scale, cache, _useFastInterpolation);
+        // Remove small connected components
+        if (_postRemoveSmallComponents && _postMinComponentSize > 1) {
+            // Create binary mask of non-zero pixels
+            cv::Mat_<uint8_t> binary;
+            cv::threshold(img, binary, 0, 255, cv::THRESH_BINARY);
 
-        // Convert to float for accumulation
-        cv::Mat_<float> slice_float;
-        slice_img.convertTo(slice_float, CV_32F);
+            // Find connected components
+            cv::Mat labels, stats, centroids;
+            int numComponents = cv::connectedComponentsWithStats(binary, labels, stats, centroids, 8, CV_32S);
 
-        if (_composite_method == "alpha") {
-            // Alpha composition algorithm
-            if (alpha_accumulator.empty()) {
-                alpha_accumulator = cv::Mat_<float>::zeros(slice_float.size());
-                value_accumulator = cv::Mat_<float>::zeros(slice_float.size());
-            }
-
-            // Process each pixel
-            for (int y = 0; y < slice_float.rows; y++) {
-                for (int x = 0; x < slice_float.cols; x++) {
-                    float pixel_value = slice_float(y, x);
-
-                    // Normalize pixel value
-                    float normalized_value = (pixel_value / 255.0f - alpha_min) / (alpha_max - alpha_min);
-                    normalized_value = std::max(0.0f, std::min(1.0f, normalized_value)); // Clamp to [0,1]
-
-                    // Skip empty areas (speed through)
-                    if (normalized_value == 0.0f) {
-                        continue;
-                    }
-
-                    float current_alpha = alpha_accumulator(y, x);
-
-                    // Check alpha cutoff for early termination
-                    if (current_alpha >= alpha_cutoff) {
-                        continue;
-                    }
-
-                    // Calculate weight
-                    float weight = (1.0f - current_alpha) * std::min(normalized_value * alpha_opacity, 1.0f);
-
-                    // Accumulate
-                    value_accumulator(y, x) += weight * normalized_value;
-                    alpha_accumulator(y, x) += weight;
+            // Create mask of components to keep (those >= min size)
+            cv::Mat_<uint8_t> keepMask = cv::Mat_<uint8_t>::zeros(img.size());
+            for (int i = 1; i < numComponents; i++) {  // Start from 1 to skip background
+                int area = stats.at<int>(i, cv::CC_STAT_AREA);
+                if (area >= _postMinComponentSize) {
+                    keepMask.setTo(255, labels == i);
                 }
             }
-        } else {
-            // Original composite methods
-            if (accumulator.empty()) {
-                accumulator = slice_float;
-                if (_composite_method == "min") {
-                    accumulator.setTo(255.0); // Initialize to max value for min operation
-                    accumulator = cv::min(accumulator, slice_float);
-                }
-            } else {
-                if (_composite_method == "max") {
-                    accumulator = cv::max(accumulator, slice_float);
-                } else if (_composite_method == "mean") {
-                    accumulator += slice_float;
-                    count++;
-                } else if (_composite_method == "min") {
-                    accumulator = cv::min(accumulator, slice_float);
-                }
-            }
+
+            // Apply mask to original image
+            cv::Mat_<uint8_t> filtered;
+            img.copyTo(filtered, keepMask);
+            img = filtered;
         }
     }
 
-    // Finalize alpha composition result
-    if (_composite_method == "alpha") {
-        accumulator = cv::Mat_<float>::zeros(value_accumulator.size());
-        for (int y = 0; y < value_accumulator.rows; y++) {
-            for (int x = 0; x < value_accumulator.cols; x++) {
-                float final_value = value_accumulator(y, x) * 255.0f;
-                accumulator(y, x) = std::max(0.0f, std::min(255.0f, final_value)); // Clamp to [0,255]
-            }
-        }
-    }
-
-    // Convert back to uint8
-    if (_composite_method == "mean" && count > 0) {
-        accumulator /= count;
-    }
-    accumulator.convertTo(img, CV_8U);
     return img;
 }
 

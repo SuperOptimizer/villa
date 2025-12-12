@@ -9,7 +9,7 @@
 
 #include <opencv2/imgproc.hpp>
 #include <opencv2/calib3d.hpp>
-#include <opencv2/highgui.hpp>
+#include <opencv2/imgcodecs.hpp>
 
 #include <nlohmann/json.hpp>
 #include <system_error>
@@ -401,9 +401,10 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
         normals_big.setTo(cv::Vec3f(std::numeric_limits<float>::quiet_NaN(),
                                     std::numeric_limits<float>::quiet_NaN(),
                                     std::numeric_limits<float>::quiet_NaN()));
+        #pragma omp parallel for collapse(2)
         for (int j = 0; j < h; ++j) {
-            const double y = oy + (j + 4.0) * sy;
             for (int i = 0; i < w; ++i) {
+                const double y = oy + (j + 4.0) * sy;
                 const double x = ox + (i + 4.0) * sx;
                 const int jj = j + 4, ii = i + 4;
                 if (valid_big.at<uint8_t>(jj, ii)) {
@@ -440,6 +441,7 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
 
     // --- apply offset along normals only where normals are valid --------
     if (need_normals && ul[2] != 0.0f) {
+        #pragma omp parallel for collapse(2)
         for (int j = 0; j < h; ++j) {
             for (int i = 0; i < w; ++i) {
                 const cv::Vec3f n = (*normals)(j, i);

@@ -13,6 +13,7 @@ add_library(vc_core
         src/Logging.cpp
         src/ChunkCache.cpp
         src/Slicing.cpp
+        src/Compositing.cpp
         src/PlaneSurface.cpp
         src/QuadSurface.cpp
         src/Render.cpp
@@ -29,7 +30,6 @@ target_link_libraries(vc_core
         opencv_core
         opencv_imgproc
         opencv_imgcodecs
-        opencv_highgui
         opencv_calib3d
         opencv_video
         nlohmann_json::nlohmann_json
