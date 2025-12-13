@@ -91,3 +91,16 @@ void readCompositeFast(
     const CompositeParams& params,
     FastCompositeCache& cache
 );
+
+// Fast composite rendering with constant normal (optimized for plane surfaces)
+// Avoids per-pixel normal lookup and uses pre-computed layer offsets
+void readCompositeFastConstantNormal(
+    cv::Mat_<uint8_t>& out,
+    z5::Dataset* ds,
+    const cv::Mat_<cv::Vec3f>& baseCoords,
+    const cv::Vec3f& normal,  // Single constant normal for all pixels
+    float zStep,
+    int zStart, int zEnd,
+    const CompositeParams& params,
+    FastCompositeCache& cache
+);

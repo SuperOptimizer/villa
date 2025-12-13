@@ -14,9 +14,9 @@
 #include <shared_mutex>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <random>
-#include <unordered_set>
 
 
 template<typename T>
@@ -988,6 +988,14 @@ const xt::xarray<uint8_t>* FastCompositeCache::getChunk(int ix, int iy, int iz) 
 // readCompositeFast - specialized fast path for nearest-neighbor compositing
 // ============================================================================
 
+// Helper to compute log2 for power-of-2 values (used for bit shift optimization)
+static inline int log2_pow2(int v) {
+    // For power-of-2 values, count trailing zeros gives log2
+    int r = 0;
+    while ((v >> r) > 1) r++;
+    return r;
+}
+
 void readCompositeFast(
     cv::Mat_<uint8_t>& out,
     z5::Dataset* ds,
@@ -1016,106 +1024,217 @@ void readCompositeFast(
     const int chunksY = (sy + ch - 1) / ch;
     const int chunksZ = (sz + cd - 1) / cd;
 
-    // Phase 1: Collect all needed chunks
-    // Track bounding box for efficient array allocation
-    int minIx = chunksX, maxIx = -1;
-    int minIy = chunksY, maxIy = -1;
-    int minIz = chunksZ, maxIz = -1;
+    // Bit shift constants for power-of-2 chunk sizes (replaces expensive division)
+    const int cwShift = log2_pow2(cw);
+    const int chShift = log2_pow2(ch);
+    const int cdShift = log2_pow2(cd);
+    const int cwMask = cw - 1;  // For modulo: x % cw == x & cwMask when cw is power of 2
+    const int chMask = ch - 1;
+    const int cdMask = cd - 1;
 
-    // Use a set to collect unique chunk indices
-    std::unordered_set<uint64_t> neededChunks;
+    // Phase 1: Collect all needed chunks using a bitmap (much faster than unordered_set)
+    // Use a flat array as a 3D bitmap - O(1) insert/lookup vs O(1) amortized with hash overhead
+    const size_t totalChunks = static_cast<size_t>(chunksX) * chunksY * chunksZ;
+    std::vector<uint8_t> chunkNeeded(totalChunks, 0);
 
-    auto addChunk = [&](int ix, int iy, int iz) {
-        if (ix >= 0 && ix < chunksX && iy >= 0 && iy < chunksY && iz >= 0 && iz < chunksZ) {
-            uint64_t key = (uint64_t(ix) << 40) | (uint64_t(iy) << 20) | uint64_t(iz);
-            neededChunks.insert(key);
-            minIx = std::min(minIx, ix);
-            maxIx = std::max(maxIx, ix);
-            minIy = std::min(minIy, iy);
-            maxIy = std::max(maxIy, iy);
-            minIz = std::min(minIz, iz);
-            maxIz = std::max(maxIz, iz);
-        }
-    };
+    // Track bounding box for efficient array allocation (use atomics for parallel updates)
+    std::atomic<int> minIx{chunksX}, maxIx{-1};
+    std::atomic<int> minIy{chunksY}, maxIy{-1};
+    std::atomic<int> minIz{chunksZ}, maxIz{-1};
 
-    // Scan all coordinates to find needed chunks
-    for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
-            const cv::Vec3f& baseCoord = baseCoords(y, x);
-            float base_ox = baseCoord[2];
-            float base_oy = baseCoord[1];
-            float base_oz = baseCoord[0];
+    // Pre-compute layer offsets (constant for all pixels)
+    std::vector<float> layerOffsets(numLayers);
+    for (int layer = 0; layer < numLayers; layer++) {
+        layerOffsets[layer] = (zStart + layer) * zStep;
+    }
 
-            if (base_oz < 0 || base_oy < 0 || base_ox < 0) continue;
-            if (base_ox >= sx || base_oy >= sy) continue;
+    // Parallel scan of all coordinates to find needed chunks
+    #pragma omp parallel
+    {
+        // Thread-local min/max to reduce atomic contention
+        int localMinIx = chunksX, localMaxIx = -1;
+        int localMinIy = chunksY, localMaxIy = -1;
+        int localMinIz = chunksZ, localMaxIz = -1;
 
-            cv::Vec3f normal(0, 0, 1);
-            if (hasNormals) {
-                const cv::Vec3f& n = normals(y, x);
-                if (std::isfinite(n[0]) && std::isfinite(n[1]) && std::isfinite(n[2])) {
-                    normal = n;
+        #pragma omp for schedule(dynamic, 16)
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                const cv::Vec3f& baseCoord = baseCoords(y, x);
+                const float base_ox = baseCoord[2];
+                const float base_oy = baseCoord[1];
+                const float base_oz = baseCoord[0];
+
+                if (base_oz < 0 || base_oy < 0 || base_ox < 0) continue;
+                if (base_ox >= sx || base_oy >= sy) continue;
+
+                float nx = 0, ny = 0, nz = 1;
+                if (hasNormals) {
+                    const cv::Vec3f& n = normals(y, x);
+                    if (std::isfinite(n[0]) && std::isfinite(n[1]) && std::isfinite(n[2])) {
+                        nx = n[0]; ny = n[1]; nz = n[2];
+                    }
+                }
+
+                for (int layer = 0; layer < numLayers; layer++) {
+                    const float layerOffset = layerOffsets[layer];
+                    const float ox = base_ox + nz * layerOffset;
+                    const float oy = base_oy + ny * layerOffset;
+                    const float oz = base_oz + nx * layerOffset;
+
+                    if (oz < 0 || oz >= sz || oy < 0 || oy >= sy || ox < 0 || ox >= sx) continue;
+
+                    int iox = static_cast<int>(ox + 0.5f);
+                    int ioy = static_cast<int>(oy + 0.5f);
+                    int ioz = static_cast<int>(oz + 0.5f);
+
+                    if (iox >= sx) iox = sx - 1;
+                    if (ioy >= sy) ioy = sy - 1;
+                    if (ioz >= sz) ioz = sz - 1;
+
+                    // Use bit shifts instead of division (chunk sizes are power of 2)
+                    const int ix = iox >> cwShift;
+                    const int iy = ioy >> chShift;
+                    const int iz = ioz >> cdShift;
+
+                    if (ix >= 0 && ix < chunksX && iy >= 0 && iy < chunksY && iz >= 0 && iz < chunksZ) {
+                        // Bitmap write is safe even with races - worst case we write 1 multiple times
+                        chunkNeeded[ix + iy * chunksX + iz * chunksX * chunksY] = 1;
+                        localMinIx = std::min(localMinIx, ix);
+                        localMaxIx = std::max(localMaxIx, ix);
+                        localMinIy = std::min(localMinIy, iy);
+                        localMaxIy = std::max(localMaxIy, iy);
+                        localMinIz = std::min(localMinIz, iz);
+                        localMaxIz = std::max(localMaxIz, iz);
+                    }
                 }
             }
+        }
 
-            for (int layer = 0; layer < numLayers; layer++) {
-                float layerOffset = (zStart + layer) * zStep;
-                float ox = base_ox + normal[2] * layerOffset;
-                float oy = base_oy + normal[1] * layerOffset;
-                float oz = base_oz + normal[0] * layerOffset;
-
-                if (oz < 0 || oz >= sz || oy < 0 || oy >= sy || ox < 0 || ox >= sx) continue;
-
-                int iox = static_cast<int>(ox + 0.5f);
-                int ioy = static_cast<int>(oy + 0.5f);
-                int ioz = static_cast<int>(oz + 0.5f);
-
-                if (iox >= sx) iox = sx - 1;
-                if (ioy >= sy) ioy = sy - 1;
-                if (ioz >= sz) ioz = sz - 1;
-
-                addChunk(iox / cw, ioy / ch, ioz / cd);
-            }
+        // Merge thread-local bounds into global atomics
+        #pragma omp critical
+        {
+            if (localMinIx < minIx.load()) minIx.store(localMinIx);
+            if (localMaxIx > maxIx.load()) maxIx.store(localMaxIx);
+            if (localMinIy < minIy.load()) minIy.store(localMinIy);
+            if (localMaxIy > maxIy.load()) maxIy.store(localMaxIy);
+            if (localMinIz < minIz.load()) minIz.store(localMinIz);
+            if (localMaxIz > maxIz.load()) maxIz.store(localMaxIz);
         }
     }
 
-    if (maxIx < minIx) {
+    const int finalMinIx = minIx.load(), finalMaxIx = maxIx.load();
+    const int finalMinIy = minIy.load(), finalMaxIy = maxIy.load();
+    const int finalMinIz = minIz.load(), finalMaxIz = maxIz.load();
+
+    if (finalMaxIx < finalMinIx) {
         // No valid chunks needed
         out = cv::Mat_<uint8_t>(baseCoords.size(), 0);
         return;
     }
 
-    // Phase 2: Pre-load all chunks
-    for (uint64_t key : neededChunks) {
-        int ix = (key >> 40) & 0xFFFFF;
-        int iy = (key >> 20) & 0xFFFFF;
-        int iz = key & 0xFFFFF;
-        cache.getChunk(ix, iy, iz);  // Pre-load into cache
-    }
-
-    // Build fast 3D lookup array
-    const int arrSizeX = maxIx - minIx + 1;
-    const int arrSizeY = maxIy - minIy + 1;
-    const int arrSizeZ = maxIz - minIz + 1;
+    // Phase 2: Pre-load all needed chunks and build lookup array
+    const int arrSizeX = finalMaxIx - finalMinIx + 1;
+    const int arrSizeY = finalMaxIy - finalMinIy + 1;
+    const int arrSizeZ = finalMaxIz - finalMinIz + 1;
     std::vector<const xt::xarray<uint8_t>*> chunkArray(arrSizeX * arrSizeY * arrSizeZ, nullptr);
 
-    for (uint64_t key : neededChunks) {
-        int ix = (key >> 40) & 0xFFFFF;
-        int iy = (key >> 20) & 0xFFFFF;
-        int iz = key & 0xFFFFF;
-        int arrIdx = (ix - minIx) + (iy - minIy) * arrSizeX + (iz - minIz) * arrSizeX * arrSizeY;
-        chunkArray[arrIdx] = cache.getChunk(ix, iy, iz);
+    // Iterate over bounding box and load chunks that are marked as needed
+    for (int iz = finalMinIz; iz <= finalMaxIz; iz++) {
+        for (int iy = finalMinIy; iy <= finalMaxIy; iy++) {
+            for (int ix = finalMinIx; ix <= finalMaxIx; ix++) {
+                if (chunkNeeded[ix + iy * chunksX + iz * chunksX * chunksY]) {
+                    const int arrIdx = (ix - finalMinIx) + (iy - finalMinIy) * arrSizeX + (iz - finalMinIz) * arrSizeX * arrSizeY;
+                    chunkArray[arrIdx] = cache.getChunk(ix, iy, iz);
+                }
+            }
+        }
     }
 
     auto getChunk = [&](int ix, int iy, int iz) -> const xt::xarray<uint8_t>* {
-        if (ix < minIx || ix > maxIx || iy < minIy || iy > maxIy || iz < minIz || iz > maxIz)
+        if (ix < finalMinIx || ix > finalMaxIx || iy < finalMinIy || iy > finalMaxIy || iz < finalMinIz || iz > finalMaxIz)
             return nullptr;
-        return chunkArray[(ix - minIx) + (iy - minIy) * arrSizeX + (iz - minIz) * arrSizeX * arrSizeY];
+        return chunkArray[(ix - finalMinIx) + (iy - finalMinIy) * arrSizeX + (iz - finalMinIz) * arrSizeX * arrSizeY];
     };
 
-    // Phase 3: Build histogram equalization LUT if requested
+    // Phase 3: Contrast enhancement
+    // Option A: 3D GLCAE - sample into 3D buffer, apply full algorithm, then composite
+    // Option B: Global equalization only - build LUT from histogram, apply during composite
+
     std::array<uint8_t, 256> equalizeLUT;
-    if (params.histogramEqualize) {
-        // Build histogram by sampling all values
+    std::vector<uint8_t> enhancedVolume;  // Only used for 3D GLCAE
+    const bool use3DGLCAE = params.histogramEqualize && params.use3DGLCAE;
+
+    if (use3DGLCAE) {
+        // 3D GLCAE: Sample all values into a 3D buffer, then apply enhancement
+        const size_t volumeSize = static_cast<size_t>(w) * h * numLayers;
+        std::vector<uint8_t> rawVolume(volumeSize, 0);
+
+        // Sample all voxels into the buffer
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                const cv::Vec3f& baseCoord = baseCoords(y, x);
+                const float base_ox = baseCoord[2];
+                const float base_oy = baseCoord[1];
+                const float base_oz = baseCoord[0];
+
+                if (base_oz < 0 || base_oy < 0 || base_ox < 0) continue;
+
+                float nx = 0, ny = 0, nz = 1;
+                if (hasNormals) {
+                    const cv::Vec3f& n = normals(y, x);
+                    if (n[0] == n[0] && n[1] == n[1] && n[2] == n[2]) {
+                        nx = n[0]; ny = n[1]; nz = n[2];
+                    }
+                }
+
+                for (int layer = 0; layer < numLayers; layer++) {
+                    const float layerOffset = layerOffsets[layer];
+                    const float ox = base_ox + nz * layerOffset;
+                    const float oy = base_oy + ny * layerOffset;
+                    const float oz = base_oz + nx * layerOffset;
+
+                    if (oz < 0 || oz >= sz || oy < 0 || oy >= sy || ox < 0 || ox >= sx) continue;
+
+                    int iox = static_cast<int>(ox + 0.5f);
+                    int ioy = static_cast<int>(oy + 0.5f);
+                    int ioz = static_cast<int>(oz + 0.5f);
+                    iox = iox < sx ? iox : sx - 1;
+                    ioy = ioy < sy ? ioy : sy - 1;
+                    ioz = ioz < sz ? ioz : sz - 1;
+
+                    const int ix = iox >> cwShift;
+                    const int iy = ioy >> chShift;
+                    const int iz = ioz >> cdShift;
+
+                    const xt::xarray<uint8_t>* chunk = getChunk(ix, iy, iz);
+                    if (!chunk) continue;
+
+                    const int lx = iox & cwMask;
+                    const int ly = ioy & chMask;
+                    const int lz = ioz & cdMask;
+
+                    uint8_t rawValue = (*chunk)(lx, ly, lz);
+                    uint8_t value = rawValue < params.isoCutoff ? 0 : rawValue;
+
+                    // Store in volume: [layer][y][x] ordering
+                    rawVolume[layer * w * h + y * w + x] = value;
+                }
+            }
+        }
+
+        // Apply 3D GLCAE
+        enhancedVolume = apply3DGLCAE(
+            rawVolume, w, h, numLayers,
+            params.isoCutoff,
+            params.glcaeClipLimit,
+            params.glcaeTileSize
+        );
+
+        // Identity LUT since enhancement is already done
+        for (int i = 0; i < 256; i++) equalizeLUT[i] = static_cast<uint8_t>(i);
+
+    } else if (params.histogramEqualize) {
+        // Global equalization only: Build histogram and LUT
         std::array<int, 256> histogram{};
         int totalSamples = 0;
 
@@ -1137,7 +1256,7 @@ void readCompositeFast(
                 }
 
                 for (int layer = 0; layer < numLayers; layer++) {
-                    const float layerOffset = (zStart + layer) * zStep;
+                    const float layerOffset = layerOffsets[layer];
                     const float ox = base_ox + nz * layerOffset;
                     const float oy = base_oy + ny * layerOffset;
                     const float oz = base_oz + nx * layerOffset;
@@ -1151,13 +1270,19 @@ void readCompositeFast(
                     ioy = ioy < sy ? ioy : sy - 1;
                     ioz = ioz < sz ? ioz : sz - 1;
 
-                    const xt::xarray<uint8_t>* chunk = getChunk(iox / cw, ioy / ch, ioz / cd);
+                    const int ix = iox >> cwShift;
+                    const int iy = ioy >> chShift;
+                    const int iz = ioz >> cdShift;
+
+                    const xt::xarray<uint8_t>* chunk = getChunk(ix, iy, iz);
                     if (!chunk) continue;
 
-                    uint8_t rawValue = (*chunk)(iox - (iox/cw)*cw, ioy - (ioy/ch)*ch, ioz - (ioz/cd)*cd);
-                    // Apply ISO cutoff highpass filter
+                    const int lx = iox & cwMask;
+                    const int ly = ioy & chMask;
+                    const int lz = ioz & cdMask;
+
+                    uint8_t rawValue = (*chunk)(lx, ly, lz);
                     uint8_t value = rawValue < params.isoCutoff ? 0 : rawValue;
-                    // Only include non-zero values in histogram for CLAHE calculations
                     if (value > 0) {
                         histogram[value]++;
                         totalSamples++;
@@ -1166,72 +1291,21 @@ void readCompositeFast(
             }
         }
 
-        // CLAHE: Clip histogram and redistribute excess (only for non-zero bins)
-        // Zero values stay zero - they're not part of the equalization
+        // Build global equalization LUT
         equalizeLUT[0] = 0;
-
         if (totalSamples > 0) {
-            // Clip limit as a multiplier of average bin count (typical CLAHE uses 2.0-4.0)
-            // Only count 255 bins (1-255) since we excluded zeros
-            const float clipLimitMultiplier = 2.0f;
-            const int avgBinCount = totalSamples / 255;
-            const int clipLimit = std::max(1, static_cast<int>(avgBinCount * clipLimitMultiplier));
-
-            // Clip histogram and count excess (bins 1-255 only)
-            int excess = 0;
+            std::array<float, 256> normalizedHist{};
+            const float invTotal = 1.0f / static_cast<float>(totalSamples);
             for (int i = 1; i < 256; i++) {
-                if (histogram[i] > clipLimit) {
-                    excess += histogram[i] - clipLimit;
-                    histogram[i] = clipLimit;
-                }
+                normalizedHist[i] = static_cast<float>(histogram[i]) * invTotal;
             }
-
-            // Redistribute excess evenly across non-zero bins (1-255)
-            const int redistPerBin = excess / 255;
-            int residual = excess % 255;
-            for (int i = 1; i < 256; i++) {
-                histogram[i] += redistPerBin;
-                if (residual > 0) {
-                    histogram[i]++;
-                    residual--;
-                }
-            }
-
-            // Recompute total after redistribution (bins 1-255)
-            int newTotal = 0;
-            for (int i = 1; i < 256; i++) {
-                newTotal += histogram[i];
-            }
-
-            // Build CDF and equalization LUT (only for bins 1-255)
-            int cumulative = 0;
-            int minCdf = 0;
-            // Find first non-zero bin (starting from 1)
-            for (int i = 1; i < 256; i++) {
-                if (histogram[i] > 0) {
-                    minCdf = histogram[i];
-                    break;
-                }
-            }
-
-            // Map non-zero values to 1-255 range (preserve 0 as 0)
-            for (int i = 1; i < 256; i++) {
-                cumulative += histogram[i];
-                if (newTotal > minCdf) {
-                    // Map to 1-255 range so zeros stay distinct
-                    equalizeLUT[i] = static_cast<uint8_t>(
-                        1 + std::round(254.0f * (cumulative - minCdf) / (newTotal - minCdf))
-                    );
-                } else {
-                    equalizeLUT[i] = static_cast<uint8_t>(i);
-                }
-            }
+            equalizeLUT = buildGlobalEqualizationLUT(normalizedHist);
+            equalizeLUT[0] = 0;
         } else {
-            // Identity LUT for non-zero values
             for (int i = 1; i < 256; i++) equalizeLUT[i] = static_cast<uint8_t>(i);
         }
     } else {
-        // Identity LUT when not equalizing
+        // No enhancement - identity LUT
         for (int i = 0; i < 256; i++) equalizeLUT[i] = static_cast<uint8_t>(i);
     }
 
@@ -1248,6 +1322,14 @@ void readCompositeFast(
     // Pre-compute alpha normalization constants
     const float alphaScale = 1.0f / (255.0f * (params.alphaMax - params.alphaMin));
     const float alphaOffset = params.alphaMin / (params.alphaMax - params.alphaMin);
+
+    // Pre-compute incremental step for coordinate updates
+    const float firstLayerOffset = zStart * zStep;
+
+    // Pre-compute chunk stride for C-contiguous layout (common case)
+    // This avoids 3 multiplies per sample when layout is standard
+    const size_t chunkPlaneStride = static_cast<size_t>(cw) * ch;  // stride for z dimension
+    const size_t chunkRowStride = static_cast<size_t>(cw);         // stride for y dimension
 
     // Phase 4: Process all layers for each pixel
     #pragma omp parallel
@@ -1281,8 +1363,6 @@ void readCompositeFast(
 
                 // Accumulators for simple methods
                 float acc = isMin ? 255.0f : 0.0f;
-                float alpha = 0.0f;
-                float valueAcc = 0.0f;
                 int validCount = 0;
 
                 // Reset layer stack
@@ -1290,13 +1370,207 @@ void readCompositeFast(
                     stack.validCount = 0;
                 }
 
+                // Pre-compute incremental coordinate deltas for this pixel's normal
+                const float dx = nz * zStep;
+                const float dy = ny * zStep;
+                const float dz = nx * zStep;
+
+                // Start at first layer position
+                float ox = base_ox + nz * firstLayerOffset;
+                float oy = base_oy + ny * firstLayerOffset;
+                float oz = base_oz + nx * firstLayerOffset;
+
+                // Chunk caching: track current chunk to avoid re-lookup
+                int cachedIx = -1, cachedIy = -1, cachedIz = -1;
+                const uint8_t* cachedData = nullptr;
+                size_t cachedStride0 = 0, cachedStride1 = 0, cachedStride2 = 0;
+
                 // Sample all layers
                 for (int layer = 0; layer < numLayers; layer++) {
-                    const float layerOffset = (zStart + layer) * zStep;
+                    float value;
+                    bool validSample = false;
 
-                    const float ox = base_ox + nz * layerOffset;
-                    const float oy = base_oy + ny * layerOffset;
-                    const float oz = base_oz + nx * layerOffset;
+                    if (use3DGLCAE) {
+                        // Read from pre-enhanced volume buffer
+                        value = static_cast<float>(enhancedVolume[layer * w * h + y * w + x]);
+                        validSample = true;
+                    } else {
+                        // Sample from chunks
+                        // Bounds check
+                        if (oz >= 0 && oz < sz && oy >= 0 && oy < sy && ox >= 0 && ox < sx) {
+                            // Fast rounding with clamping to valid range
+                            int iox = static_cast<int>(ox + 0.5f);
+                            int ioy = static_cast<int>(oy + 0.5f);
+                            int ioz = static_cast<int>(oz + 0.5f);
+
+                            // Clamp to valid range (rounding can push to boundary)
+                            if (iox >= sx) iox = sx - 1;
+                            if (ioy >= sy) ioy = sy - 1;
+                            if (ioz >= sz) ioz = sz - 1;
+
+                            // Use bit shifts for chunk index
+                            const int ix = iox >> cwShift;
+                            const int iy = ioy >> chShift;
+                            const int iz = ioz >> cdShift;
+
+                            // Check if we need to switch chunks
+                            if (ix != cachedIx || iy != cachedIy || iz != cachedIz) {
+                                const xt::xarray<uint8_t>* chunk = getChunk(ix, iy, iz);
+                                if (chunk) {
+                                    cachedData = chunk->data();
+                                    const auto& strides = chunk->strides();
+                                    cachedStride0 = strides[0];
+                                    cachedStride1 = strides[1];
+                                    cachedStride2 = strides[2];
+                                    cachedIx = ix;
+                                    cachedIy = iy;
+                                    cachedIz = iz;
+
+                                    // Prefetch next likely chunk (along z direction)
+                                    if (iz + 1 <= finalMaxIz) {
+                                        const xt::xarray<uint8_t>* nextChunk = getChunk(ix, iy, iz + 1);
+                                        if (nextChunk) {
+                                            __builtin_prefetch(nextChunk->data(), 0, 1);
+                                        }
+                                    }
+                                } else {
+                                    cachedData = nullptr;
+                                }
+                            }
+
+                            if (cachedData) {
+                                // Use bit masking for local coordinates
+                                const int lx = iox & cwMask;
+                                const int ly = ioy & chMask;
+                                const int lz = ioz & cdMask;
+
+                                // Direct pointer arithmetic with actual strides
+                                const uint8_t rawValue = cachedData[lx * cachedStride0 + ly * cachedStride1 + lz * cachedStride2];
+
+                                // Apply LUT (combines ISO cutoff + histogram equalization)
+                                value = static_cast<float>(equalizeLUT[rawValue < params.isoCutoff ? 0 : rawValue]);
+                                validSample = true;
+                            }
+                        }
+
+                        // Increment coordinates for next layer (only for non-3DGLCAE path)
+                        ox += dx; oy += dy; oz += dz;
+                    }
+
+                    if (validSample) {
+                        if (needsLayerStorage) {
+                            stack.values[stack.validCount++] = value;
+                        } else if (isMax) {
+                            acc = value > acc ? value : acc;
+                            validCount++;
+                        } else if (isMin) {
+                            acc = value < acc ? value : acc;
+                            validCount++;
+                        } else {
+                            // mean
+                            acc += value;
+                            validCount++;
+                        }
+                    }
+                }
+
+                // Compute final value
+                float result = 0.0f;
+
+                if (needsLayerStorage) {
+                    result = compositeLayerStack(stack, params);
+                } else if (isMax || isMin) {
+                    result = acc;
+                } else if (isMean && validCount > 0) {
+                    result = acc / static_cast<float>(validCount);
+                }
+
+                out(y, x) = static_cast<uint8_t>(std::max(0.0f, std::min(255.0f, result)));
+            }
+        }
+    }
+}
+
+void readCompositeFastConstantNormal(
+    cv::Mat_<uint8_t>& out,
+    z5::Dataset* ds,
+    const cv::Mat_<cv::Vec3f>& baseCoords,
+    const cv::Vec3f& normal,
+    float zStep,
+    int zStart, int zEnd,
+    const CompositeParams& params,
+    FastCompositeCache& cache)
+{
+    cache.setDataset(ds);
+
+    const int h = baseCoords.rows;
+    const int w = baseCoords.cols;
+    const int numLayers = zEnd - zStart + 1;
+
+    // Extract constant normal components once
+    const float nx = normal[0];
+    const float ny = normal[1];
+    const float nz = normal[2];
+
+    const int cw = cache.chunkSizeX();
+    const int ch = cache.chunkSizeY();
+    const int cd = cache.chunkSizeZ();
+    const int sx = cache.datasetSizeX();
+    const int sy = cache.datasetSizeY();
+    const int sz = cache.datasetSizeZ();
+    const int chunksX = (sx + cw - 1) / cw;
+    const int chunksY = (sy + ch - 1) / ch;
+    const int chunksZ = (sz + cd - 1) / cd;
+
+    // Bit shift constants for power-of-2 chunk sizes (replaces expensive division)
+    const int cwShift = log2_pow2(cw);
+    const int chShift = log2_pow2(ch);
+    const int cdShift = log2_pow2(cd);
+    const int cwMask = cw - 1;
+    const int chMask = ch - 1;
+    const int cdMask = cd - 1;
+
+    // Pre-compute layer offsets as 3D vectors (constant normal * layer offset)
+    // This is the key optimization for constant normals - we compute the delta once per layer
+    struct LayerDelta {
+        float dx, dy, dz;
+    };
+    std::vector<LayerDelta> layerDeltas(numLayers);
+    for (int layer = 0; layer < numLayers; layer++) {
+        const float offset = (zStart + layer) * zStep;
+        layerDeltas[layer] = {nz * offset, ny * offset, nx * offset};
+    }
+
+    // Phase 1: Collect all needed chunks using bitmap
+    const size_t totalChunks = static_cast<size_t>(chunksX) * chunksY * chunksZ;
+    std::vector<uint8_t> chunkNeeded(totalChunks, 0);
+
+    std::atomic<int> minIx{chunksX}, maxIx{-1};
+    std::atomic<int> minIy{chunksY}, maxIy{-1};
+    std::atomic<int> minIz{chunksZ}, maxIz{-1};
+
+    #pragma omp parallel
+    {
+        int localMinIx = chunksX, localMaxIx = -1;
+        int localMinIy = chunksY, localMaxIy = -1;
+        int localMinIz = chunksZ, localMaxIz = -1;
+
+        #pragma omp for schedule(dynamic, 16)
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                const cv::Vec3f& baseCoord = baseCoords(y, x);
+                const float base_ox = baseCoord[2];
+                const float base_oy = baseCoord[1];
+                const float base_oz = baseCoord[0];
+
+                if (base_oz < 0 || base_oy < 0 || base_ox < 0) continue;
+                if (base_ox >= sx || base_oy >= sy) continue;
+
+                for (int layer = 0; layer < numLayers; layer++) {
+                    const LayerDelta& delta = layerDeltas[layer];
+                    const float ox = base_ox + delta.dx;
+                    const float oy = base_oy + delta.dy;
+                    const float oz = base_oz + delta.dz;
 
                     if (oz < 0 || oz >= sz || oy < 0 || oy >= sy || ox < 0 || ox >= sx) continue;
 
@@ -1304,45 +1578,340 @@ void readCompositeFast(
                     int ioy = static_cast<int>(oy + 0.5f);
                     int ioz = static_cast<int>(oz + 0.5f);
 
+                    if (iox >= sx) iox = sx - 1;
+                    if (ioy >= sy) ioy = sy - 1;
+                    if (ioz >= sz) ioz = sz - 1;
+
+                    // Use bit shifts instead of division
+                    const int ix = iox >> cwShift;
+                    const int iy = ioy >> chShift;
+                    const int iz = ioz >> cdShift;
+
+                    if (ix >= 0 && ix < chunksX && iy >= 0 && iy < chunksY && iz >= 0 && iz < chunksZ) {
+                        chunkNeeded[ix + iy * chunksX + iz * chunksX * chunksY] = 1;
+                        localMinIx = std::min(localMinIx, ix);
+                        localMaxIx = std::max(localMaxIx, ix);
+                        localMinIy = std::min(localMinIy, iy);
+                        localMaxIy = std::max(localMaxIy, iy);
+                        localMinIz = std::min(localMinIz, iz);
+                        localMaxIz = std::max(localMaxIz, iz);
+                    }
+                }
+            }
+        }
+
+        #pragma omp critical
+        {
+            if (localMinIx < minIx.load()) minIx.store(localMinIx);
+            if (localMaxIx > maxIx.load()) maxIx.store(localMaxIx);
+            if (localMinIy < minIy.load()) minIy.store(localMinIy);
+            if (localMaxIy > maxIy.load()) maxIy.store(localMaxIy);
+            if (localMinIz < minIz.load()) minIz.store(localMinIz);
+            if (localMaxIz > maxIz.load()) maxIz.store(localMaxIz);
+        }
+    }
+
+    const int finalMinIx = minIx.load(), finalMaxIx = maxIx.load();
+    const int finalMinIy = minIy.load(), finalMaxIy = maxIy.load();
+    const int finalMinIz = minIz.load(), finalMaxIz = maxIz.load();
+
+    if (finalMaxIx < finalMinIx) {
+        out = cv::Mat_<uint8_t>(baseCoords.size(), 0);
+        return;
+    }
+
+    // Phase 2: Pre-load chunks and build lookup array
+    const int arrSizeX = finalMaxIx - finalMinIx + 1;
+    const int arrSizeY = finalMaxIy - finalMinIy + 1;
+    const int arrSizeZ = finalMaxIz - finalMinIz + 1;
+    std::vector<const xt::xarray<uint8_t>*> chunkArray(arrSizeX * arrSizeY * arrSizeZ, nullptr);
+
+    for (int iz = finalMinIz; iz <= finalMaxIz; iz++) {
+        for (int iy = finalMinIy; iy <= finalMaxIy; iy++) {
+            for (int ix = finalMinIx; ix <= finalMaxIx; ix++) {
+                if (chunkNeeded[ix + iy * chunksX + iz * chunksX * chunksY]) {
+                    const int arrIdx = (ix - finalMinIx) + (iy - finalMinIy) * arrSizeX + (iz - finalMinIz) * arrSizeX * arrSizeY;
+                    chunkArray[arrIdx] = cache.getChunk(ix, iy, iz);
+                }
+            }
+        }
+    }
+
+    auto getChunk = [&](int ix, int iy, int iz) -> const xt::xarray<uint8_t>* {
+        if (ix < finalMinIx || ix > finalMaxIx || iy < finalMinIy || iy > finalMaxIy || iz < finalMinIz || iz > finalMaxIz)
+            return nullptr;
+        return chunkArray[(ix - finalMinIx) + (iy - finalMinIy) * arrSizeX + (iz - finalMinIz) * arrSizeX * arrSizeY];
+    };
+
+    // Phase 3: Contrast enhancement
+    // Option A: 3D GLCAE - sample into 3D buffer, apply full algorithm, then composite
+    // Option B: Global equalization only - build LUT from histogram, apply during composite
+
+    std::array<uint8_t, 256> equalizeLUT;
+    std::vector<uint8_t> enhancedVolume;  // Only used for 3D GLCAE
+    const bool use3DGLCAE = params.histogramEqualize && params.use3DGLCAE;
+
+    if (use3DGLCAE) {
+        // 3D GLCAE: Sample all values into a 3D buffer, then apply enhancement
+        const size_t volumeSize = static_cast<size_t>(w) * h * numLayers;
+        std::vector<uint8_t> rawVolume(volumeSize, 0);
+
+        // Sample all voxels into the buffer
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                const cv::Vec3f& baseCoord = baseCoords(y, x);
+                const float base_ox = baseCoord[2];
+                const float base_oy = baseCoord[1];
+                const float base_oz = baseCoord[0];
+
+                if (base_oz < 0 || base_oy < 0 || base_ox < 0) continue;
+
+                for (int layer = 0; layer < numLayers; layer++) {
+                    const LayerDelta& delta = layerDeltas[layer];
+                    const float ox = base_ox + delta.dx;
+                    const float oy = base_oy + delta.dy;
+                    const float oz = base_oz + delta.dz;
+
+                    if (oz < 0 || oz >= sz || oy < 0 || oy >= sy || ox < 0 || ox >= sx) continue;
+
+                    int iox = static_cast<int>(ox + 0.5f);
+                    int ioy = static_cast<int>(oy + 0.5f);
+                    int ioz = static_cast<int>(oz + 0.5f);
                     iox = iox < sx ? iox : sx - 1;
                     ioy = ioy < sy ? ioy : sy - 1;
                     ioz = ioz < sz ? ioz : sz - 1;
 
-                    const int ix = iox / cw;
-                    const int iy = ioy / ch;
-                    const int iz = ioz / cd;
+                    const int ix = iox >> cwShift;
+                    const int iy = ioy >> chShift;
+                    const int iz = ioz >> cdShift;
 
                     const xt::xarray<uint8_t>* chunk = getChunk(ix, iy, iz);
                     if (!chunk) continue;
 
-                    const int lx = iox - ix * cw;
-                    const int ly = ioy - iy * ch;
-                    const int lz = ioz - iz * cd;
+                    const int lx = iox & cwMask;
+                    const int ly = ioy & chMask;
+                    const int lz = ioz & cdMask;
 
-                    // Apply ISO cutoff highpass, then histogram equalization LUT
-                    const uint8_t rawValue = (*chunk)(lx, ly, lz);
-                    const uint8_t cutoffValue = rawValue < params.isoCutoff ? 0 : rawValue;
-                    const float value = static_cast<float>(equalizeLUT[cutoffValue]);
+                    uint8_t rawValue = (*chunk)(lx, ly, lz);
+                    uint8_t value = rawValue < params.isoCutoff ? 0 : rawValue;
 
-                    if (needsLayerStorage) {
-                        // Store for later processing
-                        stack.values[stack.validCount++] = value;
-                    } else if (isMax) {
-                        acc = value > acc ? value : acc;
-                        validCount++;
-                    } else if (isMin) {
-                        acc = value < acc ? value : acc;
-                        validCount++;
+                    // Store in volume: [layer][y][x] ordering
+                    rawVolume[layer * w * h + y * w + x] = value;
+                }
+            }
+        }
+
+        // Apply 3D GLCAE
+        enhancedVolume = apply3DGLCAE(
+            rawVolume, w, h, numLayers,
+            params.isoCutoff,
+            params.glcaeClipLimit,
+            params.glcaeTileSize
+        );
+
+        // Identity LUT since enhancement is already done
+        for (int i = 0; i < 256; i++) equalizeLUT[i] = static_cast<uint8_t>(i);
+
+    } else if (params.histogramEqualize) {
+        // Global equalization only: Build histogram and LUT
+        std::array<int, 256> histogram{};
+        int totalSamples = 0;
+
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                const cv::Vec3f& baseCoord = baseCoords(y, x);
+                const float base_ox = baseCoord[2];
+                const float base_oy = baseCoord[1];
+                const float base_oz = baseCoord[0];
+
+                if (base_oz < 0 || base_oy < 0 || base_ox < 0) continue;
+
+                for (int layer = 0; layer < numLayers; layer++) {
+                    const LayerDelta& delta = layerDeltas[layer];
+                    const float ox = base_ox + delta.dx;
+                    const float oy = base_oy + delta.dy;
+                    const float oz = base_oz + delta.dz;
+
+                    if (oz < 0 || oz >= sz || oy < 0 || oy >= sy || ox < 0 || ox >= sx) continue;
+
+                    int iox = static_cast<int>(ox + 0.5f);
+                    int ioy = static_cast<int>(oy + 0.5f);
+                    int ioz = static_cast<int>(oz + 0.5f);
+                    iox = iox < sx ? iox : sx - 1;
+                    ioy = ioy < sy ? ioy : sy - 1;
+                    ioz = ioz < sz ? ioz : sz - 1;
+
+                    // Use bit shifts instead of division
+                    const int ix = iox >> cwShift;
+                    const int iy = ioy >> chShift;
+                    const int iz = ioz >> cdShift;
+
+                    const xt::xarray<uint8_t>* chunk = getChunk(ix, iy, iz);
+                    if (!chunk) continue;
+
+                    // Use bit masking instead of modulo
+                    const int lx = iox & cwMask;
+                    const int ly = ioy & chMask;
+                    const int lz = ioz & cdMask;
+
+                    uint8_t rawValue = (*chunk)(lx, ly, lz);
+                    uint8_t value = rawValue < params.isoCutoff ? 0 : rawValue;
+                    if (value > 0) {
+                        histogram[value]++;
+                        totalSamples++;
+                    }
+                }
+            }
+        }
+
+        // Global-Local Fusion: Use optimal histogram blending with uniform distribution
+        // Zero values stay zero - they're not part of the equalization
+        equalizeLUT[0] = 0;
+
+        if (totalSamples > 0) {
+            // Convert to normalized histogram (only bins 1-255)
+            std::array<float, 256> normalizedHist{};
+            const float invTotal = 1.0f / static_cast<float>(totalSamples);
+            for (int i = 1; i < 256; i++) {
+                normalizedHist[i] = static_cast<float>(histogram[i]) * invTotal;
+            }
+
+            // Build global equalization LUT using optimal lambda blending
+            equalizeLUT = buildGlobalEqualizationLUT(normalizedHist);
+
+            // Ensure zero stays zero
+            equalizeLUT[0] = 0;
+        } else {
+            // Identity LUT for non-zero values
+            for (int i = 1; i < 256; i++) equalizeLUT[i] = static_cast<uint8_t>(i);
+        }
+    } else {
+        // No enhancement - identity LUT with ISO cutoff
+        for (int i = 0; i < 256; i++) {
+            equalizeLUT[i] = (i < params.isoCutoff) ? 0 : static_cast<uint8_t>(i);
+        }
+    }
+
+    // Phase 4: Composite rendering
+    out = cv::Mat_<uint8_t>(baseCoords.size(), 0);
+
+    const bool isMin = (params.method == "min");
+    const bool isMax = (params.method == "max");
+    const bool isMean = (params.method == "mean");
+    const bool needsLayerStorage = methodRequiresLayerStorage(params.method);
+
+    #pragma omp parallel
+    {
+        LayerStack stack;
+        if (needsLayerStorage) {
+            stack.values.resize(numLayers);
+        }
+
+        #pragma omp for collapse(2)
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                const cv::Vec3f& baseCoord = baseCoords(y, x);
+                const float base_ox = baseCoord[2];
+                const float base_oy = baseCoord[1];
+                const float base_oz = baseCoord[0];
+
+                if (base_oz < 0 || base_oy < 0 || base_ox < 0) continue;
+
+                float acc = isMin ? 255.0f : 0.0f;
+                int validCount = 0;
+
+                if (needsLayerStorage) {
+                    stack.validCount = 0;
+                }
+
+                // Chunk caching (only used for non-3DGLCAE path)
+                int cachedIx = -1, cachedIy = -1, cachedIz = -1;
+                const uint8_t* cachedData = nullptr;
+                size_t cachedStride0 = 0, cachedStride1 = 0, cachedStride2 = 0;
+
+                // Sample all layers
+                for (int layer = 0; layer < numLayers; layer++) {
+                    float value;
+                    bool validSample = false;
+
+                    if (use3DGLCAE) {
+                        // Read from pre-enhanced volume buffer
+                        value = static_cast<float>(enhancedVolume[layer * w * h + y * w + x]);
+                        validSample = true;
                     } else {
-                        // mean
-                        acc += value;
-                        validCount++;
+                        const LayerDelta& delta = layerDeltas[layer];
+                        const float ox = base_ox + delta.dx;
+                        const float oy = base_oy + delta.dy;
+                        const float oz = base_oz + delta.dz;
+
+                        // Bounds check
+                        if (oz >= 0 && oz < sz && oy >= 0 && oy < sy && ox >= 0 && ox < sx) {
+                            // Fast rounding with clamping
+                            int iox = static_cast<int>(ox + 0.5f);
+                            int ioy = static_cast<int>(oy + 0.5f);
+                            int ioz = static_cast<int>(oz + 0.5f);
+
+                            if (iox >= sx) iox = sx - 1;
+                            if (ioy >= sy) ioy = sy - 1;
+                            if (ioz >= sz) ioz = sz - 1;
+
+                            const int ix = iox >> cwShift;
+                            const int iy = ioy >> chShift;
+                            const int iz = ioz >> cdShift;
+
+                            if (ix != cachedIx || iy != cachedIy || iz != cachedIz) {
+                                const xt::xarray<uint8_t>* chunk = getChunk(ix, iy, iz);
+                                if (chunk) {
+                                    cachedData = chunk->data();
+                                    const auto& strides = chunk->strides();
+                                    cachedStride0 = strides[0];
+                                    cachedStride1 = strides[1];
+                                    cachedStride2 = strides[2];
+                                    cachedIx = ix;
+                                    cachedIy = iy;
+                                    cachedIz = iz;
+
+                                    // Prefetch next chunk along z
+                                    if (iz + 1 <= finalMaxIz) {
+                                        const xt::xarray<uint8_t>* nextChunk = getChunk(ix, iy, iz + 1);
+                                        if (nextChunk) {
+                                            __builtin_prefetch(nextChunk->data(), 0, 1);
+                                        }
+                                    }
+                                } else {
+                                    cachedData = nullptr;
+                                }
+                            }
+
+                            if (cachedData) {
+                                const int lx = iox & cwMask;
+                                const int ly = ioy & chMask;
+                                const int lz = ioz & cdMask;
+
+                                const uint8_t rawValue = cachedData[lx * cachedStride0 + ly * cachedStride1 + lz * cachedStride2];
+                                value = static_cast<float>(equalizeLUT[rawValue]);
+                                validSample = true;
+                            }
+                        }
+                    }
+
+                    if (validSample) {
+                        if (needsLayerStorage) {
+                            stack.values[stack.validCount++] = value;
+                        } else if (isMax) {
+                            acc = value > acc ? value : acc;
+                            validCount++;
+                        } else if (isMin) {
+                            acc = value < acc ? value : acc;
+                            validCount++;
+                        } else {
+                            acc += value;
+                            validCount++;
+                        }
                     }
                 }
 
-                // Compute final value
                 float result = 0.0f;
-
                 if (needsLayerStorage) {
                     result = compositeLayerStack(stack, params);
                 } else if (isMax || isMin) {

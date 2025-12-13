@@ -157,6 +157,7 @@ void QuadSurface::ensureLoaded()
     }
 
     _maskTimestamp = readMaskTimestamp(path);
+    _validMaskDirty = true;
 }
 
 QuadSurface::~QuadSurface() = default;
@@ -295,9 +296,18 @@ cv::Mat_<uint8_t> QuadSurface::validMask() const
     if (!_points || _points->empty()) {
         return cv::Mat_<uint8_t>();
     }
+
+    // Return cached mask if valid
+    if (!_validMaskDirty && !_cachedValidMask.empty() &&
+        _cachedValidMask.rows == _points->rows &&
+        _cachedValidMask.cols == _points->cols) {
+        return _cachedValidMask;
+    }
+
+    // Regenerate mask
     const int rows = _points->rows;
     const int cols = _points->cols;
-    cv::Mat_<uint8_t> mask(rows, cols);
+    _cachedValidMask.create(rows, cols);
 
 #pragma omp parallel for schedule(dynamic, 1)
     for (int j = 0; j < rows; ++j) {
@@ -305,10 +315,12 @@ cv::Mat_<uint8_t> QuadSurface::validMask() const
             const cv::Vec3f& p = (*_points)(j, i);
             const bool ok = std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]) &&
                            !(p[0] == -1.f && p[1] == -1.f && p[2] == -1.f);
-            mask(j, i) = ok ? 255 : 0;
+            _cachedValidMask(j, i) = ok ? 255 : 0;
         }
     }
-    return mask;
+
+    _validMaskDirty = false;
+    return _cachedValidMask;
 }
 
 void QuadSurface::writeValidMask(const cv::Mat& img)
@@ -342,6 +354,7 @@ void QuadSurface::invalidateCache()
     }
 
     _bbox = {{-1, -1, -1}, {-1, -1, -1}};
+    _validMaskDirty = true;
 }
 
 void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
@@ -401,17 +414,18 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
         normals_big.setTo(cv::Vec3f(std::numeric_limits<float>::quiet_NaN(),
                                     std::numeric_limits<float>::quiet_NaN(),
                                     std::numeric_limits<float>::quiet_NaN()));
+
+        // Always use fast integer path - normals don't need sub-pixel precision
+        // since they're computed from neighboring grid points anyway.
+        // Just round the source coordinate to the nearest integer.
         #pragma omp parallel for collapse(2)
         for (int j = 0; j < h; ++j) {
             for (int i = 0; i < w; ++i) {
-                const double y = oy + (j + 4.0) * sy;
-                const double x = ox + (i + 4.0) * sx;
                 const int jj = j + 4, ii = i + 4;
                 if (valid_big.at<uint8_t>(jj, ii)) {
-                    normals_big(jj, ii) = grid_normal(*_points,
-                        cv::Vec3f(static_cast<float>(x),
-                                static_cast<float>(y),
-                                0.0f));
+                    const int src_x = static_cast<int>(std::round(ox + static_cast<double>(ii) * sx));
+                    const int src_y = static_cast<int>(std::round(oy + static_cast<double>(jj) * sy));
+                    normals_big(jj, ii) = grid_normal_int(*_points, src_x, src_y);
                 }
             }
         }
@@ -420,7 +434,7 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
     // --- crop away the 4px halo ----------------------------------------
     cv::Rect inner(4, 4, w, h);
     *coords = coords_big(inner).clone();
-    cv::Mat valid = valid_big(inner).clone();
+    cv::Mat valid = valid_big(inner);  // ROI, no clone needed - only reading
     if (need_normals) {
         *normals = normals_big(inner).clone();
     }
@@ -1529,8 +1543,9 @@ void QuadSurface::rotate(float angleDeg)
         channel = rotatedChannel;
     }
 
-    // Invalidate cached bbox
+    // Invalidate caches
     _bbox = {{-1, -1, -1}, {-1, -1, -1}};
+    _validMaskDirty = true;
 }
 
 float QuadSurface::computeZOrientationAngle() const

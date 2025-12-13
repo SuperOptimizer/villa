@@ -5,6 +5,10 @@
 // Geometry utility functions
 cv::Vec3f grid_normal(const cv::Mat_<cv::Vec3f> &points, const cv::Vec3f &loc);
 
+// Optimized grid normal for integer coordinates - avoids interpolation overhead
+// Returns NaN vector if any required neighbor is invalid
+cv::Vec3f grid_normal_int(const cv::Mat_<cv::Vec3f> &points, int x, int y);
+
 
 // Bilinear interpolation at fractional coordinates
 cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &p);

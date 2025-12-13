@@ -774,21 +774,89 @@
          </property>
         </widget>
        </item>
-       <item row="3" column="2" colspan="2">
+       <item row="3" column="2">
         <widget class="QCheckBox" name="chkHistogramEqualize">
          <property name="text">
           <string>Histogram Equalize</string>
          </property>
         </widget>
        </item>
+       <item row="3" column="3">
+        <widget class="QCheckBox" name="chk3DGLCAE">
+         <property name="text">
+          <string>3D GLCAE</string>
+         </property>
+         <property name="toolTip">
+          <string>Use 3D Global-Local Contrast Adaptive Enhancement (requires Histogram Equalize)</string>
+         </property>
+         <property name="enabled">
+          <bool>false</bool>
+         </property>
+        </widget>
+       </item>
        <item row="4" column="0">
+        <widget class="QLabel" name="lblGLCAEClipLimit">
+         <property name="text">
+          <string>GLCAE Clip</string>
+         </property>
+         <property name="toolTip">
+          <string>CLAHE clip limit for 3D GLCAE local enhancement</string>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="1">
+        <widget class="QDoubleSpinBox" name="spinGLCAEClipLimit">
+         <property name="minimum">
+          <double>0.5</double>
+         </property>
+         <property name="maximum">
+          <double>10.0</double>
+         </property>
+         <property name="singleStep">
+          <double>0.5</double>
+         </property>
+         <property name="value">
+          <double>2.0</double>
+         </property>
+         <property name="enabled">
+          <bool>false</bool>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="2">
+        <widget class="QLabel" name="lblGLCAETileSize">
+         <property name="text">
+          <string>GLCAE Tile</string>
+         </property>
+         <property name="toolTip">
+          <string>Cubic tile size for 3D GLCAE local contrast</string>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="3">
+        <widget class="QSpinBox" name="spinGLCAETileSize">
+         <property name="minimum">
+          <number>2</number>
+         </property>
+         <property name="maximum">
+          <number>64</number>
+         </property>
+         <property name="value">
+          <number>16</number>
+         </property>
+         <property name="enabled">
+          <bool>false</bool>
+         </property>
+        </widget>
+       </item>
+       <item row="5" column="0">
         <widget class="QLabel" name="lblIsoCutoff">
          <property name="text">
           <string>ISO Cutoff</string>
          </property>
         </widget>
        </item>
-       <item row="4" column="1" colspan="3">
+       <item row="5" column="1" colspan="3">
         <widget class="QSlider" name="sliderIsoCutoff">
          <property name="minimum">
           <number>0</number>
@@ -804,14 +872,14 @@
          </property>
         </widget>
        </item>
-       <item row="5" column="0">
+       <item row="6" column="0">
         <widget class="QLabel" name="lblMethodScale">
          <property name="text">
           <string>Scale</string>
          </property>
         </widget>
        </item>
-       <item row="5" column="1" colspan="2">
+       <item row="6" column="1" colspan="2">
         <widget class="QSlider" name="sliderMethodScale">
          <property name="minimum">
           <number>1</number>
@@ -827,7 +895,7 @@
          </property>
         </widget>
        </item>
-       <item row="5" column="3">
+       <item row="6" column="3">
         <widget class="QLabel" name="lblMethodScaleValue">
          <property name="text">
           <string>2.0</string>
@@ -837,14 +905,14 @@
          </property>
         </widget>
        </item>
-       <item row="6" column="0">
+       <item row="7" column="0">
         <widget class="QLabel" name="lblMethodParam">
          <property name="text">
           <string>Parameter</string>
          </property>
         </widget>
        </item>
-       <item row="6" column="1" colspan="2">
+       <item row="7" column="1" colspan="2">
         <widget class="QSlider" name="sliderMethodParam">
          <property name="minimum">
           <number>0</number>
@@ -860,13 +928,116 @@
          </property>
         </widget>
        </item>
-       <item row="6" column="3">
+       <item row="7" column="3">
         <widget class="QLabel" name="lblMethodParamValue">
          <property name="text">
           <string>50</string>
          </property>
          <property name="alignment">
           <set>Qt::AlignRight|Qt::AlignVCenter</set>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <widget class="Line" name="linePlaneComposite">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="lblPlaneCompositeHeader">
+       <property name="text">
+        <string>Plane View Composite (XY/XZ/YZ)</string>
+       </property>
+       <property name="font">
+        <font>
+         <bold>true</bold>
+        </font>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="planeCompositeEnableLayout">
+       <item>
+        <widget class="QCheckBox" name="chkPlaneCompositeXY">
+         <property name="text">
+          <string>XY</string>
+         </property>
+         <property name="toolTip">
+          <string>Enable composite rendering for XY plane viewer</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chkPlaneCompositeXZ">
+         <property name="text">
+          <string>XZ</string>
+         </property>
+         <property name="toolTip">
+          <string>Enable composite rendering for XZ plane viewer</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chkPlaneCompositeYZ">
+         <property name="text">
+          <string>YZ</string>
+         </property>
+         <property name="toolTip">
+          <string>Enable composite rendering for YZ plane viewer</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QGridLayout" name="planeCompositeGrid">
+       <item row="0" column="0">
+        <widget class="QLabel" name="lblPlaneLayersFront">
+         <property name="text">
+          <string>Layers Front</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <widget class="QSpinBox" name="spinPlaneLayersFront">
+         <property name="minimum">
+          <number>0</number>
+         </property>
+         <property name="maximum">
+          <number>100</number>
+         </property>
+         <property name="value">
+          <number>4</number>
+         </property>
+         <property name="toolTip">
+          <string>Number of layers in front of the plane</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="2">
+        <widget class="QLabel" name="lblPlaneLayersBehind">
+         <property name="text">
+          <string>Behind</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="3">
+        <widget class="QSpinBox" name="spinPlaneLayersBehind">
+         <property name="minimum">
+          <number>0</number>
+         </property>
+         <property name="maximum">
+          <number>100</number>
+         </property>
+         <property name="value">
+          <number>4</number>
+         </property>
+         <property name="toolTip">
+          <string>Number of layers behind the plane</string>
          </property>
         </widget>
        </item>

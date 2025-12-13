@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <opencv2/imgproc.hpp>
 
 namespace CompositeMethod {
 
@@ -493,4 +494,473 @@ std::vector<std::string> availableCompositeMethods()
         "peakCount",
         "thresholdCount"
     };
+}
+
+// Helper: Build mapping table from blended histogram
+// Maps input values to equalized output using cumulative distribution
+static std::array<uint8_t, 256> buildMappingTable(const std::array<float, 256>& h_tilde)
+{
+    std::array<uint8_t, 256> t;
+    float cumSum = 0.0f;
+    for (int i = 0; i < 256; i++) {
+        cumSum += h_tilde[i];
+        // Map to 0-255 range
+        t[i] = static_cast<uint8_t>(std::min(255.0f, std::ceil(255.0f * cumSum + 0.5f)));
+    }
+    return t;
+}
+
+// Helper: Compute the objective function for lambda optimization
+// Measures maximum "collision distance" - bins that map to same output
+static float computeObjective(float lambda, const std::array<float, 256>& h_i)
+{
+    const float h_u = 1.0f / 256.0f;  // Uniform histogram value
+    const float denom = 1.0f + lambda;
+
+    // Blend histograms: h_tilde = (1/(1+lambda)) * h_i + (lambda/(1+lambda)) * h_u
+    std::array<float, 256> h_tilde;
+    for (int i = 0; i < 256; i++) {
+        h_tilde[i] = (h_i[i] + lambda * h_u) / denom;
+    }
+
+    // Build mapping table
+    auto t = buildMappingTable(h_tilde);
+
+    // Find maximum distance between bins that map to the same output
+    float maxDist = 0.0f;
+    for (int i = 0; i < 256; i++) {
+        if (h_tilde[i] <= 0.0f) continue;
+        for (int j = 0; j < i; j++) {
+            if (h_tilde[j] > 0.0f && t[i] == t[j]) {
+                maxDist = std::max(maxDist, static_cast<float>(i - j));
+            }
+        }
+    }
+
+    return maxDist;
+}
+
+std::array<uint8_t, 256> buildGlobalEqualizationLUT(const std::array<float, 256>& histogram)
+{
+    // Brent's method for 1D optimization (simplified golden section search)
+    // Find lambda that minimizes collision distance
+
+    const float goldenRatio = 0.618033988749895f;
+    float a = 0.0f;
+    float b = 10.0f;  // Search range for lambda
+
+    float x1 = b - goldenRatio * (b - a);
+    float x2 = a + goldenRatio * (b - a);
+    float f1 = computeObjective(x1, histogram);
+    float f2 = computeObjective(x2, histogram);
+
+    const float tol = 0.01f;
+    const int maxIter = 50;
+
+    for (int iter = 0; iter < maxIter && (b - a) > tol; iter++) {
+        if (f1 < f2) {
+            b = x2;
+            x2 = x1;
+            f2 = f1;
+            x1 = b - goldenRatio * (b - a);
+            f1 = computeObjective(x1, histogram);
+        } else {
+            a = x1;
+            x1 = x2;
+            f1 = f2;
+            x2 = a + goldenRatio * (b - a);
+            f2 = computeObjective(x2, histogram);
+        }
+    }
+
+    // Use the midpoint as optimal lambda
+    float optimalLambda = (a + b) / 2.0f;
+
+    // Build final blended histogram and mapping table
+    const float h_u = 1.0f / 256.0f;
+    const float denom = 1.0f + optimalLambda;
+
+    std::array<float, 256> h_tilde;
+    for (int i = 0; i < 256; i++) {
+        h_tilde[i] = (histogram[i] + optimalLambda * h_u) / denom;
+    }
+
+    return buildMappingTable(h_tilde);
+}
+
+// Helper: Compute 3D Laplacian magnitude at a point
+static float compute3DLaplacian(
+    const std::vector<uint8_t>& vol,
+    int x, int y, int z,
+    int w, int h, int d)
+{
+    // 3D Laplacian: sum of second derivatives in x, y, z
+    // L = (v[x+1] - 2*v[x] + v[x-1]) + (v[y+1] - 2*v[y] + v[y-1]) + (v[z+1] - 2*v[z] + v[z-1])
+
+    auto idx = [w, h](int x, int y, int z) { return z * w * h + y * w + x; };
+
+    float center = static_cast<float>(vol[idx(x, y, z)]);
+
+    float lapX = 0.0f, lapY = 0.0f, lapZ = 0.0f;
+
+    if (x > 0 && x < w - 1) {
+        lapX = vol[idx(x+1, y, z)] - 2.0f * center + vol[idx(x-1, y, z)];
+    }
+    if (y > 0 && y < h - 1) {
+        lapY = vol[idx(x, y+1, z)] - 2.0f * center + vol[idx(x, y-1, z)];
+    }
+    if (z > 0 && z < d - 1) {
+        lapZ = vol[idx(x, y, z+1)] - 2.0f * center + vol[idx(x, y, z-1)];
+    }
+
+    return std::abs(lapX) + std::abs(lapY) + std::abs(lapZ);
+}
+
+// Helper: Apply 3D CLAHE to a volume
+// Returns locally enhanced volume
+static std::vector<uint8_t> apply3DCLAHE(
+    const std::vector<uint8_t>& volume,
+    int width, int height, int depth,
+    uint8_t isoCutoff,
+    float clipLimit,
+    int tileSize)
+{
+    std::vector<uint8_t> result(volume.size());
+
+    // Adjust tile size to fit volume (minimum 2)
+    tileSize = std::max(2, tileSize);
+
+    // Number of tiles in each dimension
+    const int numTilesX = (width + tileSize - 1) / tileSize;
+    const int numTilesY = (height + tileSize - 1) / tileSize;
+    const int numTilesZ = (depth + tileSize - 1) / tileSize;
+
+    // Compute LUT for each tile
+    std::vector<std::array<uint8_t, 256>> tileLUTs(numTilesX * numTilesY * numTilesZ);
+
+    auto tileIdx = [numTilesX, numTilesY](int tx, int ty, int tz) {
+        return tz * numTilesX * numTilesY + ty * numTilesX + tx;
+    };
+
+    auto volIdx = [width, height](int x, int y, int z) {
+        return z * width * height + y * width + x;
+    };
+
+    // Build histogram and LUT for each tile
+    for (int tz = 0; tz < numTilesZ; tz++) {
+        for (int ty = 0; ty < numTilesY; ty++) {
+            for (int tx = 0; tx < numTilesX; tx++) {
+                // Tile bounds
+                int x0 = tx * tileSize;
+                int y0 = ty * tileSize;
+                int z0 = tz * tileSize;
+                int x1 = std::min(x0 + tileSize, width);
+                int y1 = std::min(y0 + tileSize, height);
+                int z1 = std::min(z0 + tileSize, depth);
+
+                // Build histogram for this tile
+                std::array<int, 256> histogram{};
+                int totalSamples = 0;
+
+                for (int z = z0; z < z1; z++) {
+                    for (int y = y0; y < y1; y++) {
+                        for (int x = x0; x < x1; x++) {
+                            uint8_t val = volume[volIdx(x, y, z)];
+                            if (val >= isoCutoff && val > 0) {
+                                histogram[val]++;
+                                totalSamples++;
+                            }
+                        }
+                    }
+                }
+
+                // Build CLAHE LUT for this tile
+                auto& lut = tileLUTs[tileIdx(tx, ty, tz)];
+                lut[0] = 0;
+
+                if (totalSamples > 0) {
+                    // Clip limit
+                    const int avgBinCount = totalSamples / 255;
+                    const int clipLim = std::max(1, static_cast<int>(avgBinCount * clipLimit));
+
+                    // Clip and redistribute
+                    int excess = 0;
+                    for (int i = 1; i < 256; i++) {
+                        if (histogram[i] > clipLim) {
+                            excess += histogram[i] - clipLim;
+                            histogram[i] = clipLim;
+                        }
+                    }
+
+                    const int redistPerBin = excess / 255;
+                    int residual = excess % 255;
+                    for (int i = 1; i < 256; i++) {
+                        histogram[i] += redistPerBin;
+                        if (residual > 0) { histogram[i]++; residual--; }
+                    }
+
+                    // Build CDF
+                    int cumulative = 0;
+                    int minCdf = 0;
+                    for (int i = 1; i < 256; i++) {
+                        if (histogram[i] > 0 && minCdf == 0) minCdf = histogram[i];
+                        cumulative += histogram[i];
+                    }
+
+                    int newTotal = cumulative;
+                    cumulative = 0;
+                    for (int i = 1; i < 256; i++) {
+                        cumulative += histogram[i];
+                        if (newTotal > minCdf) {
+                            lut[i] = static_cast<uint8_t>(1 + std::round(254.0f * (cumulative - minCdf) / (newTotal - minCdf)));
+                        } else {
+                            lut[i] = static_cast<uint8_t>(i);
+                        }
+                    }
+                } else {
+                    for (int i = 1; i < 256; i++) lut[i] = static_cast<uint8_t>(i);
+                }
+            }
+        }
+    }
+
+    // Apply with nearest-neighbor tile lookup
+    for (int z = 0; z < depth; z++) {
+        const int tz = z / tileSize;
+        for (int y = 0; y < height; y++) {
+            const int ty = y / tileSize;
+            for (int x = 0; x < width; x++) {
+                uint8_t val = volume[volIdx(x, y, z)];
+
+                if (val < isoCutoff || val == 0) {
+                    result[volIdx(x, y, z)] = 0;
+                    continue;
+                }
+
+                const int tx = x / tileSize;
+                result[volIdx(x, y, z)] = tileLUTs[tileIdx(tx, ty, tz)][val];
+            }
+        }
+    }
+
+    return result;
+}
+
+std::vector<uint8_t> apply3DGLCAE(
+    const std::vector<uint8_t>& volume,
+    int width, int height, int depth,
+    uint8_t isoCutoff,
+    float claheClipLimit,
+    int tileSize)
+{
+    if (volume.empty() || width <= 0 || height <= 0 || depth <= 0) {
+        return volume;
+    }
+
+    const size_t totalVoxels = static_cast<size_t>(width) * height * depth;
+    if (volume.size() != totalVoxels) {
+        return volume;
+    }
+
+    auto volIdx = [width, height](int x, int y, int z) {
+        return z * width * height + y * width + x;
+    };
+
+    // Step 1: Build global histogram and create global equalization LUT
+    std::array<float, 256> globalHist{};
+    int totalSamples = 0;
+
+    for (size_t i = 0; i < totalVoxels; i++) {
+        uint8_t val = volume[i];
+        if (val >= isoCutoff && val > 0) {
+            globalHist[val] += 1.0f;
+            totalSamples++;
+        }
+    }
+
+    if (totalSamples == 0) {
+        return volume;  // Nothing to enhance
+    }
+
+    // Normalize histogram
+    const float invTotal = 1.0f / static_cast<float>(totalSamples);
+    for (int i = 0; i < 256; i++) {
+        globalHist[i] *= invTotal;
+    }
+
+    // Build global LUT using optimal lambda blending
+    auto globalLUT = buildGlobalEqualizationLUT(globalHist);
+    globalLUT[0] = 0;
+
+    // Step 2: Apply global enhancement
+    std::vector<uint8_t> globalEnhanced(totalVoxels);
+    for (size_t i = 0; i < totalVoxels; i++) {
+        uint8_t val = volume[i];
+        globalEnhanced[i] = (val < isoCutoff) ? 0 : globalLUT[val];
+    }
+
+    // Step 3: Apply 3D CLAHE for local enhancement
+    std::vector<uint8_t> localEnhanced = apply3DCLAHE(
+        volume, width, height, depth, isoCutoff, claheClipLimit, tileSize);
+
+    // Step 4: Compute fusion weights and blend
+    std::vector<uint8_t> result(totalVoxels);
+
+    // Pre-compute max Laplacian for normalization
+    float maxLapGlobal = 1.0f, maxLapLocal = 1.0f;
+    for (int z = 1; z < depth - 1; z++) {
+        for (int y = 1; y < height - 1; y++) {
+            for (int x = 1; x < width - 1; x++) {
+                float lapG = compute3DLaplacian(globalEnhanced, x, y, z, width, height, depth);
+                float lapL = compute3DLaplacian(localEnhanced, x, y, z, width, height, depth);
+                maxLapGlobal = std::max(maxLapGlobal, lapG);
+                maxLapLocal = std::max(maxLapLocal, lapL);
+            }
+        }
+    }
+
+    for (int z = 0; z < depth; z++) {
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                size_t idx = volIdx(x, y, z);
+                uint8_t gVal = globalEnhanced[idx];
+                uint8_t lVal = localEnhanced[idx];
+
+                if (gVal == 0 && lVal == 0) {
+                    result[idx] = 0;
+                    continue;
+                }
+
+                // Compute Laplacian-based detail weights
+                float lapG = compute3DLaplacian(globalEnhanced, x, y, z, width, height, depth);
+                float lapL = compute3DLaplacian(localEnhanced, x, y, z, width, height, depth);
+
+                float c_g = lapG / maxLapGlobal + 0.00001f;
+                float c_l = lapL / maxLapLocal + 0.00001f;
+
+                // Brightness weight (prefer mid-tones, sigma = 0.2)
+                float g_scaled = static_cast<float>(gVal) / 255.0f;
+                float l_scaled = static_cast<float>(lVal) / 255.0f;
+                float b_g = std::exp(-(g_scaled - 0.5f) * (g_scaled - 0.5f) / 0.08f);
+                float b_l = std::exp(-(l_scaled - 0.5f) * (l_scaled - 0.5f) / 0.08f);
+
+                // Combined weights: minimum of detail and brightness
+                float w_g = std::min(c_g, b_g);
+                float w_l = std::min(c_l, b_l);
+
+                // Normalize and blend
+                float wSum = w_g + w_l;
+                if (wSum < 0.00001f) {
+                    result[idx] = static_cast<uint8_t>((static_cast<int>(gVal) + lVal) / 2);
+                } else {
+                    float blended = (w_g * gVal + w_l * lVal) / wSum;
+                    result[idx] = static_cast<uint8_t>(std::min(255.0f, std::max(0.0f, blended)));
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
+cv::Mat globalLocalFusionEnhance(
+    const cv::Mat& input,
+    float claheClipLimit,
+    int claheTileSize)
+{
+    if (input.empty() || input.type() != CV_8UC1) {
+        return input.clone();
+    }
+
+    const int rows = input.rows;
+    const int cols = input.cols;
+    const int totalPixels = rows * cols;
+
+    // Step 1: Compute normalized histogram
+    std::array<float, 256> h_i = {0.0f};
+    for (int j = 0; j < rows; j++) {
+        const uint8_t* row = input.ptr<uint8_t>(j);
+        for (int i = 0; i < cols; i++) {
+            h_i[row[i]] += 1.0f;
+        }
+    }
+    for (int i = 0; i < 256; i++) {
+        h_i[i] /= static_cast<float>(totalPixels);
+    }
+
+    // Step 2: Build global equalization LUT
+    auto globalLUT = buildGlobalEqualizationLUT(h_i);
+
+    // Step 3: Apply global equalization
+    cv::Mat globalEnhanced(rows, cols, CV_8UC1);
+    for (int j = 0; j < rows; j++) {
+        const uint8_t* srcRow = input.ptr<uint8_t>(j);
+        uint8_t* dstRow = globalEnhanced.ptr<uint8_t>(j);
+        for (int i = 0; i < cols; i++) {
+            dstRow[i] = globalLUT[srcRow[i]];
+        }
+    }
+
+    // Step 4: Apply CLAHE for local enhancement
+    cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(claheClipLimit, cv::Size(claheTileSize, claheTileSize));
+    cv::Mat localEnhanced;
+    clahe->apply(input, localEnhanced);
+
+    // Step 5: Compute fusion weights
+    // Weight based on Laplacian (detail/edges) and brightness
+
+    // Laplacian of global enhanced
+    cv::Mat lapGlobal;
+    cv::Laplacian(globalEnhanced, lapGlobal, CV_16S, 3);
+    cv::Mat absLapGlobal;
+    cv::convertScaleAbs(lapGlobal, absLapGlobal);
+
+    // Laplacian of local enhanced
+    cv::Mat lapLocal;
+    cv::Laplacian(localEnhanced, lapLocal, CV_16S, 3);
+    cv::Mat absLapLocal;
+    cv::convertScaleAbs(lapLocal, absLapLocal);
+
+    // Compute fusion weights and blend
+    cv::Mat output(rows, cols, CV_8UC1);
+
+    for (int j = 0; j < rows; j++) {
+        const uint8_t* globalRow = globalEnhanced.ptr<uint8_t>(j);
+        const uint8_t* localRow = localEnhanced.ptr<uint8_t>(j);
+        const uint8_t* lapGlobalRow = absLapGlobal.ptr<uint8_t>(j);
+        const uint8_t* lapLocalRow = absLapLocal.ptr<uint8_t>(j);
+        uint8_t* outRow = output.ptr<uint8_t>(j);
+
+        for (int i = 0; i < cols; i++) {
+            // Normalize Laplacian values (detail measure)
+            float c_g = static_cast<float>(lapGlobalRow[i]) / 255.0f + 0.00001f;
+            float c_l = static_cast<float>(lapLocalRow[i]) / 255.0f + 0.00001f;
+
+            // Brightness weight (prefer mid-tones)
+            float g_scaled = static_cast<float>(globalRow[i]) / 255.0f;
+            float l_scaled = static_cast<float>(localRow[i]) / 255.0f;
+            float b_g = std::exp(-std::pow(g_scaled - 0.5f, 2) / (2.0f * 0.04f));  // sigma = 0.2
+            float b_l = std::exp(-std::pow(l_scaled - 0.5f, 2) / (2.0f * 0.04f));
+
+            // Combined weights: minimum of detail and brightness
+            float w_g = std::min(c_g, b_g);
+            float w_l = std::min(c_l, b_l);
+
+            // Normalize weights
+            float wSum = w_g + w_l;
+            if (wSum < 0.00001f) {
+                // Equal weighting if both weights are zero
+                outRow[i] = static_cast<uint8_t>((static_cast<int>(globalRow[i]) + localRow[i]) / 2);
+            } else {
+                float w_g_norm = w_g / wSum;
+                float w_l_norm = w_l / wSum;
+
+                // Blend global and local
+                float blended = w_g_norm * globalRow[i] + w_l_norm * localRow[i];
+                outRow[i] = static_cast<uint8_t>(std::min(255.0f, std::max(0.0f, blended)));
+            }
+        }
+    }
+
+    return output;
 }

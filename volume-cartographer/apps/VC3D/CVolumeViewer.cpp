@@ -445,6 +445,44 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
     _overlayUpdateTimer->start();
 }
 
+void CVolumeViewer::adjustZoomByIncrement(float increment)
+{
+    auto surf = _surf_weak.lock();
+    if (!surf)
+        return;
+
+    for (auto& col : _intersect_items)
+        for (auto& item : col.second)
+            item->setVisible(false);
+
+    float newScale = _scale + increment;
+    newScale = round_scale(newScale);
+
+    if (newScale > MIN_ZOOM && newScale < MAX_ZOOM && std::abs(newScale - _scale) > 0.001f) {
+        float zoom = newScale / _scale;
+        _scale = newScale;
+
+        recalcScales();
+
+        // Zoom centered on view center
+        QPointF center = visible_center(fGraphicsView);
+        fGraphicsView->translate(center.x() * (1 - zoom),
+                                 center.y() * (1 - zoom));
+
+        curr_img_area = {0,0,0,0};
+        int max_size = 100000;
+        fGraphicsView->setSceneRect(-max_size/2, -max_size/2, max_size, max_size);
+    }
+
+    renderVisible();
+    emit overlaysUpdated();
+
+    _lbl->setText(QString("%1x %2").arg(_scale).arg(_z_off));
+
+    _overlayUpdateTimer->stop();
+    _overlayUpdateTimer->start();
+}
+
 void CVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> volume_)
 {
     volume = volume_;
@@ -847,13 +885,14 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
                     _center_marker->show();
                 }
                 fGraphicsView->centerOn(sp[0], sp[1]);
+                // Only re-render when the focus is on/near the surface
+                renderVisible(true);
             } else {
                 if (_center_marker) {
                     _center_marker->hide();
                 }
+                // Skip expensive re-render when focus is far from this surface
             }
-
-            renderVisible(true);
         }
     }
     else if (name == "cursor") {
@@ -1275,6 +1314,38 @@ void CVolumeViewer::setCompositeHistogramEqualize(bool equalize)
     if (equalize != _composite_histogram_equalize) {
         _composite_histogram_equalize = equalize;
         if (_composite_enabled) {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositeUse3DGLCAE(bool use3dGlcae)
+{
+    if (use3dGlcae != _composite_use_3d_glcae) {
+        _composite_use_3d_glcae = use3dGlcae;
+        if (_composite_enabled && _composite_histogram_equalize) {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositeGLCAEClipLimit(float clipLimit)
+{
+    clipLimit = std::clamp(clipLimit, 0.5f, 10.0f);
+    if (std::abs(clipLimit - _composite_glcae_clip_limit) > 0.01f) {
+        _composite_glcae_clip_limit = clipLimit;
+        if (_composite_enabled && _composite_histogram_equalize && _composite_use_3d_glcae) {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositeGLCAETileSize(int tileSize)
+{
+    tileSize = std::clamp(tileSize, 2, 64);
+    if (tileSize != _composite_glcae_tile_size) {
+        _composite_glcae_tile_size = tileSize;
+        if (_composite_enabled && _composite_histogram_equalize && _composite_use_3d_glcae) {
             renderVisible(true);
         }
     }

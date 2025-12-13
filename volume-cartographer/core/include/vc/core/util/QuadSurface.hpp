@@ -386,6 +386,10 @@ protected:
     std::set<std::string> _overlappingIds;
     std::optional<std::filesystem::file_time_type> _maskTimestamp;
 
+    // Cached validity mask - mutable because it's a cache, not state
+    mutable cv::Mat_<uint8_t> _cachedValidMask;
+    mutable bool _validMaskDirty = true;
+
 private:
     // Write surface data to directory without modifying state. skipChannel can be used to exclude a channel.
     void writeDataToDirectory(const std::filesystem::path& dir, const std::string& skipChannel = "");

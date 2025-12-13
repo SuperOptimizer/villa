@@ -60,7 +60,11 @@ struct CompositeParams {
     float weightedMeanSigma = 0.5f;  // Gaussian sigma (fraction of layer count)
 
     // Pre-processing
-    bool histogramEqualize = false;  // Apply CLAHE to input values
+    bool histogramEqualize = false;  // Apply contrast enhancement to input values
+    bool use3DGLCAE = false;         // Use full 3D Global-Local Contrast Adaptive Enhancement
+                                     // (requires histogramEqualize = true)
+    float glcaeClipLimit = 2.0f;     // CLAHE clip limit for 3D GLCAE local enhancement
+    int glcaeTileSize = 16;          // Cubic tile size for 3D GLCAE local enhancement
     uint8_t isoCutoff = 0;           // Highpass filter: values below this are set to 0
 };
 
@@ -131,6 +135,59 @@ float thresholdCount(const LayerStack& stack, const CompositeParams& params);
 std::array<uint8_t, 256> buildCLAHELookupTable(
     std::array<int, 256>& histogram,
     int totalSamples
+);
+
+// Global-Local Fusion Contrast Enhancement
+// Combines global histogram equalization with local CLAHE using adaptive fusion weights.
+// Based on: "A Global and Local Contrast Stretching Based Method for Enhancement"
+//
+// Algorithm:
+// 1. Global: Optimal histogram blending with uniform distribution (Brent optimization)
+// 2. Local: CLAHE for local contrast enhancement
+// 3. Fusion: Adaptive weighting based on Laplacian (detail) and brightness
+//
+// Parameters:
+//   input: grayscale image (CV_8UC1)
+//   claheClipLimit: CLAHE clip limit (default 2.0)
+//   claheTileSize: CLAHE tile size (default 8x8)
+// Returns: contrast-enhanced grayscale image (CV_8UC1)
+cv::Mat globalLocalFusionEnhance(
+    const cv::Mat& input,
+    float claheClipLimit = 2.0f,
+    int claheTileSize = 8
+);
+
+// Build global equalization LUT using optimal histogram blending
+// Finds optimal lambda to blend input histogram with uniform distribution
+// such that the mapping function minimizes information loss.
+// histogram: normalized histogram (sum = 1.0)
+// Returns: 256-entry lookup table
+std::array<uint8_t, 256> buildGlobalEqualizationLUT(
+    const std::array<float, 256>& histogram
+);
+
+// 3D Global-Local Contrast Adaptive Enhancement (3D GLCAE)
+// Applies contrast enhancement to a 3D volume slab (width × height × depth)
+// Used for enhancing layer stacks before compositing.
+//
+// Algorithm:
+// 1. Global: Compute histogram of entire 3D slab, optimal lambda blending
+// 2. Local: 3D CLAHE with cubic tiles in x, y, z dimensions
+// 3. Fusion: 3D Laplacian magnitude and brightness-based weight blending
+//
+// Parameters:
+//   volume: 3D volume as flat array [z][y][x] ordering, size = width*height*depth
+//   width, height, depth: dimensions of the volume
+//   isoCutoff: values below this are treated as zero (not enhanced)
+//   claheClipLimit: clip limit for local CLAHE (default 2.0)
+//   tileSize: cubic tile size for local CLAHE (default 16)
+// Returns: enhanced volume (same size as input)
+std::vector<uint8_t> apply3DGLCAE(
+    const std::vector<uint8_t>& volume,
+    int width, int height, int depth,
+    uint8_t isoCutoff = 0,
+    float claheClipLimit = 2.0f,
+    int tileSize = 16
 );
 
 // Apply compositing to a single pixel's layer stack

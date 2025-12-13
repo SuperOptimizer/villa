@@ -57,6 +57,61 @@ cv::Vec3f grid_normal(const cv::Mat_<cv::Vec3f> &points, const cv::Vec3f &loc)
     return normed(n);
 }
 
+// Optimized version for integer grid coordinates - avoids interpolation and redundant checks
+cv::Vec3f grid_normal_int(const cv::Mat_<cv::Vec3f> &points, int x, int y)
+{
+    // Bounds check - need access to (x-1, y-1) through (x+1, y+1)
+    if (x < 1 || x >= points.cols - 1 || y < 1 || y >= points.rows - 1) {
+        return {NAN, NAN, NAN};
+    }
+
+    // Direct pointer access - avoid cv::Mat::operator() overhead
+    const int step = points.cols;  // Vec3f elements per row
+    const cv::Vec3f* row = points.ptr<cv::Vec3f>(y);
+    const cv::Vec3f* row_m = points.ptr<cv::Vec3f>(y - 1);
+    const cv::Vec3f* row_p = points.ptr<cv::Vec3f>(y + 1);
+
+    const float* p_xm = reinterpret_cast<const float*>(&row[x - 1]);
+    const float* p_xp = reinterpret_cast<const float*>(&row[x + 1]);
+    const float* p_ym = reinterpret_cast<const float*>(&row_m[x]);
+    const float* p_yp = reinterpret_cast<const float*>(&row_p[x]);
+
+    // Check validity of all 4 neighbors (sentinel value is -1,-1,-1)
+    if (p_xm[0] == -1.f || p_xp[0] == -1.f || p_ym[0] == -1.f || p_yp[0] == -1.f) {
+        return {NAN, NAN, NAN};
+    }
+
+    // Compute tangent vectors (unnormalized)
+    const float dx0 = p_xp[0] - p_xm[0];
+    const float dx1 = p_xp[1] - p_xm[1];
+    const float dx2 = p_xp[2] - p_xm[2];
+
+    const float dy0 = p_yp[0] - p_ym[0];
+    const float dy1 = p_yp[1] - p_ym[1];
+    const float dy2 = p_yp[2] - p_ym[2];
+
+    // Check for degenerate tangents
+    const float dx_len_sq = dx0*dx0 + dx1*dx1 + dx2*dx2;
+    const float dy_len_sq = dy0*dy0 + dy1*dy1 + dy2*dy2;
+    if (dx_len_sq < 1e-20f || dy_len_sq < 1e-20f) {
+        return {NAN, NAN, NAN};
+    }
+
+    // Cross product (dy × dx) - no need to normalize inputs, just normalize output
+    const float nx = dy1 * dx2 - dy2 * dx1;
+    const float ny = dy2 * dx0 - dy0 * dx2;
+    const float nz = dy0 * dx1 - dy1 * dx0;
+
+    // Normalize result
+    const float n_len_sq = nx*nx + ny*ny + nz*nz;
+    if (n_len_sq < 1e-20f) {
+        return {NAN, NAN, NAN};
+    }
+    const float inv_len = 1.0f / sqrtf(n_len_sq);
+
+    return {nx * inv_len, ny * inv_len, nz * inv_len};
+}
+
 template <typename E>
 static E at_int_impl(const cv::Mat_<E> &points, const cv::Vec2f& p)
 {

@@ -126,12 +126,13 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
     _vis_center = roi_c;
 
     // Check if we can reuse cached normals
-    // Cache key: roi size, scale, ptr position, z_off, and surface instance
+    // Cache key: roi size, scale, ptr position, and surface instance
+    // Note: z_off is NOT part of the cache key - normals don't depend on z_off,
+    // and we apply the z offset ourselves after retrieving cached values
     bool cacheValid = (!_cachedNormals.empty() &&
                        _cachedNormalsSize == roi.size() &&
                        std::abs(_cachedNormalsScale - _scale) < 1e-6f &&
                        cv::norm(_cachedNormalsPtr - ptr) < 1e-6f &&
-                       std::abs(_cachedNormalsZOff - _z_off) < 1e-6f &&
                        _cachedNormalsSurf.lock() == surf);
 
     cv::Mat_<cv::Vec3f> base_coords;
@@ -139,16 +140,45 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
 
     if (cacheValid) {
         // Reuse cached coordinates and normals
-        base_coords = _cachedBaseCoords;
+        // Cached coords are at z_off=0, so apply current z_off if needed
+        if (std::abs(_z_off - _cachedNormalsZOff) < 1e-6f) {
+            // Same z_off, use cached coords directly
+            base_coords = _cachedBaseCoords;
+        } else {
+            // Different z_off - apply offset along normals using work buffer
+            const int h = _cachedBaseCoords.rows;
+            const int w = _cachedBaseCoords.cols;
+
+            // Reuse work buffer if size matches, otherwise reallocate
+            if (_coordsWorkBuffer.rows != h || _coordsWorkBuffer.cols != w) {
+                _coordsWorkBuffer.create(h, w);
+            }
+
+            const float z_delta = _z_off - _cachedNormalsZOff;
+            #pragma omp parallel for collapse(2)
+            for (int j = 0; j < h; ++j) {
+                for (int i = 0; i < w; ++i) {
+                    const cv::Vec3f& src = _cachedBaseCoords(j, i);
+                    const cv::Vec3f& n = _cachedNormals(j, i);
+                    if (std::isfinite(n[0]) && std::isfinite(n[1]) && std::isfinite(n[2])) {
+                        _coordsWorkBuffer(j, i) = src + n * z_delta;
+                    } else {
+                        _coordsWorkBuffer(j, i) = src;
+                    }
+                }
+            }
+            base_coords = _coordsWorkBuffer;
+        }
         normals = _cachedNormals;
     } else {
-        // Generate coordinates and normals for base layer (z=0)
+        // Generate coordinates and normals for base layer
         surf->gen(&base_coords, &normals, roi.size(), ptr, _scale,
                   {static_cast<float>(-roi.width / 2), static_cast<float>(-roi.height / 2), _z_off});
 
-        // Cache for next render
-        _cachedBaseCoords = base_coords.clone();
-        _cachedNormals = normals.clone();
+        // Cache for next render - gen() returns freshly allocated data, so we can
+        // just copy the cv::Mat header (shallow copy) since we own the data
+        _cachedBaseCoords = base_coords;
+        _cachedNormals = normals;
         _cachedNormalsSize = roi.size();
         _cachedNormalsScale = _scale;
         _cachedNormalsPtr = ptr;
@@ -168,6 +198,9 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
     params.alphaOpacity = _composite_material / 255.0f;
     params.alphaCutoff = _composite_alpha_threshold / 10000.0f;
     params.histogramEqualize = _composite_histogram_equalize;
+    params.use3DGLCAE = _composite_use_3d_glcae;
+    params.glcaeClipLimit = _composite_glcae_clip_limit;
+    params.glcaeTileSize = _composite_glcae_tile_size;
     params.isoCutoff = static_cast<uint8_t>(_composite_iso_cutoff);
     // Scale parameters
     params.gradientScale = _composite_gradient_scale;
@@ -344,10 +377,19 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 
     z5::Dataset* baseDataset = volume ? volume->zarrDataset(_ds_sd_idx) : nullptr;
 
+    // Check if this is a plane surface that should use plane composite rendering
+    PlaneSurface* plane = dynamic_cast<PlaneSurface*>(surf.get());
+    const bool usePlaneComposite = (plane != nullptr && _plane_composite_enabled &&
+                                    (_plane_composite_layers_front > 0 || _plane_composite_layers_behind > 0));
+
     if (useComposite) {
         baseGray = render_composite(roi);
+    } else if (usePlaneComposite) {
+        // Plane composite: generate coords first, then composite along plane normal
+        surf->gen(&coords, nullptr, roi.size(), cv::Vec3f(0, 0, 0), _scale, {static_cast<float>(roi.x), static_cast<float>(roi.y), _z_off});
+        baseGray = render_composite_plane(roi, coords, plane->normal(cv::Vec3f(0, 0, 0)));
     } else {
-        if (auto* plane = dynamic_cast<PlaneSurface*>(surf.get())) {
+        if (plane) {
             surf->gen(&coords, nullptr, roi.size(), cv::Vec3f(0, 0, 0), _scale, {static_cast<float>(roi.x), static_cast<float>(roi.y), _z_off});
 
             uint8_t planeId = 0;
@@ -634,4 +676,100 @@ void CVolumeViewer::setSurfaceOverlapThreshold(float threshold)
     if (volume && _surfaceOverlayEnabled) {
         renderVisible(true);
     }
+}
+
+void CVolumeViewer::setPlaneCompositeEnabled(bool enabled)
+{
+    if (_plane_composite_enabled == enabled) {
+        return;
+    }
+    _plane_composite_enabled = enabled;
+    if (volume) {
+        renderVisible(true);
+    }
+}
+
+void CVolumeViewer::setPlaneCompositeLayers(int front, int behind)
+{
+    front = std::max(0, front);
+    behind = std::max(0, behind);
+    if (_plane_composite_layers_front == front && _plane_composite_layers_behind == behind) {
+        return;
+    }
+    _plane_composite_layers_front = front;
+    _plane_composite_layers_behind = behind;
+    if (volume && _plane_composite_enabled) {
+        renderVisible(true);
+    }
+}
+
+cv::Mat_<uint8_t> CVolumeViewer::render_composite_plane(const cv::Rect &roi, const cv::Mat_<cv::Vec3f> &coords, const cv::Vec3f &planeNormal)
+{
+    cv::Mat_<uint8_t> img;
+
+    if (coords.empty() || !volume || !volume->zarrDataset(_ds_sd_idx)) {
+        return img;
+    }
+
+    // Determine z range based on front and behind layers
+    // For planes, "front" means along the positive normal direction
+    int z_start = _composite_reverse_direction ? -_plane_composite_layers_behind : -_plane_composite_layers_front;
+    int z_end = _composite_reverse_direction ? _plane_composite_layers_front : _plane_composite_layers_behind;
+
+    // Setup compositing parameters (reuse the same parameters as segmentation composite)
+    CompositeParams params;
+    params.method = _composite_method;
+    params.alphaMin = _composite_alpha_min / 255.0f;
+    params.alphaMax = _composite_alpha_max / 255.0f;
+    params.alphaOpacity = _composite_material / 255.0f;
+    params.alphaCutoff = _composite_alpha_threshold / 10000.0f;
+    params.histogramEqualize = _composite_histogram_equalize;
+    params.use3DGLCAE = _composite_use_3d_glcae;
+    params.glcaeClipLimit = _composite_glcae_clip_limit;
+    params.glcaeTileSize = _composite_glcae_tile_size;
+    params.isoCutoff = static_cast<uint8_t>(_composite_iso_cutoff);
+    params.gradientScale = _composite_gradient_scale;
+    params.stddevScale = _composite_stddev_scale;
+    params.laplacianScale = _composite_laplacian_scale;
+    params.rangeScale = _composite_range_scale;
+    params.gradientSumScale = _composite_gradient_sum_scale;
+    params.sobelScale = _composite_sobel_scale;
+    params.localContrastScale = _composite_local_contrast_scale;
+    params.entropyScale = _composite_entropy_scale;
+    params.peakThreshold = _composite_peak_threshold;
+    params.peakCountScale = _composite_peak_count_scale;
+    params.countThreshold = _composite_count_threshold;
+    params.thresholdCountScale = _composite_threshold_count_scale;
+    params.percentile = _composite_percentile;
+    params.weightedMeanSigma = _composite_weighted_mean_sigma;
+
+    // Use optimized constant-normal path for plane surfaces (no per-pixel normal lookup)
+    if (_useFastInterpolation) {
+        readCompositeFastConstantNormal(
+            img,
+            volume->zarrDataset(_ds_sd_idx),
+            coords * _ds_scale,
+            planeNormal,  // Single constant normal for all pixels
+            _ds_scale,    // z step per layer (in dataset coordinates)
+            z_start, z_end,
+            params,
+            _fastCompositeCache
+        );
+    } else {
+        // Standard path with trilinear interpolation - still uses per-pixel normals
+        cv::Mat_<cv::Vec3f> normals(coords.size(), planeNormal);
+        readInterpolated3DComposite(
+            img,
+            volume->zarrDataset(_ds_sd_idx),
+            coords * _ds_scale,
+            normals,
+            _ds_scale,  // z step per layer (in dataset coordinates)
+            z_start, z_end,
+            params,
+            cache,
+            false  // trilinear interpolation
+        );
+    }
+
+    return img;
 }

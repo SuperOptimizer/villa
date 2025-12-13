@@ -470,7 +470,13 @@ void MenuActionController::showKeybindings()
             "\n"
             "=== Slice Step Size ===\n"
             "Shift+G: Decrease slice step size\n"
-            "Shift+H: Increase slice step size\n"));
+            "Shift+H: Increase slice step size\n"
+            "\n"
+            "=== Plane Rotation ===\n"
+            "Alt+Up/Down: Pitch focused plane up/down\n"
+            "Alt+Left/Right: Yaw focused plane left/right\n"
+            "Alt+,/.: Roll focused plane counter-clockwise/clockwise\n"
+            "Reset button: Reset all plane rotations to zero\n"));
 }
 
 void MenuActionController::exitApplication()
