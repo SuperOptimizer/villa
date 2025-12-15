@@ -1,5 +1,6 @@
 #include <qapplication.h>
 #include <QCommandLineParser>
+#include <QSurfaceFormat>
 
 #include "CWindow.hpp"
 #include "vc/core/Version.hpp"
@@ -7,6 +8,10 @@
 
 #include <opencv2/core.hpp>
 #include <thread>
+
+#ifdef VC_WITH_VTK
+#include <QVTKOpenGLNativeWidget.h>
+#endif
 
 
 auto main(int argc, char* argv[]) -> int
@@ -22,6 +27,11 @@ auto main(int argc, char* argv[]) -> int
             qputenv("QT_QPA_PLATFORM", "xcb");
         }
     }
+
+#ifdef VC_WITH_VTK
+    // VTK requires OpenGL format to be set before QApplication
+    QSurfaceFormat::setDefaultFormat(QVTKOpenGLNativeWidget::defaultFormat());
+#endif
 
     QApplication app(argc, argv);
     QApplication::setOrganizationName("Vesuvius Challenge");

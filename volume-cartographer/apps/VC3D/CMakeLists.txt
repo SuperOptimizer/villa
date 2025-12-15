@@ -95,6 +95,13 @@ if(VC_ENABLE_TSAN OR VC_ENABLE_LSAN OR VC_ENABLE_UBSAN OR VC_ENABLE_ASAN)
     list(APPEND srcs "${CMAKE_SOURCE_DIR}/misc/sanitizer_config.c")
 endif()
 
+# VTK 3D viewer (optional)
+if(VC_WITH_VTK)
+    list(APPEND srcs
+        VTK3DViewer.cpp
+        VTK3DViewer.hpp
+    )
+endif()
 
 add_executable(VC3D ${srcs} resources.qrc)
 
@@ -111,6 +118,16 @@ target_link_libraries(VC3D
     Qt6::Gui
     Qt6::Widgets
 )
+
+# VTK 3D viewer support
+if(VC_WITH_VTK)
+    target_link_libraries(VC3D ${VTK_LIBRARIES})
+    target_compile_definitions(VC3D PRIVATE VC_WITH_VTK=1)
+    vtk_module_autoinit(
+        TARGETS VC3D
+        MODULES ${VTK_LIBRARIES}
+    )
+endif()
 
 if (${VC_INSTALL_APPS})
     install(

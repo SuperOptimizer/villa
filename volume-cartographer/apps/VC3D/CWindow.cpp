@@ -895,6 +895,16 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
 
     sendVolumeChanged(currentVolume, currentVolumeId);
 
+#ifdef VC_WITH_VTK
+    if (_vtk3DViewer) {
+        if (currentVolume) {
+            _vtk3DViewer->setVolume(currentVolume, chunk_cache);
+        } else {
+            _vtk3DViewer->clearVolume();
+        }
+    }
+#endif
+
     if (currentVolume && _surf_col) {
         auto [w, h, d] = currentVolume->shape();
 
@@ -2022,6 +2032,75 @@ void CWindow::closeEvent(QCloseEvent* event)
     saveWindowState();
     std::quick_exit(0);
 }
+
+#ifdef VC_WITH_VTK
+void CWindow::show3DViewer()
+{
+    if (!_vtk3DViewer) {
+        _vtk3DViewer = new VTK3DViewer(nullptr);  // No parent = independent window
+
+        // Connect signals
+        connect(_vtk3DViewer, &VTK3DViewer::windowClosed,
+                this, &CWindow::on3DViewerClosed);
+
+        // Initialize with current state
+        if (currentVolume) {
+            _vtk3DViewer->setVolume(currentVolume, chunk_cache);
+        }
+
+        // Connect focus changes to update 3D viewer
+        connect(_surf_col, &CSurfaceCollection::sendPOIChanged,
+                this, [this](std::string name, POI* poi) {
+                    if (name == "focus" && poi && _vtk3DViewer) {
+                        _vtk3DViewer->setFocusPoint(poi->p);
+                        // Update slice planes to show where the 2D viewers are cutting
+                        // XY slice at Z, XZ slice at Y, YZ slice at X
+                        _vtk3DViewer->setSlicePositions(
+                            static_cast<int>(poi->p[2]),  // XY at Z
+                            static_cast<int>(poi->p[1]),  // XZ at Y
+                            static_cast<int>(poi->p[0])   // YZ at X
+                        );
+                    }
+                });
+
+        // Connect surface changes to update segmentation mesh
+        connect(_surf_col, &CSurfaceCollection::sendSurfaceChanged,
+                this, [this](std::string name, std::shared_ptr<Surface> surf, bool /*isEditUpdate*/) {
+                    if (name == "segmentation" && _vtk3DViewer) {
+                        if (surf) {
+                            _vtk3DViewer->setSegmentationSurface(dynamic_cast<QuadSurface*>(surf.get()));
+                        } else {
+                            _vtk3DViewer->clearSegmentationSurface();
+                        }
+                    }
+                });
+
+        // Set segmentation surface if available
+        if (auto seg = _surf_col->surface("segmentation")) {
+            _vtk3DViewer->setSegmentationSurface(dynamic_cast<QuadSurface*>(seg.get()));
+        }
+
+        // Set initial focus if we have one
+        if (auto focus = _surf_col->poi("focus")) {
+            _vtk3DViewer->setFocusPoint(focus->p);
+            _vtk3DViewer->setSlicePositions(
+                static_cast<int>(focus->p[2]),  // XY at Z
+                static_cast<int>(focus->p[1]),  // XZ at Y
+                static_cast<int>(focus->p[0])   // YZ at X
+            );
+        }
+    }
+
+    _vtk3DViewer->show();
+    _vtk3DViewer->raise();
+    _vtk3DViewer->activateWindow();
+}
+
+void CWindow::on3DViewerClosed()
+{
+    _vtk3DViewer = nullptr;
+}
+#endif
 
 void CWindow::setWidgetsEnabled(bool state)
 {

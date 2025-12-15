@@ -200,6 +200,11 @@ void MenuActionController::populateMenus(QMenuBar* menuBar)
     _viewMenu->addSeparator();
     _viewMenu->addAction(_resetViewsAct);
     _viewMenu->addSeparator();
+#ifdef VC_WITH_VTK
+    auto* action3DViewer = _viewMenu->addAction(QObject::tr("3D Volume Viewer"));
+    action3DViewer->setShortcut(QKeySequence(QObject::tr("Ctrl+3")));
+    connect(action3DViewer, &QAction::triggered, _window, &CWindow::show3DViewer);
+#endif
     _viewMenu->addAction(_showConsoleAct);
 
     _actionsMenu = new QMenu(QObject::tr("&Actions"), qWindow);

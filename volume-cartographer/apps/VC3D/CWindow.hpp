@@ -38,6 +38,9 @@
 #include "segmentation/SegmentationWidget.hpp"
 #include "segmentation/SegmentationGrowth.hpp"
 #include "SeedingWidget.hpp"
+#ifdef VC_WITH_VTK
+#include "VTK3DViewer.hpp"
+#endif
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/Surface.hpp"
@@ -62,6 +65,9 @@ class SegmentationGrower;
 class WindowRangeWidget;
 class QLabel;
 class QTemporaryFile;
+#ifdef VC_WITH_VTK
+class VTK3DViewer;
+#endif
 
 class CWindow : public QMainWindow
 {
@@ -235,8 +241,14 @@ private:
     std::unique_ptr<SegmentationModule> _segmentationModule;
     std::unique_ptr<SurfacePanelController> _surfacePanel;
     std::unique_ptr<MenuActionController> _menuController;
-    // runner for command line tools 
+    // runner for command line tools
     CommandLineToolRunner* _cmdRunner;
+
+#ifdef VC_WITH_VTK
+    VTK3DViewer* _vtk3DViewer{nullptr};
+    void show3DViewer();
+    void on3DViewerClosed();
+#endif
     bool _normalGridAvailable{false};
     QString _normalGridPath;
 

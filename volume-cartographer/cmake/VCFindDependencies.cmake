@@ -129,3 +129,19 @@ if (VC_WITH_PASTIX)
     target_compile_definitions(vc3d_pastix INTERFACE VC_HAVE_PASTIX=1)
   endif()
 endif()
+
+# ---- VTK (optional, for 3D volume viewer) ------------------------------------
+option(VC_WITH_VTK "Build with VTK 3D viewer support" ON)
+if (VC_WITH_VTK)
+    find_package(VTK QUIET COMPONENTS
+        CommonCore CommonDataModel CommonExecutionModel
+        RenderingCore RenderingVolume RenderingVolumeOpenGL2
+        InteractionStyle GUISupportQt FiltersSources FiltersModeling
+    )
+    if (VTK_FOUND)
+        message(STATUS "VTK found: ${VTK_VERSION}")
+    else()
+        message(WARNING "VTK not found, 3D viewer will be disabled")
+        set(VC_WITH_VTK OFF)
+    endif()
+endif()
