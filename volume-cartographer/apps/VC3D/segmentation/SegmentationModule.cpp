@@ -746,6 +746,8 @@ void SegmentationModule::stopTools()
     _lineDrawKeyActive = false;
     clearLineDragStroke();
     cancelDrag();
+    cancelBridgeDrag();
+    cancelCorrectionDrag();
     emit stopToolsRequested();
 }
 
@@ -865,9 +867,27 @@ void SegmentationModule::refreshOverlay()
         }
     }
 
+    // Add correction drag state (before hasSession check - corrections work without full editing session)
+    if (_correctionDrag.active) {
+        state.correctionDragActive = true;
+        state.correctionDragStart = _correctionDrag.startWorld;
+        state.correctionDragCurrent = _correctionDrag.currentWorld;
+    }
+
     if (!hasSession) {
         _overlay->applyState(state);
         return;
+    }
+
+    // Add bridge drag state (requires editing session)
+    if (_bridgeDrag.active) {
+        state.bridgeDragActive = true;
+        state.bridgeDragStart = _bridgeDrag.startWorld;
+        state.bridgeDragCurrent = _bridgeDrag.currentWorld;
+        state.bridgeDragStartRow = _bridgeDrag.startRow;
+        state.bridgeDragStartCol = _bridgeDrag.startCol;
+        state.bridgeDragCurrentRow = _bridgeDrag.currentRow;
+        state.bridgeDragCurrentCol = _bridgeDrag.currentCol;
     }
 
     if (_drag.active) {
@@ -1008,6 +1028,267 @@ void SegmentationModule::pruneMissingCorrections()
     if (_corrections) {
         _corrections->pruneMissing();
         _corrections->refreshWidget();
+    }
+}
+
+void SegmentationModule::beginCorrectionDrag(int row, int col, CVolumeViewer* viewer, const cv::Vec3f& worldPos)
+{
+    _correctionDrag.active = true;
+    _correctionDrag.anchorRow = row;
+    _correctionDrag.anchorCol = col;
+    _correctionDrag.startWorld = worldPos;
+    _correctionDrag.currentWorld = worldPos;
+    _correctionDrag.viewer = viewer;
+    _correctionDrag.moved = false;
+
+    qCInfo(lcSegModule) << "Correction drag started at grid" << row << col << "world" << worldPos[0] << worldPos[1] << worldPos[2];
+    emit statusMessageRequested(tr("Drag to correction target position..."), kStatusShort);
+    refreshOverlay();
+}
+
+void SegmentationModule::updateCorrectionDrag(const cv::Vec3f& worldPos)
+{
+    if (!_correctionDrag.active) {
+        return;
+    }
+
+    const cv::Vec3f delta = worldPos - _correctionDrag.startWorld;
+    const float distance = cv::norm(delta);
+    if (distance > 1.0f) {
+        _correctionDrag.moved = true;
+    }
+    _correctionDrag.currentWorld = worldPos;
+
+    // TODO: Add visual feedback (line from start to current)
+    refreshOverlay();
+}
+
+void SegmentationModule::finishCorrectionDrag()
+{
+    if (!_correctionDrag.active) {
+        return;
+    }
+
+    const bool didMove = _correctionDrag.moved;
+    const cv::Vec3f targetWorld = _correctionDrag.currentWorld;
+    const int anchorRow = _correctionDrag.anchorRow;
+    const int anchorCol = _correctionDrag.anchorCol;
+
+    _correctionDrag.reset();
+
+    if (!didMove) {
+        // User clicked without dragging - fall back to old behavior (add single point)
+        handleCorrectionPointAdded(targetWorld);
+        updateCorrectionsWidget();
+        return;
+    }
+
+    // Create correction with anchor2d
+    if (!_corrections || !_pointCollection) {
+        emit statusMessageRequested(tr("No correction collection available"), kStatusMedium);
+        return;
+    }
+
+    // Ensure we have an active collection
+    uint64_t collectionId = _corrections->activeCollection();
+    if (collectionId == 0) {
+        collectionId = _corrections->createCollection(true);
+        if (collectionId == 0) {
+            emit statusMessageRequested(tr("Failed to create correction collection"), kStatusMedium);
+            return;
+        }
+    }
+
+    // Set anchor2d on the collection (the grid location where user started dragging)
+    cv::Vec2f anchor2d(static_cast<float>(anchorCol), static_cast<float>(anchorRow));
+    _pointCollection->setCollectionAnchor2d(collectionId, anchor2d);
+
+    // Add the correction point (3D world target)
+    _corrections->handlePointAdded(targetWorld);
+
+    qCInfo(lcSegModule) << "Correction drag completed: anchor2d" << anchorCol << anchorRow
+                        << "target" << targetWorld[0] << targetWorld[1] << targetWorld[2];
+
+    updateCorrectionsWidget();
+
+    // Immediately trigger the solver with corrections
+    emit statusMessageRequested(tr("Applying correction..."), kStatusShort);
+    handleGrowSurfaceRequested(SegmentationGrowthMethod::Corrections,
+                               SegmentationGrowthDirection::All,
+                               0,
+                               false);
+}
+
+void SegmentationModule::cancelCorrectionDrag()
+{
+    if (_correctionDrag.active) {
+        _correctionDrag.reset();
+        refreshOverlay();
+        emit statusMessageRequested(tr("Correction drag cancelled"), kStatusShort);
+    }
+}
+
+void SegmentationModule::beginBridgeDrag(int row, int col, CVolumeViewer* viewer, const cv::Vec3f& worldPos)
+{
+    _bridgeDrag.active = true;
+    _bridgeDrag.startRow = row;
+    _bridgeDrag.startCol = col;
+    _bridgeDrag.currentRow = row;
+    _bridgeDrag.currentCol = col;
+    _bridgeDrag.startWorld = worldPos;
+    _bridgeDrag.currentWorld = worldPos;
+    _bridgeDrag.viewer = viewer;
+    _bridgeDrag.moved = false;
+
+    qCInfo(lcSegModule) << "Bridge drag started at grid" << row << col;
+    emit statusMessageRequested(tr("Drag to bridge endpoint (flattens loop between points)..."), kStatusShort);
+    refreshOverlay();
+}
+
+void SegmentationModule::updateBridgeDrag(const cv::Vec3f& worldPos)
+{
+    if (!_bridgeDrag.active || !_editManager) {
+        return;
+    }
+
+    // Find the grid index at the current world position
+    auto gridIndex = _editManager->worldToGridIndex(worldPos);
+    if (gridIndex) {
+        _bridgeDrag.currentRow = gridIndex->first;
+        _bridgeDrag.currentCol = gridIndex->second;
+
+        // Get the actual world position of this grid point for display
+        if (auto vertexWorld = _editManager->vertexWorldPosition(gridIndex->first, gridIndex->second)) {
+            _bridgeDrag.currentWorld = *vertexWorld;
+        } else {
+            _bridgeDrag.currentWorld = worldPos;
+        }
+    } else {
+        _bridgeDrag.currentWorld = worldPos;
+    }
+
+    const int rowDelta = std::abs(_bridgeDrag.currentRow - _bridgeDrag.startRow);
+    const int colDelta = std::abs(_bridgeDrag.currentCol - _bridgeDrag.startCol);
+    if (rowDelta > 0 || colDelta > 0) {
+        _bridgeDrag.moved = true;
+    }
+
+    refreshOverlay();
+}
+
+void SegmentationModule::finishBridgeDrag()
+{
+    if (!_bridgeDrag.active) {
+        return;
+    }
+
+    const bool didMove = _bridgeDrag.moved;
+    const int startRow = _bridgeDrag.startRow;
+    const int startCol = _bridgeDrag.startCol;
+    const int endRow = _bridgeDrag.currentRow;
+    const int endCol = _bridgeDrag.currentCol;
+
+    _bridgeDrag.reset();
+    refreshOverlay();
+
+    if (!didMove) {
+        emit statusMessageRequested(tr("Bridge cancelled (no movement)"), kStatusShort);
+        return;
+    }
+
+    if (!_editManager || !_editManager->hasSession()) {
+        emit statusMessageRequested(tr("No editing session active"), kStatusShort);
+        return;
+    }
+
+    // Determine primary direction (horizontal if col delta >= row delta, else vertical)
+    const int rowDelta = std::abs(endRow - startRow);
+    const int colDelta = std::abs(endCol - startCol);
+    const bool isHorizontal = colDelta >= rowDelta;
+
+    // Get start and end positions from the current edited surface
+    auto startWorld = _editManager->vertexWorldPosition(startRow, startCol);
+    auto endWorld = _editManager->vertexWorldPosition(endRow, endCol);
+
+    if (!startWorld || !endWorld) {
+        emit statusMessageRequested(tr("Could not get vertex positions"), kStatusShort);
+        return;
+    }
+
+    // Capture undo state before making changes
+    captureUndoSnapshot();
+
+    cv::Mat_<cv::Vec3f>& points = _editManager->previewPointsMutable();
+    int changedCount = 0;
+
+    if (isHorizontal) {
+        // Interpolate along columns (keeping row fixed to start row, or interpolating rows too)
+        const int minCol = std::min(startCol, endCol);
+        const int maxCol = std::max(startCol, endCol);
+        const int numSteps = maxCol - minCol;
+
+        if (numSteps > 0) {
+            // Linear interpolation from start to end
+            for (int c = minCol; c <= maxCol; ++c) {
+                const float t = static_cast<float>(c - minCol) / static_cast<float>(numSteps);
+                cv::Vec3f interpolated = (1.0f - t) * (*startWorld) + t * (*endWorld);
+
+                // If start and end are on same row, only modify that row
+                // If they're on different rows, interpolate the row too
+                const float rowT = t;
+                const int targetRow = static_cast<int>(std::round(startRow + rowT * (endRow - startRow)));
+
+                if (targetRow >= 0 && targetRow < points.rows && c >= 0 && c < points.cols) {
+                    points(targetRow, c) = interpolated;
+                    ++changedCount;
+                }
+            }
+        }
+    } else {
+        // Interpolate along rows (vertical)
+        const int minRow = std::min(startRow, endRow);
+        const int maxRow = std::max(startRow, endRow);
+        const int numSteps = maxRow - minRow;
+
+        if (numSteps > 0) {
+            for (int r = minRow; r <= maxRow; ++r) {
+                const float t = static_cast<float>(r - minRow) / static_cast<float>(numSteps);
+                cv::Vec3f interpolated = (1.0f - t) * (*startWorld) + t * (*endWorld);
+
+                // Interpolate column too if different
+                const float colT = t;
+                const int targetCol = static_cast<int>(std::round(startCol + colT * (endCol - startCol)));
+
+                if (r >= 0 && r < points.rows && targetCol >= 0 && targetCol < points.cols) {
+                    points(r, targetCol) = interpolated;
+                    ++changedCount;
+                }
+            }
+        }
+    }
+
+    if (changedCount > 0) {
+        // Mark as pending changes and refresh
+        _editManager->setPreviewPoints(points, true);
+        emitPendingChanges();
+        markAutosaveNeeded();
+
+        qCInfo(lcSegModule) << "Bridge applied:" << changedCount << "points interpolated"
+                            << (isHorizontal ? "horizontally" : "vertically");
+        emit statusMessageRequested(tr("Bridge applied: %1 points flattened").arg(changedCount), kStatusMedium);
+    } else {
+        // Remove the undo snapshot since nothing changed
+        discardLastUndoSnapshot();
+        emit statusMessageRequested(tr("No points to bridge"), kStatusShort);
+    }
+}
+
+void SegmentationModule::cancelBridgeDrag()
+{
+    if (_bridgeDrag.active) {
+        _bridgeDrag.reset();
+        refreshOverlay();
+        emit statusMessageRequested(tr("Bridge drag cancelled"), kStatusShort);
     }
 }
 

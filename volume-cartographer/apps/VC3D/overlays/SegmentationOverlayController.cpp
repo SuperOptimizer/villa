@@ -3,6 +3,7 @@
 #include "../CSurfaceCollection.hpp"
 #include "../CVolumeViewer.hpp"
 #include "../ViewerManager.hpp"
+#include "../segmentation/SegmentationEditManager.hpp"
 
 #include <QColor>
 #include <QDebug>
@@ -106,6 +107,11 @@ bool SegmentationOverlayController::State::operator==(const State& rhs) const
         return cv::norm(*lhs - *rhs) < 1e-4f;
     };
 
+    // Helper for cv::Vec3f comparison
+    const auto vec3fEqual = [](const cv::Vec3f& lhs, const cv::Vec3f& rhs) {
+        return cv::norm(lhs - rhs) < 1e-4f;
+    };
+
     return optionalEqual(activeMarker, rhs.activeMarker) &&
            vectorEqual(neighbours, rhs.neighbours) &&
            maskEqual(maskPoints, rhs.maskPoints) &&
@@ -120,6 +126,16 @@ bool SegmentationOverlayController::State::operator==(const State& rhs) const
            floatEqual(gaussianSigmaSteps, rhs.gaussianSigmaSteps) &&
            floatEqual(displayRadiusSteps, rhs.displayRadiusSteps) &&
            floatEqual(gridStepWorld, rhs.gridStepWorld) &&
+           correctionDragActive == rhs.correctionDragActive &&
+           vec3fEqual(correctionDragStart, rhs.correctionDragStart) &&
+           vec3fEqual(correctionDragCurrent, rhs.correctionDragCurrent) &&
+           bridgeDragActive == rhs.bridgeDragActive &&
+           vec3fEqual(bridgeDragStart, rhs.bridgeDragStart) &&
+           vec3fEqual(bridgeDragCurrent, rhs.bridgeDragCurrent) &&
+           bridgeDragStartRow == rhs.bridgeDragStartRow &&
+           bridgeDragStartCol == rhs.bridgeDragStartCol &&
+           bridgeDragCurrentRow == rhs.bridgeDragCurrentRow &&
+           bridgeDragCurrentCol == rhs.bridgeDragCurrentCol &&
            approvalMaskMode == rhs.approvalMaskMode &&
            approvalStrokeActive == rhs.approvalStrokeActive &&
            approvalStrokeSegments == rhs.approvalStrokeSegments &&
@@ -619,6 +635,80 @@ void SegmentationOverlayController::collectPrimitives(CVolumeViewer* viewer,
     // (but painting requires editing to be enabled - handled in SegmentationModule)
     if (state.approvalMaskMode && state.surface) {
         buildApprovalMaskOverlay(state, viewer, builder);
+    }
+
+    // Render correction drag line (regardless of editing mode - corrections are annotations)
+    if (state.correctionDragActive) {
+        const QPointF startScene = viewer->volumePointToScene(state.correctionDragStart);
+        const QPointF currentScene = viewer->volumePointToScene(state.correctionDragCurrent);
+
+        // Draw line from start to current
+        ViewerOverlayControllerBase::OverlayStyle lineStyle;
+        lineStyle.penColor = QColor(255, 100, 100);  // Red-ish for correction
+        lineStyle.penWidth = 3.0;
+        lineStyle.z = 100.0;  // Draw on top
+        builder.addLineStrip({startScene, currentScene}, false, lineStyle);
+
+        // Draw a small circle at the start (anchor) position
+        ViewerOverlayControllerBase::OverlayStyle anchorStyle;
+        anchorStyle.penColor = QColor(255, 200, 100);  // Orange for anchor
+        anchorStyle.brushColor = QColor(255, 200, 100, 180);
+        anchorStyle.penWidth = 2.0;
+        anchorStyle.z = 101.0;
+        builder.addCircle(startScene, 8.0, true, anchorStyle);
+
+        // Draw a small circle at the current (target) position
+        ViewerOverlayControllerBase::OverlayStyle targetStyle;
+        targetStyle.penColor = QColor(100, 255, 100);  // Green for target
+        targetStyle.brushColor = QColor(100, 255, 100, 180);
+        targetStyle.penWidth = 2.0;
+        targetStyle.z = 101.0;
+        builder.addCircle(currentScene, 8.0, true, targetStyle);
+    }
+
+    // Render bridge drag line (for loop flattening tool)
+    if (state.bridgeDragActive) {
+        const QPointF startScene = viewer->volumePointToScene(state.bridgeDragStart);
+        const QPointF currentScene = viewer->volumePointToScene(state.bridgeDragCurrent);
+
+        // Draw dashed line from start to current (purple for bridge)
+        ViewerOverlayControllerBase::OverlayStyle lineStyle;
+        lineStyle.penColor = QColor(200, 100, 255);  // Purple for bridge
+        lineStyle.penWidth = 3.0;
+        lineStyle.z = 100.0;
+        builder.addLineStrip({startScene, currentScene}, false, lineStyle);
+
+        // Draw a small circle at the start position (cyan)
+        ViewerOverlayControllerBase::OverlayStyle startStyle;
+        startStyle.penColor = QColor(100, 200, 255);  // Cyan for start
+        startStyle.brushColor = QColor(100, 200, 255, 180);
+        startStyle.penWidth = 2.0;
+        startStyle.z = 101.0;
+        builder.addCircle(startScene, 8.0, true, startStyle);
+
+        // Draw a small circle at the end position (cyan)
+        ViewerOverlayControllerBase::OverlayStyle endStyle;
+        endStyle.penColor = QColor(100, 200, 255);  // Cyan for end
+        endStyle.brushColor = QColor(100, 200, 255, 180);
+        endStyle.penWidth = 2.0;
+        endStyle.z = 101.0;
+        builder.addCircle(currentScene, 8.0, true, endStyle);
+
+        // Show direction indicator based on which axis we'll interpolate along
+        // Determine primary direction
+        const int rowDelta = std::abs(state.bridgeDragCurrentRow - state.bridgeDragStartRow);
+        const int colDelta = std::abs(state.bridgeDragCurrentCol - state.bridgeDragStartCol);
+        const bool isHorizontal = colDelta >= rowDelta;
+
+        // Draw text label showing the direction and count
+        const int stepCount = isHorizontal ? colDelta : rowDelta;
+        if (stepCount > 0) {
+            ViewerOverlayControllerBase::OverlayStyle textStyle;
+            textStyle.penColor = QColor(255, 255, 255);  // White text
+            textStyle.z = 102.0;
+            const QString label = QString("%1 %2 pts").arg(isHorizontal ? "H" : "V").arg(stepCount);
+            builder.addText((startScene + currentScene) / 2.0, label, QFont(), textStyle);
+        }
     }
 
     // Other overlays require editing to be enabled
