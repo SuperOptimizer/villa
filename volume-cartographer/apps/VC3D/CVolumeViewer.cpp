@@ -445,6 +445,44 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
     _overlayUpdateTimer->start();
 }
 
+void CVolumeViewer::adjustZoomByIncrement(float increment)
+{
+    auto surf = _surf_weak.lock();
+    if (!surf)
+        return;
+
+    for (auto& col : _intersect_items)
+        for (auto& item : col.second)
+            item->setVisible(false);
+
+    float newScale = _scale + increment;
+    newScale = round_scale(newScale);
+
+    if (newScale > MIN_ZOOM && newScale < MAX_ZOOM && std::abs(newScale - _scale) > 0.001f) {
+        float zoom = newScale / _scale;
+        _scale = newScale;
+
+        recalcScales();
+
+        // Zoom centered on view center
+        QPointF center = visible_center(fGraphicsView);
+        fGraphicsView->translate(center.x() * (1 - zoom),
+                                 center.y() * (1 - zoom));
+
+        curr_img_area = {0,0,0,0};
+        int max_size = 100000;
+        fGraphicsView->setSceneRect(-max_size/2, -max_size/2, max_size, max_size);
+    }
+
+    renderVisible();
+    emit overlaysUpdated();
+
+    _lbl->setText(QString("%1x %2").arg(_scale).arg(_z_off));
+
+    _overlayUpdateTimer->stop();
+    _overlayUpdateTimer->start();
+}
+
 void CVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> volume_)
 {
     volume = volume_;
@@ -847,13 +885,14 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
                     _center_marker->show();
                 }
                 fGraphicsView->centerOn(sp[0], sp[1]);
+                // Only re-render when the focus is on/near the surface
+                renderVisible(true);
             } else {
                 if (_center_marker) {
                     _center_marker->hide();
                 }
+                // Skip expensive re-render when focus is far from this surface
             }
-
-            renderVisible(true);
         }
     }
     else if (name == "cursor") {
@@ -1202,7 +1241,7 @@ void CVolumeViewer::setCompositeEnabled(bool enabled)
 }
 void CVolumeViewer::setCompositeLayersInFront(int layers)
 {
-    if (layers >= 0 && layers <= 21 && layers != _composite_layers_front) {
+    if (layers >= 0 && layers <= 100 && layers != _composite_layers_front) {
         _composite_layers_front = layers;
         if (_composite_enabled) {
             renderVisible(true);
@@ -1212,7 +1251,7 @@ void CVolumeViewer::setCompositeLayersInFront(int layers)
 
 void CVolumeViewer::setCompositeLayersBehind(int layers)
 {
-    if (layers >= 0 && layers <= 21 && layers != _composite_layers_behind) {
+    if (layers >= 0 && layers <= 100 && layers != _composite_layers_behind) {
         _composite_layers_behind = layers;
         if (_composite_enabled) {
             renderVisible(true);
@@ -1270,19 +1309,221 @@ void CVolumeViewer::setCompositeReverseDirection(bool reverse)
     }
 }
 
+void CVolumeViewer::setIsoCutoff(int value)
+{
+    value = std::clamp(value, 0, 255);
+    if (value != _iso_cutoff) {
+        _iso_cutoff = value;
+        renderVisible(true);
+    }
+}
+
+void CVolumeViewer::setCompositeGradientScale(float scale)
+{
+    scale = std::clamp(scale, 0.1f, 20.0f);
+    if (std::abs(scale - _composite_gradient_scale) > 0.01f) {
+        _composite_gradient_scale = scale;
+        if (_composite_enabled && _composite_method == "gradient") {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositeStddevScale(float scale)
+{
+    scale = std::clamp(scale, 0.1f, 20.0f);
+    if (std::abs(scale - _composite_stddev_scale) > 0.01f) {
+        _composite_stddev_scale = scale;
+        if (_composite_enabled && _composite_method == "stddev") {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositeLaplacianScale(float scale)
+{
+    scale = std::clamp(scale, 0.1f, 20.0f);
+    if (std::abs(scale - _composite_laplacian_scale) > 0.01f) {
+        _composite_laplacian_scale = scale;
+        if (_composite_enabled && _composite_method == "laplacian") {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setPostStretchValues(bool enabled)
+{
+    if (enabled != _postStretchValues) {
+        _postStretchValues = enabled;
+        if (_composite_enabled) {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setPostRemoveSmallComponents(bool enabled)
+{
+    if (enabled != _postRemoveSmallComponents) {
+        _postRemoveSmallComponents = enabled;
+        if (_composite_enabled) {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setPostMinComponentSize(int size)
+{
+    size = std::clamp(size, 1, 100000);
+    if (size != _postMinComponentSize) {
+        _postMinComponentSize = size;
+        if (_composite_enabled && _postRemoveSmallComponents) {
+            renderVisible(true);
+        }
+    }
+}
+
 void CVolumeViewer::setCompositeMethod(const std::string& method)
 {
-    if (method != _composite_method && (method == "max" || method == "mean" || method == "min" || method == "alpha")) {
+    // Validate method is one of the supported methods
+    static const std::unordered_set<std::string> validMethods = {
+        "max", "mean", "min", "median", "alpha",
+        "stddev", "range", "localContrast", "entropy",
+        "gradient", "gradientSum", "laplacian", "sobel",
+        "percentile", "weightedMean", "peakCount", "thresholdCount"
+    };
+
+    if (method != _composite_method && validMethods.count(method) > 0) {
         _composite_method = method;
         if (_composite_enabled) {
             renderVisible(true);
-            
+
             // Update status label
             QString status = QString("%1x %2").arg(_scale).arg(_z_off);
             QString methodDisplay = QString::fromStdString(_composite_method);
             methodDisplay[0] = methodDisplay[0].toUpper();
             status += QString(" | Composite: %1(%2)").arg(methodDisplay).arg(_composite_layers);
             _lbl->setText(status);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositeRangeScale(float scale)
+{
+    scale = std::clamp(scale, 0.1f, 20.0f);
+    if (std::abs(scale - _composite_range_scale) > 0.01f) {
+        _composite_range_scale = scale;
+        if (_composite_enabled && _composite_method == "range") {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositeGradientSumScale(float scale)
+{
+    scale = std::clamp(scale, 0.1f, 20.0f);
+    if (std::abs(scale - _composite_gradient_sum_scale) > 0.01f) {
+        _composite_gradient_sum_scale = scale;
+        if (_composite_enabled && _composite_method == "gradientSum") {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositeSobelScale(float scale)
+{
+    scale = std::clamp(scale, 0.1f, 20.0f);
+    if (std::abs(scale - _composite_sobel_scale) > 0.01f) {
+        _composite_sobel_scale = scale;
+        if (_composite_enabled && _composite_method == "sobel") {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositeLocalContrastScale(float scale)
+{
+    scale = std::clamp(scale, 1.0f, 1000.0f);
+    if (std::abs(scale - _composite_local_contrast_scale) > 0.1f) {
+        _composite_local_contrast_scale = scale;
+        if (_composite_enabled && _composite_method == "localContrast") {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositeEntropyScale(float scale)
+{
+    scale = std::clamp(scale, 1.0f, 200.0f);
+    if (std::abs(scale - _composite_entropy_scale) > 0.1f) {
+        _composite_entropy_scale = scale;
+        if (_composite_enabled && _composite_method == "entropy") {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositePeakThreshold(float threshold)
+{
+    threshold = std::clamp(threshold, 0.0f, 100.0f);
+    if (std::abs(threshold - _composite_peak_threshold) > 0.1f) {
+        _composite_peak_threshold = threshold;
+        if (_composite_enabled && _composite_method == "peakCount") {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositePeakCountScale(float scale)
+{
+    scale = std::clamp(scale, 1.0f, 200.0f);
+    if (std::abs(scale - _composite_peak_count_scale) > 0.1f) {
+        _composite_peak_count_scale = scale;
+        if (_composite_enabled && _composite_method == "peakCount") {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositeCountThreshold(float threshold)
+{
+    threshold = std::clamp(threshold, 0.0f, 255.0f);
+    if (std::abs(threshold - _composite_count_threshold) > 0.1f) {
+        _composite_count_threshold = threshold;
+        if (_composite_enabled && _composite_method == "thresholdCount") {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositeThresholdCountScale(float scale)
+{
+    scale = std::clamp(scale, 1.0f, 200.0f);
+    if (std::abs(scale - _composite_threshold_count_scale) > 0.1f) {
+        _composite_threshold_count_scale = scale;
+        if (_composite_enabled && _composite_method == "thresholdCount") {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositePercentile(float percentile)
+{
+    percentile = std::clamp(percentile, 0.0f, 1.0f);
+    if (std::abs(percentile - _composite_percentile) > 0.001f) {
+        _composite_percentile = percentile;
+        if (_composite_enabled && _composite_method == "percentile") {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositeWeightedMeanSigma(float sigma)
+{
+    sigma = std::clamp(sigma, 0.01f, 2.0f);
+    if (std::abs(sigma - _composite_weighted_mean_sigma) > 0.001f) {
+        _composite_weighted_mean_sigma = sigma;
+        if (_composite_enabled && _composite_method == "weightedMean") {
+            renderVisible(true);
         }
     }
 }

@@ -257,6 +257,21 @@ private:
     QShortcut* fCompositeViewShortcut;
     QShortcut* fDirectionHintsShortcut;
     QShortcut* fAxisAlignedSlicesShortcut;
+    QShortcut* fZStepUpShortcut;
+    QShortcut* fZStepDownShortcut;
+    QShortcut* fZoomInShortcut;
+    QShortcut* fZoomOutShortcut;
+    QShortcut* fResetViewShortcut;
+
+    // Plane rotation shortcuts (pitch/yaw/roll)
+    QShortcut* fPlanePitchUpShortcut;
+    QShortcut* fPlanePitchDownShortcut;
+    QShortcut* fPlaneYawLeftShortcut;
+    QShortcut* fPlaneYawRightShortcut;
+    QShortcut* fPlaneRollCWShortcut;
+    QShortcut* fPlaneRollCCWShortcut;
+
+    std::string focusedPlaneName() const;
 
     void applySlicePlaneOrientation(Surface* sourceOverride = nullptr);
     void updateAxisAlignedSliceInteraction();
@@ -276,6 +291,24 @@ private:
     std::unordered_map<const CVolumeViewer*, AxisAlignedSliceDragState> _axisAlignedSliceDrags;
     float _axisAlignedSegXZRotationDeg = 0.0f;
     float _axisAlignedSegYZRotationDeg = 0.0f;
+
+    // Euler rotation state for plane viewers (pitch, yaw, roll in degrees)
+    struct PlaneRotation {
+        float pitch = 0.0f;  // rotation around X axis
+        float yaw = 0.0f;    // rotation around Z axis
+        float roll = 0.0f;   // rotation around Y axis
+
+        bool isIdentity() const {
+            return std::abs(pitch) < 0.001f && std::abs(yaw) < 0.001f && std::abs(roll) < 0.001f;
+        }
+        void reset() { pitch = yaw = roll = 0.0f; }
+    };
+    std::unordered_map<std::string, PlaneRotation> _planeRotations;  // keyed by plane name
+
+    PlaneRotation& planeRotation(const std::string& planeName);
+    void adjustPlaneRotation(const std::string& planeName, float deltaPitch, float deltaYaw, float deltaRoll);
+    void resetAllPlaneRotations();
+    cv::Vec3f applyEulerRotation(const cv::Vec3f& baseNormal, const PlaneRotation& rot) const;
     QTimer* _axisAlignedRotationTimer{nullptr};
     bool _axisAlignedOrientationDirty{false};
 

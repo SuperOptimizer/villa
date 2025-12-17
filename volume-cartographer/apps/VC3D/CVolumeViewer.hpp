@@ -22,6 +22,7 @@
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/util/SurfacePatchIndex.hpp"
 #include "vc/core/util/ChunkCache.hpp"
+#include "vc/core/util/Slicing.hpp"
 
 class QGraphicsScene;
 class QGraphicsItem;
@@ -46,6 +47,7 @@ public:
     void renderIntersections();
     cv::Mat render_area(const cv::Rect &roi);
     cv::Mat_<uint8_t> render_composite(const cv::Rect &roi);
+    cv::Mat_<uint8_t> render_composite_plane(const cv::Rect &roi, const cv::Mat_<cv::Vec3f> &coords, const cv::Vec3f &planeNormal);
     cv::Mat_<uint8_t> renderCompositeForSurface(std::shared_ptr<QuadSurface> surface, cv::Size outputSize);
     void invalidateVis();
     void invalidateIntersect(const std::string &name = "");
@@ -64,7 +66,37 @@ public:
     void setCompositeAlphaThreshold(int value);
     void setCompositeMaterial(int value);
     void setCompositeReverseDirection(bool reverse);
+    void setIsoCutoff(int value);
+    void setCompositeGradientScale(float scale);
+    void setCompositeStddevScale(float scale);
+    void setCompositeLaplacianScale(float scale);
+    void setCompositeRangeScale(float scale);
+    void setCompositeGradientSumScale(float scale);
+    void setCompositeSobelScale(float scale);
+    void setCompositeLocalContrastScale(float scale);
+    void setCompositeEntropyScale(float scale);
+    void setCompositePeakThreshold(float threshold);
+    void setCompositePeakCountScale(float scale);
+    void setCompositeCountThreshold(float threshold);
+    void setCompositeThresholdCountScale(float scale);
+    void setCompositePercentile(float percentile);
+    void setCompositeWeightedMeanSigma(float sigma);
     void setResetViewOnSurfaceChange(bool reset);
+
+    // Plane composite view methods (for XY/XZ/YZ plane viewers)
+    void setPlaneCompositeEnabled(bool enabled);
+    void setPlaneCompositeLayers(int front, int behind);
+    bool isPlaneCompositeEnabled() const { return _plane_composite_enabled; }
+    int planeCompositeLayersFront() const { return _plane_composite_layers_front; }
+    int planeCompositeLayersBehind() const { return _plane_composite_layers_behind; }
+
+    // Postprocessing settings
+    void setPostStretchValues(bool enabled);
+    bool postStretchValues() const { return _postStretchValues; }
+    void setPostRemoveSmallComponents(bool enabled);
+    bool postRemoveSmallComponents() const { return _postRemoveSmallComponents; }
+    void setPostMinComponentSize(int size);
+    int postMinComponentSize() const { return _postMinComponentSize; }
     bool isCompositeEnabled() const { return _composite_enabled; }
     std::shared_ptr<Volume> currentVolume() const { return volume; }
     ChunkCache<uint8_t>* chunkCachePtr() const { return cache; }
@@ -190,6 +222,7 @@ public slots:
     void onScrolled();
     void onResized();
     void onZoom(int steps, QPointF scene_point, Qt::KeyboardModifiers modifiers);
+    void adjustZoomByIncrement(float increment);  // Adjust zoom by fixed increment (e.g., +/- 0.25x)
     void onCursorMove(QPointF);
     void onPathsChanged(const QList<ViewerOverlayControllerBase::PathPrimitive>& paths);
     void onPointSelected(uint64_t pointId);
@@ -250,7 +283,7 @@ protected:
     float _z_off = 0.0;
     QPointF _lastScenePos;  // Last known scene position for grid coordinate lookups
 
-    // Composite view settings
+    // Composite view settings (for segmentation/QuadSurface)
     bool _composite_enabled = false;
     int _composite_layers = 7;
     int _composite_layers_front = 8;
@@ -261,6 +294,28 @@ protected:
     int _composite_alpha_threshold = 9950;
     int _composite_material = 230;
     bool _composite_reverse_direction = false;
+    int _iso_cutoff = 0;
+    float _composite_gradient_scale = 2.0f;
+    float _composite_stddev_scale = 2.0f;
+    float _composite_laplacian_scale = 2.0f;
+    float _composite_range_scale = 1.0f;
+    float _composite_gradient_sum_scale = 1.0f;
+    float _composite_sobel_scale = 2.0f;
+    float _composite_local_contrast_scale = 255.0f;
+    float _composite_entropy_scale = 32.0f;
+    float _composite_peak_threshold = 10.0f;
+    float _composite_peak_count_scale = 25.0f;
+    float _composite_count_threshold = 128.0f;
+    float _composite_threshold_count_scale = 15.0f;
+    float _composite_percentile = 0.5f;
+    float _composite_weighted_mean_sigma = 0.5f;
+
+    // Plane composite view settings (for XY/XZ/YZ plane viewers)
+    // These share the same composite method/parameters as segmentation,
+    // but have separate layer counts and enable flag
+    bool _plane_composite_enabled = false;
+    int _plane_composite_layers_front = 4;
+    int _plane_composite_layers_behind = 4;
     
     QGraphicsItem *_center_marker = nullptr;
     QGraphicsItem *_cursor = nullptr;
@@ -347,5 +402,23 @@ protected:
     bool _surfaceOverlayEnabled{false};
     std::string _surfaceOverlayName;
     float _surfaceOverlapThreshold{5.0f};
+
+    // Postprocessing settings
+    bool _postStretchValues{false};
+    bool _postRemoveSmallComponents{false};
+    int _postMinComponentSize{50};
+
+    // Fast composite rendering cache - no mutex, specialized for composite
+    FastCompositeCache _fastCompositeCache;
+
+    // Cached normals for composite rendering - invalidated on surface/ptr change
+    cv::Mat_<cv::Vec3f> _cachedNormals;
+    cv::Mat_<cv::Vec3f> _cachedBaseCoords;
+    cv::Mat_<cv::Vec3f> _coordsWorkBuffer;  // Reusable buffer for z_off-adjusted coords
+    cv::Size _cachedNormalsSize;
+    float _cachedNormalsScale{0.0f};
+    cv::Vec3f _cachedNormalsPtr{0, 0, 0};
+    float _cachedNormalsZOff{0.0f};
+    std::weak_ptr<Surface> _cachedNormalsSurf;
 
 };  // class CVolumeViewer

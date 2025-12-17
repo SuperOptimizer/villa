@@ -34,6 +34,7 @@ struct AxisAlignedSliceCacheKey
     uint8_t baseWindowHigh = 0;
     size_t colormapHash = 0;
     uint8_t stretchValues = 0;
+    uint8_t isoCutoff = 0;
 
     bool operator==(const AxisAlignedSliceCacheKey& other) const noexcept
     {
@@ -45,7 +46,8 @@ struct AxisAlignedSliceCacheKey
                zOffsetMilli == other.zOffsetMilli && dsIndex == other.dsIndex &&
                datasetPtr == other.datasetPtr && fastInterpolation == other.fastInterpolation &&
                baseWindowLow == other.baseWindowLow && baseWindowHigh == other.baseWindowHigh &&
-               colormapHash == other.colormapHash && stretchValues == other.stretchValues;
+               colormapHash == other.colormapHash && stretchValues == other.stretchValues &&
+               isoCutoff == other.isoCutoff;
     }
 };
 
@@ -73,6 +75,7 @@ struct AxisAlignedSliceCacheKeyHasher
         hashCombine(seed, key.baseWindowHigh);
         hashCombine(seed, key.colormapHash);
         hashCombine(seed, key.stretchValues);
+        hashCombine(seed, key.isoCutoff);
         return seed;
     }
 
