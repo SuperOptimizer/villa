@@ -1388,6 +1388,67 @@ void CVolumeViewer::setCompositeBLAmbient(float value)
     }
 }
 
+void CVolumeViewer::setLightingEnabled(bool enabled)
+{
+    if (enabled != _lighting_enabled) {
+        _lighting_enabled = enabled;
+        if (_composite_enabled) {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setLightAzimuth(float degrees)
+{
+    if (degrees != _light_azimuth) {
+        _light_azimuth = degrees;
+        if (_composite_enabled && _lighting_enabled) {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setLightElevation(float degrees)
+{
+    if (degrees != _light_elevation) {
+        _light_elevation = degrees;
+        if (_composite_enabled && _lighting_enabled) {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setLightDiffuse(float value)
+{
+    if (value != _light_diffuse) {
+        _light_diffuse = value;
+        if (_composite_enabled && _lighting_enabled) {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setLightAmbient(float value)
+{
+    if (value != _light_ambient) {
+        _light_ambient = value;
+        if (_composite_enabled && _lighting_enabled) {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setUseVolumeGradients(bool enabled)
+{
+    if (enabled != _use_volume_gradients) {
+        _use_volume_gradients = enabled;
+        // Don't invalidate cache - gradients are still valid, just not being used
+        if (_composite_enabled && _lighting_enabled) {
+            renderVisible(true);
+        }
+    }
+}
+
 void CVolumeViewer::setIsoCutoff(int value)
 {
     value = std::clamp(value, 0, 255);

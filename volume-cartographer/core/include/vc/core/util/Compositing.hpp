@@ -21,6 +21,13 @@ struct CompositeParams {
     float blEmission = 1.5f;          // Emission scale (higher = brighter)
     float blAmbient = 0.1f;           // Ambient light (background illumination)
 
+    // Directional lighting parameters
+    bool lightingEnabled = false;     // Enable surface lighting
+    float lightAzimuth = 45.0f;       // Light direction azimuth (degrees, 0=right, 90=up)
+    float lightElevation = 45.0f;     // Light direction elevation (degrees above horizon)
+    float lightDiffuse = 0.7f;        // Diffuse lighting strength (0-1)
+    float lightAmbient = 0.3f;        // Ambient lighting (0-1, ensures shadows aren't pure black)
+
     // Pre-processing
     uint8_t isoCutoff = 0;           // Highpass filter: values below this are set to 0
 };
@@ -57,3 +64,9 @@ bool methodRequiresLayerStorage(const std::string& method);
 
 // Utility: get list of available compositing methods
 std::vector<std::string> availableCompositeMethods();
+
+// Compute directional lighting factor for a surface normal
+// Returns a multiplier (0-1) based on Lambertian diffuse lighting
+// normal: surface normal (should be normalized)
+// params: contains light direction and strength settings
+float computeLightingFactor(const cv::Vec3f& normal, const CompositeParams& params);

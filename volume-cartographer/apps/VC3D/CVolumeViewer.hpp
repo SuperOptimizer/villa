@@ -69,6 +69,12 @@ public:
     void setCompositeBLExtinction(float value);
     void setCompositeBLEmission(float value);
     void setCompositeBLAmbient(float value);
+    void setLightingEnabled(bool enabled);
+    void setLightAzimuth(float degrees);
+    void setLightElevation(float degrees);
+    void setLightDiffuse(float value);
+    void setLightAmbient(float value);
+    void setUseVolumeGradients(bool enabled);
     void setIsoCutoff(int value);
     void setResetViewOnSurfaceChange(bool reset);
 
@@ -293,6 +299,12 @@ protected:
     float _composite_bl_extinction = 1.5f;
     float _composite_bl_emission = 1.5f;
     float _composite_bl_ambient = 0.1f;
+    bool _lighting_enabled = false;
+    float _light_azimuth = 45.0f;
+    float _light_elevation = 45.0f;
+    float _light_diffuse = 0.7f;
+    float _light_ambient = 0.3f;
+    bool _use_volume_gradients = false;
     int _iso_cutoff = 0;
 
     // Plane composite view settings (for XY/XZ/YZ plane viewers)
@@ -405,5 +417,9 @@ protected:
     cv::Vec3f _cachedNormalsPtr{0, 0, 0};
     float _cachedNormalsZOff{0.0f};
     std::weak_ptr<Surface> _cachedNormalsSurf;
+
+    // Cached volume gradients for PBR lighting - separate surface tracking
+    cv::Mat_<cv::Vec3f> _cachedNativeVolumeGradients;
+    std::weak_ptr<Surface> _cachedGradientsSurf;
 
 };  // class CVolumeViewer

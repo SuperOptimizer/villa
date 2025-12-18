@@ -3,8 +3,11 @@
 
 #include "VolumeViewerCmaps.hpp"
 
+#include "z5/multiarray/xtensor_access.hxx"
+
 #include <QGraphicsView>
 #include <QGraphicsScene>
+#include <QDebug>
 #include <QGraphicsPixmapItem>
 #include <QGraphicsEllipseItem>
 #include <QGraphicsItem>
@@ -29,6 +32,135 @@
 
 #define COLOR_FOCUS QColor(50, 255, 215)
 
+namespace {
+
+// Compute volume gradients at native surface resolution (the raw point grid)
+// Returns normalized gradient vectors at each raw grid point
+// dsScale converts from world coordinates to dataset coordinates
+cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
+    z5::Dataset* ds,
+    const cv::Mat_<cv::Vec3f>& rawPoints,
+    float dsScale)
+{
+    const int h = rawPoints.rows;
+    const int w = rawPoints.cols;
+    cv::Mat_<cv::Vec3f> gradients(h, w, cv::Vec3f(0, 0, 1));
+
+    if (h == 0 || w == 0) return gradients;
+
+    const auto volShape = ds->shape();
+    const int volZ = static_cast<int>(volShape[0]);
+    const int volY = static_cast<int>(volShape[1]);
+    const int volX = static_cast<int>(volShape[2]);
+
+    // Step 1: Find bounding box of all valid coordinates
+    float minX = std::numeric_limits<float>::max();
+    float minY = std::numeric_limits<float>::max();
+    float minZ = std::numeric_limits<float>::max();
+    float maxX = std::numeric_limits<float>::lowest();
+    float maxY = std::numeric_limits<float>::lowest();
+    float maxZ = std::numeric_limits<float>::lowest();
+
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const cv::Vec3f& c = rawPoints(y, x);
+            // Skip invalid points (marked as -1, -1, -1)
+            if (c[0] == -1.f) continue;
+
+            const float cx = c[0] * dsScale;
+            const float cy = c[1] * dsScale;
+            const float cz = c[2] * dsScale;
+
+            minX = std::min(minX, cx);
+            minY = std::min(minY, cy);
+            minZ = std::min(minZ, cz);
+            maxX = std::max(maxX, cx);
+            maxY = std::max(maxY, cy);
+            maxZ = std::max(maxZ, cz);
+        }
+    }
+
+    if (minX > maxX) return gradients;  // No valid points
+
+    // Add padding for gradient computation (need ±1 voxel)
+    const int pad = 2;
+    const int bboxX0 = std::max(0, static_cast<int>(std::floor(minX)) - pad);
+    const int bboxY0 = std::max(0, static_cast<int>(std::floor(minY)) - pad);
+    const int bboxZ0 = std::max(0, static_cast<int>(std::floor(minZ)) - pad);
+    const int bboxX1 = std::min(volX, static_cast<int>(std::ceil(maxX)) + pad + 1);
+    const int bboxY1 = std::min(volY, static_cast<int>(std::ceil(maxY)) + pad + 1);
+    const int bboxZ1 = std::min(volZ, static_cast<int>(std::ceil(maxZ)) + pad + 1);
+
+    const size_t localW = static_cast<size_t>(bboxX1 - bboxX0);
+    const size_t localH = static_cast<size_t>(bboxY1 - bboxY0);
+    const size_t localD = static_cast<size_t>(bboxZ1 - bboxZ0);
+
+    if (localW == 0 || localH == 0 || localD == 0) return gradients;
+
+    // Step 2: Batch read the volume data for the bounding box
+    xt::xarray<uint8_t> localVolume = xt::empty<uint8_t>({localD, localH, localW});
+    z5::types::ShapeType off = {static_cast<size_t>(bboxZ0), static_cast<size_t>(bboxY0), static_cast<size_t>(bboxX0)};
+    z5::multiarray::readSubarray<uint8_t>(*ds, localVolume, off.begin());
+
+    // Helper lambda to sample from local volume with bounds checking
+    auto sampleLocal = [&](float gx, float gy, float gz) -> float {
+        const int lx = static_cast<int>(std::round(gx)) - bboxX0;
+        const int ly = static_cast<int>(std::round(gy)) - bboxY0;
+        const int lz = static_cast<int>(std::round(gz)) - bboxZ0;
+
+        if (lx < 0 || ly < 0 || lz < 0 ||
+            lx >= static_cast<int>(localW) ||
+            ly >= static_cast<int>(localH) ||
+            lz >= static_cast<int>(localD)) {
+            return 0.0f;
+        }
+        return static_cast<float>(localVolume(static_cast<size_t>(lz), static_cast<size_t>(ly), static_cast<size_t>(lx)));
+    };
+
+    // Step 3: Compute gradients in parallel at each raw grid point
+    #pragma omp parallel for collapse(2)
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const cv::Vec3f& c = rawPoints(y, x);
+
+            // Skip invalid points
+            if (c[0] == -1.f) {
+                gradients(y, x) = cv::Vec3f(0, 0, 1);
+                continue;
+            }
+
+            // Scale coordinates to dataset space
+            const float cx = c[0] * dsScale;
+            const float cy = c[1] * dsScale;
+            const float cz = c[2] * dsScale;
+
+            // Sample at ±1 voxel in each direction for central differences
+            const float v_xp = sampleLocal(cx + 1, cy, cz);
+            const float v_xm = sampleLocal(cx - 1, cy, cz);
+            const float v_yp = sampleLocal(cx, cy + 1, cz);
+            const float v_ym = sampleLocal(cx, cy - 1, cz);
+            const float v_zp = sampleLocal(cx, cy, cz + 1);
+            const float v_zm = sampleLocal(cx, cy, cz - 1);
+
+            // Central differences for gradient
+            float gx = (v_xp - v_xm) / 2.0f;
+            float gy = (v_yp - v_ym) / 2.0f;
+            float gz = (v_zp - v_zm) / 2.0f;
+
+            // Normalize to get unit normal (negative gradient points toward surface)
+            float len = std::sqrt(gx*gx + gy*gy + gz*gz);
+            if (len > 1e-6f) {
+                gradients(y, x) = cv::Vec3f(-gx/len, -gy/len, -gz/len);
+            } else {
+                gradients(y, x) = cv::Vec3f(0, 0, 1);
+            }
+        }
+    }
+
+    return gradients;
+}
+
+}  // anonymous namespace
 
 void CVolumeViewer::renderVisible(bool force)
 {
@@ -158,6 +290,56 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
         _cachedNormalsSurf = surf;
     }
 
+    // Compute volume gradients if enabled (for PBR lighting from volume data)
+    // Gradients are computed once at native surface resolution (raw point grid),
+    // then warped to view resolution using the same transform as gen() uses for coords
+    cv::Mat_<cv::Vec3f> lightingNormals = normals;  // Default to mesh normals
+    if (_use_volume_gradients && _lighting_enabled) {
+        auto* quadSurf = dynamic_cast<QuadSurface*>(surf.get());
+        if (quadSurf) {
+            // Compute native gradients once per surface
+            if (_cachedNativeVolumeGradients.empty() || _cachedGradientsSurf.lock() != surf) {
+                const cv::Mat_<cv::Vec3f>* rawPts = quadSurf->rawPointsPtr();
+                _cachedNativeVolumeGradients = computeVolumeGradientsNative(
+                    volume->zarrDataset(_ds_sd_idx),
+                    *rawPts,
+                    _ds_scale
+                );
+                _cachedGradientsSurf = surf;
+            }
+
+            // Warp native gradients to view coords using same transform as gen()
+            const cv::Vec2f surfScale = quadSurf->scale();
+            const cv::Vec3f center = quadSurf->center();
+
+            // Same calculation as gen(): ul = internal_loc(offset/scale + _center, ptr, _scale)
+            const cv::Vec3f offset = {static_cast<float>(-roi.width / 2), static_cast<float>(-roi.height / 2), _z_off};
+            const cv::Vec3f nominalOffset = offset / _scale + center;
+            const cv::Vec3f ul = ptr + cv::Vec3f(nominalOffset[0] * surfScale[0], nominalOffset[1] * surfScale[1], nominalOffset[2]);
+
+            const double sx = static_cast<double>(surfScale[0]) / static_cast<double>(_scale);
+            const double sy = static_cast<double>(surfScale[1]) / static_cast<double>(_scale);
+            const double ox = static_cast<double>(ul[0]);
+            const double oy = static_cast<double>(ul[1]);
+
+            // Map from raw grid coords to view coords
+            std::array<cv::Point2f, 3> srcf = {
+                cv::Point2f(static_cast<float>(ox), static_cast<float>(oy)),
+                cv::Point2f(static_cast<float>(ox + roi.width * sx), static_cast<float>(oy)),
+                cv::Point2f(static_cast<float>(ox), static_cast<float>(oy + roi.height * sy))
+            };
+            std::array<cv::Point2f, 3> dstf = {
+                cv::Point2f(0.f, 0.f),
+                cv::Point2f(static_cast<float>(roi.width), 0.f),
+                cv::Point2f(0.f, static_cast<float>(roi.height))
+            };
+
+            cv::Mat A = cv::getAffineTransform(srcf.data(), dstf.data());
+            cv::warpAffine(_cachedNativeVolumeGradients, lightingNormals, A, roi.size(),
+                           cv::INTER_LINEAR, cv::BORDER_REPLICATE);
+        }
+    }
+
     // Determine the z range based on front and behind layers
     int z_start = _composite_reverse_direction ? -_composite_layers_behind : -_composite_layers_front;
     int z_end = _composite_reverse_direction ? _composite_layers_front : _composite_layers_behind;
@@ -172,6 +354,11 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
     params.blExtinction = _composite_bl_extinction;
     params.blEmission = _composite_bl_emission;
     params.blAmbient = _composite_bl_ambient;
+    params.lightingEnabled = _lighting_enabled;
+    params.lightAzimuth = _light_azimuth;
+    params.lightElevation = _light_elevation;
+    params.lightDiffuse = _light_diffuse;
+    params.lightAmbient = _light_ambient;
     params.isoCutoff = static_cast<uint8_t>(_iso_cutoff);
 
     // Always use fast path (nearest neighbor, no mutex, specialized cache)
@@ -179,7 +366,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
         img,
         volume->zarrDataset(_ds_sd_idx),
         base_coords * _ds_scale,
-        normals,
+        lightingNormals,
         _ds_scale,  // z step per layer (in dataset coordinates)
         z_start, z_end,
         params,
@@ -632,6 +819,11 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite_plane(const cv::Rect &roi, con
     params.blExtinction = _composite_bl_extinction;
     params.blEmission = _composite_bl_emission;
     params.blAmbient = _composite_bl_ambient;
+    params.lightingEnabled = _lighting_enabled;
+    params.lightAzimuth = _light_azimuth;
+    params.lightElevation = _light_elevation;
+    params.lightDiffuse = _light_diffuse;
+    params.lightAmbient = _light_ambient;
     params.isoCutoff = static_cast<uint8_t>(_iso_cutoff);
 
     // Always use fast path with constant normal (nearest neighbor, no mutex)

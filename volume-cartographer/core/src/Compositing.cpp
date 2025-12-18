@@ -162,3 +162,41 @@ std::vector<std::string> availableCompositeMethods()
         "beerLambert"
     };
 }
+
+float computeLightingFactor(const cv::Vec3f& normal, const CompositeParams& params)
+{
+    if (!params.lightingEnabled) {
+        return 1.0f;
+    }
+
+    // Convert azimuth and elevation to light direction vector
+    // Azimuth: 0=+X (right), 90=+Y (up in screen space)
+    // Elevation: angle above the XY plane (toward viewer)
+    const float azimuthRad = params.lightAzimuth * static_cast<float>(M_PI) / 180.0f;
+    const float elevationRad = params.lightElevation * static_cast<float>(M_PI) / 180.0f;
+
+    // Light direction (pointing toward the light source)
+    const float cosElev = std::cos(elevationRad);
+    cv::Vec3f lightDir(
+        std::cos(azimuthRad) * cosElev,
+        std::sin(azimuthRad) * cosElev,
+        std::sin(elevationRad)
+    );
+
+    // Normalize the surface normal (in case it isn't already)
+    float normalLen = std::sqrt(normal[0]*normal[0] + normal[1]*normal[1] + normal[2]*normal[2]);
+    if (normalLen < 0.0001f) {
+        return params.lightAmbient;
+    }
+    cv::Vec3f n = normal / normalLen;
+
+    // Lambertian diffuse: N dot L
+    float nDotL = n[0]*lightDir[0] + n[1]*lightDir[1] + n[2]*lightDir[2];
+    nDotL = std::max(0.0f, nDotL);
+
+    // Combine: ambient + diffuse
+    float lighting = params.lightAmbient + params.lightDiffuse * nDotL;
+
+    // Clamp to [0, 1]
+    return std::min(1.0f, std::max(0.0f, lighting));
+}

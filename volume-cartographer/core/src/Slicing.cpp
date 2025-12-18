@@ -957,6 +957,13 @@ void readCompositeFast(
                     result = acc / static_cast<float>(validCount);
                 }
 
+                // Apply directional lighting if enabled
+                if (params.lightingEnabled && hasNormals) {
+                    const cv::Vec3f& n = normals(y, x);
+                    float lightFactor = computeLightingFactor(n, params);
+                    result *= lightFactor;
+                }
+
                 out(y, x) = static_cast<uint8_t>(std::max(0.0f, std::min(255.0f, result)));
             }
         }
@@ -1238,6 +1245,12 @@ void readCompositeFastConstantNormal(
                     result = acc;
                 } else if (isMean && validCount > 0) {
                     result = acc / static_cast<float>(validCount);
+                }
+
+                // Apply directional lighting if enabled (using constant normal)
+                if (params.lightingEnabled) {
+                    float lightFactor = computeLightingFactor(normal, params);
+                    result *= lightFactor;
                 }
 
                 out(y, x) = static_cast<uint8_t>(std::max(0.0f, std::min(255.0f, result)));

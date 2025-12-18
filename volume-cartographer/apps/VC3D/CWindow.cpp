@@ -1996,6 +1996,48 @@ void CWindow::CreateWidgets(void)
         }
     });
 
+    // Connect Lighting Enable control
+    connect(ui.chkLightingEnabled, &QCheckBox::toggled, this, [this](bool checked) {
+        if (auto* viewer = segmentationViewer()) {
+            viewer->setLightingEnabled(checked);
+        }
+    });
+
+    // Connect Light Azimuth control
+    connect(ui.spinLightAzimuth, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        if (auto* viewer = segmentationViewer()) {
+            viewer->setLightAzimuth(static_cast<float>(value));
+        }
+    });
+
+    // Connect Light Elevation control
+    connect(ui.spinLightElevation, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        if (auto* viewer = segmentationViewer()) {
+            viewer->setLightElevation(static_cast<float>(value));
+        }
+    });
+
+    // Connect Light Diffuse control
+    connect(ui.spinLightDiffuse, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
+        if (auto* viewer = segmentationViewer()) {
+            viewer->setLightDiffuse(static_cast<float>(value));
+        }
+    });
+
+    // Connect Light Ambient control
+    connect(ui.spinLightAmbient, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
+        if (auto* viewer = segmentationViewer()) {
+            viewer->setLightAmbient(static_cast<float>(value));
+        }
+    });
+
+    // Connect Volume Gradients checkbox
+    connect(ui.chkUseVolumeGradients, &QCheckBox::toggled, this, [this](bool checked) {
+        if (auto* viewer = segmentationViewer()) {
+            viewer->setUseVolumeGradients(checked);
+        }
+    });
+
     // Connect ISO Cutoff slider - applies to all viewers (segmentation, XY, XZ, YZ)
     connect(ui.sliderIsoCutoff, &QSlider::valueChanged, this, [this](int value) {
         ui.lblIsoCutoffValue->setText(QString::number(value));
@@ -2048,6 +2090,18 @@ void CWindow::CreateWidgets(void)
         ui.spinBLEmission->setVisible(showBLParams);
         ui.lblBLAmbient->setVisible(showBLParams);
         ui.spinBLAmbient->setVisible(showBLParams);
+
+        // Lighting parameters (rows 9-12) - always shown, works with all methods
+        ui.chkLightingEnabled->setVisible(true);
+        ui.lblLightAzimuth->setVisible(true);
+        ui.spinLightAzimuth->setVisible(true);
+        ui.lblLightElevation->setVisible(true);
+        ui.spinLightElevation->setVisible(true);
+        ui.lblLightDiffuse->setVisible(true);
+        ui.spinLightDiffuse->setVisible(true);
+        ui.lblLightAmbient->setVisible(true);
+        ui.spinLightAmbient->setVisible(true);
+        ui.chkUseVolumeGradients->setVisible(true);
 
         // No methods currently use scale or param sliders
         ui.lblMethodScale->setVisible(false);
