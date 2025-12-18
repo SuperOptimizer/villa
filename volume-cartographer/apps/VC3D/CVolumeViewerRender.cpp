@@ -170,21 +170,6 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
     params.alphaOpacity = _composite_material / 255.0f;
     params.alphaCutoff = _composite_alpha_threshold / 10000.0f;
     params.isoCutoff = static_cast<uint8_t>(_iso_cutoff);
-    // Scale parameters
-    params.gradientScale = _composite_gradient_scale;
-    params.stddevScale = _composite_stddev_scale;
-    params.laplacianScale = _composite_laplacian_scale;
-    params.rangeScale = _composite_range_scale;
-    params.gradientSumScale = _composite_gradient_sum_scale;
-    params.sobelScale = _composite_sobel_scale;
-    params.localContrastScale = _composite_local_contrast_scale;
-    params.entropyScale = _composite_entropy_scale;
-    params.peakThreshold = _composite_peak_threshold;
-    params.peakCountScale = _composite_peak_count_scale;
-    params.countThreshold = _composite_count_threshold;
-    params.thresholdCountScale = _composite_threshold_count_scale;
-    params.percentile = _composite_percentile;
-    params.weightedMeanSigma = _composite_weighted_mean_sigma;
 
     // Always use fast path (nearest neighbor, no mutex, specialized cache)
     readCompositeFast(
@@ -642,20 +627,6 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite_plane(const cv::Rect &roi, con
     params.alphaOpacity = _composite_material / 255.0f;
     params.alphaCutoff = _composite_alpha_threshold / 10000.0f;
     params.isoCutoff = static_cast<uint8_t>(_iso_cutoff);
-    params.gradientScale = _composite_gradient_scale;
-    params.stddevScale = _composite_stddev_scale;
-    params.laplacianScale = _composite_laplacian_scale;
-    params.rangeScale = _composite_range_scale;
-    params.gradientSumScale = _composite_gradient_sum_scale;
-    params.sobelScale = _composite_sobel_scale;
-    params.localContrastScale = _composite_local_contrast_scale;
-    params.entropyScale = _composite_entropy_scale;
-    params.peakThreshold = _composite_peak_threshold;
-    params.peakCountScale = _composite_peak_count_scale;
-    params.countThreshold = _composite_count_threshold;
-    params.thresholdCountScale = _composite_threshold_count_scale;
-    params.percentile = _composite_percentile;
-    params.weightedMeanSigma = _composite_weighted_mean_sigma;
 
     // Always use fast path with constant normal (nearest neighbor, no mutex)
     readCompositeFastConstantNormal(
