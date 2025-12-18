@@ -141,10 +141,6 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
             cancelDrag();
             return true;
         }
-        if (_bridgeDrag.active) {
-            cancelBridgeDrag();
-            return true;
-        }
         if (_correctionDrag.active) {
             cancelCorrectionDrag();
             return true;
@@ -352,16 +348,6 @@ void SegmentationModule::handleMousePress(CVolumeViewer* viewer,
         return;
     }
 
-    // Ctrl+Shift+drag: Bridge tool (flatten loops by interpolating between two points)
-    const bool ctrlShiftDrag = modifiers.testFlag(Qt::ControlModifier) && modifiers.testFlag(Qt::ShiftModifier);
-    if (ctrlShiftDrag) {
-        auto gridIndex = _editManager->worldToGridIndex(worldPos);
-        if (gridIndex) {
-            beginBridgeDrag(gridIndex->first, gridIndex->second, viewer, worldPos);
-        }
-        return;
-    }
-
     if (modifiers.testFlag(Qt::ControlModifier) || modifiers.testFlag(Qt::AltModifier)) {
         return;
     }
@@ -516,11 +502,6 @@ void SegmentationModule::handleMouseMove(CVolumeViewer* viewer,
         return;
     }
 
-    if (_bridgeDrag.active) {
-        updateBridgeDrag(worldPos);
-        return;
-    }
-
     if (_corrections && _corrections->annotateMode()) {
         return;
     }
@@ -584,12 +565,6 @@ void SegmentationModule::handleMouseRelease(CVolumeViewer* viewer,
     if (_correctionDrag.active && button == Qt::LeftButton) {
         updateCorrectionDrag(worldPos);
         finishCorrectionDrag();
-        return;
-    }
-
-    if (_bridgeDrag.active && button == Qt::LeftButton) {
-        updateBridgeDrag(worldPos);
-        finishBridgeDrag();
         return;
     }
 

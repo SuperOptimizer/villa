@@ -216,32 +216,6 @@ private:
         }
     };
 
-    // Bridge drag state - for flattening loops by interpolating between two points
-    struct BridgeDragState
-    {
-        bool active{false};
-        int startRow{0};
-        int startCol{0};
-        int currentRow{0};
-        int currentCol{0};
-        cv::Vec3f startWorld{0.0f, 0.0f, 0.0f};
-        cv::Vec3f currentWorld{0.0f, 0.0f, 0.0f};
-        QPointer<CVolumeViewer> viewer;
-        bool moved{false};
-
-        void reset() {
-            active = false;
-            startRow = 0;
-            startCol = 0;
-            currentRow = 0;
-            currentCol = 0;
-            startWorld = {0.0f, 0.0f, 0.0f};
-            currentWorld = {0.0f, 0.0f, 0.0f};
-            viewer = nullptr;
-            moved = false;
-        }
-    };
-
     void bindWidgetSignals();
     void bindViewerSignals(CVolumeViewer* viewer);
 
@@ -258,10 +232,6 @@ private:
     void finishCorrectionDrag();
     void cancelCorrectionDrag();
 
-    void beginBridgeDrag(int row, int col, CVolumeViewer* viewer, const cv::Vec3f& worldPos);
-    void updateBridgeDrag(const cv::Vec3f& worldPos);
-    void finishBridgeDrag();
-    void cancelBridgeDrag();
     void pruneMissingCorrections();
     void onCorrectionsCreateRequested();
     void onCorrectionsCollectionSelected(uint64_t id);
@@ -358,7 +328,6 @@ private:
     DragState _drag;
     HoverState _hover;
     CorrectionDragState _correctionDrag;
-    BridgeDragState _bridgeDrag;
     QSet<CVolumeViewer*> _attachedViewers;
 
     std::function<bool(CVolumeViewer*, const cv::Vec3f&)> _rotationHandleHitTester;

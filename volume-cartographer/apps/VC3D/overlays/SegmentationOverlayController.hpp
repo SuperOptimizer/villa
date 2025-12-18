@@ -62,15 +62,6 @@ public:
         cv::Vec3f correctionDragStart{0.0f, 0.0f, 0.0f};
         cv::Vec3f correctionDragCurrent{0.0f, 0.0f, 0.0f};
 
-        // Bridge drag state - for flattening loops by interpolating between two points
-        bool bridgeDragActive{false};
-        cv::Vec3f bridgeDragStart{0.0f, 0.0f, 0.0f};
-        cv::Vec3f bridgeDragCurrent{0.0f, 0.0f, 0.0f};
-        int bridgeDragStartRow{0};
-        int bridgeDragStartCol{0};
-        int bridgeDragCurrentRow{0};
-        int bridgeDragCurrentCol{0};
-
         // Approval mask state - cylinder brush model
         // Radius = circle in plane views (XY/XZ/YZ), rectangle width in flattened view
         // Depth = cylinder thickness, rectangle height in flattened view
