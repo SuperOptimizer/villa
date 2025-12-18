@@ -8,6 +8,7 @@
 #include "SegmentationBrushTool.hpp"
 #include "SegmentationLineTool.hpp"
 #include "SegmentationPushPullTool.hpp"
+#include "SegmentationLassoPushPullTool.hpp"
 #include "ApprovalMaskBrushTool.hpp"
 #include "SegmentationCorrections.hpp"
 #include "ViewerManager.hpp"
@@ -135,6 +136,9 @@ SegmentationModule::SegmentationModule(SegmentationWidget* widget,
     _pushPullTool = std::make_unique<SegmentationPushPullTool>(*this, _editManager, _widget, _overlay, _surfaces);
     _pushPullTool->setStepMultiplier(initialPushPullStep);
     _pushPullTool->setAlphaConfig(initialAlphaConfig);
+
+    _lassoPushPullTool = std::make_unique<SegmentationLassoPushPullTool>(*this, _editManager, _overlay, _surfaces);
+    _lassoPushPullTool->setStepMultiplier(initialPushPullStep);
 
     _approvalTool = std::make_unique<ApprovalMaskBrushTool>(*this, _editManager, _widget);
 
@@ -744,8 +748,12 @@ void SegmentationModule::resetEdits()
 void SegmentationModule::stopTools()
 {
     _lineDrawKeyActive = false;
+    _lassoModeActive = false;
     clearLineDragStroke();
     cancelDrag();
+    if (_lassoPushPullTool) {
+        _lassoPushPullTool->cancel();
+    }
     emit stopToolsRequested();
 }
 
@@ -817,6 +825,7 @@ void SegmentationModule::refreshOverlay()
         case FalloffTool::Line:
             return Mode::Line;
         case FalloffTool::PushPull:
+        case FalloffTool::LassoPushPull:
             return Mode::PushPull;
         }
         return Mode::Drag;
@@ -940,6 +949,19 @@ void SegmentationModule::refreshOverlay()
     state.brushActive = brushActive;
     state.brushStrokeActive = brushStrokeActive;
     state.pushPullActive = pushPullActive;
+
+    // Lasso push/pull tool state
+    state.lassoModeActive = _lassoModeActive;
+    if (_lassoPushPullTool) {
+        state.lassoDrawing = _lassoPushPullTool->isDrawing();
+        state.lassoHasSelection = _lassoPushPullTool->hasSelection();
+        if (state.lassoDrawing) {
+            state.lassoPolygon = _lassoPushPullTool->currentStrokePoints();
+        } else if (state.lassoHasSelection) {
+            state.lassoPolygon = _lassoPushPullTool->selection().polygonWorld;
+            state.lassoCentroid = _lassoPushPullTool->selection().centroidWorld;
+        }
+    }
 
     FalloffTool overlayTool = _activeFalloff;
     if (hasLineStroke) {

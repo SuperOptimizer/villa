@@ -47,6 +47,7 @@ class QTimer;
 class SegmentationBrushTool;
 class SegmentationLineTool;
 class SegmentationPushPullTool;
+class SegmentationLassoPushPullTool;
 class ApprovalMaskBrushTool;
 
 class SegmentationModule : public QObject
@@ -159,6 +160,7 @@ private:
     friend class SegmentationBrushTool;
     friend class SegmentationLineTool;
     friend class SegmentationPushPullTool;
+    friend class SegmentationLassoPushPullTool;
     friend class ApprovalMaskBrushTool;
     friend class segmentation::CorrectionsState;
 
@@ -166,7 +168,8 @@ private:
     {
         Drag,
         Line,
-        PushPull
+        PushPull,
+        LassoPushPull
     };
 
     struct DragState
@@ -310,7 +313,10 @@ private:
     std::unique_ptr<SegmentationBrushTool> _brushTool;
     std::unique_ptr<SegmentationLineTool> _lineTool;
     std::unique_ptr<SegmentationPushPullTool> _pushPullTool;
+    std::unique_ptr<SegmentationLassoPushPullTool> _lassoPushPullTool;
     std::unique_ptr<ApprovalMaskBrushTool> _approvalTool;
+
+    bool _lassoModeActive{false};
 
     bool _showApprovalMask{false};
     bool _editApprovedMask{false};

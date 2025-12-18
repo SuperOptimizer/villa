@@ -45,6 +45,8 @@ set(srcs
     segmentation/SegmentationLineTool.hpp
     segmentation/SegmentationPushPullTool.cpp
     segmentation/SegmentationPushPullTool.hpp
+    segmentation/SegmentationLassoPushPullTool.cpp
+    segmentation/SegmentationLassoPushPullTool.hpp
     segmentation/SegmentationTool.hpp
     segmentation/SegmentationModule_Falloff.cpp
     segmentation/SegmentationModule_Input.cpp

@@ -130,7 +130,12 @@ bool SegmentationOverlayController::State::operator==(const State& rhs) const
            surface == rhs.surface &&
            approvalHoverScenePos == rhs.approvalHoverScenePos &&
            floatEqual(approvalHoverViewerScale, rhs.approvalHoverViewerScale) &&
-           vec3fOptEqual(approvalHoverPlaneNormal, rhs.approvalHoverPlaneNormal);
+           vec3fOptEqual(approvalHoverPlaneNormal, rhs.approvalHoverPlaneNormal) &&
+           lassoModeActive == rhs.lassoModeActive &&
+           lassoDrawing == rhs.lassoDrawing &&
+           lassoHasSelection == rhs.lassoHasSelection &&
+           maskEqual(lassoPolygon, rhs.lassoPolygon) &&
+           vec3fOptEqual(lassoCentroid, rhs.lassoCentroid);
 }
 
 SegmentationOverlayController::SegmentationOverlayController(CSurfaceCollection* surfaces, QObject* parent)
@@ -628,6 +633,32 @@ void SegmentationOverlayController::collectPrimitives(CVolumeViewer* viewer,
 
     if (shouldShowMask(state)) {
         builder.addPath(buildMaskPrimitive(state));
+    }
+
+    // Render lasso overlay
+    if ((state.lassoDrawing || state.lassoHasSelection) && !state.lassoPolygon.empty()) {
+        ViewerOverlayControllerBase::PathPrimitive lassoPath;
+        lassoPath.points = state.lassoPolygon;
+        lassoPath.closed = state.lassoHasSelection;  // Close polygon when selection is complete
+        lassoPath.renderMode = ViewerOverlayControllerBase::PathRenderMode::LineStrip;
+        lassoPath.brushShape = ViewerOverlayControllerBase::PathBrushShape::Circle;
+        // Orange while drawing, blue when selection is active
+        lassoPath.color = state.lassoHasSelection ? QColor(100, 200, 255) : QColor(255, 200, 100);
+        lassoPath.lineWidth = 2.0f;
+        lassoPath.opacity = 0.85f;
+        lassoPath.z = kMaskZ;
+        builder.addPath(lassoPath);
+
+        // Draw centroid marker when selection is active
+        if (state.lassoHasSelection && state.lassoCentroid) {
+            const QPointF sceneCenter = viewer->volumePointToScene(*state.lassoCentroid);
+            OverlayStyle centroidStyle;
+            centroidStyle.penColor = QColor(255, 255, 255);
+            centroidStyle.penWidth = 2.0f;
+            centroidStyle.brushColor = QColor(100, 200, 255, 180);
+            centroidStyle.z = kMarkerZ;
+            builder.addCircle(sceneCenter, 6.0, true, centroidStyle);
+        }
     }
 
     buildVertexMarkers(state, viewer, builder);

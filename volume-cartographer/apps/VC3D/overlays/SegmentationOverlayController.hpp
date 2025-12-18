@@ -75,6 +75,13 @@ public:
         float approvalHoverViewerScale{1.0f};         // Viewer scale for the hover position
         std::optional<cv::Vec3f> approvalHoverPlaneNormal;  // Plane normal when hovering in XY/XZ/YZ viewers
 
+        // Lasso push/pull state
+        bool lassoModeActive{false};
+        bool lassoDrawing{false};
+        bool lassoHasSelection{false};
+        std::vector<cv::Vec3f> lassoPolygon;
+        std::optional<cv::Vec3f> lassoCentroid;
+
         bool operator==(const State& rhs) const;
         bool operator!=(const State& rhs) const { return !(*this == rhs); }
     };

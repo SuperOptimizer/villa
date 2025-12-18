@@ -7,6 +7,7 @@
 #include "SegmentationEditManager.hpp"
 #include "SegmentationLineTool.hpp"
 #include "SegmentationPushPullTool.hpp"
+#include "SegmentationLassoPushPullTool.hpp"
 #include "SegmentationWidget.hpp"
 #include "../overlays/SegmentationOverlayController.hpp"
 
@@ -137,10 +138,35 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
     }
 
     if (event->key() == Qt::Key_Escape) {
+        if (_lassoPushPullTool && _lassoPushPullTool->isActive()) {
+            _lassoPushPullTool->cancel();
+            _lassoModeActive = false;
+            refreshOverlay();
+            emit statusMessageRequested(tr("Lasso selection canceled."), kStatusShort);
+            event->accept();
+            return true;
+        }
         if (_drag.active) {
             cancelDrag();
             return true;
         }
+    }
+
+    // L: Toggle lasso mode
+    if (event->key() == Qt::Key_L && !event->isAutoRepeat() && event->modifiers() == Qt::NoModifier) {
+        if (!_editingEnabled || !_editManager || !_editManager->hasSession()) {
+            return false;
+        }
+        _lassoModeActive = !_lassoModeActive;
+        if (!_lassoModeActive && _lassoPushPullTool) {
+            _lassoPushPullTool->cancel();
+        }
+        refreshOverlay();
+        emit statusMessageRequested(
+            _lassoModeActive ? tr("Lasso mode enabled. Draw to select area.") : tr("Lasso mode disabled."),
+            kStatusShort);
+        event->accept();
+        return true;
     }
 
     const bool pushPullKey = (event->key() == Qt::Key_A || event->key() == Qt::Key_D);
@@ -154,6 +180,17 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
         }
 
         const int direction = (event->key() == Qt::Key_D) ? 1 : -1;
+
+        // Check if lasso tool has active selection - route to it first
+        if (_lassoPushPullTool && _lassoPushPullTool->hasSelection()) {
+            if (_lassoPushPullTool->startPushPull(direction)) {
+                event->accept();
+                return true;
+            }
+            return false;
+        }
+
+        // Regular push/pull
         const std::optional<bool> alphaOverride = controlActive ? std::optional<bool>{true} : std::nullopt;
         if (startPushPull(direction, alphaOverride)) {
             event->accept();
@@ -256,6 +293,14 @@ bool SegmentationModule::handleKeyRelease(QKeyEvent* event)
                                                  ~(Qt::ControlModifier | Qt::KeypadModifier);
     if (pushPullKey && disallowedMods == Qt::NoModifier) {
         const int direction = (event->key() == Qt::Key_D) ? 1 : -1;
+
+        // Check if lasso tool is active
+        if (_lassoPushPullTool && _lassoPushPullTool->isPushPullActive()) {
+            _lassoPushPullTool->stopPushPull(direction);
+            event->accept();
+            return true;
+        }
+
         stopPushPull(direction);
         event->accept();
         return true;
@@ -345,6 +390,20 @@ void SegmentationModule::handleMousePress(CVolumeViewer* viewer,
         if (_lineTool) {
             _lineTool->startStroke(worldPos);
         }
+        return;
+    }
+
+    // Lasso mode: start drawing lasso
+    if (_lassoModeActive && _lassoPushPullTool && isSegmentationViewer(viewer)) {
+        stopAllPushPull();
+        if (brushActive) {
+            deactivateInvalidationBrush();
+        }
+        if (_drag.active) {
+            cancelDrag();
+        }
+        _lassoPushPullTool->startLasso(worldPos);
+        refreshOverlay();
         return;
     }
 
@@ -458,6 +517,22 @@ void SegmentationModule::handleMouseMove(CVolumeViewer* viewer,
         return;
     }
 
+    // Handle lasso drawing
+    const bool lassoDrawing = _lassoPushPullTool && _lassoPushPullTool->isDrawing();
+    if (lassoDrawing) {
+        if (buttons.testFlag(Qt::LeftButton)) {
+            _lassoPushPullTool->extendLasso(worldPos, false);
+            refreshOverlay();
+        } else {
+            // Mouse released without going through handleMouseRelease (unlikely but handle it)
+            if (_lassoPushPullTool->finishLasso()) {
+                emit statusMessageRequested(tr("Lasso selection complete. Use A/D to push/pull."), kStatusShort);
+            }
+            refreshOverlay();
+        }
+        return;
+    }
+
     const bool paintStrokeActive = _brushTool && _brushTool->strokeActive();
     if (paintStrokeActive) {
         if (buttons.testFlag(Qt::LeftButton)) {
@@ -525,6 +600,17 @@ void SegmentationModule::handleMouseRelease(CVolumeViewer* viewer,
             _lineTool->extendStroke(worldPos, true);
             _lineTool->finishStroke(_lineDrawKeyActive);
         }
+        return;
+    }
+
+    // Handle lasso drawing completion
+    const bool lassoDrawing = _lassoPushPullTool && _lassoPushPullTool->isDrawing();
+    if (lassoDrawing && button == Qt::LeftButton) {
+        _lassoPushPullTool->extendLasso(worldPos, true);
+        if (_lassoPushPullTool->finishLasso()) {
+            emit statusMessageRequested(tr("Lasso selection complete. Use A/D to push/pull."), kStatusShort);
+        }
+        refreshOverlay();
         return;
     }
 
