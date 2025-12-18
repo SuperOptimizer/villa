@@ -1899,20 +1899,7 @@ void CWindow::CreateWidgets(void)
             case 0: method = "max"; break;
             case 1: method = "mean"; break;
             case 2: method = "min"; break;
-            case 3: method = "median"; break;
-            case 4: method = "alpha"; break;
-            case 5: method = "stddev"; break;
-            case 6: method = "range"; break;
-            case 7: method = "localContrast"; break;
-            case 8: method = "entropy"; break;
-            case 9: method = "gradient"; break;
-            case 10: method = "gradientSum"; break;
-            case 11: method = "laplacian"; break;
-            case 12: method = "sobel"; break;
-            case 13: method = "percentile"; break;
-            case 14: method = "weightedMean"; break;
-            case 15: method = "peakCount"; break;
-            case 16: method = "thresholdCount"; break;
+            case 3: method = "alpha"; break;
         }
 
         if (auto* viewer = segmentationViewer()) {
@@ -2018,70 +2005,20 @@ void CWindow::CreateWidgets(void)
             return;
         }
 
-        // Determine current method and apply to appropriate scale
-        int methodIndex = ui.cmbCompositeMode->currentIndex();
-        for (auto* viewer : _viewerManager->viewers()) {
-            if (viewer->surfName() == "segmentation") {
-                switch (methodIndex) {
-                    case 5: viewer->setCompositeStddevScale(scale); break;
-                    case 6: viewer->setCompositeRangeScale(scale); break;
-                    case 7: viewer->setCompositeLocalContrastScale(scale * 25.5f); break; // Scale 0-255
-                    case 8: viewer->setCompositeEntropyScale(scale * 3.2f); break; // Scale 0-32
-                    case 9: viewer->setCompositeGradientScale(scale); break;
-                    case 10: viewer->setCompositeGradientSumScale(scale); break;
-                    case 11: viewer->setCompositeLaplacianScale(scale); break;
-                    case 12: viewer->setCompositeSobelScale(scale); break;
-                    case 14: viewer->setCompositeWeightedMeanSigma(scale / 10.0f); break; // Sigma 0.01-1.0
-                    case 15: viewer->setCompositePeakCountScale(scale * 2.5f); break; // Scale 0-25
-                    case 16: viewer->setCompositeThresholdCountScale(scale * 1.5f); break; // Scale 0-15
-                }
-                break;
-            }
-        }
+        // Currently no methods use the scale parameter
+        (void)scale;
     });
 
     // Connect Method Param slider (for methods with threshold/percentile parameters)
     connect(ui.sliderMethodParam, &QSlider::valueChanged, this, [this](int value) {
-        int methodIndex = ui.cmbCompositeMode->currentIndex();
-
-        if (!_viewerManager) {
-            return;
-        }
-
-        for (auto* viewer : _viewerManager->viewers()) {
-            if (viewer->surfName() == "segmentation") {
-                switch (methodIndex) {
-                    case 13: // Percentile
-                        {
-                            float percentile = value / 100.0f;
-                            ui.lblMethodParamValue->setText(QString::number(static_cast<int>(percentile * 100)) + "%");
-                            viewer->setCompositePercentile(percentile);
-                        }
-                        break;
-                    case 15: // Peak Count - threshold
-                        {
-                            float threshold = value;
-                            ui.lblMethodParamValue->setText(QString::number(value));
-                            viewer->setCompositePeakThreshold(threshold);
-                        }
-                        break;
-                    case 16: // Threshold Count - threshold
-                        {
-                            float threshold = value * 2.55f; // Scale 0-255
-                            ui.lblMethodParamValue->setText(QString::number(static_cast<int>(threshold)));
-                            viewer->setCompositeCountThreshold(threshold);
-                        }
-                        break;
-                }
-                break;
-            }
-        }
+        // Currently no methods use this parameter
+        (void)value;
     });
 
     // Helper lambda to update visibility of method-specific parameters
     auto updateCompositeParamsVisibility = [this](int methodIndex) {
         // Alpha parameters (row 1, 2 - AlphaMin/Max, AlphaThreshold/Material)
-        bool showAlphaParams = (methodIndex == 4); // Alpha method
+        bool showAlphaParams = (methodIndex == 3); // Alpha method
         ui.lblAlphaMin->setVisible(showAlphaParams);
         ui.spinAlphaMin->setVisible(showAlphaParams);
         ui.lblAlphaMax->setVisible(showAlphaParams);
@@ -2091,61 +2028,13 @@ void CWindow::CreateWidgets(void)
         ui.lblMaterial->setVisible(showAlphaParams);
         ui.spinMaterial->setVisible(showAlphaParams);
 
-        // Methods that have a scale parameter:
-        // 5=stddev, 6=range, 7=localContrast, 8=entropy, 9=gradient, 10=gradientSum,
-        // 11=laplacian, 12=sobel, 14=weightedMean, 15=peakCount, 16=thresholdCount
-        bool showScaleParam = (methodIndex >= 5 && methodIndex <= 12) ||
-                              methodIndex == 14 || methodIndex == 15 || methodIndex == 16;
-        ui.lblMethodScale->setVisible(showScaleParam);
-        ui.sliderMethodScale->setVisible(showScaleParam);
-        ui.lblMethodScaleValue->setVisible(showScaleParam);
-
-        // Methods that have a secondary parameter (percentile value, threshold):
-        // 13=percentile, 15=peakCount (threshold), 16=thresholdCount (threshold)
-        bool showParamSlider = (methodIndex == 13 || methodIndex == 15 || methodIndex == 16);
-        ui.lblMethodParam->setVisible(showParamSlider);
-        ui.sliderMethodParam->setVisible(showParamSlider);
-        ui.lblMethodParamValue->setVisible(showParamSlider);
-
-        // Update labels based on method
-        if (showScaleParam) {
-            switch (methodIndex) {
-                case 5: ui.lblMethodScale->setText("Std Dev Scale"); break;
-                case 6: ui.lblMethodScale->setText("Range Scale"); break;
-                case 7: ui.lblMethodScale->setText("Contrast Scale"); break;
-                case 8: ui.lblMethodScale->setText("Entropy Scale"); break;
-                case 9: ui.lblMethodScale->setText("Gradient Scale"); break;
-                case 10: ui.lblMethodScale->setText("Grad Sum Scale"); break;
-                case 11: ui.lblMethodScale->setText("Laplacian Scale"); break;
-                case 12: ui.lblMethodScale->setText("Sobel Scale"); break;
-                case 14: ui.lblMethodScale->setText("Sigma"); break;
-                case 15: ui.lblMethodScale->setText("Peak Scale"); break;
-                case 16: ui.lblMethodScale->setText("Count Scale"); break;
-            }
-        }
-
-        if (showParamSlider) {
-            switch (methodIndex) {
-                case 13:
-                    ui.lblMethodParam->setText("Percentile");
-                    ui.sliderMethodParam->setRange(0, 100);
-                    ui.sliderMethodParam->setValue(50);
-                    ui.lblMethodParamValue->setText("50%");
-                    break;
-                case 15:
-                    ui.lblMethodParam->setText("Peak Threshold");
-                    ui.sliderMethodParam->setRange(0, 100);
-                    ui.sliderMethodParam->setValue(10);
-                    ui.lblMethodParamValue->setText("10");
-                    break;
-                case 16:
-                    ui.lblMethodParam->setText("Value Threshold");
-                    ui.sliderMethodParam->setRange(0, 100);
-                    ui.sliderMethodParam->setValue(50);
-                    ui.lblMethodParamValue->setText("128");
-                    break;
-            }
-        }
+        // No methods currently use scale or param sliders
+        ui.lblMethodScale->setVisible(false);
+        ui.sliderMethodScale->setVisible(false);
+        ui.lblMethodScaleValue->setVisible(false);
+        ui.lblMethodParam->setVisible(false);
+        ui.sliderMethodParam->setVisible(false);
+        ui.lblMethodParamValue->setVisible(false);
     };
 
     // Update the cmbCompositeMode connection to also update visibility

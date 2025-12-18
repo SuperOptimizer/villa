@@ -67,20 +67,6 @@ public:
     void setCompositeMaterial(int value);
     void setCompositeReverseDirection(bool reverse);
     void setIsoCutoff(int value);
-    void setCompositeGradientScale(float scale);
-    void setCompositeStddevScale(float scale);
-    void setCompositeLaplacianScale(float scale);
-    void setCompositeRangeScale(float scale);
-    void setCompositeGradientSumScale(float scale);
-    void setCompositeSobelScale(float scale);
-    void setCompositeLocalContrastScale(float scale);
-    void setCompositeEntropyScale(float scale);
-    void setCompositePeakThreshold(float threshold);
-    void setCompositePeakCountScale(float scale);
-    void setCompositeCountThreshold(float threshold);
-    void setCompositeThresholdCountScale(float scale);
-    void setCompositePercentile(float percentile);
-    void setCompositeWeightedMeanSigma(float sigma);
     void setResetViewOnSurfaceChange(bool reset);
 
     // Plane composite view methods (for XY/XZ/YZ plane viewers)
@@ -302,20 +288,6 @@ protected:
     int _composite_material = 230;
     bool _composite_reverse_direction = false;
     int _iso_cutoff = 0;
-    float _composite_gradient_scale = 2.0f;
-    float _composite_stddev_scale = 2.0f;
-    float _composite_laplacian_scale = 2.0f;
-    float _composite_range_scale = 1.0f;
-    float _composite_gradient_sum_scale = 1.0f;
-    float _composite_sobel_scale = 2.0f;
-    float _composite_local_contrast_scale = 255.0f;
-    float _composite_entropy_scale = 32.0f;
-    float _composite_peak_threshold = 10.0f;
-    float _composite_peak_count_scale = 25.0f;
-    float _composite_count_threshold = 128.0f;
-    float _composite_threshold_count_scale = 15.0f;
-    float _composite_percentile = 0.5f;
-    float _composite_weighted_mean_sigma = 0.5f;
 
     // Plane composite view settings (for XY/XZ/YZ plane viewers)
     // These share the same composite method/parameters as segmentation,
