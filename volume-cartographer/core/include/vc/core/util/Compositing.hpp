@@ -7,7 +7,7 @@
 
 // Parameters for multi-layer compositing
 struct CompositeParams {
-    // Compositing method: "mean", "max", "min", "alpha"
+    // Compositing method: "mean", "max", "min", "alpha", "beerLambert"
     std::string method = "mean";
 
     // Alpha compositing parameters
@@ -15,6 +15,11 @@ struct CompositeParams {
     float alphaMax = 1.0f;
     float alphaOpacity = 1.0f;
     float alphaCutoff = 1.0f;
+
+    // Beer-Lambert parameters (volume rendering with emission + absorption)
+    float blExtinction = 1.5f;        // Absorption coefficient (higher = more opaque)
+    float blEmission = 1.5f;          // Emission scale (higher = brighter)
+    float blAmbient = 0.1f;           // Ambient light (background illumination)
 
     // Pre-processing
     uint8_t isoCutoff = 0;           // Highpass filter: values below this are set to 0
@@ -35,6 +40,7 @@ float mean(const LayerStack& stack);
 float max(const LayerStack& stack);
 float min(const LayerStack& stack);
 float alpha(const LayerStack& stack, const CompositeParams& params);
+float beerLambert(const LayerStack& stack, const CompositeParams& params);
 
 } // namespace CompositeMethod
 

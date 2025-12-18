@@ -20,24 +20,6 @@ void readInterpolated3D(cv::Mat_<uint16_t> &out, z5::Dataset *ds, const cv::Mat_
 void readArea3D(xt::xtensor<uint8_t,3,xt::layout_type::column_major> &out, const cv::Vec3i& offset, z5::Dataset *ds, ChunkCache<uint8_t> *cache);
 void readArea3D(xt::xtensor<uint16_t,3,xt::layout_type::column_major> &out, const cv::Vec3i& offset, z5::Dataset *ds, ChunkCache<uint16_t> *cache);
 
-// CompositeParams is now defined in Compositing.hpp
-
-// Multi-layer sampling with compositing - reads all layers in a single pass
-// baseCoords: 3D world coordinates for z=0 layer
-// normals: surface normals at each point (layer offset is applied along normal direction)
-// zStep: distance per layer along normal (in dataset coordinates)
-void readInterpolated3DComposite(
-    cv::Mat_<uint8_t>& out,
-    z5::Dataset* ds,
-    const cv::Mat_<cv::Vec3f>& baseCoords,
-    const cv::Mat_<cv::Vec3f>& normals,
-    float zStep,
-    int zStart, int zEnd,
-    const CompositeParams& params,
-    ChunkCache<uint8_t>* cache,
-    bool nearestNeighbor = false
-);
-
 // Fast composite rendering cache - holds chunks needed for composite rendering
 // without mutex overhead. Designed for single-threaded composite rendering.
 class FastCompositeCache {

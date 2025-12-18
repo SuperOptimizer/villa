@@ -1890,6 +1890,7 @@ void CWindow::CreateWidgets(void)
             case 1: method = "mean"; break;
             case 2: method = "min"; break;
             case 3: method = "alpha"; break;
+            case 4: method = "beerLambert"; break;
         }
 
         if (auto* viewer = segmentationViewer()) {
@@ -1974,6 +1975,27 @@ void CWindow::CreateWidgets(void)
         }
     });
 
+    // Connect Beer-Lambert Extinction control
+    connect(ui.spinBLExtinction, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
+        if (auto* viewer = segmentationViewer()) {
+            viewer->setCompositeBLExtinction(static_cast<float>(value));
+        }
+    });
+
+    // Connect Beer-Lambert Emission control
+    connect(ui.spinBLEmission, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
+        if (auto* viewer = segmentationViewer()) {
+            viewer->setCompositeBLEmission(static_cast<float>(value));
+        }
+    });
+
+    // Connect Beer-Lambert Ambient control
+    connect(ui.spinBLAmbient, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
+        if (auto* viewer = segmentationViewer()) {
+            viewer->setCompositeBLAmbient(static_cast<float>(value));
+        }
+    });
+
     // Connect ISO Cutoff slider - applies to all viewers (segmentation, XY, XZ, YZ)
     connect(ui.sliderIsoCutoff, &QSlider::valueChanged, this, [this](int value) {
         ui.lblIsoCutoffValue->setText(QString::number(value));
@@ -2017,6 +2039,15 @@ void CWindow::CreateWidgets(void)
         ui.spinAlphaThreshold->setVisible(showAlphaParams);
         ui.lblMaterial->setVisible(showAlphaParams);
         ui.spinMaterial->setVisible(showAlphaParams);
+
+        // Beer-Lambert parameters (row 7, 8 - Extinction/Emission, Ambient)
+        bool showBLParams = (methodIndex == 4); // Beer-Lambert method
+        ui.lblBLExtinction->setVisible(showBLParams);
+        ui.spinBLExtinction->setVisible(showBLParams);
+        ui.lblBLEmission->setVisible(showBLParams);
+        ui.spinBLEmission->setVisible(showBLParams);
+        ui.lblBLAmbient->setVisible(showBLParams);
+        ui.spinBLAmbient->setVisible(showBLParams);
 
         // No methods currently use scale or param sliders
         ui.lblMethodScale->setVisible(false);
@@ -3029,44 +3060,6 @@ void CWindow::onResetAxisAlignedRotations()
         _planeSlicingOverlay->refreshAll();
     }
     statusBar()->showMessage(tr("All plane rotations reset"), 2000);
-}
-
-std::string CWindow::focusedPlaneName() const
-{
-    if (!_viewerManager) {
-        return "";
-    }
-
-    // Find the active/focused viewer and return its surface name if it's a plane
-    QWidget* focused = QApplication::focusWidget();
-    if (!focused) {
-        return "";
-    }
-
-    std::string result;
-    _viewerManager->forEachViewer([&](CVolumeViewer* viewer) {
-        if (!viewer || !result.empty()) {
-            return;
-        }
-        // Check if this viewer or any of its children has focus
-        if (viewer->isAncestorOf(focused) || viewer == focused ||
-            (viewer->fGraphicsView && (viewer->fGraphicsView == focused ||
-                                        viewer->fGraphicsView->isAncestorOf(focused)))) {
-            const std::string& name = viewer->surfName();
-            // Only return plane surface names
-            if (name == "xy plane" || name == "seg xz" || name == "seg yz" ||
-                name == "xz plane" || name == "yz plane") {
-                result = name;
-            }
-        }
-    });
-
-    // If no viewer is focused, default to XY plane since it's the most common
-    if (result.empty()) {
-        result = "xy plane";
-    }
-
-    return result;
 }
 
 void CWindow::onAxisOverlayVisibilityToggled(bool enabled)

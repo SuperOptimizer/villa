@@ -567,6 +567,11 @@
            <string>Alpha</string>
           </property>
          </item>
+         <item>
+          <property name="text">
+           <string>Beer-Lambert</string>
+          </property>
+         </item>
         </widget>
        </item>
       </layout>
@@ -772,6 +777,75 @@
          </property>
          <property name="alignment">
           <set>Qt::AlignRight|Qt::AlignVCenter</set>
+         </property>
+        </widget>
+       </item>
+       <item row="7" column="0">
+        <widget class="QLabel" name="lblBLExtinction">
+         <property name="text">
+          <string>Extinction</string>
+         </property>
+        </widget>
+       </item>
+       <item row="7" column="1">
+        <widget class="QDoubleSpinBox" name="spinBLExtinction">
+         <property name="minimum">
+          <double>0.000000000000000</double>
+         </property>
+         <property name="maximum">
+          <double>10.000000000000000</double>
+         </property>
+         <property name="singleStep">
+          <double>0.100000000000000</double>
+         </property>
+         <property name="value">
+          <double>1.500000000000000</double>
+         </property>
+        </widget>
+       </item>
+       <item row="7" column="2">
+        <widget class="QLabel" name="lblBLEmission">
+         <property name="text">
+          <string>Emission</string>
+         </property>
+        </widget>
+       </item>
+       <item row="7" column="3">
+        <widget class="QDoubleSpinBox" name="spinBLEmission">
+         <property name="minimum">
+          <double>0.000000000000000</double>
+         </property>
+         <property name="maximum">
+          <double>10.000000000000000</double>
+         </property>
+         <property name="singleStep">
+          <double>0.100000000000000</double>
+         </property>
+         <property name="value">
+          <double>1.500000000000000</double>
+         </property>
+        </widget>
+       </item>
+       <item row="8" column="0">
+        <widget class="QLabel" name="lblBLAmbient">
+         <property name="text">
+          <string>Ambient</string>
+         </property>
+        </widget>
+       </item>
+       <item row="8" column="1">
+        <widget class="QDoubleSpinBox" name="spinBLAmbient">
+         <property name="minimum">
+          <double>0.000000000000000</double>
+         </property>
+         <property name="maximum">
+          <double>1.000000000000000</double>
+         </property>
+         <property name="singleStep">
+          <double>0.050000000000000</double>
+         </property>
+         <property name="value">
+          <double>0.100000000000000</double>
          </property>
         </widget>
        </item>

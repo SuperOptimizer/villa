@@ -68,6 +68,56 @@ float alpha(const LayerStack& stack, const CompositeParams& params)
     return valueAcc * 255.0f;
 }
 
+float beerLambert(const LayerStack& stack, const CompositeParams& params)
+{
+    // Beer-Lambert volume rendering with emission
+    // - Each voxel emits light proportional to its density (bright = visible)
+    // - Each voxel absorbs light based on density (creates depth effect)
+    // - Front-to-back compositing: front layers partially occlude back layers
+
+    if (stack.validCount == 0) return 0.0f;
+
+    const float extinction = params.blExtinction;
+    const float emissionScale = params.blEmission;
+    const float ambient = params.blAmbient;
+
+    float transmittance = 1.0f;  // Light remaining (starts at full)
+    float accumulatedColor = 0.0f;  // Accumulated emitted light
+
+    // Front-to-back compositing (layer 0 is frontmost)
+    for (int i = 0; i < stack.validCount; i++) {
+        const float value = stack.values[i];
+        const float density = value / 255.0f;
+
+        if (density < 0.001f) {
+            continue;
+        }
+
+        // Emission: bright voxels emit light
+        const float emission = density * emissionScale;
+
+        // Beer-Lambert absorption
+        const float layerTransmittance = std::exp(-extinction * density);
+
+        // Add emission weighted by current transmittance (how much light can escape)
+        accumulatedColor += emission * transmittance * (1.0f - layerTransmittance);
+
+        // Update transmittance for next layer
+        transmittance *= layerTransmittance;
+
+        // Early termination if nearly opaque
+        if (transmittance < 0.001f) {
+            break;
+        }
+    }
+
+    // Add ambient light that made it through
+    accumulatedColor += ambient * transmittance;
+
+    // Scale to 0-255 range
+    return std::min(255.0f, accumulatedColor * 255.0f);
+}
+
 } // namespace CompositeMethod
 
 float compositeLayerStack(
@@ -86,6 +136,8 @@ float compositeLayerStack(
         return CompositeMethod::min(stack);
     } else if (method == "alpha") {
         return CompositeMethod::alpha(stack, params);
+    } else if (method == "beerLambert") {
+        return CompositeMethod::beerLambert(stack, params);
     }
 
     // Default to mean
@@ -106,6 +158,7 @@ std::vector<std::string> availableCompositeMethods()
         "mean",
         "max",
         "min",
-        "alpha"
+        "alpha",
+        "beerLambert"
     };
 }

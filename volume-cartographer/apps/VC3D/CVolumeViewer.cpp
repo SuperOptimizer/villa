@@ -1358,6 +1358,36 @@ void CVolumeViewer::setCompositeReverseDirection(bool reverse)
     }
 }
 
+void CVolumeViewer::setCompositeBLExtinction(float value)
+{
+    if (value != _composite_bl_extinction) {
+        _composite_bl_extinction = value;
+        if (_composite_enabled && _composite_method == "beerLambert") {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositeBLEmission(float value)
+{
+    if (value != _composite_bl_emission) {
+        _composite_bl_emission = value;
+        if (_composite_enabled && _composite_method == "beerLambert") {
+            renderVisible(true);
+        }
+    }
+}
+
+void CVolumeViewer::setCompositeBLAmbient(float value)
+{
+    if (value != _composite_bl_ambient) {
+        _composite_bl_ambient = value;
+        if (_composite_enabled && _composite_method == "beerLambert") {
+            renderVisible(true);
+        }
+    }
+}
+
 void CVolumeViewer::setIsoCutoff(int value)
 {
     value = std::clamp(value, 0, 255);
@@ -1403,7 +1433,7 @@ void CVolumeViewer::setCompositeMethod(const std::string& method)
 {
     // Validate method is one of the supported methods
     static const std::unordered_set<std::string> validMethods = {
-        "max", "mean", "min", "alpha"
+        "max", "mean", "min", "alpha", "beerLambert"
     };
 
     if (method != _composite_method && validMethods.count(method) > 0) {

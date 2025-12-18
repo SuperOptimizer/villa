@@ -66,6 +66,9 @@ public:
     void setCompositeAlphaThreshold(int value);
     void setCompositeMaterial(int value);
     void setCompositeReverseDirection(bool reverse);
+    void setCompositeBLExtinction(float value);
+    void setCompositeBLEmission(float value);
+    void setCompositeBLAmbient(float value);
     void setIsoCutoff(int value);
     void setResetViewOnSurfaceChange(bool reset);
 
@@ -287,6 +290,9 @@ protected:
     int _composite_alpha_threshold = 9950;
     int _composite_material = 230;
     bool _composite_reverse_direction = false;
+    float _composite_bl_extinction = 1.5f;
+    float _composite_bl_emission = 1.5f;
+    float _composite_bl_ambient = 0.1f;
     int _iso_cutoff = 0;
 
     // Plane composite view settings (for XY/XZ/YZ plane viewers)

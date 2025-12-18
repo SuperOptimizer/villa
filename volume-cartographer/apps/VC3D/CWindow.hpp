@@ -265,8 +265,6 @@ private:
     QShortcut* fWorldOffsetZPosShortcut;  // Ctrl+. (further/deeper)
     QShortcut* fWorldOffsetZNegShortcut;  // Ctrl+, (closer)
 
-    std::string focusedPlaneName() const;
-
     void applySlicePlaneOrientation(Surface* sourceOverride = nullptr);
     void updateAxisAlignedSliceInteraction();
     float currentAxisAlignedRotationDegrees(const std::string& surfaceName) const;

@@ -169,6 +169,9 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
     params.alphaMax = _composite_alpha_max / 255.0f;
     params.alphaOpacity = _composite_material / 255.0f;
     params.alphaCutoff = _composite_alpha_threshold / 10000.0f;
+    params.blExtinction = _composite_bl_extinction;
+    params.blEmission = _composite_bl_emission;
+    params.blAmbient = _composite_bl_ambient;
     params.isoCutoff = static_cast<uint8_t>(_iso_cutoff);
 
     // Always use fast path (nearest neighbor, no mutex, specialized cache)
@@ -626,6 +629,9 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite_plane(const cv::Rect &roi, con
     params.alphaMax = _composite_alpha_max / 255.0f;
     params.alphaOpacity = _composite_material / 255.0f;
     params.alphaCutoff = _composite_alpha_threshold / 10000.0f;
+    params.blExtinction = _composite_bl_extinction;
+    params.blEmission = _composite_bl_emission;
+    params.blAmbient = _composite_bl_ambient;
     params.isoCutoff = static_cast<uint8_t>(_iso_cutoff);
 
     // Always use fast path with constant normal (nearest neighbor, no mutex)
