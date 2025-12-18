@@ -330,16 +330,6 @@ constexpr float kEpsilon = 1e-6f;
 constexpr float kDegToRad = static_cast<float>(CV_PI / 180.0);
 constexpr int kAxisAlignedRotationApplyDelayMs = 25;
 
-int axisAlignedRotationCacheKey(float degrees)
-{
-    int key = static_cast<int>(std::lround(degrees));
-    key %= 360;
-    if (key < 0) {
-        key += 360;
-    }
-    return key;
-}
-
 cv::Vec3f rotateAroundZ(const cv::Vec3f& v, float radians)
 {
     const float c = std::cos(radians);
@@ -3034,41 +3024,11 @@ void CWindow::onResetAxisAlignedRotations()
     _axisAlignedSegXZRotationDeg = 0.0f;
     _axisAlignedSegYZRotationDeg = 0.0f;
     _axisAlignedSliceDrags.clear();
-    resetAllPlaneRotations();
     applySlicePlaneOrientation();
     if (_planeSlicingOverlay) {
         _planeSlicingOverlay->refreshAll();
     }
     statusBar()->showMessage(tr("All plane rotations reset"), 2000);
-}
-
-CWindow::PlaneRotation& CWindow::planeRotation(const std::string& planeName)
-{
-    return _planeRotations[planeName];
-}
-
-void CWindow::adjustPlaneRotation(const std::string& planeName, float deltaPitch, float deltaYaw, float deltaRoll)
-{
-    auto& rot = _planeRotations[planeName];
-    rot.pitch = normalizeDegrees(rot.pitch + deltaPitch);
-    rot.yaw = normalizeDegrees(rot.yaw + deltaYaw);
-    rot.roll = normalizeDegrees(rot.roll + deltaRoll);
-
-    // Show feedback in status bar
-    statusBar()->showMessage(
-        tr("%1: pitch=%2 yaw=%3 roll=%4")
-            .arg(QString::fromStdString(planeName))
-            .arg(rot.pitch, 0, 'f', 1)
-            .arg(rot.yaw, 0, 'f', 1)
-            .arg(rot.roll, 0, 'f', 1),
-        2000);
-
-    scheduleAxisAlignedOrientationUpdate();
-}
-
-void CWindow::resetAllPlaneRotations()
-{
-    _planeRotations.clear();
 }
 
 std::string CWindow::focusedPlaneName() const
@@ -3106,44 +3066,6 @@ std::string CWindow::focusedPlaneName() const
         result = "xy plane";
     }
 
-    return result;
-}
-
-cv::Vec3f CWindow::applyEulerRotation(const cv::Vec3f& baseNormal, const PlaneRotation& rot) const
-{
-    if (rot.isIdentity()) {
-        return baseNormal;
-    }
-
-    // Apply rotations in order: yaw (Z), pitch (X), roll (Y)
-    // Convert degrees to radians
-    const float yawRad = rot.yaw * static_cast<float>(CV_PI / 180.0);
-    const float pitchRad = rot.pitch * static_cast<float>(CV_PI / 180.0);
-    const float rollRad = rot.roll * static_cast<float>(CV_PI / 180.0);
-
-    // Build rotation matrices
-    const float cy = std::cos(yawRad), sy = std::sin(yawRad);
-    const float cp = std::cos(pitchRad), sp = std::sin(pitchRad);
-    const float cr = std::cos(rollRad), sr = std::sin(rollRad);
-
-    // Combined rotation matrix: R = Rz(yaw) * Rx(pitch) * Ry(roll)
-    // This gives intuitive behavior where yaw rotates in the XY plane
-    cv::Matx33f Rz(cy, -sy, 0,
-                   sy,  cy, 0,
-                    0,   0, 1);
-
-    cv::Matx33f Rx(1,  0,   0,
-                   0, cp, -sp,
-                   0, sp,  cp);
-
-    cv::Matx33f Ry( cr, 0, sr,
-                     0, 1,  0,
-                   -sr, 0, cr);
-
-    cv::Matx33f R = Rz * Rx * Ry;
-
-    cv::Vec3f result = R * baseNormal;
-    cv::normalize(result, result);
     return result;
 }
 
@@ -3595,26 +3517,10 @@ void CWindow::applySlicePlaneOrientation(Surface* sourceOverride)
     POI *focus = _surf_col->poi("focus");
     cv::Vec3f origin = focus ? focus->p : cv::Vec3f(0, 0, 0);
 
-    // Helper to compute a cache key from Euler rotation + legacy yaw
-    const auto computeRotationCacheKey = [&](const std::string& planeName, float legacyYawDeg) -> int {
-        const PlaneRotation& rot = _planeRotations[planeName];
-        if (!rot.isIdentity()) {
-            // Combine all three Euler angles into a single key
-            // Quantize to 1 degree precision to allow some cache hits
-            int pitchKey = static_cast<int>(std::round(rot.pitch)) & 0x1FF;  // 9 bits (-180 to 180)
-            int yawKey = static_cast<int>(std::round(rot.yaw)) & 0x1FF;      // 9 bits
-            int rollKey = static_cast<int>(std::round(rot.roll)) & 0x1FF;    // 9 bits
-            return (pitchKey << 18) | (yawKey << 9) | rollKey;
-        } else if (std::abs(legacyYawDeg) > 0.001f) {
-            return axisAlignedRotationCacheKey(legacyYawDeg);
-        }
-        return 0;
-    };
-
-    // Helper to configure a plane with Euler rotation
-    const auto configurePlaneWithEuler = [&](const std::string& planeName,
-                                              const cv::Vec3f& baseNormal,
-                                              float legacyYawDeg = 0.0f) {
+    // Helper to configure a plane with optional yaw rotation
+    const auto configurePlane = [&](const std::string& planeName,
+                                    const cv::Vec3f& baseNormal,
+                                    float yawDeg = 0.0f) {
         auto planeShared = std::dynamic_pointer_cast<PlaneSurface>(_surf_col->surface(planeName));
         if (!planeShared) {
             planeShared = std::make_shared<PlaneSurface>();
@@ -3623,16 +3529,10 @@ void CWindow::applySlicePlaneOrientation(Surface* sourceOverride)
         planeShared->setOrigin(origin);
         planeShared->setInPlaneRotation(0.0f);
 
-        // Get Euler rotation for this plane
-        const PlaneRotation& rot = _planeRotations[planeName];
-
-        // Apply Euler rotation if any rotation is set
+        // Apply yaw rotation if set
         cv::Vec3f rotatedNormal;
-        if (!rot.isIdentity()) {
-            rotatedNormal = applyEulerRotation(baseNormal, rot);
-        } else if (std::abs(legacyYawDeg) > 0.001f) {
-            // Fall back to legacy yaw-only rotation for backwards compatibility
-            const float radians = legacyYawDeg * kDegToRad;
+        if (std::abs(yawDeg) > 0.001f) {
+            const float radians = yawDeg * kDegToRad;
             rotatedNormal = rotateAroundZ(baseNormal, radians);
         } else {
             rotatedNormal = baseNormal;
@@ -3655,19 +3555,16 @@ void CWindow::applySlicePlaneOrientation(Surface* sourceOverride)
             planeShared->setInPlaneRotation(0.0f);
         }
 
-        // Set cache key based on rotation state
-        planeShared->setAxisAlignedRotationKey(computeRotationCacheKey(planeName, legacyYawDeg));
-
         _surf_col->setSurface(planeName, planeShared);
         return planeShared;
     };
 
-    // Always update the XY plane with Euler rotations
-    auto xyPlane = configurePlaneWithEuler("xy plane", cv::Vec3f(0.0f, 0.0f, 1.0f));
+    // Always update the XY plane
+    auto xyPlane = configurePlane("xy plane", cv::Vec3f(0.0f, 0.0f, 1.0f));
 
     if (_useAxisAlignedSlices) {
-        auto segXZShared = configurePlaneWithEuler("seg xz", cv::Vec3f(0.0f, 1.0f, 0.0f), _axisAlignedSegXZRotationDeg);
-        auto segYZShared = configurePlaneWithEuler("seg yz", cv::Vec3f(1.0f, 0.0f, 0.0f), _axisAlignedSegYZRotationDeg);
+        auto segXZShared = configurePlane("seg xz", cv::Vec3f(0.0f, 1.0f, 0.0f), _axisAlignedSegXZRotationDeg);
+        auto segYZShared = configurePlane("seg yz", cv::Vec3f(1.0f, 0.0f, 0.0f), _axisAlignedSegYZRotationDeg);
 
         if (_planeSlicingOverlay) {
             _planeSlicingOverlay->refreshAll();
@@ -3709,8 +3606,6 @@ void CWindow::applySlicePlaneOrientation(Surface* sourceOverride)
         segYZShared->setNormal(yDir - origin);
         segXZShared->setInPlaneRotation(0.0f);
         segYZShared->setInPlaneRotation(0.0f);
-        segXZShared->setAxisAlignedRotationKey(-1);
-        segYZShared->setAxisAlignedRotationKey(-1);
 
         _surf_col->setSurface("seg xz", segXZShared);
         _surf_col->setSurface("seg yz", segYZShared);
