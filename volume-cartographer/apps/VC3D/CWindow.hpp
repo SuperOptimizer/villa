@@ -257,19 +257,13 @@ private:
     QShortcut* fCompositeViewShortcut;
     QShortcut* fDirectionHintsShortcut;
     QShortcut* fAxisAlignedSlicesShortcut;
-    QShortcut* fZStepUpShortcut;
-    QShortcut* fZStepDownShortcut;
     QShortcut* fZoomInShortcut;
     QShortcut* fZoomOutShortcut;
     QShortcut* fResetViewShortcut;
 
-    // Plane rotation shortcuts (pitch/yaw/roll)
-    QShortcut* fPlanePitchUpShortcut;
-    QShortcut* fPlanePitchDownShortcut;
-    QShortcut* fPlaneYawLeftShortcut;
-    QShortcut* fPlaneYawRightShortcut;
-    QShortcut* fPlaneRollCWShortcut;
-    QShortcut* fPlaneRollCCWShortcut;
+    // Z offset shortcuts (Ctrl+,/. for normal direction)
+    QShortcut* fWorldOffsetZPosShortcut;  // Ctrl+. (further/deeper)
+    QShortcut* fWorldOffsetZNegShortcut;  // Ctrl+, (closer)
 
     std::string focusedPlaneName() const;
 

@@ -697,62 +697,33 @@ CWindow::CWindow() :
         }
     });
 
-    // Z-step shortcuts (Ctrl+Up/Down for single-step Z navigation)
-    fZStepUpShortcut = new QShortcut(QKeySequence("Ctrl+Up"), this);
-    fZStepUpShortcut->setContext(Qt::ApplicationShortcut);
-    connect(fZStepUpShortcut, &QShortcut::activated, [this]() {
-        if (!_viewerManager) {
-            return;
-        }
-        _viewerManager->forEachViewer([](CVolumeViewer* viewer) {
-            if (viewer) {
-                viewer->onZoom(1, QPointF(0, 0), Qt::ShiftModifier);
-            }
-        });
-    });
-
-    fZStepDownShortcut = new QShortcut(QKeySequence("Ctrl+Down"), this);
-    fZStepDownShortcut->setContext(Qt::ApplicationShortcut);
-    connect(fZStepDownShortcut, &QShortcut::activated, [this]() {
-        if (!_viewerManager) {
-            return;
-        }
-        _viewerManager->forEachViewer([](CVolumeViewer* viewer) {
-            if (viewer) {
-                viewer->onZoom(-1, QPointF(0, 0), Qt::ShiftModifier);
-            }
-        });
-    });
-
-    // Zoom shortcuts (Ctrl+Shift+Up/Down for 0.25x zoom steps)
-    fZoomInShortcut = new QShortcut(QKeySequence("Ctrl+Shift+Up"), this);
+    // Zoom shortcuts (Shift+= for zoom in, Shift+- for zoom out)
+    // Use 15% steps for smooth, proportional zooming - only affects active viewer
+    constexpr float ZOOM_FACTOR = 1.15f;
+    fZoomInShortcut = new QShortcut(QKeySequence("Shift+="), this);
     fZoomInShortcut->setContext(Qt::ApplicationShortcut);
     connect(fZoomInShortcut, &QShortcut::activated, [this]() {
-        if (!_viewerManager) {
-            return;
-        }
-        _viewerManager->forEachViewer([](CVolumeViewer* viewer) {
-            if (viewer) {
-                viewer->adjustZoomByIncrement(0.25f);
+        if (!mdiArea) return;
+        if (auto* subWindow = mdiArea->activeSubWindow()) {
+            if (auto* viewer = qobject_cast<CVolumeViewer*>(subWindow->widget())) {
+                viewer->adjustZoomByFactor(ZOOM_FACTOR);
             }
-        });
+        }
     });
 
-    fZoomOutShortcut = new QShortcut(QKeySequence("Ctrl+Shift+Down"), this);
+    fZoomOutShortcut = new QShortcut(QKeySequence("Shift+-"), this);
     fZoomOutShortcut->setContext(Qt::ApplicationShortcut);
     connect(fZoomOutShortcut, &QShortcut::activated, [this]() {
-        if (!_viewerManager) {
-            return;
-        }
-        _viewerManager->forEachViewer([](CVolumeViewer* viewer) {
-            if (viewer) {
-                viewer->adjustZoomByIncrement(-0.25f);
+        if (!mdiArea) return;
+        if (auto* subWindow = mdiArea->activeSubWindow()) {
+            if (auto* viewer = qobject_cast<CVolumeViewer*>(subWindow->widget())) {
+                viewer->adjustZoomByFactor(1.0f / ZOOM_FACTOR);
             }
-        });
+        }
     });
 
-    // Reset view shortcut (Ctrl+0 to fit surface in view)
-    fResetViewShortcut = new QShortcut(QKeySequence("Ctrl+0"), this);
+    // Reset view shortcut (m to fit surface in view and reset all offsets)
+    fResetViewShortcut = new QShortcut(QKeySequence("m"), this);
     fResetViewShortcut->setContext(Qt::ApplicationShortcut);
     connect(fResetViewShortcut, &QShortcut::activated, [this]() {
         if (!_viewerManager) {
@@ -760,68 +731,30 @@ CWindow::CWindow() :
         }
         _viewerManager->forEachViewer([](CVolumeViewer* viewer) {
             if (viewer) {
+                viewer->resetSurfaceOffsets();
                 viewer->fitSurfaceInView();
                 viewer->renderVisible(true);
             }
         });
     });
 
-    // Plane rotation shortcuts
-    // Alt+Arrow keys for pitch/yaw, Alt+,/. for roll (5 degree increments)
-    constexpr float kRotationStep = 5.0f;
-
-    fPlanePitchUpShortcut = new QShortcut(QKeySequence("Alt+Up"), this);
-    fPlanePitchUpShortcut->setContext(Qt::ApplicationShortcut);
-    connect(fPlanePitchUpShortcut, &QShortcut::activated, [this]() {
-        std::string plane = focusedPlaneName();
-        if (!plane.empty()) {
-            adjustPlaneRotation(plane, 5.0f, 0, 0);  // pitch up
-        }
+    // Z offset: Ctrl+. = +Z (further/deeper), Ctrl+, = -Z (closer)
+    fWorldOffsetZPosShortcut = new QShortcut(QKeySequence("Ctrl+."), this);
+    fWorldOffsetZPosShortcut->setContext(Qt::ApplicationShortcut);
+    connect(fWorldOffsetZPosShortcut, &QShortcut::activated, [this]() {
+        if (!_viewerManager) return;
+        _viewerManager->forEachViewer([](CVolumeViewer* viewer) {
+            if (viewer) viewer->adjustSurfaceOffset(1.0f);
+        });
     });
 
-    fPlanePitchDownShortcut = new QShortcut(QKeySequence("Alt+Down"), this);
-    fPlanePitchDownShortcut->setContext(Qt::ApplicationShortcut);
-    connect(fPlanePitchDownShortcut, &QShortcut::activated, [this]() {
-        std::string plane = focusedPlaneName();
-        if (!plane.empty()) {
-            adjustPlaneRotation(plane, -5.0f, 0, 0);  // pitch down
-        }
-    });
-
-    fPlaneYawLeftShortcut = new QShortcut(QKeySequence("Alt+Left"), this);
-    fPlaneYawLeftShortcut->setContext(Qt::ApplicationShortcut);
-    connect(fPlaneYawLeftShortcut, &QShortcut::activated, [this]() {
-        std::string plane = focusedPlaneName();
-        if (!plane.empty()) {
-            adjustPlaneRotation(plane, 0, -5.0f, 0);  // yaw left
-        }
-    });
-
-    fPlaneYawRightShortcut = new QShortcut(QKeySequence("Alt+Right"), this);
-    fPlaneYawRightShortcut->setContext(Qt::ApplicationShortcut);
-    connect(fPlaneYawRightShortcut, &QShortcut::activated, [this]() {
-        std::string plane = focusedPlaneName();
-        if (!plane.empty()) {
-            adjustPlaneRotation(plane, 0, 5.0f, 0);  // yaw right
-        }
-    });
-
-    fPlaneRollCWShortcut = new QShortcut(QKeySequence("Alt+."), this);
-    fPlaneRollCWShortcut->setContext(Qt::ApplicationShortcut);
-    connect(fPlaneRollCWShortcut, &QShortcut::activated, [this]() {
-        std::string plane = focusedPlaneName();
-        if (!plane.empty()) {
-            adjustPlaneRotation(plane, 0, 0, 5.0f);  // roll clockwise
-        }
-    });
-
-    fPlaneRollCCWShortcut = new QShortcut(QKeySequence("Alt+,"), this);
-    fPlaneRollCCWShortcut->setContext(Qt::ApplicationShortcut);
-    connect(fPlaneRollCCWShortcut, &QShortcut::activated, [this]() {
-        std::string plane = focusedPlaneName();
-        if (!plane.empty()) {
-            adjustPlaneRotation(plane, 0, 0, -5.0f);  // roll counter-clockwise
-        }
+    fWorldOffsetZNegShortcut = new QShortcut(QKeySequence("Ctrl+,"), this);
+    fWorldOffsetZNegShortcut->setContext(Qt::ApplicationShortcut);
+    connect(fWorldOffsetZNegShortcut, &QShortcut::activated, [this]() {
+        if (!_viewerManager) return;
+        _viewerManager->forEachViewer([](CVolumeViewer* viewer) {
+            if (viewer) viewer->adjustSurfaceOffset(-1.0f);
+        });
     });
 
     connect(_surfacePanel.get(), &SurfacePanelController::moveToPathsRequested, this, &CWindow::onMoveSegmentToPaths);
@@ -1230,6 +1163,15 @@ void CWindow::CreateWidgets(void)
 
     mdiArea = new QMdiArea(ui.tabSegment);
     aWidgetLayout->addWidget(mdiArea);
+
+    // Ensure the viewer's graphics view gets focus when subwindow is activated
+    connect(mdiArea, &QMdiArea::subWindowActivated, [](QMdiSubWindow* subWindow) {
+        if (subWindow) {
+            if (auto* viewer = qobject_cast<CVolumeViewer*>(subWindow->widget())) {
+                viewer->fGraphicsView->setFocus();
+            }
+        }
+    });
 
     // newConnectedCVolumeViewer("manual plane", tr("Manual Plane"), mdiArea);
     newConnectedCVolumeViewer("seg xz", tr("Segmentation XZ"), mdiArea)->setIntersects({"segmentation"});
