@@ -321,9 +321,11 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
     }
 
     const float viewerScale = viewer->getCurrentScale();
+    const float arrowLengthScale = viewer->normalArrowLengthScale();
+    const int maxArrowsPerAxis = viewer->normalMaxArrows();
 
-    constexpr float kArrowLen = 50.0f;
-    // Colors: Blue = +U, Green = +V, Red = +Z (normal)
+    const float kArrowLen = 50.0f * arrowLengthScale;
+    // Colors: Blue = +U, Green = +V, Red = +Normal (left hand rule: V x U)
     const QColor kUColor(0, 100, 255);
     const QColor kVColor(0, 200, 0);
     const QColor kZColor(255, 50, 50);
@@ -349,9 +351,8 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
         const float centerOffsetX = (cols / 2.0f) * gridToSceneX;
         const float centerOffsetY = (rows / 2.0f) * gridToSceneY;
 
-        constexpr int kTargetSamplesPerAxis = 32;
-        const int strideR = std::max(1, rows / kTargetSamplesPerAxis);
-        const int strideC = std::max(1, cols / kTargetSamplesPerAxis);
+        const int strideR = std::max(1, rows / maxArrowsPerAxis);
+        const int strideC = std::max(1, cols / maxArrowsPerAxis);
 
         auto drawAxisArrow = [&](const QPointF& origin, const cv::Vec3f& dir3d, const QColor& color) {
             OverlayStyle style;
@@ -422,6 +423,8 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
                 }
 
                 if (hasU && hasV) {
+                    // Left-hand rule: U x V gives normal pointing toward viewer
+                    // (consistent with grid_normal in Geometry.cpp)
                     cv::Vec3f normal = tangentU.cross(tangentV);
                     float len = std::sqrt(normal.dot(normal));
                     if (len > 1e-6f) {
@@ -510,8 +513,8 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
 
     // Sample points along the surface, but only draw those close to the viewing plane
     // Walk in both U and V directions to find points that intersect this plane
-    constexpr int kMaxSamplesPerSide = 50;
-    constexpr int kMaxTotalSamples = 100;
+    const int kMaxSamplesPerSide = maxArrowsPerAxis;
+    const int kMaxTotalSamples = maxArrowsPerAxis * 3;
     constexpr float kPlaneDistThreshold = 3.0f;  // Only draw if within 3 voxels of plane
 
     const float sampleStep = stepVal * 2.0f;
@@ -562,6 +565,8 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
             }
 
             if (hasU && hasV) {
+                // Left-hand rule: U x V gives normal pointing toward viewer
+                // (consistent with grid_normal in Geometry.cpp)
                 cv::Vec3f normal = tangentU.cross(tangentV);
                 float len = std::sqrt(normal.dot(normal));
                 if (len > 1e-6f) {

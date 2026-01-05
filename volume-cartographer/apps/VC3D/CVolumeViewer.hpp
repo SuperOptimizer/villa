@@ -112,6 +112,14 @@ public:
     void setShowSurfaceNormals(bool on) { _showSurfaceNormals = on; updateAllOverlays(); }
     bool isShowSurfaceNormals() const { return _showSurfaceNormals; }
 
+    // Surface normals arrow length scale (1.0 = default)
+    void setNormalArrowLengthScale(float scale) { _normalArrowLengthScale = scale; updateAllOverlays(); }
+    float normalArrowLengthScale() const { return _normalArrowLengthScale; }
+
+    // Surface normals max arrows per axis
+    void setNormalMaxArrows(int maxArrows) { _normalMaxArrows = maxArrows; updateAllOverlays(); }
+    int normalMaxArrows() const { return _normalMaxArrows; }
+
     // Surface-relative offset controls (normal direction only)
     void adjustSurfaceOffset(float dn);
     void resetSurfaceOffsets();
@@ -366,6 +374,8 @@ protected:
     bool _resetViewOnSurfaceChange = true;
     bool _showDirectionHints = true;
     bool _showSurfaceNormals = false;
+    float _normalArrowLengthScale = 1.0f;
+    int _normalMaxArrows = 32;
     bool _segmentationEditActive = false;
     bool _suppressFocusRecentering = false;
 
