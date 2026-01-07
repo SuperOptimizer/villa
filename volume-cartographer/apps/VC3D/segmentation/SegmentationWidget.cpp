@@ -368,7 +368,7 @@ void SegmentationWidget::buildUi()
     auto* pushPullLabel = new QLabel(tr("Step"), pushParent);
     _spinPushPullStep = new QDoubleSpinBox(pushParent);
     _spinPushPullStep->setDecimals(2);
-    _spinPushPullStep->setRange(0.05, 10.0);
+    _spinPushPullStep->setRange(0.05, 40.0);
     _spinPushPullStep->setSingleStep(0.05);
     pushGrid->addWidget(pushPullLabel, 1, 0);
     pushGrid->addWidget(_spinPushPullStep, 1, 1);
@@ -728,6 +728,47 @@ void SegmentationWidget::buildUi()
     _groupCorrections->setLayout(correctionsLayout);
     layout->addWidget(_groupCorrections);
 
+    // Neural Tracer group
+    _groupNeuralTracer = new QGroupBox(tr("Neural Tracer"), this);
+    auto* neuralTracerLayout = new QVBoxLayout(_groupNeuralTracer);
+
+    _chkUseNeuralTracer = new QCheckBox(tr("Use Neural Tracer"), _groupNeuralTracer);
+    _chkUseNeuralTracer->setToolTip(tr("Enable neural network-based surface tracing during growth."));
+    neuralTracerLayout->addWidget(_chkUseNeuralTracer);
+
+    auto* checkpointRow = new QHBoxLayout();
+    auto* checkpointLabel = new QLabel(tr("Checkpoint:"), _groupNeuralTracer);
+    _neuralTracerCheckpointEdit = new QLineEdit(_groupNeuralTracer);
+    _neuralTracerCheckpointEdit->setToolTip(tr("Path to the neural tracer checkpoint file or directory."));
+    _neuralTracerCheckpointBrowse = new QToolButton(_groupNeuralTracer);
+    _neuralTracerCheckpointBrowse->setText(QStringLiteral("..."));
+    _neuralTracerCheckpointBrowse->setToolTip(tr("Browse for checkpoint file or directory."));
+    checkpointRow->addWidget(checkpointLabel);
+    checkpointRow->addWidget(_neuralTracerCheckpointEdit, 1);
+    checkpointRow->addWidget(_neuralTracerCheckpointBrowse);
+    neuralTracerLayout->addLayout(checkpointRow);
+
+    auto* scaleRow = new QHBoxLayout();
+    auto* scaleLabel = new QLabel(tr("Zarr scale:"), _groupNeuralTracer);
+    _comboNeuralTracerScale = new QComboBox(_groupNeuralTracer);
+    _comboNeuralTracerScale->setToolTip(tr("OME-Zarr pyramid level (0 = full resolution)."));
+    for (int scale = 0; scale <= 5; ++scale) {
+        _comboNeuralTracerScale->addItem(QString::number(scale), scale);
+    }
+    _comboNeuralTracerScale->setCurrentIndex(2);  // Default to scale 2
+    scaleRow->addWidget(scaleLabel);
+    scaleRow->addStretch(1);
+    scaleRow->addWidget(_comboNeuralTracerScale);
+    neuralTracerLayout->addLayout(scaleRow);
+
+    _lblNeuralTracerStatus = new QLabel(_groupNeuralTracer);
+    _lblNeuralTracerStatus->setWordWrap(true);
+    _lblNeuralTracerStatus->setVisible(false);
+    neuralTracerLayout->addWidget(_lblNeuralTracerStatus);
+
+    _groupNeuralTracer->setLayout(neuralTracerLayout);
+    layout->addWidget(_groupNeuralTracer);
+
     _groupCustomParams = new QGroupBox(tr("Custom Params"), this);
     auto* customParamsLayout = new QVBoxLayout(_groupCustomParams);
 
@@ -1043,6 +1084,40 @@ void SegmentationWidget::buildUi()
         handleCustomParamsEdited();
     });
 
+    // Neural tracer signal connections
+    connect(_chkUseNeuralTracer, &QCheckBox::toggled, this, [this](bool enabled) {
+        _useNeuralTracer = enabled;
+        if (!_restoringSettings) {
+            writeSetting(QStringLiteral("neural_tracer_enabled"), _useNeuralTracer);
+        }
+    });
+
+    connect(_neuralTracerCheckpointEdit, &QLineEdit::textChanged, this, [this](const QString& text) {
+        _neuralTracerCheckpoint = text.trimmed();
+        if (!_restoringSettings) {
+            writeSetting(QStringLiteral("neural_tracer_checkpoint"), _neuralTracerCheckpoint);
+        }
+    });
+
+    connect(_neuralTracerCheckpointBrowse, &QToolButton::clicked, this, [this]() {
+        const QString initial = _neuralTracerCheckpoint.isEmpty() ? QDir::homePath() : _neuralTracerCheckpoint;
+        const QString path = QFileDialog::getExistingDirectory(this, tr("Select neural tracer checkpoint"), initial);
+        if (path.isEmpty()) {
+            return;
+        }
+        _neuralTracerCheckpoint = path;
+        if (_neuralTracerCheckpointEdit) {
+            _neuralTracerCheckpointEdit->setText(path);
+        }
+    });
+
+    connect(_comboNeuralTracerScale, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        _neuralTracerScale = _comboNeuralTracerScale->itemData(index).toInt();
+        if (!_restoringSettings) {
+            writeSetting(QStringLiteral("neural_tracer_scale"), _neuralTracerScale);
+        }
+    });
+
     connect(_chkCorrectionsAnnotate, &QCheckBox::toggled, this, [this](bool enabled) {
         emit correctionsAnnotateToggled(enabled);
     });
@@ -1311,6 +1386,25 @@ void SegmentationWidget::syncUiState()
         _lblApprovalMaskOpacity->setText(QString::number(_approvalMaskOpacity) + QStringLiteral("%"));
     }
 
+    // Neural tracer UI
+    if (_chkUseNeuralTracer) {
+        const QSignalBlocker blocker(_chkUseNeuralTracer);
+        _chkUseNeuralTracer->setChecked(_useNeuralTracer);
+    }
+    if (_neuralTracerCheckpointEdit) {
+        if (_neuralTracerCheckpointEdit->text() != _neuralTracerCheckpoint) {
+            const QSignalBlocker blocker(_neuralTracerCheckpointEdit);
+            _neuralTracerCheckpointEdit->setText(_neuralTracerCheckpoint);
+        }
+    }
+    if (_comboNeuralTracerScale) {
+        const QSignalBlocker blocker(_comboNeuralTracerScale);
+        int idx = _comboNeuralTracerScale->findData(_neuralTracerScale);
+        if (idx >= 0) {
+            _comboNeuralTracerScale->setCurrentIndex(idx);
+        }
+    }
+
     updateGrowthUiState();
 }
 
@@ -1349,7 +1443,7 @@ void SegmentationWidget::restoreSettings()
     _pushPullSigmaSteps = std::clamp(_pushPullSigmaSteps, 0.05f, 64.0f);
 
     _pushPullStep = settings.value(segmentation::PUSH_PULL_STEP, _pushPullStep).toFloat();
-    _pushPullStep = std::clamp(_pushPullStep, 0.05f, 10.0f);
+    _pushPullStep = std::clamp(_pushPullStep, 0.05f, 40.0f);
 
     AlphaPushPullConfig storedAlpha = _alphaPushPullConfig;
     storedAlpha.start = settings.value(segmentation::PUSH_PULL_ALPHA_START, storedAlpha.start).toFloat();
@@ -1419,6 +1513,12 @@ void SegmentationWidget::restoreSettings()
     }
     _showApprovalMask = settings.value(segmentation::SHOW_APPROVAL_MASK, _showApprovalMask).toBool();
     // Don't restore edit states - user must explicitly enable editing each session
+
+    // Neural tracer settings
+    _useNeuralTracer = settings.value(QStringLiteral("neural_tracer_enabled"), _useNeuralTracer).toBool();
+    _neuralTracerCheckpoint = settings.value(QStringLiteral("neural_tracer_checkpoint"), _neuralTracerCheckpoint).toString();
+    _neuralTracerScale = settings.value(QStringLiteral("neural_tracer_scale"), _neuralTracerScale).toInt();
+    _neuralTracerScale = std::clamp(_neuralTracerScale, 0, 5);
 
     const bool editingExpanded = settings.value(segmentation::GROUP_EDITING_EXPANDED, segmentation::GROUP_EDITING_EXPANDED_DEFAULT).toBool();
     const bool dragExpanded = settings.value(segmentation::GROUP_DRAG_EXPANDED, segmentation::GROUP_DRAG_EXPANDED_DEFAULT).toBool();
@@ -1736,7 +1836,7 @@ void SegmentationWidget::setPushPullSigma(float value)
 
 void SegmentationWidget::setPushPullStep(float value)
 {
-    const float clamped = std::clamp(value, 0.05f, 10.0f);
+    const float clamped = std::clamp(value, 0.05f, 40.0f);
     if (std::fabs(clamped - _pushPullStep) < 1e-4f) {
         return;
     }
