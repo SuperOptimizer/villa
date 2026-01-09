@@ -76,10 +76,10 @@ else()
             GIT_REPOSITORY https://github.com/constantinpape/z5.git
             GIT_TAG        ee2081bb974fe0d0d702538400c31c38b09f1629
     )
-    # Prevent z5 from trying to find xtensor again (it's already found by the main project)
-    set(CMAKE_DISABLE_FIND_PACKAGE_xtensor ON)
+    # Tell z5 that xtensor is already found to avoid re-finding it
+    set(xtensor_FOUND TRUE)
+    set(xtensor_DIR "${xtensor_DIR}" CACHE PATH "xtensor directory")
     FetchContent_MakeAvailable(z5)
-    set(CMAKE_DISABLE_FIND_PACKAGE_xtensor OFF)
 endif()
 
 if (VC_BUILD_JSON)
