@@ -1,46 +1,8 @@
 # --- VC dependencies ----------------------------------------------------------
-include(FetchContent)
+list(PREPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
-option(VC_BUILD_JSON "Build in-source JSON library" OFF)
-option(VC_BUILD_Z5   "Build (vendor) z5 header-only library" ON)
-
-#find_package(CURL REQUIRED)
-#find_package(OpenSSL REQUIRED)
-#find_package(ZLIB REQUIRED)
-#find_package(glog REQUIRED)
-
-# Try a preinstalled z5 first, unless the user explicitly forces vendoring.
-if (VC_BUILD_Z5)
-    find_package(z5 CONFIG QUIET)
-    if (z5_FOUND)
-        message(STATUS "Using preinstalled z5 at: ${z5_DIR} (set VC_BUILD_Z5=OFF to force this; keep ON to try vendoring).")
-        set(VC_BUILD_Z5 OFF CACHE BOOL "" FORCE)
-    endif()
-endif()
-
-if (NOT VC_BUILD_Z5)
-    # Use a system / previously installed z5
-    find_package(z5 CONFIG REQUIRED)
-else()
-    # Vendoring path: fetch z5 and add it as a subdir.
-    # z5 defines options; set them in the cache *before* adding the subproject.
-    set(BUILD_Z5PY OFF CACHE BOOL "Disable Python bits for z5" FORCE)
-    set(WITH_BLOSC ON  CACHE BOOL "Enable Blosc in z5"        FORCE)
-
-    # On CMake ≥4, compatibility with <3.5 was removed. Setting this floor
-    # avoids errors if z5 asks for 3.1 in its CMakeLists.
-    if (NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
-        set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
-    endif()
-
-    # FetchContent: prefer MakeAvailable over deprecated Populate/add_subdirectory
-    FetchContent_Declare(
-        z5
-        GIT_REPOSITORY https://github.com/constantinpape/z5.git
-        GIT_TAG        ee2081bb974fe0d0d702538400c31c38b09f1629
-    )
-    FetchContent_MakeAvailable(z5)
-endif()
+# --- Blosc2 -------------------------------------------------------------------
+find_package(Blosc2 REQUIRED)
 
 # ---- Qt (apps / utils) -------------------------------------------------------
 find_package(Qt6 QUIET REQUIRED COMPONENTS Widgets Gui Core Network)
@@ -64,6 +26,17 @@ endif()
 # ---- Ceres -------------------------------------------------------------------
 find_package(Ceres REQUIRED)
 
+# ---- GKlib (required by METIS, which is a transitive dependency of Ceres) ----
+# METIS's CMake config doesn't properly export its GKlib dependency, so we need
+# to find and link it explicitly
+find_package(GKlib QUIET CONFIG HINTS ${CMAKE_PREFIX_PATH})
+if (TARGET GKlib::GKlib)
+    # Add GKlib to Ceres's interface libraries so any target linking Ceres gets GKlib
+    if (TARGET Ceres::ceres)
+        target_link_libraries(Ceres::ceres INTERFACE GKlib::GKlib)
+    endif()
+endif()
+
 # ---- Eigen -------------------------------------------------------------------
 find_package(Eigen3 3.3 REQUIRED)
 if (CMAKE_GENERATOR MATCHES "Ninja|.*Makefiles.*" AND "${CMAKE_BUILD_TYPE}" MATCHES "^$|Debug")
@@ -73,9 +46,9 @@ if (CMAKE_GENERATOR MATCHES "Ninja|.*Makefiles.*" AND "${CMAKE_BUILD_TYPE}" MATC
 endif()
 
 # ---- OpenCV ------------------------------------------------------------------
-find_package(OpenCV 3 QUIET)
+find_package(OpenCV 4 QUIET)
 if(NOT OpenCV_FOUND)
-    find_package(OpenCV 4 QUIET REQUIRED)
+    find_package(OpenCV 3 QUIET REQUIRED)
 endif()
 
 # ---- OpenMP ------------------------------------------------------------------
@@ -94,27 +67,20 @@ else()
     install(TARGETS openmp_stub EXPORT "${targets_export_name}")
 endif()
 
-# ---- xtensor/xsimd toggle used by your code ---------------------------------
+# ---- xtensor/xsimd -----------------------------------------------------------
 set(XTENSOR_USE_XSIMD 1)
+find_package(xtl REQUIRED)
+find_package(xsimd REQUIRED)
 find_package(xtensor REQUIRED)
+if (xtensor_INCLUDE_DIRS)
+    include_directories(SYSTEM ${xtensor_INCLUDE_DIRS})
+endif()
 
 # ---- nlohmann/json -----------------------------------------------------------
-if (VC_BUILD_JSON)
-    FetchContent_Declare(
-        json
-        DOWNLOAD_EXTRACT_TIMESTAMP ON
-        URL https://github.com/nlohmann/json/archive/v3.11.3.tar.gz
-    )
-    FetchContent_GetProperties(json)
-    if (NOT json_POPULATED)
-        set(JSON_BuildTests OFF CACHE INTERNAL "")
-        set(JSON_Install   ON  CACHE INTERNAL "")
-        FetchContent_Populate(json)
-        add_subdirectory(${json_SOURCE_DIR} ${json_BINARY_DIR} EXCLUDE_FROM_ALL)
-    endif()
-else()
-    find_package(nlohmann_json 3.9.1 REQUIRED)
-endif()
+find_package(nlohmann_json 3.9.1 REQUIRED)
+
+# --- z5 -----------------------------------------------------------------------
+find_package(z5 CONFIG REQUIRED)
 
 # ---- Boost (apps/utils only) -------------------------------------------------
 find_package(Boost 1.58 REQUIRED COMPONENTS program_options)
