@@ -1,5 +1,7 @@
 list(PREPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
+include(FetchContent)
+
 find_package(Blosc2 REQUIRED)
 find_package(Boost REQUIRED COMPONENTS program_options)
 find_package(Ceres REQUIRED)
