@@ -148,7 +148,7 @@ if(CCACHE_PROGRAM)
 endif()
 
 option(VC_BUILD_JSON "Build in-source JSON library" OFF)
-option(VC_BUILD_Z5   "Build (vendor) z5 header-only library" ON)
+option(VC_BUILD_Z5   "Build (vendor) z5 header-only library" OFF)
 
 option(VC_WITH_CUDA_SPARSE "use cudss" ON)
 if (VC_WITH_CUDA_SPARSE)
