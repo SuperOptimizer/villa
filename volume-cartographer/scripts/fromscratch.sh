@@ -51,12 +51,15 @@ export CC CXX
 ZLIB_VERSION="1.3.1"
 ZSTD_VERSION="1.5.6"
 LIBDEFLATE_VERSION="1.22"
+BZIP2_VERSION="1.0.8"
+BROTLI_VERSION="1.1.0"
 JPEG_VERSION="3.0.4"
 PNG_VERSION="1.6.44"
 # NOTE: WEBP removed - VC3D doesn't use WebP, disabled in OpenCV
 TIFF_VERSION="4.7.0"
 # NOTE: IMATH/OPENEXR removed - VC3D doesn't use OpenEXR, disabled in OpenCV
 OPENBLAS_VERSION="0.3.28"
+TBB_VERSION="2022.3.0"
 METIS_VERSION="5.2.1"
 SUITESPARSE_VERSION="7.8.3"
 EIGEN_VERSION="3.4.0"
@@ -200,6 +203,80 @@ build_zstd() {
 }
 
 #------------------------------------------------------------------------------
+# bzip2
+#------------------------------------------------------------------------------
+build_bzip2() {
+    is_done bzip2 && { log "bzip2 already built, skipping"; return; }
+    log "Building bzip2 $BZIP2_VERSION..."
+
+    download "https://sourceware.org/pub/bzip2/bzip2-$BZIP2_VERSION.tar.gz" \
+        "$SRCDIR/bzip2.tar.gz"
+    extract "$SRCDIR/bzip2.tar.gz" "$BUILDDIR/bzip2"
+
+    cd "$BUILDDIR/bzip2"
+
+    # bzip2 uses Makefile-libbz2_so for shared libraries
+    make -f Makefile-libbz2_so -j"$JOBS" \
+        CC="ccache clang" \
+        AR="llvm-ar" \
+        RANLIB="llvm-ranlib" \
+        CFLAGS="-O3 -march=native -fPIC -flto=thin -ffat-lto-objects"
+
+    # Install manually
+    mkdir -p "$PREFIX/lib" "$PREFIX/include" "$PREFIX/bin"
+    cp -a libbz2.so.1.0.8 "$PREFIX/lib/" 2>/dev/null || cp -a libbz2.so.1.0 "$PREFIX/lib/"
+
+    # Create symlinks
+    cd "$PREFIX/lib"
+    if [[ -f libbz2.so.1.0.8 ]]; then
+        ln -sf libbz2.so.1.0.8 libbz2.so.1.0
+    fi
+    ln -sf libbz2.so.1.0 libbz2.so
+
+    cd "$BUILDDIR/bzip2"
+    cp bzlib.h "$PREFIX/include/"
+
+    # Create pkg-config file
+    mkdir -p "$PREFIX/lib/pkgconfig"
+    cat > "$PREFIX/lib/pkgconfig/bzip2.pc" << EOF
+prefix=$PREFIX
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: bzip2
+Description: A high-quality data compression program
+Version: $BZIP2_VERSION
+Libs: -L\${libdir} -lbz2
+Cflags: -I\${includedir}
+EOF
+
+    mark_done bzip2
+}
+
+#------------------------------------------------------------------------------
+# brotli
+#------------------------------------------------------------------------------
+build_brotli() {
+    is_done brotli && { log "brotli already built, skipping"; return; }
+    log "Building brotli $BROTLI_VERSION..."
+
+    download "https://github.com/google/brotli/archive/refs/tags/v$BROTLI_VERSION.tar.gz" \
+        "$SRCDIR/brotli.tar.gz"
+    extract "$SRCDIR/brotli.tar.gz" "$BUILDDIR/brotli"
+
+    mkdir -p "$BUILDDIR/brotli/build"
+    cd "$BUILDDIR/brotli/build"
+    cmake .. -G Ninja "${CMAKE_COMMON[@]}" \
+        -DBROTLI_DISABLE_TESTS=ON \
+        -DBUILD_SHARED_LIBS=ON
+    ninja -j"$JOBS"
+    ninja install
+
+    mark_done brotli
+}
+
+#------------------------------------------------------------------------------
 # libdeflate - fast deflate/zlib/gzip compression (needed by OpenCV/libtiff)
 #------------------------------------------------------------------------------
 build_libdeflate() {
@@ -288,6 +365,7 @@ build_tiff() {
     cd "$BUILDDIR/tiff/build"
     # Disable webp and jpeg12 to avoid static linking issues with library ordering
     # Force HAVE_JPEGTURBO_DUAL_MODE_8_12 to FALSE to prevent tif_jpeg_12.c from being built
+    # Explicitly set all compression library paths to ensure our versions are used
     cmake .. -G Ninja "${CMAKE_COMMON[@]}" \
         -Dtiff-tools=OFF \
         -Dtiff-tests=OFF \
@@ -307,6 +385,8 @@ build_tiff() {
         -DZLIB_LIBRARY="$PREFIX/lib/libz.so" \
         -DDeflate_INCLUDE_DIR="$PREFIX/include" \
         -DDeflate_LIBRARY="$PREFIX/lib/libdeflate.so" \
+        -Dzstd_INCLUDE_DIR="$PREFIX/include" \
+        -Dzstd_LIBRARY="$PREFIX/lib/libzstd.so" \
         -DZSTD_INCLUDE_DIR="$PREFIX/include" \
         -DZSTD_LIBRARY="$PREFIX/lib/libzstd.so" \
         -DJPEG_INCLUDE_DIR="$PREFIX/include" \
@@ -315,6 +395,8 @@ build_tiff() {
         -DCMAKE_SKIP_RPATH=FALSE \
         -DCMAKE_INSTALL_RPATH="$PREFIX/lib" \
         -DCMAKE_BUILD_RPATH="$PREFIX/lib" \
+        -DCMAKE_BUILD_WITH_INSTALL_RPATH=FALSE \
+        -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=FALSE \
         -DCMAKE_LIBRARY_PATH="$PREFIX/lib"
     ninja -j"$JOBS"
     ninja install
@@ -326,7 +408,12 @@ include(CMakeFindDependencyMacro)
 # Find required dependencies
 find_dependency(ZLIB)
 find_dependency(JPEG)
-find_dependency(ZSTD)
+
+# Find zstd
+find_package(zstd QUIET CONFIG)
+if(NOT zstd_FOUND)
+    find_package(ZSTD QUIET)
+endif()
 
 # Find Deflate - use libdeflate config and create Deflate::Deflate alias
 find_package(libdeflate QUIET CONFIG)
@@ -427,6 +514,46 @@ build_openblas() {
     make PREFIX="$PREFIX" NO_SHARED=0 NO_STATIC=1 install
 
     mark_done openblas
+}
+
+#------------------------------------------------------------------------------
+# TBB (Threading Building Blocks)
+#------------------------------------------------------------------------------
+build_tbb() {
+    is_done tbb && { log "TBB already built, skipping"; return; }
+    log "Building TBB $TBB_VERSION..."
+
+    download "https://github.com/oneapi-src/oneTBB/archive/refs/tags/v$TBB_VERSION.tar.gz" \
+        "$SRCDIR/tbb.tar.gz"
+    extract "$SRCDIR/tbb.tar.gz" "$BUILDDIR/tbb"
+
+    mkdir -p "$BUILDDIR/tbb/build"
+    cd "$BUILDDIR/tbb/build"
+
+    # TBB has issues with lld + version scripts, so disable LTO and use regular linking
+    cmake .. -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+        -DCMAKE_PREFIX_PATH="$PREFIX" \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_AR="$(which llvm-ar)" \
+        -DCMAKE_RANLIB="$(which llvm-ranlib)" \
+        -DCMAKE_NM="$(which llvm-nm)" \
+        -DCMAKE_STRIP="$(which llvm-strip)" \
+        -DCMAKE_OBJDUMP="$(which llvm-objdump)" \
+        -DCMAKE_C_FLAGS="-O3 -march=native" \
+        -DCMAKE_CXX_FLAGS="-O3 -march=native" \
+        -DBUILD_SHARED_LIBS=ON \
+        -DTBB_TEST=OFF \
+        -DTBB_EXAMPLES=OFF \
+        -DTBB_STRICT=OFF
+    ninja -j"$JOBS"
+    ninja install
+
+    mark_done tbb
 }
 
 #------------------------------------------------------------------------------
@@ -944,20 +1071,25 @@ main() {
     log "PREFIX: $PREFIX"
     log ""
 
-    # Image format libraries
+    # Compression libraries (build first - needed by everything)
     build_zlib
     build_zstd
+    build_bzip2
+    build_brotli
     build_libdeflate
+
+    # Image format libraries
     build_jpeg
     build_png
     # NOTE: libwebp, imath, openexr removed - not needed by VC3D
     build_tiff
 
-    # Compression
+    # Data compression
     build_blosc2
 
     # Math libraries
     build_openblas
+    build_tbb
     build_metis
     build_suitesparse
     build_eigen
