@@ -70,16 +70,21 @@ else()
         set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
     endif()
 
-    # FetchContent: prefer MakeAvailable over deprecated Populate/add_subdirectory
+    # FetchContent: manually populate and patch z5 to avoid xtensor conflict
     FetchContent_Declare(
             z5
             GIT_REPOSITORY https://github.com/constantinpape/z5.git
             GIT_TAG        ee2081bb974fe0d0d702538400c31c38b09f1629
     )
-    # Tell z5 that xtensor is already found to avoid re-finding it
-    set(xtensor_FOUND TRUE)
-    set(xtensor_DIR "${xtensor_DIR}" CACHE PATH "xtensor directory")
-    FetchContent_MakeAvailable(z5)
+    FetchContent_GetProperties(z5)
+    if(NOT z5_POPULATED)
+        FetchContent_Populate(z5)
+        # Replace the find_package(xtensor) line in z5's CMakeLists.txt with a comment
+        file(READ "${z5_SOURCE_DIR}/CMakeLists.txt" z5_cmake_content)
+        string(REPLACE "find_package(xtensor REQUIRED)" "# find_package(xtensor REQUIRED) - already found by main project" z5_cmake_content "${z5_cmake_content}")
+        file(WRITE "${z5_SOURCE_DIR}/CMakeLists.txt" "${z5_cmake_content}")
+        add_subdirectory(${z5_SOURCE_DIR} ${z5_BINARY_DIR} EXCLUDE_FROM_ALL)
+    endif()
 endif()
 
 if (VC_BUILD_JSON)

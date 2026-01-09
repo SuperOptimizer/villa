@@ -120,6 +120,7 @@ RUN install -m 0755 ./flatboi /usr/local/bin/flatboi
 RUN mkdir -p /src/build
 WORKDIR /src/build
 RUN cmake -DVC_WITH_CUDA_SPARSE=off \
+          -DVC_BUILD_Z5=ON \
           -DCPACK_DEBIAN_PACKAGE_SHLIBDEPS=ON \
           -DCPACK_DEBIAN_PACKAGE_DEPENDS="" \
           -GNinja /src \
