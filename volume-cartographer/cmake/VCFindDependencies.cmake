@@ -4,9 +4,11 @@ include(FetchContent)
 
 find_package(Blosc2 REQUIRED)
 find_package(Boost REQUIRED COMPONENTS program_options)
+# GKlib is required by METIS (which is used by SuiteSparse/Ceres)
+find_package(GKlib REQUIRED)
 find_package(Ceres REQUIRED)
 find_package(Eigen3 REQUIRED)
-find_package(OpenCV QUIET)
+find_package(OpenCV REQUIRED)
 
 
 set(XTENSOR_USE_XSIMD 1)
@@ -14,7 +16,7 @@ find_package(xtl REQUIRED)
 find_package(xsimd REQUIRED)
 find_package(xtensor REQUIRED)
 
-find_package(Qt6 QUIET REQUIRED COMPONENTS Widgets Gui Core Network)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Gui Core Network)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)

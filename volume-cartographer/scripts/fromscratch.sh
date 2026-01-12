@@ -614,7 +614,8 @@ build_metis() {
         -DCMAKE_INSTALL_PREFIX="$PREFIX" \
         -DGKLIB_PATH="$PREFIX" \
         -DOPENMP=ON \
-        -DSHARED=ON
+        -DSHARED=ON \
+        -DCMAKE_SHARED_LINKER_FLAGS="-L$PREFIX/lib -lGKlib"
 
     # Build only the library target
     ninja -j"$JOBS" metis
