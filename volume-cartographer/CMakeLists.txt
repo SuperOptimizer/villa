@@ -12,6 +12,12 @@ endif()
 
 project(VC3D VERSION ${VC_VERSION})
 
+# Set RPATH to find custom-built dependencies
+set(CMAKE_INSTALL_RPATH "$ENV{HOME}/vc-dependencies/lib")
+set(CMAKE_BUILD_RPATH "$ENV{HOME}/vc-dependencies/lib")
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
+
 set(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin)
 set(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)

@@ -580,6 +580,12 @@ build_gklib() {
     ninja -j"$JOBS"
     ninja install
 
+    # Ensure development symlink exists (ninja install sometimes doesn't create it)
+    cd "$PREFIX/lib"
+    if [[ -f libGKlib.so.0.0.1 ]] && [[ ! -L libGKlib.so ]]; then
+        ln -sf libGKlib.so.0.0.1 libGKlib.so
+    fi
+
     mark_done gklib
 }
 
@@ -615,7 +621,9 @@ build_metis() {
         -DGKLIB_PATH="$PREFIX" \
         -DOPENMP=ON \
         -DSHARED=ON \
-        -DCMAKE_SHARED_LINKER_FLAGS="-L$PREFIX/lib -lGKlib"
+        -DCMAKE_SHARED_LINKER_FLAGS="-L$PREFIX/lib -lGKlib -Wl,-rpath,$PREFIX/lib" \
+        -DCMAKE_BUILD_RPATH="$PREFIX/lib" \
+        -DCMAKE_INSTALL_RPATH="$PREFIX/lib"
 
     # Build only the library target
     ninja -j"$JOBS" metis
@@ -625,6 +633,11 @@ build_metis() {
     cp libmetis/libmetis.so* "$PREFIX/lib/" 2>/dev/null || cp libmetis/libmetis.so "$PREFIX/lib/"
     # Use the generated header from xinclude (has proper IDXTYPEWIDTH/REALTYPEWIDTH defines)
     cp xinclude/metis.h "$PREFIX/include/"
+
+    # Fix RPATH in the installed library using patchelf if available
+    if command -v patchelf >/dev/null 2>&1; then
+        patchelf --set-rpath "$PREFIX/lib" "$PREFIX/lib/libmetis.so" || true
+    fi
 
     mark_done metis
 }
