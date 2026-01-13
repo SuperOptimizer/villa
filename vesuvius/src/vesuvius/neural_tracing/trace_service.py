@@ -34,7 +34,7 @@ def serve(checkpoint_path, volume_zarr, volume_scale, socket_path):
     sock.bind(str(socket_path))
     sock.listen(1)
 
-    print(f"neural-tracing service listening on {socket_path}")
+    print(f"neural-tracing service listening on {socket_path}", flush=True)
 
     try:
         while True:

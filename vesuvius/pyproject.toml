@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "vesuvius"
 dynamic = ["version"]
 readme = "README.md"
-requires-python = ">=3.9,<3.13"
+requires-python = ">=3.9,<3.14"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
