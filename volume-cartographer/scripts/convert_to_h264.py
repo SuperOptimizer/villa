@@ -359,22 +359,12 @@ def convert_ome_zarr(
 
         print(f"\nConverting level {level}:")
 
-        # For lower resolution levels, scale the chunk size proportionally
-        level_int = int(level)
-        if chunk_size is not None:
-            # Scale chunk size with resolution level
-            # Level 0 = full res, level 1 = 2x downsampled, etc.
-            level_chunk_size = max(16, chunk_size // (2 ** level_int))
-            # Ensure even
-            if level_chunk_size % 2 != 0:
-                level_chunk_size = level_chunk_size + 1
-        else:
-            level_chunk_size = None
-
+        # Use the same chunk size for all levels - the number of chunks will
+        # naturally decrease at higher levels since the array dimensions are smaller
         result = convert_array(
             src_array_path=src_array,
             dst_array_path=dst_array,
-            chunk_size=level_chunk_size if level_chunk_size else chunk_size,
+            chunk_size=chunk_size,
             qp=qp,
             threads=threads,
         )
