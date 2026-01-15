@@ -621,6 +621,68 @@ void SegmentationWidget::buildUi()
 
     layout->addWidget(_groupApprovalMask);
 
+    // Cell Reoptimization Group
+    _groupCellReopt = new CollapsibleSettingsGroup(tr("Cell Reoptimization"), this);
+    auto* cellReoptLayout = _groupCellReopt->contentLayout();
+    auto* cellReoptParent = _groupCellReopt->contentWidget();
+
+    // Enable mode checkbox
+    _chkCellReoptMode = new QCheckBox(tr("Enable Cell Reoptimization"), cellReoptParent);
+    _chkCellReoptMode->setToolTip(tr("Click on unapproved regions to flood fill and place correction points.\n"
+                                      "Requires approval mask to be visible."));
+    cellReoptLayout->addWidget(_chkCellReoptMode);
+
+    // Max flood cells
+    auto* maxStepsRow = new QHBoxLayout();
+    maxStepsRow->setSpacing(8);
+    auto* maxStepsLabel = new QLabel(tr("Max Flood Cells:"), cellReoptParent);
+    _spinCellReoptMaxSteps = new QSpinBox(cellReoptParent);
+    _spinCellReoptMaxSteps->setRange(10, 10000);
+    _spinCellReoptMaxSteps->setValue(_cellReoptMaxSteps);
+    _spinCellReoptMaxSteps->setToolTip(tr("Maximum number of cells to include in the flood fill."));
+    maxStepsRow->addWidget(maxStepsLabel);
+    maxStepsRow->addWidget(_spinCellReoptMaxSteps);
+    maxStepsRow->addStretch(1);
+    cellReoptLayout->addLayout(maxStepsRow);
+
+    // Max correction points
+    auto* maxPointsRow = new QHBoxLayout();
+    maxPointsRow->setSpacing(8);
+    auto* maxPointsLabel = new QLabel(tr("Max Points:"), cellReoptParent);
+    _spinCellReoptMaxPoints = new QSpinBox(cellReoptParent);
+    _spinCellReoptMaxPoints->setRange(3, 200);
+    _spinCellReoptMaxPoints->setValue(_cellReoptMaxPoints);
+    _spinCellReoptMaxPoints->setToolTip(tr("Maximum number of correction points to place on the boundary."));
+    maxPointsRow->addWidget(maxPointsLabel);
+    maxPointsRow->addWidget(_spinCellReoptMaxPoints);
+    maxPointsRow->addStretch(1);
+    cellReoptLayout->addLayout(maxPointsRow);
+
+    // Min point spacing
+    auto* minSpacingRow = new QHBoxLayout();
+    minSpacingRow->setSpacing(8);
+    auto* minSpacingLabel = new QLabel(tr("Min Spacing:"), cellReoptParent);
+    _spinCellReoptMinSpacing = new QDoubleSpinBox(cellReoptParent);
+    _spinCellReoptMinSpacing->setRange(1.0, 50.0);
+    _spinCellReoptMinSpacing->setValue(_cellReoptMinSpacing);
+    _spinCellReoptMinSpacing->setSuffix(tr(" grid"));
+    _spinCellReoptMinSpacing->setToolTip(tr("Minimum spacing between correction points (grid steps)."));
+    minSpacingRow->addWidget(minSpacingLabel);
+    minSpacingRow->addWidget(_spinCellReoptMinSpacing);
+    minSpacingRow->addStretch(1);
+    cellReoptLayout->addLayout(minSpacingRow);
+
+    // Run reoptimization button
+    auto* runButtonRow = new QHBoxLayout();
+    runButtonRow->setSpacing(8);
+    _btnCellReoptRun = new QPushButton(tr("Run Reoptimization"), cellReoptParent);
+    _btnCellReoptRun->setToolTip(tr("Trigger reoptimization using the placed correction points."));
+    runButtonRow->addWidget(_btnCellReoptRun);
+    runButtonRow->addStretch(1);
+    cellReoptLayout->addLayout(runButtonRow);
+
+    layout->addWidget(_groupCellReopt);
+
     _groupDirectionField = new CollapsibleSettingsGroup(tr("Direction Fields"), this);
 
     auto* directionParent = _groupDirectionField->contentWidget();
@@ -814,6 +876,48 @@ void SegmentationWidget::buildUi()
     });
 
     connect(_btnUndoApprovalStroke, &QPushButton::clicked, this, &SegmentationWidget::approvalStrokesUndoRequested);
+
+    // Cell reoptimization signal connections
+    connect(_chkCellReoptMode, &QCheckBox::toggled, this, [this](bool enabled) {
+        setCellReoptMode(enabled);
+    });
+
+    connect(_spinCellReoptMaxSteps, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        if (_cellReoptMaxSteps != value) {
+            _cellReoptMaxSteps = value;
+            if (!_restoringSettings) {
+                writeSetting(QStringLiteral("cell_reopt_max_steps"), value);
+                emit cellReoptMaxStepsChanged(value);
+            }
+        }
+    });
+
+    connect(_spinCellReoptMaxPoints, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        if (_cellReoptMaxPoints != value) {
+            _cellReoptMaxPoints = value;
+            if (!_restoringSettings) {
+                writeSetting(QStringLiteral("cell_reopt_max_points"), value);
+                emit cellReoptMaxPointsChanged(value);
+            }
+        }
+    });
+
+    connect(_spinCellReoptMinSpacing, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
+        float floatVal = static_cast<float>(value);
+        if (_cellReoptMinSpacing != floatVal) {
+            _cellReoptMinSpacing = floatVal;
+            if (!_restoringSettings) {
+                writeSetting(QStringLiteral("cell_reopt_min_spacing"), value);
+                emit cellReoptMinSpacingChanged(floatVal);
+            }
+        }
+    });
+
+    connect(_btnCellReoptRun, &QPushButton::clicked, this, [this]() {
+        emit growSurfaceRequested(SegmentationGrowthMethod::Corrections,
+                                  SegmentationGrowthDirection::All,
+                                  0, false);
+    });
 
     auto connectDirectionCheckbox = [this](QCheckBox* box) {
         if (!box) {
@@ -1311,6 +1415,32 @@ void SegmentationWidget::syncUiState()
         _lblApprovalMaskOpacity->setText(QString::number(_approvalMaskOpacity) + QStringLiteral("%"));
     }
 
+    // Cell reoptimization UI state
+    if (_chkCellReoptMode) {
+        const QSignalBlocker blocker(_chkCellReoptMode);
+        _chkCellReoptMode->setChecked(_cellReoptMode);
+        // Only enabled when approval mask is visible
+        _chkCellReoptMode->setEnabled(_showApprovalMask);
+    }
+    if (_spinCellReoptMaxSteps) {
+        const QSignalBlocker blocker(_spinCellReoptMaxSteps);
+        _spinCellReoptMaxSteps->setValue(_cellReoptMaxSteps);
+        _spinCellReoptMaxSteps->setEnabled(_cellReoptMode);
+    }
+    if (_spinCellReoptMaxPoints) {
+        const QSignalBlocker blocker(_spinCellReoptMaxPoints);
+        _spinCellReoptMaxPoints->setValue(_cellReoptMaxPoints);
+        _spinCellReoptMaxPoints->setEnabled(_cellReoptMode);
+    }
+    if (_spinCellReoptMinSpacing) {
+        const QSignalBlocker blocker(_spinCellReoptMinSpacing);
+        _spinCellReoptMinSpacing->setValue(static_cast<double>(_cellReoptMinSpacing));
+        _spinCellReoptMinSpacing->setEnabled(_cellReoptMode);
+    }
+    if (_btnCellReoptRun) {
+        _btnCellReoptRun->setEnabled(_cellReoptMode && !_growthInProgress);
+    }
+
     updateGrowthUiState();
 }
 
@@ -1419,6 +1549,15 @@ void SegmentationWidget::restoreSettings()
     }
     _showApprovalMask = settings.value(segmentation::SHOW_APPROVAL_MASK, _showApprovalMask).toBool();
     // Don't restore edit states - user must explicitly enable editing each session
+
+    // Cell reoptimization settings
+    _cellReoptMaxSteps = settings.value(QStringLiteral("cell_reopt_max_steps"), _cellReoptMaxSteps).toInt();
+    _cellReoptMaxSteps = std::clamp(_cellReoptMaxSteps, 10, 10000);
+    _cellReoptMaxPoints = settings.value(QStringLiteral("cell_reopt_max_points"), _cellReoptMaxPoints).toInt();
+    _cellReoptMaxPoints = std::clamp(_cellReoptMaxPoints, 3, 200);
+    _cellReoptMinSpacing = settings.value(QStringLiteral("cell_reopt_min_spacing"), static_cast<double>(_cellReoptMinSpacing)).toFloat();
+    _cellReoptMinSpacing = std::clamp(_cellReoptMinSpacing, 1.0f, 50.0f);
+    // Don't restore cell reopt mode - user must explicitly enable each session
 
     const bool editingExpanded = settings.value(segmentation::GROUP_EDITING_EXPANDED, segmentation::GROUP_EDITING_EXPANDED_DEFAULT).toBool();
     const bool dragExpanded = settings.value(segmentation::GROUP_DRAG_EXPANDED, segmentation::GROUP_DRAG_EXPANDED_DEFAULT).toBool();
@@ -1634,6 +1773,24 @@ void SegmentationWidget::setApprovalBrushColor(const QColor& color)
         _btnApprovalColor->setStyleSheet(
             QStringLiteral("background-color: %1; border: 1px solid #888;").arg(_approvalBrushColor.name()));
     }
+}
+
+void SegmentationWidget::setCellReoptMode(bool enabled)
+{
+    if (_cellReoptMode == enabled) {
+        return;
+    }
+    _cellReoptMode = enabled;
+    qInfo() << "SegmentationWidget: Cell reoptimization mode changed to:" << enabled;
+    if (!_restoringSettings) {
+        writeSetting(QStringLiteral("cell_reopt_mode"), _cellReoptMode);
+        emit cellReoptModeChanged(_cellReoptMode);
+    }
+    if (_chkCellReoptMode) {
+        const QSignalBlocker blocker(_chkCellReoptMode);
+        _chkCellReoptMode->setChecked(_cellReoptMode);
+    }
+    syncUiState();
 }
 
 void SegmentationWidget::setPendingChanges(bool pending)

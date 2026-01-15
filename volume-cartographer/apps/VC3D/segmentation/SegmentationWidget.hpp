@@ -107,6 +107,15 @@ public:
     void setApprovalMaskOpacity(int opacity);
     void setApprovalBrushColor(const QColor& color);
 
+    // Cell reoptimization getters
+    [[nodiscard]] bool cellReoptMode() const { return _cellReoptMode; }
+    [[nodiscard]] int cellReoptMaxSteps() const { return _cellReoptMaxSteps; }
+    [[nodiscard]] int cellReoptMaxPoints() const { return _cellReoptMaxPoints; }
+    [[nodiscard]] float cellReoptMinSpacing() const { return _cellReoptMinSpacing; }
+
+    // Cell reoptimization setters
+    void setCellReoptMode(bool enabled);
+
 signals:
     void editingModeChanged(bool enabled);
     void dragRadiusChanged(float value);
@@ -141,6 +150,12 @@ signals:
     void approvalMaskOpacityChanged(int opacity);
     void approvalBrushColorChanged(QColor color);
     void approvalStrokesUndoRequested();
+
+    // Cell reoptimization signals
+    void cellReoptModeChanged(bool enabled);
+    void cellReoptMaxStepsChanged(int steps);
+    void cellReoptMaxPointsChanged(int points);
+    void cellReoptMinSpacingChanged(float spacing);
 
 private:
     void buildUi();
@@ -302,4 +317,16 @@ private:
     QLabel* _lblApprovalMaskOpacity{nullptr};
     QPushButton* _btnApprovalColor{nullptr};
     QPushButton* _btnUndoApprovalStroke{nullptr};
+
+    // Cell reoptimization state and UI
+    bool _cellReoptMode{false};
+    int _cellReoptMaxSteps{500};
+    int _cellReoptMaxPoints{50};
+    float _cellReoptMinSpacing{5.0f};
+    CollapsibleSettingsGroup* _groupCellReopt{nullptr};
+    QCheckBox* _chkCellReoptMode{nullptr};
+    QSpinBox* _spinCellReoptMaxSteps{nullptr};
+    QSpinBox* _spinCellReoptMaxPoints{nullptr};
+    QDoubleSpinBox* _spinCellReoptMinSpacing{nullptr};
+    QPushButton* _btnCellReoptRun{nullptr};
 };
