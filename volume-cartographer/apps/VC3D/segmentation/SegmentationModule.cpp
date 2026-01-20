@@ -343,8 +343,6 @@ void SegmentationModule::bindWidgetSignals()
                                           SegmentationGrowthDirection::All,
                                           0, false);
             });
-
-    _widget->setEraseBrushActive(false);
 }
 
 void SegmentationModule::bindViewerSignals(CVolumeViewer* viewer)

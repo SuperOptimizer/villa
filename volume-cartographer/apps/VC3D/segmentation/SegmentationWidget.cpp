@@ -768,17 +768,17 @@ void SegmentationWidget::buildUi()
     cellReoptLayout->addWidget(_chkCellReoptMode);
 
     // Max flood cells
-    auto* maxStepsRow = new QHBoxLayout();
-    maxStepsRow->setSpacing(8);
-    auto* maxStepsLabel = new QLabel(tr("Max Flood Cells:"), cellReoptParent);
+    auto* maxFloodRow = new QHBoxLayout();
+    maxFloodRow->setSpacing(8);
+    auto* maxFloodLabel = new QLabel(tr("Max Flood Cells:"), cellReoptParent);
     _spinCellReoptMaxSteps = new QSpinBox(cellReoptParent);
     _spinCellReoptMaxSteps->setRange(10, 10000);
     _spinCellReoptMaxSteps->setValue(_cellReoptMaxSteps);
     _spinCellReoptMaxSteps->setToolTip(tr("Maximum number of cells to include in the flood fill."));
-    maxStepsRow->addWidget(maxStepsLabel);
-    maxStepsRow->addWidget(_spinCellReoptMaxSteps);
-    maxStepsRow->addStretch(1);
-    cellReoptLayout->addLayout(maxStepsRow);
+    maxFloodRow->addWidget(maxFloodLabel);
+    maxFloodRow->addWidget(_spinCellReoptMaxSteps);
+    maxFloodRow->addStretch(1);
+    cellReoptLayout->addLayout(maxFloodRow);
 
     // Max correction points
     auto* maxPointsRow = new QHBoxLayout();
