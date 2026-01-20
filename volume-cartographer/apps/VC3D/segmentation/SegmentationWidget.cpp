@@ -672,6 +672,20 @@ void SegmentationWidget::buildUi()
     minSpacingRow->addStretch(1);
     cellReoptLayout->addLayout(minSpacingRow);
 
+    // Perimeter offset
+    auto* perimeterOffsetRow = new QHBoxLayout();
+    perimeterOffsetRow->setSpacing(8);
+    auto* perimeterOffsetLabel = new QLabel(tr("Perimeter Offset:"), cellReoptParent);
+    _spinCellReoptPerimeterOffset = new QDoubleSpinBox(cellReoptParent);
+    _spinCellReoptPerimeterOffset->setRange(-50.0, 50.0);
+    _spinCellReoptPerimeterOffset->setValue(_cellReoptPerimeterOffset);
+    _spinCellReoptPerimeterOffset->setSuffix(tr(" grid"));
+    _spinCellReoptPerimeterOffset->setToolTip(tr("Offset to expand (+) or shrink (-) the traced perimeter from center of mass."));
+    perimeterOffsetRow->addWidget(perimeterOffsetLabel);
+    perimeterOffsetRow->addWidget(_spinCellReoptPerimeterOffset);
+    perimeterOffsetRow->addStretch(1);
+    cellReoptLayout->addLayout(perimeterOffsetRow);
+
     // Run reoptimization button
     auto* runButtonRow = new QHBoxLayout();
     runButtonRow->setSpacing(8);
@@ -913,10 +927,19 @@ void SegmentationWidget::buildUi()
         }
     });
 
+    connect(_spinCellReoptPerimeterOffset, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
+        float floatVal = static_cast<float>(value);
+        if (_cellReoptPerimeterOffset != floatVal) {
+            _cellReoptPerimeterOffset = floatVal;
+            if (!_restoringSettings) {
+                writeSetting(QStringLiteral("cell_reopt_perimeter_offset"), value);
+                emit cellReoptPerimeterOffsetChanged(floatVal);
+            }
+        }
+    });
+
     connect(_btnCellReoptRun, &QPushButton::clicked, this, [this]() {
-        emit growSurfaceRequested(SegmentationGrowthMethod::Corrections,
-                                  SegmentationGrowthDirection::All,
-                                  0, false);
+        emit cellReoptGrowthRequested();
     });
 
     auto connectDirectionCheckbox = [this](QCheckBox* box) {
@@ -1437,6 +1460,11 @@ void SegmentationWidget::syncUiState()
         _spinCellReoptMinSpacing->setValue(static_cast<double>(_cellReoptMinSpacing));
         _spinCellReoptMinSpacing->setEnabled(_cellReoptMode);
     }
+    if (_spinCellReoptPerimeterOffset) {
+        const QSignalBlocker blocker(_spinCellReoptPerimeterOffset);
+        _spinCellReoptPerimeterOffset->setValue(static_cast<double>(_cellReoptPerimeterOffset));
+        _spinCellReoptPerimeterOffset->setEnabled(_cellReoptMode);
+    }
     if (_btnCellReoptRun) {
         _btnCellReoptRun->setEnabled(_cellReoptMode && !_growthInProgress);
     }
@@ -1557,6 +1585,8 @@ void SegmentationWidget::restoreSettings()
     _cellReoptMaxPoints = std::clamp(_cellReoptMaxPoints, 3, 200);
     _cellReoptMinSpacing = settings.value(QStringLiteral("cell_reopt_min_spacing"), static_cast<double>(_cellReoptMinSpacing)).toFloat();
     _cellReoptMinSpacing = std::clamp(_cellReoptMinSpacing, 1.0f, 50.0f);
+    _cellReoptPerimeterOffset = settings.value(QStringLiteral("cell_reopt_perimeter_offset"), static_cast<double>(_cellReoptPerimeterOffset)).toFloat();
+    _cellReoptPerimeterOffset = std::clamp(_cellReoptPerimeterOffset, -50.0f, 50.0f);
     // Don't restore cell reopt mode - user must explicitly enable each session
 
     const bool editingExpanded = settings.value(segmentation::GROUP_EDITING_EXPANDED, segmentation::GROUP_EDITING_EXPANDED_DEFAULT).toBool();

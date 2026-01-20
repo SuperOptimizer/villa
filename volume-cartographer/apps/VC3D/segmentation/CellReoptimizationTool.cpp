@@ -107,6 +107,12 @@ std::vector<cv::Vec3f> CellReoptimizationTool::extractBoundaryWorldPoints(const 
         _config.maxCorrectionPoints,
         _config.minBoundarySpacing);
 
+    // Apply perimeter offset if configured
+    if (std::abs(_config.perimeterOffset) > 0.001f) {
+        auto offsetBoundary = applyPerimeterOffset(sampledBoundary, _config.perimeterOffset);
+        return gridToWorldCoordinatesFloat(offsetBoundary);
+    }
+
     // Convert to world coordinates
     return gridToWorldCoordinates(sampledBoundary);
 }
@@ -350,4 +356,76 @@ std::pair<int, int> CellReoptimizationTool::gridDimensions() const
     }
 
     return {points->rows, points->cols};
+}
+
+std::vector<std::pair<float, float>> CellReoptimizationTool::applyPerimeterOffset(
+    const std::vector<std::pair<int, int>>& boundaryPoints,
+    float offset)
+{
+    if (boundaryPoints.empty()) {
+        return {};
+    }
+
+    // Compute center of mass
+    float centerRow = 0.0f;
+    float centerCol = 0.0f;
+    for (const auto& [row, col] : boundaryPoints) {
+        centerRow += static_cast<float>(row);
+        centerCol += static_cast<float>(col);
+    }
+    centerRow /= static_cast<float>(boundaryPoints.size());
+    centerCol /= static_cast<float>(boundaryPoints.size());
+
+    // Apply offset along radial direction from center
+    std::vector<std::pair<float, float>> offsetPoints;
+    offsetPoints.reserve(boundaryPoints.size());
+
+    for (const auto& [row, col] : boundaryPoints) {
+        float dr = static_cast<float>(row) - centerRow;
+        float dc = static_cast<float>(col) - centerCol;
+        float dist = std::sqrt(dr * dr + dc * dc);
+
+        float newRow, newCol;
+        if (dist > 0.001f) {
+            // Normalize direction and apply offset
+            float dirRow = dr / dist;
+            float dirCol = dc / dist;
+            newRow = static_cast<float>(row) + dirRow * offset;
+            newCol = static_cast<float>(col) + dirCol * offset;
+        } else {
+            // Point is at center, no direction to offset
+            newRow = static_cast<float>(row);
+            newCol = static_cast<float>(col);
+        }
+
+        offsetPoints.emplace_back(newRow, newCol);
+    }
+
+    return offsetPoints;
+}
+
+std::vector<cv::Vec3f> CellReoptimizationTool::gridToWorldCoordinatesFloat(
+    const std::vector<std::pair<float, float>>& gridPositions)
+{
+    std::vector<cv::Vec3f> worldCoords;
+    worldCoords.reserve(gridPositions.size());
+
+    for (const auto& [row, col] : gridPositions) {
+        // Round to nearest integer for lookup, but use interpolation ideally
+        // For now, use nearest neighbor
+        int irow = static_cast<int>(std::round(row));
+        int icol = static_cast<int>(std::round(col));
+
+        // Clamp to valid range
+        auto [rows, cols] = gridDimensions();
+        irow = std::clamp(irow, 0, rows - 1);
+        icol = std::clamp(icol, 0, cols - 1);
+
+        auto worldPos = _editManager->vertexWorldPosition(irow, icol);
+        if (worldPos.has_value()) {
+            worldCoords.push_back(*worldPos);
+        }
+    }
+
+    return worldCoords;
 }

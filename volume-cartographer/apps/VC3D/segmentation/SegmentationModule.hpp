@@ -104,6 +104,7 @@ public:
     void setCellReoptMaxSteps(int steps);
     void setCellReoptMaxPoints(int points);
     void setCellReoptMinSpacing(float spacing);
+    void setCellReoptPerimeterOffset(float offset);
 
     void applyEdits();
     void resetEdits();
@@ -351,6 +352,7 @@ private:
 
     bool _showApprovalMask{false};
     bool _cellReoptMode{false};
+    bool _skipAutoApprovalOnGrowth{false};
     bool _editApprovedMask{false};
     bool _editUnapprovedMask{false};
     float _approvalMaskBrushRadius{50.0f};  // Cylinder radius

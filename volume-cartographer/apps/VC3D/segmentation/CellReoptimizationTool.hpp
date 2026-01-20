@@ -30,6 +30,7 @@ public:
         int maxFloodSteps = 500;         // Maximum cells to include in flood fill
         int maxCorrectionPoints = 50;    // Maximum number of correction points to place
         float minBoundarySpacing = 5.0f; // Minimum spacing between points (grid steps)
+        float perimeterOffset = 0.0f;    // Offset to apply to boundary (positive=expand, negative=shrink)
     };
 
     struct FloodResult
@@ -103,6 +104,21 @@ private:
      */
     std::vector<cv::Vec3f> gridToWorldCoordinates(
         const std::vector<std::pair<int, int>>& gridPositions);
+
+    /**
+     * Convert floating-point grid positions to world coordinates (for offset points).
+     */
+    std::vector<cv::Vec3f> gridToWorldCoordinatesFloat(
+        const std::vector<std::pair<float, float>>& gridPositions);
+
+    /**
+     * Apply perimeter offset to boundary points.
+     * Computes center of mass and moves each point along the radial direction.
+     * Positive offset expands (repels from center), negative shrinks (attracts to center).
+     */
+    std::vector<std::pair<float, float>> applyPerimeterOffset(
+        const std::vector<std::pair<int, int>>& boundaryPoints,
+        float offset);
 
     /**
      * Check if a cell is an approval boundary (stops flood fill).

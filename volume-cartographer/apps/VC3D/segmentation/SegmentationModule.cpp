@@ -336,6 +336,16 @@ void SegmentationModule::bindWidgetSignals()
             this, &SegmentationModule::setCellReoptMaxPoints);
     connect(_widget, &SegmentationWidget::cellReoptMinSpacingChanged,
             this, &SegmentationModule::setCellReoptMinSpacing);
+    connect(_widget, &SegmentationWidget::cellReoptPerimeterOffsetChanged,
+            this, &SegmentationModule::setCellReoptPerimeterOffset);
+    connect(_widget, &SegmentationWidget::cellReoptGrowthRequested,
+            this, [this]() {
+                // Cell reoptimization should not auto-approve the growth region
+                _skipAutoApprovalOnGrowth = true;
+                emit growSurfaceRequested(SegmentationGrowthMethod::Corrections,
+                                          SegmentationGrowthDirection::All,
+                                          0, false);
+            });
 
     _widget->setEraseBrushActive(false);
 }
@@ -746,6 +756,15 @@ void SegmentationModule::setCellReoptMinSpacing(float spacing)
     if (_cellReoptTool) {
         auto config = _cellReoptTool->config();
         config.minBoundarySpacing = std::clamp(spacing, 1.0f, 50.0f);
+        _cellReoptTool->setConfig(config);
+    }
+}
+
+void SegmentationModule::setCellReoptPerimeterOffset(float offset)
+{
+    if (_cellReoptTool) {
+        auto config = _cellReoptTool->config();
+        config.perimeterOffset = std::clamp(offset, -50.0f, 50.0f);
         _cellReoptTool->setConfig(config);
     }
 }

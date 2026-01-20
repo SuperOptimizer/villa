@@ -358,6 +358,7 @@ void SegmentationModule::handleMousePress(CVolumeViewer* viewer,
                     config.maxFloodSteps = _widget->cellReoptMaxSteps();
                     config.maxCorrectionPoints = _widget->cellReoptMaxPoints();
                     config.minBoundarySpacing = _widget->cellReoptMinSpacing();
+                    config.perimeterOffset = _widget->cellReoptPerimeterOffset();
                     _cellReoptTool->setConfig(config);
                 }
                 _cellReoptTool->executeAtGridPosition(gridIndex->first, gridIndex->second);
