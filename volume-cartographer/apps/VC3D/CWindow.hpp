@@ -8,6 +8,7 @@
 #include <QCheckBox>
 #include <QFutureWatcher>
 #include <QPointF>
+#include <QElapsedTimer>
 #include <memory>
 #include <vector>
 #include <deque>
@@ -29,6 +30,7 @@
 #include "segmentation/SegmentationEditManager.hpp"
 #include "overlays/SegmentationOverlayController.hpp"
 #include "overlays/PointsOverlayController.hpp"
+#include "overlays/RawPointsOverlayController.hpp"
 #include "overlays/PathsOverlayController.hpp"
 #include "overlays/BBoxOverlayController.hpp"
 #include "overlays/VectorOverlayController.hpp"
@@ -62,6 +64,7 @@ class SegmentationGrower;
 class WindowRangeWidget;
 class QLabel;
 class QTemporaryFile;
+class QStandardItemModel;
 
 class CWindow : public QMainWindow
 {
@@ -147,6 +150,9 @@ private:
     void setSegmentationCursorMirroring(bool enabled);
     bool segmentationCursorMirroringEnabled() const { return _mirrorCursorToSegmentation; }
     void updateSurfaceOverlayDropdown();
+    void onSurfaceOverlaySelectionChanged(const QModelIndex& topLeft, const QModelIndex& bottomRight, const QVector<int>& roles);
+    QColor getOverlayColor(size_t index) const;
+    cv::Vec3b getOverlayColorBGR(size_t index) const;
 
 private slots:
     void onSegmentationDirChanged(int index);
@@ -166,6 +172,7 @@ private slots:
     CVolumeViewer* segmentationViewer() const;
     void clearSurfaceSelection();
     void onSurfaceActivated(const QString& surfaceId, QuadSurface* surface);
+    void onSurfaceActivatedPreserveEditing(const QString& surfaceId, QuadSurface* surface);
     void onAxisAlignedSliceMousePress(CVolumeViewer* viewer, const cv::Vec3f& volLoc, Qt::MouseButton button, Qt::KeyboardModifiers modifiers);
     void onAxisAlignedSliceMouseMove(CVolumeViewer* viewer, const cv::Vec3f& volLoc, Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers);
     void onAxisAlignedSliceMouseRelease(CVolumeViewer* viewer, Qt::MouseButton button, Qt::KeyboardModifiers modifiers);
@@ -173,6 +180,7 @@ private slots:
     void processPendingInotifyEvents();
     void onSliceStepSizeChanged(int newSize);
     void onSurfaceWillBeDeleted(std::string name, std::shared_ptr<Surface> surf);
+    void onConvertPointToAnchor(uint64_t pointId, uint64_t collectionId);
 
 private:
     void recalcAreaForSegments(const std::vector<std::string>& ids);
@@ -226,9 +234,15 @@ private:
     bool _mirrorCursorToSegmentation{false};
     std::unique_ptr<SegmentationGrower> _segmentationGrower;
 
+    // Surface overlay multi-select state
+    std::map<std::string, size_t> _surfaceOverlayColorAssignments;
+    size_t _nextSurfaceOverlayColorIndex{0};
+    QStandardItemModel* _surfaceOverlayModel{nullptr};
+
     std::unique_ptr<SegmentationEditManager> _segmentationEdit;
     std::unique_ptr<SegmentationOverlayController> _segmentationOverlay;
     std::unique_ptr<PointsOverlayController> _pointsOverlay;
+    std::unique_ptr<RawPointsOverlayController> _rawPointsOverlay;
     std::unique_ptr<PathsOverlayController> _pathsOverlay;
     std::unique_ptr<BBoxOverlayController> _bboxOverlay;
     std::unique_ptr<VectorOverlayController> _vectorOverlay;
@@ -266,6 +280,20 @@ private:
     // Z offset shortcuts (Ctrl+,/. for normal direction)
     QShortcut* fWorldOffsetZPosShortcut;  // Ctrl+. (further/deeper)
     QShortcut* fWorldOffsetZNegShortcut;  // Ctrl+, (closer)
+
+    // Segment cycling shortcuts
+    QShortcut* fCycleNextSegmentShortcut;
+    QShortcut* fCyclePrevSegmentShortcut;
+
+    QShortcut* fFocusedViewShortcut;
+    bool _focusedViewActive{false};
+    struct SavedDockState {
+        bool visible;
+        bool floating;
+        bool wasRaised;
+    };
+    std::map<QDockWidget*, SavedDockState> _savedDockStates;
+    void toggleFocusedView();
 
     void applySlicePlaneOrientation(Surface* sourceOverride = nullptr);
     void updateAxisAlignedSliceInteraction();

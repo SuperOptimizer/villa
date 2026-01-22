@@ -7,9 +7,11 @@
 #include "overlays/SegmentationOverlayController.hpp"
 
 #include <QLoggingCategory>
+#include <QTimer>
 
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/SurfacePatchIndex.hpp"
+#include "vc/ui/VCCollection.hpp"
 
 bool SegmentationModule::beginEditingSession(std::shared_ptr<QuadSurface> surface)
 {
@@ -19,8 +21,6 @@ bool SegmentationModule::beginEditingSession(std::shared_ptr<QuadSurface> surfac
 
     stopAllPushPull();
     clearUndoStack();
-    clearInvalidationBrush();
-    setInvalidationBrushActive(false);
     resetHoverLookupDetail();
     _hoverPointer.valid = false;
     _hoverPointer.viewer = nullptr;
@@ -44,8 +44,26 @@ bool SegmentationModule::beginEditingSession(std::shared_ptr<QuadSurface> surfac
         _approvalTool->setSurface(_editManager->baseSurface().get());
     }
 
+    // Reload approval mask image if showing OR editing approval mask
+    // Ensures dimensions match the session's surface
+    if ((_showApprovalMask || isEditingApprovalMask()) && _overlay) {
+        _overlay->loadApprovalMaskImage(_editManager->baseSurface().get());
+    }
+
     if (_overlay) {
         refreshOverlay();
+    }
+
+    // Auto-load persisted corrections and set path for auto-save
+    if (_pointCollection && !surface->path.empty()) {
+        qCInfo(lcSegModule) << "Loading correction points from segment path:"
+                            << QString::fromStdString(surface->path.string());
+        _pointCollection->loadFromSegmentPath(surface->path);
+        _correctionsSegmentPath = surface->path;
+    } else {
+        qCInfo(lcSegModule) << "No segment path for correction points auto-save (path empty:"
+                            << surface->path.empty() << ")";
+        _correctionsSegmentPath.clear();
     }
 
     emitPendingChanges();
@@ -60,9 +78,7 @@ void SegmentationModule::endEditingSession()
     stopAllPushPull();
     clearUndoStack();
     cancelDrag();
-    clearInvalidationBrush();
     clearLineDragStroke();
-    setInvalidationBrushActive(false);
     _lineDrawKeyActive = false;
     resetHoverLookupDetail();
     _hoverPointer.valid = false;
@@ -80,6 +96,17 @@ void SegmentationModule::endEditingSession()
             _ignoreSegSurfaceChange = previousGuard;
         }
     }
+
+    // Save any pending corrections immediately and clear auto-save state
+    if (_correctionsSaveTimer && _correctionsSaveTimer->isActive()) {
+        _correctionsSaveTimer->stop();
+    }
+    if (_pointCollection && !_correctionsSegmentPath.empty()) {
+        qCInfo(lcSegModule) << "Saving correction points on session end to:"
+                            << QString::fromStdString(_correctionsSegmentPath.string());
+        _pointCollection->saveToSegmentPath(_correctionsSegmentPath);
+    }
+    _correctionsSegmentPath.clear();
 
     if (_pendingAutosave) {
         performAutosave();
@@ -247,7 +274,6 @@ bool SegmentationModule::restoreUndoSnapshot()
             }
         }
 
-        clearInvalidationBrush();
         refreshOverlay();
         emitPendingChanges();
         markAutosaveNeeded();
@@ -297,8 +323,9 @@ void SegmentationModule::refreshSessionFromSurface(QuadSurface* surface)
         _approvalTool->setSurface(surface);
     }
 
-    // Reload approval mask image if showing approval mask
-    if (_showApprovalMask && _overlay) {
+    // Reload approval mask image if showing OR editing approval mask
+    // Both modes need correct dimensions to render/paint properly
+    if ((_showApprovalMask || isEditingApprovalMask()) && _overlay) {
         _overlay->loadApprovalMaskImage(surface);
     }
 
@@ -315,10 +342,24 @@ bool SegmentationModule::applySurfaceUpdateFromGrowth(const cv::Rect& vertexRect
         return false;
     }
 
-    // Auto-approve the growth region if approval mask is active (growth = reviewed/corrected)
-    // We paint into pending, then save immediately so the changes persist after reload
     auto* baseSurf = _editManager->baseSurface().get();
-    if (_overlay && _overlay->hasApprovalMaskData() && vertexRect.area() > 0) {
+
+    // IMPORTANT: Reload approval mask image FIRST to get correct dimensions.
+    // The surface has already been updated with the preserved approval mask from growth,
+    // but the overlay's QImages still have the old dimensions. We must reload before
+    // doing any auto-approval painting, otherwise we'd paint into wrong-sized images
+    // and overwrite the correctly-preserved mask with garbage.
+    // Reload if showing OR editing - both modes need correct dimensions.
+    if ((_showApprovalMask || isEditingApprovalMask()) && _overlay) {
+        _overlay->loadApprovalMaskImage(baseSurf);
+    }
+
+    // Auto-approve the growth region if approval mask is active (growth = reviewed/corrected)
+    // Now that images are correctly sized, we can safely paint the auto-approval
+    // Skip auto-approval for cell reoptimization - user hasn't reviewed results yet
+    const bool skipAutoApproval = _skipAutoApprovalOnGrowth;
+    _skipAutoApprovalOnGrowth = false;  // Clear flag regardless
+    if (!skipAutoApproval && _overlay && _overlay->hasApprovalMaskData() && vertexRect.area() > 0) {
         std::vector<std::pair<int, int>> gridPositions;
         gridPositions.reserve(static_cast<size_t>(vertexRect.area()));
         for (int row = vertexRect.y; row < vertexRect.y + vertexRect.height; ++row) {
@@ -331,7 +372,7 @@ bool SegmentationModule::applySurfaceUpdateFromGrowth(const cv::Rect& vertexRect
         constexpr bool kIsAutoApproval = true;
         const QColor brushColor = approvalBrushColor();
         _overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved, brushColor, false, 0.0f, 0.0f, kIsAutoApproval);
-        // Save immediately to persist through the upcoming reload
+        // Save immediately to persist the auto-approval
         _overlay->saveApprovalMaskToSurface(baseSurf);
         _overlay->clearApprovalMaskUndoHistory();
         qCInfo(lcSegModule) << "Auto-approved growth region:" << vertexRect.width << "x" << vertexRect.height;
@@ -340,11 +381,6 @@ bool SegmentationModule::applySurfaceUpdateFromGrowth(const cv::Rect& vertexRect
     // Update approval tool surface if editing approval mask
     if (isEditingApprovalMask() && _approvalTool) {
         _approvalTool->setSurface(baseSurf);
-    }
-
-    // Reload approval mask image if showing approval mask
-    if (_showApprovalMask && _overlay) {
-        _overlay->loadApprovalMaskImage(baseSurf);
     }
 
     refreshOverlay();
@@ -378,8 +414,23 @@ void SegmentationModule::updateApprovalToolAfterGrowth(QuadSurface* surface)
         _approvalTool->setSurface(approvalSurface);
     }
 
-    // Reload approval mask image if showing approval mask
-    if (_showApprovalMask && _overlay) {
+    // Reload approval mask image if showing OR editing approval mask
+    // Both modes need correct dimensions to render/paint properly
+    if ((_showApprovalMask || isEditingApprovalMask()) && _overlay) {
         _overlay->loadApprovalMaskImage(approvalSurface);
+    }
+}
+
+void SegmentationModule::applyCorrectionAnchorOffset(float offsetX, float offsetY)
+{
+    if (_pointCollection) {
+        _pointCollection->applyAnchorOffset(offsetX, offsetY);
+    }
+}
+
+void SegmentationModule::saveCorrectionPoints(const std::filesystem::path& segmentPath)
+{
+    if (_pointCollection && !segmentPath.empty()) {
+        _pointCollection->saveToSegmentPath(segmentPath);
     }
 }

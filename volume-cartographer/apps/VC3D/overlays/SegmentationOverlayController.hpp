@@ -57,6 +57,11 @@ public:
         float displayRadiusSteps{0.0f};
         float gridStepWorld{1.0f};
 
+        // Correction drag state - for drag-and-drop corrections
+        bool correctionDragActive{false};
+        cv::Vec3f correctionDragStart{0.0f, 0.0f, 0.0f};
+        cv::Vec3f correctionDragCurrent{0.0f, 0.0f, 0.0f};
+
         // Approval mask state - cylinder brush model
         // Radius = circle in plane views (XY/XZ/YZ), rectangle width in flattened view
         // Depth = cylinder thickness, rectangle height in flattened view
@@ -140,6 +145,9 @@ public:
 
     // Check if approval mask mode is active and we have mask data
     bool hasApprovalMaskData() const;
+
+    // Get approval mask dimensions (rows, cols) - returns (0,0) if no mask loaded
+    std::pair<int, int> approvalMaskDimensions() const;
 
     // Force refresh of all viewer overlays (bypasses state comparison optimization)
     void forceRefreshAllOverlays();

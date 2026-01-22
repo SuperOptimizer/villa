@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <cmath>
 #include <optional>
+#include <filesystem>
 
 #include <nlohmann/json.hpp>
  
@@ -45,6 +46,7 @@ public:
         std::unordered_map<uint64_t, ColPoint> points;
         CollectionMetadata metadata;
         cv::Vec3f color;
+        std::optional<cv::Vec2f> anchor2d;  // 2D grid anchor for drag-and-drop corrections
     };
 
     explicit VCCollection(QObject* parent = nullptr);
@@ -64,6 +66,8 @@ public:
     const std::unordered_map<uint64_t, Collection>& getAllCollections() const;
     void setCollectionMetadata(uint64_t collectionId, const CollectionMetadata& metadata);
     void setCollectionColor(uint64_t collectionId, const cv::Vec3f& color);
+    void setCollectionAnchor2d(uint64_t collectionId, const std::optional<cv::Vec2f>& anchor);
+    std::optional<cv::Vec2f> getCollectionAnchor2d(uint64_t collectionId) const;
     std::optional<ColPoint> getPoint(uint64_t pointId) const;
     std::vector<ColPoint> getPoints(const std::string& collectionName) const;
     std::string generateNewCollectionName(const std::string& prefix = "col") const;
@@ -71,6 +75,14 @@ public:
 
    bool saveToJSON(const std::string& filename) const;
    bool loadFromJSON(const std::string& filename);
+
+   // Path-based persistence for segment-specific corrections
+   // Only saves collections with anchor2d set (2D anchored points only)
+   bool saveToSegmentPath(const std::filesystem::path& segmentPath) const;
+   bool loadFromSegmentPath(const std::filesystem::path& segmentPath);
+
+   // Apply grid offset to all anchor2d values (for surface growth remapping)
+   void applyAnchorOffset(float offsetX, float offsetY);
 
 signals:
    void collectionChanged(uint64_t collectionId); // Generic signal for name/metadata changes

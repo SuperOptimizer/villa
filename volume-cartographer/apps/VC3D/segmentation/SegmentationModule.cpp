@@ -5,10 +5,10 @@
 #include "CSurfaceCollection.hpp"
 #include "SegmentationEditManager.hpp"
 #include "SegmentationWidget.hpp"
-#include "SegmentationBrushTool.hpp"
 #include "SegmentationLineTool.hpp"
 #include "SegmentationPushPullTool.hpp"
 #include "ApprovalMaskBrushTool.hpp"
+#include "CellReoptimizationTool.hpp"
 #include "SegmentationCorrections.hpp"
 #include "ViewerManager.hpp"
 #include "overlays/SegmentationOverlayController.hpp"
@@ -115,7 +115,7 @@ SegmentationModule::SegmentationModule(SegmentationWidget* widget,
         _lineSigmaSteps = _widget->lineSigma();
         _pushPullRadiusSteps = _widget->pushPullRadius();
         _pushPullSigmaSteps = _widget->pushPullSigma();
-        initialPushPullStep = std::clamp(_widget->pushPullStep(), 0.05f, 10.0f);
+        initialPushPullStep = std::clamp(_widget->pushPullStep(), 0.05f, 40.0f);
         _smoothStrength = std::clamp(_widget->smoothingStrength(), 0.0f, 1.0f);
         _smoothIterations = std::clamp(_widget->smoothingIterations(), 1, 25);
         initialAlphaConfig = SegmentationPushPullTool::sanitizeConfig(_widget->alphaPushPullConfig());
@@ -130,13 +130,25 @@ SegmentationModule::SegmentationModule(SegmentationWidget* widget,
         }
     }
 
-    _brushTool = std::make_unique<SegmentationBrushTool>(*this, _editManager, _widget, _surfaces);
     _lineTool = std::make_unique<SegmentationLineTool>(*this, _editManager, _surfaces, _smoothStrength, _smoothIterations);
     _pushPullTool = std::make_unique<SegmentationPushPullTool>(*this, _editManager, _widget, _overlay, _surfaces);
     _pushPullTool->setStepMultiplier(initialPushPullStep);
     _pushPullTool->setAlphaConfig(initialAlphaConfig);
 
     _approvalTool = std::make_unique<ApprovalMaskBrushTool>(*this, _editManager, _widget);
+
+    _cellReoptTool = std::make_unique<CellReoptimizationTool>(*this, _editManager, _overlay, _pointCollection, this);
+    connect(_cellReoptTool.get(), &CellReoptimizationTool::statusMessage,
+            this, [this](const QString& msg, int timeout) {
+                emit statusMessageRequested(msg, timeout);
+            });
+    connect(_cellReoptTool.get(), &CellReoptimizationTool::collectionCreated,
+            this, [this](uint64_t collectionId) {
+                // Register the new collection with the corrections system so it will be used
+                if (_corrections) {
+                    _corrections->setActiveCollection(collectionId, false);
+                }
+            });
 
     _corrections = std::make_unique<segmentation::CorrectionsState>(*this, _widget, _pointCollection);
 
@@ -159,16 +171,38 @@ SegmentationModule::SegmentationModule(SegmentationWidget* widget,
                 _corrections->onCollectionRemoved(id);
                 updateCorrectionsWidget();
             }
+            updateCellReoptCollections();
+            scheduleCorrectionsAutoSave();
         });
 
         connect(_pointCollection, &VCCollection::collectionChanged, this, [this](uint64_t id) {
             if (_corrections) {
                 _corrections->onCollectionChanged(id);
             }
+            updateCellReoptCollections();
+            scheduleCorrectionsAutoSave();
+        });
+
+        connect(_pointCollection, &VCCollection::collectionsAdded, this, [this](const std::vector<uint64_t>&) {
+            updateCellReoptCollections();
+            scheduleCorrectionsAutoSave();
+        });
+
+        connect(_pointCollection, &VCCollection::pointAdded, this, [this](const ColPoint&) {
+            scheduleCorrectionsAutoSave();
+        });
+
+        connect(_pointCollection, &VCCollection::pointChanged, this, [this](const ColPoint&) {
+            scheduleCorrectionsAutoSave();
+        });
+
+        connect(_pointCollection, &VCCollection::pointRemoved, this, [this](uint64_t) {
+            scheduleCorrectionsAutoSave();
         });
     }
 
     updateCorrectionsWidget();
+    updateCellReoptCollections();
 
     if (_widget) {
         if (auto range = _widget->correctionsZRange()) {
@@ -313,8 +347,26 @@ void SegmentationModule::bindWidgetSignals()
             _overlay, &SegmentationOverlayController::setApprovalMaskOpacity);
     connect(_widget, &SegmentationWidget::approvalStrokesUndoRequested,
             this, &SegmentationModule::undoApprovalStroke);
-
-    _widget->setEraseBrushActive(false);
+    connect(_widget, &SegmentationWidget::cellReoptModeChanged,
+            this, &SegmentationModule::setCellReoptimizationMode);
+    connect(_widget, &SegmentationWidget::cellReoptMaxStepsChanged,
+            this, &SegmentationModule::setCellReoptMaxSteps);
+    connect(_widget, &SegmentationWidget::cellReoptMaxPointsChanged,
+            this, &SegmentationModule::setCellReoptMaxPoints);
+    connect(_widget, &SegmentationWidget::cellReoptMinSpacingChanged,
+            this, &SegmentationModule::setCellReoptMinSpacing);
+    connect(_widget, &SegmentationWidget::cellReoptPerimeterOffsetChanged,
+            this, &SegmentationModule::setCellReoptPerimeterOffset);
+    connect(_widget, &SegmentationWidget::cellReoptGrowthRequested,
+            this, [this](uint64_t collectionId) {
+                // Cell reoptimization should not auto-approve the growth region
+                _skipAutoApprovalOnGrowth = true;
+                // Store the specific collection ID to use for this growth
+                _cellReoptCollectionId = collectionId;
+                emit growSurfaceRequested(SegmentationGrowthMethod::Corrections,
+                                          SegmentationGrowthDirection::All,
+                                          0, false);
+            });
 }
 
 void SegmentationModule::bindViewerSignals(CVolumeViewer* viewer)
@@ -368,6 +420,11 @@ void SegmentationModule::updateViewerCursors()
     }
 }
 
+void SegmentationModule::setIgnoreSegSurfaceChange(bool ignore)
+{
+    _ignoreSegSurfaceChange = ignore;
+}
+
 void SegmentationModule::setEditingEnabled(bool enabled)
 {
     if (_editingEnabled == enabled) {
@@ -382,7 +439,6 @@ void SegmentationModule::setEditingEnabled(bool enabled)
     if (!enabled) {
         stopAllPushPull();
         setCorrectionsAnnotateMode(false, false);
-        deactivateInvalidationBrush();
         clearLineDragStroke();
         _lineDrawKeyActive = false;
         clearUndoStack();
@@ -492,6 +548,31 @@ void SegmentationModule::onActiveSegmentChanged(QuadSurface* newSurface)
         }
     }
 
+    // Save corrections for old segment and load for new segment
+    if (_pointCollection) {
+        // Save pending corrections for the old segment
+        if (_correctionsSaveTimer && _correctionsSaveTimer->isActive()) {
+            _correctionsSaveTimer->stop();
+        }
+        if (!_correctionsSegmentPath.empty()) {
+            qCInfo(lcSegModule) << "  Saving correction points for previous segment";
+            _pointCollection->saveToSegmentPath(_correctionsSegmentPath);
+        }
+
+        // Load corrections for new segment
+        if (newSurface && !newSurface->path.empty()) {
+            qCInfo(lcSegModule) << "  Loading correction points for new segment:"
+                                << QString::fromStdString(newSurface->path.string());
+            _pointCollection->loadFromSegmentPath(newSurface->path);
+            _correctionsSegmentPath = newSurface->path;
+        } else {
+            // No valid path - clear anchored collections and path
+            qCInfo(lcSegModule) << "  No segment path, clearing anchored corrections";
+            _pointCollection->loadFromSegmentPath({});  // Clears anchored collections
+            _correctionsSegmentPath.clear();
+        }
+    }
+
     refreshOverlay();
 }
 
@@ -539,7 +620,6 @@ void SegmentationModule::setEditApprovedMask(bool enabled)
         }
 
         // Deactivate regular editing tools
-        deactivateInvalidationBrush();
         clearLineDragStroke();
         stopAllPushPull();
     } else if (!isEditingApprovalMask()) {
@@ -602,7 +682,6 @@ void SegmentationModule::setEditUnapprovedMask(bool enabled)
         }
 
         // Deactivate regular editing tools
-        deactivateInvalidationBrush();
         clearLineDragStroke();
         stopAllPushPull();
     } else if (!isEditingApprovalMask()) {
@@ -685,13 +764,63 @@ void SegmentationModule::undoApprovalStroke()
     }
 }
 
+void SegmentationModule::setCellReoptimizationMode(bool enabled)
+{
+    if (_cellReoptMode == enabled) {
+        return;
+    }
+    _cellReoptMode = enabled;
+
+    // Disable conflicting modes when enabling cell reopt
+    if (enabled) {
+        setCorrectionsAnnotateMode(false, false);
+        setEditApprovedMask(false);
+        setEditUnapprovedMask(false);
+    }
+}
+
+void SegmentationModule::setCellReoptMaxSteps(int steps)
+{
+    if (_cellReoptTool) {
+        auto config = _cellReoptTool->config();
+        config.maxFloodSteps = std::clamp(steps, 10, 10000);
+        _cellReoptTool->setConfig(config);
+    }
+}
+
+void SegmentationModule::setCellReoptMaxPoints(int points)
+{
+    if (_cellReoptTool) {
+        auto config = _cellReoptTool->config();
+        config.maxCorrectionPoints = std::clamp(points, 3, 200);
+        _cellReoptTool->setConfig(config);
+    }
+}
+
+void SegmentationModule::setCellReoptMinSpacing(float spacing)
+{
+    if (_cellReoptTool) {
+        auto config = _cellReoptTool->config();
+        config.minBoundarySpacing = std::clamp(spacing, 1.0f, 50.0f);
+        _cellReoptTool->setConfig(config);
+    }
+}
+
+void SegmentationModule::setCellReoptPerimeterOffset(float offset)
+{
+    if (_cellReoptTool) {
+        auto config = _cellReoptTool->config();
+        config.perimeterOffset = std::clamp(offset, -50.0f, 50.0f);
+        _cellReoptTool->setConfig(config);
+    }
+}
+
 void SegmentationModule::applyEdits()
 {
     if (!_editManager || !_editManager->hasSession()) {
         return;
     }
     const bool hadPendingChanges = _editManager->hasPendingChanges();
-    clearInvalidationBrush();
 
     // Capture delta for undo before applyPreview() clears edited vertices
     if (hadPendingChanges) {
@@ -737,7 +866,6 @@ void SegmentationModule::resetEdits()
     }
     const bool hadPendingChanges = _editManager->hasPendingChanges();
     cancelDrag();
-    clearInvalidationBrush();
     clearLineDragStroke();
     _editManager->resetPreview();
     if (_surfaces) {
@@ -755,6 +883,7 @@ void SegmentationModule::stopTools()
     _lineDrawKeyActive = false;
     clearLineDragStroke();
     cancelDrag();
+    cancelCorrectionDrag();
     emit stopToolsRequested();
 }
 
@@ -788,8 +917,9 @@ void SegmentationModule::setGrowthInProgress(bool running)
         _corrections->setGrowthInProgress(running);
     }
     if (running) {
+        // Clear the cell reopt collection ID now that payload has been built
+        _cellReoptCollectionId = 0;
         setCorrectionsAnnotateMode(false, false);
-        deactivateInvalidationBrush();
         clearLineDragStroke();
         _lineDrawKeyActive = false;
     }
@@ -874,6 +1004,13 @@ void SegmentationModule::refreshOverlay()
         }
     }
 
+    // Add correction drag state (before hasSession check - corrections work without full editing session)
+    if (_correctionDrag.active) {
+        state.correctionDragActive = true;
+        state.correctionDragStart = _correctionDrag.startWorld;
+        state.correctionDragCurrent = _correctionDrag.currentWorld;
+    }
+
     if (!hasSession) {
         _overlay->applyState(state);
         return;
@@ -914,23 +1051,10 @@ void SegmentationModule::refreshOverlay()
 
     std::vector<cv::Vec3f> maskPoints;
     std::size_t maskReserve = 0;
-    const bool brushHasOverlay = _brushTool &&
-                                 (!_brushTool->overlayPoints().empty() ||
-                                  !_brushTool->currentStrokePoints().empty());
-    if (_brushTool) {
-        maskReserve += _brushTool->overlayPoints().size();
-        maskReserve += _brushTool->currentStrokePoints().size();
-    }
     if (_lineTool) {
         maskReserve += _lineTool->overlayPoints().size();
     }
     maskPoints.reserve(maskReserve);
-    if (_brushTool) {
-        const auto& overlayPts = _brushTool->overlayPoints();
-        maskPoints.insert(maskPoints.end(), overlayPts.begin(), overlayPts.end());
-        const auto& strokePts = _brushTool->currentStrokePoints();
-        maskPoints.insert(maskPoints.end(), strokePts.begin(), strokePts.end());
-    }
     if (_lineTool) {
         const auto& linePts = _lineTool->overlayPoints();
         maskPoints.insert(maskPoints.end(), linePts.begin(), linePts.end());
@@ -938,23 +1062,19 @@ void SegmentationModule::refreshOverlay()
 
     const bool hasLineStroke = _lineTool && !_lineTool->overlayPoints().empty();
     const bool lineStrokeActive = _lineTool && _lineTool->strokeActive();
-    const bool brushActive = _brushTool && _brushTool->brushActive();
-    const bool brushStrokeActive = _brushTool && _brushTool->strokeActive();
     const bool pushPullActive = _pushPullTool && _pushPullTool->isActive();
 
     state.maskPoints = std::move(maskPoints);
     state.maskVisible = !state.maskPoints.empty();
     state.hasLineStroke = hasLineStroke;
     state.lineStrokeActive = lineStrokeActive;
-    state.brushActive = brushActive;
-    state.brushStrokeActive = brushStrokeActive;
+    state.brushActive = false;
+    state.brushStrokeActive = false;
     state.pushPullActive = pushPullActive;
 
     FalloffTool overlayTool = _activeFalloff;
     if (hasLineStroke) {
         overlayTool = FalloffTool::Line;
-    } else if (brushHasOverlay || brushStrokeActive || brushActive) {
-        overlayTool = FalloffTool::Drag;
     } else if (pushPullActive) {
         overlayTool = FalloffTool::PushPull;
     }
@@ -973,6 +1093,26 @@ void SegmentationModule::updateCorrectionsWidget()
     }
 }
 
+void SegmentationModule::updateCellReoptCollections()
+{
+    if (!_widget || !_pointCollection) {
+        return;
+    }
+
+    QVector<QPair<uint64_t, QString>> entries;
+    const auto& collections = _pointCollection->getAllCollections();
+    entries.reserve(static_cast<int>(collections.size()));
+    for (const auto& [id, col] : collections) {
+        entries.append({id, QString::fromStdString(col.name)});
+    }
+
+    // Sort by collection name for consistent ordering
+    std::sort(entries.begin(), entries.end(),
+              [](const auto& a, const auto& b) { return a.second < b.second; });
+
+    _widget->setCellReoptCollections(entries);
+}
+
 void SegmentationModule::setCorrectionsAnnotateMode(bool enabled, bool userInitiated)
 {
     if (!_corrections) {
@@ -982,7 +1122,6 @@ void SegmentationModule::setCorrectionsAnnotateMode(bool enabled, bool userIniti
     const bool wasActive = _corrections->annotateMode();
     const bool isActive = _corrections->setAnnotateMode(enabled, userInitiated, _editingEnabled);
     if (isActive && !wasActive) {
-        deactivateInvalidationBrush();
     }
 }
 
@@ -1020,6 +1159,103 @@ void SegmentationModule::pruneMissingCorrections()
     }
 }
 
+void SegmentationModule::beginCorrectionDrag(int row, int col, CVolumeViewer* viewer, const cv::Vec3f& worldPos)
+{
+    _correctionDrag.active = true;
+    _correctionDrag.anchorRow = row;
+    _correctionDrag.anchorCol = col;
+    _correctionDrag.startWorld = worldPos;
+    _correctionDrag.currentWorld = worldPos;
+    _correctionDrag.viewer = viewer;
+    _correctionDrag.moved = false;
+
+    qCInfo(lcSegModule) << "Correction drag started at grid" << row << col << "world" << worldPos[0] << worldPos[1] << worldPos[2];
+    emit statusMessageRequested(tr("Drag to correction target position..."), kStatusShort);
+    refreshOverlay();
+}
+
+void SegmentationModule::updateCorrectionDrag(const cv::Vec3f& worldPos)
+{
+    if (!_correctionDrag.active) {
+        return;
+    }
+
+    const cv::Vec3f delta = worldPos - _correctionDrag.startWorld;
+    const float distance = cv::norm(delta);
+    if (distance > 1.0f) {
+        _correctionDrag.moved = true;
+    }
+    _correctionDrag.currentWorld = worldPos;
+
+    // TODO: Add visual feedback (line from start to current)
+    refreshOverlay();
+}
+
+void SegmentationModule::finishCorrectionDrag()
+{
+    if (!_correctionDrag.active) {
+        return;
+    }
+
+    const bool didMove = _correctionDrag.moved;
+    const cv::Vec3f targetWorld = _correctionDrag.currentWorld;
+    const int anchorRow = _correctionDrag.anchorRow;
+    const int anchorCol = _correctionDrag.anchorCol;
+
+    _correctionDrag.reset();
+
+    if (!didMove) {
+        // User clicked without dragging - fall back to old behavior (add single point)
+        handleCorrectionPointAdded(targetWorld);
+        updateCorrectionsWidget();
+        return;
+    }
+
+    // Create correction with anchor2d
+    if (!_corrections || !_pointCollection) {
+        emit statusMessageRequested(tr("No correction collection available"), kStatusMedium);
+        return;
+    }
+
+    // Ensure we have an active collection
+    uint64_t collectionId = _corrections->activeCollection();
+    if (collectionId == 0) {
+        collectionId = _corrections->createCollection(true);
+        if (collectionId == 0) {
+            emit statusMessageRequested(tr("Failed to create correction collection"), kStatusMedium);
+            return;
+        }
+    }
+
+    // Set anchor2d on the collection (the grid location where user started dragging)
+    cv::Vec2f anchor2d(static_cast<float>(anchorCol), static_cast<float>(anchorRow));
+    _pointCollection->setCollectionAnchor2d(collectionId, anchor2d);
+
+    // Add the correction point (3D world target)
+    _corrections->handlePointAdded(targetWorld);
+
+    qCInfo(lcSegModule) << "Correction drag completed: anchor2d" << anchorCol << anchorRow
+                        << "target" << targetWorld[0] << targetWorld[1] << targetWorld[2];
+
+    updateCorrectionsWidget();
+
+    // Immediately trigger the solver with corrections
+    emit statusMessageRequested(tr("Applying correction..."), kStatusShort);
+    handleGrowSurfaceRequested(SegmentationGrowthMethod::Corrections,
+                               SegmentationGrowthDirection::All,
+                               0,
+                               false);
+}
+
+void SegmentationModule::cancelCorrectionDrag()
+{
+    if (_correctionDrag.active) {
+        _correctionDrag.reset();
+        refreshOverlay();
+        emit statusMessageRequested(tr("Correction drag cancelled"), kStatusShort);
+    }
+}
+
 void SegmentationModule::onCorrectionsCreateRequested()
 {
     if (!_corrections) {
@@ -1031,8 +1267,7 @@ void SegmentationModule::onCorrectionsCreateRequested()
     if (created != 0) {
         const bool nowActive = _corrections->setAnnotateMode(true, false, _editingEnabled);
         if (nowActive && !wasActive) {
-            deactivateInvalidationBrush();
-        }
+            }
     }
 }
 
@@ -1065,9 +1300,18 @@ std::optional<std::pair<int, int>> SegmentationModule::correctionsZRange() const
     return _corrections ? _corrections->zRange() : std::nullopt;
 }
 
-SegmentationCorrectionsPayload SegmentationModule::buildCorrectionsPayload() const
+SegmentationCorrectionsPayload SegmentationModule::buildCorrectionsPayload(bool onlyActiveCollection) const
 {
-    return _corrections ? _corrections->buildPayload() : SegmentationCorrectionsPayload{};
+    if (!_corrections) {
+        return SegmentationCorrectionsPayload{};
+    }
+
+    // If a specific collection ID is set for cell reoptimization, build payload with only that
+    if (_cellReoptCollectionId != 0) {
+        return _corrections->buildPayloadForCollection(_cellReoptCollectionId);
+    }
+
+    return _corrections->buildPayload(onlyActiveCollection);
 }
 void SegmentationModule::handleGrowSurfaceRequested(SegmentationGrowthMethod method,
                                                     SegmentationGrowthDirection direction,
@@ -1097,11 +1341,6 @@ void SegmentationModule::handleGrowSurfaceRequested(SegmentationGrowthMethod met
         return;
     }
 
-    // Ensure any pending invalidation brush strokes are committed before growth.
-    if (_brushTool) {
-        _brushTool->applyPending(_dragRadiusSteps);
-    }
-
     if (!inpaintOnly) {
         _growthMethod = method;
         if (method == SegmentationGrowthMethod::Corrections) {
@@ -1112,51 +1351,6 @@ void SegmentationModule::handleGrowSurfaceRequested(SegmentationGrowthMethod met
     }
     markNextEditsFromGrowth();
     emit growSurfaceRequested(method, direction, sanitizedSteps, inpaintOnly);
-}
-
-void SegmentationModule::setInvalidationBrushActive(bool active)
-{
-    if (!_brushTool) {
-        return;
-    }
-
-    const bool canUseBrush = _editingEnabled && !_growthInProgress &&
-                             !(_corrections && _corrections->annotateMode()) &&
-                             _editManager && _editManager->hasSession();
-    const bool shouldEnable = active && canUseBrush;
-
-    if (!shouldEnable) {
-        if (_brushTool->brushActive()) {
-            _brushTool->setActive(false);
-        }
-        // Only discard pending strokes when brush use is no longer possible.
-        if (!canUseBrush) {
-            _brushTool->clear();
-        }
-        return;
-    }
-
-    if (!_brushTool->brushActive()) {
-        _brushTool->setActive(true);
-    }
-}
-
-void SegmentationModule::clearInvalidationBrush()
-{
-    if (_brushTool) {
-        _brushTool->clear();
-    }
-}
-
-void SegmentationModule::deactivateInvalidationBrush()
-{
-    if (!_brushTool) {
-        return;
-    }
-    if (_brushTool->brushActive()) {
-        _brushTool->setActive(false);
-    }
-    _brushTool->clear();
 }
 
 void SegmentationModule::clearLineDragStroke()
@@ -1536,5 +1730,34 @@ void SegmentationModule::updateAutosaveState()
         }
     } else if (_autosaveTimer->isActive()) {
         _autosaveTimer->stop();
+    }
+}
+
+void SegmentationModule::scheduleCorrectionsAutoSave()
+{
+    // Only auto-save if we have a valid segment path
+    if (_correctionsSegmentPath.empty() || !_pointCollection) {
+        return;
+    }
+
+    if (!_correctionsSaveTimer) {
+        _correctionsSaveTimer = new QTimer(this);
+        _correctionsSaveTimer->setSingleShot(true);
+        connect(_correctionsSaveTimer, &QTimer::timeout, this, &SegmentationModule::performCorrectionsAutoSave);
+    }
+
+    _correctionsSaveTimer->start(kCorrectionsSaveDelayMs);
+}
+
+void SegmentationModule::performCorrectionsAutoSave()
+{
+    if (_correctionsSegmentPath.empty() || !_pointCollection) {
+        return;
+    }
+
+    if (_pointCollection->saveToSegmentPath(_correctionsSegmentPath)) {
+        qCDebug(lcSegModule) << "Auto-saved correction points to" << QString::fromStdString(_correctionsSegmentPath.string());
+    } else {
+        qCWarning(lcSegModule) << "Failed to auto-save correction points";
     }
 }

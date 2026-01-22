@@ -35,6 +35,7 @@
 
 #include "vc/tracer/Tracer.hpp"
 #include "vc/ui/VCCollection.hpp"
+#include "vc/tracer/NeuralTracerConnection.h"
 
 #define LOSS_STRAIGHT 1
 #define LOSS_DIST 2
@@ -104,6 +105,7 @@ public:
     struct CorrectionCollection {
         std::vector<cv::Vec3f> tgts_;
         std::vector<cv::Vec2f> grid_locs_;
+        std::optional<cv::Vec2f> anchor2d_;  // If set, use this as the 2D grid anchor instead of searching from first point
     };
 
     PointCorrection() = default;
@@ -113,9 +115,12 @@ public:
 
         for (const auto& pair : collections) {
             const auto& collection = pair.second;
-            if (collection.points.empty()) continue;
+            // Allow collections with anchor2d set even if they have no points (drag-and-drop case)
+            if (collection.points.empty() && !collection.anchor2d.has_value()) continue;
 
             CorrectionCollection new_collection;
+            new_collection.anchor2d_ = collection.anchor2d;
+
             std::vector<ColPoint> sorted_points;
             sorted_points.reserve(collection.points.size());
             for (const auto& point_pair : collection.points) {
@@ -142,24 +147,60 @@ public:
         }
 
         QuadSurface tmp(points, {1.0f, 1.0f});
-        
+
         for (auto& collection : collections_) {
-            cv::Vec3f ptr = tmp.pointer();
+            if (collection.anchor2d_.has_value()) {
+                // Use the provided 2D anchor directly - this is the drag-and-drop case
+                cv::Vec2f anchor = collection.anchor2d_.value();
 
-            // Initialize anchor point (lowest ID)
-            float d = tmp.pointTo(ptr, collection.tgts_[0], 1.0f);
-            cv::Vec3f loc_3d = tmp.loc_raw(ptr);
-            std::cout << "base diff: " << d << loc_3d << std::endl;
-            cv::Vec2f loc(loc_3d[0], loc_3d[1]);
-            collection.grid_locs_.push_back({loc[0], loc[1]});
+                // Bounds check: skip collections where anchor2d is outside surface bounds
+                if (anchor[0] < 0 || anchor[0] >= points.cols ||
+                    anchor[1] < 0 || anchor[1] >= points.rows) {
+                    std::cout << "Warning: skipping correction with out-of-bounds anchor2d: "
+                              << anchor << " (surface size: " << points.cols << "x" << points.rows << ")" << std::endl;
+                    continue;
+                }
 
-            // Initialize other points
-            for (size_t i = 1; i < collection.tgts_.size(); ++i) {
-                d = tmp.pointTo(ptr, collection.tgts_[i], 100.0f, 0);
-                loc_3d = tmp.loc_raw(ptr);
-                std::cout << "point diff: " << d << loc_3d << std::endl;
-                loc = {loc_3d[0], loc_3d[1]};
+                std::cout << "using provided anchor2d: " << anchor << std::endl;
+
+                // Convert 2D grid location to pointer coordinates
+                // pointer coords are relative to center: ptr = grid_loc - center
+                // With scale {1,1}, center is {cols/2, rows/2, 0}
+                cv::Vec3f ptr = {
+                    anchor[0] - points.cols / 2.0f,
+                    anchor[1] - points.rows / 2.0f,
+                    0.0f
+                };
+
+                // Search for all correction points from the anchor position
+                for (size_t i = 0; i < collection.tgts_.size(); ++i) {
+                    float d = tmp.pointTo(ptr, collection.tgts_[i], 100.0f, 0);
+                    cv::Vec3f loc_3d = tmp.loc_raw(ptr);
+                    std::cout << "point diff: " << d << loc_3d << std::endl;
+                    cv::Vec2f loc = {loc_3d[0], loc_3d[1]};
+                    collection.grid_locs_.push_back(loc);
+                }
+            } else {
+                // Original behavior: use first point as anchor
+                if (collection.tgts_.empty()) continue;
+
+                cv::Vec3f ptr = tmp.pointer();
+
+                // Initialize anchor point (lowest ID)
+                float d = tmp.pointTo(ptr, collection.tgts_[0], 1.0f);
+                cv::Vec3f loc_3d = tmp.loc_raw(ptr);
+                std::cout << "base diff: " << d << loc_3d << std::endl;
+                cv::Vec2f loc(loc_3d[0], loc_3d[1]);
                 collection.grid_locs_.push_back({loc[0], loc[1]});
+
+                // Initialize other points
+                for (size_t i = 1; i < collection.tgts_.size(); ++i) {
+                    d = tmp.pointTo(ptr, collection.tgts_[i], 100.0f, 0);
+                    loc_3d = tmp.loc_raw(ptr);
+                    std::cout << "point diff: " << d << loc_3d << std::endl;
+                    loc = {loc_3d[0], loc_3d[1]};
+                    collection.grid_locs_.push_back({loc[0], loc[1]});
+                }
             }
         }
     }
@@ -538,6 +579,123 @@ static std::vector<cv::Vec2i> parse_growth_directions(const nlohmann::json& para
 }
 
 } // namespace
+
+struct NeuralTracerPointInfo {
+    cv::Vec2i best_dir;
+    std::optional<cv::Vec2i> best_ortho_pos;
+    std::optional<cv::Vec2i> best_diag_pos;
+    int max_score;
+};
+
+static NeuralTracerPointInfo compute_neural_tracer_point_info(
+    const cv::Vec2i& p,
+    TraceParameters& trace_params)
+{
+    auto is_valid = [&](const cv::Vec2i& pt) {
+        return point_in_bounds(trace_params.state, pt) && (trace_params.state(pt) & STATE_LOC_VALID);
+    };
+
+    NeuralTracerPointInfo result;
+    result.max_score = -1;
+
+    const cv::Vec2i dirs[] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+
+    for (const auto& dir : dirs) {
+        if (!is_valid(p - dir) || !is_valid(p - 2 * dir)) {  // check if center and prev_u (where u is dir-direction) are valid
+            continue;
+        }
+
+        const cv::Vec2i center_pos = p - dir;
+
+        const cv::Vec2i ortho_dirs[] = {{-dir[1], dir[0]}, {dir[1], -dir[0]}};
+
+        for (const auto& ortho_dir : ortho_dirs) {
+
+            auto current_ortho_pos = is_valid(center_pos - ortho_dir) ? std::optional{center_pos - ortho_dir} : std::nullopt;
+            cv::Vec2i diag_dir;  // vector from prev_diag to center
+            if (current_ortho_pos) {
+                // if prev_u and prev_v both given, then prev_diag should be adjacent to the gap p (not to center)
+                diag_dir = dir - ortho_dir;
+            } else {
+                // if only prev_u not prev_v given, then prev_diag should be opposite to the gap p along ortho_dir
+                diag_dir = dir + ortho_dir;
+            }
+            auto current_diag_pos = is_valid(center_pos - diag_dir) ? std::optional{center_pos - diag_dir} : std::nullopt;
+
+            int current_score =
+                current_ortho_pos && current_diag_pos ? 3 :
+                current_ortho_pos ? 2 :
+                current_diag_pos ? 1 :
+                0;  // only prev_u & center valid
+
+            if (current_score > result.max_score) {
+                result.max_score = current_score;
+                result.best_dir = dir;
+                result.best_ortho_pos = current_ortho_pos;
+                result.best_diag_pos = current_diag_pos;
+            }
+        }
+    }
+
+    return result;
+}
+
+static std::vector<cv::Vec2i> call_neural_tracer_for_points(
+    const std::vector<cv::Vec2i>& points,
+    TraceParameters& trace_params,
+    NeuralTracerConnection* neural_tracer)
+{
+    if (!neural_tracer)
+        throw std::logic_error("Neural tracer connection is null");
+
+    std::vector<cv::Vec3f> center_xyzs;
+    std::vector<std::optional<cv::Vec3f>> prev_u_xyzs, prev_v_xyzs, prev_diag_xyzs;
+    std::vector<cv::Vec2i> points_with_valid_dirs;
+
+    for (auto const &p : points) {
+
+        auto const point_info = compute_neural_tracer_point_info(p, trace_params);
+
+        if (point_info.max_score < 1) {
+            // we disallow score = -1 since this implies no neighbors found, and score = 0 since this is likely to create long, poorly-supported tendrils
+            std::cout << "warning: max_score = " << point_info.max_score << std::endl;
+            continue;
+        }
+
+        auto get_point = [&](const cv::Vec2i& pos) {
+            assert(point_in_bounds(trace_params.state, pos) && (trace_params.state(pos) & STATE_LOC_VALID));
+            const auto& p_double_neighbor = trace_params.dpoints(pos);
+            return cv::Vec3f(p_double_neighbor[0], p_double_neighbor[1], p_double_neighbor[2]);
+        };
+
+        center_xyzs.push_back(get_point(p - point_info.best_dir));
+        prev_u_xyzs.push_back(get_point(p - 2 * point_info.best_dir));
+        prev_v_xyzs.push_back(point_info.best_ortho_pos.transform(get_point));
+        prev_diag_xyzs.push_back(point_info.best_diag_pos.transform(get_point));
+        points_with_valid_dirs.push_back(p);
+    }
+
+    if (points_with_valid_dirs.empty()) {
+        return {};
+    }
+
+    auto next_uvs = neural_tracer->get_next_points(center_xyzs, prev_u_xyzs, prev_v_xyzs, prev_diag_xyzs);
+
+    std::vector<cv::Vec2i> successful_points;
+    for (int point_idx = 0; point_idx < points_with_valid_dirs.size(); point_idx++) {
+        auto const p = points_with_valid_dirs[point_idx];
+        const auto& candidates = next_uvs[point_idx].next_u_xyzs;
+        if (!candidates.empty() && cv::norm(candidates[0]) > 1e-6) {
+            trace_params.dpoints(p) = {candidates[0][0], candidates[0][1], candidates[0][2]};
+            trace_params.state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
+            successful_points.push_back(p);
+        } else {
+            std::cout << "warning: no valid next point found at " << p << std::endl;
+        }
+    }
+
+    return successful_points;
+}
 
 // global CUDA to allow use to set to false globally
 // in the case they have cuda avail, but do not want to use it
@@ -1586,6 +1744,25 @@ struct thresholdedDistance
 
 QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv::Vec3f origin, const nlohmann::json &params, const std::string &cache_root, float voxelsize, std::vector<DirectionField> const &direction_fields, QuadSurface* resume_surf, const std::filesystem::path& tgt_path, const nlohmann::json& meta_params, const VCCollection &corrections)
 {
+    std::unique_ptr<NeuralTracerConnection> neural_tracer;
+    int pre_neural_gens = 0, neural_batch_size = 1;
+    if (params.contains("neural_socket")) {
+        std::string socket_path = params["neural_socket"];
+        if (!socket_path.empty()) {
+            try {
+                neural_tracer = std::make_unique<NeuralTracerConnection>(socket_path);
+                std::cout << "Neural tracer connection enabled on " << socket_path << std::endl;
+            } catch (const std::exception& e) {
+                std::cerr << "Failed to connect neural tracer: " << e.what() << std::endl;
+                throw;
+            }
+        }
+        pre_neural_gens = params.value("pre_neural_generations", 0);
+        neural_batch_size = params.value("neural_batch_size", 1);
+        if (!neural_tracer) {
+            std::cout << "Neural tracer not active" << std::endl;
+        }
+    }
     TraceData trace_data(direction_fields);
     LossSettings loss_settings;
     loss_settings.applyJsonWeights(params);
@@ -1868,6 +2045,11 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
         (*surf->meta)["elapsed_time_s"] = f_timer.seconds();
         if (resume_surf && !resume_surf->id.empty()) {
             (*surf->meta)["seed_surface_id"] = resume_surf->id;
+            // Store grid offset for correction point remapping
+            // new_coord = old_coord + offset
+            const int offset_row = resume_pad_y - used_area_safe.y;
+            const int offset_col = resume_pad_x - used_area_safe.x;
+            (*surf->meta)["grid_offset"] = {offset_col, offset_row};
         }
 
         // Preserve approval and mask channels from resume surface with correct offset
@@ -2025,19 +2207,31 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
             cv::Mat mask = resume_surf->channel("mask");
             if (!mask.empty()) {
                 std::vector<std::vector<cv::Point2f>> all_hulls;
+                // For single-point collections (e.g., drag-and-drop), store center and radius
+                std::vector<std::pair<cv::Point2f, float>> single_point_regions;
+
                 for (const auto& collection : trace_data.point_correction.collections()) {
                     if (collection.grid_locs_.empty()) continue;
 
-                    std::vector<cv::Point2f> points_for_hull;
-                    points_for_hull.reserve(collection.grid_locs_.size());
-                    for (const auto& loc : collection.grid_locs_) {
-                        points_for_hull.emplace_back(loc[0], loc[1]);
-                    }
-                    
-                    std::vector<cv::Point2f> hull_points;
-                    cv::convexHull(points_for_hull, hull_points);
-                    if (!hull_points.empty()) {
-                        all_hulls.push_back(hull_points);
+                    if (collection.grid_locs_.size() == 1) {
+                        // Single point - use a radius-based region instead of convex hull
+                        // This handles the drag-and-drop case where only one correction point is set
+                        cv::Point2f center(collection.grid_locs_[0][0], collection.grid_locs_[0][1]);
+                        float radius = 8.0f;  // Default radius for single-point corrections
+                        single_point_regions.emplace_back(center, radius);
+                        std::cout << "single-point correction region at " << center << " with radius " << radius << std::endl;
+                    } else {
+                        std::vector<cv::Point2f> points_for_hull;
+                        points_for_hull.reserve(collection.grid_locs_.size());
+                        for (const auto& loc : collection.grid_locs_) {
+                            points_for_hull.emplace_back(loc[0], loc[1]);
+                        }
+
+                        std::vector<cv::Point2f> hull_points;
+                        cv::convexHull(points_for_hull, hull_points);
+                        if (!hull_points.empty()) {
+                            all_hulls.push_back(hull_points);
+                        }
                     }
                 }
 
@@ -2048,12 +2242,27 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                             int target_x = resume_pad_x + i;
                             cv::Point2f p(target_x, target_y);
                             bool keep = false;
+
+                            // Check convex hull regions
                             for (const auto& hull : all_hulls) {
                                 if (cv::pointPolygonTest(hull, p, false) >= 0) {
                                     keep = true;
                                     break;
                                 }
                             }
+
+                            // Check single-point circular regions
+                            if (!keep) {
+                                for (const auto& [center, radius] : single_point_regions) {
+                                    float dx = p.x - center.x;
+                                    float dy = p.y - center.y;
+                                    if (dx * dx + dy * dy <= radius * radius) {
+                                        keep = true;
+                                        break;
+                                    }
+                                }
+                            }
+
                             if (!keep) {
                                 trace_params.state(target_y, target_x) = 0;
                                 trace_params.dpoints(target_y, target_x) = cv::Vec3d(-1,-1,-1);
@@ -2148,13 +2357,60 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
         std::cout << "Resuming from generation " << generation << " with " << fringe.size() << " points. Initial loss count: " << loss_count << std::endl;
 
     } else {
-        // Initialise the trace at the center of the available area, as a tiny single-quad patch at the seed point
+        // Initialize seed normals with consistent orientation (vx cross vy = +Z direction)
+        cv::Vec3d seed_normal = cv::Vec3d(vx).cross(cv::Vec3d(vy));
+        seed_normal /= cv::norm(seed_normal);
+
+        if (neural_tracer && pre_neural_gens == 0) {
+            std::cout << "Initializing with neural tracer..." << std::endl;
+
+            // Bootstrap the first quad with the neural tracer -- we already have the
+            // top-left point; we construct top-right, bottom-left and bottom-right
+
+            trace_params.dpoints(y0, x0) = origin;
+
+            // Get hopefully-4 adjacent points; take the one with min or max z-displacement depending on required direction
+            auto coordinates = neural_tracer->get_next_points({origin}, {{}}, {{}}, {{}})[0].next_u_xyzs;
+            if (coordinates.empty() || cv::norm(coordinates[0]) < 1e-6) {
+                std::cout << "no blobs found while bootstrapping (vertex #1, top-right)" << std::endl;
+                throw std::runtime_error("Neural tracer bootstrap failed at vertex #1");
+            }
+            // use minimum delta-z; this choice orients the patch
+            auto min_delta_z_it = std::min_element(coordinates.begin(), coordinates.end(), [&origin](const cv::Vec3f& a, const cv::Vec3f& b) {
+                return std::abs(a[2] - origin[2]) < std::abs(b[2] - origin[2]);
+            });
+            trace_params.dpoints(y0, x0 + 1) = *min_delta_z_it;
+
+            // Conditioned on center and right, predict below & above (choosing one arbitrarily)
+            cv::Vec3f prev_v = trace_params.dpoints(y0, x0 + 1);
+            coordinates = neural_tracer->get_next_points({origin}, {{}}, {prev_v}, {{}})[0].next_u_xyzs;
+            if (coordinates.empty() || cv::norm(coordinates[0]) < 1e-6) {
+                std::cout << "no blobs found while bootstrapping (vertex #2, bottom-left)" << std::endl;
+                throw std::runtime_error("Neural tracer bootstrap failed at vertex #2");
+            }
+            trace_params.dpoints(y0 + 1, x0) = coordinates[0];
+
+            // Conditioned on center (top-right of the quad!) and left and below-left, predict below
+            cv::Vec3f center_xyz = trace_params.dpoints(y0, x0 + 1);
+            prev_v = trace_params.dpoints(y0, x0);
+            cv::Vec3f prev_diag = trace_params.dpoints(y0 + 1, x0);
+            coordinates = neural_tracer->get_next_points({center_xyz}, {{}}, {prev_v}, {prev_diag})[0].next_u_xyzs;
+            if (coordinates.empty() || cv::norm(coordinates[0]) < 1e-6) {
+                std::cout << "no blobs found while bootstrapping (vertex #3, bottom-right)" << std::endl;
+                throw std::runtime_error("Neural tracer bootstrap failed at vertex #3");
+            }
+            trace_params.dpoints(y0 + 1, x0 + 1) = coordinates[0];
+
+        } else {
+            // Initialise the trace at the center of the available area, as a tiny single-quad patch at the seed point
+            //these are locations in the local volume!
+            trace_params.dpoints(y0,x0) = origin;
+            trace_params.dpoints(y0,x0+1) = origin+vx*0.1;
+            trace_params.dpoints(y0+1,x0) = origin+vy*0.1;
+            trace_params.dpoints(y0+1,x0+1) = origin+vx*0.1 + vy*0.1;
+        }
+
         used_area = cv::Rect(x0,y0,2,2);
-        //these are locations in the local volume!
-        trace_params.dpoints(y0,x0) = origin;
-        trace_params.dpoints(y0,x0+1) = origin+vx*0.1;
-        trace_params.dpoints(y0+1,x0) = origin+vy*0.1;
-        trace_params.dpoints(y0+1,x0+1) = origin+vx*0.1 + vy*0.1;
 
         trace_params.state(y0,x0) = STATE_LOC_VALID | STATE_COORD_VALID;
         trace_params.state(y0+1,x0) = STATE_LOC_VALID | STATE_COORD_VALID;
@@ -2166,9 +2422,6 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
         generations(y0+1,x0) = 1;
         generations(y0+1,x0+1) = 1;
 
-        // Initialize seed normals with consistent orientation (vx cross vy = +Z direction)
-        cv::Vec3d seed_normal = cv::Vec3d(vx).cross(cv::Vec3d(vy));
-        seed_normal /= cv::norm(seed_normal);
         surface_normals(y0,x0) = seed_normal;
         surface_normals(y0,x0+1) = seed_normal;
         surface_normals(y0+1,x0) = seed_normal;
@@ -2178,17 +2431,17 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
         fringe.push_back({y0+1,x0});
         fringe.push_back({y0,x0+1});
         fringe.push_back({y0+1,x0+1});
-
-        std::cout << "init loss count " << loss_count << std::endl;
     }
 
     int succ_start = succ;
 
     // Solve the initial optimisation problem, just placing the first four vertices around the seed
     ceres::Solver::Summary big_summary;
-    //just continue on resume no additional global opt	
+    //just continue on resume no additional global opt
     if (!resume_surf) {
-        local_optimization(8, {y0,x0}, trace_params, trace_data, loss_settings, true);
+        if (!neural_tracer) {
+            local_optimization(8, {y0,x0}, trace_params, trace_data, loss_settings, true);
+        }
     }
     else
     {
@@ -2447,114 +2700,153 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
         int succ_gen = 0;
         std::vector<cv::Vec2i> succ_gen_ps;
 
-        // Build a structure that allows parallel iteration over cands, while avoiding any two threads simultaneously
-        // considering two points that are too close to each other...
-        OmpThreadPointCol cands_threadcol(local_opt_r*2+1, cands);
-
-        // Snapshot positions before per-point optimization for flip detection
-        cv::Mat_<cv::Vec3d> positions_before_perpoint = trace_params.dpoints.clone();
-
-        // Configure anti-flipback constraint for per-point optimization
-        // Note: new points won't have surface normals yet, but the loss function handles this
-        AntiFlipbackConfig perpoint_flipback_config;
-        perpoint_flipback_config.anchors = &positions_before_perpoint;
-        perpoint_flipback_config.surface_normals = &surface_normals;
-        perpoint_flipback_config.threshold = loss_settings.flipback_threshold;
-        perpoint_flipback_config.weight = loss_settings.flipback_weight;
-
-        // ...then start iterating over candidates in parallel using the above to yield points
-#pragma omp parallel
-        {
-            CachedChunked3dInterpolator<uint8_t,thresholdedDistance> interp(proc_tensor);
-//             int idx = rand() % cands.size();
+        if (neural_tracer && generation > pre_neural_gens) {
+            std::unordered_set<cv::Vec2i> cands_processed;  // subset of cands we've already passed to the neural tracer in this gen
             while (true) {
-                int r = 1;
-                double phys_fail_th = 0.1;
-                cv::Vec2i p = cands_threadcol.next();
-                if (p[0] == -1)
-                    break;
 
-                if (trace_params.state(p) & (STATE_LOC_VALID | STATE_COORD_VALID))
-                    continue;
+                float const min_pair_distance = 4.f;  // points closer than this in uv-space aren't processed together
 
-                // p is now a 2D point we consider adding to the patch; find the best 3D point to map it to
-
-                // Iterate all adjacent points that are in the patch, and find their 3D locations
-                int ref_count = 0;
-                cv::Vec3d avg = {0,0,0};
-                std::vector<cv::Vec2i> srcs;
-                for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,trace_params.dpoints.rows-1);oy++)
-                    for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,trace_params.dpoints.cols-1);ox++)
-                        if (trace_params.state(oy,ox) & STATE_LOC_VALID) {
-                            ref_count++;
-                            avg += trace_params.dpoints(oy,ox);
-                            srcs.push_back({oy,ox});
-                        }
-
-                // Of those adjacent points, find the one that itself has most adjacent in-patch points
-                cv::Vec2i best_l = srcs[0];
-                int best_ref_l = -1;
-                int rec_ref_sum = 0;
-                for(cv::Vec2i l : srcs) {
-                    int ref_l = 0;
-                    for(int oy=std::max(l[0]-r,0);oy<=std::min(l[0]+r,trace_params.dpoints.rows-1);oy++)
-                        for(int ox=std::max(l[1]-r,0);ox<=std::min(l[1]+r,trace_params.dpoints.cols-1);ox++)
-                            if (trace_params.state(oy,ox) & STATE_LOC_VALID)
-                                ref_l++;
-
-                    rec_ref_sum += ref_l;
-
-                    if (ref_l > best_ref_l) {
-                        best_l = l;
-                        best_ref_l = ref_l;
-                    }
+                std::vector<cv::Vec2i> batch_cands;
+                batch_cands.reserve(neural_batch_size);
+                for (auto const& p : cands) {
+                    if (trace_params.state(p) & (STATE_LOC_VALID | STATE_COORD_VALID))
+                        continue;
+                    if (cands_processed.contains(p))
+                        continue;
+                    if (min_dist(p, batch_cands) < min_pair_distance)
+                        continue;
+                    // TODO: also skip if its neighbors are outside the z-range (c.f. ceres case checking avg)
+                    batch_cands.push_back(p);
+                    cands_processed.insert(p);
+                    if (batch_cands.size() == neural_batch_size)
+                        break;
                 }
 
-                // Initial guess for the corresponding 3D location is a perturbation of the position of the best-connected neighbor
-                avg /= ref_count;
+                auto const points_placed = call_neural_tracer_for_points(batch_cands, trace_params, neural_tracer.get());
 
-                //"fast" skip based on avg z value out of limits
-                if (avg[2] < loss_settings.z_min || avg[2] > loss_settings.z_max)
-                    continue;
-
-                cv::Vec3d init = trace_params.dpoints(best_l) + random_perturbation();
-                trace_params.dpoints(p) = init;
-
-                // Set up a new local optimzation problem for the candidate point and its neighbors (initially just distance
-                // and curvature losses, not nearness-to-surface)
-                ceres::Problem problem;
-
-                trace_params.state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
-                int local_loss_count = add_losses(problem, p, trace_params, trace_data, loss_settings, LOSS_DIST | LOSS_STRAIGHT);
-
-                std::vector<double*> parameter_blocks;
-                problem.GetParameterBlocks(&parameter_blocks);
-                for (auto& block : parameter_blocks) {
-                    problem.SetParameterBlockConstant(block);
-                }
-                problem.SetParameterBlockVariable(&trace_params.dpoints(p)[0]);
-
-                ceres::Solver::Summary summary;
-                ceres::Solve(options, &problem, &summary);
-
-                generations(p) = generation;
-
-#pragma omp critical
-                {
-                    succ++;
-                    succ_gen++;
+                for (cv::Vec2i const &p : points_placed) {
+                    generations(p) = generation;
                     if (!used_area.contains(cv::Point(p[1],p[0]))) {
                         used_area = used_area | cv::Rect(p[1],p[0],1,1);
                     }
-
                     fringe.push_back(p);
                     succ_gen_ps.push_back(p);
                 }
+                succ += points_placed.size();
+                succ_gen += points_placed.size();
 
-                local_optimization(1, p, trace_params, trace_data, loss_settings, true, false, nullptr, &perpoint_flipback_config);
-                if (local_opt_r > 1)
-                    local_optimization(local_opt_r, p, trace_params, trace_data, loss_settings, true, false, nullptr, &perpoint_flipback_config);
-            }  // end parallel iteration over cands
+                if (cands_processed.size() == cands.size())
+                    break;
+
+            }  // end loop over batches
+
+        } else {
+
+            // Snapshot positions before per-point optimization for flip detection
+            cv::Mat_<cv::Vec3d> positions_before_perpoint = trace_params.dpoints.clone();
+
+            // Configure anti-flipback constraint for per-point optimization
+            // Note: new points won't have surface normals yet, but the loss function handles this
+            AntiFlipbackConfig perpoint_flipback_config;
+            perpoint_flipback_config.anchors = &positions_before_perpoint;
+            perpoint_flipback_config.surface_normals = &surface_normals;
+            perpoint_flipback_config.threshold = loss_settings.flipback_threshold;
+            perpoint_flipback_config.weight = loss_settings.flipback_weight;
+
+            // Build a structure that allows parallel iteration over cands, while avoiding any two threads simultaneously
+            // considering two points that are too close to each other...
+            OmpThreadPointCol cands_threadcol(local_opt_r*2+1, cands);
+
+            // ...then start iterating over candidates in parallel using the above to yield points
+            #pragma omp parallel
+            {
+                CachedChunked3dInterpolator<uint8_t,thresholdedDistance> interp(proc_tensor);
+                //             int idx = rand() % cands.size();
+                while (true) {
+                    int r = 1;
+                    double phys_fail_th = 0.1;
+                    cv::Vec2i p = cands_threadcol.next();
+                    if (p[0] == -1)
+                        break;
+
+                    if (trace_params.state(p) & (STATE_LOC_VALID | STATE_COORD_VALID))
+                        continue;
+
+                    // p is now a 2D point we consider adding to the patch; find the best 3D point to map it to
+
+                    // Iterate all adjacent points that are in the patch, and find their 3D locations
+                    int ref_count = 0;
+                    cv::Vec3d avg = {0,0,0};
+                    std::vector<cv::Vec2i> srcs;
+                    for(int oy=std::max(p[0]-r,0);oy<=std::min(p[0]+r,trace_params.dpoints.rows-1);oy++)
+                        for(int ox=std::max(p[1]-r,0);ox<=std::min(p[1]+r,trace_params.dpoints.cols-1);ox++)
+                            if (trace_params.state(oy,ox) & STATE_LOC_VALID) {
+                                ref_count++;
+                                avg += trace_params.dpoints(oy,ox);
+                                srcs.push_back({oy,ox});
+                            }
+
+                    // Of those adjacent points, find the one that itself has most adjacent in-patch points
+                    cv::Vec2i best_l = srcs[0];
+                    int best_ref_l = -1;
+                    int rec_ref_sum = 0;
+                    for(cv::Vec2i l : srcs) {
+                        int ref_l = 0;
+                        for(int oy=std::max(l[0]-r,0);oy<=std::min(l[0]+r,trace_params.dpoints.rows-1);oy++)
+                            for(int ox=std::max(l[1]-r,0);ox<=std::min(l[1]+r,trace_params.dpoints.cols-1);ox++)
+                                if (trace_params.state(oy,ox) & STATE_LOC_VALID)
+                                    ref_l++;
+
+                        rec_ref_sum += ref_l;
+
+                        if (ref_l > best_ref_l) {
+                            best_l = l;
+                            best_ref_l = ref_l;
+                        }
+                    }
+
+                    avg /= ref_count;
+
+                    //"fast" skip based on avg z value out of limits
+                    if (avg[2] < loss_settings.z_min || avg[2] > loss_settings.z_max)
+                        continue;
+
+                    cv::Vec3d init = trace_params.dpoints(best_l) + random_perturbation();
+                    trace_params.dpoints(p) = init;
+
+                    ceres::Problem problem;
+                    trace_params.state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
+                    add_losses(problem, p, trace_params, trace_data, loss_settings, LOSS_DIST | LOSS_STRAIGHT);
+
+                    std::vector<double*> parameter_blocks;
+                    problem.GetParameterBlocks(&parameter_blocks);
+                    for (auto& block : parameter_blocks) {
+                        problem.SetParameterBlockConstant(block);
+                    }
+                    problem.SetParameterBlockVariable(&trace_params.dpoints(p)[0]);
+
+                    ceres::Solver::Summary summary;
+                    ceres::Solve(options, &problem, &summary);
+
+                    local_optimization(1, p, trace_params, trace_data, loss_settings, true, false, nullptr, &perpoint_flipback_config);
+                    if (local_opt_r > 1)
+                        local_optimization(local_opt_r, p, trace_params, trace_data, loss_settings, true, false, nullptr, &perpoint_flipback_config);
+
+                    generations(p) = generation;
+
+                    #pragma omp critical
+                    {
+                        succ++;
+                        succ_gen++;
+                        if (!used_area.contains(cv::Point(p[1],p[0]))) {
+                            used_area = used_area | cv::Rect(p[1],p[0],1,1);
+                        }
+
+                        fringe.push_back(p);
+                        succ_gen_ps.push_back(p);
+                    }
+                }  // end parallel iteration over cands
+            }
         }
 
         // Update surface normals for all newly added points and their neighbors
@@ -2573,7 +2865,9 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
             }
         }
 
-        if (!global_opt) {
+        if (neural_tracer && generation > pre_neural_gens) {
+            // Skip optimizations
+        } else if (!global_opt) {
             // For late generations, instead of re-solving the global problem, solve many local-ish problems, around each
             // of the newly added points
             std::vector<cv::Vec2i> opt_local;

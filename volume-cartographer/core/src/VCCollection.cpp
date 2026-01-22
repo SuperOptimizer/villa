@@ -18,6 +18,18 @@ struct adl_serializer<cv::Vec3f> {
         j.at(2).get_to(v[2]);
     }
 };
+
+template <>
+struct adl_serializer<cv::Vec2f> {
+    static void to_json(json& j, const cv::Vec2f& v) {
+        j = {v[0], v[1]};
+    }
+
+    static void from_json(const json& j, cv::Vec2f& v) {
+        j.at(0).get_to(v[0]);
+        j.at(1).get_to(v[1]);
+    }
+};
 NLOHMANN_JSON_NAMESPACE_END
  
 #define VC_POINTCOLLECTIONS_JSON_VERSION "1"
@@ -74,11 +86,15 @@ void to_json(json& j, const VCCollection::Collection& c) {
         {"metadata", c.metadata},
         {"color", c.color}
     };
+
+    if (c.anchor2d.has_value()) {
+        j["anchor2d"] = c.anchor2d.value();
+    }
 }
  
 void from_json(const json& j, VCCollection::Collection& c) {
     j.at("name").get_to(c.name);
-    
+
     json points_obj = j.at("points");
     if (points_obj.is_object()) {
         for (auto& [id_str, point_json] : points_obj.items()) {
@@ -91,6 +107,12 @@ void from_json(const json& j, VCCollection::Collection& c) {
 
     j.at("metadata").get_to(c.metadata);
     j.at("color").get_to(c.color);
+
+    if (j.contains("anchor2d") && !j.at("anchor2d").is_null()) {
+        c.anchor2d = j.at("anchor2d").get<cv::Vec2f>();
+    } else {
+        c.anchor2d = std::nullopt;
+    }
 }
  
 VCCollection::VCCollection(QObject* parent)
@@ -220,6 +242,22 @@ void VCCollection::setCollectionColor(uint64_t collectionId, const cv::Vec3f& co
     }
 }
 
+void VCCollection::setCollectionAnchor2d(uint64_t collectionId, const std::optional<cv::Vec2f>& anchor)
+{
+    if (_collections.count(collectionId)) {
+        _collections.at(collectionId).anchor2d = anchor;
+        emit collectionChanged(collectionId);
+    }
+}
+
+std::optional<cv::Vec2f> VCCollection::getCollectionAnchor2d(uint64_t collectionId) const
+{
+    if (_collections.count(collectionId)) {
+        return _collections.at(collectionId).anchor2d;
+    }
+    return std::nullopt;
+}
+
 std::optional<ColPoint> VCCollection::getPoint(uint64_t pointId) const
 {
     if (_points.count(pointId)) {
@@ -327,7 +365,7 @@ bool VCCollection::loadFromJSON(const std::string& filename)
         qWarning() << "Failed to open file for reading: " << QString::fromStdString(filename);
         return false;
     }
- 
+
     json j;
     try {
         i >> j;
@@ -335,9 +373,9 @@ bool VCCollection::loadFromJSON(const std::string& filename)
         qWarning() << "Failed to parse JSON: " << e.what();
         return false;
     }
- 
+
     clearAll();
- 
+
     try {
        if (!j.contains("vc_pointcollections_json_version") || j.at("vc_pointcollections_json_version").get<std::string>() != VC_POINTCOLLECTIONS_JSON_VERSION) {
            throw std::runtime_error("JSON file has incorrect version or is missing version info.");
@@ -362,7 +400,7 @@ bool VCCollection::loadFromJSON(const std::string& filename)
         qWarning() << "Failed to extract data from JSON: " << e.what();
         return false;
     }
- 
+
     // Recalculate next IDs
     _next_collection_id = 1;
     _next_point_id = 1;
@@ -376,7 +414,7 @@ bool VCCollection::loadFromJSON(const std::string& filename)
             }
         }
     }
- 
+
     // Rebuild the _points map
     _points.clear();
     for (const auto& col_pair : _collections) {
@@ -390,6 +428,175 @@ bool VCCollection::loadFromJSON(const std::string& filename)
         collectionIds.push_back(col_id);
     }
     emit collectionsAdded(collectionIds);
+
+    return true;
+}
+
+bool VCCollection::saveToSegmentPath(const std::filesystem::path& segmentPath) const
+{
+    if (segmentPath.empty()) {
+        return false;
+    }
+
+    auto filePath = segmentPath / "corrections.json";
+
+    // Filter to only collections with anchor2d set
+    json collections_obj = json::object();
+    int anchoredCount = 0;
+    for (const auto& pair : _collections) {
+        if (pair.second.anchor2d.has_value()) {
+            collections_obj[std::to_string(pair.first)] = pair.second;
+            anchoredCount++;
+        }
+    }
+
+    // If no anchored collections exist, remove the file if it exists
+    if (anchoredCount == 0) {
+        std::error_code ec;
+        if (std::filesystem::exists(filePath, ec)) {
+            std::filesystem::remove(filePath, ec);
+            qInfo() << "Removed empty corrections file:" << QString::fromStdString(filePath.string());
+        }
+        return true;
+    }
+
+    json j;
+    j["vc_pointcollections_json_version"] = VC_POINTCOLLECTIONS_JSON_VERSION;
+    j["collections"] = collections_obj;
+
+    std::ofstream o(filePath);
+    if (!o.is_open()) {
+        qWarning() << "Failed to open corrections file for writing:" << QString::fromStdString(filePath.string());
+        return false;
+    }
+    o << j.dump(4);
+    o.close();
+
+    qInfo() << "Saved" << anchoredCount << "anchored correction collections to" << QString::fromStdString(filePath.string());
+    return true;
+}
+
+void VCCollection::applyAnchorOffset(float offsetX, float offsetY)
+{
+    if (offsetX == 0.0f && offsetY == 0.0f) {
+        return;
+    }
+
+    int updatedCount = 0;
+    for (auto& pair : _collections) {
+        if (pair.second.anchor2d.has_value()) {
+            cv::Vec2f& anchor = pair.second.anchor2d.value();
+            anchor[0] += offsetX;
+            anchor[1] += offsetY;
+            updatedCount++;
+            emit collectionChanged(pair.first);
+        }
+    }
+
+    if (updatedCount > 0) {
+        qInfo() << "Applied offset (" << offsetX << "," << offsetY << ") to" << updatedCount << "correction anchors";
+    }
+}
+
+bool VCCollection::loadFromSegmentPath(const std::filesystem::path& segmentPath)
+{
+    // Clear existing anchored collections (segment-specific corrections) before loading
+    // This ensures switching segments replaces old corrections with new ones
+    std::vector<uint64_t> toRemove;
+    for (const auto& [id, col] : _collections) {
+        if (col.anchor2d.has_value()) {
+            toRemove.push_back(id);
+        }
+    }
+    if (!toRemove.empty()) {
+        qInfo() << "Clearing" << toRemove.size() << "existing anchored correction collections";
+    }
+    for (uint64_t id : toRemove) {
+        clearCollection(id);
+    }
+
+    // If no path provided, just clear (already done above) and return success
+    if (segmentPath.empty()) {
+        return true;
+    }
+
+    auto filePath = segmentPath / "corrections.json";
+
+    std::error_code ec;
+    if (!std::filesystem::exists(filePath, ec)) {
+        // No corrections file - this is normal, not an error
+        qInfo() << "No corrections file at" << QString::fromStdString(filePath.string());
+        return true;
+    }
+
+    std::ifstream i(filePath);
+    if (!i.is_open()) {
+        qWarning() << "Failed to open corrections file for reading:" << QString::fromStdString(filePath.string());
+        return false;
+    }
+
+    json j;
+    try {
+        i >> j;
+    } catch (json::parse_error& e) {
+        qWarning() << "Failed to parse corrections JSON:" << e.what();
+        return false;
+    }
+
+    try {
+        if (!j.contains("vc_pointcollections_json_version") ||
+            j.at("vc_pointcollections_json_version").get<std::string>() != VC_POINTCOLLECTIONS_JSON_VERSION) {
+            qWarning() << "Corrections file has incorrect version";
+            return false;
+        }
+
+        json collections_obj = j.at("collections");
+        if (!collections_obj.is_object()) {
+            return false;
+        }
+
+        std::vector<uint64_t> addedCollectionIds;
+        int loadedCount = 0;
+
+        for (auto& [id_str, col_json] : collections_obj.items()) {
+            Collection col = col_json.get<Collection>();
+            // Only load collections with anchor2d set
+            if (!col.anchor2d.has_value()) {
+                continue;
+            }
+
+            uint64_t id = std::stoull(id_str);
+            col.id = id;
+            _collections[col.id] = col;
+            for (auto& point_pair : _collections.at(col.id).points) {
+                point_pair.second.collectionId = col.id;
+                _points[point_pair.first] = point_pair.second;
+            }
+
+            // Update next IDs
+            if (col.id >= _next_collection_id) {
+                _next_collection_id = col.id + 1;
+            }
+            for (const auto& point_pair : col.points) {
+                if (point_pair.first >= _next_point_id) {
+                    _next_point_id = point_pair.first + 1;
+                }
+            }
+
+            addedCollectionIds.push_back(col.id);
+            loadedCount++;
+        }
+
+        if (!addedCollectionIds.empty()) {
+            emit collectionsAdded(addedCollectionIds);
+        }
+
+        qInfo() << "Loaded" << loadedCount << "anchored correction collections from" << QString::fromStdString(filePath.string());
+
+    } catch (json::exception& e) {
+        qWarning() << "Failed to extract data from corrections JSON:" << e.what();
+        return false;
+    }
 
     return true;
 }

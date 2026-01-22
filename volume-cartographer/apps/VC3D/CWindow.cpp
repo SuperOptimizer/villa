@@ -48,6 +48,7 @@
 #include <QGraphicsSimpleTextItem>
 #include <QPointer>
 #include <QPen>
+#include <QListView>
 #include <QFont>
 #include <QPainter>
 #include <chrono>
@@ -83,6 +84,7 @@
 #include "segmentation/SegmentationGrower.hpp"
 #include "SurfacePanelController.hpp"
 #include "MenuActionController.hpp"
+#include "vc/core/Version.hpp"
 
 #include "vc/core/util/Logging.hpp"
 #include "vc/core/types/Volume.hpp"
@@ -486,6 +488,12 @@ CWindow::CWindow() :
                                                   vc3d::settings::viewer::MIRROR_CURSOR_TO_SEGMENTATION_DEFAULT).toBool();
     setWindowIcon(QPixmap(":/images/logo.png"));
     ui.setupUi(this);
+    const QString baseTitle = windowTitle();
+    const QString repoShortHash = QString::fromStdString(ProjectInfo::RepositoryShortHash()).trimmed();
+    if (!repoShortHash.isEmpty() && !repoShortHash.startsWith('@')
+        && repoShortHash.compare("Untracked", Qt::CaseInsensitive) != 0) {
+        setWindowTitle(QString("%1 %2").arg(baseTitle, repoShortHash));
+    }
     // setAttribute(Qt::WA_DeleteOnClose);
 
     chunk_cache = new ChunkCache<uint8_t>(CHUNK_CACHE_SIZE_GB*1024ULL*1024ULL*1024ULL);
@@ -517,6 +525,9 @@ CWindow::CWindow() :
 
     _pointsOverlay = std::make_unique<PointsOverlayController>(_point_collection, this);
     _viewerManager->setPointsOverlay(_pointsOverlay.get());
+
+    _rawPointsOverlay = std::make_unique<RawPointsOverlayController>(_surf_col, this);
+    _viewerManager->setRawPointsOverlay(_rawPointsOverlay.get());
 
     _pathsOverlay = std::make_unique<PathsOverlayController>(this);
     _viewerManager->setPathsOverlay(_pathsOverlay.get());
@@ -706,6 +717,19 @@ CWindow::CWindow() :
         }
     });
 
+    // Raw points overlay shortcut (P key)
+    auto* rawPointsShortcut = new QShortcut(QKeySequence("P"), this);
+    rawPointsShortcut->setContext(Qt::ApplicationShortcut);
+    connect(rawPointsShortcut, &QShortcut::activated, [this]() {
+        if (_rawPointsOverlay) {
+            bool newEnabled = !_rawPointsOverlay->isEnabled();
+            _rawPointsOverlay->setEnabled(newEnabled);
+            statusBar()->showMessage(
+                newEnabled ? tr("Raw points overlay enabled") : tr("Raw points overlay disabled"),
+                2000);
+        }
+    });
+
     // Zoom shortcuts (Shift+= for zoom in, Shift+- for zoom out)
     // Use 15% steps for smooth, proportional zooming - only affects active viewer
     constexpr float ZOOM_FACTOR = 1.15f;
@@ -765,6 +789,54 @@ CWindow::CWindow() :
             if (viewer) viewer->adjustSurfaceOffset(-1.0f);
         });
     });
+
+    // Segment cycling shortcuts (] for next, [ for previous)
+    fCycleNextSegmentShortcut = new QShortcut(QKeySequence("]"), this);
+    fCycleNextSegmentShortcut->setContext(Qt::ApplicationShortcut);
+    connect(fCycleNextSegmentShortcut, &QShortcut::activated, [this]() {
+        if (!_surfacePanel) {
+            return;
+        }
+
+        const bool preserveEditing = _segmentationWidget && _segmentationWidget->isEditingEnabled();
+        bool previousIgnore = false;
+        if (preserveEditing && _segmentationModule) {
+            previousIgnore = _segmentationModule->ignoreSegSurfaceChange();
+            _segmentationModule->setIgnoreSegSurfaceChange(true);
+        }
+
+        _surfacePanel->cycleToNextVisibleSegment();
+
+        if (preserveEditing && _segmentationModule) {
+            _segmentationModule->setIgnoreSegSurfaceChange(previousIgnore);
+        }
+    });
+
+    fCyclePrevSegmentShortcut = new QShortcut(QKeySequence("["), this);
+    fCyclePrevSegmentShortcut->setContext(Qt::ApplicationShortcut);
+    connect(fCyclePrevSegmentShortcut, &QShortcut::activated, [this]() {
+        if (!_surfacePanel) {
+            return;
+        }
+
+        const bool preserveEditing = _segmentationWidget && _segmentationWidget->isEditingEnabled();
+        bool previousIgnore = false;
+        if (preserveEditing && _segmentationModule) {
+            previousIgnore = _segmentationModule->ignoreSegSurfaceChange();
+            _segmentationModule->setIgnoreSegSurfaceChange(true);
+        }
+
+        _surfacePanel->cycleToPreviousVisibleSegment();
+
+        if (preserveEditing && _segmentationModule) {
+            _segmentationModule->setIgnoreSegSurfaceChange(previousIgnore);
+        }
+    });
+
+    // Focused view toggle (Shift+Ctrl+F) - hides dock widgets, keeps all viewers
+    fFocusedViewShortcut = new QShortcut(QKeySequence("Shift+Ctrl+F"), this);
+    fFocusedViewShortcut->setContext(Qt::ApplicationShortcut);
+    connect(fFocusedViewShortcut, &QShortcut::activated, this, &CWindow::toggleFocusedView);
 
     connect(_surfacePanel.get(), &SurfacePanelController::moveToPathsRequested, this, &CWindow::onMoveSegmentToPaths);
 }
@@ -1025,6 +1097,40 @@ void CWindow::toggleVolumeOverlayVisibility()
 {
     if (_volumeOverlay) {
         _volumeOverlay->toggleVisibility();
+    }
+}
+
+void CWindow::toggleFocusedView()
+{
+    if (_focusedViewActive) {
+        for (const auto& [dock, state] : _savedDockStates) {
+            if (dock) {
+                dock->setVisible(state.visible);
+            }
+        }
+        for (const auto& [dock, state] : _savedDockStates) {
+            if (dock && state.wasRaised) {
+                dock->raise();
+            }
+        }
+        _savedDockStates.clear();
+        _focusedViewActive = false;
+        statusBar()->showMessage(tr("Restored full view"), 2000);
+    } else {
+        _savedDockStates.clear();
+        const QList<QDockWidget*> docks = findChildren<QDockWidget*>();
+        for (QDockWidget* dock : docks) {
+            bool wasRaised = false;
+            if (dock->isVisible() && !dock->isFloating()) {
+                if (QWidget* content = dock->widget()) {
+                    wasRaised = !content->visibleRegion().isEmpty();
+                }
+            }
+            _savedDockStates[dock] = {dock->isVisible(), dock->isFloating(), wasRaised};
+            dock->hide();
+        }
+        _focusedViewActive = true;
+        statusBar()->showMessage(tr("Focused view (Shift+Ctrl+F to restore)"), 2000);
     }
 }
 
@@ -1478,6 +1584,7 @@ void CWindow::CreateWidgets(void)
         });
     }
     connect(_point_collection_widget, &CPointCollectionWidget::pointDoubleClicked, this, &CWindow::onPointDoubleClicked);
+    connect(_point_collection_widget, &CPointCollectionWidget::convertPointToAnchorRequested, this, &CWindow::onConvertPointToAnchor);
 
     // Tab the docks - keep Segmentation, Seeding, Point Collections, and Drawing together
     tabifyDockWidget(ui.dockWidgetSegmentation, ui.dockWidgetDistanceTransform);
@@ -1521,6 +1628,8 @@ void CWindow::CreateWidgets(void)
 
     connect(_surfacePanel.get(), &SurfacePanelController::surfaceActivated,
             this, &CWindow::onSurfaceActivated);
+    connect(_surfacePanel.get(), &SurfacePanelController::surfaceActivatedPreserveEditing,
+            this, &CWindow::onSurfaceActivatedPreserveEditing);
 
     // new and remove path buttons
     // connect(ui.btnNewPath, SIGNAL(clicked()), this, SLOT(OnNewPathClicked()));
@@ -1566,14 +1675,6 @@ void CWindow::CreateWidgets(void)
         });
         ui.surfaceOverlaySelect->setEnabled(checked);
         ui.spinOverlapThreshold->setEnabled(checked);
-    });
-
-    connect(ui.surfaceOverlaySelect, qOverload<int>(&QComboBox::currentIndexChanged), [this](int index) {
-        if (index < 0 || !_viewerManager) return;
-        const QString surfaceName = ui.surfaceOverlaySelect->currentData().toString();
-        _viewerManager->forEachViewer([&surfaceName](CVolumeViewer* viewer) {
-            viewer->setSurfaceOverlay(surfaceName.toStdString());
-        });
     });
 
     connect(ui.spinOverlapThreshold, qOverload<double>(&QDoubleSpinBox::valueChanged), [this](double value) {
@@ -2906,6 +3007,57 @@ void CWindow::onSurfaceActivated(const QString& surfaceId, QuadSurface* surface)
     }
 }
 
+void CWindow::onSurfaceActivatedPreserveEditing(const QString& surfaceId, QuadSurface* surface)
+{
+    const std::string previousSurfId = _surfID;
+    _surfID = surfaceId.toStdString();
+
+    if (fVpkg && !_surfID.empty()) {
+        _surf_weak = fVpkg->getSurface(_surfID);
+    } else {
+        _surf_weak.reset();
+    }
+
+    auto surf = _surf_weak.lock();
+
+    if (_surfID != previousSurfId && _segmentationModule) {
+        _segmentationModule->onActiveSegmentChanged(surf.get());
+
+        const bool wantsEditing = _segmentationWidget && _segmentationWidget->isEditingEnabled();
+        if (wantsEditing) {
+            if (!_segmentationModule->editingEnabled()) {
+                _segmentationModule->setEditingEnabled(true);
+            } else if (_surf_col) {
+                auto targetSurface = surf;
+                if (!targetSurface) {
+                    targetSurface = std::dynamic_pointer_cast<QuadSurface>(_surf_col->surface("segmentation"));
+                }
+
+                if (targetSurface) {
+                    _segmentationModule->endEditingSession();
+                    if (_segmentationModule->beginEditingSession(targetSurface) && _viewerManager) {
+                        _viewerManager->forEachViewer([](CVolumeViewer* viewer) {
+                            if (viewer) {
+                                viewer->clearOverlayGroup("segmentation_radius_indicator");
+                            }
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    if (surf) {
+        applySlicePlaneOrientation(surf.get());
+    } else {
+        applySlicePlaneOrientation();
+    }
+
+    if (_surfacePanel && _surfacePanel->isCurrentOnlyFilterEnabled()) {
+        _surfacePanel->refreshFiltersOnly();
+    }
+}
+
 void CWindow::onSurfaceWillBeDeleted(std::string name, std::shared_ptr<Surface> surf)
 {
     // Called BEFORE surface deletion - clear all references to prevent use-after-free
@@ -3241,6 +3393,45 @@ void CWindow::onPointDoubleClicked(uint64_t pointId)
 
         _surf_col->setPOI("focus", poi);
     }
+}
+
+void CWindow::onConvertPointToAnchor(uint64_t pointId, uint64_t collectionId)
+{
+    auto point_opt = _point_collection->getPoint(pointId);
+    if (!point_opt) {
+        statusBar()->showMessage(tr("Point not found"), 2000);
+        return;
+    }
+
+    // Get the segmentation surface to project the point onto
+    auto seg_surface = _surf_col->surface("segmentation");
+    auto* quad_surface = dynamic_cast<QuadSurface*>(seg_surface.get());
+    if (!quad_surface) {
+        statusBar()->showMessage(tr("No active segmentation surface for anchor conversion"), 3000);
+        return;
+    }
+
+    // Find the 2D grid location of this point on the surface
+    auto ptr = quad_surface->pointer();
+    auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
+    float dist = quad_surface->pointTo(ptr, point_opt->p, 4.0, 1000, patchIndex);
+
+    if (dist > 10.0) {
+        statusBar()->showMessage(tr("Point is too far from surface (distance: %1)").arg(dist), 3000);
+        return;
+    }
+
+    // Get the raw grid location (internal coordinates)
+    cv::Vec3f loc_3d = quad_surface->loc_raw(ptr);
+    cv::Vec2f anchor2d(loc_3d[0], loc_3d[1]);
+
+    // Set the anchor2d on the collection
+    _point_collection->setCollectionAnchor2d(collectionId, anchor2d);
+
+    // Remove the point (it's now represented by the anchor)
+    _point_collection->removePoint(pointId);
+
+    statusBar()->showMessage(tr("Converted point to anchor at grid position (%1, %2)").arg(anchor2d[0]).arg(anchor2d[1]), 3000);
 }
 
 void CWindow::onZoomOut()
@@ -4694,31 +4885,161 @@ void CWindow::updateSurfaceOverlayDropdown()
         return;
     }
 
-    const QSignalBlocker blocker(ui.surfaceOverlaySelect);
-    QString currentSelection = ui.surfaceOverlaySelect->currentData().toString();
+    // Disconnect previous model's signals if any
+    if (_surfaceOverlayModel) {
+        disconnect(_surfaceOverlayModel, &QStandardItemModel::dataChanged,
+                   this, &CWindow::onSurfaceOverlaySelectionChanged);
+    }
 
-    ui.surfaceOverlaySelect->clear();
-    ui.surfaceOverlaySelect->addItem(tr("(None)"), QString());
+    // Create new model
+    _surfaceOverlayModel = new QStandardItemModel(ui.surfaceOverlaySelect);
+    ui.surfaceOverlaySelect->setModel(_surfaceOverlayModel);
+
+    // Use a QListView to properly show checkboxes
+    auto* listView = new QListView(ui.surfaceOverlaySelect);
+    ui.surfaceOverlaySelect->setView(listView);
+
+    // Get current segmentation directory for filtering
+    std::string currentDir;
+    if (fVpkg) {
+        currentDir = fVpkg->getSegmentationDirectory();
+    }
+
+    // Add "All" item at the top
+    auto* allItem = new QStandardItem(tr("All"));
+    allItem->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled);
+    allItem->setData(Qt::Unchecked, Qt::CheckStateRole);
+    allItem->setData(QStringLiteral("__all__"), Qt::UserRole);
+    _surfaceOverlayModel->appendRow(allItem);
 
     if (_surf_col) {
         const auto names = _surf_col->surfaceNames();
-        int selectedIndex = 0;
-        int currentIndex = 1; // Start at 1 since "(None)" is at 0
-
         for (const auto& name : names) {
-            // Only add QuadSurfaces (actual segmentations), skip PlaneSurfaces (xy, xz, yz, etc.)
+            // Only add QuadSurfaces (actual segmentations), skip PlaneSurfaces
             auto surf = _surf_col->surface(name);
-            if (surf && dynamic_cast<QuadSurface*>(surf.get())) {
-                ui.surfaceOverlaySelect->addItem(QString::fromStdString(name), QString::fromStdString(name));
+            auto* quadSurf = dynamic_cast<QuadSurface*>(surf.get());
+            if (!quadSurf) {
+                continue;
+            }
 
-                // Restore previous selection if it still exists
-                if (QString::fromStdString(name) == currentSelection) {
-                    selectedIndex = currentIndex;
+            // Filter by current segmentation directory
+            if (!currentDir.empty() && !surf->path.empty()) {
+                std::string surfDir = surf->path.parent_path().filename().string();
+                if (surfDir != currentDir) {
+                    continue;
                 }
-                currentIndex++;
+            }
+
+            auto* item = new QStandardItem(QString::fromStdString(name));
+            item->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled);
+            item->setData(Qt::Unchecked, Qt::CheckStateRole);
+            item->setData(QString::fromStdString(name), Qt::UserRole);
+
+            // Assign persistent color if not already assigned
+            if (_surfaceOverlayColorAssignments.find(name) == _surfaceOverlayColorAssignments.end()) {
+                _surfaceOverlayColorAssignments[name] = _nextSurfaceOverlayColorIndex++;
+            }
+            size_t colorIdx = _surfaceOverlayColorAssignments[name];
+
+            // Create color swatch icon (16x16 colored square)
+            QPixmap swatch(16, 16);
+            swatch.fill(getOverlayColor(colorIdx));
+            item->setIcon(QIcon(swatch));
+
+            _surfaceOverlayModel->appendRow(item);
+        }
+    }
+
+    // Connect model's dataChanged signal for checkbox state changes
+    connect(_surfaceOverlayModel, &QStandardItemModel::dataChanged,
+            this, &CWindow::onSurfaceOverlaySelectionChanged);
+}
+
+void CWindow::onSurfaceOverlaySelectionChanged(const QModelIndex& topLeft,
+                                                const QModelIndex& /*bottomRight*/,
+                                                const QVector<int>& roles)
+{
+    if (!roles.contains(Qt::CheckStateRole) || !_surfaceOverlayModel || !_viewerManager) {
+        return;
+    }
+
+    // Check if "All" was toggled (row 0)
+    QStandardItem* changedItem = _surfaceOverlayModel->itemFromIndex(topLeft);
+    if (changedItem && changedItem->data(Qt::UserRole).toString() == QStringLiteral("__all__")) {
+        bool allChecked = changedItem->checkState() == Qt::Checked;
+
+        // Block signals while updating all items
+        {
+            QSignalBlocker blocker(_surfaceOverlayModel);
+            for (int row = 1; row < _surfaceOverlayModel->rowCount(); ++row) {
+                QStandardItem* item = _surfaceOverlayModel->item(row);
+                if (item) {
+                    item->setCheckState(allChecked ? Qt::Checked : Qt::Unchecked);
+                }
             }
         }
-
-        ui.surfaceOverlaySelect->setCurrentIndex(selectedIndex);
     }
+
+    // Build map of selected surfaces with colors
+    std::map<std::string, cv::Vec3b> selectedSurfaces;
+    int checkedCount = 0;
+    int totalSurfaces = 0;
+
+    for (int row = 1; row < _surfaceOverlayModel->rowCount(); ++row) {
+        QStandardItem* item = _surfaceOverlayModel->item(row);
+        if (!item) continue;
+
+        totalSurfaces++;
+        if (item->checkState() == Qt::Checked) {
+            checkedCount++;
+            std::string name = item->data(Qt::UserRole).toString().toStdString();
+            size_t colorIdx = _surfaceOverlayColorAssignments[name];
+            selectedSurfaces[name] = getOverlayColorBGR(colorIdx);
+        }
+    }
+
+    // Update "All" checkbox state (partial/full/none) without triggering recursion
+    {
+        QSignalBlocker blocker(_surfaceOverlayModel);
+        QStandardItem* allItem = _surfaceOverlayModel->item(0);
+        if (allItem) {
+            if (checkedCount == 0) {
+                allItem->setCheckState(Qt::Unchecked);
+            } else if (checkedCount == totalSurfaces && totalSurfaces > 0) {
+                allItem->setCheckState(Qt::Checked);
+            } else {
+                allItem->setCheckState(Qt::PartiallyChecked);
+            }
+        }
+    }
+
+    // Propagate to all viewers
+    _viewerManager->forEachViewer([&selectedSurfaces](CVolumeViewer* viewer) {
+        viewer->setSurfaceOverlays(selectedSurfaces);
+    });
+}
+
+QColor CWindow::getOverlayColor(size_t index) const
+{
+    static const std::vector<QColor> palette = {
+        QColor(80, 180, 255),   // sky blue
+        QColor(180, 80, 220),   // violet
+        QColor(80, 220, 200),   // aqua/teal
+        QColor(220, 80, 180),   // magenta
+        QColor(80, 130, 255),   // medium blue
+        QColor(160, 80, 255),   // purple
+        QColor(80, 255, 220),   // cyan
+        QColor(255, 80, 200),   // hot pink
+        QColor(120, 220, 80),   // lime green
+        QColor(80, 180, 120),   // spring green
+        QColor(150, 200, 255),  // light sky blue
+        QColor(200, 150, 230),  // light violet
+    };
+    return palette[index % palette.size()];
+}
+
+cv::Vec3b CWindow::getOverlayColorBGR(size_t index) const
+{
+    QColor c = getOverlayColor(index);
+    return cv::Vec3b(c.blue(), c.green(), c.red());
 }

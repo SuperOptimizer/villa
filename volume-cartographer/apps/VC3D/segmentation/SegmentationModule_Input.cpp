@@ -3,6 +3,7 @@
 #include "CVolumeViewer.hpp"
 #include "SegmentationBrushTool.hpp"
 #include "ApprovalMaskBrushTool.hpp"
+#include "CellReoptimizationTool.hpp"
 #include "SegmentationCorrections.hpp"
 #include "SegmentationEditManager.hpp"
 #include "SegmentationLineTool.hpp"
@@ -79,36 +80,16 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
         }
     }
 
-    if (event->key() == Qt::Key_Shift && !event->isAutoRepeat()) {
-        setInvalidationBrushActive(true);
-        event->accept();
-        return true;
-    }
-
     if (event->key() == Qt::Key_S && !event->isAutoRepeat()) {
         if (_editingEnabled && !_growthInProgress && _editManager && _editManager->hasSession()) {
             _lineDrawKeyActive = true;
             stopAllPushPull();
-            const bool brushActive = _brushTool && _brushTool->brushActive();
-            if (brushActive) {
-                deactivateInvalidationBrush();
-            }
             clearLineDragStroke();
             cancelDrag();
             event->accept();
             return true;
         }
         _lineDrawKeyActive = false;
-    }
-
-    if (event->key() == Qt::Key_E && !event->isAutoRepeat()) {
-        const Qt::KeyboardModifiers mods = event->modifiers();
-        if (mods == Qt::NoModifier || mods == Qt::ShiftModifier) {
-            if (_brushTool && _brushTool->applyPending(_dragRadiusSteps)) {
-                event->accept();
-                return true;
-            }
-        }
     }
 
     if (!event->isAutoRepeat() && event->key() == Qt::Key_G &&
@@ -139,6 +120,10 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
     if (event->key() == Qt::Key_Escape) {
         if (_drag.active) {
             cancelDrag();
+            return true;
+        }
+        if (_correctionDrag.active) {
+            cancelCorrectionDrag();
             return true;
         }
     }
@@ -172,20 +157,38 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
         return true;
     }
 
+    if (event->key() == Qt::Key_T && event->modifiers() == Qt::ShiftModifier) {
+        if (!_editingEnabled) {
+            setEditingEnabled(true);
+            if (_widget) {
+                _widget->setEditingEnabled(true);
+            }
+        }
+        event->accept();
+        return true;
+    }
+
     if (event->key() == Qt::Key_T && event->modifiers() == Qt::NoModifier) {
         if (!_editingEnabled) {
             setEditingEnabled(true);
             if (_widget) {
                 _widget->setEditingEnabled(true);
             }
-        } else {
             setCorrectionsAnnotateMode(true, true);
+        } else {
+            // Toggle correction point annotation mode
+            bool currentMode = _corrections && _corrections->annotateMode();
+            setCorrectionsAnnotateMode(!currentMode, true);
         }
         event->accept();
         return true;
     }
 
     if (event->modifiers() == Qt::NoModifier && !event->isAutoRepeat()) {
+        if (!_widget || !_widget->growthKeybindsEnabled()) {
+            return false;
+        }
+
         if (event->key() == Qt::Key_6) {
             const SegmentationGrowthMethod method = _widget ? _widget->growthMethod() : _growthMethod;
             handleGrowSurfaceRequested(method, SegmentationGrowthDirection::All, 1, false);
@@ -233,12 +236,6 @@ bool SegmentationModule::handleKeyRelease(QKeyEvent* event)
 {
     if (!event) {
         return false;
-    }
-
-    if (event->key() == Qt::Key_Shift && !event->isAutoRepeat()) {
-        setInvalidationBrushActive(false);
-        event->accept();
-        return true;
     }
 
     if (event->key() == Qt::Key_S && !event->isAutoRepeat()) {
@@ -313,10 +310,47 @@ void SegmentationModule::handleMousePress(CVolumeViewer* viewer,
         }
         if (modifiers.testFlag(Qt::ControlModifier)) {
             handleCorrectionPointRemove(worldPos);
-        } else {
-            handleCorrectionPointAdded(worldPos);
+            updateCorrectionsWidget();
+            return;
         }
+        // Shift+click+drag: start correction drag with anchor2d
+        // Click without Shift: add correction point directly (old behavior)
+        if (modifiers.testFlag(Qt::ShiftModifier) && _editManager) {
+            auto gridIndex = _editManager->worldToGridIndex(worldPos);
+            if (gridIndex) {
+                beginCorrectionDrag(gridIndex->first, gridIndex->second, viewer, worldPos);
+                return;
+            }
+        }
+        // Default: add correction point at clicked position
+        handleCorrectionPointAdded(worldPos);
         updateCorrectionsWidget();
+        return;
+    }
+
+    // Handle cell reoptimization mode
+    if (_cellReoptMode && isLeftButton) {
+        if (modifiers.testFlag(Qt::ControlModifier) || modifiers.testFlag(Qt::AltModifier)) {
+            return;
+        }
+        if (_cellReoptTool && _editManager) {
+            auto gridIndex = _editManager->worldToGridIndex(worldPos);
+            if (gridIndex) {
+                // Update the tool's surface reference and config
+                if (_editManager->baseSurface()) {
+                    _cellReoptTool->setSurface(_editManager->baseSurface().get());
+                }
+                if (_widget) {
+                    CellReoptimizationTool::Config config;
+                    config.maxFloodSteps = _widget->cellReoptMaxSteps();
+                    config.maxCorrectionPoints = _widget->cellReoptMaxPoints();
+                    config.minBoundarySpacing = _widget->cellReoptMinSpacing();
+                    config.perimeterOffset = _widget->cellReoptPerimeterOffset();
+                    _cellReoptTool->setConfig(config);
+                }
+                _cellReoptTool->executeAtGridPosition(gridIndex->first, gridIndex->second);
+            }
+        }
         return;
     }
 
@@ -332,26 +366,13 @@ void SegmentationModule::handleMousePress(CVolumeViewer* viewer,
         return;
     }
 
-    const bool brushActive = _brushTool && _brushTool->brushActive();
-
     if (_lineDrawKeyActive) {
         stopAllPushPull();
-        if (brushActive) {
-            deactivateInvalidationBrush();
-        }
         if (_drag.active) {
             cancelDrag();
         }
         if (_lineTool) {
             _lineTool->startStroke(worldPos);
-        }
-        return;
-    }
-
-    if (brushActive) {
-        stopAllPushPull();
-        if (_brushTool) {
-            _brushTool->startStroke(worldPos);
         }
         return;
     }
@@ -458,22 +479,13 @@ void SegmentationModule::handleMouseMove(CVolumeViewer* viewer,
         return;
     }
 
-    const bool paintStrokeActive = _brushTool && _brushTool->strokeActive();
-    if (paintStrokeActive) {
-        if (buttons.testFlag(Qt::LeftButton)) {
-            if (_brushTool) {
-                _brushTool->extendStroke(worldPos, false);
-            }
-        } else {
-            if (_brushTool) {
-                _brushTool->finishStroke();
-            }
-        }
+    if (_drag.active) {
+        updateDrag(worldPos);
         return;
     }
 
-    if (_drag.active) {
-        updateDrag(worldPos);
+    if (_correctionDrag.active) {
+        updateCorrectionDrag(worldPos);
         return;
     }
 
@@ -528,12 +540,9 @@ void SegmentationModule::handleMouseRelease(CVolumeViewer* viewer,
         return;
     }
 
-    const bool paintStrokeActive = _brushTool && _brushTool->strokeActive();
-    if (paintStrokeActive && button == Qt::LeftButton) {
-        if (_brushTool) {
-            _brushTool->extendStroke(worldPos, true);
-            _brushTool->finishStroke();
-        }
+    if (_correctionDrag.active && button == Qt::LeftButton) {
+        updateCorrectionDrag(worldPos);
+        finishCorrectionDrag();
         return;
     }
 

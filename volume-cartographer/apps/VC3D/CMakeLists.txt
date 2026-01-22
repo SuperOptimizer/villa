@@ -33,14 +33,16 @@ set(srcs
     segmentation/SegmentationWidget.cpp
     segmentation/SegmentationWidget.hpp
     segmentation/SegmentationGrowth.cpp
+    segmentation/ExtrapolationGrowth.cpp
+    segmentation/ExtrapolationGrowth.hpp
     segmentation/SegmentationGrower.cpp
     segmentation/SegmentationGrower.hpp
     segmentation/SegmentationEditManager.cpp
     segmentation/SegmentationEditManager.hpp
-    segmentation/SegmentationBrushTool.cpp
-    segmentation/SegmentationBrushTool.hpp
     segmentation/ApprovalMaskBrushTool.cpp
     segmentation/ApprovalMaskBrushTool.hpp
+    segmentation/CellReoptimizationTool.cpp
+    segmentation/CellReoptimizationTool.hpp
     segmentation/SegmentationLineTool.cpp
     segmentation/SegmentationLineTool.hpp
     segmentation/SegmentationPushPullTool.cpp
@@ -53,6 +55,8 @@ set(srcs
     overlays/SegmentationOverlayController.hpp
     overlays/PointsOverlayController.cpp
     overlays/PointsOverlayController.hpp
+    overlays/RawPointsOverlayController.cpp
+    overlays/RawPointsOverlayController.hpp
     overlays/BBoxOverlayController.cpp
     overlays/BBoxOverlayController.hpp
     overlays/PathsOverlayController.cpp
@@ -101,6 +105,9 @@ add_executable(VC3D ${srcs} resources.qrc)
 target_include_directories(VC3D
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/libs/edt
+        ${CMAKE_SOURCE_DIR}/libs/cc3d
+        ${CMAKE_SOURCE_DIR}/libs/djikstra3d
 )
 
 target_link_libraries(VC3D
@@ -110,6 +117,7 @@ target_link_libraries(VC3D
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
+    opencv_ximgproc
 )
 
 if (${VC_INSTALL_APPS})
@@ -120,7 +128,7 @@ if (${VC_INSTALL_APPS})
     )
 
     install(
-            PROGRAMS ${CMAKE_SOURCE_DIR}/scripts/vc_sync.py ${CMAKE_SOURCE_DIR}/scripts/flatboi.py
+            PROGRAMS ${CMAKE_SOURCE_DIR}/scripts/vc_sync.py
             DESTINATION ${CMAKE_INSTALL_BINDIR}
             COMPONENT Programs
     )
