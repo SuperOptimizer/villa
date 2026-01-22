@@ -179,6 +179,23 @@ bool NeuralTraceServiceManager::startService(const QString& checkpointPath,
     // Use provided Python path if specified, otherwise auto-detect
     QString python = pythonPath.isEmpty() ? findPythonExecutable() : pythonPath;
 
+    // Set up environment with vesuvius/src in PYTHONPATH
+    // trace_service.py is at vesuvius/src/vesuvius/neural_tracing/trace_service.py
+    // so vesuvius/src is two directories up from the script's parent
+    QDir traceServiceDir(QFileInfo(traceServicePath).absolutePath());
+    traceServiceDir.cdUp();  // neural_tracing -> vesuvius
+    traceServiceDir.cdUp();  // vesuvius -> src
+    QString vesuviusSrcPath = traceServiceDir.absolutePath();
+
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    QString existingPythonPath = env.value("PYTHONPATH");
+    if (existingPythonPath.isEmpty()) {
+        env.insert("PYTHONPATH", vesuviusSrcPath);
+    } else {
+        env.insert("PYTHONPATH", vesuviusSrcPath + ":" + existingPythonPath);
+    }
+    _process->setProcessEnvironment(env);
+
     QStringList args = {
         traceServicePath,
         "--checkpoint_path", checkpointPath,
