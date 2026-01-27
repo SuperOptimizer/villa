@@ -1,7 +1,6 @@
 #pragma once
 
-#include "vc/core/util/xtensor_include.hpp"
-#include XTENSORINCLUDE(containers, xarray.hpp)
+#include "vc/core/zarr/Tensor3D.hpp"
 #include <vc/core/util/HashFunctions.hpp>
 
 #include <shared_mutex>
@@ -41,14 +40,14 @@ public:
      * @param key Cache key (group_idx, z, y, x)
      * @param ar Chunk data (ownership transferred to cache)
      */
-    void put(const cv::Vec4i& key, xt::xarray<T>* ar);
+    void put(const cv::Vec4i& key, volcart::zarr::Tensor3D<T>* ar);
 
     /**
      * @brief Retrieve a chunk from the cache
      * @param key Cache key
-     * @return std::shared_ptr<xt::xarray<T>> Cached chunk or nullptr if not found
+     * @return std::shared_ptr<Tensor3D<T>> Cached chunk or nullptr if not found
      */
-    std::shared_ptr<xt::xarray<T>> get(const cv::Vec4i& key);
+    std::shared_ptr<volcart::zarr::Tensor3D<T>> get(const cv::Vec4i& key);
 
     /**
      * @brief Check if a chunk exists in the cache
@@ -62,16 +61,20 @@ public:
      */
     void reset();
 
+    /**
+     * @brief Get cache statistics for debugging
+     */
+    void getStats(size_t& storedBytes, size_t& maxBytes, size_t& numEntries, size_t& numNullEntries) const;
+
     std::shared_mutex mutex;
 
 private:
     uint64_t _generation = 0;
     size_t _size = 0;
     size_t _stored = 0;
-    std::unordered_map<cv::Vec4i, std::shared_ptr<xt::xarray<T>>, vec4i_hash> _store;
+    std::unordered_map<cv::Vec4i, std::shared_ptr<volcart::zarr::Tensor3D<T>>, vec4i_hash> _store;
     std::unordered_map<cv::Vec4i, uint64_t, vec4i_hash> _gen_store;
     std::unordered_map<std::string, int> _group_store;
-    std::shared_mutex _mutex;
 };
 
 // Explicit template instantiations (defined in ChunkCache.cpp)

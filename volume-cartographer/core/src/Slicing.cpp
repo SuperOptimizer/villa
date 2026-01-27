@@ -1,13 +1,8 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Compositing.hpp"
 
-#include "vc/core/util/xtensor_include.hpp"
-#include XTENSORINCLUDE(containers, xarray.hpp)
-#include XTENSORINCLUDE(io, xio.hpp)
-#include XTENSORINCLUDE(generators, xbuilder.hpp)
-#include XTENSORINCLUDE(views, xview.hpp)
-
-#include "z5/multiarray/xtensor_access.hxx"
+#include "vc/core/zarr/Tensor3D.hpp"
+#include "vc/core/zarr/ZarrDataset.hpp"
 
 #include <opencv2/core.hpp>
 #include <opencv2/calib3d.hpp>
@@ -18,29 +13,28 @@
 #include <cmath>
 #include <random>
 
+using namespace volcart::zarr;
 
 template<typename T>
-static xt::xarray<T> *readChunk(const z5::Dataset & ds, const z5::types::ShapeType& chunkId)
+static Tensor3D<T>* readChunk(ZarrDataset& ds, const std::vector<std::size_t>& chunkId)
 {
     if (!ds.chunkExists(chunkId)) {
         return nullptr;
     }
 
-    if (!ds.isZarr())
-        throw std::runtime_error("only zarr datasets supported currently!");
-    if (ds.getDtype() != z5::types::Datatype::uint8 && ds.getDtype() != z5::types::Datatype::uint16)
+    Dtype dtype = ds.getDtype();
+    if (dtype != Dtype::UInt8 && dtype != Dtype::UInt16)
         throw std::runtime_error("only uint8_t/uint16 zarrs supported currently!");
 
-    z5::types::ShapeType chunkShape;
+    std::vector<std::size_t> chunkShape;
     ds.getChunkShape(chunkId, chunkShape);
+    const auto& maxChunkShape = ds.chunkShape();
     const std::size_t maxChunkSize = ds.defaultChunkSize();
-    const auto & maxChunkShape = ds.defaultChunkShape();
 
-    xt::xarray<T> *out = new xt::xarray<T>();
-    *out = xt::empty<T>(maxChunkShape);
+    auto* out = new Tensor3D<T>(maxChunkShape[0], maxChunkShape[1], maxChunkShape[2]);
 
     // Handle based on both dataset dtype and target type T
-    if (ds.getDtype() == z5::types::Datatype::uint8) {
+    if (dtype == Dtype::UInt8) {
         // Dataset is uint8 - direct read for uint8_t, invalid for uint16_t
         if constexpr (std::is_same_v<T, uint8_t>) {
             ds.readChunk(chunkId, out->data());
@@ -48,17 +42,17 @@ static xt::xarray<T> *readChunk(const z5::Dataset & ds, const z5::types::ShapeTy
             throw std::runtime_error("Cannot read uint8 dataset into uint16 array");
         }
     }
-    else if (ds.getDtype() == z5::types::Datatype::uint16) {
+    else if (dtype == Dtype::UInt16) {
         if constexpr (std::is_same_v<T, uint16_t>) {
             // Dataset is uint16, target is uint16 - direct read
             ds.readChunk(chunkId, out->data());
         } else if constexpr (std::is_same_v<T, uint8_t>) {
             // Dataset is uint16, target is uint8 - need conversion
-            xt::xarray<uint16_t> tmp = xt::empty<uint16_t>(maxChunkShape);
+            Tensor3D<uint16_t> tmp(maxChunkShape[0], maxChunkShape[1], maxChunkShape[2]);
             ds.readChunk(chunkId, tmp.data());
 
-            uint8_t *p8 = out->data();
-            uint16_t *p16 = tmp.data();
+            uint8_t* p8 = out->data();
+            uint16_t* p16 = tmp.data();
             for(size_t i = 0; i < maxChunkSize; i++)
                 p8[i] = p16[i] / 257;
         }
@@ -70,10 +64,10 @@ static xt::xarray<T> *readChunk(const z5::Dataset & ds, const z5::types::ShapeTy
 
 
 template<typename T>
-static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<T>* cache) {
+static void readArea3DImpl(Tensor3D<T>& out, const cv::Vec3i& offset, ZarrDataset* ds, ChunkCache<T>* cache) {
     int group_idx = cache->groupIdx(ds->path());
     cv::Vec3i size = {(int)out.shape()[0], (int)out.shape()[1], (int)out.shape()[2]};
-    auto chunksize = ds->chunking().blockShape();
+    const auto& chunksize = ds->chunkShape();
     cv::Vec3i to = offset + size;
 
     // Step 1: List all required chunks
@@ -95,7 +89,7 @@ static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out
     // Step 2 & 3: Combined parallel I/O and copy
     #pragma omp parallel for schedule(dynamic, 1)
     for (const auto& idx : chunks_to_process) {
-        std::shared_ptr<xt::xarray<T>> chunk_ref;
+        std::shared_ptr<Tensor3D<T>> chunk_ref;
         bool needs_read = false;
 
         {
@@ -156,20 +150,20 @@ static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out
     }
 }
 
-void readArea3D(xt::xtensor<uint8_t, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<uint8_t>* cache) {
+void readArea3D(Tensor3D<uint8_t>& out, const cv::Vec3i& offset, ZarrDataset* ds, ChunkCache<uint8_t>* cache) {
     readArea3DImpl(out, offset, ds, cache);
 }
 
-void readArea3D(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<uint16_t>* cache) {
+void readArea3D(Tensor3D<uint16_t>& out, const cv::Vec3i& offset, ZarrDataset* ds, ChunkCache<uint16_t>* cache) {
     readArea3DImpl(out, offset, ds, cache);
 }
 
 template<typename T>
-static void readNearestNeighborImpl(cv::Mat_<T> &out, const z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache<T> *cache) {
+static void readNearestNeighborImpl(cv::Mat_<T> &out, ZarrDataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache<T> *cache) {
     out = cv::Mat_<T>(coords.size(), 0);
     int group_idx = cache->groupIdx(ds->path());
 
-    const auto& blockShape = ds->chunking().blockShape();
+    const auto& blockShape = ds->chunkShape();
     if (blockShape.size() < 3) {
         throw std::runtime_error("Unexpected chunk dimensionality for nearest-neighbor sampling: got " + std::to_string(blockShape.size()));
     }
@@ -190,8 +184,8 @@ static void readNearestNeighborImpl(cv::Mat_<T> &out, const z5::Dataset *ds, con
     {
         // Thread-local variables
         cv::Vec4i last_idx = {-1,-1,-1,-1};
-        xt::xarray<T> *chunk = nullptr;
-        std::shared_ptr<xt::xarray<T>> chunk_ref;
+        Tensor3D<T> *chunk = nullptr;
+        std::shared_ptr<Tensor3D<T>> chunk_ref;
 
         #pragma omp for schedule(static, 1) collapse(2)
         for(size_t tile_y = 0; tile_y < static_cast<size_t>(h); tile_y += TILE_SIZE) {
@@ -220,16 +214,30 @@ static void readNearestNeighborImpl(cv::Mat_<T> &out, const z5::Dataset *ds, con
 
                         if (idx != last_idx) {
                             last_idx = idx;
+                            chunk_ref.reset();
+                            chunk = nullptr;
 
-                            #pragma omp critical(cache_access)
+                            // Try read-only lookup first (allows parallel reads)
                             {
-                                if (!cache->has(idx)) {
-                                    auto* new_chunk = readChunk<T>(*ds, {size_t(ix), size_t(iy), size_t(iz)});
-                                    cache->put(idx, new_chunk);
-                                    chunk_ref = cache->get(idx);
-                                } else {
+                                std::shared_lock<std::shared_mutex> rlock(cache->mutex);
+                                if (cache->has(idx)) {
                                     chunk_ref = cache->get(idx);
                                 }
+                            }
+
+                            // Cache miss - load chunk outside lock
+                            if (!chunk_ref) {
+                                auto* new_chunk = readChunk<T>(*ds, {size_t(ix), size_t(iy), size_t(iz)});
+
+                                // Insert with exclusive lock
+                                std::unique_lock<std::shared_mutex> wlock(cache->mutex);
+                                // Double-check: another thread may have loaded it
+                                if (!cache->has(idx)) {
+                                    cache->put(idx, new_chunk);
+                                } else {
+                                    delete new_chunk;  // Another thread loaded it
+                                }
+                                chunk_ref = cache->get(idx);
                             }
                             chunk = chunk_ref.get();
                         }
@@ -246,7 +254,7 @@ static void readNearestNeighborImpl(cv::Mat_<T> &out, const z5::Dataset *ds, con
                             continue;
                         }
 
-                        out(y,x) = chunk->operator()(lx, ly, lz);
+                        out(y,x) = (*chunk)(lx, ly, lz);
                     }
                 }
             }
@@ -254,16 +262,16 @@ static void readNearestNeighborImpl(cv::Mat_<T> &out, const z5::Dataset *ds, con
     }
 }
 
-void readNearestNeighbor(cv::Mat_<uint8_t> &out, const z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache<uint8_t> *cache) {
+void readNearestNeighbor(cv::Mat_<uint8_t> &out, ZarrDataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache<uint8_t> *cache) {
     readNearestNeighborImpl(out, ds, coords, cache);
 }
 
-static void readNearestNeighbor16(cv::Mat_<uint16_t> &out, const z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache<uint16_t> *cache) {
+static void readNearestNeighbor16(cv::Mat_<uint16_t> &out, ZarrDataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache<uint16_t> *cache) {
     readNearestNeighborImpl(out, ds, coords, cache);
 }
 
 template<typename T>
-static void readInterpolated3DImpl(cv::Mat_<T> &out, z5::Dataset *ds,
+static void readInterpolated3DImpl(cv::Mat_<T> &out, ZarrDataset *ds,
                                const cv::Mat_<cv::Vec3f> &coords, ChunkCache<T> *cache, bool nearest_neighbor) {
     if (nearest_neighbor) {
         if constexpr (std::is_same_v<T, uint8_t>) {
@@ -282,9 +290,10 @@ static void readInterpolated3DImpl(cv::Mat_<T> &out, z5::Dataset *ds,
 
     int group_idx = cache->groupIdx(ds->path());
 
-    auto cw = ds->chunking().blockShape()[0];
-    auto ch = ds->chunking().blockShape()[1];
-    auto cd = ds->chunking().blockShape()[2];
+    const auto& chunkShape = ds->chunkShape();
+    auto cw = chunkShape[0];
+    auto ch = chunkShape[1];
+    auto cd = chunkShape[2];
 
     const auto& dsShape = ds->shape();
     const int sx = static_cast<int>(dsShape[0]);
@@ -298,7 +307,7 @@ static void readInterpolated3DImpl(cv::Mat_<T> &out, z5::Dataset *ds,
     int h = coords.rows;
 
     std::shared_mutex mutex;
-    std::unordered_map<cv::Vec4i,std::shared_ptr<xt::xarray<T>>,vec4i_hash> chunks;
+    std::unordered_map<cv::Vec4i,std::shared_ptr<Tensor3D<T>>,vec4i_hash> chunks;
 
     // Lambda for retrieving single values (unchanged)
     auto retrieve_single_value_cached = [&cw,&ch,&cd,&group_idx,&chunks,&sx,&sy,&sz](
@@ -319,7 +328,7 @@ static void readInterpolated3DImpl(cv::Mat_<T> &out, z5::Dataset *ds,
                 return 0;
             }
 
-            xt::xarray<T> *chunk  = it->second.get();
+            Tensor3D<T> *chunk  = it->second.get();
 
             if (!chunk)
                 return 0;
@@ -328,7 +337,7 @@ static void readInterpolated3DImpl(cv::Mat_<T> &out, z5::Dataset *ds,
             int ly = oy-iy*ch;
             int lz = oz-iz*cd;
 
-            return chunk->operator()(lx,ly,lz);
+            return (*chunk)(lx,ly,lz);
         };
 
         // size_t done = 0;
@@ -336,9 +345,9 @@ static void readInterpolated3DImpl(cv::Mat_<T> &out, z5::Dataset *ds,
         #pragma omp parallel
         {
             cv::Vec4i last_idx = {-1,-1,-1,-1};
-            std::shared_ptr<xt::xarray<T>> chunk_ref;
-            xt::xarray<T> *chunk = nullptr;
-            std::unordered_map<cv::Vec4i,std::shared_ptr<xt::xarray<T>>,vec4i_hash> chunks_local;
+            std::shared_ptr<Tensor3D<T>> chunk_ref;
+            Tensor3D<T> *chunk = nullptr;
+            std::unordered_map<cv::Vec4i,std::shared_ptr<Tensor3D<T>>,vec4i_hash> chunks_local;
 
             #pragma omp for collapse(2)
             for(size_t y = 0;y<h;y++) {
@@ -406,12 +415,12 @@ static void readInterpolated3DImpl(cv::Mat_<T> &out, z5::Dataset *ds,
 
         }
 
-    std::vector<std::pair<cv::Vec4i,xt::xarray<T>*>> needs_io;
+    std::vector<std::pair<cv::Vec4i,Tensor3D<T>*>> needs_io;
 
     cache->mutex.lock();
     for(auto &it : chunks) {
-        xt::xarray<T> *chunk = nullptr;
-        std::shared_ptr<xt::xarray<T>> chunk_ref;
+        Tensor3D<T> *chunk = nullptr;
+        std::shared_ptr<Tensor3D<T>> chunk_ref;
 
         cv::Vec4i idx = it.first;
 
@@ -427,7 +436,7 @@ static void readInterpolated3DImpl(cv::Mat_<T> &out, z5::Dataset *ds,
     #pragma omp parallel for schedule(dynamic, 1)
     for(auto &it : needs_io) {
         cv::Vec4i idx = it.first;
-        std::shared_ptr<xt::xarray<T>> chunk_ref;
+        std::shared_ptr<Tensor3D<T>> chunk_ref;
         it.second = readChunk<T>(*ds, {size_t(idx[1]),size_t(idx[2]),size_t(idx[3])});
     }
 
@@ -443,8 +452,8 @@ static void readInterpolated3DImpl(cv::Mat_<T> &out, z5::Dataset *ds,
     #pragma omp parallel
     {
         cv::Vec4i last_idx = {-1,-1,-1,-1};
-        std::shared_ptr<xt::xarray<T>> chunk_ref;
-        xt::xarray<T> *chunk = nullptr;
+        std::shared_ptr<Tensor3D<T>> chunk_ref;
+        Tensor3D<T> *chunk = nullptr;
 
         #pragma omp for collapse(2)
         for(size_t y = 0;y<h;y++) {
@@ -485,7 +494,7 @@ static void readInterpolated3DImpl(cv::Mat_<T> &out, z5::Dataset *ds,
                 if (!chunk)
                     continue;
 
-                float c000 = chunk->operator()(lx,ly,lz);
+                float c000 = (*chunk)(lx,ly,lz);
                 float c100, c010, c110, c001, c101, c011, c111;
 
                 // Handle edge cases for interpolation
@@ -493,29 +502,29 @@ static void readInterpolated3DImpl(cv::Mat_<T> &out, z5::Dataset *ds,
                     if (lx+1>=cw)
                         c100 = retrieve_single_value_cached(ox+1,oy,oz);
                     else
-                        c100 = chunk->operator()(lx+1,ly,lz);
+                        c100 = (*chunk)(lx+1,ly,lz);
 
                     if (ly+1 >= ch)
                         c010 = retrieve_single_value_cached(ox,oy+1,oz);
                     else
-                        c010 = chunk->operator()(lx,ly+1,lz);
+                        c010 = (*chunk)(lx,ly+1,lz);
                     if (lz+1 >= cd)
                         c001 = retrieve_single_value_cached(ox,oy,oz+1);
                     else
-                        c001 = chunk->operator()(lx,ly,lz+1);
+                        c001 = (*chunk)(lx,ly,lz+1);
 
                     c110 = retrieve_single_value_cached(ox+1,oy+1,oz);
                     c101 = retrieve_single_value_cached(ox+1,oy,oz+1);
                     c011 = retrieve_single_value_cached(ox,oy+1,oz+1);
                     c111 = retrieve_single_value_cached(ox+1,oy+1,oz+1);
                 } else {
-                    c100 = chunk->operator()(lx+1,ly,lz);
-                    c010 = chunk->operator()(lx,ly+1,lz);
-                    c110 = chunk->operator()(lx+1,ly+1,lz);
-                    c001 = chunk->operator()(lx,ly,lz+1);
-                    c101 = chunk->operator()(lx+1,ly,lz+1);
-                    c011 = chunk->operator()(lx,ly+1,lz+1);
-                    c111 = chunk->operator()(lx+1,ly+1,lz+1);
+                    c100 = (*chunk)(lx+1,ly,lz);
+                    c010 = (*chunk)(lx,ly+1,lz);
+                    c110 = (*chunk)(lx+1,ly+1,lz);
+                    c001 = (*chunk)(lx,ly,lz+1);
+                    c101 = (*chunk)(lx+1,ly,lz+1);
+                    c011 = (*chunk)(lx,ly+1,lz+1);
+                    c111 = (*chunk)(lx+1,ly+1,lz+1);
                 }
 
                 // Trilinear interpolation
@@ -545,12 +554,12 @@ static void readInterpolated3DImpl(cv::Mat_<T> &out, z5::Dataset *ds,
     }
 }
 
-void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds,
+void readInterpolated3D(cv::Mat_<uint8_t> &out, ZarrDataset *ds,
                                const cv::Mat_<cv::Vec3f> &coords, ChunkCache<uint8_t> *cache, bool nearest_neighbor) {
     readInterpolated3DImpl(out, ds, coords, cache, nearest_neighbor);
 }
 
-void readInterpolated3D(cv::Mat_<uint16_t> &out, z5::Dataset *ds,
+void readInterpolated3D(cv::Mat_<uint16_t> &out, ZarrDataset *ds,
                                const cv::Mat_<cv::Vec3f> &coords, ChunkCache<uint16_t> *cache, bool nearest_neighbor) {
     readInterpolated3DImpl(out, ds, coords, cache, nearest_neighbor);
 }
@@ -562,13 +571,16 @@ void readInterpolated3D(cv::Mat_<uint16_t> &out, z5::Dataset *ds,
 
 void FastCompositeCache::clear() {
     _chunks.clear();
+    _genMap.clear();
+    _currentBytes = 0;
+    _generation = 0;
     _ds = nullptr;
     _cw = _ch = _cd = 0;
     _sx = _sy = _sz = 0;
     _chunksX = _chunksY = _chunksZ = 0;
 }
 
-void FastCompositeCache::setDataset(z5::Dataset* ds) {
+void FastCompositeCache::setDataset(ZarrDataset* ds) {
     if (_ds == ds) return;  // Already set to this dataset
 
     clear();
@@ -576,7 +588,7 @@ void FastCompositeCache::setDataset(z5::Dataset* ds) {
 
     if (!ds) return;
 
-    const auto& blockShape = ds->chunking().blockShape();
+    const auto& blockShape = ds->chunkShape();
     _cw = static_cast<int>(blockShape[0]);
     _ch = static_cast<int>(blockShape[1]);
     _cd = static_cast<int>(blockShape[2]);
@@ -591,7 +603,7 @@ void FastCompositeCache::setDataset(z5::Dataset* ds) {
     _chunksZ = (_sz + _cd - 1) / _cd;
 }
 
-const xt::xarray<uint8_t>* FastCompositeCache::getChunk(int ix, int iy, int iz) {
+const Tensor3D<uint8_t>* FastCompositeCache::getChunk(int ix, int iy, int iz) {
     if (!_ds) return nullptr;
     if (ix < 0 || ix >= _chunksX || iy < 0 || iy >= _chunksY || iz < 0 || iz >= _chunksZ)
         return nullptr;
@@ -599,16 +611,47 @@ const xt::xarray<uint8_t>* FastCompositeCache::getChunk(int ix, int iy, int iz) 
     uint64_t key = chunkKey(ix, iy, iz);
     auto it = _chunks.find(key);
     if (it != _chunks.end()) {
+        // Update generation for LRU tracking
+        _generation++;
+        _genMap[key] = _generation;
         return it->second.get();
     }
+
+    // Evict old chunks if needed before loading new one
+    evictIfNeeded();
 
     // Load chunk directly - no mutex needed
     auto* chunk = readChunk<uint8_t>(*_ds, {static_cast<size_t>(ix), static_cast<size_t>(iy), static_cast<size_t>(iz)});
     if (chunk) {
-        _chunks[key] = std::unique_ptr<xt::xarray<uint8_t>>(chunk);
+        _currentBytes += chunk->nbytes();
+        _generation++;
+        _genMap[key] = _generation;
+        _chunks[key] = std::unique_ptr<Tensor3D<uint8_t>>(chunk);
         return chunk;
     }
     return nullptr;
+}
+
+void FastCompositeCache::evictIfNeeded() {
+    if (_currentBytes < _maxBytes) return;
+
+    // Build list sorted by generation (oldest first)
+    std::vector<std::pair<uint64_t, uint64_t>> genList(_genMap.begin(), _genMap.end());
+    std::sort(genList.begin(), genList.end(),
+              [](const auto& a, const auto& b) { return a.second < b.second; });
+
+    // Evict oldest 10% to amortize sorting cost
+    size_t targetBytes = static_cast<size_t>(_maxBytes * 0.9);
+    for (const auto& [key, gen] : genList) {
+        if (_currentBytes < targetBytes) break;
+
+        auto it = _chunks.find(key);
+        if (it != _chunks.end() && it->second) {
+            _currentBytes -= it->second->nbytes();
+            _chunks.erase(it);
+            _genMap.erase(key);
+        }
+    }
 }
 
 // ============================================================================
@@ -625,7 +668,7 @@ static inline int log2_pow2(int v) {
 
 void readCompositeFast(
     cv::Mat_<uint8_t>& out,
-    z5::Dataset* ds,
+    ZarrDataset* ds,
     const cv::Mat_<cv::Vec3f>& baseCoords,
     const cv::Mat_<cv::Vec3f>& normals,
     float zStep,
@@ -763,7 +806,7 @@ void readCompositeFast(
     const int arrSizeX = finalMaxIx - finalMinIx + 1;
     const int arrSizeY = finalMaxIy - finalMinIy + 1;
     const int arrSizeZ = finalMaxIz - finalMinIz + 1;
-    std::vector<const xt::xarray<uint8_t>*> chunkArray(arrSizeX * arrSizeY * arrSizeZ, nullptr);
+    std::vector<const Tensor3D<uint8_t>*> chunkArray(arrSizeX * arrSizeY * arrSizeZ, nullptr);
 
     // Iterate over bounding box and load chunks that are marked as needed
     for (int iz = finalMinIz; iz <= finalMaxIz; iz++) {
@@ -777,7 +820,7 @@ void readCompositeFast(
         }
     }
 
-    auto getChunk = [&](int ix, int iy, int iz) -> const xt::xarray<uint8_t>* {
+    auto getChunk = [&](int ix, int iy, int iz) -> const Tensor3D<uint8_t>* {
         if (ix < finalMinIx || ix > finalMaxIx || iy < finalMinIy || iy > finalMaxIy || iz < finalMinIz || iz > finalMaxIz)
             return nullptr;
         return chunkArray[(ix - finalMinIx) + (iy - finalMinIy) * arrSizeX + (iz - finalMinIz) * arrSizeX * arrSizeY];
@@ -862,7 +905,7 @@ void readCompositeFast(
                 // Chunk caching: track current chunk to avoid re-lookup
                 int cachedIx = -1, cachedIy = -1, cachedIz = -1;
                 const uint8_t* cachedData = nullptr;
-                size_t cachedStride0 = 0, cachedStride1 = 0, cachedStride2 = 0;
+                const Tensor3D<uint8_t>* cachedChunk = nullptr;
 
                 // Sample all layers
                 for (int layer = 0; layer < numLayers; layer++) {
@@ -888,20 +931,16 @@ void readCompositeFast(
 
                             // Check if we need to switch chunks
                             if (ix != cachedIx || iy != cachedIy || iz != cachedIz) {
-                                const xt::xarray<uint8_t>* chunk = getChunk(ix, iy, iz);
-                                if (chunk) {
-                                    cachedData = chunk->data();
-                                    const auto& strides = chunk->strides();
-                                    cachedStride0 = strides[0];
-                                    cachedStride1 = strides[1];
-                                    cachedStride2 = strides[2];
+                                cachedChunk = getChunk(ix, iy, iz);
+                                if (cachedChunk) {
+                                    cachedData = cachedChunk->data();
                                     cachedIx = ix;
                                     cachedIy = iy;
                                     cachedIz = iz;
 
                                     // Prefetch next likely chunk (along z direction)
                                     if (iz + 1 <= finalMaxIz) {
-                                        const xt::xarray<uint8_t>* nextChunk = getChunk(ix, iy, iz + 1);
+                                        const Tensor3D<uint8_t>* nextChunk = getChunk(ix, iy, iz + 1);
                                         if (nextChunk) {
                                             __builtin_prefetch(nextChunk->data(), 0, 1);
                                         }
@@ -911,14 +950,14 @@ void readCompositeFast(
                                 }
                             }
 
-                            if (cachedData) {
+                            if (cachedData && cachedChunk) {
                                 // Use bit masking for local coordinates
                                 const int lx = iox & cwMask;
                                 const int ly = ioy & chMask;
                                 const int lz = ioz & cdMask;
 
-                                // Direct pointer arithmetic with actual strides
-                                const uint8_t rawValue = cachedData[lx * cachedStride0 + ly * cachedStride1 + lz * cachedStride2];
+                                // Use tensor operator() for correct indexing
+                                const uint8_t rawValue = (*cachedChunk)(lx, ly, lz);
 
                                 // Apply LUT (ISO cutoff)
                                 value = static_cast<float>(equalizeLUT[rawValue < params.isoCutoff ? 0 : rawValue]);
@@ -972,7 +1011,7 @@ void readCompositeFast(
 
 void readCompositeFastConstantNormal(
     cv::Mat_<uint8_t>& out,
-    z5::Dataset* ds,
+    ZarrDataset* ds,
     const cv::Mat_<cv::Vec3f>& baseCoords,
     const cv::Vec3f& normal,
     float zStep,
@@ -1103,7 +1142,7 @@ void readCompositeFastConstantNormal(
     const int arrSizeX = finalMaxIx - finalMinIx + 1;
     const int arrSizeY = finalMaxIy - finalMinIy + 1;
     const int arrSizeZ = finalMaxIz - finalMinIz + 1;
-    std::vector<const xt::xarray<uint8_t>*> chunkArray(arrSizeX * arrSizeY * arrSizeZ, nullptr);
+    std::vector<const Tensor3D<uint8_t>*> chunkArray(arrSizeX * arrSizeY * arrSizeZ, nullptr);
 
     for (int iz = finalMinIz; iz <= finalMaxIz; iz++) {
         for (int iy = finalMinIy; iy <= finalMaxIy; iy++) {
@@ -1116,7 +1155,7 @@ void readCompositeFastConstantNormal(
         }
     }
 
-    auto getChunk = [&](int ix, int iy, int iz) -> const xt::xarray<uint8_t>* {
+    auto getChunk = [&](int ix, int iy, int iz) -> const Tensor3D<uint8_t>* {
         if (ix < finalMinIx || ix > finalMaxIx || iy < finalMinIy || iy > finalMaxIy || iz < finalMinIz || iz > finalMaxIz)
             return nullptr;
         return chunkArray[(ix - finalMinIx) + (iy - finalMinIy) * arrSizeX + (iz - finalMinIz) * arrSizeX * arrSizeY];
@@ -1160,7 +1199,7 @@ void readCompositeFastConstantNormal(
                 // Chunk caching (only used for non-3DGLCAE path)
                 int cachedIx = -1, cachedIy = -1, cachedIz = -1;
                 const uint8_t* cachedData = nullptr;
-                size_t cachedStride0 = 0, cachedStride1 = 0, cachedStride2 = 0;
+                const Tensor3D<uint8_t>* cachedChunk = nullptr;
 
                 // Sample all layers
                 for (int layer = 0; layer < numLayers; layer++) {
@@ -1188,20 +1227,16 @@ void readCompositeFastConstantNormal(
                             const int iz = ioz >> cdShift;
 
                             if (ix != cachedIx || iy != cachedIy || iz != cachedIz) {
-                                const xt::xarray<uint8_t>* chunk = getChunk(ix, iy, iz);
-                                if (chunk) {
-                                    cachedData = chunk->data();
-                                    const auto& strides = chunk->strides();
-                                    cachedStride0 = strides[0];
-                                    cachedStride1 = strides[1];
-                                    cachedStride2 = strides[2];
+                                cachedChunk = getChunk(ix, iy, iz);
+                                if (cachedChunk) {
+                                    cachedData = cachedChunk->data();
                                     cachedIx = ix;
                                     cachedIy = iy;
                                     cachedIz = iz;
 
                                     // Prefetch next chunk along z
                                     if (iz + 1 <= finalMaxIz) {
-                                        const xt::xarray<uint8_t>* nextChunk = getChunk(ix, iy, iz + 1);
+                                        const Tensor3D<uint8_t>* nextChunk = getChunk(ix, iy, iz + 1);
                                         if (nextChunk) {
                                             __builtin_prefetch(nextChunk->data(), 0, 1);
                                         }
@@ -1211,12 +1246,12 @@ void readCompositeFastConstantNormal(
                                 }
                             }
 
-                            if (cachedData) {
+                            if (cachedData && cachedChunk) {
                                 const int lx = iox & cwMask;
                                 const int ly = ioy & chMask;
                                 const int lz = ioz & cdMask;
 
-                                const uint8_t rawValue = cachedData[lx * cachedStride0 + ly * cachedStride1 + lz * cachedStride2];
+                                const uint8_t rawValue = (*cachedChunk)(lx, ly, lz);
                                 value = static_cast<float>(equalizeLUT[rawValue]);
                                 validSample = true;
                             }

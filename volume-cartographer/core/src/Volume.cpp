@@ -5,14 +5,6 @@
 
 #include "vc/core/util/LoadJson.hpp"
 
-#include "z5/attributes.hxx"
-#include "z5/dataset.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/handle.hxx"
-#include "z5/types/types.hxx"
-#include "z5/factory.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-
 static const std::filesystem::path METADATA_FILE = "meta.json";
 
 Volume::Volume(std::filesystem::path path) : path_(std::move(path))
@@ -91,20 +83,35 @@ void Volume::zarrOpen()
     if (!metadata_.contains("format") || metadata_["format"].get<std::string>() != "zarr")
         return;
 
-    zarrFile_ = std::make_unique<z5::filesystem::handle::File>(path_);
-    z5::filesystem::handle::Group group(path_, z5::FileMode::FileMode::r);
-    z5::readAttributes(group, zarrGroup_);
+    // Read group attributes if available
+    auto groupAttrsPath = path_ / ".zattrs";
+    if (std::filesystem::exists(groupAttrsPath)) {
+        std::ifstream attrsFile(groupAttrsPath);
+        if (attrsFile.is_open()) {
+            zarrGroup_ = nlohmann::json::parse(attrsFile);
+        }
+    }
 
+    // Find all scale level directories (0, 1, 2, etc.)
     std::vector<std::string> groups;
-    zarrFile_->keys(groups);
+    for (const auto& entry : std::filesystem::directory_iterator(path_)) {
+        if (entry.is_directory()) {
+            auto name = entry.path().filename().string();
+            // Check if it's a zarr array (has .zarray)
+            if (std::filesystem::exists(entry.path() / ".zarray")) {
+                groups.push_back(name);
+            }
+        }
+    }
     std::sort(groups.begin(), groups.end());
 
     //FIXME hardcoded assumption that groups correspond to power-2 scaledowns ...
-    for(auto name : groups) {
-        z5::filesystem::handle::Dataset ds_handle(group, name, nlohmann::json::parse(std::ifstream(path_/name/".zarray")).value<std::string>("dimension_separator","."));
+    for(const auto& name : groups) {
+        auto dsPath = path_ / name;
+        zarrDs_.push_back(std::make_unique<volcart::zarr::ZarrDataset>(dsPath));
 
-        zarrDs_.push_back(z5::filesystem::openDataset(ds_handle));
-        if (zarrDs_.back()->getDtype() != z5::types::Datatype::uint8 && zarrDs_.back()->getDtype() != z5::types::Datatype::uint16)
+        auto dtype = zarrDs_.back()->getDtype();
+        if (dtype != volcart::zarr::Dtype::UInt8 && dtype != volcart::zarr::Dtype::UInt16)
             throw std::runtime_error("only uint8 & uint16 is currently supported for zarr datasets incompatible type found in "+path_.string()+" / " +name);
 
         // Verify level 0 shape matches meta.json dimensions
@@ -144,8 +151,8 @@ double Volume::voxelSize() const
     return metadata_["voxelsize"].get<double>();
 }
 
-z5::Dataset *Volume::zarrDataset(int level) const {
-    if (level >= zarrDs_.size())
+volcart::zarr::ZarrDataset *Volume::zarrDataset(int level) const {
+    if (level >= static_cast<int>(zarrDs_.size()))
         return nullptr;
 
     return zarrDs_[level].get();

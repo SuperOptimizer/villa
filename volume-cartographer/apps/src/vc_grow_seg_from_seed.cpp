@@ -10,8 +10,7 @@
 #include "vc/core/util/StreamOperators.hpp"
 #include "vc/tracer/Tracer.hpp"
 
-
-#include "z5/factory.hxx"
+#include "vc/core/zarr/ZarrDataset.hpp"
 #include <nlohmann/json.hpp>
 #include <boost/program_options.hpp>
 
@@ -23,9 +22,8 @@
 #include <optional>
 #include <utility>
 #include <vector>
- 
+
 namespace po = boost::program_options;
-using shape = z5::types::ShapeType;
 
 
 using json = nlohmann::json;
@@ -103,22 +101,21 @@ static auto load_direction_fields(json const&params, ChunkCache<uint8_t> *chunk_
             }
             int const ome_scale = direction_field["scale"];
             float scale_factor = std::pow(2, -ome_scale);
-            z5::filesystem::handle::Group dirs_group(zarr_path, z5::FileMode::FileMode::r);
-            std::vector<std::unique_ptr<z5::Dataset>> direction_dss;
+            std::filesystem::path dirs_group_path(zarr_path);
+            std::vector<std::unique_ptr<volcart::zarr::ZarrDataset>> direction_dss;
             for (auto dim : std::string("xyz")) {
-                z5::filesystem::handle::Group dim_group(dirs_group, std::string(&dim, 1));
-                z5::filesystem::handle::Dataset dirs_ds_handle(dim_group, std::to_string(ome_scale), ".");
-                direction_dss.push_back(z5::filesystem::openDataset(dirs_ds_handle));
+                std::filesystem::path dim_path = dirs_group_path / std::string(&dim, 1) / std::to_string(ome_scale);
+                direction_dss.push_back(std::make_unique<volcart::zarr::ZarrDataset>(dim_path));
             }
-            std::cout << "direction field dataset shape " << direction_dss.front()->shape() << std::endl;
-            std::unique_ptr<z5::Dataset> maybe_weight_ds;
+            auto& first_shape = direction_dss.front()->shape();
+            std::cout << "direction field dataset shape [" << first_shape[0] << ", " << first_shape[1] << ", " << first_shape[2] << "]" << std::endl;
+            std::unique_ptr<volcart::zarr::ZarrDataset> maybe_weight_ds;
             if (direction_field.contains("weight_zarr")) {
                 std::string const weight_zarr_path = direction_field["weight_zarr"];
-                z5::filesystem::handle::Group weight_group(weight_zarr_path);
-                z5::filesystem::handle::Dataset weight_ds_handle(weight_group, std::to_string(ome_scale), ".");
-                maybe_weight_ds = z5::filesystem::openDataset(weight_ds_handle);
+                std::filesystem::path weight_ds_path = std::filesystem::path(weight_zarr_path) / std::to_string(ome_scale);
+                maybe_weight_ds = std::make_unique<volcart::zarr::ZarrDataset>(weight_ds_path);
             }
-            std::string const unique_id = std::to_string(std::hash<std::string>{}(dirs_group.path().string() + std::to_string(ome_scale)));
+            std::string const unique_id = std::to_string(std::hash<std::string>{}(dirs_group_path.string() + std::to_string(ome_scale)));
             float weight = 1.0f;
             if (direction_field.contains("weight")) {
                 try {
@@ -264,12 +261,13 @@ int main(int argc, char *argv[])
         set_space_tracing_use_cuda(true);
     }
 
-    z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset ds_handle(group, "0", json::parse(std::ifstream(vol_path/"0/.zarray")).value<std::string>("dimension_separator","."));
-    std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
+    std::filesystem::path ds_path = vol_path / "0";
+    auto ds = std::make_unique<volcart::zarr::ZarrDataset>(ds_path);
 
-    std::cout << "zarr dataset size for scale group 0 " << ds->shape() << std::endl;
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
+    auto ds_shape = ds->shape();
+    auto chunk_shape = ds->chunkShape();
+    std::cout << "zarr dataset size for scale group 0 [" << ds_shape[0] << ", " << ds_shape[1] << ", " << ds_shape[2] << "]" << std::endl;
+    std::cout << "chunk shape [" << chunk_shape[0] << ", " << chunk_shape[1] << ", " << chunk_shape[2] << "]" << std::endl;
 
     ChunkCache<uint8_t> chunk_cache(params.value("cache_size", 1e9));
 
@@ -277,7 +275,7 @@ int main(int argc, char *argv[])
     Chunked3d<uint8_t,passTroughComputor> tensor(pass, ds.get(), &chunk_cache);
     CachedChunked3dInterpolator<uint8_t,passTroughComputor> interpolator(tensor);
 
-    auto chunk_size = ds->chunking().blockShape();
+    auto chunk_size = ds->chunkShape();
 
     srand(clock());
 
@@ -450,15 +448,16 @@ int main(int argc, char *argv[])
             int max_attempts = 1000;
             
             while(count < max_attempts && !succ) {
-                origin = {static_cast<double>(128 + (rand() % (ds->shape(2)-384))),
-                         static_cast<double>(128 + (rand() % (ds->shape(1)-384))),
-                         static_cast<double>(128 + (rand() % (ds->shape(0)-384)))};
+                origin = {static_cast<double>(128 + (rand() % (static_cast<int>(ds_shape[2])-384))),
+                         static_cast<double>(128 + (rand() % (static_cast<int>(ds_shape[1])-384))),
+                         static_cast<double>(128 + (rand() % (static_cast<int>(ds_shape[0])-384)))};
 
                 count++;
-                auto chunk_id = chunk_size;
-                chunk_id[0] = origin[2]/chunk_id[0];
-                chunk_id[1] = origin[1]/chunk_id[1];
-                chunk_id[2] = origin[0]/chunk_id[2];
+                std::vector<std::size_t> chunk_id = {
+                    static_cast<std::size_t>(origin[2]/chunk_size[0]),
+                    static_cast<std::size_t>(origin[1]/chunk_size[1]),
+                    static_cast<std::size_t>(origin[0]/chunk_size[2])
+                };
 
                 if (!ds->chunkExists(chunk_id))
                     continue;

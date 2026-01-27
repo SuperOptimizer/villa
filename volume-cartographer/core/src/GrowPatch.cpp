@@ -17,8 +17,6 @@
 #include "vc/core/util/CostFunctions.hpp"
 #include "vc/core/util/HashFunctions.hpp"
 
-#include "vc/core/util/xtensor_include.hpp"
-#include XTENSORINCLUDE(views, xview.hpp)
 
 #include <iostream>
 #include <cctype>
@@ -1680,8 +1678,9 @@ static void _dist_iteration(T &from, T &to, int s)
 template <typename T, typename E>
 static T distance_transform(const T &chunk, int steps, int size)
 {
-    T c1 = xt::empty<E>(chunk.shape());
-    T c2 = xt::empty<E>(chunk.shape());
+    auto sh = chunk.shape();
+    T c1 = volcart::zarr::empty<E>(sh[0], sh[1], sh[2]);
+    T c2 = volcart::zarr::empty<E>(sh[0], sh[1], sh[2]);
 
     c1 = chunk;
 
@@ -1711,7 +1710,8 @@ struct thresholdedDistance
     const std::string UNIQUE_ID_STRING = "dqk247q6vz_"+std::to_string(BORDER)+"_"+std::to_string(CHUNK_SIZE)+"_"+std::to_string(FILL_V)+"_"+std::to_string(TH);
     template <typename T, typename E> void compute(const T &large, T &small, const cv::Vec3i &offset_large)
     {
-        T outer = xt::empty<E>(large.shape());
+        auto sh = large.shape();
+        T outer = volcart::zarr::empty<E>(sh[0], sh[1], sh[2]);
 
         int s = CHUNK_SIZE+2*BORDER;
         E magic = -1;
@@ -1734,15 +1734,14 @@ struct thresholdedDistance
         int low = int(BORDER);
         int high = int(BORDER)+int(CHUNK_SIZE);
 
-        auto crop_outer = view(outer, xt::range(low,high),xt::range(low,high),xt::range(low,high));
-
-        small = crop_outer;
+        // Copy the view from outer to small
+        volcart::zarr::copy_view(outer, small, low, high, low, high, low, high);
     }
 
 };
 
 
-QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv::Vec3f origin, const nlohmann::json &params, const std::string &cache_root, float voxelsize, std::vector<DirectionField> const &direction_fields, QuadSurface* resume_surf, const std::filesystem::path& tgt_path, const nlohmann::json& meta_params, const VCCollection &corrections)
+QuadSurface *tracer(volcart::zarr::ZarrDataset *ds, float scale, ChunkCache<uint8_t> *cache, cv::Vec3f origin, const nlohmann::json &params, const std::string &cache_root, float voxelsize, std::vector<DirectionField> const &direction_fields, QuadSurface* resume_surf, const std::filesystem::path& tgt_path, const nlohmann::json& meta_params, const VCCollection &corrections)
 {
     std::unique_ptr<NeuralTracerConnection> neural_tracer;
     int pre_neural_gens = 0, neural_batch_size = 1;

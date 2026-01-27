@@ -4,7 +4,8 @@
 
 #include "VolumeViewerCmaps.hpp"
 
-#include "z5/multiarray/xtensor_access.hxx"
+#include "vc/core/zarr/ZarrDataset.hpp"
+#include "vc/core/zarr/Tensor3D.hpp"
 
 #include <QGraphicsView>
 #include <QGraphicsScene>
@@ -39,7 +40,7 @@ namespace {
 // Returns normalized gradient vectors at each raw grid point
 // dsScale converts from world coordinates to dataset coordinates
 cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
-    z5::Dataset* ds,
+    volcart::zarr::ZarrDataset* ds,
     const cv::Mat_<cv::Vec3f>& rawPoints,
     float dsScale)
 {
@@ -49,7 +50,7 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
 
     if (h == 0 || w == 0) return gradients;
 
-    const auto volShape = ds->shape();
+    const auto& volShape = ds->shape();
     const int volZ = static_cast<int>(volShape[0]);
     const int volY = static_cast<int>(volShape[1]);
     const int volX = static_cast<int>(volShape[2]);
@@ -99,9 +100,10 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
     if (localW == 0 || localH == 0 || localD == 0) return gradients;
 
     // Step 2: Batch read the volume data for the bounding box
-    xt::xarray<uint8_t> localVolume = xt::empty<uint8_t>({localD, localH, localW});
-    z5::types::ShapeType off = {static_cast<size_t>(bboxZ0), static_cast<size_t>(bboxY0), static_cast<size_t>(bboxX0)};
-    z5::multiarray::readSubarray<uint8_t>(*ds, localVolume, off.begin());
+    volcart::zarr::Tensor3D<uint8_t> localVolume;
+    std::vector<size_t> off = {static_cast<size_t>(bboxZ0), static_cast<size_t>(bboxY0), static_cast<size_t>(bboxX0)};
+    std::vector<size_t> shape = {localD, localH, localW};
+    ds->readSubarray(localVolume, off, shape);
 
     // Helper lambda to sample from local volume with bounds checking
     auto sampleLocal = [&](float gx, float gy, float gz) -> float {
@@ -501,7 +503,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 
     cv::Mat baseColor;
 
-    z5::Dataset* baseDataset = volume ? volume->zarrDataset(_ds_sd_idx) : nullptr;
+    volcart::zarr::ZarrDataset* baseDataset = volume ? volume->zarrDataset(_ds_sd_idx) : nullptr;
 
     // Check if this is a plane surface that should use plane composite rendering
     PlaneSurface* plane = dynamic_cast<PlaneSurface*>(surf.get());
@@ -603,7 +605,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
             }
 
             cv::Mat_<uint8_t> overlayValues;
-            z5::Dataset* overlayDataset = _overlayVolume->zarrDataset(overlayIdx);
+            volcart::zarr::ZarrDataset* overlayDataset = _overlayVolume->zarrDataset(overlayIdx);
             readInterpolated3D(overlayValues, overlayDataset, coords * overlayScale, cache, /*nearest_neighbor=*/true);
 
             if (!overlayValues.empty()) {

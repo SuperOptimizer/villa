@@ -1,14 +1,6 @@
 #include <nlohmann/json.hpp>
-
-#include "vc/core/util/xtensor_include.hpp"
-#include XTENSORINCLUDE(containers, xarray.hpp)
-#include XTENSORINCLUDE(io, xio.hpp)
-#include XTENSORINCLUDE(views, xview.hpp)
-
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-#include "z5/attributes.hxx"
+#include <filesystem>
+#include <cstring>
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/core.hpp>
@@ -17,32 +9,29 @@
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/StreamOperators.hpp"
+#include "vc/core/zarr/ZarrDataset.hpp"
+
+using volcart::zarr::ZarrDataset;
 
 
-using shape = z5::types::ShapeType;
-using namespace xt::placeholders;
 
-
-
-shape chunkId(const std::unique_ptr<z5::Dataset> &ds, shape coord)
+std::vector<size_t> chunkId(const ZarrDataset* ds, std::vector<size_t> coord)
 {
-    shape div = ds->chunking().blockShape();
-    shape id = coord;
-    for(int i=0;i<id.size();i++)
-        id[i] /= div[i];
-    return id;
-}
-
-shape idCoord(const std::unique_ptr<z5::Dataset> &ds, shape id)
-{
-    shape mul = ds->chunking().blockShape();
-    shape coord = id;
-    for(int i=0;i<coord.size();i++)
-        coord[i] *= mul[i];
+    const auto& div = ds->chunkShape();
+    for(size_t i=0;i<coord.size();i++)
+        coord[i] /= div[i];
     return coord;
 }
 
-void timed_plane_slice(Surface &plane, z5::Dataset *ds, int size, ChunkCache<uint8_t> *cache, std::string msg, bool nearest_neighbor)
+std::vector<size_t> idCoord(const ZarrDataset* ds, std::vector<size_t> id)
+{
+    const auto& mul = ds->chunkShape();
+    for(size_t i=0;i<id.size();i++)
+        id[i] *= mul[i];
+    return id;
+}
+
+void timed_plane_slice(Surface &plane, ZarrDataset *ds, int size, ChunkCache<uint8_t> *cache, std::string msg, bool nearest_neighbor)
 {
     cv::Mat_<cv::Vec3f> coords;
     cv::Mat_<cv::Vec3f> normals;
@@ -62,16 +51,13 @@ void timed_plane_slice(Surface &plane, z5::Dataset *ds, int size, ChunkCache<uin
 int main(int argc, char *argv[])
 {
   assert(argc == 2 || argc == 3);
-  // z5::filesystem::handle::File f(argv[1]);
-  z5::filesystem::handle::Group group(argv[1], z5::FileMode::FileMode::r);
-  z5::filesystem::handle::Dataset ds_handle(group, "1", "/");
-  std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
+  std::filesystem::path vol_path = argv[1];
+  auto ds = std::make_unique<ZarrDataset>(vol_path / "1");
 
    bool nearest_neighbor =  (argc == 3 && strncmp(argv[2],"nearest",7) == 0);
 
   std::cout << "ds shape " << ds->shape() << std::endl;
-  std::cout << "ds shape via chunk " << ds->chunking().shape() << std::endl;
-  std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
+  std::cout << "chunk shape " << ds->chunkShape() << std::endl;
   if (nearest_neighbor) {
     std::cout << "doing nearest neighbor interpolation" << std::endl;
   }

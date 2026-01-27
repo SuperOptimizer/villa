@@ -12,19 +12,15 @@
 #include <atomic>
 #include <iomanip>
 #include <sstream>
+#include <fstream>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
 
-// Zarr / xtensor
+// Zarr
 #include <nlohmann/json.hpp>
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/filesystem/dataset.hxx"
-#include "z5/attributes.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-#include "vc/core/util/xtensor_include.hpp"
-#include XTENSORINCLUDE(containers, xarray.hpp)
+#include "vc/core/zarr/ZarrDataset.hpp"
+#include "vc/core/zarr/Tensor3D.hpp"
 
 namespace po = boost::program_options;
 using json = nlohmann::json;
@@ -981,26 +977,8 @@ int main(int argc, char** argv) {
             // 1) in_path points to zarr root (has .zgroup) -> use group_idx subfolder (e.g. 0)
             // 2) in_path points directly to a dataset (has .zarray) -> open that dataset (ignore group_idx)
             const bool path_is_dataset = fs::exists(in_root / ".zarray");
-            z5::filesystem::handle::Dataset inHandle = [&]() {
-                std::string dimsep = ".";
-                if (path_is_dataset) {
-                    fs::path ds_path = in_root;
-                    try {
-                        json j = json::parse(std::ifstream((ds_path / ".zarray").string()));
-                        if (j.contains("dimension_separator")) dimsep = j["dimension_separator"].get<std::string>();
-                    } catch (...) {}
-                    z5::filesystem::handle::Group parent(ds_path.parent_path(), z5::FileMode::FileMode::r);
-                    return z5::filesystem::handle::Dataset(parent, ds_path.filename().string(), dimsep);
-                } else {
-                    z5::filesystem::handle::Group root(in_root, z5::FileMode::FileMode::r);
-                    try {
-                        json j = json::parse(std::ifstream((in_root / std::to_string(group_idx) / ".zarray").string()));
-                        if (j.contains("dimension_separator")) dimsep = j["dimension_separator"].get<std::string>();
-                    } catch (...) {}
-                    return z5::filesystem::handle::Dataset(root, std::to_string(group_idx), dimsep);
-                }
-            }();
-            std::unique_ptr<z5::Dataset> dsIn = z5::filesystem::openDataset(inHandle);
+            fs::path ds_path = path_is_dataset ? in_root : (in_root / std::to_string(group_idx));
+            auto dsIn = std::make_unique<volcart::zarr::ZarrDataset>(ds_path);
 
             const auto& shape = dsIn->shape(); // [Z, Y, X]
             if (shape.size() != 3) {
@@ -1057,28 +1035,25 @@ int main(int argc, char** argv) {
                     const size_t z = static_cast<size_t>(zi);
                     cv::Mat src;
                     // Read one Z slab
-                    if (dsIn->getDtype() == z5::types::Datatype::uint8) {
-                        xt::xarray<uint8_t> slab = xt::empty<uint8_t>({1ul, Y, X});
-                        z5::types::ShapeType off = {z, 0ul, 0ul};
-                        z5::multiarray::readSubarray<uint8_t>(dsIn, slab, off.begin());
+                    if (dsIn->getDtype() == volcart::zarr::Dtype::UInt8) {
+                        volcart::zarr::Tensor3D<uint8_t> slab;
+                        dsIn->readSubarray(slab, {z, 0ul, 0ul}, {1ul, Y, X});
                         src.create(static_cast<int>(Y), static_cast<int>(X), CV_8UC1);
                         for (size_t y = 0; y < Y; ++y) {
                             uint8_t* row = src.ptr<uint8_t>(static_cast<int>(y));
                             for (size_t x = 0; x < X; ++x) row[x] = slab(0, y, x);
                         }
-                    } else if (dsIn->getDtype() == z5::types::Datatype::uint16) {
-                        xt::xarray<uint16_t> slab = xt::empty<uint16_t>({1ul, Y, X});
-                        z5::types::ShapeType off = {z, 0ul, 0ul};
-                        z5::multiarray::readSubarray<uint16_t>(dsIn, slab, off.begin());
+                    } else if (dsIn->getDtype() == volcart::zarr::Dtype::UInt16) {
+                        volcart::zarr::Tensor3D<uint16_t> slab;
+                        dsIn->readSubarray(slab, {z, 0ul, 0ul}, {1ul, Y, X});
                         src.create(static_cast<int>(Y), static_cast<int>(X), CV_16UC1);
                         for (size_t y = 0; y < Y; ++y) {
                             uint16_t* row = src.ptr<uint16_t>(static_cast<int>(y));
                             for (size_t x = 0; x < X; ++x) row[x] = slab(0, y, x);
                         }
-                    } else if (dsIn->getDtype() == z5::types::Datatype::float32) {
-                        xt::xarray<float> slab = xt::empty<float>({1ul, Y, X});
-                        z5::types::ShapeType off = {z, 0ul, 0ul};
-                        z5::multiarray::readSubarray<float>(dsIn, slab, off.begin());
+                    } else if (dsIn->getDtype() == volcart::zarr::Dtype::Float32) {
+                        volcart::zarr::Tensor3D<float> slab;
+                        dsIn->readSubarray(slab, {z, 0ul, 0ul}, {1ul, Y, X});
                         src.create(static_cast<int>(Y), static_cast<int>(X), CV_32FC1);
                         for (size_t y = 0; y < Y; ++y) {
                             float* row = src.ptr<float>(static_cast<int>(y));
@@ -1163,16 +1138,21 @@ int main(int argc, char** argv) {
             }
 
             // Else: Prepare output zarr root and level-0 dataset
-            z5::filesystem::handle::File outFile(out_root);
-            z5::createFile(outFile, true);
+            // Create zarr root directory with .zgroup
+            fs::create_directories(out_root);
+            {
+                nlohmann::json zgroup;
+                zgroup["zarr_format"] = 2;
+                std::ofstream(out_root / ".zgroup") << zgroup.dump(2);
+            }
 
             const size_t CH = 128, CW = 128; // chunking in Y,X; Z chunk = 1 for per-slice IO
             const size_t CZ = 1;
-            auto make_shape = [](size_t z, size_t y, size_t x){ return std::vector<size_t>{z, y, x}; };
             std::vector<size_t> shape0{Z, Y, X};
             std::vector<size_t> chunks0{CZ, std::min(CH, Y), std::min(CW, X)};
             nlohmann::json compOpts0 = {{"cname","zstd"},{"clevel",1},{"shuffle",0}};
-            auto dsOut0 = z5::createDataset(outFile, "0", "uint8", shape0, chunks0, std::string("blosc"), compOpts0);
+            auto dsOut0 = std::make_unique<volcart::zarr::ZarrDataset>(
+                out_root / "0", shape0, chunks0, volcart::zarr::Dtype::UInt8, "blosc", compOpts0);
 
             // Process slices, parallelized over Z
             // jobs/done/total already declared above
@@ -1185,28 +1165,25 @@ int main(int argc, char** argv) {
                 const size_t z = static_cast<size_t>(zi);
                 cv::Mat src;
                 // Support uint8 / uint16; other types -> convert later
-                if (dsIn->getDtype() == z5::types::Datatype::uint8) {
-                    xt::xarray<uint8_t> slab = xt::empty<uint8_t>({1ul, Y, X});
-                    z5::types::ShapeType off = {z, 0ul, 0ul};
-                    z5::multiarray::readSubarray<uint8_t>(dsIn, slab, off.begin());
+                if (dsIn->getDtype() == volcart::zarr::Dtype::UInt8) {
+                    volcart::zarr::Tensor3D<uint8_t> slab;
+                    dsIn->readSubarray(slab, {z, 0ul, 0ul}, {1ul, Y, X});
                     src.create(static_cast<int>(Y), static_cast<int>(X), CV_8UC1);
                     for (size_t y = 0; y < Y; ++y) {
                         uint8_t* row = src.ptr<uint8_t>(static_cast<int>(y));
                         for (size_t x = 0; x < X; ++x) row[x] = slab(0, y, x);
                     }
-                } else if (dsIn->getDtype() == z5::types::Datatype::uint16) {
-                    xt::xarray<uint16_t> slab = xt::empty<uint16_t>({1ul, Y, X});
-                    z5::types::ShapeType off = {z, 0ul, 0ul};
-                    z5::multiarray::readSubarray<uint16_t>(dsIn, slab, off.begin());
+                } else if (dsIn->getDtype() == volcart::zarr::Dtype::UInt16) {
+                    volcart::zarr::Tensor3D<uint16_t> slab;
+                    dsIn->readSubarray(slab, {z, 0ul, 0ul}, {1ul, Y, X});
                     src.create(static_cast<int>(Y), static_cast<int>(X), CV_16UC1);
                     for (size_t y = 0; y < Y; ++y) {
                         uint16_t* row = src.ptr<uint16_t>(static_cast<int>(y));
                         for (size_t x = 0; x < X; ++x) row[x] = slab(0, y, x);
                     }
-                } else if (dsIn->getDtype() == z5::types::Datatype::float32) {
-                    xt::xarray<float> slab = xt::empty<float>({1ul, Y, X});
-                    z5::types::ShapeType off = {z, 0ul, 0ul};
-                    z5::multiarray::readSubarray<float>(dsIn, slab, off.begin());
+                } else if (dsIn->getDtype() == volcart::zarr::Dtype::Float32) {
+                    volcart::zarr::Tensor3D<float> slab;
+                    dsIn->readSubarray(slab, {z, 0ul, 0ul}, {1ul, Y, X});
                     src.create(static_cast<int>(Y), static_cast<int>(X), CV_32FC1);
                     for (size_t y = 0; y < Y; ++y) {
                         float* row = src.ptr<float>(static_cast<int>(y));
@@ -1232,13 +1209,12 @@ int main(int argc, char** argv) {
                 }
 
                 // Write to output level-0 at [z, 0, 0]
-                xt::xarray<uint8_t> slabOut = xt::empty<uint8_t>({1ul, Y, X});
+                volcart::zarr::Tensor3D<uint8_t> slabOut = volcart::zarr::empty<uint8_t>(1, Y, X);
                 for (size_t y = 0; y < Y; ++y) {
                     const uint8_t* row = out_u8.ptr<uint8_t>(static_cast<int>(y));
                     for (size_t x = 0; x < X; ++x) slabOut(0, y, x) = row[x];
                 }
-                z5::types::ShapeType offOut = {z, 0ul, 0ul};
-                z5::multiarray::writeSubarray<uint8_t>(dsOut0, slabOut, offOut.begin());
+                dsOut0->writeSubarray(slabOut, {z, 0ul, 0ul});
 
                 size_t d = ++done;
                 if ((d % 1) == 0) {
@@ -1278,21 +1254,22 @@ int main(int argc, char** argv) {
             }
             multiscale["metadata"] = nlohmann::json{{"downsampling_method","mean"}};
             attrs["multiscales"] = nlohmann::json::array({multiscale});
-            z5::filesystem::writeAttributes(outFile, attrs);
+            std::ofstream(out_root / ".zattrs") << attrs.dump(2);
 
             // Build additional pyramid levels by mean pooling 2x2x2 from previous level (as uint8)
             for (int targetLevel = 1; targetLevel <= 5; ++targetLevel) {
-                auto src = z5::openDataset(outFile, std::to_string(targetLevel - 1));
-                const auto& sShape = src->shape();
+                auto srcDs = std::make_unique<volcart::zarr::ZarrDataset>(out_root / std::to_string(targetLevel - 1));
+                const auto& sShape = srcDs->shape();
                 size_t sz = std::max<size_t>(1, sShape[0] / 2);
                 size_t sy = std::max<size_t>(1, sShape[1] / 2);
                 size_t sx = std::max<size_t>(1, sShape[2] / 2);
                 std::vector<size_t> dShape{sz, sy, sx};
                 std::vector<size_t> dChunks{1ul, std::min(CH, sy), std::min(CW, sx)};
                 nlohmann::json compOpts = {{"cname","zstd"},{"clevel",1},{"shuffle",0}};
-                auto dst = z5::createDataset(outFile, std::to_string(targetLevel), "uint8", dShape, dChunks, std::string("blosc"), compOpts);
+                auto dstDs = std::make_unique<volcart::zarr::ZarrDataset>(
+                    out_root / std::to_string(targetLevel), dShape, dChunks, volcart::zarr::Dtype::UInt8, "blosc", compOpts);
 
-                const size_t tileZ = 1, tileY = CH, tileX = CW;
+                const size_t tileY = CH, tileX = CW;
                 const size_t tilesY = (sy + tileY - 1) / tileY;
                 const size_t tilesX = (sx + tileX - 1) / tileX;
                 std::atomic<size_t> tilesDone{0};
@@ -1308,12 +1285,9 @@ int main(int argc, char** argv) {
                         size_t lx = std::min(tileX, sx - x0);
                         size_t lz = sz;
 
-                        xt::xarray<uint8_t> srcChunk = xt::empty<uint8_t>({lz, ly*2ul, lx*2ul});
-                        {
-                            z5::types::ShapeType off = {0ul, y0*2ul, x0*2ul};
-                            z5::multiarray::readSubarray<uint8_t>(src, srcChunk, off.begin());
-                        }
-                        xt::xarray<uint8_t> dstChunk = xt::empty<uint8_t>({lz, ly, lx});
+                        volcart::zarr::Tensor3D<uint8_t> srcChunk;
+                        srcDs->readSubarray(srcChunk, {0ul, y0*2ul, x0*2ul}, {lz, ly*2ul, lx*2ul});
+                        volcart::zarr::Tensor3D<uint8_t> dstChunk = volcart::zarr::empty<uint8_t>(lz, ly, lx);
                         for (size_t zz = 0; zz < lz; ++zz) {
                             for (size_t yy = 0; yy < ly; ++yy) {
                                 for (size_t xx = 0; xx < lx; ++xx) {
@@ -1326,8 +1300,7 @@ int main(int argc, char** argv) {
                                 }
                             }
                         }
-                        z5::types::ShapeType offD = {0ul, y0, x0};
-                        z5::multiarray::writeSubarray<uint8_t>(dst, dstChunk, offD.begin());
+                        dstDs->writeSubarray(dstChunk, {0ul, y0, x0});
                         size_t d = ++tilesDone;
                         #ifdef _OPENMP
                         if (omp_get_thread_num() == 0)

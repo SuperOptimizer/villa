@@ -2,6 +2,7 @@
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
+#include "vc/core/zarr/ZarrDataset.hpp"
 #include <opencv2/imgcodecs.hpp>
 #include <iostream>
 #include <opencv2/imgproc.hpp>
@@ -12,8 +13,8 @@ namespace fs = std::filesystem;
 void generate_mask(QuadSurface* surf,
                             cv::Mat_<uint8_t>& mask,
                             cv::Mat_<uint8_t>& img,
-                            z5::Dataset* ds_high = nullptr,
-                            z5::Dataset* ds_low = nullptr,
+                            volcart::zarr::ZarrDataset* ds_high = nullptr,
+                            volcart::zarr::ZarrDataset* ds_low = nullptr,
                             ChunkCache<uint8_t>* cache = nullptr) {
     cv::Mat_<cv::Vec3f> points = surf->rawPoints();
     cv::Mat_<uint8_t> rawMask = surf->validMask();

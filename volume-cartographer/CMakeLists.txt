@@ -19,7 +19,7 @@ set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 option(VC_USE_OPENMP "Enable OpenMP support" ON)
 option(VC_USE_VALGRIND "Enable Valgrind support" off)
 
-set(CMAKE_CXX_FLAGS " ${CMAKE_CXX_FLAGS} -fPIC -std=c++23 -DWITH_BLOSC=1 -DWITH_ZLIB=1 " )
+set(CMAKE_CXX_FLAGS " ${CMAKE_CXX_FLAGS} -fPIC -std=c++23 -DWITH_BLOSC=1 -DWITH_ZLIB=1 -fno-inline " )
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ")
 include_directories(core/include)
 
@@ -30,7 +30,7 @@ endif()
 
 # Set LTO type and linker based on compiler
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    set(VC_LTO_FLAGS "-flto=thin")
+    set(VC_LTO_FLAGS "-flto=off")
     set(VC_LINKER_FLAGS "-fuse-ld=lld")
     message(STATUS "Using Clang: thin LTO with lld linker")
 else()

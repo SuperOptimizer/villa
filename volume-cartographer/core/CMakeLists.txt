@@ -22,6 +22,9 @@ add_library(vc_core
         src/Thinning.cpp
         src/Umbilicus.cpp
         src/ABFFlattening.cpp
+        src/zarr/Tensor3D.cpp
+        src/zarr/BloscCodec.cpp
+        src/zarr/ZarrDataset.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/Version.cpp
 )
 
@@ -33,7 +36,7 @@ target_link_libraries(vc_core
         opencv_calib3d
         opencv_video
         nlohmann_json::nlohmann_json
-        z5
+        Blosc2::blosc2
         OpenMP::OpenMP_CXX
         tiff
         OpenABF

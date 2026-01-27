@@ -27,7 +27,7 @@ int ChunkCache<T>::groupIdx(const std::string& name)
 }
 
 template<typename T>
-void ChunkCache<T>::put(const cv::Vec4i& idx, xt::xarray<T>* ar)
+void ChunkCache<T>::put(const cv::Vec4i& idx, volcart::zarr::Tensor3D<T>* ar)
 {
     // Evict old entries if cache is full
     if (_stored >= _size) {
@@ -37,18 +37,14 @@ void ChunkCache<T>::put(const cv::Vec4i& idx, xt::xarray<T>* ar)
                   [](const KP& a, const KP& b) { return a.second < b.second; });
 
         for (const auto& it : gen_list) {
-            std::shared_ptr<xt::xarray<T>> ar = _store[it.first];
-            // TODO: we could remove this with lower probability so we don't store
-            // infinitely empty blocks but also keep more of them as they are cheap
-            if (ar.get()) {
-                size_t size = ar.get()->storage().size();  // elements
-                size *= sizeof(T);
-                ar.reset();
-                _stored -= size;
-
-                _store.erase(it.first);
-                _gen_store.erase(it.first);
+            std::shared_ptr<volcart::zarr::Tensor3D<T>> cached = _store[it.first];
+            if (cached.get()) {
+                size_t bytes = cached->nbytes();
+                _stored -= bytes;
             }
+            // Always erase entries (including null entries for non-existent chunks)
+            _store.erase(it.first);
+            _gen_store.erase(it.first);
 
             // We delete 10% of cache content to amortize sorting costs
             if (_stored < 0.9 * _size) {
@@ -61,9 +57,9 @@ void ChunkCache<T>::put(const cv::Vec4i& idx, xt::xarray<T>* ar)
     if (ar) {
         if (_store.count(idx)) {
             assert(_store[idx].get());
-            _stored -= _store[idx]->size() * sizeof(T);
+            _stored -= _store[idx]->nbytes();
         }
-        _stored += ar->size() * sizeof(T);
+        _stored += ar->nbytes();
     }
 
     _store[idx].reset(ar);
@@ -72,7 +68,7 @@ void ChunkCache<T>::put(const cv::Vec4i& idx, xt::xarray<T>* ar)
 }
 
 template<typename T>
-std::shared_ptr<xt::xarray<T>> ChunkCache<T>::get(const cv::Vec4i& idx)
+std::shared_ptr<volcart::zarr::Tensor3D<T>> ChunkCache<T>::get(const cv::Vec4i& idx)
 {
     auto res = _store.find(idx);
     if (res == _store.end()) {
@@ -100,6 +96,20 @@ void ChunkCache<T>::reset()
 
     _generation = 0;
     _stored = 0;
+}
+
+template<typename T>
+void ChunkCache<T>::getStats(size_t& storedBytes, size_t& maxBytes, size_t& numEntries, size_t& numNullEntries) const
+{
+    storedBytes = _stored;
+    maxBytes = _size;
+    numEntries = _store.size();
+    numNullEntries = 0;
+    for (const auto& it : _store) {
+        if (!it.second.get()) {
+            numNullEntries++;
+        }
+    }
 }
 
 // Explicit template instantiations
