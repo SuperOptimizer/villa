@@ -30,7 +30,7 @@ endif()
 
 # Set LTO type and linker based on compiler
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    set(VC_LTO_FLAGS "-flto=off")
+    set(VC_LTO_FLAGS "-flto=thin")
     set(VC_LINKER_FLAGS "-fuse-ld=lld")
     message(STATUS "Using Clang: thin LTO with lld linker")
 else()

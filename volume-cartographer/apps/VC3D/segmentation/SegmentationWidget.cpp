@@ -1,6 +1,7 @@
 #include "SegmentationWidget.hpp"
 
 #include "elements/CollapsibleSettingsGroup.hpp"
+#include "NeuralTraceServiceManager.hpp"
 #include "VCSettings.hpp"
 
 #include <QAbstractItemView>
@@ -451,11 +452,43 @@ void SegmentationWidget::buildUi()
     _groupGrowth->setLayout(growthLayout);
     layout->addWidget(_groupGrowth);
 
-    _lblNormalGrid = new QLabel(this);
-    _lblNormalGrid->setTextFormat(Qt::RichText);
-    _lblNormalGrid->setToolTip(tr("Shows whether precomputed normal grids are available for push/pull tools."));
-    _lblNormalGrid->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    layout->addWidget(_lblNormalGrid);
+    {
+        auto* normalGridRow = new QHBoxLayout();
+        _lblNormalGrid = new QLabel(this);
+        _lblNormalGrid->setTextFormat(Qt::RichText);
+        _lblNormalGrid->setToolTip(tr("Shows whether precomputed normal grids are available for push/pull tools."));
+        _lblNormalGrid->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        normalGridRow->addWidget(_lblNormalGrid, 0);
+
+        _editNormalGridPath = new QLineEdit(this);
+        _editNormalGridPath->setReadOnly(true);
+        _editNormalGridPath->setClearButtonEnabled(false);
+        _editNormalGridPath->setVisible(false);
+        normalGridRow->addWidget(_editNormalGridPath, 1);
+        layout->addLayout(normalGridRow);
+    }
+
+    // Normal3D zarr selection (optional)
+    {
+        auto* normal3dRow = new QHBoxLayout();
+        _lblNormal3d = new QLabel(this);
+        _lblNormal3d->setTextFormat(Qt::RichText);
+        _lblNormal3d->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        normal3dRow->addWidget(_lblNormal3d, 0);
+
+        _editNormal3dPath = new QLineEdit(this);
+        _editNormal3dPath->setReadOnly(true);
+        _editNormal3dPath->setClearButtonEnabled(false);
+        _editNormal3dPath->setVisible(false);
+        normal3dRow->addWidget(_editNormal3dPath, 1);
+
+        _comboNormal3d = new QComboBox(this);
+        _comboNormal3d->setToolTip(tr("Select Normal3D zarr volume to use for normal3dline constraints."));
+        _comboNormal3d->setVisible(false);
+        normal3dRow->addWidget(_comboNormal3d, 0);
+
+        layout->addLayout(normal3dRow);
+    }
 
     auto* hoverRow = new QHBoxLayout();
     hoverRow->addSpacing(4);
@@ -916,6 +949,64 @@ void SegmentationWidget::buildUi()
 
     layout->addWidget(_groupDirectionField);
 
+    // Neural Tracer group
+    _groupNeuralTracer = new CollapsibleSettingsGroup(tr("Neural Tracer"), this);
+    auto* neuralParent = _groupNeuralTracer->contentWidget();
+
+    _chkNeuralTracerEnabled = new QCheckBox(tr("Enable neural tracer"), neuralParent);
+    _chkNeuralTracerEnabled->setToolTip(tr("Use neural network-based tracing instead of the default tracer. "
+                                           "Requires a trained model checkpoint."));
+    _groupNeuralTracer->contentLayout()->addWidget(_chkNeuralTracerEnabled);
+
+    _groupNeuralTracer->addRow(tr("Checkpoint:"), [&](QHBoxLayout* row) {
+        _neuralCheckpointEdit = new QLineEdit(neuralParent);
+        _neuralCheckpointEdit->setPlaceholderText(tr("Path to model checkpoint (.pt)"));
+        _neuralCheckpointEdit->setToolTip(tr("Path to the trained neural network checkpoint file."));
+        _neuralCheckpointBrowse = new QToolButton(neuralParent);
+        _neuralCheckpointBrowse->setText(QStringLiteral("..."));
+        _neuralCheckpointBrowse->setToolTip(tr("Browse for checkpoint file."));
+        row->addWidget(_neuralCheckpointEdit, 1);
+        row->addWidget(_neuralCheckpointBrowse);
+    }, tr("Path to the trained neural network checkpoint file."));
+
+    _groupNeuralTracer->addRow(tr("Python:"), [&](QHBoxLayout* row) {
+        _neuralPythonEdit = new QLineEdit(neuralParent);
+        _neuralPythonEdit->setPlaceholderText(tr("Path to Python executable (leave empty for auto-detect)"));
+        _neuralPythonEdit->setToolTip(tr("Path to the Python executable with torch installed (e.g. ~/miniconda3/bin/python). "
+                                         "Leave empty to auto-detect."));
+        _neuralPythonBrowse = new QToolButton(neuralParent);
+        _neuralPythonBrowse->setText(QStringLiteral("..."));
+        _neuralPythonBrowse->setToolTip(tr("Browse for Python executable."));
+        row->addWidget(_neuralPythonEdit, 1);
+        row->addWidget(_neuralPythonBrowse);
+    }, tr("Python executable with torch installed."));
+
+    _groupNeuralTracer->addRow(tr("Volume scale:"), [&](QHBoxLayout* row) {
+        _comboNeuralVolumeScale = new QComboBox(neuralParent);
+        _comboNeuralVolumeScale->setToolTip(tr("OME-Zarr scale level to use for neural tracing (0 = full resolution)."));
+        for (int scale = 0; scale <= 5; ++scale) {
+            _comboNeuralVolumeScale->addItem(QString::number(scale), scale);
+        }
+        row->addWidget(_comboNeuralVolumeScale);
+
+        auto* batchLabel = new QLabel(tr("Batch size:"), neuralParent);
+        _spinNeuralBatchSize = new QSpinBox(neuralParent);
+        _spinNeuralBatchSize->setRange(1, 64);
+        _spinNeuralBatchSize->setValue(_neuralBatchSize);
+        _spinNeuralBatchSize->setToolTip(tr("Number of points to process in parallel (higher = faster but more memory)."));
+        row->addSpacing(12);
+        row->addWidget(batchLabel);
+        row->addWidget(_spinNeuralBatchSize);
+        row->addStretch(1);
+    });
+
+    _lblNeuralTracerStatus = new QLabel(neuralParent);
+    _lblNeuralTracerStatus->setWordWrap(true);
+    _lblNeuralTracerStatus->setVisible(false);
+    _groupNeuralTracer->contentLayout()->addWidget(_lblNeuralTracerStatus);
+
+    layout->addWidget(_groupNeuralTracer);
+
     auto rememberGroupState = [this](CollapsibleSettingsGroup* group, const QString& key) {
         if (!group) {
             return;
@@ -933,6 +1024,7 @@ void SegmentationWidget::buildUi()
     rememberGroupState(_groupLine, QStringLiteral("group_line_expanded"));
     rememberGroupState(_groupPushPull, QStringLiteral("group_push_pull_expanded"));
     rememberGroupState(_groupDirectionField, QStringLiteral("group_direction_field_expanded"));
+    rememberGroupState(_groupNeuralTracer, QStringLiteral("group_neural_tracer_expanded"));
 
     _groupCorrections = new QGroupBox(tr("Corrections"), this);
     auto* correctionsLayout = new QVBoxLayout(_groupCorrections);
@@ -965,6 +1057,21 @@ void SegmentationWidget::buildUi()
         tr("Additional JSON fields merge into the tracer params. Leave empty for defaults."), _groupCustomParams);
     customParamsDescription->setWordWrap(true);
     customParamsLayout->addWidget(customParamsDescription);
+
+    {
+        auto* profileRow = new QHBoxLayout();
+        auto* profileLabel = new QLabel(tr("Profile:"), _groupCustomParams);
+        _comboCustomParamsProfile = new QComboBox(_groupCustomParams);
+        _comboCustomParamsProfile->addItem(tr("Custom"), QStringLiteral("custom"));
+        _comboCustomParamsProfile->addItem(tr("Default"), QStringLiteral("default"));
+        _comboCustomParamsProfile->addItem(tr("Robust"), QStringLiteral("robust"));
+        _comboCustomParamsProfile->setToolTip(tr("Select a predefined parameter profile.\n"
+                                               "- Custom: editable\n"
+                                               "- Default/Robust: auto-filled and read-only"));
+        profileRow->addWidget(profileLabel);
+        profileRow->addWidget(_comboCustomParamsProfile, 1);
+        customParamsLayout->addLayout(profileRow);
+    }
 
     _editCustomParams = new QPlainTextEdit(_groupCustomParams);
     _editCustomParams->setToolTip(tr("Optional JSON that merges into tracer parameters before growth."));
@@ -1409,6 +1516,33 @@ void SegmentationWidget::buildUi()
         handleCustomParamsEdited();
     });
 
+    connect(_comboCustomParamsProfile, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx) {
+        if (_restoringSettings) {
+            return;
+        }
+        if (!_comboCustomParamsProfile || idx < 0) {
+            return;
+        }
+        const QString profile = _comboCustomParamsProfile->itemData(idx).toString();
+        applyCustomParamsProfile(profile, /*persist=*/true, /*fromUi=*/true);
+    });
+
+    connect(_comboNormal3d, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx) {
+        if (_restoringSettings) {
+            return;
+        }
+        if (!_comboNormal3d || idx < 0) {
+            return;
+        }
+        const QString path = _comboNormal3d->itemData(idx).toString();
+        if (path.isEmpty() || path == _normal3dSelectedPath) {
+            return;
+        }
+        _normal3dSelectedPath = path;
+        writeSetting(QStringLiteral("normal3d_selected_path"), _normal3dSelectedPath);
+        updateNormal3dUi();
+    });
+
     connect(_chkCorrectionsAnnotate, &QCheckBox::toggled, this, [this](bool enabled) {
         emit correctionsAnnotateToggled(enabled);
     });
@@ -1445,6 +1579,81 @@ void SegmentationWidget::buildUi()
     connect(_btnApply, &QPushButton::clicked, this, &SegmentationWidget::applyRequested);
     connect(_btnReset, &QPushButton::clicked, this, &SegmentationWidget::resetRequested);
     connect(_btnStop, &QPushButton::clicked, this, &SegmentationWidget::stopToolsRequested);
+
+    // Neural tracer connections
+    connect(_chkNeuralTracerEnabled, &QCheckBox::toggled, this, [this](bool enabled) {
+        setNeuralTracerEnabled(enabled);
+    });
+
+    connect(_neuralCheckpointEdit, &QLineEdit::textChanged, this, [this](const QString& text) {
+        _neuralCheckpointPath = text.trimmed();
+        writeSetting(QStringLiteral("neural_checkpoint_path"), _neuralCheckpointPath);
+    });
+
+    connect(_neuralCheckpointBrowse, &QToolButton::clicked, this, [this]() {
+        const QString initial = _neuralCheckpointPath.isEmpty() ? QDir::homePath() : _neuralCheckpointPath;
+        const QString file = QFileDialog::getOpenFileName(this, tr("Select neural tracer checkpoint"),
+                                                          initial, tr("PyTorch Checkpoint (*.pt *.pth);;All Files (*)"));
+        if (!file.isEmpty()) {
+            _neuralCheckpointPath = file;
+            _neuralCheckpointEdit->setText(file);
+        }
+    });
+
+    connect(_neuralPythonEdit, &QLineEdit::textChanged, this, [this](const QString& text) {
+        _neuralPythonPath = text.trimmed();
+        writeSetting(QStringLiteral("neural_python_path"), _neuralPythonPath);
+    });
+
+    connect(_neuralPythonBrowse, &QToolButton::clicked, this, [this]() {
+        const QString initial = _neuralPythonPath.isEmpty() ? QDir::homePath() : QFileInfo(_neuralPythonPath).absolutePath();
+        const QString file = QFileDialog::getOpenFileName(this, tr("Select Python executable"),
+                                                          initial, tr("All Files (*)"));
+        if (!file.isEmpty()) {
+            _neuralPythonPath = file;
+            _neuralPythonEdit->setText(file);
+        }
+    });
+
+    connect(_comboNeuralVolumeScale, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        _neuralVolumeScale = _comboNeuralVolumeScale->itemData(index).toInt();
+        writeSetting(QStringLiteral("neural_volume_scale"), _neuralVolumeScale);
+    });
+
+    connect(_spinNeuralBatchSize, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        _neuralBatchSize = value;
+        writeSetting(QStringLiteral("neural_batch_size"), _neuralBatchSize);
+    });
+
+    // Connect to service manager signals
+    auto& serviceManager = NeuralTraceServiceManager::instance();
+    connect(&serviceManager, &NeuralTraceServiceManager::statusMessage, this, [this](const QString& message) {
+        if (_lblNeuralTracerStatus) {
+            _lblNeuralTracerStatus->setText(message);
+            _lblNeuralTracerStatus->setVisible(true);
+            _lblNeuralTracerStatus->setStyleSheet(QString());
+        }
+        emit neuralTracerStatusMessage(message);
+    });
+    connect(&serviceManager, &NeuralTraceServiceManager::serviceStarted, this, [this]() {
+        if (_lblNeuralTracerStatus) {
+            _lblNeuralTracerStatus->setText(tr("Service running"));
+            _lblNeuralTracerStatus->setStyleSheet(QStringLiteral("color: #27ae60;"));
+        }
+    });
+    connect(&serviceManager, &NeuralTraceServiceManager::serviceStopped, this, [this]() {
+        if (_lblNeuralTracerStatus) {
+            _lblNeuralTracerStatus->setText(tr("Service stopped"));
+            _lblNeuralTracerStatus->setStyleSheet(QString());
+        }
+    });
+    connect(&serviceManager, &NeuralTraceServiceManager::serviceError, this, [this](const QString& error) {
+        if (_lblNeuralTracerStatus) {
+            _lblNeuralTracerStatus->setText(tr("Error: %1").arg(error));
+            _lblNeuralTracerStatus->setStyleSheet(QStringLiteral("color: #c0392b;"));
+            _lblNeuralTracerStatus->setVisible(true);
+        }
+    });
 }
 
 void SegmentationWidget::syncUiState()
@@ -1557,6 +1766,18 @@ void SegmentationWidget::syncUiState()
             const QSignalBlocker blocker(_editCustomParams);
             _editCustomParams->setPlainText(_customParamsText);
         }
+    }
+
+    if (_comboCustomParamsProfile) {
+        const QSignalBlocker blocker(_comboCustomParamsProfile);
+        const int idx = _comboCustomParamsProfile->findData(_customParamsProfile);
+        if (idx >= 0) {
+            _comboCustomParamsProfile->setCurrentIndex(idx);
+        }
+    }
+
+    if (_editCustomParams) {
+        _editCustomParams->setReadOnly(_customParamsProfile != QStringLiteral("custom"));
     }
     updateCustomParamsStatus();
 
@@ -1707,17 +1928,11 @@ void SegmentationWidget::syncUiState()
             : QStringLiteral("<span style=\"color:#c62828; font-size:16px;\">&#10007;</span>");
         const bool hasExplicitLocation = !_normalGridDisplayPath.isEmpty() && _normalGridDisplayPath != _normalGridHint;
         QString message;
-        if (hasExplicitLocation) {
-            message = _normalGridAvailable
-                ? tr("Normal grids found at %1").arg(_normalGridDisplayPath)
-                : tr("Normal grids not found at %1").arg(_normalGridDisplayPath);
-        } else {
-            message = _normalGridAvailable ? tr("Normal grids found.") : tr("Normal grids not found.");
-            if (!_normalGridHint.isEmpty()) {
-                message.append(QStringLiteral(" ("));
-                message.append(_normalGridHint);
-                message.append(QLatin1Char(')'));
-            }
+        message = _normalGridAvailable ? tr("Normal grids found.") : tr("Normal grids not found.");
+        if (!_normalGridHint.isEmpty()) {
+            message.append(QStringLiteral(" ("));
+            message.append(_normalGridHint);
+            message.append(QLatin1Char(')'));
         }
 
         QString tooltip = message;
@@ -1734,6 +1949,15 @@ void SegmentationWidget::syncUiState()
         _lblNormalGrid->setToolTip(tooltip);
         _lblNormalGrid->setAccessibleDescription(message);
     }
+
+    if (_editNormalGridPath) {
+        const bool show = _normalGridAvailable && !_normalGridPath.isEmpty();
+        _editNormalGridPath->setVisible(show);
+        _editNormalGridPath->setText(_normalGridPath);
+        _editNormalGridPath->setToolTip(_normalGridPath);
+    }
+
+    updateNormal3dUi();
 
     // Approval mask checkboxes
     if (_chkShowApprovalMask) {
@@ -1796,6 +2020,134 @@ void SegmentationWidget::syncUiState()
     }
 
     updateGrowthUiState();
+}
+
+void SegmentationWidget::updateNormal3dUi()
+{
+    if (!_lblNormal3d) {
+        return;
+    }
+
+    const int count = _normal3dCandidates.size();
+    const bool hasAny = count > 0;
+
+    // Keep selection valid.
+    if (hasAny) {
+        if (_normal3dSelectedPath.isEmpty() || !_normal3dCandidates.contains(_normal3dSelectedPath)) {
+            _normal3dSelectedPath = _normal3dCandidates.front();
+        }
+    } else {
+        _normal3dSelectedPath.clear();
+    }
+
+    const bool showCombo = count > 1;
+    if (_comboNormal3d) {
+        _comboNormal3d->setVisible(showCombo);
+        _comboNormal3d->setEnabled(_editingEnabled && hasAny);
+        if (showCombo) {
+            const QSignalBlocker blocker(_comboNormal3d);
+            _comboNormal3d->clear();
+            for (const QString& p : _normal3dCandidates) {
+                _comboNormal3d->addItem(p, p);
+            }
+            const int idx = _comboNormal3d->findData(_normal3dSelectedPath);
+            if (idx >= 0) {
+                _comboNormal3d->setCurrentIndex(idx);
+            }
+        }
+    }
+
+    const QString icon = hasAny
+        ? QStringLiteral("<span style=\"color:#2e7d32; font-size:16px;\">&#10003;</span>")
+        : QStringLiteral("<span style=\"color:#c62828; font-size:16px;\">&#10007;</span>");
+
+    QString message;
+    if (!hasAny) {
+        message = tr("Normal3D volume not found.");
+    } else if (count == 1) {
+        message = tr("Normal3D volume found.");
+    } else {
+        message = tr("Normal3D volumes found (%1). Select one:").arg(count);
+    }
+
+    QString tooltip = message;
+    if (!_normal3dHint.isEmpty()) {
+        tooltip.append(QStringLiteral("\n"));
+        tooltip.append(_normal3dHint);
+    }
+    if (!_volumePackagePath.isEmpty()) {
+        tooltip.append(QStringLiteral("\n"));
+        tooltip.append(tr("Volume package: %1").arg(_volumePackagePath));
+    }
+
+    _lblNormal3d->setText(icon + QStringLiteral("&nbsp;") + message);
+    _lblNormal3d->setToolTip(tooltip);
+    _lblNormal3d->setAccessibleDescription(message);
+
+    if (_editNormal3dPath) {
+        const bool show = hasAny && !showCombo;
+        _editNormal3dPath->setVisible(show);
+        _editNormal3dPath->setText(_normal3dSelectedPath);
+        _editNormal3dPath->setToolTip(_normal3dSelectedPath);
+    }
+}
+
+void SegmentationWidget::setNormal3dZarrCandidates(const QStringList& candidates, const QString& hint)
+{
+    _normal3dCandidates = candidates;
+    _normal3dHint = hint;
+    syncUiState();
+}
+
+QString SegmentationWidget::paramsTextForProfile(const QString& profile) const
+{
+    if (profile == QStringLiteral("default")) {
+        // Empty => use GrowPatch defaults.
+        return QString();
+    }
+    if (profile == QStringLiteral("robust")) {
+        // See LossSettings() in core/src/GrowPatch.cpp.
+        return QStringLiteral(
+            "{\n"
+            "  \"snap_weight\": 0.0,\n"
+            "  \"normal_weight\": 0.0,\n"
+            "  \"normal3dline_weight\": 1.0,\n"
+            "  \"straight_weight\": 10.0,\n"
+            "  \"dist_weight\": 1.0,\n"
+            "  \"direction_weight\": 0.0,\n"
+            "  \"sdir_weight\": 1.0,\n"
+            "  \"correction_weight\": 1.0,\n"
+            "  \"reference_ray_weight\": 0.0\n"
+            "}\n");
+    }
+    return _customParamsText;
+}
+
+void SegmentationWidget::applyCustomParamsProfile(const QString& profile, bool persist, bool fromUi)
+{
+    const QString normalized = (profile == QStringLiteral("default") || profile == QStringLiteral("robust"))
+        ? profile
+        : QStringLiteral("custom");
+
+    if (_customParamsProfile == normalized && (!fromUi || normalized == QStringLiteral("custom"))) {
+        // Nothing to do.
+    }
+    _customParamsProfile = normalized;
+    if (persist) {
+        writeSetting(QStringLiteral("custom_params_profile"), _customParamsProfile);
+    }
+
+    if (_customParamsProfile != QStringLiteral("custom")) {
+        _updatingCustomParamsProgrammatically = true;
+        _customParamsText = paramsTextForProfile(_customParamsProfile);
+        if (persist) {
+            writeSetting(QStringLiteral("custom_params_text"), _customParamsText);
+        }
+        validateCustomParamsText();
+        _updatingCustomParamsProgrammatically = false;
+    }
+
+    syncUiState();
 }
 
 void SegmentationWidget::restoreSettings()
@@ -1909,7 +2261,20 @@ void SegmentationWidget::restoreSettings()
     }
 
     _customParamsText = settings.value(segmentation::CUSTOM_PARAMS_TEXT, QString()).toString();
+    _customParamsProfile = settings.value(QStringLiteral("custom_params_profile"), _customParamsProfile).toString();
+    if (_customParamsProfile != QStringLiteral("custom") &&
+        _customParamsProfile != QStringLiteral("default") &&
+        _customParamsProfile != QStringLiteral("robust")) {
+        _customParamsProfile = QStringLiteral("custom");
+    }
     validateCustomParamsText();
+
+    _normal3dSelectedPath = settings.value(QStringLiteral("normal3d_selected_path"), QString()).toString();
+
+    // Apply profile behavior (auto-fill + read-only) after restoring.
+    if (_customParamsProfile != QStringLiteral("custom")) {
+        applyCustomParamsProfile(_customParamsProfile, /*persist=*/false, /*fromUi=*/false);
+    }
 
     _approvalBrushRadius = settings.value(segmentation::APPROVAL_BRUSH_RADIUS, _approvalBrushRadius).toFloat();
     _approvalBrushRadius = std::clamp(_approvalBrushRadius, 1.0f, 1000.0f);
@@ -1926,6 +2291,15 @@ void SegmentationWidget::restoreSettings()
     _showApprovalMask = settings.value(segmentation::SHOW_APPROVAL_MASK, _showApprovalMask).toBool();
     // Don't restore edit states - user must explicitly enable editing each session
 
+    // Neural tracer settings
+    _neuralTracerEnabled = settings.value(QStringLiteral("neural_tracer_enabled"), false).toBool();
+    _neuralCheckpointPath = settings.value(QStringLiteral("neural_checkpoint_path"), QString()).toString();
+    _neuralPythonPath = settings.value(QStringLiteral("neural_python_path"), QString()).toString();
+    _neuralVolumeScale = settings.value(QStringLiteral("neural_volume_scale"), 0).toInt();
+    _neuralVolumeScale = std::clamp(_neuralVolumeScale, 0, 5);
+    _neuralBatchSize = settings.value(QStringLiteral("neural_batch_size"), 4).toInt();
+    _neuralBatchSize = std::clamp(_neuralBatchSize, 1, 64);
+  
     // Cell reoptimization settings
     _cellReoptMaxSteps = settings.value(QStringLiteral("cell_reopt_max_steps"), _cellReoptMaxSteps).toInt();
     _cellReoptMaxSteps = std::clamp(_cellReoptMaxSteps, 10, 10000);
@@ -1957,6 +2331,36 @@ void SegmentationWidget::restoreSettings()
     }
     if (_groupDirectionField) {
         _groupDirectionField->setExpanded(directionExpanded);
+    }
+
+    const bool neuralExpanded = settings.value(QStringLiteral("group_neural_tracer_expanded"), false).toBool();
+    if (_groupNeuralTracer) {
+        _groupNeuralTracer->setExpanded(neuralExpanded);
+    }
+
+    // Sync neural tracer UI
+    if (_chkNeuralTracerEnabled) {
+        const QSignalBlocker blocker(_chkNeuralTracerEnabled);
+        _chkNeuralTracerEnabled->setChecked(_neuralTracerEnabled);
+    }
+    if (_neuralCheckpointEdit) {
+        const QSignalBlocker blocker(_neuralCheckpointEdit);
+        _neuralCheckpointEdit->setText(_neuralCheckpointPath);
+    }
+    if (_neuralPythonEdit) {
+        const QSignalBlocker blocker(_neuralPythonEdit);
+        _neuralPythonEdit->setText(_neuralPythonPath);
+    }
+    if (_comboNeuralVolumeScale) {
+        const QSignalBlocker blocker(_comboNeuralVolumeScale);
+        int idx = _comboNeuralVolumeScale->findData(_neuralVolumeScale);
+        if (idx >= 0) {
+            _comboNeuralVolumeScale->setCurrentIndex(idx);
+        }
+    }
+    if (_spinNeuralBatchSize) {
+        const QSignalBlocker blocker(_spinNeuralBatchSize);
+        _spinNeuralBatchSize->setValue(_neuralBatchSize);
     }
 
     settings.endGroup();
@@ -2435,6 +2839,16 @@ void SegmentationWidget::handleCustomParamsEdited()
     if (!_editCustomParams) {
         return;
     }
+
+    if (_updatingCustomParamsProgrammatically) {
+        return;
+    }
+
+    // Edits only allowed in custom profile (UI should already be read-only otherwise).
+    if (_customParamsProfile != QStringLiteral("custom")) {
+        return;
+    }
+
     _customParamsText = _editCustomParams->toPlainText();
     writeSetting(QStringLiteral("custom_params_text"), _customParamsText);
     validateCustomParamsText();
@@ -2559,6 +2973,12 @@ void SegmentationWidget::setNormalGridPathHint(const QString& hint)
         display = display.mid(colonIndex + 1).trimmed();
     }
     _normalGridDisplayPath = display;
+    syncUiState();
+}
+
+void SegmentationWidget::setNormalGridPath(const QString& path)
+{
+    _normalGridPath = path.trimmed();
     syncUiState();
 }
 
@@ -3086,4 +3506,86 @@ int SegmentationWidget::normalizeGrowthDirectionMask(int mask)
         mask = kGrowDirAllMask;
     }
     return mask;
+}
+
+void SegmentationWidget::setNeuralTracerEnabled(bool enabled)
+{
+    if (_neuralTracerEnabled == enabled) {
+        return;
+    }
+    _neuralTracerEnabled = enabled;
+    writeSetting(QStringLiteral("neural_tracer_enabled"), _neuralTracerEnabled);
+
+    if (_chkNeuralTracerEnabled) {
+        const QSignalBlocker blocker(_chkNeuralTracerEnabled);
+        _chkNeuralTracerEnabled->setChecked(enabled);
+    }
+
+    emit neuralTracerEnabledChanged(enabled);
+}
+
+void SegmentationWidget::setNeuralCheckpointPath(const QString& path)
+{
+    if (_neuralCheckpointPath == path) {
+        return;
+    }
+    _neuralCheckpointPath = path;
+    writeSetting(QStringLiteral("neural_checkpoint_path"), _neuralCheckpointPath);
+
+    if (_neuralCheckpointEdit) {
+        const QSignalBlocker blocker(_neuralCheckpointEdit);
+        _neuralCheckpointEdit->setText(path);
+    }
+}
+
+void SegmentationWidget::setNeuralPythonPath(const QString& path)
+{
+    if (_neuralPythonPath == path) {
+        return;
+    }
+    _neuralPythonPath = path;
+    writeSetting(QStringLiteral("neural_python_path"), _neuralPythonPath);
+
+    if (_neuralPythonEdit) {
+        const QSignalBlocker blocker(_neuralPythonEdit);
+        _neuralPythonEdit->setText(path);
+    }
+}
+
+void SegmentationWidget::setNeuralVolumeScale(int scale)
+{
+    scale = std::clamp(scale, 0, 5);
+    if (_neuralVolumeScale == scale) {
+        return;
+    }
+    _neuralVolumeScale = scale;
+    writeSetting(QStringLiteral("neural_volume_scale"), _neuralVolumeScale);
+
+    if (_comboNeuralVolumeScale) {
+        const QSignalBlocker blocker(_comboNeuralVolumeScale);
+        int idx = _comboNeuralVolumeScale->findData(scale);
+        if (idx >= 0) {
+            _comboNeuralVolumeScale->setCurrentIndex(idx);
+        }
+    }
+}
+
+void SegmentationWidget::setNeuralBatchSize(int size)
+{
+    size = std::clamp(size, 1, 64);
+    if (_neuralBatchSize == size) {
+        return;
+    }
+    _neuralBatchSize = size;
+    writeSetting(QStringLiteral("neural_batch_size"), _neuralBatchSize);
+
+    if (_spinNeuralBatchSize) {
+        const QSignalBlocker blocker(_spinNeuralBatchSize);
+        _spinNeuralBatchSize->setValue(size);
+    }
+}
+
+void SegmentationWidget::setVolumeZarrPath(const QString& path)
+{
+    _volumeZarrPath = path;
 }
