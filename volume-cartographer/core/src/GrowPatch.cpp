@@ -956,13 +956,13 @@ static int gen_normal_loss(ceres::Problem &problem, const cv::Vec2i &p, TracePar
 
         bool direction_aware = false; // this is not that simple ...
         // Loss with p as base point A
-        problem.AddResidualBlock(NormalConstraintPlane::Create(*trace_data.ngv, i, settings(LossType::NORMAL, p), settings(LossType::SNAP, p), direction_aware, settings.z_min, settings.z_max), nullptr, pA, pB1, pB2, pC);
+        problem.AddResidualBlock(NormalConstraintPlane::Create(*trace_data.ngv, i, settings(LossType::NORMAL, p), settings(LossType::SNAP, p), nullptr, direction_aware, settings.z_min, settings.z_max), nullptr, pA, pB1, pB2, pC);
         // Loss with p_br as base point A
-        problem.AddResidualBlock(NormalConstraintPlane::Create(*trace_data.ngv, i, settings(LossType::NORMAL, p), settings(LossType::SNAP, p), direction_aware, settings.z_min, settings.z_max), nullptr, pC, pB2, pB1, pA);
+        problem.AddResidualBlock(NormalConstraintPlane::Create(*trace_data.ngv, i, settings(LossType::NORMAL, p), settings(LossType::SNAP, p), nullptr, direction_aware, settings.z_min, settings.z_max), nullptr, pC, pB2, pB1, pA);
         // Loss with p_tr as base point A
-        problem.AddResidualBlock(NormalConstraintPlane::Create(*trace_data.ngv, i, settings(LossType::NORMAL, p), settings(LossType::SNAP, p), direction_aware, settings.z_min, settings.z_max), nullptr, pB1, pC, pA, pB2);
+        problem.AddResidualBlock(NormalConstraintPlane::Create(*trace_data.ngv, i, settings(LossType::NORMAL, p), settings(LossType::SNAP, p), nullptr, direction_aware, settings.z_min, settings.z_max), nullptr, pB1, pC, pA, pB2);
         // Loss with p_bl as base point A
-        problem.AddResidualBlock(NormalConstraintPlane::Create(*trace_data.ngv, i, settings(LossType::NORMAL, p), settings(LossType::SNAP, p), direction_aware, settings.z_min, settings.z_max), nullptr, pB2, pA, pC, pB1);
+        problem.AddResidualBlock(NormalConstraintPlane::Create(*trace_data.ngv, i, settings(LossType::NORMAL, p), settings(LossType::SNAP, p), nullptr, direction_aware, settings.z_min, settings.z_max), nullptr, pB2, pA, pC, pB1);
         count += 4;
     }
 
