@@ -316,7 +316,15 @@ cv::Mat_<uint8_t> QuadSurface::validMask() const
     }
     const int rows = _points->rows;
     const int cols = _points->cols;
-    cv::Mat_<uint8_t> mask(rows, cols);
+
+    // Return cached mask if available and correct size
+    if (!_validMaskCache.empty() &&
+        _validMaskCache.rows == rows &&
+        _validMaskCache.cols == cols) {
+        return _validMaskCache;
+    }
+
+    _validMaskCache.create(rows, cols);
 
 #pragma omp parallel for schedule(dynamic, 1)
     for (int j = 0; j < rows; ++j) {
@@ -324,10 +332,10 @@ cv::Mat_<uint8_t> QuadSurface::validMask() const
             const cv::Vec3f& p = (*_points)(j, i);
             const bool ok = std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]) &&
                            !(p[0] == -1.f && p[1] == -1.f && p[2] == -1.f);
-            mask(j, i) = ok ? 255 : 0;
+            _validMaskCache(j, i) = ok ? 255 : 0;
         }
     }
-    return mask;
+    return _validMaskCache;
 }
 
 void QuadSurface::writeValidMask(const cv::Mat& img)
@@ -361,6 +369,7 @@ void QuadSurface::invalidateCache()
     }
 
     _bbox = {{-1, -1, -1}, {-1, -1, -1}};
+    _validMaskCache.release();
 }
 
 void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,

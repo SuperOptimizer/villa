@@ -221,12 +221,13 @@ bool ZarrDataset::readChunk(
     const std::vector<std::size_t>& chunkId, void* buffer) const
 {
     auto cp = chunkPath(chunkId);
-    if (!std::filesystem::exists(cp)) {
+
+    // Open directly — avoids a separate stat() syscall
+    std::ifstream f(cp, std::ios::binary);
+    if (!f.is_open()) {
         return false;
     }
 
-    // Read compressed data
-    std::ifstream f(cp, std::ios::binary);
     f.seekg(0, std::ios::end);
     auto fileSize = f.tellg();
     f.seekg(0, std::ios::beg);

@@ -4,7 +4,10 @@
 #include "vc/core/zarr/ZarrDataset.hpp"
 #include "vc/core/zarr/Tensor3D.hpp"
 
+#include <vc/core/util/HashFunctions.hpp>
+
 #include <opencv2/core.hpp>
+#include <shared_mutex>
 
 #include <sys/types.h>
 #include <sys/stat.h>

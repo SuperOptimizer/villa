@@ -16,24 +16,35 @@
 #include <sstream>
 #include <algorithm>
 #include <atomic>
+#include <functional>
 #include <boost/program_options.hpp>
 #include <mutex>
 #include <cmath>
 #include <set>
 #include <cctype>
+#include <chrono>
 
 namespace po = boost::program_options;
 
 using json = nlohmann::json;
 
-/**
- * @brief Structure to hold affine transform data
- */
+static inline bool isNaN3f(const cv::Vec3f& v)
+{
+    return std::isnan(v[0]) || std::isnan(v[1]) || std::isnan(v[2]);
+}
+
 struct AffineTransform {
     cv::Mat_<double> matrix;  // 4x4 matrix in XYZ format
-    
+
     AffineTransform() {
         matrix = cv::Mat_<double>::eye(4, 4);
+    }
+
+    cv::Matx33d linearPart() const {
+        return cv::Matx33d(
+            matrix(0,0), matrix(0,1), matrix(0,2),
+            matrix(1,0), matrix(1,1), matrix(1,2),
+            matrix(2,0), matrix(2,1), matrix(2,2));
     }
 };
 
@@ -44,20 +55,13 @@ struct AffineTransform {
  */
 static inline bool invertAffineInPlace(AffineTransform& T)
 {
-    cv::Mat A_cv(3, 3, CV_64F);
-    for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 3; ++c)
-            A_cv.at<double>(r, c) = T.matrix(r, c);
-
+    cv::Mat A_cv(T.linearPart());
     cv::Mat Ainv_cv;
     double det = cv::invert(A_cv, Ainv_cv, cv::DECOMP_LU);
-    if (det < 1e-10) {
-        return false;
-    }
-    cv::Matx33d Ainv;
-    for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 3; ++c)
-            Ainv(r, c) = Ainv_cv.at<double>(r, c);
+    if (det < 1e-10) return false;
+    cv::Matx33d Ainv(Ainv_cv.at<double>(0,0), Ainv_cv.at<double>(0,1), Ainv_cv.at<double>(0,2),
+                     Ainv_cv.at<double>(1,0), Ainv_cv.at<double>(1,1), Ainv_cv.at<double>(1,2),
+                     Ainv_cv.at<double>(2,0), Ainv_cv.at<double>(2,1), Ainv_cv.at<double>(2,2));
     const cv::Vec3d t(T.matrix(0,3), T.matrix(1,3), T.matrix(2,3));
     const cv::Vec3d tinv = -(Ainv * t);
     for (int r = 0; r < 3; ++r) {
@@ -173,200 +177,42 @@ static inline std::pair<std::string, bool> parseAffineSpec(const std::string& sp
 
 
 /**
- * @brief Apply affine transform to a single point
- * 
- * @param point Point to transform
- * @param transform Affine transform to apply
- * @return cv::Vec3f Transformed point
- */
-cv::Vec3f applyAffineTransformToPoint(const cv::Vec3f& point, const AffineTransform& transform) {
-    const double ptx = static_cast<double>(point[0]);
-    const double pty = static_cast<double>(point[1]);
-    const double ptz = static_cast<double>(point[2]);
-    
-    // Apply affine transform (note: matrix is in XYZ format)
-    const double ptx_new = transform.matrix(0, 0) * ptx + transform.matrix(0, 1) * pty + transform.matrix(0, 2) * ptz + transform.matrix(0, 3);
-    const double pty_new = transform.matrix(1, 0) * ptx + transform.matrix(1, 1) * pty + transform.matrix(1, 2) * ptz + transform.matrix(1, 3);
-    const double ptz_new = transform.matrix(2, 0) * ptx + transform.matrix(2, 1) * pty + transform.matrix(2, 2) * ptz + transform.matrix(2, 3);
-    
-    return cv::Vec3f(
-        static_cast<float>(ptx_new),
-        static_cast<float>(pty_new),
-        static_cast<float>(ptz_new));
-}
-
-/**
  * @brief Apply affine transform to points and normals
  * 
  * @param points Points to transform (modified in-place)
  * @param normals Normals to transform (modified in-place)
  * @param transform Affine transform to apply
  */
-void applyAffineTransform(cv::Mat_<cv::Vec3f>& points, 
-                         cv::Mat_<cv::Vec3f>& normals, 
+void applyAffineTransform(cv::Mat_<cv::Vec3f>& points,
+                         cv::Mat_<cv::Vec3f>& normals,
                          const AffineTransform& transform) {
-    // Precompute linear part A and its inverse-transpose for proper normal transform
-    const cv::Matx33d A(
-        transform.matrix(0,0), transform.matrix(0,1), transform.matrix(0,2),
-        transform.matrix(1,0), transform.matrix(1,1), transform.matrix(1,2),
-        transform.matrix(2,0), transform.matrix(2,1), transform.matrix(2,2)
-    );
-    // Use double precision for inversion; normals will be renormalized afterwards.
+    const cv::Matx33d A = transform.linearPart();
     const cv::Matx33d invAT = A.inv().t();
+    const cv::Vec3d t(transform.matrix(0,3), transform.matrix(1,3), transform.matrix(2,3));
 
-    // Apply transform to each point
     for (int y = 0; y < points.rows; y++) {
         for (int x = 0; x < points.cols; x++) {
             cv::Vec3f& pt = points(y, x);
-            
-            // Skip NaN points
-            if (std::isnan(pt[0]) || std::isnan(pt[1]) || std::isnan(pt[2])) {
-                continue;
-            }
-
-            pt = applyAffineTransformToPoint(pt, transform);
-        }
-    }
-    
-    // Apply correct normal transform: n' ∝ (A^{-1})^T * n (then normalize)
-    for (int y = 0; y < normals.rows; y++) {
-        for (int x = 0; x < normals.cols; x++) {
             cv::Vec3f& n = normals(y, x);
-            if (std::isnan(n[0]) || std::isnan(n[1]) || std::isnan(n[2])) {
-                continue;
+
+            if (!isNaN3f(pt)) {
+                cv::Vec3d pd(pt[0], pt[1], pt[2]);
+                cv::Vec3d r = A * pd + t;
+                pt = cv::Vec3f(static_cast<float>(r[0]), static_cast<float>(r[1]), static_cast<float>(r[2]));
             }
 
-            const double nx_new =
-                invAT(0,0) * static_cast<double>(n[0]) + invAT(0,1) * static_cast<double>(n[1]) + invAT(0,2) * static_cast<double>(n[2]);
-            const double ny_new =
-                invAT(1,0) * static_cast<double>(n[0]) + invAT(1,1) * static_cast<double>(n[1]) + invAT(1,2) * static_cast<double>(n[2]);
-            const double nz_new =
-                invAT(2,0) * static_cast<double>(n[0]) + invAT(2,1) * static_cast<double>(n[1]) + invAT(2,2) * static_cast<double>(n[2]);
-
-            const double norm = std::sqrt(nx_new * nx_new + ny_new * ny_new + nz_new * nz_new);
-            if (norm > 0.0) {
-                n[0] = static_cast<float>(nx_new / norm);
-                n[1] = static_cast<float>(ny_new / norm);
-                n[2] = static_cast<float>(nz_new / norm);
+            if (!isNaN3f(n)) {
+                cv::Vec3d nd(n[0], n[1], n[2]);
+                cv::Vec3d rn = invAT * nd;
+                double len = cv::norm(rn);
+                if (len > 0.0) rn /= len;
+                n = cv::Vec3f(static_cast<float>(rn[0]), static_cast<float>(rn[1]), static_cast<float>(rn[2]));
             }
         }
     }
 }
 
 
-/**
- * @brief Calculate the centroid of valid 3D points in the mesh
- *
- * @param points Matrix of 3D points (cv::Mat_<cv::Vec3f>)
- * @return cv::Vec3f The centroid of all valid points
- */
-cv::Vec3f calculateMeshCentroid(const cv::Mat_<cv::Vec3f>& points)
-{
-    cv::Vec3f centroid(0, 0, 0);
-    int count = 0;
-
-    for (int y = 0; y < points.rows; y++) {
-        for (int x = 0; x < points.cols; x++) {
-            const cv::Vec3f& pt = points(y, x);
-            if (!std::isnan(pt[0]) && !std::isnan(pt[1]) && !std::isnan(pt[2])) {
-                centroid += pt;
-                count++;
-            }
-        }
-    }
-
-    if (count > 0) {
-        centroid /= static_cast<float>(count);
-    }
-    return centroid;
-}
-
-/**
- * @brief Determine if normals should be flipped based on a reference point
- *
- * @param points Matrix of 3D points (cv::Mat_<cv::Vec3f>)
- * @param normals Matrix of normal vectors
- * @param referencePoint The reference point to orient normals towards/away from
- * @return bool True if normals should be flipped, false otherwise
- */
-bool shouldFlipNormals(
-    const cv::Mat_<cv::Vec3f>& points,
-    const cv::Mat_<cv::Vec3f>& normals,
-    const cv::Vec3f& referencePoint)
-{
-    size_t pointingToward = 0;
-    size_t pointingAway = 0;
-
-    for (int y = 0; y < points.rows; y++) {
-        for (int x = 0; x < points.cols; x++) {
-            const cv::Vec3f& pt = points(y, x);
-            const cv::Vec3f& n = normals(y, x);
-
-            if (std::isnan(pt[0]) || std::isnan(pt[1]) || std::isnan(pt[2]) ||
-                std::isnan(n[0]) || std::isnan(n[1]) || std::isnan(n[2])) {
-                continue;
-            }
-
-            // Calculate direction from point to reference
-            cv::Vec3f toRef = referencePoint - pt;
-
-            // Check if normal points toward or away from reference
-            float dotProduct = toRef.dot(n);
-            if (dotProduct > 0) {
-                pointingToward++;
-            } else {
-                pointingAway++;
-            }
-        }
-    }
-
-    // Flip if majority point away from reference
-    return pointingAway > pointingToward;
-}
-
-/**
- * @brief Apply normal flipping decision to a set of normals
- *
- * @param normals Matrix of normal vectors to potentially flip (modified in-place)
- * @param shouldFlip Whether to flip the normals
- */
-void applyNormalOrientation(cv::Mat_<cv::Vec3f>& normals, bool shouldFlip)
-{
-    if (shouldFlip) {
-        for (int y = 0; y < normals.rows; y++) {
-            for (int x = 0; x < normals.cols; x++) {
-                cv::Vec3f& n = normals(y, x);
-                if (!std::isnan(n[0]) && !std::isnan(n[1]) && !std::isnan(n[2])) {
-                    n = -n;
-                }
-            }
-        }
-    }
-}
-
-/**
- * @brief Apply flip transformation to an image
- *
- * @param img Image to flip (modified in-place)
- * @param flipType Flip type: 0=Vertical, 1=Horizontal, 2=Both
- */
-void flipImage(cv::Mat& img, int flipType)
-{
-    if (flipType < 0 || flipType > 2) {
-        return; // Invalid flip type
-    }
-
-    if (flipType == 0) {
-        // Vertical flip (flip around horizontal axis)
-        cv::flip(img, img, 0);
-    } else if (flipType == 1) {
-        // Horizontal flip (flip around vertical axis)
-        cv::flip(img, img, 1);
-    } else if (flipType == 2) {
-        // Both (flip around both axes)
-        cv::flip(img, img, -1);
-    }
-}
 
 static inline int normalizeQuadrantRotation(double angleDeg, double tolDeg = 0.5)
 {
@@ -384,18 +230,14 @@ static inline int normalizeQuadrantRotation(double angleDeg, double tolDeg = 0.5
     return (bestDiff <= tolDeg) ? best : -1;
 }
 
-static inline void applyRightAngleRotation(cv::Mat& m, int quad)
-{
-    if (quad == 1)      cv::rotate(m, m, cv::ROTATE_90_COUNTERCLOCKWISE);
-    else if (quad == 2) cv::rotate(m, m, cv::ROTATE_180);
-    else if (quad == 3) cv::rotate(m, m, cv::ROTATE_90_CLOCKWISE);
-}
-
-// Convenience: apply optional right-angle rotation and optional flip in one place
+// Apply optional right-angle rotation and optional flip in one place
 static inline void rotateFlipIfNeeded(cv::Mat& m, int rotQuad, int flip_axis)
 {
-    if (rotQuad >= 0) applyRightAngleRotation(m, rotQuad);
-    if (flip_axis >= 0) flipImage(m, flip_axis);
+    if (rotQuad == 1)      cv::rotate(m, m, cv::ROTATE_90_COUNTERCLOCKWISE);
+    else if (rotQuad == 2) cv::rotate(m, m, cv::ROTATE_180);
+    else if (rotQuad == 3) cv::rotate(m, m, cv::ROTATE_90_CLOCKWISE);
+    if (flip_axis >= 0 && flip_axis <= 2)
+        cv::flip(m, m, flip_axis == 2 ? -1 : flip_axis);
 }
 
 // Map source tile index (tx,ty) in a grid (tilesX,tilesY) to destination index
@@ -438,44 +280,43 @@ static inline void mapTileIndex(int tx, int ty,
     outTilesY = rTilesY;
 }
 
-// Normalize a matrix of 3D vectors in-place; skip NaNs and zero-length
-static inline void normalizeNormals(cv::Mat_<cv::Vec3f>& nrm)
-{
-    for (int yy = 0; yy < nrm.rows; ++yy)
-        for (int xx = 0; xx < nrm.cols; ++xx) {
-            cv::Vec3f& v = nrm(yy, xx);
-            if (std::isnan(v[0]) || std::isnan(v[1]) || std::isnan(v[2])) continue;
-            float L = std::sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
-            if (L > 0) v /= L;
-        }
-}
 
 // Compute a global normal orientation flip decision using a small probe tile
 static inline bool computeGlobalFlipDecision(
     QuadSurface* surf,
-    int dx0,
-    int dy0,
-    float u0,
-    float v0,
-    float render_scale,
-    float scale_seg,
-    bool hasAffine,
-    const AffineTransform& affineTransform,
+    int dx0, int dy0,
+    float u0, float v0,
+    float render_scale, float scale_seg,
+    bool hasAffine, const AffineTransform& affineTransform,
     cv::Vec3f& outCentroid)
 {
     cv::Mat_<cv::Vec3f> _tp, _tn;
-    surf->gen(&_tp, &_tn,
-              cv::Size(dx0, dy0),
-              cv::Vec3f(0,0,0),
-              render_scale,
-              cv::Vec3f(u0, v0, 0.0f));
-
+    surf->gen(&_tp, &_tn, cv::Size(dx0, dy0),
+              cv::Vec3f(0,0,0), render_scale, cv::Vec3f(u0, v0, 0.0f));
     _tp *= scale_seg;
-    if (hasAffine) {
-        applyAffineTransform(_tp, _tn, affineTransform);
-    }
-    outCentroid = calculateMeshCentroid(_tp);
-    return shouldFlipNormals(_tp, _tn, outCentroid);
+    if (hasAffine) applyAffineTransform(_tp, _tn, affineTransform);
+
+    // Compute centroid of valid points
+    cv::Vec3f centroid(0,0,0);
+    int count = 0;
+    for (int y = 0; y < _tp.rows; y++)
+        for (int x = 0; x < _tp.cols; x++) {
+            const cv::Vec3f& pt = _tp(y, x);
+            if (!isNaN3f(pt)) { centroid += pt; count++; }
+        }
+    if (count > 0) centroid /= static_cast<float>(count);
+    outCentroid = centroid;
+
+    // Count normals pointing toward vs away from centroid
+    size_t toward = 0, away = 0;
+    for (int y = 0; y < _tp.rows; y++)
+        for (int x = 0; x < _tp.cols; x++) {
+            const cv::Vec3f& pt = _tp(y, x);
+            const cv::Vec3f& n = _tn(y, x);
+            if (isNaN3f(pt) || isNaN3f(n)) continue;
+            if ((centroid - pt).dot(n) > 0) toward++; else away++;
+        }
+    return away > toward;
 }
 
 // Given raw tile points/normals, produce dataset-space base points and normalized step dirs
@@ -493,11 +334,17 @@ static inline void prepareBasePointsAndStepDirs(
     basePointsOut = tilePoints.clone();
     basePointsOut *= scale_seg;
     stepDirsOut = tileNormals.clone();
-    if (hasAffine) {
-        applyAffineTransform(basePointsOut, stepDirsOut, affineTransform);
-    }
-    applyNormalOrientation(stepDirsOut, globalFlipDecision);
-    normalizeNormals(stepDirsOut);
+    if (hasAffine) applyAffineTransform(basePointsOut, stepDirsOut, affineTransform);
+    // Flip and normalize normals in a single pass
+    const float flipSign = globalFlipDecision ? -1.0f : 1.0f;
+    for (int yy = 0; yy < stepDirsOut.rows; ++yy)
+        for (int xx = 0; xx < stepDirsOut.cols; ++xx) {
+            cv::Vec3f& v = stepDirsOut(yy, xx);
+            if (isNaN3f(v)) continue;
+            v *= flipSign;
+            float L = std::sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+            if (L > 0) v /= L;
+        }
     basePointsOut *= ds_scale;
 }
 
@@ -506,14 +353,6 @@ static inline void computeCanvasOrigin(const cv::Size& size, float& u0, float& v
 {
     u0 = -0.5f * (static_cast<float>(size.width)  - 1.0f);
     v0 = -0.5f * (static_cast<float>(size.height) - 1.0f);
-}
-
-// Compute per-tile origin by offsetting the canvas origin by (x0_src,y0_src)
-static inline void computeTileOrigin(const cv::Size& fullSize, size_t x0_src, size_t y0_src, float& u0, float& v0)
-{
-    computeCanvasOrigin(fullSize, u0, v0);
-    u0 += static_cast<float>(x0_src);
-    v0 += static_cast<float>(y0_src);
 }
 
 // Thin wrapper around QuadSurface::gen with consistent parameters
@@ -528,35 +367,277 @@ static inline void genTile(
     surf->gen(&points, &normals, size, cv::Vec3f(0,0,0), render_scale, cv::Vec3f(u0, v0, 0.0f));
 }
 
-// Render one slice from base points and unit step directions at offset `off`
-static inline void renderSliceFromBase(
-    cv::Mat& out,
-    volcart::zarr::ZarrDataset* ds,
-    ChunkCache<uint8_t>* cache,
-    const cv::Mat_<cv::Vec3f>& basePoints,
-    const cv::Mat_<cv::Vec3f>& stepDirs,
-    float off,
-    float ds_scale,
-    bool nearest_neighbor = false)
+// Print tiled progress (OMP-safe)
+static inline void printTileProgress(
+    std::atomic<size_t>& tilesDone, size_t totalTiles, const char* label)
 {
-    cv::Mat_<cv::Vec3f> coords(basePoints.size());
-    for (int yy = 0; yy < coords.rows; ++yy) {
-        for (int xx = 0; xx < coords.cols; ++xx) {
-            const cv::Vec3f& p = basePoints(yy, xx);
-            const cv::Vec3f& d = stepDirs(yy, xx);
-            coords(yy, xx) = p + off * d * static_cast<float>(ds_scale);
-        }
+    size_t done = ++tilesDone;
+    int pct = static_cast<int>(100.0 * double(done) / double(totalTiles));
+    #pragma omp critical(progress_print)
+    {
+        std::cout << "\r[" << label << "] tile " << done << "/" << totalTiles
+                  << " (" << pct << "%)" << std::flush;
     }
-    cv::Mat_<uint8_t> tmp;
-    readInterpolated3D(tmp, ds, coords, cache, nearest_neighbor);
-    out = tmp;
 }
 
-// 16-bit variant (uses the uint16_t overload)
-static inline void renderSliceFromBase16(
+// Generate tile points/normals and prepare base points + step dirs for rendering
+static inline void genTileAndPrepare(
+    QuadSurface* surf,
+    const cv::Size& tileSize,
+    const cv::Size& fullSize,
+    size_t x0_src, size_t y0_src,
+    const cv::Rect& crop,
+    float render_scale,
+    float scale_seg, float ds_scale,
+    bool hasAffine, const AffineTransform& affineTransform,
+    bool globalFlipDecision,
+    cv::Mat_<cv::Vec3f>& basePoints,
+    cv::Mat_<cv::Vec3f>& stepDirs)
+{
+    float u0, v0;
+    computeCanvasOrigin(fullSize, u0, v0);
+    u0 += static_cast<float>(x0_src + static_cast<size_t>(crop.x));
+    v0 += static_cast<float>(y0_src + static_cast<size_t>(crop.y));
+    cv::Mat_<cv::Vec3f> tilePoints, tileNormals;
+    genTile(surf, tileSize, render_scale, u0, v0, tilePoints, tileNormals);
+    prepareBasePointsAndStepDirs(tilePoints, tileNormals,
+        scale_seg, ds_scale, hasAffine, affineTransform,
+        globalFlipDecision, basePoints, stepDirs);
+}
+
+// Core tiled rendering loop: generates surface geometry for all tiles,
+// then processes them all in parallel with schedule(dynamic).
+template<typename TileFunc>
+static void renderTiledLoop(
+    QuadSurface* surf,
+    const cv::Size& tgt_size,
+    const cv::Size& full_size,
+    const cv::Rect& crop,
+    float render_scale,
+    float scale_seg, float ds_scale,
+    bool hasAffine, const AffineTransform& affineTransform,
+    cv::Vec3f& meshCentroid,
+    std::atomic<size_t>& tilesDone, size_t totalTiles,
+    const char* progressLabel,
+    uint32_t tileW, uint32_t tileH,
+    TileFunc&& tileFunc)
+{
+    const uint32_t tilesX = (static_cast<uint32_t>(tgt_size.width)  + tileW - 1) / tileW;
+    const uint32_t tilesY = (static_cast<uint32_t>(tgt_size.height) + tileH - 1) / tileH;
+
+    bool globalFlip = false;
+    {
+        const int dx0 = std::min<int>(static_cast<int>(tileW), tgt_size.width);
+        const int dy0 = std::min<int>(static_cast<int>(tileH), tgt_size.height);
+        float u0, v0;
+        computeCanvasOrigin(full_size, u0, v0);
+        u0 += static_cast<float>(crop.x);
+        v0 += static_cast<float>(crop.y);
+        globalFlip = computeGlobalFlipDecision(
+            surf, dx0, dy0, u0, v0, render_scale,
+            scale_seg, hasAffine, affineTransform, meshCentroid);
+    }
+
+    for (uint32_t ty = 0; ty < tilesY; ++ty) {
+        #pragma omp parallel for schedule(dynamic)
+        for (long long tx = 0; tx < static_cast<long long>(tilesX); ++tx) {
+            const uint32_t x0_src = static_cast<uint32_t>(tx) * tileW;
+            const uint32_t y0_src = ty * tileH;
+            const uint32_t dx = std::min<uint32_t>(tileW, static_cast<uint32_t>(tgt_size.width) - x0_src);
+            const uint32_t dy = std::min<uint32_t>(tileH, static_cast<uint32_t>(tgt_size.height) - y0_src);
+
+            cv::Mat_<cv::Vec3f> basePoints, stepDirs;
+            genTileAndPrepare(surf,
+                cv::Size(static_cast<int>(dx), static_cast<int>(dy)),
+                full_size, x0_src, y0_src, crop,
+                render_scale, scale_seg, ds_scale,
+                hasAffine, affineTransform, globalFlip,
+                basePoints, stepDirs);
+
+            tileFunc(static_cast<int>(tx), static_cast<int>(ty),
+                     static_cast<int>(dx), static_cast<int>(dy),
+                     basePoints, stepDirs);
+
+            printTileProgress(tilesDone, totalTiles, progressLabel);
+        }
+    }
+    std::cout << std::endl;
+}
+
+// Local trilinear interpolation from contiguous Tensor3D memory.
+// Tensor3D is row-major ZYX: shape (nz, ny, nx), strides [ny*nx, nx, 1].
+template<typename T>
+static inline float sampleTrilinearLocal(
+    const T* data, int nz, int ny, int nx,
+    float z, float y, float x)
+{
+    int iz = static_cast<int>(z);
+    int iy = static_cast<int>(y);
+    int ix = static_cast<int>(x);
+    if (iz < 0 || iy < 0 || ix < 0 ||
+        iz + 1 >= nz || iy + 1 >= ny || ix + 1 >= nx)
+        return 0;
+    float fz = z - iz, fy = y - iy, fx = x - ix;
+    size_t sZ = static_cast<size_t>(ny) * nx, sY = static_cast<size_t>(nx);
+    size_t base = static_cast<size_t>(iz) * sZ + static_cast<size_t>(iy) * sY + static_cast<size_t>(ix);
+    float c000 = data[base],          c001 = data[base + 1];
+    float c010 = data[base + sY],     c011 = data[base + sY + 1];
+    float c100 = data[base + sZ],     c101 = data[base + sZ + 1];
+    float c110 = data[base + sZ+sY],  c111 = data[base + sZ+sY+1];
+    float c00 = c000 + fx*(c001-c000), c01 = c010 + fx*(c011-c010);
+    float c10 = c100 + fx*(c101-c100), c11 = c110 + fx*(c111-c110);
+    float c0 = c00 + fy*(c01-c00), c1 = c10 + fy*(c11-c10);
+    return c0 + fz*(c1-c0);
+}
+
+// Local nearest-neighbor sampling from contiguous Tensor3D memory (ZYX layout).
+template<typename T>
+static inline T sampleNearestLocal(
+    const T* data, int nz, int ny, int nx,
+    float z, float y, float x)
+{
+    int iz = static_cast<int>(std::round(z));
+    int iy = static_cast<int>(std::round(y));
+    int ix = static_cast<int>(std::round(x));
+    if (iz < 0 || iy < 0 || ix < 0 || iz >= nz || iy >= ny || ix >= nx)
+        return 0;
+    size_t sZ = static_cast<size_t>(ny) * nx, sY = static_cast<size_t>(nx);
+    return data[static_cast<size_t>(iz) * sZ + static_cast<size_t>(iy) * sY + static_cast<size_t>(ix)];
+}
+
+// Bulk-read a 3D bounding box and render all slices via local trilinear interpolation.
+// Returns true on success, false if bbox is too large (caller should fall back).
+//
+// Coordinate conventions:
+//   Dataset shape & Tensor3D: ZYX (dim0=Z, dim1=Y, dim2=X)
+//   readArea3D offset Vec3i:  [0]=Z, [1]=Y, [2]=X
+//   coords Vec3f (basePoints/stepDirs): [0]=X, [1]=Y, [2]=Z  (legacy XYZ order)
+template<typename T>
+static bool renderSlicesBulk(
+    std::vector<cv::Mat>& outSlices,
+    volcart::zarr::ZarrDataset* ds,
+    ChunkCache<T>* cache,
+    const cv::Mat_<cv::Vec3f>& basePoints,
+    const cv::Mat_<cv::Vec3f>& stepDirs,
+    float ds_scale,
+    bool nearest_neighbor,
+    const std::vector<float>& allOffsets)
+{
+    constexpr int cvType = std::is_same_v<T, uint16_t> ? CV_16UC1 : CV_8UC1;
+    const int rows = basePoints.rows;
+    const int cols = basePoints.cols;
+    const size_t nOffsets = allOffsets.size();
+    if (nOffsets == 0 || rows == 0 || cols == 0) return false;
+
+    // Find min/max offset values
+    float minOff = allOffsets[0], maxOff = allOffsets[0];
+    for (size_t i = 1; i < nOffsets; ++i) {
+        if (allOffsets[i] < minOff) minOff = allOffsets[i];
+        if (allOffsets[i] > maxOff) maxOff = allOffsets[i];
+    }
+    const float scaleMin = minOff * ds_scale;
+    const float scaleMax = maxOff * ds_scale;
+
+    // Compute AABB across all pixels at min and max offsets.
+    // coords Vec3f: [0]=X, [1]=Y, [2]=Z
+    float z_min_f = std::numeric_limits<float>::max(), z_max_f = std::numeric_limits<float>::lowest();
+    float y_min_f = z_min_f, y_max_f = z_max_f;
+    float x_min_f = z_min_f, x_max_f = z_max_f;
+
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            const cv::Vec3f& p = basePoints(r, c);
+            const cv::Vec3f& d = stepDirs(r, c);
+            if (isNaN3f(p) || isNaN3f(d)) continue;
+            for (int e = 0; e < 2; ++e) {
+                float s = (e == 0) ? scaleMin : scaleMax;
+                float cx = p[0] + s * d[0]; // coords[0] = X
+                float cy = p[1] + s * d[1]; // coords[1] = Y
+                float cz = p[2] + s * d[2]; // coords[2] = Z
+                if (cz < z_min_f) z_min_f = cz;
+                if (cz > z_max_f) z_max_f = cz;
+                if (cy < y_min_f) y_min_f = cy;
+                if (cy > y_max_f) y_max_f = cy;
+                if (cx < x_min_f) x_min_f = cx;
+                if (cx > x_max_f) x_max_f = cx;
+            }
+        }
+    }
+
+    if (z_min_f > z_max_f) return false; // all NaN
+
+    // Expand to integer bounds (+1 for trilinear margin). dsShape is ZYX.
+    const auto& dsShape = ds->shape(); // [Z, Y, X]
+    int z_lo = std::max(0, static_cast<int>(std::floor(z_min_f)) - 1);
+    int y_lo = std::max(0, static_cast<int>(std::floor(y_min_f)) - 1);
+    int x_lo = std::max(0, static_cast<int>(std::floor(x_min_f)) - 1);
+    int z_hi = std::min(static_cast<int>(dsShape[0]) - 1, static_cast<int>(std::ceil(z_max_f)) + 1);
+    int y_hi = std::min(static_cast<int>(dsShape[1]) - 1, static_cast<int>(std::ceil(y_max_f)) + 1);
+    int x_hi = std::min(static_cast<int>(dsShape[2]) - 1, static_cast<int>(std::ceil(x_max_f)) + 1);
+
+    if (z_hi < z_lo || y_hi < y_lo || x_hi < x_lo) return false;
+
+    size_t nz = static_cast<size_t>(z_hi - z_lo + 1);
+    size_t ny = static_cast<size_t>(y_hi - y_lo + 1);
+    size_t nx = static_cast<size_t>(x_hi - x_lo + 1);
+
+    // Check total voxels < 256M
+    if (nz * ny * nx > 256ull * 1024 * 1024) return false;
+
+    // Bulk read via ChunkCache — readArea3D offset is [Z, Y, X]
+    volcart::zarr::Tensor3D<T> tensor(nz, ny, nx);
+    cv::Vec3i areaOffset(z_lo, y_lo, x_lo);
+    readArea3D(tensor, areaOffset, ds, cache);
+
+    const T* data = tensor.data();
+    const int inz = static_cast<int>(nz);
+    const int iny = static_cast<int>(ny);
+    const int inx = static_cast<int>(nx);
+
+    // Render all slices
+    outSlices.resize(nOffsets);
+    for (size_t si = 0; si < nOffsets; ++si) {
+        outSlices[si].create(rows, cols, cvType);
+    }
+
+    for (size_t si = 0; si < nOffsets; ++si) {
+        const float scale = allOffsets[si] * ds_scale;
+        cv::Mat& out = outSlices[si];
+        for (int r = 0; r < rows; ++r) {
+            T* row = out.ptr<T>(r);
+            for (int c = 0; c < cols; ++c) {
+                const cv::Vec3f& p = basePoints(r, c);
+                const cv::Vec3f& d = stepDirs(r, c);
+                if (isNaN3f(p) || isNaN3f(d)) {
+                    row[c] = 0;
+                    continue;
+                }
+                float cx = p[0] + scale * d[0];
+                float cy = p[1] + scale * d[1];
+                float cz = p[2] + scale * d[2];
+                float lz = cz - static_cast<float>(z_lo);
+                float ly = cy - static_cast<float>(y_lo);
+                float lx = cx - static_cast<float>(x_lo);
+                if (nearest_neighbor) {
+                    row[c] = sampleNearestLocal<T>(data, inz, iny, inx, lz, ly, lx);
+                } else {
+                    float val = sampleTrilinearLocal<T>(data, inz, iny, inx, lz, ly, lx);
+                    row[c] = static_cast<T>(std::min<float>(val + 0.5f,
+                        static_cast<float>(std::numeric_limits<T>::max())));
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+// Render one slice from base points and unit step directions at offset `off`
+template<typename T>
+static inline void renderSliceFromBaseT(
     cv::Mat& out,
     volcart::zarr::ZarrDataset* ds,
-    ChunkCache<uint16_t>* cache,
+    ChunkCache<T>* cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
     float off,
@@ -564,14 +645,15 @@ static inline void renderSliceFromBase16(
     bool nearest_neighbor = false)
 {
     cv::Mat_<cv::Vec3f> coords(basePoints.size());
+    const float scale = off * static_cast<float>(ds_scale);
     for (int yy = 0; yy < coords.rows; ++yy) {
         for (int xx = 0; xx < coords.cols; ++xx) {
             const cv::Vec3f& p = basePoints(yy, xx);
             const cv::Vec3f& d = stepDirs(yy, xx);
-            coords(yy, xx) = p + off * d * static_cast<float>(ds_scale);
+            coords(yy, xx) = p + scale * d;
         }
     }
-    cv::Mat_<uint16_t> tmp;
+    cv::Mat_<T> tmp;
     readInterpolated3D(tmp, ds, coords, cache, nearest_neighbor);
     out = tmp;
 }
@@ -667,8 +749,247 @@ static inline void renderAccumulatedSlice(
     }
 }
 
+// ============================================================================
+// Template helpers to eliminate uint8/uint16 code duplication
+// ============================================================================
+
+// Render slices into a zarr chunk, applying rotation/flip per slice
+template<typename T>
+static inline void renderSlicesToZarrChunk(
+    volcart::zarr::Tensor3D<T>& outChunk,
+    volcart::zarr::ZarrDataset* ds,
+    ChunkCache<T>* cache,
+    const cv::Mat_<cv::Vec3f>& basePoints,
+    const cv::Mat_<cv::Vec3f>& stepDirs,
+    float ds_scale,
+    bool nearest_neighbor,
+    size_t dz, size_t z0, double baseZ_center, double slice_step,
+    const std::vector<float>& accumOffsets, AccumType accumType,
+    int rotQuad, int flip_axis)
+{
+    constexpr int cvType = std::is_same_v<T, uint16_t> ? CV_16UC1 : CV_8UC1;
+
+    // Build flat list of ALL offsets to sample (each output slice × accumulation sub-samples)
+    std::vector<float> allOffsets;
+    std::vector<size_t> sliceStartIdx; // index into allOffsets for each output slice
+    for (size_t zi = 0; zi < dz; ++zi) {
+        sliceStartIdx.push_back(allOffsets.size());
+        const float off = static_cast<float>(
+            (static_cast<double>(z0 + zi) - baseZ_center) * slice_step);
+        if (accumOffsets.empty()) {
+            allOffsets.push_back(off);
+        } else {
+            for (float ao : accumOffsets) {
+                allOffsets.push_back(off + ao);
+            }
+        }
+    }
+
+    // Try bulk read + local interpolation
+    std::vector<cv::Mat> bulkSlices;
+    bool usedBulk = renderSlicesBulk<T>(bulkSlices, ds, cache,
+        basePoints, stepDirs, ds_scale, nearest_neighbor, allOffsets);
+
+    cv::Mat tileOut;
+    for (size_t zi = 0; zi < dz; ++zi) {
+        if (usedBulk) {
+            size_t start = sliceStartIdx[zi];
+            size_t count = accumOffsets.empty() ? 1 : accumOffsets.size();
+            if (count == 1) {
+                tileOut = bulkSlices[start];
+            } else if (accumType == AccumType::Max) {
+                tileOut = bulkSlices[start].clone();
+                for (size_t i = 1; i < count; ++i)
+                    cv::max(tileOut, bulkSlices[start + i], tileOut);
+            } else if (accumType == AccumType::Mean) {
+                cv::Mat sum;
+                bulkSlices[start].convertTo(sum, CV_64F);
+                for (size_t i = 1; i < count; ++i) {
+                    cv::Mat tmp;
+                    bulkSlices[start + i].convertTo(tmp, CV_64F);
+                    sum += tmp;
+                }
+                sum /= static_cast<double>(count);
+                sum.convertTo(tileOut, cvType);
+            } else { // Median
+                std::vector<cv::Mat> samples(bulkSlices.begin() + start,
+                                              bulkSlices.begin() + start + count);
+                if (cvType == CV_16UC1)
+                    computeMedianFromSamples<uint16_t>(samples, tileOut);
+                else
+                    computeMedianFromSamples<uint8_t>(samples, tileOut);
+            }
+        } else {
+            const float off = static_cast<float>(
+                (static_cast<double>(z0 + zi) - baseZ_center) * slice_step);
+            auto renderOne = [&](cv::Mat& dst, float offset) {
+                renderSliceFromBaseT<T>(dst, ds, cache,
+                                        basePoints, stepDirs, offset, ds_scale, nearest_neighbor);
+            };
+            renderAccumulatedSlice(tileOut, renderOne, off, accumOffsets, accumType, cvType);
+        }
+        if (rotQuad >= 0 || flip_axis >= 0) {
+            rotateFlipIfNeeded(tileOut, rotQuad, flip_axis);
+        }
+        const size_t cH = static_cast<size_t>(tileOut.rows);
+        const size_t cW = static_cast<size_t>(tileOut.cols);
+        for (size_t yy = 0; yy < cH; ++yy) {
+            const T* src = tileOut.ptr<T>(static_cast<int>(yy));
+            for (size_t xx = 0; xx < cW; ++xx) {
+                outChunk(zi, yy, xx) = src[xx];
+            }
+        }
+    }
+}
+
+// Downsample a zarr chunk by 2x in all dimensions using averaging
+template<typename T>
+static inline void downsampleChunk(
+    volcart::zarr::ZarrDataset* src,
+    volcart::zarr::ZarrDataset* dst,
+    size_t z, size_t y, size_t x,
+    size_t lz, size_t ly, size_t lx,
+    size_t sz, size_t sy, size_t sx)
+{
+    volcart::zarr::Tensor3D<T> srcChunk(sz, sy, sx);
+    std::vector<size_t> sOff = {static_cast<size_t>(2*z), static_cast<size_t>(2*y), static_cast<size_t>(2*x)};
+    src->readSubarray(srcChunk, sOff, {sz, sy, sx});
+    volcart::zarr::Tensor3D<T> dstChunk(lz, ly, lx);
+    for (size_t zz = 0; zz < lz; ++zz)
+        for (size_t yy = 0; yy < ly; ++yy)
+            for (size_t xx = 0; xx < lx; ++xx) {
+                uint32_t sum = 0; int cnt = 0;
+                for (int dz2 = 0; dz2 < 2 && (2*zz + dz2) < sz; ++dz2)
+                    for (int dy2 = 0; dy2 < 2 && (2*yy + dy2) < sy; ++dy2)
+                        for (int dx2 = 0; dx2 < 2 && (2*xx + dx2) < sx; ++dx2) {
+                            sum += srcChunk(2*zz + dz2, 2*yy + dy2, 2*xx + dx2);
+                            cnt += 1;
+                        }
+                dstChunk(zz, yy, xx) = static_cast<T>((sum + (cnt/2)) / std::max(1, cnt));
+            }
+    std::vector<size_t> dOff = {z, static_cast<size_t>(y), static_cast<size_t>(x)};
+    dst->writeSubarray(dstChunk, dOff);
+}
+
+// Export zarr L0 tile to TIFF writers
+template<typename T>
+static inline void exportZarrTileToTiff(
+    volcart::zarr::ZarrDataset* dsL0,
+    std::vector<TiffWriter>& writers,
+    std::vector<std::mutex>& writerLocks,
+    size_t Z, uint32_t dy, uint32_t dx,
+    uint32_t y0_src, uint32_t x0_src,
+    uint32_t x0_dst, uint32_t y0_dst)
+{
+    constexpr int cvType = std::is_same_v<T, uint16_t> ? CV_16UC1 : CV_8UC1;
+    volcart::zarr::Tensor3D<T> tile(Z, static_cast<size_t>(dy), static_cast<size_t>(dx));
+    std::vector<size_t> off = {0, static_cast<size_t>(y0_src), static_cast<size_t>(x0_src)};
+    dsL0->readSubarray(tile, off, {Z, static_cast<size_t>(dy), static_cast<size_t>(dx)});
+    for (size_t z = 0; z < Z; ++z) {
+        cv::Mat srcTile(static_cast<int>(dy), static_cast<int>(dx), cvType);
+        for (uint32_t yy = 0; yy < dy; ++yy) {
+            T* dstRow = srcTile.ptr<T>(static_cast<int>(yy));
+            for (uint32_t xx = 0; xx < dx; ++xx) dstRow[xx] = tile(z, yy, xx);
+        }
+        std::lock_guard<std::mutex> guard(writerLocks[z]);
+        writers[z].writeTile(x0_dst, y0_dst, srcTile);
+    }
+}
+
+// Render slices for TIFF tiled output, writing tiles directly to writers
+template<typename T>
+static inline void renderSlicesToTiffTiles(
+    volcart::zarr::ZarrDataset* ds,
+    ChunkCache<T>* cache,
+    const cv::Mat_<cv::Vec3f>& basePoints,
+    const cv::Mat_<cv::Vec3f>& stepDirs,
+    float ds_scale,
+    bool nearest_neighbor,
+    int num_slices, double num_slices_center, double slice_step,
+    const std::vector<float>& accumOffsets, AccumType accumType,
+    int rotQuad, int flip_axis,
+    int tx, int ty, int tilesX_src, int tilesY_src,
+    uint32_t tileW, uint32_t tileH,
+    std::vector<TiffWriter>& writers,
+    std::vector<std::mutex>& writerLocks)
+{
+    constexpr int cvType = std::is_same_v<T, uint16_t> ? CV_16UC1 : CV_8UC1;
+
+    // Build flat list of ALL offsets to sample
+    std::vector<float> allOffsets;
+    std::vector<size_t> sliceStartIdx;
+    for (int zi = 0; zi < num_slices; ++zi) {
+        sliceStartIdx.push_back(allOffsets.size());
+        const float off = static_cast<float>(
+            (static_cast<double>(zi) - num_slices_center) * slice_step);
+        if (accumOffsets.empty()) {
+            allOffsets.push_back(off);
+        } else {
+            for (float ao : accumOffsets) {
+                allOffsets.push_back(off + ao);
+            }
+        }
+    }
+
+    // Try bulk read + local interpolation
+    std::vector<cv::Mat> bulkSlices;
+    bool usedBulk = renderSlicesBulk<T>(bulkSlices, ds, cache,
+        basePoints, stepDirs, ds_scale, nearest_neighbor, allOffsets);
+
+    cv::Mat tileOut;
+    for (int zi = 0; zi < num_slices; ++zi) {
+        if (usedBulk) {
+            size_t start = sliceStartIdx[zi];
+            size_t count = accumOffsets.empty() ? 1 : accumOffsets.size();
+            if (count == 1) {
+                tileOut = bulkSlices[start];
+            } else if (accumType == AccumType::Max) {
+                tileOut = bulkSlices[start].clone();
+                for (size_t i = 1; i < count; ++i)
+                    cv::max(tileOut, bulkSlices[start + i], tileOut);
+            } else if (accumType == AccumType::Mean) {
+                cv::Mat sum;
+                bulkSlices[start].convertTo(sum, CV_64F);
+                for (size_t i = 1; i < count; ++i) {
+                    cv::Mat tmp;
+                    bulkSlices[start + i].convertTo(tmp, CV_64F);
+                    sum += tmp;
+                }
+                sum /= static_cast<double>(count);
+                sum.convertTo(tileOut, cvType);
+            } else { // Median
+                std::vector<cv::Mat> samples(bulkSlices.begin() + start,
+                                              bulkSlices.begin() + start + count);
+                if (cvType == CV_16UC1)
+                    computeMedianFromSamples<uint16_t>(samples, tileOut);
+                else
+                    computeMedianFromSamples<uint8_t>(samples, tileOut);
+            }
+        } else {
+            const float off = static_cast<float>(
+                (static_cast<double>(zi) - num_slices_center) * slice_step);
+            auto renderOne = [&](cv::Mat& dst, float offset) {
+                renderSliceFromBaseT<T>(dst, ds, cache,
+                                        basePoints, stepDirs, offset, ds_scale, nearest_neighbor);
+            };
+            renderAccumulatedSlice(tileOut, renderOne, off, accumOffsets, accumType, cvType);
+        }
+        cv::Mat tileTransformed = tileOut;
+        rotateFlipIfNeeded(tileTransformed, rotQuad, flip_axis);
+        int dstTx, dstTy, rTilesX, rTilesY;
+        mapTileIndex(tx, ty, tilesX_src, tilesY_src,
+                     std::max(rotQuad, 0), flip_axis,
+                     dstTx, dstTy, rTilesX, rTilesY);
+        const uint32_t x0_dst = static_cast<uint32_t>(dstTx) * tileW;
+        const uint32_t y0_dst = static_cast<uint32_t>(dstTy) * tileH;
+        std::lock_guard<std::mutex> guard(writerLocks[static_cast<size_t>(zi)]);
+        writers[static_cast<size_t>(zi)].writeTile(x0_dst, y0_dst, tileTransformed);
+    }
+}
+
 int main(int argc, char *argv[])
 {
+    auto wall_t0 = std::chrono::steady_clock::now();
     // clang-format off
     po::options_description required("Required arguments");
     required.add_options()
@@ -928,12 +1249,16 @@ int main(int argc, char *argv[])
         std::cout << "Detected source dtype=uint16 -> rendering as uint16" << std::endl;
     else
         std::cout << "Detected source dtype!=uint16 -> rendering as uint8 (default)" << std::endl;
-    std::cout << "chunk shape shape [";
+    std::cout << "chunk shape [";
+    size_t chunk_voxels = 1;
     for (size_t i = 0; i < ds->chunkShape().size(); ++i) {
         if (i > 0) std::cout << ", ";
         std::cout << ds->chunkShape()[i];
+        chunk_voxels *= ds->chunkShape()[i];
     }
-    std::cout << "]" << std::endl;
+    const size_t bytes_per_voxel = output_is_u16 ? 2 : 1;
+    const size_t chunk_bytes_each = chunk_voxels * bytes_per_voxel;
+    std::cout << "] (" << (chunk_bytes_each / (1024*1024)) << " MB per chunk)" << std::endl;
     std::cout << "output argument: " << base_output_arg << std::endl;
 
     // Enforce 90-degree-increment rotations only
@@ -961,9 +1286,16 @@ int main(int argc, char *argv[])
 
     const size_t cache_gb = parsed["cache-gb"].as<size_t>();
     const size_t cache_bytes = cache_gb * 1024ull * 1024ull * 1024ull;
-    std::cout << "Chunk cache: " << cache_gb << " GB (" << cache_bytes << " bytes)" << std::endl;
+    {
+        size_t total_ds_chunks = 1;
+        for (size_t i = 0; i < ds->shape().size(); ++i)
+            total_ds_chunks *= (ds->shape()[i] + ds->chunkShape()[i] - 1) / ds->chunkShape()[i];
+        std::cout << "Dataset has " << total_ds_chunks << " disk chunks" << std::endl;
+    }
     ChunkCache<uint8_t> chunk_cache_u8(cache_bytes);
     ChunkCache<uint16_t> chunk_cache_u16(cache_bytes);
+    chunk_cache_u8.init(ds.get());
+    chunk_cache_u16.init(ds.get());
 
     auto process_one = [&](const std::filesystem::path& seg_folder, const std::string& out_arg, bool force_zarr) -> void {
         std::filesystem::path output_path_local(out_arg);
@@ -1032,12 +1364,7 @@ int main(int argc, char *argv[])
     // mapped to dataset index space by: scale_seg -> affine -> ds_scale.
     double sA = 1.0;
     if (hasAffine) {
-        const cv::Matx33d A(
-            affineTransform.matrix(0,0), affineTransform.matrix(0,1), affineTransform.matrix(0,2),
-            affineTransform.matrix(1,0), affineTransform.matrix(1,1), affineTransform.matrix(1,2),
-            affineTransform.matrix(2,0), affineTransform.matrix(2,1), affineTransform.matrix(2,2)
-        );
-        const double detA = cv::determinant(cv::Mat(A));
+        const double detA = cv::determinant(cv::Mat(affineTransform.linearPart()));
         if (std::isfinite(detA) && std::abs(detA) > 1e-18)
             sA = std::cbrt(std::abs(detA));
     }
@@ -1085,33 +1412,9 @@ int main(int argc, char *argv[])
               << " at scale " << tgt_scale
               << " crop " << crop << std::endl;    
               
-    cv::Mat_<cv::Vec3f> points, normals;
-    
-    bool slice_gen = false;
-    
-    // Global normal orientation decision (for consistency across chunks)
-    bool globalFlipDecision = false;
-    bool orientationDetermined = false;
     cv::Vec3f meshCentroid;
 
-    if ((tgt_size.width >= 10000 || tgt_size.height >= 10000) && num_slices > 1)
-        slice_gen = true;
-    else {
-        // Origin must be computed in full (uncropped) canvas and shifted by crop origin.
-        float u0, v0; computeCanvasOrigin(full_size, u0, v0);
-        u0 += static_cast<float>(crop.x);
-        v0 += static_cast<float>(crop.y);
-        genTile(surf.get(), tgt_size, static_cast<float>(render_scale), u0, v0, points, normals);
-    }
-
     if (output_is_zarr) {
-        const double render_scale_zarr = render_scale;
-
-        cv::Mat_<cv::Vec3f> points, normals;
-        float u0_base, v0_base;
-        computeCanvasOrigin(full_size, u0_base, v0_base);
-        u0_base += static_cast<float>(crop.x);
-        v0_base += static_cast<float>(crop.y);
         const size_t CH = 128, CW = 128;
         const size_t baseZ = std::max(1, num_slices);
         const double baseZ_center = 0.5 * (static_cast<double>(baseZ) - 1.0);
@@ -1128,16 +1431,8 @@ int main(int argc, char *argv[])
         // Create output zarr directory
         std::filesystem::create_directories(output_path_local);
 
-        auto make_shape = [](size_t z, size_t y, size_t x){
-            return std::vector<size_t>{z, y, x};
-        };
-
-        auto make_chunks = [](size_t z, size_t y, size_t x){
-            return std::vector<size_t>{z, y, x};
-        };
-
-        std::vector<size_t> shape0 = make_shape(baseZ, baseY, baseX);
-        std::vector<size_t> chunks0 = make_chunks(shape0[0], std::min(CH, shape0[1]), std::min(CW, shape0[2]));
+        std::vector<size_t> shape0 = {baseZ, baseY, baseX};
+        std::vector<size_t> chunks0 = {shape0[0], std::min(CH, shape0[1]), std::min(CW, shape0[2])};
         nlohmann::json compOpts0 = {
             {"cname",   "zstd"},
             {"clevel",  1},
@@ -1152,141 +1447,49 @@ int main(int argc, char *argv[])
         const size_t totalTiles = tilesY_src * tilesX_src;
         std::atomic<size_t> tilesDone{0};
 
-        bool globalFlipDecision = false;
-        {
-            const int dx0 = static_cast<int>(std::min(CW, shape0[2]));
-            const int dy0 = static_cast<int>(std::min(CH, shape0[1]));
-            const float u0 = u0_base;
-            const float v0 = v0_base;
-            globalFlipDecision = computeGlobalFlipDecision(
-                surf.get(), dx0, dy0, u0, v0,
-                static_cast<float>(render_scale_zarr),
-                scale_seg, hasAffine, affineTransform,
-                meshCentroid);
-        }
+        renderTiledLoop(surf.get(), tgt_size, full_size, crop,
+            static_cast<float>(render_scale), scale_seg, ds_scale,
+            hasAffine, affineTransform, meshCentroid,
+            tilesDone, totalTiles, "render L0",
+            static_cast<uint32_t>(CW), static_cast<uint32_t>(CH),
+            [&](int tx, int ty, int dx, int dy,
+                const cv::Mat_<cv::Vec3f>& basePoints, const cv::Mat_<cv::Vec3f>& stepDirs)
+            {
+                const bool swapWH = (rotQuad >= 0) && ((rotQuad % 2) == 1);
+                const size_t dy_dst = swapWH ? dx : dy;
+                const size_t dx_dst = swapWH ? dy : dx;
 
-        // Iterate output chunks and render directly into them (parallel over XY tiles)
-        #pragma omp parallel for schedule(dynamic)
-        for (size_t z0 = 0; z0 < shape0[0]; z0 += CZ) {
-            const size_t dz = std::min(CZ, shape0[0] - z0);
-            for (long long ty = 0; ty < static_cast<long long>(tilesY_src); ++ty) {
-                for (long long tx = 0; tx < static_cast<long long>(tilesX_src); ++tx) {
-                    const size_t y0_src = static_cast<size_t>(ty) * CH;
-                    const size_t x0_src = static_cast<size_t>(tx) * CW;
-                    const size_t dy = std::min(static_cast<size_t>(CH), static_cast<size_t>(tgt_size.height) - y0_src);
-                    const size_t dx = std::min(static_cast<size_t>(CW), static_cast<size_t>(tgt_size.width)  - x0_src);
-
-                    float u0, v0;
-                    computeTileOrigin(full_size,
-                                      x0_src + static_cast<size_t>(crop.x),
-                                      y0_src + static_cast<size_t>(crop.y),
-                                      u0, v0);
-
-                    cv::Mat_<cv::Vec3f> tilePoints, tileNormals;
-                    genTile(surf.get(), cv::Size(static_cast<int>(dx), static_cast<int>(dy)),
-                            static_cast<float>(render_scale_zarr), u0, v0, tilePoints, tileNormals);
-
-                    cv::Mat_<cv::Vec3f> basePoints, stepDirs;
-                    prepareBasePointsAndStepDirs(
-                        tilePoints, tileNormals,
-                        scale_seg, ds_scale,
-                        hasAffine, affineTransform,
-                        globalFlipDecision,
-                        basePoints, stepDirs);
-
-                    const bool swapWH = (rotQuad >= 0) && ((rotQuad % 2) == 1);
-                    const size_t dy_dst = swapWH ? dx : dy;
-                    const size_t dx_dst = swapWH ? dy : dx;
-                    
-                    cv::Mat tileOut; // will be CV_8UC1 or CV_16UC1
-
-                    if (output_is_u16) {
-                        auto renderOne16 = [&](cv::Mat& dst, float offset) {
-                            renderSliceFromBase16(dst, ds.get(), &chunk_cache_u16,
-                                                  basePoints, stepDirs, offset, static_cast<float>(ds_scale), nearest_neighbor);
-                        };
-                        volcart::zarr::Tensor3D<uint16_t> outChunk(dz, dy_dst, dx_dst);
-                        for (size_t zi = 0; zi < dz; ++zi) {
-                            const size_t sliceIndex = z0 + zi;
-                            const float off = static_cast<float>(
-                                (static_cast<double>(sliceIndex) - baseZ_center) * slice_step);
-                            renderAccumulatedSlice(
-                                tileOut, renderOne16, off, accumOffsets, accumType, CV_16UC1);
-                            if (rotQuad >= 0 || flip_axis >= 0) {
-                                rotateFlipIfNeeded(tileOut, rotQuad, flip_axis);
-                            }
-                            const size_t cH = static_cast<size_t>(tileOut.rows);
-                            const size_t cW = static_cast<size_t>(tileOut.cols);
-                            for (size_t yy = 0; yy < cH; ++yy) {
-                                const uint16_t* src = tileOut.ptr<uint16_t>(static_cast<int>(yy));
-                                for (size_t xx = 0; xx < cW; ++xx) {
-                                    outChunk(zi, yy, xx) = src[xx];
-                                }
-                            }
-                        }
-                        int dstTx = static_cast<int>(tx), dstTy = static_cast<int>(ty);
-                        int dstTilesX = static_cast<int>(tilesX_src), dstTilesY = static_cast<int>(tilesY_src);
-                        if (rotQuad >= 0 || flip_axis >= 0) {
-                            mapTileIndex(static_cast<int>(tx), static_cast<int>(ty),
-                                         static_cast<int>(tilesX_src), static_cast<int>(tilesY_src),
-                                         std::max(rotQuad, 0), flip_axis,
-                                         dstTx, dstTy, dstTilesX, dstTilesY);
-                        }
-                        const size_t x0_dst = static_cast<size_t>(dstTx) * CW;
-                        const size_t y0_dst = static_cast<size_t>(dstTy) * CH;
-                        std::vector<size_t> outOffset = {z0, y0_dst, x0_dst};
-                        dsOut0->writeSubarray(outChunk, outOffset);
-                    } else {
-                        auto renderOne8 = [&](cv::Mat& dst, float offset) {
-                            renderSliceFromBase(dst, ds.get(), &chunk_cache_u8,
-                                                basePoints, stepDirs, offset, static_cast<float>(ds_scale), nearest_neighbor);
-                        };
-                        volcart::zarr::Tensor3D<uint8_t> outChunk(dz, dy_dst, dx_dst);
-                        for (size_t zi = 0; zi < dz; ++zi) {
-                            const size_t sliceIndex = z0 + zi;
-                            const float off = static_cast<float>(
-                                (static_cast<double>(sliceIndex) - baseZ_center) * slice_step);
-                            renderAccumulatedSlice(
-                                tileOut, renderOne8, off, accumOffsets, accumType, CV_8UC1);
-                            if (rotQuad >= 0 || flip_axis >= 0) {
-                                rotateFlipIfNeeded(tileOut, rotQuad, flip_axis);
-                            }
-                            const size_t cH = static_cast<size_t>(tileOut.rows);
-                            const size_t cW = static_cast<size_t>(tileOut.cols);
-                            for (size_t yy = 0; yy < cH; ++yy) {
-                                const uint8_t* src = tileOut.ptr<uint8_t>(static_cast<int>(yy));
-                                for (size_t xx = 0; xx < cW; ++xx) {
-                                    outChunk(zi, yy, xx) = src[xx];
-                                }
-                            }
-                        }
-                        int dstTx = static_cast<int>(tx), dstTy = static_cast<int>(ty);
-                        int dstTilesX = static_cast<int>(tilesX_src), dstTilesY = static_cast<int>(tilesY_src);
-                        if (rotQuad >= 0 || flip_axis >= 0) {
-                            mapTileIndex(static_cast<int>(tx), static_cast<int>(ty),
-                                         static_cast<int>(tilesX_src), static_cast<int>(tilesY_src),
-                                         std::max(rotQuad, 0), flip_axis,
-                                         dstTx, dstTy, dstTilesX, dstTilesY);
-                        }
-                        const size_t x0_dst = static_cast<size_t>(dstTx) * CW;
-                        const size_t y0_dst = static_cast<size_t>(dstTy) * CH;
-                        std::vector<size_t> outOffset = {z0, y0_dst, x0_dst};
-                        dsOut0->writeSubarray(outChunk, outOffset);
-                    }
-
-                    size_t done = ++tilesDone;
-                    int pct = static_cast<int>(100.0 * double(done) / double(totalTiles));
-                    //#pragma omp critical(progress_print)
-                    //{
-                    //    std::cout << "\r[render L0] tile " << done << "/" << totalTiles
-                    //              << " (" << pct << "%)" << std::flush;
-                    //}
+                int dstTx = tx, dstTy = ty;
+                int dstTilesX = static_cast<int>(tilesX_src), dstTilesY = static_cast<int>(tilesY_src);
+                if (rotQuad >= 0 || flip_axis >= 0) {
+                    mapTileIndex(tx, ty,
+                                 static_cast<int>(tilesX_src), static_cast<int>(tilesY_src),
+                                 std::max(rotQuad, 0), flip_axis,
+                                 dstTx, dstTy, dstTilesX, dstTilesY);
                 }
-            }
-        }
+                const size_t x0_dst = static_cast<size_t>(dstTx) * CW;
+                const size_t y0_dst = static_cast<size_t>(dstTy) * CH;
+                std::vector<size_t> outOffset = {0, y0_dst, x0_dst};
 
-        // After finishing L0 tiles, add newline for the progress line
-        std::cout << std::endl;
+                if (output_is_u16) {
+                    volcart::zarr::Tensor3D<uint16_t> outChunk(baseZ, dy_dst, dx_dst);
+                    renderSlicesToZarrChunk<uint16_t>(outChunk, ds.get(), &chunk_cache_u16,
+                        basePoints, stepDirs, static_cast<float>(ds_scale), nearest_neighbor,
+                        baseZ, 0, baseZ_center, slice_step, accumOffsets, accumType, rotQuad, flip_axis);
+                    dsOut0->writeSubarray(outChunk, outOffset);
+                } else {
+                    volcart::zarr::Tensor3D<uint8_t> outChunk(baseZ, dy_dst, dx_dst);
+                    renderSlicesToZarrChunk<uint8_t>(outChunk, ds.get(), &chunk_cache_u8,
+                        basePoints, stepDirs, static_cast<float>(ds_scale), nearest_neighbor,
+                        baseZ, 0, baseZ_center, slice_step, accumOffsets, accumType, rotQuad, flip_axis);
+                    dsOut0->writeSubarray(outChunk, outOffset);
+                }
+            });
+
+        if (output_is_u16)
+            chunk_cache_u16.printStats("after L0 render");
+        else
+            chunk_cache_u8.printStats("after L0 render");
 
         // Build multi-resolution pyramid levels 1..5 by averaging 2x blocks in Z, Y, and X
         // Keep track of datasets for each level
@@ -1303,7 +1506,7 @@ int main(int argc, char *argv[])
                 (sShape[2] + 1) / 2
             };
             // Chunk Z equals number of slices at this level (full Z), XY = 128
-            std::vector<size_t> dChunks = make_chunks(dShape[0], std::min(CH, dShape[1]), std::min(CW, dShape[2]));
+            std::vector<size_t> dChunks = {dShape[0], std::min(CH, dShape[1]), std::min(CW, dShape[2])};
             nlohmann::json compOpts = {
                 {"cname",   "zstd"},
                 {"clevel",  1},
@@ -1332,52 +1535,13 @@ int main(int argc, char *argv[])
                         const size_t sx = std::min<size_t>(2*lx, sShape[2] - x*2);
 
                         if (output_is_u16) {
-                            volcart::zarr::Tensor3D<uint16_t> srcChunk(sz, sy, sx);
-                            std::vector<size_t> sOff = {static_cast<size_t>(2*z), static_cast<size_t>(2*y), static_cast<size_t>(2*x)};
-                            src->readSubarray(srcChunk, sOff, {sz, sy, sx});
-                            volcart::zarr::Tensor3D<uint16_t> dstChunk(lz, ly, lx);
-                            for (size_t zz = 0; zz < lz; ++zz)
-                                for (size_t yy = 0; yy < ly; ++yy)
-                                    for (size_t xx = 0; xx < lx; ++xx) {
-                                        uint32_t sum = 0; int cnt = 0;
-                                        for (int dz2 = 0; dz2 < 2 && (2*zz + dz2) < sz; ++dz2)
-                                            for (int dy2 = 0; dy2 < 2 && (2*yy + dy2) < sy; ++dy2)
-                                                for (int dx2 = 0; dx2 < 2 && (2*xx + dx2) < sx; ++dx2) {
-                                                    sum += srcChunk(2*zz + dz2, 2*yy + dy2, 2*xx + dx2);
-                                                    cnt += 1;
-                                                }
-                                        dstChunk(zz, yy, xx) = static_cast<uint16_t>((sum + (cnt/2)) / std::max(1, cnt));
-                                    }
-                            std::vector<size_t> dOff = {z, static_cast<size_t>(y), static_cast<size_t>(x)};
-                            dst->writeSubarray(dstChunk, dOff);
+                            downsampleChunk<uint16_t>(src.get(), dst.get(), z, y, x, lz, ly, lx, sz, sy, sx);
                         } else {
-                            volcart::zarr::Tensor3D<uint8_t> srcChunk(sz, sy, sx);
-                            std::vector<size_t> sOff = {static_cast<size_t>(2*z), static_cast<size_t>(2*y), static_cast<size_t>(2*x)};
-                            src->readSubarray(srcChunk, sOff, {sz, sy, sx});
-                            volcart::zarr::Tensor3D<uint8_t> dstChunk(lz, ly, lx);
-                            for (size_t zz = 0; zz < lz; ++zz)
-                                for (size_t yy = 0; yy < ly; ++yy)
-                                    for (size_t xx = 0; xx < lx; ++xx) {
-                                        int sum = 0; int cnt = 0;
-                                        for (int dz2 = 0; dz2 < 2 && (2*zz + dz2) < sz; ++dz2)
-                                            for (int dy2 = 0; dy2 < 2 && (2*yy + dy2) < sy; ++dy2)
-                                                for (int dx2 = 0; dx2 < 2 && (2*xx + dx2) < sx; ++dx2) {
-                                                    sum += srcChunk(2*zz + dz2, 2*yy + dy2, 2*xx + dx2);
-                                                    cnt += 1;
-                                                }
-                                        dstChunk(zz, yy, xx) = static_cast<uint8_t>((sum + (cnt/2)) / std::max(1, cnt));
-                                    }
-                            std::vector<size_t> dOff = {z, static_cast<size_t>(y), static_cast<size_t>(x)};
-                            dst->writeSubarray(dstChunk, dOff);
+                            downsampleChunk<uint8_t>(src.get(), dst.get(), z, y, x, lz, ly, lx, sz, sy, sx);
                         }
 
-                        size_t done = ++tilesDone;
-                        int pct = static_cast<int>(100.0 * double(done) / double(totalTiles));
-                        //#pragma omp critical(progress_print)
-                        //{
-                        //    std::cout << "\r[render L" << targetLevel << "] tile " << done << "/" << totalTiles
-                        //              << " (" << pct << "%)" << std::flush;
-                        //}
+                        const std::string progLabel = "render L" + std::to_string(targetLevel);
+                        printTileProgress(tilesDone, totalTiles, progLabel.c_str());
                     }
                 }
             }
@@ -1498,40 +1662,12 @@ int main(int argc, char *argv[])
                         const uint32_t y0_dst = static_cast<uint32_t>(ty) * tileH;
 
                         if (output_is_u16) {
-                            volcart::zarr::Tensor3D<uint16_t> tile(Z, static_cast<size_t>(dy), static_cast<size_t>(dx));
-                            std::vector<size_t> off = {0, static_cast<size_t>(y0_src), static_cast<size_t>(x0_src)};
-                            dsL0->readSubarray(tile, off, {Z, static_cast<size_t>(dy), static_cast<size_t>(dx)});
-                            for (size_t z = 0; z < Z; ++z) {
-                                cv::Mat srcTile(static_cast<int>(dy), static_cast<int>(dx), CV_16UC1);
-                                for (uint32_t yy = 0; yy < dy; ++yy) {
-                                    uint16_t* dst = srcTile.ptr<uint16_t>(static_cast<int>(yy));
-                                    for (uint32_t xx = 0; xx < dx; ++xx) dst[xx] = tile(z, yy, xx);
-                                }
-                                std::lock_guard<std::mutex> guard(writerLocks[z]);
-                                writers[z].writeTile(x0_dst, y0_dst, srcTile);
-                            }
+                            exportZarrTileToTiff<uint16_t>(dsL0.get(), writers, writerLocks, Z, dy, dx, y0_src, x0_src, x0_dst, y0_dst);
                         } else {
-                            volcart::zarr::Tensor3D<uint8_t> tile(Z, static_cast<size_t>(dy), static_cast<size_t>(dx));
-                            std::vector<size_t> off = {0, static_cast<size_t>(y0_src), static_cast<size_t>(x0_src)};
-                            dsL0->readSubarray(tile, off, {Z, static_cast<size_t>(dy), static_cast<size_t>(dx)});
-                            for (size_t z = 0; z < Z; ++z) {
-                                cv::Mat srcTile(static_cast<int>(dy), static_cast<int>(dx), CV_8UC1);
-                                for (uint32_t yy = 0; yy < dy; ++yy) {
-                                    uint8_t* dst = srcTile.ptr<uint8_t>(static_cast<int>(yy));
-                                    for (uint32_t xx = 0; xx < dx; ++xx) dst[xx] = tile(z, yy, xx);
-                                }
-                                std::lock_guard<std::mutex> guard(writerLocks[z]);
-                                writers[z].writeTile(x0_dst, y0_dst, srcTile);
-                            }
+                            exportZarrTileToTiff<uint8_t>(dsL0.get(), writers, writerLocks, Z, dy, dx, y0_src, x0_src, x0_dst, y0_dst);
                         }
 
-                        size_t done = ++tilesDone;
-                        int pct = static_cast<int>(100.0 * double(done) / double(totalTiles));
-                        //#pragma omp critical(progress_print)
-                        //{
-                        //    std::cout << "\r[tif export] tiles " << done << "/" << totalTiles
-                        //              << " (" << pct << "%)" << std::flush;
-                        //}
+                        printTileProgress(tilesDone, totalTiles, "tif export");
                     }
                 }
 
@@ -1547,18 +1683,17 @@ int main(int argc, char *argv[])
     }
 
     {
-        {
-            try {
-                const int rotQuad = normalizeQuadrantRotation(rotate_angle);
-                if (std::abs(rotate_angle) > 1e-6 && rotQuad < 0) {
-                    throw std::runtime_error("non-right-angle rotation not supported in tiled-TIFF path");
+        try {
+            const int rotQuad = normalizeQuadrantRotation(rotate_angle);
+            if (std::abs(rotate_angle) > 1e-6 && rotQuad < 0) {
+                throw std::runtime_error("non-right-angle rotation not supported in tiled-TIFF path");
                 }
 
                 const int outW = ((rotQuad >= 0) && (rotQuad % 2 == 1)) ? tgt_size.height : tgt_size.width;
                 const int outH = ((rotQuad >= 0) && (rotQuad % 2 == 1)) ? tgt_size.width  : tgt_size.height;
 
-                const uint32_t tileW = 128;
-                const uint32_t tileH = 128;
+                const uint32_t tileW = 32;
+                const uint32_t tileH = 32;
                 const double num_slices_center = 0.5 * (static_cast<double>(std::max(1, num_slices)) - 1.0);
 
                 auto make_out_path = [&](int sliceIdx) -> std::filesystem::path {
@@ -1598,119 +1733,53 @@ int main(int argc, char *argv[])
                                          cvType, tileW, tileH, 0.0f);
                 }
 
-                {
-                    const int dx0 = std::min<int>(static_cast<int>(tileW), tgt_size.width);
-                    const int dy0 = std::min<int>(static_cast<int>(tileH), tgt_size.height);
-                    float u0, v0; computeCanvasOrigin(full_size, u0, v0);
-                    u0 += static_cast<float>(crop.x);
-                    v0 += static_cast<float>(crop.y);
-                    globalFlipDecision = computeGlobalFlipDecision(
-                        surf.get(), dx0, dy0, u0, v0,
-                        static_cast<float>(render_scale),
-                        scale_seg, hasAffine, affineTransform,
-                        meshCentroid);
-                }
-
                 const uint32_t tilesX_src = (static_cast<uint32_t>(tgt_size.width)  + tileW - 1) / tileW;
                 const uint32_t tilesY_src = (static_cast<uint32_t>(tgt_size.height) + tileH - 1) / tileH;
                 const size_t totalTiles = static_cast<size_t>(tilesX_src) * static_cast<size_t>(tilesY_src);
                 std::atomic<size_t> tilesDone{0};
 
-                #pragma omp parallel for schedule(dynamic) collapse(2)
-                for (long long ty = 0; ty < static_cast<long long>(tilesY_src); ++ty) {
-                    for (long long tx = 0; tx < static_cast<long long>(tilesX_src); ++tx) {
-                        const uint32_t x0_src = static_cast<uint32_t>(tx) * tileW;
-                        const uint32_t y0_src = static_cast<uint32_t>(ty) * tileH;
-                        const uint32_t dx = std::min<uint32_t>(tileW, static_cast<uint32_t>(tgt_size.width)  - x0_src);
-                        const uint32_t dy = std::min<uint32_t>(tileH, static_cast<uint32_t>(tgt_size.height) - y0_src);
-
-                        // Generate base coordinates/normals for this tile once
-                        float u0, v0;
-                        computeTileOrigin(full_size,
-                                          x0_src + static_cast<size_t>(crop.x),
-                                          y0_src + static_cast<size_t>(crop.y),
-                                          u0, v0);
-                        cv::Mat_<cv::Vec3f> tilePoints, tileNormals;
-                        genTile(surf.get(), cv::Size(static_cast<int>(dx), static_cast<int>(dy)),
-                                static_cast<float>(render_scale), u0, v0, tilePoints, tileNormals);
-
-                        cv::Mat_<cv::Vec3f> basePoints, stepDirs;
-                        prepareBasePointsAndStepDirs(
-                            tilePoints, tileNormals,
-                            scale_seg, ds_scale,
-                            hasAffine, affineTransform,
-                            globalFlipDecision,
-                            basePoints, stepDirs);
-
+                renderTiledLoop(surf.get(), tgt_size, full_size, crop,
+                    static_cast<float>(render_scale), scale_seg, ds_scale,
+                    hasAffine, affineTransform, meshCentroid,
+                    tilesDone, totalTiles, "tif tiled",
+                    tileW, tileH,
+                    [&](int tx, int ty, int dx, int dy,
+                        const cv::Mat_<cv::Vec3f>& basePoints, const cv::Mat_<cv::Vec3f>& stepDirs)
+                    {
                         if (output_is_u16) {
-                            auto renderOne16 = [&](cv::Mat& dst, float offset) {
-                                renderSliceFromBase16(dst, ds.get(), &chunk_cache_u16,
-                                                      basePoints, stepDirs, offset, static_cast<float>(ds_scale), nearest_neighbor);
-                            };
-                            cv::Mat tileOut;
-                            for (int zi = 0; zi < num_slices; ++zi) {
-                                const float off = static_cast<float>(
-                                    (static_cast<double>(zi) - num_slices_center) * slice_step);
-                                renderAccumulatedSlice(
-                                    tileOut, renderOne16, off, accumOffsets, accumType, CV_16UC1);
-                                cv::Mat tileTransformed = tileOut;
-                                rotateFlipIfNeeded(tileTransformed, rotQuad, flip_axis);
-                                int dstTx, dstTy, rTilesX, rTilesY;
-                                mapTileIndex(static_cast<int>(tx), static_cast<int>(ty),
-                                             static_cast<int>(tilesX_src), static_cast<int>(tilesY_src),
-                                             std::max(rotQuad, 0), flip_axis,
-                                             dstTx, dstTy, rTilesX, rTilesY);
-                                const uint32_t x0_dst = static_cast<uint32_t>(dstTx) * tileW;
-                                const uint32_t y0_dst = static_cast<uint32_t>(dstTy) * tileH;
-                                std::lock_guard<std::mutex> guard(writerLocks[static_cast<size_t>(zi)]);
-                                writers[static_cast<size_t>(zi)].writeTile(x0_dst, y0_dst, tileTransformed);
-                            }
+                            renderSlicesToTiffTiles<uint16_t>(
+                                ds.get(), &chunk_cache_u16, basePoints, stepDirs,
+                                static_cast<float>(ds_scale), nearest_neighbor,
+                                num_slices, num_slices_center, slice_step,
+                                accumOffsets, accumType, rotQuad, flip_axis,
+                                tx, ty,
+                                static_cast<int>(tilesX_src), static_cast<int>(tilesY_src),
+                                tileW, tileH, writers, writerLocks);
                         } else {
-                            auto renderOne8 = [&](cv::Mat& dst, float offset) {
-                                renderSliceFromBase(dst, ds.get(), &chunk_cache_u8,
-                                                    basePoints, stepDirs, offset, static_cast<float>(ds_scale), nearest_neighbor);
-                            };
-                            cv::Mat tileOut;
-                            for (int zi = 0; zi < num_slices; ++zi) {
-                                const float off = static_cast<float>(
-                                    (static_cast<double>(zi) - num_slices_center) * slice_step);
-                                renderAccumulatedSlice(
-                                    tileOut, renderOne8, off, accumOffsets, accumType, CV_8UC1);
-                                cv::Mat tileTransformed = tileOut;
-                                rotateFlipIfNeeded(tileTransformed, rotQuad, flip_axis);
-                                int dstTx, dstTy, rTilesX, rTilesY;
-                                mapTileIndex(static_cast<int>(tx), static_cast<int>(ty),
-                                             static_cast<int>(tilesX_src), static_cast<int>(tilesY_src),
-                                             std::max(rotQuad, 0), flip_axis,
-                                             dstTx, dstTy, rTilesX, rTilesY);
-                                const uint32_t x0_dst = static_cast<uint32_t>(dstTx) * tileW;
-                                const uint32_t y0_dst = static_cast<uint32_t>(dstTy) * tileH;
-                                std::lock_guard<std::mutex> guard(writerLocks[static_cast<size_t>(zi)]);
-                                writers[static_cast<size_t>(zi)].writeTile(x0_dst, y0_dst, tileTransformed);
-                            }
+                            renderSlicesToTiffTiles<uint8_t>(
+                                ds.get(), &chunk_cache_u8, basePoints, stepDirs,
+                                static_cast<float>(ds_scale), nearest_neighbor,
+                                num_slices, num_slices_center, slice_step,
+                                accumOffsets, accumType, rotQuad, flip_axis,
+                                tx, ty,
+                                static_cast<int>(tilesX_src), static_cast<int>(tilesY_src),
+                                tileW, tileH, writers, writerLocks);
                         }
+                    });
 
-                        size_t done = ++tilesDone;
-                        int pct = static_cast<int>(100.0 * double(done) / double(totalTiles));
-                        //#pragma omp critical(progress_print)
-                        //{
-                        //    std::cout << "\r[tif tiled] tiles " << done << "/" << totalTiles
-                        //              << " (" << pct << "%)" << std::flush;
-                        //}
-                    }
-                }
+                if (output_is_u16)
+                    chunk_cache_u16.printStats("after tif render");
+                else
+                    chunk_cache_u8.printStats("after tif render");
 
                 writers.clear(); // Explicitly close all writers
-                std::cout << std::endl;
 
                 return;
-            } catch (const std::exception& e) {
-                std::cerr << "[tif tiled] error: " << e.what() << std::endl;
-                return;
-            }
+        } catch (const std::exception& e) {
+            std::cerr << "[tif tiled] error: " << e.what() << std::endl;
+            return;
         }
-
-        }
+    }
     };
 
 
@@ -1759,5 +1828,16 @@ int main(int argc, char *argv[])
         process_one(seg_path, base_output_arg, false);
     }
 
+    {
+        auto wall_t1 = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(wall_t1 - wall_t0).count();
+        int h = static_cast<int>(elapsed / 3600);
+        int m = static_cast<int>((elapsed % 3600) / 60);
+        int s = static_cast<int>(elapsed % 60);
+        std::cout << "Total time: "
+                  << std::setw(2) << std::setfill('0') << h << ":"
+                  << std::setw(2) << std::setfill('0') << m << ":"
+                  << std::setw(2) << std::setfill('0') << s << std::endl;
+    }
     return EXIT_SUCCESS;
 }

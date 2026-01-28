@@ -1,82 +1,155 @@
 #pragma once
 
 #include "vc/core/zarr/Tensor3D.hpp"
-#include <vc/core/util/HashFunctions.hpp>
+#include "vc/core/zarr/ZarrDataset.hpp"
 
-#include <shared_mutex>
+#include <atomic>
 #include <memory>
-#include <unordered_map>
-#include <string>
+#include <vector>
+#include <cstdint>
+#include <cstdio>
+#include <mutex>
 
 /**
- * @brief Thread-safe LRU cache for volume chunks
+ * @brief Thread-safe chunk cache with shared_ptr lifetime management
  *
  * @tparam T Data type of cached chunks (uint8_t or uint16_t)
  *
- * The cache uses a generation-based LRU eviction strategy. When the cache
- * is full, it removes the 10% oldest entries to amortize sorting costs.
+ * Chunks are stored as shared_ptr so eviction removes from the cache but
+ * doesn't free memory until all readers are done. This prevents use-after-free
+ * when one thread evicts a chunk another thread is reading.
+ *
+ * Uses a flat 3D array indexed by chunk coordinates (ix, iy, iz).
  */
 template<typename T>
 class ChunkCache
 {
 public:
-    /**
-     * @brief Construct a new Chunk Cache object
-     * @param size Maximum cache size in bytes
-     */
-    explicit ChunkCache(size_t size);
+    using ChunkPtr = std::shared_ptr<volcart::zarr::Tensor3D<T>>;
 
+    explicit ChunkCache(size_t maxBytes = 0);
     ~ChunkCache();
 
-    /**
-     * @brief Get or create a group index for a dataset path
-     * @param name Unique identifier for the group (e.g., dataset path + group name)
-     * @return int Group index (used as high 16 bits of cache key)
-     */
-    int groupIdx(const std::string& name);
+    ChunkCache(const ChunkCache&) = delete;
+    ChunkCache& operator=(const ChunkCache&) = delete;
+    ChunkCache(ChunkCache&&) = delete;
+    ChunkCache& operator=(ChunkCache&&) = delete;
+
+    void init(volcart::zarr::ZarrDataset* ds);
+    bool initialized() const { return _ds != nullptr; }
+
+    void setMaxBytes(size_t maxBytes);
+    size_t cachedCount() const { return _cachedCount.load(std::memory_order_relaxed); }
 
     /**
-     * @brief Store a chunk in the cache
-     * @param key Cache key (group_idx, z, y, x)
-     * @param ar Chunk data (ownership transferred to cache)
+     * @brief Get a chunk, loading from disk if needed.
+     * Returns shared_ptr — caller holds the chunk alive even if evicted.
      */
-    void put(const cv::Vec4i& key, volcart::zarr::Tensor3D<T>* ar);
+    ChunkPtr get(int ix, int iy, int iz);
 
     /**
-     * @brief Retrieve a chunk from the cache
-     * @param key Cache key
-     * @return std::shared_ptr<Tensor3D<T>> Cached chunk or nullptr if not found
+     * @brief Get raw pointer (for hot-path compatibility). Caller must ensure
+     * chunk stays alive (e.g. by also holding a ChunkPtr from get()).
      */
-    std::shared_ptr<volcart::zarr::Tensor3D<T>> get(const cv::Vec4i& key);
+    volcart::zarr::Tensor3D<T>* getRaw(int ix, int iy, int iz);
 
-    /**
-     * @brief Check if a chunk exists in the cache
-     * @param idx Cache key
-     * @return true if chunk is cached
-     */
-    bool has(const cv::Vec4i& idx);
+    ChunkPtr getIfCached(int ix, int iy, int iz) const;
 
-    /**
-     * @brief Clear all cached data
-     */
-    void reset();
+    void prefetch(int minIx, int minIy, int minIz, int maxIx, int maxIy, int maxIz);
+    void clear();
 
-    /**
-     * @brief Get cache statistics for debugging
-     */
-    void getStats(size_t& storedBytes, size_t& maxBytes, size_t& numEntries, size_t& numNullEntries) const;
+    /** @brief Drop all cached chunks but keep the cache initialized for the same dataset */
+    void flush();
 
-    std::shared_mutex mutex;
+    int chunkSizeX() const { return _cw; }
+    int chunkSizeY() const { return _ch; }
+    int chunkSizeZ() const { return _cd; }
+    int datasetSizeX() const { return _sx; }
+    int datasetSizeY() const { return _sy; }
+    int datasetSizeZ() const { return _sz; }
+    int chunksX() const { return _chunksX; }
+    int chunksY() const { return _chunksY; }
+    int chunksZ() const { return _chunksZ; }
+
+    int chunkShiftX() const { return _cwShift; }
+    int chunkShiftY() const { return _chShift; }
+    int chunkShiftZ() const { return _cdShift; }
+    int chunkMaskX() const { return _cwMask; }
+    int chunkMaskY() const { return _chMask; }
+    int chunkMaskZ() const { return _cdMask; }
+
+    volcart::zarr::ZarrDataset* dataset() const { return _ds; }
+
+    uint64_t statHits() const { return _statHits.load(std::memory_order_relaxed); }
+    uint64_t statMisses() const { return _statMisses.load(std::memory_order_relaxed); }
+    uint64_t statEvictions() const { return _statEvictions.load(std::memory_order_relaxed); }
+    void resetStats() {
+        _statHits.store(0, std::memory_order_relaxed);
+        _statMisses.store(0, std::memory_order_relaxed);
+        _statEvictions.store(0, std::memory_order_relaxed);
+        _statUniqueChunks.store(0, std::memory_order_relaxed);
+    }
+    void printStats(const char* label = nullptr) const {
+        uint64_t h = _statHits.load(std::memory_order_relaxed);
+        uint64_t m = _statMisses.load(std::memory_order_relaxed);
+        uint64_t e = _statEvictions.load(std::memory_order_relaxed);
+        uint64_t total = h + m;
+        double hitRate = total > 0 ? 100.0 * h / total : 0.0;
+        uint64_t u = _statUniqueChunks.load(std::memory_order_relaxed);
+        std::printf("[ChunkCache%s%s] hits: %llu  misses: %llu  evictions: %llu  unique: %llu  hit-rate: %.1f%%  cached: %zu\n",
+            label ? " " : "", label ? label : "",
+            (unsigned long long)h, (unsigned long long)m, (unsigned long long)e,
+            (unsigned long long)u,
+            hitRate, _cachedCount.load(std::memory_order_relaxed));
+    }
 
 private:
-    uint64_t _generation = 0;
-    size_t _size = 0;
-    size_t _stored = 0;
-    std::unordered_map<cv::Vec4i, std::shared_ptr<volcart::zarr::Tensor3D<T>>, vec4i_hash> _store;
-    std::unordered_map<cv::Vec4i, uint64_t, vec4i_hash> _gen_store;
-    std::unordered_map<std::string, int> _group_store;
+    volcart::zarr::ZarrDataset* _ds = nullptr;
+
+    size_t _maxBytes = 0;
+    size_t _maxChunks = 0;
+    std::atomic<size_t> _cachedCount{0};
+    std::atomic<uint64_t> _generation{0};
+
+    mutable std::atomic<uint64_t> _statHits{0};
+    mutable std::atomic<uint64_t> _statMisses{0};
+    mutable std::atomic<uint64_t> _statEvictions{0};
+    mutable std::atomic<uint64_t> _statUniqueChunks{0};
+
+    int _cw = 0, _ch = 0, _cd = 0;
+    int _sx = 0, _sy = 0, _sz = 0;
+    int _chunksX = 0, _chunksY = 0, _chunksZ = 0;
+
+    int _cwShift = 0, _chShift = 0, _cdShift = 0;
+    int _cwMask = 0, _chMask = 0, _cdMask = 0;
+
+    // Flat 3D array: _chunks[ix * _chunksY * _chunksZ + iy * _chunksZ + iz]
+    // atomic shared_ptr for lock-free reads on the fast path
+    size_t _totalSlots = 0;
+    std::unique_ptr<std::atomic<ChunkPtr>[]> _chunks;
+    std::unique_ptr<std::atomic<uint64_t>[]> _lastAccess;
+    std::unique_ptr<std::atomic<bool>[]> _everLoaded;
+
+    std::mutex _evictionMutex;
+
+    static constexpr int kLockPoolSize = 64;
+    std::mutex _lockPool[kLockPoolSize];
+
+    size_t idx(int ix, int iy, int iz) const {
+        return static_cast<size_t>(ix) * _chunksY * _chunksZ +
+               static_cast<size_t>(iy) * _chunksZ +
+               static_cast<size_t>(iz);
+    }
+
+    ChunkPtr loadChunk(int ix, int iy, int iz);
+    void evictIfNeeded();
+
+    static int log2_pow2(int v) {
+        int r = 0;
+        while ((v >> r) > 1) r++;
+        return r;
+    }
 };
 
-// Explicit template instantiations (defined in ChunkCache.cpp)
 extern template class ChunkCache<uint8_t>;
 extern template class ChunkCache<uint16_t>;
