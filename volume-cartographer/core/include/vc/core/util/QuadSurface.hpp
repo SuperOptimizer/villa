@@ -396,6 +396,7 @@ protected:
     Rect3D _bbox = {{-1,-1,-1},{-1,-1,-1}};
     std::set<std::string> _overlappingIds;
     std::optional<std::filesystem::file_time_type> _maskTimestamp;
+    mutable cv::Mat_<uint8_t> _validMaskCache;  // Cached validity mask
 
 private:
     // Write surface data to directory without modifying state. skipChannel can be used to exclude a channel.

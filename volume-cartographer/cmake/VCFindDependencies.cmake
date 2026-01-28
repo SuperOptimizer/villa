@@ -42,6 +42,14 @@ else()
     FetchContent_MakeAvailable(z5)
 endif()
 
+# ---- Threads (required by Qt6) -----------------------------------------------
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+set(CMAKE_THREAD_LIBS_INIT "-lpthread")
+set(CMAKE_HAVE_THREADS_LIBRARY 1)
+set(CMAKE_USE_WIN32_THREADS_INIT 0)
+set(CMAKE_USE_PTHREADS_INIT 1)
+find_package(Threads REQUIRED)
+
 # ---- Qt (apps / utils) -------------------------------------------------------
 find_package(Qt6 QUIET REQUIRED COMPONENTS Widgets Gui Core Network)
 set(CMAKE_AUTOMOC ON)

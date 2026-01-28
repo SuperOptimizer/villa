@@ -371,7 +371,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
         _ds_scale,  // z step per layer (in dataset coordinates)
         z_start, z_end,
         params,
-        _fastCompositeCache
+        _compositeCache
     );
 
     // Apply postprocessing
@@ -899,7 +899,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite_plane(const cv::Rect &roi, con
         _ds_scale,    // z step per layer (in dataset coordinates)
         z_start, z_end,
         params,
-        _fastCompositeCache
+        _compositeCache
     );
 
     return img;

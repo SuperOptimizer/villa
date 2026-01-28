@@ -19,14 +19,35 @@ set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 option(VC_USE_OPENMP "Enable OpenMP support" ON)
 option(VC_USE_VALGRIND "Enable Valgrind support" off)
 
-set(CMAKE_CXX_FLAGS " ${CMAKE_CXX_FLAGS} -fPIC -std=c++23 -DWITH_BLOSC=1 -DWITH_ZLIB=1 " )
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ")
 include_directories(core/include)
 
 if(NOT CMAKE_BUILD_TYPE)
     message(STATUS "Setting build type to 'Release' as none was specified.")
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
 endif()
+
+
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
+endif()
+
+# Use modern C++ for everything and generate compile_commands database.
+set(CMAKE_EXPORT_COMPILE_COMMANDS on)
+
+# Choose what to install
+option(VC_INSTALL_APPS      "Install VC core programs"    on)
+option(VC_INSTALL_LIBS      "Install VC libraries"        on)
+option(VC_INSTALL_UTILS     "Install VC utility programs" on)
+
+# Some helpful constants to be used in subprojects.
+include(VCConstants)
+
+# Enable/disable PaStiX from the build (OFF by default)
+option(VC_WITH_PASTIX "Build with PaStiX support" OFF)
+
+# Look for external dependencies.
+include(VCFindDependencies)
 
 # Set LTO type and linker based on compiler
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -36,29 +57,8 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
 else()
     set(VC_LTO_FLAGS "-flto=auto")
     set(VC_LINKER_FLAGS "")
-    message(STATUS "Using ${CMAKE_CXX_COMPILER_ID}: auto LTO with default linker")
+    message(STATUS "Using ${CMAKE_CXX_COMPILER_ID}: LTO with default linker")
 endif()
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ggdb -O0 -g3 -gdwarf-5 -funwind-tables -fasynchronous-unwind-tables")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}  -g3 -gdwarf-5 -rdynamic -fPIE")
-elseif(CMAKE_BUILD_TYPE STREQUAL "QuickBuild")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O1")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ")
-elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 ${VC_LTO_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS}")
-elseif(CMAKE_BUILD_TYPE STREQUAL "ReleaseUnsafe")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 ${VC_LTO_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS}")
-elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 ${VC_LTO_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS}")
-elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Os ${VC_LTO_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS}")
-endif()
-
 
 option(VC_ENABLE_ASAN "Enable AddressSanitizer for memory error detection" OFF)
 option(VC_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
@@ -138,28 +138,29 @@ else()
     message(STATUS "Valgrind support disabled")
 endif()
 
-find_program(CCACHE_PROGRAM ccache)
-if(CCACHE_PROGRAM)
-    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
+# Apply all compiler/linker flags AFTER find_package calls to avoid -fuse-ld=lld
+# breaking CMake try_compile tests (e.g. FindThreads, FindBLAS).
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -std=c++23 -DWITH_BLOSC=1 -DWITH_ZLIB=1 -g")
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ggdb -Og -g3 -gdwarf-5 -funwind-tables -fasynchronous-unwind-tables")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}  -g3 -gdwarf-5 -rdynamic -fPIE")
+elseif(CMAKE_BUILD_TYPE STREQUAL "QuickBuild")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O1")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ")
+elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 ${VC_LTO_FLAGS}")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS}")
+elseif(CMAKE_BUILD_TYPE STREQUAL "ReleaseUnsafe")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 ${VC_LTO_FLAGS}")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS}")
+elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 ${VC_LTO_FLAGS}")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS}")
+elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Os ${VC_LTO_FLAGS}")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS}")
 endif()
-
-# Use modern C++ for everything and generate compile_commands database.
-set(CMAKE_EXPORT_COMPILE_COMMANDS on)
-
-
-# Choose what to install
-option(VC_INSTALL_APPS      "Install VC core programs"    on)
-option(VC_INSTALL_LIBS      "Install VC libraries"        on)
-option(VC_INSTALL_UTILS     "Install VC utility programs" on)
-
-# Some helpful constants to be used in subprojects.
-include(VCConstants)
-
-# Enable/disable PaStiX from the build (OFF by default)
-option(VC_WITH_PASTIX "Build with PaStiX support" OFF)
-
-# Look for external dependencies.
-include(VCFindDependencies)
 
 option(VC_DEVELOPER_WARNINGS "For developers: Enable extensive compiler warnings" OFF)
 mark_as_advanced(VC_DEVELOPER_WARNINGS)

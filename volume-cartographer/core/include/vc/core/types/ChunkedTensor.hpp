@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/HashFunctions.hpp"
 
 #include <opencv2/core.hpp>
 #include "z5/dataset.hxx"
@@ -19,6 +20,7 @@
 #include <cerrno>
 #include <cstring>
 #include <sstream>
+#include <shared_mutex>
 
 #ifndef CCI_TLS_MAX // Max number for ChunkedCachedInterpolator
 #define CCI_TLS_MAX 256
