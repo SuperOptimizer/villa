@@ -10,25 +10,25 @@ namespace volcart::zarr
 
 template <typename T>
 Tensor3D<T>::Tensor3D(size_type d0, size_type d1, size_type d2)
-    : data_(d0 * d1 * d2), shape_{d0, d1, d2}
+    : data_(d0 * d1 * d2), shape_{d0, d1, d2}, stride0_(d1 * d2), stride1_(d2)
 {
 }
 
 template <typename T>
 Tensor3D<T>::Tensor3D(size_type d0, size_type d1, size_type d2, T fill)
-    : data_(d0 * d1 * d2, fill), shape_{d0, d1, d2}
+    : data_(d0 * d1 * d2, fill), shape_{d0, d1, d2}, stride0_(d1 * d2), stride1_(d2)
 {
 }
 
 template <typename T>
 Tensor3D<T>::Tensor3D(const shape_type& shape)
-    : data_(shape[0] * shape[1] * shape[2]), shape_(shape)
+    : data_(shape[0] * shape[1] * shape[2]), shape_(shape), stride0_(shape[1] * shape[2]), stride1_(shape[2])
 {
 }
 
 template <typename T>
 Tensor3D<T>::Tensor3D(const shape_type& shape, T fill)
-    : data_(shape[0] * shape[1] * shape[2], fill), shape_(shape)
+    : data_(shape[0] * shape[1] * shape[2], fill), shape_(shape), stride0_(shape[1] * shape[2]), stride1_(shape[2])
 {
 }
 
@@ -51,8 +51,7 @@ const T& Tensor3D<T>::operator()(size_type i, size_type j, size_type k) const
 template <typename T>
 typename Tensor3D<T>::shape_type Tensor3D<T>::strides() const noexcept
 {
-    // Row-major (C-order) strides (in elements)
-    return {shape_[1] * shape_[2], shape_[2], 1};
+    return {stride0_, stride1_, 1};
 }
 
 // Resize
@@ -61,6 +60,8 @@ template <typename T>
 void Tensor3D<T>::resize(size_type d0, size_type d1, size_type d2)
 {
     shape_ = {d0, d1, d2};
+    stride0_ = d1 * d2;
+    stride1_ = d2;
     data_.resize(d0 * d1 * d2);
 }
 

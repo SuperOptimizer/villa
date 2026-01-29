@@ -158,12 +158,13 @@ public:
 private:
     std::vector<T> data_;
     shape_type shape_{0, 0, 0};
+    size_type stride0_{0};  // shape_[1] * shape_[2]
+    size_type stride1_{0};  // shape_[2]
 
     /** @brief Calculate linear index from 3D coordinates */
     size_type linearIndex(size_type i, size_type j, size_type k) const noexcept
     {
-        // Row-major (C-order): i * shape[1] * shape[2] + j * shape[2] + k
-        return i * shape_[1] * shape_[2] + j * shape_[2] + k;
+        return i * stride0_ + j * stride1_ + k;
     }
 };
 
