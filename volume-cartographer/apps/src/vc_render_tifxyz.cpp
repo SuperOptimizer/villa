@@ -1717,8 +1717,8 @@ int main(int argc, char *argv[])
                 const int outW = ((rotQuad >= 0) && (rotQuad % 2 == 1)) ? tgt_size.height : tgt_size.width;
                 const int outH = ((rotQuad >= 0) && (rotQuad % 2 == 1)) ? tgt_size.width  : tgt_size.height;
 
-                const uint32_t tileW = 32;
-                const uint32_t tileH = 32;
+                const uint32_t tileW = 128;
+                const uint32_t tileH = 128;
                 const double num_slices_center = 0.5 * (static_cast<double>(std::max(1, num_slices)) - 1.0);
 
                 auto make_out_path = [&](int sliceIdx) -> std::filesystem::path {
