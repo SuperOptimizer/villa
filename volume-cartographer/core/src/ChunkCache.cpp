@@ -106,6 +106,9 @@ void ChunkCache<T>::init(ZarrDataset* ds)
 
     _totalSlots = static_cast<size_t>(_chunksX) * _chunksY * _chunksZ;
     _chunks = std::make_unique<std::atomic<ChunkPtr>[]>(_totalSlots);
+    _rawChunks = std::make_unique<std::atomic<const Tensor3D<T>*>[]>(_totalSlots);
+    for (size_t i = 0; i < _totalSlots; i++)
+        _rawChunks[i].store(nullptr, std::memory_order_relaxed);
     _lastAccess = std::make_unique<std::atomic<uint64_t>[]>(_totalSlots);
 
     _cachedCount.store(0, std::memory_order_relaxed);
@@ -149,6 +152,7 @@ auto ChunkCache<T>::get(int ix, int iy, int iz) -> ChunkPtr
         }
     }
 
+    _rawChunks[i].store(newChunk.get(), std::memory_order_relaxed);
     _chunks[i].store(newChunk, std::memory_order_release);
     _lastAccess[i].store(_generation.fetch_add(1, std::memory_order_relaxed), std::memory_order_relaxed);
     _cachedCount.fetch_add(1, std::memory_order_relaxed);
@@ -160,6 +164,16 @@ Tensor3D<T>* ChunkCache<T>::getRaw(int ix, int iy, int iz)
 {
     auto ptr = get(ix, iy, iz);
     return ptr.get();
+}
+
+template<typename T>
+const Tensor3D<T>* ChunkCache<T>::getRawFast(int ix, int iy, int iz) const
+{
+    if (ix < 0 || ix >= _chunksX || iy < 0 || iy >= _chunksY || iz < 0 || iz >= _chunksZ)
+        return nullptr;
+
+    size_t i = idx(ix, iy, iz);
+    return _rawChunks[i].load(std::memory_order_relaxed);
 }
 
 template<typename T>
@@ -195,9 +209,12 @@ void ChunkCache<T>::prefetch(int minIx, int minIy, int minIz, int maxIx, int max
 template<typename T>
 void ChunkCache<T>::clear()
 {
-    for (size_t i = 0; i < _totalSlots; i++)
+    for (size_t i = 0; i < _totalSlots; i++) {
+        _rawChunks[i].store(nullptr, std::memory_order_relaxed);
         _chunks[i].store(nullptr, std::memory_order_relaxed);
+    }
     _chunks.reset();
+    _rawChunks.reset();
     _lastAccess.reset();
     _totalSlots = 0;
 
@@ -215,8 +232,10 @@ void ChunkCache<T>::clear()
 template<typename T>
 void ChunkCache<T>::flush()
 {
-    for (size_t i = 0; i < _totalSlots; i++)
+    for (size_t i = 0; i < _totalSlots; i++) {
+        _rawChunks[i].store(nullptr, std::memory_order_relaxed);
         _chunks[i].store(nullptr, std::memory_order_relaxed);
+    }
     _cachedCount.store(0, std::memory_order_relaxed);
     _generation.store(0, std::memory_order_relaxed);
 }
@@ -255,6 +274,7 @@ void ChunkCache<T>::evictIfNeeded()
     size_t evicted = 0;
 
     for (size_t j = 0; j < toEvict && j < candidates.size(); j++) {
+        _rawChunks[candidates[j].index].store(nullptr, std::memory_order_relaxed);
         _chunks[candidates[j].index].store(nullptr, std::memory_order_release);
         evicted++;
     }

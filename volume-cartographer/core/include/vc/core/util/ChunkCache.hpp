@@ -52,6 +52,14 @@ public:
      */
     volcart::zarr::Tensor3D<T>* getRaw(int ix, int iy, int iz);
 
+    /**
+     * @brief Fast raw pointer lookup with no refcount overhead.
+     * Returns nullptr on cache miss. Caller must ensure no concurrent eviction
+     * of the returned chunk (safe during rendering where eviction only happens
+     * inside get() calls).
+     */
+    const volcart::zarr::Tensor3D<T>* getRawFast(int ix, int iy, int iz) const;
+
     ChunkPtr getIfCached(int ix, int iy, int iz) const;
 
     void prefetch(int minIx, int minIy, int minIz, int maxIx, int maxIy, int maxIz);
@@ -98,6 +106,7 @@ private:
     // atomic shared_ptr for lock-free reads on the fast path
     size_t _totalSlots = 0;
     std::unique_ptr<std::atomic<ChunkPtr>[]> _chunks;
+    std::unique_ptr<std::atomic<const volcart::zarr::Tensor3D<T>*>[]> _rawChunks;
     std::unique_ptr<std::atomic<uint64_t>[]> _lastAccess;
 
     std::mutex _evictionMutex;

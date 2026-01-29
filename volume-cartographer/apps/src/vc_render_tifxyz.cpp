@@ -645,7 +645,6 @@ static void renderSlicesBulkOptimized(
 
             // Cache the last chunk pointer for this pixel's ray
             int lastCiz = -1, lastCiy = -1, lastCix = -1;
-            typename ChunkCache<T>::ChunkPtr lastChunkOwner;
             const volcart::zarr::Tensor3D<T>* lastChunk = nullptr;
 
             for (size_t si = 0; si < numOffsets; ++si) {
@@ -667,8 +666,11 @@ static void renderSlicesBulkOptimized(
                     int ciz = iz >> cwShift, ciy = iy >> chShift, cix = ix >> cdShift;
 
                     if (ciz != lastCiz || ciy != lastCiy || cix != lastCix) {
-                        lastChunkOwner = cache->get(ciz, ciy, cix);
-                        lastChunk = lastChunkOwner.get();
+                        lastChunk = cache->getRawFast(ciz, ciy, cix);
+                        if (!lastChunk) {
+                            auto owner = cache->get(ciz, ciy, cix);
+                            lastChunk = owner.get();
+                        }
                         lastCiz = ciz; lastCiy = ciy; lastCix = cix;
                     }
 
@@ -689,8 +691,11 @@ static void renderSlicesBulkOptimized(
 
                     if (ciz == (iz+1) >> cwShift && ciy == (iy+1) >> chShift && cix == (ix+1) >> cdShift) {
                         if (ciz != lastCiz || ciy != lastCiy || cix != lastCix) {
-                            lastChunkOwner = cache->get(ciz, ciy, cix);
-                            lastChunk = lastChunkOwner.get();
+                            lastChunk = cache->getRawFast(ciz, ciy, cix);
+                            if (!lastChunk) {
+                                auto owner = cache->get(ciz, ciy, cix);
+                                lastChunk = owner.get();
+                            }
                             lastCiz = ciz; lastCiy = ciy; lastCix = cix;
                         }
 
@@ -709,8 +714,12 @@ static void renderSlicesBulkOptimized(
                         outRowPtrs[si][r][c] = static_cast<T>(std::min(val + 0.5f, float(std::numeric_limits<T>::max())));
                     } else {
                         auto get = [&](int vz, int vy, int vx) -> float {
-                            auto ptr = cache->get(vz >> cwShift, vy >> chShift, vx >> cdShift);
-                            return ptr ? float((*ptr)(vz & cwMask, vy & chMask, vx & cdMask)) : 0;
+                            auto raw = cache->getRawFast(vz >> cwShift, vy >> chShift, vx >> cdShift);
+                            if (!raw) {
+                                auto owner = cache->get(vz >> cwShift, vy >> chShift, vx >> cdShift);
+                                raw = owner.get();
+                            }
+                            return raw ? float((*raw)(vz & cwMask, vy & chMask, vx & cdMask)) : 0;
                         };
                         float val = trilinear8(
                             get(iz,iy,ix), get(iz,iy,ix+1), get(iz,iy+1,ix), get(iz,iy+1,ix+1),
