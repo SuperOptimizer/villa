@@ -28,6 +28,15 @@ namespace po = boost::program_options;
 
 using json = nlohmann::json;
 
+static std::string formatDuration(double seconds) {
+    int s = static_cast<int>(seconds);
+    int h = s / 3600; s %= 3600;
+    int m = s / 60; s %= 60;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%02d:%02d:%02d", h, m, s);
+    return buf;
+}
+
 static inline bool isNaN3f(const cv::Vec3f& v)
 {
     return std::isnan(v[0]) || std::isnan(v[1]) || std::isnan(v[2]);
@@ -367,16 +376,22 @@ static inline void genTile(
     surf->gen(&points, &normals, size, cv::Vec3f(0,0,0), render_scale, cv::Vec3f(u0, v0, 0.0f));
 }
 
-// Print tiled progress (OMP-safe)
+// Print tiled progress (OMP-safe) with elapsed/eta
 static inline void printTileProgress(
-    std::atomic<size_t>& tilesDone, size_t totalTiles, const char* label)
+    std::atomic<size_t>& tilesDone, size_t totalTiles, const char* label,
+    const std::chrono::steady_clock::time_point& startTime)
 {
     size_t done = ++tilesDone;
     int pct = static_cast<int>(100.0 * double(done) / double(totalTiles));
+    auto now = std::chrono::steady_clock::now();
+    double elapsed = std::chrono::duration<double>(now - startTime).count();
+    double eta = (done > 0) ? elapsed * (double(totalTiles) / double(done) - 1.0) : 0.0;
     #pragma omp critical(progress_print)
     {
         std::cout << "\r[" << label << "] tile " << done << "/" << totalTiles
-                  << " (" << pct << "%)" << std::flush;
+                  << " (" << pct << "%)  elapsed " << formatDuration(elapsed)
+                  << "  eta " << formatDuration(eta)
+                  << "  total ~" << formatDuration(elapsed + eta) << "  " << std::flush;
     }
 }
 
@@ -423,6 +438,7 @@ static void renderTiledLoop(
 {
     const uint32_t tilesX = (static_cast<uint32_t>(tgt_size.width)  + tileW - 1) / tileW;
     const uint32_t tilesY = (static_cast<uint32_t>(tgt_size.height) + tileH - 1) / tileH;
+    auto loopStart = std::chrono::steady_clock::now();
 
     bool globalFlip = false;
     {
@@ -438,7 +454,7 @@ static void renderTiledLoop(
     }
 
     for (uint32_t ty = 0; ty < tilesY; ++ty) {
-        #pragma omp parallel for schedule(dynamic)
+        #pragma omp parallel for schedule(dynamic, 2)
         for (long long tx = 0; tx < static_cast<long long>(tilesX); ++tx) {
             const uint32_t x0_src = static_cast<uint32_t>(tx) * tileW;
             const uint32_t y0_src = ty * tileH;
@@ -457,7 +473,7 @@ static void renderTiledLoop(
                      static_cast<int>(dx), static_cast<int>(dy),
                      basePoints, stepDirs);
 
-            printTileProgress(tilesDone, totalTiles, progressLabel);
+            printTileProgress(tilesDone, totalTiles, progressLabel, loopStart);
         }
     }
     std::cout << std::endl;
@@ -1511,11 +1527,6 @@ int main(int argc, char *argv[])
                 }
             });
 
-        if (output_is_u16)
-            chunk_cache_u16.printStats("after L0 render");
-        else
-            chunk_cache_u8.printStats("after L0 render");
-
         // Build multi-resolution pyramid levels 1..5 by averaging 2x blocks in Z, Y, and X
         // Keep track of datasets for each level
         std::vector<std::unique_ptr<volcart::zarr::ZarrDataset>> pyramidLevels;
@@ -1546,7 +1557,8 @@ int main(int argc, char *argv[])
             const size_t tilesX = (dShape[2] + tileX - 1) / tileX;
             const size_t totalTiles = tilesY * tilesX;
             std::atomic<size_t> tilesDone{0};
-            #pragma omp parallel for schedule(dynamic)
+            auto pyramidStart = std::chrono::steady_clock::now();
+            #pragma omp parallel for schedule(static)
             for (size_t z = 0; z < dShape[0]; z += tileZ) {
                 const size_t lz = std::min(tileZ, dShape[0] - z);
 
@@ -1566,7 +1578,7 @@ int main(int argc, char *argv[])
                         }
 
                         const std::string progLabel = "render L" + std::to_string(targetLevel);
-                        printTileProgress(tilesDone, totalTiles, progLabel.c_str());
+                        printTileProgress(tilesDone, totalTiles, progLabel.c_str(), pyramidStart);
                     }
                 }
             }
@@ -1664,6 +1676,7 @@ int main(int argc, char *argv[])
                 const uint32_t outH = static_cast<uint32_t>(Y);
                 const size_t totalTiles = static_cast<size_t>(tilesX_src) * static_cast<size_t>(tilesY_src);
                 std::atomic<size_t> tilesDone{0};
+                auto tifExportStart = std::chrono::steady_clock::now();
 
                 std::vector<TiffWriter> writers;
                 std::vector<std::mutex> writerLocks(Z);
@@ -1676,7 +1689,7 @@ int main(int argc, char *argv[])
                     writers.emplace_back(outPath, outW, outH, cvType, tileW, tileH, 0.0f);
                 }
 
-                #pragma omp parallel for schedule(dynamic)
+                #pragma omp parallel for schedule(static)
                 for (long long ty = 0; ty < static_cast<long long>(tilesY_src); ++ty) {
                     for (long long tx = 0; tx < static_cast<long long>(tilesX_src); ++tx) {
                         const uint32_t x0_src = static_cast<uint32_t>(tx) * tileW;
@@ -1692,7 +1705,7 @@ int main(int argc, char *argv[])
                             exportZarrTileToTiff<uint8_t>(dsL0.get(), writers, writerLocks, Z, dy, dx, y0_src, x0_src, x0_dst, y0_dst);
                         }
 
-                        printTileProgress(tilesDone, totalTiles, "tif export");
+                        printTileProgress(tilesDone, totalTiles, "tif export", tifExportStart);
                     }
                 }
 
@@ -1717,8 +1730,8 @@ int main(int argc, char *argv[])
                 const int outW = ((rotQuad >= 0) && (rotQuad % 2 == 1)) ? tgt_size.height : tgt_size.width;
                 const int outH = ((rotQuad >= 0) && (rotQuad % 2 == 1)) ? tgt_size.width  : tgt_size.height;
 
-                const uint32_t tileW = 128;
-                const uint32_t tileH = 128;
+                const uint32_t tileW = 512;
+                const uint32_t tileH = 512;
                 const double num_slices_center = 0.5 * (static_cast<double>(std::max(1, num_slices)) - 1.0);
 
                 auto make_out_path = [&](int sliceIdx) -> std::filesystem::path {
@@ -1791,11 +1804,6 @@ int main(int argc, char *argv[])
                                 tileW, tileH, writers, writerLocks);
                         }
                     });
-
-                if (output_is_u16)
-                    chunk_cache_u16.printStats("after tif render");
-                else
-                    chunk_cache_u8.printStats("after tif render");
 
                 writers.clear(); // Explicitly close all writers
 

@@ -107,7 +107,6 @@ void ChunkCache<T>::init(ZarrDataset* ds)
     _totalSlots = static_cast<size_t>(_chunksX) * _chunksY * _chunksZ;
     _chunks = std::make_unique<std::atomic<ChunkPtr>[]>(_totalSlots);
     _lastAccess = std::make_unique<std::atomic<uint64_t>[]>(_totalSlots);
-    _everLoaded = std::make_unique<std::atomic<bool>[]>(_totalSlots);
 
     _cachedCount.store(0, std::memory_order_relaxed);
     _generation.store(0, std::memory_order_relaxed);
@@ -126,7 +125,6 @@ auto ChunkCache<T>::get(int ix, int iy, int iz) -> ChunkPtr
     // Fast path: lock-free atomic read
     ChunkPtr cached = _chunks[i].load(std::memory_order_acquire);
     if (cached) {
-        _statHits.fetch_add(1, std::memory_order_relaxed);
         _lastAccess[i].store(_generation.fetch_add(1, std::memory_order_relaxed), std::memory_order_relaxed);
         return cached;
     }
@@ -137,12 +135,10 @@ auto ChunkCache<T>::get(int ix, int iy, int iz) -> ChunkPtr
     // Re-check after acquiring disk lock
     cached = _chunks[i].load(std::memory_order_acquire);
     if (cached) {
-        _statHits.fetch_add(1, std::memory_order_relaxed);
         _lastAccess[i].store(_generation.fetch_add(1, std::memory_order_relaxed), std::memory_order_relaxed);
         return cached;
     }
 
-    _statMisses.fetch_add(1, std::memory_order_relaxed);
     ChunkPtr newChunk = loadChunk(ix, iy, iz);
     if (!newChunk) return nullptr;
 
@@ -156,8 +152,6 @@ auto ChunkCache<T>::get(int ix, int iy, int iz) -> ChunkPtr
     _chunks[i].store(newChunk, std::memory_order_release);
     _lastAccess[i].store(_generation.fetch_add(1, std::memory_order_relaxed), std::memory_order_relaxed);
     _cachedCount.fetch_add(1, std::memory_order_relaxed);
-    if (!_everLoaded[i].exchange(true, std::memory_order_relaxed))
-        _statUniqueChunks.fetch_add(1, std::memory_order_relaxed);
     return newChunk;
 }
 
@@ -205,7 +199,6 @@ void ChunkCache<T>::clear()
         _chunks[i].store(nullptr, std::memory_order_relaxed);
     _chunks.reset();
     _lastAccess.reset();
-    _everLoaded.reset();
     _totalSlots = 0;
 
     _ds = nullptr;
@@ -267,7 +260,6 @@ void ChunkCache<T>::evictIfNeeded()
     }
 
     _cachedCount.fetch_sub(evicted, std::memory_order_relaxed);
-    _statEvictions.fetch_add(evicted, std::memory_order_relaxed);
 }
 
 template<typename T>

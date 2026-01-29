@@ -7,7 +7,6 @@
 #include <memory>
 #include <vector>
 #include <cstdint>
-#include <cstdio>
 #include <mutex>
 
 /**
@@ -80,29 +79,6 @@ public:
 
     volcart::zarr::ZarrDataset* dataset() const { return _ds; }
 
-    uint64_t statHits() const { return _statHits.load(std::memory_order_relaxed); }
-    uint64_t statMisses() const { return _statMisses.load(std::memory_order_relaxed); }
-    uint64_t statEvictions() const { return _statEvictions.load(std::memory_order_relaxed); }
-    void resetStats() {
-        _statHits.store(0, std::memory_order_relaxed);
-        _statMisses.store(0, std::memory_order_relaxed);
-        _statEvictions.store(0, std::memory_order_relaxed);
-        _statUniqueChunks.store(0, std::memory_order_relaxed);
-    }
-    void printStats(const char* label = nullptr) const {
-        uint64_t h = _statHits.load(std::memory_order_relaxed);
-        uint64_t m = _statMisses.load(std::memory_order_relaxed);
-        uint64_t e = _statEvictions.load(std::memory_order_relaxed);
-        uint64_t total = h + m;
-        double hitRate = total > 0 ? 100.0 * h / total : 0.0;
-        uint64_t u = _statUniqueChunks.load(std::memory_order_relaxed);
-        std::printf("[ChunkCache%s%s] hits: %llu  misses: %llu  evictions: %llu  unique: %llu  hit-rate: %.1f%%  cached: %zu\n",
-            label ? " " : "", label ? label : "",
-            (unsigned long long)h, (unsigned long long)m, (unsigned long long)e,
-            (unsigned long long)u,
-            hitRate, _cachedCount.load(std::memory_order_relaxed));
-    }
-
 private:
     volcart::zarr::ZarrDataset* _ds = nullptr;
 
@@ -110,11 +86,6 @@ private:
     size_t _maxChunks = 0;
     std::atomic<size_t> _cachedCount{0};
     std::atomic<uint64_t> _generation{0};
-
-    mutable std::atomic<uint64_t> _statHits{0};
-    mutable std::atomic<uint64_t> _statMisses{0};
-    mutable std::atomic<uint64_t> _statEvictions{0};
-    mutable std::atomic<uint64_t> _statUniqueChunks{0};
 
     int _cw = 0, _ch = 0, _cd = 0;
     int _sx = 0, _sy = 0, _sz = 0;
@@ -128,7 +99,6 @@ private:
     size_t _totalSlots = 0;
     std::unique_ptr<std::atomic<ChunkPtr>[]> _chunks;
     std::unique_ptr<std::atomic<uint64_t>[]> _lastAccess;
-    std::unique_ptr<std::atomic<bool>[]> _everLoaded;
 
     std::mutex _evictionMutex;
 
