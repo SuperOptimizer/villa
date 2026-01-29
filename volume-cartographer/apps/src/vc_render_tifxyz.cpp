@@ -94,6 +94,9 @@ struct RenderParams {
     bool nearestNeighbor;
     TransformParams transform;
     AccumParams accum;
+    int startTileRow = 0;
+    int endTileRow = -1;  // -1 means all rows
+    int numParts = 1;
 };
 
 // ============================================================================
@@ -786,7 +789,6 @@ static void renderTiledRowBased(
 {
     const uint32_t tilesX = (tgtSize.width + tileW - 1) / tileW;
     const uint32_t tilesY = (tgtSize.height + tileH - 1) / tileH;
-    const size_t totalTiles = tilesX * tilesY;
 
     // Compute global flip decision once
     cv::Vec3f centroid;
@@ -798,20 +800,26 @@ static void renderTiledRowBased(
         surf, std::min(int(tileW), tgtSize.width), std::min(int(tileH), tgtSize.height),
         baseU0, baseV0, params.renderScale, params.scaleSeg, params.transform, centroid);
 
+    // Apply tile row partitioning
+    uint32_t startRow = params.startTileRow;
+    uint32_t endRow = (params.endTileRow < 0) ? tilesY : std::min(uint32_t(params.endTileRow), tilesY);
+    uint32_t partRows = endRow - startRow;
+
     ProgressTracker progress;
-    progress.reset(totalTiles, label);
+    progress.reset(partRows * tilesX, label);
 
     // Row work queue for work-stealing pattern
     RowWorkQueue rowQueue;
-    rowQueue.reset(tilesY);
+    rowQueue.reset(partRows);
 
     // Each thread grabs entire rows and processes all tiles in that row
     // This maximizes cache reuse since tiles in a row share similar volume regions
     #pragma omp parallel
     {
         while (true) {
-            int ty = rowQueue.getNextRow();
-            if (ty < 0) break;
+            int localRow = rowQueue.getNextRow();
+            if (localRow < 0) break;
+            int ty = startRow + localRow;
 
             uint32_t y0 = ty * tileH;
             uint32_t dy = std::min(tileH, uint32_t(tgtSize.height) - y0);
@@ -867,8 +875,13 @@ static void renderTiledBandBased(
 {
     const uint32_t tilesX = (tgtSize.width + tileW - 1) / tileW;
     const uint32_t tilesY = (tgtSize.height + tileH - 1) / tileH;
-    const uint32_t numBands = (tilesY + bandHeight - 1) / bandHeight;
-    const size_t totalTiles = tilesX * tilesY;
+
+    // Apply tile row partitioning
+    uint32_t partStartRow = params.startTileRow;
+    uint32_t partEndRow = (params.endTileRow < 0) ? tilesY : std::min(uint32_t(params.endTileRow), tilesY);
+    uint32_t partRows = partEndRow - partStartRow;
+    const uint32_t numBands = (partRows + bandHeight - 1) / bandHeight;
+    const size_t totalTiles = tilesX * partRows;
 
     // Compute global flip decision once
     cv::Vec3f centroid;
@@ -885,8 +898,8 @@ static void renderTiledBandBased(
 
     // Process bands sequentially, tiles within band in parallel
     for (uint32_t band = 0; band < numBands; ++band) {
-        uint32_t startRow = band * bandHeight;
-        uint32_t endRow = std::min(startRow + bandHeight, tilesY);
+        uint32_t startRow = partStartRow + band * bandHeight;
+        uint32_t endRow = std::min(startRow + bandHeight, partEndRow);
         uint32_t tilesInBand = (endRow - startRow) * tilesX;
 
         #pragma omp parallel for schedule(dynamic, 1)
@@ -1175,6 +1188,13 @@ static void renderToZarr(
 
     writeQueue.finish();
 
+    // Skip pyramid and tiff export when running as one part of a multi-VM job.
+    // These should be run separately after all parts finish writing L0 tiles.
+    if (params.numParts > 1) {
+        std::cout << "[zarr] multi-part mode: skipping pyramid build and tif export\n";
+        return;
+    }
+
     // Build pyramid
     std::vector<std::unique_ptr<volcart::zarr::ZarrDataset>> levels;
     levels.push_back(std::move(dsOut));
@@ -1272,6 +1292,17 @@ static void renderToTiff(
     if (rotQuad >= 0 && (rotQuad % 2 == 1))
         std::swap(outW, outH);
 
+    // For multi-part TIFF, compute the pixel height of this part's rows
+    const uint32_t tilesY_full = (outH + tileH - 1) / tileH;
+    uint32_t partStartRow = params.startTileRow;
+    uint32_t partEndRow = (params.endTileRow < 0) ? tilesY_full : std::min(uint32_t(params.endTileRow), tilesY_full);
+    uint32_t partPixelY0 = partStartRow * tileH;
+    int partOutH = std::min(int(partEndRow * tileH), outH) - int(partPixelY0);
+    if (partOutH <= 0) {
+        std::cout << "[tif] no rows assigned to this part, skipping" << std::endl;
+        return;
+    }
+
     bool usesPattern = outPath.string().find('%') != std::string::npos;
     auto makePath = [&](int z) -> std::filesystem::path {
         if (usesPattern) {
@@ -1297,7 +1328,7 @@ static void renderToTiff(
     std::vector<TiffWriter> writers;
     writers.reserve(offsets.numSlices);
     for (size_t z = 0; z < offsets.numSlices; ++z) {
-        writers.emplace_back(makePath(z), outW, outH, PixelTraits<T>::cvType, tileW, tileH, 0.0f);
+        writers.emplace_back(makePath(z), outW, partOutH, PixelTraits<T>::cvType, tileW, tileH, 0.0f);
     }
     std::vector<std::mutex> locks(offsets.numSlices);
 
@@ -1319,7 +1350,7 @@ static void renderToTiff(
                                  std::max(rotQuad, 0), flipAxis,
                                  dstTx, dstTy, rTilesX, rTilesY);
                     uint32_t x0 = dstTx * tileW;
-                    uint32_t y0 = dstTy * tileH;
+                    uint32_t y0 = dstTy * tileH - partPixelY0;
                     std::lock_guard<std::mutex> guard(locks[zi]);
                     writers[zi].writeTile(x0, y0, slice);
                 });
@@ -1366,7 +1397,9 @@ int main(int argc, char* argv[])
         ("flatten-downsample", po::value<int>()->default_value(1), "ABF++ downsample factor")
         ("nearest-neighbor", po::bool_switch()->default_value(false), "Use nearest-neighbor sampling")
         ("threads", po::value<int>()->default_value(0), "Number of threads (0 = auto)")
-        ("band-height", po::value<int>()->default_value(4), "Tile rows per band for cache locality");
+        ("band-height", po::value<int>()->default_value(4), "Tile rows per band for cache locality")
+        ("num-parts", po::value<int>()->default_value(1), "Total number of shards for distributed rendering")
+        ("part-id", po::value<int>()->default_value(0), "This shard's ID (0-indexed)");
 
     po::options_description all("Usage");
     all.add(required).add(optional);
@@ -1517,6 +1550,19 @@ int main(int argc, char* argv[])
     if (nearestNeighbor)
         std::cout << "Using nearest-neighbor sampling\n";
 
+    int numParts = vm["num-parts"].as<int>();
+    int partId = vm["part-id"].as<int>();
+    if (numParts < 1) {
+        std::cerr << "Error: --num-parts must be >= 1\n";
+        return EXIT_FAILURE;
+    }
+    if (partId < 0 || partId >= numParts) {
+        std::cerr << "Error: --part-id must be in [0, num-parts)\n";
+        return EXIT_FAILURE;
+    }
+    if (numParts > 1)
+        std::cout << "Sharding: part " << partId << " of " << numParts << "\n";
+
     // Pre-build offset table (shared across all tiles)
     OffsetTable offsets;
     offsets.build(numSlices, sliceStep, accum.offsets);
@@ -1606,6 +1652,39 @@ int main(int argc, char* argv[])
         params.nearestNeighbor = nearestNeighbor;
         params.transform = transform;
         params.accum = accum;
+        params.numParts = numParts;
+
+        // Compute tile row partitioning for multi-VM sharding
+        if (numParts > 1) {
+            // Tile height depends on output format: 128 for zarr, 64 for tiff
+            uint32_t tileH = outputZarr ? 128 : 64;
+            uint32_t tilesY = (tgtSize.height + tileH - 1) / tileH;
+            uint32_t rowsPerPart = tilesY / numParts;
+            params.startTileRow = partId * rowsPerPart;
+            params.endTileRow = (partId == numParts - 1) ? tilesY : (partId + 1) * rowsPerPart;
+            std::cout << "Part " << partId << ": tile rows [" << params.startTileRow
+                      << ", " << params.endTileRow << ") of " << tilesY << "\n";
+        }
+
+        // For tiff with multi-part, modify output path
+        std::filesystem::path actualOutputPath = outputPath;
+        if (numParts > 1 && !outputZarr) {
+            // Add _part_NNN suffix to the output directory/pattern
+            std::ostringstream suffix;
+            suffix << "_part_" << std::setw(3) << std::setfill('0') << partId;
+            if (outputPath.string().find('%') != std::string::npos) {
+                // Pattern mode: insert suffix before the extension in the pattern
+                std::string s = outputPath.string();
+                auto dot = s.rfind('.');
+                if (dot != std::string::npos)
+                    actualOutputPath = s.substr(0, dot) + suffix.str() + s.substr(dot);
+                else
+                    actualOutputPath = s + suffix.str();
+            } else {
+                actualOutputPath = outputPath.string() + suffix.str();
+            }
+            std::cout << "Part output: " << actualOutputPath << "\n";
+        }
 
         // Render
         if (outputZarr) {
@@ -1616,17 +1695,15 @@ int main(int argc, char* argv[])
                 renderToZarr<uint8_t>(surf.get(), &cache8, outputPath, volPath, groupIdx,
                                       tgtSize, fullSize, crop, params, offsets, includeTifs);
         } else {
-            if (!outputZarr) {
-                if (outputPath.string().find('%') == std::string::npos)
-                    std::filesystem::create_directories(outputPath);
-                else
-                    std::filesystem::create_directories(outputPath.parent_path());
-            }
+            if (actualOutputPath.string().find('%') == std::string::npos)
+                std::filesystem::create_directories(actualOutputPath);
+            else
+                std::filesystem::create_directories(actualOutputPath.parent_path());
             if (isU16)
-                renderToTiff<uint16_t>(surf.get(), &cache16, outputPath,
+                renderToTiff<uint16_t>(surf.get(), &cache16, actualOutputPath,
                                        tgtSize, fullSize, crop, params, offsets);
             else
-                renderToTiff<uint8_t>(surf.get(), &cache8, outputPath,
+                renderToTiff<uint8_t>(surf.get(), &cache8, actualOutputPath,
                                       tgtSize, fullSize, crop, params, offsets);
         }
     };

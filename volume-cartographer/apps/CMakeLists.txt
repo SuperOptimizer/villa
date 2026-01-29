@@ -13,6 +13,9 @@ target_link_libraries(vc_render_video opencv_core vc_core opencv_videoio)
 add_executable(vc_render_tifxyz src/vc_render_tifxyz.cpp)
 target_link_libraries(vc_render_tifxyz vc_core Boost::program_options tiff)
 
+add_executable(vc_merge_tiff_parts src/vc_merge_tiff_parts.cpp)
+target_link_libraries(vc_merge_tiff_parts vc_core Boost::program_options tiff)
+
 add_executable(vc_objrefine src/ObjAlphaCompRefinement.cpp)
 target_link_libraries(vc_objrefine vc_core)
 
