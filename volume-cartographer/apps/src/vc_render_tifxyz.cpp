@@ -405,8 +405,7 @@ static inline void genTileAndPrepare(
         globalFlipDecision, basePoints, stepDirs);
 }
 
-// Core tiled rendering loop: generates surface geometry for all tiles,
-// then processes them all in parallel with schedule(dynamic).
+// Core tiled rendering loop: row-sequential with parallel tiles per row.
 template<typename TileFunc>
 static void renderTiledLoop(
     QuadSurface* surf,
@@ -566,35 +565,12 @@ static bool renderSlicesBulk(
 
     if (z_min_f > z_max_f) return false; // all NaN
 
-    // Expand to integer bounds (+1 for trilinear margin). dsShape is ZYX.
-    const auto& dsShape = ds->shape(); // [Z, Y, X]
-    int z_lo = std::max(0, static_cast<int>(std::floor(z_min_f)) - 1);
-    int y_lo = std::max(0, static_cast<int>(std::floor(y_min_f)) - 1);
-    int x_lo = std::max(0, static_cast<int>(std::floor(x_min_f)) - 1);
-    int z_hi = std::min(static_cast<int>(dsShape[0]) - 1, static_cast<int>(std::ceil(z_max_f)) + 1);
-    int y_hi = std::min(static_cast<int>(dsShape[1]) - 1, static_cast<int>(std::ceil(y_max_f)) + 1);
-    int x_hi = std::min(static_cast<int>(dsShape[2]) - 1, static_cast<int>(std::ceil(x_max_f)) + 1);
+    // Sample directly from cached chunks — no readArea3D copy needed
+    const int cw = cache->chunkSizeX(), ch = cache->chunkSizeY(), cd = cache->chunkSizeZ();
+    const int cwShift = cache->chunkShiftX(), chShift = cache->chunkShiftY(), cdShift = cache->chunkShiftZ();
+    const int cwMask = cache->chunkMaskX(), chMask = cache->chunkMaskY(), cdMask = cache->chunkMaskZ();
+    const int dsZ = cache->datasetSizeX(), dsY = cache->datasetSizeY(), dsX = cache->datasetSizeZ();
 
-    if (z_hi < z_lo || y_hi < y_lo || x_hi < x_lo) return false;
-
-    size_t nz = static_cast<size_t>(z_hi - z_lo + 1);
-    size_t ny = static_cast<size_t>(y_hi - y_lo + 1);
-    size_t nx = static_cast<size_t>(x_hi - x_lo + 1);
-
-    // Check total voxels < 256M
-    if (nz * ny * nx > 256ull * 1024 * 1024) return false;
-
-    // Bulk read via ChunkCache — readArea3D offset is [Z, Y, X]
-    volcart::zarr::Tensor3D<T> tensor(nz, ny, nx);
-    cv::Vec3i areaOffset(z_lo, y_lo, x_lo);
-    readArea3D(tensor, areaOffset, ds, cache);
-
-    const T* data = tensor.data();
-    const int inz = static_cast<int>(nz);
-    const int iny = static_cast<int>(ny);
-    const int inx = static_cast<int>(nx);
-
-    // Render all slices
     outSlices.resize(nOffsets);
     for (size_t si = 0; si < nOffsets; ++si) {
         outSlices[si].create(rows, cols, cvType);
@@ -612,18 +588,67 @@ static bool renderSlicesBulk(
                     row[c] = 0;
                     continue;
                 }
+                // coords: [0]=X, [1]=Y, [2]=Z; chunk dims: X=dim0, Y=dim1, Z=dim2
                 float cx = p[0] + scale * d[0];
                 float cy = p[1] + scale * d[1];
                 float cz = p[2] + scale * d[2];
-                float lz = cz - static_cast<float>(z_lo);
-                float ly = cy - static_cast<float>(y_lo);
-                float lx = cx - static_cast<float>(x_lo);
+
                 if (nearest_neighbor) {
-                    row[c] = sampleNearestLocal<T>(data, inz, iny, inx, lz, ly, lx);
+                    int iz = static_cast<int>(cz + 0.5f);
+                    int iy = static_cast<int>(cy + 0.5f);
+                    int ix = static_cast<int>(cx + 0.5f);
+                    if (iz < 0 || iz >= dsZ || iy < 0 || iy >= dsY || ix < 0 || ix >= dsX) {
+                        row[c] = 0; continue;
+                    }
+                    auto ptr = cache->get(iz >> cwShift, iy >> chShift, ix >> cdShift);
+                    if (!ptr) { row[c] = 0; continue; }
+                    row[c] = (*ptr)(iz & cwMask, iy & chMask, ix & cdMask);
                 } else {
-                    float val = sampleTrilinearLocal<T>(data, inz, iny, inx, lz, ly, lx);
-                    row[c] = static_cast<T>(std::min<float>(val + 0.5f,
-                        static_cast<float>(std::numeric_limits<T>::max())));
+                    int iz = static_cast<int>(cz);
+                    int iy = static_cast<int>(cy);
+                    int ix = static_cast<int>(cx);
+                    if (iz < 0 || iy < 0 || ix < 0 ||
+                        iz + 1 >= dsZ || iy + 1 >= dsY || ix + 1 >= dsX) {
+                        row[c] = 0; continue;
+                    }
+                    float fz = cz - iz, fy = cy - iy, fx = cx - ix;
+
+                    // Fast path: all 8 neighbors in same chunk
+                    int ciz = iz >> cwShift, ciy = iy >> chShift, cix = ix >> cdShift;
+                    int ciz1 = (iz+1) >> cwShift, ciy1 = (iy+1) >> chShift, cix1 = (ix+1) >> cdShift;
+                    if (ciz == ciz1 && ciy == ciy1 && cix == cix1) {
+                        auto ptr = cache->get(ciz, ciy, cix);
+                        if (!ptr) { row[c] = 0; continue; }
+                        const auto& chunk = *ptr;
+                        int lz = iz & cwMask, ly = iy & chMask, lx = ix & cdMask;
+                        float c000 = chunk(lz, ly, lx),     c001 = chunk(lz, ly, lx+1);
+                        float c010 = chunk(lz, ly+1, lx),   c011 = chunk(lz, ly+1, lx+1);
+                        float c100 = chunk(lz+1, ly, lx),   c101 = chunk(lz+1, ly, lx+1);
+                        float c110 = chunk(lz+1, ly+1, lx), c111 = chunk(lz+1, ly+1, lx+1);
+                        float c00 = c000 + fx*(c001-c000), c01 = c010 + fx*(c011-c010);
+                        float c10 = c100 + fx*(c101-c100), c11 = c110 + fx*(c111-c110);
+                        float v0 = c00 + fy*(c01-c00), v1 = c10 + fy*(c11-c10);
+                        float val = v0 + fz*(v1-v0);
+                        row[c] = static_cast<T>(std::min<float>(val + 0.5f,
+                            static_cast<float>(std::numeric_limits<T>::max())));
+                    } else {
+                        // Slow path: neighbors span chunk boundaries
+                        auto getVoxel = [&](int vz, int vy, int vx) -> float {
+                            auto ptr = cache->get(vz >> cwShift, vy >> chShift, vx >> cdShift);
+                            if (!ptr) return 0;
+                            return static_cast<float>((*ptr)(vz & cwMask, vy & chMask, vx & cdMask));
+                        };
+                        float c000 = getVoxel(iz,iy,ix),     c001 = getVoxel(iz,iy,ix+1);
+                        float c010 = getVoxel(iz,iy+1,ix),   c011 = getVoxel(iz,iy+1,ix+1);
+                        float c100 = getVoxel(iz+1,iy,ix),   c101 = getVoxel(iz+1,iy,ix+1);
+                        float c110 = getVoxel(iz+1,iy+1,ix), c111 = getVoxel(iz+1,iy+1,ix+1);
+                        float c00 = c000 + fx*(c001-c000), c01 = c010 + fx*(c011-c010);
+                        float c10 = c100 + fx*(c101-c100), c11 = c110 + fx*(c111-c110);
+                        float v0 = c00 + fy*(c01-c00), v1 = c10 + fy*(c11-c10);
+                        float val = v0 + fz*(v1-v0);
+                        row[c] = static_cast<T>(std::min<float>(val + 0.5f,
+                            static_cast<float>(std::numeric_limits<T>::max())));
+                    }
                 }
             }
         }
