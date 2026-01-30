@@ -7,7 +7,7 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
-#include "vc/core/zarr/ZarrDataset.hpp"
+#include "vc/core/types/IChunkSource.hpp"
 
 class Volume
 {
@@ -37,10 +37,11 @@ public:
     [[nodiscard]] int sliceWidth() const;
     [[nodiscard]] int sliceHeight() const;
     [[nodiscard]] int numSlices() const;
+    /// Returns {depth(Z), height(Y), width(X)}
     [[nodiscard]] std::array<int, 3> shape() const;
     [[nodiscard]] double voxelSize() const;
 
-    [[nodiscard]] volcart::zarr::ZarrDataset *zarrDataset(int level = 0) const;
+    [[nodiscard]] IChunkSource* chunkSource(int level = 0) const;
     [[nodiscard]] size_t numScales() const;
 
     static bool checkDir(std::filesystem::path path);
@@ -53,7 +54,10 @@ protected:
     int _height{0};
     int _slices{0};
 
-    std::vector<std::unique_ptr<volcart::zarr::ZarrDataset>> zarrDs_;
+    // Owning storage for all chunk sources (zarr adapters, csvs datasets, etc.)
+    std::vector<std::unique_ptr<IChunkSource>> ownedSources_;
+    // Non-owning pointers: one per level
+    std::vector<IChunkSource*> chunkSources_;
     nlohmann::json zarrGroup_;
     void zarrOpen();
 

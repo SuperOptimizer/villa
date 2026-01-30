@@ -13,6 +13,7 @@
 #include <QString>
 
 #include "vc/core/zarr/ZarrDataset.hpp"
+#include "vc/core/types/IChunkSource.hpp"
 
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
@@ -254,8 +255,8 @@ void ensureNormalsInward(QuadSurface* surface, const Volume* volume)
     }
     cv::normalize(normal, normal);
 
-    auto [w, h, d] = volume->shape();
-    cv::Vec3f volumeCenter(w * 0.5f, h * 0.5f, d * 0.5f);
+    auto [d, h, w] = volume->shape();
+    cv::Vec3f volumeCenter(d * 0.5f, h * 0.5f, w * 0.5f);
     cv::Vec3f toCenter = volumeCenter - p;
     toCenter[2] = 0.0f;
 
@@ -355,7 +356,7 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
 
     ensureNormalsInward(context.resumeSurface, context.volume);
 
-    volcart::zarr::ZarrDataset* dataset = context.volume->zarrDataset(0);
+    auto* dataset = dynamic_cast<volcart::zarr::ZarrDataset*>(context.volume->chunkSource(0));
     if (!dataset) {
         result.error = QStringLiteral("Unable to access primary volume dataset");
         return result;

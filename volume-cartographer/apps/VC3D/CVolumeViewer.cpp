@@ -195,7 +195,7 @@ QPointF CVolumeViewer::volumeToScene(const cv::Vec3f& vol_point)
         p = surf->loc(ptr) * _scale;
     }
 
-    return QPointF(p[0], p[1]);
+    return QPointF(p[2], p[1]);
 }
 
 bool scene2vol(cv::Vec3f &p, cv::Vec3f &n, Surface *_surf, const std::string &_surf_name, CSurfaceCollection *_surf_col, const QPointF &scene_loc, const cv::Vec2f &_vis_center, float _ds_scale)
@@ -203,12 +203,12 @@ bool scene2vol(cv::Vec3f &p, cv::Vec3f &n, Surface *_surf, const std::string &_s
     // Safety check for null surface
     if (!_surf) {
         p = cv::Vec3f(0, 0, 0);
-        n = cv::Vec3f(0, 0, 1);
+        n = cv::Vec3f(1, 0, 0);
         return false;
     }
-    
+
     try {
-        cv::Vec3f surf_loc = {static_cast<float>(scene_loc.x()/_ds_scale), static_cast<float>(scene_loc.y()/_ds_scale),0};
+        cv::Vec3f surf_loc = {0, static_cast<float>(scene_loc.y()/_ds_scale), static_cast<float>(scene_loc.x()/_ds_scale)};
         
         auto ptr = _surf->pointer();
         
@@ -252,7 +252,7 @@ void CVolumeViewer::onCursorMove(QPointF scene_loc)
             QuadSurface *quad = dynamic_cast<QuadSurface*>(surf.get());
             if (plane) {
                 const cv::Vec3f sp = plane->project(p, 1.0, _scale);
-                _cursor->setPos(sp[0], sp[1]);
+                _cursor->setPos(sp[2], sp[1]);
             } else if (quad) {
                 // We already know the cursor's scene position when interacting with a quad,
                 // so avoid re-running the expensive pointTo() search.
@@ -368,10 +368,10 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
             cv::Vec3f newPosition = focus->p + normal * static_cast<float>(adjustedSteps);
 
             if (volume) {
-                auto [w, h, d] = volume->shape();
-                newPosition[0] = std::clamp(newPosition[0], 0.0f, static_cast<float>(w - 1));
+                auto [d, h, w] = volume->shape();
+                newPosition[0] = std::clamp(newPosition[0], 0.0f, static_cast<float>(d - 1));
                 newPosition[1] = std::clamp(newPosition[1], 0.0f, static_cast<float>(h - 1));
-                newPosition[2] = std::clamp(newPosition[2], 0.0f, static_cast<float>(d - 1));
+                newPosition[2] = std::clamp(newPosition[2], 0.0f, static_cast<float>(w - 1));
             }
 
             focus->p = newPosition;
@@ -389,9 +389,9 @@ void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers m
             _z_off += adjustedSteps;
 
             if (volume && plane) {
-                float effective_z = plane->origin()[2] + _z_off;
+                float effective_z = plane->origin()[0] + _z_off;
                 effective_z = std::max(0.0f, std::min(effective_z, static_cast<float>(volume->numSlices() - 1)));
-                _z_off = effective_z - plane->origin()[2];
+                _z_off = effective_z - plane->origin()[0];
             }
 
             renderVisible(true);
@@ -543,13 +543,21 @@ void CVolumeViewer::updateStatusLabel()
 void CVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> volume_)
 {
     volume = volume_;
-    
-    // printf("sizes %d %d %d\n", volume_->sliceWidth(), volume_->sliceHeight(), volume_->numSlices());
 
-    int max_size = 100000 ;//std::max(volume_->sliceWidth(), std::max(volume_->numSlices(), volume_->sliceHeight()))*_ds_scale + 512;
-    // printf("max size %d\n", max_size);
+    // Invalidate all cached coordinates/normals — volume dimensions changed
+    _cachedNormals.release();
+    _cachedBaseCoords.release();
+    _cachedNormalsSize = cv::Size();
+    _cachedNormalsScale = 0.0f;
+    _cachedNormalsPtr = cv::Vec3f(0, 0, 0);
+    _cachedNormalsZOff = 0.0f;
+    _cachedNormalsSurf.reset();
+    _cachedNativeVolumeGradients.release();
+    _cachedGradientsSurf.reset();
+
+    int max_size = 100000;
     fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
-    
+
     if (volume->numScales() >= 2) {
         //FIXME currently hardcoded
         _max_scale = 0.5;
@@ -991,7 +999,7 @@ void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
         
         if (dist != -1) {
             if (dist < 20.0/_scale) {
-                _cursor->setPos(sp[0], sp[1]);
+                _cursor->setPos(sp[2], sp[1]);
                 _cursor->setOpacity(1.0-dist*_scale/20.0);
             }
             else

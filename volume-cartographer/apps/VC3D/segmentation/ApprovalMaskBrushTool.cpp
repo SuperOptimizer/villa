@@ -833,8 +833,8 @@ std::optional<std::pair<int, int>> ApprovalMaskBrushTool::sceneToGridIndex(const
     // Compute grid position: (scenePos / viewerScale + center) * surfaceScale
     const float surfLocX = static_cast<float>(scenePos.x()) / viewerScale;
     const float surfLocY = static_cast<float>(scenePos.y()) / viewerScale;
-    const float gridX = (surfLocX + center[0]) * surfScale[0];
-    const float gridY = (surfLocY + center[1]) * surfScale[1];
+    const float gridX = (surfLocX + center[2]) * surfScale[1];
+    const float gridY = (surfLocY + center[1]) * surfScale[0];
 
     const int col = static_cast<int>(std::round(gridX));
     const int row = static_cast<int>(std::round(gridY));

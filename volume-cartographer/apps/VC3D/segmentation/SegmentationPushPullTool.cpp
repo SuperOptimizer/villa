@@ -9,6 +9,7 @@
 #include "CSurfaceCollection.hpp"
 
 #include "vc/core/types/Volume.hpp"
+#include "vc/core/types/IChunkSource.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/Slicing.hpp"
 
@@ -849,9 +850,9 @@ std::optional<cv::Vec3f> SegmentationPushPullTool::computeAlphaTarget(const cv::
         datasetIndex = std::clamp(datasetIndex, 0, static_cast<int>(scaleCount) - 1);
     }
 
-    volcart::zarr::ZarrDataset* dataset = volume->zarrDataset(datasetIndex);
+    IChunkSource* dataset = volume->chunkSource(datasetIndex);
     if (!dataset) {
-        dataset = volume->zarrDataset(0);
+        dataset = volume->chunkSource(0);
     }
     if (!dataset) {
         if (outUnavailable) {

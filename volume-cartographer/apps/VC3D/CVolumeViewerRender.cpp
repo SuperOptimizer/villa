@@ -4,7 +4,7 @@
 
 #include "VolumeViewerCmaps.hpp"
 
-#include "vc/core/zarr/ZarrDataset.hpp"
+#include "vc/core/types/IChunkSource.hpp"
 #include "vc/core/zarr/Tensor3D.hpp"
 
 #include <QGraphicsView>
@@ -40,17 +40,18 @@ namespace {
 // Returns normalized gradient vectors at each raw grid point
 // dsScale converts from world coordinates to dataset coordinates
 cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
-    volcart::zarr::ZarrDataset* ds,
+    IChunkSource* ds,
     const cv::Mat_<cv::Vec3f>& rawPoints,
-    float dsScale)
+    float dsScale,
+    ChunkCache<uint8_t>& cache)
 {
     const int h = rawPoints.rows;
     const int w = rawPoints.cols;
-    cv::Mat_<cv::Vec3f> gradients(h, w, cv::Vec3f(0, 0, 1));
+    cv::Mat_<cv::Vec3f> gradients(h, w, cv::Vec3f(1, 0, 0));
 
     if (h == 0 || w == 0) return gradients;
 
-    const auto& volShape = ds->shape();
+    const auto volShape = ds->volShape();
     const int volZ = static_cast<int>(volShape[0]);
     const int volY = static_cast<int>(volShape[1]);
     const int volX = static_cast<int>(volShape[2]);
@@ -69,9 +70,9 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
             // Skip invalid points (marked as -1, -1, -1)
             if (c[0] == -1.f) continue;
 
-            const float cx = c[0] * dsScale;
+            const float cz = c[0] * dsScale;
             const float cy = c[1] * dsScale;
-            const float cz = c[2] * dsScale;
+            const float cx = c[2] * dsScale;
 
             minX = std::min(minX, cx);
             minY = std::min(minY, cy);
@@ -100,10 +101,8 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
     if (localW == 0 || localH == 0 || localD == 0) return gradients;
 
     // Step 2: Batch read the volume data for the bounding box
-    volcart::zarr::Tensor3D<uint8_t> localVolume;
-    std::vector<size_t> off = {static_cast<size_t>(bboxZ0), static_cast<size_t>(bboxY0), static_cast<size_t>(bboxX0)};
-    std::vector<size_t> shape = {localD, localH, localW};
-    ds->readSubarray(localVolume, off, shape);
+    volcart::zarr::Tensor3D<uint8_t> localVolume(localD, localH, localW);
+    readArea3D(localVolume, cv::Vec3i(bboxZ0, bboxY0, bboxX0), ds, &cache);
 
     // Helper lambda to sample from local volume with bounds checking
     auto sampleLocal = [&](float gx, float gy, float gz) -> float {
@@ -128,14 +127,14 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
 
             // Skip invalid points
             if (c[0] == -1.f) {
-                gradients(y, x) = cv::Vec3f(0, 0, 1);
+                gradients(y, x) = cv::Vec3f(1, 0, 0);
                 continue;
             }
 
             // Scale coordinates to dataset space
-            const float cx = c[0] * dsScale;
+            const float cz = c[0] * dsScale;
             const float cy = c[1] * dsScale;
-            const float cz = c[2] * dsScale;
+            const float cx = c[2] * dsScale;
 
             // Sample at ±1 voxel in each direction for central differences
             const float v_xp = sampleLocal(cx + 1, cy, cz);
@@ -153,9 +152,9 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
             // Normalize to get unit normal (negative gradient points toward surface)
             float len = std::sqrt(gx*gx + gy*gy + gz*gz);
             if (len > 1e-6f) {
-                gradients(y, x) = cv::Vec3f(-gx/len, -gy/len, -gz/len);
+                gradients(y, x) = cv::Vec3f(-gz/len, -gy/len, -gx/len);
             } else {
-                gradients(y, x) = cv::Vec3f(0, 0, 1);
+                gradients(y, x) = cv::Vec3f(1, 0, 0);
             }
         }
     }
@@ -178,7 +177,7 @@ void CVolumeViewer::renderVisible(bool force)
         }
     }
 
-    if (!volume || !volume->zarrDataset() || !surf)
+    if (!volume || !volume->chunkSource() || !surf)
         return;
 
     QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->viewport()->geometry()).boundingRect();
@@ -227,7 +226,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
 
     cv::Vec2f roi_c = {static_cast<float>(roi.x + roi.width / 2), static_cast<float>(roi.y + roi.height / 2)};
     cv::Vec3f ptr = surf->pointer();
-    cv::Vec3f diff = {roi_c[0], roi_c[1], 0};
+    cv::Vec3f diff = {0, roi_c[1], roi_c[0]};
     surf->move(ptr, diff / _scale);
     _ptr = ptr;
     _vis_center = roi_c;
@@ -280,7 +279,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
     } else {
         // Generate coordinates and normals for base layer
         surf->gen(&base_coords, &normals, roi.size(), ptr, _scale,
-                  {static_cast<float>(-roi.width / 2), static_cast<float>(-roi.height / 2), _z_off});
+                  {_z_off, static_cast<float>(-roi.height / 2), static_cast<float>(-roi.width / 2)});
 
         // Cache for next render - gen() returns freshly allocated data, so we can
         // just copy the cv::Mat header (shallow copy) since we own the data
@@ -304,9 +303,10 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
             if (_cachedNativeVolumeGradients.empty() || _cachedGradientsSurf.lock() != surf) {
                 const cv::Mat_<cv::Vec3f>* rawPts = quadSurf->rawPointsPtr();
                 _cachedNativeVolumeGradients = computeVolumeGradientsNative(
-                    volume->zarrDataset(_ds_sd_idx),
+                    volume->chunkSource(_ds_sd_idx),
                     *rawPts,
-                    _ds_scale
+                    _ds_scale,
+                    _compositeCache
                 );
                 _cachedGradientsSurf = surf;
             }
@@ -316,13 +316,13 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
             const cv::Vec3f center = quadSurf->center();
 
             // Same calculation as gen(): ul = internal_loc(offset/scale + _center, ptr, _scale)
-            const cv::Vec3f offset = {static_cast<float>(-roi.width / 2), static_cast<float>(-roi.height / 2), _z_off};
+            const cv::Vec3f offset = {_z_off, static_cast<float>(-roi.height / 2), static_cast<float>(-roi.width / 2)};
             const cv::Vec3f nominalOffset = offset / _scale + center;
-            const cv::Vec3f ul = ptr + cv::Vec3f(nominalOffset[0] * surfScale[0], nominalOffset[1] * surfScale[1], nominalOffset[2]);
+            const cv::Vec3f ul = ptr + cv::Vec3f(nominalOffset[0], nominalOffset[1] * surfScale[0], nominalOffset[2] * surfScale[1]);
 
-            const double sx = static_cast<double>(surfScale[0]) / static_cast<double>(_scale);
-            const double sy = static_cast<double>(surfScale[1]) / static_cast<double>(_scale);
-            const double ox = static_cast<double>(ul[0]);
+            const double sx = static_cast<double>(surfScale[1]) / static_cast<double>(_scale);
+            const double sy = static_cast<double>(surfScale[0]) / static_cast<double>(_scale);
+            const double ox = static_cast<double>(ul[2]);
             const double oy = static_cast<double>(ul[1]);
 
             // Map from raw grid coords to view coords
@@ -367,7 +367,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
     // Always use fast path (nearest neighbor, no mutex, specialized cache)
     readCompositeFast(
         img,
-        volume->zarrDataset(_ds_sd_idx),
+        volume->chunkSource(_ds_sd_idx),
         base_coords * _ds_scale,
         lightingNormals,
         _ds_scale,  // z step per layer (in dataset coordinates)
@@ -435,11 +435,11 @@ cv::Mat_<uint8_t> CVolumeViewer::renderCompositeForSurface(std::shared_ptr<QuadS
     // Use surface's scale so that gen() computes sx = _scale/_scale = 1.0,
     // sampling 1:1 from the raw points grid
     cv::Size rawPointsSize = surface->rawPointsPtr()->size();
-    float surfScale = surface->_scale[0];
+    float surfScale = surface->_scale[1];
 
     std::cout << "[renderCompositeForSurface] outputSize: " << outputSize.width << "x" << outputSize.height
               << ", rawPointsSize: " << rawPointsSize.width << "x" << rawPointsSize.height
-              << ", surface->_scale: " << surface->_scale[0] << "x" << surface->_scale[1] << std::endl;
+              << ", surface->_scale: " << surface->_scale[1] << "x" << surface->_scale[0] << std::endl;
 
     _surf_weak = surface;
     _scale = surfScale;  // Use surface's scale so gen() samples 1:1 from raw points
@@ -503,7 +503,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 
     cv::Mat baseColor;
 
-    volcart::zarr::ZarrDataset* baseDataset = volume ? volume->zarrDataset(_ds_sd_idx) : nullptr;
+    IChunkSource* baseDataset = volume ? volume->chunkSource(_ds_sd_idx) : nullptr;
 
     // Check if this is a plane surface that should use plane composite rendering
     PlaneSurface* plane = dynamic_cast<PlaneSurface*>(surf.get());
@@ -514,20 +514,20 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
         baseGray = render_composite(roi);
     } else if (usePlaneComposite) {
         // Plane composite: generate coords first, then composite along plane normal
-        surf->gen(&coords, nullptr, roi.size(), cv::Vec3f(0, 0, 0), _scale, {static_cast<float>(roi.x), static_cast<float>(roi.y), _z_off});
+        surf->gen(&coords, nullptr, roi.size(), cv::Vec3f(0, 0, 0), _scale, {_z_off, static_cast<float>(roi.y), static_cast<float>(roi.x)});
         baseGray = render_composite_plane(roi, coords, plane->normal(cv::Vec3f(0, 0, 0)));
     } else {
         if (plane) {
-            surf->gen(&coords, nullptr, roi.size(), cv::Vec3f(0, 0, 0), _scale, {static_cast<float>(roi.x), static_cast<float>(roi.y), _z_off});
+            surf->gen(&coords, nullptr, roi.size(), cv::Vec3f(0, 0, 0), _scale, {_z_off, static_cast<float>(roi.y), static_cast<float>(roi.x)});
 
         } else {
             cv::Vec2f roi_c = {roi.x + roi.width / 2.0f, roi.y + roi.height / 2.0f};
             _ptr = surf->pointer();
-            cv::Vec3f diff = {roi_c[0], roi_c[1], 0};
+            cv::Vec3f diff = {0, roi_c[1], roi_c[0]};
             surf->move(_ptr, diff / _scale);
             _vis_center = roi_c;
 
-            surf->gen(&coords, nullptr, roi.size(), _ptr, _scale, {-roi.width / 2.0f, -roi.height / 2.0f, _z_off});
+            surf->gen(&coords, nullptr, roi.size(), _ptr, _scale, {_z_off, -roi.height / 2.0f, -roi.width / 2.0f});
         }
 
         if (!baseDataset) {
@@ -585,14 +585,14 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
     if (_overlayVolume && _overlayOpacity > 0.0f) {
         if (coords.empty()) {
             if (auto* plane = dynamic_cast<PlaneSurface*>(surf.get())) {
-                surf->gen(&coords, nullptr, roi.size(), cv::Vec3f(0, 0, 0), _scale, {static_cast<float>(roi.x), static_cast<float>(roi.y), _z_off});
+                surf->gen(&coords, nullptr, roi.size(), cv::Vec3f(0, 0, 0), _scale, {_z_off, static_cast<float>(roi.y), static_cast<float>(roi.x)});
             } else {
                 cv::Vec2f roi_c = {roi.x + roi.width / 2.0f, roi.y + roi.height / 2.0f};
                 _ptr = surf->pointer();
-                cv::Vec3f diff = {roi_c[0], roi_c[1], 0};
+                cv::Vec3f diff = {0, roi_c[1], roi_c[0]};
                 surf->move(_ptr, diff / _scale);
                 _vis_center = roi_c;
-                surf->gen(&coords, nullptr, roi.size(), _ptr, _scale, {-roi.width / 2.0f, -roi.height / 2.0f, _z_off});
+                surf->gen(&coords, nullptr, roi.size(), _ptr, _scale, {_z_off, -roi.height / 2.0f, -roi.width / 2.0f});
             }
         }
 
@@ -605,7 +605,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
             }
 
             cv::Mat_<uint8_t> overlayValues;
-            volcart::zarr::ZarrDataset* overlayDataset = _overlayVolume->zarrDataset(overlayIdx);
+            IChunkSource* overlayDataset = _overlayVolume->chunkSource(overlayIdx);
             readInterpolated3D(overlayValues, overlayDataset, coords * overlayScale, cache, /*nearest_neighbor=*/true);
 
             if (!overlayValues.empty()) {
@@ -866,7 +866,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite_plane(const cv::Rect &roi, con
 {
     cv::Mat_<uint8_t> img;
 
-    if (coords.empty() || !volume || !volume->zarrDataset(_ds_sd_idx)) {
+    if (coords.empty() || !volume || !volume->chunkSource(_ds_sd_idx)) {
         return img;
     }
 
@@ -895,7 +895,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite_plane(const cv::Rect &roi, con
     // Always use fast path with constant normal (nearest neighbor, no mutex)
     readCompositeFastConstantNormal(
         img,
-        volume->zarrDataset(_ds_sd_idx),
+        volume->chunkSource(_ds_sd_idx),
         coords * _ds_scale,
         planeNormal,  // Single constant normal for all pixels
         _ds_scale,    // z step per layer (in dataset coordinates)

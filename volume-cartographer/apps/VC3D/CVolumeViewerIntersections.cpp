@@ -61,7 +61,7 @@ static bool intersectionLinesEqual(const std::vector<IntersectionLine>& a,
 void CVolumeViewer::renderIntersections()
 {
     auto surf = _surf_weak.lock();
-    if (!volume || !volume->zarrDataset() || !surf)
+    if (!volume || !volume->chunkSource() || !surf)
         return;
 
     // Refresh cached surface pointers if targets changed or if a surface object
@@ -359,8 +359,8 @@ void CVolumeViewer::renderIntersections()
             if (checkApproval) {
                 const cv::Vec3f center = segmentation->center();
                 const cv::Vec2f scale = segmentation->scale();
-                approvalOffsetX = center[0] * scale[0];
-                approvalOffsetY = center[1] * scale[1];
+                approvalOffsetX = center[2] * scale[1];
+                approvalOffsetY = center[1] * scale[0];
             }
 
             // Batch lines by style (color/width/z) to reduce QGraphicsItem count
@@ -431,8 +431,8 @@ void CVolumeViewer::renderIntersections()
                 QPainterPath& path = batchedPaths[style];
                 cv::Vec3f p0 = plane->project(line.world[0], 1.0, _scale);
                 cv::Vec3f p1 = plane->project(line.world[1], 1.0, _scale);
-                path.moveTo(p0[0], p0[1]);
-                path.lineTo(p1[0], p1[1]);
+                path.moveTo(p0[2], p0[1]);
+                path.lineTo(p1[2], p1[1]);
             }
 
             // Create one QGraphicsItem per style batch

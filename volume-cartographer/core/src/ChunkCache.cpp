@@ -4,40 +4,38 @@
 
 using namespace volcart::zarr;
 
-// Helper to read a chunk from disk
+// Helper to read a chunk from disk via IChunkSource
 template<typename T>
-static std::shared_ptr<Tensor3D<T>> readChunkFromDisk(ZarrDataset& ds, size_t ix, size_t iy, size_t iz)
+static std::shared_ptr<Tensor3D<T>> readChunkFromSource(IChunkSource& src, size_t iz, size_t iy, size_t ix)
 {
-    std::vector<std::size_t> chunkId = {ix, iy, iz};
-
-    Dtype dtype = ds.getDtype();
+    Dtype dtype = src.volDtype();
     if (dtype != Dtype::UInt8 && dtype != Dtype::UInt16)
-        throw std::runtime_error("only uint8_t/uint16 zarrs supported currently!");
+        throw std::runtime_error("only uint8_t/uint16 sources supported currently!");
 
-    const auto& maxChunkShape = ds.chunkShape();
+    const auto chunkShape = src.volChunkShape();
 
-    auto out = std::make_shared<Tensor3D<T>>(maxChunkShape[0], maxChunkShape[1], maxChunkShape[2]);
+    auto out = std::make_shared<Tensor3D<T>>(chunkShape[0], chunkShape[1], chunkShape[2]);
 
     bool ok = false;
     if (dtype == Dtype::UInt8) {
         if constexpr (std::is_same_v<T, uint8_t>) {
-            ok = ds.readChunk(chunkId, out->data());
+            ok = src.volReadChunk(iz, iy, ix, out->data());
         } else {
             throw std::runtime_error("Cannot read uint8 dataset into uint16 array");
         }
     }
     else if (dtype == Dtype::UInt16) {
         if constexpr (std::is_same_v<T, uint16_t>) {
-            ok = ds.readChunk(chunkId, out->data());
+            ok = src.volReadChunk(iz, iy, ix, out->data());
         } else if constexpr (std::is_same_v<T, uint8_t>) {
-            Tensor3D<uint16_t> tmp(maxChunkShape[0], maxChunkShape[1], maxChunkShape[2]);
-            ok = ds.readChunk(chunkId, tmp.data());
+            size_t chunkElems = src.volChunkElements();
+            Tensor3D<uint16_t> tmp(chunkShape[0], chunkShape[1], chunkShape[2]);
+            ok = src.volReadChunk(iz, iy, ix, tmp.data());
 
             if (ok) {
-                const size_t maxChunkSize = ds.defaultChunkSize();
                 uint8_t* p8 = out->data();
                 uint16_t* p16 = tmp.data();
-                for (size_t i = 0; i < maxChunkSize; i++)
+                for (size_t i = 0; i < chunkElems; i++)
                     p8[i] = p16[i] / 257;
             }
         }
@@ -56,8 +54,8 @@ template<typename T>
 void ChunkCache<T>::setMaxBytes(size_t maxBytes)
 {
     _maxBytes = maxBytes;
-    if (_ds && _cw > 0 && _ch > 0 && _cd > 0) {
-        size_t chunkBytes = static_cast<size_t>(_cw) * _ch * _cd * sizeof(T);
+    if (_src && _cz > 0 && _cy > 0 && _cx > 0) {
+        size_t chunkBytes = static_cast<size_t>(_cz) * _cy * _cx * sizeof(T);
         _maxChunks = (_maxBytes > 0) ? (_maxBytes / chunkBytes) : 0;
     }
 }
@@ -69,42 +67,42 @@ ChunkCache<T>::~ChunkCache()
 }
 
 template<typename T>
-void ChunkCache<T>::init(ZarrDataset* ds)
+void ChunkCache<T>::init(IChunkSource* src)
 {
-    if (_ds == ds) return;
+    if (_src == src) return;
 
     clear();
 
-    if (!ds) {
-        _ds = nullptr;
+    if (!src) {
+        _src = nullptr;
         return;
     }
 
-    const auto& blockShape = ds->chunkShape();
-    _cw = static_cast<int>(blockShape[0]);
-    _ch = static_cast<int>(blockShape[1]);
-    _cd = static_cast<int>(blockShape[2]);
+    const auto chunkShape = src->volChunkShape();
+    _cz = static_cast<int>(chunkShape[0]);
+    _cy = static_cast<int>(chunkShape[1]);
+    _cx = static_cast<int>(chunkShape[2]);
 
-    _cwShift = log2_pow2(_cw);
-    _chShift = log2_pow2(_ch);
-    _cdShift = log2_pow2(_cd);
-    _cwMask = _cw - 1;
-    _chMask = _ch - 1;
-    _cdMask = _cd - 1;
+    _czShift = log2_pow2(_cz);
+    _cyShift = log2_pow2(_cy);
+    _cxShift = log2_pow2(_cx);
+    _czMask = _cz - 1;
+    _cyMask = _cy - 1;
+    _cxMask = _cx - 1;
 
-    const auto& dsShape = ds->shape();
-    _sx = static_cast<int>(dsShape[0]);
+    const auto dsShape = src->volShape();
+    _sz = static_cast<int>(dsShape[0]);
     _sy = static_cast<int>(dsShape[1]);
-    _sz = static_cast<int>(dsShape[2]);
+    _sx = static_cast<int>(dsShape[2]);
 
-    _chunksX = (_sx + _cw - 1) / _cw;
-    _chunksY = (_sy + _ch - 1) / _ch;
-    _chunksZ = (_sz + _cd - 1) / _cd;
+    _chunksZ = (_sz + _cz - 1) / _cz;
+    _chunksY = (_sy + _cy - 1) / _cy;
+    _chunksX = (_sx + _cx - 1) / _cx;
 
-    size_t chunkBytes = static_cast<size_t>(_cw) * _ch * _cd * sizeof(T);
+    size_t chunkBytes = static_cast<size_t>(_cz) * _cy * _cx * sizeof(T);
     _maxChunks = (_maxBytes > 0) ? (_maxBytes / chunkBytes) : 0;
 
-    _totalSlots = static_cast<size_t>(_chunksX) * _chunksY * _chunksZ;
+    _totalSlots = static_cast<size_t>(_chunksZ) * _chunksY * _chunksX;
     _chunks = std::make_unique<std::atomic<ChunkPtr>[]>(_totalSlots);
     _rawChunks = std::make_unique<std::atomic<const Tensor3D<T>*>[]>(_totalSlots);
     for (size_t i = 0; i < _totalSlots; i++)
@@ -114,16 +112,16 @@ void ChunkCache<T>::init(ZarrDataset* ds)
     _cachedCount.store(0, std::memory_order_relaxed);
     _generation.store(0, std::memory_order_relaxed);
 
-    _ds = ds;
+    _src = src;
 }
 
 template<typename T>
-auto ChunkCache<T>::get(int ix, int iy, int iz) -> ChunkPtr
+auto ChunkCache<T>::get(int iz, int iy, int ix) -> ChunkPtr
 {
-    if (ix < 0 || ix >= _chunksX || iy < 0 || iy >= _chunksY || iz < 0 || iz >= _chunksZ)
+    if (iz < 0 || iz >= _chunksZ || iy < 0 || iy >= _chunksY || ix < 0 || ix >= _chunksX)
         return nullptr;
 
-    size_t i = idx(ix, iy, iz);
+    size_t i = idx(iz, iy, ix);
 
     // Fast path: lock-free atomic read
     ChunkPtr cached = _chunks[i].load(std::memory_order_acquire);
@@ -142,7 +140,7 @@ auto ChunkCache<T>::get(int ix, int iy, int iz) -> ChunkPtr
         return cached;
     }
 
-    ChunkPtr newChunk = loadChunk(ix, iy, iz);
+    ChunkPtr newChunk = loadChunk(iz, iy, ix);
     if (!newChunk) return nullptr;
 
     {
@@ -160,47 +158,47 @@ auto ChunkCache<T>::get(int ix, int iy, int iz) -> ChunkPtr
 }
 
 template<typename T>
-Tensor3D<T>* ChunkCache<T>::getRaw(int ix, int iy, int iz)
+Tensor3D<T>* ChunkCache<T>::getRaw(int iz, int iy, int ix)
 {
-    auto ptr = get(ix, iy, iz);
+    auto ptr = get(iz, iy, ix);
     return ptr.get();
 }
 
 template<typename T>
-const Tensor3D<T>* ChunkCache<T>::getRawFast(int ix, int iy, int iz) const
+const Tensor3D<T>* ChunkCache<T>::getRawFast(int iz, int iy, int ix) const
 {
-    if (ix < 0 || ix >= _chunksX || iy < 0 || iy >= _chunksY || iz < 0 || iz >= _chunksZ)
+    if (iz < 0 || iz >= _chunksZ || iy < 0 || iy >= _chunksY || ix < 0 || ix >= _chunksX)
         return nullptr;
 
-    size_t i = idx(ix, iy, iz);
+    size_t i = idx(iz, iy, ix);
     return _rawChunks[i].load(std::memory_order_relaxed);
 }
 
 template<typename T>
-auto ChunkCache<T>::getIfCached(int ix, int iy, int iz) const -> ChunkPtr
+auto ChunkCache<T>::getIfCached(int iz, int iy, int ix) const -> ChunkPtr
 {
-    if (ix < 0 || ix >= _chunksX || iy < 0 || iy >= _chunksY || iz < 0 || iz >= _chunksZ)
+    if (iz < 0 || iz >= _chunksZ || iy < 0 || iy >= _chunksY || ix < 0 || ix >= _chunksX)
         return nullptr;
 
-    size_t i = idx(ix, iy, iz);
+    size_t i = idx(iz, iy, ix);
     return _chunks[i].load(std::memory_order_acquire);
 }
 
 template<typename T>
-void ChunkCache<T>::prefetch(int minIx, int minIy, int minIz, int maxIx, int maxIy, int maxIz)
+void ChunkCache<T>::prefetch(int minIz, int minIy, int minIx, int maxIz, int maxIy, int maxIx)
 {
-    minIx = std::max(0, minIx);
-    minIy = std::max(0, minIy);
     minIz = std::max(0, minIz);
-    maxIx = std::min(_chunksX - 1, maxIx);
-    maxIy = std::min(_chunksY - 1, maxIy);
+    minIy = std::max(0, minIy);
+    minIx = std::max(0, minIx);
     maxIz = std::min(_chunksZ - 1, maxIz);
+    maxIy = std::min(_chunksY - 1, maxIy);
+    maxIx = std::min(_chunksX - 1, maxIx);
 
     #pragma omp parallel for collapse(3) schedule(dynamic, 1)
-    for (int iz = minIz; iz <= maxIz; iz++) {
+    for (int ix = minIx; ix <= maxIx; ix++) {
         for (int iy = minIy; iy <= maxIy; iy++) {
-            for (int ix = minIx; ix <= maxIx; ix++) {
-                get(ix, iy, iz);
+            for (int iz = minIz; iz <= maxIz; iz++) {
+                get(iz, iy, ix);
             }
         }
     }
@@ -218,12 +216,12 @@ void ChunkCache<T>::clear()
     _lastAccess.reset();
     _totalSlots = 0;
 
-    _ds = nullptr;
-    _cw = _ch = _cd = 0;
-    _sx = _sy = _sz = 0;
-    _chunksX = _chunksY = _chunksZ = 0;
-    _cwShift = _chShift = _cdShift = 0;
-    _cwMask = _chMask = _cdMask = 0;
+    _src = nullptr;
+    _cz = _cy = _cx = 0;
+    _sz = _sy = _sx = 0;
+    _chunksZ = _chunksY = _chunksX = 0;
+    _czShift = _cyShift = _cxShift = 0;
+    _czMask = _cyMask = _cxMask = 0;
     _maxChunks = 0;
     _cachedCount.store(0, std::memory_order_relaxed);
     _generation.store(0, std::memory_order_relaxed);
@@ -283,11 +281,11 @@ void ChunkCache<T>::evictIfNeeded()
 }
 
 template<typename T>
-auto ChunkCache<T>::loadChunk(int ix, int iy, int iz) -> ChunkPtr
+auto ChunkCache<T>::loadChunk(int iz, int iy, int ix) -> ChunkPtr
 {
-    if (!_ds) return nullptr;
+    if (!_src) return nullptr;
     try {
-        return readChunkFromDisk<T>(*_ds, static_cast<size_t>(ix), static_cast<size_t>(iy), static_cast<size_t>(iz));
+        return readChunkFromSource<T>(*_src, static_cast<size_t>(iz), static_cast<size_t>(iy), static_cast<size_t>(ix));
     } catch (const std::exception&) {
         return nullptr;
     }

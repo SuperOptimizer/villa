@@ -1,6 +1,6 @@
 #pragma once
 
-#include "vc/core/zarr/ZarrDataset.hpp"
+#include "vc/core/types/IChunkSource.hpp"
 
 class QuadSurface;
 template<typename T> class ChunkCache;
@@ -13,11 +13,11 @@ void render_binary_mask(QuadSurface* surf,
 void render_surface_image(QuadSurface* surf,
                          cv::Mat_<uint8_t>& mask,
                          cv::Mat_<uint8_t>& img,
-                         volcart::zarr::ZarrDataset* ds,
+                         IChunkSource* ds,
                          ChunkCache<uint8_t>* cache,
                          float scale = 1.0f);
 
 void render_image_from_coords(const cv::Mat_<cv::Vec3f>& coords,
                               cv::Mat_<uint8_t>& img,
-                              volcart::zarr::ZarrDataset* ds,
+                              IChunkSource* ds,
                               ChunkCache<uint8_t>* cache);

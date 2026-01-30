@@ -1530,9 +1530,9 @@ void CWindow::onGrowSeeds(const std::string& segmentId, bool isExpand, bool isRa
             QMessageBox::warning(this, tr("Error"), tr("No focus point selected. Click on a volume with Ctrl key to set a seed point."));
             return;
         }
-        seedX = static_cast<int>(poi->p[0]);
+        seedX = static_cast<int>(poi->p[2]);
         seedY = static_cast<int>(poi->p[1]);
-        seedZ = static_cast<int>(poi->p[2]);
+        seedZ = static_cast<int>(poi->p[0]);
     }
 
     _cmdRunner->setGrowParams(
@@ -1921,7 +1921,7 @@ void CWindow::onExportWidthChunks(const std::string& segmentId)
     const int W = points.cols;
     const int H = points.rows;
     const cv::Vec2f sc = surf->scale();
-    const double sx = (std::isfinite(sc[0]) && sc[0] > 0.0f) ? double(sc[0]) : 1.0; // guard
+    const double sx = (std::isfinite(sc[1]) && sc[1] > 0.0f) ? double(sc[1]) : 1.0; // guard
 
     if (W <= 0 || H <= 0) {
         QMessageBox::warning(this, tr("Error"),

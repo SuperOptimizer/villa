@@ -629,7 +629,7 @@ bool DrawingWidget::isValidVolumePoint(const cv::Vec3f& point) const
     }
     
     // Check if the point is within volume bounds
-    auto [w, h, d] = currentVolume->shape();
+    auto [d, h, w] = currentVolume->shape();
 
     if (point[0] >= w || point[1] >= h || point[2] >= d) {
         return false;

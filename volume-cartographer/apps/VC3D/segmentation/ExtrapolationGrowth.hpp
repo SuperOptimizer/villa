@@ -4,7 +4,7 @@
 
 #include <opencv2/core.hpp>
 #include <vc/core/util/ChunkCache.hpp>
-#include <vc/core/zarr/ZarrDataset.hpp>
+#include <vc/core/types/IChunkSource.hpp>
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
@@ -42,7 +42,7 @@ struct NewtonRefinementParams {
 
 // Context for SDT-guided refinement
 struct SDTContext {
-    volcart::zarr::ZarrDataset* binaryDataset = nullptr;
+    IChunkSource* binaryDataset = nullptr;
     ChunkCache<uint8_t>* cache = nullptr;
     NewtonRefinementParams params;
 
@@ -75,7 +75,7 @@ struct SkeletonPathParams {
 
 // Context for skeleton path extrapolation
 struct SkeletonPathContext {
-    volcart::zarr::ZarrDataset* binaryDataset = nullptr;
+    IChunkSource* binaryDataset = nullptr;
     ChunkCache<uint8_t>* cache = nullptr;
     SkeletonPathParams params;
 

@@ -86,13 +86,13 @@ static cv::Vec2f find_closest_intersection(QuadSurface* surface, const cv::Vec3f
 
     for (int i = 0; i < 1000; ++i) { // 1000 random trials
         cv::Vec2f nominal_loc = {
-            (float)(rand() % s_size.width),
-            (float)(rand() % s_size.height)
+            (float)(rand() % s_size.height),
+            (float)(rand() % s_size.width)
         };
 
         cv::Vec2f cand_loc_abs = { nominal_loc[0] * scale[0], nominal_loc[1] * scale[1] };
 
-        cv::Vec3f ptr_loc = cv::Vec3f(cand_loc_abs[0], cand_loc_abs[1], 0) - center_in_points;
+        cv::Vec3f ptr_loc = cv::Vec3f(0, cand_loc_abs[0], cand_loc_abs[1]) - center_in_points;
         if (!surface->valid(ptr_loc)) {
             continue;
         }
@@ -129,7 +129,7 @@ nlohmann::json calc_point_metrics(const VCCollection& collection, QuadSurface* s
 
         std::vector<ColPoint> points;
         for (const auto& p_pair : coll.points) {
-            if (p_pair.second.p[2] >= z_min && p_pair.second.p[2] <= z_max) {
+            if (p_pair.second.p[0] >= z_min && p_pair.second.p[0] <= z_max) {
                 points.push_back(p_pair.second);
             }
         }
@@ -161,11 +161,11 @@ nlohmann::json calc_point_metrics(const VCCollection& collection, QuadSurface* s
 
             cv::Vec3f ptr1 = surface->pointer();
             surface->pointTo(ptr1, p1.p, 5.0);
-            cv::Vec2f loc1(ptr1[0], ptr1[1]);
+            cv::Vec2f loc1(ptr1[1], ptr1[2]);
 
             cv::Vec3f ptr2 = surface->pointer();
             surface->pointTo(ptr2, p2.p, 5.0);
-            cv::Vec2f loc2(ptr2[0], ptr2[1]);
+            cv::Vec2f loc2(ptr2[1], ptr2[2]);
 
             cv::Vec2f scale = surface->scale();
             cv::Vec2f diff_loc = (loc1 - loc2);
@@ -205,7 +205,7 @@ nlohmann::json calc_point_winding_metrics(const VCCollection& collection, QuadSu
         std::vector<ColPoint> points_with_winding;
         for (const auto& p_pair : coll.points) {
             if (!std::isnan(p_pair.second.winding_annotation)) {
-                if (p_pair.second.p[2] >= z_min && p_pair.second.p[2] <= z_max) {
+                if (p_pair.second.p[0] >= z_min && p_pair.second.p[0] <= z_max) {
                     points_with_winding.push_back(p_pair.second);
                 }
             }

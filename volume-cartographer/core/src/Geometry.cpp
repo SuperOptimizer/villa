@@ -29,25 +29,25 @@ static cv::Vec2f vmax(const cv::Vec2f &a, const cv::Vec2f &b)
 
 cv::Vec3f grid_normal(const cv::Mat_<cv::Vec3f> &points, const cv::Vec3f &loc)
 {
-    cv::Vec2f inb_loc = {loc[0], loc[1]};
+    cv::Vec2f inb_loc = {loc[1], loc[2]};
     //move inside from the grid border so w can access required locations
     inb_loc = vmax(inb_loc, {1.f,1.f});
-    inb_loc = vmin(inb_loc, {static_cast<float>(points.cols-3), static_cast<float>(points.rows-3)});
+    inb_loc = vmin(inb_loc, {static_cast<float>(points.rows-3), static_cast<float>(points.cols-3)});
 
     if (!loc_valid_xy(points, inb_loc))
         return {NAN,NAN,NAN};
 
-    if (!loc_valid_xy(points, inb_loc+cv::Vec2f(1,0)))
-        return {NAN,NAN,NAN};
-    if (!loc_valid_xy(points, inb_loc+cv::Vec2f(-1,0)))
-        return {NAN,NAN,NAN};
     if (!loc_valid_xy(points, inb_loc+cv::Vec2f(0,1)))
         return {NAN,NAN,NAN};
     if (!loc_valid_xy(points, inb_loc+cv::Vec2f(0,-1)))
         return {NAN,NAN,NAN};
+    if (!loc_valid_xy(points, inb_loc+cv::Vec2f(1,0)))
+        return {NAN,NAN,NAN};
+    if (!loc_valid_xy(points, inb_loc+cv::Vec2f(-1,0)))
+        return {NAN,NAN,NAN};
 
-    cv::Vec3f xv = normed(at_int(points,inb_loc+cv::Vec2f(1,0))-at_int(points,inb_loc-cv::Vec2f(1,0)));
-    cv::Vec3f yv = normed(at_int(points,inb_loc+cv::Vec2f(0,1))-at_int(points,inb_loc-cv::Vec2f(0,1)));
+    cv::Vec3f xv = normed(at_int(points,inb_loc+cv::Vec2f(0,1))-at_int(points,inb_loc-cv::Vec2f(0,1)));
+    cv::Vec3f yv = normed(at_int(points,inb_loc+cv::Vec2f(1,0))-at_int(points,inb_loc-cv::Vec2f(1,0)));
 
     // Left-hand rule: +U (xv) × +V (yv) = +Z (toward viewer)
     cv::Vec3f n = xv.cross(yv);
@@ -61,10 +61,10 @@ cv::Vec3f grid_normal(const cv::Mat_<cv::Vec3f> &points, const cv::Vec3f &loc)
 template <typename E>
 static E at_int_impl(const cv::Mat_<E> &points, const cv::Vec2f& p)
 {
-    int x = p[0];
-    int y = p[1];
-    float fx = p[0]-x;
-    float fy = p[1]-y;
+    int y = p[0];
+    int x = p[1];
+    float fy = p[0]-y;
+    float fx = p[1]-x;
 
     const E& p00 = points(y,x);
     const E& p01 = points(y,x+1);
@@ -125,12 +125,12 @@ static bool loc_valid_scalar(const cv::Mat_<float> &m, const cv::Vec2d &l)
 template<typename T, int C>
 static bool loc_valid_xy_impl(const cv::Mat_<cv::Vec<T,C>> &m, const cv::Vec2d &l)
 {
-    return loc_valid_impl(m, {l[1],l[0]});
+    return loc_valid_impl(m, l);
 }
 
 static bool loc_valid_xy_scalar(const cv::Mat_<float> &m, const cv::Vec2d &l)
 {
-    return loc_valid_scalar(m, {l[1],l[0]});
+    return loc_valid_scalar(m, l);
 }
 
 cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &p) {

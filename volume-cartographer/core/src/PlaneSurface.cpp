@@ -11,7 +11,7 @@ namespace {
 //NOTE we have 3 coordinate systems. Nominal (voxel volume) coordinates, internal relative (ptr) coords (where _center is at 0/0) and internal absolute (_points) coordinates where the upper left corner is at 0/0.
 static cv::Vec3f internal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal, const cv::Vec2f &scale)
 {
-    return internal + cv::Vec3f(nominal[0]*scale[0], nominal[1]*scale[1], nominal[2]);
+    return internal + cv::Vec3f(nominal[0], nominal[1]*scale[0], nominal[2]*scale[1]);
 }
 
 //given origin and normal, return the normalized vector v which describes a point : origin + v which lies in the plane and maximizes v.x at the cost of v.y,v.z
@@ -23,9 +23,9 @@ static cv::Vec3f vx_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
 
     //also trivial
     if (n[0] == 0)
-        return {1,0,0};
+        return {0,0,1};
 
-    cv::Vec3f v = {1,0,0};
+    cv::Vec3f v = {0,0,1};
 
     if (n[1] == 0) {
         v[1] = 0;
@@ -158,7 +158,7 @@ void PlaneSurface::update()
     _vy = vy;
 
     std::vector <cv::Vec3f> src = {_origin,_origin+_normal,_origin+_vx,_origin+_vy};
-    std::vector <cv::Vec3f> tgt = {{0,0,0},{0,0,1},{1,0,0},{0,1,0}};
+    std::vector <cv::Vec3f> tgt = {{0,0,0},{1,0,0},{0,0,1},{0,1,0}};
     cv::Mat transf;
     cv::Mat inliers;
 
@@ -185,7 +185,7 @@ float PlaneSurface::scalarp(cv::Vec3f point) const
 
 void PlaneSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, const cv::Vec3f &ptr, float scale, const cv::Vec3f &offset)
 {
-    bool create_normals = normals || offset[2] || ptr[2];
+    bool create_normals = normals || offset[0] || ptr[0];
     cv::Vec3f total_offset = internal_loc(offset/scale, ptr, {1,1});
 
     int w = size.width;
@@ -208,12 +208,12 @@ void PlaneSurface::gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals
     const cv::Vec3f vy = _vy;
 
     float m = 1/scale;
-    cv::Vec3f use_origin = _origin + _normal*total_offset[2];
+    cv::Vec3f use_origin = _origin + _normal*total_offset[0];
 
 #pragma omp parallel for
     for(int j=0;j<h;j++)
         for(int i=0;i<w;i++) {
-            (*coords)(j,i) = vx*(i*m+total_offset[0]) + vy*(j*m+total_offset[1]) + use_origin;
+            (*coords)(j,i) = vx*(i*m+total_offset[2]) + vy*(j*m+total_offset[1]) + use_origin;
         }
 }
 
@@ -250,7 +250,7 @@ cv::Vec3f PlaneSurface::normal(const cv::Vec3f &ptr, const cv::Vec3f &offset)
 //plane -> stay on plane
 float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds, PlaneSurface *plane, float init_step, float min_step)
 {
-    if (!loc_valid(points, {loc[1],loc[0]})) {
+    if (!loc_valid(points, loc)) {
         out = {-1,-1,-1};
         return -1;
     }
@@ -277,7 +277,7 @@ float min_loc(const cv::Mat_<cv::Vec3f> &points, cv::Vec2f &loc, cv::Vec3f &out,
         for(auto &off : search) {
             cv::Vec2f cand = loc+off*step;
 
-            if (!loc_valid(points, {cand[1],cand[0]})) {
+            if (!loc_valid(points, cand)) {
                 // out = {-1,-1,-1};
                 // loc = {-1,-1};
                 // return -1;

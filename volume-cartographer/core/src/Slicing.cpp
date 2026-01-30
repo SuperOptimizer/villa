@@ -2,7 +2,6 @@
 #include "vc/core/util/Compositing.hpp"
 
 #include "vc/core/zarr/Tensor3D.hpp"
-#include "vc/core/zarr/ZarrDataset.hpp"
 
 #include <opencv2/core.hpp>
 #include <opencv2/calib3d.hpp>
@@ -16,21 +15,21 @@ using namespace volcart::zarr;
 
 
 // ============================================================================
-// CacheParams — extract cache constants once
+// CacheParams — extract cache constants once (ZYX ordering)
 // ============================================================================
 
 template<typename T>
 struct CacheParams {
-    int cw, ch, cd, sx, sy, sz;
-    int cwShift, chShift, cdShift, cwMask, chMask, cdMask;
-    int chunksX, chunksY, chunksZ;
+    int cz, cy, cx, sz, sy, sx;
+    int czShift, cyShift, cxShift, czMask, cyMask, cxMask;
+    int chunksZ, chunksY, chunksX;
 
     explicit CacheParams(ChunkCache<T>& c)
-        : cw(c.chunkSizeX()), ch(c.chunkSizeY()), cd(c.chunkSizeZ()),
-          sx(c.datasetSizeX()), sy(c.datasetSizeY()), sz(c.datasetSizeZ()),
-          cwShift(c.chunkShiftX()), chShift(c.chunkShiftY()), cdShift(c.chunkShiftZ()),
-          cwMask(c.chunkMaskX()), chMask(c.chunkMaskY()), cdMask(c.chunkMaskZ()),
-          chunksX(c.chunksX()), chunksY(c.chunksY()), chunksZ(c.chunksZ()) {}
+        : cz(c.chunkSizeZ()), cy(c.chunkSizeY()), cx(c.chunkSizeX()),
+          sz(c.datasetSizeZ()), sy(c.datasetSizeY()), sx(c.datasetSizeX()),
+          czShift(c.chunkShiftZ()), cyShift(c.chunkShiftY()), cxShift(c.chunkShiftX()),
+          czMask(c.chunkMaskZ()), cyMask(c.chunkMaskY()), cxMask(c.chunkMaskX()),
+          chunksZ(c.chunksZ()), chunksY(c.chunksY()), chunksX(c.chunksX()) {}
 };
 
 
@@ -38,11 +37,11 @@ struct CacheParams {
 // ChunkSampler — thread-local fast voxel access via raw pointer + strides
 // ============================================================================
 
-template<typename T, bool PrefetchZ = false>
+template<typename T, bool PrefetchX = false>
 struct ChunkSampler {
     const CacheParams<T>& p;
     ChunkCache<T>& cache;
-    int cachedIx = -1, cachedIy = -1, cachedIz = -1;
+    int cachedIz = -1, cachedIy = -1, cachedIx = -1;
     typename ChunkCache<T>::ChunkPtr cachedChunk;  // holds chunk alive
     const T* data = nullptr;
     size_t s0 = 0, s1 = 0, s2 = 0;
@@ -50,132 +49,132 @@ struct ChunkSampler {
     ChunkSampler(const CacheParams<T>& p_, ChunkCache<T>& cache_)
         : p(p_), cache(cache_) {}
 
-    void updateChunk(int ix, int iy, int iz) {
-        if (ix == cachedIx && iy == cachedIy && iz == cachedIz) return;
-        cachedChunk = cache.get(ix, iy, iz);
+    void updateChunk(int iz, int iy, int ix) {
+        if (iz == cachedIz && iy == cachedIy && ix == cachedIx) return;
+        cachedChunk = cache.get(iz, iy, ix);
         if (cachedChunk) {
             data = cachedChunk->data();
-            s0 = static_cast<size_t>(p.ch) * p.cd;
-            s1 = static_cast<size_t>(p.cd);
+            s0 = static_cast<size_t>(p.cy) * p.cx;
+            s1 = static_cast<size_t>(p.cx);
             s2 = 1;
-            if constexpr (PrefetchZ) {
-                if (iz + 1 < p.chunksZ) {
-                    auto next = cache.getIfCached(ix, iy, iz + 1);
+            if constexpr (PrefetchX) {
+                if (ix + 1 < p.chunksX) {
+                    auto next = cache.getIfCached(iz, iy, ix + 1);
                     if (next) __builtin_prefetch(next->data(), 0, 1);
                 }
             }
         } else {
             data = nullptr;
         }
-        cachedIx = ix; cachedIy = iy; cachedIz = iz;
+        cachedIz = iz; cachedIy = iy; cachedIx = ix;
     }
 
-    bool inBounds(float ox, float oy, float oz) const {
-        return ox >= 0 && oy >= 0 && oz >= 0 && ox < p.sx && oy < p.sy && oz < p.sz;
+    bool inBounds(float vz, float vy, float vx) const {
+        return vz >= 0 && vy >= 0 && vx >= 0 && vz < p.sz && vy < p.sy && vx < p.sx;
     }
 
-    T sampleNearest(float ox, float oy, float oz) {
-        int iox = static_cast<int>(ox + 0.5f);
-        int ioy = static_cast<int>(oy + 0.5f);
-        int ioz = static_cast<int>(oz + 0.5f);
-        if (iox >= p.sx) iox = p.sx - 1;
-        if (ioy >= p.sy) ioy = p.sy - 1;
-        if (ioz >= p.sz) ioz = p.sz - 1;
+    T sampleNearest(float vz, float vy, float vx) {
+        int iz = static_cast<int>(vz + 0.5f);
+        int iy = static_cast<int>(vy + 0.5f);
+        int ix = static_cast<int>(vx + 0.5f);
+        if (iz >= p.sz) iz = p.sz - 1;
+        if (iy >= p.sy) iy = p.sy - 1;
+        if (ix >= p.sx) ix = p.sx - 1;
 
-        updateChunk(iox >> p.cwShift, ioy >> p.chShift, ioz >> p.cdShift);
+        updateChunk(iz >> p.czShift, iy >> p.cyShift, ix >> p.cxShift);
         if (!data) return 0;
 
-        return data[(iox & p.cwMask) * s0 + (ioy & p.chMask) * s1 + (ioz & p.cdMask) * s2];
+        return data[(iz & p.czMask) * s0 + (iy & p.cyMask) * s1 + (ix & p.cxMask) * s2];
     }
 
-    T sampleInt(int ox, int oy, int oz) {
-        if (ox < 0 || oy < 0 || oz < 0 || ox >= p.sx || oy >= p.sy || oz >= p.sz)
+    T sampleInt(int iz, int iy, int ix) {
+        if (iz < 0 || iy < 0 || ix < 0 || iz >= p.sz || iy >= p.sy || ix >= p.sx)
             return 0;
 
-        updateChunk(ox >> p.cwShift, oy >> p.chShift, oz >> p.cdShift);
+        updateChunk(iz >> p.czShift, iy >> p.cyShift, ix >> p.cxShift);
         if (!data) return 0;
 
-        return data[(ox & p.cwMask) * s0 + (oy & p.chMask) * s1 + (oz & p.cdMask) * s2];
+        return data[(iz & p.czMask) * s0 + (iy & p.cyMask) * s1 + (ix & p.cxMask) * s2];
     }
 
-    float sampleTrilinear(float ox, float oy, float oz) {
-        int iox = static_cast<int>(ox);
-        int ioy = static_cast<int>(oy);
-        int ioz = static_cast<int>(oz);
+    float sampleTrilinear(float vz, float vy, float vx) {
+        int iz = static_cast<int>(vz);
+        int iy = static_cast<int>(vy);
+        int ix = static_cast<int>(vx);
 
-        float c000 = sampleInt(iox, ioy, ioz);
-        float c100 = sampleInt(iox + 1, ioy, ioz);
-        float c010 = sampleInt(iox, ioy + 1, ioz);
-        float c110 = sampleInt(iox + 1, ioy + 1, ioz);
-        float c001 = sampleInt(iox, ioy, ioz + 1);
-        float c101 = sampleInt(iox + 1, ioy, ioz + 1);
-        float c011 = sampleInt(iox, ioy + 1, ioz + 1);
-        float c111 = sampleInt(iox + 1, ioy + 1, ioz + 1);
+        float c000 = sampleInt(iz, iy, ix);
+        float c100 = sampleInt(iz + 1, iy, ix);
+        float c010 = sampleInt(iz, iy + 1, ix);
+        float c110 = sampleInt(iz + 1, iy + 1, ix);
+        float c001 = sampleInt(iz, iy, ix + 1);
+        float c101 = sampleInt(iz + 1, iy, ix + 1);
+        float c011 = sampleInt(iz, iy + 1, ix + 1);
+        float c111 = sampleInt(iz + 1, iy + 1, ix + 1);
 
-        float fx = ox - iox;
-        float fy = oy - ioy;
-        float fz = oz - ioz;
+        float fz = vz - iz;
+        float fy = vy - iy;
+        float fx = vx - ix;
 
-        float c00 = (1 - fz) * c000 + fz * c001;
-        float c01 = (1 - fz) * c010 + fz * c011;
-        float c10 = (1 - fz) * c100 + fz * c101;
-        float c11 = (1 - fz) * c110 + fz * c111;
+        float c00 = (1 - fx) * c000 + fx * c001;
+        float c01 = (1 - fx) * c010 + fx * c011;
+        float c10 = (1 - fx) * c100 + fx * c101;
+        float c11 = (1 - fx) * c110 + fx * c111;
 
         float c0 = (1 - fy) * c00 + fy * c01;
         float c1 = (1 - fy) * c10 + fy * c11;
 
-        return (1 - fx) * c0 + fx * c1;
+        return (1 - fz) * c0 + fz * c1;
     }
 
     // Fast path: when all 8 trilinear corners are in the same chunk,
     // do a single updateChunk + 8 direct array lookups (no per-sample bounds checks).
-    float sampleTrilinearFast(float ox, float oy, float oz) {
-        int iox = static_cast<int>(ox);
-        int ioy = static_cast<int>(oy);
-        int ioz = static_cast<int>(oz);
+    float sampleTrilinearFast(float vz, float vy, float vx) {
+        int iz = static_cast<int>(vz);
+        int iy = static_cast<int>(vy);
+        int ix = static_cast<int>(vx);
 
         // Bounds check entire 2x2x2 block at once
-        if (iox < 0 || ioy < 0 || ioz < 0 ||
-            iox + 1 >= p.sx || ioy + 1 >= p.sy || ioz + 1 >= p.sz)
-            return sampleTrilinear(ox, oy, oz);
+        if (iz < 0 || iy < 0 || ix < 0 ||
+            iz + 1 >= p.sz || iy + 1 >= p.sy || ix + 1 >= p.sx)
+            return sampleTrilinear(vz, vy, vx);
 
         // Check if all 8 corners are in the same chunk
-        int ix0 = iox >> p.cwShift, ix1 = (iox + 1) >> p.cwShift;
-        int iy0 = ioy >> p.chShift, iy1 = (ioy + 1) >> p.chShift;
-        int iz0 = ioz >> p.cdShift, iz1 = (ioz + 1) >> p.cdShift;
+        int ciz0 = iz >> p.czShift, ciz1 = (iz + 1) >> p.czShift;
+        int ciy0 = iy >> p.cyShift, ciy1 = (iy + 1) >> p.cyShift;
+        int cix0 = ix >> p.cxShift, cix1 = (ix + 1) >> p.cxShift;
 
-        if (ix0 == ix1 && iy0 == iy1 && iz0 == iz1) {
+        if (ciz0 == ciz1 && ciy0 == ciy1 && cix0 == cix1) {
             // Fast path: single chunk, no per-sample bounds checks
-            updateChunk(ix0, iy0, iz0);
+            updateChunk(ciz0, ciy0, cix0);
             if (!data) return 0;
-            int lx0 = iox & p.cwMask, ly0 = ioy & p.chMask, lz0 = ioz & p.cdMask;
-            int lx1 = lx0 + 1, ly1 = ly0 + 1, lz1 = lz0 + 1;
+            int lz0 = iz & p.czMask, ly0 = iy & p.cyMask, lx0 = ix & p.cxMask;
+            int lz1 = lz0 + 1, ly1 = ly0 + 1, lx1 = lx0 + 1;
 
-            float c000 = data[lx0*s0 + ly0*s1 + lz0*s2];
-            float c100 = data[lx1*s0 + ly0*s1 + lz0*s2];
-            float c010 = data[lx0*s0 + ly1*s1 + lz0*s2];
-            float c110 = data[lx1*s0 + ly1*s1 + lz0*s2];
-            float c001 = data[lx0*s0 + ly0*s1 + lz1*s2];
-            float c101 = data[lx1*s0 + ly0*s1 + lz1*s2];
-            float c011 = data[lx0*s0 + ly1*s1 + lz1*s2];
-            float c111 = data[lx1*s0 + ly1*s1 + lz1*s2];
+            float c000 = data[lz0*s0 + ly0*s1 + lx0*s2];
+            float c100 = data[lz1*s0 + ly0*s1 + lx0*s2];
+            float c010 = data[lz0*s0 + ly1*s1 + lx0*s2];
+            float c110 = data[lz1*s0 + ly1*s1 + lx0*s2];
+            float c001 = data[lz0*s0 + ly0*s1 + lx1*s2];
+            float c101 = data[lz1*s0 + ly0*s1 + lx1*s2];
+            float c011 = data[lz0*s0 + ly1*s1 + lx1*s2];
+            float c111 = data[lz1*s0 + ly1*s1 + lx1*s2];
 
-            float fx = ox - iox;
-            float fy = oy - ioy;
-            float fz = oz - ioz;
+            float fz = vz - iz;
+            float fy = vy - iy;
+            float fx = vx - ix;
 
-            float c00 = (1 - fz) * c000 + fz * c001;
-            float c01 = (1 - fz) * c010 + fz * c011;
-            float c10 = (1 - fz) * c100 + fz * c101;
-            float c11 = (1 - fz) * c110 + fz * c111;
+            float c00 = (1 - fx) * c000 + fx * c001;
+            float c01 = (1 - fx) * c010 + fx * c011;
+            float c10 = (1 - fx) * c100 + fx * c101;
+            float c11 = (1 - fx) * c110 + fx * c111;
 
             float c0 = (1 - fy) * c00 + fy * c01;
             float c1 = (1 - fy) * c10 + fy * c11;
 
-            return (1 - fx) * c0 + fx * c1;
+            return (1 - fz) * c0 + fz * c1;
         }
 
-        return sampleTrilinear(ox, oy, oz);
+        return sampleTrilinear(vz, vy, vx);
     }
 };
 
@@ -205,45 +204,45 @@ static void readVolumeImpl(
 
     // Phase 1: Discover needed chunks and prefetch (single-threaded).
     {
-        const size_t totalChunks = static_cast<size_t>(p.chunksX) * p.chunksY * p.chunksZ;
+        const size_t totalChunks = static_cast<size_t>(p.chunksZ) * p.chunksY * p.chunksX;
         std::vector<uint8_t> needed(totalChunks, 0);
-        int minIx = p.chunksX, maxIx = -1;
-        int minIy = p.chunksY, maxIy = -1;
         int minIz = p.chunksZ, maxIz = -1;
+        int minIy = p.chunksY, maxIy = -1;
+        int minIx = p.chunksX, maxIx = -1;
 
-        auto markVoxel = [&](float ox, float oy, float oz) {
-            if (!(ox >= 0 && oy >= 0 && oz >= 0 && ox < p.sx && oy < p.sy && oz < p.sz)) return;
-            int iox = static_cast<int>(ox + 0.5f);
-            int ioy = static_cast<int>(oy + 0.5f);
-            int ioz = static_cast<int>(oz + 0.5f);
-            if (iox >= p.sx) iox = p.sx - 1;
-            if (ioy >= p.sy) ioy = p.sy - 1;
-            if (ioz >= p.sz) ioz = p.sz - 1;
-            int ix = iox >> p.cwShift;
-            int iy = ioy >> p.chShift;
-            int iz = ioz >> p.cdShift;
-            size_t idx = ix + iy * p.chunksX + iz * p.chunksX * p.chunksY;
+        auto markVoxel = [&](float vz, float vy, float vx) {
+            if (!(vz >= 0 && vy >= 0 && vx >= 0 && vz < p.sz && vy < p.sy && vx < p.sx)) return;
+            int iz = static_cast<int>(vz + 0.5f);
+            int iy = static_cast<int>(vy + 0.5f);
+            int ix = static_cast<int>(vx + 0.5f);
+            if (iz >= p.sz) iz = p.sz - 1;
+            if (iy >= p.sy) iy = p.sy - 1;
+            if (ix >= p.sx) ix = p.sx - 1;
+            int ciz = iz >> p.czShift;
+            int ciy = iy >> p.cyShift;
+            int cix = ix >> p.cxShift;
+            size_t idx = ciz * p.chunksY * p.chunksX + ciy * p.chunksX + cix;
             if (!needed[idx]) {
                 needed[idx] = 1;
-                minIx = std::min(minIx, ix); maxIx = std::max(maxIx, ix);
-                minIy = std::min(minIy, iy); maxIy = std::max(maxIy, iy);
-                minIz = std::min(minIz, iz); maxIz = std::max(maxIz, iz);
+                minIz = std::min(minIz, ciz); maxIz = std::max(maxIz, ciz);
+                minIy = std::min(minIy, ciy); maxIy = std::max(maxIy, ciy);
+                minIx = std::min(minIx, cix); maxIx = std::max(maxIx, cix);
             }
         };
 
         if (numLayers == 1) {
             for (int y = 0; y < h; y++) {
                 for (int x = 0; x < w; x++) {
-                    float ox = coords(y,x)[2], oy = coords(y,x)[1], oz = coords(y,x)[0];
+                    float vz = coords(y,x)[0], vy = coords(y,x)[1], vx = coords(y,x)[2];
                     if constexpr (Mode == SampleMode::Trilinear) {
-                        if (!(ox >= 0 && oy >= 0 && oz >= 0 && ox < p.sx && oy < p.sy && oz < p.sz)) continue;
-                        int iox = static_cast<int>(ox), ioy = static_cast<int>(oy), ioz = static_cast<int>(oz);
+                        if (!(vz >= 0 && vy >= 0 && vx >= 0 && vz < p.sz && vy < p.sy && vx < p.sx)) continue;
+                        int iz = static_cast<int>(vz), iy = static_cast<int>(vy), ix = static_cast<int>(vx);
                         for (int dz = 0; dz <= 1; dz++)
                             for (int dy = 0; dy <= 1; dy++)
                                 for (int dx = 0; dx <= 1; dx++)
-                                    markVoxel(float(iox+dx), float(ioy+dy), float(ioz+dz));
+                                    markVoxel(float(iz+dz), float(iy+dy), float(ix+dx));
                     } else {
-                        markVoxel(ox, oy, oz);
+                        markVoxel(vz, vy, vx);
                     }
                 }
             }
@@ -255,12 +254,12 @@ static void readVolumeImpl(
             for (int y = 0; y < h; y++) {
                 for (int x = 0; x < w; x++) {
                     const cv::Vec3f& bc = coords(y, x);
-                    float bx = bc[2], by = bc[1], bz = bc[0];
-                    if (!(bx >= 0 && by >= 0 && bz >= 0 && bx < p.sx && by < p.sy)) continue;
+                    float bz = bc[0], by = bc[1], bx = bc[2];
+                    if (!(bz >= 0 && by >= 0 && bx >= 0 && bz < p.sz && by < p.sy)) continue;
                     cv::Vec3f n = getNormal(y, x);
                     for (int l = 0; l < numLayers; l++) {
                         float off = layerOffsets[l];
-                        markVoxel(bx + n[2]*off, by + n[1]*off, bz + n[0]*off);
+                        markVoxel(bz + n[0]*off, by + n[1]*off, bx + n[2]*off);
                     }
                 }
             }
@@ -268,11 +267,11 @@ static void readVolumeImpl(
 
         // Collect needed chunk indices for parallel loading
         std::vector<std::array<int,3>> neededChunks;
-        for (int iz = minIz; iz <= maxIz; iz++)
-            for (int iy = minIy; iy <= maxIy; iy++)
-                for (int ix = minIx; ix <= maxIx; ix++)
-                    if (needed[ix + iy * p.chunksX + iz * p.chunksX * p.chunksY])
-                        neededChunks.push_back({ix, iy, iz});
+        for (int cix = minIx; cix <= maxIx; cix++)
+            for (int ciy = minIy; ciy <= maxIy; ciy++)
+                for (int ciz = minIz; ciz <= maxIz; ciz++)
+                    if (needed[ciz * p.chunksY * p.chunksX + ciy * p.chunksX + cix])
+                        neededChunks.push_back({ciz, ciy, cix});
 
         // Load chunks in parallel (fine-grained locking in ChunkCache allows this)
         #pragma omp parallel for schedule(dynamic, 1)
@@ -302,15 +301,15 @@ static void readVolumeImpl(
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
                 const cv::Vec3f& bc = coords(y, x);
-                float base_ox = bc[2], base_oy = bc[1], base_oz = bc[0];
+                float base_vz = bc[0], base_vy = bc[1], base_vx = bc[2];
 
                 if (numLayers == 1) {
                     // Single-sample path
-                    if (!(base_ox >= 0 && base_oy >= 0 && base_oz >= 0)) continue;
+                    if (!(base_vz >= 0 && base_vy >= 0 && base_vx >= 0)) continue;
 
                     if constexpr (Mode == SampleMode::Trilinear) {
-                        if (!(base_ox < p.sx && base_oy < p.sy && base_oz < p.sz)) continue;
-                        float v = samplerNoPrefetch.sampleTrilinearFast(base_ox, base_oy, base_oz);
+                        if (!(base_vz < p.sz && base_vy < p.sy && base_vx < p.sx)) continue;
+                        float v = samplerNoPrefetch.sampleTrilinearFast(base_vz, base_vy, base_vx);
                         if constexpr (std::is_same_v<T, uint16_t>) {
                             if (v < 0.f) v = 0.f;
                             if (v > 65535.f) v = 65535.f;
@@ -319,16 +318,16 @@ static void readVolumeImpl(
                             out(y, x) = static_cast<T>(v);
                         }
                     } else {
-                        if (!(base_ox < p.sx && base_oy < p.sy && base_oz < p.sz)) continue;
-                        if ((static_cast<int>(base_ox + 0.5f) | static_cast<int>(base_oy + 0.5f) | static_cast<int>(base_oz + 0.5f)) < 0) continue;
-                        out(y, x) = samplerNoPrefetch.sampleNearest(base_ox, base_oy, base_oz);
+                        if (!(base_vz < p.sz && base_vy < p.sy && base_vx < p.sx)) continue;
+                        if ((static_cast<int>(base_vz + 0.5f) | static_cast<int>(base_vy + 0.5f) | static_cast<int>(base_vx + 0.5f)) < 0) continue;
+                        out(y, x) = samplerNoPrefetch.sampleNearest(base_vz, base_vy, base_vx);
                     }
                 } else {
                     // Composite path
-                    if (!(base_ox >= 0 && base_oy >= 0 && base_oz >= 0)) continue;
+                    if (!(base_vz >= 0 && base_vy >= 0 && base_vx >= 0)) continue;
 
                     cv::Vec3f n = getNormal(y, x);
-                    float nx = n[0], ny = n[1], nz = n[2];
+                    float nz = n[0], ny = n[1], nx = n[2];
 
                     float acc = isMin ? 255.0f : 0.0f;
                     int validCount = 0;
@@ -337,25 +336,25 @@ static void readVolumeImpl(
                         stack.validCount = 0;
                     }
 
-                    float dx = nz * zStep;
+                    float dz = nz * zStep;
                     float dy = ny * zStep;
-                    float dz = nx * zStep;
+                    float dx = nx * zStep;
 
-                    float ox = base_ox + nz * firstLayerOffset;
-                    float oy = base_oy + ny * firstLayerOffset;
-                    float oz = base_oz + nx * firstLayerOffset;
+                    float vz = base_vz + nz * firstLayerOffset;
+                    float vy = base_vy + ny * firstLayerOffset;
+                    float vx = base_vx + nx * firstLayerOffset;
 
                     for (int layer = 0; layer < numLayers; layer++) {
                         bool validSample = false;
                         float value = 0;
 
-                        if (samplerPrefetch.inBounds(ox, oy, oz)) {
-                            uint8_t raw = samplerPrefetch.sampleNearest(ox, oy, oz);
+                        if (samplerPrefetch.inBounds(vz, vy, vx)) {
+                            uint8_t raw = samplerPrefetch.sampleNearest(vz, vy, vx);
                             value = static_cast<float>(raw < params->isoCutoff ? 0 : raw);
                             validSample = true;
                         }
 
-                        ox += dx; oy += dy; oz += dz;
+                        vz += dz; vy += dy; vx += dx;
 
                         if (validSample) {
                             if (needsLayerStorage) {
@@ -401,8 +400,9 @@ static void readVolumeImpl(
 // ============================================================================
 
 template<typename T>
-static void readArea3DImpl(Tensor3D<T>& out, const cv::Vec3i& offset, ZarrDataset* ds, ChunkCache<T>* cache) {
+static void readArea3DImpl(Tensor3D<T>& out, const cv::Vec3i& offset, IChunkSource* ds, ChunkCache<T>* cache) {
 
+    cache->init(ds);
     CacheParams<T> p(*cache);
 
     cv::Vec3i size = {(int)out.shape()[0], (int)out.shape()[1], (int)out.shape()[2]};
@@ -410,8 +410,8 @@ static void readArea3DImpl(Tensor3D<T>& out, const cv::Vec3i& offset, ZarrDatase
 
     // Step 1: List all required chunks
     std::vector<cv::Vec3i> chunks_to_process;
-    cv::Vec3i start_chunk = {offset[0] / p.cw, offset[1] / p.ch, offset[2] / p.cd};
-    cv::Vec3i end_chunk = {(to[0] - 1) / p.cw, (to[1] - 1) / p.ch, (to[2] - 1) / p.cd};
+    cv::Vec3i start_chunk = {offset[0] / p.cz, offset[1] / p.cy, offset[2] / p.cx};
+    cv::Vec3i end_chunk = {(to[0] - 1) / p.cz, (to[1] - 1) / p.cy, (to[2] - 1) / p.cx};
 
     for (int cz = start_chunk[0]; cz <= end_chunk[0]; ++cz) {
         for (int cy = start_chunk[1]; cy <= end_chunk[1]; ++cy) {
@@ -429,7 +429,7 @@ static void readArea3DImpl(Tensor3D<T>& out, const cv::Vec3i& offset, ZarrDatase
         auto chunkPtr = cache->get(cz, cy, cx);
         Tensor3D<T>* chunk = chunkPtr.get();
 
-        cv::Vec3i chunk_offset = {p.cw * cz, p.ch * cy, p.cd * cx};
+        cv::Vec3i chunk_offset = {p.cz * cz, p.cy * cy, p.cx * cx};
 
         cv::Vec3i copy_from_start = {
             std::max(offset[0], chunk_offset[0]),
@@ -438,9 +438,9 @@ static void readArea3DImpl(Tensor3D<T>& out, const cv::Vec3i& offset, ZarrDatase
         };
 
         cv::Vec3i copy_from_end = {
-            std::min(to[0], chunk_offset[0] + p.cw),
-            std::min(to[1], chunk_offset[1] + p.ch),
-            std::min(to[2], chunk_offset[2] + p.cd)
+            std::min(to[0], chunk_offset[0] + p.cz),
+            std::min(to[1], chunk_offset[1] + p.cy),
+            std::min(to[2], chunk_offset[2] + p.cx)
         };
 
         if (chunk) {
@@ -466,11 +466,11 @@ static void readArea3DImpl(Tensor3D<T>& out, const cv::Vec3i& offset, ZarrDatase
     }
 }
 
-void readArea3D(Tensor3D<uint8_t>& out, const cv::Vec3i& offset, ZarrDataset* ds, ChunkCache<uint8_t>* cache) {
+void readArea3D(Tensor3D<uint8_t>& out, const cv::Vec3i& offset, IChunkSource* ds, ChunkCache<uint8_t>* cache) {
     readArea3DImpl(out, offset, ds, cache);
 }
 
-void readArea3D(Tensor3D<uint16_t>& out, const cv::Vec3i& offset, ZarrDataset* ds, ChunkCache<uint16_t>* cache) {
+void readArea3D(Tensor3D<uint16_t>& out, const cv::Vec3i& offset, IChunkSource* ds, ChunkCache<uint16_t>* cache) {
     readArea3DImpl(out, offset, ds, cache);
 }
 
@@ -480,8 +480,9 @@ void readArea3D(Tensor3D<uint16_t>& out, const cv::Vec3i& offset, ZarrDataset* d
 // ============================================================================
 
 template<typename T>
-static void readInterpolated3DImpl(cv::Mat_<T>& out, ZarrDataset* ds,
+static void readInterpolated3DImpl(cv::Mat_<T>& out, IChunkSource* ds,
                                    const cv::Mat_<cv::Vec3f>& coords, ChunkCache<T>* cache, bool nearest_neighbor) {
+    cache->init(ds);
     CacheParams<T> p(*cache);
 
     if (nearest_neighbor) {
@@ -493,12 +494,12 @@ static void readInterpolated3DImpl(cv::Mat_<T>& out, ZarrDataset* ds,
     }
 }
 
-void readInterpolated3D(cv::Mat_<uint8_t>& out, ZarrDataset* ds,
+void readInterpolated3D(cv::Mat_<uint8_t>& out, IChunkSource* ds,
                         const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint8_t>* cache, bool nearest_neighbor) {
     readInterpolated3DImpl(out, ds, coords, cache, nearest_neighbor);
 }
 
-void readInterpolated3D(cv::Mat_<uint16_t>& out, ZarrDataset* ds,
+void readInterpolated3D(cv::Mat_<uint16_t>& out, IChunkSource* ds,
                         const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint16_t>* cache, bool nearest_neighbor) {
     readInterpolated3DImpl(out, ds, coords, cache, nearest_neighbor);
 }
@@ -506,7 +507,7 @@ void readInterpolated3D(cv::Mat_<uint16_t>& out, ZarrDataset* ds,
 
 void readCompositeFast(
     cv::Mat_<uint8_t>& out,
-    ZarrDataset* ds,
+    IChunkSource* ds,
     const cv::Mat_<cv::Vec3f>& baseCoords,
     const cv::Mat_<cv::Vec3f>& normals,
     float zStep,
@@ -527,7 +528,7 @@ void readCompositeFast(
                 return n;
             }
         }
-        return {0, 0, 1};
+        return {1, 0, 0};
     };
 
     readVolumeImpl<uint8_t, SampleMode::Nearest>(out, cache, p, baseCoords,
@@ -536,7 +537,7 @@ void readCompositeFast(
 
 void readCompositeFastConstantNormal(
     cv::Mat_<uint8_t>& out,
-    ZarrDataset* ds,
+    IChunkSource* ds,
     const cv::Mat_<cv::Vec3f>& baseCoords,
     const cv::Vec3f& normal,
     float zStep,

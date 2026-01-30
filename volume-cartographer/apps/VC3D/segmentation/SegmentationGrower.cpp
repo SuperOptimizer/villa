@@ -513,7 +513,7 @@ void saveCorrectionsAnnotation(
         for (const auto& pt : sortedPoints) {
             nlohmann::json ptJson;
             ptJson["id"] = pt.id;
-            ptJson["position"] = {pt.p[0], pt.p[1], pt.p[2]};
+            ptJson["position"] = {pt.p[2], pt.p[1], pt.p[0]};
             ptJson["creation_time"] = pt.creation_time;
             pointsJson.push_back(ptJson);
         }
@@ -710,7 +710,7 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
                 try {
                     sdtVolume = volumeContext.package->volume(sdtVolumeId);
                     if (sdtVolume) {
-                        sdtContext.binaryDataset = sdtVolume->zarrDataset(0);
+                        sdtContext.binaryDataset = sdtVolume->chunkSource(0);
                         sdtContext.cache = _context.chunkCache;
                         sdtContextPtr = &sdtContext;
                         qCInfo(lcSegGrowth) << "Linear+Fit: SDT refinement using volume"
@@ -739,7 +739,7 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
                         try {
                             sdtVolume = volumeContext.package->volume(sdtVolumeId);
                             if (sdtVolume) {
-                                sdtContext.binaryDataset = sdtVolume->zarrDataset(0);
+                                sdtContext.binaryDataset = sdtVolume->chunkSource(0);
                                 sdtContext.cache = _context.chunkCache;
                                 sdtContextPtr = &sdtContext;
                                 qCInfo(lcSegGrowth) << "SDT refinement enabled with volume"
@@ -792,7 +792,7 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
                 try {
                     skeletonVolume = volumeContext.package->volume(skeletonVolumeId);
                     if (skeletonVolume) {
-                        skeletonContext.binaryDataset = skeletonVolume->zarrDataset(0);
+                        skeletonContext.binaryDataset = skeletonVolume->chunkSource(0);
                         skeletonContext.cache = _context.chunkCache;
                         skeletonContextPtr = &skeletonContext;
                         qCInfo(lcSegGrowth) << "Skeleton Path: using volume"

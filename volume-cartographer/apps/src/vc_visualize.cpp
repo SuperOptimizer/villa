@@ -127,7 +127,7 @@ public:
         }
         volume_ = vpkg_->volume(volume_id);
         std::cout << "Using volume: " << volume_id << " (" << volume_->name() << ")" << std::endl;
-        auto [w, h, d] = volume_->shape();
+        auto [d, h, w] = volume_->shape();
         std::cout << "Volume dimensions: " << w << "x" << h << "x" << d << std::endl;
         cache_ = new ChunkCache<uint8_t>(1ULL * 1024ULL * 1024ULL * 1024ULL);
     }
@@ -162,8 +162,8 @@ private:
         cv::Mat_<cv::Vec3f> raw_points = target_surf->rawPoints();
         cv::Vec2f stored_scale = target_surf->scale();
 
-        int native_width = raw_points.cols / stored_scale[0];
-        int native_height = raw_points.rows / stored_scale[1];
+        int native_width = raw_points.cols / stored_scale[1];
+        int native_height = raw_points.rows / stored_scale[0];
 
         std::cout << "Target resolution: " << native_width << "x" << native_height << std::endl;
 
@@ -174,9 +174,9 @@ private:
         cv::Mat_<cv::Vec3f> coords;
         cv::Vec3f center = target_surf->pointer();
         cv::Vec3f offset = {
-            -(float)(gen_size.width / 2),
+            0,
             -(float)(gen_size.height / 2),
-            0
+            -(float)(gen_size.width / 2)
         };
 
         target_surf->gen(&coords, nullptr, gen_size, center, gen_scale, offset);

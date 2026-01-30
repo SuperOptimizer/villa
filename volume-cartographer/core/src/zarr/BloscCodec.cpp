@@ -31,8 +31,18 @@ BloscCodec::BloscCodec(const nlohmann::json& config) : BloscCodec()
     if (config.contains("clevel") && config["clevel"].is_number_integer()) {
         clevel_ = config["clevel"].get<int>();
     }
-    if (config.contains("shuffle") && config["shuffle"].is_number_integer()) {
-        shuffle_ = config["shuffle"].get<int>();
+    if (config.contains("shuffle")) {
+        if (config["shuffle"].is_number_integer()) {
+            shuffle_ = config["shuffle"].get<int>();
+        } else if (config["shuffle"].is_string()) {
+            auto s = config["shuffle"].get<std::string>();
+            if (s == "noshuffle")
+                shuffle_ = 0;
+            else if (s == "shuffle")
+                shuffle_ = 1;
+            else if (s == "bitshuffle")
+                shuffle_ = 2;
+        }
     }
     if (config.contains("blocksize") && config["blocksize"].is_number_integer()) {
         blocksize_ = config["blocksize"].get<std::size_t>();
@@ -42,12 +52,9 @@ BloscCodec::BloscCodec(const nlohmann::json& config) : BloscCodec()
 std::vector<std::uint8_t> BloscCodec::compress(
     const void* src, std::size_t size, std::size_t typesize) const
 {
-    // blosc2_compress_ctx is thread-safe
-    // Maximum compressed size (blosc can expand data slightly in worst case)
     std::size_t maxDstSize = size + BLOSC2_MAX_OVERHEAD;
     std::vector<std::uint8_t> dst(maxDstSize);
 
-    // Create compression context
     blosc2_cparams cparams = BLOSC2_CPARAMS_DEFAULTS;
     cparams.typesize = static_cast<int32_t>(typesize);
     cparams.compcode = blosc2_compname_to_compcode(cname_.c_str());
@@ -56,7 +63,7 @@ std::vector<std::uint8_t> BloscCodec::compress(
         (shuffle_ == 2) ? BLOSC_BITSHUFFLE : (shuffle_ == 1) ? BLOSC_SHUFFLE
                                                              : BLOSC_NOSHUFFLE;
     cparams.blocksize = static_cast<int32_t>(blocksize_);
-    cparams.nthreads = 1;  // Thread-safe with 1 thread
+    cparams.nthreads = 1;
 
     blosc2_context* cctx = blosc2_create_cctx(cparams);
     if (!cctx) {
@@ -88,9 +95,8 @@ std::size_t BloscCodec::decompress(
     void* dst,
     std::size_t dstCapacity) const
 {
-    // Create decompression context
     blosc2_dparams dparams = BLOSC2_DPARAMS_DEFAULTS;
-    dparams.nthreads = 1;  // Thread-safe with 1 thread
+    dparams.nthreads = 1;
 
     blosc2_context* dctx = blosc2_create_dctx(dparams);
     if (!dctx) {
@@ -121,10 +127,7 @@ bool BloscCodec::isBlosc(const void* data, std::size_t size)
     if (size < BLOSC_MIN_HEADER_LENGTH) {
         return false;
     }
-
-    // Blosc header starts with specific magic bytes
     const auto* bytes = static_cast<const std::uint8_t*>(data);
-    // Check version byte range (0x01 or 0x02 for blosc/blosc2)
     return bytes[0] >= 0x01 && bytes[0] <= 0x02;
 }
 
@@ -143,6 +146,21 @@ nlohmann::json BloscCodec::toJson() const
         {"clevel", clevel_},
         {"shuffle", shuffle_},
         {"blocksize", blocksize_}};
+}
+
+nlohmann::json BloscCodec::toJsonV3(std::size_t typesize) const
+{
+    std::string shuffleStr = (shuffle_ == 2)   ? "bitshuffle"
+                             : (shuffle_ == 1) ? "shuffle"
+                                               : "noshuffle";
+    return {
+        {"name", "blosc"},
+        {"configuration",
+         {{"cname", cname_},
+          {"clevel", clevel_},
+          {"shuffle", shuffleStr},
+          {"typesize", typesize},
+          {"blocksize", blocksize_}}}};
 }
 
 }  // namespace volcart::zarr

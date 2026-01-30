@@ -7,6 +7,7 @@
 #include "vc/core/util/ABFFlattening.hpp"
 #include "vc/core/zarr/ZarrDataset.hpp"
 #include "vc/core/zarr/Tensor3D.hpp"
+#include "vc/core/csvs/CsvsDataset.hpp"
 #include <omp.h>
 
 #include <nlohmann/json.hpp>
@@ -437,7 +438,7 @@ static bool computeGlobalFlipDecision(QuadSurface* surf, int dx, int dy,
                                       float u0, float v0, float renderScale, float scaleSeg,
                                       const TransformParams& transform, cv::Vec3f& centroid) {
     cv::Mat_<cv::Vec3f> tp, tn;
-    surf->gen(&tp, &tn, cv::Size(dx, dy), cv::Vec3f(0,0,0), renderScale, cv::Vec3f(u0, v0, 0));
+    surf->gen(&tp, &tn, cv::Size(dx, dy), cv::Vec3f(0,0,0), renderScale, cv::Vec3f(0, v0, u0));
     tp *= scaleSeg;
     if (transform.hasAffine)
         applyAffineTransform(tp, tn, transform.affine);
@@ -612,9 +613,9 @@ static void renderSlicesBulkOptimized(
 
     if (numOffsets == 0 || rows == 0 || cols == 0) return;
 
-    const int cwShift = cache->chunkShiftX(), chShift = cache->chunkShiftY(), cdShift = cache->chunkShiftZ();
-    const int cwMask = cache->chunkMaskX(), chMask = cache->chunkMaskY(), cdMask = cache->chunkMaskZ();
-    const int dsZ = cache->datasetSizeX(), dsY = cache->datasetSizeY(), dsX = cache->datasetSizeZ();
+    const int czShift = cache->chunkShiftZ(), cyShift = cache->chunkShiftY(), cxShift = cache->chunkShiftX();
+    const int czMask = cache->chunkMaskZ(), cyMask = cache->chunkMaskY(), cxMask = cache->chunkMaskX();
+    const int dsZ = cache->datasetSizeZ(), dsY = cache->datasetSizeY(), dsX = cache->datasetSizeX();
 
     // Pre-allocate output matrices
     out.resize(numOffsets);
@@ -666,7 +667,7 @@ static void renderSlicesBulkOptimized(
                         continue;
                     }
 
-                    int ciz = iz >> cwShift, ciy = iy >> chShift, cix = ix >> cdShift;
+                    int ciz = iz >> czShift, ciy = iy >> cyShift, cix = ix >> cxShift;
 
                     if (ciz != lastCiz || ciy != lastCiy || cix != lastCix) {
                         lastChunk = cache->getRawFast(ciz, ciy, cix);
@@ -677,7 +678,7 @@ static void renderSlicesBulkOptimized(
                         lastCiz = ciz; lastCiy = ciy; lastCix = cix;
                     }
 
-                    outRowPtrs[si][r][c] = lastChunk ? (*lastChunk)(iz & cwMask, iy & chMask, ix & cdMask) : 0;
+                    outRowPtrs[si][r][c] = lastChunk ? (*lastChunk)(iz & czMask, iy & cyMask, ix & cxMask) : 0;
                 } else {
                     int iz = static_cast<int>(cz);
                     int iy = static_cast<int>(cy);
@@ -690,9 +691,9 @@ static void renderSlicesBulkOptimized(
                     }
 
                     float fz = cz - iz, fy = cy - iy, fx = cx - ix;
-                    int ciz = iz >> cwShift, ciy = iy >> chShift, cix = ix >> cdShift;
+                    int ciz = iz >> czShift, ciy = iy >> cyShift, cix = ix >> cxShift;
 
-                    if (ciz == (iz+1) >> cwShift && ciy == (iy+1) >> chShift && cix == (ix+1) >> cdShift) {
+                    if (ciz == (iz+1) >> czShift && ciy == (iy+1) >> cyShift && cix == (ix+1) >> cxShift) {
                         if (ciz != lastCiz || ciy != lastCiy || cix != lastCix) {
                             lastChunk = cache->getRawFast(ciz, ciy, cix);
                             if (!lastChunk) {
@@ -708,7 +709,7 @@ static void renderSlicesBulkOptimized(
                         }
 
                         const auto& ch = *lastChunk;
-                        int lz = iz & cwMask, ly = iy & chMask, lx = ix & cdMask;
+                        int lz = iz & czMask, ly = iy & cyMask, lx = ix & cxMask;
 
                         float val = trilinear8(
                             ch(lz,ly,lx), ch(lz,ly,lx+1), ch(lz,ly+1,lx), ch(lz,ly+1,lx+1),
@@ -717,12 +718,12 @@ static void renderSlicesBulkOptimized(
                         outRowPtrs[si][r][c] = static_cast<T>(std::min(val + 0.5f, float(std::numeric_limits<T>::max())));
                     } else {
                         auto get = [&](int vz, int vy, int vx) -> float {
-                            auto raw = cache->getRawFast(vz >> cwShift, vy >> chShift, vx >> cdShift);
+                            auto raw = cache->getRawFast(vz >> czShift, vy >> cyShift, vx >> cxShift);
                             if (!raw) {
-                                auto owner = cache->get(vz >> cwShift, vy >> chShift, vx >> cdShift);
+                                auto owner = cache->get(vz >> czShift, vy >> cyShift, vx >> cxShift);
                                 raw = owner.get();
                             }
-                            return raw ? float((*raw)(vz & cwMask, vy & chMask, vx & cdMask)) : 0;
+                            return raw ? float((*raw)(vz & czMask, vy & cyMask, vx & cxMask)) : 0;
                         };
                         float val = trilinear8(
                             get(iz,iy,ix), get(iz,iy,ix+1), get(iz,iy+1,ix), get(iz,iy+1,ix+1),
@@ -836,7 +837,7 @@ static void renderTiledRowBased(
 
                 cv::Mat_<cv::Vec3f> pts, norms;
                 surf->gen(&pts, &norms, cv::Size(dx, dy), cv::Vec3f(0,0,0),
-                          params.renderScale, cv::Vec3f(tu0, tv0, 0));
+                          params.renderScale, cv::Vec3f(0, tv0, tu0));
 
                 cv::Mat_<cv::Vec3f> basePoints, stepDirs;
                 prepareBasePointsAndStepDirs(pts, norms, params.scaleSeg, params.dsScale,
@@ -918,7 +919,7 @@ static void renderTiledBandBased(
 
             cv::Mat_<cv::Vec3f> pts, norms;
             surf->gen(&pts, &norms, cv::Size(dx, dy), cv::Vec3f(0,0,0),
-                      params.renderScale, cv::Vec3f(tu0, tv0, 0));
+                      params.renderScale, cv::Vec3f(0, tv0, tu0));
 
             cv::Mat_<cv::Vec3f> basePoints, stepDirs;
             prepareBasePointsAndStepDirs(pts, norms, params.scaleSeg, params.dsScale,
@@ -1126,7 +1127,8 @@ static void renderToZarr(
     const cv::Rect& crop,
     const RenderParams& params,
     const OffsetTable& offsets,
-    bool includeTifs)
+    bool includeTifs,
+    int shardSize = 0)
 {
     constexpr size_t CH = 128, CW = 128;
 
@@ -1139,8 +1141,17 @@ static void renderToZarr(
     std::vector<size_t> shape = {offsets.numSlices, size_t(zarrSize.height), size_t(zarrSize.width)};
     std::vector<size_t> chunks = {shape[0], std::min(CH, shape[1]), std::min(CW, shape[2])};
 
+    auto version = (shardSize > 0) ? volcart::zarr::ZarrVersion::V3
+                                   : volcart::zarr::ZarrVersion::V2;
+    std::vector<size_t> shards;
+    if (shardSize > 0) {
+        shards = {shape[0], std::min(size_t(shardSize), shape[1]),
+                             std::min(size_t(shardSize), shape[2])};
+    }
+
     auto dsOut = std::make_unique<volcart::zarr::ZarrDataset>(
-        outPath / "0", shape, chunks, PixelTraits<T>::dtype, "blosc", defaultBloscOpts());
+        outPath / "0", shape, chunks, PixelTraits<T>::dtype, "blosc", defaultBloscOpts(),
+        version, shards);
 
     const int tilesX_src = (tgtSize.width + CW - 1) / CW;
     const int tilesY_src = (tgtSize.height + CH - 1) / CH;
@@ -1187,6 +1198,7 @@ static void renderToZarr(
         });
 
     writeQueue.finish();
+    dsOut->flush();
 
     // Skip pyramid and tiff export when running as one part of a multi-VM job.
     // These should be run separately after all parts finish writing L0 tiles.
@@ -1266,6 +1278,345 @@ static void renderToZarr(
         }
         progress.finish();
     }
+}
+
+// ============================================================================
+// CSVS Subvolume Write Helper
+// ============================================================================
+
+template<typename T>
+static void csvsWriteSubvolume(volcart::csvs::CsvsDataset* ds,
+                                const volcart::zarr::Tensor3D<T>& data,
+                                std::array<size_t, 3> offset)
+{
+    const auto& s = data.shape();
+    uint32_t cs = ds->chunkSize();
+    size_t elemSize = volcart::zarr::dtypeSize(ds->dtype());
+    size_t chunkBytes = size_t(cs) * cs * cs * elemSize;
+    std::vector<uint8_t> chunkBuf(chunkBytes, 0);
+
+    for (size_t oz = 0; oz < s[0]; ) {
+        size_t gz = offset[0] + oz;
+        size_t cz = gz / cs;
+        size_t lz = gz % cs;
+        size_t dz = std::min(size_t(cs) - lz, s[0] - oz);
+
+        for (size_t oy = 0; oy < s[1]; ) {
+            size_t gy = offset[1] + oy;
+            size_t cy = gy / cs;
+            size_t ly = gy % cs;
+            size_t dy = std::min(size_t(cs) - ly, s[1] - oy);
+
+            for (size_t ox = 0; ox < s[2]; ) {
+                size_t gx = offset[2] + ox;
+                size_t cx = gx / cs;
+                size_t lx = gx % cs;
+                size_t dx = std::min(size_t(cs) - lx, s[2] - ox);
+
+                std::memset(chunkBuf.data(), 0, chunkBytes);
+                ds->readChunk(cz, cy, cx, chunkBuf.data());
+
+                T* dst = reinterpret_cast<T*>(chunkBuf.data());
+                for (size_t z = 0; z < dz; ++z)
+                    for (size_t y = 0; y < dy; ++y)
+                        for (size_t x = 0; x < dx; ++x)
+                            dst[(lz + z) * cs * cs + (ly + y) * cs + (lx + x)] =
+                                data(oz + z, oy + y, ox + x);
+
+                ds->writeChunk(cz, cy, cx, chunkBuf.data(), chunkBytes);
+                ox += dx;
+            }
+            oy += dy;
+        }
+        oz += dz;
+    }
+}
+
+template<typename T>
+static void csvsReadSubvolume(volcart::csvs::CsvsDataset* ds,
+                               volcart::zarr::Tensor3D<T>& out,
+                               std::array<size_t, 3> offset,
+                               std::array<size_t, 3> size)
+{
+    out.resize(size[0], size[1], size[2]);
+    out.fill(T{0});
+
+    uint32_t cs = ds->chunkSize();
+    size_t elemSize = volcart::zarr::dtypeSize(ds->dtype());
+    size_t chunkBytes = size_t(cs) * cs * cs * elemSize;
+    std::vector<uint8_t> chunkBuf(chunkBytes);
+
+    for (size_t oz = 0; oz < size[0]; ) {
+        size_t gz = offset[0] + oz;
+        size_t cz = gz / cs;
+        size_t lz = gz % cs;
+        size_t dz = std::min(size_t(cs) - lz, size[0] - oz);
+
+        for (size_t oy = 0; oy < size[1]; ) {
+            size_t gy = offset[1] + oy;
+            size_t cy = gy / cs;
+            size_t ly = gy % cs;
+            size_t dy = std::min(size_t(cs) - ly, size[1] - oy);
+
+            for (size_t ox = 0; ox < size[2]; ) {
+                size_t gx = offset[2] + ox;
+                size_t cx = gx / cs;
+                size_t lx = gx % cs;
+                size_t dx = std::min(size_t(cs) - lx, size[2] - ox);
+
+                if (ds->readChunk(cz, cy, cx, chunkBuf.data())) {
+                    const T* src = reinterpret_cast<const T*>(chunkBuf.data());
+                    for (size_t z = 0; z < dz; ++z)
+                        for (size_t y = 0; y < dy; ++y)
+                            for (size_t x = 0; x < dx; ++x)
+                                out(oz + z, oy + y, ox + x) =
+                                    src[(lz + z) * cs * cs + (ly + y) * cs + (lx + x)];
+                }
+                ox += dx;
+            }
+            oy += dy;
+        }
+        oz += dz;
+    }
+}
+
+// ============================================================================
+// Async Write Queue for CSVS
+// ============================================================================
+
+template<typename T>
+struct AsyncCsvsWriteQueue {
+    struct WriteJob {
+        volcart::zarr::Tensor3D<T> data;
+        std::array<size_t, 3> offset;
+        volcart::csvs::CsvsDataset* ds;
+    };
+
+    std::queue<WriteJob> jobs;
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::condition_variable cvFull;
+    std::thread writerThread;
+    bool done = false;
+    size_t maxQueueSize = 16;
+
+    void start() {
+        writerThread = std::thread([this]() {
+            while (true) {
+                WriteJob job;
+                {
+                    std::unique_lock<std::mutex> lock(mutex);
+                    cv.wait(lock, [this]() { return !jobs.empty() || done; });
+                    if (done && jobs.empty()) break;
+                    job = std::move(jobs.front());
+                    jobs.pop();
+                    cvFull.notify_one();
+                }
+                csvsWriteSubvolume<T>(job.ds, job.data, job.offset);
+            }
+        });
+    }
+
+    void enqueue(volcart::csvs::CsvsDataset* ds, volcart::zarr::Tensor3D<T>&& data,
+                 std::array<size_t, 3> offset) {
+        std::unique_lock<std::mutex> lock(mutex);
+        cvFull.wait(lock, [this]() { return jobs.size() < maxQueueSize; });
+        jobs.push({std::move(data), offset, ds});
+        cv.notify_one();
+    }
+
+    void finish() {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            done = true;
+        }
+        cv.notify_one();
+        if (writerThread.joinable()) writerThread.join();
+    }
+};
+
+// ============================================================================
+// CSVS Pyramid Building
+// ============================================================================
+
+template<typename T>
+static void downsampleChunkCsvs(
+    volcart::csvs::CsvsDataset* src,
+    volcart::csvs::CsvsDataset* dst,
+    size_t z, size_t y, size_t x,
+    size_t lz, size_t ly, size_t lx,
+    size_t sz, size_t sy, size_t sx)
+{
+    volcart::zarr::Tensor3D<T> srcChunk(sz, sy, sx);
+    csvsReadSubvolume<T>(src, srcChunk, {2*z, 2*y, 2*x}, {sz, sy, sx});
+
+    volcart::zarr::Tensor3D<T> dstChunk(lz, ly, lx);
+    for (size_t zz = 0; zz < lz; ++zz)
+        for (size_t yy = 0; yy < ly; ++yy)
+            for (size_t xx = 0; xx < lx; ++xx) {
+                uint32_t sum = 0;
+                int cnt = 0;
+                for (int dz = 0; dz < 2 && (2*zz + dz) < sz; ++dz)
+                    for (int dy = 0; dy < 2 && (2*yy + dy) < sy; ++dy)
+                        for (int dx = 0; dx < 2 && (2*xx + dx) < sx; ++dx) {
+                            sum += srcChunk(2*zz + dz, 2*yy + dy, 2*xx + dx);
+                            cnt++;
+                        }
+                dstChunk(zz, yy, xx) = static_cast<T>((sum + cnt/2) / std::max(1, cnt));
+            }
+
+    csvsWriteSubvolume<T>(dst, dstChunk, {z, y, x});
+}
+
+template<typename T>
+static void buildCsvsPyramid(
+    const std::filesystem::path& basePath,
+    std::vector<std::unique_ptr<volcart::csvs::CsvsDataset>>& levels,
+    int maxLevel,
+    size_t chunkSize,
+    size_t shardSize)
+{
+    for (int level = 1; level <= maxLevel; ++level) {
+        auto& src = levels[level - 1];
+        const auto& sShape = src->shape();
+
+        std::array<size_t, 3> dShape = {
+            (sShape[0] + 1) / 2,
+            (sShape[1] + 1) / 2,
+            (sShape[2] + 1) / 2
+        };
+
+        auto dst = std::make_unique<volcart::csvs::CsvsDataset>(
+            basePath / std::to_string(level),
+            dShape, static_cast<uint32_t>(chunkSize),
+            static_cast<uint32_t>(shardSize),
+            src->dtype());
+
+        const size_t tileY = chunkSize, tileX = chunkSize;
+        const size_t tilesY = (dShape[1] + tileY - 1) / tileY;
+        const size_t tilesX = (dShape[2] + tileX - 1) / tileX;
+        const size_t totalTiles = tilesY * tilesX;
+
+        ProgressTracker progress;
+        std::string progLabel = "render L" + std::to_string(level);
+        progress.reset(totalTiles, progLabel.c_str());
+
+        RowWorkQueue rowQueue;
+        rowQueue.reset(tilesY);
+
+        #pragma omp parallel
+        {
+            while (true) {
+                int ty = rowQueue.getNextRow();
+                if (ty < 0) break;
+
+                size_t y = ty * tileY;
+
+                for (size_t tx = 0; tx < tilesX; ++tx) {
+                    size_t x = tx * tileX;
+                    size_t ly = std::min(tileY, dShape[1] - y);
+                    size_t lx = std::min(tileX, dShape[2] - x);
+                    size_t lz = dShape[0];
+
+                    size_t sz = std::min<size_t>(2 * lz, sShape[0]);
+                    size_t sy = std::min<size_t>(2 * ly, sShape[1] - 2 * y);
+                    size_t sx = std::min<size_t>(2 * lx, sShape[2] - 2 * x);
+
+                    downsampleChunkCsvs<T>(src.get(), dst.get(), 0, y, x, lz, ly, lx, sz, sy, sx);
+                    progress.increment();
+                }
+            }
+        }
+        progress.finish();
+        levels.push_back(std::move(dst));
+    }
+}
+
+// ============================================================================
+// Render to CSVS
+// ============================================================================
+
+template<typename T>
+static void renderToCsvs(
+    QuadSurface* surf,
+    ChunkCache<T>* cache,
+    const std::filesystem::path& outPath,
+    const cv::Size& tgtSize,
+    const cv::Size& fullSize,
+    const cv::Rect& crop,
+    const RenderParams& params,
+    const OffsetTable& offsets,
+    int shardSize)
+{
+    constexpr size_t CH = 128, CW = 128;
+
+    cv::Size csvsSize = tgtSize;
+    if (params.transform.rotQuad >= 0 && (params.transform.rotQuad % 2 == 1))
+        std::swap(csvsSize.width, csvsSize.height);
+
+    std::filesystem::create_directories(outPath);
+
+    std::array<size_t, 3> shape = {offsets.numSlices, size_t(csvsSize.height), size_t(csvsSize.width)};
+
+    auto dsOut = std::make_unique<volcart::csvs::CsvsDataset>(
+        outPath / "0", shape,
+        static_cast<uint32_t>(std::min(CH, CW)),
+        static_cast<uint32_t>(shardSize),
+        PixelTraits<T>::dtype == volcart::zarr::Dtype::UInt16 ?
+            volcart::zarr::Dtype::UInt16 : volcart::zarr::Dtype::UInt8);
+
+    const int tilesX_src = (tgtSize.width + CW - 1) / CW;
+    const int tilesY_src = (tgtSize.height + CH - 1) / CH;
+    const int rotQuad = params.transform.rotQuad;
+    const int flipAxis = params.transform.flipAxis;
+
+    AsyncCsvsWriteQueue<T> writeQueue;
+    writeQueue.start();
+
+    uint32_t bandHeight = 4;
+
+    renderTiledBandBased<T>(surf, cache, tgtSize, fullSize, crop, params, offsets,
+        CW, CH, bandHeight, "render L0",
+        [&](int tx, int ty, int dx, int dy,
+            const cv::Mat_<cv::Vec3f>& basePoints,
+            const cv::Mat_<cv::Vec3f>& stepDirs)
+        {
+            const bool swapWH = (rotQuad >= 0) && (rotQuad % 2 == 1);
+            size_t dx_dst = swapWH ? dy : dx;
+            size_t dy_dst = swapWH ? dx : dy;
+
+            int dstTx, dstTy, rTilesX, rTilesY;
+            mapTileIndex(tx, ty, tilesX_src, tilesY_src,
+                         std::max(rotQuad, 0), flipAxis,
+                         dstTx, dstTy, rTilesX, rTilesY);
+
+            volcart::zarr::Tensor3D<T> outChunk(offsets.numSlices, dy_dst, dx_dst);
+
+            renderSlicesWithCallback<T>(cache, basePoints, stepDirs,
+                params.nearestNeighbor, offsets, params.accum, rotQuad, flipAxis,
+                [&](size_t zi, cv::Mat& slice) {
+                    for (int yy = 0; yy < slice.rows; ++yy) {
+                        const T* src = slice.ptr<T>(yy);
+                        for (int xx = 0; xx < slice.cols; ++xx)
+                            outChunk(zi, yy, xx) = src[xx];
+                    }
+                });
+
+            std::array<size_t, 3> offset = {0, size_t(dstTy) * CH, size_t(dstTx) * CW};
+            writeQueue.enqueue(dsOut.get(), std::move(outChunk), offset);
+        });
+
+    writeQueue.finish();
+
+    if (params.numParts > 1) {
+        std::cout << "[csvs] multi-part mode: skipping pyramid build\n";
+        return;
+    }
+
+    // Build pyramid
+    std::vector<std::unique_ptr<volcart::csvs::CsvsDataset>> levels;
+    levels.push_back(std::move(dsOut));
+    buildCsvsPyramid<T>(outPath, levels, 5, std::min(CH, CW), shardSize);
 }
 
 // ============================================================================
@@ -1397,6 +1748,7 @@ int main(int argc, char* argv[])
         ("flatten-downsample", po::value<int>()->default_value(1), "ABF++ downsample factor")
         ("nearest-neighbor", po::bool_switch()->default_value(false), "Use nearest-neighbor sampling")
         ("threads", po::value<int>()->default_value(0), "Number of threads (0 = auto)")
+        ("shard-size", po::value<int>()->default_value(0), "Shard size for zarr v3 sharding (0 = disabled, implies v3)")
         ("band-height", po::value<int>()->default_value(4), "Tile rows per band for cache locality")
         ("num-parts", po::value<int>()->default_value(1), "Total number of shards for distributed rendering")
         ("part-id", po::value<int>()->default_value(0), "This shard's ID (0-indexed)");
@@ -1550,6 +1902,10 @@ int main(int argc, char* argv[])
     if (nearestNeighbor)
         std::cout << "Using nearest-neighbor sampling\n";
 
+    int shardSize = vm["shard-size"].as<int>();
+    if (shardSize > 0)
+        std::cout << "Zarr v3 sharding enabled, shard size: " << shardSize << "\n";
+
     int numParts = vm["num-parts"].as<int>();
     int partId = vm["part-id"].as<int>();
     if (numParts < 1) {
@@ -1627,8 +1983,8 @@ int main(int argc, char* argv[])
         float renderScale = static_cast<float>(tgtScale * scaleSeg * sA * dsScale);
 
         // Scale canvas
-        double sx = renderScale / surf->_scale[0];
-        double sy = renderScale / surf->_scale[1];
+        double sx = renderScale / surf->_scale[1];
+        double sy = renderScale / surf->_scale[0];
         fullSize.width = std::max(1, static_cast<int>(std::lround(fullSize.width * sx)));
         fullSize.height = std::max(1, static_cast<int>(std::lround(fullSize.height * sy)));
 
@@ -1687,13 +2043,21 @@ int main(int argc, char* argv[])
         }
 
         // Render
-        if (outputZarr) {
+        if (outputZarr && shardSize > 0) {
+            // Use CSVS format for sharded output
+            if (isU16)
+                renderToCsvs<uint16_t>(surf.get(), &cache16, outputPath,
+                                       tgtSize, fullSize, crop, params, offsets, shardSize);
+            else
+                renderToCsvs<uint8_t>(surf.get(), &cache8, outputPath,
+                                      tgtSize, fullSize, crop, params, offsets, shardSize);
+        } else if (outputZarr) {
             if (isU16)
                 renderToZarr<uint16_t>(surf.get(), &cache16, outputPath, volPath, groupIdx,
-                                       tgtSize, fullSize, crop, params, offsets, includeTifs);
+                                       tgtSize, fullSize, crop, params, offsets, includeTifs, shardSize);
             else
                 renderToZarr<uint8_t>(surf.get(), &cache8, outputPath, volPath, groupIdx,
-                                      tgtSize, fullSize, crop, params, offsets, includeTifs);
+                                      tgtSize, fullSize, crop, params, offsets, includeTifs, shardSize);
         } else {
             if (actualOutputPath.string().find('%') == std::string::npos)
                 std::filesystem::create_directories(actualOutputPath);

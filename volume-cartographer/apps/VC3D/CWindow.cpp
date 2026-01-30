@@ -552,9 +552,9 @@ CWindow::CWindow() :
     _surf_col = new CSurfaceCollection();
 
     //_surf_col->setSurface("manual plane", new PlaneSurface({2000,2000,2000},{1,1,1}));
-    _surf_col->setSurface("xy plane", std::make_shared<PlaneSurface>(cv::Vec3f{2000,2000,2000}, cv::Vec3f{0,0,1}));
+    _surf_col->setSurface("xy plane", std::make_shared<PlaneSurface>(cv::Vec3f{2000,2000,2000}, cv::Vec3f{1,0,0}));
     _surf_col->setSurface("xz plane", std::make_shared<PlaneSurface>(cv::Vec3f{2000,2000,2000}, cv::Vec3f{0,1,0}));
-    _surf_col->setSurface("yz plane", std::make_shared<PlaneSurface>(cv::Vec3f{2000,2000,2000}, cv::Vec3f{1,0,0}));
+    _surf_col->setSurface("yz plane", std::make_shared<PlaneSurface>(cv::Vec3f{2000,2000,2000}, cv::Vec3f{0,0,1}));
 
     connect(_surf_col, &CSurfaceCollection::sendPOIChanged, this, &CWindow::onFocusPOIChanged);
     connect(_surf_col, &CSurfaceCollection::sendSurfaceWillBeDeleted, this, &CWindow::onSurfaceWillBeDeleted);
@@ -1085,32 +1085,37 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
 
     updateNormalGridAvailability();
 
-    sendVolumeChanged(currentVolume, currentVolumeId);
-
+    // Clamp POI to new volume dimensions BEFORE notifying viewers,
+    // otherwise viewers render with stale coordinates outside the new volume.
     if (currentVolume && _surf_col) {
-        auto [w, h, d] = currentVolume->shape();
+        auto newShape = currentVolume->shape();
 
         POI* poi = existingFocusPoi;
         const bool createdPoi = (poi == nullptr);
         if (!poi) {
             poi = new POI;
-            poi->n = cv::Vec3f(0, 0, 1);
+            poi->n = cv::Vec3f(1, 0, 0);
         }
 
-        const auto clampCoord = [](float value, int maxDim) {
-            if (maxDim <= 0) {
-                return 0.0f;
-            }
-            const float maxValue = static_cast<float>(maxDim - 1);
-            return std::clamp(value, 0.0f, maxValue);
-        };
-
+        // POI p is [Z,Y,X], shape is [Z,Y,X] — direct indexing
         if (createdPoi || !hadVolume) {
-            poi->p = cv::Vec3f(w / 2.0f, h / 2.0f, d / 2.0f);
+            for (int i = 0; i < 3; i++)
+                poi->p[i] = newShape[i] / 2.0f;
+        } else if (previousVolume) {
+            // Rescale POI proportionally from old volume to new volume
+            auto oldShape = previousVolume->shape();
+            for (int i = 0; i < 3; i++) {
+                if (oldShape[i] > 0)
+                    poi->p[i] = std::clamp(
+                        poi->p[i] * newShape[i] / static_cast<float>(oldShape[i]),
+                        0.0f, static_cast<float>(newShape[i] - 1));
+                else
+                    poi->p[i] = newShape[i] / 2.0f;
+            }
         } else {
-            poi->p[0] = clampCoord(poi->p[0], w);
-            poi->p[1] = clampCoord(poi->p[1], h);
-            poi->p[2] = clampCoord(poi->p[2], d);
+            for (int i = 0; i < 3; i++)
+                poi->p[i] = std::clamp(poi->p[i], 0.0f,
+                                       static_cast<float>(newShape[i] - 1));
         }
 
         _surf_col->setPOI("focus", poi);
@@ -1118,6 +1123,8 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
 
     onManualPlaneChanged();
     applySlicePlaneOrientation(_surf_col ? _surf_col->surface("segmentation").get() : nullptr);
+
+    sendVolumeChanged(currentVolume, currentVolumeId);
 }
 
 void CWindow::updateNormalGridAvailability()
@@ -3191,7 +3198,7 @@ void CWindow::onAppendMaskPressed(void)
     cv::Mat_<uint8_t> img;
     std::vector<cv::Mat> existing_layers;
 
-    auto* ds = currentVolume->zarrDataset(0);
+    auto* ds = currentVolume->chunkSource(0);
 
     try {
         // Find the segmentation viewer and check if composite is enabled
@@ -3222,14 +3229,14 @@ void CWindow::onAppendMaskPressed(void)
                 cv::Vec3f offset(-rawSize.width/2.0f, -rawSize.height/2.0f, 0);
 
                 // Use surface's scale so sx = _scale/_scale = 1.0, sampling 1:1 from raw points
-                float surfScale = surf->scale()[0];
+                float surfScale = surf->scale()[1];
                 cv::Mat_<cv::Vec3f> coords;
                 surf->gen(&coords, nullptr, maskSize, ptr, surfScale, offset);
 
                 std::cout << "[AppendMask non-composite] rawSize: " << rawSize.width << "x" << rawSize.height
                           << ", maskSize: " << maskSize.width << "x" << maskSize.height
                           << ", coords size: " << coords.cols << "x" << coords.rows
-                          << ", surface._scale: " << surf->scale()[0] << std::endl;
+                          << ", surface._scale: " << surf->scale()[1] << std::endl;
 
                 // Sample a few coords to verify they're in native voxel space
                 if (coords.rows > 4 && coords.cols > 4) {
@@ -3358,9 +3365,9 @@ void CWindow::onManualLocationChanged()
         POI* poi = _surf_col->poi("focus");
         if (poi) {
             lblLocFocus->setText(QString("%1, %2, %3")
-                .arg(static_cast<int>(poi->p[0]))
+                .arg(static_cast<int>(poi->p[2]))
                 .arg(static_cast<int>(poi->p[1]))
-                .arg(static_cast<int>(poi->p[2])));
+                .arg(static_cast<int>(poi->p[0])));
         }
         return;
     }
@@ -3377,15 +3384,15 @@ void CWindow::onManualLocationChanged()
         POI* poi = _surf_col->poi("focus");
         if (poi) {
             lblLocFocus->setText(QString("%1, %2, %3")
-                .arg(static_cast<int>(poi->p[0]))
+                .arg(static_cast<int>(poi->p[2]))
                 .arg(static_cast<int>(poi->p[1]))
-                .arg(static_cast<int>(poi->p[2])));
+                .arg(static_cast<int>(poi->p[0])));
         }
         return;
     }
 
     // Clamp values to volume bounds
-    auto [w, h, d] = currentVolume->shape();
+    auto [d, h, w] = currentVolume->shape();
 
     x = std::max(0, std::min(x, w - 1));
     y = std::max(0, std::min(y, h - 1));
@@ -3400,8 +3407,8 @@ void CWindow::onManualLocationChanged()
         poi = new POI;
     }
 
-    poi->p = cv::Vec3f(x, y, z);
-    poi->n = cv::Vec3f(0, 0, 1); // Default normal for XY plane
+    poi->p = cv::Vec3f(z, y, x);
+    poi->n = cv::Vec3f(1, 0, 0); // Default normal for XY plane
 
     _surf_col->setPOI("focus", poi);
 
@@ -3432,9 +3439,9 @@ void CWindow::onFocusPOIChanged(std::string name, POI* poi)
 {
     if (name == "focus" && poi) {
         lblLocFocus->setText(QString("%1, %2, %3")
-            .arg(static_cast<int>(poi->p[0]))
+            .arg(static_cast<int>(poi->p[2]))
             .arg(static_cast<int>(poi->p[1]))
-            .arg(static_cast<int>(poi->p[2])));
+            .arg(static_cast<int>(poi->p[0])));
 
         if (_surfacePanel) {
             _surfacePanel->refreshFiltersOnly();
@@ -3462,7 +3469,7 @@ void CWindow::onPointDoubleClicked(uint64_t pointId)
             quad_surface->pointTo(ptr, point_opt->p, 4.0, 100, patchIndex);
             poi->n = quad_surface->normal(ptr, quad_surface->loc(ptr));
         } else {
-            poi->n = cv::Vec3f(0, 0, 1); // Default normal if no surface
+            poi->n = cv::Vec3f(1, 0, 0); // Default normal if no surface
         }
 
         _surf_col->setPOI("focus", poi);
@@ -4039,11 +4046,11 @@ void CWindow::applySlicePlaneOrientation(Surface* sourceOverride)
     };
 
     // Always update the XY plane
-    auto xyPlane = configurePlane("xy plane", cv::Vec3f(0.0f, 0.0f, 1.0f));
+    auto xyPlane = configurePlane("xy plane", cv::Vec3f(1.0f, 0.0f, 0.0f));
 
     if (_useAxisAlignedSlices) {
         auto segXZShared = configurePlane("seg xz", cv::Vec3f(0.0f, 1.0f, 0.0f), _axisAlignedSegXZRotationDeg);
-        auto segYZShared = configurePlane("seg yz", cv::Vec3f(1.0f, 0.0f, 0.0f), _axisAlignedSegYZRotationDeg);
+        auto segYZShared = configurePlane("seg yz", cv::Vec3f(0.0f, 0.0f, 1.0f), _axisAlignedSegYZRotationDeg);
 
         if (_planeSlicingOverlay) {
             _planeSlicingOverlay->refreshAll();

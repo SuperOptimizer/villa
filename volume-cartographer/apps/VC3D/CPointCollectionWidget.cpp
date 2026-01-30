@@ -215,7 +215,7 @@ void CPointCollectionWidget::refreshTree()
             id_item->setData(QVariant::fromValue(point.id));
             id_item->setFlags(id_item->flags() & ~Qt::ItemIsEditable);
             
-            QStandardItem *pos_item = new QStandardItem(QString("{%1, %2, %3}").arg(point.p[0]).arg(point.p[1]).arg(point.p[2]));
+            QStandardItem *pos_item = new QStandardItem(QString("{%1, %2, %3}").arg(point.p[2]).arg(point.p[1]).arg(point.p[0]));
             pos_item->setFlags(pos_item->flags() & ~Qt::ItemIsEditable);
             
             name_item->appendRow({id_item, pos_item});
@@ -299,7 +299,7 @@ void CPointCollectionWidget::onPointAdded(const ColPoint& point)
         id_item->setData(QVariant::fromValue(point.id));
         id_item->setFlags(id_item->flags() & ~Qt::ItemIsEditable);
         
-        QStandardItem *pos_item = new QStandardItem(QString("{%1, %2, %3}").arg(point.p[0]).arg(point.p[1]).arg(point.p[2]));
+        QStandardItem *pos_item = new QStandardItem(QString("{%1, %2, %3}").arg(point.p[2]).arg(point.p[1]).arg(point.p[0]));
         pos_item->setFlags(pos_item->flags() & ~Qt::ItemIsEditable);
         
         collection_item->appendRow({id_item, pos_item});

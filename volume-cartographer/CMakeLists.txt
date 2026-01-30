@@ -43,7 +43,7 @@ option(VC_WITH_PASTIX "Build with PaStiX support" OFF)
 include(VCFindDependencies)
 
 
-set(CMAKE_CXX_FLAGS "  -std=c++23 -DWITH_BLOSC=1 -DWITH_ZLIB=1  " )
+set(CMAKE_CXX_FLAGS "  -std=c++23 -DWITH_BLOSC=1 -DWITH_ZLIB=1 -Wno-inconsistent-missing-override " )
 set(CMAKE_EXE_LINKER_FLAGS " ")
 include_directories(core/include)
 

@@ -1,5 +1,7 @@
 #include "vc/core/zarr/ZarrDataset.hpp"
 
+#include "vc/core/zarr/ShardedStore.hpp"
+
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -26,7 +28,6 @@ std::string dtypeToString(Dtype dtype)
 
 Dtype dtypeFromString(const std::string& s)
 {
-    // Handle both little-endian (<) and native (|) byte order markers
     if (s == "<u1" || s == "|u1" || s == "uint8") {
         return Dtype::UInt8;
     }
@@ -70,18 +71,26 @@ ZarrDataset::ZarrDataset(
     const std::vector<std::size_t>& chunks,
     Dtype dtype,
     const std::string& compressor,
-    const nlohmann::json& compressorOpts)
-    : path_(path), shape_(shape), chunks_(chunks), dtype_(dtype)
+    const nlohmann::json& compressorOpts,
+    ZarrVersion version,
+    const std::vector<std::size_t>& shardShape)
+    : path_(path)
+    , shape_(shape)
+    , chunks_(chunks)
+    , dtype_(dtype)
+    , version_(version)
 {
-    // Create directory
     std::filesystem::create_directories(path_);
 
-    // Setup compressor
+    if (version_ == ZarrVersion::V3) {
+        chunkPrefix_ = "c";
+    }
+
     if (compressor == "blosc") {
         codec_ = std::make_unique<BloscCodec>(compressorOpts);
     }
 
-    // Default fill value based on dtype
+    // Default fill value
     switch (dtype_) {
         case Dtype::UInt8:
         case Dtype::UInt16:
@@ -94,28 +103,68 @@ ZarrDataset::ZarrDataset(
             fillValue_ = nullptr;
     }
 
-    writeMetadata();
+    // Sharding
+    if (!shardShape.empty()) {
+        if (version_ != ZarrVersion::V3) {
+            throw std::runtime_error("Sharding requires zarr v3");
+        }
+        for (std::size_t i = 0; i < shardShape.size(); ++i) {
+            if (shardShape[i] % chunks[i] != 0) {
+                throw std::runtime_error(
+                    "Shard shape must be multiple of chunk shape");
+            }
+        }
+        shardShape_ = shardShape;
+        shardStore_ = std::make_unique<ShardedStore>(
+            path_, shape_, chunks_, shardShape_, codec_.get(), dtype_);
+    }
+
+    // Write metadata
+    if (version_ == ZarrVersion::V3) {
+        writeMetadataV3();
+    } else {
+        writeMetadata();
+    }
+}
+
+ZarrDataset::~ZarrDataset()
+{
+    flush();
+}
+
+ZarrDataset::ZarrDataset(ZarrDataset&&) noexcept = default;
+ZarrDataset& ZarrDataset::operator=(ZarrDataset&&) noexcept = default;
+
+void ZarrDataset::flush()
+{
+    if (shardStore_) {
+        shardStore_->flush();
+    }
 }
 
 void ZarrDataset::loadMetadata()
 {
+    // Check for v3 first
+    auto zarrJsonPath = path_ / "zarr.json";
+    if (std::filesystem::exists(zarrJsonPath)) {
+        loadMetadataV3();
+        return;
+    }
+
     auto zarrayPath = path_ / ".zarray";
     if (!std::filesystem::exists(zarrayPath)) {
         throw std::runtime_error(
-            "ZarrDataset: .zarray not found at " + zarrayPath.string());
+            "ZarrDataset: no .zarray or zarr.json found at " +
+            path_.string());
     }
 
     std::ifstream f(zarrayPath);
     nlohmann::json meta;
     f >> meta;
 
-    // Parse shape
     shape_ = meta["shape"].get<std::vector<std::size_t>>();
-
-    // Parse chunks
     chunks_ = meta["chunks"].get<std::vector<std::size_t>>();
 
-    // Parse dtype
     dtype_ = dtypeFromString(meta["dtype"].get<std::string>());
     if (dtype_ == Dtype::Unknown) {
         throw std::runtime_error(
@@ -123,15 +172,20 @@ void ZarrDataset::loadMetadata()
             meta["dtype"].get<std::string>());
     }
 
-    // Parse dimension separator (defaults to '/')
-    if (meta.contains("dimension_separator")) {
+    // Detect v1 vs v2
+    int fmt = meta.value("zarr_format", 2);
+    version_ = (fmt <= 1) ? ZarrVersion::V1 : ZarrVersion::V2;
+
+    // v1 default separator is '.'
+    if (version_ == ZarrVersion::V1 && !meta.contains("dimension_separator")) {
+        dimSeparator_ = '.';
+    } else if (meta.contains("dimension_separator")) {
         auto sep = meta["dimension_separator"].get<std::string>();
         if (!sep.empty()) {
             dimSeparator_ = sep[0];
         }
     }
 
-    // Parse compressor
     if (meta.contains("compressor") && !meta["compressor"].is_null()) {
         auto compMeta = meta["compressor"];
         if (compMeta.contains("id") && compMeta["id"] == "blosc") {
@@ -139,9 +193,63 @@ void ZarrDataset::loadMetadata()
         }
     }
 
-    // Parse fill_value
     if (meta.contains("fill_value")) {
         fillValue_ = meta["fill_value"];
+    }
+}
+
+void ZarrDataset::loadMetadataV3()
+{
+    version_ = ZarrVersion::V3;
+    chunkPrefix_ = "c";
+
+    std::ifstream f(path_ / "zarr.json");
+    nlohmann::json meta;
+    f >> meta;
+
+    shape_ = meta["shape"].get<std::vector<std::size_t>>();
+    dtype_ = dtypeFromString(meta["data_type"].get<std::string>());
+
+    // chunk_grid: outer shape (= shard shape if sharded, chunk shape if not)
+    auto gridShape = meta["chunk_grid"]["configuration"]["chunk_shape"]
+                         .get<std::vector<std::size_t>>();
+
+    // chunk_key_encoding separator
+    if (meta.contains("chunk_key_encoding") &&
+        meta["chunk_key_encoding"].contains("configuration")) {
+        auto sep = meta["chunk_key_encoding"]["configuration"].value(
+            "separator", "/");
+        dimSeparator_ = sep[0];
+    }
+
+    fillValue_ = meta.value("fill_value", nlohmann::json(0));
+
+    // Parse codecs
+    bool foundSharding = false;
+    for (auto& c : meta["codecs"]) {
+        std::string name = c["name"];
+        if (name == "sharding_indexed") {
+            foundSharding = true;
+            auto& cfg = c["configuration"];
+            shardShape_ = gridShape;
+            chunks_ = cfg["chunk_shape"].get<std::vector<std::size_t>>();
+
+            for (auto& inner : cfg["codecs"]) {
+                if (inner["name"] == "blosc") {
+                    codec_ = std::make_unique<BloscCodec>(
+                        inner["configuration"]);
+                }
+            }
+        } else if (name == "blosc") {
+            codec_ = std::make_unique<BloscCodec>(c["configuration"]);
+        }
+    }
+
+    if (foundSharding) {
+        shardStore_ = std::make_unique<ShardedStore>(
+            path_, shape_, chunks_, shardShape_, codec_.get(), dtype_);
+    } else {
+        chunks_ = gridShape;
     }
 }
 
@@ -152,7 +260,7 @@ void ZarrDataset::writeMetadata() const
     meta["shape"] = shape_;
     meta["chunks"] = chunks_;
     meta["dtype"] = dtypeToString(dtype_);
-    meta["order"] = "C";  // C-order (row-major in numpy terms, but we use column-major internally)
+    meta["order"] = "C";
     meta["fill_value"] = fillValue_;
     meta["dimension_separator"] = std::string(1, dimSeparator_);
 
@@ -169,6 +277,68 @@ void ZarrDataset::writeMetadata() const
     f << meta.dump(2);
 }
 
+void ZarrDataset::writeMetadataV3() const
+{
+    nlohmann::json meta;
+    meta["zarr_format"] = 3;
+    meta["node_type"] = "array";
+    meta["shape"] = shape_;
+
+    switch (dtype_) {
+        case Dtype::UInt8:
+            meta["data_type"] = "uint8";
+            break;
+        case Dtype::UInt16:
+            meta["data_type"] = "uint16";
+            break;
+        case Dtype::Float32:
+            meta["data_type"] = "float32";
+            break;
+        default:
+            meta["data_type"] = "uint8";
+    }
+
+    auto outerShape = shardShape_.empty() ? chunks_ : shardShape_;
+    meta["chunk_grid"] = {
+        {"name", "regular"},
+        {"configuration", {{"chunk_shape", outerShape}}}};
+
+    meta["chunk_key_encoding"] = {
+        {"name", "default"},
+        {"configuration", {{"separator", std::string(1, dimSeparator_)}}}};
+
+    meta["fill_value"] = fillValue_;
+
+    // Build codecs
+    nlohmann::json bytesCodec = {
+        {"name", "bytes"},
+        {"configuration", {{"endian", "little"}}}};
+
+    nlohmann::json innerCodecs = nlohmann::json::array();
+    innerCodecs.push_back(bytesCodec);
+    if (codec_) {
+        innerCodecs.push_back(codec_->toJsonV3(dtypeSize(dtype_)));
+    }
+
+    if (!shardShape_.empty()) {
+        nlohmann::json indexCodecs = nlohmann::json::array();
+        indexCodecs.push_back(bytesCodec);
+
+        meta["codecs"] = nlohmann::json::array(
+            {{{"name", "sharding_indexed"},
+              {"configuration",
+               {{"chunk_shape", chunks_},
+                {"codecs", innerCodecs},
+                {"index_codecs", indexCodecs},
+                {"index_location", "end"}}}}});
+    } else {
+        meta["codecs"] = innerCodecs;
+    }
+
+    std::ofstream f(path_ / "zarr.json");
+    f << meta.dump(2);
+}
+
 std::size_t ZarrDataset::defaultChunkSize() const noexcept
 {
     std::size_t size = 1;
@@ -180,6 +350,10 @@ std::size_t ZarrDataset::defaultChunkSize() const noexcept
 
 bool ZarrDataset::chunkExists(const std::vector<std::size_t>& chunkId) const
 {
+    if (shardStore_) {
+        return const_cast<ShardedStore*>(shardStore_.get())
+            ->chunkExists(chunkId);
+    }
     return std::filesystem::exists(chunkPath(chunkId));
 }
 
@@ -205,7 +379,10 @@ std::filesystem::path ZarrDataset::chunkPath(
         }
         name += std::to_string(chunkId[i]);
     }
-    return path_ / name;
+    if (chunkPrefix_.empty()) {
+        return path_ / name;
+    }
+    return path_ / chunkPrefix_ / name;
 }
 
 void ZarrDataset::ensureChunkDir(const std::vector<std::size_t>& chunkId) const
@@ -220,9 +397,13 @@ void ZarrDataset::ensureChunkDir(const std::vector<std::size_t>& chunkId) const
 bool ZarrDataset::readChunk(
     const std::vector<std::size_t>& chunkId, void* buffer) const
 {
+    if (shardStore_) {
+        return const_cast<ShardedStore*>(shardStore_.get())
+            ->readChunk(chunkId, buffer);
+    }
+
     auto cp = chunkPath(chunkId);
 
-    // Open directly — avoids a separate stat() syscall
     std::ifstream f(cp, std::ios::binary);
     if (!f.is_open()) {
         return false;
@@ -236,12 +417,10 @@ bool ZarrDataset::readChunk(
     f.read(reinterpret_cast<char*>(compressed.data()), fileSize);
 
     if (codec_) {
-        // Decompress
         std::size_t chunkBytes = defaultChunkSize() * dtypeSize(dtype_);
         codec_->decompress(
             compressed.data(), compressed.size(), buffer, chunkBytes);
     } else {
-        // Raw data
         std::memcpy(buffer, compressed.data(), compressed.size());
     }
 
@@ -253,6 +432,11 @@ void ZarrDataset::writeChunk(
     const void* buffer,
     std::size_t size)
 {
+    if (shardStore_) {
+        shardStore_->writeChunk(chunkId, buffer, size);
+        return;
+    }
+
     ensureChunkDir(chunkId);
 
     std::vector<std::uint8_t> output;
@@ -277,52 +461,43 @@ void ZarrDataset::readSubarray(
     const std::vector<std::size_t>& offset,
     const std::vector<std::size_t>& reqShape) const
 {
-    // Validate dimensions
     if (offset.size() != 3 || reqShape.size() != 3) {
         throw std::runtime_error(
             "ZarrDataset::readSubarray: requires 3D offset and shape");
     }
 
-    // Resize output if needed
     if (out.shape()[0] != reqShape[0] || out.shape()[1] != reqShape[1] ||
         out.shape()[2] != reqShape[2]) {
         out.resize(reqShape[0], reqShape[1], reqShape[2]);
     }
 
-    // Initialize with fill value
     T fillVal{0};
     if (fillValue_.is_number()) {
         fillVal = fillValue_.get<T>();
     }
     out.fill(fillVal);
 
-    // Calculate chunk range
     std::vector<std::size_t> startChunk(3), endChunk(3);
     for (int i = 0; i < 3; ++i) {
         startChunk[i] = offset[i] / chunks_[i];
         endChunk[i] = (offset[i] + reqShape[i] + chunks_[i] - 1) / chunks_[i];
     }
 
-    // Temporary buffer for reading chunks
     std::vector<T> chunkBuffer(defaultChunkSize());
 
-    // Iterate over chunks
     for (std::size_t cz = startChunk[0]; cz < endChunk[0]; ++cz) {
         for (std::size_t cy = startChunk[1]; cy < endChunk[1]; ++cy) {
             for (std::size_t cx = startChunk[2]; cx < endChunk[2]; ++cx) {
                 std::vector<std::size_t> chunkId = {cz, cy, cx};
 
-                // Try to read chunk
                 if (!readChunk(chunkId, chunkBuffer.data())) {
-                    continue;  // Chunk doesn't exist, use fill value
+                    continue;
                 }
 
-                // Calculate overlap between chunk and requested region
                 std::size_t chunkStartZ = cz * chunks_[0];
                 std::size_t chunkStartY = cy * chunks_[1];
                 std::size_t chunkStartX = cx * chunks_[2];
 
-                // Source range within chunk
                 std::size_t srcZ0 =
                     (offset[0] > chunkStartZ) ? offset[0] - chunkStartZ : 0;
                 std::size_t srcY0 =
@@ -337,18 +512,13 @@ void ZarrDataset::readSubarray(
                 std::size_t srcX1 = std::min(
                     chunks_[2], offset[2] + reqShape[2] - chunkStartX);
 
-                // Destination range within output
                 std::size_t dstZ0 = chunkStartZ + srcZ0 - offset[0];
                 std::size_t dstY0 = chunkStartY + srcY0 - offset[1];
                 std::size_t dstX0 = chunkStartX + srcX0 - offset[2];
 
-                // Copy data (zarr C-order: z,y,x with x varying fastest)
-                // Our tensor is column-major with dim0 varying fastest
-                // We need to handle the mapping properly
                 for (std::size_t sz = srcZ0; sz < srcZ1; ++sz) {
                     for (std::size_t sy = srcY0; sy < srcY1; ++sy) {
                         for (std::size_t sx = srcX0; sx < srcX1; ++sx) {
-                            // Zarr C-order index: z*chunks[1]*chunks[2] + y*chunks[2] + x
                             std::size_t srcIdx =
                                 sz * chunks_[1] * chunks_[2] +
                                 sy * chunks_[2] + sx;
@@ -373,32 +543,26 @@ void ZarrDataset::writeSubarray(
 {
     const auto& dataShape = data.shape();
 
-    // Validate dimensions
     if (offset.size() != 3) {
         throw std::runtime_error(
             "ZarrDataset::writeSubarray: requires 3D offset");
     }
 
-    // Calculate chunk range
     std::vector<std::size_t> startChunk(3), endChunk(3);
     for (int i = 0; i < 3; ++i) {
         startChunk[i] = offset[i] / chunks_[i];
         endChunk[i] = (offset[i] + dataShape[i] + chunks_[i] - 1) / chunks_[i];
     }
 
-    // Temporary buffer for writing chunks
     std::vector<T> chunkBuffer(defaultChunkSize());
 
-    // Iterate over chunks
     for (std::size_t cz = startChunk[0]; cz < endChunk[0]; ++cz) {
         for (std::size_t cy = startChunk[1]; cy < endChunk[1]; ++cy) {
             for (std::size_t cx = startChunk[2]; cx < endChunk[2]; ++cx) {
                 std::vector<std::size_t> chunkId = {cz, cy, cx};
 
-                // Try to read existing chunk data (for partial overwrites)
                 bool existingChunk = readChunk(chunkId, chunkBuffer.data());
                 if (!existingChunk) {
-                    // Initialize with fill value
                     T fillVal{0};
                     if (fillValue_.is_number()) {
                         fillVal = fillValue_.get<T>();
@@ -406,12 +570,10 @@ void ZarrDataset::writeSubarray(
                     std::fill(chunkBuffer.begin(), chunkBuffer.end(), fillVal);
                 }
 
-                // Calculate overlap
                 std::size_t chunkStartZ = cz * chunks_[0];
                 std::size_t chunkStartY = cy * chunks_[1];
                 std::size_t chunkStartX = cx * chunks_[2];
 
-                // Destination range within chunk
                 std::size_t dstZ0 =
                     (offset[0] > chunkStartZ) ? offset[0] - chunkStartZ : 0;
                 std::size_t dstY0 =
@@ -426,12 +588,10 @@ void ZarrDataset::writeSubarray(
                 std::size_t dstX1 = std::min(
                     chunks_[2], offset[2] + dataShape[2] - chunkStartX);
 
-                // Source range within input data
                 std::size_t srcZ0 = chunkStartZ + dstZ0 - offset[0];
                 std::size_t srcY0 = chunkStartY + dstY0 - offset[1];
                 std::size_t srcX0 = chunkStartX + dstX0 - offset[2];
 
-                // Copy data
                 for (std::size_t dz = dstZ0; dz < dstZ1; ++dz) {
                     for (std::size_t dy = dstY0; dy < dstY1; ++dy) {
                         for (std::size_t dx = dstX0; dx < dstX1; ++dx) {
@@ -439,7 +599,6 @@ void ZarrDataset::writeSubarray(
                             std::size_t sy = srcY0 + (dy - dstY0);
                             std::size_t sx = srcX0 + (dx - dstX0);
 
-                            // Zarr C-order index
                             std::size_t dstIdx =
                                 dz * chunks_[1] * chunks_[2] +
                                 dy * chunks_[2] + dx;
@@ -449,7 +608,6 @@ void ZarrDataset::writeSubarray(
                     }
                 }
 
-                // Write chunk
                 writeChunk(
                     chunkId,
                     chunkBuffer.data(),

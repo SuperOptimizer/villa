@@ -254,10 +254,10 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
         dir3 *= (1.0f / len);
 
         cv::Vec3f s0 = plane->project(p0, 1.0f, scale);
-        QPointF anchor(QPointF(s0[0], s0[1]));
+        QPointF anchor(QPointF(s0[2], s0[1]));
 
         cv::Vec3f s1 = plane->project(p0 + dir3 * (kArrowLength / scale), 1.0f, scale);
-        QPointF dir2(s1[0] - s0[0], s1[1] - s0[1]);
+        QPointF dir2(s1[2] - s0[2], s1[1] - s0[1]);
         if (std::hypot(dir2.x(), dir2.y()) < 1e-3) {
             return;
         }
@@ -294,15 +294,15 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
         addMarker(anchor, kCenterColor, kStepCenterRadius);
 
         for (int n = 1; n <= numPoints; ++n) {
-            cv::Vec3f pPos = segSurface->coord(segPtr, {n * stepVal, 0, 0});
-            cv::Vec3f pNeg = segSurface->coord(segPtr, {-n * stepVal, 0, 0});
+            cv::Vec3f pPos = segSurface->coord(segPtr, {0, 0, n * stepVal});
+            cv::Vec3f pNeg = segSurface->coord(segPtr, {0, 0, -n * stepVal});
             if (pPos[0] != -1) {
                 cv::Vec3f s = plane->project(pPos, 1.0f, scale);
-                addMarker(QPointF(s[0], s[1]), kArrowFalseColor, kStepMarkerRadius);
+                addMarker(QPointF(s[2], s[1]), kArrowFalseColor, kStepMarkerRadius);
             }
             if (pNeg[0] != -1) {
                 cv::Vec3f s = plane->project(pNeg, 1.0f, scale);
-                addMarker(QPointF(s[0], s[1]), kArrowTrueColor, kStepMarkerRadius);
+                addMarker(QPointF(s[2], s[1]), kArrowTrueColor, kStepMarkerRadius);
             }
         }
     }
@@ -346,8 +346,8 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
         const int cols = points->cols;
         const cv::Vec2f surfScale = quad->scale();
 
-        const float gridToSceneX = viewerScale / surfScale[0];
-        const float gridToSceneY = viewerScale / surfScale[1];
+        const float gridToSceneX = viewerScale / surfScale[1];
+        const float gridToSceneY = viewerScale / surfScale[0];
         const float centerOffsetX = (cols / 2.0f) * gridToSceneX;
         const float centerOffsetY = (rows / 2.0f) * gridToSceneY;
 
@@ -474,8 +474,8 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
         cv::Vec3f p0 = plane->project(worldPos, 1.0f, viewerScale);
         cv::Vec3f p1 = plane->project(worldPos + dir3d * (kArrowLen / viewerScale), 1.0f, viewerScale);
 
-        QPointF origin(p0[0], p0[1]);
-        QPointF dir2d(p1[0] - p0[0], p1[1] - p0[1]);
+        QPointF origin(p0[2], p0[1]);
+        QPointF dir2d(p1[2] - p0[2], p1[1] - p0[1]);
         float len2d = std::sqrt(dir2d.x() * dir2d.x() + dir2d.y() * dir2d.y());
 
         OverlayStyle style;

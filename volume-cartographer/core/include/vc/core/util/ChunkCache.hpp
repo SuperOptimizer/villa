@@ -1,7 +1,7 @@
 #pragma once
 
 #include "vc/core/zarr/Tensor3D.hpp"
-#include "vc/core/zarr/ZarrDataset.hpp"
+#include "vc/core/types/IChunkSource.hpp"
 
 #include <atomic>
 #include <memory>
@@ -18,7 +18,8 @@
  * doesn't free memory until all readers are done. This prevents use-after-free
  * when one thread evicts a chunk another thread is reading.
  *
- * Uses a flat 3D array indexed by chunk coordinates (ix, iy, iz).
+ * Uses a flat 3D array indexed by chunk coordinates (iz, iy, ix).
+ * Dimensions follow ZYX ordering: dim 0 = Z, dim 1 = Y, dim 2 = X.
  */
 template<typename T>
 class ChunkCache
@@ -34,8 +35,8 @@ public:
     ChunkCache(ChunkCache&&) = delete;
     ChunkCache& operator=(ChunkCache&&) = delete;
 
-    void init(volcart::zarr::ZarrDataset* ds);
-    bool initialized() const { return _ds != nullptr; }
+    void init(IChunkSource* src);
+    bool initialized() const { return _src != nullptr; }
 
     void setMaxBytes(size_t maxBytes);
     size_t cachedCount() const { return _cachedCount.load(std::memory_order_relaxed); }
@@ -44,13 +45,13 @@ public:
      * @brief Get a chunk, loading from disk if needed.
      * Returns shared_ptr — caller holds the chunk alive even if evicted.
      */
-    ChunkPtr get(int ix, int iy, int iz);
+    ChunkPtr get(int iz, int iy, int ix);
 
     /**
      * @brief Get raw pointer (for hot-path compatibility). Caller must ensure
      * chunk stays alive (e.g. by also holding a ChunkPtr from get()).
      */
-    volcart::zarr::Tensor3D<T>* getRaw(int ix, int iy, int iz);
+    volcart::zarr::Tensor3D<T>* getRaw(int iz, int iy, int ix);
 
     /**
      * @brief Fast raw pointer lookup with no refcount overhead.
@@ -58,51 +59,51 @@ public:
      * of the returned chunk (safe during rendering where eviction only happens
      * inside get() calls).
      */
-    const volcart::zarr::Tensor3D<T>* getRawFast(int ix, int iy, int iz) const;
+    const volcart::zarr::Tensor3D<T>* getRawFast(int iz, int iy, int ix) const;
 
-    ChunkPtr getIfCached(int ix, int iy, int iz) const;
+    ChunkPtr getIfCached(int iz, int iy, int ix) const;
 
-    void prefetch(int minIx, int minIy, int minIz, int maxIx, int maxIy, int maxIz);
+    void prefetch(int minIz, int minIy, int minIx, int maxIz, int maxIy, int maxIx);
     void clear();
 
     /** @brief Drop all cached chunks but keep the cache initialized for the same dataset */
     void flush();
 
-    int chunkSizeX() const { return _cw; }
-    int chunkSizeY() const { return _ch; }
-    int chunkSizeZ() const { return _cd; }
-    int datasetSizeX() const { return _sx; }
-    int datasetSizeY() const { return _sy; }
+    int chunkSizeZ() const { return _cz; }
+    int chunkSizeY() const { return _cy; }
+    int chunkSizeX() const { return _cx; }
     int datasetSizeZ() const { return _sz; }
-    int chunksX() const { return _chunksX; }
-    int chunksY() const { return _chunksY; }
+    int datasetSizeY() const { return _sy; }
+    int datasetSizeX() const { return _sx; }
     int chunksZ() const { return _chunksZ; }
+    int chunksY() const { return _chunksY; }
+    int chunksX() const { return _chunksX; }
 
-    int chunkShiftX() const { return _cwShift; }
-    int chunkShiftY() const { return _chShift; }
-    int chunkShiftZ() const { return _cdShift; }
-    int chunkMaskX() const { return _cwMask; }
-    int chunkMaskY() const { return _chMask; }
-    int chunkMaskZ() const { return _cdMask; }
+    int chunkShiftZ() const { return _czShift; }
+    int chunkShiftY() const { return _cyShift; }
+    int chunkShiftX() const { return _cxShift; }
+    int chunkMaskZ() const { return _czMask; }
+    int chunkMaskY() const { return _cyMask; }
+    int chunkMaskX() const { return _cxMask; }
 
-    volcart::zarr::ZarrDataset* dataset() const { return _ds; }
+    IChunkSource* source() const { return _src; }
 
 private:
-    volcart::zarr::ZarrDataset* _ds = nullptr;
+    IChunkSource* _src = nullptr;
 
     size_t _maxBytes = 0;
     size_t _maxChunks = 0;
     std::atomic<size_t> _cachedCount{0};
     std::atomic<uint64_t> _generation{0};
 
-    int _cw = 0, _ch = 0, _cd = 0;
-    int _sx = 0, _sy = 0, _sz = 0;
-    int _chunksX = 0, _chunksY = 0, _chunksZ = 0;
+    int _cz = 0, _cy = 0, _cx = 0;
+    int _sz = 0, _sy = 0, _sx = 0;
+    int _chunksZ = 0, _chunksY = 0, _chunksX = 0;
 
-    int _cwShift = 0, _chShift = 0, _cdShift = 0;
-    int _cwMask = 0, _chMask = 0, _cdMask = 0;
+    int _czShift = 0, _cyShift = 0, _cxShift = 0;
+    int _czMask = 0, _cyMask = 0, _cxMask = 0;
 
-    // Flat 3D array: _chunks[ix * _chunksY * _chunksZ + iy * _chunksZ + iz]
+    // Flat 3D array: _chunks[iz * _chunksY * _chunksX + iy * _chunksX + ix]
     // atomic shared_ptr for lock-free reads on the fast path
     size_t _totalSlots = 0;
     std::unique_ptr<std::atomic<ChunkPtr>[]> _chunks;
@@ -114,13 +115,13 @@ private:
     static constexpr int kLockPoolSize = 64;
     std::mutex _lockPool[kLockPoolSize];
 
-    size_t idx(int ix, int iy, int iz) const {
-        return static_cast<size_t>(ix) * _chunksY * _chunksZ +
-               static_cast<size_t>(iy) * _chunksZ +
-               static_cast<size_t>(iz);
+    size_t idx(int iz, int iy, int ix) const {
+        return static_cast<size_t>(iz) * _chunksY * _chunksX +
+               static_cast<size_t>(iy) * _chunksX +
+               static_cast<size_t>(ix);
     }
 
-    ChunkPtr loadChunk(int ix, int iy, int iz);
+    ChunkPtr loadChunk(int iz, int iy, int ix);
     void evictIfNeeded();
 
     static int log2_pow2(int v) {

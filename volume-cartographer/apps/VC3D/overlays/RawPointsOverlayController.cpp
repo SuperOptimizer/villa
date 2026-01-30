@@ -284,8 +284,8 @@ void RawPointsOverlayController::collectFlattenedViewPoints(CVolumeViewer* viewe
         const float ptrY = static_cast<float>(gp.row) - centerY;
 
         // Convert to nominal coordinates (divide by surface scale)
-        const float nomX = ptrX / surfScale[0];
-        const float nomY = ptrY / surfScale[1];
+        const float nomX = ptrX / surfScale[1];
+        const float nomY = ptrY / surfScale[0];
 
         // Convert to scene coordinates (multiply by viewer scale)
         const float sceneX = nomX * viewerScale;

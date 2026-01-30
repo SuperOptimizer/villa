@@ -860,8 +860,8 @@ bool SegmentationEditManager::markInvalidRegion(int centerRow, int centerCol, fl
 
     const float sanitizedRadius = std::max(radiusSteps, 0.0f);
     const float stepNorm = stepNormalization();
-    const float stepX = std::abs(_gridScale[0]);
-    const float stepY = std::abs(_gridScale[1]);
+    const float stepX = std::abs(_gridScale[1]);
+    const float stepY = std::abs(_gridScale[0]);
 
     const float radiusWorld = std::max(stepNorm * 0.5f, sanitizedRadius * stepNorm);
     const float radiusWorldSq = radiusWorld * radiusWorld;
@@ -988,8 +988,8 @@ bool SegmentationEditManager::buildActiveSamples(const std::pair<int, int>& grid
     _activeDrag.samples.clear();
     _activeDrag.samples.reserve(static_cast<size_t>((rowEnd - rowStart + 1) * (colEnd - colStart + 1)));
 
-    const float stepX = _gridScale[0];
-    const float stepY = _gridScale[1];
+    const float stepX = _gridScale[1];
+    const float stepY = _gridScale[0];
 
     for (int r = rowStart; r <= rowEnd; ++r) {
         for (int c = colStart; c <= colEnd; ++c) {

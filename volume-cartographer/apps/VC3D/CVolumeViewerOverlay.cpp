@@ -127,10 +127,10 @@ void CVolumeViewer::updateAllOverlays()
         if (poi) {
             cv::Vec3f planeOrigin = plane->origin();
             // If plane origin differs from POI, update POI
-            if (std::abs(poi->p[2] - planeOrigin[2]) > 0.01) {
+            if (std::abs(poi->p[0] - planeOrigin[0]) > 0.01) {
                 poi->p = planeOrigin;
                 _surf_col->setPOI("focus", poi);  // NOW we do the expensive update
-                emit sendZSliceChanged(static_cast<int>(poi->p[2]));
+                emit sendZSliceChanged(static_cast<int>(poi->p[0]));
             }
         }
     }

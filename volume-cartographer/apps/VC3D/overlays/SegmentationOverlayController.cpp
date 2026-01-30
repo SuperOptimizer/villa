@@ -853,8 +853,8 @@ void SegmentationOverlayController::rebuildViewerCache(CVolumeViewer* viewer, Qu
 
     // Formula: scenePos = (gridPos/surfScale - center) * viewerScale
     auto gridToScene = [&](int row, int col) -> QPointF {
-        const float surfLocalX = static_cast<float>(col) / surfScale[0] - center[0];
-        const float surfLocalY = static_cast<float>(row) / surfScale[1] - center[1];
+        const float surfLocalX = static_cast<float>(col) / surfScale[1] - center[2];
+        const float surfLocalY = static_cast<float>(row) / surfScale[0] - center[1];
         const float sceneX = surfLocalX * viewerScale;
         const float sceneY = surfLocalY * viewerScale;
         return QPointF(sceneX, sceneY);
@@ -1263,8 +1263,8 @@ void SegmentationOverlayController::buildApprovalMaskOverlay(const State& state,
     // Lambda to convert grid index directly to scene position (no pointTo!)
     // Formula: scenePos = (gridPos/surfScale - center) * viewerScale
     auto gridToScene = [&](int row, int col) -> QPointF {
-        const float sceneX = (static_cast<float>(col) / surfScale[0] - center[0]) * viewerScale;
-        const float sceneY = (static_cast<float>(row) / surfScale[1] - center[1]) * viewerScale;
+        const float sceneX = (static_cast<float>(col) / surfScale[1] - center[2]) * viewerScale;
+        const float sceneY = (static_cast<float>(row) / surfScale[0] - center[1]) * viewerScale;
         return QPointF(sceneX, sceneY);
     };
 

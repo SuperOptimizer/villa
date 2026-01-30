@@ -71,12 +71,12 @@ void normalizeMaskChannel(cv::Mat& mask)
 //NOTE we have 3 coordiante systems. Nominal (voxel volume) coordinates, internal relative (ptr) coords (where _center is at 0/0) and internal absolute (_points) coordinates where the upper left corner is at 0/0.
 static cv::Vec3f internal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal, const cv::Vec2f &scale)
 {
-    return internal + cv::Vec3f(nominal[0]*scale[0], nominal[1]*scale[1], nominal[2]);
+    return internal + cv::Vec3f(nominal[0], nominal[1]*scale[0], nominal[2]*scale[1]);
 }
 
 static cv::Vec3f nominal_loc(const cv::Vec3f &nominal, const cv::Vec3f &internal, const cv::Vec2f &scale)
 {
-    return nominal + cv::Vec3f(internal[0]/scale[0], internal[1]/scale[1], internal[2]);
+    return nominal + cv::Vec3f(internal[0], internal[1]/scale[0], internal[2]/scale[1]);
 }
 
 QuadSurface::QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &scale)
@@ -84,7 +84,7 @@ QuadSurface::QuadSurface(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &sca
     _points = std::make_unique<cv::Mat_<cv::Vec3f>>(points.clone());
     _bounds = {0,0,_points->cols-1,_points->rows-1};
     _scale = scale;
-    _center = {static_cast<float>(_points->cols/2.0/_scale[0]), static_cast<float>(_points->rows/2.0/_scale[1]), 0.f};
+    _center = {0.f, static_cast<float>(_points->rows/2.0/_scale[0]), static_cast<float>(_points->cols/2.0/_scale[1])};
 }
 
 QuadSurface::QuadSurface(cv::Mat_<cv::Vec3f> *points, const cv::Vec2f &scale)
@@ -93,7 +93,7 @@ QuadSurface::QuadSurface(cv::Mat_<cv::Vec3f> *points, const cv::Vec2f &scale)
     //-1 as many times we read with linear interpolation and access +1 locations
     _bounds = {0,0,_points->cols-1,_points->rows-1};
     _scale = scale;
-    _center = {static_cast<float>(_points->cols/2.0/_scale[0]), static_cast<float>(_points->rows/2.0/_scale[1]), 0.f};
+    _center = {0.f, static_cast<float>(_points->rows/2.0/_scale[0]), static_cast<float>(_points->cols/2.0/_scale[1])};
 }
 
 namespace {
@@ -178,14 +178,14 @@ cv::Vec3f QuadSurface::pointer()
 
 void QuadSurface::move(cv::Vec3f &ptr, const cv::Vec3f &offset)
 {
-    ptr += cv::Vec3f(offset[0]*_scale[0], offset[1]*_scale[1], offset[2]);
+    ptr += cv::Vec3f(offset[0], offset[1]*_scale[0], offset[2]*_scale[1]);
 }
 
 bool QuadSurface::valid(const cv::Vec3f &ptr, const cv::Vec3f &offset)
 {
     ensureLoaded();
     cv::Vec3f p = internal_loc(offset+_center, ptr, _scale);
-    return loc_valid_xy(*_points, {p[0], p[1]});
+    return loc_valid_xy(*_points, {p[1], p[2]});
 }
 
 
@@ -195,10 +195,10 @@ cv::Vec3f QuadSurface::coord(const cv::Vec3f &ptr, const cv::Vec3f &offset)
     cv::Vec3f p = internal_loc(offset+_center, ptr, _scale);
 
     cv::Rect bounds = {0,0,_points->cols-2,_points->rows-2};
-    if (!bounds.contains(cv::Point(p[0],p[1])))
+    if (!bounds.contains(cv::Point(p[2],p[1])))
         return {-1,-1,-1};
 
-    return at_int((*_points), {p[0],p[1]});
+    return at_int((*_points), {p[1],p[2]});
 }
 
 cv::Vec3f QuadSurface::loc(const cv::Vec3f &ptr, const cv::Vec3f &offset)
@@ -214,7 +214,7 @@ cv::Vec3f QuadSurface::loc_raw(const cv::Vec3f &ptr)
 cv::Size QuadSurface::size()
 {
     ensureLoaded();
-    return {static_cast<int>(_points->cols / _scale[0]), static_cast<int>(_points->rows / _scale[1])};
+    return {static_cast<int>(_points->cols / _scale[1]), static_cast<int>(_points->rows / _scale[0])};
 }
 
 cv::Vec2f QuadSurface::scale() const
@@ -240,8 +240,8 @@ cv::Vec3f QuadSurface::gridNormal(int row, int col) const
     if (!_points) {
         return {NAN, NAN, NAN};
     }
-    // grid_normal expects (col, row) order in the Vec3f
-    return grid_normal(*_points, cv::Vec3f(static_cast<float>(col), static_cast<float>(row), 0.0f));
+    // grid_normal expects ZYX: (0, row, col)
+    return grid_normal(*_points, cv::Vec3f(0.0f, static_cast<float>(row), static_cast<float>(col)));
 }
 
 void QuadSurface::setChannel(const std::string& name, const cv::Mat& channel)
@@ -359,9 +359,9 @@ void QuadSurface::invalidateCache()
     if (_points) {
         _bounds = {0, 0, _points->cols - 1, _points->rows - 1};
         _center = {
-            static_cast<float>(_points->cols / 2.0 / _scale[0]),
-            static_cast<float>(_points->rows / 2.0 / _scale[1]),
-            0.f
+            0.f,
+            static_cast<float>(_points->rows / 2.0 / _scale[0]),
+            static_cast<float>(_points->cols / 2.0 / _scale[1])
         };
     } else {
         _bounds = {0, 0, -1, -1};
@@ -380,7 +380,7 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
                       const cv::Vec3f& offset)
 {
     ensureLoaded();
-    const bool need_normals = (normals != nullptr) || offset[2] || ptr[2];
+    const bool need_normals = (normals != nullptr) || offset[0] || ptr[0];
 
     const cv::Vec3f ul = internal_loc(offset/scale + _center, ptr, _scale);
     const int w = size.width, h = size.height;
@@ -392,9 +392,9 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
     coords->create(size + cv::Size(8, 8));
 
     // --- build mapping  ---------------------------------
-    const double sx = static_cast<double>(_scale[0]) / static_cast<double>(scale);
-    const double sy = static_cast<double>(_scale[1]) / static_cast<double>(scale);
-    const double ox = static_cast<double>(ul[0]) - 4.0 * sx;
+    const double sx = static_cast<double>(_scale[1]) / static_cast<double>(scale);
+    const double sy = static_cast<double>(_scale[0]) / static_cast<double>(scale);
+    const double ox = static_cast<double>(ul[2]) - 4.0 * sx;
     const double oy = static_cast<double>(ul[1]) - 4.0 * sy;
 
     std::array<cv::Point2f,3> srcf = {
@@ -437,9 +437,9 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
                 const int jj = j + 4, ii = i + 4;
                 if (valid_big.at<uint8_t>(jj, ii)) {
                     normals_big(jj, ii) = grid_normal(*_points,
-                        cv::Vec3f(static_cast<float>(x),
+                        cv::Vec3f(0.0f,
                                 static_cast<float>(y),
-                                0.0f));
+                                static_cast<float>(x)));
                 }
             }
         }
@@ -468,12 +468,12 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
     }
 
     // --- apply offset along normals only where normals are valid --------
-    if (need_normals && ul[2] != 0.0f) {
+    if (need_normals && ul[0] != 0.0f) {
         for (int j = 0; j < h; ++j) {
             for (int i = 0; i < w; ++i) {
                 const cv::Vec3f n = (*normals)(j, i);
                 if (std::isfinite(n[0]) && std::isfinite(n[1]) && std::isfinite(n[2])) {
-                    (*coords)(j, i) += n * ul[2];
+                    (*coords)(j, i) += n * ul[0];
                 }
             }
         }
@@ -496,7 +496,7 @@ template <typename E>
 static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt, cv::Vec2f init_step, float min_step_x)
 {
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
-    if (!boundary.contains(cv::Point(loc))) {
+    if (!boundary.contains(cv::Point(loc[1],loc[0]))) {
         out = {-1,-1,-1};
         return -1;
     }
@@ -519,7 +519,7 @@ static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f
             cv::Vec2f cand = loc+mul(off,step);
 
             //just skip if out of bounds
-            if (!boundary.contains(cv::Point(cand)))
+            if (!boundary.contains(cv::Point(cand[1],cand[0])))
                 continue;
 
             val = at_int(points, cand);
@@ -538,7 +538,7 @@ static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f
         step *= 0.5;
         changed = true;
 
-        if (step[0] < min_step_x)
+        if (step[1] < min_step_x)
             break;
     }
 
@@ -550,11 +550,11 @@ static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f
 template <typename E>
 static float pointTo_(cv::Vec2f &loc, const cv::Mat_<E> &points, const cv::Vec3f &tgt, float th, int max_iters, float scale)
 {
-    loc = cv::Vec2f(points.cols/2,points.rows/2);
+    loc = cv::Vec2f(points.rows/2,points.cols/2);
     cv::Vec3f _out;
 
     cv::Vec2f step_small = {std::max(1.0f,scale),std::max(1.0f,scale)};
-    float min_mul = std::min(0.1*points.cols/scale,0.1*points.rows/scale);
+    float min_mul = std::min(0.1*points.rows/scale,0.1*points.cols/scale);
     cv::Vec2f step_large = {min_mul*scale,min_mul*scale};
 
     assert(points.cols > 3);
@@ -575,9 +575,9 @@ static float pointTo_(cv::Vec2f &loc, const cv::Mat_<E> &points, const cv::Vec3f
     int r_full = 0;
     for(int r=0;r<10*max_iters && r_full < max_iters;r++) {
         //FIXME skipn invalid init locs!
-        loc = {static_cast<float>(1 + (rand() % (points.cols-3))), static_cast<float>(1 + (rand() % (points.rows-3)))};
+        loc = {static_cast<float>(1 + (rand() % (points.rows-3))), static_cast<float>(1 + (rand() % (points.cols-3)))};
 
-        if (points(loc[1],loc[0])[0] == -1)
+        if (points(loc[0],loc[1])[0] == -1)
             continue;
 
         r_full++;
@@ -612,25 +612,25 @@ float QuadSurface::pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int m
                            SurfacePatchIndex* surfaceIndex, PointIndex* pointIndex)
 {
     ensureLoaded();
-    cv::Vec2f loc = cv::Vec2f(ptr[0], ptr[1]) + cv::Vec2f(_center[0]*_scale[0], _center[1]*_scale[1]);
+    cv::Vec2f loc = cv::Vec2f(ptr[1], ptr[2]) + cv::Vec2f(_center[1]*_scale[0], _center[2]*_scale[1]);
     cv::Vec3f _out;
 
     cv::Vec2f step_small = {std::max(1.0f,_scale[0]), std::max(1.0f,_scale[1])};
-    float min_mul = std::min(0.1*_points->cols/_scale[0], 0.1*_points->rows/_scale[1]);
+    float min_mul = std::min(0.1*_points->rows/_scale[0], 0.1*_points->cols/_scale[1]);
     cv::Vec2f step_large = {min_mul*_scale[0], min_mul*_scale[1]};
 
     // Try initial location first
-    float dist = search_min_loc(*_points, loc, _out, tgt, step_small, _scale[0]*0.1);
+    float dist = search_min_loc(*_points, loc, _out, tgt, step_small, _scale[1]*0.1);
 
     if (dist < th && dist >= 0) {
-        ptr = cv::Vec3f(loc[0], loc[1], 0) - cv::Vec3f(_center[0]*_scale[0], _center[1]*_scale[1], 0);
+        ptr = cv::Vec3f(0, loc[0], loc[1]) - cv::Vec3f(0, _center[1]*_scale[0], _center[2]*_scale[1]);
         return dist;
     }
 
     cv::Vec2f min_loc = loc;
     float min_dist = dist;
     if (min_dist < 0)
-        min_dist = 10*(_points->cols/_scale[0]+_points->rows/_scale[1]);
+        min_dist = 10*(_points->cols/_scale[1]+_points->rows/_scale[0]);
 
     // Try accelerated search using spatial indices
     if (surfaceIndex && !surfaceIndex->empty()) {
@@ -657,11 +657,11 @@ float QuadSurface::pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int m
                 continue;
             }
 
-            loc = {static_cast<float>(col), static_cast<float>(row)};
-            dist = search_min_loc(*_points, loc, _out, tgt, step_small, _scale[0]*0.1);
+            loc = {static_cast<float>(row), static_cast<float>(col)};
+            dist = search_min_loc(*_points, loc, _out, tgt, step_small, _scale[1]*0.1);
 
             if (dist < th && dist >= 0) {
-                ptr = cv::Vec3f(loc[0], loc[1], 0) - cv::Vec3f(_center[0]*_scale[0], _center[1]*_scale[1], 0);
+                ptr = cv::Vec3f(0, loc[0], loc[1]) - cv::Vec3f(0, _center[1]*_scale[0], _center[2]*_scale[1]);
                 return dist;
             } else if (dist >= 0 && dist < min_dist) {
                 min_loc = loc;
@@ -671,7 +671,7 @@ float QuadSurface::pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int m
 
         // If we found something decent with R-tree, return it
         if (min_dist < th * 2.0f) {
-            ptr = cv::Vec3f(min_loc[0], min_loc[1], 0) - cv::Vec3f(_center[0]*_scale[0], _center[1]*_scale[1], 0);
+            ptr = cv::Vec3f(0, min_loc[0], min_loc[1]) - cv::Vec3f(0, _center[1]*_scale[0], _center[2]*_scale[1]);
             return min_dist;
         }
     }
@@ -686,10 +686,10 @@ float QuadSurface::pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int m
             float hint_dist = pointTo(hint_ptr, nearest->position, th, std::max(1, max_iters / 4), nullptr, nullptr);
             if (hint_dist >= 0 && hint_dist < min_dist) {
                 // Now search from this hint toward our actual target
-                loc = cv::Vec2f(hint_ptr[0], hint_ptr[1]) + cv::Vec2f(_center[0]*_scale[0], _center[1]*_scale[1]);
-                dist = search_min_loc(*_points, loc, _out, tgt, step_small, _scale[0]*0.1);
+                loc = cv::Vec2f(hint_ptr[1], hint_ptr[2]) + cv::Vec2f(_center[1]*_scale[0], _center[2]*_scale[1]);
+                dist = search_min_loc(*_points, loc, _out, tgt, step_small, _scale[1]*0.1);
                 if (dist < th && dist >= 0) {
-                    ptr = cv::Vec3f(loc[0], loc[1], 0) - cv::Vec3f(_center[0]*_scale[0], _center[1]*_scale[1], 0);
+                    ptr = cv::Vec3f(0, loc[0], loc[1]) - cv::Vec3f(0, _center[1]*_scale[0], _center[2]*_scale[1]);
                     return dist;
                 } else if (dist >= 0 && dist < min_dist) {
                     min_loc = loc;
@@ -703,9 +703,9 @@ float QuadSurface::pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int m
     int r_full = 0;
     int skip_count = 0;
     for(int r=0; r<10*max_iters && r_full<max_iters; r++) {
-        loc = {static_cast<float>(1 + (rand() % (_points->cols-3))), static_cast<float>(1 + (rand() % (_points->rows-3)))};
+        loc = {static_cast<float>(1 + (rand() % (_points->rows-3))), static_cast<float>(1 + (rand() % (_points->cols-3)))};
 
-        if ((*_points)(loc[1],loc[0])[0] == -1) {
+        if ((*_points)(loc[0],loc[1])[0] == -1) {
             skip_count++;
             if (skip_count > max_iters / 10) {
                 cv::Vec2f dir = { (float)(rand() % 3 - 1), (float)(rand() % 3 - 1) };
@@ -715,12 +715,12 @@ float QuadSurface::pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int m
                 bool first_valid_found = false;
                 for (int i = 0; i < std::max(_points->cols, _points->rows); ++i) {
                     current_pos += dir;
-                    if (current_pos[0] < 1 || current_pos[0] >= _points->cols - 1 ||
-                        current_pos[1] < 1 || current_pos[1] >= _points->rows - 1) {
+                    if (current_pos[0] < 1 || current_pos[0] >= _points->rows - 1 ||
+                        current_pos[1] < 1 || current_pos[1] >= _points->cols - 1) {
                         break; // Reached border
                     }
 
-                    if ((*_points)((int)current_pos[1], (int)current_pos[0])[0] != -1) {
+                    if ((*_points)((int)current_pos[0], (int)current_pos[1])[0] != -1) {
                         if (first_valid_found) {
                             loc = current_pos;
                             break; // Found second consecutive valid point
@@ -730,7 +730,7 @@ float QuadSurface::pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int m
                         first_valid_found = false;
                     }
                 }
-                if ((*_points)(loc[1],loc[0])[0] == -1) continue; // if we didn't find a valid point
+                if ((*_points)(loc[0],loc[1])[0] == -1) continue; // if we didn't find a valid point
             } else {
                 continue;
             }
@@ -738,11 +738,11 @@ float QuadSurface::pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int m
 
         r_full++;
 
-        float dist = search_min_loc(*_points, loc, _out, tgt, step_large, _scale[0]*0.1);
+        float dist = search_min_loc(*_points, loc, _out, tgt, step_large, _scale[1]*0.1);
 
         if (dist < th && dist >= 0) {
-            dist = search_min_loc((*_points), loc, _out, tgt, step_small, _scale[0]*0.1);
-            ptr = cv::Vec3f(loc[0], loc[1], 0) - cv::Vec3f(_center[0]*_scale[0], _center[1]*_scale[1], 0);
+            dist = search_min_loc((*_points), loc, _out, tgt, step_small, _scale[1]*0.1);
+            ptr = cv::Vec3f(0, loc[0], loc[1]) - cv::Vec3f(0, _center[1]*_scale[0], _center[2]*_scale[1]);
             return dist;
         } else if (dist >= 0 && dist < min_dist) {
             min_loc = loc;
@@ -750,7 +750,7 @@ float QuadSurface::pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int m
         }
     }
 
-    ptr = cv::Vec3f(min_loc[0], min_loc[1], 0) - cv::Vec3f(_center[0]*_scale[0], _center[1]*_scale[1], 0);
+    ptr = cv::Vec3f(0, min_loc[0], min_loc[1]) - cv::Vec3f(0, _center[1]*_scale[0], _center[2]*_scale[1]);
     return min_dist;
 }
 
@@ -799,9 +799,9 @@ void QuadSurface::writeDataToDirectory(const std::filesystem::path& dir, const s
     cv::split((*_points), xyz);
 
     // Write x/y/z as 32-bit float tiled TIFF with LZW
-    writeTiff(dir / "x.tif", xyz[0]);
+    writeTiff(dir / "z.tif", xyz[0]);
     writeTiff(dir / "y.tif", xyz[1]);
-    writeTiff(dir / "z.tif", xyz[2]);
+    writeTiff(dir / "x.tif", xyz[2]);
 
     // OpenCV compression params for fallback
     std::vector<int> compression_params = { cv::IMWRITE_TIFF_COMPRESSION, 5 };
@@ -918,7 +918,7 @@ void QuadSurface::saveSnapshot(int maxBackups)
     snapshotMeta["type"] = "seg";
     snapshotMeta["uuid"] = id;
     snapshotMeta["format"] = "tifxyz";
-    snapshotMeta["scale"] = {_scale[0], _scale[1]};
+    snapshotMeta["scale"] = {_scale[1], _scale[0]};
 
     std::ofstream o(snapshot_dest / "meta.json");
     o << std::setw(4) << snapshotMeta << std::endl;
@@ -982,7 +982,7 @@ void QuadSurface::save(const std::string &path_, const std::string &uuid, bool f
     (*meta)["type"] = "seg";
     (*meta)["uuid"] = uuid;
     (*meta)["format"] = "tifxyz";
-    (*meta)["scale"] = {_scale[0], _scale[1]};
+    (*meta)["scale"] = {_scale[1], _scale[0]};
 
     std::ofstream o(path / "meta.json.tmp");
     o << std::setw(4) << (*meta) << std::endl;
@@ -1203,18 +1203,18 @@ std::unique_ptr<QuadSurface> load_quad_from_tifxyz(const std::string &path, int 
         throw std::runtime_error("Cannot open meta.json at: " + path);
     }
     nlohmann::json metadata = nlohmann::json::parse(meta_f);
-    cv::Vec2f scale = {metadata["scale"][0].get<float>(), metadata["scale"][1].get<float>()};
+    cv::Vec2f scale = {metadata["scale"][1].get<float>(), metadata["scale"][0].get<float>()};
 
     auto points = std::make_unique<cv::Mat_<cv::Vec3f>>();
     int W=0, H=0;
-    read_band_into(std::filesystem::path(path)/"x.tif", *points, 0, W, H);
+    read_band_into(std::filesystem::path(path)/"z.tif", *points, 0, W, H);
     read_band_into(std::filesystem::path(path)/"y.tif", *points, 1, W, H);
-    read_band_into(std::filesystem::path(path)/"z.tif", *points, 2, W, H);
+    read_band_into(std::filesystem::path(path)/"x.tif", *points, 2, W, H);
 
     // Invalidate by z<=0
     for (int j=0;j<points->rows;++j)
         for (int i=0;i<points->cols;++i)
-            if ((*points)(j,i)[2] <= 0.f)
+            if ((*points)(j,i)[0] <= 0.f)
                 (*points)(j,i) = cv::Vec3f(-1.f,-1.f,-1.f);
 
     // Optional mask
@@ -1445,8 +1445,8 @@ std::unique_ptr<QuadSurface> surface_union(QuadSurface* a, QuadSurface* b, float
 
             // If point is not found in a, we need to add it
             if (!result || result->distanceSq > toleranceSq) {
-                int grid_x = std::round(i * b->scale()[0] / a->scale()[0]);
-                int grid_y = std::round(j * b->scale()[1] / a->scale()[1]);
+                int grid_x = std::round(i * b->scale()[1] / a->scale()[1]);
+                int grid_y = std::round(j * b->scale()[0] / a->scale()[0]);
 
                 if (grid_x >= 0 && grid_x < union_points->cols &&
                     grid_y >= 0 && grid_y < union_points->rows) {
@@ -1592,7 +1592,7 @@ float QuadSurface::computeZOrientationAngle() const
         for (int col = 0; col < _points->cols; ++col) {
             const cv::Vec3f& pt = (*_points)(row, col);
             if (pt[0] != -1.f) {
-                sumZ += pt[2];
+                sumZ += pt[0];
                 count++;
             }
         }
@@ -1850,8 +1850,8 @@ bool overlap(QuadSurface& a, QuadSurface& b, int max_iters)
 
     cv::Mat_<cv::Vec3f> points = a.rawPoints();
     for(int r=0; r<std::max(10, max_iters/10); r++) {
-        cv::Vec2f p = {static_cast<float>(rand() % points.cols), static_cast<float>(rand() % points.rows)};
-        cv::Vec3f loc = points(p[1], p[0]);
+        cv::Vec2f p = {static_cast<float>(rand() % points.rows), static_cast<float>(rand() % points.cols)};
+        cv::Vec3f loc = points(p[0], p[1]);
         if (loc[0] == -1)
             continue;
 

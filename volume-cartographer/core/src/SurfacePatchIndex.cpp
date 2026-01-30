@@ -663,9 +663,9 @@ SurfacePatchIndex::locate(const cv::Vec3f& worldPoint, float tolerance, const Su
         const float absX = static_cast<float>(rec.i) + hit.u;
         const float absY = static_cast<float>(rec.j) + hit.v;
         cv::Vec3f ptr = {
-            absX - info.center[0] * info.scale[0],
-            absY - info.center[1] * info.scale[1],
-            0.0f
+            0.0f,
+            absY - info.center[1] * info.scale[0],
+            absX - info.center[2] * info.scale[1]
         };
 
         best.surface = rec.surface;
@@ -788,7 +788,7 @@ void SurfacePatchIndex::forEachTriangleImpl(
             const int rows = points ? points->rows : 0;
             const int cols = points ? points->cols : 0;
             cacheIt = surfaceCacheMap.emplace(rec.surface.get(),
-                SurfaceCache{center[0] * scale[0], center[1] * scale[1], rows, cols}).first;
+                SurfaceCache{center[2] * scale[1], center[1] * scale[0], rows, cols}).first;
         }
         const SurfaceCache& cache = cacheIt->second;
 
@@ -798,10 +798,10 @@ void SurfacePatchIndex::forEachTriangleImpl(
 
         // Params for corners: [0]=(0,0), [1]=(stride,0), [2]=(stride,stride), [3]=(0,stride)
         std::array<cv::Vec3f, 4> params = {
-            cv::Vec3f(baseX - cache.cx, baseY - cache.cy, 0.0f),
-            cv::Vec3f(baseX + effectiveStrideX - cache.cx, baseY - cache.cy, 0.0f),
-            cv::Vec3f(baseX + effectiveStrideX - cache.cx, baseY + effectiveStrideY - cache.cy, 0.0f),
-            cv::Vec3f(baseX - cache.cx, baseY + effectiveStrideY - cache.cy, 0.0f)
+            cv::Vec3f(0.0f, baseY - cache.cy, baseX - cache.cx),
+            cv::Vec3f(0.0f, baseY - cache.cy, baseX + effectiveStrideX - cache.cx),
+            cv::Vec3f(0.0f, baseY + effectiveStrideY - cache.cy, baseX + effectiveStrideX - cache.cx),
+            cv::Vec3f(0.0f, baseY + effectiveStrideY - cache.cy, baseX - cache.cx)
         };
 
         // Emit both triangles from cached corners/params
