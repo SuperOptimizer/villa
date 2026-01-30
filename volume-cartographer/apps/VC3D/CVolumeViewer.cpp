@@ -206,7 +206,7 @@ bool scene2vol(cv::Vec3f &p, cv::Vec3f &n, Surface *_surf, const std::string &_s
         n = cv::Vec3f(0, 0, 1);
         return false;
     }
-    
+
     try {
         cv::Vec3f surf_loc = {static_cast<float>(scene_loc.x()/_ds_scale), static_cast<float>(scene_loc.y()/_ds_scale),0};
         
@@ -543,13 +543,21 @@ void CVolumeViewer::updateStatusLabel()
 void CVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> volume_)
 {
     volume = volume_;
-    
-    // printf("sizes %d %d %d\n", volume_->sliceWidth(), volume_->sliceHeight(), volume_->numSlices());
 
-    int max_size = 100000 ;//std::max(volume_->sliceWidth(), std::max(volume_->numSlices(), volume_->sliceHeight()))*_ds_scale + 512;
-    // printf("max size %d\n", max_size);
+    // Invalidate all cached coordinates/normals — volume dimensions changed
+    _cachedNormals.release();
+    _cachedBaseCoords.release();
+    _cachedNormalsSize = cv::Size();
+    _cachedNormalsScale = 0.0f;
+    _cachedNormalsPtr = cv::Vec3f(0, 0, 0);
+    _cachedNormalsZOff = 0.0f;
+    _cachedNormalsSurf.reset();
+    _cachedNativeVolumeGradients.release();
+    _cachedGradientsSurf.reset();
+
+    int max_size = 100000;
     fGraphicsView->setSceneRect(-max_size/2,-max_size/2,max_size,max_size);
-    
+
     if (volume->numScales() >= 2) {
         //FIXME currently hardcoded
         _max_scale = 0.5;

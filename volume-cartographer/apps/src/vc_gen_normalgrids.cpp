@@ -15,14 +15,9 @@
 
 #include <omp.h>
 
-#include "vc/core/util/xtensor_include.hpp"
-#include XTENSORINCLUDE(containers, xarray.hpp)
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/common.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/zarr/ZarrDataset.hpp"
+#include "vc/core/zarr/Tensor3D.hpp"
 #include <vc/core/util/GridStore.hpp>
 #include "vc/core/util/Thinning.hpp"
 #include "support.hpp"
@@ -268,13 +263,15 @@ void run_generate(const po::variables_map& vm) {
     std::cout << "Input Zarr path: " << input_path << std::endl;
     std::cout << "Output directory: " << output_path << std::endl;
 
-    z5::filesystem::handle::Group group_handle(input_path);
-    std::unique_ptr<z5::Dataset> ds = z5::openDataset(group_handle, "0");
-    if (!ds) {
-        std::cerr << "Error: Could not open dataset '0' in volume '" << input_path << "'." << std::endl;
+    fs::path vol_path = input_path;
+    std::unique_ptr<volcart::zarr::ZarrDataset> ds;
+    try {
+        ds = std::make_unique<volcart::zarr::ZarrDataset>(vol_path / "0");
+    } catch (const std::exception& e) {
+        std::cerr << "Error: Could not open dataset '0' in volume '" << input_path << "': " << e.what() << std::endl;
         exit(1);
     }
-    auto shape = ds->shape();
+    const auto& shape = ds->shape();
 
     double spiral_step = vm["spiral-step"].as<double>();
     int grid_step = vm["grid-step"].as<int>();
@@ -379,9 +376,8 @@ void run_generate(const po::variables_map& vm) {
 
             // Read entire chunk at once (KEY OPTIMIZATION)
             ALifeTime chunk_timer;
-            xt::xtensor<uint8_t, 3, xt::layout_type::column_major> chunk_data =
-                xt::xtensor<uint8_t, 3, xt::layout_type::column_major>::from_shape(chunk_shape);
-            chunk_timer.mark("xtensor init");
+            volcart::zarr::Tensor3D<uint8_t> chunk_data(chunk_shape[0], chunk_shape[1], chunk_shape[2]);
+            chunk_timer.mark("tensor init");
             readArea3D(chunk_data, chunk_offset, ds.get(), &cache);
             chunk_timer.mark("read_chunk");
 

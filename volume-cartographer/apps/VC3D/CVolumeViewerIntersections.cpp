@@ -61,7 +61,7 @@ static bool intersectionLinesEqual(const std::vector<IntersectionLine>& a,
 void CVolumeViewer::renderIntersections()
 {
     auto surf = _surf_weak.lock();
-    if (!volume || !volume->zarrDataset() || !surf)
+    if (!volume || !volume->chunkSource() || !surf)
         return;
 
     // Refresh cached surface pointers if targets changed or if a surface object

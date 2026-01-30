@@ -2,6 +2,7 @@
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
+#include "vc/core/types/IChunkSource.hpp"
 #include <opencv2/imgcodecs.hpp>
 #include <iostream>
 #include <opencv2/imgproc.hpp>
@@ -12,8 +13,8 @@ namespace fs = std::filesystem;
 void generate_mask(QuadSurface* surf,
                             cv::Mat_<uint8_t>& mask,
                             cv::Mat_<uint8_t>& img,
-                            z5::Dataset* ds_high = nullptr,
-                            z5::Dataset* ds_low = nullptr,
+                            IChunkSource* ds_high = nullptr,
+                            IChunkSource* ds_low = nullptr,
                             ChunkCache<uint8_t>* cache = nullptr) {
     cv::Mat_<cv::Vec3f> points = surf->rawPoints();
     cv::Mat_<uint8_t> rawMask = surf->validMask();
@@ -32,7 +33,7 @@ void generate_mask(QuadSurface* surf,
         // Small surface: resize and downsample
         cv::Mat_<cv::Vec3f> scaled;
         cv::Vec2f scale = surf->scale();
-        cv::resize(points, scaled, {0,0}, 1.0/scale[0], 1.0/scale[1], cv::INTER_CUBIC);
+        cv::resize(points, scaled, {0,0}, 1.0/scale[1], 1.0/scale[0], cv::INTER_CUBIC);
 
         if (ds_high && cache) {
             readInterpolated3D(img, ds_high, scaled, cache);
@@ -105,8 +106,8 @@ int main(int argc, char *argv[])
             cache = new ChunkCache<uint8_t>(1ULL * 1024ULL * 1024ULL * 1024ULL);
 
             generate_mask(surf.get(), mask, img,
-                         volume->zarrDataset(0),
-                         volume->zarrDataset(2),
+                         volume->chunkSource(0),
+                         volume->chunkSource(2),
                          cache);
 
             // Save as multi-layer TIFF

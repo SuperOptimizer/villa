@@ -13,8 +13,7 @@
 #include <opencv2/ximgproc.hpp>
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Slicing.hpp"
-#include "vc/core/util/xtensor_include.hpp"
-#include XTENSORINCLUDE(containers, xtensor.hpp)
+#include "vc/core/zarr/Tensor3D.hpp"
 
 Q_DECLARE_LOGGING_CATEGORY(lcSegGrowth)
 
@@ -37,12 +36,10 @@ SDTChunk* getOrComputeSDTChunk(SDTContext& ctx, const cv::Vec3f& worldPt) {
 
     // Load binary data from zarr
     cv::Vec3i size(cs, cs, cs);
-    xt::xtensor<uint8_t, 3, xt::layout_type::column_major> binaryData(
-        std::array<size_t, 3>{(size_t)cs, (size_t)cs, (size_t)cs});
-    binaryData.fill(0);
+    volcart::zarr::Tensor3D<uint8_t> binaryData(cs, cs, cs, 0);
 
     // Clamp to dataset bounds
-    auto shape = ctx.binaryDataset->shape();
+    auto shape = ctx.binaryDataset->volShape();
     cv::Vec3i clampedOrigin(
         std::max(0, origin[0]),
         std::max(0, origin[1]),
@@ -59,8 +56,7 @@ SDTChunk* getOrComputeSDTChunk(SDTContext& ctx, const cv::Vec3f& worldPt) {
         // Zarr volumes are [z,y,x]; translate from world XYZ to ZYX for reading.
         cv::Vec3i clampedOriginZYX(clampedOrigin[2], clampedOrigin[1], clampedOrigin[0]);
         cv::Vec3i readSizeZYX(readSize[2], readSize[1], readSize[0]);
-        xt::xtensor<uint8_t, 3, xt::layout_type::column_major> readBuf(
-            std::array<size_t, 3>{(size_t)readSizeZYX[0], (size_t)readSizeZYX[1], (size_t)readSizeZYX[2]});
+        volcart::zarr::Tensor3D<uint8_t> readBuf(readSizeZYX[0], readSizeZYX[1], readSizeZYX[2]);
         readArea3D(readBuf, clampedOriginZYX, ctx.binaryDataset, ctx.cache);
 
         // Copy into binaryData at correct offset
@@ -185,10 +181,10 @@ float sampleSDT(SDTContext& ctx, const cv::Vec3f& worldPt) {
     if (!chunk) return 0.0f;
 
     cv::Vec3f local = worldPt - cv::Vec3f(chunk->origin);
-    int x = std::clamp(static_cast<int>(local[0]), 0, chunk->size[0] - 1);
+    int z = std::clamp(static_cast<int>(local[0]), 0, chunk->size[0] - 1);
     int y = std::clamp(static_cast<int>(local[1]), 0, chunk->size[1] - 1);
-    int z = std::clamp(static_cast<int>(local[2]), 0, chunk->size[2] - 1);
-    return chunk->data[z * chunk->size[1] * chunk->size[0] + y * chunk->size[0] + x];
+    int x = std::clamp(static_cast<int>(local[2]), 0, chunk->size[2] - 1);
+    return chunk->data[z * chunk->size[1] * chunk->size[2] + y * chunk->size[2] + x];
 }
 
 // Newton refinement towards SDT=0 (the surface boundary)
@@ -359,7 +355,7 @@ uint8_t* getOrLoadBinaryChunk(SkeletonPathContext& ctx, const cv::Vec3i& origin,
     std::memset(chunk.get(), 0, voxels);
 
     // Clamp to dataset bounds
-    auto shape = ctx.binaryDataset->shape();
+    auto shape = ctx.binaryDataset->volShape();
     cv::Vec3i clampedOrigin(
         std::max(0, origin[0]),
         std::max(0, origin[1]),
@@ -376,10 +372,7 @@ uint8_t* getOrLoadBinaryChunk(SkeletonPathContext& ctx, const cv::Vec3i& origin,
         // Zarr volumes are [z,y,x]; translate from world XYZ to ZYX for reading.
         cv::Vec3i clampedOriginZYX(clampedOrigin[2], clampedOrigin[1], clampedOrigin[0]);
         cv::Vec3i readSizeZYX(readSize[2], readSize[1], readSize[0]);
-        xt::xtensor<uint8_t, 3, xt::layout_type::column_major> readBuf(
-            std::array<size_t, 3>{static_cast<size_t>(readSizeZYX[0]),
-                                  static_cast<size_t>(readSizeZYX[1]),
-                                  static_cast<size_t>(readSizeZYX[2])});
+        volcart::zarr::Tensor3D<uint8_t> readBuf(readSizeZYX[0], readSizeZYX[1], readSizeZYX[2]);
         readArea3D(readBuf, clampedOriginZYX, ctx.binaryDataset, ctx.cache);
 
         // Copy into chunk at correct offset

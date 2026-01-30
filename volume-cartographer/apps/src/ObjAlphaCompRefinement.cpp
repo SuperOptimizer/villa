@@ -1,14 +1,6 @@
 #include <nlohmann/json.hpp>
 
-#include "vc/core/util/xtensor_include.hpp"
-#include XTENSORINCLUDE(containers, xarray.hpp)
-#include XTENSORINCLUDE(io, xio.hpp)
-#include XTENSORINCLUDE(views, xview.hpp)
-
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-#include "z5/attributes.hxx"
+#include "vc/core/zarr/ZarrDataset.hpp"
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/core.hpp>
@@ -143,7 +135,7 @@ bool istype(const std::string &line, const std::string &type)
 
 
 struct DSReader {
-    z5::Dataset* ds;
+    volcart::zarr::ZarrDataset* ds;
     float scale;
     ChunkCache<uint8_t>* cache;
     std::mutex read_mutex;
@@ -410,12 +402,13 @@ int main(int argc, char *argv[])
     const nlohmann::json params = nlohmann::json::parse(params_f);
     const RefinementConfig cfg = parse_config(params);
 
-    z5::filesystem::handle::Group group(vol_path.string(), z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset ds_handle(group, cfg.dataset_group, "/");
-    std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
+    std::filesystem::path ds_path = vol_path / cfg.dataset_group;
+    auto ds = std::make_unique<volcart::zarr::ZarrDataset>(ds_path);
 
-    std::cout << "zarr dataset size for scale group " << cfg.dataset_group << " " << ds->shape() << std::endl;
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
+    auto shape = ds->shape();
+    auto chunkShape = ds->chunkShape();
+    std::cout << "zarr dataset size for scale group " << cfg.dataset_group << " [" << shape[0] << ", " << shape[1] << ", " << shape[2] << "]" << std::endl;
+    std::cout << "chunk shape [" << chunkShape[0] << ", " << chunkShape[1] << ", " << chunkShape[2] << "]" << std::endl;
     std::cout << "chunk cache size (bytes) " << cfg.cache_bytes << std::endl;
     ChunkCache<uint8_t> chunk_cache(cfg.cache_bytes);
 

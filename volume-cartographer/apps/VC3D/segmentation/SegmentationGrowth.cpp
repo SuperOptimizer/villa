@@ -12,7 +12,8 @@
 #include <QLoggingCategory>
 #include <QString>
 
-#include "z5/factory.hxx"
+#include "vc/core/zarr/ZarrDataset.hpp"
+#include "vc/core/types/IChunkSource.hpp"
 
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
@@ -174,15 +175,14 @@ bool appendDirectionField(const SegmentationDirectionFieldConfig& config,
     }
 
     try {
-        z5::filesystem::handle::Group group(zarrPath, z5::FileMode::FileMode::r);
+        std::filesystem::path basePath = zarrPath;
         const int scaleLevel = std::clamp(config.scale, 0, 5);
 
-        std::vector<std::unique_ptr<z5::Dataset>> datasets;
+        std::vector<std::unique_ptr<volcart::zarr::ZarrDataset>> datasets;
         datasets.reserve(3);
         for (char axis : std::string("xyz")) {
-            z5::filesystem::handle::Group axisGroup(group, std::string(1, axis));
-            z5::filesystem::handle::Dataset datasetHandle(axisGroup, std::to_string(scaleLevel), ".");
-            datasets.push_back(z5::filesystem::openDataset(datasetHandle));
+            datasets.push_back(std::make_unique<volcart::zarr::ZarrDataset>(
+                basePath / std::string(1, axis) / std::to_string(scaleLevel)));
         }
 
         const float scaleFactor = std::pow(2.0f, -static_cast<float>(scaleLevel));
@@ -255,8 +255,8 @@ void ensureNormalsInward(QuadSurface* surface, const Volume* volume)
     }
     cv::normalize(normal, normal);
 
-    auto [w, h, d] = volume->shape();
-    cv::Vec3f volumeCenter(w * 0.5f, h * 0.5f, d * 0.5f);
+    auto [d, h, w] = volume->shape();
+    cv::Vec3f volumeCenter(d * 0.5f, h * 0.5f, w * 0.5f);
     cv::Vec3f toCenter = volumeCenter - p;
     toCenter[2] = 0.0f;
 
@@ -356,7 +356,7 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
 
     ensureNormalsInward(context.resumeSurface, context.volume);
 
-    z5::Dataset* dataset = context.volume->zarrDataset(0);
+    auto* dataset = dynamic_cast<volcart::zarr::ZarrDataset*>(context.volume->chunkSource(0));
     if (!dataset) {
         result.error = QStringLiteral("Unable to access primary volume dataset");
         return result;

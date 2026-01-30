@@ -548,7 +548,7 @@ void SeedingWidget::computeDistanceTransform()
     }
     
     // Read the slice data using the volume's dataset
-    readInterpolated3D(sliceData, currentVolume->zarrDataset(0), coords, chunkCache);
+    readInterpolated3D(sliceData, currentVolume->chunkSource(0), coords, chunkCache);
     
     // Threshold the slice to create a binary image for distance transform
     cv::Mat binaryImage;
@@ -608,7 +608,7 @@ void SeedingWidget::findPeaksAlongRay(
     }
     
     const int maxRadius = maxRadiusSpinBox->value();
-    auto [width, height, depth] = currentVolume->shape();
+    auto [depth, height, width] = currentVolume->shape();
     
     std::vector<float> intensities;
     std::vector<cv::Vec3f> positions;
@@ -635,7 +635,7 @@ void SeedingWidget::findPeaksAlongRay(
         coord(0, 0) = point;
         
         cv::Mat_<uint8_t> intensity(1, 1);
-        readInterpolated3D(intensity, currentVolume->zarrDataset(0), coord, chunkCache);
+        readInterpolated3D(intensity, currentVolume->chunkSource(0), coord, chunkCache);
         
         // Store intensity and position
         intensities.push_back(intensity(0, 0));
@@ -869,19 +869,19 @@ void SeedingWidget::onRunSegmentationClicked()
                      << QString("\"%1\"").arg(QString::fromStdString(volumePath.string()))
                      << QString("\"%1\"").arg(QString::fromStdString(pathsDir.string()))
                      << QString("\"%1\"").arg(QString::fromStdString(seedJsonPath.string()))
-                     << QString::number(point.p[0])
+                     << QString::number(point.p[2])
                      << QString::number(point.p[1])
-                     << QString::number(point.p[2]);
+                     << QString::number(point.p[0]);
 
         std::cout << "Starting job " << pointIndex << ": " << previewParts.join(' ').toStdString() << std::endl;
-        
+
         process->start("nice", QStringList() << "-n" << "19" << "ionice" << "-c" << "3" << executablePath <<
                       QString::fromStdString(volumePath.string()) <<
                       QString::fromStdString(pathsDir.string()) <<
                       QString::fromStdString(seedJsonPath.string()) <<
-                      QString::number(point.p[0]) <<
+                      QString::number(point.p[2]) <<
                       QString::number(point.p[1]) <<
-                      QString::number(point.p[2]));
+                      QString::number(point.p[0]));
         
         runningProcesses.append(QPointer<QProcess>(process));
     };
@@ -1068,7 +1068,7 @@ void SeedingWidget::findPeaksAlongPath(const PathPrimitive& path)
     PathPrimitive densifiedPath = path.densify(0.5f); // Sample every 0.5 pixels
 
     // Get volume dimensions for bounds checking
-    auto [width, height, depth] = currentVolume->shape();
+    auto [depth, height, width] = currentVolume->shape();
     
     std::vector<float> intensities;
     std::vector<cv::Vec3f> positions;
@@ -1086,7 +1086,7 @@ void SeedingWidget::findPeaksAlongPath(const PathPrimitive& path)
             
             // Read the intensity value at this 3D point
             cv::Mat_<uint8_t> intensity(1, 1);
-            readInterpolated3D(intensity, currentVolume->zarrDataset(0), coord, chunkCache);
+            readInterpolated3D(intensity, currentVolume->chunkSource(0), coord, chunkCache);
             
             intensities.push_back(intensity(0, 0));
             positions.push_back(pt);
@@ -1277,7 +1277,7 @@ void SeedingWidget::findPeaksAlongPathToCollection(const PathPrimitive& path, co
 
     PathPrimitive densifiedPath = path.densify(0.5f);
 
-    auto [width, height, depth] = currentVolume->shape();
+    auto [depth, height, width] = currentVolume->shape();
 
     std::vector<float> intensities;
     std::vector<cv::Vec3f> positions;
@@ -1289,7 +1289,7 @@ void SeedingWidget::findPeaksAlongPathToCollection(const PathPrimitive& path, co
             cv::Mat_<cv::Vec3f> coord(1, 1);
             coord(0, 0) = pt;
             cv::Mat_<uint8_t> intensity(1, 1);
-            readInterpolated3D(intensity, currentVolume->zarrDataset(0), coord, chunkCache);
+            readInterpolated3D(intensity, currentVolume->chunkSource(0), coord, chunkCache);
             intensities.push_back(intensity(0, 0));
             positions.push_back(pt);
         }

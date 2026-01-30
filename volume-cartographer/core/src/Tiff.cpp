@@ -110,35 +110,15 @@ void writeTiff(const std::filesystem::path& outPath,
     TIFFSetField(tf, TIFFTAG_PHOTOMETRIC,     PHOTOMETRIC_MINISBLACK);
     TIFFSetField(tf, TIFFTAG_COMPRESSION,     COMPRESSION_LZW);
     TIFFSetField(tf, TIFFTAG_PREDICTOR,       PREDICTOR_HORIZONTAL);
-    TIFFSetField(tf, TIFFTAG_TILEWIDTH,       tileW);
-    TIFFSetField(tf, TIFFTAG_TILELENGTH,      tileH);
+    TIFFSetField(tf, TIFFTAG_ROWSPERSTRIP,    1);
 
-    const size_t tileBytes = static_cast<size_t>(tileW) * tileH * params.elemSize;
-    std::vector<uint8_t> tileBuf(tileBytes);
-
-    for (uint32_t y0 = 0; y0 < H; y0 += tileH) {
-        const uint32_t dy = std::min(tileH, H - y0);
-        for (uint32_t x0 = 0; x0 < W; x0 += tileW) {
-            const uint32_t dx = std::min(tileW, W - x0);
-
-            // Fill with padding
-            fillTileBuffer(tileBuf, outType, padValue);
-
-            // Copy actual data
-            for (uint32_t ty = 0; ty < dy; ++ty) {
-                const uint8_t* src = outImg.ptr<uint8_t>(static_cast<int>(y0 + ty)) + x0 * params.elemSize;
-                std::memcpy(tileBuf.data() + ty * tileW * params.elemSize,
-                           src,
-                           dx * params.elemSize);
-            }
-
-            const ttile_t tileIndex = TIFFComputeTile(tf, x0, y0, 0, 0);
-            if (TIFFWriteEncodedTile(tf, tileIndex, tileBuf.data(), static_cast<tmsize_t>(tileBytes)) < 0) {
-                TIFFClose(tf);
-                throw std::runtime_error("TIFFWriteEncodedTile failed at tile (" +
-                                        std::to_string(x0) + "," + std::to_string(y0) +
-                                        ") in " + outPath.string());
-            }
+    // Write scanlines instead of tiles for better viewer compatibility
+    for (uint32_t y = 0; y < H; ++y) {
+        const uint8_t* row = outImg.ptr<uint8_t>(static_cast<int>(y));
+        if (TIFFWriteScanline(tf, const_cast<uint8_t*>(row), y, 0) < 0) {
+            TIFFClose(tf);
+            throw std::runtime_error("TIFFWriteScanline failed at row " +
+                                    std::to_string(y) + " in " + outPath.string());
         }
     }
 

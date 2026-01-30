@@ -6,8 +6,8 @@ list(PREPEND CMAKE_PREFIX_PATH "$ENV{HOME}/vc-dependencies")
 
 option(VC_VERSION_DATESTAMP "Append date stamp to version number" off)
 if(VC_VERSION_DATESTAMP)
-string(TIMESTAMP VC_VERSION_TWEAK "%s")
-set(VC_VERSION ${VC_VERSION}.${VC_VERSION_TWEAK})
+    string(TIMESTAMP VC_VERSION_TWEAK "%s")
+    set(VC_VERSION ${VC_VERSION}.${VC_VERSION_TWEAK})
 endif()
 
 project(VC3D VERSION ${VC_VERSION})
@@ -43,7 +43,7 @@ option(VC_WITH_PASTIX "Build with PaStiX support" OFF)
 include(VCFindDependencies)
 
 
-set(CMAKE_CXX_FLAGS "  -std=c++23 -DWITH_BLOSC=1 -DWITH_ZLIB=1 " )
+set(CMAKE_CXX_FLAGS "  -std=c++23 -DWITH_BLOSC=1 -DWITH_ZLIB=1 -Wno-inconsistent-missing-override " )
 set(CMAKE_EXE_LINKER_FLAGS " ")
 include_directories(core/include)
 
@@ -55,6 +55,7 @@ endif()
 # Set LTO type and linker based on compiler
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     set(VC_LTO_FLAGS "-flto=thin")
+    #set(VC_LTO_FLAGS "-fno-lto")
     set(VC_LINKER_FLAGS "-fuse-ld=lld")
     message(STATUS "Using Clang: thin LTO with lld linker")
 else()
@@ -64,7 +65,7 @@ else()
 endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -Og")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}  -g")
 elseif(CMAKE_BUILD_TYPE STREQUAL "QuickBuild")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O1")

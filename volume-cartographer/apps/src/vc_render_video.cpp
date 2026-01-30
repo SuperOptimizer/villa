@@ -1,15 +1,5 @@
 #include <nlohmann/json.hpp>
 
-#include "vc/core/util/xtensor_include.hpp"
-#include XTENSORINCLUDE(containers, xarray.hpp)
-#include XTENSORINCLUDE(io, xio.hpp)
-#include XTENSORINCLUDE(views, xview.hpp)
-
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-#include "z5/attributes.hxx"
-
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -18,6 +8,7 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
+#include "vc/core/zarr/ZarrDataset.hpp"
 
 #include <filesystem>
 #include <omp.h>
@@ -25,8 +16,7 @@
 #include "vc/core/types/ChunkedTensor.hpp"
 #include "vc/core/util/StreamOperators.hpp"
 
-using shape = z5::types::ShapeType;
-using namespace xt::placeholders;
+using shape = std::vector<std::size_t>;
 
 
 using json = nlohmann::json;
@@ -95,12 +85,10 @@ int main(int argc, char *argv[])
     for(int i=3;i<argc;i++)
         seg_dirs.push_back(argv[i]);
 
-    z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset ds_handle(group, "1", json::parse(std::ifstream(vol_path/"1/.zarray")).value<std::string>("dimension_separator","."));
-    std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
+    auto ds = std::make_unique<volcart::zarr::ZarrDataset>(vol_path / "1");
 
     std::cout << "zarr dataset size for scale group 1 " << ds->shape() << std::endl;
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
+    std::cout << "chunk shape shape " << ds->chunkShape() << std::endl;
 
     cv::Size tgt_size = {3840, 2160};
 

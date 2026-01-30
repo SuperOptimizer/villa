@@ -1085,10 +1085,10 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
 
     updateNormalGridAvailability();
 
-    sendVolumeChanged(currentVolume, currentVolumeId);
-
+    // Clamp POI to new volume dimensions BEFORE notifying viewers,
+    // otherwise viewers render with stale coordinates outside the new volume.
     if (currentVolume && _surf_col) {
-        auto [w, h, d] = currentVolume->shape();
+        auto newShape = currentVolume->shape();
 
         POI* poi = existingFocusPoi;
         const bool createdPoi = (poi == nullptr);
@@ -1097,20 +1097,25 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
             poi->n = cv::Vec3f(0, 0, 1);
         }
 
-        const auto clampCoord = [](float value, int maxDim) {
-            if (maxDim <= 0) {
-                return 0.0f;
-            }
-            const float maxValue = static_cast<float>(maxDim - 1);
-            return std::clamp(value, 0.0f, maxValue);
-        };
-
+        // POI p is [X,Y,Z], shape is [X,Y,Z]
         if (createdPoi || !hadVolume) {
-            poi->p = cv::Vec3f(w / 2.0f, h / 2.0f, d / 2.0f);
+            for (int i = 0; i < 3; i++)
+                poi->p[i] = newShape[i] / 2.0f;
+        } else if (previousVolume) {
+            // Rescale POI proportionally from old volume to new volume
+            auto oldShape = previousVolume->shape();
+            for (int i = 0; i < 3; i++) {
+                if (oldShape[i] > 0)
+                    poi->p[i] = std::clamp(
+                        poi->p[i] * newShape[i] / static_cast<float>(oldShape[i]),
+                        0.0f, static_cast<float>(newShape[i] - 1));
+                else
+                    poi->p[i] = newShape[i] / 2.0f;
+            }
         } else {
-            poi->p[0] = clampCoord(poi->p[0], w);
-            poi->p[1] = clampCoord(poi->p[1], h);
-            poi->p[2] = clampCoord(poi->p[2], d);
+            for (int i = 0; i < 3; i++)
+                poi->p[i] = std::clamp(poi->p[i], 0.0f,
+                                       static_cast<float>(newShape[i] - 1));
         }
 
         _surf_col->setPOI("focus", poi);
@@ -1118,6 +1123,8 @@ void CWindow::setVolume(std::shared_ptr<Volume> newvol)
 
     onManualPlaneChanged();
     applySlicePlaneOrientation(_surf_col ? _surf_col->surface("segmentation").get() : nullptr);
+
+    sendVolumeChanged(currentVolume, currentVolumeId);
 }
 
 void CWindow::updateNormalGridAvailability()
@@ -3191,7 +3198,7 @@ void CWindow::onAppendMaskPressed(void)
     cv::Mat_<uint8_t> img;
     std::vector<cv::Mat> existing_layers;
 
-    z5::Dataset* ds = currentVolume->zarrDataset(0);
+    auto* ds = currentVolume->chunkSource(0);
 
     try {
         // Find the segmentation viewer and check if composite is enabled

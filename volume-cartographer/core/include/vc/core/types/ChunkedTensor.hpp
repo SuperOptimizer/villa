@@ -1,16 +1,13 @@
 #pragma once
 
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/zarr/ZarrDataset.hpp"
+#include "vc/core/zarr/Tensor3D.hpp"
+
+#include <vc/core/util/HashFunctions.hpp>
 
 #include <opencv2/core.hpp>
-#include "z5/dataset.hxx"
-
-#include "vc/core/util/xtensor_include.hpp"
-#include XTENSORINCLUDE(containers, xtensor.hpp)
-#include XTENSORINCLUDE(containers, xadapt.hpp)
-#include XTENSORINCLUDE(views, xview.hpp)
-
-#include "z5/multiarray/xtensor_access.hxx"
+#include <shared_mutex>
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -18,7 +15,13 @@
 #include <sys/mman.h>
 #include <cerrno>
 #include <cstring>
+#include <deque>
+#include <fstream>
+#include <iomanip>
+#include <set>
 #include <sstream>
+#include <thread>
+#include <unordered_map>
 
 #ifndef CCI_TLS_MAX // Max number for ChunkedCachedInterpolator
 #define CCI_TLS_MAX 256
@@ -36,7 +39,8 @@ struct passTroughComputor
     {
         int low = int(BORDER);
         int high = int(BORDER)+int(CHUNK_SIZE);
-        small = view(large, xt::range(low,high),xt::range(low,high),xt::range(low,high));
+        // Copy the sub-region from large to small
+        volcart::zarr::copy_view(large, small, low, high, low, high, low, high);
     }
 };
 
@@ -58,9 +62,9 @@ static std::string tmp_name_proc_thread()
 template <typename T, typename C>
 class Chunked3d {
 public:
-    using CHUNKT = xt::xtensor<T,3,xt::layout_type::column_major>;
+    using CHUNKT = volcart::zarr::Tensor3D<T>;
 
-    Chunked3d(C &compute_f, z5::Dataset *ds, ChunkCache<T> *cache) : _compute_f(compute_f), _ds(ds), _cache(cache)
+    Chunked3d(C &compute_f, volcart::zarr::ZarrDataset *ds, ChunkCache<T> *cache) : _compute_f(compute_f), _ds(ds), _cache(cache)
     {
         _border = compute_f.BORDER;
     };
@@ -69,26 +73,28 @@ public:
         if (!_persistent)
             remove_all(_cache_dir);
     };
-    Chunked3d(C &compute_f, z5::Dataset *ds, ChunkCache<T> *cache, const std::filesystem::path &cache_root) : _compute_f(compute_f), _ds(ds), _cache(cache)
+    Chunked3d(C &compute_f, volcart::zarr::ZarrDataset *ds, ChunkCache<T> *cache, const std::filesystem::path &cache_root) : _compute_f(compute_f), _ds(ds), _cache(cache)
     {
         _border = compute_f.BORDER;
-        
-        if (_ds)
-            _shape = {static_cast<int>(_ds->shape()[0]), static_cast<int>(_ds->shape()[1]), static_cast<int>(_ds->shape()[2])};
-        
+
+        if (_ds) {
+            auto shape = _ds->shape();
+            _shape = {static_cast<int>(shape[0]), static_cast<int>(shape[1]), static_cast<int>(shape[2])};
+        }
+
         if (cache_root.empty())
             return;
 
         if (!_compute_f.UNIQUE_ID_STRING.size())
-            throw std::runtime_error("requested fs cache for compute function without identifier");        
-        
+            throw std::runtime_error("requested fs cache for compute function without identifier");
+
         std::filesystem::path root = cache_root/_compute_f.UNIQUE_ID_STRING;
-        
+
         std::filesystem::create_directories(root);
-        
+
         if (!_ds)
             _persistent = false;
-        
+
         //create cache dir while others are competing to do the same
         for(int r=0;r<1000 && _cache_dir.empty();r++) {
             std::set<std::string> paths;
@@ -105,10 +111,10 @@ public:
                             std::filesystem::path src_candidate(meta["dataset_source_path"].get<std::string>());
                             if (!std::filesystem::exists(src_candidate))
                                 continue;
-                            if (!std::filesystem::exists(ds->path()))
+                            if (!std::filesystem::exists(_ds->path()))
                                 continue;
                             std::filesystem::path src = std::filesystem::canonical(src_candidate);
-                            std::filesystem::path cur = std::filesystem::canonical(ds->path());
+                            std::filesystem::path cur = std::filesystem::canonical(_ds->path());
                             if (src == cur) {
                                 _cache_dir = entry.path();
                                 break;
@@ -118,21 +124,21 @@ public:
                             continue;
                         }
                     }
-                
+
                 if (!_cache_dir.empty())
                     continue;
             }
-            
+
             //try generating our own cache dir atomically
             std::filesystem::path tmp_dir = cache_root/tmp_name_proc_thread();
             std::filesystem::create_directories(tmp_dir);
-            
+
             if (_persistent) {
                 nlohmann::json meta;
-                meta["dataset_source_path"] = std::filesystem::canonical(ds->path()).string();
+                meta["dataset_source_path"] = std::filesystem::canonical(_ds->path()).string();
                 std::ofstream o(tmp_dir/"meta.json");
                 o << std::setw(4) << meta << std::endl;
-                
+
                 std::filesystem::path tgt_path;
                 for(int i=0;i<1000;i++) {
                     tgt_path = root/std::to_string(i);
@@ -152,10 +158,10 @@ public:
                 _cache_dir = tmp_dir;
             }
         }
-        
+
         if (_cache_dir.empty())
             throw std::runtime_error("could not create cache dir - maybe too many caches in cache root (max 1000!)");
-        
+
     };
     size_t calc_off(const cv::Vec3i &p)
     {
@@ -256,25 +262,24 @@ public:
         }
         T *chunk = (T*)mmap(NULL, len_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         close(fd);
-        
+
         cv::Vec3i offset =
         {static_cast<int>(id[0]*s-_border),
             static_cast<int>(id[1]*s-_border),
             static_cast<int>(id[2]*s-_border)};
 
-        CHUNKT small = xt::empty<T>({s,s,s});
+        CHUNKT small = volcart::zarr::empty<T>(s,s,s);
         CHUNKT large;
         if (_ds) {
-            large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
-            large = xt::full_like(large, C::FILL_V);
+            large = volcart::zarr::full<T>(s+2*_border, s+2*_border, s+2*_border, static_cast<T>(C::FILL_V));
 
             readArea3D(large, offset, _ds, _cache);
         }
 
         _compute_f.template compute<CHUNKT,T>(large, small, offset);
 
-        for(int i=0;i<len;i++)
-            chunk[i] = (&small(0,0,0))[i];
+        for(size_t i=0;i<len;i++)
+            chunk[i] = small.data()[i];
 
         _mutex.lock();
         if (!_chunks.count(id)) {
@@ -302,18 +307,17 @@ public:
     T *cache_chunk_safe_alloc(const cv::Vec3i &id)
     {
         auto s = C::CHUNK_SIZE;
-        CHUNKT small = xt::empty<T>({s,s,s});
+        CHUNKT small = volcart::zarr::empty<T>(s,s,s);
 
         cv::Vec3i offset =
         {static_cast<int>(id[0]*s-_border),
             static_cast<int>(id[1]*s-_border),
             static_cast<int>(id[2]*s-_border)};
-            
+
         CHUNKT large;
         if (_ds) {
-            large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
-            large = xt::full_like(large, C::FILL_V);
-            
+            large = volcart::zarr::full<T>(s+2*_border, s+2*_border, s+2*_border, static_cast<T>(C::FILL_V));
+
             readArea3D(large, offset, _ds, _cache);
         }
 
@@ -324,7 +328,7 @@ public:
         _mutex.lock();
         if (!_chunks.count(id)) {
             chunk = (T*)malloc(s*s*s*sizeof(T));
-            memcpy(chunk, &small(0,0,0), s*s*s*sizeof(T));
+            memcpy(chunk, small.data(), s*s*s*sizeof(T));
             _chunks[id] = chunk;
         }
         else {
@@ -339,38 +343,6 @@ public:
         return chunk;
     }
 
-    // T *cache_chunk_safe_alloc(const cv::Vec3i &id)
-    // {
-    //     auto s = C::CHUNK_SIZE;
-    //     CHUNKT large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
-    //     large = xt::full_like(large, C::FILL_V);
-    //     CHUNKT small = xt::empty<T>({s,s,s});
-    //
-    //     cv::Vec3i offset =
-    //     {id[0]*s-_border,
-    //         id[1]*s-_border,
-    //         id[2]*s-_border};
-    //
-    //     readArea3D(large, offset, _ds, _cache);
-    //
-    //     _compute_f.template compute<CHUNKT,T>(large, small);
-    //
-    //     _mutex.lock();
-    //     if (!_chunks.count(id))
-    //         _chunks[id] = small;
-    //     else {
-    //         #pragma omp atomic
-    //         chunk_compute_collisions++;
-    //         delete small;
-    //         small = _chunks[id];
-    //     }
-    //     #pragma omp atomic
-    //     chunk_compute_total++;
-    //     _mutex.unlock();
-    //
-    //     return small;
-    // }
-
     T *cache_chunk_safe(const cv::Vec3i &id)
     {
         if (_cache_dir.empty())
@@ -381,24 +353,6 @@ public:
 
     T *cache_chunk(const cv::Vec3i &id) {
         return cache_chunk_safe(id);
-        // auto s = C::CHUNK_SIZE;
-        // CHUNKT large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
-        // large = xt::full_like(large, C::FILL_V);
-        // CHUNKT *small = new CHUNKT();
-        // *small = xt::empty<T>({s,s,s});
-        //
-        // cv::Vec3i offset =
-        // {id[0]*s-_border,
-        //     id[1]*s-_border,
-        //     id[2]*s-_border};
-        //
-        //     readArea3D(large, offset, _ds, _cache);
-        //
-        //     _compute_f.template compute<CHUNKT,T>(large, *small);
-        //
-        //     _chunks[id] = small;
-        //
-        // return small;
     }
 
     T *chunk(const cv::Vec3i &id) {
@@ -421,13 +375,13 @@ public:
 
         return chunk;
     }
-    
+
     std::vector<int> shape() {
         return _shape;
     }
 
     std::unordered_map<cv::Vec3i,T*,vec3i_hash> _chunks;
-    z5::Dataset *_ds;
+    volcart::zarr::ZarrDataset *_ds;
     ChunkCache<T> *_cache;
     size_t _border;
     C &_compute_f;
@@ -484,7 +438,7 @@ public:
     }
 
     T& safe_at(const cv::Vec3i &p)
-    {        
+    {
         auto s = C::CHUNK_SIZE;
 
         if (_corner[0] == -1)
@@ -504,13 +458,6 @@ public:
         #pragma omp atomic
         total++;
 
-        // size_t pos_xt = &_chunk->operator()(p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]) - &_chunk->operator()(0,0,0);
-        // if (pos_xt != _ar.calc_off({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]})) {
-        //     std::cout << pos_xt << cv::Vec3i({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]}) << _ar.calc_off({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]}) << std::endl;
-        //     throw std::runtime_error("fix calc_off!");
-        // }
-
-        // return _chunk->operator()(p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]);
         return _chunk[_ar.calc_off({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]})];
     }
 
@@ -564,7 +511,7 @@ public:
     template <typename V>
     inline void Evaluate(const V& z, const V& y, const V& x, V* out) const
     {
-        // ---- 1. get *this* thread’s private accessor ------------------------
+        // ---- 1. get *this* thread's private accessor ------------------------
         Acc& a = local_accessor();
 
         // ---- 2. fast trilinear interpolation --------------------
@@ -654,7 +601,7 @@ private:
 
 struct Chunked3dFloatFromUint8
 {
-    Chunked3dFloatFromUint8(std::unique_ptr<z5::Dataset> &&ds, float scale, ChunkCache<uint8_t> *cache, std::string const &cache_root, std::string const &unique_id) :
+    Chunked3dFloatFromUint8(std::unique_ptr<volcart::zarr::ZarrDataset> &&ds, float scale, ChunkCache<uint8_t> *cache, std::string const &cache_root, std::string const &unique_id) :
         _passthrough{unique_id},
         _x(_passthrough, ds.get(), cache, cache_root),
         _scale(scale),  // multiplying by this maps indices of the 'canonical' volume to indices of our dataset
@@ -679,12 +626,12 @@ struct Chunked3dFloatFromUint8
     passTroughComputor _passthrough;
     Chunked3d<uint8_t, passTroughComputor> _x;
     float _scale;
-    std::unique_ptr<z5::Dataset> _ds;
+    std::unique_ptr<volcart::zarr::ZarrDataset> _ds;
 };
 
 struct Chunked3dVec3fFromUint8
 {
-    Chunked3dVec3fFromUint8(std::vector<std::unique_ptr<z5::Dataset>> &&dss, float scale, ChunkCache<uint8_t> *cache, std::string const &cache_root, std::string const &unique_id) :
+    Chunked3dVec3fFromUint8(std::vector<std::unique_ptr<volcart::zarr::ZarrDataset>> &&dss, float scale, ChunkCache<uint8_t> *cache, std::string const &cache_root, std::string const &unique_id) :
         _passthrough_x{unique_id + "_x"},
         _passthrough_y{unique_id + "_y"},
         _passthrough_z{unique_id + "_z"},
@@ -715,5 +662,5 @@ struct Chunked3dVec3fFromUint8
     passTroughComputor _passthrough_x, _passthrough_y, _passthrough_z;
     Chunked3d<uint8_t, passTroughComputor> _x, _y, _z;
     float _scale;
-    std::vector<std::unique_ptr<z5::Dataset>> _dss;
+    std::vector<std::unique_ptr<volcart::zarr::ZarrDataset>> _dss;
 };

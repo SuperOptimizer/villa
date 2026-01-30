@@ -35,8 +35,8 @@ void render_binary_mask(QuadSurface* surf,
     // genScale = surf->_scale (e.g. 0.05), and sx = 0.05/0.05 = 1.0
     // This samples 1:1 from the raw points grid
     cv::Vec3f ptr = surf->pointer();
-    cv::Vec3f offset(-rawSize.width/2.0f, -rawSize.height/2.0f, 0);
-    float genScale = surf->_scale[0] / scale;
+    cv::Vec3f offset(0, -rawSize.height/2.0f, -rawSize.width/2.0f);
+    float genScale = surf->_scale[1] / scale;
     surf->gen(&coords_out, nullptr, targetSize, ptr, genScale, offset);
 
     int finalValid = cv::countNonZero(mask);
@@ -75,7 +75,7 @@ void render_binary_mask(QuadSurface* surf,
 
 void render_image_from_coords(const cv::Mat_<cv::Vec3f>& coords,
                               cv::Mat_<uint8_t>& img,
-                              z5::Dataset* ds,
+                              IChunkSource* ds,
                               ChunkCache<uint8_t>* cache) {
     if (!ds || !cache) {
         throw std::runtime_error("Dataset or cache is null in render_image_from_coords");
@@ -89,7 +89,7 @@ void render_image_from_coords(const cv::Mat_<cv::Vec3f>& coords,
 void render_surface_image(QuadSurface* surf,
                          cv::Mat_<uint8_t>& mask,
                          cv::Mat_<uint8_t>& img,
-                         z5::Dataset* ds,
+                         IChunkSource* ds,
                          ChunkCache<uint8_t>* cache,
                          float scale) {
 

@@ -5,7 +5,6 @@
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
 
-#include "z5/factory.hxx"
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
@@ -245,9 +244,9 @@ static void surf_write_obj(QuadSurface *surf, const std::filesystem::path &out_f
 
     // Derive UV scale from meta: surf->scale() is typically micrometers-per-pixel (or similar).
     // You asked to use the reciprocal (1/scale) as the multiplier.
-    cv::Vec2f s = surf->scale();           // [sx, sy]
-    float uv_fac_x = (std::isfinite(s[0]) && s[0] > 0.f) ? 1.0f / s[0] : 1.0f;
-    float uv_fac_y = (std::isfinite(s[1]) && s[1] > 0.f) ? 1.0f / s[1] : 1.0f;
+    cv::Vec2f s = surf->scale();           // [sy, sx]
+    float uv_fac_x = (std::isfinite(s[1]) && s[1] > 0.f) ? 1.0f / s[1] : 1.0f;
+    float uv_fac_y = (std::isfinite(s[0]) && s[0] > 0.f) ? 1.0f / s[0] : 1.0f;
     if (normalize_uv) {
         std::cout << "UVs: normalized to [0,1]\n";
     } else {

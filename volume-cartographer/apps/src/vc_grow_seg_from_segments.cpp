@@ -1,14 +1,5 @@
 #include <nlohmann/json.hpp>
 
-#include "vc/core/util/xtensor_include.hpp"
-#include XTENSORINCLUDE(io, xio.hpp)
-#include XTENSORINCLUDE(views, xview.hpp)
-
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-#include "z5/attributes.hxx"
-
 #include <opencv2/core.hpp>
 
 #include "vc/core/util/Slicing.hpp"
@@ -20,11 +11,7 @@
 #include "vc/core/util/DateTime.hpp"
 #include "vc/core/util/StreamOperators.hpp"
 #include "vc/tracer/Tracer.hpp"
-
-
-using shape = z5::types::ShapeType;
-using namespace xt::placeholders;
-
+#include "vc/core/zarr/ZarrDataset.hpp"
 
 using json = nlohmann::json;
 
@@ -56,12 +43,13 @@ int main(int argc, char *argv[])
     }
     params["tgt_dir"] = tgt_dir;
 
-    z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset ds_handle(group, "0", json::parse(std::ifstream(vol_path/"0/.zarray")).value<std::string>("dimension_separator","."));
-    std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
+    std::filesystem::path ds_path = vol_path / "0";
+    auto ds = std::make_unique<volcart::zarr::ZarrDataset>(ds_path);
 
-    std::cout << "zarr dataset size for scale group 0 " << ds->shape() << std::endl;
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
+    auto ds_shape = ds->shape();
+    auto chunk_shape = ds->chunkShape();
+    std::cout << "zarr dataset size for scale group 0 [" << ds_shape[0] << ", " << ds_shape[1] << ", " << ds_shape[2] << "]" << std::endl;
+    std::cout << "chunk shape [" << chunk_shape[0] << ", " << chunk_shape[1] << ", " << chunk_shape[2] << "]" << std::endl;
 
     float voxelsize = json::parse(std::ifstream(vol_path/"meta.json"))["voxelsize"];
 
