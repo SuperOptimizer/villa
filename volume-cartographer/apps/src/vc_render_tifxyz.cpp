@@ -20,6 +20,7 @@
 #include <cmath>
 #include <set>
 #include <cctype>
+#include <omp.h>
 
 namespace po = boost::program_options;
 
@@ -664,6 +665,8 @@ static inline void renderAccumulatedSlice(
 
 int main(int argc, char *argv[])
 {
+    kmp_set_blocktime(0);
+
     // clang-format off
     po::options_description required("Required arguments");
     required.add_options()

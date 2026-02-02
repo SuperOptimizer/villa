@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/HashFunctions.hpp"
 
 #include <opencv2/core.hpp>
 #include "z5/dataset.hxx"
