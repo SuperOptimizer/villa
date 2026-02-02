@@ -1,8 +1,7 @@
 #include "vc/core/util/ChunkCache.hpp"
 
-#include "vc/core/util/xtensor_include.hpp"
-#include XTENSORINCLUDE(containers, xarray.hpp)
-#include XTENSORINCLUDE(generators, xbuilder.hpp)
+#include <xtensor/containers/xarray.hpp>
+#include <xtensor/generators/xbuilder.hpp>
 
 #include "z5/dataset.hxx"
 #include "z5/types/types.hxx"

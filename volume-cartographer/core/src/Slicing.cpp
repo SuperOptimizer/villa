@@ -1,10 +1,9 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Compositing.hpp"
 
-#include "vc/core/util/xtensor_include.hpp"
-#include XTENSORINCLUDE(containers, xarray.hpp)
-#include XTENSORINCLUDE(containers, xtensor.hpp)
-#include XTENSORINCLUDE(generators, xbuilder.hpp)
+#include <xtensor/containers/xarray.hpp>
+#include <xtensor/containers/xtensor.hpp>
+#include <xtensor/generators/xbuilder.hpp>
 
 #include "z5/dataset.hxx"
 
