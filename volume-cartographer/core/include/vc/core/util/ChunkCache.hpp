@@ -42,6 +42,16 @@ public:
     void setMaxBytes(size_t maxBytes);
     size_t cachedCount() const { return _cachedCount.load(std::memory_order_relaxed); }
 
+    // Cache statistics
+    struct Stats {
+        uint64_t hits = 0;
+        uint64_t misses = 0;
+        uint64_t evictions = 0;
+        uint64_t bytesRead = 0;
+    };
+    Stats stats() const;
+    void resetStats();
+
     /**
      * @brief Get a chunk, loading from disk if needed.
      * Returns shared_ptr — caller holds the chunk alive even if evicted.
@@ -98,6 +108,12 @@ private:
 
     ChunkPtr loadChunk(z5::Dataset* ds, int iz, int iy, int ix);
     void evictIfNeeded();
+
+    // Stats counters
+    mutable std::atomic<uint64_t> _hits{0};
+    std::atomic<uint64_t> _misses{0};
+    std::atomic<uint64_t> _evictions{0};
+    std::atomic<uint64_t> _bytesRead{0};
 };
 
 extern template class ChunkCache<uint8_t>;

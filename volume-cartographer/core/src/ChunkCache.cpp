@@ -77,9 +77,12 @@ auto ChunkCache<T>::get(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
         auto it = _map.find(key);
         if (it != _map.end()) {
             it->second.lastAccess = _generation.fetch_add(1, std::memory_order_relaxed);
+            _hits.fetch_add(1, std::memory_order_relaxed);
             return it->second.chunk;
         }
     }
+
+    _misses.fetch_add(1, std::memory_order_relaxed);
 
     // Slow path: load from disk (per-key lock to avoid duplicate reads)
     std::lock_guard<std::mutex> diskLock(_lockPool[lockIndex(key)]);
@@ -98,6 +101,7 @@ auto ChunkCache<T>::get(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
     if (!newChunk) return nullptr;
 
     size_t chunkBytes = newChunk->size() * sizeof(T);
+    _bytesRead.fetch_add(chunkBytes, std::memory_order_relaxed);
 
     {
         std::lock_guard<std::mutex> evictLock(_evictionMutex);
@@ -127,8 +131,10 @@ auto ChunkCache<T>::getIfCached(z5::Dataset* ds, int iz, int iy, int ix) const -
     ChunkKey key{ds, iz, iy, ix};
     std::shared_lock<std::shared_mutex> rlock(_mapMutex);
     auto it = _map.find(key);
-    if (it != _map.end())
+    if (it != _map.end()) {
+        _hits.fetch_add(1, std::memory_order_relaxed);
         return it->second.chunk;
+    }
     return nullptr;
 }
 
@@ -193,7 +199,7 @@ void ChunkCache<T>::evictIfNeeded()
                   return a.lastAccess < b.lastAccess;
               });
 
-    size_t target = _maxBytes * 3 / 4;
+    size_t target = _maxBytes * 15 / 16;
     size_t evictedBytes = 0;
     size_t evictedCount = 0;
 
@@ -212,7 +218,28 @@ void ChunkCache<T>::evictIfNeeded()
         }
         _storedBytes.fetch_sub(evictedBytes, std::memory_order_relaxed);
         _cachedCount.fetch_sub(evictedCount, std::memory_order_relaxed);
+        _evictions.fetch_add(evictedCount, std::memory_order_relaxed);
     }
+}
+
+template<typename T>
+auto ChunkCache<T>::stats() const -> Stats
+{
+    return {
+        _hits.load(std::memory_order_relaxed),
+        _misses.load(std::memory_order_relaxed),
+        _evictions.load(std::memory_order_relaxed),
+        _bytesRead.load(std::memory_order_relaxed)
+    };
+}
+
+template<typename T>
+void ChunkCache<T>::resetStats()
+{
+    _hits.store(0, std::memory_order_relaxed);
+    _misses.store(0, std::memory_order_relaxed);
+    _evictions.store(0, std::memory_order_relaxed);
+    _bytesRead.store(0, std::memory_order_relaxed);
 }
 
 template<typename T>

@@ -41,3 +41,25 @@ void readCompositeFastConstantNormal(
     const CompositeParams& params,
     ChunkCache<uint8_t>& cache
 );
+
+// Bulk multi-slice read with trilinear interpolation.
+// Samples basePoints + offsets[i] * stepDirs for each offset, returning one Mat per offset.
+// Does a single prefetch pass covering all slices, then samples in parallel.
+// basePoints/stepDirs use (X,Y,Z) in Vec3f[0],[1],[2] (same convention as readInterpolated3D coords).
+void readMultiSlice(
+    std::vector<cv::Mat_<uint8_t>>& out,
+    z5::Dataset* ds,
+    ChunkCache<uint8_t>* cache,
+    const cv::Mat_<cv::Vec3f>& basePoints,
+    const cv::Mat_<cv::Vec3f>& stepDirs,
+    const std::vector<float>& offsets
+);
+
+void readMultiSlice(
+    std::vector<cv::Mat_<uint16_t>>& out,
+    z5::Dataset* ds,
+    ChunkCache<uint16_t>* cache,
+    const cv::Mat_<cv::Vec3f>& basePoints,
+    const cv::Mat_<cv::Vec3f>& stepDirs,
+    const std::vector<float>& offsets
+);
