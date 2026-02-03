@@ -42,7 +42,7 @@ set(xtensor_DIR "${FETCHCONTENT_BASE_DIR}/xtensor-build" CACHE PATH "" FORCE)
 
 FetchContent_Declare(
     z5
-    GIT_REPOSITORY https://github.com/SuperOptimizer/z5.git
+    GIT_REPOSITORY https://github.com/constantinpape/z5.git
 )
 FetchContent_MakeAvailable(z5)
 
