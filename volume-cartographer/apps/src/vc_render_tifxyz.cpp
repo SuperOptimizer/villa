@@ -21,6 +21,7 @@
 #include <set>
 #include <cctype>
 #include <chrono>
+#include <thread>
 #include <tiffio.h>
 #include <omp.h>
 
@@ -742,7 +743,12 @@ int main(int argc, char *argv[])
             "Part ID to process, 0-indexed (for multi-VM runs)")
         ("merge-parts", po::bool_switch()->default_value(false),
             "Merge partial TIFF files (*.partN.tif) into final TIFFs. "
-            "Run after all parts have completed. Requires --num-parts.");
+            "Run after all parts have completed. Requires --num-parts.")
+        ("finalize", po::bool_switch()->default_value(false),
+            "Build pyramid levels and write attrs for a zarr whose L0 tiles are already complete "
+            "(run after all multi-part jobs finish)")
+        ("barrier-timeout", po::value<int>()->default_value(300),
+            "Timeout in seconds for slave parts waiting for master (part 0) to create the zarr (default 300)");
     // clang-format on
 
     po::options_description all("Usage");
@@ -772,6 +778,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
     const bool mergeParts = parsed["merge-parts"].as<bool>();
+    const int barrierTimeout = parsed["barrier-timeout"].as<int>();
     if (numParts > 1) {
         std::cout << "Multi-part mode: part " << partId << " of " << numParts << std::endl;
     }
@@ -1274,7 +1281,6 @@ int main(int argc, char *argv[])
         const size_t baseX = static_cast<size_t>(zarr_xy_size.width);
 
         z5::filesystem::handle::File outFile(output_path_local);
-        z5::createFile(outFile, true);
 
         auto make_shape = [](size_t z, size_t y, size_t x){
             return std::vector<size_t>{z, y, x};
@@ -1292,8 +1298,30 @@ int main(int argc, char *argv[])
             {"shuffle", 0}
         };
         const std::string out_dtype0 = output_is_u16 ? "uint16" : "uint8";
-        auto dsOut0 = z5::createDataset(
-            outFile, "0", out_dtype0, shape0, chunks0, std::string("blosc"), compOpts0);
+        const bool finalize = parsed["finalize"].as<bool>();
+        std::unique_ptr<z5::Dataset> dsOut0;
+        if (finalize) {
+            // Finalize: zarr and L0 must already exist
+            dsOut0 = z5::openDataset(outFile, "0");
+        } else if (partId == 0) {
+            // Master: create zarr file and L0 dataset
+            z5::createFile(outFile, true);
+            dsOut0 = z5::createDataset(outFile, "0", out_dtype0, shape0, chunks0, std::string("blosc"), compOpts0);
+        } else {
+            // Slave: wait for master to create the zarr dataset
+            const auto dsPath = output_path_local / "0" / ".zarray";
+            for (int wait = 0; !std::filesystem::exists(dsPath); ++wait) {
+                if (wait >= barrierTimeout) {
+                    std::cerr << "Error: timed out after " << barrierTimeout
+                              << "s waiting for master (part 0) to create " << dsPath << std::endl;
+                    return;
+                }
+                if (wait % 10 == 0 && wait > 0)
+                    std::cout << "[part " << partId << "] waiting for master to create zarr..." << std::endl;
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+            dsOut0 = z5::openDataset(outFile, "0");
+        }
 
         const size_t tilesY_src = (static_cast<size_t>(tgt_size.height) + CH - 1) / CH;
         const size_t tilesX_src = (static_cast<size_t>(tgt_size.width)  + CW - 1) / CW;
@@ -1313,6 +1341,7 @@ int main(int argc, char *argv[])
                 meshCentroid);
         }
 
+        if (!finalize) {
         // Iterate output chunks and render directly into them (parallel over XY tiles)
         for (size_t z0 = 0; z0 < shape0[0]; z0 += CZ) {
             const size_t dz = std::min(CZ, shape0[0] - z0);
@@ -1437,6 +1466,18 @@ int main(int argc, char *argv[])
         // After finishing L0 tiles, add newline for the progress line
         std::cout << std::endl;
 
+        // In multi-part mode, skip pyramid/attrs — run --finalize after all parts complete
+        if (numParts > 1 && !finalize) {
+            std::cout << "[multi-part] part " << partId << " finished L0. "
+                      << "Run with --finalize after all parts complete to build pyramid." << std::endl;
+            return;
+        }
+        } // end if (!finalize)
+
+        if (finalize) {
+            std::cout << "[finalize] building pyramid from existing L0..." << std::endl;
+        }
+
         // Build multi-resolution pyramid levels 1..5 by averaging 2x blocks in Z, Y, and X
         auto downsample_avg = [&](int targetLevel){
             auto src = z5::openDataset(outFile, std::to_string(targetLevel - 1));
@@ -1454,10 +1495,15 @@ int main(int argc, char *argv[])
                 {"clevel",  1},
                 {"shuffle", 0}
             };
-            auto dst = z5::createDataset(
-                outFile, std::to_string(targetLevel),
-                output_is_u16 ? "uint16" : "uint8",
-                dShape, dChunks, std::string("blosc"), compOpts);
+            std::unique_ptr<z5::Dataset> dst;
+            try {
+                dst = z5::createDataset(
+                    outFile, std::to_string(targetLevel),
+                    output_is_u16 ? "uint16" : "uint8",
+                    dShape, dChunks, std::string("blosc"), compOpts);
+            } catch (const std::invalid_argument&) {
+                dst = z5::openDataset(outFile, std::to_string(targetLevel));
+            }
 
             const size_t tileZ = dShape[0], tileY = CH, tileX = CW;
             const size_t tilesY = (dShape[1] + tileY - 1) / tileY;
@@ -1468,7 +1514,7 @@ int main(int argc, char *argv[])
             for (size_t z = 0; z < dShape[0]; z += tileZ) {
                 const size_t lz = std::min(tileZ, dShape[0] - z);
                 #pragma omp parallel for schedule(dynamic, 2)
-                for (long long y = static_cast<long long>(partId) * static_cast<long long>(tileY); y < static_cast<long long>(dShape[1]); y += static_cast<long long>(numParts) * static_cast<long long>(tileY)) {
+                for (long long y = 0; y < static_cast<long long>(dShape[1]); y += static_cast<long long>(tileY)) {
                     for (long long x = 0; x < static_cast<long long>(dShape[2]); x += tileX) {
                         const size_t ly = std::min(tileY, static_cast<size_t>(dShape[1] - y));
                         const size_t lx = std::min(tileX, static_cast<size_t>(dShape[2] - x));
@@ -1534,6 +1580,7 @@ int main(int argc, char *argv[])
             downsample_avg(level);
         }
 
+        {
         nlohmann::json attrs;
         attrs["source_zarr"] = vol_path.string();
         attrs["source_group"] = group_idx;
@@ -1577,9 +1624,14 @@ int main(int argc, char *argv[])
         attrs["multiscales"] = nlohmann::json::array({multiscale});
 
         z5::filesystem::writeAttributes(outFile, attrs);
+        }
 
         // Optionally export per-Z TIFFs from level 0 into layers_{zarrname}
-        if (include_tifs) {
+        // Skipped in multi-part mode; run single-part afterwards to export.
+        if (include_tifs && numParts > 1) {
+            std::cout << "[tif export] skipped in multi-part mode; re-run without --num-parts to export." << std::endl;
+        }
+        if (include_tifs && numParts <= 1) {
             try {
                 auto dsL0 = z5::openDataset(outFile, "0");
                 const auto& shape0_check = dsL0->shape(); // [Z, Y, X]
