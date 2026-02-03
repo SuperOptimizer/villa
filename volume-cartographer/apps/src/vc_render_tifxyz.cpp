@@ -733,7 +733,14 @@ int main(int argc, char *argv[])
         ("flatten-iterations", po::value<int>()->default_value(10),
             "Maximum ABF++ iterations when --flatten is enabled")
         ("flatten-downsample", po::value<int>()->default_value(1),
-            "Downsample factor for ABF++ (1=full, 2=half, 4=quarter). Higher = faster but lower quality");
+            "Downsample factor for ABF++ (1=full, 2=half, 4=quarter). Higher = faster but lower quality")
+        ("num-parts", po::value<int>()->default_value(1),
+            "Number of parts to split processing into (for multi-VM runs)")
+        ("part-id", po::value<int>()->default_value(0),
+            "Part ID to process, 0-indexed (for multi-VM runs)")
+        ("merge-parts", po::bool_switch()->default_value(false),
+            "Merge partial TIFF files (*.partN.tif) into final TIFFs. "
+            "Run after all parts have completed. Requires --num-parts.");
     // clang-format on
 
     po::options_description all("Usage");
@@ -754,6 +761,124 @@ int main(int argc, char *argv[])
         std::cerr << "Error: " << e.what() << '\n';
         std::cerr << "Use --help for usage information\n";
         return EXIT_FAILURE;
+    }
+
+    const int numParts = parsed["num-parts"].as<int>();
+    const int partId = parsed["part-id"].as<int>();
+    if (numParts < 1 || partId < 0 || partId >= numParts) {
+        std::cerr << "Error: need 0 <= part-id < num-parts, got part-id=" << partId << " num-parts=" << numParts << "\n";
+        return EXIT_FAILURE;
+    }
+    const bool mergeParts = parsed["merge-parts"].as<bool>();
+    if (numParts > 1) {
+        std::cout << "Multi-part mode: part " << partId << " of " << numParts << std::endl;
+    }
+
+    // --merge-parts: combine *.partN.tif files into final TIFFs, then exit
+    if (mergeParts) {
+        if (numParts < 2) {
+            std::cerr << "Error: --merge-parts requires --num-parts >= 2\n";
+            return EXIT_FAILURE;
+        }
+        // Discover part files by scanning for *.part0.tif pattern in output dir
+        std::filesystem::path outArg = parsed["output"].as<std::string>();
+        std::filesystem::path outDir = outArg;
+        if (!std::filesystem::is_directory(outDir)) outDir = outDir.parent_path();
+        if (outDir.empty()) outDir = ".";
+
+        // Find all unique base names: foo.part0.tif -> foo.tif
+        std::map<std::filesystem::path, std::vector<std::filesystem::path>> groups;
+        for (auto& entry : std::filesystem::directory_iterator(outDir)) {
+            std::string fname = entry.path().filename().string();
+            // Match *.part0.tif through *.part{N-1}.tif
+            auto pos = fname.find(".part");
+            if (pos == std::string::npos) continue;
+            auto dotTif = fname.find(".tif", pos);
+            if (dotTif == std::string::npos) continue;
+            std::string baseName = fname.substr(0, pos) + ".tif";
+            std::filesystem::path finalPath = outDir / baseName;
+            groups[finalPath].push_back(entry.path());
+        }
+
+        if (groups.empty()) {
+            std::cerr << "No .partN.tif files found in " << outDir << "\n";
+            return EXIT_FAILURE;
+        }
+
+        std::cout << "Merging " << groups.size() << " TIFF(s) from " << numParts << " parts..." << std::endl;
+        for (auto& [finalPath, partFiles] : groups) {
+            std::sort(partFiles.begin(), partFiles.end());
+            // Open first part to get dimensions and tile info
+            TIFF* first = TIFFOpen(partFiles[0].c_str(), "r");
+            if (!first) { std::cerr << "Cannot open " << partFiles[0] << "\n"; continue; }
+            uint32_t w, h, tw, th;
+            uint16_t bps, spp, sf, comp;
+            TIFFGetField(first, TIFFTAG_IMAGEWIDTH, &w);
+            TIFFGetField(first, TIFFTAG_IMAGELENGTH, &h);
+            TIFFGetField(first, TIFFTAG_TILEWIDTH, &tw);
+            TIFFGetField(first, TIFFTAG_TILELENGTH, &th);
+            TIFFGetField(first, TIFFTAG_BITSPERSAMPLE, &bps);
+            TIFFGetField(first, TIFFTAG_SAMPLESPERPIXEL, &spp);
+            TIFFGetField(first, TIFFTAG_SAMPLEFORMAT, &sf);
+            TIFFGetField(first, TIFFTAG_COMPRESSION, &comp);
+            TIFFClose(first);
+
+            // Create output
+            TIFF* out = TIFFOpen(finalPath.c_str(), "w");
+            if (!out) { std::cerr << "Cannot create " << finalPath << "\n"; continue; }
+            TIFFSetField(out, TIFFTAG_IMAGEWIDTH, w);
+            TIFFSetField(out, TIFFTAG_IMAGELENGTH, h);
+            TIFFSetField(out, TIFFTAG_TILEWIDTH, tw);
+            TIFFSetField(out, TIFFTAG_TILELENGTH, th);
+            TIFFSetField(out, TIFFTAG_BITSPERSAMPLE, bps);
+            TIFFSetField(out, TIFFTAG_SAMPLESPERPIXEL, spp);
+            TIFFSetField(out, TIFFTAG_SAMPLEFORMAT, sf);
+            TIFFSetField(out, TIFFTAG_COMPRESSION, comp);
+            TIFFSetField(out, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+
+            tmsize_t tileSizeBytes = TIFFTileSize(out);
+            std::vector<uint8_t> buf(static_cast<size_t>(tileSizeBytes), 0);
+            std::vector<uint8_t> zeroBuf(static_cast<size_t>(tileSizeBytes), 0);
+
+            // For each tile position, find the part that has non-zero data
+            uint32_t tilesX = (w + tw - 1) / tw;
+            uint32_t tilesY = (h + th - 1) / th;
+            size_t tilesMerged = 0;
+            for (uint32_t ty = 0; ty < tilesY; ty++) {
+                for (uint32_t tx = 0; tx < tilesX; tx++) {
+                    bool found = false;
+                    for (auto& pf : partFiles) {
+                        TIFF* pt = TIFFOpen(pf.c_str(), "r");
+                        if (!pt) continue;
+                        ttile_t ti = TIFFComputeTile(pt, tx * tw, ty * th, 0, 0);
+                        tmsize_t r = TIFFReadEncodedTile(pt, ti, buf.data(), tileSizeBytes);
+                        TIFFClose(pt);
+                        if (r > 0 && buf != zeroBuf) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    ttile_t outTi = TIFFComputeTile(out, tx * tw, ty * th, 0, 0);
+                    if (found) {
+                        TIFFWriteEncodedTile(out, outTi, buf.data(), tileSizeBytes);
+                        tilesMerged++;
+                    } else {
+                        TIFFWriteEncodedTile(out, outTi, zeroBuf.data(), tileSizeBytes);
+                    }
+                }
+            }
+            TIFFWriteDirectory(out);
+            TIFFClose(out);
+
+            // Delete part files
+            for (auto& pf : partFiles)
+                std::filesystem::remove(pf);
+
+            std::cout << "  " << finalPath.filename().string() << ": merged " << tilesMerged
+                      << " tiles from " << partFiles.size() << " parts" << std::endl;
+        }
+        std::cout << "Merge complete." << std::endl;
+        return EXIT_SUCCESS;
     }
 
     std::filesystem::path vol_path = parsed["volume"].as<std::string>();
@@ -1154,7 +1279,7 @@ int main(int argc, char *argv[])
         for (size_t z0 = 0; z0 < shape0[0]; z0 += CZ) {
             const size_t dz = std::min(CZ, shape0[0] - z0);
             #pragma omp parallel for schedule(dynamic, 2)
-            for (long long ty = 0; ty < static_cast<long long>(tilesY_src); ++ty) {
+            for (long long ty = partId; ty < static_cast<long long>(tilesY_src); ty += numParts) {
                 for (long long tx = 0; tx < static_cast<long long>(tilesX_src); ++tx) {
                     const size_t y0_src = static_cast<size_t>(ty) * CH;
                     const size_t x0_src = static_cast<size_t>(tx) * CW;
@@ -1305,7 +1430,7 @@ int main(int argc, char *argv[])
             for (size_t z = 0; z < dShape[0]; z += tileZ) {
                 const size_t lz = std::min(tileZ, dShape[0] - z);
                 #pragma omp parallel for schedule(dynamic, 2)
-                for (long long y = 0; y < static_cast<long long>(dShape[1]); y += tileY) {
+                for (long long y = static_cast<long long>(partId) * static_cast<long long>(tileY); y < static_cast<long long>(dShape[1]); y += static_cast<long long>(numParts) * static_cast<long long>(tileY)) {
                     for (long long x = 0; x < static_cast<long long>(dShape[2]); x += tileX) {
                         const size_t ly = std::min(tileY, static_cast<size_t>(dShape[1] - y));
                         const size_t lx = std::min(tileX, static_cast<size_t>(dShape[2] - x));
@@ -1466,7 +1591,7 @@ int main(int argc, char *argv[])
                 }
 
                 #pragma omp parallel for schedule(dynamic, 2)
-                for (long long ty = 0; ty < static_cast<long long>(tilesY_src); ++ty) {
+                for (long long ty = partId; ty < static_cast<long long>(tilesY_src); ty += numParts) {
                     for (long long tx = 0; tx < static_cast<long long>(tilesX_src); ++tx) {
                         const uint32_t x0_src = static_cast<uint32_t>(tx) * tileW;
                         const uint32_t y0_src = static_cast<uint32_t>(ty) * tileH;
@@ -1538,7 +1663,7 @@ int main(int argc, char *argv[])
                 const uint32_t bandH = 128;
                 const double num_slices_center = 0.5 * (static_cast<double>(std::max(1, num_slices)) - 1.0);
 
-                auto make_out_path = [&](int sliceIdx) -> std::filesystem::path {
+                auto make_out_path_base = [&](int sliceIdx) -> std::filesystem::path {
                     if (output_path_local.string().find('%') == std::string::npos) {
                         int pad = 2; int v = std::max(0, num_slices-1);
                         while (v >= 100) { pad++; v /= 10; }
@@ -1551,9 +1676,19 @@ int main(int argc, char *argv[])
                         return std::filesystem::path(buf);
                     }
                 };
+                auto make_out_path = [&](int sliceIdx) -> std::filesystem::path {
+                    auto p = make_out_path_base(sliceIdx);
+                    if (numParts > 1) {
+                        // e.g. 00.tif -> 00.part0.tif
+                        auto stem = p.stem().string();
+                        auto ext = p.extension().string();
+                        return p.parent_path() / (stem + ".part" + std::to_string(partId) + ext);
+                    }
+                    return p;
+                };
 
                 // If all expected TIFFs exist, skip this segmentation
-                {
+                if (numParts <= 1) {
                     bool all_exist = true;
                     for (int z = 0; z < num_slices; ++z) {
                         std::filesystem::path outPath = make_out_path(z);
@@ -1613,7 +1748,8 @@ int main(int argc, char *argv[])
 
                 // Process one full-width band at a time, top to bottom.
                 // readMultiSlice parallelizes rows internally via OMP.
-                for (uint32_t bandIdx = 0; bandIdx < numBands; ++bandIdx) {
+                // In multi-part mode, each part handles a subset of bands.
+                for (uint32_t bandIdx = static_cast<uint32_t>(partId); bandIdx < numBands; bandIdx += static_cast<uint32_t>(numParts)) {
                     const uint32_t y0 = bandIdx * bandH;
                     const uint32_t dy = std::min(bandH, static_cast<uint32_t>(tgt_size.height) - y0);
 
@@ -1727,10 +1863,12 @@ int main(int argc, char *argv[])
                     // Progress with cache stats (throttled to ~1/sec)
                     auto now = std::chrono::steady_clock::now();
                     double sinceLast = std::chrono::duration<double>(now - lastPrint).count();
-                    if (sinceLast >= 1.0 || bandIdx + 1 == numBands) {
+                    uint32_t bandsThisPart = (numBands - static_cast<uint32_t>(partId) + static_cast<uint32_t>(numParts) - 1) / static_cast<uint32_t>(numParts);
+                    uint32_t bandsDone = (bandIdx - static_cast<uint32_t>(partId)) / static_cast<uint32_t>(numParts) + 1;
+                    if (sinceLast >= 1.0 || bandsDone == bandsThisPart) {
                         lastPrint = now;
                         double elapsed = std::chrono::duration<double>(now - bandWallStart).count();
-                        double eta = (bandIdx > 0) ? elapsed * (double(numBands) / (bandIdx + 1) - 1.0) : 0.0;
+                        double eta = (bandsDone > 0) ? elapsed * (double(bandsThisPart) / bandsDone - 1.0) : 0.0;
                         auto cs8 = chunk_cache_u8.stats();
                         auto cs16 = chunk_cache_u16.stats();
                         uint64_t hits = cs8.hits + cs16.hits;
