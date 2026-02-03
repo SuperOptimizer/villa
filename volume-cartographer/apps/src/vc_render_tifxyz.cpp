@@ -708,6 +708,8 @@ int main(int argc, char *argv[])
             "Crop region width (0 = no crop)")
         ("crop-height", po::value<int>()->default_value(0),
             "Crop region height (0 = no crop)")
+        ("auto-crop", po::bool_switch()->default_value(false),
+            "Automatically crop to bounding box of valid surface points")
         // Multi-affine interface (preferred):
         ("affine", po::value<std::vector<std::string>>()->multitoken()->composing(),
             "One or more affine JSON files, in application order (first listed applies first). "
@@ -1132,6 +1134,18 @@ int main(int argc, char *argv[])
             if ((*raw_points)(j,i)[0] == -1)
                 (*raw_points)(j,i) = {NAN,NAN,NAN};
 
+    // Compute bounding box of valid (non-NaN) surface points in raw grid coords
+    int raw_col_min = raw_points->cols, raw_col_max = -1;
+    int raw_row_min = raw_points->rows, raw_row_max = -1;
+    for (int j = 0; j < raw_points->rows; j++)
+        for (int i = 0; i < raw_points->cols; i++)
+            if (std::isfinite((*raw_points)(j,i)[0])) {
+                if (i < raw_col_min) raw_col_min = i;
+                if (i > raw_col_max) raw_col_max = i;
+                if (j < raw_row_min) raw_row_min = j;
+                if (j > raw_row_max) raw_row_max = j;
+            }
+
     cv::Size full_size = raw_points->size();
 
     // Interpret --scale as Pg = pixels per level-g voxel.
@@ -1166,18 +1180,42 @@ int main(int argc, char *argv[])
     cv::Size tgt_size = full_size;
     // 'crop' is expressed in the *uncropped* canvas coordinate system
     cv::Rect crop = {0, 0, full_size.width, full_size.height};
+    const cv::Rect canvasROI{0, 0, full_size.width, full_size.height};
 
     std::cout << "downsample level " << group_idx
               << " (ds_scale=" << ds_scale << ", sA=" << sA
               << ", Pg=" << Pg << ", render_scale=" << render_scale << ")\n";
 
-    // Handle crop parameters (clamped to canvas)
+    // Handle crop: --auto-crop and --crop-* are mutually exclusive
     const int crop_x = parsed["crop-x"].as<int>();
     const int crop_y = parsed["crop-y"].as<int>();
     const int crop_width  = parsed["crop-width"].as<int>();
     const int crop_height = parsed["crop-height"].as<int>();
-    const cv::Rect canvasROI{0, 0, full_size.width, full_size.height};
-    if (crop_width > 0 && crop_height > 0) {
+    const bool manualCrop = (crop_width > 0 && crop_height > 0);
+    const bool autoCropEnabled = parsed["auto-crop"].as<bool>();
+
+    if (autoCropEnabled && manualCrop) {
+        std::cerr << "Error: --auto-crop and --crop-* options are mutually exclusive" << std::endl;
+        return;
+    }
+
+    if (autoCropEnabled && raw_col_max >= raw_col_min) {
+        const double sx = render_scale / static_cast<double>(surf->_scale[0]);
+        const double sy = render_scale / static_cast<double>(surf->_scale[1]);
+        const int ac_x = static_cast<int>(std::floor(raw_col_min * sx));
+        const int ac_y = static_cast<int>(std::floor(raw_row_min * sy));
+        const int ac_r = static_cast<int>(std::ceil((raw_col_max + 1) * sx));
+        const int ac_b = static_cast<int>(std::ceil((raw_row_max + 1) * sy));
+        cv::Rect autoCrop{ac_x, ac_y, ac_r - ac_x, ac_b - ac_y};
+        crop = autoCrop & canvasROI;
+        tgt_size = crop.size();
+        std::cout << "auto-crop: raw bbox [" << raw_col_min << "," << raw_row_min
+                  << "]-[" << raw_col_max << "," << raw_row_max
+                  << "] → canvas crop " << crop << std::endl;
+    }
+
+    // Handle manual crop parameters (clamped to canvas)
+    if (manualCrop) {
         const cv::Rect req{crop_x, crop_y, crop_width, crop_height};
         crop = (req & canvasROI); // intersect with canvas
         if (crop.width <= 0 || crop.height <= 0) {
@@ -1186,7 +1224,7 @@ int main(int argc, char *argv[])
             return;
         }
         tgt_size = crop.size();
-    } else {
+    } else if (!autoCropEnabled) {
         crop = canvasROI;              // no crop requested
         tgt_size = crop.size();
     }
