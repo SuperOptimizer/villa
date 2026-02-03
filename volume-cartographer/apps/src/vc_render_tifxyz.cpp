@@ -667,7 +667,7 @@ static inline void renderAccumulatedSlice(
 
 int main(int argc, char *argv[])
 {
-    kmp_set_blocktime(0);
+    //kmp_set_blocktime(0);
 
     // clang-format off
     po::options_description required("Required arguments");
