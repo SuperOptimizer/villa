@@ -1153,7 +1153,7 @@ int main(int argc, char *argv[])
         // Iterate output chunks and render directly into them (parallel over XY tiles)
         for (size_t z0 = 0; z0 < shape0[0]; z0 += CZ) {
             const size_t dz = std::min(CZ, shape0[0] - z0);
-            #pragma omp parallel for schedule(dynamic, 1)
+            #pragma omp parallel for schedule(dynamic, 2)
             for (long long ty = 0; ty < static_cast<long long>(tilesY_src); ++ty) {
                 for (long long tx = 0; tx < static_cast<long long>(tilesX_src); ++tx) {
                     const size_t y0_src = static_cast<size_t>(ty) * CH;
@@ -1304,7 +1304,7 @@ int main(int argc, char *argv[])
 
             for (size_t z = 0; z < dShape[0]; z += tileZ) {
                 const size_t lz = std::min(tileZ, dShape[0] - z);
-                #pragma omp parallel for schedule(dynamic, 1)
+                #pragma omp parallel for schedule(dynamic, 2)
                 for (long long y = 0; y < static_cast<long long>(dShape[1]); y += tileY) {
                     for (long long x = 0; x < static_cast<long long>(dShape[2]); x += tileX) {
                         const size_t ly = std::min(tileY, static_cast<size_t>(dShape[1] - y));
@@ -1465,7 +1465,7 @@ int main(int argc, char *argv[])
                     writers.emplace_back(outPath, outW, outH, cvType, tileW, tileH, 0.0f);
                 }
 
-                #pragma omp parallel for schedule(dynamic, 1)
+                #pragma omp parallel for schedule(dynamic, 2)
                 for (long long ty = 0; ty < static_cast<long long>(tilesY_src); ++ty) {
                     for (long long tx = 0; tx < static_cast<long long>(tilesX_src); ++tx) {
                         const uint32_t x0_src = static_cast<uint32_t>(tx) * tileW;
@@ -1535,7 +1535,7 @@ int main(int argc, char *argv[])
                 const int outW = ((rotQuad >= 0) && (rotQuad % 2 == 1)) ? tgt_size.height : tgt_size.width;
                 const int outH = ((rotQuad >= 0) && (rotQuad % 2 == 1)) ? tgt_size.width  : tgt_size.height;
 
-                const uint32_t bandH = 16;
+                const uint32_t bandH = 128;
                 const double num_slices_center = 0.5 * (static_cast<double>(std::max(1, num_slices)) - 1.0);
 
                 auto make_out_path = [&](int sliceIdx) -> std::filesystem::path {
@@ -1565,9 +1565,9 @@ int main(int argc, char *argv[])
                     }
                 }
 
-                // TIFF tile = full output width x bandH
+                // TIFF tile = full output width x 16 rows
                 const uint32_t tiffTileW = (static_cast<uint32_t>(outW) + 15u) & ~15u;
-                const uint32_t tiffTileH = bandH;
+                const uint32_t tiffTileH = 16;
 
                 std::vector<TiffWriter> writers;
                 writers.reserve(static_cast<size_t>(num_slices));
@@ -1667,10 +1667,17 @@ int main(int argc, char *argv[])
                                 }
                             }
                             rotateFlipIfNeeded(sliceOut, rotQuad, flip_axis);
-                            int dstBx, dstBy, rBX, rBY;
-                            mapTileIndex(0, static_cast<int>(bandIdx), 1, static_cast<int>(numBands),
-                                         std::max(rotQuad, 0), flip_axis, dstBx, dstBy, rBX, rBY);
-                            writers[static_cast<size_t>(zi)].writeTile(0, static_cast<uint32_t>(dstBy) * bandH, sliceOut);
+                            // Write as multiple TIFF tiles (tiffTileH rows each)
+                            for (uint32_t ty = 0; ty < static_cast<uint32_t>(sliceOut.rows); ty += tiffTileH) {
+                                uint32_t tdy = std::min(tiffTileH, static_cast<uint32_t>(sliceOut.rows) - ty);
+                                cv::Mat subTile = sliceOut(cv::Rect(0, ty, sliceOut.cols, tdy));
+                                int dstBx, dstBy, rBX, rBY;
+                                uint32_t srcTileIdx = (y0 + ty) / tiffTileH;
+                                uint32_t numTiffTiles = (static_cast<uint32_t>(tgt_size.height) + tiffTileH - 1) / tiffTileH;
+                                mapTileIndex(0, static_cast<int>(srcTileIdx), 1, static_cast<int>(numTiffTiles),
+                                             std::max(rotQuad, 0), flip_axis, dstBx, dstBy, rBX, rBY);
+                                writers[static_cast<size_t>(zi)].writeTile(0, static_cast<uint32_t>(dstBy) * tiffTileH, subTile);
+                            }
                         }
                     } else {
                         std::vector<cv::Mat_<uint8_t>> rawSlices;
@@ -1703,10 +1710,17 @@ int main(int argc, char *argv[])
                                 }
                             }
                             rotateFlipIfNeeded(sliceOut, rotQuad, flip_axis);
-                            int dstBx, dstBy, rBX, rBY;
-                            mapTileIndex(0, static_cast<int>(bandIdx), 1, static_cast<int>(numBands),
-                                         std::max(rotQuad, 0), flip_axis, dstBx, dstBy, rBX, rBY);
-                            writers[static_cast<size_t>(zi)].writeTile(0, static_cast<uint32_t>(dstBy) * bandH, sliceOut);
+                            // Write as multiple TIFF tiles (tiffTileH rows each)
+                            for (uint32_t ty = 0; ty < static_cast<uint32_t>(sliceOut.rows); ty += tiffTileH) {
+                                uint32_t tdy = std::min(tiffTileH, static_cast<uint32_t>(sliceOut.rows) - ty);
+                                cv::Mat subTile = sliceOut(cv::Rect(0, ty, sliceOut.cols, tdy));
+                                int dstBx, dstBy, rBX, rBY;
+                                uint32_t srcTileIdx = (y0 + ty) / tiffTileH;
+                                uint32_t numTiffTiles = (static_cast<uint32_t>(tgt_size.height) + tiffTileH - 1) / tiffTileH;
+                                mapTileIndex(0, static_cast<int>(srcTileIdx), 1, static_cast<int>(numTiffTiles),
+                                             std::max(rotQuad, 0), flip_axis, dstBx, dstBy, rBX, rBY);
+                                writers[static_cast<size_t>(zi)].writeTile(0, static_cast<uint32_t>(dstBy) * tiffTileH, subTile);
+                            }
                         }
                     }
 
