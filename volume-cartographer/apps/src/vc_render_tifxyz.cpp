@@ -783,8 +783,12 @@ int main(int argc, char *argv[])
         std::cout << "Multi-part mode: part " << partId << " of " << numParts << std::endl;
     }
 
-    // --merge-parts: combine *.partN.tif files into final TIFFs, then exit
-    if (mergeParts) {
+    const bool finalize_flag = parsed["finalize"].as<bool>();
+
+    // --merge-parts or --finalize for TIFFs: combine *.partN.tif files into final TIFFs, then exit
+    // (--finalize for zarr goes through the normal path and builds the pyramid there)
+    const bool outputIsZarr = std::filesystem::path(parsed["output"].as<std::string>()).extension() == ".zarr";
+    if (mergeParts || (finalize_flag && numParts >= 2 && !outputIsZarr)) {
         if (numParts < 2) {
             std::cerr << "Error: --merge-parts requires --num-parts >= 2\n";
             return EXIT_FAILURE;
