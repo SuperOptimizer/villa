@@ -8,6 +8,7 @@
  */
 
 #include "CWindow.hpp"
+#include "CSurfaceCollection.hpp"
 
 #include <cmath>
 

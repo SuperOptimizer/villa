@@ -10,7 +10,6 @@
 #include <nlohmann/json.hpp>
 #include "z5/factory.hxx"
 #include "z5/filesystem/handle.hxx"
-#include "z5/filesystem/dataset.hxx"
 #include "z5/multiarray/xtensor_access.hxx"
 #include <xtensor/containers/xarray.hpp>
 

@@ -6,7 +6,7 @@
 #include <sstream>
 #include <iomanip>
 
-class ALifeTime
+class ALifeTime final
 {
 public:
     ALifeTime(const std::string &msg = "")
@@ -19,9 +19,7 @@ public:
     double unit = 0;
     std::string del_msg;
     std::string unit_string;
-    ~ALifeTime()
-    {
-    }
+    ~ALifeTime() = default;
 
     void mark(const std::string& label) {
         auto now = std::chrono::high_resolution_clock::now();
@@ -30,7 +28,7 @@ public:
         _last_mark = now;
     }
 
-    std::string report() const {
+    [[nodiscard]] std::string report() const {
         std::stringstream ss;
         ss << std::fixed << std::setprecision(4);
         for(const auto& mark : _marks) {
@@ -39,11 +37,11 @@ public:
         return ss.str();
     }
 
-    const std::vector<std::pair<std::string, double>>& getMarks() const {
+    [[nodiscard]] const std::vector<std::pair<std::string, double>>& getMarks() const noexcept {
         return _marks;
     }
 
-    double seconds() const {
+    [[nodiscard]] double seconds() const noexcept {
         auto end = std::chrono::high_resolution_clock::now();
         return std::chrono::duration<double>(end-start).count();
     }

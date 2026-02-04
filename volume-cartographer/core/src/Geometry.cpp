@@ -1,27 +1,26 @@
 #include "vc/core/util/Geometry.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 
-#include <xtensor/generators/xbuilder.hpp>
-#include <xtensor/views/xview.hpp>
-
 #include <opencv2/core.hpp>
-#include <opencv2/calib3d.hpp>
 
 #include <algorithm>
-#include <random>
+#include <iostream>
 
-//somehow opencvs functions are pretty slow
-static cv::Vec3f normed(const cv::Vec3f& v)
+// Use inverse sqrt + multiply instead of sqrt + divide (faster)
+[[gnu::always_inline]] static cv::Vec3f normed(const cv::Vec3f& v) noexcept
 {
-    return v/sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);
+    const float lenSq = v[0]*v[0] + v[1]*v[1] + v[2]*v[2];
+    if (lenSq < 1e-12f) [[unlikely]] return {0.0f, 0.0f, 0.0f};
+    const float invLen = 1.0f / std::sqrt(lenSq);
+    return {v[0] * invLen, v[1] * invLen, v[2] * invLen};
 }
 
-static cv::Vec2f vmin(const cv::Vec2f &a, const cv::Vec2f &b)
+[[gnu::always_inline]] static cv::Vec2f vmin(const cv::Vec2f &a, const cv::Vec2f &b) noexcept
 {
     return {std::min(a[0],b[0]),std::min(a[1],b[1])};
 }
 
-static cv::Vec2f vmax(const cv::Vec2f &a, const cv::Vec2f &b)
+[[gnu::always_inline]] static cv::Vec2f vmax(const cv::Vec2f &a, const cv::Vec2f &b) noexcept
 {
     return {std::max(a[0],b[0]),std::max(a[1],b[1])};
 }
@@ -57,119 +56,121 @@ cv::Vec3f grid_normal(const cv::Mat_<cv::Vec3f> &points, const cv::Vec3f &loc)
     return normed(n);
 }
 
+// FMA-friendly bilinear interpolation: a + t*(b-a) instead of (1-t)*a + t*b
 template <typename E>
-static E at_int_impl(const cv::Mat_<E> &points, const cv::Vec2f& p)
+[[gnu::always_inline]] static E at_int_impl(const cv::Mat_<E> &points, const cv::Vec2f& p) noexcept
 {
-    int x = p[0];
-    int y = p[1];
-    float fx = p[0]-x;
-    float fy = p[1]-y;
+    const int x = static_cast<int>(p[0]);
+    const int y = static_cast<int>(p[1]);
+    const float fx = p[0] - x;
+    const float fy = p[1] - y;
 
-    const E& p00 = points(y,x);
-    const E& p01 = points(y,x+1);
-    const E& p10 = points(y+1,x);
-    const E& p11 = points(y+1,x+1);
+    const E& p00 = points(y, x);
+    const E& p01 = points(y, x + 1);
+    const E& p10 = points(y + 1, x);
+    const E& p11 = points(y + 1, x + 1);
 
-    E p0 = (1-fx)*p00 + fx*p01;
-    E p1 = (1-fx)*p10 + fx*p11;
+    // FMA-friendly form: a + t*(b-a) generates fmadd instructions
+    const E p0 = p00 + fx * (p01 - p00);
+    const E p1 = p10 + fx * (p11 - p10);
 
-    return (1-fy)*p0 + fy*p1;
+    return p0 + fy * (p1 - p0);
 }
 
 template<typename T, int C>
-static bool loc_valid_impl(const cv::Mat_<cv::Vec<T,C>> &m, const cv::Vec2d &l)
+[[gnu::always_inline]] static bool loc_valid_impl(const cv::Mat_<cv::Vec<T,C>> &m, const cv::Vec2d &l) noexcept
 {
-    if (l[0] == -1)
+    if (l[0] == -1) [[unlikely]]
         return false;
 
     cv::Rect bounds = {0, 0, m.rows-2,m.cols-2};
     cv::Vec2i li = {static_cast<int>(floor(l[0])), static_cast<int>(floor(l[1]))};
 
-    if (!bounds.contains(cv::Point(li)))
+    if (!bounds.contains(cv::Point(li))) [[unlikely]]
         return false;
 
-    if (m(li[0],li[1])[0] == -1)
+    if (m(li[0],li[1])[0] == -1) [[unlikely]]
         return false;
-    if (m(li[0]+1,li[1])[0] == -1)
+    if (m(li[0]+1,li[1])[0] == -1) [[unlikely]]
         return false;
-    if (m(li[0],li[1]+1)[0] == -1)
+    if (m(li[0],li[1]+1)[0] == -1) [[unlikely]]
         return false;
-    if (m(li[0]+1,li[1]+1)[0] == -1)
+    if (m(li[0]+1,li[1]+1)[0] == -1) [[unlikely]]
         return false;
     return true;
 }
 
-static bool loc_valid_scalar(const cv::Mat_<float> &m, const cv::Vec2d &l)
+[[gnu::always_inline]] static bool loc_valid_scalar(const cv::Mat_<float> &m, const cv::Vec2d &l) noexcept
 {
-    if (l[0] == -1)
+    if (l[0] == -1) [[unlikely]]
         return false;
 
     cv::Rect bounds = {0, 0, m.rows-2,m.cols-2};
     cv::Vec2i li = {static_cast<int>(floor(l[0])), static_cast<int>(floor(l[1]))};
 
-    if (!bounds.contains(cv::Point(li)))
+    if (!bounds.contains(cv::Point(li))) [[unlikely]]
         return false;
 
-    if (m(li[0],li[1]) == -1)
+    if (m(li[0],li[1]) == -1) [[unlikely]]
         return false;
-    if (m(li[0]+1,li[1]) == -1)
+    if (m(li[0]+1,li[1]) == -1) [[unlikely]]
         return false;
-    if (m(li[0],li[1]+1) == -1)
+    if (m(li[0],li[1]+1) == -1) [[unlikely]]
         return false;
-    if (m(li[0]+1,li[1]+1) == -1)
+    if (m(li[0]+1,li[1]+1) == -1) [[unlikely]]
         return false;
     return true;
 }
 
 template<typename T, int C>
-static bool loc_valid_xy_impl(const cv::Mat_<cv::Vec<T,C>> &m, const cv::Vec2d &l)
+[[gnu::always_inline]] static bool loc_valid_xy_impl(const cv::Mat_<cv::Vec<T,C>> &m, const cv::Vec2d &l) noexcept
 {
     return loc_valid_impl(m, {l[1],l[0]});
 }
 
-static bool loc_valid_xy_scalar(const cv::Mat_<float> &m, const cv::Vec2d &l)
+[[gnu::always_inline]] static bool loc_valid_xy_scalar(const cv::Mat_<float> &m, const cv::Vec2d &l) noexcept
 {
     return loc_valid_scalar(m, {l[1],l[0]});
 }
 
-cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &p) {
+cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &p) noexcept {
     return at_int_impl(points, p);
 }
 
-float at_int(const cv::Mat_<float> &points, const cv::Vec2f& p) {
+float at_int(const cv::Mat_<float> &points, const cv::Vec2f& p) noexcept {
     return at_int_impl(points, p);
 }
 
-cv::Vec3d at_int(const cv::Mat_<cv::Vec3d> &points, const cv::Vec2f& p) {
+cv::Vec3d at_int(const cv::Mat_<cv::Vec3d> &points, const cv::Vec2f& p) noexcept {
     return at_int_impl(points, p);
 }
 
-bool loc_valid(const cv::Mat_<cv::Vec3f> &m, const cv::Vec2d &l) {
+bool loc_valid(const cv::Mat_<cv::Vec3f> &m, const cv::Vec2d &l) noexcept {
     return loc_valid_impl(m, l);
 }
 
-bool loc_valid(const cv::Mat_<cv::Vec3d> &m, const cv::Vec2d &l) {
+bool loc_valid(const cv::Mat_<cv::Vec3d> &m, const cv::Vec2d &l) noexcept {
     return loc_valid_impl(m, l);
 }
 
-bool loc_valid(const cv::Mat_<float> &m, const cv::Vec2d &l) {
+bool loc_valid(const cv::Mat_<float> &m, const cv::Vec2d &l) noexcept {
     return loc_valid_scalar(m, l);
 }
 
-bool loc_valid_xy(const cv::Mat_<cv::Vec3f> &m, const cv::Vec2d &l) {
+bool loc_valid_xy(const cv::Mat_<cv::Vec3f> &m, const cv::Vec2d &l) noexcept {
     return loc_valid_xy_impl(m, l);
 }
 
-bool loc_valid_xy(const cv::Mat_<cv::Vec3d> &m, const cv::Vec2d &l) {
+bool loc_valid_xy(const cv::Mat_<cv::Vec3d> &m, const cv::Vec2d &l) noexcept {
     return loc_valid_xy_impl(m, l);
 }
 
-bool loc_valid_xy(const cv::Mat_<float> &m, const cv::Vec2d &l) {
+bool loc_valid_xy(const cv::Mat_<float> &m, const cv::Vec2d &l) noexcept {
     return loc_valid_xy_scalar(m, l);
 }
 
 
-float tdist(const cv::Vec3f &a, const cv::Vec3f &b, float t_dist)
+float tdist(const cv::Vec3f &a, const cv::Vec3f &b, float t_dist) noexcept
 {
     cv::Vec3f d = a-b;
     float l = sqrtf(d.dot(d));
@@ -177,10 +178,10 @@ float tdist(const cv::Vec3f &a, const cv::Vec3f &b, float t_dist)
     return abs(l-t_dist);
 }
 
-float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds)
+float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds) noexcept
 {
     float sum = 0;
-    for(int i=0;i<tgts.size();i++) {
+    for(size_t i=0;i<tgts.size();i++) {
         float d = tdist(v, tgts[i], tds[i]);
         sum += d*d;
     }
@@ -232,11 +233,11 @@ cv::Mat_<cv::Vec3f> clean_surface_outliers(const cv::Mat_<cv::Vec3f>& points, fl
     const float threshold = median_dist + distance_threshold * (mad / 0.6745f);
 
     if (print_stats) {
-        std::cout << "Outlier detection statistics:" << std::endl;
-        std::cout << "  Median neighbor distance: " << median_dist << std::endl;
-        std::cout << "  MAD: " << mad << std::endl;
-        std::cout << "  K (sigma multiplier): " << distance_threshold << std::endl;
-        std::cout << "  Distance threshold: " << threshold << std::endl;
+        std::cout << "Outlier detection statistics:" << "\n";
+        std::cout << "  Median neighbor distance: " << median_dist << "\n";
+        std::cout << "  MAD: " << mad << "\n";
+        std::cout << "  K (sigma multiplier): " << distance_threshold << "\n";
+        std::cout << "  Distance threshold: " << threshold << "\n";
     }
 
     // Second pass: invalidate isolated/far points
@@ -267,7 +268,7 @@ cv::Mat_<cv::Vec3f> clean_surface_outliers(const cv::Mat_<cv::Vec3f>& points, fl
     }
 
     if (print_stats) {
-        std::cout << "Surface cleaning: removed " << removed_count << " outlier points" << std::endl;
+        std::cout << "Surface cleaning: removed " << removed_count << " outlier points" << "\n";
     }
 
     return cleaned;

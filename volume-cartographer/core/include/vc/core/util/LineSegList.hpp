@@ -11,7 +11,7 @@
  namespace core {
  namespace util {
 
- class LineSegList {
+ class LineSegList final {
  public:
      explicit LineSegList(const std::vector<cv::Point>& points) {
          if (points.empty()) {
@@ -52,11 +52,11 @@
         return points_ptr;
     }
 
-    const int8_t* compressed_data() const { return compressed_data_ptr_; }
-    size_t compressed_data_size() const { return compressed_data_size_; }
-    cv::Point start_point() const { return start_point_; }
-    size_t num_points() const { return 1 + compressed_data_size_ / 2; }
-    size_t get_memory_usage() const {
+    [[nodiscard]] const int8_t* compressed_data() const noexcept { return compressed_data_ptr_; }
+    [[nodiscard]] size_t compressed_data_size() const noexcept { return compressed_data_size_; }
+    [[nodiscard]] cv::Point start_point() const noexcept { return start_point_; }
+    [[nodiscard]] size_t num_points() const noexcept { return 1 + compressed_data_size_ / 2; }
+    [[nodiscard]] size_t get_memory_usage() const noexcept {
        return sizeof(LineSegList) + compressed_data_.capacity();
     }
 

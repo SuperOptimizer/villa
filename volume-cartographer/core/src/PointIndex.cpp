@@ -48,12 +48,12 @@ void PointIndex::clear()
     impl_->pointData.clear();
 }
 
-bool PointIndex::empty() const
+bool PointIndex::empty() const noexcept
 {
     return impl_->pointData.empty();
 }
 
-size_t PointIndex::size() const
+size_t PointIndex::size() const noexcept
 {
     return impl_->pointData.size();
 }

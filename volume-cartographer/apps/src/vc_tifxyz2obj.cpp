@@ -1,12 +1,6 @@
 // vc_tifxyz2obj.cpp
 #include "vc/core/util/Geometry.hpp"
-#include "vc/core/util/Slicing.hpp"
-#include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
-#include "vc/core/types/ChunkedTensor.hpp"
-
-#include "z5/factory.hxx"
-#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -14,9 +8,6 @@
 #include <iostream>
 #include <cmath>
 #include <limits>
-
-
-using json = nlohmann::json;
 
 // ---- small helpers ---------------------------------------------------------
 static inline bool finite3(const cv::Vec3f& v) {
@@ -85,7 +76,7 @@ static cv::Mat_<cv::Vec3f> decimate_grid(const cv::Mat_<cv::Vec3f>& points, int 
         
         std::cout << "Decimation iteration " << (iter + 1) << ": " 
                   << "reduced to " << new_rows << " x " << new_cols 
-                  << " (" << (new_rows * new_cols) << " points)" << std::endl;
+                  << " (" << (new_rows * new_cols) << " points)" << "\n";
     }
     
     return result;
@@ -184,7 +175,7 @@ static void surf_write_obj(QuadSurface *surf, const std::filesystem::path &out_f
     
     // Clean surface outliers if requested
     if (clean_surface) {
-        std::cout << "Cleaning surface outliers..." << std::endl;
+        std::cout << "Cleaning surface outliers..." << "\n";
         points = clean_surface_outliers(points, clean_sigma_k);
     }
     
@@ -220,7 +211,7 @@ static void surf_write_obj(QuadSurface *surf, const std::filesystem::path &out_f
     // Apply decimation if requested
     if (decimate_iterations > 0) {
         std::cout << "Original grid: " << points.rows << " x " << points.cols 
-                  << " (" << (points.rows * points.cols) << " points)" << std::endl;
+                  << " (" << (points.rows * points.cols) << " points)" << "\n";
         points = decimate_grid(points, decimate_iterations);
     }
     
@@ -237,7 +228,7 @@ static void surf_write_obj(QuadSurface *surf, const std::filesystem::path &out_f
 
     std::cout << "Point dims: " << points.size()
               << " cols: " << points.cols
-              << " rows: " << points.rows << std::endl;
+              << " rows: " << points.rows << "\n";
     
     if (align_grid) {
         std::cout << "Grid alignment: enabled (rows: constant Z only)\n";
@@ -352,7 +343,7 @@ int main(int argc, char *argv[])
         surf = load_quad_from_tifxyz(seg_path);
     }
     catch (...) {
-        std::cerr << "error when loading: " << seg_path << std::endl;
+        std::cerr << "error when loading: " << seg_path << "\n";
         return EXIT_FAILURE;
     }
 

@@ -1,7 +1,7 @@
 #include "vc/core/util/VolumeFilter.hpp"
 
 #include <opencv2/imgproc.hpp>
-#include <_stdlib.h>
+#include <cstdlib>
 #include <opencv2/core/hal/interface.h>
 #include <stdint.h>
 #include <stdlib.h>

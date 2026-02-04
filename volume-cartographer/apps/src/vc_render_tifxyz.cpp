@@ -958,7 +958,7 @@ int main(int argc, char *argv[])
     const bool mergeParts = parsed["merge-parts"].as<bool>();
     const int barrierTimeout = parsed["barrier-timeout"].as<int>();
     if (numParts > 1) {
-        std::cout << "Multi-part mode: part " << partId << " of " << numParts << std::endl;
+        std::cout << "Multi-part mode: part " << partId << " of " << numParts << "\n";
     }
 
     const bool finalize_flag = parsed["finalize"].as<bool>();
@@ -983,7 +983,7 @@ int main(int argc, char *argv[])
         if (postProcess.bilateral) std::cout << " Bilateral";
         if (postProcess.sharpen) std::cout << " Sharpen";
         if (std::abs(postProcess.gamma - 1.0) > 0.001) std::cout << " Gamma(" << postProcess.gamma << ")";
-        std::cout << std::endl;
+        std::cout << "\n";
     }
 
     // --merge-parts or --finalize for TIFFs: combine *.partN.tif files into final TIFFs, then exit
@@ -1019,7 +1019,7 @@ int main(int argc, char *argv[])
             return EXIT_FAILURE;
         }
 
-        std::cout << "Merging " << groups.size() << " TIFF(s) from " << numParts << " parts..." << std::endl;
+        std::cout << "Merging " << groups.size() << " TIFF(s) from " << numParts << " parts..." << "\n";
         for (auto& [finalPath, partFiles] : groups) {
             std::sort(partFiles.begin(), partFiles.end());
             // Open first part to get dimensions and tile info
@@ -1089,9 +1089,9 @@ int main(int argc, char *argv[])
                 std::filesystem::remove(pf);
 
             std::cout << "  " << finalPath.filename().string() << ": merged " << tilesMerged
-                      << " tiles from " << partFiles.size() << " parts" << std::endl;
+                      << " tiles from " << partFiles.size() << " parts" << "\n";
         }
-        std::cout << "Merge complete." << std::endl;
+        std::cout << "Merge complete." << "\n";
         return EXIT_SUCCESS;
     }
 
@@ -1162,7 +1162,7 @@ int main(int argc, char *argv[])
         std::cerr << "Warning: --composite-single with --num-slices=1 has no effect.\n";
     }
     if (compositeSingle) {
-        std::cout << "Composite single output: " << num_slices << " slices using '" << accum_type_str << "'" << std::endl;
+        std::cout << "Composite single output: " << num_slices << " slices using '" << accum_type_str << "'" << "\n";
     }
     std::vector<float> accumOffsets;
     if (accum_step > 0.0) {
@@ -1186,7 +1186,7 @@ int main(int argc, char *argv[])
         }
         accum_step = spacing;
         std::cout << "Accumulation enabled: " << samples << " samples per slice at step "
-                  << spacing << " using '" << accum_type_str << "' reducer." << std::endl;
+                  << spacing << " using '" << accum_type_str << "' reducer." << "\n";
     }
     // Downsample factor for this OME-Zarr pyramid level: g=0 -> 1, g=1 -> 0.5, ...
     const float ds_scale = std::ldexp(1.0f, -group_idx);  // 2^(-group_idx)
@@ -1239,7 +1239,7 @@ int main(int argc, char *argv[])
             try {
                 AffineTransform T = loadAffineTransform(path);
                 std::cout << "Loaded affine[" << k << "]: " << path
-                          << (invertFlag ? " (invert)" : "") << std::endl;
+                          << (invertFlag ? " (invert)" : "") << "\n";
                 if (invertFlag) {
                     if (!invertAffineInPlace(T)) {
                         std::cerr << "Error: affine[" << k << "] has non-invertible linear part.\n";
@@ -1249,7 +1249,7 @@ int main(int argc, char *argv[])
                 composed = composeAffine(composed, T);
                 ++k;
             } catch (const std::exception& e) {
-                std::cerr << "Error loading affine[" << k << "]: " << e.what() << std::endl;
+                std::cerr << "Error loading affine[" << k << "]: " << e.what() << "\n";
                 return EXIT_FAILURE;
 
             }
@@ -1263,28 +1263,28 @@ int main(int argc, char *argv[])
     z5::filesystem::handle::Dataset ds_handle(group, std::to_string(group_idx), json::parse(std::ifstream(vol_path/std::to_string(group_idx)/".zarray")).value<std::string>("dimension_separator","."));
     std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
 
-    std::cout << "zarr dataset size for scale group " << group_idx << ds->shape() << std::endl;
+    std::cout << "zarr dataset size for scale group " << group_idx << ds->shape() << "\n";
     const bool output_is_u16 = (ds->getDtype() == z5::types::Datatype::uint16);
     if (output_is_u16)
-        std::cout << "Detected source dtype=uint16 -> rendering as uint16" << std::endl;
+        std::cout << "Detected source dtype=uint16 -> rendering as uint16" << "\n";
     else
-        std::cout << "Detected source dtype!=uint16 -> rendering as uint8 (default)" << std::endl;
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
-    std::cout << "output argument: " << base_output_arg << std::endl;
+        std::cout << "Detected source dtype!=uint16 -> rendering as uint8 (default)" << "\n";
+    std::cout << "chunk shape shape " << ds->chunking().blockShape() << "\n";
+    std::cout << "output argument: " << base_output_arg << "\n";
 
     // Enforce 90-degree-increment rotations only
     int rotQuadGlobal = -1;
     if (std::abs(rotate_angle) > 1e-6) {
         rotQuadGlobal = normalizeQuadrantRotation(rotate_angle);
         if (rotQuadGlobal < 0) {
-            std::cerr << "Error: only 0/90/180/270 degree rotations are supported." << std::endl;
+            std::cerr << "Error: only 0/90/180/270 degree rotations are supported." << "\n";
             return EXIT_FAILURE;
         }
         rotate_angle = rotQuadGlobal * 90.0; // normalize
-        std::cout << "Rotation: " << rotate_angle << " degrees" << std::endl;
+        std::cout << "Rotation: " << rotate_angle << " degrees" << "\n";
     }
     if (flip_axis >= 0) {
-        std::cout << "Flip: " << (flip_axis == 0 ? "Vertical" : flip_axis == 1 ? "Horizontal" : "Both") << std::endl;
+        std::cout << "Flip: " << (flip_axis == 0 ? "Vertical" : flip_axis == 1 ? "Horizontal" : "Both") << "\n";
     }
 
     std::filesystem::path output_path(base_output_arg);
@@ -1297,7 +1297,7 @@ int main(int argc, char *argv[])
 
     const size_t cache_gb = parsed["cache-gb"].as<size_t>();
     const size_t cache_bytes = cache_gb * 1024ull * 1024ull * 1024ull;
-    std::cout << "Chunk cache: " << cache_gb << " GB (" << cache_bytes << " bytes)" << std::endl;
+    std::cout << "Chunk cache: " << cache_gb << " GB (" << cache_bytes << " bytes)" << "\n";
     ChunkCache<uint8_t> chunk_cache_u8(cache_bytes);
     ChunkCache<uint16_t> chunk_cache_u16(cache_bytes);
 
@@ -1322,20 +1322,20 @@ int main(int argc, char *argv[])
                   << seg_folder.string() << " -> "
                   << output_path_local.string()
                   << (output_is_zarr?" (zarr)":" (tif)")
-                  << std::endl;
+                  << "\n";
 
         std::unique_ptr<QuadSurface> surf;
         try {
             surf = load_quad_from_tifxyz(seg_folder);
         }
         catch (...) {
-            std::cout << "error when loading: " << seg_folder << std::endl;
+            std::cout << "error when loading: " << seg_folder << "\n";
             return;
         }
 
         // Apply ABF++ flattening if requested
         if (parsed["flatten"].as<bool>()) {
-            std::cout << "Applying ABF++ flattening..." << std::endl;
+            std::cout << "Applying ABF++ flattening..." << "\n";
             vc::ABFConfig flatConfig;
             flatConfig.maxIterations = static_cast<std::size_t>(parsed["flatten-iterations"].as<int>());
             flatConfig.downsampleFactor = parsed["flatten-downsample"].as<int>();
@@ -1346,9 +1346,9 @@ int main(int argc, char *argv[])
             if (flatSurf) {
                 surf.reset(flatSurf);
                 std::cout << "Flattening complete. New grid: "
-                          << surf->rawPointsPtr()->cols << " x " << surf->rawPointsPtr()->rows << std::endl;
+                          << surf->rawPointsPtr()->cols << " x " << surf->rawPointsPtr()->rows << "\n";
             } else {
-                std::cerr << "Warning: ABF++ flattening failed, using original mesh" << std::endl;
+                std::cerr << "Warning: ABF++ flattening failed, using original mesh" << "\n";
             }
         }
 
@@ -1419,7 +1419,7 @@ int main(int argc, char *argv[])
     const bool autoCropEnabled = parsed["auto-crop"].as<bool>();
 
     if (autoCropEnabled && manualCrop) {
-        std::cerr << "Error: --auto-crop and --crop-* options are mutually exclusive" << std::endl;
+        std::cerr << "Error: --auto-crop and --crop-* options are mutually exclusive" << "\n";
         return;
     }
 
@@ -1435,7 +1435,7 @@ int main(int argc, char *argv[])
         tgt_size = crop.size();
         std::cout << "auto-crop: raw bbox [" << raw_col_min << "," << raw_row_min
                   << "]-[" << raw_col_max << "," << raw_row_max
-                  << "] → canvas crop " << crop << std::endl;
+                  << "] → canvas crop " << crop << "\n";
     }
 
     // Handle manual crop parameters (clamped to canvas)
@@ -1444,7 +1444,7 @@ int main(int argc, char *argv[])
         crop = (req & canvasROI); // intersect with canvas
         if (crop.width <= 0 || crop.height <= 0) {
             std::cerr << "Error: crop rectangle " << req
-                      << " lies outside the render canvas " << canvasROI << std::endl;
+                      << " lies outside the render canvas " << canvasROI << "\n";
             return;
         }
         tgt_size = crop.size();
@@ -1455,7 +1455,7 @@ int main(int argc, char *argv[])
 
     std::cout << "rendering size " << tgt_size
               << " at scale " << tgt_scale
-              << " crop " << crop << std::endl;
+              << " crop " << crop << "\n";
 
     cv::Mat_<cv::Vec3f> points, normals;
 
@@ -1530,11 +1530,11 @@ int main(int argc, char *argv[])
             for (int wait = 0; !std::filesystem::exists(dsPath); ++wait) {
                 if (wait >= barrierTimeout) {
                     std::cerr << "Error: timed out after " << barrierTimeout
-                              << "s waiting for master (part 0) to create " << dsPath << std::endl;
+                              << "s waiting for master (part 0) to create " << dsPath << "\n";
                     return;
                 }
                 if (wait % 10 == 0 && wait > 0)
-                    std::cout << "[part " << partId << "] waiting for master to create zarr..." << std::endl;
+                    std::cout << "[part " << partId << "] waiting for master to create zarr..." << "\n";
                 std::this_thread::sleep_for(std::chrono::seconds(1));
             }
             dsOut0 = z5::openDataset(outFile, "0");
@@ -1613,11 +1613,11 @@ int main(int argc, char *argv[])
                             applyPostProcessing(tileOut, postProcess);
                             const size_t cH = static_cast<size_t>(tileOut.rows);
                             const size_t cW = static_cast<size_t>(tileOut.cols);
+                            // Use memcpy for row-wise copy (both cv::Mat and xtensor are row-major)
                             for (size_t yy = 0; yy < cH; ++yy) {
                                 const uint16_t* src = tileOut.ptr<uint16_t>(static_cast<int>(yy));
-                                for (size_t xx = 0; xx < cW; ++xx) {
-                                    outChunk(zi, yy, xx) = src[xx];
-                                }
+                                uint16_t* dst = &outChunk(zi, yy, 0);
+                                std::memcpy(dst, src, cW * sizeof(uint16_t));
                             }
                         }
                         int dstTx = static_cast<int>(tx), dstTy = static_cast<int>(ty);
@@ -1650,11 +1650,11 @@ int main(int argc, char *argv[])
                             applyPostProcessing(tileOut, postProcess);
                             const size_t cH = static_cast<size_t>(tileOut.rows);
                             const size_t cW = static_cast<size_t>(tileOut.cols);
+                            // Use memcpy for row-wise copy (both cv::Mat and xtensor are row-major)
                             for (size_t yy = 0; yy < cH; ++yy) {
                                 const uint8_t* src = tileOut.ptr<uint8_t>(static_cast<int>(yy));
-                                for (size_t xx = 0; xx < cW; ++xx) {
-                                    outChunk(zi, yy, xx) = src[xx];
-                                }
+                                uint8_t* dst = &outChunk(zi, yy, 0);
+                                std::memcpy(dst, src, cW);
                             }
                         }
                         int dstTx = static_cast<int>(tx), dstTy = static_cast<int>(ty);
@@ -1683,18 +1683,18 @@ int main(int argc, char *argv[])
         }
 
         // After finishing L0 tiles, add newline for the progress line
-        std::cout << std::endl;
+        std::cout << "\n";
 
         // In multi-part mode, skip pyramid/attrs — run --finalize after all parts complete
         if (numParts > 1 && !finalize) {
             std::cout << "[multi-part] part " << partId << " finished L0. "
-                      << "Run with --finalize after all parts complete to build pyramid." << std::endl;
+                      << "Run with --finalize after all parts complete to build pyramid." << "\n";
             return;
         }
         } // end if (!finalize)
 
         if (finalize) {
-            std::cout << "[finalize] building pyramid from existing L0..." << std::endl;
+            std::cout << "[finalize] building pyramid from existing L0..." << "\n";
         }
 
         // Build multi-resolution pyramid levels 1..5 by averaging 2x blocks in Z, Y, and X
@@ -1792,7 +1792,7 @@ int main(int argc, char *argv[])
                     }
                 }
             }
-            std::cout << std::endl;
+            std::cout << "\n";
         };
 
         for (int level = 1; level <= 5; ++level) {
@@ -1848,7 +1848,7 @@ int main(int argc, char *argv[])
         // Optionally export per-Z TIFFs from level 0 into layers_{zarrname}
         // Skipped in multi-part mode; run single-part afterwards to export.
         if (include_tifs && numParts > 1) {
-            std::cout << "[tif export] skipped in multi-part mode; re-run without --num-parts to export." << std::endl;
+            std::cout << "[tif export] skipped in multi-part mode; re-run without --num-parts to export." << "\n";
         }
         if (include_tifs && numParts <= 1) {
             try {
@@ -1874,7 +1874,7 @@ int main(int argc, char *argv[])
                     if (!std::filesystem::exists(outPath)) { all_exist = false; break; }
                 }
                 if (all_exist) {
-                    std::cout << "[tif export] all slices exist in " << layers_dir.string() << ", skipping." << std::endl;
+                    std::cout << "[tif export] all slices exist in " << layers_dir.string() << ", skipping." << "\n";
                     return;
                 }
 
@@ -1949,9 +1949,9 @@ int main(int argc, char *argv[])
 
                 writers.clear(); // Explicitly close all writers
 
-                std::cout << std::endl;
+                std::cout << "\n";
             } catch (const std::exception& e) {
-                std::cerr << "[tif export] warning: failed to export TIFFs: " << e.what() << std::endl;
+                std::cerr << "[tif export] warning: failed to export TIFFs: " << e.what() << "\n";
             }
         }
 
@@ -2004,7 +2004,7 @@ int main(int argc, char *argv[])
                         if (!std::filesystem::exists(outPath)) { all_exist = false; break; }
                     }
                     if (all_exist) {
-                        std::cout << "[tif] all slices exist in " << output_path_local.string() << ", skipping." << std::endl;
+                        std::cout << "[tif] all slices exist in " << output_path_local.string() << ", skipping." << "\n";
                         return;
                     }
                 }
@@ -2024,7 +2024,7 @@ int main(int argc, char *argv[])
                     writers.reserve(1);
                     writers.emplace_back(outPath, static_cast<uint32_t>(outW), static_cast<uint32_t>(outH),
                                          cvType, tiffTileW, tiffTileH, 0.0f, COMPRESSION_PACKBITS);
-                    std::cout << "Composite single output: " << outPath << std::endl;
+                    std::cout << "Composite single output: " << outPath << "\n";
                 } else {
                     writers.reserve(static_cast<size_t>(num_slices));
                     for (int z = 0; z < num_slices; ++z) {
@@ -2274,7 +2274,7 @@ int main(int argc, char *argv[])
 
                 return;
             } catch (const std::exception& e) {
-                std::cerr << "[tif] error: " << e.what() << std::endl;
+                std::cerr << "[tif] error: " << e.what() << "\n";
                 return;
             }
         }

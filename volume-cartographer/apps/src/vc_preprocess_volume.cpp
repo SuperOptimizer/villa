@@ -34,12 +34,10 @@
 
 #include "z5/factory.hxx"
 #include "z5/filesystem/handle.hxx"
-#include "z5/filesystem/dataset.hxx"
 #include "z5/attributes.hxx"
 #include "z5/multiarray/xtensor_access.hxx"
 
 #include <xtensor/containers/xarray.hpp>
-#include <xtensor/generators/xbuilder.hpp>
 
 #include <opencv2/core.hpp>
 
@@ -152,7 +150,7 @@ static std::mutex g_printMtx;
 static void log(const Config& cfg, const std::string& msg) {
     if (cfg.verbose) {
         std::lock_guard<std::mutex> lock(g_printMtx);
-        std::cout << "[INFO] " << msg << std::endl;
+        std::cout << "[INFO] " << msg << "\n";
     }
 }
 
@@ -205,7 +203,7 @@ public:
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - startTime_).count();
         std::lock_guard<std::mutex> lock(g_printMtx);
         std::cout << "\r[" << stage_ << "] Complete (" << total_ << "/" << total_
-                  << ") in " << elapsed << "s                    " << std::endl;
+                  << ") in " << elapsed << "s                    " << "\n";
     }
 
     double getElapsedSeconds() const {
@@ -260,7 +258,7 @@ public:
     void printEstimate(const VolumeInfo& info, const std::vector<std::string>& stages) {
         size_t totalVoxels = info.sz * info.sy * info.sx;
 
-        std::cout << "\n=== Runtime Estimate (based on preview) ===" << std::endl;
+        std::cout << "\n=== Runtime Estimate (based on preview) ===" << "\n";
         double totalSeconds = 0.0;
 
         for (const auto& stage : stages) {
@@ -271,9 +269,9 @@ public:
                 int minutes = (static_cast<int>(seconds) % 3600) / 60;
                 std::cout << "  " << stage << ": ";
                 if (hours > 0) {
-                    std::cout << hours << "h " << minutes << "m" << std::endl;
+                    std::cout << hours << "h " << minutes << "m" << "\n";
                 } else {
-                    std::cout << minutes << "m " << (static_cast<int>(seconds) % 60) << "s" << std::endl;
+                    std::cout << minutes << "m " << (static_cast<int>(seconds) % 60) << "s" << "\n";
                 }
             }
         }
@@ -282,11 +280,11 @@ public:
         int totalMinutes = (static_cast<int>(totalSeconds) % 3600) / 60;
         std::cout << "  TOTAL: ";
         if (totalHours > 0) {
-            std::cout << totalHours << "h " << totalMinutes << "m" << std::endl;
+            std::cout << totalHours << "h " << totalMinutes << "m" << "\n";
         } else {
-            std::cout << totalMinutes << "m " << (static_cast<int>(totalSeconds) % 60) << "s" << std::endl;
+            std::cout << totalMinutes << "m " << (static_cast<int>(totalSeconds) % 60) << "s" << "\n";
         }
-        std::cout << "==========================================\n" << std::endl;
+        std::cout << "==========================================\n" << "\n";
     }
 
 private:
@@ -567,7 +565,7 @@ static void runCLAHE(const Config& cfg, std::unique_ptr<z5::Dataset>& dsIn,
     writeChunk<T>(dsOut, volume, 0, 0, 0);
 
     std::lock_guard<std::mutex> lock(g_printMtx);
-    std::cout << "\r[CLAHE] Complete                    " << std::endl;
+    std::cout << "\r[CLAHE] Complete                    " << "\n";
 }
 
 template<typename T>
@@ -640,7 +638,7 @@ static void runNormalize(const Config& cfg, std::unique_ptr<z5::Dataset>& dsIn,
     // Write back
     writeChunk<T>(dsOut, volume, 0, 0, 0);
 
-    std::cout << "[Normalize] Complete" << std::endl;
+    std::cout << "[Normalize] Complete" << "\n";
 }
 
 template<typename T>
@@ -956,12 +954,12 @@ static int runPipeline(const Config& cfg) {
         z5::filesystem::handle::Dataset dsHandle(root, "0", dimSep);
         dsIn = z5::filesystem::openDataset(dsHandle);
     } else {
-        std::cerr << "Error: Cannot find Zarr dataset at " << inputPath << std::endl;
+        std::cerr << "Error: Cannot find Zarr dataset at " << inputPath << "\n";
         return 1;
     }
 
     VolumeInfo fullInfo = getVolumeInfo(dsIn.get());
-    std::cout << "Input volume: " << fullInfo.sx << " x " << fullInfo.sy << " x " << fullInfo.sz << std::endl;
+    std::cout << "Input volume: " << fullInfo.sx << " x " << fullInfo.sy << " x " << fullInfo.sz << "\n";
 
     // Preview mode: extract a subvolume
     VolumeInfo inInfo = fullInfo;
@@ -984,7 +982,7 @@ static int runPipeline(const Config& cfg) {
         inInfo.sx = std::min(pSize, fullInfo.sx - previewX0);
 
         std::cout << "Preview mode: processing subvolume " << inInfo.sx << " x " << inInfo.sy << " x " << inInfo.sz
-                  << " at offset (" << previewX0 << ", " << previewY0 << ", " << previewZ0 << ")" << std::endl;
+                  << " at offset (" << previewX0 << ", " << previewY0 << ", " << previewZ0 << ")" << "\n";
     }
 
     // Compute output dimensions (may change if resampling)
@@ -993,7 +991,7 @@ static int runPipeline(const Config& cfg) {
         outInfo.sx = static_cast<size_t>(std::round(static_cast<float>(inInfo.sx) * cfg.resampleScaleX));
         outInfo.sy = static_cast<size_t>(std::round(static_cast<float>(inInfo.sy) * cfg.resampleScaleY));
         outInfo.sz = static_cast<size_t>(std::round(static_cast<float>(inInfo.sz) * cfg.resampleScaleZ));
-        std::cout << "Output volume (resampled): " << outInfo.sx << " x " << outInfo.sy << " x " << outInfo.sz << std::endl;
+        std::cout << "Output volume (resampled): " << outInfo.sx << " x " << outInfo.sy << " x " << outInfo.sz << "\n";
     }
 
     // Create output dataset
@@ -1044,7 +1042,7 @@ static int runPipeline(const Config& cfg) {
 
     std::cout << "Enabled stages: ";
     for (const auto& s : stages) std::cout << s << " ";
-    std::cout << std::endl;
+    std::cout << "\n";
 
     // Track whether we've written to output yet (for pipeline chaining)
     bool outputWritten = false;
@@ -1053,12 +1051,12 @@ static int runPipeline(const Config& cfg) {
     // For preview mode, first copy the subvolume to output
     // This way all stages read from the output dataset at correct offsets
     if (cfg.preview && !stages.empty()) {
-        std::cout << "Copying preview subvolume to output..." << std::endl;
+        std::cout << "Copying preview subvolume to output..." << "\n";
         xt::xarray<T> subvolume;
         readChunk<T>(dsIn, subvolume, previewZ0, previewY0, previewX0, inInfo.sz, inInfo.sy, inInfo.sx);
         writeChunk<T>(dsOut, subvolume, 0, 0, 0);
         outputWritten = true;
-        std::cout << "Preview subvolume copied." << std::endl;
+        std::cout << "Preview subvolume copied." << "\n";
     }
 
     // Run stages in order
@@ -1215,7 +1213,7 @@ static int runPipeline(const Config& cfg) {
 
     // If no stages ran, just copy
     if (stages.empty()) {
-        std::cout << "No stages enabled, copying input to output..." << std::endl;
+        std::cout << "No stages enabled, copying input to output..." << "\n";
         size_t numChunksZ = (inInfo.sz + cfg.chunkSize - 1) / cfg.chunkSize;
         size_t numChunksY = (inInfo.sy + cfg.chunkSize - 1) / cfg.chunkSize;
         size_t numChunksX = (inInfo.sx + cfg.chunkSize - 1) / cfg.chunkSize;
@@ -1294,9 +1292,9 @@ static int runPipeline(const Config& cfg) {
     };
     z5::filesystem::writeAttributes(outputFile, attrs);
 
-    std::cout << "Output saved to: " << outputPath << std::endl;
+    std::cout << "Output saved to: " << outputPath << "\n";
     if (dsGradOut) {
-        std::cout << "Gradients saved to: " << cfg.gradientOutputPath << std::endl;
+        std::cout << "Gradients saved to: " << cfg.gradientOutputPath << "\n";
     }
 
     return 0;
@@ -1472,30 +1470,30 @@ int main(int argc, char* argv[]) {
             .run(), vm);
 
         if (vm.count("help") || argc < 3) {
-            std::cout << desc << std::endl;
-            std::cout << "\nExamples:" << std::endl;
-            std::cout << "  # SOTA preprocessing pipeline" << std::endl;
-            std::cout << "  vc_preprocess_volume input.zarr output.zarr --bm3d --vo-ring --clahe --diffuse" << std::endl;
-            std::cout << std::endl;
-            std::cout << "  # Preview mode for parameter tuning" << std::endl;
-            std::cout << "  vc_preprocess_volume input.zarr preview.zarr --preview --bm3d --bm3d-sigma 30" << std::endl;
-            std::cout << std::endl;
-            std::cout << "  # Ring and stripe removal for synchrotron data" << std::endl;
-            std::cout << "  vc_preprocess_volume input.zarr output.zarr --vo-ring --stripe-remove" << std::endl;
-            std::cout << std::endl;
-            std::cout << "  # Resample to half resolution" << std::endl;
-            std::cout << "  vc_preprocess_volume vol.zarr vol_half.zarr --resample --resample-scale-x 0.5 --resample-scale-y 0.5 --resample-scale-z 0.5" << std::endl;
-            std::cout << std::endl;
-            std::cout << "  # Compute gradients for downstream processing" << std::endl;
-            std::cout << "  vc_preprocess_volume vol.zarr vol_proc.zarr --compute-gradients --output-gradients grad.zarr" << std::endl;
+            std::cout << desc << "\n";
+            std::cout << "\nExamples:" << "\n";
+            std::cout << "  # SOTA preprocessing pipeline" << "\n";
+            std::cout << "  vc_preprocess_volume input.zarr output.zarr --bm3d --vo-ring --clahe --diffuse" << "\n";
+            std::cout << "\n";
+            std::cout << "  # Preview mode for parameter tuning" << "\n";
+            std::cout << "  vc_preprocess_volume input.zarr preview.zarr --preview --bm3d --bm3d-sigma 30" << "\n";
+            std::cout << "\n";
+            std::cout << "  # Ring and stripe removal for synchrotron data" << "\n";
+            std::cout << "  vc_preprocess_volume input.zarr output.zarr --vo-ring --stripe-remove" << "\n";
+            std::cout << "\n";
+            std::cout << "  # Resample to half resolution" << "\n";
+            std::cout << "  vc_preprocess_volume vol.zarr vol_half.zarr --resample --resample-scale-x 0.5 --resample-scale-y 0.5 --resample-scale-z 0.5" << "\n";
+            std::cout << "\n";
+            std::cout << "  # Compute gradients for downstream processing" << "\n";
+            std::cout << "  vc_preprocess_volume vol.zarr vol_proc.zarr --compute-gradients --output-gradients grad.zarr" << "\n";
             return 0;
         }
 
         po::notify(vm);
 
     } catch (const po::error& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        std::cerr << "Use --help for usage information." << std::endl;
+        std::cerr << "Error: " << e.what() << "\n";
+        std::cerr << "Use --help for usage information." << "\n";
         return 1;
     }
 
@@ -1504,7 +1502,7 @@ int main(int argc, char* argv[]) {
     if (cfg.numThreads > 0) {
         omp_set_num_threads(cfg.numThreads);
     }
-    std::cout << "Using " << omp_get_max_threads() << " threads" << std::endl;
+    std::cout << "Using " << omp_get_max_threads() << " threads" << "\n";
     #endif
 
     // Detect dtype from input
@@ -1535,11 +1533,11 @@ int main(int argc, char* argv[]) {
             auto ds = z5::filesystem::openDataset(dsHandle);
             dtype = ds->getDtype();
         } else {
-            std::cerr << "Error: Cannot find Zarr dataset at " << inputPath << std::endl;
+            std::cerr << "Error: Cannot find Zarr dataset at " << inputPath << "\n";
             return 1;
         }
     } catch (const std::exception& e) {
-        std::cerr << "Error opening input: " << e.what() << std::endl;
+        std::cerr << "Error opening input: " << e.what() << "\n";
         return 1;
     }
 
@@ -1552,11 +1550,11 @@ int main(int argc, char* argv[]) {
         } else if (dtype == z5::types::Datatype::float32) {
             return runPipeline<float>(cfg);
         } else {
-            std::cerr << "Error: Unsupported data type. Only uint8, uint16, and float32 are supported." << std::endl;
+            std::cerr << "Error: Unsupported data type. Only uint8, uint16, and float32 are supported." << "\n";
             return 1;
         }
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        std::cerr << "Error: " << e.what() << "\n";
         return 1;
     }
 

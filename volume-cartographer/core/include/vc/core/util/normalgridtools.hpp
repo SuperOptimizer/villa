@@ -50,17 +50,17 @@ struct SegmentInfo {
     }
 };
 
-class SegmentGrid {
+class SegmentGrid final {
 public:
     SegmentGrid(const cv::Rect& rect, int grid_step);
     void add(const std::shared_ptr<SegmentInfo>& segment);
     void remove(const std::shared_ptr<SegmentInfo>& segment);
     std::vector<std::shared_ptr<SegmentInfo>> nearest_neighbors(const cv::Point2f& point, int n) const;
     std::shared_ptr<SegmentInfo> get_random_segment();
-    size_t count() const;
-    cv::Size size() const { return rect.size(); }
+    [[nodiscard]] size_t count() const noexcept;
+    [[nodiscard]] cv::Size size() const noexcept { return rect.size(); }
 
-    const std::vector<std::shared_ptr<SegmentInfo>>& get_all_segments() const { return all_segments; }
+    [[nodiscard]] const std::vector<std::shared_ptr<SegmentInfo>>& get_all_segments() const noexcept { return all_segments; }
 
 private:
     cv::Rect rect;

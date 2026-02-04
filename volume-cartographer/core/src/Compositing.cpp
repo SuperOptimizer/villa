@@ -5,46 +5,55 @@
 
 namespace CompositeMethod {
 
-float mean(const LayerStack& stack)
+[[gnu::always_inline]] inline float mean(const LayerStack& stack) noexcept
 {
-    if (stack.validCount == 0) return 0.0f;
+    if (stack.validCount == 0) [[unlikely]] return 0.0f;
+
+    const float* __restrict__ values = stack.values.data();
+    const int n = stack.validCount;
 
     float sum = 0.0f;
-    for (int i = 0; i < stack.validCount; i++) {
-        sum += stack.values[i];
+    #pragma omp simd reduction(+:sum)
+    for (int i = 0; i < n; i++) {
+        sum += values[i];
     }
-    return sum / static_cast<float>(stack.validCount);
+    // Multiply by reciprocal instead of divide
+    return sum * (1.0f / static_cast<float>(n));
 }
 
-float max(const LayerStack& stack)
+[[gnu::always_inline]] inline float max(const LayerStack& stack) noexcept
 {
-    if (stack.validCount == 0) return 0.0f;
+    if (stack.validCount == 0) [[unlikely]] return 0.0f;
 
-    float maxVal = stack.values[0];
-    for (int i = 1; i < stack.validCount; i++) {
-        if (stack.values[i] > maxVal) {
-            maxVal = stack.values[i];
-        }
+    const float* __restrict__ values = stack.values.data();
+    const int n = stack.validCount;
+
+    float maxVal = values[0];
+    #pragma omp simd reduction(max:maxVal)
+    for (int i = 1; i < n; i++) {
+        maxVal = std::max(maxVal, values[i]);
     }
     return maxVal;
 }
 
-float min(const LayerStack& stack)
+[[gnu::always_inline]] inline float min(const LayerStack& stack) noexcept
 {
-    if (stack.validCount == 0) return 255.0f;
+    if (stack.validCount == 0) [[unlikely]] return 255.0f;
 
-    float minVal = stack.values[0];
-    for (int i = 1; i < stack.validCount; i++) {
-        if (stack.values[i] < minVal) {
-            minVal = stack.values[i];
-        }
+    const float* __restrict__ values = stack.values.data();
+    const int n = stack.validCount;
+
+    float minVal = values[0];
+    #pragma omp simd reduction(min:minVal)
+    for (int i = 1; i < n; i++) {
+        minVal = std::min(minVal, values[i]);
     }
     return minVal;
 }
 
-float alpha(const LayerStack& stack, const CompositeParams& params)
+[[gnu::always_inline]] inline float alpha(const LayerStack& stack, const CompositeParams& params) noexcept
 {
-    if (stack.validCount == 0) return 0.0f;
+    if (stack.validCount == 0) [[unlikely]] return 0.0f;
 
     const float alphaScale = 1.0f / (255.0f * (params.alphaMax - params.alphaMin));
     const float alphaOffset = params.alphaMin / (params.alphaMax - params.alphaMin);
@@ -54,12 +63,12 @@ float alpha(const LayerStack& stack, const CompositeParams& params)
 
     for (int i = 0; i < stack.validCount; i++) {
         float normalized = stack.values[i] * alphaScale - alphaOffset;
-        if (normalized <= 0.0f) continue;
-        if (normalized > 1.0f) normalized = 1.0f;
-        if (alpha >= params.alphaCutoff) break;
+        if (normalized <= 0.0f) [[unlikely]] continue;
+        if (normalized > 1.0f) [[unlikely]] normalized = 1.0f;
+        if (alpha >= params.alphaCutoff) [[unlikely]] break;
 
         float opacity = normalized * params.alphaOpacity;
-        if (opacity > 1.0f) opacity = 1.0f;
+        if (opacity > 1.0f) [[unlikely]] opacity = 1.0f;
         float weight = (1.0f - alpha) * opacity;
         valueAcc += weight * normalized;
         alpha += weight;
@@ -68,54 +77,59 @@ float alpha(const LayerStack& stack, const CompositeParams& params)
     return valueAcc * 255.0f;
 }
 
-float beerLambert(const LayerStack& stack, const CompositeParams& params)
+[[gnu::always_inline]] inline float beerLambert(const LayerStack& stack, const CompositeParams& params) noexcept
 {
     // Beer-Lambert volume rendering with emission
     // - Each voxel emits light proportional to its density (bright = visible)
     // - Each voxel absorbs light based on density (creates depth effect)
     // - Front-to-back compositing: front layers partially occlude back layers
 
-    if (stack.validCount == 0) return 0.0f;
+    if (stack.validCount == 0) [[unlikely]] return 0.0f;
 
+    const float* __restrict__ values = stack.values.data();
+    const int n = stack.validCount;
     const float extinction = params.blExtinction;
     const float emissionScale = params.blEmission;
     const float ambient = params.blAmbient;
+
+    // Pre-compute constant factors
+    constexpr float inv255 = 1.0f / 255.0f;
+    constexpr float densityThreshold = 0.001f;
+    constexpr float transmittanceThreshold = 0.001f;
 
     float transmittance = 1.0f;  // Light remaining (starts at full)
     float accumulatedColor = 0.0f;  // Accumulated emitted light
 
     // Front-to-back compositing (layer 0 is frontmost)
-    for (int i = 0; i < stack.validCount; i++) {
-        const float value = stack.values[i];
-        const float density = value / 255.0f;
+    for (int i = 0; i < n; i++) {
+        const float density = values[i] * inv255;
 
-        if (density < 0.001f) {
+        if (density < densityThreshold) [[unlikely]] {
             continue;
         }
 
         // Emission: bright voxels emit light
         const float emission = density * emissionScale;
 
-        // Beer-Lambert absorption
+        // Beer-Lambert absorption: exp(-extinction * density)
         const float layerTransmittance = std::exp(-extinction * density);
+        const float oneMinusLayerT = 1.0f - layerTransmittance;
 
         // Add emission weighted by current transmittance (how much light can escape)
-        accumulatedColor += emission * transmittance * (1.0f - layerTransmittance);
+        // FMA-friendly: accumulatedColor += (emission * oneMinusLayerT) * transmittance
+        accumulatedColor += emission * oneMinusLayerT * transmittance;
 
         // Update transmittance for next layer
         transmittance *= layerTransmittance;
 
         // Early termination if nearly opaque
-        if (transmittance < 0.001f) {
+        if (transmittance < transmittanceThreshold) [[unlikely]] {
             break;
         }
     }
 
-    // Add ambient light that made it through
-    accumulatedColor += ambient * transmittance;
-
-    // Scale to 0-255 range
-    return std::min(255.0f, accumulatedColor * 255.0f);
+    // Add ambient light that made it through, scale to 0-255 range
+    return std::min(255.0f, (accumulatedColor + ambient * transmittance) * 255.0f);
 }
 
 } // namespace CompositeMethod
@@ -144,7 +158,7 @@ float compositeLayerStack(
     return CompositeMethod::mean(stack);
 }
 
-bool methodRequiresLayerStorage(const std::string& method)
+bool methodRequiresLayerStorage(const std::string& method) noexcept
 {
     // These methods need all layer values stored to compute their result
     // (can't use a running accumulator)
@@ -163,40 +177,48 @@ std::vector<std::string> availableCompositeMethods()
     };
 }
 
-float computeLightingFactor(const cv::Vec3f& normal, const CompositeParams& params)
+float computeLightingFactor(const cv::Vec3f& normal, const CompositeParams& params) noexcept
 {
-    if (!params.lightingEnabled) {
+    if (!params.lightingEnabled) [[likely]] {
         return 1.0f;
     }
 
     // Convert azimuth and elevation to light direction vector
     // Azimuth: 0=+X (right), 90=+Y (up in screen space)
     // Elevation: angle above the XY plane (toward viewer)
-    const float azimuthRad = params.lightAzimuth * static_cast<float>(M_PI) / 180.0f;
-    const float elevationRad = params.lightElevation * static_cast<float>(M_PI) / 180.0f;
+    constexpr float degToRad = static_cast<float>(M_PI) / 180.0f;
+    const float azimuthRad = params.lightAzimuth * degToRad;
+    const float elevationRad = params.lightElevation * degToRad;
 
     // Light direction (pointing toward the light source)
+    // Use sincos where available for efficiency
     const float cosElev = std::cos(elevationRad);
-    cv::Vec3f lightDir(
-        std::cos(azimuthRad) * cosElev,
-        std::sin(azimuthRad) * cosElev,
-        std::sin(elevationRad)
-    );
+    const float sinElev = std::sin(elevationRad);
+    const float cosAz = std::cos(azimuthRad);
+    const float sinAz = std::sin(azimuthRad);
 
-    // Normalize the surface normal (in case it isn't already)
-    float normalLen = std::sqrt(normal[0]*normal[0] + normal[1]*normal[1] + normal[2]*normal[2]);
-    if (normalLen < 0.0001f) {
+    const float lightX = cosAz * cosElev;
+    const float lightY = sinAz * cosElev;
+    const float lightZ = sinElev;
+
+    // Compute squared length of normal for normalization
+    const float nx = normal[0], ny = normal[1], nz = normal[2];
+    const float lenSq = nx*nx + ny*ny + nz*nz;
+
+    if (lenSq < 1e-8f) [[unlikely]] {
         return params.lightAmbient;
     }
-    cv::Vec3f n = normal / normalLen;
 
-    // Lambertian diffuse: N dot L
-    float nDotL = n[0]*lightDir[0] + n[1]*lightDir[1] + n[2]*lightDir[2];
-    nDotL = std::max(0.0f, nDotL);
+    // Use inverse sqrt for normalization (avoids division)
+    const float invLen = 1.0f / std::sqrt(lenSq);
 
-    // Combine: ambient + diffuse
-    float lighting = params.lightAmbient + params.lightDiffuse * nDotL;
+    // Normalized dot product: (n/|n|) · L = (n · L) / |n| = (n · L) * invLen
+    const float nDotL_unnorm = nx*lightX + ny*lightY + nz*lightZ;
+    const float nDotL = std::max(0.0f, nDotL_unnorm * invLen);
 
-    // Clamp to [0, 1]
+    // Combine: ambient + diffuse, clamped to [0, 1]
+    // FMA-friendly: ambient + diffuse * nDotL
+    const float lighting = params.lightAmbient + params.lightDiffuse * nDotL;
+
     return std::min(1.0f, std::max(0.0f, lighting));
 }

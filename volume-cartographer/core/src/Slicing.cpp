@@ -4,12 +4,10 @@
 
 #include <xtensor/containers/xarray.hpp>
 #include <xtensor/containers/xtensor.hpp>
-#include <xtensor/generators/xbuilder.hpp>
 
 #include "z5/dataset.hxx"
 
 #include <opencv2/core.hpp>
-#include <opencv2/calib3d.hpp>
 
 #include <algorithm>
 #include <array>
@@ -42,7 +40,7 @@ struct CacheParams {
         chunksX = (sx + cx - 1) / cx;
     }
 
-    static int log2_pow2(int v) {
+    [[gnu::always_inline]] static int log2_pow2(int v) noexcept {
         int r = 0;
         while ((v >> r) > 1) r++;
         return r;
@@ -79,10 +77,10 @@ struct ChunkSampler {
         s2 = 1;
     }
 
-    void updateChunk(int iz, int iy, int ix) {
-        // Check MRU slot first
+    [[gnu::always_inline]] void updateChunk(int iz, int iy, int ix) {
+        // Check MRU slot first (most common case)
         auto& m = slots[mru];
-        if (m.iz == iz && m.iy == iy && m.ix == ix) {
+        if (m.iz == iz && m.iy == iy && m.ix == ix) [[likely]] {
             data = m.data;
             return;
         }
@@ -106,105 +104,120 @@ struct ChunkSampler {
         data = v.data;
     }
 
-    bool inBounds(float vz, float vy, float vx) const {
+    [[gnu::always_inline]] bool inBounds(float vz, float vy, float vx) const noexcept {
         return vz >= 0 && vy >= 0 && vx >= 0 && vz < p.sz && vy < p.sy && vx < p.sx;
     }
 
-    T sampleNearest(float vz, float vy, float vx) {
+    [[gnu::always_inline]] T sampleNearest(float vz, float vy, float vx) {
         int iz = static_cast<int>(vz + 0.5f);
         int iy = static_cast<int>(vy + 0.5f);
         int ix = static_cast<int>(vx + 0.5f);
-        if (iz >= p.sz) iz = p.sz - 1;
-        if (iy >= p.sy) iy = p.sy - 1;
-        if (ix >= p.sx) ix = p.sx - 1;
+        if (iz >= p.sz) [[unlikely]] iz = p.sz - 1;
+        if (iy >= p.sy) [[unlikely]] iy = p.sy - 1;
+        if (ix >= p.sx) [[unlikely]] ix = p.sx - 1;
 
         updateChunk(iz >> p.czShift, iy >> p.cyShift, ix >> p.cxShift);
-        if (!data) return 0;
+        if (!data) [[unlikely]] return 0;
 
         return data[(iz & p.czMask) * s0 + (iy & p.cyMask) * s1 + (ix & p.cxMask) * s2];
     }
 
-    T sampleInt(int iz, int iy, int ix) {
-        if (iz < 0 || iy < 0 || ix < 0 || iz >= p.sz || iy >= p.sy || ix >= p.sx)
+    [[gnu::always_inline]] T sampleInt(int iz, int iy, int ix) {
+        // Use unsigned comparison trick: (unsigned)(x) >= N catches both x<0 and x>=N
+        if (static_cast<unsigned>(iz) >= static_cast<unsigned>(p.sz) ||
+            static_cast<unsigned>(iy) >= static_cast<unsigned>(p.sy) ||
+            static_cast<unsigned>(ix) >= static_cast<unsigned>(p.sx)) [[unlikely]]
             return 0;
 
         updateChunk(iz >> p.czShift, iy >> p.cyShift, ix >> p.cxShift);
-        if (!data) return 0;
+        if (!data) [[unlikely]] return 0;
 
         return data[(iz & p.czMask) * s0 + (iy & p.cyMask) * s1 + (ix & p.cxMask) * s2];
     }
 
-    float sampleTrilinear(float vz, float vy, float vx) {
-        int iz = static_cast<int>(vz);
-        int iy = static_cast<int>(vy);
-        int ix = static_cast<int>(vx);
+    // FMA-friendly form: a + t*(b-a) instead of (1-t)*a + t*b
+    [[gnu::always_inline]] float sampleTrilinear(float vz, float vy, float vx) {
+        const int iz = static_cast<int>(vz);
+        const int iy = static_cast<int>(vy);
+        const int ix = static_cast<int>(vx);
 
-        float c000 = sampleInt(iz, iy, ix);
-        float c100 = sampleInt(iz + 1, iy, ix);
-        float c010 = sampleInt(iz, iy + 1, ix);
-        float c110 = sampleInt(iz + 1, iy + 1, ix);
-        float c001 = sampleInt(iz, iy, ix + 1);
-        float c101 = sampleInt(iz + 1, iy, ix + 1);
-        float c011 = sampleInt(iz, iy + 1, ix + 1);
-        float c111 = sampleInt(iz + 1, iy + 1, ix + 1);
+        const float c000 = sampleInt(iz, iy, ix);
+        const float c001 = sampleInt(iz, iy, ix + 1);
+        const float c010 = sampleInt(iz, iy + 1, ix);
+        const float c011 = sampleInt(iz, iy + 1, ix + 1);
+        const float c100 = sampleInt(iz + 1, iy, ix);
+        const float c101 = sampleInt(iz + 1, iy, ix + 1);
+        const float c110 = sampleInt(iz + 1, iy + 1, ix);
+        const float c111 = sampleInt(iz + 1, iy + 1, ix + 1);
 
-        float fz = vz - iz;
-        float fy = vy - iy;
-        float fx = vx - ix;
+        const float fx = vx - ix;
+        const float fy = vy - iy;
+        const float fz = vz - iz;
 
-        float c00 = (1 - fx) * c000 + fx * c001;
-        float c01 = (1 - fx) * c010 + fx * c011;
-        float c10 = (1 - fx) * c100 + fx * c101;
-        float c11 = (1 - fx) * c110 + fx * c111;
+        // FMA-friendly lerp: a + t*(b-a)
+        const float c00 = c000 + fx * (c001 - c000);
+        const float c01 = c010 + fx * (c011 - c010);
+        const float c10 = c100 + fx * (c101 - c100);
+        const float c11 = c110 + fx * (c111 - c110);
 
-        float c0 = (1 - fy) * c00 + fy * c01;
-        float c1 = (1 - fy) * c10 + fy * c11;
+        const float c0 = c00 + fy * (c01 - c00);
+        const float c1 = c10 + fy * (c11 - c10);
 
-        return (1 - fz) * c0 + fz * c1;
+        return c0 + fz * (c1 - c0);
     }
 
     // Fast path: when all 8 trilinear corners are in the same chunk
-    float sampleTrilinearFast(float vz, float vy, float vx) {
+    // Uses FMA-friendly form: a + t*(b-a) instead of (1-t)*a + t*b
+    [[gnu::always_inline]] float sampleTrilinearFast(float vz, float vy, float vx) {
         int iz = static_cast<int>(vz);
         int iy = static_cast<int>(vy);
         int ix = static_cast<int>(vx);
 
         if (iz < 0 || iy < 0 || ix < 0 ||
-            iz + 1 >= p.sz || iy + 1 >= p.sy || ix + 1 >= p.sx)
+            iz + 1 >= p.sz || iy + 1 >= p.sy || ix + 1 >= p.sx) [[unlikely]]
             return sampleTrilinear(vz, vy, vx);
 
         int ciz0 = iz >> p.czShift, ciz1 = (iz + 1) >> p.czShift;
         int ciy0 = iy >> p.cyShift, ciy1 = (iy + 1) >> p.cyShift;
         int cix0 = ix >> p.cxShift, cix1 = (ix + 1) >> p.cxShift;
 
-        if (ciz0 == ciz1 && ciy0 == ciy1 && cix0 == cix1) {
+        if (ciz0 == ciz1 && ciy0 == ciy1 && cix0 == cix1) [[likely]] {
             updateChunk(ciz0, ciy0, cix0);
-            if (!data) return 0;
-            int lz0 = iz & p.czMask, ly0 = iy & p.cyMask, lx0 = ix & p.cxMask;
-            int lz1 = lz0 + 1, ly1 = ly0 + 1, lx1 = lx0 + 1;
+            if (!data) [[unlikely]] return 0;
 
-            float c000 = data[lz0*s0 + ly0*s1 + lx0*s2];
-            float c100 = data[lz1*s0 + ly0*s1 + lx0*s2];
-            float c010 = data[lz0*s0 + ly1*s1 + lx0*s2];
-            float c110 = data[lz1*s0 + ly1*s1 + lx0*s2];
-            float c001 = data[lz0*s0 + ly0*s1 + lx1*s2];
-            float c101 = data[lz1*s0 + ly0*s1 + lx1*s2];
-            float c011 = data[lz0*s0 + ly1*s1 + lx1*s2];
-            float c111 = data[lz1*s0 + ly1*s1 + lx1*s2];
+            const int lz0 = iz & p.czMask, ly0 = iy & p.cyMask, lx0 = ix & p.cxMask;
+            const int lz1 = lz0 + 1, ly1 = ly0 + 1, lx1 = lx0 + 1;
 
-            float fz = vz - iz;
-            float fy = vy - iy;
-            float fx = vx - ix;
+            // Pre-compute base offsets to help compiler optimize
+            const size_t base_z0y0 = lz0*s0 + ly0*s1;
+            const size_t base_z1y0 = lz1*s0 + ly0*s1;
+            const size_t base_z0y1 = lz0*s0 + ly1*s1;
+            const size_t base_z1y1 = lz1*s0 + ly1*s1;
 
-            float c00 = (1 - fx) * c000 + fx * c001;
-            float c01 = (1 - fx) * c010 + fx * c011;
-            float c10 = (1 - fx) * c100 + fx * c101;
-            float c11 = (1 - fx) * c110 + fx * c111;
+            // Load all 8 corners with optimized address calculation
+            const float c000 = data[base_z0y0 + lx0];
+            const float c001 = data[base_z0y0 + lx1];
+            const float c010 = data[base_z0y1 + lx0];
+            const float c011 = data[base_z0y1 + lx1];
+            const float c100 = data[base_z1y0 + lx0];
+            const float c101 = data[base_z1y0 + lx1];
+            const float c110 = data[base_z1y1 + lx0];
+            const float c111 = data[base_z1y1 + lx1];
 
-            float c0 = (1 - fy) * c00 + fy * c01;
-            float c1 = (1 - fy) * c10 + fy * c11;
+            const float fx = vx - ix;
+            const float fy = vy - iy;
+            const float fz = vz - iz;
 
-            return (1 - fz) * c0 + fz * c1;
+            // FMA-friendly form: a + t*(b-a) generates fmadd instructions
+            const float c00 = c000 + fx * (c001 - c000);
+            const float c01 = c010 + fx * (c011 - c010);
+            const float c10 = c100 + fx * (c101 - c100);
+            const float c11 = c110 + fx * (c111 - c110);
+
+            const float c0 = c00 + fy * (c01 - c00);
+            const float c1 = c10 + fy * (c11 - c10);
+
+            return c0 + fz * (c1 - c0);
         }
 
         return sampleTrilinear(vz, vy, vx);
@@ -464,11 +477,23 @@ static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out
         }
     }
 
+    // Pre-compute output strides for column-major layout
+    // Column-major: element (z, y, x) at z + y * out_sz + x * out_sz * out_sy
+    const size_t out_sz = static_cast<size_t>(size[0]);
+    const size_t out_sy = static_cast<size_t>(size[1]);
+    const size_t out_stride_y = out_sz;
+    const size_t out_stride_x = out_sz * out_sy;
+    T* __restrict__ out_data = out.data();
+
+    // Pre-compute chunk strides for row-major layout
+    // Row-major: element (lz, ly, lx) at lz * cy * cx + ly * cx + lx
+    const size_t chunk_stride_z = static_cast<size_t>(p.cy) * p.cx;
+    const size_t chunk_stride_y = static_cast<size_t>(p.cx);
+
     // Step 2 & 3: Load and copy chunks (no inner OMP — called from parallel tile loop)
     for (const auto& idx : chunks_to_process) {
         int cz = idx[0], cy = idx[1], cx = idx[2];
         auto chunkPtr = cache->get(ds, cz, cy, cx);
-        xt::xarray<T>* chunk = chunkPtr.get();
 
         cv::Vec3i chunk_offset = {p.cz * cz, p.cy * cy, p.cx * cx};
 
@@ -484,22 +509,51 @@ static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out
             std::min(to[2], chunk_offset[2] + p.cx)
         };
 
-        if (chunk) {
-            for (int z = copy_from_start[0]; z < copy_from_end[0]; ++z) {
-                for (int y = copy_from_start[1]; y < copy_from_end[1]; ++y) {
-                    for (int x = copy_from_start[2]; x < copy_from_end[2]; ++x) {
-                        int lz = z - chunk_offset[0];
-                        int ly = y - chunk_offset[1];
-                        int lx = x - chunk_offset[2];
-                        out(z - offset[0], y - offset[1], x - offset[2]) = (*chunk)(lz, ly, lx);
+        // Pre-compute local offsets
+        const int lz_base = copy_from_start[0] - chunk_offset[0];
+        const int ly_base = copy_from_start[1] - chunk_offset[1];
+        const int lx_base = copy_from_start[2] - chunk_offset[2];
+
+        // Pre-compute output offsets
+        const int oz_base = copy_from_start[0] - offset[0];
+        const int oy_base = copy_from_start[1] - offset[1];
+        const int ox_base = copy_from_start[2] - offset[2];
+
+        const int nz = copy_from_end[0] - copy_from_start[0];
+        const int ny = copy_from_end[1] - copy_from_start[1];
+        const int nx = copy_from_end[2] - copy_from_start[2];
+
+        if (chunkPtr) {
+            const T* __restrict__ chunk_data = chunkPtr->data();
+
+            for (int dz = 0; dz < nz; ++dz) {
+                const int oz = oz_base + dz;
+                const int lz = lz_base + dz;
+                const size_t chunk_z_off = lz * chunk_stride_z;
+
+                for (int dy = 0; dy < ny; ++dy) {
+                    const int oy = oy_base + dy;
+                    const int ly = ly_base + dy;
+                    const size_t chunk_zy_off = chunk_z_off + ly * chunk_stride_y + lx_base;
+                    const size_t out_zy_off = oz + oy * out_stride_y + ox_base * out_stride_x;
+
+                    // Innermost loop with simple indexing
+                    for (int dx = 0; dx < nx; ++dx) {
+                        out_data[out_zy_off + dx * out_stride_x] = chunk_data[chunk_zy_off + dx];
                     }
                 }
             }
         } else {
-            for (int z = copy_from_start[0]; z < copy_from_end[0]; ++z) {
-                for (int y = copy_from_start[1]; y < copy_from_end[1]; ++y) {
-                    for (int x = copy_from_start[2]; x < copy_from_end[2]; ++x) {
-                        out(z - offset[0], y - offset[1], x - offset[2]) = 0;
+            for (int dz = 0; dz < nz; ++dz) {
+                const int oz = oz_base + dz;
+
+                for (int dy = 0; dy < ny; ++dy) {
+                    const int oy = oy_base + dy;
+                    const size_t out_zy_off = oz + oy * out_stride_y + ox_base * out_stride_x;
+
+                    // Innermost loop
+                    for (int dx = 0; dx < nx; ++dx) {
+                        out_data[out_zy_off + dx * out_stride_x] = 0;
                     }
                 }
             }
@@ -711,4 +765,170 @@ void readMultiSlice(
     const std::vector<float>& offsets)
 {
     readMultiSliceImpl(out, ds, *cache, basePoints, stepDirs, offsets);
+}
+
+
+// ============================================================================
+// readSubarray3D — centralized z5 subarray reading
+// ============================================================================
+// These wrappers consolidate z5::multiarray::readSubarray template instantiations
+// into a single translation unit, preventing code bloat from multiple instantiations.
+
+#include "z5/multiarray/xtensor_access.hxx"
+
+template<typename T>
+static void readSubarray3DImpl(xt::xarray<T>& out, z5::Dataset& ds, const std::vector<std::size_t>& offset) {
+    z5::multiarray::readSubarray<T>(ds, out, offset.begin());
+}
+
+void readSubarray3D(xt::xarray<uint8_t>& out, z5::Dataset& ds, const std::vector<std::size_t>& offset) {
+    readSubarray3DImpl(out, ds, offset);
+}
+
+void readSubarray3D(xt::xarray<uint16_t>& out, z5::Dataset& ds, const std::vector<std::size_t>& offset) {
+    readSubarray3DImpl(out, ds, offset);
+}
+
+void readSubarray3D(xt::xarray<float>& out, z5::Dataset& ds, const std::vector<std::size_t>& offset) {
+    readSubarray3DImpl(out, ds, offset);
+}
+
+// ============================================================================
+// computeVolumeGradientsNative — compute gradients from volume at raw surface points
+// ============================================================================
+// Moved here from CVolumeViewerRender.cpp to consolidate z5 header dependencies.
+
+cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
+    z5::Dataset* ds,
+    const cv::Mat_<cv::Vec3f>& rawPoints,
+    float dsScale)
+{
+    const int h = rawPoints.rows;
+    const int w = rawPoints.cols;
+    cv::Mat_<cv::Vec3f> gradients(h, w, cv::Vec3f(0, 0, 1));
+
+    if (h == 0 || w == 0) return gradients;
+
+    const auto volShape = ds->shape();
+    const int volZ = static_cast<int>(volShape[0]);
+    const int volY = static_cast<int>(volShape[1]);
+    const int volX = static_cast<int>(volShape[2]);
+
+    // Step 1: Find bounding box of all valid coordinates
+    float minX = std::numeric_limits<float>::max();
+    float minY = std::numeric_limits<float>::max();
+    float minZ = std::numeric_limits<float>::max();
+    float maxX = std::numeric_limits<float>::lowest();
+    float maxY = std::numeric_limits<float>::lowest();
+    float maxZ = std::numeric_limits<float>::lowest();
+
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const cv::Vec3f& c = rawPoints(y, x);
+            // Skip invalid points (marked as -1, -1, -1)
+            if (c[0] == -1.f) continue;
+
+            const float cx = c[0] * dsScale;
+            const float cy = c[1] * dsScale;
+            const float cz = c[2] * dsScale;
+
+            minX = std::min(minX, cx);
+            minY = std::min(minY, cy);
+            minZ = std::min(minZ, cz);
+            maxX = std::max(maxX, cx);
+            maxY = std::max(maxY, cy);
+            maxZ = std::max(maxZ, cz);
+        }
+    }
+
+    if (minX > maxX) return gradients;  // No valid points
+
+    // Add padding for gradient computation (need ±1 voxel)
+    const int pad = 2;
+    const int bboxX0 = std::max(0, static_cast<int>(std::floor(minX)) - pad);
+    const int bboxY0 = std::max(0, static_cast<int>(std::floor(minY)) - pad);
+    const int bboxZ0 = std::max(0, static_cast<int>(std::floor(minZ)) - pad);
+    const int bboxX1 = std::min(volX, static_cast<int>(std::ceil(maxX)) + pad + 1);
+    const int bboxY1 = std::min(volY, static_cast<int>(std::ceil(maxY)) + pad + 1);
+    const int bboxZ1 = std::min(volZ, static_cast<int>(std::ceil(maxZ)) + pad + 1);
+
+    const size_t localW = static_cast<size_t>(bboxX1 - bboxX0);
+    const size_t localH = static_cast<size_t>(bboxY1 - bboxY0);
+    const size_t localD = static_cast<size_t>(bboxZ1 - bboxZ0);
+
+    if (localW == 0 || localH == 0 || localD == 0) return gradients;
+
+    // Step 2: Batch read the volume data for the bounding box
+    xt::xarray<uint8_t> localVolume = xt::empty<uint8_t>({localD, localH, localW});
+    std::vector<std::size_t> off = {static_cast<size_t>(bboxZ0), static_cast<size_t>(bboxY0), static_cast<size_t>(bboxX0)};
+    readSubarray3D(localVolume, *ds, off);
+
+    // Get raw pointer for faster access (xtensor stores data in row-major by default)
+    const uint8_t* __restrict__ volData = localVolume.data();
+    const size_t strideZ = localH * localW;
+    const size_t strideY = localW;
+
+    // Pre-convert bounds for fast clamping
+    const int localWi = static_cast<int>(localW);
+    const int localHi = static_cast<int>(localH);
+    const int localDi = static_cast<int>(localD);
+
+    // Step 3: Compute gradients in parallel at each raw grid point
+    #pragma omp parallel for collapse(2) schedule(static)
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const cv::Vec3f& c = rawPoints(y, x);
+
+            // Skip invalid points
+            if (c[0] == -1.f) {
+                gradients(y, x) = cv::Vec3f(0, 0, 1);
+                continue;
+            }
+
+            // Scale coordinates to dataset space and convert to local coords
+            const float cx = c[0] * dsScale - static_cast<float>(bboxX0);
+            const float cy = c[1] * dsScale - static_cast<float>(bboxY0);
+            const float cz = c[2] * dsScale - static_cast<float>(bboxZ0);
+
+            // Compute integer center position with rounding
+            const int icx = static_cast<int>(std::round(cx));
+            const int icy = static_cast<int>(std::round(cy));
+            const int icz = static_cast<int>(std::round(cz));
+
+            // Compute clamped indices for all 6 sample points
+            const int lx_p = std::min(std::max(icx + 1, 0), localWi - 1);
+            const int lx_m = std::min(std::max(icx - 1, 0), localWi - 1);
+            const int ly_p = std::min(std::max(icy + 1, 0), localHi - 1);
+            const int ly_m = std::min(std::max(icy - 1, 0), localHi - 1);
+            const int lz_p = std::min(std::max(icz + 1, 0), localDi - 1);
+            const int lz_m = std::min(std::max(icz - 1, 0), localDi - 1);
+            const int lx_c = std::min(std::max(icx, 0), localWi - 1);
+            const int ly_c = std::min(std::max(icy, 0), localHi - 1);
+            const int lz_c = std::min(std::max(icz, 0), localDi - 1);
+
+            // Sample using pointer arithmetic (faster than operator())
+            const float v_xp = static_cast<float>(volData[lz_c * strideZ + ly_c * strideY + lx_p]);
+            const float v_xm = static_cast<float>(volData[lz_c * strideZ + ly_c * strideY + lx_m]);
+            const float v_yp = static_cast<float>(volData[lz_c * strideZ + ly_p * strideY + lx_c]);
+            const float v_ym = static_cast<float>(volData[lz_c * strideZ + ly_m * strideY + lx_c]);
+            const float v_zp = static_cast<float>(volData[lz_p * strideZ + ly_c * strideY + lx_c]);
+            const float v_zm = static_cast<float>(volData[lz_m * strideZ + ly_c * strideY + lx_c]);
+
+            // Central differences (FMA-friendly: diff * 0.5 instead of diff / 2)
+            const float gx = (v_xp - v_xm) * 0.5f;
+            const float gy = (v_yp - v_ym) * 0.5f;
+            const float gz = (v_zp - v_zm) * 0.5f;
+
+            // Normalize to get unit normal (negative gradient points toward surface)
+            const float len_sq = gx*gx + gy*gy + gz*gz;
+            if (len_sq > 1e-12f) {
+                const float inv_len = -1.0f / std::sqrt(len_sq);  // Negative for normal direction
+                gradients(y, x) = cv::Vec3f(gx * inv_len, gy * inv_len, gz * inv_len);
+            } else {
+                gradients(y, x) = cv::Vec3f(0, 0, 1);
+            }
+        }
+    }
+
+    return gradients;
 }

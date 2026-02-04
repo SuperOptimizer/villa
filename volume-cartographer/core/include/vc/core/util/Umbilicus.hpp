@@ -11,7 +11,7 @@
 
 namespace vc::core::util {
 
-    class Umbilicus {
+    class Umbilicus final {
     public:
         enum class SeamDirection {
             PositiveX,
@@ -25,19 +25,19 @@ namespace vc::core::util {
         static Umbilicus FromPoints(std::vector<cv::Vec3f> control_points,
                                     const cv::Vec3i& volume_shape);
 
-        const cv::Vec3i& volume_shape() const noexcept;
-        const std::vector<cv::Vec3f>& centers() const noexcept;
-        const cv::Vec3f& center_at(int z_index) const;
+        [[nodiscard]] const cv::Vec3i& volume_shape() const noexcept;
+        [[nodiscard]] const std::vector<cv::Vec3f>& centers() const noexcept;
+        [[nodiscard]] const cv::Vec3f& center_at(int z_index) const;
 
         cv::Vec3f vector_to_umbilicus(const cv::Vec3f& point) const;
         double distance_to_umbilicus(const cv::Vec3f& point) const;
 
         void set_seam(SeamDirection direction);
         void set_seam_from_point(const cv::Vec3f& point);
-        bool has_seam() const noexcept;
-        SeamDirection seam_direction() const;
-        std::pair<cv::Vec3f, cv::Vec3f> seam_segment(int z_index) const;
-        const std::vector<cv::Vec3f>& seam_endpoints() const;
+        [[nodiscard]] bool has_seam() const noexcept;
+        [[nodiscard]] SeamDirection seam_direction() const;
+        [[nodiscard]] std::pair<cv::Vec3f, cv::Vec3f> seam_segment(int z_index) const;
+        [[nodiscard]] const std::vector<cv::Vec3f>& seam_endpoints() const;
 
         double theta(const cv::Vec3f& point, int wrap_count = 0) const;
 

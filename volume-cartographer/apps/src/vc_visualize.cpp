@@ -1,26 +1,19 @@
 #include <unordered_set>
-#include <unordered_map>
 #include <algorithm>
-#include <random>
-#include <iomanip>
 #include <iostream>
-#include <random>
 #include <fstream>
 #include <atomic>
 
-#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <nlohmann/json.hpp>
 #include <boost/program_options.hpp>
 
-#include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/SurfacePatchIndex.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
-#include "vc/core/util/Slicing.hpp"
 
 namespace po = boost::program_options;
 namespace fs = std::filesystem;
@@ -52,7 +45,7 @@ class SegmentRenderer {
 
     cv::Mat generateLegend(const fs::path& output_path) {
         if (segment_color_map_.empty()) {
-            std::cout << "No segments to create legend for" << std::endl;
+            std::cout << "No segments to create legend for" << "\n";
             return cv::Mat();
         }
 
@@ -109,7 +102,7 @@ class SegmentRenderer {
 
         fs::path legend_path = output_path.parent_path() / (output_path.stem().string() + "_legend.png");
         cv::imwrite(legend_path.string(), legend);
-        std::cout << "Legend saved to: " << legend_path << std::endl;
+        std::cout << "Legend saved to: " << legend_path << "\n";
 
         return legend;
     }
@@ -126,9 +119,9 @@ public:
             throw std::runtime_error("Volume not found: " + volume_id);
         }
         volume_ = vpkg_->volume(volume_id);
-        std::cout << "Using volume: " << volume_id << " (" << volume_->name() << ")" << std::endl;
+        std::cout << "Using volume: " << volume_id << " (" << volume_->name() << ")" << "\n";
         auto [w, h, d] = volume_->shape();
-        std::cout << "Volume dimensions: " << w << "x" << h << "x" << d << std::endl;
+        std::cout << "Volume dimensions: " << w << "x" << h << "x" << d << "\n";
         cache_ = new ChunkCache<uint8_t>(1ULL * 1024ULL * 1024ULL * 1024ULL);
     }
 
@@ -149,7 +142,7 @@ private:
                                     const std::string& filter,
                                     int stride = 0) {
 
-        std::cout << "Rendering " << source << " for segment: " << target_segment_id << std::endl;
+        std::cout << "Rendering " << source << " for segment: " << target_segment_id << "\n";
 
         segment_color_map_.clear();
 
@@ -165,7 +158,7 @@ private:
         int native_width = raw_points.cols / stored_scale[0];
         int native_height = raw_points.rows / stored_scale[1];
 
-        std::cout << "Target resolution: " << native_width << "x" << native_height << std::endl;
+        std::cout << "Target resolution: " << native_width << "x" << native_height << "\n";
 
         // Generate at native resolution
         float gen_scale = 1.0f;
@@ -185,10 +178,10 @@ private:
         std::vector<SurfaceInfo> surfaces = loadSurfaces(target_segment_id, target_surf,
                                                          source, filter);
 
-        std::cout << "Loaded " << surfaces.size() << " surfaces" << std::endl;
+        std::cout << "Loaded " << surfaces.size() << " surfaces" << "\n";
 
         if (surfaces.empty() && source != "sequence") {
-            std::cerr << "Warning: No surfaces found for source: " << source << std::endl;
+            std::cerr << "Warning: No surfaces found for source: " << source << "\n";
             // Return image with just the target in black
             cv::Mat_<cv::Vec3b> output(gen_size, cv::Vec3b(255, 255, 255));
 
@@ -215,21 +208,21 @@ private:
         }
         patchIndex.rebuild(surface_ptrs);
 
-        std::cout << "SurfacePatchIndex built for " << surfaces.size() << " surfaces" << std::endl;
+        std::cout << "SurfacePatchIndex built for " << surfaces.size() << " surfaces" << "\n";
 
         // Process with optional stride for performance
         if (stride <= 0) {
             stride = (gen_size.width > 2000) ? 2 : 1;
-            std::cout << "Auto-selected stride: " << stride << " based on width " << gen_size.width << std::endl;
+            std::cout << "Auto-selected stride: " << stride << " based on width " << gen_size.width << "\n";
         } else {
-            std::cout << "Using user-specified stride: " << stride << std::endl;
+            std::cout << "Using user-specified stride: " << stride << "\n";
         }
 
         cv::Size process_size(gen_size.width / stride, gen_size.height / stride);
         cv::Mat_<cv::Vec3b> output(process_size, cv::Vec3b(255, 255, 255));  // White background
 
         std::cout << "Processing with stride " << stride << ": "
-                  << process_size.width << "x" << process_size.height << std::endl;
+                  << process_size.width << "x" << process_size.height << "\n";
 
         // Statistics tracking
         std::atomic<int> valid_count(0), target_only_count(0);
@@ -246,7 +239,7 @@ private:
             if (j % 50 == 0) {
                 #pragma omp critical
                 {
-                    std::cout << "Processing row " << j << "/" << process_size.height << std::endl;
+                    std::cout << "Processing row " << j << "/" << process_size.height << "\n";
                 }
             }
 
@@ -305,7 +298,7 @@ private:
         // Print statistics
         printStatistics(surfaces, valid_count, target_only_count, surface_counts);
 
-        std::cout << "Saved to: " << output_path << std::endl;
+        std::cout << "Saved to: " << output_path << "\n";
 
         return final_output;
     }
@@ -320,15 +313,15 @@ private:
 
         // Apply filter if provided
         if (!filter.empty()) {
-            std::cout << "Applying filter to " << surface_ids.size() << " surfaces" << std::endl;
+            std::cout << "Applying filter to " << surface_ids.size() << " surfaces" << "\n";
             surface_ids = applyFilter(surface_ids, filter);
-            std::cout << "After filtering: " << surface_ids.size() << " surfaces" << std::endl;
+            std::cout << "After filtering: " << surface_ids.size() << " surfaces" << "\n";
         }
 
         // Sort surface IDs alphabetically
         std::sort(surface_ids.begin(), surface_ids.end());
 
-        std::cout << "Assigning colors to " << surface_ids.size() << " surfaces in alphabetical order:" << std::endl;
+        std::cout << "Assigning colors to " << surface_ids.size() << " surfaces in alphabetical order:" << "\n";
 
         // Handle sequence source specially
         if (source == "sequence") {
@@ -342,10 +335,10 @@ private:
             if (surf) {
                 surfaces.push_back({surf_id, surf, color_idx});
                 segment_color_map_[surf_id] = color_idx;
-                std::cout << "  " << surf_id << " -> color index " << color_idx << std::endl;
+                std::cout << "  " << surf_id << " -> color index " << color_idx << "\n";
                 color_idx++;
             } else {
-                std::cerr << "Failed to load surface: " << surf_id << std::endl;
+                std::cerr << "Failed to load surface: " << surf_id << "\n";
             }
         }
 
@@ -490,10 +483,10 @@ private:
                         int valid_count, int target_only_count,
                         const std::vector<std::atomic<int>>& surface_counts) {
 
-        std::cout << "\n=== Rendering Statistics ===" << std::endl;
-        std::cout << "Valid points processed: " << valid_count << std::endl;
+        std::cout << "\n=== Rendering Statistics ===" << "\n";
+        std::cout << "Valid points processed: " << valid_count << "\n";
         std::cout << "Points in target only (black): " << target_only_count
-                  << " (" << (100.0 * target_only_count / std::max(1, valid_count)) << "%)" << std::endl;
+                  << " (" << (100.0 * target_only_count / std::max(1, valid_count)) << "%)" << "\n";
 
         int surfaces_hit = 0;
         int total_overlap_points = 0;
@@ -506,7 +499,7 @@ private:
                     int count = surface_counts[i];
                     if (count > 0) {
                         std::cout << "Surface " << seg_id << ": " << count << " points (color index "
-                                  << color_idx << ")" << std::endl;
+                                  << color_idx << ")" << "\n";
                         surfaces_hit++;
                         total_overlap_points += count;
                     }
@@ -516,8 +509,8 @@ private:
         }
 
         std::cout << "Total overlap points (colored): " << total_overlap_points
-                  << " (" << (100.0 * total_overlap_points / std::max(1, valid_count)) << "%)" << std::endl;
-        std::cout << "Surfaces with matches: " << surfaces_hit << "/" << segment_color_map_.size() << std::endl;
+                  << " (" << (100.0 * total_overlap_points / std::max(1, valid_count)) << "%)" << "\n";
+        std::cout << "Surfaces with matches: " << surfaces_hit << "/" << segment_color_map_.size() << "\n";
     }
 };
 
@@ -547,7 +540,7 @@ int main(int argc, char* argv[]) {
 
         if (vm.count("help")) {
             std::cout << "Segment Renderer - Render segment overlaps and visualizations\n\n";
-            std::cout << desc << std::endl;
+            std::cout << desc << "\n";
             std::cout << "\nColor scheme:\n";
             std::cout << "  - White: Background/invalid points\n";
             std::cout << "  - Black: Target segment only\n";

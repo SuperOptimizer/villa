@@ -1,6 +1,7 @@
 #include "vc/core/util/GridStore.hpp"
 #include "vc/core/util/LineSegList.hpp"
 
+#include <nlohmann/json.hpp>
 #include <set>
 #include <sstream>
 #include <unordered_set>
@@ -131,11 +132,11 @@ public:
         return result;
     }
 
-    cv::Size size() const {
+    cv::Size size() const noexcept {
         return bounds_.size();
     }
 
-    size_t get_memory_usage() const {
+    size_t get_memory_usage() const noexcept {
         size_t grid_memory = grid_.capacity() * sizeof(std::vector<int>);
         for (const auto& cell : grid_) {
             grid_memory += cell.capacity() * sizeof(int);
@@ -153,7 +154,7 @@ public:
         return grid_memory + storage_memory;
     }
 
-    size_t numSegments() const {
+    size_t numSegments() const noexcept {
         if (read_only_) {
             std::unordered_set<size_t> all_offsets;
             size_t num_buckets = grid_size_.width * grid_size_.height;
@@ -182,7 +183,7 @@ public:
         }
     }
 
-    size_t numNonEmptyBuckets() const {
+    size_t numNonEmptyBuckets() const noexcept {
         size_t count = 0;
         for (const auto& bucket : grid_) {
             if (!bucket.empty()) {
@@ -613,12 +614,14 @@ private:
 };
  
 GridStore::GridStore(const cv::Rect& bounds, int cell_size)
-    : pimpl_(std::make_unique<GridStoreImpl>(bounds, cell_size)) {}
- 
+    : pimpl_(std::make_unique<GridStoreImpl>(bounds, cell_size)),
+      meta_(std::make_unique<nlohmann::json>()) {}
+
 GridStore::GridStore(const std::string& path)
-    : pimpl_(std::make_unique<GridStoreImpl>(cv::Rect(), 1)) { // Use a dummy cell_size to avoid division by zero
+    : pimpl_(std::make_unique<GridStoreImpl>(cv::Rect(), 1)),
+      meta_(std::make_unique<nlohmann::json>()) { // Use a dummy cell_size to avoid division by zero
     pimpl_->load_mmap(path);
-    meta = pimpl_->meta_;
+    *meta_ = pimpl_->meta_;
 }
 
 GridStore::~GridStore() = default;
@@ -642,29 +645,38 @@ std::vector<std::shared_ptr<std::vector<cv::Point>>> GridStore::get_all() const 
     return pimpl_->get_all();
 }
 
-cv::Size GridStore::size() const {
+cv::Size GridStore::size() const noexcept {
     return pimpl_->size();
 }
 
-size_t GridStore::get_memory_usage() const {
+size_t GridStore::get_memory_usage() const noexcept {
     return pimpl_->get_memory_usage();
 }
 
-size_t GridStore::numSegments() const {
+size_t GridStore::numSegments() const noexcept {
     return pimpl_->numSegments();
 }
 
-size_t GridStore::numNonEmptyBuckets() const {
+size_t GridStore::numNonEmptyBuckets() const noexcept {
     return pimpl_->numNonEmptyBuckets();
 }
 
 void GridStore::save(const std::string& path) const {
-    pimpl_->meta_ = meta;
+    pimpl_->meta_ = *meta_;
     pimpl_->save(path);
 }
 
 void GridStore::load_mmap(const std::string& path) {
     pimpl_->load_mmap(path);
+    *meta_ = pimpl_->meta_;
+}
+
+nlohmann::json& GridStore::meta() {
+    return *meta_;
+}
+
+const nlohmann::json& GridStore::meta() const {
+    return *meta_;
 }
 
 }

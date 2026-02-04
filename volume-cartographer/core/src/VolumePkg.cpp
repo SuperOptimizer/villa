@@ -1,20 +1,25 @@
 #include "vc/core/types/VolumePkg.hpp"
 
+#include <nlohmann/json.hpp>
 #include <set>
 #include <utility>
 #include <cstring>
 
+#include "vc/core/types/Segmentation.hpp"
+#include "vc/core/types/Volume.hpp"
 #include "vc/core/util/DateTime.hpp"
 #include "vc/core/util/LoadJson.hpp"
 #include "vc/core/util/Logging.hpp"
+#include "vc/core/util/QuadSurface.hpp"
 
 constexpr auto CONFIG = "config.json";
 
-VolumePkg::VolumePkg(const std::filesystem::path& fileLocation) : rootDir_{fileLocation}
+VolumePkg::VolumePkg(const std::filesystem::path& fileLocation)
+    : config_(std::make_unique<nlohmann::json>()), rootDir_{fileLocation}
 {
     auto configPath = fileLocation / ::CONFIG;
-    config_ = vc::json::load_json_file(configPath);
-    vc::json::require_fields(config_, {"name", "version"}, configPath.string());
+    *config_ = vc::json::load_json_file(configPath);
+    vc::json::require_fields(*config_, {"name", "version"}, configPath.string());
 
     std::vector<std::string> dirs = {"volumes","paths","traces","transforms","renders","backups"};
 
@@ -49,7 +54,7 @@ std::shared_ptr<VolumePkg> VolumePkg::New(const std::filesystem::path& fileLocat
 
 std::string VolumePkg::name() const
 {
-    auto name = config_["name"].get<std::string>();
+    auto name = (*config_)["name"].get<std::string>();
     if (name != "NULL") {
         return name;
     }
@@ -57,23 +62,17 @@ std::string VolumePkg::name() const
     return "UnnamedVolume";
 }
 
-int VolumePkg::version() const { return config_["version"].get<int>(); }
-
-bool VolumePkg::hasVolumes() const { return !volumes_.empty(); }
+int VolumePkg::version() const { return (*config_)["version"].get<int>(); }
 
 bool VolumePkg::hasVolume(const std::string& id) const
 {
     return volumes_.count(id) > 0;
 }
 
-std::size_t VolumePkg::numberOfVolumes() const
-{
-    return volumes_.size();
-}
-
 std::vector<std::string> VolumePkg::volumeIDs() const
 {
     std::vector<std::string> ids;
+    ids.reserve(volumes_.size());
     for (const auto& v : volumes_) {
         ids.emplace_back(v.first);
     }
@@ -92,12 +91,6 @@ std::shared_ptr<Volume> VolumePkg::volume(const std::string& id)
 {
     return volumes_.at(id);
 }
-
-bool VolumePkg::hasSegmentations() const
-{
-    return !segmentations_.empty();
-}
-
 
 std::shared_ptr<Segmentation> VolumePkg::segmentation(const std::string& id)
 {
@@ -188,7 +181,7 @@ void VolumePkg::ensureSegmentScrollSource()
         return;
     }
 
-    auto scrollName = config_["name"].get<std::string>();
+    auto scrollName = (*config_)["name"].get<std::string>();
     auto vol = volumes_.begin()->second;
     auto volumeUuid = vol->id();
 
@@ -204,17 +197,6 @@ void VolumePkg::setSegmentationDirectory(const std::string& dirName)
     }
     currentSegmentationDir_ = dirName;
 }
-
-auto VolumePkg::getSegmentationDirectory() const -> std::string
-{
-    return currentSegmentationDir_;
-}
-
-auto VolumePkg::getVolpkgDirectory() const -> std::string
-{
-    return rootDir_;
-}
-
 
 auto VolumePkg::getAvailableSegmentationDirectories() const -> std::vector<std::string>
 {
@@ -427,7 +409,7 @@ bool VolumePkg::addSingleSegmentation(const std::string& id)
     try {
         auto s = Segmentation::New(segPath);
         if (!volumes_.empty()) {
-            auto scrollName = config_["name"].get<std::string>();
+            auto scrollName = (*config_)["name"].get<std::string>();
             auto volumeUuid = volumes_.begin()->second->id();
             s->ensureScrollSource(scrollName, volumeUuid);
         }

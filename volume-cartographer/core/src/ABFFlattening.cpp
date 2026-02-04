@@ -4,7 +4,6 @@
 #include <OpenABF/OpenABF.hpp>
 
 #include <Eigen/Core>
-#include <opencv2/imgproc.hpp>
 
 #include <unordered_map>
 #include <iostream>
@@ -183,12 +182,10 @@ static cv::Mat_<cv::Vec2f> upsampleUVs(const cv::Mat_<cv::Vec2f>& coarseUVs,
                 continue;
             }
 
-            // Bilinear interpolation
-            cv::Vec2f uv = (1 - fr) * (1 - fc) * uv00 +
-                           (1 - fr) * fc * uv01 +
-                           fr * (1 - fc) * uv10 +
-                           fr * fc * uv11;
-            result(row, col) = uv;
+            // Bilinear interpolation (FMA-friendly: a + t*(b-a))
+            const cv::Vec2f uv0 = uv00 + fc * (uv01 - uv00);
+            const cv::Vec2f uv1 = uv10 + fc * (uv11 - uv10);
+            result(row, col) = uv0 + fr * (uv1 - uv0);
         }
     }
 

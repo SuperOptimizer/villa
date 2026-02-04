@@ -9,7 +9,7 @@
 #include "vc/core/types/ChunkedTensor.hpp"
 #include "vc/core/util/StreamOperators.hpp"
 #include "vc/tracer/Tracer.hpp"
-
+#include "vc/ui/VCCollection.hpp"
 
 #include "z5/factory.hxx"
 #include <nlohmann/json.hpp>
@@ -80,7 +80,7 @@ bool check_existing_segments(const std::filesystem::path& tgt_dir, const cv::Vec
 
         QuadSurface other(entry.path(), meta);
         if (contains(other, origin, search_effort)) {
-            std::cout << "Found overlapping segment at location: " << entry.path() << std::endl;
+            std::cout << "Found overlapping segment at location: " << entry.path() << "\n";
             return true;
         }
     }
@@ -92,13 +92,13 @@ static auto load_direction_fields(json const&params, ChunkCache<uint8_t> *chunk_
     std::vector<DirectionField> direction_fields;
     if (params.contains("direction_fields")) {
         if (!params["direction_fields"].is_array()) {
-            std::cerr << "WARNING: direction_fields must be an array; ignoring" << std::endl;
+            std::cerr << "WARNING: direction_fields must be an array; ignoring" << "\n";
         }
         for (auto const& direction_field : params["direction_fields"]) {
             std::string const zarr_path = direction_field["zarr"];
             std::string const direction = direction_field["dir"];
             if (!std::ranges::contains(std::vector{"horizontal", "vertical", "normal"}, direction)) {
-                std::cerr << "WARNING: invalid direction in direction_field " << zarr_path << "; skipping" << std::endl;
+                std::cerr << "WARNING: invalid direction in direction_field " << zarr_path << "; skipping" << "\n";
                 continue;
             }
             int const ome_scale = direction_field["scale"];
@@ -110,7 +110,7 @@ static auto load_direction_fields(json const&params, ChunkCache<uint8_t> *chunk_
                 z5::filesystem::handle::Dataset dirs_ds_handle(dim_group, std::to_string(ome_scale), ".");
                 direction_dss.push_back(z5::filesystem::openDataset(dirs_ds_handle));
             }
-            std::cout << "direction field dataset shape " << direction_dss.front()->shape() << std::endl;
+            std::cout << "direction field dataset shape " << direction_dss.front()->shape() << "\n";
             std::unique_ptr<z5::Dataset> maybe_weight_ds;
             if (direction_field.contains("weight_zarr")) {
                 std::string const weight_zarr_path = direction_field["weight_zarr"];
@@ -124,7 +124,7 @@ static auto load_direction_fields(json const&params, ChunkCache<uint8_t> *chunk_
                 try {
                     weight = std::clamp(direction_field["weight"].get<float>(), 0.0f, 10.0f);
                 } catch (const std::exception& ex) {
-                    std::cerr << "WARNING: invalid weight for direction field " << zarr_path << ": " << ex.what() << std::endl;
+                    std::cerr << "WARNING: invalid weight for direction field " << zarr_path << ": " << ex.what() << "\n";
                 }
             }
 
@@ -178,14 +178,14 @@ int main(int argc, char *argv[])
             po::store(po::parse_command_line(argc, argv, desc), vm);
 
             if (vm.count("help")) {
-                std::cout << desc << std::endl;
+                std::cout << desc << "\n";
                 return EXIT_SUCCESS;
             }
 
             po::notify(vm);
         } catch (const po::error &e) {
-            std::cerr << "ERROR: " << e.what() << std::endl << std::endl;
-            std::cerr << desc << std::endl;
+            std::cerr << "ERROR: " << e.what() << "\n" << "\n";
+            std::cerr << desc << "\n";
             return EXIT_FAILURE;
         }
 
@@ -196,7 +196,7 @@ int main(int argc, char *argv[])
         if (vm.count("seed")) {
             auto seed_coords = vm["seed"].as<std::vector<float>>();
             if (seed_coords.size() != 3) {
-                std::cerr << "ERROR: --seed requires exactly 3 coordinates (x y z)" << std::endl;
+                std::cerr << "ERROR: --seed requires exactly 3 coordinates (x y z)" << "\n";
                 return EXIT_FAILURE;
             }
             origin = {seed_coords[0], seed_coords[1], seed_coords[2]};
@@ -207,13 +207,13 @@ int main(int argc, char *argv[])
 
         if (vm.count("correct")) {
             if (!vm.count("resume")) {
-                std::cerr << "ERROR: --correct can only be used with --resume" << std::endl;
+                std::cerr << "ERROR: --correct can only be used with --resume" << "\n";
                 return EXIT_FAILURE;
             }
             correct_path = vm["correct"].as<std::string>();
             std::ifstream correct_f(correct_path.string());
             if (!corrections.loadFromJSON(correct_path.string())) {
-                std::cerr << "ERROR: Could not load or parse corrections file: " << correct_path << std::endl;
+                std::cerr << "ERROR: Could not load or parse corrections file: " << correct_path << "\n";
                 return EXIT_FAILURE;
             }
         }
@@ -238,7 +238,7 @@ int main(int argc, char *argv[])
             if (resume_opt == "skip" || resume_opt == "local" || resume_opt == "global") {
                 params["resume_opt"] = resume_opt;
             } else {
-                std::cerr << "ERROR: --resume-opt must be one of 'skip', 'local', or 'global'" << std::endl;
+                std::cerr << "ERROR: --resume-opt must be one of 'skip', 'local', or 'global'" << "\n";
                 return EXIT_FAILURE;
             }
         }
@@ -268,8 +268,8 @@ int main(int argc, char *argv[])
     z5::filesystem::handle::Dataset ds_handle(group, "0", json::parse(std::ifstream(vol_path/"0/.zarray")).value<std::string>("dimension_separator","."));
     std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
 
-    std::cout << "zarr dataset size for scale group 0 " << ds->shape() << std::endl;
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
+    std::cout << "zarr dataset size for scale group 0 " << ds->shape() << "\n";
+    std::cout << "chunk shape shape " << ds->chunking().blockShape() << "\n";
 
     ChunkCache<uint8_t> chunk_cache(params.value("cache_size", 1e9));
 
@@ -293,15 +293,15 @@ int main(int argc, char *argv[])
     if (params.contains("cache_root") && params["cache_root"].is_string()) {
         cache_root = params["cache_root"].get<std::string>();
     } else if (params.contains("cache_root") && !params["cache_root"].is_null()) {
-        std::cerr << "WARNING: cache_root must be a string; ignoring" << std::endl;
+        std::cerr << "WARNING: cache_root must be a string; ignoring" << "\n";
     }
 
     std::string mode = params.value("mode", "seed");
     
-    std::cout << "mode: " << mode << std::endl;
-    std::cout << "step size: " << params.value("step_size", 20.0f) << std::endl;
-    std::cout << "min_area_cm: " << min_area_cm << std::endl;
-    std::cout << "tgt_overlap_count: " << tgt_overlap_count << std::endl;
+    std::cout << "mode: " << mode << "\n";
+    std::cout << "step size: " << params.value("step_size", 20.0f) << "\n";
+    std::cout << "min_area_cm: " << min_area_cm << "\n";
+    std::cout << "tgt_overlap_count: " << tgt_overlap_count << "\n";
 
     auto direction_fields = load_direction_fields(params, &chunk_cache, cache_root);
 
@@ -328,7 +328,7 @@ int main(int argc, char *argv[])
                 if (name.compare(0, name_prefix.size(), name_prefix))
                     continue;
 
-                std::cout << entry.path() << entry.path().filename() << std::endl;
+                std::cout << entry.path() << entry.path().filename() << "\n";
 
                 std::filesystem::path meta_fn = entry.path() / "meta.json";
                 if (!std::filesystem::exists(meta_fn))
@@ -351,7 +351,7 @@ int main(int argc, char *argv[])
             }
             
         if (!surfs.size()) {
-            std::cerr << "ERROR: no seed surfaces found in expansion mode" << std::endl; 
+            std::cerr << "ERROR: no seed surfaces found in expansion mode" << "\n"; 
             return EXIT_FAILURE;
         }
         
@@ -427,7 +427,7 @@ int main(int argc, char *argv[])
                 break;
         }
 
-        std::cout << "found potential overlapping starting seed " << origin << " with overlap " << count_overlap << std::endl;
+        std::cout << "found potential overlapping starting seed " << origin << " with overlap " << count_overlap << "\n";
     }
     else if (mode != "gen_neighbor") {
         if (!resume_path.empty()) {
@@ -436,12 +436,12 @@ int main(int argc, char *argv[])
             mode = "explicit_seed";
             double v;
             interpolator.Evaluate(origin[2], origin[1], origin[0], &v);
-            std::cout << "seed location " << origin << " value is " << v << std::endl;
+            std::cout << "seed location " << origin << " value is " << v << "\n";
         } else if (!use_old_args && origin[0] != 0 && origin[1] != 0 && origin[2] != 0) {
             mode = "explicit_seed";
             double v;
             interpolator.Evaluate(origin[2], origin[1], origin[0], &v);
-            std::cout << "seed location " << origin << " value is " << v << std::endl;
+            std::cout << "seed location " << origin << " value is " << v << "\n";
         }
         else {
             mode = "random_seed";
@@ -477,7 +477,7 @@ int main(int argc, char *argv[])
                             continue;
                         succ = true;
                         origin = p;
-                        std::cout << "Found seed location " << origin << " value: " << v << std::endl;
+                        std::cout << "Found seed location " << origin << " value: " << v << "\n";
                         break;
                     }
                 }
@@ -485,7 +485,7 @@ int main(int argc, char *argv[])
 
             if (!succ) {
                 std::cout << "ERROR: Could not find valid non-overlapping seed location after " 
-                        << max_attempts << " attempts" << std::endl;
+                        << max_attempts << " attempts" << "\n";
                 return EXIT_SUCCESS;
             }
         }
@@ -530,7 +530,7 @@ int main(int argc, char *argv[])
     //
     if (mode == "gen_neighbor") {
         if (resume_path.empty()) {
-            std::cerr << "ERROR: gen_neighbor mode requires --resume <tifxyz_dir> to provide the source surface" << std::endl;
+            std::cerr << "ERROR: gen_neighbor mode requires --resume <tifxyz_dir> to provide the source surface" << "\n";
             return EXIT_FAILURE;
         }
 
@@ -539,7 +539,7 @@ int main(int argc, char *argv[])
         try {
             src_surface = load_quad_from_tifxyz(resume_path);
         } catch (const std::exception& ex) {
-            std::cerr << "ERROR: failed to load resume surface: " << ex.what() << std::endl;
+            std::cerr << "ERROR: failed to load resume surface: " << ex.what() << "\n";
             return EXIT_FAILURE;
         }
 
@@ -586,7 +586,7 @@ int main(int argc, char *argv[])
 
         const bool cast_out = (neighbor_dir == "out");
         if (!(cast_out || neighbor_dir == "in")) {
-            std::cerr << "WARNING: neighbor_dir must be 'in' or 'out'; defaulting to 'out'" << std::endl;
+            std::cerr << "WARNING: neighbor_dir must be 'in' or 'out'; defaulting to 'out'" << "\n";
         }
 
         // Cast a ray per valid vertex
@@ -923,13 +923,13 @@ int main(int argc, char *argv[])
 
         auto [src_min, src_max] = calc_bbox(src_points);
         auto [dst_min, dst_max] = calc_bbox(dst_points);
-        std::cout << "DEBUG gen_neighbor:" << std::endl;
-        std::cout << "  Source grid: " << cols << "x" << rows << ", scale: " << src_surface->scale() << std::endl;
-        std::cout << "  Source extent: [" << src_extent[0] << ", " << src_extent[1] << "]" << std::endl;
-        std::cout << "  Dst extent: [" << dst_extent[0] << ", " << dst_extent[1] << "]" << std::endl;
-        std::cout << "  x_scale: " << x_scale << ", y_scale: " << y_scale << std::endl;
-        std::cout << "  measured_scale_factor: " << measured_scale_factor << " (from extent ratio)" << std::endl;
-        std::cout << "  scale_factor (after clamp): " << scale_factor << std::endl;
+        std::cout << "DEBUG gen_neighbor:" << "\n";
+        std::cout << "  Source grid: " << cols << "x" << rows << ", scale: " << src_surface->scale() << "\n";
+        std::cout << "  Source extent: [" << src_extent[0] << ", " << src_extent[1] << "]" << "\n";
+        std::cout << "  Dst extent: [" << dst_extent[0] << ", " << dst_extent[1] << "]" << "\n";
+        std::cout << "  x_scale: " << x_scale << ", y_scale: " << y_scale << "\n";
+        std::cout << "  measured_scale_factor: " << measured_scale_factor << " (from extent ratio)" << "\n";
+        std::cout << "  scale_factor (after clamp): " << scale_factor << "\n";
 
         // Resize grid if scale factor is significantly different from 1.0
         cv::Mat_<cv::Vec3f> final_points = dst_points;
@@ -938,21 +938,22 @@ int main(int argc, char *argv[])
             int new_rows = static_cast<int>(std::round(rows * scale_factor));
 
             std::cout << "  Resizing grid from " << cols << "x" << rows
-                      << " to " << new_cols << "x" << new_rows << std::endl;
+                      << " to " << new_cols << "x" << new_rows << "\n";
 
             // Custom bilinear interpolation that properly handles invalid markers
             // cv::resize doesn't work because it interpolates invalid (-1,-1,-1) markers
             // as if they were real coordinates, corrupting the result
             cv::Mat_<cv::Vec3f> resized_points(new_rows, new_cols);
             resized_points.setTo(invalid_marker);
+            const float inv_scale_factor = 1.0f / static_cast<float>(scale_factor);
 
             #pragma omp parallel for schedule(static)
             for (int new_r = 0; new_r < new_rows; ++new_r) {
                 for (int new_c = 0; new_c < new_cols; ++new_c) {
                     // Map back to original grid position (floating point)
-                    // Using (new_idx + 0.5) / scale - 0.5 for proper pixel-center alignment
-                    float orig_r = (static_cast<float>(new_r) + 0.5f) / static_cast<float>(scale_factor) - 0.5f;
-                    float orig_c = (static_cast<float>(new_c) + 0.5f) / static_cast<float>(scale_factor) - 0.5f;
+                    // Using (new_idx + 0.5) * inv_scale - 0.5 for proper pixel-center alignment
+                    float orig_r = (static_cast<float>(new_r) + 0.5f) * inv_scale_factor - 0.5f;
+                    float orig_c = (static_cast<float>(new_c) + 0.5f) * inv_scale_factor - 0.5f;
 
                     // Clamp to valid range
                     orig_r = std::clamp(orig_r, 0.0f, static_cast<float>(rows - 1));
@@ -989,11 +990,11 @@ int main(int argc, char *argv[])
 
             // Debug: Show bbox after resize
             auto [final_min, final_max] = calc_bbox(final_points);
-            std::cout << "  Final bbox (after resize): [" << final_min << "] to [" << final_max << "]" << std::endl;
+            std::cout << "  Final bbox (after resize): [" << final_min << "] to [" << final_max << "]" << "\n";
         }
 
         // Debug: Final output info
-        std::cout << "  Output grid: " << final_points.cols << "x" << final_points.rows << std::endl;
+        std::cout << "  Output grid: " << final_points.cols << "x" << final_points.rows << "\n";
 
         // Prepare output surface and save
         std::unique_ptr<QuadSurface> out_surf(new QuadSurface(final_points, src_surface->scale()));
@@ -1016,7 +1017,7 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }
 
-    QuadSurface *surf = tracer(ds.get(), 1.0, &chunk_cache, origin, params, cache_root, voxelsize, direction_fields, resume_surf.get(), seg_dir, meta_params, corrections);
+    QuadSurface *surf = tracer(ds.get(), 1.0, &chunk_cache, origin, params, cache_root, voxelsize, direction_fields, resume_surf.get(), seg_dir, meta_params, &corrections);
 
     double area_cm2 = (*surf->meta)["area_cm2"].get<double>();
     if (area_cm2 < min_area_cm) {
@@ -1026,7 +1027,7 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }
 
-    std::cout << "saving " << seg_dir << std::endl;
+    std::cout << "saving " << seg_dir << "\n";
     surf->save(seg_dir, uuid, true);
     surf->path = seg_dir;
 

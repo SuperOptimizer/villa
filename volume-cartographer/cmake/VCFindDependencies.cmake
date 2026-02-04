@@ -1,7 +1,7 @@
 # --- VC dependencies ----------------------------------------------------------
 include(FetchContent)
 
-option(VC_BUILD_JSON "Build in-source JSON library" OFF)
+option(VC_BUILD_JSON "Build in-source JSON library" ON)
 option(VC_BUILD_Z5   "Build (vendor) z5 header-only library" ON)
 
 #find_package(CURL REQUIRED)

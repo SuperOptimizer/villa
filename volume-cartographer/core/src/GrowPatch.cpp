@@ -90,7 +90,7 @@ cv::Vec3d random_perturbation(double max_abs_offset = 0.05) {
 }
 
 struct Vec2iLess {
-    bool operator()(const cv::Vec2i& a, const cv::Vec2i& b) const {
+    [[gnu::always_inline]] bool operator()(const cv::Vec2i& a, const cv::Vec2i& b) const noexcept {
         if (a[0] != b[0]) {
             return a[0] < b[0];
         }
@@ -99,7 +99,7 @@ struct Vec2iLess {
 };
 
 template <typename T>
-static bool point_in_bounds(const cv::Mat_<T>& mat, const cv::Vec2i& p)
+[[gnu::always_inline]] static bool point_in_bounds(const cv::Mat_<T>& mat, const cv::Vec2i& p) noexcept
 {
     return p[0] >= 0 && p[0] < mat.rows && p[1] >= 0 && p[1] < mat.cols;
 }
@@ -107,7 +107,7 @@ static bool point_in_bounds(const cv::Mat_<T>& mat, const cv::Vec2i& p)
 // Normal3D placeholder / validity check.
 // The fitted normal direction-field stores placeholder/unset normals as the neutral uint8 triplet (128,128,128).
 // We treat a trilinear sample as invalid if *any* of the 8 lattice corners is a placeholder.
-static inline bool normal3d_trilinear_sample_valid(Chunked3dVec3fFromUint8& dirs, const cv::Vec3d& xyz)
+[[gnu::always_inline]] static inline bool normal3d_trilinear_sample_valid(Chunked3dVec3fFromUint8& dirs, const cv::Vec3d& xyz)
 {
     const double zf = xyz[2] * static_cast<double>(dirs._scale);
     const double yf = xyz[1] * static_cast<double>(dirs._scale);
@@ -118,11 +118,11 @@ static inline bool normal3d_trilinear_sample_valid(Chunked3dVec3fFromUint8& dirs
     int x0 = static_cast<int>(std::floor(xf));
 
     const auto shape = dirs._x.shape(); // z,y,x
-    if (!shape.empty()) {
+    if (!shape.empty()) [[likely]] {
         z0 = std::clamp(z0, 0, std::max(0, shape[0] - 2));
         y0 = std::clamp(y0, 0, std::max(0, shape[1] - 2));
         x0 = std::clamp(x0, 0, std::max(0, shape[2] - 2));
-    } else {
+    } else [[unlikely]] {
         z0 = std::max(0, z0);
         y0 = std::max(0, y0);
         x0 = std::max(0, x0);
@@ -203,11 +203,11 @@ public:
                 if (anchor[0] < 0 || anchor[0] >= points.cols ||
                     anchor[1] < 0 || anchor[1] >= points.rows) {
                     std::cout << "Warning: skipping correction with out-of-bounds anchor2d: "
-                              << anchor << " (surface size: " << points.cols << "x" << points.rows << ")" << std::endl;
+                              << anchor << " (surface size: " << points.cols << "x" << points.rows << ")" << "\n";
                     continue;
                 }
 
-                std::cout << "using provided anchor2d: " << anchor << std::endl;
+                std::cout << "using provided anchor2d: " << anchor << "\n";
 
                 // Convert 2D grid location to pointer coordinates
                 // pointer coords are relative to center: ptr = grid_loc - center
@@ -222,7 +222,7 @@ public:
                 for (size_t i = 0; i < collection.tgts_.size(); ++i) {
                     float d = tmp.pointTo(ptr, collection.tgts_[i], 100.0f, 0);
                     cv::Vec3f loc_3d = tmp.loc_raw(ptr);
-                    std::cout << "point diff: " << d << loc_3d << std::endl;
+                    std::cout << "point diff: " << d << loc_3d << "\n";
                     cv::Vec2f loc = {loc_3d[0], loc_3d[1]};
                     collection.grid_locs_.push_back(loc);
                 }
@@ -235,7 +235,7 @@ public:
                 // Initialize anchor point (lowest ID)
                 float d = tmp.pointTo(ptr, collection.tgts_[0], 1.0f);
                 cv::Vec3f loc_3d = tmp.loc_raw(ptr);
-                std::cout << "base diff: " << d << loc_3d << std::endl;
+                std::cout << "base diff: " << d << loc_3d << "\n";
                 cv::Vec2f loc(loc_3d[0], loc_3d[1]);
                 collection.grid_locs_.push_back({loc[0], loc[1]});
 
@@ -243,7 +243,7 @@ public:
                 for (size_t i = 1; i < collection.tgts_.size(); ++i) {
                     d = tmp.pointTo(ptr, collection.tgts_[i], 100.0f, 0);
                     loc_3d = tmp.loc_raw(ptr);
-                    std::cout << "point diff: " << d << loc_3d << std::endl;
+                    std::cout << "point diff: " << d << loc_3d << "\n";
                     loc = {loc_3d[0], loc_3d[1]};
                     collection.grid_locs_.push_back({loc[0], loc[1]});
                 }
@@ -491,7 +491,7 @@ struct LossSettings {
             if (it->is_number()) {
                 w[type] = static_cast<float>(it->get<double>());
             } else {
-                std::cerr << key << " must be numeric" << std::endl;
+                std::cerr << key << " must be numeric" << "\n";
             }
         };
 
@@ -548,7 +548,7 @@ static std::vector<cv::Vec2i> parse_growth_directions(const nlohmann::json& para
 
     const nlohmann::json& directions = *it;
     if (!directions.is_array()) {
-        std::cerr << "growth_directions parameter must be an array of strings" << std::endl;
+        std::cerr << "growth_directions parameter must be an array of strings" << "\n";
         return kDefaultDirections;
     }
 
@@ -567,7 +567,7 @@ static std::vector<cv::Vec2i> parse_growth_directions(const nlohmann::json& para
 
     for (const auto& entry : directions) {
         if (!entry.is_string()) {
-            std::cerr << "Ignoring non-string entry in growth_directions" << std::endl;
+            std::cerr << "Ignoring non-string entry in growth_directions" << "\n";
             continue;
         }
 
@@ -584,7 +584,7 @@ static std::vector<cv::Vec2i> parse_growth_directions(const nlohmann::json& para
         }
 
         if (normalized.empty()) {
-            std::cerr << "Empty growth direction entry ignored" << std::endl;
+            std::cerr << "Empty growth direction entry ignored" << "\n";
             continue;
         }
 
@@ -630,7 +630,7 @@ static std::vector<cv::Vec2i> parse_growth_directions(const nlohmann::json& para
             continue;
         }
 
-        std::cerr << "Unknown growth direction '" << value << "' ignored" << std::endl;
+        std::cerr << "Unknown growth direction '" << value << "' ignored" << "\n";
     }
 
     if (!any_valid) {
@@ -720,7 +720,7 @@ static std::vector<cv::Vec2i> call_neural_tracer_for_points(
 
         if (point_info.max_score < 1) {
             // we disallow score = -1 since this implies no neighbors found, and score = 0 since this is likely to create long, poorly-supported tendrils
-            std::cout << "warning: max_score = " << point_info.max_score << std::endl;
+            std::cout << "warning: max_score = " << point_info.max_score << "\n";
             continue;
         }
 
@@ -745,14 +745,14 @@ static std::vector<cv::Vec2i> call_neural_tracer_for_points(
 
     std::vector<cv::Vec2i> successful_points;
     for (int point_idx = 0; point_idx < points_with_valid_dirs.size(); point_idx++) {
-        auto const p = points_with_valid_dirs[point_idx];
+        const auto& p = points_with_valid_dirs[point_idx];
         const auto& candidates = next_uvs[point_idx].next_u_xyzs;
         if (!candidates.empty() && cv::norm(candidates[0]) > 1e-6) {
             trace_params.dpoints(p) = {candidates[0][0], candidates[0][1], candidates[0][2]};
             trace_params.state(p) = STATE_LOC_VALID | STATE_COORD_VALID;
             successful_points.push_back(p);
         } else {
-            std::cout << "warning: no valid next point found at " << p << std::endl;
+            std::cout << "warning: no valid next point found at " << p << "\n";
         }
     }
 
@@ -787,14 +787,14 @@ static int conditional_reference_ray_loss(int bit, const cv::Vec2i &p, cv::Mat_<
                                           const TraceData &trace_data, const LossSettings &settings);
 
 // Used by conditional losses.
-static bool loss_mask(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status);
-static int set_loss_mask(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, int set);
-static bool loc_valid(int state)
+static bool loss_mask(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status) noexcept;
+static int set_loss_mask(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, int set) noexcept;
+[[gnu::always_inline]] static inline bool loc_valid(int state) noexcept
 {
     return state & STATE_LOC_VALID;
 }
 
-static bool coord_valid(int state)
+[[gnu::always_inline]] static inline bool coord_valid(int state) noexcept
 {
     return (state & STATE_COORD_VALID) || (state & STATE_LOC_VALID);
 }
@@ -913,7 +913,7 @@ static int conditional_reference_ray_loss(int bit,
 // -------------------------
 // helpers used by conditionals (must be before they’re used)
 // -------------------------
-static cv::Vec2i lower_p(const cv::Vec2i &point, const cv::Vec2i &offset)
+[[gnu::always_inline]] static inline cv::Vec2i lower_p(const cv::Vec2i &point, const cv::Vec2i &offset) noexcept
 {
     if (offset[0] == 0) {
         if (offset[1] < 0)
@@ -931,7 +931,7 @@ static cv::Vec2i lower_p(const cv::Vec2i &point, const cv::Vec2i &offset)
 // - For horizontal edges (same row), order by column.
 // - For vertical edges (same col), order by row.
 // Falls back to lexicographic (row,col) if neither axis matches.
-static inline std::pair<cv::Vec2i, cv::Vec2i> order_p(const cv::Vec2i& p, const cv::Vec2i& q)
+[[gnu::always_inline]] static inline std::pair<cv::Vec2i, cv::Vec2i> order_p(const cv::Vec2i& p, const cv::Vec2i& q) noexcept
 {
     if (p[0] == q[0]) { // same row => horizontal edge
         return (p[1] <= q[1]) ? std::make_pair(p, q) : std::make_pair(q, p);
@@ -943,12 +943,12 @@ static inline std::pair<cv::Vec2i, cv::Vec2i> order_p(const cv::Vec2i& p, const 
     return (p[0] < q[0] || (p[0] == q[0] && p[1] <= q[1])) ? std::make_pair(p, q) : std::make_pair(q, p);
 }
 
-static bool loss_mask(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status)
+[[gnu::always_inline]] static inline bool loss_mask(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status) noexcept
 {
     return loss_status(lower_p(p, off)) & (1 << bit);
 }
 
-static int set_loss_mask(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, int set)
+[[gnu::always_inline]] static inline int set_loss_mask(int bit, const cv::Vec2i &p, const cv::Vec2i &off, cv::Mat_<uint16_t> &loss_status, int set) noexcept
 {
     if (set)
         loss_status(lower_p(p, off)) |= (1 << bit);
@@ -1046,7 +1046,7 @@ static int gen_3d_normal_line_loss(ceres::Problem &problem,
     // For consistent disambiguation of the directed normal field, provide a third point:
     // the next quad corner in clockwise direction when walking from base towards off.
     // This third point is treated as non-differentiable inside the loss.
-    const cv::Vec2i base = p;
+    const cv::Vec2i& base = p;
     const cv::Vec2i off_p = p + off;
 
     // Determine clockwise neighbor in (row,col) grid coordinates.
@@ -1465,7 +1465,7 @@ static cv::Vec3d compute_surface_normal_at(
         for (const auto& off : neighbor_offsets) {
             cv::Vec2i neighbor = p + off;
             if (is_valid(neighbor)) {
-                cv::Vec3d neighbor_normal = (*surface_normals)(neighbor);
+                const cv::Vec3d& neighbor_normal = (*surface_normals)(neighbor);
                 if (cv::norm(neighbor_normal) > 0.5) {
                     // Flip if pointing opposite to neighbor
                     if (normal.dot(neighbor_normal) < 0) {
@@ -1708,7 +1708,7 @@ static void local_optimization(const cv::Rect &roi, const cv::Mat_<uchar> &mask,
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
 
-    // std::cout << "inpaint solve " << summary.BriefReport() << std::endl;
+    // std::cout << "inpaint solve " << summary.BriefReport() << "\n";
 
     // cv::imwrite("opt_mask.tif", mask);
 }
@@ -1812,7 +1812,7 @@ static float local_optimization(int radius, const cv::Vec2i &p, TraceParameters 
 //                 options.use_mixed_precision_solves = true;
 //             // }
 //         } else {
-//             std::cerr << "Warning: use_cuda=true but Ceres was not built with CUDA sparse support. Falling back to CPU sparse." << std::endl;
+//             std::cerr << "Warning: use_cuda=true but Ceres was not built with CUDA sparse support. Falling back to CPU sparse." << "\n";
 //         }
 //     }
 // #endif
@@ -1822,12 +1822,12 @@ static float local_optimization(int radius, const cv::Vec2i &p, TraceParameters 
     ceres::Solve(options, &problem, &summary);
 
     if (!quiet)
-        std::cout << "local solve radius " << radius << " " << summary.BriefReport() << std::endl;
+        std::cout << "local solve radius " << radius << " " << summary.BriefReport() << "\n";
 
     return sqrt(summary.final_cost/summary.num_residual_blocks);
 }
 template <typename E>
-static E _max_d_ign(const E &a, const E &b)
+[[gnu::always_inline]] static inline E _max_d_ign(const E &a, const E &b) noexcept
 {
     if (a == E(-1))
         return b;
@@ -1840,7 +1840,7 @@ template <typename T, typename E>
 static void _dist_iteration(T &from, T &to, int s)
 {
     E magic = -1;
-#pragma omp parallel for
+#pragma omp parallel for collapse(2)
     for(int k=0;k<s;k++)
         for(int j=0;j<s;j++)
             for(int i=0;i<s;i++) {
@@ -1878,7 +1878,7 @@ static T distance_transform(const T &chunk, int steps, int size)
         _dist_iteration<T,E>(c2,c1,size);
     }
 
-#pragma omp parallel for
+#pragma omp parallel for collapse(2)
     for(int z=0;z<size;z++)
         for(int y=0;y<size;y++)
             for(int x=0;x<size;x++)
@@ -1902,18 +1902,11 @@ struct thresholdedDistance
         int s = CHUNK_SIZE+2*BORDER;
         E magic = -1;
 
-        int good_count = 0;
-
-#pragma omp parallel for
+#pragma omp parallel for collapse(2)
         for(int z=0;z<s;z++)
             for(int y=0;y<s;y++)
                 for(int x=0;x<s;x++)
-                    if (large(z,y,x) < TH)
-                        outer(z,y,x) = magic;
-                    else {
-                        good_count++;
-                        outer(z,y,x) = 0;
-                    }
+                    outer(z,y,x) = (large(z,y,x) < TH) ? magic : E(0);
 
         outer = distance_transform<T,E>(outer, 15, s);
 
@@ -1928,7 +1921,7 @@ struct thresholdedDistance
 };
 
 
-QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv::Vec3f origin, const nlohmann::json &params, const std::string &cache_root, float voxelsize, std::vector<DirectionField> const &direction_fields, QuadSurface* resume_surf, const std::filesystem::path& tgt_path, const nlohmann::json& meta_params, const VCCollection &corrections)
+QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv::Vec3f origin, const nlohmann::json &params, const std::string &cache_root, float voxelsize, std::vector<DirectionField> const &direction_fields, QuadSurface* resume_surf, const std::filesystem::path& tgt_path, const nlohmann::json& meta_params, const VCCollection* corrections)
 {
     std::unique_ptr<NeuralTracerConnection> neural_tracer;
     int pre_neural_gens = 0, neural_batch_size = 1;
@@ -1937,16 +1930,16 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
         if (!socket_path.empty()) {
             try {
                 neural_tracer = std::make_unique<NeuralTracerConnection>(socket_path);
-                std::cout << "Neural tracer connection enabled on " << socket_path << std::endl;
+                std::cout << "Neural tracer connection enabled on " << socket_path << "\n";
             } catch (const std::exception& e) {
-                std::cerr << "Failed to connect neural tracer: " << e.what() << std::endl;
+                std::cerr << "Failed to connect neural tracer: " << e.what() << "\n";
                 throw;
             }
         }
         pre_neural_gens = params.value("pre_neural_generations", 0);
         neural_batch_size = params.value("neural_batch_size", 1);
         if (!neural_tracer) {
-            std::cout << "Neural tracer not active" << std::endl;
+            std::cout << "Neural tracer not active" << "\n";
         }
     }
     TraceData trace_data(direction_fields);
@@ -2073,16 +2066,16 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                 trace_data.normal3d_fit_quality = std::make_unique<NormalFitQualityWeightField>(
                     std::move(ds_rms), std::move(ds_frac), scale_factor, cache, cache_root, unique_id + "_n3d_fitq");
             } catch (const std::exception& e) {
-                std::cerr << "Normal3d fit-quality fields not loaded (optional): " << e.what() << std::endl;
+                std::cerr << "Normal3d fit-quality fields not loaded (optional): " << e.what() << "\n";
                 trace_data.normal3d_fit_quality.reset();
             }
 
             std::cout << "Loaded normal3d zarr field from " << zarr_root
                       << " (ratio=" << ratio
                       << ", scale_factor=" << scale_factor
-                      << ", delim='" << delim << "')" << std::endl;
+                      << ", delim='" << delim << "')" << "\n";
         } catch (const std::exception& e) {
-            std::cerr << "Failed to load normal3d zarr field: " << e.what() << std::endl;
+            std::cerr << "Failed to load normal3d zarr field: " << e.what() << "\n";
             trace_data.normal3d_field.reset();
             trace_data.normal3d_fit_quality.reset();
         }
@@ -2100,7 +2093,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                 if (path_it->is_string()) {
                     ref_path = path_it->get<std::string>();
                 } else if (!path_it->is_null()) {
-                    std::cerr << "reference_surface.path must be a string" << std::endl;
+                    std::cerr << "reference_surface.path must be a string" << "\n";
                 }
             }
         }
@@ -2109,12 +2102,12 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
             try {
                 reference_surface = load_quad_from_tifxyz(ref_path);
                 loss_settings.reference_raycast.surface = reference_surface.get();
-                std::cout << "Loaded reference surface from " << ref_path << std::endl;
+                std::cout << "Loaded reference surface from " << ref_path << "\n";
             } catch (const std::exception& e) {
-                std::cerr << "Failed to load reference surface '" << ref_path << "': " << e.what() << std::endl;
+                std::cerr << "Failed to load reference surface '" << ref_path << "': " << e.what() << "\n";
             }
         } else {
-            std::cerr << "reference_surface parameter provided without a valid path" << std::endl;
+            std::cerr << "reference_surface parameter provided without a valid path" << "\n";
         }
 
         if (loss_settings.reference_raycast.surface && ref_cfg.is_object()) {
@@ -2126,7 +2119,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                 if (it->is_number()) {
                     return it->get<double>();
                 }
-                std::cerr << "reference_surface." << key << " must be numeric" << std::endl;
+                std::cerr << "reference_surface." << key << " must be numeric" << "\n";
                 return current;
             };
             loss_settings.reference_raycast.voxel_threshold = read_double("voxel_threshold", loss_settings.reference_raycast.voxel_threshold);
@@ -2158,7 +2151,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
             if (loss_settings.reference_raycast.max_distance > 0.0) {
                 std::cout << ", max_distance=" << loss_settings.reference_raycast.max_distance;
             }
-            std::cout << ")" << std::endl;
+            std::cout << ")" << "\n";
         }
     }
     TraceParameters trace_params;
@@ -2203,7 +2196,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
               << " NORMAL3DLINE: " << loss_settings.w[LossType::NORMAL3DLINE]
               << " REFERENCE_RAY: " << loss_settings.w[LossType::REFERENCE_RAY]
               << " SDIR: " << loss_settings.w[LossType::SDIR]
-              << std::endl;
+              << "\n";
     int rewind_gen = params.value("rewind_gen", -1);
     loss_settings.z_min = params.value("z_min", -1);
     loss_settings.z_max = params.value("z_max", std::numeric_limits<int>::max());
@@ -2215,7 +2208,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
     loss_settings.flipback_weight = params.value("flipback_weight", 1.0f);
     std::cout << "Anti-flipback: threshold=" << loss_settings.flipback_threshold
               << " weight=" << loss_settings.flipback_weight
-              << (loss_settings.flipback_weight == 0 ? " (DISABLED)" : "") << std::endl;
+              << (loss_settings.flipback_weight == 0 ? " (DISABLED)" : "") << "\n";
     ALifeTime f_timer("empty space tracing\n");
 
 
@@ -2263,7 +2256,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
     Chunked3d<uint8_t,passTroughComputor> dbg_tensor(pass, ds, cache);
     trace_data.raw_volume = &dbg_tensor;
     std::cout << "seed val " << origin << " " <<
-    (int)dbg_tensor(origin[2],origin[1],origin[0]) << std::endl;
+    (int)dbg_tensor(origin[2],origin[1],origin[0]) << "\n";
 
     auto timer = new ALifeTime("search & optimization ...");
 
@@ -2429,7 +2422,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                 std::cout << "Preserved approval mask (" << old_approval.channels() << " channels, "
                           << old_approval.cols << "x" << old_approval.rows << " -> "
                           << new_approval.cols << "x" << new_approval.rows
-                          << ") with offset (" << offset_row << ", " << offset_col << ")" << std::endl;
+                          << ") with offset (" << offset_row << ", " << offset_col << ")" << "\n";
             }
 
             // Preserve mask channel (single channel uint8)
@@ -2466,7 +2459,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                 surf->setChannel("mask", new_mask);
                 std::cout << "Preserved mask (" << old_mask.cols << "x" << old_mask.rows << " -> "
                           << new_mask.cols << "x" << new_mask.rows
-                          << ") with offset (" << offset_row << ", " << offset_col << ")" << std::endl;
+                          << ") with offset (" << offset_row << ", " << offset_col << ")" << "\n";
             }
         }
 
@@ -2482,10 +2475,10 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
     int last_succ = 0;
     int start_gen = 0;
 
-    std::cout << "lets go! " << std::endl;
+    std::cout << "lets go! " << "\n";
 
     if (resume_surf) {
-        std::cout << "resuime! " << std::endl;
+        std::cout << "resuime! " << "\n";
         float resume_step = 1.0 / resume_surf->scale()[0];
         // Only validate step match if not using normal_grid (which is authoritative for legacy surfaces)
         if (!ngv && std::abs(resume_step - step) > 1e-6) {
@@ -2527,12 +2520,14 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
             }
         }
 
-        trace_data.point_correction = PointCorrection(corrections);
+        if (corrections) {
+            trace_data.point_correction = PointCorrection(*corrections);
+        }
 
         if (trace_data.point_correction.isValid()) {
             trace_data.point_correction.init(trace_params.dpoints);
 
-            std::cout << "Resuming with " << trace_data.point_correction.all_grid_locs().size() << " correction points." << std::endl;
+            std::cout << "Resuming with " << trace_data.point_correction.all_grid_locs().size() << " correction points." << "\n";
             cv::Mat mask = resume_surf->channel("mask");
             if (!mask.empty()) {
                 std::vector<std::vector<cv::Point2f>> all_hulls;
@@ -2548,7 +2543,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                         cv::Point2f center(collection.grid_locs_[0][0], collection.grid_locs_[0][1]);
                         float radius = 8.0f;  // Default radius for single-point corrections
                         single_point_regions.emplace_back(center, radius);
-                        std::cout << "single-point correction region at " << center << " with radius " << radius << std::endl;
+                        std::cout << "single-point correction region at " << center << " with radius " << radius << "\n";
                     } else {
                         std::vector<cv::Point2f> points_for_hull;
                         points_for_hull.reserve(collection.grid_locs_.size());
@@ -2627,7 +2622,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                 cv::Vec2i corr_center_i = { (int)std::round(avg_loc[1]), (int)std::round(avg_loc[0]) };
                 opt_centers.push_back({corr_center_i, radius});
 
-                std::cout << "correction opt centered at " << avg_loc << " with radius " << radius << std::endl;
+                std::cout << "correction opt centered at " << avg_loc << " with radius " << radius << "\n";
                 LossSettings loss_inpaint = loss_settings;
                 loss_inpaint[SNAP] *= 0.0;
                 loss_inpaint[DIST] *= 0.3;
@@ -2668,7 +2663,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                 QuadSurface* surf = create_surface_from_state();
                 surf->save(tgt_path, true);
                 delete surf;
-                std::cout << "saved snapshot in " << tgt_path << std::endl;
+                std::cout << "saved snapshot in " << tgt_path << "\n";
             }
         }
 
@@ -2683,7 +2678,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
 
         last_succ = succ;
         last_elapsed_seconds = f_timer.seconds();
-        std::cout << "Resuming from generation " << generation << " with " << fringe.size() << " points. Initial loss count: " << loss_count << std::endl;
+        std::cout << "Resuming from generation " << generation << " with " << fringe.size() << " points. Initial loss count: " << loss_count << "\n";
 
     } else {
         // Initialize seed normals with consistent orientation (vx cross vy = +Z direction)
@@ -2691,7 +2686,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
         seed_normal /= cv::norm(seed_normal);
 
         if (neural_tracer && pre_neural_gens == 0) {
-            std::cout << "Initializing with neural tracer..." << std::endl;
+            std::cout << "Initializing with neural tracer..." << "\n";
 
             // Bootstrap the first quad with the neural tracer -- we already have the
             // top-left point; we construct top-right, bottom-left and bottom-right
@@ -2701,7 +2696,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
             // Get hopefully-4 adjacent points; take the one with min or max z-displacement depending on required direction
             auto coordinates = neural_tracer->get_next_points({origin}, {{}}, {{}}, {{}})[0].next_u_xyzs;
             if (coordinates.empty() || cv::norm(coordinates[0]) < 1e-6) {
-                std::cout << "no blobs found while bootstrapping (vertex #1, top-right)" << std::endl;
+                std::cout << "no blobs found while bootstrapping (vertex #1, top-right)" << "\n";
                 throw std::runtime_error("Neural tracer bootstrap failed at vertex #1");
             }
             // use minimum delta-z; this choice orients the patch
@@ -2714,7 +2709,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
             cv::Vec3f prev_v = trace_params.dpoints(y0, x0 + 1);
             coordinates = neural_tracer->get_next_points({origin}, {{}}, {prev_v}, {{}})[0].next_u_xyzs;
             if (coordinates.empty() || cv::norm(coordinates[0]) < 1e-6) {
-                std::cout << "no blobs found while bootstrapping (vertex #2, bottom-left)" << std::endl;
+                std::cout << "no blobs found while bootstrapping (vertex #2, bottom-left)" << "\n";
                 throw std::runtime_error("Neural tracer bootstrap failed at vertex #2");
             }
             trace_params.dpoints(y0 + 1, x0) = coordinates[0];
@@ -2725,7 +2720,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
             cv::Vec3f prev_diag = trace_params.dpoints(y0 + 1, x0);
             coordinates = neural_tracer->get_next_points({center_xyz}, {{}}, {prev_v}, {prev_diag})[0].next_u_xyzs;
             if (coordinates.empty() || cv::norm(coordinates[0]) < 1e-6) {
-                std::cout << "no blobs found while bootstrapping (vertex #3, bottom-right)" << std::endl;
+                std::cout << "no blobs found while bootstrapping (vertex #3, bottom-right)" << "\n";
                 throw std::runtime_error("Neural tracer bootstrap failed at vertex #3");
             }
             trace_params.dpoints(y0 + 1, x0 + 1) = coordinates[0];
@@ -2775,27 +2770,27 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
     else
     {
         if (params.value("resume_opt", "skip") == "global") {
-            std::cout << "global opt" << std::endl;
+            std::cout << "global opt" << "\n";
             local_optimization(100, {y0,x0}, trace_params, trace_data, loss_settings, false, true);
         }
         else if (params.value("resume_opt", "skip") == "local") {
             int opt_step = params.value("resume_local_opt_step", 16);
             if (opt_step <= 0) {
-                std::cerr << "WARNING: resume_local_opt_step must be > 0; defaulting to 16" << std::endl;
+                std::cerr << "WARNING: resume_local_opt_step must be > 0; defaulting to 16" << "\n";
                 opt_step = 16;
             }
 
             int default_radius = opt_step * 2;
             int opt_radius = params.value("resume_local_opt_radius", default_radius);
             if (opt_radius <= 0) {
-                std::cerr << "WARNING: resume_local_opt_radius must be > 0; defaulting to " << default_radius << std::endl;
+                std::cerr << "WARNING: resume_local_opt_radius must be > 0; defaulting to " << default_radius << "\n";
                 opt_radius = default_radius;
             }
 
             LocalOptimizationConfig resume_local_config;
             resume_local_config.max_iterations = params.value("resume_local_max_iters", 1000);
             if (resume_local_config.max_iterations <= 0) {
-                std::cerr << "WARNING: resume_local_max_iters must be > 0; defaulting to 1000" << std::endl;
+                std::cerr << "WARNING: resume_local_max_iters must be > 0; defaulting to 1000" << "\n";
                 resume_local_config.max_iterations = 1000;
             }
             resume_local_config.use_dense_qr = params.value("resume_local_dense_qr", false);
@@ -2804,7 +2799,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                       << ", radius=" << opt_radius
                       << ", max_iters=" << resume_local_config.max_iterations
                       << ", dense_qr=" << std::boolalpha << resume_local_config.use_dense_qr
-                      << std::noboolalpha << ")" << std::endl;
+                      << std::noboolalpha << ")" << "\n";
             std::vector<cv::Vec2i> opt_local;
             for (int j = used_area.y; j < used_area.br().y; ++j) {
                 for (int i = used_area.x; i < used_area.br().x; ++i) {
@@ -2868,7 +2863,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
             std::vector<cv::Vec4i> hierarchy;
             cv::findContours(hole_mask, contours, hierarchy, cv::RETR_CCOMP, cv::CHAIN_APPROX_SIMPLE);
 
-            std::cout << "performing inpaint on " << contours.size() << " potential holes" << std::endl;
+            std::cout << "performing inpaint on " << contours.size() << " potential holes" << "\n";
 
             int inpaint_count = 0;
             int inpaint_skip = 0;
@@ -2896,12 +2891,12 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                         inpaint_skip++;
     #pragma omp critical
                         {
-                            std::cout << "skip inpaint: insufficient margin around roi " << roi << std::endl;
+                            std::cout << "skip inpaint: insufficient margin around roi " << roi << "\n";
                         }
                         continue;
                     }
 
-                    // std::cout << hole_mask.size() << trace_params.state.size() << resume_pad_x << "x" << resume_pad_y << std::endl;
+                    // std::cout << hole_mask.size() << trace_params.state.size() << resume_pad_x << "x" << resume_pad_y << "\n";
 
                     // cv::Point testp(2492+resume_pad_x, 508+resume_pad_y);
                     // cv::Point testp(2500+resume_pad_x, 566+resume_pad_y);
@@ -2910,7 +2905,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                     // cv::rectangle(vis, roi, cv::Scalar(255,255,255));
 
                     // if (!roi.contains(testp)) {
-                    //     // std::cout << "skip " << roi << std::endl;
+                    //     // std::cout << "skip " << roi << "\n";
                     //     continue;
                     // }
 
@@ -2923,7 +2918,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                     std::vector<std::vector<cv::Point>> contours_to_fill = {hole_contour_roi};
                     cv::fillPoly(inpaint_mask, contours_to_fill, cv::Scalar(0));
 
-                    // std::cout << "Inpainting hole at " << roi << " - " << inpaint_count << "+" << inpaint_skip << "/" << contours.size() << std::endl;
+                    // std::cout << "Inpainting hole at " << roi << " - " << inpaint_count << "+" << inpaint_skip << "/" << contours.size() << "\n";
                     bool did_inpaint = false;
                     try {
                         did_inpaint = inpaint(roi, inpaint_mask, trace_params, trace_data);
@@ -2932,7 +2927,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                         inpaint_skip++;
     #pragma omp critical
                         {
-                            std::cout << "skip inpaint: OpenCV exception for roi " << roi << " => " << ex.what() << std::endl;
+                            std::cout << "skip inpaint: OpenCV exception for roi " << roi << " => " << ex.what() << "\n";
                         }
                         continue;
                     } catch (const std::exception& ex) {
@@ -2940,7 +2935,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                         inpaint_skip++;
     #pragma omp critical
                         {
-                            std::cout << "skip inpaint: exception for roi " << roi << " => " << ex.what() << std::endl;
+                            std::cout << "skip inpaint: exception for roi " << roi << " => " << ex.what() << "\n";
                         }
                         continue;
                     } catch (...) {
@@ -2948,7 +2943,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                         inpaint_skip++;
     #pragma omp critical
                         {
-                            std::cout << "skip inpaint: unknown exception for roi " << roi << std::endl;
+                            std::cout << "skip inpaint: unknown exception for roi " << roi << "\n";
                         }
                         continue;
                     }
@@ -2958,7 +2953,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                         inpaint_skip++;
     #pragma omp critical
                         {
-                            std::cout << "skip inpaint: mask border check failed for roi " << roi << std::endl;
+                            std::cout << "skip inpaint: mask border check failed for roi " << roi << "\n";
                         }
                         continue;
                     }
@@ -2969,7 +2964,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                             QuadSurface* surf = create_surface_from_state();
                             surf->save(tgt_path, true);
                             delete surf;
-                            std::cout << "saved snapshot in " << tgt_path << " (" << inpaint_count << "+" << inpaint_skip << "/" << contours.size() << ")" << std::endl;
+                            std::cout << "saved snapshot in " << tgt_path << " (" << inpaint_count << "+" << inpaint_skip << "/" << contours.size() << ")" << "\n";
                         }
                     }
 
@@ -2996,7 +2991,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
 
     int local_opt_r = 3;
 
-    std::cout << "lets start fringe: " << fringe.size() << std::endl;
+    std::cout << "lets start fringe: " << fringe.size() << "\n";
 
     while (!fringe.empty()) {
         bool global_opt = generation <= 10 && !resume_surf;
@@ -3021,10 +3016,10 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
                     cands.push_back(p+n);
                 }
         }
-        std::cout << "gen " << generation << " processing " << cands.size() << " fringe cands (total done " << succ << " fringe: " << fringe.size() << ")" << std::endl;
+        std::cout << "gen " << generation << " processing " << cands.size() << " fringe cands (total done " << succ << " fringe: " << fringe.size() << ")" << "\n";
         fringe.resize(0);
 
-        std::cout << "cands " << cands.size() << std::endl;
+        std::cout << "cands " << cands.size() << "\n";
 
         int succ_gen = 0;
         std::vector<cv::Vec2i> succ_gen_ps;
@@ -3297,7 +3292,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
             QuadSurface* surf = create_surface_from_state();
             surf->save(tgt_path, true);
             delete surf;
-            std::cout << "saved snapshot in " << tgt_path << std::endl;
+            std::cout << "saved snapshot in " << tgt_path << "\n";
         }
 
     }  // end while fringe is non-empty

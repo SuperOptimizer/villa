@@ -86,6 +86,16 @@
 #include "segmentation/SegmentationGrower.hpp"
 #include "SurfacePanelController.hpp"
 #include "MenuActionController.hpp"
+#include "ViewerManager.hpp"
+#include "segmentation/SegmentationEditManager.hpp"
+#include "overlays/SegmentationOverlayController.hpp"
+#include "overlays/PointsOverlayController.hpp"
+#include "overlays/RawPointsOverlayController.hpp"
+#include "overlays/PathsOverlayController.hpp"
+#include "overlays/BBoxOverlayController.hpp"
+#include "overlays/VectorOverlayController.hpp"
+#include "overlays/PlaneSlicingOverlayController.hpp"
+#include "overlays/VolumeOverlayController.hpp"
 #include "vc/core/Version.hpp"
 
 #include "vc/core/util/Logging.hpp"
@@ -283,7 +293,7 @@ CWindow::CWindow() :
     // setAttribute(Qt::WA_DeleteOnClose);
 
     chunk_cache = new ChunkCache<uint8_t>(CHUNK_CACHE_SIZE_GB*1024ULL*1024ULL*1024ULL);
-    std::cout << "chunk cache size is " << CHUNK_CACHE_SIZE_GB << " gigabytes " << std::endl;
+    std::cout << "chunk cache size is " << CHUNK_CACHE_SIZE_GB << " gigabytes " << "\n";
 
     _surf_col = new CSurfaceCollection();
 
@@ -1581,7 +1591,7 @@ void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf
         return;
     }
     else if (modifiers & Qt::ControlModifier) {
-        std::cout << "clicked on vol loc " << vol_loc << std::endl;
+        std::cout << "clicked on vol loc " << vol_loc << "\n";
         // Get the surface ID from the surface collection
         std::string surfId;
         if (_surf_col && surf) {

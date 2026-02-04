@@ -13,6 +13,7 @@
 #include <opencv2/core.hpp>
 
 #include "vc/core/util/SurfacePatchIndex.hpp"
+#include "vc/core/types/InterpolationMethod.hpp"
 
 class QMdiArea;
 class CVolumeViewer;
@@ -95,6 +96,10 @@ public:
 
     void setSliceStepSize(int size);
     int sliceStepSize() const { return _sliceStepSize; }
+
+    // Performance settings - applied to all viewers
+    void setDownscaleOverride(int level);
+    void setInterpolationMethod(InterpolationMethod method);
 
     void forEachViewer(const std::function<void(CVolumeViewer*)>& fn) const;
     void setIntersectionThickness(float thickness);

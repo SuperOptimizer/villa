@@ -33,7 +33,7 @@ using json = nlohmann::json;
 int main(int argc, char *argv[])
 {
     if (argc != 6) {
-        std::cout << "usage: " << argv[0] << " <zarr-volume> <src-dir> <tgt-dir> <json-params> <src-segment>" << std::endl;
+        std::cout << "usage: " << argv[0] << " <zarr-volume> <src-dir> <tgt-dir> <json-params> <src-segment>" << "\n";
         return EXIT_SUCCESS;
     }
 
@@ -59,8 +59,8 @@ int main(int argc, char *argv[])
     z5::filesystem::handle::Dataset ds_handle(group, "0", json::parse(std::ifstream(vol_path/"0/.zarray")).value<std::string>("dimension_separator","."));
     std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
 
-    std::cout << "zarr dataset size for scale group 0 " << ds->shape() << std::endl;
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
+    std::cout << "zarr dataset size for scale group 0 " << ds->shape() << "\n";
+    std::cout << "chunk shape shape " << ds->chunking().blockShape() << "\n";
 
     float voxelsize = json::parse(std::ifstream(vol_path/"meta.json"))["voxelsize"];
 
@@ -69,13 +69,13 @@ int main(int argc, char *argv[])
 
     std::filesystem::path meta_fn = src_path / "meta.json";
     if (!std::filesystem::exists(meta_fn)) {
-        std::cerr << "Error: meta.json not found at " << meta_fn << std::endl;
+        std::cerr << "Error: meta.json not found at " << meta_fn << "\n";
         return EXIT_FAILURE;
     }
 
     std::ifstream meta_f(meta_fn);
     if (!meta_f.is_open() || !meta_f.good()) {
-        std::cerr << "Error: Could not open " << meta_fn << std::endl;
+        std::cerr << "Error: Could not open " << meta_fn << "\n";
         return EXIT_FAILURE;
     }
 

@@ -17,8 +17,10 @@
 #include <vector>
 #include <optional>
 #include "overlays/ViewerOverlayControllerBase.hpp"
-#include "CSurfaceCollection.hpp"  // Required for IntersectionLine value type
+#include "SurfaceTypes.hpp"  // POI, IntersectionLine (lightweight, no Qt)
 #include "vc/core/util/SurfacePatchIndex.hpp"
+
+class CSurfaceCollection;  // Forward declaration
 #include "vc/core/types/InterpolationMethod.hpp"
 
 // Forward declarations - reduces header dependencies
@@ -100,6 +102,13 @@ public:
     ChunkCache<uint8_t>* chunkCachePtr() const { return cache; }
     int datasetScaleIndex() const { return _ds_sd_idx; }
     float datasetScaleFactor() const { return _ds_scale; }
+
+    // Performance settings - can be changed at runtime
+    void setDownscaleOverride(int level);
+    int downscaleOverride() const { return _downscale_override; }
+    void setInterpolationMethod(InterpolationMethod method);
+    InterpolationMethod interpolationMethod() const { return _interpolationMethod; }
+
     VCCollection* pointCollection() const { return _point_collection; }
     uint64_t highlightedPointId() const { return _highlighted_point_id; }
     uint64_t selectedPointId() const { return _selected_point_id; }

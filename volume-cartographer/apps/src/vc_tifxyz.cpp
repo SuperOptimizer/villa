@@ -1,13 +1,14 @@
-#include "vc/core/util/Slicing.hpp"
-#include "vc/core/util/Surface.hpp"
-#include "vc/core/util/QuadSurface.hpp"
-#include "vc/core/util/SurfaceArea.hpp"
-#include <opencv2/opencv.hpp>
+#include <boost/program_options.hpp>
+#include <nlohmann/json.hpp>
 #include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
-#include <boost/program_options.hpp>
+#include <cmath>
+#include <memory>
+
+#include "vc/core/util/QuadSurface.hpp"                     // for QuadSurface
+#include "vc/core/util/SurfaceArea.hpp"                     // for computeSu...
 
 namespace po = boost::program_options;
 
@@ -28,19 +29,19 @@ int main(int argc, char* argv[]) {
         po::store(po::command_line_parser(argc, argv).options(desc).positional(p).run(), vm);
 
         if (vm.count("help")) {
-            std::cout << "usage: " << argv[0] << " <tifxyz> -r/--rotate angle_deg [-p/--paths ...]\n" << desc << std::endl;
+            std::cout << "usage: " << argv[0] << " <tifxyz> -r/--rotate angle_deg [-p/--paths ...]\n" << desc << "\n";
             return EXIT_SUCCESS;
         }
 
         po::notify(vm);
     } catch (const po::error &e) {
-        std::cerr << "ERROR: " << e.what() << std::endl << std::endl;
-        std::cerr << "usage: " << argv[0] << " <tifxyz> -r/--rotate angle_deg [-p/--paths ...]\n" << desc << std::endl;
+        std::cerr << "ERROR: " << e.what() << "\n" << "\n";
+        std::cerr << "usage: " << argv[0] << " <tifxyz> -r/--rotate angle_deg [-p/--paths ...]\n" << desc << "\n";
         return EXIT_FAILURE;
     }
 
     if (!vm.count("input-file")) {
-        std::cerr << "Error: No input tiffxyz file specified." << std::endl;
+        std::cerr << "Error: No input tiffxyz file specified." << "\n";
         return EXIT_FAILURE;
     }
 
@@ -52,12 +53,12 @@ int main(int argc, char* argv[]) {
     try {
         surf = load_quad_from_tifxyz(input_path);
     } catch (const std::exception& e) {
-        std::cerr << "Error loading tifxyz file: " << input_path << " - " << e.what() << std::endl;
+        std::cerr << "Error loading tifxyz file: " << input_path << " - " << e.what() << "\n";
         return EXIT_FAILURE;
     }
 
     // Apply rotation using QuadSurface::rotate() which handles points and channels
-    std::cout << "Rotating surface by " << rotation_angle << " degrees..." << std::endl;
+    std::cout << "Rotating surface by " << rotation_angle << " degrees..." << "\n";
     surf->rotate(rotation_angle);
 
     // Generate output filename
@@ -75,7 +76,7 @@ int main(int argc, char* argv[]) {
     (*surf->meta)["area"] = area;
 
     surf->save(output_path, true);
-    std::cout << "Saved rotated surface to: " << output_path << std::endl;
+    std::cout << "Saved rotated surface to: " << output_path << "\n";
 
     return EXIT_SUCCESS;
 }

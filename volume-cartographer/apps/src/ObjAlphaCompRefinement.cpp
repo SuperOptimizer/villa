@@ -1,35 +1,30 @@
 #include <nlohmann/json.hpp>
-
-#include <xtensor/containers/xarray.hpp>
-#include <xtensor/io/xio.hpp>
-#include <xtensor/views/xview.hpp>
-
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-#include "z5/attributes.hxx"
-
-#include <opencv2/imgcodecs.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
+#include <z5/common.hxx>
+#include <z5/dataset.hxx>
+#include <z5/filesystem/factory.hxx>
+#include <z5/util/blocking.hxx>
+#include <filesystem>
+#include <fstream>
+#include <vector>
+#include <iostream>
+#include <cmath>
+#include <algorithm>
+#include <chrono>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <sstream>
+#include <string>
 
+#include "z5/filesystem/handle.hxx"
 #include "vc/core/util/Geometry.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/StreamOperators.hpp"
-#include "vc/core/util/Surface.hpp"
-
-#include <filesystem>
-#include <fstream>
-#include <optional>
-#include <vector>
-#include <iostream>
-#include <cmath>
-#include <type_traits>
-#include <stdexcept>
-#include <algorithm>
-#include <cstdint>
+#include "vc/core/util/ChunkCache.hpp"
 
 enum class SurfaceInputType {
     Obj,
@@ -129,7 +124,7 @@ cv::Vec3f parse_vec3f(std::string line, std::string type = "")
     std::istringstream iss(line);
     std::string t;
     if (!(iss >> t >> v[0] >> v[1] >> v[2]) || (type.size() && t != type)) {
-        std::cout << t << v << type << line << std::endl;
+        std::cout << t << v << type << line << "\n";
         throw std::runtime_error("error in parse_vec3f()");
     }
     return v;
@@ -258,7 +253,7 @@ int process_obj(const std::string& src,
             vns.push_back(normal);
         }
         // if (vs.size() % 10000 == 0)
-            // std::cout << vs.size() << std::endl;
+            // std::cout << vs.size() << "\n";
     }
 
     if (vs.size() != vns.size())
@@ -305,7 +300,7 @@ int process_tifxyz(const std::filesystem::path& src,
     try {
         surf = load_quad_from_tifxyz(src.string());
     } catch (const std::exception& e) {
-        std::cerr << "failed to load tifxyz: " << e.what() << std::endl;
+        std::cerr << "failed to load tifxyz: " << e.what() << "\n";
         return EXIT_FAILURE;
     }
 
@@ -360,7 +355,7 @@ int process_tifxyz(const std::filesystem::path& src,
     try {
         outSurf.save(dst.string(), uuid, cfg.overwrite);
     } catch (const std::exception& e) {
-        std::cerr << "failed to save tifxyz: " << e.what() << std::endl;
+        std::cerr << "failed to save tifxyz: " << e.what() << "\n";
         return EXIT_FAILURE;
     }
 
@@ -382,7 +377,7 @@ public:
     ~MeasureLife()
     {
         auto end = std::chrono::high_resolution_clock::now();
-        std::cout << " took " << std::chrono::duration<double>(end-start).count() << " s" << std::endl;
+        std::cout << " took " << std::chrono::duration<double>(end-start).count() << " s" << "\n";
     }
 private:
     std::chrono::time_point<std::chrono::high_resolution_clock> start;
@@ -392,7 +387,7 @@ int main(int argc, char *argv[])
 {
     if (argc != 5) {
         std::cout << "usage: " << argv[0]
-                  << " <zarr-volume> <src-surface> <out-surface> <json-params>" << std::endl;
+                  << " <zarr-volume> <src-surface> <out-surface> <json-params>" << "\n";
         return EXIT_SUCCESS;
     }
 
@@ -403,7 +398,7 @@ int main(int argc, char *argv[])
 
     std::ifstream params_f(params_path);
     if (!params_f) {
-        std::cerr << "failed to open params json: " << params_path << std::endl;
+        std::cerr << "failed to open params json: " << params_path << "\n";
         return EXIT_FAILURE;
     }
 
@@ -414,9 +409,9 @@ int main(int argc, char *argv[])
     z5::filesystem::handle::Dataset ds_handle(group, cfg.dataset_group, "/");
     std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
 
-    std::cout << "zarr dataset size for scale group " << cfg.dataset_group << " " << ds->shape() << std::endl;
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
-    std::cout << "chunk cache size (bytes) " << cfg.cache_bytes << std::endl;
+    std::cout << "zarr dataset size for scale group " << cfg.dataset_group << " " << ds->shape() << "\n";
+    std::cout << "chunk shape shape " << ds->chunking().blockShape() << "\n";
+    std::cout << "chunk cache size (bytes) " << cfg.cache_bytes << "\n";
     ChunkCache<uint8_t> chunk_cache(cfg.cache_bytes);
 
     DSReader reader = {ds.get(), cfg.reader_scale, &chunk_cache};

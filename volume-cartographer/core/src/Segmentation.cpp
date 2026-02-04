@@ -1,53 +1,57 @@
 #include "vc/core/types/Segmentation.hpp"
+
+#include <nlohmann/json.hpp>
+
 #include "vc/core/util/LoadJson.hpp"
 #include "vc/core/util/Logging.hpp"
+#include "vc/core/util/QuadSurface.hpp"
 
 static const std::filesystem::path METADATA_FILE = "meta.json";
 
 Segmentation::Segmentation(std::filesystem::path path)
-    : path_(std::move(path))
+    : path_(std::move(path)), metadata_(std::make_unique<nlohmann::json>())
 {
     loadMetadata();
 }
 
-Segmentation::Segmentation(std::filesystem::path path, std::string uuid, std::string name)
-    : path_(std::move(path))
+Segmentation::Segmentation(std::filesystem::path path, const std::string& uuid, const std::string& name)
+    : path_(std::move(path)), metadata_(std::make_unique<nlohmann::json>())
 {
-    metadata_["uuid"] = uuid;
-    metadata_["name"] = name;
-    metadata_["type"] = "seg";
-    metadata_["volume"] = std::string{};
+    (*metadata_)["uuid"] = uuid;
+    (*metadata_)["name"] = name;
+    (*metadata_)["type"] = "seg";
+    (*metadata_)["volume"] = std::string{};
     saveMetadata();
 }
 
 void Segmentation::loadMetadata()
 {
     auto metaPath = path_ / METADATA_FILE;
-    metadata_ = vc::json::load_json_file(metaPath);
-    vc::json::require_type(metadata_, "type", "seg", metaPath.string());
-    vc::json::require_fields(metadata_, {"uuid"}, metaPath.string());
+    *metadata_ = vc::json::load_json_file(metaPath);
+    vc::json::require_type(*metadata_, "type", "seg", metaPath.string());
+    vc::json::require_fields(*metadata_, {"uuid"}, metaPath.string());
 }
 
 std::string Segmentation::id() const
 {
-    return metadata_["uuid"].get<std::string>();
+    return (*metadata_)["uuid"].get<std::string>();
 }
 
 std::string Segmentation::name() const
 {
-    return metadata_["name"].get<std::string>();
+    return (*metadata_)["name"].get<std::string>();
 }
 
 void Segmentation::setName(const std::string& n)
 {
-    metadata_["name"] = n;
+    (*metadata_)["name"] = n;
 }
 
 void Segmentation::saveMetadata()
 {
     auto metaPath = path_ / METADATA_FILE;
     std::ofstream jsonFile(metaPath.string(), std::ofstream::out);
-    jsonFile << metadata_ << '\n';
+    jsonFile << *metadata_ << '\n';
     if (jsonFile.fail()) {
         throw std::runtime_error("could not write json file '" + metaPath.string() + "'");
     }
@@ -56,12 +60,12 @@ void Segmentation::saveMetadata()
 void Segmentation::ensureScrollSource(const std::string& scrollName, const std::string& volumeUuid)
 {
     bool changed = false;
-    if (!metadata_.contains("scroll_source") || metadata_["scroll_source"].get<std::string>().empty()) {
-        metadata_["scroll_source"] = scrollName;
+    if (!metadata_->contains("scroll_source") || (*metadata_)["scroll_source"].get<std::string>().empty()) {
+        (*metadata_)["scroll_source"] = scrollName;
         changed = true;
     }
-    if (!metadata_.contains("volume") || metadata_["volume"].get<std::string>().empty()) {
-        metadata_["volume"] = volumeUuid;
+    if (!metadata_->contains("volume") || (*metadata_)["volume"].get<std::string>().empty()) {
+        (*metadata_)["volume"] = volumeUuid;
         changed = true;
     }
     if (changed) {
@@ -69,7 +73,7 @@ void Segmentation::ensureScrollSource(const std::string& scrollName, const std::
     }
 }
 
-bool Segmentation::checkDir(std::filesystem::path path)
+bool Segmentation::checkDir(const std::filesystem::path& path)
 {
     return std::filesystem::is_directory(path) && std::filesystem::exists(path / METADATA_FILE);
 }
@@ -84,15 +88,10 @@ std::shared_ptr<Segmentation> Segmentation::New(const std::filesystem::path& pat
     return std::make_shared<Segmentation>(path, uuid, name);
 }
 
-bool Segmentation::isSurfaceLoaded() const
-{
-    return surface_ != nullptr;
-}
-
 bool Segmentation::canLoadSurface() const
 {
-    return metadata_.contains("format") &&
-           metadata_["format"].get<std::string>() == "tifxyz";
+    return metadata_->contains("format") &&
+           (*metadata_)["format"].get<std::string>() == "tifxyz";
 }
 
 std::shared_ptr<QuadSurface> Segmentation::loadSurface()

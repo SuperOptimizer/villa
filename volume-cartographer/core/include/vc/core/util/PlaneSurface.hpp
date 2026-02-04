@@ -37,9 +37,9 @@ public:
     cv::Vec3f origin();
     float scalarp(cv::Vec3f point) const;
     void setInPlaneRotation(float radians);
-    float inPlaneRotation() const { return _inPlaneRotation; }
-    cv::Vec3f basisX() const { return _vx; }
-    cv::Vec3f basisY() const { return _vy; }
+    [[nodiscard]] float inPlaneRotation() const noexcept { return _inPlaneRotation; }
+    [[nodiscard]] cv::Vec3f basisX() const noexcept { return _vx; }
+    [[nodiscard]] cv::Vec3f basisY() const noexcept { return _vy; }
 protected:
     void update();
     cv::Vec3f _normal = {0,0,1};

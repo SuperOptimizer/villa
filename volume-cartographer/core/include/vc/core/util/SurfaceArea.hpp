@@ -32,7 +32,7 @@ struct MaskAreaResult
 namespace detail
 {
 template <typename Vec>
-inline bool isFiniteVec(const Vec& v)
+[[gnu::always_inline]] inline bool isFiniteVec(const Vec& v) noexcept
 {
     return std::isfinite(static_cast<double>(v[0])) &&
            std::isfinite(static_cast<double>(v[1])) &&
@@ -40,7 +40,7 @@ inline bool isFiniteVec(const Vec& v)
 }
 
 template <typename Vec>
-inline bool isSentinelInvalid(const Vec& v)
+[[gnu::always_inline]] inline bool isSentinelInvalid(const Vec& v) noexcept
 {
     return static_cast<double>(v[0]) == -1.0 &&
            static_cast<double>(v[1]) == -1.0 &&
@@ -48,7 +48,7 @@ inline bool isSentinelInvalid(const Vec& v)
 }
 
 template <typename Vec>
-inline double triangleArea(const Vec& a, const Vec& b, const Vec& c)
+[[gnu::always_inline]] inline double triangleArea(const Vec& a, const Vec& b, const Vec& c) noexcept
 {
     if (!isFiniteVec(a) || !isFiniteVec(b) || !isFiniteVec(c)) {
         return 0.0;
@@ -73,10 +73,10 @@ inline double triangleArea(const Vec& a, const Vec& b, const Vec& c)
 }
 
 template <typename Vec>
-inline double quadArea(const Vec& p00,
+[[gnu::always_inline]] inline double quadArea(const Vec& p00,
                        const Vec& p10,
                        const Vec& p01,
-                       const Vec& p11)
+                       const Vec& p11) noexcept
 {
     return triangleArea(p00, p10, p11) + triangleArea(p00, p11, p01);
 }
@@ -144,28 +144,28 @@ inline MaskConversion toBinaryMask(const cv::Mat& input, bool insideIsNonZero)
 }
 } // namespace detail
 
-inline double triangleAreaVox2(const cv::Vec3d& a, const cv::Vec3d& b, const cv::Vec3d& c)
+[[nodiscard]] inline double triangleAreaVox2(const cv::Vec3d& a, const cv::Vec3d& b, const cv::Vec3d& c) noexcept
 {
     return detail::triangleArea(a, b, c);
 }
 
-inline double triangleAreaVox2(const cv::Vec3f& a, const cv::Vec3f& b, const cv::Vec3f& c)
+[[nodiscard]] inline double triangleAreaVox2(const cv::Vec3f& a, const cv::Vec3f& b, const cv::Vec3f& c) noexcept
 {
     return detail::triangleArea(a, b, c);
 }
 
-inline double quadAreaVox2(const cv::Vec3d& p00,
+[[nodiscard]] inline double quadAreaVox2(const cv::Vec3d& p00,
                            const cv::Vec3d& p10,
                            const cv::Vec3d& p01,
-                           const cv::Vec3d& p11)
+                           const cv::Vec3d& p11) noexcept
 {
     return detail::quadArea(p00, p10, p01, p11);
 }
 
-inline double quadAreaVox2(const cv::Vec3f& p00,
+[[nodiscard]] inline double quadAreaVox2(const cv::Vec3f& p00,
                            const cv::Vec3f& p10,
                            const cv::Vec3f& p01,
-                           const cv::Vec3f& p11)
+                           const cv::Vec3f& p11) noexcept
 {
     return detail::quadArea(p00, p10, p01, p11);
 }

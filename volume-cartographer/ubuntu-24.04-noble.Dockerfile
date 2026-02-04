@@ -31,8 +31,9 @@ RUN ARCH=$(uname -m) && \
     else \
         echo "Unsupported architecture: $ARCH" && exit 1; \
     fi && \
-    curl -Ls "https://micro.mamba.pm/api/micromamba/${MICROMAMBA_ARCH}/latest" | \
-    tar -xvj -C /usr/local/bin bin/micromamba --strip-components=1
+    curl -Ls "https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-${MICROMAMBA_ARCH}" \
+        -o /usr/local/bin/micromamba && \
+    chmod +x /usr/local/bin/micromamba
 
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then \

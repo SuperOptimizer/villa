@@ -35,9 +35,9 @@ namespace vc {
  * @param a Lanczos parameter (window size), typically 2 or 3
  * @return Lanczos kernel weight
  */
-inline float lanczosKernel(float x, int a = 3) {
-    if (x == 0.0f) return 1.0f;
-    if (std::abs(x) >= static_cast<float>(a)) return 0.0f;
+[[gnu::always_inline]] inline float lanczosKernel(float x, int a = 3) noexcept {
+    if (x == 0.0f) [[unlikely]] return 1.0f;
+    if (std::abs(x) >= static_cast<float>(a)) [[unlikely]] return 0.0f;
 
     float pix = std::numbers::pi_v<float> * x;
     float pixa = pix / static_cast<float>(a);
@@ -52,25 +52,31 @@ inline float lanczosKernel(float x, int a = 3) {
  */
 struct Lanczos3Weights {
     std::array<float, 6> weights;
-    float sum;
 
     /**
      * @brief Compute weights for a fractional offset
      * @param frac Fractional part in [0, 1)
      */
     explicit Lanczos3Weights(float frac) {
-        sum = 0.0f;
-        for (int i = 0; i < 6; ++i) {
-            float x = frac - static_cast<float>(i - 2);  // Position relative to center
-            weights[i] = lanczosKernel(x, 3);
-            sum += weights[i];
-        }
-        // Normalize
+        // Compute all weights - positions relative to center
+        weights[0] = lanczosKernel(frac + 2.0f, 3);  // i=0: frac - (-2) = frac + 2
+        weights[1] = lanczosKernel(frac + 1.0f, 3);  // i=1: frac - (-1) = frac + 1
+        weights[2] = lanczosKernel(frac, 3);         // i=2: frac - 0 = frac
+        weights[3] = lanczosKernel(frac - 1.0f, 3);  // i=3: frac - 1
+        weights[4] = lanczosKernel(frac - 2.0f, 3);  // i=4: frac - 2
+        weights[5] = lanczosKernel(frac - 3.0f, 3);  // i=5: frac - 3
+
+        // Sum and normalize with reciprocal multiplication (faster than division)
+        const float sum = weights[0] + weights[1] + weights[2] +
+                          weights[3] + weights[4] + weights[5];
         if (sum > 0.0f) {
-            for (int i = 0; i < 6; ++i) {
-                weights[i] /= sum;
-            }
-            sum = 1.0f;
+            const float inv_sum = 1.0f / sum;
+            weights[0] *= inv_sum;
+            weights[1] *= inv_sum;
+            weights[2] *= inv_sum;
+            weights[3] *= inv_sum;
+            weights[4] *= inv_sum;
+            weights[5] *= inv_sum;
         }
     }
 };
@@ -91,37 +97,50 @@ template<typename T>
 float sampleLanczos3D(const T* __restrict__ data, int sz, int sy, int sx,
                       float vz, float vy, float vx) {
     // Integer and fractional parts
-    int iz = static_cast<int>(std::floor(vz));
-    int iy = static_cast<int>(std::floor(vy));
-    int ix = static_cast<int>(std::floor(vx));
+    const int iz = static_cast<int>(std::floor(vz));
+    const int iy = static_cast<int>(std::floor(vy));
+    const int ix = static_cast<int>(std::floor(vx));
 
-    float fz = vz - static_cast<float>(iz);
-    float fy = vy - static_cast<float>(iy);
-    float fx = vx - static_cast<float>(ix);
+    const float fz = vz - static_cast<float>(iz);
+    const float fy = vy - static_cast<float>(iy);
+    const float fx = vx - static_cast<float>(ix);
 
     // Precompute weights
-    Lanczos3Weights wz(fz), wy(fy), wx(fx);
+    const Lanczos3Weights wz(fz), wy(fy), wx(fx);
 
-    // Separable evaluation
+    // Pre-compute strides for better optimization
+    const size_t stride_z = static_cast<size_t>(sy) * sx;
+    const size_t stride_y = static_cast<size_t>(sx);
+
+    // Pre-compute valid ranges to eliminate branches in inner loops
+    const int z_start = std::max(0, -2 - iz);
+    const int z_end = std::min(6, sz - iz + 2);
+    const int y_start = std::max(0, -2 - iy);
+    const int y_end = std::min(6, sy - iy + 2);
+    const int x_start = std::max(0, -2 - ix);
+    const int x_end = std::min(6, sx - ix + 2);
+
     float result = 0.0f;
 
-    for (int dz = -2; dz <= 3; ++dz) {
-        int z = iz + dz;
-        if (z < 0 || z >= sz) continue;
-        float wZ = wz.weights[dz + 2];
+    for (int dzi = z_start; dzi < z_end; ++dzi) {
+        const int z = iz + dzi - 2;
+        const float wZ = wz.weights[dzi];
+        const size_t z_off = z * stride_z;
 
-        for (int dy = -2; dy <= 3; ++dy) {
-            int y = iy + dy;
-            if (y < 0 || y >= sy) continue;
-            float wZY = wZ * wy.weights[dy + 2];
+        for (int dyi = y_start; dyi < y_end; ++dyi) {
+            const int y = iy + dyi - 2;
+            const float wZY = wZ * wy.weights[dyi];
+            const size_t zy_off = z_off + y * stride_y;
 
-            for (int dx = -2; dx <= 3; ++dx) {
-                int x = ix + dx;
-                if (x < 0 || x >= sx) continue;
-
-                float w = wZY * wx.weights[dx + 2];
-                result += w * static_cast<float>(data[z * sy * sx + y * sx + x]);
+            // Innermost loop - simple enough for auto-vectorization
+            float row_sum = 0.0f;
+            #pragma omp simd reduction(+:row_sum)
+            for (int dxi = x_start; dxi < x_end; ++dxi) {
+                const int x = ix + dxi - 2;
+                const float w = wZY * wx.weights[dxi];
+                row_sum += w * static_cast<float>(data[zy_off + x]);
             }
+            result += row_sum;
         }
     }
 
@@ -175,7 +194,7 @@ float sampleLanczos3DWithGradient(const T* __restrict__ data, int sz, int sy, in
 
     for (int dz = -2; dz <= 3; ++dz) {
         int z = iz + dz;
-        if (z < 0 || z >= sz) continue;
+        if (z < 0 || z >= sz) [[unlikely]] continue;
         float wZ = wz.weights[dz + 2];
         float dZ = static_cast<float>(dz) - fz;
         float gZ = gaussianWeight(dZ);
@@ -183,7 +202,7 @@ float sampleLanczos3DWithGradient(const T* __restrict__ data, int sz, int sy, in
 
         for (int dy = -2; dy <= 3; ++dy) {
             int y = iy + dy;
-            if (y < 0 || y >= sy) continue;
+            if (y < 0 || y >= sy) [[unlikely]] continue;
             float wZY = wZ * wy.weights[dy + 2];
             float dY = static_cast<float>(dy) - fy;
             float gY = gaussianWeight(dY);
@@ -194,7 +213,7 @@ float sampleLanczos3DWithGradient(const T* __restrict__ data, int sz, int sy, in
 
             for (int dx = -2; dx <= 3; ++dx) {
                 int x = ix + dx;
-                if (x < 0 || x >= sx) continue;
+                if (x < 0 || x >= sx) [[unlikely]] continue;
 
                 float dX = static_cast<float>(dx) - fx;
                 float gX = gaussianWeight(dX);
@@ -240,24 +259,35 @@ template<typename T>
 void resampleChunkLanczos3D(const T* __restrict__ input, int inSz, int inSy, int inSx,
                              T* __restrict__ output, int outSz, int outSy, int outSx,
                              const LanczosResampleParams& params) {
+    // Pre-compute inverse scales for multiplication instead of division
+    const float invScaleZ = 1.0f / params.scaleZ;
+    const float invScaleY = 1.0f / params.scaleY;
+    const float invScaleX = 1.0f / params.scaleX;
+
+    // Pre-compute output strides
+    const size_t out_stride_z = static_cast<size_t>(outSy) * outSx;
+    const size_t out_stride_y = static_cast<size_t>(outSx);
+
     #pragma omp parallel for collapse(2) schedule(static)
     for (int oz = 0; oz < outSz; ++oz) {
         for (int oy = 0; oy < outSy; ++oy) {
+            // Pre-compute z and y input coords (constant for inner loop)
+            const float iz = static_cast<float>(oz) * invScaleZ;
+            const float iy = static_cast<float>(oy) * invScaleY;
+            const size_t out_base = oz * out_stride_z + oy * out_stride_y;
+
             for (int ox = 0; ox < outSx; ++ox) {
-                // Map output coordinate to input coordinate
-                float iz = static_cast<float>(oz) / params.scaleZ;
-                float iy = static_cast<float>(oy) / params.scaleY;
-                float ix = static_cast<float>(ox) / params.scaleX;
+                const float ix = static_cast<float>(ox) * invScaleX;
 
                 float v = sampleLanczos3D(input, inSz, inSy, inSx, iz, iy, ix);
 
                 // Clamp and store
                 if constexpr (std::is_same_v<T, uint8_t>) {
                     v = std::max(0.0f, std::min(255.0f, v));
-                    output[oz * outSy * outSx + oy * outSx + ox] = static_cast<uint8_t>(v + 0.5f);
+                    output[out_base + ox] = static_cast<uint8_t>(v + 0.5f);
                 } else if constexpr (std::is_same_v<T, uint16_t>) {
                     v = std::max(0.0f, std::min(65535.0f, v));
-                    output[oz * outSy * outSx + oy * outSx + ox] = static_cast<uint16_t>(v + 0.5f);
+                    output[out_base + ox] = static_cast<uint16_t>(v + 0.5f);
                 } else {
                     output[oz * outSy * outSx + oy * outSx + ox] = static_cast<T>(v);
                 }

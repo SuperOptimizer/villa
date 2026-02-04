@@ -26,7 +26,7 @@ void writeTiff(const std::filesystem::path& outPath,
 
 // Class for incremental tiled TIFF writing
 // Useful for writing tiles in parallel or from streaming data
-class TiffWriter {
+class TiffWriter final {
 public:
     // Open a new TIFF file for tiled writing
     // cvType: CV_8UC1, CV_16UC1, or CV_32FC1
@@ -57,14 +57,14 @@ public:
     void close();
 
     // Check if file is open
-    bool isOpen() const { return _tiff != nullptr; }
+    [[nodiscard]] bool isOpen() const noexcept { return _tiff != nullptr; }
 
     // Accessors
-    uint32_t width() const { return _width; }
-    uint32_t height() const { return _height; }
-    uint32_t tileWidth() const { return _tileW; }
-    uint32_t tileHeight() const { return _tileH; }
-    int cvType() const { return _cvType; }
+    [[nodiscard]] uint32_t width() const noexcept { return _width; }
+    [[nodiscard]] uint32_t height() const noexcept { return _height; }
+    [[nodiscard]] uint32_t tileWidth() const noexcept { return _tileW; }
+    [[nodiscard]] uint32_t tileHeight() const noexcept { return _tileH; }
+    [[nodiscard]] int cvType() const noexcept { return _cvType; }
 
 private:
     TIFF* _tiff = nullptr;

@@ -2,7 +2,7 @@
 #include <random>
 #include <iostream>
 #include <opencv2/imgproc.hpp>
-#include <opencv2/imgcodecs.hpp>
+#include <nlohmann/json.hpp>
 
 #include "vc/core/util/normalgridtools.hpp"
 
@@ -80,10 +80,16 @@ cv::Vec2f align_and_extract_umbilicus(const GridStore& grid_store) {
             const auto& point = sample_points[j];
             const auto& normal = sample_normals[j];
 
-            cv::Vec2f umbilicus_to_segment = cv::Vec2f(point) - candidate_umbilicus;
-            cv::normalize(umbilicus_to_segment, umbilicus_to_segment);
+            const float dx = point.x - candidate_umbilicus[0];
+            const float dy = point.y - candidate_umbilicus[1];
+            const float lenSq = dx * dx + dy * dy;
+            if (lenSq < 1e-12f) [[unlikely]] continue;
 
-            double cos_angle = umbilicus_to_segment.dot(normal);
+            // Fast inverse sqrt for normalization
+            const float invLen = 1.0f / std::sqrt(lenSq);
+
+            // cos_angle = (normalized_vec).dot(normal) = (dx*invLen)*normal[0] + (dy*invLen)*normal[1]
+            const float cos_angle = (dx * normal[0] + dy * normal[1]) * invLen;
             current_score += cos_angle * cos_angle;
         }
 
@@ -98,22 +104,28 @@ cv::Vec2f align_and_extract_umbilicus(const GridStore& grid_store) {
     auto score_candidate = [&](const cv::Vec2f& candidate) {
         double score = 0.0;
         double wsum = 0.0;
+        const float cx = candidate[0];
+        const float cy = candidate[1];
+
         for (size_t j = 0; j < sample_points.size(); ++j) {
             const auto& point = sample_points[j];
             const auto& normal = sample_normals[j];
 
-            cv::Vec2f umbilicus_to_segment = cv::Vec2f(point) - candidate;
-            float dist = cv::norm(umbilicus_to_segment);
-            if (dist < 1e-6) continue;
+            const float dx = point.x - cx;
+            const float dy = point.y - cy;
+            const float distSq = dx * dx + dy * dy;
+            if (distSq < 1e-12f) [[unlikely]] continue;
 
-            umbilicus_to_segment /= dist; // Manual normalization
+            const float dist = std::sqrt(distSq);
+            const float invDist = 1.0f / dist;
 
-            double cos_angle = umbilicus_to_segment.dot(normal);
-            float weight = 1.0f / std::max(100.0f, dist);
+            // cos_angle = (normalized_vec).dot(normal)
+            const float cos_angle = (dx * normal[0] + dy * normal[1]) * invDist;
+            const float weight = 1.0f / std::max(100.0f, dist);
             score += (cos_angle * cos_angle) * weight;
             wsum += weight;
         }
-        return score/wsum;
+        return score / wsum;
     };
 
     double refined_best_score = score_candidate(best_umbilicus);
@@ -141,7 +153,7 @@ cv::Vec2f align_and_extract_umbilicus(const GridStore& grid_store) {
         }
     }
 
-    std::cout << "Refined umbilicus estimate: " << best_umbilicus << " with score " << refined_best_score << std::endl;
+    std::cout << "Refined umbilicus estimate: " << best_umbilicus << " with score " << refined_best_score << "\n";
 
     return best_umbilicus;
 }
@@ -200,11 +212,11 @@ void align_and_filter_segments(const GridStore& grid_store, GridStore& result, c
         // if (iter == 10000)
             // break;
         if (unused.count() == 0) {
-            std::cout << "Iteration " << iter << ": No unused segments left. Exiting." << std::endl;
+            std::cout << "Iteration " << iter << ": No unused segments left. Exiting." << "\n";
             break;
         }
-        // std::cout << "\n--- Iteration " << iter << " ---" << std::endl;
-        // std::cout << "Assigned: " << assigned.count() << ", Unused: " << unused.count() << std::endl;
+        // std::cout << "\n--- Iteration " << iter << " ---" << "\n";
+        // std::cout << "Assigned: " << assigned.count() << ", Unused: " << unused.count() << "\n";
 
         // 1. Sample a set of random points from assigned
         auto assigned_sample = assigned.get_random_segment();
@@ -212,16 +224,16 @@ void align_and_filter_segments(const GridStore& grid_store, GridStore& result, c
 
         // 2. For each of those get 20 knn points from unused
         auto candidates = unused.nearest_neighbors(assigned_sample->middle_point, 20);
-        // std::cout << "Found " << candidates.size() << " candidates near assigned sample." << std::endl;
+        // std::cout << "Found " << candidates.size() << " candidates near assigned sample." << "\n";
 
         // 3. Find the candidate with the densest neighborhood of assigned segments
         std::shared_ptr<SegmentInfo> best_candidate = nullptr;
         float min_max_dist = std::numeric_limits<float>::max();
 
         for (const auto& candidate : candidates) {
-            // std::cout << "retrieve from assigned points " << std::endl;
+            // std::cout << "retrieve from assigned points " << "\n";
             auto assigned_neighbors = assigned.nearest_neighbors(candidate->middle_point, 10);
-            // std::cout << "done " << std::endl;
+            // std::cout << "done " << "\n";
 
             if (!assigned_neighbors.size())
                 continue;
@@ -240,10 +252,10 @@ void align_and_filter_segments(const GridStore& grid_store, GridStore& result, c
         }
 
         if (!best_candidate) {
-            // std::cout << "No best candidate found in this iteration." << std::endl;
+            // std::cout << "No best candidate found in this iteration." << "\n";
             continue;
         }
-        // std::cout << "Best candidate found with min_max_dist: " << min_max_dist << std::endl;
+        // std::cout << "Best candidate found with min_max_dist: " << min_max_dist << "\n";
 
         // 4. Calculate scores for flipping vs. not flipping
         auto neighbors = assigned.nearest_neighbors(best_candidate->middle_point, 20);
@@ -259,9 +271,9 @@ void align_and_filter_segments(const GridStore& grid_store, GridStore& result, c
         }
 
         // 5. Add the best candidate with the correct orientation to assigned
-        // std::cout << "Scores - No Flip: " << score_no_flip << ", Flip: " << score_flip << std::endl;
+        // std::cout << "Scores - No Flip: " << score_no_flip << ", Flip: " << score_flip << "\n";
         if (score_flip > score_no_flip) {
-            // std::cout << "Flipping candidate." << std::endl;
+            // std::cout << "Flipping candidate." << "\n";
             best_candidate->flipped = true;
             best_candidate->normal *= -1;
         }
@@ -274,9 +286,9 @@ void align_and_filter_segments(const GridStore& grid_store, GridStore& result, c
         //         double avg_before = static_cast<double>(total_candidates_before_dedup) / nearest_neighbors_calls;
         //         double avg_after = static_cast<double>(total_candidates_after_dedup) / nearest_neighbors_calls;
         //         std::cout << "Iteration " << iter << ", Avg. candidates before dedup: " << avg_before
-        //                   << ", after dedup: " << avg_after << std::endl;
+        //                   << ", after dedup: " << avg_after << "\n";
         //     } else {
-        //         std::cout << "Iteration " << iter << std::endl;
+        //         std::cout << "Iteration " << iter << "\n";
         //     }
         //     // 6. Debug visualization
         //     // GridStore tmp(rect, grid_step);
@@ -313,13 +325,13 @@ void align_and_filter_segments(const GridStore& grid_store, GridStore& result, c
                 seg->flipped = !seg->flipped;
             }
         }
-        result.meta["umbilicus_x"] = center_point[0];
-        result.meta["umbilicus_y"] = center_point[1];
+        result.meta()["umbilicus_x"] = center_point[0];
+        result.meta()["umbilicus_y"] = center_point[1];
     }
 
     // Rebuild the GridStore from the aligned segments
     convert_segment_grid_to_grid_store(assigned, grid_store, result);
-    result.meta["aligned"] = true;
+    result.meta()["aligned"] = true;
 
     // Final visualization of the result
     // cv::Mat final_vis = visualize_segment_directions(result);
@@ -387,7 +399,7 @@ void convert_segment_grid_to_grid_store(const SegmentGrid& segment_grid, const G
         }
 
         if (has_discontinuity) {
-            std::cerr << "Skipping discontinuous path with original_path_idx " << pair.first << std::endl;
+            std::cerr << "Skipping discontinuous path with original_path_idx " << pair.first << "\n";
             continue;
         }
 
@@ -558,7 +570,7 @@ std::shared_ptr<SegmentInfo> SegmentGrid::get_random_segment() {
     return all_segments[dist(gen)];
 }
 
-size_t SegmentGrid::count() const {
+size_t SegmentGrid::count() const noexcept {
     return all_segments.size();
 }
 

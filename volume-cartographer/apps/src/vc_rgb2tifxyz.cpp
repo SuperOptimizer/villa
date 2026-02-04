@@ -13,17 +13,13 @@
 #include <iomanip>
 #include <memory>
 #include <algorithm>
-#include <cmath>
-#include <vector>
 #include <filesystem>
 #include <chrono>
 #include <system_error>
 
-#include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 
 #include <nlohmann/json.hpp>
-#include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 
 namespace fs = std::filesystem;
@@ -360,10 +356,16 @@ int main(int argc, char** argv) {
 
     // --- Reconstruct points (world/voxel coords according to bounds)
     cv::Mat_<cv::Vec3f> points(rows, cols, cv::Vec3f(-1.f, -1.f, -1.f));
+
+    // Pre-compute reciprocal for division
+    constexpr float inv255 = 1.0f / 255.0f;
+
+    #pragma omp parallel for schedule(static)
     for (int j = 0; j < rows; ++j) {
         const auto* p4   = has_alpha ? img.ptr<cv::Vec4b>(j) : nullptr;
         const auto* p3   = has_alpha ? nullptr : img.ptr<cv::Vec3b>(j);
         const uint8_t* mrow = mask.empty() ? nullptr : mask.ptr<uint8_t>(j);
+        cv::Vec3f* __restrict__ points_row = points.ptr<cv::Vec3f>(j);
 
         for (int i = 0; i < cols; ++i) {
             bool invalid = false;
@@ -375,18 +377,18 @@ int main(int argc, char** argv) {
             }
 
             if (invalid) {
-                points(j,i) = cv::Vec3f(-1.f, -1.f, -1.f);
+                points_row[i] = cv::Vec3f(-1.f, -1.f, -1.f);
                 continue;
             }
 
             float nx, ny, nz;
-            if (has_alpha) { nz = p4[i][0] / 255.0f; ny = p4[i][1] / 255.0f; nx = p4[i][2] / 255.0f; }
-            else           { nz = p3[i][0] / 255.0f; ny = p3[i][1] / 255.0f; nx = p3[i][2] / 255.0f; }
+            if (has_alpha) { nz = p4[i][0] * inv255; ny = p4[i][1] * inv255; nx = p4[i][2] * inv255; }
+            else           { nz = p3[i][0] * inv255; ny = p3[i][1] * inv255; nx = p3[i][2] * inv255; }
 
             const float X = B.minx + nx * rx;
             const float Y = B.miny + ny * ry;
             const float Z = B.minz + nz * rz;
-            points(j,i) = cv::Vec3f(X, Y, Z);
+            points_row[i] = cv::Vec3f(X, Y, Z);
         }
     }
 

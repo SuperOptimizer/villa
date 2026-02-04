@@ -611,7 +611,7 @@ void SurfacePatchIndex::clear()
     }
 }
 
-bool SurfacePatchIndex::empty() const
+bool SurfacePatchIndex::empty() const noexcept
 {
     return !impl_ || !impl_->tree || impl_->patchCount == 0;
 }
@@ -1153,9 +1153,9 @@ bool SurfacePatchIndex::setSamplingStride(int stride)
     return true;
 }
 
-int SurfacePatchIndex::samplingStride() const
+int SurfacePatchIndex::samplingStride() const noexcept
 {
-    if (!impl_) {
+    if (!impl_) [[unlikely]] {
         return 1;
     }
     return impl_->samplingStride;  // Invariant: always >= 1 (enforced by setter)

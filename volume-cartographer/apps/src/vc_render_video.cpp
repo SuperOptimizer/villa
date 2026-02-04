@@ -43,7 +43,7 @@ public:
     ~MeasureLife()
     {
         auto end = std::chrono::high_resolution_clock::now();
-        std::cout << " took " << std::chrono::duration<double>(end-start).count() << " s" << std::endl;
+        std::cout << " took " << std::chrono::duration<double>(end-start).count() << " s" << "\n";
     }
 private:
     std::chrono::time_point<std::chrono::high_resolution_clock> start;
@@ -84,7 +84,7 @@ float get_val(I &interp, cv::Vec3d l) {
 int main(int argc, char *argv[])
 {
     if (argc < 4) {
-        std::cout << "usage: " << argv[0] << " <zarr-volume> <video-file> segments..." << std::endl;
+        std::cout << "usage: " << argv[0] << " <zarr-volume> <video-file> segments..." << "\n";
         return EXIT_SUCCESS;
     }
 
@@ -98,8 +98,8 @@ int main(int argc, char *argv[])
     z5::filesystem::handle::Dataset ds_handle(group, "1", json::parse(std::ifstream(vol_path/"1/.zarray")).value<std::string>("dimension_separator","."));
     std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
 
-    std::cout << "zarr dataset size for scale group 1 " << ds->shape() << std::endl;
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
+    std::cout << "zarr dataset size for scale group 1 " << ds->shape() << "\n";
+    std::cout << "chunk shape shape " << ds->chunking().blockShape() << "\n";
 
     cv::Size tgt_size = {3840, 2160};
 
@@ -113,7 +113,7 @@ int main(int argc, char *argv[])
             surf = load_quad_from_tifxyz(path);
         }
         catch (...) {
-            std::cout << "error, skipping: " << path << std::endl;
+            std::cout << "error, skipping: " << path << "\n";
             continue;
         }
         cv::Mat_<cv::Vec3f> points = surf->rawPoints();
@@ -130,7 +130,7 @@ int main(int argc, char *argv[])
         int pad_x = (tgt_size.width - img.size().width)/2;
         int pad_y = (tgt_size.height - img.size().height)/2;
         cv::Rect roi = {pad_x, pad_y, img.size().width, img.size().height };
-        std::cout << tgt_size << roi << img.size << vid.getBackendName() << std::endl;
+        std::cout << tgt_size << roi << img.size << vid.getBackendName() << "\n";
         img.copyTo(frame(roi));
 
         cv::Mat col;

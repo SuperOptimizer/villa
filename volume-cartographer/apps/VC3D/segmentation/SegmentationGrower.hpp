@@ -15,6 +15,8 @@
 #include <string>
 #include <vector>
 
+#include "vc/core/util/QuadSurface.hpp"  // Needed for unique_ptr<QuadSurface>
+
 class SegmentationModule;
 class SegmentationWidget;
 class CSurfaceCollection;
@@ -23,7 +25,6 @@ class SurfacePanelController;
 class VolumePkg;
 class Volume;
 template <typename T> class ChunkCache;
-class QuadSurface;
 class CVolumeViewer;
 
 class SegmentationGrower : public QObject

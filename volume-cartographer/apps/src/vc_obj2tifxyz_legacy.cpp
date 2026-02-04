@@ -1,5 +1,4 @@
-#include "vc/core/util/QuadSurface.hpp"
-
+#include <opencv2/core.hpp>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -7,6 +6,10 @@
 #include <algorithm>
 #include <limits>
 #include <cmath>
+#include <string>
+#include <vector>
+
+#include "vc/core/util/QuadSurface.hpp"
 
 
 
@@ -38,7 +41,7 @@ public:
     bool loadObj(const std::string& filename) {
         std::ifstream file(filename);
         if (!file.is_open()) {
-            std::cerr << "Cannot open OBJ file: " << filename << std::endl;
+            std::cerr << "Cannot open OBJ file: " << filename << "\n";
             return false;
         }
         
@@ -91,10 +94,10 @@ public:
         
         file.close();
         
-        std::cout << "Loaded OBJ file:" << std::endl;
-        std::cout << "  Vertices: " << vertices.size() << std::endl;
-        std::cout << "  UVs: " << uvs.size() << std::endl;
-        std::cout << "  Faces: " << faces.size() << std::endl;
+        std::cout << "Loaded OBJ file:" << "\n";
+        std::cout << "  Vertices: " << vertices.size() << "\n";
+        std::cout << "  UVs: " << uvs.size() << "\n";
+        std::cout << "  Faces: " << faces.size() << "\n";
         
         return !vertices.empty() && !faces.empty() && !uvs.empty();
     }
@@ -178,8 +181,8 @@ public:
         cv::Vec2f uv_range = uv_max - uv_min;
 
         std::cout << "UV bounds: [" << uv_min[0] << ", " << uv_min[1] << "] to ["
-                  << uv_max[0] << ", " << uv_max[1] << "]" << std::endl;
-        std::cout << "Directional scales: U=" << avg_scale_u << ", V=" << avg_scale_v << std::endl;
+                  << uv_max[0] << ", " << uv_max[1] << "]" << "\n";
+        std::cout << "Directional scales: U=" << avg_scale_u << ", V=" << avg_scale_v << "\n";
 
         // Compute full voxel resolution
         double full_res_u = uv_range[0] * avg_scale_u;
@@ -192,9 +195,9 @@ public:
         grid_size[0] = static_cast<int>(std::ceil(full_res_u / step_size)) + 1;
         grid_size[1] = static_cast<int>(std::ceil(full_res_v / step_size)) + 1;
 
-        std::cout << "Full resolution: " << full_res_u << " x " << full_res_v << std::endl;
-        std::cout << "Grid dimensions: " << grid_size[0] << " x " << grid_size[1] << std::endl;
-        std::cout << "Step size: " << step_size << ", Scale: " << (1.0f / step_size) << std::endl;
+        std::cout << "Full resolution: " << full_res_u << " x " << full_res_v << "\n";
+        std::cout << "Grid dimensions: " << grid_size[0] << " x " << grid_size[1] << "\n";
+        std::cout << "Step size: " << step_size << ", Scale: " << (1.0f / step_size) << "\n";
     }
     
     QuadSurface* createQuadSurface() {
@@ -217,7 +220,7 @@ public:
         }
 
         std::cout << "Valid grid points: " << valid_count << " / " << (grid_size[0] * grid_size[1])
-                  << " (" << (100.0f * valid_count / (grid_size[0] * grid_size[1])) << "%)" << std::endl;
+                  << " (" << (100.0f * valid_count / (grid_size[0] * grid_size[1])) << "%)" << "\n";
 
         // Scale = 1/step_size (matching GrowPatch.cpp pattern)
         cv::Vec2f scale = {1.0f / step_size, 1.0f / step_size};
@@ -305,15 +308,15 @@ private:
 int main(int argc, char *argv[])
 {
     if (argc < 3 || argc > 4) {
-        std::cout << "usage: " << argv[0] << " <input.obj> <output_directory> [step_size]" << std::endl;
-        std::cout << "Converts an OBJ file to tifxyz format" << std::endl;
-        std::cout << std::endl;
-        std::cout << "Parameters:" << std::endl;
-        std::cout << "  step_size: UV units per grid cell (default: 20)" << std::endl;
-        std::cout << "             Scale will be 1/step_size (default: 0.05)" << std::endl;
-        std::cout << std::endl;
-        std::cout << "Example: " << argv[0] << " mesh.obj output_dir" << std::endl;
-        std::cout << "Example: " << argv[0] << " mesh.obj output_dir 10" << std::endl;
+        std::cout << "usage: " << argv[0] << " <input.obj> <output_directory> [step_size]" << "\n";
+        std::cout << "Converts an OBJ file to tifxyz format" << "\n";
+        std::cout << "\n";
+        std::cout << "Parameters:" << "\n";
+        std::cout << "  step_size: UV units per grid cell (default: 20)" << "\n";
+        std::cout << "             Scale will be 1/step_size (default: 0.05)" << "\n";
+        std::cout << "\n";
+        std::cout << "Example: " << argv[0] << " mesh.obj output_dir" << "\n";
+        std::cout << "Example: " << argv[0] << " mesh.obj output_dir 10" << "\n";
         return EXIT_SUCCESS;
     }
 
@@ -324,26 +327,26 @@ int main(int argc, char *argv[])
     if (argc >= 4) {
         step_size = std::atof(argv[3]);
         if (step_size <= 0) {
-            std::cerr << "Invalid step size: " << step_size << std::endl;
+            std::cerr << "Invalid step size: " << step_size << "\n";
             return EXIT_FAILURE;
         }
     }
 
     if (!std::filesystem::exists(obj_path)) {
-        std::cerr << "Input file does not exist: " << obj_path << std::endl;
+        std::cerr << "Input file does not exist: " << obj_path << "\n";
         return EXIT_FAILURE;
     }
 
-    std::cout << "Converting OBJ to tifxyz format" << std::endl;
-    std::cout << "Input: " << obj_path << std::endl;
-    std::cout << "Output: " << output_dir << std::endl;
-    std::cout << "Step size: " << step_size << " (scale: " << (1.0f / step_size) << ")" << std::endl;
+    std::cout << "Converting OBJ to tifxyz format" << "\n";
+    std::cout << "Input: " << obj_path << "\n";
+    std::cout << "Output: " << output_dir << "\n";
+    std::cout << "Step size: " << step_size << " (scale: " << (1.0f / step_size) << ")" << "\n";
 
     ObjToTifxyzConverter converter;
 
     // Load OBJ file
     if (!converter.loadObj(obj_path.string())) {
-        std::cerr << "Failed to load OBJ file" << std::endl;
+        std::cerr << "Failed to load OBJ file" << "\n";
         return EXIT_FAILURE;
     }
 
@@ -353,7 +356,7 @@ int main(int argc, char *argv[])
     // Create quad surface
     QuadSurface* surf = converter.createQuadSurface();
     if (!surf) {
-        std::cerr << "Failed to create quad surface" << std::endl;
+        std::cerr << "Failed to create quad surface" << "\n";
         return EXIT_FAILURE;
     }
     
@@ -363,14 +366,14 @@ int main(int argc, char *argv[])
         uuid = obj_path.stem().string();
     }
     
-    std::cout << "Saving to tifxyz format..." << std::endl;
+    std::cout << "Saving to tifxyz format..." << "\n";
     
     try {
         surf->save(output_dir.string(), uuid);
-        std::cout << "Successfully converted to tifxyz format" << std::endl;
+        std::cout << "Successfully converted to tifxyz format" << "\n";
     }
     catch (const std::exception& e) {
-        std::cerr << "Error saving tifxyz: " << e.what() << std::endl;
+        std::cerr << "Error saving tifxyz: " << e.what() << "\n";
         delete surf;
         return EXIT_FAILURE;
     }

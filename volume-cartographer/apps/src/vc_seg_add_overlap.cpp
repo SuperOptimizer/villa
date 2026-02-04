@@ -1,8 +1,12 @@
-#include "vc/core/util/Slicing.hpp"
-#include "vc/core/util/Surface.hpp"
-#include "vc/core/util/QuadSurface.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
+#include <iostream>
+#include <filesystem>
+#include <set>
+#include <string>
+#include <ctime>
+
+#include "vc/core/util/QuadSurface.hpp"
 
 
 using json = nlohmann::json;
@@ -12,8 +16,8 @@ using json = nlohmann::json;
 int main(int argc, char *argv[])
 {
     if (argc != 3) {
-        std::cout << "usage: " << argv[0] << " <tgt-dir> <single-tiffxyz>" << std::endl;
-        std::cout << "   this will check for overlap between any tiffxyz in target dir and <single-tiffxyz> and add overlap metadata" << std::endl;
+        std::cout << "usage: " << argv[0] << " <tgt-dir> <single-tiffxyz>" << "\n";
+        std::cout << "   this will check for overlap between any tiffxyz in target dir and <single-tiffxyz> and add overlap metadata" << "\n";
         return EXIT_SUCCESS;
     }
 
@@ -45,7 +49,7 @@ int main(int argc, char *argv[])
             try {
                 meta = json::parse(meta_f);
             } catch (const json::exception& e) {
-                std::cerr << "Error parsing meta.json for " << name << ": " << e.what() << std::endl;
+                std::cerr << "Error parsing meta.json for " << name << ": " << e.what() << "\n";
                 continue;
             }
 
@@ -68,7 +72,7 @@ int main(int argc, char *argv[])
                 other_overlapping.insert(current.id);
                 write_overlapping_json(other.path, other_overlapping);
 
-                std::cout << "Found overlap: " << current.id << " <-> " << other.id << std::endl;
+                std::cout << "Found overlap: " << current.id << " <-> " << other.id << "\n";
             }
         }
 
@@ -76,7 +80,7 @@ int main(int argc, char *argv[])
     if (found_overlaps || !current_overlapping.empty()) {
         write_overlapping_json(current.path, current_overlapping);
         std::cout << "Updated overlapping data for " << current.id
-                  << " (" << current_overlapping.size() << " overlaps)" << std::endl;
+                  << " (" << current_overlapping.size() << " overlaps)" << "\n";
     }
 
     return EXIT_SUCCESS;

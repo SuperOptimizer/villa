@@ -27,6 +27,8 @@
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Render.hpp"
 
+#include <nlohmann/json.hpp>
+
 void CWindow::onEditMaskPressed()
 {
     auto surf = _surf_weak.lock();
@@ -109,13 +111,13 @@ void CWindow::onAppendMaskPressed()
                 std::cout << "[AppendMask non-composite] rawSize: " << rawSize.width << "x" << rawSize.height
                           << ", maskSize: " << maskSize.width << "x" << maskSize.height
                           << ", coords size: " << coords.cols << "x" << coords.rows
-                          << ", surface._scale: " << surf->scale()[0] << std::endl;
+                          << ", surface._scale: " << surf->scale()[0] << "\n";
 
                 // Sample a few coords to verify they're in native voxel space
                 if (coords.rows > 4 && coords.cols > 4) {
                     std::cout << "[AppendMask non-composite] coords[0,0]: " << coords(4,4)
                               << ", coords[center]: " << coords(coords.rows/2, coords.cols/2)
-                              << ", coords[end]: " << coords(coords.rows-5, coords.cols-5) << std::endl;
+                              << ", coords[end]: " << coords(coords.rows-5, coords.cols-5) << "\n";
                 }
 
                 render_image_from_coords(coords, img, ds, chunk_cache);
@@ -124,7 +126,7 @@ void CWindow::onAppendMaskPressed()
 
             std::cout << "[AppendMask] maskSize: " << maskSize.width << "x" << maskSize.height
                       << ", img size: " << img.cols << "x" << img.rows
-                      << ", useComposite: " << useComposite << std::endl;
+                      << ", useComposite: " << useComposite << "\n";
 
             // Append the new image layer to existing layers
             existing_layers.push_back(img);

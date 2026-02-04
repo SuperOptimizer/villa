@@ -1,20 +1,14 @@
 #include "vc/core/util/QuadSurface.hpp"
-#include "vc/core/util/Surface.hpp"
-#include "vc/core/types/ChunkedTensor.hpp"
-
-#include <nlohmann/json.hpp>
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
-
-
-
-using json = nlohmann::json;
+#include <iostream>
+#include <filesystem>
 
 int main(int argc, char *argv[])
 {
     if (argc != 4) {
-        std::cout << "usage: " << argv[0] << " <tiffxyz-src> <mask> <tiffxyz-src>" << std::endl;
+        std::cout << "usage: " << argv[0] << " <tiffxyz-src> <mask> <tiffxyz-src>" << "\n";
         return EXIT_SUCCESS;
     }
     
@@ -27,7 +21,7 @@ int main(int argc, char *argv[])
         surf = load_quad_from_tifxyz(seg_path);
     }
     catch (...) {
-        std::cout << "error when loading: " << seg_path << std::endl;
+        std::cout << "error when loading: " << seg_path << "\n";
         return EXIT_FAILURE;
     }
 
@@ -48,7 +42,7 @@ int main(int argc, char *argv[])
     for(int r=0;r<12;r++)
         cv::dilate(mask_points, mask_points, m, {-1,-1}, 1);
 
-    std::cout << "sizes " << points->size() << mask.size() << std::endl;
+    std::cout << "sizes " << points->size() << mask.size() << "\n";
     if (mask.size() != points->size())
         throw std::runtime_error("mask must be same size as tiffxyz");
 
@@ -58,7 +52,7 @@ int main(int argc, char *argv[])
 
     for(int r=0;r<100;r++) {
         int dia = int(float(100-r)/100*11)*2+1;
-        std::cout << dia << std::endl;
+        std::cout << dia << "\n";
         cv::GaussianBlur((*points), (*points), {dia,dia}, 0);
         points_orig.copyTo((*points), mask);
     }

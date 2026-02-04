@@ -1,11 +1,10 @@
 #pragma once
 
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <opencv2/core/matx.hpp>
 #include <math.h>
 #include <qtmetamacros.h>
 #include <qtypes.h>
-#include <nlohmann/json_fwd.hpp>
 #include <opencv2/core/matx.inl.hpp>
 #include <cstdint>
 #include <filesystem>

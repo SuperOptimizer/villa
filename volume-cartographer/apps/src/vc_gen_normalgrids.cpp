@@ -110,7 +110,7 @@ int main(int argc, char* argv[]) {
         // Check for help before parsing required options
         for (const auto& opt : opts) {
             if (opt == "-h" || opt == "--help") {
-                std::cout << generate_desc << std::endl;
+                std::cout << generate_desc << "\n";
                 return 0;
             }
         }
@@ -121,7 +121,7 @@ int main(int argc, char* argv[]) {
             po::notify(generate_vm);
         } catch (const po::error& e) {
             std::cerr << "Error: " << e.what() << "\n\n";
-            std::cout << generate_desc << std::endl;
+            std::cout << generate_desc << "\n";
             return 1;
         }
         run_generate(generate_vm);
@@ -145,7 +145,7 @@ int main(int argc, char* argv[]) {
         // Check for help before parsing required options
         for (const auto& opt : opts) {
             if (opt == "-h" || opt == "--help") {
-                std::cout << convert_desc << std::endl;
+                std::cout << convert_desc << "\n";
                 return 0;
             }
         }
@@ -156,7 +156,7 @@ int main(int argc, char* argv[]) {
             po::notify(convert_vm);
         } catch (const po::error& e) {
             std::cerr << "Error: " << e.what() << "\n\n";
-            std::cout << convert_desc << std::endl;
+            std::cout << convert_desc << "\n";
             return 1;
         }
         run_convert(convert_vm);
@@ -173,7 +173,7 @@ int main(int argc, char* argv[]) {
 void run_convert(const po::variables_map& vm) {
     fs::path input_dir = vm["input"].as<std::string>();
     int new_grid_step = vm["grid-step"].as<int>();
-    std::cout << "Scanning directory: " << input_dir << " with new grid step: " << new_grid_step << std::endl;
+    std::cout << "Scanning directory: " << input_dir << " with new grid step: " << new_grid_step << "\n";
 
     std::vector<fs::path> grid_files;
     for (const auto& entry : fs::recursive_directory_iterator(input_dir)) {
@@ -182,7 +182,7 @@ void run_convert(const po::variables_map& vm) {
         }
     }
 
-    std::cout << "Found " << grid_files.size() << " grid files to process." << std::endl;
+    std::cout << "Found " << grid_files.size() << " grid files to process." << "\n";
 
     std::atomic<size_t> converted_count = 0;
     std::atomic<size_t> skipped_count = 0;
@@ -196,7 +196,7 @@ void run_convert(const po::variables_map& vm) {
             std::ifstream file(path, std::ios::binary);
             if (!file) {
                 #pragma omp critical
-                std::cerr << "Error: Could not open file " << path << std::endl;
+                std::cerr << "Error: Could not open file " << path << "\n";
                 error_count++;
                 continue;
             }
@@ -209,7 +209,7 @@ void run_convert(const po::variables_map& vm) {
 
             if (magic != 0x56434753) { // "VCGS"
                 #pragma omp critical
-                std::cerr << "Warning: Skipping file with invalid magic: " << path << std::endl;
+                std::cerr << "Warning: Skipping file with invalid magic: " << path << "\n";
                 skipped_count++;
                 continue;
             }
@@ -222,7 +222,7 @@ void run_convert(const po::variables_map& vm) {
                 for(const auto& p : all_paths) {
                     new_store.add(*p);
                 }
-                new_store.meta = old_store.meta;
+                new_store.meta() = old_store.meta();
 
                 std::string tmp_path = path.string() + ".tmp";
                 new_store.save(tmp_path);
@@ -233,7 +233,7 @@ void run_convert(const po::variables_map& vm) {
             }
         } catch (const std::exception& e) {
             #pragma omp critical
-            std::cerr << "Error processing file " << path << ": " << e.what() << std::endl;
+            std::cerr << "Error processing file " << path << ": " << e.what() << "\n";
             error_count++;
         }
         
@@ -243,14 +243,14 @@ void run_convert(const po::variables_map& vm) {
             std::cout << "Processed " << processed << "/" << grid_files.size()
                       << " (Converted: " << converted_count
                       << ", Skipped: " << skipped_count
-                      << ", Errors: " << error_count << ")" << std::endl;
+                      << ", Errors: " << error_count << ")" << "\n";
         }
     }
 
     std::cout << "Conversion complete. Total processed: " << processed_count
               << ", Converted: " << converted_count
               << ", Skipped: " << skipped_count
-              << ", Errors: " << error_count << std::endl;
+              << ", Errors: " << error_count << "\n";
 }
 
 
@@ -258,13 +258,13 @@ void run_generate(const po::variables_map& vm) {
     std::string input_path = vm["input"].as<std::string>();
     std::string output_path = vm["output"].as<std::string>();
 
-    std::cout << "Input Zarr path: " << input_path << std::endl;
-    std::cout << "Output directory: " << output_path << std::endl;
+    std::cout << "Input Zarr path: " << input_path << "\n";
+    std::cout << "Output directory: " << output_path << "\n";
 
     z5::filesystem::handle::Group group_handle(input_path);
     std::unique_ptr<z5::Dataset> ds = z5::openDataset(group_handle, "0");
     if (!ds) {
-        std::cerr << "Error: Could not open dataset '0' in volume '" << input_path << "'." << std::endl;
+        std::cerr << "Error: Could not open dataset '0' in volume '" << input_path << "'." << "\n";
         exit(1);
     }
     auto shape = ds->shape();
@@ -287,7 +287,7 @@ void run_generate(const po::variables_map& vm) {
     metadata["grid-step"] = grid_step;
     metadata["sparse-volume"] = sparse_volume;
     std::ofstream o(output_fs_path / "metadata.json");
-    o << std::setw(4) << metadata << std::endl;
+    o << std::setw(4) << metadata << "\n";
 
     ChunkCache<uint8_t> cache(10llu*1024*1024*1024);
 
@@ -409,32 +409,42 @@ void run_generate(const po::variables_map& vm) {
                 }
 
                 // Extract slice from chunk_data into cv::Mat
+                // chunk_data is row-major: (z, y, x) with strides (shape[1]*shape[2], shape[2], 1)
                 cv::Mat slice_mat;
+                const uint8_t* __restrict__ chunk_ptr = chunk_data.data();
+                const size_t stride_z = shape[1] * shape[2];
+                const size_t stride_y = shape[2];
+
                 switch (dir) {
-                    case SliceDirection::XY:
+                    case SliceDirection::XY: {
+                        // Extract (i_chunk, :, :) - contiguous slice, can use memcpy
                         slice_mat = cv::Mat(shape[1], shape[2], CV_8U);
-                        for (int z = 0; z < slice_mat.rows; ++z) {
-                            for (int y = 0; y < slice_mat.cols; ++y) {
-                                slice_mat.at<uint8_t>(z, y) = chunk_data(i_chunk, z, y);
-                            }
-                        }
+                        const uint8_t* src = chunk_ptr + i_chunk * stride_z;
+                        std::memcpy(slice_mat.data, src, shape[1] * shape[2]);
                         break;
-                    case SliceDirection::XZ:
+                    }
+                    case SliceDirection::XZ: {
+                        // Extract (:, i_chunk, :) - need to copy row by row
                         slice_mat = cv::Mat(shape[0], shape[2], CV_8U);
-                        for (int z = 0; z < slice_mat.rows; ++z) {
-                            for (int y = 0; y < slice_mat.cols; ++y) {
-                                slice_mat.at<uint8_t>(z, y) = chunk_data(z, i_chunk, y);
-                            }
+                        for (int z = 0; z < static_cast<int>(shape[0]); ++z) {
+                            const uint8_t* src_row = chunk_ptr + z * stride_z + i_chunk * stride_y;
+                            uint8_t* dst_row = slice_mat.ptr<uint8_t>(z);
+                            std::memcpy(dst_row, src_row, shape[2]);
                         }
                         break;
-                    case SliceDirection::YZ:
+                    }
+                    case SliceDirection::YZ: {
+                        // Extract (:, :, i_chunk) - strided access, no memcpy possible
                         slice_mat = cv::Mat(shape[0], shape[1], CV_8U);
-                        for (int z = 0; z < slice_mat.rows; ++z) {
-                            for (int y = 0; y < slice_mat.cols; ++y) {
-                                slice_mat.at<uint8_t>(z, y) = chunk_data(z, y, i_chunk);
+                        for (int z = 0; z < static_cast<int>(shape[0]); ++z) {
+                            uint8_t* __restrict__ dst_row = slice_mat.ptr<uint8_t>(z);
+                            const size_t z_off = z * stride_z;
+                            for (int y = 0; y < static_cast<int>(shape[1]); ++y) {
+                                dst_row[y] = chunk_ptr[z_off + y * stride_y + i_chunk];
                             }
                         }
                         break;
+                    }
                 }
 
                 cv::Mat binary_slice = slice_mat > 0;
@@ -521,12 +531,12 @@ void run_generate(const po::variables_map& vm) {
                                 std::cout << ", avg " << key << ": " << avg_time << "s";
                             }
                         }
-                        std::cout << std::endl;
+                        std::cout << "\n";
                     }
                 }
             }
         }
     }
 
-    std::cout << "Processing complete." << std::endl;
+    std::cout << "Processing complete." << "\n";
 }

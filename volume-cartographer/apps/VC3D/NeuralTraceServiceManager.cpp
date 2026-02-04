@@ -210,7 +210,7 @@ bool NeuralTraceServiceManager::startService(const QString& checkpointPath,
     for (const QString& arg : args) {
         std::cout << " " << arg.toStdString();
     }
-    std::cout << std::endl;
+    std::cout << "\n";
 
     _process->start(python, args);
 
@@ -259,7 +259,7 @@ void NeuralTraceServiceManager::stopService()
         return;
     }
 
-    std::cout << "Stopping neural trace service..." << std::endl;
+    std::cout << "Stopping neural trace service..." << "\n";
 
     if (_process->state() == QProcess::Running) {
         _process->terminate();
@@ -297,7 +297,7 @@ QString NeuralTraceServiceManager::socketPath() const
 
 void NeuralTraceServiceManager::handleProcessFinished(int exitCode, QProcess::ExitStatus exitStatus)
 {
-    std::cout << "Neural trace service finished with exit code " << exitCode << std::endl;
+    std::cout << "Neural trace service finished with exit code " << exitCode << "\n";
 
     if (exitStatus == QProcess::CrashExit) {
         _lastError = tr("Neural trace service crashed");
@@ -334,7 +334,7 @@ void NeuralTraceServiceManager::handleProcessError(QProcess::ProcessError error)
     }
 
     _lastError = errorStr;
-    std::cerr << "Neural trace service error: " << errorStr.toStdString() << std::endl;
+    std::cerr << "Neural trace service error: " << errorStr.toStdString() << "\n";
     emit serviceError(errorStr);
 }
 

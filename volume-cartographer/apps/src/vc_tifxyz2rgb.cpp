@@ -6,18 +6,17 @@
 //   ./tifxyz_to_rgb <mesh.tifxyz> [out.png]
 // Produces an 8-bit RGB image (PNG/TIF supported by OpenCV).
 
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/core.hpp>
 #include <iostream>
 #include <limits>
 #include <filesystem>
 #include <cmath>
 #include <memory>
 #include <algorithm>
-
-#include <opencv2/imgcodecs.hpp>
-#include <opencv2/core.hpp>
+#include <string>
 
 #include "vc/core/util/QuadSurface.hpp"
-#include "vc/core/util/Surface.hpp"  // QuadSurface, load_quad_from_tifxyz
 
 namespace fs = std::filesystem;
 

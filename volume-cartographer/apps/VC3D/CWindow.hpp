@@ -22,22 +22,28 @@
 #include <unordered_map>
 #include <map>
 
-// Required includes for method signatures and unique_ptr destructors
-#include "CSurfaceCollection.hpp"
-#include "CVolumeViewer.hpp"
-#include "segmentation/SegmentationGrowth.hpp"
-#include "segmentation/SegmentationEditManager.hpp"
-#include "overlays/SegmentationOverlayController.hpp"
-#include "overlays/PointsOverlayController.hpp"
-#include "overlays/RawPointsOverlayController.hpp"
-#include "overlays/PathsOverlayController.hpp"
-#include "overlays/BBoxOverlayController.hpp"
-#include "overlays/VectorOverlayController.hpp"
-#include "overlays/PlaneSlicingOverlayController.hpp"
-#include "overlays/VolumeOverlayController.hpp"
-#include "ViewerManager.hpp"
+// Only include headers needed for inline methods and non-pointer members
+#include "SurfaceTypes.hpp"  // POI struct used in signals
+#include "segmentation/SegmentationGrowthEnums.hpp"  // For SegmentationGrowthMethod/Direction enums
 
-// Forward declarations - these types only used as pointers/smart pointers with external linkage
+// Forward declarations - only used as pointers
+class CVolumeViewer;
+class CSurfaceCollection;
+
+// Forward declarations - unique_ptr members don't need full types if destructor is in .cpp
+class VolumeOverlayController;
+class ViewerManager;
+class SegmentationGrower;
+class SegmentationEditManager;
+class SegmentationOverlayController;
+class PointsOverlayController;
+class RawPointsOverlayController;
+class PathsOverlayController;
+class BBoxOverlayController;
+class VectorOverlayController;
+class PlaneSlicingOverlayController;
+
+// Forward declarations - these types only used as pointers/smart pointers
 class VCCollection;
 class CPointCollectionWidget;
 class DrawingWidget;
@@ -122,6 +128,9 @@ public:
     // Helper method to get the current volume path
     QString getCurrentVolumePath() const;
     VCCollection* pointCollection() { return _point_collection; }
+
+    // Toggle file watching at runtime
+    void setFileWatchingEnabled(bool enabled);
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;

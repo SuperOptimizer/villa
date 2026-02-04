@@ -143,7 +143,7 @@ CVolumeViewer::CVolumeViewer(CSurfaceCollection *col, ViewerManager* manager, QW
     } else {
         _interpolationMethod = static_cast<InterpolationMethod>(perf::INTERPOLATION_METHOD_DEFAULT);
     }
-    std::cout << "using interpolation method: " << interpolationMethodName(_interpolationMethod) << std::endl;
+    std::cout << "using interpolation method: " << interpolationMethodName(_interpolationMethod) << "\n";
     QVBoxLayout* aWidgetLayout = new QVBoxLayout;
     aWidgetLayout->addWidget(fGraphicsView);
 
@@ -330,6 +330,26 @@ void CVolumeViewer::recalcScales()
     }
 }
 
+void CVolumeViewer::setDownscaleOverride(int level)
+{
+    if (_downscale_override == level) {
+        return;
+    }
+    _downscale_override = level;
+    recalcScales();
+    invalidateVis();
+    renderVisible(true);
+}
+
+void CVolumeViewer::setInterpolationMethod(InterpolationMethod method)
+{
+    if (_interpolationMethod == method) {
+        return;
+    }
+    _interpolationMethod = method;
+    invalidateVis();
+    renderVisible(true);
+}
 
 void CVolumeViewer::onZoom(int steps, QPointF scene_loc, Qt::KeyboardModifiers modifiers)
 {
@@ -630,7 +650,7 @@ void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, 
         sendVolumeClicked(p, n, segmentation.surface, buttons, modifiers);
     }
     else {
-        std::cout << "FIXME: onVolumeClicked()" << std::endl;
+        std::cout << "FIXME: onVolumeClicked()" << "\n";
     }
 }
 
@@ -1171,7 +1191,7 @@ void CVolumeViewer::onMouseRelease(QPointF scene_loc, Qt::MouseButton button, Qt
             emit sendMouseReleaseVolume(p, button, modifiers);
         }
         else {
-            std::cout << "FIXME: onMouseRelease()" << std::endl;
+            std::cout << "FIXME: onMouseRelease()" << "\n";
         }
     }
 }

@@ -74,22 +74,31 @@ void generate_simple_spiral(
         return;
     }
 
+    const double inv_revolutions = 1.0 / static_cast<double>(revolutions);
+    const double radius_delta = end_radius - start_radius;
+
     for (int i = 0; i < revolutions; ++i) {
-        double radius_low = start_radius + (end_radius - start_radius) * (double)i / revolutions;
-        double radius_high = start_radius + (end_radius - start_radius) * (double)(i + 1) / revolutions;
-        double avg_radius = (radius_low + radius_high) / 2.0;
+        double radius_low = start_radius + radius_delta * static_cast<double>(i) * inv_revolutions;
+        double radius_high = start_radius + radius_delta * static_cast<double>(i + 1) * inv_revolutions;
+        double avg_radius = (radius_low + radius_high) * 0.5;
         int n_points = static_cast<int>(2 * CV_PI * avg_radius / spiral_step);
+        if (n_points <= 0) continue;
+
+        const double inv_n_points = 1.0 / static_cast<double>(n_points);
+        const double radius_range = radius_high - radius_low;
+        const double angle_scale = 2 * CV_PI * inv_n_points;
 
         for (int j = 0; j < n_points; ++j) {
-            double angle = 2 * CV_PI * (double)j / n_points;
-            double radius = radius_low + (radius_high - radius_low) * (double)j / n_points;
+            const double t = static_cast<double>(j) * inv_n_points;
+            double angle = angle_scale * static_cast<double>(j);
+            double radius = radius_low + radius_range * t;
             SpiralPoint sp;
             sp.pos[0] = umbilicus.x + radius * std::cos(angle);
             sp.pos[1] = umbilicus.y + radius * std::sin(angle);
             sp.pos[2] = 0;
-            sp.winding = (double)i + (double)j / n_points;
-            sp.dist_low = radius - (start_radius + (end_radius - start_radius) * (double)(i - 1) / revolutions);
-            sp.dist_high = (start_radius + (end_radius - start_radius) * (double)(i + 1) / revolutions) - radius;
+            sp.winding = static_cast<double>(i) + t;
+            sp.dist_low = radius - (start_radius + radius_delta * static_cast<double>(i - 1) * inv_revolutions);
+            sp.dist_high = (start_radius + radius_delta * static_cast<double>(i + 1) * inv_revolutions) - radius;
             points_per_revolution[i].push_back(sp);
         }
     }

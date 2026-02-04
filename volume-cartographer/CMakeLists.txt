@@ -2,6 +2,17 @@ cmake_minimum_required(VERSION 3.22 FATAL_ERROR)
 
 set(VC_VERSION 3.0.2)
 
+# Prevent z5 from auto-detecting conda environment and polluting CMAKE_PREFIX_PATH
+set(WITHIN_TRAVIS ON CACHE BOOL "Skip z5 conda detection" FORCE)
+
+# Ignore conda paths to prevent picking up conda packages instead of system ones
+if(EXISTS "$ENV{HOME}/miniconda3")
+    list(APPEND CMAKE_IGNORE_PREFIX_PATH "$ENV{HOME}/miniconda3")
+endif()
+if(EXISTS "$ENV{HOME}/anaconda3")
+    list(APPEND CMAKE_IGNORE_PREFIX_PATH "$ENV{HOME}/anaconda3")
+endif()
+
 list(PREPEND CMAKE_PREFIX_PATH "$ENV{HOME}/vc-dependencies")
 
 option(VC_VERSION_DATESTAMP "Append date stamp to version number" off)
@@ -91,6 +102,13 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     # -mllvm -enable-loopinterchange: Enable loop interchange for better cache usage
     set(VC_LLVM_PASSES "-mllvm -enable-gvn-hoist -mllvm -enable-loopinterchange")
 
+    # Size-focused flags for MinSizeRel
+    # -fno-ident: Remove compiler identification from .comment section
+    set(VC_SIZE_FLAGS "-fno-ident")
+    # Machine outliner must be passed to the linker during LTO
+    # -mllvm -enable-machine-outliner: Extract common instruction sequences into functions
+    set(VC_SIZE_LINKER_FLAGS "-Wl,-mllvm,-enable-machine-outliner")
+
     if(APPLE)
         # macOS: enable LTO with lld linker (Homebrew LLVM includes lld)
         find_program(LLD_LINKER ld.lld HINTS "/opt/homebrew/opt/llvm/bin")
@@ -112,9 +130,24 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         endif()
     else()
         # Linux Clang: LTO + full devirtualization + aggressive opts
-        set(VC_LTO_FLAGS "-flto=thin -march=native ${VC_DEVIRT_FLAGS} ${VC_DEVIRT_LTO_FLAGS} ${VC_AGGRESSIVE_MATH} ${VC_VISIBILITY_FLAGS} ${VC_LLVM_PASSES}")
-        set(VC_LINKER_FLAGS "-fuse-ld=lld")
-        message(STATUS "Using Clang: thin LTO + devirt + aggressive optimizations")
+        # -ffunction-sections/-fdata-sections: Put each function/data in its own section for fine-grained GC
+        set(VC_LTO_FLAGS "-flto=thin -march=native ${VC_DEVIRT_FLAGS} ${VC_DEVIRT_LTO_FLAGS} ${VC_AGGRESSIVE_MATH} ${VC_VISIBILITY_FLAGS} ${VC_LLVM_PASSES} -ffunction-sections -fdata-sections")
+        # Linker flags for size reduction and performance:
+        # --icf=all: Identical Code Folding - merges identical functions
+        # --gc-sections: Remove unreferenced sections (works with -ffunction-sections/-fdata-sections)
+        # --as-needed: Only link libraries that are actually used
+        # -O2: LLD optimization level (enables additional linker optimizations)
+        # --hash-style=gnu: Use faster GNU-style hash tables
+        # LLD uses multi-threaded linking by default (auto-detects CPU count)
+        # ThinLTO backend jobs are controlled separately via --thinlto-jobs
+        include(ProcessorCount)
+        ProcessorCount(NPROC)
+        if(NOT NPROC OR NPROC EQUAL 0)
+            set(NPROC 4)
+        endif()
+        set(VC_LINKER_FLAGS "-fuse-ld=lld -Wl,--icf=all -Wl,--gc-sections -Wl,--as-needed -Wl,-O2 -Wl,--hash-style=gnu -Wl,--thinlto-jobs=${NPROC}")
+        message(STATUS "LLD parallel linking with ${NPROC} ThinLTO jobs")
+        message(STATUS "Using Clang: thin LTO + devirt + aggressive optimizations + ICF + GC sections + parallel linking")
     endif()
 else()
     set(VC_LTO_FLAGS "-flto=auto")
@@ -134,29 +167,46 @@ if(VC_USE_UNITY_BUILD)
     message(STATUS "Unity build enabled (batch size: 8)")
 endif()
 
+# ThinLTO cache for faster incremental builds (shared across all build types using LTO)
+set(VC_THINLTO_CACHE_DIR "${CMAKE_BINARY_DIR}/lto-cache")
+file(MAKE_DIRECTORY ${VC_THINLTO_CACHE_DIR})
+set(VC_THINLTO_CACHE_FLAGS "-Wl,--thinlto-cache-dir=${VC_THINLTO_CACHE_DIR} -Wl,--thinlto-cache-policy=cache_size_bytes=1g")
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(VC_FAST_DEBUG)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g1 -O0")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -g1")
-        message(STATUS "Fast debug mode: using -g1 (minimal debug info)")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -g1 -Wl,--compress-debug-sections=zlib")
+        message(STATUS "Fast debug mode: using -g1 (minimal debug info, compressed)")
     else()
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -g")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -g -Wl,--compress-debug-sections=zlib")
+        message(STATUS "Debug mode: full debug info, compressed")
     endif()
 elseif(CMAKE_BUILD_TYPE STREQUAL "QuickBuild")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O1")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LINKER_FLAGS}")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    # Release: fully optimized and stripped (no debug info)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 ${VC_LTO_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS}")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS} ${VC_THINLTO_CACHE_FLAGS} -Wl,--strip-all")
+    message(STATUS "Release mode: stripped binary, ThinLTO cached")
 elseif(CMAKE_BUILD_TYPE STREQUAL "ReleaseUnsafe")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 ${VC_LTO_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS}")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS} ${VC_THINLTO_CACHE_FLAGS} -Wl,--strip-all")
 elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 ${VC_LTO_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS}")
+    # RelWithDebInfo: optimized with split debug info (.dwo files)
+    # -gsplit-dwarf puts debug info in separate .dwo files, keeping main binary small
+    # Debug info can be combined later with: dwp -e <binary> -o <binary>.dwp
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 ${VC_LTO_FLAGS} -g -gsplit-dwarf")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS} ${VC_THINLTO_CACHE_FLAGS} -Wl,--compress-debug-sections=zlib")
+    message(STATUS "RelWithDebInfo mode: split DWARF debug info (.dwo files), ThinLTO cached")
 elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Os ${VC_LTO_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS}")
+    # MinSizeRel: optimized for smallest binary size
+    # -Oz: Optimize aggressively for size (may sacrifice some speed for smaller code)
+    # Machine outliner extracts common instruction sequences during LTO
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Oz ${VC_LTO_FLAGS} ${VC_SIZE_FLAGS}")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS} ${VC_THINLTO_CACHE_FLAGS} ${VC_SIZE_LINKER_FLAGS} -Wl,--strip-all")
+    message(STATUS "MinSizeRel mode: size-optimized (-Oz), machine outliner enabled")
 endif()
 
 

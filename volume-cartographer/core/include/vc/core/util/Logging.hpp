@@ -22,7 +22,7 @@ enum class LogLevel {
     Off = 4
 };
 
-class MinimalLogger {
+class MinimalLogger final {
 public:
     MinimalLogger();
     ~MinimalLogger();

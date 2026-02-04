@@ -15,16 +15,16 @@
 // - Output keeps the same relative path under <output_dir>.
 // - If no holes are found, the image is copied as-is.
 
+#include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/photo.hpp>
 #include <iostream>
 #include <filesystem>
 #include <string>
 #include <algorithm>
 #include <cctype>
-
-#include <opencv2/core.hpp>
-#include <opencv2/imgcodecs.hpp>
-#include <opencv2/imgproc.hpp>
-#include <opencv2/photo.hpp>
+#include <vector>
 
 namespace fs = std::filesystem;
 

@@ -7,10 +7,12 @@
 #include <nlohmann/json.hpp>
 
 // Helper to get point-to-line-segment squared distance
-static float dist_point_segment_sq(const cv::Vec3f& p, const cv::Vec3f& a, const cv::Vec3f& b) {
+[[gnu::always_inline]] static inline float dist_point_segment_sq(const cv::Vec3f& p, const cv::Vec3f& a, const cv::Vec3f& b) noexcept {
     cv::Vec3f ab = b - a;
     cv::Vec3f ap = p - a;
-    float t = ap.dot(ab) / ab.dot(ab);
+    float denom = ab.dot(ab);
+    if (denom < 1e-12f) [[unlikely]] return ap.dot(ap);
+    float t = ap.dot(ab) / denom;
     t = std::max(0.0f, std::min(1.0f, t));
     cv::Vec3f closest_point = a + t * ab;
     cv::Vec3f d = p - closest_point;

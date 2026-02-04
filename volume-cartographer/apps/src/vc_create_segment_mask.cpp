@@ -1,10 +1,17 @@
-#include "vc/core/util/Surface.hpp"
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/core.hpp>
+#include <iostream>
+#include <filesystem>
+#include <iomanip>
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/types/Volume.hpp"
-#include "vc/core/types/ChunkedTensor.hpp"
-#include <opencv2/imgcodecs.hpp>
-#include <iostream>
-#include <opencv2/imgproc.hpp>
+#include "vc/core/util/ChunkCache.hpp"
+#include "vc/core/util/Slicing.hpp"
 
 namespace fs = std::filesystem;
 
@@ -51,9 +58,9 @@ void generate_mask(QuadSurface* surf,
 int main(int argc, char *argv[])
 {
     if (argc < 2) {
-        std::cout << "usage: " << argv[0] << " <tiffxyz-segment> [zarr-volume] [output-mask-path] [--overwrite]" << std::endl;
-        std::cout << "  Generates a mask (and optionally image layer if volume provided)" << std::endl;
-        std::cout << "  --overwrite: overwrite existing mask file (defaults to false)" << std::endl;
+        std::cout << "usage: " << argv[0] << " <tiffxyz-segment> [zarr-volume] [output-mask-path] [--overwrite]" << "\n";
+        std::cout << "  Generates a mask (and optionally image layer if volume provided)" << "\n";
+        std::cout << "  --overwrite: overwrite existing mask file (defaults to false)" << "\n";
         return EXIT_SUCCESS;
     }
 
@@ -77,8 +84,8 @@ int main(int argc, char *argv[])
 
     // Check if mask already exists
     if (fs::exists(mask_path) && !overwrite) {
-        std::cout << "Mask already exists at " << mask_path << std::endl;
-        std::cout << "Use --overwrite flag to regenerate" << std::endl;
+        std::cout << "Mask already exists at " << mask_path << "\n";
+        std::cout << "Use --overwrite flag to regenerate" << "\n";
         return EXIT_SUCCESS;
     }
 
@@ -88,7 +95,7 @@ int main(int argc, char *argv[])
         surf = load_quad_from_tifxyz(seg_path);
     }
     catch (const std::exception& e) {
-        std::cerr << "Error loading surface: " << e.what() << std::endl;
+        std::cerr << "Error loading surface: " << e.what() << "\n";
         return EXIT_FAILURE;
     }
 
@@ -112,7 +119,7 @@ int main(int argc, char *argv[])
             // Save as multi-layer TIFF
             std::vector<cv::Mat> layers = {mask, img};
             if (!cv::imwritemulti(mask_path.string(), layers)) {
-                std::cerr << "Error writing mask to " << mask_path << std::endl;
+                std::cerr << "Error writing mask to " << mask_path << "\n";
                 delete cache;
                 return EXIT_FAILURE;
             }
@@ -120,7 +127,7 @@ int main(int argc, char *argv[])
             delete cache;
         }
         catch (const std::exception& e) {
-            std::cerr << "Error processing volume: " << e.what() << std::endl;
+            std::cerr << "Error processing volume: " << e.what() << "\n";
             if (cache) delete cache;
             return EXIT_FAILURE;
         }
@@ -129,20 +136,20 @@ int main(int argc, char *argv[])
         generate_mask(surf.get(), mask, img);
 
         if (!cv::imwrite(mask_path.string(), mask)) {
-            std::cerr << "Error writing mask to " << mask_path << std::endl;
+            std::cerr << "Error writing mask to " << mask_path << "\n";
             return EXIT_FAILURE;
         }
     }
 
-    std::cout << "Mask generated successfully at " << mask_path << std::endl;
-    std::cout << "  Dimensions: " << mask.size() << std::endl;
+    std::cout << "Mask generated successfully at " << mask_path << "\n";
+    std::cout << "  Dimensions: " << mask.size() << "\n";
 
     // Report statistics
     int valid_count = cv::countNonZero(mask);
     int total_count = mask.rows * mask.cols;
     float valid_percent = (float)valid_count / total_count * 100.0f;
     std::cout << "  Valid pixels: " << valid_count << " / " << total_count
-              << " (" << std::fixed << std::setprecision(1) << valid_percent << "%)" << std::endl;
+              << " (" << std::fixed << std::setprecision(1) << valid_percent << "%)" << "\n";
 
     return EXIT_SUCCESS;
 }

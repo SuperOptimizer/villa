@@ -79,3 +79,22 @@ void readMultiSlice(
     const cv::Mat_<cv::Vec3f>& stepDirs,
     const std::vector<float>& offsets
 );
+
+// Centralized z5 subarray reading to consolidate template instantiations.
+// Uses xt::xarray with default (row-major) layout.
+// offset is ZYX order (same as z5 dataset shape).
+// These functions exist to prevent template bloat from having readSubarray
+// instantiated in multiple translation units.
+#include <xtensor/containers/xarray.hpp>
+
+void readSubarray3D(xt::xarray<uint8_t>& out, z5::Dataset& ds, const std::vector<std::size_t>& offset);
+void readSubarray3D(xt::xarray<uint16_t>& out, z5::Dataset& ds, const std::vector<std::size_t>& offset);
+void readSubarray3D(xt::xarray<float>& out, z5::Dataset& ds, const std::vector<std::size_t>& offset);
+
+// Compute volume gradients at native surface resolution (the raw point grid)
+// Returns normalized gradient vectors at each raw grid point
+// dsScale converts from world coordinates to dataset coordinates
+cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
+    z5::Dataset* ds,
+    const cv::Mat_<cv::Vec3f>& rawPoints,
+    float dsScale);

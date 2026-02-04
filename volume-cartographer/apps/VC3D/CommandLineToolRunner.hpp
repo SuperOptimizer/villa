@@ -6,14 +6,13 @@
 #include <QProcess>
 #include <QDialog>
 #include <QFile>
+#include <QStatusBar>
 
-#include "CWindow.hpp"
-#include "elements/ProgressUtil.hpp"
-#include "ConsoleOutputWidget.hpp"
-
-
-
-// Forward declaration
+// Forward declarations
+class CWindow;
+class QTextStream;
+class ProgressUtil;
+class ConsoleOutputWidget;
 
 
 /**

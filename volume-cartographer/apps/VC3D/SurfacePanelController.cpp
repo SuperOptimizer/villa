@@ -156,7 +156,7 @@ void SurfacePanelController::loadSurfacesIncremental()
         return;
     }
 
-    std::cout << "Starting incremental surface load..." << std::endl;
+    std::cout << "Starting incremental surface load..." << "\n";
     _volumePkg->refreshSegmentations();
     auto changes = detectSurfaceChanges();
 
@@ -193,7 +193,7 @@ void SurfacePanelController::loadSurfacesIncremental()
         reloadedIds.reserve(changes.toReload.size());
 
         for (const auto& id : changes.toReload) {
-            std::cout << "Queueing for reload: " << id << std::endl;
+            std::cout << "Queueing for reload: " << id << "\n";
             auto currentSurface = _surfaces ? _surfaces->surface(id) : nullptr;
             auto activeSegSurface = _surfaces ? _surfaces->surface("segmentation") : nullptr;
             const bool wasActiveSeg = (currentSurface != nullptr && activeSegSurface.get() == currentSurface.get());
@@ -234,7 +234,7 @@ void SurfacePanelController::loadSurfacesIncremental()
 
     std::cout << "Incremental delta: add=" << changes.toAdd.size()
               << " remove=" << changes.toRemove.size()
-              << " reload=" << changes.toReload.size() << std::endl;
+              << " reload=" << changes.toReload.size() << "\n";
 
     applyFilters();
     logSurfaceLoadSummary();
@@ -245,7 +245,7 @@ void SurfacePanelController::loadSurfacesIncremental()
         _viewerManager->primeSurfacePatchIndicesAsync();
     }
     emit surfacesLoaded();
-    std::cout << "Incremental surface load completed." << std::endl;
+    std::cout << "Incremental surface load completed." << "\n";
 }
 
 SurfacePanelController::SurfaceChanges SurfacePanelController::detectSurfaceChanges() const
@@ -327,7 +327,7 @@ SurfacePanelController::SurfaceChanges SurfacePanelController::detectSurfaceChan
               << " ui=" << uiIds.size()
               << " add=" << changes.toAdd.size()
               << " remove=" << changes.toRemove.size()
-              << " reload=" << changes.toReload.size() << std::endl;
+              << " reload=" << changes.toReload.size() << "\n";
     return changes;
 }
 
@@ -433,7 +433,7 @@ void SurfacePanelController::addSingleSegmentation(const std::string& segId)
         return;
     }
 
-    std::cout << "Adding segmentation: " << segId << std::endl;
+    std::cout << "Adding segmentation: " << segId << "\n";
     try {
         auto surf = _volumePkg->loadSurface(segId);
         if (!surf) {
@@ -459,13 +459,13 @@ void SurfacePanelController::addSingleSegmentation(const std::string& segId)
             updateTreeItemIcon(item);
         }
     } catch (const std::exception& e) {
-        std::cout << "Failed to add segmentation " << segId << ": " << e.what() << std::endl;
+        std::cout << "Failed to add segmentation " << segId << ": " << e.what() << "\n";
     }
 }
 
 void SurfacePanelController::removeSingleSegmentation(const std::string& segId, bool suppressSignals)
 {
-    std::cout << "Removing segmentation: " << segId << std::endl;
+    std::cout << "Removing segmentation: " << segId << "\n";
 
     // Wait for any pending index rebuild to finish before deleting surfaces
     // to avoid use-after-free in the background rebuild thread
@@ -1393,13 +1393,13 @@ void SurfacePanelController::setTagCheckboxEnabled(bool enabledApproved,
 void SurfacePanelController::logSurfaceLoadSummary() const
 {
     if (!_volumePkg) {
-        std::cout << "[SurfacePanel] No volume package set; skipping surface load summary." << std::endl;
+        std::cout << "[SurfacePanel] No volume package set; skipping surface load summary." << "\n";
         return;
     }
 
     const auto segIds = _volumePkg->segmentationIDs();
     if (segIds.empty()) {
-        std::cout << "[SurfacePanel] No segmentation IDs available." << std::endl;
+        std::cout << "[SurfacePanel] No segmentation IDs available." << "\n";
         return;
     }
 
@@ -1425,7 +1425,7 @@ void SurfacePanelController::logSurfaceLoadSummary() const
     }
 
     std::cout << "[SurfacePanel] Loaded " << loadedCount << " / " << segIds.size()
-              << " surfaces into memory." << std::endl;
+              << " surfaces into memory." << "\n";
     if (!missing.empty()) {
         const size_t previewCount = std::min<size_t>(missing.size(), 10);
         std::cout << "[SurfacePanel] Missing (" << missing.size() << ") IDs: ";
@@ -1438,7 +1438,7 @@ void SurfacePanelController::logSurfaceLoadSummary() const
         if (missing.size() > previewCount) {
             std::cout << ", ...";
         }
-        std::cout << std::endl;
+        std::cout << "\n";
     }
 }
 

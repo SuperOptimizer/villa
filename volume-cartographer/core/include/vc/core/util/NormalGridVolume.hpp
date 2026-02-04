@@ -1,17 +1,17 @@
 #pragma once
 
-#include <opencv2/core/types.hpp>
-#include <nlohmann/json.hpp>
 #include <nlohmann/json_fwd.hpp>
+#include <opencv2/core/types.hpp>
 #include <string>
 #include <memory>
 #include <optional>
 
-#include "vc/core/util/GridStore.hpp"
+// Forward declarations
+namespace vc::core::util { class GridStore; }
 
 namespace vc::core::util {
 
-    class NormalGridVolume {
+    class NormalGridVolume final {
     public:
         explicit NormalGridVolume(const std::string& path);
         ~NormalGridVolume();

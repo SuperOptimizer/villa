@@ -1,13 +1,16 @@
-#include "vc/core/util/Geometry.hpp"
-#include "vc/core/util/QuadSurface.hpp"
-#include "vc/ui/VCCollection.hpp"
-
+#include <opencv2/imgcodecs.hpp>
+#include <boost/program_options.hpp>
+#include <opencv2/core.hpp>
 #include <algorithm>
 #include <iostream>
 #include <string>
+#include <cmath>
+#include <memory>
+#include <vector>
 
-#include <boost/program_options.hpp>
-#include <opencv2/imgcodecs.hpp>
+#include "vc/core/util/Geometry.hpp"                        // for at_int
+#include "vc/core/util/QuadSurface.hpp"                     // for QuadSurface
+#include "vc/ui/VCCollection.hpp"                           // for VCCollection
 
 namespace po = boost::program_options;
 
@@ -103,7 +106,7 @@ IntersectVec getIntersects(const cv::Vec2i &seed, QuadSurface* surface)
         if (!loc_valid_xy(points,loc))
             continue;
 
-        // std::cout << dist << res << loc << std::endl;
+        // std::cout << dist << res << loc << "\n";
 
         bool found = false;
         for(auto l : locs) {
@@ -139,12 +142,12 @@ int main(int argc, char** argv) {
     po::notify(vm);
 
     if (vm.count("help")) {
-        std::cout << desc << std::endl;
+        std::cout << desc << "\n";
         return 0;
     }
 
     if (!vm.count("input") || !vm.count("winding") || !vm.count("output")) {
-        std::cerr << "Error: --input, --winding, and --output are required." << std::endl;
+        std::cerr << "Error: --input, --winding, and --output are required." << "\n";
         return 1;
     }
 
@@ -155,13 +158,13 @@ int main(int argc, char** argv) {
 
     auto surface = load_quad_from_tifxyz(input_path);
     if (!surface) {
-        std::cerr << "Error: Failed to load surface from " << input_path << std::endl;
+        std::cerr << "Error: Failed to load surface from " << input_path << "\n";
         return 1;
     }
 
     cv::Mat_<float> winding = cv::imread(winding_path, cv::IMREAD_UNCHANGED);
     if (winding.empty()) {
-        std::cerr << "Error: Failed to load winding from " << winding_path << std::endl;
+        std::cerr << "Error: Failed to load winding from " << winding_path << "\n";
         return 1;
     }
 
@@ -169,11 +172,11 @@ int main(int argc, char** argv) {
     
     VCCollection collection;
 
-    std::cout << "wtf "  << std::endl;
+    std::cout << "wtf "  << "\n";
     for (int i = 0; i < num_collections; ++i) {
         cv::Point seed_loc(rand() % points.cols, rand() % points.rows);
 
-        std::cout << "try " << seed_loc << std::endl;
+        std::cout << "try " << seed_loc << "\n";
 
         if (points(seed_loc.y, seed_loc.x)[0] == -1) {
             i--; // Try again with a new random point
@@ -182,7 +185,7 @@ int main(int argc, char** argv) {
 
         IntersectVec intersects = getIntersects({seed_loc.x, seed_loc.y}, surface.get());
 
-        std::cout << "got " << intersects.size() << std::endl;
+        std::cout << "got " << intersects.size() << "\n";
 
         if (intersects.empty()) {
             continue;
@@ -223,7 +226,7 @@ int main(int argc, char** argv) {
     
     collection.saveToJSON(output_path);
 
-    std::cout << "Successfully generated annotations and saved to " << output_path << std::endl;
+    std::cout << "Successfully generated annotations and saved to " << output_path << "\n";
 
     return 0;
 }

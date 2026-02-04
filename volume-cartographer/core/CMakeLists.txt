@@ -5,6 +5,7 @@ add_library(vc_core
         src/NormalGridVolume.cpp
         src/normalgridtools.cpp
         src/Segmentation.cpp
+        src/Surface.cpp
         src/Volume.cpp
         src/VolumePkg.cpp
         src/ChunkedTensor.cpp
@@ -113,6 +114,19 @@ target_precompile_headers(vc_core PRIVATE
     # Eigen (used by Ceres)
     <Eigen/Core>
     <Eigen/Dense>
+    # Boost (used by CLI apps)
+    <boost/program_options.hpp>
+    # z5/xtensor (zarr volume access - heavy templates)
+    <xtensor/containers/xarray.hpp>
+    <xtensor/containers/xadapt.hpp>
+    <xtensor/views/xview.hpp>
+    <xtensor/generators/xbuilder.hpp>
+    <z5/factory.hxx>
+    <z5/dataset.hxx>
+    <z5/attributes.hxx>
+    <z5/filesystem/handle.hxx>
+    <z5/filesystem/dataset.hxx>
+    <z5/multiarray/xtensor_access.hxx>
 )
 endif()
 
@@ -123,7 +137,7 @@ if(VC_USE_PCH)
     target_precompile_headers(vc_ui REUSE_FROM vc_core)
 endif()
 
-add_library(vc_tracer src/GrowPatch.cpp src/GrowSurface.cpp src/NeuralTracerConnection.cpp)
+add_library(vc_tracer src/GrowPatch.cpp src/GrowSurface.cpp src/NeuralTracerConnection.cpp src/CostFunctions.cpp)
 target_link_libraries(vc_tracer PUBLIC vc_core vc_ui Ceres::ceres Qt6::Core)
 if(VC_USE_PCH)
     target_precompile_headers(vc_tracer REUSE_FROM vc_core)

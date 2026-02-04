@@ -1,25 +1,24 @@
-#include <nlohmann/json.hpp>
+#include <map>
+#include <chrono>
+#include <filesystem>
+#include <iostream>
+#include <memory>
+#include <string>
 
-#include <xtensor/containers/xarray.hpp>
-#include <xtensor/io/xio.hpp>
-#include <xtensor/views/xview.hpp>
-
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-#include "z5/attributes.hxx"
-
-#include <opencv2/imgcodecs.hpp>
 #include <opencv2/core.hpp>
+#include <z5/common.hxx>
+#include <z5/dataset.hxx>
+#include <z5/filesystem/factory.hxx>
+#include <z5/util/blocking.hxx>
 
+#include "z5/filesystem/handle.hxx"
 #include "vc/core/util/Slicing.hpp"
-#include "vc/core/util/Surface.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/StreamOperators.hpp"
+#include "vc/core/util/ChunkCache.hpp"
 
 
 using shape = z5::types::ShapeType;
-using namespace xt::placeholders;
 
 
 
@@ -50,11 +49,11 @@ void timed_plane_slice(Surface &plane, z5::Dataset *ds, int size, ChunkCache<uin
     auto start = std::chrono::high_resolution_clock::now();
     plane.gen(&coords, &normals, {size, size}, plane.pointer(), 1.0, {0,0,0});
     auto end = std::chrono::high_resolution_clock::now();
-    std::cout << std::chrono::duration<double>(end-start).count() << "s gen_coords() " << msg << std::endl;
+    std::cout << std::chrono::duration<double>(end-start).count() << "s gen_coords() " << msg << "\n";
     start = std::chrono::high_resolution_clock::now();
     readInterpolated3D(img, ds, coords, cache, nearest_neighbor);
     end = std::chrono::high_resolution_clock::now();
-    std::cout << std::chrono::duration<double>(end-start).count() << "s slicing  " << size*size/1024.0/1024.0/std::chrono::duration<double>(end-start).count() << "MiB/s " << msg << std::endl;
+    std::cout << std::chrono::duration<double>(end-start).count() << "s slicing  " << size*size/1024.0/1024.0/std::chrono::duration<double>(end-start).count() << "MiB/s " << msg << "\n";
 }
 
 
@@ -68,11 +67,11 @@ int main(int argc, char *argv[])
 
    bool nearest_neighbor =  (argc == 3 && strncmp(argv[2],"nearest",7) == 0);
 
-  std::cout << "ds shape " << ds->shape() << std::endl;
-  std::cout << "ds shape via chunk " << ds->chunking().shape() << std::endl;
-  std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
+  std::cout << "ds shape " << ds->shape() << "\n";
+  std::cout << "ds shape via chunk " << ds->chunking().shape() << "\n";
+  std::cout << "chunk shape shape " << ds->chunking().blockShape() << "\n";
   if (nearest_neighbor) {
-    std::cout << "doing nearest neighbor interpolation" << std::endl;
+    std::cout << "doing nearest neighbor interpolation" << "\n";
   }
 
   cv::Mat_<cv::Vec3f> coords;
@@ -103,7 +102,7 @@ int main(int argc, char *argv[])
   // auto start = std::chrono::high_resolution_clock::now();
   // readInterpolated3D(img,ds.get(),coords, &chunk_cache);
   // auto end = std::chrono::high_resolution_clock::now();
-  // std::cout << std::chrono::duration<double>(end-start).count() << "s cold" << std::endl;
+  // std::cout << std::chrono::duration<double>(end-start).count() << "s cold" << "\n";
   
   // cv::imwrite("plane.tif", img);
   
@@ -111,13 +110,13 @@ int main(int argc, char *argv[])
 //     start = std::chrono::high_resolution_clock::now();
 //     readInterpolated3D(img,ds.get(),coords, &chunk_cache);
 //     end = std::chrono::high_resolution_clock::now();
-//     std::cout << std::chrono::duration<double>(end-start).count() << "s cached" << std::endl;
+//     std::cout << std::chrono::duration<double>(end-start).count() << "s cached" << "\n";
 //   }
 //
 
   const int size = 1024;
 
-  std::cout << "testing different slice directions / caching" << std::endl;
+  std::cout << "testing different slice directions / caching" << "\n";
   for(int r=0;r<3;r++) {
       timed_plane_slice(plane_x, ds.get(), size, &chunk_cache, "yz cold", nearest_neighbor);
       timed_plane_slice(plane_x, ds.get(), size, &chunk_cache, "yz", nearest_neighbor);
@@ -146,7 +145,7 @@ int main(int argc, char *argv[])
     }
 
     auto end = std::chrono::high_resolution_clock::now();
-    std::cout << std::chrono::duration<double>(end-start).count() << "s slicing / " << 100*size*size/1024.0/1024.0/std::chrono::duration<double>(end-start).count() << "MiB/s " << " shift (cold)"  << std::endl;
+    std::cout << std::chrono::duration<double>(end-start).count() << "s slicing / " << 100*size*size/1024.0/1024.0/std::chrono::duration<double>(end-start).count() << "MiB/s " << " shift (cold)"  << "\n";
   }
 
   {
@@ -165,7 +164,7 @@ int main(int argc, char *argv[])
       }
 
       auto end = std::chrono::high_resolution_clock::now();
-      std::cout << std::chrono::duration<double>(end-start).count() << "s slicing / " << 100*size*size/1024.0/1024.0/std::chrono::duration<double>(end-start).count() << "MiB/s " << " shift (warm)"  << std::endl;
+      std::cout << std::chrono::duration<double>(end-start).count() << "s slicing / " << 100*size*size/1024.0/1024.0/std::chrono::duration<double>(end-start).count() << "MiB/s " << " shift (warm)"  << "\n";
   }
 
 

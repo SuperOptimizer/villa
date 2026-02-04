@@ -248,6 +248,12 @@ target_precompile_headers(VC3D PRIVATE
     <QTreeWidget>
     <QVBoxLayout>
     <QWidget>
+    # MDI and additional widgets
+    <QMdiArea>
+    <QMdiSubWindow>
+    <QDockWidget>
+    <QSignalBlocker>
+    <QStandardItemModel>
 )
 endif()
 

@@ -35,8 +35,8 @@ public:
     PointIndex& operator=(const PointIndex&) = delete;
 
     void clear();
-    [[nodiscard]] bool empty() const;
-    [[nodiscard]] size_t size() const;
+    [[nodiscard]] bool empty() const noexcept;
+    [[nodiscard]] size_t size() const noexcept;
 
     void insert(uint64_t id, uint64_t collectionId, const cv::Vec3f& position);
     void bulkInsert(const std::vector<std::tuple<uint64_t, uint64_t, cv::Vec3f>>& points);

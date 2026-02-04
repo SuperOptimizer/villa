@@ -994,16 +994,18 @@ static void run_vis_normals_zarr_on_surf_edges_as_ply(
                   std::numeric_limits<int>::max() / 4),
     });
 
-    auto decode = [&](uint8_t u) -> float { return (static_cast<int>(u) - 128) / 127.0f; };
+    constexpr float inv127 = 1.0f / 127.0f;
+    auto decode = [&](uint8_t u) -> float { return (static_cast<int>(u) - 128) * inv127; };
     auto is_fill = [&](size_t iz, size_t iy, size_t ix) -> bool {
         return ax(iz, iy, ix) == 128 && ay(iz, iy, ix) == 128 && az(iz, iy, ix) == 128;
     };
 
+    const double inv_step = 1.0 / static_cast<double>(step);
     auto sample_trilinear = [&](const cv::Point3f& p_xyz, cv::Point3f& out_n_xyz) -> bool {
-        // Convert voxel coordinates to grid coordinates.
-        const double gx = (static_cast<double>(p_xyz.x) - origin_xyz[0]) / static_cast<double>(step);
-        const double gy = (static_cast<double>(p_xyz.y) - origin_xyz[1]) / static_cast<double>(step);
-        const double gz = (static_cast<double>(p_xyz.z) - origin_xyz[2]) / static_cast<double>(step);
+        // Convert voxel coordinates to grid coordinates (using pre-computed reciprocal).
+        const double gx = (static_cast<double>(p_xyz.x) - origin_xyz[0]) * inv_step;
+        const double gy = (static_cast<double>(p_xyz.y) - origin_xyz[1]) * inv_step;
+        const double gz = (static_cast<double>(p_xyz.z) - origin_xyz[2]) * inv_step;
 
         int x0 = static_cast<int>(std::floor(gx));
         int y0 = static_cast<int>(std::floor(gy));
@@ -1033,7 +1035,8 @@ static void run_vis_normals_zarr_on_surf_edges_as_ply(
         ty = std::clamp(ty, 0.0, 1.0);
         tz = std::clamp(tz, 0.0, 1.0);
 
-        auto lerp = [](double a, double b, double t) { return (1.0 - t) * a + t * b; };
+        // FMA-friendly form: a + t*(b-a)
+        auto lerp = [](double a, double b, double t) { return a + t * (b - a); };
         auto tri = [&](double c000, double c100, double c010, double c110,
                        double c001, double c101, double c011, double c111) -> double {
             const double c00 = lerp(c000, c001, tx);
@@ -1734,7 +1737,7 @@ static void run_fit_normals(
     // RMS=0 => blue, RMS>=0.5 => red, linear blend in between.
     auto rms_to_color_bgr = [&](double rms) -> cv::Vec3b {
         const double t = std::clamp(rms / 0.5, 0.0, 1.0);
-        const int b = static_cast<int>(std::lround((1.0 - t) * 255.0));
+        const int b = static_cast<int>(std::lround(255.0 - t * 255.0));  // FMA-friendly
         const int g = 0;
         const int r = static_cast<int>(std::lround(t * 255.0));
         return cv::Vec3b(static_cast<uint8_t>(b), static_cast<uint8_t>(g), static_cast<uint8_t>(r));
@@ -2506,7 +2509,7 @@ int main(int argc, char** argv) {
 
         if (vm.count("help") || argc == 1) {
             print_usage();
-            std::cout << "\n" << desc << std::endl;
+            std::cout << "\n" << desc << "\n";
             return 0;
         }
 
@@ -2514,13 +2517,13 @@ int main(int argc, char** argv) {
     } catch (const po::error& e) {
         std::cerr << "Error: " << e.what() << "\n\n";
         print_usage();
-        std::cout << "\n" << desc << std::endl;
+        std::cout << "\n" << desc << "\n";
         return 1;
     }
 
     const fs::path input_dir(vm["input"].as<std::string>());
     if (!fs::exists(input_dir) || !fs::is_directory(input_dir)) {
-        std::cerr << "Error: input is not a directory: " << input_dir << std::endl;
+        std::cerr << "Error: input is not a directory: " << input_dir << "\n";
         return 1;
     }
 

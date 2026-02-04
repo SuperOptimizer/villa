@@ -3,18 +3,14 @@
 // either OBJ or TIFXYZ geometry, writing the transformed result.
 
 #include "vc/core/util/QuadSurface.hpp"
-#include "vc/core/util/Surface.hpp"
 
 #include <boost/program_options.hpp>
 #include <nlohmann/json.hpp>
-
-#include <opencv2/core.hpp>
 
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <limits>
 #include <sstream>
 #include <string>
 
@@ -56,12 +52,11 @@ static inline cv::Vec3f apply_affine_point(const cv::Vec3f& p, const AffineTrans
 
 static inline cv::Vec3f transform_normal(const cv::Vec3f& n, const AffineTransform& A) {
     // Proper normal transform: n' ∝ (A^{-1})^T * n (ignore uniform pre-scale)
-    cv::Matx33d Lin(
-        A.M(0,0), A.M(0,1), A.M(0,2),
-        A.M(1,0), A.M(1,1), A.M(1,2),
-        A.M(2,0), A.M(2,1), A.M(2,2)
-    );
-    cv::Matx33d invAT = Lin.inv().t();
+    cv::Mat_<double> Lin(3, 3);
+    Lin(0,0) = A.M(0,0); Lin(0,1) = A.M(0,1); Lin(0,2) = A.M(0,2);
+    Lin(1,0) = A.M(1,0); Lin(1,1) = A.M(1,1); Lin(1,2) = A.M(1,2);
+    Lin(2,0) = A.M(2,0); Lin(2,1) = A.M(2,1); Lin(2,2) = A.M(2,2);
+    cv::Mat_<double> invAT = Lin.inv().t();
     const double nx = invAT(0,0)*n[0] + invAT(0,1)*n[1] + invAT(0,2)*n[2];
     const double ny = invAT(1,0)*n[0] + invAT(1,1)*n[1] + invAT(1,2)*n[2];
     const double nz = invAT(2,0)*n[0] + invAT(2,1)*n[1] + invAT(2,2)*n[2];
@@ -88,7 +83,7 @@ static int run_tifxyz(const std::filesystem::path& inDir,
         AA = std::make_unique<AffineTransform>(*A);
         if (invert) {
             cv::Mat inv = cv::Mat(AA->M).inv();
-            if (inv.empty()) { std::cerr << "non-invertible affine" << std::endl; return 2; }
+            if (inv.empty()) { std::cerr << "non-invertible affine" << "\n"; return 2; }
             inv.copyTo(AA->M);
         }
     }
@@ -96,7 +91,7 @@ static int run_tifxyz(const std::filesystem::path& inDir,
     std::unique_ptr<QuadSurface> surf;
     try { surf = load_quad_from_tifxyz(inDir.string()); }
     catch (const std::exception& e) {
-        std::cerr << "failed to load tifxyz: " << e.what() << std::endl; return 3;
+        std::cerr << "failed to load tifxyz: " << e.what() << "\n"; return 3;
     }
 
     cv::Mat_<cv::Vec3f>* P = surf->rawPointsPtr();
@@ -114,7 +109,7 @@ static int run_tifxyz(const std::filesystem::path& inDir,
         std::filesystem::path out = outDir;
         surf->save(out);
     } catch (const std::exception& e) {
-        std::cerr << "failed to save tifxyz: " << e.what() << std::endl; return 4;
+        std::cerr << "failed to save tifxyz: " << e.what() << "\n"; return 4;
     }
     return 0;
 }
@@ -134,13 +129,13 @@ static int run_obj(const std::filesystem::path& inFile,
         AA = std::make_unique<AffineTransform>(*A);
         if (invert) {
             cv::Mat inv = cv::Mat(AA->M).inv();
-            if (inv.empty()) { std::cerr << "non-invertible affine" << std::endl; return 2; }
+            if (inv.empty()) { std::cerr << "non-invertible affine" << "\n"; return 2; }
             inv.copyTo(AA->M);
         }
     }
 
     std::ifstream in(inFile);
-    if (!in.is_open()) { std::cerr << "cannot open OBJ: " << inFile << std::endl; return 5; }
+    if (!in.is_open()) { std::cerr << "cannot open OBJ: " << inFile << "\n"; return 5; }
     // Ensure output directory exists
     {
         const auto parent = outFile.parent_path();
@@ -150,7 +145,7 @@ static int run_obj(const std::filesystem::path& inFile,
         }
     }
     std::ofstream out(outFile);
-    if (!out.is_open()) { std::cerr << "cannot open output OBJ: " << outFile << std::endl; return 6; }
+    if (!out.is_open()) { std::cerr << "cannot open output OBJ: " << outFile << "\n"; return 6; }
 
     std::string line;
     while (std::getline(in, line)) {
@@ -193,10 +188,10 @@ int main(int argc, char** argv) {
         po::variables_map vm;
         try {
             po::store(po::parse_command_line(argc, argv, desc), vm);
-            if (vm.count("help")) { std::cout << desc << std::endl; return 0; }
+            if (vm.count("help")) { std::cout << desc << "\n"; return 0; }
             po::notify(vm);
         } catch (const std::exception& e) {
-            std::cerr << e.what() << "\n" << desc << std::endl; return 1;
+            std::cerr << e.what() << "\n" << desc << "\n"; return 1;
         }
 
         const std::filesystem::path inPath(vm["input"].as<std::string>());
@@ -212,21 +207,21 @@ int main(int argc, char** argv) {
         // Determine input type and route
         if (is_tifxyz_dir(inPath)) {
             if (std::filesystem::exists(outPath)) {
-                std::cerr << "output directory already exists: " << outPath << std::endl; return 1;
+                std::cerr << "output directory already exists: " << outPath << "\n"; return 1;
             }
             return run_tifxyz(inPath, outPath, A.get(), invert, scale_seg);
         }
 
         if (inPath.extension() == ".obj") {
             if (outPath.extension() != ".obj") {
-                std::cerr << "output should have .obj extension for OBJ input" << std::endl; return 1;
+                std::cerr << "output should have .obj extension for OBJ input" << "\n"; return 1;
             }
             return run_obj(inPath, outPath, A.get(), invert, scale_seg);
         }
 
-        std::cerr << "Unknown input type. Provide a .obj file or a TIFXYZ directory (containing x.tif,y.tif,z.tif)." << std::endl;
+        std::cerr << "Unknown input type. Provide a .obj file or a TIFXYZ directory (containing x.tif,y.tif,z.tif)." << "\n";
         return 1;
     } catch (const std::exception& e) {
-        std::cerr << "Fatal: " << e.what() << std::endl; return 1;
+        std::cerr << "Fatal: " << e.what() << "\n"; return 1;
     }
 }

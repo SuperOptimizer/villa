@@ -1,17 +1,27 @@
 #pragma once
 
+#include <nlohmann/json_fwd.hpp>
 #include <filesystem>
 #include <memory>
 #include <string>
 
-#include <opencv2/core.hpp>
-#include <nlohmann/json.hpp>
+#include <opencv2/core/matx.hpp>
+#include <opencv2/core/types.hpp>
+
+// Forward declarations
+class SurfacePatchIndex;
+class PointIndex;
 
 //base surface class
 class Surface
 {
 public:
-    virtual ~Surface() = default;
+    Surface();
+    virtual ~Surface();
+    Surface(Surface&&) noexcept;
+    Surface& operator=(Surface&&) noexcept;
+    Surface(const Surface&) = delete;
+    Surface& operator=(const Surface&) = delete;
 
     // get a central location point
     virtual cv::Vec3f pointer() = 0;

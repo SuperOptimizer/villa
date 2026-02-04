@@ -5,7 +5,6 @@
 #include <cmath>
 #include <deque>
 #include <limits>
-#include <iostream>
 
 // Helper for non-maximum suppression
 static void nonMaximumSuppression(const cv::Mat& src, cv::Mat& dst, int size) {

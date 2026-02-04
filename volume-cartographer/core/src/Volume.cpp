@@ -1,6 +1,5 @@
 #include "vc/core/types/Volume.hpp"
 
-#include <opencv2/imgcodecs.hpp>
 #include <nlohmann/json.hpp>
 
 #include "vc/core/util/LoadJson.hpp"
@@ -8,7 +7,6 @@
 #include "z5/attributes.hxx"
 #include "z5/dataset.hxx"
 #include "z5/filesystem/handle.hxx"
-#include "z5/handle.hxx"
 #include "z5/types/types.hxx"
 #include "z5/factory.hxx"
 #include "z5/filesystem/metadata.hxx"
@@ -17,13 +15,15 @@
 static const std::filesystem::path METADATA_FILE = "meta.json";
 static const std::filesystem::path METADATA_FILE_ALT = "metadata.json";
 
-Volume::Volume(std::filesystem::path path) : path_(std::move(path))
+Volume::Volume(std::filesystem::path path) : path_(std::move(path)),
+    metadata_(std::make_unique<nlohmann::json>()),
+    zarrGroup_(std::make_unique<nlohmann::json>())
 {
     loadMetadata();
 
-    _width = metadata_["width"].get<int>();
-    _height = metadata_["height"].get<int>();
-    _slices = metadata_["slices"].get<int>();
+    _width = (*metadata_)["width"].get<int>();
+    _height = (*metadata_)["height"].get<int>();
+    _slices = (*metadata_)["slices"].get<int>();
 
     std::vector<std::mutex> init_mutexes(_slices);
 
@@ -32,18 +32,20 @@ Volume::Volume(std::filesystem::path path) : path_(std::move(path))
 }
 
 // Setup a Volume from a folder of slices
-Volume::Volume(std::filesystem::path path, std::string uuid, std::string name)
-    : path_(std::move(path))
+Volume::Volume(std::filesystem::path path, const std::string& uuid, const std::string& name)
+    : path_(std::move(path)),
+      metadata_(std::make_unique<nlohmann::json>()),
+      zarrGroup_(std::make_unique<nlohmann::json>())
 {
-    metadata_["uuid"] = uuid;
-    metadata_["name"] = name;
-    metadata_["type"] = "vol";
-    metadata_["width"] = _width;
-    metadata_["height"] = _height;
-    metadata_["slices"] = _slices;
-    metadata_["voxelsize"] = double{};
-    metadata_["min"] = double{};
-    metadata_["max"] = double{};
+    (*metadata_)["uuid"] = uuid;
+    (*metadata_)["name"] = name;
+    (*metadata_)["type"] = "vol";
+    (*metadata_)["width"] = _width;
+    (*metadata_)["height"] = _height;
+    (*metadata_)["slices"] = _slices;
+    (*metadata_)["voxelsize"] = double{};
+    (*metadata_)["min"] = double{};
+    (*metadata_)["max"] = double{};
 
     zarrOpen();
 }
@@ -54,7 +56,7 @@ void Volume::loadMetadata()
 {
     auto metaPath = path_ / METADATA_FILE;
     if (std::filesystem::exists(metaPath)) {
-        metadata_ = vc::json::load_json_file(metaPath);
+        *metadata_ = vc::json::load_json_file(metaPath);
     } else {
         auto altPath = path_ / METADATA_FILE_ALT;
         auto full = vc::json::load_json_file(altPath);
@@ -62,42 +64,42 @@ void Volume::loadMetadata()
             throw std::runtime_error(
                 "metadata.json missing 'scan' key: " + altPath.string());
         }
-        metadata_ = full["scan"];
-        if (!metadata_.contains("format")) {
-            metadata_["format"] = "zarr";
+        *metadata_ = full["scan"];
+        if (!metadata_->contains("format")) {
+            (*metadata_)["format"] = "zarr";
         }
         metaPath = altPath;
     }
-    vc::json::require_type(metadata_, "type", "vol", metaPath.string());
-    vc::json::require_fields(metadata_, {"uuid", "width", "height", "slices"}, metaPath.string());
+    vc::json::require_type(*metadata_, "type", "vol", metaPath.string());
+    vc::json::require_fields(*metadata_, {"uuid", "width", "height", "slices"}, metaPath.string());
 }
 
 std::string Volume::id() const
 {
-    return metadata_["uuid"].get<std::string>();
+    return (*metadata_)["uuid"].get<std::string>();
 }
 
 std::string Volume::name() const
 {
-    return metadata_["name"].get<std::string>();
+    return (*metadata_)["name"].get<std::string>();
 }
 
 void Volume::setName(const std::string& n)
 {
-    metadata_["name"] = n;
+    (*metadata_)["name"] = n;
 }
 
 void Volume::saveMetadata()
 {
     auto metaPath = path_ / METADATA_FILE;
     std::ofstream jsonFile(metaPath.string(), std::ofstream::out);
-    jsonFile << metadata_ << '\n';
+    jsonFile << *metadata_ << '\n';
     if (jsonFile.fail()) {
         throw std::runtime_error("could not write json file '" + metaPath.string() + "'");
     }
 }
 
-bool Volume::checkDir(std::filesystem::path path)
+bool Volume::checkDir(const std::filesystem::path& path)
 {
     return std::filesystem::is_directory(path) &&
            (std::filesystem::exists(path / METADATA_FILE) ||
@@ -106,12 +108,12 @@ bool Volume::checkDir(std::filesystem::path path)
 
 void Volume::zarrOpen()
 {
-    if (!metadata_.contains("format") || metadata_["format"].get<std::string>() != "zarr")
+    if (!metadata_->contains("format") || (*metadata_)["format"].get<std::string>() != "zarr")
         return;
 
     zarrFile_ = std::make_unique<z5::filesystem::handle::File>(path_);
     z5::filesystem::handle::Group group(path_, z5::FileMode::FileMode::r);
-    z5::readAttributes(group, zarrGroup_);
+    z5::readAttributes(group, *zarrGroup_);
 
     std::vector<std::string> groups;
     zarrFile_->keys(groups);
@@ -154,27 +156,19 @@ std::shared_ptr<Volume> Volume::New(std::filesystem::path path)
     return std::make_shared<Volume>(path);
 }
 
-std::shared_ptr<Volume> Volume::New(std::filesystem::path path, std::string uuid, std::string name)
+std::shared_ptr<Volume> Volume::New(std::filesystem::path path, const std::string& uuid, const std::string& name)
 {
     return std::make_shared<Volume>(path, uuid, name);
 }
 
-int Volume::sliceWidth() const { return _width; }
-int Volume::sliceHeight() const { return _height; }
-int Volume::numSlices() const { return _slices; }
-std::array<int, 3> Volume::shape() const { return {_width, _height, _slices}; }
 double Volume::voxelSize() const
 {
-    return metadata_["voxelsize"].get<double>();
+    return (*metadata_)["voxelsize"].get<double>();
 }
 
 z5::Dataset *Volume::zarrDataset(int level) const {
-    if (level >= zarrDs_.size())
+    if (level >= zarrDs_.size()) [[unlikely]]
         return nullptr;
 
     return zarrDs_[level].get();
-}
-
-size_t Volume::numScales() const {
-    return zarrDs_.size();
 }

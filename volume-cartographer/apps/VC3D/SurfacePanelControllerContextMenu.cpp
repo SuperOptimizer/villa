@@ -296,10 +296,10 @@ void SurfacePanelController::handleDeleteSegments(const QStringList& segmentIds)
             } else {
                 failedSegments << id + tr(" (filesystem error)");
             }
-            std::cerr << "Failed to delete segment " << idStd << ": " << e.what() << std::endl;
+            std::cerr << "Failed to delete segment " << idStd << ": " << e.what() << "\n";
         } catch (const std::exception& e) {
             failedSegments << id;
-            std::cerr << "Failed to delete segment " << idStd << ": " << e.what() << std::endl;
+            std::cerr << "Failed to delete segment " << idStd << ": " << e.what() << "\n";
         }
     }
 
@@ -312,7 +312,7 @@ void SurfacePanelController::handleDeleteSegments(const QStringList& segmentIds)
         try {
             _volumePkg->refreshSegmentations();
         } catch (const std::exception& e) {
-            std::cerr << "Error refreshing segmentations after deletion: " << e.what() << std::endl;
+            std::cerr << "Error refreshing segmentations after deletion: " << e.what() << "\n";
         }
         applyFilters();
         if (_filtersUpdated) {

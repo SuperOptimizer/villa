@@ -399,7 +399,7 @@ void SeedingWidget::setupUI()
 
 void SeedingWidget::setVolumePkg(std::shared_ptr<VolumePkg> vpkg)
 {
-    std::cout << "SeedingWidget::setVolumePkg called - vpkg: " << (vpkg ? "valid" : "null") << std::endl;
+    std::cout << "SeedingWidget::setVolumePkg called - vpkg: " << (vpkg ? "valid" : "null") << "\n";
     fVpkg = vpkg;
     updateButtonStates();
 }
@@ -440,7 +440,7 @@ void SeedingWidget::onCollectionRemoved(uint64_t collectionId)
 void SeedingWidget::onVolumeChanged(std::shared_ptr<Volume> vol, const std::string& volumeId)
 {
     std::cout << "SeedingWidget::onVolumeChanged called - volume: " << (vol ? "valid" : "null")
-              << ", volumeId: " << volumeId << std::endl;
+              << ", volumeId: " << volumeId << "\n";
     currentVolume = vol;
     currentVolumeId = volumeId;
     updateButtonStates();
@@ -728,10 +728,10 @@ void SeedingWidget::findPeaksAlongRay(
 
 void SeedingWidget::onRunSegmentationClicked()
 {
-    std::cout << "SeedingWidget::onRunSegmentationClicked - START" << std::endl;
-    std::cout << "  currentVolume: " << (currentVolume ? "valid" : "null") << std::endl;
-    std::cout << "  currentVolumeId: " << currentVolumeId << std::endl;
-    std::cout << "  fVpkg: " << (fVpkg ? "valid" : "null") << std::endl;
+    std::cout << "SeedingWidget::onRunSegmentationClicked - START" << "\n";
+    std::cout << "  currentVolume: " << (currentVolume ? "valid" : "null") << "\n";
+    std::cout << "  currentVolumeId: " << currentVolumeId << "\n";
+    std::cout << "  fVpkg: " << (fVpkg ? "valid" : "null") << "\n";
     
     // Get the selected collection name from the combo box
     std::string sourceCollection = collectionComboBox->currentText().toStdString();
@@ -837,9 +837,9 @@ void SeedingWidget::onRunSegmentationClicked()
                 
                 // Log result
                 if (exitCode != 0) {
-                    std::cerr << "Process for point " << pointIndex << " failed with exit code: " << exitCode << std::endl;
+                    std::cerr << "Process for point " << pointIndex << " failed with exit code: " << exitCode << "\n";
                 } else {
-                    std::cout << "Completed segmentation for point " << pointIndex << std::endl;
+                    std::cout << "Completed segmentation for point " << pointIndex << "\n";
                 }
                 
                 // Update progress
@@ -882,7 +882,7 @@ void SeedingWidget::onRunSegmentationClicked()
                      << QString::number(point.p[1])
                      << QString::number(point.p[2]);
 
-        std::cout << "Starting job " << pointIndex << ": " << previewParts.join(' ').toStdString() << std::endl;
+        std::cout << "Starting job " << pointIndex << ": " << previewParts.join(' ').toStdString() << "\n";
         
         process->start("nice", QStringList() << "-n" << "19" << "ionice" << "-c" << "3" << executablePath <<
                       QString::fromStdString(volumePath.string()) <<
@@ -1576,9 +1576,9 @@ void SeedingWidget::onExpandSeedsClicked()
                 
                 // Log result
                 if (exitCode != 0) {
-                    std::cerr << "Expansion iteration " << iterationIndex << " failed with exit code: " << exitCode << std::endl;
+                    std::cerr << "Expansion iteration " << iterationIndex << " failed with exit code: " << exitCode << "\n";
                 } else {
-                    std::cout << "Completed expansion iteration " << iterationIndex << std::endl;
+                    std::cout << "Completed expansion iteration " << iterationIndex << "\n";
                 }
                 
                 // Update progress
@@ -1618,7 +1618,7 @@ void SeedingWidget::onExpandSeedsClicked()
                      << QString("\"%1\"").arg(QString::fromStdString(pathsDir.string()))
                      << QString("\"%1\"").arg(QString::fromStdString(expandJsonPath.string()));
 
-        std::cout << "Starting expansion job " << iterationIndex << ": " << previewParts.join(' ').toStdString() << std::endl;
+        std::cout << "Starting expansion job " << iterationIndex << ": " << previewParts.join(' ').toStdString() << "\n";
         
         process->start("nice", QStringList() << "-n" << "19" << "ionice" << "-c" << "3" << executablePath <<
                       QString::fromStdString(volumePath.string()) <<

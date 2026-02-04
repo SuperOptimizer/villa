@@ -223,7 +223,7 @@ void SeedingWidget::onNeuralTraceClicked()
     for (const QString& arg : args) {
         std::cout << " " << arg.toStdString();
     }
-    std::cout << std::endl;
+    std::cout << "\n";
 
     process->start(python, args);
     runningProcesses.append(QPointer<QProcess>(process));

@@ -4,8 +4,6 @@
 
 #include "VolumeViewerCmaps.hpp"
 
-#include "z5/multiarray/xtensor_access.hxx"
-
 #include <QGraphicsView>
 #include <QGraphicsScene>
 #include <QDebug>
@@ -32,136 +30,6 @@
 #include <opencv2/imgproc.hpp>
 
 #define COLOR_FOCUS QColor(50, 255, 215)
-
-namespace {
-
-// Compute volume gradients at native surface resolution (the raw point grid)
-// Returns normalized gradient vectors at each raw grid point
-// dsScale converts from world coordinates to dataset coordinates
-cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
-    z5::Dataset* ds,
-    const cv::Mat_<cv::Vec3f>& rawPoints,
-    float dsScale)
-{
-    const int h = rawPoints.rows;
-    const int w = rawPoints.cols;
-    cv::Mat_<cv::Vec3f> gradients(h, w, cv::Vec3f(0, 0, 1));
-
-    if (h == 0 || w == 0) return gradients;
-
-    const auto volShape = ds->shape();
-    const int volZ = static_cast<int>(volShape[0]);
-    const int volY = static_cast<int>(volShape[1]);
-    const int volX = static_cast<int>(volShape[2]);
-
-    // Step 1: Find bounding box of all valid coordinates
-    float minX = std::numeric_limits<float>::max();
-    float minY = std::numeric_limits<float>::max();
-    float minZ = std::numeric_limits<float>::max();
-    float maxX = std::numeric_limits<float>::lowest();
-    float maxY = std::numeric_limits<float>::lowest();
-    float maxZ = std::numeric_limits<float>::lowest();
-
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            const cv::Vec3f& c = rawPoints(y, x);
-            // Skip invalid points (marked as -1, -1, -1)
-            if (c[0] == -1.f) continue;
-
-            const float cx = c[0] * dsScale;
-            const float cy = c[1] * dsScale;
-            const float cz = c[2] * dsScale;
-
-            minX = std::min(minX, cx);
-            minY = std::min(minY, cy);
-            minZ = std::min(minZ, cz);
-            maxX = std::max(maxX, cx);
-            maxY = std::max(maxY, cy);
-            maxZ = std::max(maxZ, cz);
-        }
-    }
-
-    if (minX > maxX) return gradients;  // No valid points
-
-    // Add padding for gradient computation (need ±1 voxel)
-    const int pad = 2;
-    const int bboxX0 = std::max(0, static_cast<int>(std::floor(minX)) - pad);
-    const int bboxY0 = std::max(0, static_cast<int>(std::floor(minY)) - pad);
-    const int bboxZ0 = std::max(0, static_cast<int>(std::floor(minZ)) - pad);
-    const int bboxX1 = std::min(volX, static_cast<int>(std::ceil(maxX)) + pad + 1);
-    const int bboxY1 = std::min(volY, static_cast<int>(std::ceil(maxY)) + pad + 1);
-    const int bboxZ1 = std::min(volZ, static_cast<int>(std::ceil(maxZ)) + pad + 1);
-
-    const size_t localW = static_cast<size_t>(bboxX1 - bboxX0);
-    const size_t localH = static_cast<size_t>(bboxY1 - bboxY0);
-    const size_t localD = static_cast<size_t>(bboxZ1 - bboxZ0);
-
-    if (localW == 0 || localH == 0 || localD == 0) return gradients;
-
-    // Step 2: Batch read the volume data for the bounding box
-    xt::xarray<uint8_t> localVolume = xt::empty<uint8_t>({localD, localH, localW});
-    z5::types::ShapeType off = {static_cast<size_t>(bboxZ0), static_cast<size_t>(bboxY0), static_cast<size_t>(bboxX0)};
-    z5::multiarray::readSubarray<uint8_t>(*ds, localVolume, off.begin());
-
-    // Helper lambda to sample from local volume with bounds checking
-    auto sampleLocal = [&](float gx, float gy, float gz) -> float {
-        const int lx = static_cast<int>(std::round(gx)) - bboxX0;
-        const int ly = static_cast<int>(std::round(gy)) - bboxY0;
-        const int lz = static_cast<int>(std::round(gz)) - bboxZ0;
-
-        if (lx < 0 || ly < 0 || lz < 0 ||
-            lx >= static_cast<int>(localW) ||
-            ly >= static_cast<int>(localH) ||
-            lz >= static_cast<int>(localD)) {
-            return 0.0f;
-        }
-        return static_cast<float>(localVolume(static_cast<size_t>(lz), static_cast<size_t>(ly), static_cast<size_t>(lx)));
-    };
-
-    // Step 3: Compute gradients in parallel at each raw grid point
-    #pragma omp parallel for collapse(2) schedule(static)
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            const cv::Vec3f& c = rawPoints(y, x);
-
-            // Skip invalid points
-            if (c[0] == -1.f) {
-                gradients(y, x) = cv::Vec3f(0, 0, 1);
-                continue;
-            }
-
-            // Scale coordinates to dataset space
-            const float cx = c[0] * dsScale;
-            const float cy = c[1] * dsScale;
-            const float cz = c[2] * dsScale;
-
-            // Sample at ±1 voxel in each direction for central differences
-            const float v_xp = sampleLocal(cx + 1, cy, cz);
-            const float v_xm = sampleLocal(cx - 1, cy, cz);
-            const float v_yp = sampleLocal(cx, cy + 1, cz);
-            const float v_ym = sampleLocal(cx, cy - 1, cz);
-            const float v_zp = sampleLocal(cx, cy, cz + 1);
-            const float v_zm = sampleLocal(cx, cy, cz - 1);
-
-            // Central differences for gradient
-            float gx = (v_xp - v_xm) / 2.0f;
-            float gy = (v_yp - v_ym) / 2.0f;
-            float gz = (v_zp - v_zm) / 2.0f;
-
-            // Normalize to get unit normal (negative gradient points toward surface)
-            float len = std::sqrt(gx*gx + gy*gy + gz*gz);
-            if (len > 1e-6f) {
-                gradients(y, x) = cv::Vec3f(-gx/len, -gy/len, -gz/len);
-            } else {
-                gradients(y, x) = cv::Vec3f(0, 0, 1);
-            }
-        }
-    }
-
-    return gradients;
-}
-
-}  // anonymous namespace
 
 void CVolumeViewer::renderVisible(bool force)
 {
@@ -437,7 +305,7 @@ cv::Mat_<uint8_t> CVolumeViewer::renderCompositeForSurface(std::shared_ptr<QuadS
 
     std::cout << "[renderCompositeForSurface] outputSize: " << outputSize.width << "x" << outputSize.height
               << ", rawPointsSize: " << rawPointsSize.width << "x" << rawPointsSize.height
-              << ", surface->_scale: " << surface->_scale[0] << "x" << surface->_scale[1] << std::endl;
+              << ", surface->_scale: " << surface->_scale[0] << "x" << surface->_scale[1] << "\n";
 
     _surf_weak = surface;
     _scale = surfScale;  // Use surface's scale so gen() samples 1:1 from raw points
@@ -446,7 +314,7 @@ cv::Mat_<uint8_t> CVolumeViewer::renderCompositeForSurface(std::shared_ptr<QuadS
     recalcScales();
 
     std::cout << "[renderCompositeForSurface] after recalcScales: _scale=" << _scale
-              << ", _ds_scale=" << _ds_scale << ", _ds_sd_idx=" << _ds_sd_idx << std::endl;
+              << ", _ds_scale=" << _ds_scale << ", _ds_sd_idx=" << _ds_sd_idx << "\n";
 
     _ptr = surface->pointer();
     // Use raw points size for the ROI so we cover the whole surface
@@ -457,12 +325,12 @@ cv::Mat_<uint8_t> CVolumeViewer::renderCompositeForSurface(std::shared_ptr<QuadS
 
     cv::Mat_<uint8_t> result = render_composite(roi);
 
-    std::cout << "[renderCompositeForSurface] result size: " << result.cols << "x" << result.rows << std::endl;
+    std::cout << "[renderCompositeForSurface] result size: " << result.cols << "x" << result.rows << "\n";
 
     // Resize to requested output size if different
     if (result.size() != outputSize) {
         std::cout << "[renderCompositeForSurface] resizing from " << result.cols << "x" << result.rows
-                  << " to " << outputSize.width << "x" << outputSize.height << std::endl;
+                  << " to " << outputSize.width << "x" << outputSize.height << "\n";
         cv::resize(result, result, outputSize, 0, 0, cv::INTER_LINEAR);
     }
 

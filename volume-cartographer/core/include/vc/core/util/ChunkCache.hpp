@@ -45,7 +45,7 @@ public:
     ChunkCache& operator=(ChunkCache&&) = delete;
 
     void setMaxBytes(size_t maxBytes);
-    [[nodiscard]] size_t cachedCount() const { return _cachedCount.load(std::memory_order_relaxed); }
+    [[nodiscard]] size_t cachedCount() const noexcept { return _cachedCount.load(std::memory_order_relaxed); }
 
     // Cache statistics
     struct Stats {

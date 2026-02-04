@@ -823,6 +823,24 @@ void ViewerManager::setSliceStepSize(int size)
     _sliceStepSize = std::max(1, size);
 }
 
+void ViewerManager::setDownscaleOverride(int level)
+{
+    for (auto* viewer : _viewers) {
+        if (viewer) {
+            viewer->setDownscaleOverride(level);
+        }
+    }
+}
+
+void ViewerManager::setInterpolationMethod(InterpolationMethod method)
+{
+    for (auto* viewer : _viewers) {
+        if (viewer) {
+            viewer->setInterpolationMethod(method);
+        }
+    }
+}
+
 void ViewerManager::forEachViewer(const std::function<void(CVolumeViewer*)>& fn) const
 {
     if (!fn) {

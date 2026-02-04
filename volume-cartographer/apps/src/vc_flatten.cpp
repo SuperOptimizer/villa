@@ -10,12 +10,14 @@
  * distortion in rendered textures.
  */
 
-#include "vc/core/util/QuadSurface.hpp"
-#include "vc/core/util/ABFFlattening.hpp"
-
 #include <boost/program_options.hpp>
 #include <filesystem>
 #include <iostream>
+#include <memory>
+#include <string>
+
+#include "vc/core/util/QuadSurface.hpp"
+#include "vc/core/util/ABFFlattening.hpp"
 
 namespace po = boost::program_options;
 namespace fs = std::filesystem;
@@ -51,19 +53,19 @@ int main(int argc, char* argv[]) {
             .run(), vm);
 
         if (vm.count("help") || argc < 2) {
-            std::cout << desc << std::endl;
-            std::cout << "\nExamples:" << std::endl;
-            std::cout << "  vc_flatten /path/to/segment" << std::endl;
-            std::cout << "  vc_flatten -i segment -o segment_flat --iterations 20" << std::endl;
-            std::cout << "  vc_flatten segment --lscm-only" << std::endl;
-            std::cout << "  vc_flatten segment --uv-only  # Store UV channel without rasterizing" << std::endl;
+            std::cout << desc << "\n";
+            std::cout << "\nExamples:" << "\n";
+            std::cout << "  vc_flatten /path/to/segment" << "\n";
+            std::cout << "  vc_flatten -i segment -o segment_flat --iterations 20" << "\n";
+            std::cout << "  vc_flatten segment --lscm-only" << "\n";
+            std::cout << "  vc_flatten segment --uv-only  # Store UV channel without rasterizing" << "\n";
             return 0;
         }
 
         po::notify(vm);
     } catch (const po::error& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        std::cerr << "Use --help for usage information." << std::endl;
+        std::cerr << "Error: " << e.what() << "\n";
+        std::cerr << "Use --help for usage information." << "\n";
         return 1;
     }
 
@@ -86,60 +88,60 @@ int main(int argc, char* argv[]) {
     bool uvOnly = vm["uv-only"].as<bool>();
 
     // Load surface
-    std::cout << "Loading surface: " << inputPath << std::endl;
+    std::cout << "Loading surface: " << inputPath << "\n";
     auto surf = load_quad_from_tifxyz(inputPath.string());
     if (!surf) {
-        std::cerr << "Failed to load surface: " << inputPath << std::endl;
+        std::cerr << "Failed to load surface: " << inputPath << "\n";
         return 1;
     }
 
-    std::cout << "Surface loaded:" << std::endl;
-    std::cout << "  Grid size: " << surf->rawPointsPtr()->cols << " x " << surf->rawPointsPtr()->rows << std::endl;
-    std::cout << "  Scale: " << surf->scale()[0] << ", " << surf->scale()[1] << std::endl;
-    std::cout << "  Valid points: " << surf->countValidPoints() << std::endl;
-    std::cout << "  Valid quads: " << surf->countValidQuads() << std::endl;
+    std::cout << "Surface loaded:" << "\n";
+    std::cout << "  Grid size: " << surf->rawPointsPtr()->cols << " x " << surf->rawPointsPtr()->rows << "\n";
+    std::cout << "  Scale: " << surf->scale()[0] << ", " << surf->scale()[1] << "\n";
+    std::cout << "  Valid points: " << surf->countValidPoints() << "\n";
+    std::cout << "  Valid quads: " << surf->countValidQuads() << "\n";
 
-    std::cout << "\nFlattening configuration:" << std::endl;
-    std::cout << "  Max iterations: " << config.maxIterations << std::endl;
-    std::cout << "  Downsample factor: " << config.downsampleFactor << std::endl;
-    std::cout << "  Use ABF++: " << (config.useABF ? "yes" : "no (LSCM only)") << std::endl;
-    std::cout << "  Scale to original area: " << (config.scaleToOriginalArea ? "yes" : "no") << std::endl;
-    std::cout << "  Mode: " << (uvOnly ? "UV channel only" : "create new surface") << std::endl;
+    std::cout << "\nFlattening configuration:" << "\n";
+    std::cout << "  Max iterations: " << config.maxIterations << "\n";
+    std::cout << "  Downsample factor: " << config.downsampleFactor << "\n";
+    std::cout << "  Use ABF++: " << (config.useABF ? "yes" : "no (LSCM only)") << "\n";
+    std::cout << "  Scale to original area: " << (config.scaleToOriginalArea ? "yes" : "no") << "\n";
+    std::cout << "  Mode: " << (uvOnly ? "UV channel only" : "create new surface") << "\n";
 
     if (uvOnly) {
         // Just compute and save UV channel
-        std::cout << "\nComputing UV coordinates..." << std::endl;
+        std::cout << "\nComputing UV coordinates..." << "\n";
         if (!vc::abfFlattenInPlace(*surf, config)) {
-            std::cerr << "Flattening failed" << std::endl;
+            std::cerr << "Flattening failed" << "\n";
             return 1;
         }
 
         // Save the original surface with UV channel
-        std::cout << "Saving surface with UV channel to: " << outputPath << std::endl;
+        std::cout << "Saving surface with UV channel to: " << outputPath << "\n";
         surf->save(outputPath.string(), outputPath.filename().string(), true);
     } else {
         // Create a new surface with rearranged positions
-        std::cout << "\nFlattening mesh..." << std::endl;
+        std::cout << "\nFlattening mesh..." << "\n";
         QuadSurface* flatSurf = vc::abfFlattenToNewSurface(*surf, config);
         if (!flatSurf) {
-            std::cerr << "Flattening failed" << std::endl;
+            std::cerr << "Flattening failed" << "\n";
             return 1;
         }
 
-        std::cout << "\nFlattened surface:" << std::endl;
-        std::cout << "  Grid size: " << flatSurf->rawPointsPtr()->cols << " x " << flatSurf->rawPointsPtr()->rows << std::endl;
-        std::cout << "  Scale: " << flatSurf->scale()[0] << ", " << flatSurf->scale()[1] << std::endl;
-        std::cout << "  Valid points: " << flatSurf->countValidPoints() << std::endl;
-        std::cout << "  Valid quads: " << flatSurf->countValidQuads() << std::endl;
+        std::cout << "\nFlattened surface:" << "\n";
+        std::cout << "  Grid size: " << flatSurf->rawPointsPtr()->cols << " x " << flatSurf->rawPointsPtr()->rows << "\n";
+        std::cout << "  Scale: " << flatSurf->scale()[0] << ", " << flatSurf->scale()[1] << "\n";
+        std::cout << "  Valid points: " << flatSurf->countValidPoints() << "\n";
+        std::cout << "  Valid quads: " << flatSurf->countValidQuads() << "\n";
 
         // Save the flattened surface
-        std::cout << "\nSaving flattened surface to: " << outputPath << std::endl;
+        std::cout << "\nSaving flattened surface to: " << outputPath << "\n";
         flatSurf->save(outputPath.string(), outputPath.filename().string(), true);
 
         delete flatSurf;
     }
 
-    std::cout << "Done!" << std::endl;
+    std::cout << "Done!" << "\n";
 
     return 0;
 }

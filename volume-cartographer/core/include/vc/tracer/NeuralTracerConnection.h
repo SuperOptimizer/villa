@@ -1,13 +1,13 @@
 #pragma once
 
 #include <opencv2/core.hpp>
-#include <__vector/vector.h>
+#include <vector>
 #include <opencv2/core/matx.hpp>
 #include <string>
 #include <optional>
 
 
-class NeuralTracerConnection
+class NeuralTracerConnection final
 {
 public:
 

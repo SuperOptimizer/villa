@@ -20,7 +20,6 @@
 #include <nlohmann/json.hpp>
 #include "z5/factory.hxx"
 #include "z5/filesystem/handle.hxx"
-#include "z5/filesystem/dataset.hxx"
 #include "z5/attributes.hxx"
 #include "z5/multiarray/xtensor_access.hxx"
 #include <xtensor/containers/xarray.hpp>
@@ -340,7 +339,7 @@ static void ced_run(const cv::Mat& input, cv::Mat& output, const Config& cfg,
                 if (do_print) {
                     std::lock_guard<std::mutex> lock(g_print_mtx);
                     std::cout << "[" << progress_label << "] Step " << (step + 1)
-                              << "/" << cfg.num_steps_ << std::endl;
+                              << "/" << cfg.num_steps_ << "\n";
                 }
             }
         }
@@ -359,10 +358,10 @@ static void ced_run(const cv::Mat& input, cv::Mat& output, const Config& cfg,
     }
     if (cfg.show_progress_) {
         if (progress_label == nullptr) {
-            std::cout << "\nDiffusion complete!" << std::endl;
+            std::cout << "\nDiffusion complete!" << "\n";
         } else {
             std::lock_guard<std::mutex> lock(g_print_mtx);
-            std::cout << "[" << progress_label << "] Complete" << std::endl;
+            std::cout << "[" << progress_label << "] Complete" << "\n";
         }
     }
 
@@ -579,6 +578,8 @@ static cv::Mat compute_direction_field_rgb(const cv::Mat& input, const Config& c
     // HSV image (OpenCV hue: 0..180). Use hue for direction, value for coherence magnitude.
     cv::Mat hsv(dH, dW, CV_8UC3);
     const float invDenom = 1.0f / std::max(1e-6f, (1.0f - GAMMA));
+    const float twoPi = 2.0f * static_cast<float>(CV_PI);
+    const float hueScale = 180.0f / twoPi;  // Pre-compute reciprocal * 180
     #pragma omp parallel for schedule(static)
     for (int y = 0; y < dH; ++y) {
         cv::Vec3b* row = hsv.ptr<cv::Vec3b>(y);
@@ -591,8 +592,8 @@ static cv::Mat compute_direction_field_rgb(const cv::Mat& input, const Config& c
             float theta = 0.5f * std::atan2(2.0f * b, a - c);
             // Coherent direction is perpendicular to gradient-dominated eigenvector
             float phi = theta + static_cast<float>(CV_PI) * 0.5f;
-            float hue = std::fmod((phi < 0 ? phi + 2.0f * static_cast<float>(CV_PI) : phi), 2.0f * static_cast<float>(CV_PI));
-            uint8_t Hh = static_cast<uint8_t>(std::lround((hue / (2.0f * static_cast<float>(CV_PI))) * 180.0f));
+            float hue = std::fmod((phi < 0 ? phi + twoPi : phi), twoPi);
+            uint8_t Hh = static_cast<uint8_t>(std::lround(hue * hueScale));
 
             float coh = (c2[i] - GAMMA) * invDenom; // 0..1
             if (coh < 0.f) coh = 0.f; if (coh > 1.f) coh = 1.f;
@@ -943,14 +944,14 @@ int main(int argc, char** argv) {
         ;
 
         if (argc == 1) {
-            std::cout << desc << std::endl;
+            std::cout << desc << "\n";
             return 0;
         }
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, desc), vm);
         if (vm.count("help")) {
-            std::cout << desc << std::endl;
+            std::cout << desc << "\n";
             return 0;
         }
         po::notify(vm);
@@ -1036,7 +1037,7 @@ int main(int argc, char** argv) {
 
             const auto& shape = dsIn->shape(); // [Z, Y, X]
             if (shape.size() != 3) {
-                std::cerr << "Expected 3D OME-Zarr (Z,Y,X); got dims=" << shape.size() << std::endl;
+                std::cerr << "Expected 3D OME-Zarr (Z,Y,X); got dims=" << shape.size() << "\n";
                 return 1;
             }
             const size_t Z = shape[0];
@@ -1048,7 +1049,7 @@ int main(int argc, char** argv) {
             // Compute Z range
             size_t z0 = 0, z1 = (Z > 0 ? Z - 1 : 0);
             if (Z == 0) {
-                std::cout << "Empty Zarr dataset (Z=0). Nothing to do." << std::endl;
+                std::cout << "Empty Zarr dataset (Z=0). Nothing to do." << "\n";
                 return 0;
             }
             z0 = static_cast<size_t>(std::max(0, std::min<int>(min_z, static_cast<int>(Z) - 1)));
@@ -1075,7 +1076,7 @@ int main(int argc, char** argv) {
             if (!out_is_zarr) {
                 // Write per-Z TIFFs into output directory
                 if (!ensure_dir(out_root.string())) {
-                    std::cerr << "Failed to create output directory: " << out_root << std::endl;
+                    std::cerr << "Failed to create output directory: " << out_root << "\n";
                     return 1;
                 }
 
@@ -1120,7 +1121,7 @@ int main(int argc, char** argv) {
                         #ifdef _OPENMP
                         if (omp_get_thread_num() == 0)
                         #endif
-                        std::cerr << "Unsupported Zarr dtype; only uint8/uint16/float32 supported." << std::endl;
+                        std::cerr << "Unsupported Zarr dtype; only uint8/uint16/float32 supported." << "\n";
                         continue;
                     }
 
@@ -1148,7 +1149,7 @@ int main(int argc, char** argv) {
                             #ifdef _OPENMP
                             if (omp_get_thread_num() == 0)
                             #endif
-                            std::cerr << "Failed to write RGB TIFF: " << out_file << std::endl;
+                            std::cerr << "Failed to write RGB TIFF: " << out_file << "\n";
                         }
                     } else {
                         cv::Mat out_u8;
@@ -1163,7 +1164,7 @@ int main(int argc, char** argv) {
                             #ifdef _OPENMP
                             if (omp_get_thread_num() == 0)
                             #endif
-                            std::cerr << "Failed to write TIFF: " << out_file << std::endl;
+                            std::cerr << "Failed to write TIFF: " << out_file << "\n";
                         }
                     }
                     
@@ -1182,15 +1183,15 @@ int main(int argc, char** argv) {
                                   << "\rProgress: " << d << "/" << total << " (" << pct << "%)" << std::flush;
                     }
                 }
-                std::cout << std::endl;
-                std::cout << "Saved per-Z TIFFs to: " << out_root << std::endl;
+                std::cout << "\n";
+                std::cout << "Saved per-Z TIFFs to: " << out_root << "\n";
                 return 0;
             }
 
             // Direction field RGB currently not supported for OME-Zarr output
             if (cfg.coherence_field_ && cfg.direction_field_) {
                 std::cerr << "--direction-field is only supported when writing TIFFs."
-                          << " For OME-Zarr output, omit --direction-field or write TIFFs with -o <dir>." << std::endl;
+                          << " For OME-Zarr output, omit --direction-field or write TIFFs with -o <dir>." << "\n";
                 return 1;
             }
 
@@ -1248,7 +1249,7 @@ int main(int argc, char** argv) {
                     #ifdef _OPENMP
                     if (omp_get_thread_num() == 0)
                     #endif
-                    std::cerr << "Unsupported Zarr dtype; only uint8/uint16/float32 supported." << std::endl;
+                    std::cerr << "Unsupported Zarr dtype; only uint8/uint16/float32 supported." << "\n";
                     continue;
                 }
 
@@ -1280,7 +1281,7 @@ int main(int argc, char** argv) {
                               << "\rProgress: " << d << "/" << total << " (" << pct << "%)" << std::flush;
                 }
             }
-            std::cout << std::endl;
+            std::cout << "\n";
 
             // Write attributes and OME-NGFF multiscales metadata
             nlohmann::json attrs;
@@ -1372,17 +1373,17 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
-                std::cout << std::endl;
+                std::cout << "\n";
             }
 
-            std::cout << "Saved OME-Zarr: " << out_root.string() << std::endl;
+            std::cout << "Saved OME-Zarr: " << out_root.string() << "\n";
             return 0;
         }
 
         if (dir_mode) {
             // Folder mode: process all .tif/.tiff files
             if (!ensure_dir(out_path)) {
-                std::cerr << "Cannot create/open output directory: " << out_path << std::endl;
+                std::cerr << "Cannot create/open output directory: " << out_path << "\n";
                 return 1;
             }
             std::vector<cv::String> files;
@@ -1391,7 +1392,7 @@ int main(int argc, char** argv) {
             cv::glob(in_path + "/*.tiff", files_tiff, false);
             files.insert(files.end(), files_tiff.begin(), files_tiff.end());
             if (files.empty()) {
-                std::cerr << "No TIFF files found in directory: " << in_path << std::endl;
+                std::cerr << "No TIFF files found in directory: " << in_path << "\n";
                 return 1;
             }
             std::cout << "Found " << files.size() << " TIFF files in " << in_path << "\n";
@@ -1482,19 +1483,19 @@ int main(int argc, char** argv) {
                               << "\rProgress: " << done << "/" << total << " (" << pct << "%), remaining " << rem << std::flush;
                 }
             }
-            std::cout << std::endl << "Done folder processing." << std::endl;
+            std::cout << "\n" << "Done folder processing." << "\n";
         } else {
             cv::Mat img = cv::imread(in_path, cv::IMREAD_UNCHANGED);
             if (img.empty()) {
-                std::cerr << "Failed to read input TIFF: " << in_path << std::endl;
+                std::cerr << "Failed to read input TIFF: " << in_path << "\n";
                 return 1;
             }
             if (img.channels() != 1) {
-                std::cerr << "Only single-channel (grayscale) 2D TIFFs are supported" << std::endl;
+                std::cerr << "Only single-channel (grayscale) 2D TIFFs are supported" << "\n";
                 return 1;
             }
             if (img.dims != 2) {
-                std::cerr << "Only 2D TIFFs are supported" << std::endl;
+                std::cerr << "Only 2D TIFFs are supported" << "\n";
                 return 1;
             }
 
@@ -1502,7 +1503,7 @@ int main(int argc, char** argv) {
             if (cfg.coherence_field_ && cfg.direction_field_) {
                 cv::Mat dirrgb = compute_direction_field_rgb(img, cfg);
                 if (!cv::imwrite(out_path, dirrgb)) {
-                    std::cerr << "Failed to write output TIFF: " << out_path << std::endl;
+                    std::cerr << "Failed to write output TIFF: " << out_path << "\n";
                     return 1;
                 }
             } else {
@@ -1515,14 +1516,14 @@ int main(int argc, char** argv) {
                     out_u8 = to_uint8_scaled_and_threshold(out, cfg);
                 }
                 if (!cv::imwrite(out_path, out_u8, params)) {
-                    std::cerr << "Failed to write output TIFF: " << out_path << std::endl;
+                    std::cerr << "Failed to write output TIFF: " << out_path << "\n";
                     return 1;
                 }
             }
-            std::cout << "Saved: " << out_path << std::endl;
+            std::cout << "Saved: " << out_path << "\n";
         }
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        std::cerr << "Error: " << e.what() << "\n";
         return 1;
     }
     return 0;

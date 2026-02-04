@@ -1,34 +1,14 @@
 #pragma once
 
-#include <array>
 #include <memory>
-#include <string>
 #include <unordered_map>
 #include <vector>
 
 #include <QObject>
-#include <opencv2/core.hpp>
+
+#include "SurfaceTypes.hpp"  // POI, IntersectionLine, Intersection
 
 class Surface;  // Forward declaration instead of heavy include
-
-
-struct POI
-{
-    cv::Vec3f p = {0,0,0};
-    std::string surfaceId;  // ID of the source surface (for lookup, not ownership)
-    cv::Vec3f n = {0,0,0};
-};
-
-struct IntersectionLine
-{
-    std::array<cv::Vec3f, 2> world{};         // 3D points in volume space
-    std::array<cv::Vec3f, 2> surfaceParams{}; // QuadSurface ptr-space samples aligned with `world`
-};
-
-struct Intersection
-{
-    std::vector<IntersectionLine> lines;
-};
 
 
 

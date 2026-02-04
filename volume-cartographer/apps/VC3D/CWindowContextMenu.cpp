@@ -3,6 +3,7 @@
 #include "SurfacePanelController.hpp"
 #include "VCSettings.hpp"
 
+#include <QStatusBar>
 #include <functional>
 #include <algorithm>
 #include <iostream>
@@ -63,7 +64,7 @@ static bool runProcessBlocking(const QString& program,
 
     std::cout << "Running: " << program.toStdString();
     for (const QString& arg : args) std::cout << " " << arg.toStdString();
-    std::cout << std::endl;
+    std::cout << "\n";
 
     p.start(program, args);
     if (!p.waitForStarted()) { if (err) *err = QObject::tr("Failed to start %1").arg(program); return false; }

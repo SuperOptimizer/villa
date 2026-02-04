@@ -1,6 +1,5 @@
 #pragma once
 
-#include <nlohmann/json.hpp>
 #include <nlohmann/json_fwd.hpp>
 #include <cstddef>
 #include <filesystem>
@@ -9,9 +8,12 @@
 #include <string>
 #include <vector>
 
+// Include the types we manage (needed by callers who use the smart pointers)
 #include "vc/core/types/Segmentation.hpp"
 #include "vc/core/types/Volume.hpp"
-#include "vc/core/util/QuadSurface.hpp"
+
+// Forward declaration - only used in method signatures
+class QuadSurface;
 
 class VolumePkg final
 {
@@ -22,21 +24,21 @@ public:
 
     [[nodiscard]] std::string name() const;
     [[nodiscard]] int version() const;
-    [[nodiscard]] bool hasVolumes() const;
+    [[nodiscard]] bool hasVolumes() const noexcept { return !volumes_.empty(); }
     [[nodiscard]] bool hasVolume(const std::string& id) const;
-    [[nodiscard]] std::size_t numberOfVolumes() const;
+    [[nodiscard]] std::size_t numberOfVolumes() const noexcept { return volumes_.size(); }
     [[nodiscard]] std::vector<std::string> volumeIDs() const;
     std::shared_ptr<Volume> volume();
     std::shared_ptr<Volume> volume(const std::string& id);
-    [[nodiscard]] bool hasSegmentations() const;
+    [[nodiscard]] bool hasSegmentations() const noexcept { return !segmentations_.empty(); }
     [[nodiscard]] std::vector<std::string> segmentationIDs() const;
 
     std::shared_ptr<Segmentation> segmentation(const std::string& id);
     void removeSegmentation(const std::string& id);
     void setSegmentationDirectory(const std::string& dirName);
-    [[nodiscard]] std::string getSegmentationDirectory() const;
+    [[nodiscard]] std::string getSegmentationDirectory() const noexcept { return currentSegmentationDir_; }
     [[nodiscard]] std::vector<std::string> getAvailableSegmentationDirectories() const;
-    [[nodiscard]] std::string getVolpkgDirectory() const;
+    [[nodiscard]] std::string getVolpkgDirectory() const noexcept { return rootDir_.string(); }
 
     void refreshSegmentations();
 
@@ -54,7 +56,7 @@ public:
     bool reloadSingleSegmentation(const std::string& id);
 
 private:
-    nlohmann::json config_;
+    std::unique_ptr<nlohmann::json> config_;
     std::filesystem::path rootDir_;
     std::map<std::string, std::shared_ptr<Volume>> volumes_;
     std::map<std::string, std::shared_ptr<Segmentation>> segmentations_;

@@ -5,16 +5,16 @@
 #include "omp.h"
 
 
-static float min_dist(const cv::Vec2i &p, const std::vector<cv::Vec2i> &list)
+[[nodiscard]] static float min_dist(const cv::Vec2i &p, const std::vector<cv::Vec2i> &list) noexcept
 {
     double dist = 10000000000;
-    for(auto &o : list) {
+    for(const auto &o : list) {
         if (o[0] == -1 || o == p)
             continue;
         dist = std::min(cv::norm(o-p), dist);
     }
 
-    return dist;
+    return static_cast<float>(dist);
 }
 
 static cv::Point2i extract_point_min_dist(std::vector<cv::Vec2i> &cands, const std::vector<cv::Vec2i> &blocked, int &idx, float dist)
@@ -37,7 +37,7 @@ static cv::Point2i extract_point_min_dist(std::vector<cv::Vec2i> &cands, const s
 }
 
 //collection of points which can be retrieved with minimum distance requirement
-class OmpThreadPointCol
+class OmpThreadPointCol final
 {
 public:
     OmpThreadPointCol(float dist, const std::vector<cv::Vec2i> &src) :

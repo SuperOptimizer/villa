@@ -1,5 +1,7 @@
 #include "CommandLineToolRunner.hpp"
 #include "CWindow.hpp"
+#include "elements/ProgressUtil.hpp"
+#include "ConsoleOutputWidget.hpp"
 #include <QDir>
 #include <QFileInfo>
 #include <QStatusBar>

@@ -35,7 +35,7 @@ struct CacheParamsLanczos {
         chunksX = (sx + cx - 1) / cx;
     }
 
-    static int log2_pow2(int v) {
+    [[gnu::always_inline]] static int log2_pow2(int v) noexcept {
         int r = 0;
         while ((v >> r) > 1) r++;
         return r;
@@ -51,7 +51,7 @@ struct ChunkSamplerLanczos {
     static constexpr int kSlots = 16;  // More slots for Lanczos's larger footprint
 
     // Pack 3 chunk indices into a single 64-bit key for fast comparison
-    static uint64_t packKey(int iz, int iy, int ix) {
+    [[gnu::always_inline]] static uint64_t packKey(int iz, int iy, int ix) noexcept {
         return (static_cast<uint64_t>(static_cast<uint32_t>(iz)) << 42) |
                (static_cast<uint64_t>(static_cast<uint32_t>(iy)) << 21) |
                static_cast<uint64_t>(static_cast<uint32_t>(ix));
@@ -78,7 +78,7 @@ struct ChunkSamplerLanczos {
         s2 = 1;
     }
 
-    const T* getChunkData(int ciz, int ciy, int cix) {
+    [[gnu::always_inline]] const T* getChunkData(int ciz, int ciy, int cix) {
         const uint64_t key = packKey(ciz, ciy, cix);
 
         // Check MRU slot first - single 64-bit comparison
@@ -103,8 +103,11 @@ struct ChunkSamplerLanczos {
         return v.data;
     }
 
-    T sampleInt(int iz, int iy, int ix) {
-        if (iz < 0 || iy < 0 || ix < 0 || iz >= p.sz || iy >= p.sy || ix >= p.sx)
+    [[gnu::always_inline]] T sampleInt(int iz, int iy, int ix) {
+        // Use unsigned comparison trick: (unsigned)(x) >= N catches both x<0 and x>=N
+        if (static_cast<unsigned>(iz) >= static_cast<unsigned>(p.sz) ||
+            static_cast<unsigned>(iy) >= static_cast<unsigned>(p.sy) ||
+            static_cast<unsigned>(ix) >= static_cast<unsigned>(p.sx)) [[unlikely]]
             return 0;
 
         int ciz = iz >> p.czShift;
@@ -112,7 +115,7 @@ struct ChunkSamplerLanczos {
         int cix = ix >> p.cxShift;
 
         const T* data = getChunkData(ciz, ciy, cix);
-        if (!data) return 0;
+        if (!data) [[unlikely]] return 0;
 
         return data[(iz & p.czMask) * s0 + (iy & p.cyMask) * s1 + (ix & p.cxMask) * s2];
     }

@@ -1,16 +1,17 @@
 #include <nlohmann/json.hpp>
-
 #include <opencv2/core.hpp>
-
-#include "vc/core/util/Surface.hpp"
-#include "vc/core/util/QuadSurface.hpp"
-#include "vc/core/util/SurfaceArea.hpp"
-
 #include <filesystem>
 #include <chrono>
 #include <iostream>
 #include <fstream>
 #include <cmath>
+#include <iomanip>
+#include <memory>
+#include <sstream>
+#include <string>
+
+#include "vc/core/util/QuadSurface.hpp"
+#include "vc/core/util/SurfaceArea.hpp"
 
 
 using json = nlohmann::json;
@@ -26,7 +27,7 @@ public:
     ~MeasureLife()
     {
         auto end = std::chrono::high_resolution_clock::now();
-        std::cout << " took " << std::chrono::duration<double>(end-start).count() << " s" << std::endl;
+        std::cout << " took " << std::chrono::duration<double>(end-start).count() << " s" << "\n";
     }
 private:
     std::chrono::time_point<std::chrono::high_resolution_clock> start;
@@ -69,21 +70,21 @@ QuadSurface* load_surface(const std::filesystem::path& path) {
 int main(int argc, char *argv[])
 {
     if (argc < 5 || argc > 7) {
-        std::cout << "Usage: " << argv[0] << " <surface-a> <surface-b> <operation> <output-name> [tolerance] [params.json]" << std::endl;
-        std::cout << std::endl;
-        std::cout << "Operations:" << std::endl;
-        std::cout << "  diff         - Returns points in surface-a that are not in surface-b" << std::endl;
-        std::cout << "  union        - Combines points from both surfaces" << std::endl;
-        std::cout << "  intersection - Returns only points that exist in both surfaces" << std::endl;
-        std::cout << std::endl;
-        std::cout << "Options:" << std::endl;
-        std::cout << "  output-name  - Base name for output (will append operation and timestamp)" << std::endl;
-        std::cout << "  tolerance    - Distance threshold for considering points as same (default: 2.0)" << std::endl;
-        std::cout << "  params.json  - Additional parameters file (optional)" << std::endl;
-        std::cout << std::endl;
-        std::cout << "Example:" << std::endl;
-        std::cout << "  " << argv[0] << " ./seg1 ./seg2 diff ./output_seg 2.0" << std::endl;
-        std::cout << "  Creates: ./output_seg_diff_20250817144348966/" << std::endl;
+        std::cout << "Usage: " << argv[0] << " <surface-a> <surface-b> <operation> <output-name> [tolerance] [params.json]" << "\n";
+        std::cout << "\n";
+        std::cout << "Operations:" << "\n";
+        std::cout << "  diff         - Returns points in surface-a that are not in surface-b" << "\n";
+        std::cout << "  union        - Combines points from both surfaces" << "\n";
+        std::cout << "  intersection - Returns only points that exist in both surfaces" << "\n";
+        std::cout << "\n";
+        std::cout << "Options:" << "\n";
+        std::cout << "  output-name  - Base name for output (will append operation and timestamp)" << "\n";
+        std::cout << "  tolerance    - Distance threshold for considering points as same (default: 2.0)" << "\n";
+        std::cout << "  params.json  - Additional parameters file (optional)" << "\n";
+        std::cout << "\n";
+        std::cout << "Example:" << "\n";
+        std::cout << "  " << argv[0] << " ./seg1 ./seg2 diff ./output_seg 2.0" << "\n";
+        std::cout << "  Creates: ./output_seg_diff_20250817144348966/" << "\n";
         return EXIT_FAILURE;
     }
 
@@ -108,14 +109,14 @@ int main(int argc, char *argv[])
 
     // Validate operation
     if (operation != "diff" && operation != "union" && operation != "intersection") {
-        std::cerr << "Error: Invalid operation '" << operation << "'" << std::endl;
-        std::cerr << "Valid operations are: diff, union, intersection" << std::endl;
+        std::cerr << "Error: Invalid operation '" << operation << "'" << "\n";
+        std::cerr << "Valid operations are: diff, union, intersection" << "\n";
         return EXIT_FAILURE;
     }
 
     try {
         // Load surface A
-        std::cout << "Loading surface A from: " << surface_a_path << std::endl;
+        std::cout << "Loading surface A from: " << surface_a_path << "\n";
         QuadSurface* surf_a = nullptr;
         {
             MeasureLife timer("Loading surface A");
@@ -123,12 +124,12 @@ int main(int argc, char *argv[])
         }
 
         if (!surf_a) {
-            std::cerr << "Error: Failed to load surface A" << std::endl;
+            std::cerr << "Error: Failed to load surface A" << "\n";
             return EXIT_FAILURE;
         }
 
         // Load surface B
-        std::cout << "Loading surface B from: " << surface_b_path << std::endl;
+        std::cout << "Loading surface B from: " << surface_b_path << "\n";
         QuadSurface* surf_b = nullptr;
         {
             MeasureLife timer("Loading surface B");
@@ -136,20 +137,20 @@ int main(int argc, char *argv[])
         }
 
         if (!surf_b) {
-            std::cerr << "Error: Failed to load surface B" << std::endl;
+            std::cerr << "Error: Failed to load surface B" << "\n";
             delete surf_a;
             return EXIT_FAILURE;
         }
 
         // Print surface info
         std::cout << "Surface A: " << surf_a->size().width << "x" << surf_a->size().height
-                  << " scale: [" << surf_a->scale()[0] << ", " << surf_a->scale()[1] << "]" << std::endl;
+                  << " scale: [" << surf_a->scale()[0] << ", " << surf_a->scale()[1] << "]" << "\n";
         std::cout << "Surface B: " << surf_b->size().width << "x" << surf_b->size().height
-                  << " scale: [" << surf_b->scale()[0] << ", " << surf_b->scale()[1] << "]" << std::endl;
+                  << " scale: [" << surf_b->scale()[0] << ", " << surf_b->scale()[1] << "]" << "\n";
 
         // Perform the operation
         std::unique_ptr<QuadSurface> result;
-        std::cout << "Performing " << operation << " operation with tolerance=" << tolerance << std::endl;
+        std::cout << "Performing " << operation << " operation with tolerance=" << tolerance << "\n";
 
         {
             MeasureLife timer("Computing " + operation);
@@ -164,7 +165,7 @@ int main(int argc, char *argv[])
         }
 
         if (!result) {
-            std::cerr << "Error: Operation failed" << std::endl;
+            std::cerr << "Error: Operation failed" << "\n";
             delete surf_a;
             delete surf_b;
             return EXIT_FAILURE;
@@ -195,10 +196,10 @@ int main(int argc, char *argv[])
             result->save(output_path, uuid);
         }
 
-        std::cout << "Result saved to: " << output_path << std::endl;
+        std::cout << "Result saved to: " << output_path << "\n";
 
         // Print statistics
-        std::cout << "Result surface contains " << result->countValidPoints() << " valid points" << std::endl;
+        std::cout << "Result surface contains " << result->countValidPoints() << " valid points" << "\n";
 
         if (result->meta) {
             const double area_vx2 = vc::surface::computeSurfaceAreaVox2(result->rawPoints());
@@ -209,7 +210,7 @@ int main(int argc, char *argv[])
                 if (std::isfinite(voxelsize) && voxelsize > 0.0) {
                     const double area_cm2 = area_vx2 * voxelsize * voxelsize / 1e8;
                     (*result->meta)["area_cm2"] = area_cm2;
-                    std::cout << "Area: " << area_cm2 << " cm²" << std::endl;
+                    std::cout << "Area: " << area_cm2 << " cm²" << "\n";
                 }
             }
         }
@@ -217,10 +218,10 @@ int main(int argc, char *argv[])
         // Update metadata with final statistics
         result->save_meta();
 
-        std::cout << "Operation completed successfully!" << std::endl;
+        std::cout << "Operation completed successfully!" << "\n";
 
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        std::cerr << "Error: " << e.what() << "\n";
         return EXIT_FAILURE;
     }
 

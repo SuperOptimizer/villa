@@ -8,6 +8,8 @@
  */
 
 #include "CWindow.hpp"
+#include "CSurfaceCollection.hpp"
+#include "CVolumeViewer.hpp"
 
 #include <QComboBox>
 #include <QListView>

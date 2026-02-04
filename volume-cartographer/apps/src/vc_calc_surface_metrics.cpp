@@ -1,6 +1,5 @@
 #include "vc/ui/surface_metrics.hpp"
 #include "vc/ui/VCCollection.hpp"
-#include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include <opencv2/imgcodecs.hpp>
 #include <boost/program_options.hpp>
@@ -27,12 +26,12 @@ int main(int argc, char** argv)
     po::notify(vm);
 
     if (vm.count("help")) {
-        std::cout << desc << std::endl;
+        std::cout << desc << "\n";
         return 0;
     }
 
     if (!vm.count("collection") || !vm.count("surface") || !vm.count("output")) {
-        std::cerr << "Error: --collection, --surface, and --output are required." << std::endl;
+        std::cerr << "Error: --collection, --surface, and --output are required." << "\n";
         return 1;
     }
 
@@ -44,13 +43,13 @@ int main(int argc, char** argv)
 
     VCCollection collection;
     if (!collection.loadFromJSON(collection_path)) {
-        std::cerr << "Error: Failed to load point collection from " << collection_path << std::endl;
+        std::cerr << "Error: Failed to load point collection from " << collection_path << "\n";
         return 1;
     }
 
     auto surface = load_quad_from_tifxyz(surface_path);
     if (!surface) {
-        std::cerr << "Error: Failed to load surface from " << surface_path << std::endl;
+        std::cerr << "Error: Failed to load surface from " << surface_path << "\n";
         return 1;
     }
     if (z_min == -1)
@@ -64,7 +63,7 @@ int main(int argc, char** argv)
         std::string winding_path = vm["winding"].as<std::string>();
         cv::Mat_<float> winding = cv::imread(winding_path, cv::IMREAD_UNCHANGED);
         if (winding.empty()) {
-            std::cerr << "Error: Failed to load winding from " << winding_path << std::endl;
+            std::cerr << "Error: Failed to load winding from " << winding_path << "\n";
             return 1;
         }
         nlohmann::json winding_metrics = calc_point_winding_metrics(collection, surface.get(), winding, z_min, z_max);
@@ -73,14 +72,14 @@ int main(int argc, char** argv)
 
     std::ofstream o(output_path);
     if (!o.is_open()) {
-        std::cerr << "Error: Failed to open output file " << output_path << std::endl;
+        std::cerr << "Error: Failed to open output file " << output_path << "\n";
         return 1;
     }
 
     o << metrics.dump(4);
     o.close();
 
-    std::cout << "Successfully calculated metrics and saved to " << output_path << std::endl;
+    std::cout << "Successfully calculated metrics and saved to " << output_path << "\n";
 
     return 0;
 }

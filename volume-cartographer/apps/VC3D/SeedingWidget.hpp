@@ -18,6 +18,7 @@ class QProgressBar;
 class QPushButton;
 class QSpinBox;
 class QToolButton;
+template <typename T> class ChunkCache;
 
 #include "CSurfaceCollection.hpp"
 #include "elements/ProgressUtil.hpp"

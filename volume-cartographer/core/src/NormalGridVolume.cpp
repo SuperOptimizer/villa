@@ -1,8 +1,12 @@
 #include "vc/core/util/NormalGridVolume.hpp"
+
+#include <nlohmann/json.hpp>
+
+#include "vc/core/util/GridStore.hpp"
 #include "vc/core/util/HashFunctions.hpp"
- 
- #include <filesystem>
- #include <fstream>
+
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <unordered_map>
 #include <random>
@@ -180,7 +184,7 @@
                     uint64_t total = hits + misses;
                     double hit_rate = (total == 0) ? 0.0 : (static_cast<double>(hits) / total) * 100.0;
                     if (hit_rate < 99.0)
-                        std::cout << "[GridStore Cache] Hitrate Warning Triggered: Hits: " << hits << ", Misses: " << misses << ", Total: " << total << ", Hit Rate: " << std::fixed << std::setprecision(2) << hit_rate << "%" << std::endl;
+                        std::cout << "[GridStore Cache] Hitrate Warning Triggered: Hits: " << hits << ", Misses: " << misses << ", Total: " << total << ", Hit Rate: " << std::fixed << std::setprecision(2) << hit_rate << "%\n";
                     last_stat_time = now;
                 }
             }

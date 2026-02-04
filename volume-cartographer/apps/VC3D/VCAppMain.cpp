@@ -31,7 +31,7 @@ auto main(int argc, char* argv[]) -> int
     QApplication::setApplicationName("VC3D");
     QApplication::setWindowIcon(QIcon(":/images/logo.png"));
     QApplication::setApplicationVersion(QString::fromStdString(ProjectInfo::VersionString()));
-    std::cout << "VC3D commit: " << ProjectInfo::RepositoryHash() << std::endl;
+    std::cout << "VC3D commit: " << ProjectInfo::RepositoryHash() << "\n";
 
     QCommandLineParser parser;
     parser.setApplicationDescription("VC3D - Volume Cartographer 3D Viewer");

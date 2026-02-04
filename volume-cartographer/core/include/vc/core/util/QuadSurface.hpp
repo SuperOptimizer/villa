@@ -114,7 +114,7 @@ struct tuple_element<5, QuadRef<T>> { using type = T&; };
 
 // Range for iterating over valid points
 template<typename PointType>
-class ValidPointRange {
+class ValidPointRange final {
     // Use const Mat* when PointType is const, non-const Mat* otherwise
     using MatPtr = std::conditional_t<std::is_const_v<PointType>,
                                       const cv::Mat_<cv::Vec3f>*,
@@ -133,42 +133,42 @@ public:
             advanceToValid();
         }
 
-        reference operator*() const {
+        [[gnu::always_inline]] reference operator*() const noexcept {
             return PointRef<PointType>{_row, _col, (*_points)(_row, _col)};
         }
 
-        Iterator& operator++() {
+        Iterator& operator++() noexcept {
             advance();
             advanceToValid();
             return *this;
         }
 
-        Iterator operator++(int) {
+        Iterator operator++(int) noexcept {
             Iterator tmp = *this;
             ++(*this);
             return tmp;
         }
 
-        bool operator==(const Iterator& other) const {
+        [[gnu::always_inline]] bool operator==(const Iterator& other) const noexcept {
             return _row == other._row && _col == other._col;
         }
 
-        bool operator!=(const Iterator& other) const {
+        [[gnu::always_inline]] bool operator!=(const Iterator& other) const noexcept {
             return !(*this == other);
         }
 
     private:
-        void advance() {
+        [[gnu::always_inline]] void advance() noexcept {
             ++_col;
-            if (_col >= _points->cols) {
+            if (_col >= _points->cols) [[unlikely]] {
                 _col = 0;
                 ++_row;
             }
         }
 
-        void advanceToValid() {
+        void advanceToValid() noexcept {
             while (_row < _points->rows) {
-                if ((*_points)(_row, _col)[0] != -1.f) {
+                if ((*_points)(_row, _col)[0] != -1.f) [[likely]] {
                     return;
                 }
                 advance();
@@ -180,10 +180,10 @@ public:
         int _col;
     };
 
-    ValidPointRange(MatPtr points) : _points(points) {}
+    ValidPointRange(MatPtr points) noexcept : _points(points) {}
 
-    Iterator begin() { return Iterator(_points, 0, 0); }
-    Iterator end() { return Iterator(_points, _points->rows, 0); }
+    [[nodiscard]] Iterator begin() const noexcept { return Iterator(_points, 0, 0); }
+    [[nodiscard]] Iterator end() const noexcept { return Iterator(_points, _points->rows, 0); }
 
 private:
     MatPtr _points;
@@ -191,7 +191,7 @@ private:
 
 // Range for iterating over valid quads (2x2 cells where all 4 corners are valid)
 template<typename PointType>
-class ValidQuadRange {
+class ValidQuadRange final {
     // Use const Mat* when PointType is const, non-const Mat* otherwise
     using MatPtr = std::conditional_t<std::is_const_v<PointType>,
                                       const cv::Mat_<cv::Vec3f>*,
@@ -210,7 +210,7 @@ public:
             advanceToValid();
         }
 
-        reference operator*() const {
+        [[gnu::always_inline]] reference operator*() const noexcept {
             return QuadRef<PointType>{
                 _row, _col,
                 (*_points)(_row, _col),
@@ -220,45 +220,45 @@ public:
             };
         }
 
-        Iterator& operator++() {
+        Iterator& operator++() noexcept {
             advance();
             advanceToValid();
             return *this;
         }
 
-        Iterator operator++(int) {
+        Iterator operator++(int) noexcept {
             Iterator tmp = *this;
             ++(*this);
             return tmp;
         }
 
-        bool operator==(const Iterator& other) const {
+        [[gnu::always_inline]] bool operator==(const Iterator& other) const noexcept {
             return _row == other._row && _col == other._col;
         }
 
-        bool operator!=(const Iterator& other) const {
+        [[gnu::always_inline]] bool operator!=(const Iterator& other) const noexcept {
             return !(*this == other);
         }
 
     private:
-        void advance() {
+        [[gnu::always_inline]] void advance() noexcept {
             ++_col;
-            if (_col >= _points->cols - 1) {
+            if (_col >= _points->cols - 1) [[unlikely]] {
                 _col = 0;
                 ++_row;
             }
         }
 
-        void advanceToValid() {
+        void advanceToValid() noexcept {
             while (_row < _points->rows - 1) {
-                if (isQuadValid()) {
+                if (isQuadValid()) [[likely]] {
                     return;
                 }
                 advance();
             }
         }
 
-        bool isQuadValid() const {
+        [[gnu::always_inline]] bool isQuadValid() const noexcept {
             return (*_points)(_row, _col)[0] != -1.f &&
                    (*_points)(_row, _col + 1)[0] != -1.f &&
                    (*_points)(_row + 1, _col)[0] != -1.f &&
@@ -270,10 +270,10 @@ public:
         int _col;
     };
 
-    ValidQuadRange(MatPtr points) : _points(points) {}
+    ValidQuadRange(MatPtr points) noexcept : _points(points) {}
 
-    Iterator begin() { return Iterator(_points, 0, 0); }
-    Iterator end() { return Iterator(_points, _points->rows - 1, 0); }
+    [[nodiscard]] Iterator begin() const noexcept { return Iterator(_points, 0, 0); }
+    [[nodiscard]] Iterator end() const noexcept { return Iterator(_points, _points->rows - 1, 0); }
 
 private:
     MatPtr _points;
@@ -309,8 +309,8 @@ public:
     float pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int max_iters = 1000,
                   class SurfacePatchIndex* surfaceIndex = nullptr, class PointIndex* pointIndex = nullptr) override;
     cv::Size size();
-    [[nodiscard]] cv::Vec2f scale() const;
-    [[nodiscard]] cv::Vec3f center() const;
+    [[nodiscard]] cv::Vec2f scale() const noexcept;
+    [[nodiscard]] cv::Vec3f center() const noexcept;
 
     void save(const std::string &path, const std::string &uuid, bool force_overwrite = false);
     void save(const std::filesystem::path &path, bool force_overwrite = false);
@@ -390,15 +390,15 @@ public:
     void flipV();
 
     // Overlapping surfaces management (by ID/name)
-    const std::set<std::string>& overlappingIds() const { return _overlappingIds; }
+    [[nodiscard]] const std::set<std::string>& overlappingIds() const noexcept { return _overlappingIds; }
     void setOverlappingIds(const std::set<std::string>& ids) { _overlappingIds = ids; }
     void addOverlappingId(const std::string& id) { _overlappingIds.insert(id); }
-    void removeOverlappingId(const std::string& id) { _overlappingIds.erase(id); }
+    void removeOverlappingId(const std::string& id) noexcept { _overlappingIds.erase(id); }
     void readOverlappingJson();   // Load from path/overlapping.json
     void writeOverlappingJson() const;
 
     // Mask timestamp caching
-    std::optional<std::filesystem::file_time_type> maskTimestamp() const { return _maskTimestamp; }
+    [[nodiscard]] std::optional<std::filesystem::file_time_type> maskTimestamp() const noexcept { return _maskTimestamp; }
     void refreshMaskTimestamp();
     static std::optional<std::filesystem::file_time_type> readMaskTimestamp(const std::filesystem::path& dir);
 

@@ -8,17 +8,14 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/mman.h>
-#include <_stdio.h>
-#include <_string.h>
+#include <cstdio>
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <nlohmann/json.hpp>
-#include <nlohmann/json_fwd.hpp>
 #include <opencv2/core/matx.hpp>
 #include <opencv2/core/matx.inl.hpp>
 #include <opencv2/core/saturate.hpp>
-#include <xsimd/arch/xsimd_neon.hpp>
 #include <xsimd/memory/xsimd_aligned_allocator.hpp>
 #include <xsimd/types/xsimd_api.hpp>
 #include <xtensor/core/xlayout.hpp>
@@ -91,7 +88,7 @@ static std::string tmp_name_proc_thread()
 
 //chunked 3d tensor for on-demand computation from a zarr dataset ... could as some point be file backed ...
 template <typename T, typename C>
-class Chunked3d {
+class Chunked3d final {
 public:
     using CHUNKT = xt::xtensor<T,3,xt::layout_type::column_major>;
 
@@ -192,10 +189,10 @@ public:
             throw std::runtime_error("could not create cache dir - maybe too many caches in cache root (max 1000!)");
         
     };
-    size_t calc_off(const cv::Vec3i &p)
+    [[gnu::always_inline]] size_t calc_off(const cv::Vec3i &p) const noexcept
     {
-        auto s = C::CHUNK_SIZE;
-        return p[0] + p[1]*s + p[2]*s*s;
+        constexpr auto s = C::CHUNK_SIZE;
+        return static_cast<size_t>(p[0]) + static_cast<size_t>(p[1])*s + static_cast<size_t>(p[2])*s*s;
     }
     T &operator()(const cv::Vec3i &p)
     {
@@ -476,7 +473,7 @@ public:
 void print_accessor_stats();
 
 template <typename T, typename C>
-class Chunked3dAccessor
+class Chunked3dAccessor final
 {
 public:
     using CHUNKT = typename Chunked3d<T,C>::CHUNKT;
@@ -488,22 +485,20 @@ public:
         return Chunked3dAccessor(ar);
     }
 
-    T &operator()(const cv::Vec3i &p)
+    [[gnu::always_inline]] T &operator()(const cv::Vec3i &p)
     {
-        auto s = C::CHUNK_SIZE;
+        constexpr auto s = C::CHUNK_SIZE;
 
-        if (_corner[0] == -1)
-            get_chunk(p);
-        else {
-            bool miss = false;
-            for(int i=0;i<3;i++)
-                if (p[i] < _corner[i])
-                    miss = true;
-            for(int i=0;i<3;i++)
-                if (p[i] >= _corner[i]+C::CHUNK_SIZE)
-                    miss = true;
-            if (miss)
+        // Fast path: check if point is in current chunk
+        if (_corner[0] != -1) [[likely]] {
+            const bool in_chunk =
+                (static_cast<unsigned>(p[0] - _corner[0]) < s) &&
+                (static_cast<unsigned>(p[1] - _corner[1]) < s) &&
+                (static_cast<unsigned>(p[2] - _corner[2]) < s);
+            if (!in_chunk) [[unlikely]]
                 get_chunk(p);
+        } else [[unlikely]] {
+            get_chunk(p);
         }
 
         total++;
@@ -511,45 +506,34 @@ public:
         return _chunk[_ar.calc_off({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]})];
     }
 
-
-
-    T &operator()(int z, int y, int x)
+    [[gnu::always_inline]] T &operator()(int z, int y, int x)
     {
         return operator()({z,y,x});
     }
 
-    T& safe_at(const cv::Vec3i &p)
-    {        
-        auto s = C::CHUNK_SIZE;
+    [[gnu::always_inline]] T& safe_at(const cv::Vec3i &p)
+    {
+        constexpr auto s = C::CHUNK_SIZE;
 
-        if (_corner[0] == -1)
-            get_chunk_safe(p);
-        else {
-            bool miss = false;
-            for(int i=0;i<3;i++)
-                if (p[i] < _corner[i])
-                    miss = true;
-            for(int i=0;i<3;i++)
-                if (p[i] >= _corner[i]+C::CHUNK_SIZE)
-                    miss = true;
-            if (miss)
+        // Fast path: check if point is in current chunk
+        if (_corner[0] != -1) [[likely]] {
+            const bool in_chunk =
+                (static_cast<unsigned>(p[0] - _corner[0]) < s) &&
+                (static_cast<unsigned>(p[1] - _corner[1]) < s) &&
+                (static_cast<unsigned>(p[2] - _corner[2]) < s);
+            if (!in_chunk) [[unlikely]]
                 get_chunk_safe(p);
+        } else [[unlikely]] {
+            get_chunk_safe(p);
         }
 
         #pragma omp atomic
         total++;
 
-        // size_t pos_xt = &_chunk->operator()(p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]) - &_chunk->operator()(0,0,0);
-        // if (pos_xt != _ar.calc_off({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]})) {
-        //     std::cout << pos_xt << cv::Vec3i({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]}) << _ar.calc_off({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]}) << std::endl;
-        //     throw std::runtime_error("fix calc_off!");
-        // }
-
-        // return _chunk->operator()(p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]);
         return _chunk[_ar.calc_off({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]})];
     }
 
-    T& safe_at(int z, int y, int x)
+    [[gnu::always_inline]] T& safe_at(int z, int y, int x)
     {
         return safe_at({z,y,x});
     }
@@ -582,7 +566,7 @@ protected:
 // ────────────────────────────────────────────────────────────────────────────────
 
 template <typename T, typename C>
-class CachedChunked3dInterpolator
+class CachedChunked3dInterpolator final
 {
 public:
     using Acc   = Chunked3dAccessor<T, C>;
@@ -634,16 +618,16 @@ public:
         const V c011 = V(a.safe_at(corner + cv::Vec3i(0,1,1)));
         const V c111 = V(a.safe_at(corner + cv::Vec3i(1,1,1)));
 
-        // interpolate
-        const V c00 = (V(1)-cz)*c000 + cz*c001;
-        const V c01 = (V(1)-cz)*c010 + cz*c011;
-        const V c10 = (V(1)-cz)*c100 + cz*c101;
-        const V c11 = (V(1)-cz)*c110 + cz*c111;
+        // interpolate using FMA-friendly form: a + t*(b-a) instead of (1-t)*a + t*b
+        const V c00 = c000 + cz*(c001 - c000);
+        const V c01 = c010 + cz*(c011 - c010);
+        const V c10 = c100 + cz*(c101 - c100);
+        const V c11 = c110 + cz*(c111 - c110);
 
-        const V c0  = (V(1)-cy)*c00 + cy*c01;
-        const V c1  = (V(1)-cy)*c10 + cy*c11;
+        const V c0  = c00 + cy*(c01 - c00);
+        const V c1  = c10 + cy*(c11 - c10);
 
-        *out = (V(1)-cx)*c0 + cx*c1;
+        *out = c0 + cx*(c1 - c0);
     }
 
     // -------------------------------------------------------------------------

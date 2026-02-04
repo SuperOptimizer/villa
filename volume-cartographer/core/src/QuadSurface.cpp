@@ -9,7 +9,6 @@
 #include "vc/core/util/SurfacePatchIndex.hpp"
 
 #include <opencv2/imgproc.hpp>
-#include <opencv2/calib3d.hpp>
 #include <opencv2/imgcodecs.hpp>
 
 #include <nlohmann/json.hpp>
@@ -227,12 +226,12 @@ cv::Size QuadSurface::size()
     return {static_cast<int>(_points->cols / _scale[0]), static_cast<int>(_points->rows / _scale[1])};
 }
 
-cv::Vec2f QuadSurface::scale() const
+cv::Vec2f QuadSurface::scale() const noexcept
 {
     return _scale;
 }
 
-cv::Vec3f QuadSurface::center() const
+cv::Vec3f QuadSurface::center() const noexcept
 {
     return _center;
 }
@@ -312,6 +311,7 @@ cv::Mat QuadSurface::channel(const std::string& name, int flags)
 std::vector<std::string> QuadSurface::channelNames() const
 {
     std::vector<std::string> names;
+    names.reserve(_channels.size());
     for (const auto& pair : _channels) {
         names.push_back(pair.first);
     }
@@ -457,13 +457,23 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
         normals_big.setTo(cv::Vec3f(std::numeric_limits<float>::quiet_NaN(),
                                     std::numeric_limits<float>::quiet_NaN(),
                                     std::numeric_limits<float>::quiet_NaN()));
+
+        // Pre-compute base coordinates to avoid repeated calculation
+        const double ox_base = ox + 4.0 * sx;
+        const double oy_base = oy + 4.0 * sy;
+
+        #pragma omp parallel for schedule(dynamic)
         for (int j = 0; j < h; ++j) {
-            const double y = oy + (j + 4.0) * sy;
+            const double y = oy_base + j * sy;
+            const int jj = j + 4;
+            const uint8_t* __restrict__ valid_row = valid_big.ptr<uint8_t>(jj);
+            cv::Vec3f* __restrict__ normals_row = normals_big.ptr<cv::Vec3f>(jj);
+
             for (int i = 0; i < w; ++i) {
-                const double x = ox + (i + 4.0) * sx;
-                const int jj = j + 4, ii = i + 4;
-                if (valid_big.at<uint8_t>(jj, ii)) {
-                    normals_big(jj, ii) = grid_normal(*_points,
+                const int ii = i + 4;
+                if (valid_row[ii]) {
+                    const double x = ox_base + i * sx;
+                    normals_row[ii] = grid_normal(*_points,
                         cv::Vec3f(static_cast<float>(x),
                                 static_cast<float>(y),
                                 0.0f));
@@ -484,23 +494,44 @@ void QuadSurface::gen(cv::Mat_<cv::Vec3f>* coords,
     const cv::Vec3f qnan(std::numeric_limits<float>::quiet_NaN(),
                         std::numeric_limits<float>::quiet_NaN(),
                         std::numeric_limits<float>::quiet_NaN());
-    for (int j = 0; j < h; ++j) {
-        const uint8_t* mv = valid.ptr<uint8_t>(j);
-        for (int i = 0; i < w; ++i) {
-            if (!mv[i]) {
-                (*coords)(j, i) = qnan;
-                if (need_normals) (*normals)(j, i) = qnan;
+
+    if (need_normals) {
+        #pragma omp parallel for schedule(static)
+        for (int j = 0; j < h; ++j) {
+            const uint8_t* __restrict__ mv = valid.ptr<uint8_t>(j);
+            cv::Vec3f* __restrict__ cp = coords->ptr<cv::Vec3f>(j);
+            cv::Vec3f* __restrict__ np = normals->ptr<cv::Vec3f>(j);
+            for (int i = 0; i < w; ++i) {
+                if (!mv[i]) {
+                    cp[i] = qnan;
+                    np[i] = qnan;
+                }
+            }
+        }
+    } else {
+        #pragma omp parallel for schedule(static)
+        for (int j = 0; j < h; ++j) {
+            const uint8_t* __restrict__ mv = valid.ptr<uint8_t>(j);
+            cv::Vec3f* __restrict__ cp = coords->ptr<cv::Vec3f>(j);
+            for (int i = 0; i < w; ++i) {
+                if (!mv[i]) {
+                    cp[i] = qnan;
+                }
             }
         }
     }
 
     // --- apply offset along normals only where normals are valid --------
     if (need_normals && ul[2] != 0.0f) {
+        const float offset_z = ul[2];
+        #pragma omp parallel for schedule(static)
         for (int j = 0; j < h; ++j) {
+            cv::Vec3f* __restrict__ cp = coords->ptr<cv::Vec3f>(j);
+            const cv::Vec3f* __restrict__ np = normals->ptr<cv::Vec3f>(j);
             for (int i = 0; i < w; ++i) {
-                const cv::Vec3f n = (*normals)(j, i);
-                if (std::isfinite(n[0]) && std::isfinite(n[1]) && std::isfinite(n[2])) {
-                    (*coords)(j, i) += n * ul[2];
+                const cv::Vec3f n = np[i];
+                if (std::isfinite(n[0])) {  // If one component is finite, all should be
+                    cp[i] += n * offset_z;
                 }
             }
         }
@@ -520,7 +551,7 @@ static inline cv::Vec2f mul(const cv::Vec2f &a, const cv::Vec2f &b)
 }
 
 template <typename E>
-static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt, cv::Vec2f init_step, float min_step_x)
+static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f &out, const cv::Vec3f& tgt, const cv::Vec2f& init_step, float min_step_x)
 {
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
     if (!boundary.contains(cv::Point(loc))) {
@@ -569,7 +600,7 @@ static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f
             break;
     }
 
-    return sqrt(best);
+    return std::sqrt(best);
 }
 
 
@@ -577,7 +608,7 @@ static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f
 template <typename E>
 static float pointTo_(cv::Vec2f &loc, const cv::Mat_<E> &points, const cv::Vec3f &tgt, float th, int max_iters, float scale)
 {
-    loc = cv::Vec2f(points.cols/2,points.rows/2);
+    loc = cv::Vec2f(static_cast<float>(points.cols)/2.0f, static_cast<float>(points.rows)/2.0f);
     cv::Vec3f _out;
 
     cv::Vec2f step_small = {std::max(1.0f,scale),std::max(1.0f,scale)};

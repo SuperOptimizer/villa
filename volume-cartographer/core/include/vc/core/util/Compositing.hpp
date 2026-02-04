@@ -44,11 +44,11 @@ struct LayerStack {
 // Each method takes a stack of layer values and returns a single output value
 namespace CompositeMethod {
 
-float mean(const LayerStack& stack);
-float max(const LayerStack& stack);
-float min(const LayerStack& stack);
-float alpha(const LayerStack& stack, const CompositeParams& params);
-float beerLambert(const LayerStack& stack, const CompositeParams& params);
+float mean(const LayerStack& stack) noexcept;
+float max(const LayerStack& stack) noexcept;
+float min(const LayerStack& stack) noexcept;
+float alpha(const LayerStack& stack, const CompositeParams& params) noexcept;
+float beerLambert(const LayerStack& stack, const CompositeParams& params) noexcept;
 
 } // namespace CompositeMethod
 
@@ -61,7 +61,7 @@ float compositeLayerStack(
 
 // Utility: check if method requires all layer values to be stored
 // (as opposed to running accumulator like max/min)
-bool methodRequiresLayerStorage(const std::string& method);
+bool methodRequiresLayerStorage(const std::string& method) noexcept;
 
 // Utility: get list of available compositing methods
 std::vector<std::string> availableCompositeMethods();
@@ -70,4 +70,4 @@ std::vector<std::string> availableCompositeMethods();
 // Returns a multiplier (0-1) based on Lambertian diffuse lighting
 // normal: surface normal (should be normalized)
 // params: contains light direction and strength settings
-float computeLightingFactor(const cv::Vec3f& normal, const CompositeParams& params);
+float computeLightingFactor(const cv::Vec3f& normal, const CompositeParams& params) noexcept;

@@ -6,6 +6,7 @@
  */
 
 #include "CWindow.hpp"
+#include "CSurfaceCollection.hpp"
 
 #ifdef __linux__
 
@@ -119,7 +120,7 @@ void CWindow::onInotifyEvent()
 
     if (length < 0) {
         if (errno != EAGAIN) {
-            std::cerr << "Error reading inotify events: " << strerror(errno) << std::endl;
+            std::cerr << "Error reading inotify events: " << strerror(errno) << "\n";
         }
         return;
     }
@@ -200,7 +201,7 @@ void CWindow::onInotifyEvent()
 
                 // Handle overflow
                 if (event->mask & IN_Q_OVERFLOW) {
-                    std::cerr << "Inotify queue overflow - some events may have been lost" << std::endl;
+                    std::cerr << "Inotify queue overflow - some events may have been lost" << "\n";
                     // Could trigger a full reload here if needed
                 }
             }
@@ -767,6 +768,23 @@ void CWindow::pruneExpiredRecentlyEdited()
             ++it;
         }
     }
+}
+
+void CWindow::setFileWatchingEnabled(bool enabled)
+{
+    if (enabled) {
+        startWatchingWithInotify();
+    } else {
+        stopWatchingWithInotify();
+    }
+}
+
+#else // !__linux__
+
+// Stub implementation for non-Linux platforms
+void CWindow::setFileWatchingEnabled(bool /*enabled*/)
+{
+    // File watching is only supported on Linux
 }
 
 #endif // __linux__

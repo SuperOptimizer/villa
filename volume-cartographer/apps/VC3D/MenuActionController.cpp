@@ -16,6 +16,7 @@
 #include "vc/ui/VCCollection.hpp"
 
 #include "vc/core/types/VolumePkg.hpp"
+#include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/Version.hpp"
 #include "vc/core/util/Logging.hpp"
 #include "vc/core/util/LoadJson.hpp"
@@ -23,6 +24,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QStatusBar>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
@@ -373,16 +375,35 @@ void MenuActionController::showSettingsDialog()
     auto* dialog = new SettingsDialog(_window);
     dialog->exec();
 
+    // Apply settings that can take effect immediately
     QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+
+    // Direction hints
     bool showDirHints = settings.value(vc3d::settings::viewer::SHOW_DIRECTION_HINTS,
                                        vc3d::settings::viewer::SHOW_DIRECTION_HINTS_DEFAULT).toBool();
+
+    // Performance settings
+    int downscaleOverride = settings.value(vc3d::settings::perf::DOWNSCALE_OVERRIDE,
+                                           vc3d::settings::perf::DOWNSCALE_OVERRIDE_DEFAULT).toInt();
+    int interpMethod = settings.value(vc3d::settings::perf::INTERPOLATION_METHOD,
+                                      vc3d::settings::perf::INTERPOLATION_METHOD_DEFAULT).toInt();
+
     if (_window->_viewerManager) {
         _window->_viewerManager->forEachViewer([showDirHints](CVolumeViewer* viewer) {
             if (viewer) {
                 viewer->setShowDirectionHints(showDirHints);
             }
         });
+
+        // Apply performance settings to all viewers
+        _window->_viewerManager->setDownscaleOverride(downscaleOverride);
+        _window->_viewerManager->setInterpolationMethod(static_cast<InterpolationMethod>(interpMethod));
     }
+
+    // Toggle file watching if setting changed
+    bool fileWatchingEnabled = settings.value(vc3d::settings::perf::ENABLE_FILE_WATCHING,
+                                              vc3d::settings::perf::ENABLE_FILE_WATCHING_DEFAULT).toBool();
+    _window->setFileWatchingEnabled(fileWatchingEnabled);
 
     dialog->deleteLater();
 }

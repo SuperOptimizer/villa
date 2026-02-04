@@ -146,7 +146,6 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "App
         -Wno-thread-safety-negative
 
         # NRVO warnings (optimizer hint, not a bug)
-        -Wno-return-std-move-in-c++11
         -Wno-nrvo
 
         # Unused lambda captures (common with [this] or [&] patterns)

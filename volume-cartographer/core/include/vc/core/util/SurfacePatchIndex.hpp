@@ -51,7 +51,7 @@ public:
 
     void rebuild(const std::vector<SurfacePtr>& surfaces, float bboxPadding = 0.0f);
     void clear();
-    [[nodiscard]] bool empty() const;
+    [[nodiscard]] bool empty() const noexcept;
 
     std::optional<LookupResult> locate(const cv::Vec3f& worldPoint,
                                        float tolerance,
@@ -85,7 +85,7 @@ public:
                              int colEnd);
     bool removeSurface(const SurfacePtr& surface);
     bool setSamplingStride(int stride);
-    int samplingStride() const;
+    [[nodiscard]] int samplingStride() const noexcept;
 
     // Pending update tracking for incremental R-tree updates
     // Queue the 4 cells surrounding a vertex for update

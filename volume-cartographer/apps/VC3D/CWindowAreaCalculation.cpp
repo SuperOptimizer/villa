@@ -25,6 +25,8 @@
 #include "vc/core/util/DateTime.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 
+#include <nlohmann/json.hpp>
+
 namespace
 {
 

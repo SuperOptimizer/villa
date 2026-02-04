@@ -70,13 +70,14 @@ struct NormalFitQualityWeightField {
         _interp_rms.Evaluate(dz, dy, dx, &rms_u8);
         _interp_frac.Evaluate(dz, dy, dx, &frac_u8);
 
-        const double rms = std::clamp(rms_u8 / 255.0, 0.0, 1.0);
-        const double frac = std::clamp(frac_u8 / 255.0, 0.0, 1.0);
+        constexpr double inv255 = 1.0 / 255.0;
+        const double rms = std::clamp(rms_u8 * inv255, 0.0, 1.0);
+        const double frac = std::clamp(frac_u8 * inv255, 0.0, 1.0);
 
-        // rms weighting: 0 -> 1, 0.5 -> 0
-        const double w_rms = std::clamp(1.0 - (rms / 0.5), 0.0, 1.0);
+        // rms weighting: 0 -> 1, 0.5 -> 0 (rms/0.5 = rms*2.0)
+        const double w_rms = std::clamp(1.0 - rms * 2.0, 0.0, 1.0);
         // frac-short weighting: 0 -> 1, 1 -> 0
-        const double w_frac = std::clamp(1.0 - frac, 0.0, 1.0);
+        const double w_frac = 1.0 - frac;  // already in [0,1], no clamp needed
         return w_rms * w_frac;
     }
 
@@ -134,10 +135,7 @@ struct DistLoss {
     double _d;
     double _w;
 
-    static ceres::CostFunction* Create(float d, float w = 1.0)
-    {
-        return new ceres::AutoDiffCostFunction<DistLoss, 1, 3, 3>(new DistLoss(d, w));
-    }
+    static ceres::CostFunction* Create(float d, float w = 1.0);
 };
 
 struct DistLoss2D {
@@ -178,12 +176,7 @@ struct DistLoss2D {
     double _d;
     double _w;
 
-    static ceres::CostFunction* Create(float d, float w = 1.0)
-    {
-        if (d == 0)
-            throw std::runtime_error("dist can't be zero for DistLoss2D");
-        return new ceres::AutoDiffCostFunction<DistLoss2D, 1, 2, 2>(new DistLoss2D(d, w));
-    }
+    static ceres::CostFunction* Create(float d, float w = 1.0);
 };
 
 
@@ -219,10 +212,7 @@ struct StraightLoss {
 
     float _w;
 
-    static ceres::CostFunction* Create(float w = 1.0)
-    {
-        return new ceres::AutoDiffCostFunction<StraightLoss, 1, 3, 3, 3>(new StraightLoss(w));
-    }
+    static ceres::CostFunction* Create(float w = 1.0);
 };
 
 struct StraightLoss2 {
@@ -242,11 +232,8 @@ struct StraightLoss2 {
     }
     
     float _w;
-    
-    static ceres::CostFunction* Create(float w = 1.0)
-    {
-        return new ceres::AutoDiffCostFunction<StraightLoss2, 3, 3, 3, 3>(new StraightLoss2(w));
-    }
+
+    static ceres::CostFunction* Create(float w = 1.0);
 };
 
 struct StraightLoss2D {
@@ -278,10 +265,7 @@ struct StraightLoss2D {
 
     float _w;
 
-    static ceres::CostFunction* Create(float w = 1.0)
-    {
-        return new ceres::AutoDiffCostFunction<StraightLoss2D, 1, 2, 2, 2>(new StraightLoss2D(w));
-    }
+    static ceres::CostFunction* Create(float w = 1.0);
 };
 
 template<typename T, typename E, int C>
@@ -338,11 +322,7 @@ struct SurfaceLossD {
     const cv::Mat_<cv::Vec3f> _m;
     float _w;
 
-    static ceres::CostFunction* Create(const cv::Mat_<cv::Vec3f> &m, float w = 1.0)
-    {
-        return new ceres::AutoDiffCostFunction<SurfaceLossD, 3, 3, 2>(new SurfaceLossD(m, w));
-    }
-
+    static ceres::CostFunction* Create(const cv::Mat_<cv::Vec3f> &m, float w = 1.0);
 };
 
 struct LinChkDistLoss {
@@ -367,11 +347,7 @@ struct LinChkDistLoss {
     cv::Vec2d _p;
     float _w;
 
-    static ceres::CostFunction* Create(const cv::Vec2d &p, float w = 1.0)
-    {
-        return new ceres::AutoDiffCostFunction<LinChkDistLoss, 2, 2>(new LinChkDistLoss(p, w));
-    }
-
+    static ceres::CostFunction* Create(const cv::Vec2d &p, float w = 1.0);
 };
 
 struct ZCoordLoss {
@@ -385,12 +361,8 @@ struct ZCoordLoss {
     
     float _z;
     float _w;
-    
-    static ceres::CostFunction* Create(float z, float w = 1.0)
-    {
-        return new ceres::AutoDiffCostFunction<ZCoordLoss, 1, 3>(new ZCoordLoss(z, w));
-    }
-    
+
+    static ceres::CostFunction* Create(float z, float w = 1.0);
 };
 
 template <typename V>
