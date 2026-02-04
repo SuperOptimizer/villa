@@ -1,5 +1,6 @@
 #pragma once
 
+#include "SegmentationGrowerHelpers.hpp"
 #include "SegmentationGrowth.hpp"
 
 #include <QFutureWatcher>
@@ -13,13 +14,6 @@
 #include <optional>
 #include <string>
 #include <vector>
-
-// Bounding box info for corrections annotation saving
-struct CorrectionsBounds {
-    cv::Vec3f worldMin{0.0f, 0.0f, 0.0f};
-    cv::Vec3f worldMax{0.0f, 0.0f, 0.0f};
-    cv::Rect gridRegion;  // 2D crop region on surface grid
-};
 
 class SegmentationModule;
 class SegmentationWidget;

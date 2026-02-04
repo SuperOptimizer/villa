@@ -1,12 +1,14 @@
 #pragma once
 
-#include <filesystem>
-#include <fstream>
-#include <memory>
 #include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
+#include <filesystem>
+#include <memory>
+#include <string>
+
 #include "vc/core/util/QuadSurface.hpp"
 
-class Segmentation
+class Segmentation final
 {
 public:
     explicit Segmentation(std::filesystem::path path);

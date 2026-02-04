@@ -2,6 +2,7 @@
 
 #include "VCSettings.hpp"
 #include "CWindow.hpp"
+#include "CPointCollectionWidget.hpp"
 #include "SurfacePanelController.hpp"
 #include "ViewerManager.hpp"
 #include "segmentation/SegmentationModule.hpp"
@@ -12,6 +13,7 @@
 #include "SettingsDialog.hpp"
 #include "segmentation/SegmentationModule.hpp"
 #include "ui_VCMain.h"
+#include "vc/ui/VCCollection.hpp"
 
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/Version.hpp"

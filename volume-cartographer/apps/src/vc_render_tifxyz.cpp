@@ -1,29 +1,28 @@
-#include "vc/core/util/Slicing.hpp"
-#include "vc/core/util/QuadSurface.hpp"
-#include "vc/core/util/Surface.hpp"
-#include "vc/core/util/Tiff.hpp"
-#include "vc/core/types/ChunkedTensor.hpp"
-#include "vc/core/util/StreamOperators.hpp"
 #include "vc/core/util/ABFFlattening.hpp"
+#include "vc/core/util/QuadSurface.hpp"
+#include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/StreamOperators.hpp"
+#include "vc/core/util/Tiff.hpp"
 
-#include "z5/factory.hxx"
-#include <nlohmann/json.hpp>
-
-#include <opencv2/imgproc.hpp>
-#include <fstream>
-#include <iomanip>
-#include <sstream>
 #include <algorithm>
 #include <atomic>
-#include <boost/program_options.hpp>
-#include <mutex>
-#include <cmath>
-#include <set>
 #include <cctype>
 #include <chrono>
+#include <cmath>
+#include <fstream>
+#include <iomanip>
+#include <mutex>
+#include <set>
+#include <sstream>
 #include <thread>
+
+#include <boost/program_options.hpp>
+#include <nlohmann/json.hpp>
+#include <opencv2/imgproc.hpp>
 #include <tiffio.h>
-#include <omp.h>
+
+#include "z5/factory.hxx"
+#include "z5/multiarray/xtensor_access.hxx"
 
 namespace po = boost::program_options;
 
@@ -578,8 +577,62 @@ static inline void renderSliceFromBase16(
 enum class AccumType {
     Max,
     Mean,
-    Median
+    Median,
+    AlphaFront,   // Alpha composite front-to-back (first slice on top)
+    AlphaBack     // Alpha composite back-to-front (last slice on top)
 };
+
+// Compute alpha-composited result from slices
+// Front-to-back: slice[0] is front (on top), slice[n-1] is back
+// Uses simple over compositing: out = fg + bg * (1 - fg_alpha)
+// Alpha is derived from pixel intensity (brighter = more opaque)
+template <typename T>
+static inline void computeAlphaComposite(const std::vector<cv::Mat>& samples, cv::Mat& out, bool frontToBack, float alphaScale = 1.0f)
+{
+    if (samples.empty()) {
+        out.release();
+        return;
+    }
+    const int rows = samples.front().rows;
+    const int cols = samples.front().cols;
+    const double maxVal = std::is_same_v<T, uint16_t> ? 65535.0 : 255.0;
+
+    // Accumulate in float for precision
+    cv::Mat result = cv::Mat::zeros(rows, cols, CV_64FC1);
+    cv::Mat accumAlpha = cv::Mat::zeros(rows, cols, CV_64FC1);
+
+    // Process in compositing order
+    auto processSlice = [&](size_t idx) {
+        const cv::Mat& slice = samples[idx];
+        for (int y = 0; y < rows; ++y) {
+            for (int x = 0; x < cols; ++x) {
+                double val = static_cast<double>(slice.at<T>(y, x));
+                double alpha = (val / maxVal) * alphaScale;  // Intensity-based alpha
+                alpha = std::min(1.0, alpha);
+
+                double& acc = accumAlpha.at<double>(y, x);
+                double remaining = 1.0 - acc;
+
+                result.at<double>(y, x) += val * remaining * alpha;
+                acc += remaining * alpha;
+            }
+        }
+    };
+
+    if (frontToBack) {
+        for (size_t i = 0; i < samples.size(); ++i) {
+            processSlice(i);
+        }
+    } else {
+        for (size_t i = samples.size(); i > 0; --i) {
+            processSlice(i - 1);
+        }
+    }
+
+    // Convert back to original type
+    out.create(rows, cols, samples.front().type());
+    result.convertTo(out, samples.front().type());
+}
 
 template <typename T>
 static inline void computeMedianFromSamples(const std::vector<cv::Mat>& samples, cv::Mat& out)
@@ -666,6 +719,102 @@ static inline void renderAccumulatedSlice(
     }
 }
 
+// ============================================================================
+// Post-processing filters for rendered slices
+// ============================================================================
+
+struct PostProcessConfig {
+    bool clahe = false;
+    double claheClip = 2.0;
+    int claheGrid = 8;
+
+    bool bilateral = false;
+    int bilateralD = 9;
+    double bilateralSigmaColor = 75.0;
+    double bilateralSigmaSpace = 75.0;
+
+    bool sharpen = false;
+    double sharpenAmount = 1.0;
+    double sharpenSigma = 1.0;
+
+    double gamma = 1.0;
+
+    bool hasAnyFilter() const {
+        return clahe || bilateral || sharpen || (std::abs(gamma - 1.0) > 0.001);
+    }
+};
+
+// Apply post-processing filters to a rendered slice
+static void applyPostProcessing(cv::Mat& slice, const PostProcessConfig& cfg)
+{
+    if (!cfg.hasAnyFilter()) return;
+
+    bool is16bit = (slice.type() == CV_16UC1);
+
+    // CLAHE
+    if (cfg.clahe) {
+        cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(cfg.claheClip, cv::Size(cfg.claheGrid, cfg.claheGrid));
+        if (is16bit) {
+            // OpenCV CLAHE works on 8-bit, so we need to handle 16-bit specially
+            cv::Mat slice8;
+            double minVal, maxVal;
+            cv::minMaxLoc(slice, &minVal, &maxVal);
+            if (maxVal > minVal) {
+                slice.convertTo(slice8, CV_8UC1, 255.0 / (maxVal - minVal), -255.0 * minVal / (maxVal - minVal));
+                clahe->apply(slice8, slice8);
+                slice8.convertTo(slice, CV_16UC1, (maxVal - minVal) / 255.0, minVal);
+            }
+        } else {
+            clahe->apply(slice, slice);
+        }
+    }
+
+    // Bilateral filter
+    if (cfg.bilateral) {
+        cv::Mat filtered;
+        if (is16bit) {
+            // Bilateral works on 8-bit, convert
+            cv::Mat slice8;
+            double minVal, maxVal;
+            cv::minMaxLoc(slice, &minVal, &maxVal);
+            if (maxVal > minVal) {
+                slice.convertTo(slice8, CV_8UC1, 255.0 / (maxVal - minVal), -255.0 * minVal / (maxVal - minVal));
+                cv::bilateralFilter(slice8, filtered, cfg.bilateralD, cfg.bilateralSigmaColor, cfg.bilateralSigmaSpace);
+                filtered.convertTo(slice, CV_16UC1, (maxVal - minVal) / 255.0, minVal);
+            }
+        } else {
+            cv::bilateralFilter(slice, filtered, cfg.bilateralD, cfg.bilateralSigmaColor, cfg.bilateralSigmaSpace);
+            slice = filtered;
+        }
+    }
+
+    // Unsharp mask sharpening
+    if (cfg.sharpen) {
+        cv::Mat blurred;
+        cv::GaussianBlur(slice, blurred, cv::Size(0, 0), cfg.sharpenSigma);
+        cv::addWeighted(slice, 1.0 + cfg.sharpenAmount, blurred, -cfg.sharpenAmount, 0, slice);
+    }
+
+    // Gamma correction
+    if (std::abs(cfg.gamma - 1.0) > 0.001) {
+        cv::Mat lut(1, is16bit ? 65536 : 256, is16bit ? CV_16UC1 : CV_8UC1);
+        double maxVal = is16bit ? 65535.0 : 255.0;
+        double invGamma = 1.0 / cfg.gamma;
+
+        if (is16bit) {
+            for (int i = 0; i < 65536; ++i) {
+                lut.at<uint16_t>(i) = static_cast<uint16_t>(std::pow(i / maxVal, invGamma) * maxVal + 0.5);
+            }
+        } else {
+            for (int i = 0; i < 256; ++i) {
+                lut.at<uint8_t>(i) = static_cast<uint8_t>(std::pow(i / maxVal, invGamma) * maxVal + 0.5);
+            }
+        }
+
+        cv::LUT(slice, lut, slice);
+    }
+}
+
 int main(int argc, char *argv[])
 {
     //kmp_set_blocktime(0);
@@ -700,7 +849,12 @@ int main(int argc, char *argv[])
         ("accum", po::value<float>()->default_value(0.0f),
             "Optional fractional accumulation step (< slice-step) aggregated into each output slice (0 = disabled)")
         ("accum-type", po::value<std::string>()->default_value("max"),
-            "Accumulation reducer when --accum > 0: max, mean, or median")
+            "Accumulation reducer when --accum > 0: max, mean, median, alpha-front, or alpha-back")
+        ("composite-single", po::bool_switch()->default_value(false),
+            "Output a single composited image instead of multiple slices. "
+            "Composites all --num-slices into one output using --accum-type method.")
+        ("alpha-scale", po::value<float>()->default_value(1.0f),
+            "Alpha scale for alpha compositing (0.1-2.0, default 1.0). Higher = more opaque layers.")
         ("crop-x", po::value<int>()->default_value(0),
             "Crop region X coordinate")
         ("crop-y", po::value<int>()->default_value(0),
@@ -748,7 +902,31 @@ int main(int argc, char *argv[])
             "Build pyramid levels and write attrs for a zarr whose L0 tiles are already complete "
             "(run after all multi-part jobs finish)")
         ("barrier-timeout", po::value<int>()->default_value(300),
-            "Timeout in seconds for slave parts waiting for master (part 0) to create the zarr (default 300)");
+            "Timeout in seconds for slave parts waiting for master (part 0) to create the zarr (default 300)")
+
+        // Post-processing filters (applied to each rendered slice)
+        ("clahe", po::bool_switch()->default_value(false),
+            "Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) to each slice")
+        ("clahe-clip", po::value<double>()->default_value(2.0),
+            "CLAHE clip limit (default: 2.0)")
+        ("clahe-grid", po::value<int>()->default_value(8),
+            "CLAHE grid size (default: 8x8)")
+        ("bilateral", po::bool_switch()->default_value(false),
+            "Apply bilateral filter for edge-preserving denoising")
+        ("bilateral-d", po::value<int>()->default_value(9),
+            "Bilateral filter diameter (default: 9)")
+        ("bilateral-sigma-color", po::value<double>()->default_value(75.0),
+            "Bilateral filter sigma for color space (default: 75)")
+        ("bilateral-sigma-space", po::value<double>()->default_value(75.0),
+            "Bilateral filter sigma for coordinate space (default: 75)")
+        ("sharpen", po::bool_switch()->default_value(false),
+            "Apply unsharp mask sharpening")
+        ("sharpen-amount", po::value<double>()->default_value(1.0),
+            "Unsharp mask amount (default: 1.0)")
+        ("sharpen-sigma", po::value<double>()->default_value(1.0),
+            "Unsharp mask Gaussian sigma (default: 1.0)")
+        ("gamma", po::value<double>()->default_value(1.0),
+            "Gamma correction (default: 1.0 = no correction)");
     // clang-format on
 
     po::options_description all("Usage");
@@ -784,6 +962,29 @@ int main(int argc, char *argv[])
     }
 
     const bool finalize_flag = parsed["finalize"].as<bool>();
+
+    // Parse post-processing options
+    PostProcessConfig postProcess;
+    postProcess.clahe = parsed["clahe"].as<bool>();
+    postProcess.claheClip = parsed["clahe-clip"].as<double>();
+    postProcess.claheGrid = parsed["clahe-grid"].as<int>();
+    postProcess.bilateral = parsed["bilateral"].as<bool>();
+    postProcess.bilateralD = parsed["bilateral-d"].as<int>();
+    postProcess.bilateralSigmaColor = parsed["bilateral-sigma-color"].as<double>();
+    postProcess.bilateralSigmaSpace = parsed["bilateral-sigma-space"].as<double>();
+    postProcess.sharpen = parsed["sharpen"].as<bool>();
+    postProcess.sharpenAmount = parsed["sharpen-amount"].as<double>();
+    postProcess.sharpenSigma = parsed["sharpen-sigma"].as<double>();
+    postProcess.gamma = parsed["gamma"].as<double>();
+
+    if (postProcess.hasAnyFilter()) {
+        std::cout << "Post-processing enabled:";
+        if (postProcess.clahe) std::cout << " CLAHE";
+        if (postProcess.bilateral) std::cout << " Bilateral";
+        if (postProcess.sharpen) std::cout << " Sharpen";
+        if (std::abs(postProcess.gamma - 1.0) > 0.001) std::cout << " Gamma(" << postProcess.gamma << ")";
+        std::cout << std::endl;
+    }
 
     // --merge-parts or --finalize for TIFFs: combine *.partN.tif files into final TIFFs, then exit
     // (--finalize for zarr goes through the normal path and builds the pyramid there)
@@ -947,9 +1148,21 @@ int main(int argc, char *argv[])
         accumType = AccumType::Mean;
     } else if (accum_type_str == "median") {
         accumType = AccumType::Median;
+    } else if (accum_type_str == "alpha-front" || accum_type_str == "alpha_front") {
+        accumType = AccumType::AlphaFront;
+    } else if (accum_type_str == "alpha-back" || accum_type_str == "alpha_back") {
+        accumType = AccumType::AlphaBack;
     } else {
-        std::cerr << "Error: --accum-type must be one of: max, mean, median.\n";
+        std::cerr << "Error: --accum-type must be one of: max, mean, median, alpha-front, alpha-back.\n";
         return EXIT_FAILURE;
+    }
+    const bool compositeSingle = parsed["composite-single"].as<bool>();
+    const float alphaScale = parsed["alpha-scale"].as<float>();
+    if (compositeSingle && num_slices < 2) {
+        std::cerr << "Warning: --composite-single with --num-slices=1 has no effect.\n";
+    }
+    if (compositeSingle) {
+        std::cout << "Composite single output: " << num_slices << " slices using '" << accum_type_str << "'" << std::endl;
     }
     std::vector<float> accumOffsets;
     if (accum_step > 0.0) {
@@ -1397,6 +1610,7 @@ int main(int argc, char *argv[])
                             if (rotQuad >= 0 || flip_axis >= 0) {
                                 rotateFlipIfNeeded(tileOut, rotQuad, flip_axis);
                             }
+                            applyPostProcessing(tileOut, postProcess);
                             const size_t cH = static_cast<size_t>(tileOut.rows);
                             const size_t cW = static_cast<size_t>(tileOut.cols);
                             for (size_t yy = 0; yy < cH; ++yy) {
@@ -1433,6 +1647,7 @@ int main(int argc, char *argv[])
                             if (rotQuad >= 0 || flip_axis >= 0) {
                                 rotateFlipIfNeeded(tileOut, rotQuad, flip_axis);
                             }
+                            applyPostProcessing(tileOut, postProcess);
                             const size_t cH = static_cast<size_t>(tileOut.rows);
                             const size_t cW = static_cast<size_t>(tileOut.cols);
                             for (size_t yy = 0; yy < cH; ++yy) {
@@ -1799,12 +2014,24 @@ int main(int argc, char *argv[])
                 const uint32_t tiffTileH = 16;
 
                 std::vector<TiffWriter> writers;
-                writers.reserve(static_cast<size_t>(num_slices));
                 const int cvType = output_is_u16 ? CV_16UC1 : CV_8UC1;
-                for (int z = 0; z < num_slices; ++z) {
-                    std::filesystem::path outPath = make_out_path(z);
+
+                if (compositeSingle) {
+                    // Single composited output
+                    std::filesystem::path outPath = make_out_path(0);
+                    // Change extension to indicate composite
+                    outPath = outPath.parent_path() / (outPath.stem().string() + "_composite.tif");
+                    writers.reserve(1);
                     writers.emplace_back(outPath, static_cast<uint32_t>(outW), static_cast<uint32_t>(outH),
                                          cvType, tiffTileW, tiffTileH, 0.0f, COMPRESSION_PACKBITS);
+                    std::cout << "Composite single output: " << outPath << std::endl;
+                } else {
+                    writers.reserve(static_cast<size_t>(num_slices));
+                    for (int z = 0; z < num_slices; ++z) {
+                        std::filesystem::path outPath = make_out_path(z);
+                        writers.emplace_back(outPath, static_cast<uint32_t>(outW), static_cast<uint32_t>(outH),
+                                             cvType, tiffTileW, tiffTileH, 0.0f, COMPRESSION_PACKBITS);
+                    }
                 }
 
                 // Compute global flip decision
@@ -1866,9 +2093,58 @@ int main(int argc, char *argv[])
                         basePoints, stepDirs);
 
                     // Bulk read all slices for this band in one pass
+                    // Helper lambda to composite slices
+                    auto compositeSlices = [&](std::vector<cv::Mat>& slices, cv::Mat& out, bool is16bit) {
+                        if (slices.empty()) return;
+                        if (accumType == AccumType::Max) {
+                            out = slices[0].clone();
+                            for (size_t i = 1; i < slices.size(); ++i)
+                                cv::max(out, slices[i], out);
+                        } else if (accumType == AccumType::Mean) {
+                            cv::Mat sum;
+                            slices[0].convertTo(sum, CV_64F);
+                            for (size_t i = 1; i < slices.size(); ++i) {
+                                cv::Mat tmp; slices[i].convertTo(tmp, CV_64F);
+                                sum += tmp;
+                            }
+                            sum /= static_cast<double>(slices.size());
+                            sum.convertTo(out, is16bit ? CV_16UC1 : CV_8UC1);
+                        } else if (accumType == AccumType::Median) {
+                            if (is16bit) {
+                                computeMedianFromSamples<uint16_t>(slices, out);
+                            } else {
+                                computeMedianFromSamples<uint8_t>(slices, out);
+                            }
+                        } else if (accumType == AccumType::AlphaFront || accumType == AccumType::AlphaBack) {
+                            if (is16bit) {
+                                computeAlphaComposite<uint16_t>(slices, out, accumType == AccumType::AlphaFront, alphaScale);
+                            } else {
+                                computeAlphaComposite<uint8_t>(slices, out, accumType == AccumType::AlphaFront, alphaScale);
+                            }
+                        }
+                    };
+
+                    // Helper lambda to write slice tiles
+                    auto writeSliceTiles = [&](cv::Mat& sliceOut, size_t writerIdx) {
+                        for (uint32_t ty = 0; ty < static_cast<uint32_t>(sliceOut.rows); ty += tiffTileH) {
+                            uint32_t tdy = std::min(tiffTileH, static_cast<uint32_t>(sliceOut.rows) - ty);
+                            cv::Mat subTile = sliceOut(cv::Rect(0, ty, sliceOut.cols, tdy));
+                            int dstBx, dstBy, rBX, rBY;
+                            uint32_t srcTileIdx = (y0 + ty) / tiffTileH;
+                            uint32_t numTiffTiles = (static_cast<uint32_t>(tgt_size.height) + tiffTileH - 1) / tiffTileH;
+                            mapTileIndex(0, static_cast<int>(srcTileIdx), 1, static_cast<int>(numTiffTiles),
+                                         std::max(rotQuad, 0), flip_axis, dstBx, dstBy, rBX, rBY);
+                            writers[writerIdx].writeTile(0, static_cast<uint32_t>(dstBy) * tiffTileH, subTile);
+                        }
+                    };
+
                     if (output_is_u16) {
                         std::vector<cv::Mat_<uint16_t>> rawSlices;
                         readMultiSlice(rawSlices, ds.get(), &chunk_cache_u16, basePoints, stepDirs, allOffsets);
+
+                        // Process each slice (accumulate sub-samples if needed)
+                        std::vector<cv::Mat> processedSlices;
+                        processedSlices.reserve(static_cast<size_t>(num_slices));
 
                         for (int zi = 0; zi < num_slices; ++zi) {
                             cv::Mat sliceOut;
@@ -1897,21 +2173,28 @@ int main(int argc, char *argv[])
                                 }
                             }
                             rotateFlipIfNeeded(sliceOut, rotQuad, flip_axis);
-                            // Write as multiple TIFF tiles (tiffTileH rows each)
-                            for (uint32_t ty = 0; ty < static_cast<uint32_t>(sliceOut.rows); ty += tiffTileH) {
-                                uint32_t tdy = std::min(tiffTileH, static_cast<uint32_t>(sliceOut.rows) - ty);
-                                cv::Mat subTile = sliceOut(cv::Rect(0, ty, sliceOut.cols, tdy));
-                                int dstBx, dstBy, rBX, rBY;
-                                uint32_t srcTileIdx = (y0 + ty) / tiffTileH;
-                                uint32_t numTiffTiles = (static_cast<uint32_t>(tgt_size.height) + tiffTileH - 1) / tiffTileH;
-                                mapTileIndex(0, static_cast<int>(srcTileIdx), 1, static_cast<int>(numTiffTiles),
-                                             std::max(rotQuad, 0), flip_axis, dstBx, dstBy, rBX, rBY);
-                                writers[static_cast<size_t>(zi)].writeTile(0, static_cast<uint32_t>(dstBy) * tiffTileH, subTile);
+                            applyPostProcessing(sliceOut, postProcess);
+
+                            if (compositeSingle) {
+                                processedSlices.push_back(sliceOut.clone());
+                            } else {
+                                writeSliceTiles(sliceOut, static_cast<size_t>(zi));
                             }
+                        }
+
+                        // If composite-single, composite all slices and write
+                        if (compositeSingle && !processedSlices.empty()) {
+                            cv::Mat composited;
+                            compositeSlices(processedSlices, composited, true);
+                            writeSliceTiles(composited, 0);
                         }
                     } else {
                         std::vector<cv::Mat_<uint8_t>> rawSlices;
                         readMultiSlice(rawSlices, ds.get(), &chunk_cache_u8, basePoints, stepDirs, allOffsets);
+
+                        // Process each slice (accumulate sub-samples if needed)
+                        std::vector<cv::Mat> processedSlices;
+                        processedSlices.reserve(static_cast<size_t>(num_slices));
 
                         for (int zi = 0; zi < num_slices; ++zi) {
                             cv::Mat sliceOut;
@@ -1940,17 +2223,20 @@ int main(int argc, char *argv[])
                                 }
                             }
                             rotateFlipIfNeeded(sliceOut, rotQuad, flip_axis);
-                            // Write as multiple TIFF tiles (tiffTileH rows each)
-                            for (uint32_t ty = 0; ty < static_cast<uint32_t>(sliceOut.rows); ty += tiffTileH) {
-                                uint32_t tdy = std::min(tiffTileH, static_cast<uint32_t>(sliceOut.rows) - ty);
-                                cv::Mat subTile = sliceOut(cv::Rect(0, ty, sliceOut.cols, tdy));
-                                int dstBx, dstBy, rBX, rBY;
-                                uint32_t srcTileIdx = (y0 + ty) / tiffTileH;
-                                uint32_t numTiffTiles = (static_cast<uint32_t>(tgt_size.height) + tiffTileH - 1) / tiffTileH;
-                                mapTileIndex(0, static_cast<int>(srcTileIdx), 1, static_cast<int>(numTiffTiles),
-                                             std::max(rotQuad, 0), flip_axis, dstBx, dstBy, rBX, rBY);
-                                writers[static_cast<size_t>(zi)].writeTile(0, static_cast<uint32_t>(dstBy) * tiffTileH, subTile);
+                            applyPostProcessing(sliceOut, postProcess);
+
+                            if (compositeSingle) {
+                                processedSlices.push_back(sliceOut.clone());
+                            } else {
+                                writeSliceTiles(sliceOut, static_cast<size_t>(zi));
                             }
+                        }
+
+                        // If composite-single, composite all slices and write
+                        if (compositeSingle && !processedSlices.empty()) {
+                            cv::Mat composited;
+                            compositeSlices(processedSlices, composited, false);
+                            writeSliceTiles(composited, 0);
                         }
                     }
 

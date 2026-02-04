@@ -2,16 +2,15 @@
 
 #include <QDialog>
 #include <QString>
-#include <QLineEdit>
-#include <QDoubleSpinBox>
-#include <QSpinBox>
-#include <QCheckBox>
-#include <QComboBox>
 #include <QJsonObject>
-#include <QJsonDocument>
-#include <QJsonArray>
 #include <QVector>
-#include <QSettings>
+
+// Forward declarations - full headers only needed in .cpp
+class QLineEdit;
+class QDoubleSpinBox;
+class QSpinBox;
+class QCheckBox;
+class QComboBox;
 
 class RenderParamsDialog : public QDialog {
     Q_OBJECT

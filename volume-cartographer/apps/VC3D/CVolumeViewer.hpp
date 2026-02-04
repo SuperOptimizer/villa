@@ -17,13 +17,15 @@
 #include <vector>
 #include <optional>
 #include "overlays/ViewerOverlayControllerBase.hpp"
-#include "vc/ui/VCCollection.hpp"
-#include "CSurfaceCollection.hpp"
-#include "CVolumeViewerView.hpp"
-#include "vc/core/types/Volume.hpp"
+#include "CSurfaceCollection.hpp"  // Required for IntersectionLine value type
 #include "vc/core/util/SurfacePatchIndex.hpp"
-#include "vc/core/util/ChunkCache.hpp"
-#include "vc/core/util/Slicing.hpp"
+#include "vc/core/types/InterpolationMethod.hpp"
+
+// Forward declarations - reduces header dependencies
+class Volume;  // Forward declare instead of including heavy Volume.hpp
+class VCCollection;
+class CVolumeViewerView;
+template<typename T> class ChunkCache;
 
 class QGraphicsScene;
 class QGraphicsItem;
@@ -33,13 +35,13 @@ class QTimer;
 class ViewerManager;
 
 
-class CVolumeViewer : public QWidget
+class CVolumeViewer final : public QWidget
 {
     Q_OBJECT
 
 public:
-    CVolumeViewer(CSurfaceCollection *col, ViewerManager* manager, QWidget* parent = 0);
-    ~CVolumeViewer(void);
+    CVolumeViewer(CSurfaceCollection *col, ViewerManager* manager, QWidget* parent = nullptr);
+    ~CVolumeViewer() override;
 
     void setCache(ChunkCache<uint8_t> *cache);
     void setPointCollection(VCCollection* point_collection);
@@ -54,7 +56,7 @@ public:
     void invalidateIntersect(const std::string &name = "");
     
     void setIntersects(const std::set<std::string> &set);
-    std::string surfName() const { return _surf_name; };
+    std::string surfName() const { return _surf_name; }
     void recalcScales();
     
     // Composite view methods
@@ -390,7 +392,7 @@ protected:
     struct Selection { QRectF surfRect; QColor color; };
     std::vector<Selection> _selections;
 
-    bool _useFastInterpolation;
+    InterpolationMethod _interpolationMethod{InterpolationMethod::Trilinear};
 
     std::shared_ptr<Volume> _overlayVolume;
     float _overlayOpacity{0.5f};

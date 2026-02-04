@@ -206,6 +206,7 @@ signals:
 
 private:
     void buildUi();
+    void connectSignals();
     void syncUiState();
     void restoreSettings();
     void writeSetting(const QString& key, const QVariant& value);

@@ -1,11 +1,15 @@
 #pragma once
 
+#include <nlohmann/json.hpp>
+#include <stddef.h>
+#include <nlohmann/json_fwd.hpp>
+#include <z5/dataset.hxx>
 #include <array>
 #include <filesystem>
-#include <fstream>
 #include <memory>
+#include <string>
 #include <vector>
-#include <nlohmann/json.hpp>
+#include <map>
 
 // Forward declarations
 namespace z5 {
@@ -17,7 +21,7 @@ namespace z5 {
 
 }
 
-class Volume
+class Volume final
 {
 public:
     // Static flag to skip zarr shape validation against meta.json

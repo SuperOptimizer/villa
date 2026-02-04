@@ -1,31 +1,25 @@
-#include <iostream>
-#include <string>
-#include <vector>
-#include <filesystem>
-
-#include <boost/program_options.hpp>
-#include <opencv2/opencv.hpp>
-#include <nlohmann/json.hpp>
-#include <fstream>
-#include <atomic>
-#include <chrono>
-#include <mutex>
-#include <unordered_map>
-#include <arpa/inet.h>
-
-#include <omp.h>
-
-#include <xtensor/containers/xarray.hpp>
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/common.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-
-#include "vc/core/util/Slicing.hpp"
-#include <vc/core/util/GridStore.hpp>
-#include "vc/core/util/Thinning.hpp"
 #include "support.hpp"
 #include "vc/core/util/LifeTime.hpp"
+#include "vc/core/util/Thinning.hpp"
+
+#include <arpa/inet.h>
+#include <atomic>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+
+#include <boost/program_options.hpp>
+#include <nlohmann/json.hpp>
+#include <omp.h>
+#include <opencv2/imgproc.hpp>
+
+#include "z5/common.hxx"
+#include "z5/factory.hxx"
+#include "z5/filesystem/handle.hxx"
 
 namespace fs = std::filesystem;
 namespace po = boost::program_options;
@@ -195,7 +189,7 @@ void run_convert(const po::variables_map& vm) {
     std::atomic<size_t> error_count = 0;
     std::atomic<size_t> processed_count = 0;
 
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(dynamic)
     for (size_t i = 0; i < grid_files.size(); ++i) {
         const auto& path = grid_files[i];
         try {

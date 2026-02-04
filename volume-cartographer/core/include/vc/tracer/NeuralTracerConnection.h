@@ -1,8 +1,10 @@
 #pragma once
 
+#include <opencv2/core.hpp>
+#include <__vector/vector.h>
+#include <opencv2/core/matx.hpp>
 #include <string>
 #include <optional>
-#include <opencv2/core.hpp>
 
 
 class NeuralTracerConnection

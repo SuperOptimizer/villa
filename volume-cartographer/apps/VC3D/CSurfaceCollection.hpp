@@ -2,11 +2,14 @@
 
 #include <array>
 #include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 #include <QObject>
 #include <opencv2/core.hpp>
 
-#include "vc/core/util/Surface.hpp"
+class Surface;  // Forward declaration instead of heavy include
 
 
 struct POI
@@ -38,7 +41,7 @@ class CSurfaceCollection : public QObject
     Q_OBJECT
 
 public:
-    ~CSurfaceCollection();
+    ~CSurfaceCollection() override;
 
     // Surface management with shared_ptr
     void setSurface(const std::string &name, std::shared_ptr<Surface> surf, bool noSignalSend = false, bool isEditUpdate = false);

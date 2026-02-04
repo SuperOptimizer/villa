@@ -1,6 +1,8 @@
 #pragma once
 
 #include <opencv2/core.hpp>
+#include <opencv2/core/mat.hpp>
+#include <opencv2/core/matx.hpp>
 #include <cstddef>
 
 // Forward declaration

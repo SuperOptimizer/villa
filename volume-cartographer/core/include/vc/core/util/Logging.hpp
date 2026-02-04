@@ -4,6 +4,8 @@
 #include <memory>
 #include <string>
 #include <format>
+#include <type_traits>
+#include <utility>
 
 // Forward declaration
 class MinimalLogger;

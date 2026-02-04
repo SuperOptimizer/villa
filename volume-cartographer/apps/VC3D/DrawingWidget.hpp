@@ -1,17 +1,22 @@
 #pragma once
 
-#include <QWidget>
+#include <QColor>
 #include <QList>
 #include <QMap>
-#include <QColor>
+#include <QWidget>
+
 #include <memory>
-#include <QCheckBox>
-#include <QLabel>
-#include <QPushButton>
-#include <QRadioButton>
-#include <QSlider>
-#include <QSpinBox>
+
 #include <opencv2/core.hpp>
+
+// Forward declarations - full headers only needed in .cpp
+class QButtonGroup;
+class QCheckBox;
+class QLabel;
+class QPushButton;
+class QRadioButton;
+class QSlider;
+class QSpinBox;
 
 #include "overlays/ViewerOverlayControllerBase.hpp"
 

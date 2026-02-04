@@ -1,17 +1,27 @@
 #pragma once
 
+#include <stdint.h>
+#include <nlohmann/json_fwd.hpp>
+#include <opencv2/core/mat.hpp>
+#include <opencv2/core/mat.inl.hpp>
+#include <opencv2/core/matx.hpp>
+#include <opencv2/core/matx.inl.hpp>
+#include <opencv2/core/traits.hpp>
+#include <opencv2/core/types.hpp>
+#include <cstddef>
 #include <filesystem>
 #include <iterator>
 #include <mutex>
 #include <optional>
 #include <set>
+#include <string>
 #include <tuple>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
-#include <string>
+#include <memory>
 
 #include "Surface.hpp"
-#include "Tiff.hpp"
 
 // Forward declarations
 template<typename T>
@@ -24,7 +34,7 @@ class ChunkCache;
 // Debug prefix for auto-generated surfaces
 #define Z_DBG_GEN_PREFIX "auto_grown_"
 
-struct Rect3D {
+struct alignas(16) Rect3D {
     cv::Vec3f low = {0,0,0};
     cv::Vec3f high = {0,0,0};
 };
@@ -270,7 +280,7 @@ private:
 };
 
 //quads based surface class with a pointer implementing a nominal scale of 1 voxel
-class QuadSurface : public Surface
+class QuadSurface final : public Surface
 {
 public:
     cv::Vec3f pointer() override;
@@ -354,6 +364,7 @@ public:
     mutable cv::Mat_<cv::Vec3f> _normalCache;
 
     cv::Vec2f _scale;
+    cv::Vec2f _inv_scale;  // Pre-computed 1.0/_scale for faster division
 
     void setChannel(const std::string& name, const cv::Mat& channel);
     cv::Mat channel(const std::string& name, int flags = 0);

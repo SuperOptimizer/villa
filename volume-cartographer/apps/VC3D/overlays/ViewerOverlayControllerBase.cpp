@@ -1,6 +1,7 @@
 #include "ViewerOverlayControllerBase.hpp"
 
 #include "../CVolumeViewer.hpp"
+#include "../CVolumeViewerView.hpp"
 #include "../ViewerManager.hpp"
 
 #include <QGraphicsEllipseItem>

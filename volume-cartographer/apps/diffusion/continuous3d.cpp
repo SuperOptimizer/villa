@@ -171,7 +171,7 @@ int continuous3d_main(const po::variables_map& vm) {
 
         StupidTensor<float> next_density = density;
 
-        #pragma omp parallel for
+        #pragma omp parallel for schedule(static)
         for (int z = 1; z < box_d - 1; ++z) {
             for (int y = 1; y < box_h - 1; ++y) {
                 for (int x = 1; x < box_w - 1; ++x) {

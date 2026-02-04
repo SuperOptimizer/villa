@@ -2,24 +2,30 @@
 
 #include "VCSettings.hpp"
 
-#include <QFormLayout>
-#include <QHBoxLayout>
-#include <QVBoxLayout>
+#include <QCheckBox>
+#include <QComboBox>
 #include <QDialogButtonBox>
-#include <QPushButton>
+#include <QDoubleSpinBox>
+#include <QFile>
 #include <QFileDialog>
-#include <QLabel>
-#include <QGroupBox>
 #include <QFontMetrics>
-#include <QSizePolicy>
-#include <QList>
-#include <QRegularExpression>
-#include <QRegularExpressionValidator>
-#include <QVariant>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
-#include <QFile>
+#include <QLabel>
+#include <QLineEdit>
+#include <QList>
+#include <QPushButton>
+#include <QRegularExpression>
+#include <QRegularExpressionValidator>
+#include <QSettings>
+#include <QSizePolicy>
+#include <QSpinBox>
+#include <QVariant>
+#include <QVBoxLayout>
 
 #include <cmath>
 

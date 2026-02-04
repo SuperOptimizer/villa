@@ -218,7 +218,7 @@ int continous_main(
             winding_prev = winding.clone();
             processed_rows = 0;
 
-            #pragma omp parallel for
+            #pragma omp parallel for schedule(static)
             for (int y = 0; y < winding.rows; ++y) {
                 for (int x = 0; x < winding.cols; ++x) {
                     if (std::isnan(winding_prev.at<float>(y, x))) continue;

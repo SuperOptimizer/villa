@@ -159,7 +159,7 @@ void run_spiral_generation(
 
     std::cout << "Generated " << all_points.size() << " spiral points. Finding neighbors..." << std::endl;
 
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < revolutions; ++i) {
         for (size_t j = 0; j < points_per_revolution[i].size(); ++j) {
             int current_point_idx = revolution_start_indices[i] + j;

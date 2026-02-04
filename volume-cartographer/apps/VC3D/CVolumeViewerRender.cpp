@@ -119,7 +119,7 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
     };
 
     // Step 3: Compute gradients in parallel at each raw grid point
-    #pragma omp parallel for collapse(2)
+    #pragma omp parallel for collapse(2) schedule(static)
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             const cv::Vec3f& c = rawPoints(y, x);
@@ -260,7 +260,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
             }
 
             const float z_delta = _z_off - _cachedNormalsZOff;
-            #pragma omp parallel for collapse(2)
+            #pragma omp parallel for collapse(2) schedule(static)
             for (int j = 0; j < h; ++j) {
                 for (int i = 0; i < w; ++i) {
                     const cv::Vec3f& src = _cachedBaseCoords(j, i);
@@ -531,7 +531,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
         if (!baseDataset) {
             return cv::Mat();
         }
-        readInterpolated3D(baseGray, baseDataset, coords * _ds_scale, cache, _useFastInterpolation);
+        readInterpolated3D(baseGray, baseDataset, coords * _ds_scale, cache, _interpolationMethod);
     }
 
     if (baseGray.empty()) {
@@ -726,7 +726,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
                 const cv::Vec3f colorVec(overlayColor[0], overlayColor[1], overlayColor[2]);
 
                 // For each sampled base surface point, query distance to this overlay surface
-                #pragma omp parallel for collapse(2)
+                #pragma omp parallel for collapse(2) schedule(static)
                 for (int sy = 0; sy < sampledRows; ++sy) {
                     for (int sx = 0; sx < sampledCols; ++sx) {
                         const int y = sy * stride;

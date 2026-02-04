@@ -1,10 +1,18 @@
 #pragma once
 
+#include <opencv2/core.hpp>
+#include <stdlib.h>
+#include <opencv2/core/matx.hpp>
+#include <opencv2/core/matx.inl.hpp>
+#include <opencv2/core/types.hpp>
+
 #include "Surface.hpp"
 
-#include <opencv2/core.hpp>
+namespace cv {
+template <typename _Tp> class Mat_;
+}  // namespace cv
 
-class PlaneSurface : public Surface
+class PlaneSurface final : public Surface
 {
 public:
     //Surface API

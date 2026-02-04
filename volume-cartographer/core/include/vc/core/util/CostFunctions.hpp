@@ -1,8 +1,9 @@
 #pragma once
 
 #include "vc/core/types/ChunkedTensor.hpp"
-#include "vc/core/util/NormalGridVolume.hpp"
+#include "vc/core/util/Geometry.hpp"
 #include "vc/core/util/GridStore.hpp"
+#include "vc/core/util/NormalGridVolume.hpp"
 
 #include <opencv2/core.hpp>
 

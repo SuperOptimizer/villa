@@ -1,17 +1,19 @@
 #pragma once
 
+#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <cstddef>
-#include <iostream>
+#include <filesystem>
 #include <map>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include <filesystem>
-#include <fstream>
-#include <nlohmann/json.hpp>
 #include "vc/core/types/Segmentation.hpp"
 #include "vc/core/types/Volume.hpp"
+#include "vc/core/util/QuadSurface.hpp"
 
-class VolumePkg
+class VolumePkg final
 {
 public:
     explicit VolumePkg(const std::filesystem::path& fileLocation);

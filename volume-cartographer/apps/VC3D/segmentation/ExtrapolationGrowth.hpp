@@ -3,11 +3,13 @@
 #include "SegmentationGrowth.hpp"
 
 #include <opencv2/core.hpp>
-#include <vc/core/util/ChunkCache.hpp>
-#include <z5/dataset.hxx>
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
+
+// Forward declarations to avoid heavy template includes
+namespace z5 { class Dataset; }
+template<typename T> class ChunkCache;
 
 class QuadSurface;
 

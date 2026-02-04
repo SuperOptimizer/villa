@@ -1,11 +1,11 @@
 #pragma once
 
+#include <opencv2/core/types.hpp>
+#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <string>
 #include <memory>
 #include <optional>
-
-#include <opencv2/core/types.hpp>
-#include <nlohmann/json.hpp>
 
 #include "vc/core/util/GridStore.hpp"
 
@@ -32,6 +32,7 @@ namespace vc::core::util {
 
     private:
         struct pimpl;
+
         std::unique_ptr<pimpl> pimpl_;
     };
 

@@ -1,6 +1,7 @@
 #include "PlaneSlicingOverlayController.hpp"
 
 #include "../CVolumeViewer.hpp"
+#include "../CVolumeViewerView.hpp"
 #include "../CSurfaceCollection.hpp"
 #include "vc/core/util/Surface.hpp"
 

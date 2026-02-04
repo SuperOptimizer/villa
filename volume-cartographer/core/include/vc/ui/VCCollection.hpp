@@ -1,16 +1,19 @@
 #pragma once
 
-#include <QObject>
-#include <QDateTime>
-#include <opencv2/core.hpp>
-#include <string>
-#include <vector>
-#include <unordered_map>
-#include <cmath>
-#include <optional>
-#include <filesystem>
-
 #include <nlohmann/json.hpp>
+#include <opencv2/core/matx.hpp>
+#include <math.h>
+#include <qtmetamacros.h>
+#include <qtypes.h>
+#include <nlohmann/json_fwd.hpp>
+#include <opencv2/core/matx.inl.hpp>
+#include <cstdint>
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <QDateTime>
+#include <QObject>
  
 
  
@@ -50,7 +53,7 @@ public:
     };
 
     explicit VCCollection(QObject* parent = nullptr);
-    ~VCCollection();
+    ~VCCollection() override;
 
     uint64_t addCollection(const std::string& name);
     ColPoint addPoint(const std::string& collectionName, const cv::Vec3f& point);

@@ -1,16 +1,32 @@
 #pragma once
 
-#include <xtensor/containers/xarray.hpp>
-#include <opencv2/core.hpp>
-#include <string>
-
+#include <opencv2/core/mat.hpp>
+#include <opencv2/core/matx.hpp>
+#include <xtensor/containers/xtensor.hpp>
+#include <vc/core/types/InterpolationMethod.hpp>
 #include <vc/core/util/ChunkCache.hpp>
 #include <vc/core/util/Compositing.hpp>
+#include <stdint.h>
+#include <xtensor/core/xlayout.hpp>
+#include <xtensor/core/xtensor_forward.hpp>
+#include <vector>
 
 // Forward declaration
-namespace z5 { class Dataset; }
+namespace z5 {
+class Dataset;
+}  // namespace z5
+enum class InterpolationMethod;
+namespace cv {
+template <typename _Tp> class Mat_;
+}  // namespace cv
+struct CompositeParams;
+template <typename T> class ChunkCache;
 
-// Read interpolated 3D data from a z5 dataset
+// Read interpolated 3D data from a z5 dataset with specified interpolation method
+void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache<uint8_t> *cache, InterpolationMethod method);
+void readInterpolated3D(cv::Mat_<uint16_t> &out, z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache<uint16_t> *cache, InterpolationMethod method);
+
+// Legacy overloads for backward compatibility (bool nearest_neighbor maps to Nearest/Trilinear)
 void readInterpolated3D(cv::Mat_<uint8_t> &out, z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache<uint8_t> *cache, bool nearest_neighbor=false);
 void readInterpolated3D(cv::Mat_<uint16_t> &out, z5::Dataset *ds, const cv::Mat_<cv::Vec3f> &coords, ChunkCache<uint16_t> *cache, bool nearest_neighbor=false);
 

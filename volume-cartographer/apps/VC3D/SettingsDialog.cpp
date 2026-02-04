@@ -49,7 +49,17 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
     spinParallelProcesses->setValue(settings.value(perf::PARALLEL_PROCESSES, perf::PARALLEL_PROCESSES_DEFAULT).toInt());
     spinIterationCount->setValue(settings.value(perf::ITERATION_COUNT, perf::ITERATION_COUNT_DEFAULT).toInt());
     cmbDownscaleOverride->setCurrentIndex(settings.value(perf::DOWNSCALE_OVERRIDE, perf::DOWNSCALE_OVERRIDE_DEFAULT).toInt());
-    chkFastInterpolation->setChecked(settings.value(perf::FAST_INTERPOLATION, perf::FAST_INTERPOLATION_DEFAULT).toBool());
+
+    // Interpolation method - migrate from old boolean setting if needed
+    int interpMethod = perf::INTERPOLATION_METHOD_DEFAULT;
+    if (settings.contains(perf::INTERPOLATION_METHOD)) {
+        interpMethod = settings.value(perf::INTERPOLATION_METHOD).toInt();
+    } else if (settings.contains(perf::FAST_INTERPOLATION)) {
+        // Migrate from old setting: fast=true means Nearest (0), fast=false means Trilinear (1)
+        interpMethod = settings.value(perf::FAST_INTERPOLATION).toBool() ? 0 : 1;
+    }
+    cmbInterpolationMethod->setCurrentIndex(interpMethod);
+
     chkEnableFileWatching->setChecked(settings.value(perf::ENABLE_FILE_WATCHING, perf::ENABLE_FILE_WATCHING_DEFAULT).toBool());
 
 
@@ -57,7 +67,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
     connect(btnHelpScrollSpeed, &QPushButton::clicked, this, [this]{ QToolTip::showText(QCursor::pos(), btnHelpScrollSpeed->toolTip()); });
     connect(btnHelpDisplayOpacity, &QPushButton::clicked, this, [this]{ QToolTip::showText(QCursor::pos(), btnHelpDisplayOpacity->toolTip()); });
     connect(btnHelpPreloadedSlices, &QPushButton::clicked, this, [this]{ QToolTip::showText(QCursor::pos(), btnHelpPreloadedSlices->toolTip()); });
-    connect(btnHelpFastInterpolation, &QPushButton::clicked, this, [this]{ QToolTip::showText(QCursor::pos(), btnHelpFastInterpolation->toolTip()); });
+    connect(btnHelpInterpolationMethod, &QPushButton::clicked, this, [this]{ QToolTip::showText(QCursor::pos(), btnHelpInterpolationMethod->toolTip()); });
 }
 
 void SettingsDialog::accept()
@@ -96,8 +106,10 @@ void SettingsDialog::accept()
     settings.setValue(perf::PARALLEL_PROCESSES, spinParallelProcesses->value());
     settings.setValue(perf::ITERATION_COUNT, spinIterationCount->value());
     settings.setValue(perf::DOWNSCALE_OVERRIDE, cmbDownscaleOverride->currentIndex());
-    settings.setValue(perf::FAST_INTERPOLATION, chkFastInterpolation->isChecked() ? "1" : "0");
+    settings.setValue(perf::INTERPOLATION_METHOD, cmbInterpolationMethod->currentIndex());
     settings.setValue(perf::ENABLE_FILE_WATCHING, chkEnableFileWatching->isChecked() ? "1" : "0");
+    // Remove legacy setting
+    settings.remove(perf::FAST_INTERPOLATION);
 
     QMessageBox::information(this, tr("Restart required"), tr("Note: Some settings only take effect once you restarted the app."));
 

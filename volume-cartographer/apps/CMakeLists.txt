@@ -11,7 +11,7 @@ add_executable(vc_render_video src/vc_render_video.cpp)
 target_link_libraries(vc_render_video z5 opencv_core vc_core opencv_videoio)
 
 add_executable(vc_render_tifxyz src/vc_render_tifxyz.cpp)
-target_link_libraries(vc_render_tifxyz vc_core Boost::program_options tiff)
+target_link_libraries(vc_render_tifxyz vc_core Boost::program_options TIFF::TIFF)
 
 add_executable(vc_objrefine src/ObjAlphaCompRefinement.cpp)
 target_link_libraries(vc_objrefine vc_core)
@@ -147,7 +147,17 @@ add_executable(vc_tifxyz src/vc_tifxyz.cpp)
 target_link_libraries(vc_tifxyz vc_core Boost::program_options opencv_core)
 
 add_executable(vc_zarr_to_tiff src/vc_zarr_to_tiff.cpp)
-target_link_libraries(vc_zarr_to_tiff vc_core Boost::program_options tiff)
+target_link_libraries(vc_zarr_to_tiff vc_core Boost::program_options TIFF::TIFF)
+
+add_executable(vc_preprocess_volume src/vc_preprocess_volume.cpp)
+target_link_libraries(vc_preprocess_volume
+    vc_core
+    z5
+    opencv_core
+    opencv_imgproc
+    Boost::program_options
+    OpenMP::OpenMP_CXX
+)
 
 # Install targets
 if(VC_INSTALL_APPS)
@@ -178,6 +188,7 @@ install(
         vc_thinning
         vc_tifxyz
         vc_zarr_to_tiff
+        vc_preprocess_volume
         ${extra_apps}
     RUNTIME DESTINATION bin
     COMPONENT Programs

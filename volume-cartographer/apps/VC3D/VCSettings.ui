@@ -471,14 +471,38 @@
            </widget>
          </item>
          <item row="5" column="0">
-          <widget class="QCheckBox" name="chkFastInterpolation">
+          <widget class="QLabel" name="lblInterpolationMethod">
            <property name="text">
-            <string>Use fast interpolation (nearest neighbor)</string>
+            <string>Interpolation method:</string>
            </property>
           </widget>
          </item>
+         <item row="5" column="1">
+          <widget class="QComboBox" name="cmbInterpolationMethod">
+           <item>
+            <property name="text">
+             <string>Nearest Neighbor (fastest)</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Trilinear (default)</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Tricubic (smooth)</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Lanczos-3 (best quality)</string>
+            </property>
+           </item>
+          </widget>
+         </item>
          <item row="5" column="2">
-          <widget class="QPushButton" name="btnHelpFastInterpolation">
+          <widget class="QPushButton" name="btnHelpInterpolationMethod">
            <property name="enabled">
             <bool>true</bool>
            </property>
@@ -489,7 +513,7 @@
             </sizepolicy>
            </property>
            <property name="toolTip">
-            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Uses nearest neighbor interpolation instead of linear interpolation.&lt;/p&gt;&lt;p&gt;This improves rendering performance but reduces image quality.&lt;/p&gt;&lt;p&gt;Useful for slower systems or when working with very large volumes.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;b&gt;Interpolation method for volume sampling:&lt;/b&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;Nearest Neighbor:&lt;/b&gt; Fastest, but blocky appearance. Good for performance.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Trilinear:&lt;/b&gt; Good balance of quality and speed (default).&lt;/p&gt;&lt;p&gt;&lt;b&gt;Tricubic:&lt;/b&gt; Smoother results using Catmull-Rom splines. Slower than trilinear.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Lanczos-3:&lt;/b&gt; Best quality, preserves sharp edges. Slowest option.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
            </property>
            <property name="text">
             <string/>

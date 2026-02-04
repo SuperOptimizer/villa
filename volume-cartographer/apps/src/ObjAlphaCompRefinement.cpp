@@ -209,7 +209,7 @@ static void refine_vertices(std::vector<cv::Vec3f>& vertices,
         return;
     }
 
-#pragma omp parallel for
+#pragma omp parallel for schedule(static)
     for (int j = 0; j < static_cast<int>(vertices.size()); ++j) {
         const auto& normal = normals[j];
         if (!normal_is_valid(normal)) {
@@ -250,11 +250,12 @@ int process_obj(const std::string& src,
             vs.push_back(parse_vec3f(line));
         }
         if (istype(line, "vn")) {
-            if (vs.size()-1 != vns.size())
+            if (vs.size()-1 != vns.size()) {
                 throw std::runtime_error("sorry our taste in obj is quite peculiar ...");
-                cv::Vec3f normal = parse_vec3f(line);
-                normalize(normal, normal);
-                vns.push_back(normal);
+            }
+            cv::Vec3f normal = parse_vec3f(line);
+            normalize(normal, normal);
+            vns.push_back(normal);
         }
         // if (vs.size() % 10000 == 0)
             // std::cout << vs.size() << std::endl;
@@ -320,7 +321,7 @@ int process_tifxyz(const std::filesystem::path& src,
         const int rows = original.rows;
         const int cols = original.cols;
 
-#pragma omp parallel for collapse(2)
+#pragma omp parallel for collapse(2) schedule(static)
         for (int y = 0; y < rows; ++y) {
             for (int x = 0; x < cols; ++x) {
                 if (!loc_valid(original, cv::Vec2d(y, x))) {

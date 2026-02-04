@@ -120,15 +120,18 @@ namespace perf {
     constexpr auto PARALLEL_PROCESSES = "perf/parallel_processes";
     constexpr auto ITERATION_COUNT = "perf/iteration_count";
     constexpr auto DOWNSCALE_OVERRIDE = "perf/downscale_override";
-    constexpr auto FAST_INTERPOLATION = "perf/fast_interpolation";
+    constexpr auto INTERPOLATION_METHOD = "perf/interpolation_method";  // 0=Nearest, 1=Trilinear, 2=Tricubic, 3=Lanczos
     constexpr auto ENABLE_FILE_WATCHING = "perf/enable_file_watching";
+
+    // Legacy key for migration
+    constexpr auto FAST_INTERPOLATION = "perf/fast_interpolation";
 
     constexpr int PRELOADED_SLICES_DEFAULT = 200;
     constexpr bool SKIP_IMAGE_FORMAT_CONV_DEFAULT = false;
     constexpr int PARALLEL_PROCESSES_DEFAULT = 8;
     constexpr int ITERATION_COUNT_DEFAULT = 1000;
     constexpr int DOWNSCALE_OVERRIDE_DEFAULT = 0;
-    constexpr bool FAST_INTERPOLATION_DEFAULT = false;
+    constexpr int INTERPOLATION_METHOD_DEFAULT = 1;  // Trilinear (good balance of quality/speed)
     constexpr bool ENABLE_FILE_WATCHING_DEFAULT = true;
 }
 

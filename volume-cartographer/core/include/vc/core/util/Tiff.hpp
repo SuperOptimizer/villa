@@ -1,10 +1,15 @@
 #pragma once
 
 #include <opencv2/core.hpp>
+#include <tiffio.h>
+#include <tiff.h>
 #include <filesystem>
 #include <vector>
 #include <cstdint>
-#include <tiffio.h>
+
+namespace cv {
+class Mat;
+}  // namespace cv
 
 // Write single-channel image (8U, 16U, 32F) as tiled TIFF
 // cvType: output type (-1 = same as input). If different, values are scaled:

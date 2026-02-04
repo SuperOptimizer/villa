@@ -57,17 +57,18 @@ static float search_min_line(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3
             cv::Vec2f cand = loc+mul(off,step);
             
             //just skip if out of bounds
-            if (!boundary.contains(cv::Point(cand)))
+            if (!boundary.contains(cv::Point(cand))) {
                 continue;
-                
-                val = at_int(points, cand);
-                res = ldist(val, tgt_o, tgt_v);
-                if (res < best) {
-                    changed = true;
-                    best = res;
-                    loc = cand;
-                    out = val;
-                }
+            }
+
+            val = at_int(points, cand);
+            res = ldist(val, tgt_o, tgt_v);
+            if (res < best) {
+                changed = true;
+                best = res;
+                loc = cand;
+                out = val;
+            }
         }
         
         if (changed)
@@ -487,7 +488,7 @@ int main(int argc, char *argv[])
         cv::Rect bounds_inv(0,0,points.rows-1,points.cols-1);
         
         std::vector<cv::Vec2i> neighs = {{0,-1},{0,1},{1,0},{-1,0},{1,1},{-1,1},{1,-1},{-1,-1},{0,-4},{0,4},{4,0},{-4,0},{0,-16},{0,16},{16,0},{-16,0}};
-#pragma omp parallel for
+#pragma omp parallel for schedule(static)
         for(int j=1;j<winding.rows-1;j++)
             for(int i=1;i<winding.cols-1;i++) {
                 cv::Vec2i p = {j,i};
@@ -545,24 +546,32 @@ int main(int argc, char *argv[])
             
             cv::Mat_<cv::Vec3b> vis(points.size(), {0,0,0});
             cv::Mat_<float> winding_err(points.size());
-#pragma omp parallel for
-            for(int j=0;j<winding.rows;j++)
+#pragma omp parallel for schedule(static)
+            for(int j=0;j<winding.rows;j++) {
+                const float* __restrict__ winding_row = winding.ptr<float>(j);
+                const float* __restrict__ wind_w_row = wind_w.ptr<float>(j);
+                cv::Vec3b* __restrict__ vis_row = vis.ptr<cv::Vec3b>(j);
                 for(int i=0;i<winding.cols;i++) {
-                    if (wind_w(j,i)) {
-                        int w_num = std::min(std::max(int(winding(j,i)*2+200),0),398);
-                        float f = winding(j,i)*2+100 - int(winding(j,i)*2+100);
-                        vis(j,i) = wind_cols[w_num]*(1-f)+wind_cols[w_num+1]*f;
+                    if (wind_w_row[i]) {
+                        int w_num = std::min(std::max(int(winding_row[i]*2+200),0),398);
+                        float f = winding_row[i]*2+100 - int(winding_row[i]*2+100);
+                        vis_row[i] = wind_cols[w_num]*(1-f)+wind_cols[w_num+1]*f;
                     }
                 }
-#pragma omp parallel for
-            for(int j=0;j<winding.rows;j++)
+            }
+#pragma omp parallel for schedule(static)
+            for(int j=0;j<winding.rows;j++) {
+                const float* __restrict__ winding_row = winding.ptr<float>(j);
+                const float* __restrict__ wind_w_row = wind_w.ptr<float>(j);
+                float* __restrict__ err_row = winding_err.ptr<float>(j);
                 for(int i=0;i<winding.cols-1;i++) {
-                    if (wind_w(j,i) && wind_w(j,i+1)) {
-                        float wind_g = winding(j,i+1) - winding(j,i);
+                    if (wind_w_row[i] && wind_w_row[i+1]) {
+                        float wind_g = winding_row[i+1] - winding_row[i];
                         wind_g = wind_g * wind_x_ref[i/wind_sd];
-                        winding_err(j,i) = abs(1-wind_g);
+                        err_row[i] = abs(1-wind_g);
                     }
                 }
+            }
             // cv::imwrite("winding"+std::to_string(n)+".tif", winding);
             // cv::imwrite("wind_vis"+std::to_string(n)+".tif", vis);
             cv::imwrite("winding.tif", winding);

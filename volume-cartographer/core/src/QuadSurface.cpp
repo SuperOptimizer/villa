@@ -1,6 +1,7 @@
 #include "vc/core/util/QuadSurface.hpp"
 
 #include "vc/core/util/ChunkCache.hpp"
+#include "vc/core/util/Tiff.hpp"
 #include "vc/core/util/Geometry.hpp"
 #include "vc/core/util/LoadJson.hpp"
 #include "vc/core/util/PointIndex.hpp"
@@ -27,6 +28,15 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <unistd.h>
+
+// macOS doesn't have renameat2 - provide a fallback that returns ENOSYS
+#ifndef RENAME_EXCHANGE
+#define RENAME_EXCHANGE 0
+static inline int renameat2(int, const char*, int, const char*, unsigned int) {
+    errno = ENOSYS;
+    return -1;
+}
+#endif
 
 // Use libtiff for BigTIFF
 #include <tiffio.h>

@@ -9,6 +9,7 @@
 #include <QFutureWatcher>
 #include <QPointF>
 #include <QElapsedTimer>
+#include <QMdiArea>
 #include <memory>
 #include <vector>
 #include <deque>
@@ -16,17 +17,15 @@
 #include <chrono>
 #include "ui_VCMain.h"
 
-#include "vc/ui/VCCollection.hpp"
-
 #include <QShortcut>
 #include <QSet>
 #include <unordered_map>
 #include <map>
 
-#include "CPointCollectionWidget.hpp"
+// Required includes for method signatures and unique_ptr destructors
 #include "CSurfaceCollection.hpp"
 #include "CVolumeViewer.hpp"
-#include "DrawingWidget.hpp"
+#include "segmentation/SegmentationGrowth.hpp"
 #include "segmentation/SegmentationEditManager.hpp"
 #include "overlays/SegmentationOverlayController.hpp"
 #include "overlays/PointsOverlayController.hpp"
@@ -37,15 +36,22 @@
 #include "overlays/PlaneSlicingOverlayController.hpp"
 #include "overlays/VolumeOverlayController.hpp"
 #include "ViewerManager.hpp"
-#include "segmentation/SegmentationWidget.hpp"
-#include "segmentation/SegmentationGrowth.hpp"
-#include "SeedingWidget.hpp"
-#include "vc/core/types/Volume.hpp"
-#include "vc/core/types/VolumePkg.hpp"
-#include "vc/core/util/Surface.hpp"
-#include "vc/core/util/QuadSurface.hpp"
 
+// Forward declarations - these types only used as pointers/smart pointers with external linkage
+class VCCollection;
+class CPointCollectionWidget;
+class DrawingWidget;
+class SeedingWidget;
+class SegmentationWidget;
+class Volume;
+class VolumePkg;
+class Surface;
+class QuadSurface;
+template<typename T> class ChunkCache;
+
+#ifdef __linux__
 #include <sys/inotify.h>
+#endif
 #include <QSocketNotifier>
 
 #define MAX_RECENT_VOLPKG 10
@@ -66,7 +72,7 @@ class QLabel;
 class QTemporaryFile;
 class QStandardItemModel;
 
-class CWindow : public QMainWindow
+class CWindow final : public QMainWindow
 {
 
     Q_OBJECT
@@ -111,7 +117,7 @@ public slots:
 
 public:
     CWindow();
-    ~CWindow(void);
+    ~CWindow() override;
     
     // Helper method to get the current volume path
     QString getCurrentVolumePath() const;
@@ -124,6 +130,8 @@ protected:
 
 private:
     void CreateWidgets(void);
+    void setupViewControls();
+    void setupCompositeControls();
 
     void UpdateView(void);
     void UpdateVolpkgLabel(int filterCounter);
@@ -133,7 +141,7 @@ private:
     bool initializeCommandLineRunner(void);
 
     CVolumeViewer *newConnectedCVolumeViewer(std::string surfaceName, QString title, QMdiArea *mdiArea);
-    void closeEvent(QCloseEvent* event);
+    void closeEvent(QCloseEvent* event) override;
 
     void setWidgetsEnabled(bool state);
 
@@ -178,7 +186,9 @@ private slots:
     void onAxisAlignedSliceMouseMove(CVolumeViewer* viewer, const cv::Vec3f& volLoc, Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers);
     void onAxisAlignedSliceMouseRelease(CVolumeViewer* viewer, Qt::MouseButton button, Qt::KeyboardModifiers modifiers);
     void onSegmentationGrowthStatusChanged(bool running);
+#ifdef __linux__
     void processPendingInotifyEvents();
+#endif
     void onSliceStepSizeChanged(int newSize);
     void onSurfaceWillBeDeleted(std::string name, std::shared_ptr<Surface> surf);
     void onConvertPointToAnchor(uint64_t pointId, uint64_t collectionId);
@@ -318,6 +328,7 @@ private:
     QTimer* _axisAlignedRotationTimer{nullptr};
     bool _axisAlignedOrientationDirty{false};
 
+#ifdef __linux__
     int _inotifyFd;
     QSocketNotifier* _inotifyNotifier;
     std::map<int, std::string> _watchDescriptors; // wd -> directory name
@@ -337,12 +348,14 @@ private:
 
     // Periodic timer for inotify events
     QTimer* _inotifyProcessTimer;
+#endif
 
     // Timer for debounced window state saving
     QTimer* _windowStateSaveTimer{nullptr};
     void scheduleWindowStateSave();
     void saveWindowState();
 
+#ifdef __linux__
     struct InotifyEvent {
         enum Type { Addition, Removal, Rename, Update };
         Type type;
@@ -360,6 +373,7 @@ private:
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> _recentlyEditedSegments;
     static constexpr int INOTIFY_THROTTLE_MS = 100;
     static constexpr int RECENT_EDIT_GRACE_SECONDS = 30;
+#endif
 
     struct NeighborCopyJob {
         enum class Stage { None, FirstPass, SecondPass };

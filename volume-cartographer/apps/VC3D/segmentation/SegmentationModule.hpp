@@ -64,7 +64,7 @@ public:
                        VCCollection* pointCollection,
                        bool editingEnabled,
                        QObject* parent = nullptr);
-    ~SegmentationModule();
+    ~SegmentationModule() override;
 
     [[nodiscard]] bool editingEnabled() const { return _editingEnabled; }
     void setEditingEnabled(bool enabled);

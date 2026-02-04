@@ -71,17 +71,18 @@ static float search_min_line(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3
             cv::Vec2f cand = loc+mul(off,step);
             
             //just skip if out of bounds
-            if (!boundary.contains(cv::Point(cand)))
+            if (!boundary.contains(cv::Point(cand))) {
                 continue;
-                
-                val = at_int(points, cand);
-                res = ldist(val, tgt_o, tgt_v);
-                if (res < best) {
-                    changed = true;
-                    best = res;
-                    loc = cand;
-                    out = val;
-                }
+            }
+
+            val = at_int(points, cand);
+            res = ldist(val, tgt_o, tgt_v);
+            if (res < best) {
+                changed = true;
+                best = res;
+                loc = cand;
+                out = val;
+            }
         }
         
         if (changed)
@@ -736,13 +737,16 @@ cv::Mat_<cv::Vec3f> points_hr_grounding(const cv::Mat_<uint8_t> &state, std::vec
                     }
             }
 
-#pragma omp parallel for
-    for(int j=0;j<points_hr.rows;j++)
+#pragma omp parallel for schedule(static)
+    for(int j=0;j<points_hr.rows;j++) {
+        cv::Vec3f* __restrict__ points_row = points_hr.ptr<cv::Vec3f>(j);
+        const int* __restrict__ counts_row = counts_hr.ptr<int>(j);
         for(int i=0;i<points_hr.cols;i++)
-            if (counts_hr(j,i))
-                points_hr(j,i) /= counts_hr(j,i);
-    else
-        points_hr(j,i) = {-1,-1,-1};
+            if (counts_row[i])
+                points_row[i] /= counts_row[i];
+            else
+                points_row[i] = {-1,-1,-1};
+    }
     
     return points_hr;
 }
@@ -1217,7 +1221,7 @@ int main(int argc, char *argv[])
         
         std::cout << "proc col " << i << std::endl;
         ceres::Problem problem_col;
-#pragma omp parallel for
+#pragma omp parallel for schedule(dynamic)
         for(int j=std::max(bbox.y,lower_bound);j<std::min(bbox.br().y,upper_bound+1);j++) {
             cv::Vec2i p = {j,i};
 
@@ -1256,7 +1260,7 @@ int main(int argc, char *argv[])
         std::vector<int> add_idxs;
         
         //TODO re-use existing locs if there!
-#pragma omp parallel for
+#pragma omp parallel for schedule(dynamic)
         for(int j=bbox.y;j<bbox.br().y;j++) {
             for(int o=0;o<=opt_w;o++) {
                 //only add in area where we also inpaint

@@ -1,19 +1,23 @@
 #pragma once
 
-#include <QWidget>
-#include <QComboBox>
-#include <QSpinBox>
-#include <QDoubleSpinBox>
-#include <QPushButton>
-#include <QLabel>
-#include <QProgressBar>
-#include <QHBoxLayout>
-#include <QLineEdit>
-#include <QProcess>
 #include <QPointer>
-#include <QToolButton>
-#include <opencv2/core.hpp>
+#include <QWidget>
+
 #include <memory>
+
+#include <opencv2/core.hpp>
+
+// Forward declarations - full headers only needed in .cpp
+class QComboBox;
+class QDoubleSpinBox;
+class QHBoxLayout;
+class QLabel;
+class QLineEdit;
+class QProcess;
+class QProgressBar;
+class QPushButton;
+class QSpinBox;
+class QToolButton;
 
 #include "CSurfaceCollection.hpp"
 #include "elements/ProgressUtil.hpp"

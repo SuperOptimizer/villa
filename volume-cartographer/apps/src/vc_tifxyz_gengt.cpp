@@ -1,16 +1,13 @@
-#include "vc/ui/VCCollection.hpp"
 #include "vc/core/util/Geometry.hpp"
-#include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
-#include "vc/core/util/Slicing.hpp"
-#include <opencv2/imgcodecs.hpp>
-#include <boost/program_options.hpp>
-#include <nlohmann/json.hpp>
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <string>
+#include "vc/ui/VCCollection.hpp"
+
 #include <algorithm>
+#include <iostream>
+#include <string>
+
+#include <boost/program_options.hpp>
+#include <opencv2/imgcodecs.hpp>
 
 namespace po = boost::program_options;
 
@@ -49,17 +46,18 @@ static float search_min_line(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3
         for(auto &off : search) {
             cv::Vec2f cand = loc+mul(off,step);
             
-            if (!boundary.contains(cv::Point(cand)))
+            if (!boundary.contains(cv::Point(cand))) {
                 continue;
-                
-                val = at_int(points, cand);
-                res = ldist(val, tgt_o, tgt_v);
-                if (res < best) {
-                    changed = true;
-                    best = res;
-                    loc = cand;
-                    out = val;
-                }
+            }
+
+            val = at_int(points, cand);
+            res = ldist(val, tgt_o, tgt_v);
+            if (res < best) {
+                changed = true;
+                best = res;
+                loc = cand;
+                out = val;
+            }
         }
         
         if (changed)

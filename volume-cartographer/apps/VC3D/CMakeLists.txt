@@ -6,10 +6,22 @@ add_definitions(-DCHUNK_CACHE_SIZE_GB=${CHUNK_CACHE_SIZE_GB})
 set(srcs
     VCAppMain.cpp
     CWindow.cpp
+    CWindowAreaCalculation.cpp
+    CWindowAxisAlignedSlices.cpp
+    CWindowExportOperations.cpp
+    CWindowFocusHistory.cpp
+    CWindowMaskOperations.cpp
+    CWindowSegmentationOperations.cpp
+    CWindowUserInteraction.cpp
     CWindowContextMenu.cpp
+    CWindowFileWatcher.cpp
+    CWindowSurfaceOverlay.cpp
+    CWindowViewControlSetup.cpp
+    CWindowVolumeManagement.cpp
     CVolumeViewer.cpp
     CVolumeViewerIntersections.cpp
     CVolumeViewerRender.cpp
+    CVolumeViewerSettings.cpp
     CVolumeViewerOverlay.cpp
     CVolumeViewerView.cpp
     VolumeViewerCmaps.cpp
@@ -28,15 +40,24 @@ set(srcs
     SurfaceTreeWidget.cpp
     SeedingWidget.cpp
     SeedingWidget.hpp
+    SeedingWidgetNeuralTrace.cpp
     DrawingWidget.cpp
     DrawingWidget.hpp
     segmentation/SegmentationWidget.cpp
     segmentation/SegmentationWidget.hpp
+    segmentation/SegmentationWidgetConnections.cpp
+    segmentation/SegmentationWidgetDirectionField.cpp
+    segmentation/SegmentationWidgetToolSettings.cpp
+    segmentation/SegmentationWidgetApprovalMask.cpp
+    segmentation/SegmentationWidgetNeuralTracer.cpp
+    segmentation/SegmentationWidgetSettings.cpp
     segmentation/SegmentationGrowth.cpp
     segmentation/ExtrapolationGrowth.cpp
     segmentation/ExtrapolationGrowth.hpp
     segmentation/SegmentationGrower.cpp
     segmentation/SegmentationGrower.hpp
+    segmentation/SegmentationGrowerHelpers.cpp
+    segmentation/SegmentationGrowerHelpers.hpp
     segmentation/SegmentationEditManager.cpp
     segmentation/SegmentationEditManager.hpp
     segmentation/ApprovalMaskBrushTool.cpp
@@ -71,10 +92,12 @@ set(srcs
     overlays/ViewerOverlayControllerBase.hpp
     SurfacePanelController.cpp
     SurfacePanelController.hpp
+    SurfacePanelControllerContextMenu.cpp
     MenuActionController.cpp
     MenuActionController.hpp
     segmentation/SegmentationModule.cpp
     segmentation/SegmentationModule.hpp
+    segmentation/SegmentationModule_ApprovalMask.cpp
     segmentation/SegmentationCorrections.cpp
     segmentation/SegmentationCorrections.hpp
     segmentation/SegmentationUndoHistory.hpp
@@ -121,6 +144,112 @@ target_link_libraries(VC3D
     Qt6::Widgets
     opencv_ximgproc
 )
+
+# Precompiled headers for faster builds
+if(VC_USE_PCH)
+target_precompile_headers(VC3D PRIVATE
+    # STL - containers
+    <array>
+    <deque>
+    <list>
+    <map>
+    <queue>
+    <set>
+    <stack>
+    <unordered_map>
+    <unordered_set>
+    <vector>
+    # STL - algorithms and utilities
+    <algorithm>
+    <chrono>
+    <cmath>
+    <cstdint>
+    <cstdlib>
+    <functional>
+    <limits>
+    <numeric>
+    <tuple>
+    <utility>
+    # STL - I/O and strings
+    <filesystem>
+    <fstream>
+    <iostream>
+    <sstream>
+    <string>
+    <string_view>
+    # STL - memory
+    <memory>
+    <optional>
+    # STL - concurrency
+    <atomic>
+    <mutex>
+    <thread>
+    # OpenCV
+    <opencv2/core.hpp>
+    <opencv2/core/mat.hpp>
+    <opencv2/imgproc.hpp>
+    # JSON
+    <nlohmann/json.hpp>
+    # Eigen
+    <Eigen/Core>
+    <Eigen/Dense>
+    # Qt Core
+    <QCoreApplication>
+    <QDir>
+    <QElapsedTimer>
+    <QFile>
+    <QFileInfo>
+    <QLoggingCategory>
+    <QObject>
+    <QPointer>
+    <QProcess>
+    <QSettings>
+    <QString>
+    <QStringList>
+    <QTimer>
+    <QVariant>
+    <QVector>
+    # Qt Gui
+    <QColor>
+    <QImage>
+    <QPainter>
+    <QPen>
+    <QBrush>
+    <QFont>
+    <QPointF>
+    <QRectF>
+    # Qt Widgets
+    <QAction>
+    <QApplication>
+    <QCheckBox>
+    <QComboBox>
+    <QDialog>
+    <QFileDialog>
+    <QGraphicsItem>
+    <QGraphicsPixmapItem>
+    <QGraphicsScene>
+    <QGraphicsView>
+    <QGroupBox>
+    <QHBoxLayout>
+    <QLabel>
+    <QLineEdit>
+    <QMainWindow>
+    <QMenu>
+    <QMenuBar>
+    <QMessageBox>
+    <QPushButton>
+    <QScrollArea>
+    <QSlider>
+    <QSpinBox>
+    <QStatusBar>
+    <QTabWidget>
+    <QToolBar>
+    <QToolButton>
+    <QTreeWidget>
+    <QVBoxLayout>
+    <QWidget>
+)
+endif()
 
 if (${VC_INSTALL_APPS})
     install(

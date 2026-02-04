@@ -1,24 +1,59 @@
 #pragma once
 
-#include "vc/core/util/Slicing.hpp"
-#include "vc/core/util/HashFunctions.hpp"
-
 #include <opencv2/core.hpp>
-#include "z5/dataset.hxx"
-
 #include <xtensor/containers/xtensor.hpp>
 #include <xtensor/containers/xadapt.hpp>
 #include <xtensor/views/xview.hpp>
-
-#include "z5/multiarray/xtensor_access.hxx"
-
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <_stdio.h>
+#include <_string.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
+#include <opencv2/core/matx.hpp>
+#include <opencv2/core/matx.inl.hpp>
+#include <opencv2/core/saturate.hpp>
+#include <xsimd/arch/xsimd_neon.hpp>
+#include <xsimd/memory/xsimd_aligned_allocator.hpp>
+#include <xsimd/types/xsimd_api.hpp>
+#include <xtensor/core/xlayout.hpp>
+#include <xtensor/core/xstrides.hpp>
+#include <xtensor/core/xtensor_forward.hpp>
+#include <xtensor/generators/xbuilder.hpp>
+#include <xtensor/utils/xutils.hpp>
+#include <xtensor/views/xslice.hpp>
 #include <cerrno>
 #include <cstring>
 #include <sstream>
+#include <algorithm>
+#include <cmath>
+#include <deque>
+#include <exception>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <map>
+#include <memory>
+#include <numeric>
+#include <set>
+#include <shared_mutex>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <utility>
+
+#include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/HashFunctions.hpp"
+#include "z5/dataset.hxx"
+#include "z5/multiarray/xtensor_access.hxx"
+
+template <typename T> class ChunkCache;
 
 #ifndef CCI_TLS_MAX // Max number for ChunkedCachedInterpolator
 #define CCI_TLS_MAX 256

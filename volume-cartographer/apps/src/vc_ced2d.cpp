@@ -96,29 +96,46 @@ static void compute_gradients(const std::vector<float>& img, int H, int W,
                               std::vector<float>& gx, std::vector<float>& gy) {
     gx.assign(H * W, 0.f);
     gy.assign(H * W, 0.f);
+    const float* __restrict__ imgPtr = img.data();
+    float* __restrict__ gxPtr = gx.data();
+    float* __restrict__ gyPtr = gy.data();
     #pragma omp parallel for schedule(static)
     for (int y = 0; y < H; ++y) {
-        for (int x = 0; x < W; ++x) {
-            int xm = clampi(x - 1, 0, W - 1);
-            int xp = clampi(x + 1, 0, W - 1);
-            int ym = clampi(y - 1, 0, H - 1);
-            int yp = clampi(y + 1, 0, H - 1);
-            gx[y * W + x] = 0.5f * (img[y * W + xp] - img[y * W + xm]);
-            gy[y * W + x] = 0.5f * (img[yp * W + x] - img[ym * W + x]);
+        const int ym = clampi(y - 1, 0, H - 1);
+        const int yp = clampi(y + 1, 0, H - 1);
+        const int yW = y * W;
+        const int ymW = ym * W;
+        const int ypW = yp * W;
+        // Interior pixels (can be vectorized)
+        #pragma omp simd
+        for (int x = 1; x < W - 1; ++x) {
+            gxPtr[yW + x] = 0.5f * (imgPtr[yW + x + 1] - imgPtr[yW + x - 1]);
+            gyPtr[yW + x] = 0.5f * (imgPtr[ypW + x] - imgPtr[ymW + x]);
         }
+        // Boundary pixels
+        gxPtr[yW] = 0.5f * (imgPtr[yW + 1] - imgPtr[yW]);
+        gyPtr[yW] = 0.5f * (imgPtr[ypW] - imgPtr[ymW]);
+        gxPtr[yW + W - 1] = 0.5f * (imgPtr[yW + W - 1] - imgPtr[yW + W - 2]);
+        gyPtr[yW + W - 1] = 0.5f * (imgPtr[ypW + W - 1] - imgPtr[ymW + W - 1]);
     }
 }
 
 static void compute_structure_tensor(const std::vector<float>& gx, const std::vector<float>& gy, int H, int W, float rho,
                                      std::vector<float>& s11, std::vector<float>& s12, std::vector<float>& s22) {
     std::vector<float> gx2(H * W), gy2(H * W), gxy(H * W);
-    #pragma omp parallel for schedule(static)
-    for (int i = 0; i < H * W; ++i) {
-        float gxv = gx[i];
-        float gyv = gy[i];
-        gx2[i] = gxv * gxv;
-        gy2[i] = gyv * gyv;
-        gxy[i] = gxv * gyv;
+    const int n = H * W;
+    const float* __restrict__ gxPtr = gx.data();
+    const float* __restrict__ gyPtr = gy.data();
+    float* __restrict__ gx2Ptr = gx2.data();
+    float* __restrict__ gy2Ptr = gy2.data();
+    float* __restrict__ gxyPtr = gxy.data();
+    #pragma omp parallel for simd schedule(static)
+    for (int i = 0; i < n; ++i) {
+        float gxv = gxPtr[i];
+        float gyv = gyPtr[i];
+        gx2Ptr[i] = gxv * gxv;
+        gy2Ptr[i] = gyv * gyv;
+        gxyPtr[i] = gxv * gyv;
     }
     gaussian_blur(gx2, H, W, rho, s11);
     gaussian_blur(gxy, H, W, rho, s12);
@@ -128,34 +145,42 @@ static void compute_structure_tensor(const std::vector<float>& gx, const std::ve
 static void compute_alpha(const std::vector<float>& s11, const std::vector<float>& s12, const std::vector<float>& s22,
                           int HW, std::vector<float>& alpha) {
     alpha.resize(HW);
-    #pragma omp parallel for schedule(static)
+    const float* __restrict__ s11Ptr = s11.data();
+    const float* __restrict__ s12Ptr = s12.data();
+    const float* __restrict__ s22Ptr = s22.data();
+    float* __restrict__ alphaPtr = alpha.data();
+    #pragma omp parallel for simd schedule(static)
     for (int i = 0; i < HW; ++i) {
-        float a = s11[i] - s22[i];
-        float b = s12[i];
-        alpha[i] = std::sqrt(a * a + 4.0f * b * b);
+        float a = s11Ptr[i] - s22Ptr[i];
+        float b = s12Ptr[i];
+        alphaPtr[i] = std::sqrt(a * a + 4.0f * b * b);
     }
 }
 
 static void compute_c2(const std::vector<float>& alpha, float lambda_, float m, int HW, std::vector<float>& c2) {
     c2.resize(HW);
-    #pragma omp parallel for schedule(static)
+    const float* __restrict__ alphaPtr = alpha.data();
+    float* __restrict__ c2Ptr = c2.data();
+    const bool usePow = std::abs(m - 1.0f) >= 1e-10f;
+    #pragma omp parallel for simd schedule(static)
     for (int i = 0; i < HW; ++i) {
-        float h1 = (alpha[i] + EPS) / lambda_;
-        float h2 = (std::abs(m - 1.0f) < 1e-10f) ? h1 : std::pow(h1, m);
+        float h1 = (alphaPtr[i] + EPS) / lambda_;
+        float h2 = usePow ? std::pow(h1, m) : h1;
         float h3 = std::exp(-CM / h2);
-        c2[i] = GAMMA + (1.0f - GAMMA) * h3;
+        c2Ptr[i] = GAMMA + (1.0f - GAMMA) * h3;
     }
 }
 
 static inline void invert_c2_mechanics(std::vector<float>& c2) {
     // Map c2 in [GAMMA,1] to inverted preference: high where original was low, and vice versa.
     // c2_inv = 1 - c2 + GAMMA, clamped to [GAMMA,1].
-    #pragma omp parallel for schedule(static)
-    for (int i = 0; i < static_cast<int>(c2.size()); ++i) {
-        float v = 1.0f - c2[i] + GAMMA;
-        if (v < GAMMA) v = GAMMA;
-        if (v > 1.0f) v = 1.0f;
-        c2[i] = v;
+    float* __restrict__ c2Ptr = c2.data();
+    const int n = static_cast<int>(c2.size());
+    #pragma omp parallel for simd schedule(static)
+    for (int i = 0; i < n; ++i) {
+        float v = 1.0f - c2Ptr[i] + GAMMA;
+        v = std::max(GAMMA, std::min(1.0f, v));
+        c2Ptr[i] = v;
     }
 }
 
@@ -164,12 +189,20 @@ static void compute_diffusion_tensor(const std::vector<float>& s11, const std::v
                                      int HW,
                                      std::vector<float>& d11, std::vector<float>& d12, std::vector<float>& d22) {
     d11.resize(HW); d12.resize(HW); d22.resize(HW);
-    #pragma omp parallel for schedule(static)
+    const float* __restrict__ s11Ptr = s11.data();
+    const float* __restrict__ s12Ptr = s12.data();
+    const float* __restrict__ s22Ptr = s22.data();
+    const float* __restrict__ alphaPtr = alpha.data();
+    const float* __restrict__ c2Ptr = c2.data();
+    float* __restrict__ d11Ptr = d11.data();
+    float* __restrict__ d12Ptr = d12.data();
+    float* __restrict__ d22Ptr = d22.data();
+    #pragma omp parallel for simd schedule(static)
     for (int i = 0; i < HW; ++i) {
-        float dd = (c2[i] - GAMMA) * (s11[i] - s22[i]) / (alpha[i] + EPS);
-        d11[i] = 0.5f * (GAMMA + c2[i] + dd);
-        d12[i] = (GAMMA - c2[i]) * s12[i] / (alpha[i] + EPS);
-        d22[i] = 0.5f * (GAMMA + c2[i] - dd);
+        float dd = (c2Ptr[i] - GAMMA) * (s11Ptr[i] - s22Ptr[i]) / (alphaPtr[i] + EPS);
+        d11Ptr[i] = 0.5f * (GAMMA + c2Ptr[i] + dd);
+        d12Ptr[i] = (GAMMA - c2Ptr[i]) * s12Ptr[i] / (alphaPtr[i] + EPS);
+        d22Ptr[i] = 0.5f * (GAMMA + c2Ptr[i] - dd);
     }
 }
 

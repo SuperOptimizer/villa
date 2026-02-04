@@ -1,5 +1,8 @@
 #pragma once
 
+#include <opencv2/core.hpp>
+#include <opencv2/core/matx.hpp>
+#include <opencv2/core/matx.inl.hpp>
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -8,13 +11,11 @@
 #include <unordered_set>
 #include <vector>
 
-#include <opencv2/core.hpp>
-
 class QuadSurface;
 class PlaneSurface;
 struct Rect3D;
 
-class SurfacePatchIndex {
+class SurfacePatchIndex final {
 public:
     using SurfacePtr = std::shared_ptr<QuadSurface>;
 
@@ -50,7 +51,7 @@ public:
 
     void rebuild(const std::vector<SurfacePtr>& surfaces, float bboxPadding = 0.0f);
     void clear();
-    bool empty() const;
+    [[nodiscard]] bool empty() const;
 
     std::optional<LookupResult> locate(const cv::Vec3f& worldPoint,
                                        float tolerance,
@@ -112,5 +113,6 @@ private:
                              const std::function<void(const TriangleCandidate&)>& visitor) const;
 
     struct Impl;
+
     std::unique_ptr<Impl> impl_;
 };

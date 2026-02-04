@@ -1,14 +1,21 @@
 #pragma once
 
+#include <opencv2/core.hpp>
+#include <stddef.h>
+#include <opencv2/core/matx.hpp>
+#include <opencv2/core/matx.inl.hpp>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <tuple>
 #include <vector>
+#include <limits>
 
-#include <opencv2/core.hpp>
+namespace cv {
+template <typename _Tp> class Mat_;
+}  // namespace cv
 
-class PointIndex
+class PointIndex final
 {
 public:
     struct QueryResult {
@@ -28,8 +35,8 @@ public:
     PointIndex& operator=(const PointIndex&) = delete;
 
     void clear();
-    bool empty() const;
-    size_t size() const;
+    [[nodiscard]] bool empty() const;
+    [[nodiscard]] size_t size() const;
 
     void insert(uint64_t id, uint64_t collectionId, const cv::Vec3f& position);
     void bulkInsert(const std::vector<std::tuple<uint64_t, uint64_t, cv::Vec3f>>& points);
@@ -57,5 +64,6 @@ public:
 
 private:
     struct Impl;
+
     std::unique_ptr<Impl> impl_;
 };

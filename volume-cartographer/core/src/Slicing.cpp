@@ -1,5 +1,6 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Compositing.hpp"
+#include "vc/core/util/Interpolation.hpp"
 
 #include <xtensor/containers/xarray.hpp>
 #include <xtensor/containers/xtensor.hpp>
@@ -543,6 +544,40 @@ void readInterpolated3D(cv::Mat_<uint16_t>& out, z5::Dataset* ds,
     readInterpolated3DImpl(out, ds, coords, cache, nearest_neighbor);
 }
 
+// InterpolationMethod overloads
+void readInterpolated3D(cv::Mat_<uint8_t>& out, z5::Dataset* ds,
+                        const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint8_t>* cache, InterpolationMethod method) {
+    switch (method) {
+        case InterpolationMethod::Nearest:
+            readInterpolated3DImpl(out, ds, coords, cache, /*nearest_neighbor=*/true);
+            break;
+        case InterpolationMethod::Lanczos:
+            vc::readInterpolated3DLanczos(out, ds, coords, *cache);
+            break;
+        case InterpolationMethod::Trilinear:
+        case InterpolationMethod::Tricubic:  // Tricubic falls back to trilinear for now
+        default:
+            readInterpolated3DImpl(out, ds, coords, cache, /*nearest_neighbor=*/false);
+            break;
+    }
+}
+
+void readInterpolated3D(cv::Mat_<uint16_t>& out, z5::Dataset* ds,
+                        const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint16_t>* cache, InterpolationMethod method) {
+    switch (method) {
+        case InterpolationMethod::Nearest:
+            readInterpolated3DImpl(out, ds, coords, cache, /*nearest_neighbor=*/true);
+            break;
+        case InterpolationMethod::Lanczos:
+            vc::readInterpolated3DLanczos(out, ds, coords, *cache);
+            break;
+        case InterpolationMethod::Trilinear:
+        case InterpolationMethod::Tricubic:  // Tricubic falls back to trilinear for now
+        default:
+            readInterpolated3DImpl(out, ds, coords, cache, /*nearest_neighbor=*/false);
+            break;
+    }
+}
 
 void readCompositeFast(
     cv::Mat_<uint8_t>& out,
