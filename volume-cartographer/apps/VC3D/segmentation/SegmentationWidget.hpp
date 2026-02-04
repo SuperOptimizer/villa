@@ -130,6 +130,20 @@ public:
     void setApprovalMaskOpacity(int opacity);
     void setApprovalBrushColor(const QColor& color);
 
+    // Auto-approval getters
+    [[nodiscard]] bool autoApprovalEnabled() const { return _autoApprovalEnabled; }
+    [[nodiscard]] float autoApprovalRadius() const { return _autoApprovalRadius; }
+    [[nodiscard]] float autoApprovalThreshold() const { return _autoApprovalThreshold; }
+    [[nodiscard]] float autoApprovalMaxDistance() const { return _autoApprovalMaxDistance; }
+    [[nodiscard]] bool autoApprovalUseGenerations() const { return _autoApprovalUseGenerations; }
+
+    // Auto-approval setters
+    void setAutoApprovalEnabled(bool enabled);
+    void setAutoApprovalRadius(float radius);
+    void setAutoApprovalThreshold(float threshold);
+    void setAutoApprovalMaxDistance(float distance);
+    void setAutoApprovalUseGenerations(bool enabled);
+
     // Neural tracer setters
     void setNeuralTracerEnabled(bool enabled);
     void setNeuralCheckpointPath(const QString& path);
@@ -188,6 +202,13 @@ signals:
     void approvalMaskOpacityChanged(int opacity);
     void approvalBrushColorChanged(QColor color);
     void approvalStrokesUndoRequested();
+
+    // Auto-approval signals
+    void autoApprovalEnabledChanged(bool enabled);
+    void autoApprovalRadiusChanged(float radius);
+    void autoApprovalThresholdChanged(float threshold);
+    void autoApprovalMaxDistanceChanged(float distance);
+    void autoApprovalUseGenerationsChanged(bool enabled);
 
     // Neural tracer signals
     void neuralTracerEnabledChanged(bool enabled);
@@ -399,6 +420,13 @@ private:
     float _approvalBrushDepth{15.0f};      // Cylinder depth (rect height in flattened view)
     int _approvalMaskOpacity{50};          // Mask overlay opacity (0-100, default 50%)
     QColor _approvalBrushColor{0, 255, 0}; // RGB color for approval painting (default pure green)
+
+    // Auto-approval settings
+    bool _autoApprovalEnabled{true};           // Enable auto-approval when editing surfaces
+    float _autoApprovalRadius{1.0f};           // Paint radius for auto-approval (0.5-50)
+    float _autoApprovalThreshold{0.0f};        // Min change threshold in voxels (0=disabled, 0-10)
+    float _autoApprovalMaxDistance{0.0f};      // Max distance from drag center (0=disabled, 0-500 grid steps)
+    bool _autoApprovalUseGenerations{true};    // Use generations channel for growth auto-approval
     CollapsibleSettingsGroup* _groupApprovalMask{nullptr};
     QCheckBox* _chkShowApprovalMask{nullptr};
     QCheckBox* _chkEditApprovedMask{nullptr};
@@ -409,6 +437,13 @@ private:
     QLabel* _lblApprovalMaskOpacity{nullptr};
     QPushButton* _btnApprovalColor{nullptr};
     QPushButton* _btnUndoApprovalStroke{nullptr};
+
+    // Auto-approval UI widgets
+    QCheckBox* _chkAutoApprovalEnabled{nullptr};
+    QDoubleSpinBox* _spinAutoApprovalRadius{nullptr};
+    QDoubleSpinBox* _spinAutoApprovalThreshold{nullptr};
+    QDoubleSpinBox* _spinAutoApprovalMaxDistance{nullptr};
+    QCheckBox* _chkAutoApprovalUseGenerations{nullptr};
 
     // Neural tracer state
     bool _neuralTracerEnabled{false};

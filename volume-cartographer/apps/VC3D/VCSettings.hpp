@@ -245,6 +245,13 @@ namespace segmentation {
     constexpr auto APPROVAL_BRUSH_COLOR = "approval_brush_color";
     constexpr auto SHOW_APPROVAL_MASK = "show_approval_mask";
 
+    // Auto-approval settings
+    constexpr auto AUTO_APPROVAL_ENABLED = "auto_approval_enabled";
+    constexpr auto AUTO_APPROVAL_RADIUS = "auto_approval_radius";
+    constexpr auto AUTO_APPROVAL_THRESHOLD = "auto_approval_threshold";
+    constexpr auto AUTO_APPROVAL_MAX_DISTANCE = "auto_approval_max_distance";
+    constexpr auto AUTO_APPROVAL_USE_GENERATIONS = "auto_approval_use_generations";
+
     constexpr bool CORRECTIONS_ENABLED_DEFAULT = false;
     constexpr bool CORRECTIONS_Z_RANGE_ENABLED_DEFAULT = false;
     constexpr int CORRECTIONS_Z_MIN_DEFAULT = 0;

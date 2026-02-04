@@ -93,6 +93,19 @@ public:
     void setApprovalMaskBrushRadius(float radiusSteps);
     void setApprovalBrushDepth(float depth);
     void setApprovalBrushColor(const QColor& color);
+
+    // Auto-approval settings
+    void setAutoApprovalEnabled(bool enabled);
+    void setAutoApprovalRadius(float radius);
+    void setAutoApprovalThreshold(float threshold);
+    void setAutoApprovalMaxDistance(float distance);
+    void setAutoApprovalUseGenerations(bool enabled);
+    [[nodiscard]] bool autoApprovalEnabled() const { return _autoApprovalEnabled; }
+    [[nodiscard]] float autoApprovalRadius() const { return _autoApprovalRadius; }
+    [[nodiscard]] float autoApprovalThreshold() const { return _autoApprovalThreshold; }
+    [[nodiscard]] float autoApprovalMaxDistance() const { return _autoApprovalMaxDistance; }
+    [[nodiscard]] bool autoApprovalUseGenerations() const { return _autoApprovalUseGenerations; }
+
     [[nodiscard]] SegmentationOverlayController* overlay() const { return _overlay; }
     [[nodiscard]] ViewerManager* viewerManager() const { return _viewerManager; }
     [[nodiscard]] float approvalMaskBrushRadius() const { return _approvalMaskBrushRadius; }
@@ -310,6 +323,14 @@ private:
     void updateAutosaveState();
     void saveApprovalMaskToDisk();
 
+    // Auto-approval helpers
+    std::vector<std::pair<int, int>> filterVerticesForAutoApproval(
+        const std::vector<SegmentationEditManager::VertexEdit>& edits,
+        const std::optional<std::pair<int, int>>& dragCenter) const;
+    std::vector<std::pair<int, int>> findChangedVerticesFromGenerations(
+        QuadSurface* surface, uint16_t baseGeneration, const cv::Rect& bounds) const;
+    void performAutoApproval(const std::vector<std::pair<int, int>>& vertices);
+
     SegmentationWidget* _widget{nullptr};
     SegmentationEditManager* _editManager{nullptr};
     SegmentationOverlayController* _overlay{nullptr};
@@ -359,6 +380,14 @@ private:
     float _approvalMaskBrushRadius{50.0f};  // Cylinder radius
     float _approvalBrushDepth{15.0f};       // Cylinder depth
     QColor _approvalBrushColor{0, 255, 0};  // RGB color for approval painting
+
+    // Auto-approval settings
+    bool _autoApprovalEnabled{true};
+    float _autoApprovalRadius{1.0f};
+    float _autoApprovalThreshold{0.0f};
+    float _autoApprovalMaxDistance{0.0f};
+    bool _autoApprovalUseGenerations{true};
+    uint16_t _preGrowthMaxGeneration{0};  // Captured before growth starts
 
     segmentation::UndoHistory _undoHistory;
     bool _suppressUndoCapture{false};

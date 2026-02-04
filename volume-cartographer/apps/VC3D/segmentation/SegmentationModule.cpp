@@ -347,6 +347,19 @@ void SegmentationModule::bindWidgetSignals()
             _overlay, &SegmentationOverlayController::setApprovalMaskOpacity);
     connect(_widget, &SegmentationWidget::approvalStrokesUndoRequested,
             this, &SegmentationModule::undoApprovalStroke);
+
+    // Auto-approval settings connections
+    connect(_widget, &SegmentationWidget::autoApprovalEnabledChanged,
+            this, &SegmentationModule::setAutoApprovalEnabled);
+    connect(_widget, &SegmentationWidget::autoApprovalRadiusChanged,
+            this, &SegmentationModule::setAutoApprovalRadius);
+    connect(_widget, &SegmentationWidget::autoApprovalThresholdChanged,
+            this, &SegmentationModule::setAutoApprovalThreshold);
+    connect(_widget, &SegmentationWidget::autoApprovalMaxDistanceChanged,
+            this, &SegmentationModule::setAutoApprovalMaxDistance);
+    connect(_widget, &SegmentationWidget::autoApprovalUseGenerationsChanged,
+            this, &SegmentationModule::setAutoApprovalUseGenerations);
+
     connect(_widget, &SegmentationWidget::cellReoptModeChanged,
             this, &SegmentationModule::setCellReoptimizationMode);
     connect(_widget, &SegmentationWidget::cellReoptMaxStepsChanged,
@@ -743,6 +756,130 @@ void SegmentationModule::setApprovalBrushColor(const QColor& color)
     }
 }
 
+void SegmentationModule::setAutoApprovalEnabled(bool enabled)
+{
+    _autoApprovalEnabled = enabled;
+}
+
+void SegmentationModule::setAutoApprovalRadius(float radius)
+{
+    _autoApprovalRadius = std::clamp(radius, 0.5f, 50.0f);
+}
+
+void SegmentationModule::setAutoApprovalThreshold(float threshold)
+{
+    _autoApprovalThreshold = std::clamp(threshold, 0.0f, 10.0f);
+}
+
+void SegmentationModule::setAutoApprovalMaxDistance(float distance)
+{
+    _autoApprovalMaxDistance = std::clamp(distance, 0.0f, 500.0f);
+}
+
+void SegmentationModule::setAutoApprovalUseGenerations(bool enabled)
+{
+    _autoApprovalUseGenerations = enabled;
+}
+
+std::vector<std::pair<int, int>> SegmentationModule::filterVerticesForAutoApproval(
+    const std::vector<SegmentationEditManager::VertexEdit>& edits,
+    const std::optional<std::pair<int, int>>& dragCenter) const
+{
+    std::vector<std::pair<int, int>> result;
+    result.reserve(edits.size());
+
+    for (const auto& edit : edits) {
+        // Check threshold: skip if movement is below minimum
+        if (_autoApprovalThreshold > 0.0f) {
+            const cv::Vec3f delta = edit.currentWorld - edit.originalWorld;
+            const float distance = cv::norm(delta);
+            if (distance < _autoApprovalThreshold) {
+                continue;
+            }
+        }
+
+        // Check max distance from drag center: skip if too far
+        if (_autoApprovalMaxDistance > 0.0f && dragCenter.has_value()) {
+            const int dr = edit.row - dragCenter->first;
+            const int dc = edit.col - dragCenter->second;
+            const float gridDist = std::sqrt(static_cast<float>(dr * dr + dc * dc));
+            if (gridDist > _autoApprovalMaxDistance) {
+                continue;
+            }
+        }
+
+        result.emplace_back(edit.row, edit.col);
+    }
+
+    return result;
+}
+
+std::vector<std::pair<int, int>> SegmentationModule::findChangedVerticesFromGenerations(
+    QuadSurface* surface, uint16_t baseGeneration, const cv::Rect& bounds) const
+{
+    std::vector<std::pair<int, int>> result;
+    if (!surface) {
+        return result;
+    }
+
+    // Try to get the generations channel
+    auto genIt = surface->channels.find("generations");
+    if (genIt == surface->channels.end()) {
+        qCInfo(lcSegModule) << "No generations channel found, falling back to full rect";
+        // Fall back to full rect
+        result.reserve(static_cast<size_t>(bounds.area()));
+        for (int row = bounds.y; row < bounds.y + bounds.height; ++row) {
+            for (int col = bounds.x; col < bounds.x + bounds.width; ++col) {
+                result.emplace_back(row, col);
+            }
+        }
+        return result;
+    }
+
+    const cv::Mat& generations = genIt->second;
+    if (generations.type() != CV_16UC1) {
+        qCWarning(lcSegModule) << "Generations channel has unexpected type:" << generations.type();
+        // Fall back to full rect
+        result.reserve(static_cast<size_t>(bounds.area()));
+        for (int row = bounds.y; row < bounds.y + bounds.height; ++row) {
+            for (int col = bounds.x; col < bounds.x + bounds.width; ++col) {
+                result.emplace_back(row, col);
+            }
+        }
+        return result;
+    }
+
+    // Collect vertices where generation > baseGeneration
+    for (int row = bounds.y; row < bounds.y + bounds.height; ++row) {
+        if (row < 0 || row >= generations.rows) continue;
+        for (int col = bounds.x; col < bounds.x + bounds.width; ++col) {
+            if (col < 0 || col >= generations.cols) continue;
+            const uint16_t gen = generations.at<uint16_t>(row, col);
+            if (gen > baseGeneration) {
+                result.emplace_back(row, col);
+            }
+        }
+    }
+
+    qCInfo(lcSegModule) << "Found" << result.size() << "changed vertices from generations"
+                        << "(base generation:" << baseGeneration << ")";
+    return result;
+}
+
+void SegmentationModule::performAutoApproval(const std::vector<std::pair<int, int>>& vertices)
+{
+    if (vertices.empty() || !_overlay || !_overlay->hasApprovalMaskData()) {
+        return;
+    }
+
+    constexpr uint8_t kApproved = 255;
+    constexpr bool kIsAutoApproval = true;
+    const QColor brushColor = approvalBrushColor();
+    _overlay->paintApprovalMaskDirect(vertices, _autoApprovalRadius, kApproved, brushColor, false, 0.0f, 0.0f, kIsAutoApproval);
+    _overlay->scheduleDebouncedSave(_editManager->baseSurface().get());
+    qCInfo(lcSegModule) << "Auto-approved" << vertices.size() << "vertices with radius" << _autoApprovalRadius;
+}
+
 void SegmentationModule::undoApprovalStroke()
 {
     qCInfo(lcSegModule) << "Undoing last approval stroke...";
@@ -828,22 +965,12 @@ void SegmentationModule::applyEdits()
     }
 
     // Auto-approve edited regions if approval mask is active (you edited it, so it's reviewed)
-    if (_overlay && _overlay->hasApprovalMaskData() && hadPendingChanges) {
+    if (_autoApprovalEnabled && _overlay && _overlay->hasApprovalMaskData() && hadPendingChanges) {
         const auto editedVerts = _editManager->editedVertices();
         if (!editedVerts.empty()) {
-            std::vector<std::pair<int, int>> gridPositions;
-            gridPositions.reserve(editedVerts.size());
-            for (const auto& edit : editedVerts) {
-                gridPositions.emplace_back(edit.row, edit.col);
-            }
-            // Paint with value 255 (approved), radius 1 to mark just the edited vertices
-            constexpr uint8_t kApproved = 255;
-            constexpr float kRadius = 1.0f;
-            constexpr bool kIsAutoApproval = true;
-            const QColor brushColor = approvalBrushColor();
-            _overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved, brushColor, false, 0.0f, 0.0f, kIsAutoApproval);
-            _overlay->scheduleDebouncedSave(_editManager->baseSurface().get());
-            qCInfo(lcSegModule) << "Auto-approved" << gridPositions.size() << "edited vertices";
+            // No drag center for applyEdits - use nullopt
+            const auto filteredVerts = filterVerticesForAutoApproval(editedVerts, std::nullopt);
+            performAutoApproval(filteredVerts);
         }
     }
 
@@ -1349,6 +1476,22 @@ void SegmentationModule::handleGrowSurfaceRequested(SegmentationGrowthMethod met
             _growthSteps = std::max(1, steps);
         }
     }
+
+    // Capture max generation before growth for generations-based auto-approval
+    _preGrowthMaxGeneration = 0;
+    if (_autoApprovalUseGenerations && _editManager) {
+        auto* baseSurf = _editManager->baseSurface().get();
+        if (baseSurf) {
+            auto genIt = baseSurf->channels.find("generations");
+            if (genIt != baseSurf->channels.end() && genIt->second.type() == CV_16UC1) {
+                double minVal = 0, maxVal = 0;
+                cv::minMaxLoc(genIt->second, &minVal, &maxVal);
+                _preGrowthMaxGeneration = static_cast<uint16_t>(maxVal);
+                qCInfo(lcSegModule) << "Captured pre-growth max generation:" << _preGrowthMaxGeneration;
+            }
+        }
+    }
+
     markNextEditsFromGrowth();
     emit growSurfaceRequested(method, direction, sanitizedSteps, inpaintOnly);
 }
@@ -1444,21 +1587,17 @@ void SegmentationModule::finishDrag()
         captureUndoDelta();
 
         // Auto-approve edited regions before applyPreview() clears them
-        if (_overlay && _overlay->hasApprovalMaskData()) {
+        if (_autoApprovalEnabled && _overlay && _overlay->hasApprovalMaskData()) {
             const auto editedVerts = _editManager->editedVertices();
             if (!editedVerts.empty()) {
-                std::vector<std::pair<int, int>> gridPositions;
-                gridPositions.reserve(editedVerts.size());
-                for (const auto& edit : editedVerts) {
-                    gridPositions.emplace_back(edit.row, edit.col);
+                // Get drag center from the active drag state
+                const auto& activeDrag = _editManager->activeDrag();
+                std::optional<std::pair<int, int>> dragCenter;
+                if (activeDrag.center.first >= 0 && activeDrag.center.second >= 0) {
+                    dragCenter = std::make_pair(activeDrag.center.first, activeDrag.center.second);
                 }
-                constexpr uint8_t kApproved = 255;
-                constexpr float kRadius = 1.0f;
-                constexpr bool kIsAutoApproval = true;
-                const QColor brushColor = approvalBrushColor();
-                _overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved, brushColor, false, 0.0f, 0.0f, kIsAutoApproval);
-                _overlay->scheduleDebouncedSave(_editManager->baseSurface().get());
-                qCInfo(lcSegModule) << "Auto-approved" << gridPositions.size() << "drag edited vertices";
+                const auto filteredVerts = filterVerticesForAutoApproval(editedVerts, dragCenter);
+                performAutoApproval(filteredVerts);
             }
         }
 

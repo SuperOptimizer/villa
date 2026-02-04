@@ -359,24 +359,33 @@ bool SegmentationModule::applySurfaceUpdateFromGrowth(const cv::Rect& vertexRect
     // Skip auto-approval for cell reoptimization - user hasn't reviewed results yet
     const bool skipAutoApproval = _skipAutoApprovalOnGrowth;
     _skipAutoApprovalOnGrowth = false;  // Clear flag regardless
-    if (!skipAutoApproval && _overlay && _overlay->hasApprovalMaskData() && vertexRect.area() > 0) {
+    if (!skipAutoApproval && _autoApprovalEnabled && _overlay && _overlay->hasApprovalMaskData() && vertexRect.area() > 0) {
         std::vector<std::pair<int, int>> gridPositions;
-        gridPositions.reserve(static_cast<size_t>(vertexRect.area()));
-        for (int row = vertexRect.y; row < vertexRect.y + vertexRect.height; ++row) {
-            for (int col = vertexRect.x; col < vertexRect.x + vertexRect.width; ++col) {
-                gridPositions.emplace_back(row, col);
+
+        // Use generations-based detection if enabled
+        if (_autoApprovalUseGenerations && _preGrowthMaxGeneration > 0) {
+            gridPositions = findChangedVerticesFromGenerations(baseSurf, _preGrowthMaxGeneration, vertexRect);
+        } else {
+            // Fall back to full rect
+            gridPositions.reserve(static_cast<size_t>(vertexRect.area()));
+            for (int row = vertexRect.y; row < vertexRect.y + vertexRect.height; ++row) {
+                for (int col = vertexRect.x; col < vertexRect.x + vertexRect.width; ++col) {
+                    gridPositions.emplace_back(row, col);
+                }
             }
         }
-        constexpr uint8_t kApproved = 255;
-        constexpr float kRadius = 1.0f;
-        constexpr bool kIsAutoApproval = true;
-        const QColor brushColor = approvalBrushColor();
-        _overlay->paintApprovalMaskDirect(gridPositions, kRadius, kApproved, brushColor, false, 0.0f, 0.0f, kIsAutoApproval);
-        // Save immediately to persist the auto-approval
-        _overlay->saveApprovalMaskToSurface(baseSurf);
-        _overlay->clearApprovalMaskUndoHistory();
-        qCInfo(lcSegModule) << "Auto-approved growth region:" << vertexRect.width << "x" << vertexRect.height;
+
+        if (!gridPositions.empty()) {
+            performAutoApproval(gridPositions);
+            // Save immediately to persist the auto-approval
+            _overlay->saveApprovalMaskToSurface(baseSurf);
+            _overlay->clearApprovalMaskUndoHistory();
+            qCInfo(lcSegModule) << "Auto-approved growth region:" << gridPositions.size() << "vertices"
+                                << "(rect:" << vertexRect.width << "x" << vertexRect.height << ")";
+        }
     }
+    // Reset pre-growth generation
+    _preGrowthMaxGeneration = 0;
 
     // Update approval tool surface if editing approval mask
     if (isEditingApprovalMask() && _approvalTool) {
