@@ -355,7 +355,7 @@ public:
             return;
         }
 
-        mmapped_data_->data = mmap(NULL, mmapped_data_->size, PROT_READ, MAP_PRIVATE, fd, 0);
+        mmapped_data_->data = mmap(nullptr, mmapped_data_->size, PROT_READ, MAP_PRIVATE, fd, 0);
         close(fd);  // Close immediately after mmap - mapping remains valid on Linux
         if (mmapped_data_->data == MAP_FAILED) {
             throw std::runtime_error("Failed to mmap file: " + path);

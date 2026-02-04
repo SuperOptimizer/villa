@@ -461,7 +461,7 @@ static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out
 
     CacheParams<T> p(ds);
 
-    cv::Vec3i size = {(int)out.shape()[0], (int)out.shape()[1], (int)out.shape()[2]};
+    cv::Vec3i size = {static_cast<int>(out.shape()[0]), static_cast<int>(out.shape()[1]), static_cast<int>(out.shape()[2])};
     cv::Vec3i to = offset + size;
 
     // Step 1: List all required chunks

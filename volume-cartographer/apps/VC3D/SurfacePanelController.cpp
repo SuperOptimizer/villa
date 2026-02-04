@@ -14,6 +14,8 @@
 #include "vc/core/util/LoadJson.hpp"
 #include "vc/ui/VCCollection.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QLineEdit>

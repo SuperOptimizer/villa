@@ -487,7 +487,7 @@ void CPointCollectionWidget::onColorButtonClicked()
     QColor color = QColorDialog::getColor(initial_color, this, "Select Collection Color");
 
     if (color.isValid()) {
-        _point_collection->setCollectionColor(_selected_collection_id, { (float)color.redF(), (float)color.greenF(), (float)color.blueF() });
+        _point_collection->setCollectionColor(_selected_collection_id, { static_cast<float>(color.redF()), static_cast<float>(color.greenF()), static_cast<float>(color.blueF()) });
     }
 }
 

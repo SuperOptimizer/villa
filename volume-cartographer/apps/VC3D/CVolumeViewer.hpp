@@ -17,7 +17,9 @@
 #include <vector>
 #include <optional>
 
-#include <opencv2/core.hpp>  // For cv::Rect, cv::Size, cv::Mat_
+#include <opencv2/core/mat.hpp>
+#include <opencv2/core/matx.hpp>
+#include <opencv2/core/types.hpp>
 
 #include "overlays/ViewerOverlayControllerBase.hpp"
 #include "SurfaceTypes.hpp"  // POI, IntersectionLine (lightweight, no Qt)
@@ -56,7 +58,7 @@ public:
     cv::Mat render_area(const cv::Rect &roi);
     cv::Mat_<uint8_t> render_composite(const cv::Rect &roi);
     cv::Mat_<uint8_t> render_composite_plane(const cv::Rect &roi, const cv::Mat_<cv::Vec3f> &coords, const cv::Vec3f &planeNormal);
-    cv::Mat_<uint8_t> renderCompositeForSurface(std::shared_ptr<QuadSurface> surface, cv::Size outputSize);
+    cv::Mat_<uint8_t> renderCompositeForSurface(const std::shared_ptr<QuadSurface>& surface, cv::Size outputSize);
     void invalidateVis();
     void invalidateIntersect(const std::string &name = "");
     
@@ -246,8 +248,8 @@ public slots:
     void onPanRelease(Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void onPanStart(Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void onCollectionSelected(uint64_t collectionId);
-    void onSurfaceChanged(std::string name, std::shared_ptr<Surface> surf, bool isEditUpdate = false);
-    void onPOIChanged(std::string name, POI *poi);
+    void onSurfaceChanged(const std::string& name, const std::shared_ptr<Surface>& surf, bool isEditUpdate = false);
+    void onPOIChanged(const std::string& name, POI *poi);
     void onScrolled();
     void onResized();
     void onZoom(int steps, QPointF scene_point, Qt::KeyboardModifiers modifiers);
@@ -261,7 +263,7 @@ public slots:
     void onMouseMove(QPointF scene_loc, Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers);
     void onMouseRelease(QPointF scene_loc, Qt::MouseButton button, Qt::KeyboardModifiers modifiers);
     void onVolumeClosing(); // Clear surface pointers when volume is closing
-    void onSurfaceWillBeDeleted(std::string name, std::shared_ptr<Surface> surf); // Clear references before surface deletion
+    void onSurfaceWillBeDeleted(const std::string& name, const std::shared_ptr<Surface>& surf); // Clear references before surface deletion
     void onKeyRelease(int key, Qt::KeyboardModifiers modifiers);
     void onDrawingModeActive(bool active, float brushSize = 3.0f, bool isSquare = false);
 

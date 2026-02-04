@@ -51,9 +51,9 @@ void visualize_sheet_distance_constraints(
     }
 
     if (cv::imwrite(vis_path.string(), viz)) {
-        std::cout << "Saved sheet constraint visualization to " << vis_path << std::endl;
+        std::cout << "Saved sheet constraint visualization to " << vis_path << '\n';
     } else {
-        std::cerr << "Error: Failed to write sheet constraint visualization to " << vis_path << std::endl;
+        std::cerr << "Error: Failed to write sheet constraint visualization to " << vis_path << '\n';
     }
 }
 
@@ -70,7 +70,7 @@ int continous_main(
     const cv::Mat& mask,
     const po::variables_map& vm
 ) {
-    std::cout << "OpenMP max threads: " << omp_get_max_threads() << std::endl;
+    std::cout << "OpenMP max threads: " << omp_get_max_threads() << '\n';
     cv::Mat winding(slice_mat.size(), CV_32F, cv::Scalar(std::numeric_limits<float>::quiet_NaN()));
     if (!mask.empty()) {
         for (int y = 0; y < slice_mat.rows; ++y) {
@@ -116,7 +116,7 @@ int continous_main(
 
     size_t head = 0;
     auto last_report_time = std::chrono::high_resolution_clock::now();
-    std::cout << "Starting wavefront propagation..." << std::endl;
+    std::cout << "Starting wavefront propagation..." << '\n';
 
     while(head < active_pixels.size()) {
         cv::Point p = active_pixels[head++];
@@ -202,12 +202,12 @@ int continous_main(
 
     auto end_wavefront = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> wavefront_time = end_wavefront - start_diffusion;
-    std::cout << "Wavefront propagation finished after " << wavefront_time.count() << " s." << std::endl;
+    std::cout << "Wavefront propagation finished after " << wavefront_time.count() << " s." << '\n';
 
     float damping_factor = vm["dampening"].as<float>();
 
     if (iterations > 0) {
-        std::cout << "Starting iterative diffusion for " << iterations << " iterations with damping factor " << damping_factor << "..." << std::endl;
+        std::cout << "Starting iterative diffusion for " << iterations << " iterations with damping factor " << damping_factor << "..." << '\n';
         auto start_iterative = std::chrono::high_resolution_clock::now();
 
         cv::Mat winding_prev;
@@ -286,17 +286,17 @@ int continous_main(
                     }
                 }
             }
-            std::cout << "  Iteration " << i + 1 << "/" << iterations << " complete.                                  " << std::endl;
+            std::cout << "  Iteration " << i + 1 << "/" << iterations << " complete.                                  " << '\n';
         }
 
         auto end_iterative = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> iterative_time = end_iterative - start_iterative;
-        std::cout << "Iterative diffusion finished after " << iterative_time.count() << " s." << std::endl;
+        std::cout << "Iterative diffusion finished after " << iterative_time.count() << " s." << '\n';
     }
 
     // Visualization
     cv::imwrite("wind_float.tif", winding);
-    std::cout << "Saved floating point winding data to wind_float.tif" << std::endl;
+    std::cout << "Saved floating point winding data to wind_float.tif" << '\n';
 
     cv::Mat viz;
     cv::Mat is_nan_mask(winding.size(), CV_8U);
@@ -310,9 +310,9 @@ int continous_main(
     cv::applyColorMap(viz, viz, cv::COLORMAP_JET);
 
     if (!cv::imwrite(output_path.string(), viz)) {
-        std::cerr << "Error: Failed to write output image to " << output_path << std::endl;
+        std::cerr << "Error: Failed to write output image to " << output_path << '\n';
     } else {
-        std::cout << "Saved visualization to " << output_path << std::endl;
+        std::cout << "Saved visualization to " << output_path << '\n';
     }
 
     cv::Mat spiral_viz(winding.size(), CV_8U, cv::Scalar(0));

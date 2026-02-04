@@ -109,7 +109,7 @@ IntersectVec getIntersects(const cv::Vec2i &seed, QuadSurface* surface)
         // std::cout << dist << res << loc << "\n";
 
         bool found = false;
-        for(auto l : locs) {
+        for(const auto& l : locs) {
             if (cv::norm(loc, l) <= 4) {
                 found = true;
                 break;
@@ -120,7 +120,7 @@ IntersectVec getIntersects(const cv::Vec2i &seed, QuadSurface* surface)
     }
 
     IntersectVec dist_locs;
-    for(auto l : locs)
+    for(const auto& l : locs)
         dist_locs.push_back({line_off(at_int(points,l),o,n), l});
     
     std::sort(dist_locs.begin(), dist_locs.end(), [](const auto& a, const auto& b) {return a.first < b.first; });

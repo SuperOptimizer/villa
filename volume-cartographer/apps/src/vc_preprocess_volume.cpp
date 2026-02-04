@@ -937,7 +937,9 @@ static int runPipeline(const Config& cfg) {
             if (j.contains("dimension_separator")) {
                 return j["dimension_separator"].get<std::string>();
             }
-        } catch (...) {}
+        } catch (...) {
+            // dimension_separator is optional; keep default '.'
+        }
         return ".";
     };
 
@@ -1515,7 +1517,9 @@ int main(int argc, char* argv[]) {
             if (j.contains("dimension_separator")) {
                 return j["dimension_separator"].get<std::string>();
             }
-        } catch (...) {}
+        } catch (...) {
+            // dimension_separator is optional; keep default '.'
+        }
         return ".";
     };
 

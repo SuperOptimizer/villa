@@ -43,7 +43,7 @@ int spiral2cont_main(
     const po::variables_map& vm
 ) {
     if (!vm.count("json-in") || !vm.count("collection-name") || !vm.count("start-winding") || !vm.count("end-winding")) {
-        std::cerr << "Error: For spiral2cont mode, --json-in, --collection-name, --start-winding, and --end-winding are required." << std::endl;
+        std::cerr << "Error: For spiral2cont mode, --json-in, --collection-name, --start-winding, and --end-winding are required." << '\n';
         return 1;
     }
 
@@ -67,7 +67,7 @@ int spiral2cont_main(
     }
 
     if (!collection_found) {
-        std::cerr << "Error: Collection '" << collection_name << "' not found in JSON file." << std::endl;
+        std::cerr << "Error: Collection '" << collection_name << "' not found in JSON file." << '\n';
         return 1;
     }
 
@@ -98,11 +98,11 @@ int spiral2cont_main(
     }
 
     if (target_spiral.empty()) {
-        std::cerr << "Error: Could not find the specified spiral wrap." << std::endl;
+        std::cerr << "Error: Could not find the specified spiral wrap." << '\n';
         return 1;
     }
     else
-        std::cout << "tgt spiral size: " << target_spiral.size() << std::endl;
+        std::cout << "tgt spiral size: " << target_spiral.size() << '\n';
 
     double spiral_step = vm["spiral-step"].as<double>();
     cv::Point umbilicus_p(
@@ -132,6 +132,6 @@ int spiral2cont_main(
     cv::addWeighted(slice_bgr, 0.5, final_vis, 0.5, 0.0, final_vis);
 
     cv::imwrite(output_path.string(), final_vis);
-    std::cout << "Saved optimized spiral to " << output_path << std::endl;
+    std::cout << "Saved optimized spiral to " << output_path << '\n';
     return 0;
 }

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <vector>
-#include <opencv2/core.hpp>
+#include <opencv2/core/mat.hpp>
+#include <opencv2/core/matx.hpp>
+#include <opencv2/core/types.hpp>
 #include <random>
 #include <memory>
 

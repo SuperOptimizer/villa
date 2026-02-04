@@ -1,6 +1,5 @@
 #pragma once
 
-#include <opencv2/core.hpp>
 #include <xtensor/containers/xtensor.hpp>
 #include <xtensor/containers/xadapt.hpp>
 #include <xtensor/views/xview.hpp>
@@ -12,7 +11,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <nlohmann/json.hpp>
 #include <opencv2/core/matx.hpp>
 #include <opencv2/core/matx.inl.hpp>
 #include <opencv2/core/saturate.hpp>
@@ -79,12 +77,11 @@ static uint64_t chunk_compute_total = 0;
 
 template <typename T, typename C> class Chunked3dAccessor;
 
-static std::string tmp_name_proc_thread()
-{
-    std::stringstream ss;
-    ss << "tmp_" << getpid() << "_" << std::this_thread::get_id();
-    return ss.str();
-}
+std::filesystem::path resolve_chunk_cache_dir(
+    const std::filesystem::path& cache_root,
+    const std::filesystem::path& root,
+    bool persistent,
+    const std::filesystem::path& ds_path);
 
 //chunked 3d tensor for on-demand computation from a zarr dataset ... could as some point be file backed ...
 template <typename T, typename C>
@@ -121,69 +118,8 @@ public:
         if (!_ds)
             _persistent = false;
         
-        //create cache dir while others are competing to do the same
-        for(int r=0;r<1000 && _cache_dir.empty();r++) {
-            std::set<std::string> paths;
-            if (_persistent) {
-                for (auto const& entry : std::filesystem::directory_iterator(root))
-                    if (std::filesystem::is_directory(entry) && std::filesystem::exists(entry.path()/"meta.json") && std::filesystem::is_regular_file(entry.path()/"meta.json")) {
-                        paths.insert(entry.path());
-                        try {
-                            std::ifstream meta_f(entry.path()/"meta.json");
-                            nlohmann::json meta = nlohmann::json::parse(meta_f);
-                            // Skip entries with invalid or non-existent dataset paths
-                            if (!meta.contains("dataset_source_path") || !meta["dataset_source_path"].is_string())
-                                continue;
-                            std::filesystem::path src_candidate(meta["dataset_source_path"].get<std::string>());
-                            if (!std::filesystem::exists(src_candidate))
-                                continue;
-                            if (!std::filesystem::exists(ds->path()))
-                                continue;
-                            std::filesystem::path src = std::filesystem::canonical(src_candidate);
-                            std::filesystem::path cur = std::filesystem::canonical(ds->path());
-                            if (src == cur) {
-                                _cache_dir = entry.path();
-                                break;
-                            }
-                        } catch (const std::exception&) {
-                            // Ignore malformed cache entries or paths we cannot canonicalize
-                            continue;
-                        }
-                    }
-                
-                if (!_cache_dir.empty())
-                    continue;
-            }
-            
-            //try generating our own cache dir atomically
-            std::filesystem::path tmp_dir = cache_root/tmp_name_proc_thread();
-            std::filesystem::create_directories(tmp_dir);
-            
-            if (_persistent) {
-                nlohmann::json meta;
-                meta["dataset_source_path"] = std::filesystem::canonical(ds->path()).string();
-                std::ofstream o(tmp_dir/"meta.json");
-                o << std::setw(4) << meta << std::endl;
-                
-                std::filesystem::path tgt_path;
-                for(int i=0;i<1000;i++) {
-                    tgt_path = root/std::to_string(i);
-                    if (paths.count(tgt_path.string()))
-                        continue;
-                    try {
-                        std::filesystem::rename(tmp_dir, tgt_path);
-                    }
-                    catch (std::filesystem::filesystem_error&){
-                        continue;
-                    }
-                    _cache_dir = tgt_path;
-                    break;
-                }
-            }
-            else {
-                _cache_dir = tmp_dir;
-            }
-        }
+        _cache_dir = resolve_chunk_cache_dir(cache_root, root, _persistent,
+                                              _ds ? _ds->path() : std::filesystem::path{});
         
         if (_cache_dir.empty())
             throw std::runtime_error("could not create cache dir - maybe too many caches in cache root (max 1000!)");

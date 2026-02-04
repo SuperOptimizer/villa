@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-#include "vc/core/util/QuadSurface.hpp"  // Needed for unique_ptr<QuadSurface>
+class QuadSurface;
 
 class SegmentationModule;
 class SegmentationWidget;
@@ -60,6 +60,7 @@ public:
     SegmentationGrower(Context context,
                        UiCallbacks callbacks,
                        QObject* parent = nullptr);
+    ~SegmentationGrower() override;
 
     void updateContext(Context context);
     void updateUiCallbacks(UiCallbacks callbacks);

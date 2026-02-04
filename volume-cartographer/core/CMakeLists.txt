@@ -9,6 +9,7 @@ add_library(vc_core
         src/Volume.cpp
         src/VolumePkg.cpp
         src/ChunkedTensor.cpp
+        src/LoadJson.cpp
         src/SurfacePatchIndex.cpp
         src/PointIndex.cpp
         src/Logging.cpp

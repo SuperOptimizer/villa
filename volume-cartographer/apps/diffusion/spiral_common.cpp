@@ -2,6 +2,24 @@
 #include "spiral_common.hpp"
 #include "spiral_ceres.hpp"
 
+#include <nlohmann/json.hpp>
+
+void to_json(nlohmann::json& j, const SpiralPoint& p) {
+    j = nlohmann::json{
+        {"pos", {p.pos[0], p.pos[1], p.pos[2]}},
+        {"winding", p.winding}
+    };
+}
+
+void from_json(const nlohmann::json& j, SpiralPoint& p) {
+    std::vector<double> pos_vec;
+    j.at("pos").get_to(pos_vec);
+    if (pos_vec.size() == 3) {
+        p.pos = cv::Vec3d(pos_vec[0], pos_vec[1], pos_vec[2]);
+    }
+    j.at("winding").get_to(p.winding);
+}
+
 void visualize_spiral(
     const std::vector<SpiralPoint>& all_points,
     const cv::Size& slice_size,
@@ -15,9 +33,9 @@ void visualize_spiral(
     visualize_spiral(viz, all_points, cv::Scalar(255, 255, 255), point_color, draw_winding_text);
 
     if (cv::imwrite(output_path.string(), viz)) {
-        std::cout << "Saved spiral visualization to " << output_path << std::endl;
+        std::cout << "Saved spiral visualization to " << output_path << '\n';
     } else {
-        std::cerr << "Error: Failed to write spiral visualization to " << output_path << std::endl;
+        std::cerr << "Error: Failed to write spiral visualization to " << output_path << '\n';
     }
 }
 
@@ -59,8 +77,8 @@ bool find_intersections(
             cv::Point2f vec_to_intersect(intersection_pt.x - ray_origin.x, intersection_pt.y - ray_origin.y);
             if (vec_to_intersect.dot(ray_dir) > 0) {
                 intersections.push_back({
-                    (int)i,
-                                        (int)i + 1,
+                    static_cast<int>(i),
+                                        static_cast<int>(i) + 1,
                                         t,
                                         intersection_pt,
                                         all_points[i].winding + t * (all_points[i+1].winding - all_points[i].winding)

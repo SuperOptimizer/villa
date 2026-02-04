@@ -118,8 +118,8 @@ public:
             // Check valid indices
             bool valid = true;
             for (int i = 0; i < 3; i++) {
-                if (face.v[i] < 0 || face.v[i] >= (int)vertices.size() ||
-                    face.vt[i] < 0 || face.vt[i] >= (int)uvs.size()) {
+                if (face.v[i] < 0 || face.v[i] >= static_cast<int>(vertices.size()) ||
+                    face.vt[i] < 0 || face.vt[i] >= static_cast<int>(uvs.size())) {
                     valid = false;
                     break;
                 }

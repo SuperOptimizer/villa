@@ -1021,7 +1021,9 @@ int main(int argc, char** argv) {
                     try {
                         json j = json::parse(std::ifstream((ds_path / ".zarray").string()));
                         if (j.contains("dimension_separator")) dimsep = j["dimension_separator"].get<std::string>();
-                    } catch (...) {}
+                    } catch (...) {
+                        // dimension_separator is optional; keep default
+                    }
                     z5::filesystem::handle::Group parent(ds_path.parent_path(), z5::FileMode::FileMode::r);
                     return z5::filesystem::handle::Dataset(parent, ds_path.filename().string(), dimsep);
                 } else {
@@ -1029,7 +1031,9 @@ int main(int argc, char** argv) {
                     try {
                         json j = json::parse(std::ifstream((in_root / std::to_string(group_idx) / ".zarray").string()));
                         if (j.contains("dimension_separator")) dimsep = j["dimension_separator"].get<std::string>();
-                    } catch (...) {}
+                    } catch (...) {
+                        // dimension_separator is optional; keep default
+                    }
                     return z5::filesystem::handle::Dataset(root, std::to_string(group_idx), dimsep);
                 }
             }();
@@ -1420,7 +1424,7 @@ int main(int argc, char** argv) {
                     if (img.empty() || img.channels() != 1 || img.dims != 2) {
                         int done = ++completed;
                         int rem = total - done;
-                        double pct = 100.0 * (double)done / (double)total;
+                        double pct = 100.0 * static_cast<double>(done) / static_cast<double>(total);
                         std::lock_guard<std::mutex> lock(g_print_mtx);
                         std::cout << std::fixed << std::setprecision(1)
                                   << "\rProgress: " << done << "/" << total << " (" << pct << "%), remaining " << rem << std::flush;
@@ -1444,7 +1448,7 @@ int main(int argc, char** argv) {
                     }
                     int done = ++completed;
                     int rem = total - done;
-                    double pct = 100.0 * (double)done / (double)total;
+                    double pct = 100.0 * static_cast<double>(done) / static_cast<double>(total);
                     std::lock_guard<std::mutex> lock(g_print_mtx);
                     std::cout << std::fixed << std::setprecision(1)
                               << "\rProgress: " << done << "/" << total << " (" << pct << "%), remaining " << rem << std::flush;
@@ -1478,7 +1482,7 @@ int main(int argc, char** argv) {
                     }
                     int done = ++completed;
                     int rem = total - done;
-                    double pct = 100.0 * (double)done / (double)total;
+                    double pct = 100.0 * static_cast<double>(done) / static_cast<double>(total);
                     std::cout << std::fixed << std::setprecision(1)
                               << "\rProgress: " << done << "/" << total << " (" << pct << "%), remaining " << rem << std::flush;
                 }

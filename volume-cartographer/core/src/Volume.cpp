@@ -120,7 +120,7 @@ void Volume::zarrOpen()
     std::sort(groups.begin(), groups.end());
 
     //FIXME hardcoded assumption that groups correspond to power-2 scaledowns ...
-    for(auto name : groups) {
+    for(const auto& name : groups) {
         // Read metadata first to discover the dimension separator
         z5::filesystem::handle::Dataset tmp_handle(path_ / name, z5::FileMode::FileMode::r);
         z5::DatasetMetadata dsMeta;
@@ -153,12 +153,12 @@ void Volume::zarrOpen()
 
 std::shared_ptr<Volume> Volume::New(std::filesystem::path path)
 {
-    return std::make_shared<Volume>(path);
+    return std::make_shared<Volume>(std::move(path));
 }
 
 std::shared_ptr<Volume> Volume::New(std::filesystem::path path, const std::string& uuid, const std::string& name)
 {
-    return std::make_shared<Volume>(path, uuid, name);
+    return std::make_shared<Volume>(std::move(path), uuid, name);
 }
 
 double Volume::voxelSize() const

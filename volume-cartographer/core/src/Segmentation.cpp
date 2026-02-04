@@ -1,5 +1,7 @@
 #include "vc/core/types/Segmentation.hpp"
 
+#include <fstream>
+
 #include <nlohmann/json.hpp>
 
 #include "vc/core/util/LoadJson.hpp"

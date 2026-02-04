@@ -31,6 +31,7 @@
 
 #include "vc/ui/VCCollection.hpp"
 #include "CSurfaceCollection.hpp"
+#include "elements/ProgressUtil.hpp"
 
 #include <cmath>
 #include <filesystem>

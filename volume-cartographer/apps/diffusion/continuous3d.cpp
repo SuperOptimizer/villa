@@ -71,11 +71,11 @@ int continuous3d_main(const po::variables_map& vm) {
     std::string dataset_name = vm["dataset"].as<std::string>();
     double target_winding = vm["winding"].as<double>();
     if (!vm.count("box-size")) {
-        std::cerr << "Error: --box-size is required for continuous3d mode." << std::endl;
+        std::cerr << "Error: --box-size is required for continuous3d mode." << '\n';
         return 1;
     }
     if (!vm.count("box-size")) {
-        std::cerr << "Error: --box-size is required for continuous3d mode." << std::endl;
+        std::cerr << "Error: --box-size is required for continuous3d mode." << '\n';
         return 1;
     }
     std::vector<int> box_dims = vm["box-size"].as<std::vector<int>>();
@@ -84,7 +84,7 @@ int continuous3d_main(const po::variables_map& vm) {
         box_dims.push_back(box_dims[0]);
     }
     if (box_dims.size() != 3) {
-        std::cerr << "Error: --box-size requires one or three values (width, height, depth)." << std::endl;
+        std::cerr << "Error: --box-size requires one or three values (width, height, depth)." << '\n';
         return 1;
     }
     int box_w = box_dims[0];
@@ -94,7 +94,7 @@ int continuous3d_main(const po::variables_map& vm) {
 
     VCCollection point_collection;
     if (!point_collection.loadFromJSON(points_path.string())) {
-        std::cerr << "Error: Failed to load point file: " << points_path << std::endl;
+        std::cerr << "Error: Failed to load point file: " << points_path << '\n';
         return 1;
     }
 
@@ -117,21 +117,21 @@ int continuous3d_main(const po::variables_map& vm) {
     find_point(point_collection.getAllCollections());
 
     if (!target_point) {
-        std::cerr << "Error: Point with winding number " << target_winding << " not found." << std::endl;
+        std::cerr << "Error: Point with winding number " << target_winding << " not found." << '\n';
         return 1;
     }
 
-    std::cout << "Found point " << *target_point << " for winding " << target_winding << std::endl;
+    std::cout << "Found point " << *target_point << " for winding " << target_winding << '\n';
 
     z5::filesystem::handle::Group group_handle(volume_path);
     std::unique_ptr<z5::Dataset> ds = z5::openDataset(group_handle, dataset_name);
     if (!ds) {
-        std::cerr << "Error: Could not open dataset '" << dataset_name << "' in volume '" << volume_path << "'." << std::endl;
+        std::cerr << "Error: Could not open dataset '" << dataset_name << "' in volume '" << volume_path << "'." << '\n';
         return 1;
     }
 
     auto shape = ds->shape();
-    std::cout << "Volume shape: (" << shape[0] << ", " << shape[1] << ", " << shape[2] << ")" << std::endl;
+    std::cout << "Volume shape: (" << shape[0] << ", " << shape[1] << ", " << shape[2] << ")" << '\n';
 
     StupidTensor<uint8_t> volume_slice(cv::Size(box_w, box_h), box_d);
     
@@ -141,7 +141,7 @@ int continuous3d_main(const po::variables_map& vm) {
         static_cast<int>(std::round((*target_point)[0])) - box_w / 2
     };
 
-    std::vector<size_t> slice_shape = {(size_t)box_d, (size_t)box_h, (size_t)box_w};
+    std::vector<size_t> slice_shape = {static_cast<size_t>(box_d), static_cast<size_t>(box_h), static_cast<size_t>(box_w)};
     xt::xtensor<uint8_t, 3, xt::layout_type::column_major> slice_data = xt::zeros<uint8_t>(slice_shape);
 
     ChunkCache<uint8_t> cache(4llu*1024*1024*1024);
@@ -155,14 +155,14 @@ int continuous3d_main(const po::variables_map& vm) {
         }
     }
 
-    std::cout << "Extracted " << box_w << "x" << box_h << "x" << box_d << " volume around the point." << std::endl;
+    std::cout << "Extracted " << box_w << "x" << box_h << "x" << box_d << " volume around the point." << '\n';
 
     int seed_x = box_w / 2;
     int seed_y = box_h / 2;
     int seed_z = box_d / 2;
 
     cv::imwrite("diffusion_slice_crop.tif", volume_slice.planes[seed_z]);
-    std::cout << "Saved debug slice crop to diffusion_slice_crop.tif" << std::endl;
+    std::cout << "Saved debug slice crop to diffusion_slice_crop.tif" << '\n';
 
     StupidTensor<float> density(cv::Size(box_w, box_h), box_d);
     density.setTo(0.0f);
@@ -208,7 +208,7 @@ int continuous3d_main(const po::variables_map& vm) {
             }
         }
         density = next_density;
-        std::cout << "Iteration " << i+1 << "/" << iterations << std::endl;
+        std::cout << "Iteration " << i+1 << "/" << iterations << '\n';
     }
 
     cv::Mat output_slice = density.planes[seed_z];
@@ -219,7 +219,7 @@ int continuous3d_main(const po::variables_map& vm) {
     for (int z = 0; z < box_d; ++z) {
         for (int y = 0; y < box_h; ++y) {
             for (int x = 0; x < box_w; ++x) {
-                row_max_values[y] = std::max(row_max_values[y], (double)density(z, y, x));
+                row_max_values[y] = std::max(row_max_values[y], static_cast<double>(density(z, y, x)));
             }
         }
     }
@@ -232,7 +232,7 @@ int continuous3d_main(const po::variables_map& vm) {
 
     cv::imwrite(output_path.string(), normalized_slice);
 
-    std::cout << "Saved output slice to " << output_path << std::endl;
+    std::cout << "Saved output slice to " << output_path << '\n';
 
     return 0;
 }

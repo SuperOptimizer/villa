@@ -122,7 +122,7 @@ public:
         
         for (const auto& face : faces) {
             for (int i = 0; i < 3; i++) {
-                if (face.vt[i] >= 0 && face.vt[i] < (int)uvs.size()) {
+                if (face.vt[i] >= 0 && face.vt[i] < static_cast<int>(uvs.size())) {
                     cv::Vec2f uv = uvs[face.vt[i]].coord;
                     uv_min[0] = std::min(uv_min[0], uv[0]);
                     uv_min[1] = std::min(uv_min[1], uv[1]);
@@ -308,10 +308,10 @@ private:
     void rasterizeTriangle(cv::Mat_<cv::Vec3f>& points, const Face& face) {
         // Validate indices
         for (int k = 0; k < 3; ++k) {
-            if (face.v[k] < 0 || face.v[k] >= (int)vertices.size()) {
+            if (face.v[k] < 0 || face.v[k] >= static_cast<int>(vertices.size())) {
                 return; // skip invalid vertex indices
             }
-            if (face.vt[k] < 0 || face.vt[k] >= (int)uvs.size()) {
+            if (face.vt[k] < 0 || face.vt[k] >= static_cast<int>(uvs.size())) {
                 return; // skip faces with missing/invalid UVs
             }
         }

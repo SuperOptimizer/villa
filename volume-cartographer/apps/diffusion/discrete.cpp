@@ -57,7 +57,7 @@ void print_conflict_report(
     const std::unordered_map<int32_t, std::string>& label_to_name_map,
     const std::unordered_map<std::string, int>& collection_offsets
 ) {
-    std::cout << "\n--- Conflict Report ---" << std::endl;
+    std::cout << "\n--- Conflict Report ---" << '\n';
     int false_conflicts = 0;
     int self_conflicts = 0;
     for (const auto& group : all_groups) {
@@ -76,24 +76,24 @@ void print_conflict_report(
         }
     }
 
-    std::cout << "Total conflict groups: " << all_groups.size() << std::endl;
-    std::cout << "Self-conflict groups: " << self_conflicts << std::endl;
+    std::cout << "Total conflict groups: " << all_groups.size() << '\n';
+    std::cout << "Self-conflict groups: " << self_conflicts << '\n';
     if (!collection_offsets.empty()) {
-        std::cout << "False conflict groups (explained by offsets): " << false_conflicts << std::endl;
+        std::cout << "False conflict groups (explained by offsets): " << false_conflicts << '\n';
     }
 
-    std::cout << "\n--- Self-Conflict Groups ---" << std::endl;
-    std::cout << "Size, Collection, Implied Offset" << std::endl;
+    std::cout << "\n--- Self-Conflict Groups ---" << '\n';
+    std::cout << "Size, Collection, Implied Offset" << '\n';
     for (const auto& group : all_groups) {
         const std::string name1 = get_collection_name_from_label(group.label1, label_to_name_map);
         const std::string name2 = get_collection_name_from_label(group.label2, label_to_name_map);
         if (name1 == name2) {
-            std::cout << group.size << ", " << name1 << ", " << group.offset << std::endl;
+            std::cout << group.size << ", " << name1 << ", " << group.offset << '\n';
         }
     }
 
-    std::cout << "\n--- Unexplained Cross-Conflict Groups ---" << std::endl;
-    std::cout << "Size, Collection A, Collection B, Implied Offset, Corrected Offset" << std::endl;
+    std::cout << "\n--- Unexplained Cross-Conflict Groups ---" << '\n';
+    std::cout << "Size, Collection A, Collection B, Implied Offset, Corrected Offset" << '\n';
     for (const auto& group : all_groups) {
         const std::string name1 = get_collection_name_from_label(group.label1, label_to_name_map);
         const std::string name2 = get_collection_name_from_label(group.label2, label_to_name_map);
@@ -104,12 +104,12 @@ void print_conflict_report(
             if (group.offset != corrected_offset) {
                 std::cout << group.size << ", "
                 << name1 << ", " << name2 << ", "
-                << group.offset << ", " << corrected_offset << std::endl;
+                << group.offset << ", " << corrected_offset << '\n';
             }
         } else {
             std::cout << group.size << ", "
             << name1 << ", " << name2 << ", "
-            << group.offset << ", " << "N/A" << std::endl;
+            << group.offset << ", " << "N/A" << '\n';
         }
     }
 }
@@ -120,7 +120,7 @@ std::unordered_map<std::string, int> estimate_offsets(
 ) {
     std::unordered_map<std::string, int> collection_offsets;
     if (label_to_name_map.empty() || all_groups.empty()) {
-        std::cout << "\n--- No conflicts or labels found for offset estimation. ---" << std::endl;
+        std::cout << "\n--- No conflicts or labels found for offset estimation. ---" << '\n';
         return collection_offsets;
     }
 
@@ -162,7 +162,7 @@ std::unordered_map<std::string, int> estimate_offsets(
         }
 
         if (evidence_map.empty()) {
-            std::cout << "No more evidence between sets. Stopping." << std::endl;
+            std::cout << "No more evidence between sets. Stopping." << '\n';
             break;
         }
 
@@ -183,13 +183,13 @@ std::unordered_map<std::string, int> estimate_offsets(
         }
 
         if (max_pixels == 0) {
-            std::cout << "No single best evidence found. Stopping." << std::endl;
+            std::cout << "No single best evidence found. Stopping." << '\n';
             break;
         }
 
         // Merge the sets
         std::cout << "Merging set '" << best_set2 << "' into '" << best_set1
-        << "' with offset " << best_offset << " (evidence: " << max_pixels << " pixels)" << std::endl;
+        << "' with offset " << best_offset << " (evidence: " << max_pixels << " pixels)" << '\n';
 
         // Apply offset to all collections in the second set
         for (const auto& name_to_update : set_to_collections.at(best_set2)) {
@@ -206,18 +206,18 @@ std::unordered_map<std::string, int> estimate_offsets(
         set_to_collections.erase(best_set2);
 
         if (set_to_collections.size() == 1) {
-            std::cout << "All collections merged into a single set." << std::endl;
+            std::cout << "All collections merged into a single set." << '\n';
             break;
         }
     }
 
-    std::cout << "\n--- Estimated Collection Offsets ---" << std::endl;
+    std::cout << "\n--- Estimated Collection Offsets ---" << '\n';
     for (auto const& [name, offset] : collection_offsets) {
-        std::cout << name << ": " << offset << std::endl;
+        std::cout << name << ": " << offset << '\n';
     }
     for (const auto& [label, name] : label_to_name_map) {
         if (!collection_offsets.count(name)) {
-            std::cout << name << ": " << "Unknown" << std::endl;
+            std::cout << name << ": " << "Unknown" << '\n';
         }
     }
 
@@ -248,7 +248,7 @@ int discrete_main(
         if (collection.name == umbilicus_set_name) continue;
 
         if (collection.metadata.absolute_winding_number) {
-            std::cout << "Warning: Collection '" << collection.name << "' has absolute winding numbers, which is not fully supported. Processing anyway." << std::endl;
+            std::cout << "Warning: Collection '" << collection.name << "' has absolute winding numbers, which is not fully supported. Processing anyway." << '\n';
         }
 
         if (collection_base_labels.find(collection.name) == collection_base_labels.end()) {
@@ -263,7 +263,7 @@ int discrete_main(
 
             float winding_val = point.winding_annotation;
             if (winding_val != std::round(winding_val)) {
-                std::cerr << "Error: Winding annotation for point " << point_id << " in collection '" << collection.name << "' is not an integer (" << winding_val << ")." << std::endl;
+                std::cerr << "Error: Winding annotation for point " << point_id << " in collection '" << collection.name << "' is not an integer (" << winding_val << ")." << '\n';
                 return 1;
             }
             int winding_int = static_cast<int>(std::round(winding_val));
@@ -278,7 +278,7 @@ int discrete_main(
             active_pixels.insert(cv::Point(x, y));
         }
     }
-    std::cout << "Initialized labels from point sets." << std::endl;
+    std::cout << "Initialized labels from point sets." << '\n';
 
     // Diffusion loop
     int umb_slice_x = static_cast<int>(std::round((*umbilicus_point)[0]));
@@ -295,7 +295,7 @@ int discrete_main(
     int last_report_iter = 0;
     for (int i = 0; i < iterations; ++i) {
         if (active_pixels.empty()) {
-            std::cout << "No more active pixels. Stopping at iteration " << i << std::endl;
+            std::cout << "No more active pixels. Stopping at iteration " << i << '\n';
             break;
         }
 
@@ -304,7 +304,7 @@ int discrete_main(
         if (elapsed_since_last_report.count() >= 1.0) {
             int iters_since_last_report = i - last_report_iter;
             std::cout << "Iteration " << i << "/" << iterations << " (" << active_pixels.size() << " active pixels). "
-            << iters_since_last_report / elapsed_since_last_report.count() << " iters/s" << std::endl;
+            << iters_since_last_report / elapsed_since_last_report.count() << " iters/s" << '\n';
             last_report_time = now;
             last_report_iter = i;
         }
@@ -351,7 +351,7 @@ int discrete_main(
     labels = *labels_prev;
     auto end_diffusion = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> total_diffusion_time = end_diffusion - start_diffusion;
-    std::cout << "Diffusion finished after " << total_diffusion_time.count() << " s." << std::endl;
+    std::cout << "Diffusion finished after " << total_diffusion_time.count() << " s." << '\n';
 
     // Group, sort, and report conflicts
     auto all_conflict_groups = group_and_sort_conflicts(conflicts);
@@ -399,9 +399,9 @@ void visualize_labels(
     }
 
     if (!cv::imwrite(output_path.string(), viz)) {
-        std::cerr << "Error: Failed to write output image to " << output_path << std::endl;
+        std::cerr << "Error: Failed to write output image to " << output_path << '\n';
     } else {
-        std::cout << "Saved visualization to " << output_path << std::endl;
+        std::cout << "Saved visualization to " << output_path << '\n';
     }
 }
 
@@ -433,9 +433,9 @@ void visualize_conflicts(
         }
     }
     if (!cv::imwrite(conflicts_path.string(), conflicts_viz)) {
-        std::cerr << "Error: Failed to write conflicts map to " << conflicts_path << std::endl;
+        std::cerr << "Error: Failed to write conflicts map to " << conflicts_path << '\n';
     } else {
-        std::cout << "Saved conflicts map to " << conflicts_path << std::endl;
+        std::cout << "Saved conflicts map to " << conflicts_path << '\n';
     }
 }
 
@@ -480,10 +480,10 @@ std::vector<ConflictGroup> group_and_sort_conflicts(
             }
         }
         all_conflict_groups.push_back({
-            (int)current_group_points.size(),
+            static_cast<int>(current_group_points.size()),
                                       group_l1,
                                       group_l2,
-                                      (int)(group_l2 - group_l1)
+                                      static_cast<int>(group_l2 - group_l1)
         });
     }
 
@@ -506,10 +506,10 @@ void calculate_sheet_distance_constraints(
     int w = slice_mat.cols;
 
     float max_dist = 0;
-    max_dist = std::max(max_dist, (float)cv::norm(cv::Point(0, 0) - umbilicus));
-    max_dist = std::max(max_dist, (float)cv::norm(cv::Point(w - 1, 0) - umbilicus));
-    max_dist = std::max(max_dist, (float)cv::norm(cv::Point(0, h - 1) - umbilicus));
-    max_dist = std::max(max_dist, (float)cv::norm(cv::Point(w - 1, h - 1) - umbilicus));
+    max_dist = std::max(max_dist, static_cast<float>(cv::norm(cv::Point(0, 0) - umbilicus)));
+    max_dist = std::max(max_dist, static_cast<float>(cv::norm(cv::Point(w - 1, 0) - umbilicus)));
+    max_dist = std::max(max_dist, static_cast<float>(cv::norm(cv::Point(0, h - 1) - umbilicus)));
+    max_dist = std::max(max_dist, static_cast<float>(cv::norm(cv::Point(w - 1, h - 1) - umbilicus)));
 
     float min_dist = 0.5f * ray_step_dist;
     int grid_cols = static_cast<int>(std::ceil(w / min_dist));
@@ -588,5 +588,5 @@ void calculate_sheet_distance_constraints(
             }
         }
     }
-    std::cout << "Generated " << constraints.size() << " sheet distance constraints across " << constraint_rays.size() << " rays." << std::endl;
+    std::cout << "Generated " << constraints.size() << " sheet distance constraints across " << constraint_rays.size() << " rays." << '\n';
 }

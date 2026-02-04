@@ -118,19 +118,19 @@ int main(int argc, char** argv) {
         po::store(po::parse_command_line(argc, argv, desc), vm);
         po::notify(vm);
     } catch (const po::error &e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        std::cout << desc << std::endl;
+        std::cerr << "Error: " << e.what() << '\n';
+        std::cout << desc << '\n';
         return 1;
     }
 
     if (vm.count("help")) {
-        std::cout << desc << std::endl;
+        std::cout << desc << '\n';
         return 0;
     }
 
     if (!vm.count("points") || !vm.count("volume") || !vm.count("output")) {
-        std::cerr << "Error: Missing required arguments: --points, --volume, --output" << std::endl;
-        std::cout << desc << std::endl;
+        std::cerr << "Error: Missing required arguments: --points, --volume, --output" << '\n';
+        std::cout << desc << '\n';
         return 1;
     }
 
@@ -147,24 +147,24 @@ int main(int argc, char** argv) {
     std::string mode = vm["mode"].as<std::string>();
    float ray_step_dist = vm["ray-step-dist"].as<float>();
 
-    std::cout << "Winding Diffusion Tool" << std::endl;
-    std::cout << "----------------------" << std::endl;
-    std::cout << "Mode: " << mode << std::endl;
+    std::cout << "Winding Diffusion Tool" << '\n';
+    std::cout << "----------------------" << '\n';
+    std::cout << "Mode: " << mode << '\n';
 
     // Load points
     VCCollection point_collection;
     if (!point_collection.loadFromJSON(points_path.string())) {
-        std::cerr << "Error: Failed to load point file: " << points_path << std::endl;
+        std::cerr << "Error: Failed to load point file: " << points_path << '\n';
         return 1;
     }
-    std::cout << "Loaded " << point_collection.getAllCollections().size() << " point sets from " << points_path << std::endl;
+    std::cout << "Loaded " << point_collection.getAllCollections().size() << " point sets from " << points_path << '\n';
 
     // Find umbilicus point
     std::optional<cv::Vec3f> umbilicus_point;
     for (const auto& [id, collection] : point_collection.getAllCollections()) {
         if (collection.name == umbilicus_set_name) {
             if (collection.points.empty()) {
-                std::cerr << "Error: Umbilicus point set '" << umbilicus_set_name << "' is empty." << std::endl;
+                std::cerr << "Error: Umbilicus point set '" << umbilicus_set_name << "' is empty." << '\n';
                 return 1;
             }
             umbilicus_point = collection.points.begin()->second.p;
@@ -173,24 +173,24 @@ int main(int argc, char** argv) {
     }
 
     if (!umbilicus_point) {
-        std::cerr << "Error: Umbilicus point set '" << umbilicus_set_name << "' not found." << std::endl;
+        std::cerr << "Error: Umbilicus point set '" << umbilicus_set_name << "' not found." << '\n';
         return 1;
     }
-    std::cout << "Found umbilicus point at: " << *umbilicus_point << std::endl;
+    std::cout << "Found umbilicus point at: " << *umbilicus_point << '\n';
 
     // Load volume data using z5 and ChunkedTensor
     z5::filesystem::handle::Group group_handle(volume_path);
     std::unique_ptr<z5::Dataset> ds = z5::openDataset(group_handle, dataset_name);
     if (!ds) {
-        std::cerr << "Error: Could not open dataset '" << dataset_name << "' in volume '" << volume_path << "'." << std::endl;
+        std::cerr << "Error: Could not open dataset '" << dataset_name << "' in volume '" << volume_path << "'." << '\n';
         return 1;
     }
     auto shape = ds->shape();
-    std::cout << "Volume shape: (" << shape[0] << ", " << shape[1] << ", " << shape[2] << ")" << std::endl;
+    std::cout << "Volume shape: (" << shape[0] << ", " << shape[1] << ", " << shape[2] << ")" << '\n';
 
     // Extract XY slice
     int z_slice = static_cast<int>(std::round((*umbilicus_point)[2]));
-    std::cout << "Extracting slice at z=" << z_slice << std::endl;
+    std::cout << "Extracting slice at z=" << z_slice << '\n';
 
     auto start_slice_extraction = std::chrono::high_resolution_clock::now();
     std::clock_t start_cpu = std::clock();
@@ -215,20 +215,20 @@ int main(int argc, char** argv) {
 
     std::cout << "Slice extraction took " << real_time << " s (real), "
               << cpu_time << " s (user), "
-              << (cpu_time / real_time * 100.0) << "%" << std::endl;
+              << (cpu_time / real_time * 100.0) << "%" << '\n';
     
-    std::cout << "Successfully extracted slice." << std::endl;
+    std::cout << "Successfully extracted slice." << '\n';
 
     cv::Mat mask;
     if (vm.count("mask")) {
         fs::path mask_path = vm["mask"].as<std::string>();
         mask = cv::imread(mask_path.string(), cv::IMREAD_GRAYSCALE);
         if (mask.empty()) {
-            std::cerr << "Error: Failed to load mask image from " << mask_path << std::endl;
+            std::cerr << "Error: Failed to load mask image from " << mask_path << '\n';
             return 1;
         }
         if (mask.size() != slice_mat.size()) {
-            std::cerr << "Error: Mask dimensions (" << mask.size() << ") do not match slice dimensions (" << slice_mat.size() << ")." << std::endl;
+            std::cerr << "Error: Mask dimensions (" << mask.size() << ") do not match slice dimensions (" << slice_mat.size() << ")." << '\n';
             return 1;
         }
         for (int y = 0; y < slice_mat.rows; ++y) {
@@ -238,17 +238,17 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        std::cout << "Applied mask from " << mask_path << std::endl;
+        std::cout << "Applied mask from " << mask_path << '\n';
     }
 
     if (vm.count("debug")) {
         cv::imwrite("slice.tif", slice_mat);
-        std::cout << "Saved debug slice to slice.tif" << std::endl;
+        std::cout << "Saved debug slice to slice.tif" << '\n';
     }
 
     if (vm.count("debug")) {
         cv::imwrite("slice.tif", slice_mat);
-        std::cout << "Saved debug slice to slice.tif" << std::endl;
+        std::cout << "Saved debug slice to slice.tif" << '\n';
     }
 
     if (mode == "discrete") {
@@ -264,7 +264,7 @@ int main(int argc, char** argv) {
     } else if (mode == "continuous3d") {
         return continuous3d_main(vm);
     } else {
-        std::cerr << "Error: Unknown mode '" << mode << "'. Use 'discrete', 'continuous', 'spiral', 'spiral2', 'spiral2cont', or 'continuous3d'." << std::endl;
+        std::cerr << "Error: Unknown mode '" << mode << "'. Use 'discrete', 'continuous', 'spiral', 'spiral2', 'spiral2cont', or 'continuous3d'." << '\n';
         return 1;
     }
  

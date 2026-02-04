@@ -21,6 +21,8 @@
 #include "vc/core/util/Logging.hpp"
 #include "vc/core/util/LoadJson.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>

@@ -62,7 +62,7 @@ int main(int argc, char* argv[]) {
     surf->rotate(rotation_angle);
 
     // Generate output filename
-    float normalized_angle = fmod(rotation_angle, 360.0f);
+    float normalized_angle = std::fmod(rotation_angle, 360.0f);
     if (normalized_angle < 0) normalized_angle += 360.0f;
 
     std::string angle_str = std::to_string(static_cast<int>(normalized_angle));

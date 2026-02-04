@@ -21,7 +21,7 @@ void render_binary_mask(QuadSurface* surf,
 
     std::cout << "render_binary_mask: rawSize=" << rawSize
               << " targetSize=" << targetSize
-              << " scale=" << scale << std::endl;
+              << " scale=" << scale << '\n';
 
     // Create mask from raw points at their native resolution
     cv::Mat_<uint8_t> rawMask = surf->validMask();
@@ -43,10 +43,10 @@ void render_binary_mask(QuadSurface* surf,
     std::cout << "  rawValid=" << rawValid << "/" << (rawSize.width * rawSize.height)
               << " (" << (100.0 * rawValid / (rawSize.width * rawSize.height)) << "%)"
               << " targetValid=" << finalValid << "/" << (targetSize.width * targetSize.height)
-              << " (" << (100.0 * finalValid / (targetSize.width * targetSize.height)) << "%)" << std::endl;
+              << " (" << (100.0 * finalValid / (targetSize.width * targetSize.height)) << "%)" << '\n';
 
     std::cout << "  ptr=" << ptr << ", offset=" << offset << ", genScale=" << genScale
-              << ", surf->_scale=" << surf->_scale << std::endl;
+              << ", surf->_scale=" << surf->_scale << '\n';
 
     // Log coordinate bounds
     if (coords_out.rows > 8 && coords_out.cols > 8) {
@@ -69,7 +69,7 @@ void render_binary_mask(QuadSurface* surf,
         }
         cv::Vec3f span = maxCoord - minCoord;
         std::cout << "  coords bounds: min=" << minCoord << ", max=" << maxCoord
-                  << ", span=" << span << ", validCoords=" << validCoords << std::endl;
+                  << ", span=" << span << ", validCoords=" << validCoords << '\n';
     }
 }
 
@@ -82,7 +82,7 @@ void render_image_from_coords(const cv::Mat_<cv::Vec3f>& coords,
     }
 
     readInterpolated3D(img, ds, coords, cache);
-    std::cout << "render_image_from_coords: completed" << std::endl;
+    std::cout << "render_image_from_coords: completed" << '\n';
 }
 
 // Render surface - generates both mask and image
@@ -97,5 +97,5 @@ void render_surface_image(QuadSurface* surf,
     render_binary_mask(surf, mask, coords, scale);
     render_image_from_coords(coords, img, ds, cache);
 
-    std::cout << "render_surface_image: completed" << std::endl;
+    std::cout << "render_surface_image: completed" << '\n';
 }

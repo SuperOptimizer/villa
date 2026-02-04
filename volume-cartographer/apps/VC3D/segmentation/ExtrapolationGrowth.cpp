@@ -39,7 +39,7 @@ SDTChunk* getOrComputeSDTChunk(SDTContext& ctx, const cv::Vec3f& worldPt) {
     // Load binary data from zarr
     cv::Vec3i size(cs, cs, cs);
     xt::xtensor<uint8_t, 3, xt::layout_type::column_major> binaryData(
-        std::array<size_t, 3>{(size_t)cs, (size_t)cs, (size_t)cs});
+        std::array<size_t, 3>{static_cast<size_t>(cs), static_cast<size_t>(cs), static_cast<size_t>(cs)});
     binaryData.fill(0);
 
     // Clamp to dataset bounds
@@ -50,9 +50,9 @@ SDTChunk* getOrComputeSDTChunk(SDTContext& ctx, const cv::Vec3f& worldPt) {
         std::max(0, origin[2])
     );
     cv::Vec3i clampedEnd(
-        std::min((int)shape[2], origin[0] + cs),
-        std::min((int)shape[1], origin[1] + cs),
-        std::min((int)shape[0], origin[2] + cs)
+        std::min(static_cast<int>(shape[2]), origin[0] + cs),
+        std::min(static_cast<int>(shape[1]), origin[1] + cs),
+        std::min(static_cast<int>(shape[0]), origin[2] + cs)
     );
     cv::Vec3i readSize = clampedEnd - clampedOrigin;
 
@@ -61,7 +61,7 @@ SDTChunk* getOrComputeSDTChunk(SDTContext& ctx, const cv::Vec3f& worldPt) {
         cv::Vec3i clampedOriginZYX(clampedOrigin[2], clampedOrigin[1], clampedOrigin[0]);
         cv::Vec3i readSizeZYX(readSize[2], readSize[1], readSize[0]);
         xt::xtensor<uint8_t, 3, xt::layout_type::column_major> readBuf(
-            std::array<size_t, 3>{(size_t)readSizeZYX[0], (size_t)readSizeZYX[1], (size_t)readSizeZYX[2]});
+            std::array<size_t, 3>{static_cast<size_t>(readSizeZYX[0]), static_cast<size_t>(readSizeZYX[1]), static_cast<size_t>(readSizeZYX[2])});
         readArea3D(readBuf, clampedOriginZYX, ctx.binaryDataset, ctx.cache);
 
         // Copy into binaryData at correct offset

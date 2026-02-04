@@ -24,11 +24,13 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QTimer>
 #include <QTreeWidget>
 
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/Logging.hpp"
+#include "vc/ui/VCCollection.hpp"
 
 // Open volume package
 void CWindow::OpenVolume(const QString& path)

@@ -147,7 +147,7 @@ int main(int argc, char *argv[])
     // Report statistics
     int valid_count = cv::countNonZero(mask);
     int total_count = mask.rows * mask.cols;
-    float valid_percent = (float)valid_count / total_count * 100.0f;
+    float valid_percent = static_cast<float>(valid_count) / total_count * 100.0f;
     std::cout << "  Valid pixels: " << valid_count << " / " << total_count
               << " (" << std::fixed << std::setprecision(1) << valid_percent << "%)" << "\n";
 

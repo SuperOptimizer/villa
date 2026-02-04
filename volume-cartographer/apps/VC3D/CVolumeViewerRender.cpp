@@ -283,7 +283,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
     return img;
 }
 
-cv::Mat_<uint8_t> CVolumeViewer::renderCompositeForSurface(std::shared_ptr<QuadSurface> surface, cv::Size outputSize)
+cv::Mat_<uint8_t> CVolumeViewer::renderCompositeForSurface(const std::shared_ptr<QuadSurface>& surface, cv::Size outputSize)
 {
     if (!surface || !_composite_enabled || !volume) {
         return cv::Mat_<uint8_t>();

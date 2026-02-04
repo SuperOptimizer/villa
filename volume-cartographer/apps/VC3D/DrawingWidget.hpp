@@ -23,8 +23,10 @@ class QSpinBox;
 
 using PathPrimitive = ViewerOverlayControllerBase::PathPrimitive;
 using PathBrushShape = ViewerOverlayControllerBase::PathBrushShape;
-#include "vc/core/types/VolumePkg.hpp"
-#include "vc/core/util/Slicing.hpp"
+// Forward declarations - heavy headers only needed in .cpp
+class VolumePkg;
+class Volume;
+template <typename T> class ChunkCache;
 
 
 /**

@@ -240,7 +240,7 @@ void align_and_filter_segments(const GridStore& grid_store, GridStore& result, c
 
             float max_dist = 0.0f;
             for(const auto& neighbor : assigned_neighbors) {
-                max_dist = std::max(max_dist, (float)cv::norm(candidate->middle_point - neighbor->middle_point));
+                max_dist = std::max(max_dist, static_cast<float>(cv::norm(candidate->middle_point - neighbor->middle_point)));
             }
 
             max_dist *= 10.0/assigned_neighbors.size()+100.0;

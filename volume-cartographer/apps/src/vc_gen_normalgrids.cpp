@@ -359,15 +359,15 @@ void run_generate(const po::variables_map& vm) {
             switch (dir) {
                 case SliceDirection::XY:
                     chunk_shape = {chunk_size, shape[1], shape[2]};
-                    chunk_offset = {(int)chunk_start, 0, 0};
+                    chunk_offset = {static_cast<int>(chunk_start), 0, 0};
                     break;
                 case SliceDirection::XZ:
                     chunk_shape = {shape[0], chunk_size, shape[2]};
-                    chunk_offset = {0, (int)chunk_start, 0};
+                    chunk_offset = {0, static_cast<int>(chunk_start), 0};
                     break;
                 case SliceDirection::YZ:
                     chunk_shape = {shape[0], shape[1], chunk_size};
-                    chunk_offset = {0, 0, (int)chunk_start};
+                    chunk_offset = {0, 0, static_cast<int>(chunk_start)};
                     break;
             }
 

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <nlohmann/json_fwd.hpp>
-#include <opencv2/core.hpp>
+#include <opencv2/core/mat.hpp>
 
 #include "VCCollection.hpp"
 

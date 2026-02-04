@@ -23,6 +23,7 @@
 #include <QStatusBar>
 
 #include "vc/core/util/QuadSurface.hpp"
+#include "vc/ui/VCCollection.hpp"
 
 void CWindow::onZoomIn()
 {
@@ -42,7 +43,7 @@ void CWindow::onZoomIn()
     viewer->onZoom(1, center, Qt::NoModifier);
 }
 
-void CWindow::onFocusPOIChanged(std::string name, POI* poi)
+void CWindow::onFocusPOIChanged(const std::string& name, POI* poi)
 {
     if (name == "focus" && poi) {
         lblLocFocus->setText(QString("%1, %2, %3")

@@ -83,7 +83,7 @@ void voRingRemoveSlice(cv::Mat_<T>& slice, const VoRingParams& params);
  */
 template<typename T>
 void voRingRemoveVolume(xt::xarray<T>& volume, const VoRingParams& params,
-                         std::function<void(float)> progressCallback = nullptr);
+                         const std::function<void(float)>& progressCallback = nullptr);
 
 // Legacy ring correction (kept for compatibility)
 struct RingCorrectionParams {
@@ -134,7 +134,7 @@ void stripeRemoveSlice(cv::Mat_<T>& slice, const StripeRemovalParams& params);
  */
 template<typename T>
 void stripeRemoveVolume(xt::xarray<T>& volume, const StripeRemovalParams& params,
-                         std::function<void(float)> progressCallback = nullptr);
+                         const std::function<void(float)>& progressCallback = nullptr);
 
 // ============================================================================
 // 3D CLAHE (Contrast Limited Adaptive Histogram Equalization)
@@ -163,7 +163,7 @@ struct CLAHE3DParams {
  */
 template<typename T>
 void clahe3D(xt::xarray<T>& volume, const CLAHE3DParams& params,
-              std::function<void(float)> progressCallback = nullptr);
+              const std::function<void(float)>& progressCallback = nullptr);
 
 // ============================================================================
 // BM3D Denoising (Block-Matching 3D)
@@ -207,7 +207,7 @@ void bm3dSlice(cv::Mat_<T>& slice, const BM3DParams& params);
  */
 template<typename T>
 void bm3dVolume(xt::xarray<T>& volume, const BM3DParams& params,
-                 std::function<void(float)> progressCallback = nullptr);
+                 const std::function<void(float)>& progressCallback = nullptr);
 
 // ============================================================================
 // Intensity Normalization (Beam Hardening Correction)
@@ -263,7 +263,7 @@ struct DiffusionParams {
  */
 template<typename T>
 void anisotropicDiffusion3D(xt::xarray<T>& volume, const DiffusionParams& params,
-                             std::function<void(float)> progressCallback = nullptr);
+                             const std::function<void(float)>& progressCallback = nullptr);
 
 // ============================================================================
 // Gradient Computation
@@ -339,7 +339,7 @@ template<typename T>
 void processVolumeChunked(
     xt::xarray<T>& volume,
     const ChunkProcessingParams& chunkParams,
-    std::function<void(xt::xarray<T>&, const std::array<int, 3>&)> processChunk);
+    const std::function<void(xt::xarray<T>&, const std::array<int, 3>&)>& processChunk);
 
 // ============================================================================
 // Explicit template instantiation declarations
@@ -354,9 +354,9 @@ extern template void voRingRemoveSlice<uint8_t>(cv::Mat_<uint8_t>&, const VoRing
 extern template void voRingRemoveSlice<uint16_t>(cv::Mat_<uint16_t>&, const VoRingParams&);
 extern template void voRingRemoveSlice<float>(cv::Mat_<float>&, const VoRingParams&);
 
-extern template void voRingRemoveVolume<uint8_t>(xt::xarray<uint8_t>&, const VoRingParams&, std::function<void(float)>);
-extern template void voRingRemoveVolume<uint16_t>(xt::xarray<uint16_t>&, const VoRingParams&, std::function<void(float)>);
-extern template void voRingRemoveVolume<float>(xt::xarray<float>&, const VoRingParams&, std::function<void(float)>);
+extern template void voRingRemoveVolume<uint8_t>(xt::xarray<uint8_t>&, const VoRingParams&, const std::function<void(float)>&);
+extern template void voRingRemoveVolume<uint16_t>(xt::xarray<uint16_t>&, const VoRingParams&, const std::function<void(float)>&);
+extern template void voRingRemoveVolume<float>(xt::xarray<float>&, const VoRingParams&, const std::function<void(float)>&);
 
 // Legacy ring correction
 extern template void ringCorrectSlice<uint8_t>(cv::Mat_<uint8_t>&, const RingCorrectionParams&);
@@ -372,31 +372,31 @@ extern template void stripeRemoveSlice<uint8_t>(cv::Mat_<uint8_t>&, const Stripe
 extern template void stripeRemoveSlice<uint16_t>(cv::Mat_<uint16_t>&, const StripeRemovalParams&);
 extern template void stripeRemoveSlice<float>(cv::Mat_<float>&, const StripeRemovalParams&);
 
-extern template void stripeRemoveVolume<uint8_t>(xt::xarray<uint8_t>&, const StripeRemovalParams&, std::function<void(float)>);
-extern template void stripeRemoveVolume<uint16_t>(xt::xarray<uint16_t>&, const StripeRemovalParams&, std::function<void(float)>);
-extern template void stripeRemoveVolume<float>(xt::xarray<float>&, const StripeRemovalParams&, std::function<void(float)>);
+extern template void stripeRemoveVolume<uint8_t>(xt::xarray<uint8_t>&, const StripeRemovalParams&, const std::function<void(float)>&);
+extern template void stripeRemoveVolume<uint16_t>(xt::xarray<uint16_t>&, const StripeRemovalParams&, const std::function<void(float)>&);
+extern template void stripeRemoveVolume<float>(xt::xarray<float>&, const StripeRemovalParams&, const std::function<void(float)>&);
 
 // 3D CLAHE
-extern template void clahe3D<uint8_t>(xt::xarray<uint8_t>&, const CLAHE3DParams&, std::function<void(float)>);
-extern template void clahe3D<uint16_t>(xt::xarray<uint16_t>&, const CLAHE3DParams&, std::function<void(float)>);
-extern template void clahe3D<float>(xt::xarray<float>&, const CLAHE3DParams&, std::function<void(float)>);
+extern template void clahe3D<uint8_t>(xt::xarray<uint8_t>&, const CLAHE3DParams&, const std::function<void(float)>&);
+extern template void clahe3D<uint16_t>(xt::xarray<uint16_t>&, const CLAHE3DParams&, const std::function<void(float)>&);
+extern template void clahe3D<float>(xt::xarray<float>&, const CLAHE3DParams&, const std::function<void(float)>&);
 
 // BM3D
 extern template void bm3dSlice<uint8_t>(cv::Mat_<uint8_t>&, const BM3DParams&);
 extern template void bm3dSlice<uint16_t>(cv::Mat_<uint16_t>&, const BM3DParams&);
 extern template void bm3dSlice<float>(cv::Mat_<float>&, const BM3DParams&);
 
-extern template void bm3dVolume<uint8_t>(xt::xarray<uint8_t>&, const BM3DParams&, std::function<void(float)>);
-extern template void bm3dVolume<uint16_t>(xt::xarray<uint16_t>&, const BM3DParams&, std::function<void(float)>);
-extern template void bm3dVolume<float>(xt::xarray<float>&, const BM3DParams&, std::function<void(float)>);
+extern template void bm3dVolume<uint8_t>(xt::xarray<uint8_t>&, const BM3DParams&, const std::function<void(float)>&);
+extern template void bm3dVolume<uint16_t>(xt::xarray<uint16_t>&, const BM3DParams&, const std::function<void(float)>&);
+extern template void bm3dVolume<float>(xt::xarray<float>&, const BM3DParams&, const std::function<void(float)>&);
 
 extern template void normalizeIntensity<uint8_t>(xt::xarray<uint8_t>&, const NormalizationParams&);
 extern template void normalizeIntensity<uint16_t>(xt::xarray<uint16_t>&, const NormalizationParams&);
 extern template void normalizeIntensity<float>(xt::xarray<float>&, const NormalizationParams&);
 
-extern template void anisotropicDiffusion3D<uint8_t>(xt::xarray<uint8_t>&, const DiffusionParams&, std::function<void(float)>);
-extern template void anisotropicDiffusion3D<uint16_t>(xt::xarray<uint16_t>&, const DiffusionParams&, std::function<void(float)>);
-extern template void anisotropicDiffusion3D<float>(xt::xarray<float>&, const DiffusionParams&, std::function<void(float)>);
+extern template void anisotropicDiffusion3D<uint8_t>(xt::xarray<uint8_t>&, const DiffusionParams&, const std::function<void(float)>&);
+extern template void anisotropicDiffusion3D<uint16_t>(xt::xarray<uint16_t>&, const DiffusionParams&, const std::function<void(float)>&);
+extern template void anisotropicDiffusion3D<float>(xt::xarray<float>&, const DiffusionParams&, const std::function<void(float)>&);
 
 extern template void computeGradientVolume<uint8_t>(const xt::xarray<uint8_t>&, xt::xarray<float>&, xt::xarray<float>&, xt::xarray<float>&, const GradientParams&);
 extern template void computeGradientVolume<uint16_t>(const xt::xarray<uint16_t>&, xt::xarray<float>&, xt::xarray<float>&, xt::xarray<float>&, const GradientParams&);

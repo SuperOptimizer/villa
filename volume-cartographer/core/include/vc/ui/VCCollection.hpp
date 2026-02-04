@@ -1,35 +1,19 @@
 #pragma once
 
+#include "VCCollectionTypes.hpp"
+
 #include <nlohmann/json_fwd.hpp>
 #include <opencv2/core/matx.hpp>
-#include <math.h>
 #include <qtmetamacros.h>
-#include <qtypes.h>
-#include <opencv2/core/matx.inl.hpp>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include <QDateTime>
 #include <QObject>
- 
 
- 
-struct ColPoint
-{
-    uint64_t id;
-    uint64_t collectionId;
-    cv::Vec3f p = {0,0,0};
-    float winding_annotation = NAN;
-    qint64 creation_time = 0;
-};
- 
-struct CollectionMetadata
-{
-    bool absolute_winding_number = false;
-};
- 
 class VCCollection : public QObject
 {
     Q_OBJECT

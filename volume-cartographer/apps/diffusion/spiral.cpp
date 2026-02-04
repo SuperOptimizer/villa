@@ -65,12 +65,12 @@ void generate_simple_spiral(
     int revolutions,
     const cv::Point& umbilicus
 ) {
-    std::cout << "Generating simple spiral..." << std::endl;
+    std::cout << "Generating simple spiral..." << '\n';
     double start_radius = starting_diameter / 2.0;
     double end_radius = end_diameter / 2.0;
 
     if (spiral_step <= 0) {
-        std::cerr << "Error: spiral-step must be positive." << std::endl;
+        std::cerr << "Error: spiral-step must be positive." << '\n';
         return;
     }
 
@@ -166,7 +166,7 @@ void run_spiral_generation(
         }
     }
 
-    std::cout << "Generated " << all_points.size() << " spiral points. Finding neighbors..." << std::endl;
+    std::cout << "Generated " << all_points.size() << " spiral points. Finding neighbors..." << '\n';
 
     #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < revolutions; ++i) {
@@ -177,6 +177,7 @@ void run_spiral_generation(
             // Find neighbors in revolution below
             if (i > 0) {
                 std::vector<std::pair<double, int>> dists;
+                dists.reserve(3);
                 std::vector<std::pair<double, int>> winding_dists;
                 for (size_t k = 0; k < all_points.size(); ++k) {
                     if (k == current_point_idx) continue;
@@ -187,8 +188,8 @@ void run_spiral_generation(
                 for(int k = 0; k < 3; ++k) {
                     dists.emplace_back(cv::norm(current_point.pos - all_points[winding_dists[k].second].pos), winding_dists[k].second);
                 }
-                std::partial_sort(dists.begin(), dists.begin() + std::min(3, (int)dists.size()), dists.end());
-                for(int k = 0; k < std::min(3, (int)dists.size()); ++k) {
+                std::partial_sort(dists.begin(), dists.begin() + std::min(3, static_cast<int>(dists.size())), dists.end());
+                for(int k = 0; k < std::min(3, static_cast<int>(dists.size())); ++k) {
                     all_points[current_point_idx].neighbors_low.push_back({dists[k].second, dists[k].first / current_point.dist_low});
                 }
 
@@ -208,6 +209,7 @@ void run_spiral_generation(
             // Find neighbors in revolution above
             if (i < revolutions - 1) {
                 std::vector<std::pair<double, int>> dists;
+                dists.reserve(3);
                 std::vector<std::pair<double, int>> winding_dists;
                 for (size_t k = 0; k < all_points.size(); ++k) {
                     if (k == current_point_idx) continue;
@@ -218,8 +220,8 @@ void run_spiral_generation(
                 for(int k = 0; k < 3; ++k) {
                     dists.emplace_back(cv::norm(current_point.pos - all_points[winding_dists[k].second].pos), winding_dists[k].second);
                 }
-                std::partial_sort(dists.begin(), dists.begin() + std::min(3, (int)dists.size()), dists.end());
-                for(int k = 0; k < std::min(3, (int)dists.size()); ++k) {
+                std::partial_sort(dists.begin(), dists.begin() + std::min(3, static_cast<int>(dists.size())), dists.end());
+                for(int k = 0; k < std::min(3, static_cast<int>(dists.size())); ++k) {
                     all_points[current_point_idx].neighbors_high.push_back({dists[k].second, dists[k].first / current_point.dist_high});
                 }
 
@@ -373,7 +375,7 @@ void run_spiral_generation(
     options.minimizer_progress_to_stdout = true;
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
-    std::cout << summary.FullReport() << std::endl;
+    std::cout << summary.FullReport() << '\n';
 
     // Update all_points with optimized values
     for(size_t i = 0; i < all_points.size(); ++i) {
@@ -427,7 +429,7 @@ void run_spiral_generation(
     }
 
     ceres::Solve(options, &problem, &summary);
-    std::cout << summary.FullReport() << std::endl;
+    std::cout << summary.FullReport() << '\n';
 
     // Update all_points with optimized values
     for(size_t i = 0; i < all_points.size(); ++i) {
@@ -445,8 +447,8 @@ void run_spiral_generation(
     // }
 
     // if (vm.count("debug")) {
-    //     std::cout << "\n--- Post-Optimization Debug Output ---" << std::endl;
-    //     std::cout << "PointIdx, Winding, ParamLow, CalcLow, ParamHigh, CalcHigh" << std::endl;
+    //     std::cout << "\n--- Post-Optimization Debug Output ---" << '\n';
+    //     std::cout << "PointIdx, Winding, ParamLow, CalcLow, ParamHigh, CalcHigh" << '\n';
     //
     //     PointToLineDistanceConstraint dist_functor(1.0);
     //
@@ -484,7 +486,7 @@ void run_spiral_generation(
     //                   << p.winding << ", "
     //                   << p.dist_low << ", " << calc_dist_low << ", "
     //                   << p.dist_high << ", " << calc_dist_high
-    //                   << std::endl;
+    //                   << '\n';
     //     }
     // }
 }
@@ -502,7 +504,7 @@ void generate_optimized_spiral(
     const cv::Size& slice_size,
     bool debug
 ) {
-    std::cout << "Generating optimized spiral..." << std::endl;
+    std::cout << "Generating optimized spiral..." << '\n';
 
     cv::Mat steps_vis;
     if (debug) {
@@ -513,7 +515,7 @@ void generate_optimized_spiral(
     double end_radius = end_diameter / 2.0;
 
     if (spiral_step <= 0) {
-        std::cerr << "Error: spiral-step must be positive." << std::endl;
+        std::cerr << "Error: spiral-step must be positive." << '\n';
         return;
     }
 
@@ -611,7 +613,7 @@ void generate_optimized_spiral(
             new_point.winding = current_angle / (2*CV_PI);
         }
 
-        // std::cout << "  Point " << i << ": cost=" << summary.final_cost << ", winding=" << new_point.winding << std::endl;
+        // std::cout << "  Point " << i << ": cost=" << summary.final_cost << ", winding=" << new_point.winding << '\n';
 
         int current_rev = static_cast<int>(new_point.winding);
         if (current_rev >= 0 && current_rev < revolutions) {
@@ -626,7 +628,7 @@ void generate_optimized_spiral(
 
     if (debug) {
         cv::imwrite("spiral_generation_steps.tif", steps_vis);
-        std::cout << "Saved spiral generation steps visualization to spiral_generation_steps.tif" << std::endl;
+        std::cout << "Saved spiral generation steps visualization to spiral_generation_steps.tif" << '\n';
     }
 }
 
@@ -639,7 +641,7 @@ int spiral_main(
     const po::variables_map& vm
 ) {
     if (!vm.count("starting-diameter") || !vm.count("end-diameter") || !vm.count("spiral-step")) {
-        std::cerr << "Error: For spiral mode, --starting-diameter, --end-diameter, and --spiral-step are required." << std::endl;
+        std::cerr << "Error: For spiral mode, --starting-diameter, --end-diameter, and --spiral-step are required." << '\n';
         return 1;
     }
     double starting_diameter = vm["starting-diameter"].as<double>();

@@ -778,7 +778,7 @@ float QuadSurface::pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int m
                         break; // Reached border
                     }
 
-                    if ((*_points)((int)current_pos[1], (int)current_pos[0])[0] != -1) {
+                    if ((*_points)(static_cast<int>(current_pos[1]), static_cast<int>(current_pos[0]))[0] != -1) {
                         if (first_valid_found) {
                             loc = current_pos;
                             break; // Found second consecutive valid point
@@ -1204,7 +1204,7 @@ std::unique_ptr<QuadSurface> load_quad_from_tifxyz(const std::string &path, int 
                 default: break;
             }
             // Last resort: treat as 32-bit float bytes
-            std::memcpy(&v, p, std::min(bytesPer, (int)sizeof(float)));
+            std::memcpy(&v, p, std::min(bytesPer, static_cast<int>(sizeof(float))));
             return v;
         };
 

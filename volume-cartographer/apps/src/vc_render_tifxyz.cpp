@@ -2315,7 +2315,9 @@ int main(int argc, char *argv[])
                 const std::string prefix = base.stem().string().empty()
                                              ? base.filename().string()
                                              : base.stem().string();
-                const std::string combined_name = prefix + "_" + seg_name;
+                std::string combined_name = prefix;
+                combined_name += '_';
+                combined_name += seg_name;
                 out_arg_path = base_dir / combined_name;
                 std::cout << "[batch] writing Zarr under directory: "
                           << base_dir.string()

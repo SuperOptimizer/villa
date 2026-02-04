@@ -117,7 +117,7 @@ public slots:
                                    SegmentationGrowthDirection direction,
                                    int steps,
                                    bool inpaintOnly);
-    void onFocusPOIChanged(std::string name, POI* poi);
+    void onFocusPOIChanged(const std::string& name, POI* poi);
     void onPointDoubleClicked(uint64_t pointId);
     void onMoveSegmentToPaths(const QString& segmentId);
 

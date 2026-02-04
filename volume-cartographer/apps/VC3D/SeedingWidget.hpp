@@ -21,13 +21,16 @@ class QSpinBox;
 class QToolButton;
 template <typename T> class ChunkCache;
 
-#include "CSurfaceCollection.hpp"
-#include "elements/ProgressUtil.hpp"
 #include "overlays/ViewerOverlayControllerBase.hpp"
 
 using PathPrimitive = ViewerOverlayControllerBase::PathPrimitive;
-#include "vc/core/types/VolumePkg.hpp"
-#include "vc/ui/VCCollection.hpp"
+
+// Forward declarations - heavy headers only needed in .cpp
+class CSurfaceCollection;
+class ProgressUtil;
+class VolumePkg;
+class Volume;
+class VCCollection;
 
 
 class SeedingWidget : public QWidget {

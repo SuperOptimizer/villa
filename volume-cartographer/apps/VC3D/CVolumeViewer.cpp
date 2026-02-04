@@ -6,6 +6,8 @@
 #include <unordered_set>
 #include <utility>
 
+#include <opencv2/core.hpp>
+
 #include <QGuiApplication>
 #include <QSettings>
 #include <QVBoxLayout>
@@ -317,7 +319,7 @@ void CVolumeViewer::recalcScales()
     if (_downscale_override > 0) {
         _ds_sd_idx += _downscale_override;
         // Clamp to available scales
-        _ds_sd_idx = std::min(_ds_sd_idx, (int)volume->numScales() - 1);
+        _ds_sd_idx = std::min(_ds_sd_idx, static_cast<int>(volume->numScales()) - 1);
     }
     _ds_scale = std::pow(2.0f, -_ds_sd_idx);
     /* ---------------------------------------------------------------- */
@@ -569,7 +571,7 @@ void CVolumeViewer::updateStatusLabel()
 
 void CVolumeViewer::OnVolumeChanged(std::shared_ptr<Volume> volume_)
 {
-    volume = volume_;
+    volume = std::move(volume_);
     
     // printf("sizes %d %d %d\n", volume_->sliceWidth(), volume_->sliceHeight(), volume_->numSlices());
 
@@ -808,7 +810,7 @@ void CVolumeViewer::fitSurfaceInView()
 }
 
 
-void CVolumeViewer::onSurfaceChanged(std::string name, std::shared_ptr<Surface> surf, bool isEditUpdate)
+void CVolumeViewer::onSurfaceChanged(const std::string& name, const std::shared_ptr<Surface>& surf, bool isEditUpdate)
 {
     if (name == "segmentation" || name == _surf_name) {
         markActiveSegmentationDirty();
@@ -939,7 +941,7 @@ QGraphicsItem *crossItem()
 }
 
 //TODO make poi tracking optional and configurable
-void CVolumeViewer::onPOIChanged(std::string name, POI *poi)
+void CVolumeViewer::onPOIChanged(const std::string& name, POI *poi)
 {
     auto surf = _surf_weak.lock();
     if (!poi || !surf)
@@ -1339,7 +1341,7 @@ void CVolumeViewer::onVolumeClosing()
     }
 }
 
-void CVolumeViewer::onSurfaceWillBeDeleted(std::string /*name*/, std::shared_ptr<Surface> surf)
+void CVolumeViewer::onSurfaceWillBeDeleted(const std::string& /*name*/, const std::shared_ptr<Surface>& surf)
 {
     // Called BEFORE surface deletion - clear all cached references to prevent use-after-free
     auto quad = std::dynamic_pointer_cast<QuadSurface>(surf);

@@ -10,7 +10,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include <opencv2/core.hpp>
+#include <opencv2/core/types.hpp>
 
 #include "vc/core/util/SurfacePatchIndex.hpp"
 #include "vc/core/types/InterpolationMethod.hpp"

@@ -2256,7 +2256,7 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
     Chunked3d<uint8_t,passTroughComputor> dbg_tensor(pass, ds, cache);
     trace_data.raw_volume = &dbg_tensor;
     std::cout << "seed val " << origin << " " <<
-    (int)dbg_tensor(origin[2],origin[1],origin[0]) << "\n";
+    static_cast<int>(dbg_tensor(origin[2],origin[1],origin[0])) << "\n";
 
     auto timer = new ALifeTime("search & optimization ...");
 
@@ -2615,11 +2615,11 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
 
                 float max_dist = 0.0f;
                 for (const auto& loc : collection.grid_locs_) {
-                    max_dist = std::max(max_dist, (float)cv::norm(loc - avg_loc));
+                    max_dist = std::max(max_dist, static_cast<float>(cv::norm(loc - avg_loc)));
                 }
 
                 int radius = 8 + static_cast<int>(std::ceil(max_dist));
-                cv::Vec2i corr_center_i = { (int)std::round(avg_loc[1]), (int)std::round(avg_loc[0]) };
+                cv::Vec2i corr_center_i = { static_cast<int>(std::round(avg_loc[1])), static_cast<int>(std::round(avg_loc[0])) };
                 opt_centers.push_back({corr_center_i, radius});
 
                 std::cout << "correction opt centered at " << avg_loc << " with radius " << radius << "\n";
@@ -3262,9 +3262,9 @@ QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv
         double seconds_this_gen = elapsed_seconds - last_elapsed_seconds;
         int succ_this_gen = succ - last_succ;
 
-        double const vx_per_quad = (double)step * step;
-        double const voxelsize_mm = (double)voxelsize / 1000.0;
-        double const voxelsize_m = (double)voxelsize / 1000000.0;
+        double const vx_per_quad = static_cast<double>(step) * step;
+        double const voxelsize_mm = static_cast<double>(voxelsize) / 1000.0;
+        double const voxelsize_m = static_cast<double>(voxelsize) / 1000000.0;
         double const mm2_per_quad = vx_per_quad * voxelsize_mm * voxelsize_mm;
         double const m2_per_quad = vx_per_quad * voxelsize_m * voxelsize_m;
 

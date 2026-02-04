@@ -70,7 +70,7 @@ cv::Mat visualize_normal_grid(const vc::core::util::GridStore& normal_grid, cons
     cv::Mat normal_constraints_vis = cv::Mat::zeros(size, CV_8UC3);
     cv::RNG rng(12345);
     const auto& all_paths = normal_grid.get_all();
-    std::cout << "Visualizing " << all_paths.size() << " paths from the grid store." << std::endl;
+    std::cout << "Visualizing " << all_paths.size() << " paths from the grid store." << '\n';
     for (const auto& path_ptr : all_paths) {
         const auto& path = *path_ptr;
         cv::Scalar color(rng.uniform(0, 256), rng.uniform(0, 256), rng.uniform(0, 256));

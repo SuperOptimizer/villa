@@ -30,7 +30,7 @@ public:
     VideoCallback(const std::vector<double>* positions, cv::Mat* frame, cv::VideoWriter* writer)
         : positions_(positions), frame_(frame), writer_(writer) {}
 
-    virtual ceres::CallbackReturnType operator()(const ceres::IterationSummary& summary) {
+    ceres::CallbackReturnType operator()(const ceres::IterationSummary& summary) override {
         if (writer_ && writer_->isOpened()) {
             // Redraw the entire trace for this frame
             frame_->setTo(cv::Scalar(0,0,0)); // Clear frame
@@ -95,9 +95,9 @@ void visualize_annotations(
     cv::circle(viz, p_bw, 8, cv::Scalar(0, 0, 255), 2); // Blue circle for backward start
 
     if (!cv::imwrite(path, viz)) {
-        std::cerr << "Error: Failed to write annotation visualization to " << path << std::endl;
+        std::cerr << "Error: Failed to write annotation visualization to " << path << '\n';
     } else {
-        std::cout << "Saved annotation visualization to " << path << std::endl;
+        std::cout << "Saved annotation visualization to " << path << '\n';
     }
 }
 
@@ -114,11 +114,11 @@ void optimize_spiral_trace(
     cv::Mat& vis_frame
 ) {
     if (spiral_trace.size() < 3) {
-        std::cout << "Trace is too short to optimize, skipping." << std::endl;
+        std::cout << "Trace is too short to optimize, skipping." << '\n';
         return;
     }
 
-    std::cout << "Optimizing spiral trace with " << spiral_trace.size() << " points..." << std::endl;
+    std::cout << "Optimizing spiral trace with " << spiral_trace.size() << " points..." << '\n';
 
     std::vector<double> positions(spiral_trace.size() * 2);
     for(size_t i = 0; i < spiral_trace.size(); ++i) {
@@ -175,7 +175,7 @@ void optimize_spiral_trace(
 
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
-    std::cout << summary.BriefReport() << std::endl;
+    std::cout << summary.BriefReport() << '\n';
 
     // Update spiral_trace with optimized values
     for(size_t i = 0; i < spiral_trace.size(); ++i) {
@@ -271,13 +271,13 @@ int spiral2_main(
         if (!video_out_path.empty()) {
             video_writer.open(video_out_path, cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 30, cv::Size(slice_mat.cols, slice_mat.rows));
             if (!video_writer.isOpened()) {
-                std::cerr << "Error: Could not open video writer for path: " << video_out_path << std::endl;
+                std::cerr << "Error: Could not open video writer for path: " << video_out_path << '\n';
             }
         }
     }
 
     if (!vm.count("spiral-step")) {
-        std::cerr << "Error: For spiral2 mode, --spiral-step is required." << std::endl;
+        std::cerr << "Error: For spiral2 mode, --spiral-step is required." << '\n';
         return 1;
     }
     double spiral_step = vm["spiral-step"].as<double>();
@@ -301,7 +301,7 @@ int spiral2_main(
     double cpu_time_skeletonization = static_cast<double>(end_cpu_skeletonization - start_cpu_skeletonization) / CLOCKS_PER_SEC;
     std::cout << "Skeletonization took " << real_time_skeletonization << " s (real), "
               << cpu_time_skeletonization << " s (user), "
-              << (cpu_time_skeletonization / real_time_skeletonization * 100.0) << "%" << std::endl;
+              << (cpu_time_skeletonization / real_time_skeletonization * 100.0) << "%" << '\n';
 
     auto start_grid_construction = std::chrono::high_resolution_clock::now();
     std::clock_t start_cpu_grid_construction = std::clock();
@@ -315,10 +315,10 @@ int spiral2_main(
     double cpu_time_grid_construction = static_cast<double>(end_cpu_grid_construction - start_cpu_grid_construction) / CLOCKS_PER_SEC;
     std::cout << "Normal grid construction took " << real_time_grid_construction << " s (real), "
               << cpu_time_grid_construction << " s (user), "
-              << (cpu_time_grid_construction / real_time_grid_construction * 100.0) << "%" << std::endl;
+              << (cpu_time_grid_construction / real_time_grid_construction * 100.0) << "%" << '\n';
 
     size_t grid_memory = normal_grid_src.get_memory_usage();
-    std::cout << "Normal grid memory usage: " << grid_memory / (1024.0 * 1024.0) << " MB" << std::endl;
+    std::cout << "Normal grid memory usage: " << grid_memory / (1024.0 * 1024.0) << " MB" << '\n';
 
     //so we test it here ...
     normal_grid_src.save("test_gridstore.bin");
@@ -367,7 +367,7 @@ int spiral2_main(
 
                     std::cout << "Generating spiral wrap for " << collection.name
                                 << " from winding " << start_point_fw.winding
-                                << " to " << start_point_bw.winding << std::endl;
+                                << " to " << start_point_bw.winding << '\n';
 
                     std::vector<SpiralPoint> spiral_wrap = generate_single_spiral_wrap(
                         slice_mat, start_point_fw, start_point_bw, spiral_step, umbilicus_p,
@@ -399,7 +399,7 @@ int spiral2_main(
         slice_bgr *= 0.5;
         cv::max(slice_bgr, composite_vis, composite_vis);
         cv::imwrite(final_path, composite_vis);
-        std::cout << "Saved final spiral visualization for " << collection.name << " to " << final_path << std::endl;
+        std::cout << "Saved final spiral visualization for " << collection.name << " to " << final_path << '\n';
 
         json_collection["spirals"] = all_spiral_wraps;
         json_output.push_back(json_collection);
@@ -408,8 +408,8 @@ int spiral2_main(
     if (vm.count("json-out")) {
         std::string json_out_path = vm["json-out"].as<std::string>();
         std::ofstream o(json_out_path);
-        o << std::setw(4) << json_output << std::endl;
-        std::cout << "Saved spiral data to " << json_out_path << std::endl;
+        o << std::setw(4) << json_output << '\n';
+        std::cout << "Saved spiral data to " << json_out_path << '\n';
     }
     return 0;
 }
@@ -429,7 +429,7 @@ void generate_bidir_spiral(
     cv::VideoWriter& video_writer,
     cv::Mat& vis_frame
 ) {
-    std::cout << "Generating bidirectional spiral (direction: " << direction << ")..." << std::endl;
+    std::cout << "Generating bidirectional spiral (direction: " << direction << ")..." << '\n';
 
     cv::Mat steps_vis;
     if (debug) {
@@ -437,7 +437,7 @@ void generate_bidir_spiral(
     }
 
     if (spiral_step <= 0) {
-        std::cerr << "Error: spiral-step must be positive." << std::endl;
+        std::cerr << "Error: spiral-step must be positive." << '\n';
         return;
     }
 
@@ -528,7 +528,7 @@ void generate_bidir_spiral(
         if (angle_diff < -CV_PI) angle_diff += 2 * CV_PI;
         new_point.winding = prev_point.winding + angle_diff / (2 * CV_PI);
 
-        // std::cout << "  Point " << i << ": cost=" << summary.final_cost << ", winding=" << new_point.winding << std::endl;
+        // std::cout << "  Point " << i << ": cost=" << summary.final_cost << ", winding=" << new_point.winding << '\n';
 
         int current_rev = static_cast<int>(std::abs(new_point.winding - start_point.winding));
         if (current_rev >= 0 && current_rev < revolutions) {
@@ -544,6 +544,6 @@ void generate_bidir_spiral(
     // if (debug) {
     //     std::string vis_path = "spiral_generation_steps_" + direction + ".tif";
     //     cv::imwrite(vis_path, steps_vis);
-    //     std::cout << "Saved spiral generation steps visualization to " << vis_path << std::endl;
+    //     std::cout << "Saved spiral generation steps visualization to " << vis_path << '\n';
     // }
 }

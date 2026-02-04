@@ -25,16 +25,16 @@ public:
                   class SurfacePatchIndex* surfaceIndex = nullptr, class PointIndex* pointIndex = nullptr) override { abort(); };
 
     PlaneSurface() {};
-    PlaneSurface(cv::Vec3f origin_, cv::Vec3f normal_);
+    PlaneSurface(const cv::Vec3f& origin_, const cv::Vec3f& normal_);
 
     void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, const cv::Vec3f &ptr, float scale, const cv::Vec3f &offset) override;
 
-    float pointDist(cv::Vec3f wp);
-    cv::Vec3f project(cv::Vec3f wp, float render_scale = 1.0, float coord_scale = 1.0);
-    void setNormal(cv::Vec3f normal);
-    void setOrigin(cv::Vec3f origin);
+    float pointDist(const cv::Vec3f& wp);
+    cv::Vec3f project(const cv::Vec3f& wp, float render_scale = 1.0, float coord_scale = 1.0);
+    void setNormal(const cv::Vec3f& normal);
+    void setOrigin(const cv::Vec3f& origin);
     cv::Vec3f origin();
-    float scalarp(cv::Vec3f point) const;
+    float scalarp(const cv::Vec3f& point) const;
     void setInPlaneRotation(float radians);
     [[nodiscard]] float inPlaneRotation() const noexcept { return _inPlaneRotation; }
     [[nodiscard]] cv::Vec3f basisX() const noexcept { return _vx; }

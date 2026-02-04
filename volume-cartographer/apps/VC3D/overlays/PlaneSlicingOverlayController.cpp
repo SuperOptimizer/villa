@@ -1,5 +1,7 @@
 #include "PlaneSlicingOverlayController.hpp"
 
+#include <opencv2/core.hpp>
+
 #include "../CVolumeViewer.hpp"
 #include "../CVolumeViewerView.hpp"
 #include "../CSurfaceCollection.hpp"

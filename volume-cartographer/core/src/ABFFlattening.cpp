@@ -198,7 +198,7 @@ static cv::Mat_<cv::Vec2f> upsampleUVs(const cv::Mat_<cv::Vec2f>& coarseUVs,
 static cv::Mat_<cv::Vec2f> abfFlattenInternal(const QuadSurface& surface, const ABFConfig& config) {
     const cv::Mat_<cv::Vec3f>* points = surface.rawPointsPtr();
     if (!points || points->empty()) {
-        std::cerr << "ABF++: Empty surface" << std::endl;
+        std::cerr << "ABF++: Empty surface" << '\n';
         return cv::Mat_<cv::Vec2f>();
     }
 
@@ -234,7 +234,7 @@ static cv::Mat_<cv::Vec2f> abfFlattenInternal(const QuadSurface& surface, const 
     }
 
     if (usedVertices.empty()) {
-        std::cerr << "ABF++: No valid quads found" << std::endl;
+        std::cerr << "ABF++: No valid quads found" << '\n';
         return cv::Mat_<cv::Vec2f>();
     }
 
@@ -256,7 +256,7 @@ static cv::Mat_<cv::Vec2f> abfFlattenInternal(const QuadSurface& surface, const 
         vertexIdx++;
     }
 
-    std::cout << "ABF++: Inserted " << vertexIdx << " vertices" << std::endl;
+    std::cout << "ABF++: Inserted " << vertexIdx << " vertices" << '\n';
 
     // Step 2: Insert faces (triangulated quads)
     int faceCount = 0;
@@ -292,35 +292,35 @@ static cv::Mat_<cv::Vec2f> abfFlattenInternal(const QuadSurface& surface, const 
         }
     }
 
-    std::cout << "ABF++: Inserted " << faceCount << " faces" << std::endl;
+    std::cout << "ABF++: Inserted " << faceCount << " faces" << '\n';
 
     hem->update_boundary();
 
     // Step 3: Check manifold
     if (!OpenABF::IsManifold(hem)) {
-        std::cerr << "ABF++: Mesh is not manifold" << std::endl;
+        std::cerr << "ABF++: Mesh is not manifold" << '\n';
         return cv::Mat_<cv::Vec2f>();
     }
 
     // Step 4: Run ABF++ optimization
     if (config.useABF) {
-        std::cout << "ABF++: Running angle optimization (max " << config.maxIterations << " iterations)..." << std::endl;
+        std::cout << "ABF++: Running angle optimization (max " << config.maxIterations << " iterations)..." << '\n';
         std::size_t iters = 0;
         double grad = 0;
         try {
             ABF::Compute(hem, iters, grad, config.maxIterations);
-            std::cout << "ABF++: Completed in " << iters << " iterations, final grad: " << grad << std::endl;
+            std::cout << "ABF++: Completed in " << iters << " iterations, final grad: " << grad << '\n';
         } catch (const OpenABF::SolverException& e) {
-            std::cerr << "ABF++: Solver failed (" << e.what() << "), falling back to LSCM only" << std::endl;
+            std::cerr << "ABF++: Solver failed (" << e.what() << "), falling back to LSCM only" << '\n';
         }
     }
 
     // Step 5: Run LSCM for final parameterization
-    std::cout << "ABF++: Running LSCM parameterization..." << std::endl;
+    std::cout << "ABF++: Running LSCM parameterization..." << '\n';
     try {
         LSCM::Compute(hem);
     } catch (const std::exception& e) {
-        std::cerr << "ABF++: LSCM failed: " << e.what() << std::endl;
+        std::cerr << "ABF++: LSCM failed: " << e.what() << '\n';
         return cv::Mat_<cv::Vec2f>();
     }
 
@@ -344,7 +344,7 @@ static cv::Mat_<cv::Vec2f> abfFlattenInternal(const QuadSurface& surface, const 
 
         if (area2D > 1e-10) {
             double scale = std::sqrt(area3D / area2D);
-            std::cout << "ABF++: Scaling UVs by " << scale << " to match 3D area" << std::endl;
+            std::cout << "ABF++: Scaling UVs by " << scale << " to match 3D area" << '\n';
 
             for (int row = 0; row < uvs.rows; ++row) {
                 for (int col = 0; col < uvs.cols; ++col) {
@@ -356,14 +356,14 @@ static cv::Mat_<cv::Vec2f> abfFlattenInternal(const QuadSurface& surface, const 
         }
     }
 
-    std::cout << "ABF++: Flattening complete" << std::endl;
+    std::cout << "ABF++: Flattening complete" << '\n';
     return uvs;
 }
 
 cv::Mat_<cv::Vec2f> abfFlatten(const QuadSurface& surface, const ABFConfig& config) {
     const cv::Mat_<cv::Vec3f>* points = surface.rawPointsPtr();
     if (!points || points->empty()) {
-        std::cerr << "ABF++: Empty surface" << std::endl;
+        std::cerr << "ABF++: Empty surface" << '\n';
         return cv::Mat_<cv::Vec2f>();
     }
 
@@ -381,7 +381,7 @@ cv::Mat_<cv::Vec2f> abfFlatten(const QuadSurface& surface, const ABFConfig& conf
 
     cv::Mat_<cv::Vec3f> coarseGrid = downsampleGrid(*points, config.downsampleFactor);
 
-    std::cout << coarseGrid.rows << "x" << coarseGrid.cols << ")" << std::endl;
+    std::cout << coarseGrid.rows << "x" << coarseGrid.cols << ")" << '\n';
 
     // Create a temporary coarse surface for ABF
     // Note: We need to allocate this on the heap and manage it carefully
@@ -398,7 +398,7 @@ cv::Mat_<cv::Vec2f> abfFlatten(const QuadSurface& surface, const ABFConfig& conf
 
     // Upsample UVs back to original resolution
     std::cout << "ABF++: Upsampling UVs from " << coarseUVs.rows << "x" << coarseUVs.cols
-              << " to " << originalRows << "x" << originalCols << std::endl;
+              << " to " << originalRows << "x" << originalCols << '\n';
 
     return upsampleUVs(coarseUVs, originalRows, originalCols, config.downsampleFactor);
 }
@@ -494,7 +494,7 @@ QuadSurface* abfFlattenToNewSurface(const QuadSurface& surface, const ABFConfig&
 
     cv::Vec2f uvRange = uvMax - uvMin;
     std::cout << "ABF++: UV bounds: [" << uvMin[0] << ", " << uvMin[1] << "] to ["
-              << uvMax[0] << ", " << uvMax[1] << "]" << std::endl;
+              << uvMax[0] << ", " << uvMax[1] << "]" << '\n';
 
     // Step 3: Determine output grid size
     // The stored tifxyz grid is a downsampled representation. The scale factor
@@ -512,7 +512,7 @@ QuadSurface* abfFlattenToNewSurface(const QuadSurface& surface, const ABFConfig&
 
     std::cout << "ABF++: Creating output grid " << gridW << " x " << gridH
               << " (input scale=" << inputScaleX << "x" << inputScaleY
-              << ", UV range=" << uvRange[0] << "x" << uvRange[1] << ")" << std::endl;
+              << ", UV range=" << uvRange[0] << "x" << uvRange[1] << ")" << '\n';
 
     // Step 4: Create output points grid
     cv::Mat_<cv::Vec3f>* outPoints = new cv::Mat_<cv::Vec3f>(gridH, gridW, cv::Vec3f(-1.f, -1.f, -1.f));
@@ -609,7 +609,7 @@ QuadSurface* abfFlattenToNewSurface(const QuadSurface& surface, const ABFConfig&
         }
     }
     std::cout << "ABF++: Rasterized " << validCount << " / " << (gridW * gridH)
-              << " points (" << (100.0f * validCount / (gridW * gridH)) << "%)" << std::endl;
+              << " points (" << (100.0f * validCount / (gridW * gridH)) << "%)" << '\n';
 
     // Step 6: Use input scale for output
     // The scale determines how gen() upscales the grid. Using the same scale

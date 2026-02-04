@@ -22,6 +22,8 @@
 
 #include <QLoggingCategory>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -42,6 +44,8 @@ SegmentationGrower::SegmentationGrower(Context context,
     , _callbacks(std::move(callbacks))
 {
 }
+
+SegmentationGrower::~SegmentationGrower() = default;
 
 void SegmentationGrower::updateContext(Context context)
 {
@@ -445,7 +449,7 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
         return false;
     }
     if (auto customParams = _context.widget->customParamsJson()) {
-        request.customParams = std::move(*customParams);
+        request.customParams = std::make_shared<nlohmann::json>(std::move(*customParams));
     }
 
     // Handle neural tracer integration - pass neural_socket when enabled, GrowPatch will use it as needed
@@ -482,7 +486,7 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
 
         // Add neural socket parameters to custom params
         if (!request.customParams) {
-            request.customParams = nlohmann::json::object();
+            request.customParams = std::make_shared<nlohmann::json>(nlohmann::json::object());
         }
         (*request.customParams)["neural_socket"] = socketPath.toStdString();
         (*request.customParams)["neural_batch_size"] = batchSize;

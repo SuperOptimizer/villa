@@ -56,7 +56,7 @@ static cv::Vec3f vy_from_orig_norm(const cv::Vec3f &o, const cv::Vec3f &n)
     return {v[1],v[0],v[2]};
 }
 
-static void vxy_from_normal(cv::Vec3f orig, cv::Vec3f normal, cv::Vec3f &vx, cv::Vec3f &vy)
+static void vxy_from_normal(const cv::Vec3f& orig, const cv::Vec3f& normal, cv::Vec3f &vx, cv::Vec3f &vy)
 {
     vx = vx_from_orig_norm(orig, normal);
     vy = vy_from_orig_norm(orig, normal);
@@ -103,19 +103,19 @@ static cv::Vec3f rotateAroundAxis(const cv::Vec3f& vector, const cv::Vec3f& axis
 
 } // anonymous namespace
 
-PlaneSurface::PlaneSurface(cv::Vec3f origin_, cv::Vec3f normal) : _origin(origin_)
+PlaneSurface::PlaneSurface(const cv::Vec3f& origin_, const cv::Vec3f& normal) : _origin(origin_)
 {
     cv::normalize(normal, _normal);
     update();
 };
 
-void PlaneSurface::setNormal(cv::Vec3f normal)
+void PlaneSurface::setNormal(const cv::Vec3f& normal)
 {
     cv::normalize(normal, _normal);
     update();
 }
 
-void PlaneSurface::setOrigin(cv::Vec3f origin)
+void PlaneSurface::setOrigin(const cv::Vec3f& origin)
 {
     _origin = origin;
     update();
@@ -126,7 +126,7 @@ cv::Vec3f PlaneSurface::origin()
     return _origin;
 }
 
-float PlaneSurface::pointDist(cv::Vec3f wp)
+float PlaneSurface::pointDist(const cv::Vec3f& wp)
 {
     float plane_off = _origin.dot(_normal);
     float scalarp = wp.dot(_normal) - plane_off /*- _z_off*/;
@@ -168,7 +168,7 @@ void PlaneSurface::update()
     _T = transf({3,0,1,3});
 }
 
-cv::Vec3f PlaneSurface::project(cv::Vec3f wp, float render_scale, float coord_scale)
+cv::Vec3f PlaneSurface::project(const cv::Vec3f& wp, float render_scale, float coord_scale)
 {
     cv::Vec3d res = _M*cv::Vec3d(wp)+_T;
     res *= render_scale*coord_scale;
@@ -176,7 +176,7 @@ cv::Vec3f PlaneSurface::project(cv::Vec3f wp, float render_scale, float coord_sc
     return {static_cast<float>(res(0)), static_cast<float>(res(1)), static_cast<float>(res(2))};
 }
 
-float PlaneSurface::scalarp(cv::Vec3f point) const
+float PlaneSurface::scalarp(const cv::Vec3f& point) const
 {
     return point.dot(_normal) - _origin.dot(_normal);
 }

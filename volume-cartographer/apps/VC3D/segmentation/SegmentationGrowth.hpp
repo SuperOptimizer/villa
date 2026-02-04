@@ -4,16 +4,17 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 #include <opencv2/core/matx.hpp>
 
-#include "vc/ui/VCCollection.hpp"
+#include "vc/ui/VCCollectionTypes.hpp"
 
 class QuadSurface;
 class Volume;
@@ -51,7 +52,7 @@ struct SegmentationGrowthRequest {
     SegmentationCorrectionsPayload corrections;
     std::optional<std::pair<int, int>> correctionsZRange;
     std::vector<SegmentationDirectionFieldConfig> directionFields;
-    std::optional<nlohmann::json> customParams;
+    std::shared_ptr<nlohmann::json> customParams;
     bool inpaintOnly{false};
     // Extrapolation parameters
     int extrapolationPointCount{7};

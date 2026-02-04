@@ -156,7 +156,7 @@ QString normalGridDirectoryForVolumePkg(const std::shared_ptr<VolumePkg>& pkg,
     }
 
     const std::filesystem::path candidate = rootPath / "normal_grids";
-    const QString candidateStr = QString::fromStdString(candidate.string());
+    QString candidateStr = QString::fromStdString(candidate.string());
     if (checkedPath) {
         *checkedPath = candidateStr;
     }
@@ -1566,7 +1566,7 @@ std::filesystem::path seg_path_name(const std::filesystem::path &path)
 {
     std::string name;
     bool store = false;
-    for(auto elm : path) {
+    for(const auto& elm : path) {
         if (store)
             name += "/"+elm.string();
         else if (elm == "paths")
