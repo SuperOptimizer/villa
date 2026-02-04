@@ -207,7 +207,7 @@ QStringList normal3dZarrCandidatesForVolumePkg(const std::shared_ptr<VolumePkg>&
         if (!entry.is_directory(ec) || ec) {
             continue;
         }
-        const std::filesystem::path p = entry.path();
+        const std::filesystem::path& p = entry.path();
         // Heuristic: treat as zarr if it contains x/0, y/0, z/0.
         if (std::filesystem::is_directory(p / "x" / "0") &&
             std::filesystem::is_directory(p / "y" / "0") &&
@@ -656,7 +656,7 @@ CWindow::~CWindow()
     delete _point_collection;
 }
 
-CVolumeViewer *CWindow::newConnectedCVolumeViewer(std::string surfaceName, QString title, QMdiArea *mdiArea)
+CVolumeViewer *CWindow::newConnectedCVolumeViewer(const std::string& surfaceName, const QString& title, QMdiArea *mdiArea)
 {
     if (!_viewerManager) {
         return nullptr;
@@ -748,17 +748,17 @@ void CWindow::configureViewerConnections(CVolumeViewer* viewer)
         }
 
         connect(viewer, &CVolumeViewer::sendMousePressVolume,
-                this, [this, viewer](cv::Vec3f volLoc, cv::Vec3f /*normal*/, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) {
+                this, [this, viewer](const cv::Vec3f& volLoc, const cv::Vec3f& /*normal*/, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) {
                     onAxisAlignedSliceMousePress(viewer, volLoc, button, modifiers);
                 });
 
         connect(viewer, &CVolumeViewer::sendMouseMoveVolume,
-                this, [this, viewer](cv::Vec3f volLoc, Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers) {
+                this, [this, viewer](const cv::Vec3f& volLoc, Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers) {
                     onAxisAlignedSliceMouseMove(viewer, volLoc, buttons, modifiers);
                 });
 
         connect(viewer, &CVolumeViewer::sendMouseReleaseVolume,
-                this, [this, viewer](cv::Vec3f /*volLoc*/, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) {
+                this, [this, viewer](const cv::Vec3f& /*volLoc*/, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) {
                     onAxisAlignedSliceMouseRelease(viewer, button, modifiers);
                 });
 
@@ -797,7 +797,7 @@ void CWindow::clearSurfaceSelection()
     }
 }
 
-void CWindow::setVolume(std::shared_ptr<Volume> newvol)
+void CWindow::setVolume(const std::shared_ptr<Volume>& newvol)
 {
     const bool hadVolume = static_cast<bool>(currentVolume);
     auto previousVolume = currentVolume;
@@ -1503,7 +1503,7 @@ void CWindow::UpdateVolpkgLabel(int filterCounter)
     ui.lblVpkgName->setText(label);
 }
 
-void CWindow::onShowStatusMessage(QString text, int timeout)
+void CWindow::onShowStatusMessage(const QString& text, int timeout)
 {
     statusBar()->showMessage(text, timeout);
 }
@@ -1585,7 +1585,7 @@ void CWindow::onLocChanged(void)
 
 }
 
-void CWindow::onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
+void CWindow::onVolumeClicked(const cv::Vec3f& vol_loc, const cv::Vec3f& normal, Surface *surf, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers)
 {
     if (modifiers & Qt::ShiftModifier) {
         return;
@@ -1710,7 +1710,7 @@ void CWindow::onSurfaceActivatedPreserveEditing(const QString& surfaceId, QuadSu
     }
 }
 
-void CWindow::onSurfaceWillBeDeleted(std::string name, std::shared_ptr<Surface> surf)
+void CWindow::onSurfaceWillBeDeleted(const std::string& name, const std::shared_ptr<Surface>& surf)
 {
     // Called BEFORE surface deletion - clear all references to prevent use-after-free
 

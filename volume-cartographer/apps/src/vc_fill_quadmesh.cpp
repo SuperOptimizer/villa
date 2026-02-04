@@ -45,7 +45,7 @@ float ldist(const E &p, const cv::Vec3f &tgt_o, const cv::Vec3f &tgt_v)
 }
 
 template <typename E>
-static float search_min_line(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt_o, cv::Vec3f tgt_v, cv::Vec2f init_step, float min_step_x)
+static float search_min_line(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f &out, const cv::Vec3f& tgt_o, const cv::Vec3f& tgt_v, const cv::Vec2f& init_step, float min_step_x)
 {
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
     if (!boundary.contains(cv::Point(loc))) {
@@ -185,7 +185,7 @@ std::string time_str()
     return oss.str();
 }
 
-int gen_surfloss(const cv::Vec2i p, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in, 
+int gen_surfloss(const cv::Vec2i& p, ceres::Problem &problem, const cv::Mat_<uint8_t> &state, const cv::Mat_<cv::Vec3f> &points_in,
     cv::Mat_<cv::Vec3d> &points, cv::Mat_<cv::Vec2d> &locs, float w = 0.1, int flags = 0)
 {
     if ((state(p) & STATE_LOC_VALID) == 0)
@@ -1308,7 +1308,7 @@ int main(int argc, char *argv[])
         
         for(int n=0;n<add_idxs.size();n++) {
             int idx = add_idxs[n];
-            cv::Vec2i p = add_ps[n];
+            const cv::Vec2i& p = add_ps[n];
             problem_col.AddResidualBlock(SurfaceLossD::Create(surf_points[idx], surf_w*weights[idx]), nullptr, &points(p)[0], &surf_locs[idx](p)[0]);
             problem_col.AddResidualBlock(Interp2DLoss<float>::Create(winds[idx], tgt_wind[p[1]], wind_w*weights[idx]), nullptr, &surf_locs[idx](p)[0]);
         }

@@ -502,10 +502,7 @@ struct FiberDirectionLoss {
     Chunked3dVec3fFromUint8 &_fiber_dirs;
     Chunked3dFloatFromUint8 *_maybe_weights;
 
-    static ceres::CostFunction* Create(Chunked3dVec3fFromUint8 &fiber_dirs, Chunked3dFloatFromUint8 *maybe_weights, float w = 1.0)
-    {
-        return new ceres::AutoDiffCostFunction<FiberDirectionLoss, 1, 3, 3>(new FiberDirectionLoss(fiber_dirs, maybe_weights, w));
-    }
+    static ceres::CostFunction* Create(Chunked3dVec3fFromUint8 &fiber_dirs, Chunked3dFloatFromUint8 *maybe_weights, float w = 1.0);
 };
 
 struct NormalDirectionLoss {
@@ -561,10 +558,7 @@ struct NormalDirectionLoss {
     Chunked3dVec3fFromUint8 &_normal_dirs;
     Chunked3dFloatFromUint8 *_maybe_weights;
 
-    static ceres::CostFunction* Create(Chunked3dVec3fFromUint8 &normal_dirs, Chunked3dFloatFromUint8 *maybe_weights, float w = 1.0)
-    {
-        return new ceres::AutoDiffCostFunction<NormalDirectionLoss, 1, 3, 3, 3>(new NormalDirectionLoss(normal_dirs, maybe_weights, w));
-    }
+    static ceres::CostFunction* Create(Chunked3dVec3fFromUint8 &normal_dirs, Chunked3dFloatFromUint8 *maybe_weights, float w = 1.0);
 };
 
 // Penalize that an in-surface edge direction is perpendicular to the directed target normal field.
@@ -669,11 +663,7 @@ struct Normal3DLineLoss {
 public:
     static ceres::CostFunction* Create(Chunked3dVec3fFromUint8 &normal_dirs,
                                        const NormalFitQualityWeightField* maybe_fit_quality,
-                                       float w = 1.0f)
-    {
-        return new ceres::AutoDiffCostFunction<Normal3DLineLoss, 1, 3, 3, 3>(
-            new Normal3DLineLoss(normal_dirs, maybe_fit_quality, w));
-    }
+                                       float w = 1.0f);
 
 private:
     template <typename E>
@@ -1278,11 +1268,7 @@ struct NormalConstraintPlane {
                                        bool direction_aware = false,
                                        int z_min = -1,
                                        int z_max = -1,
-                                       bool invert_dir = false) {
-        return new ceres::AutoDiffCostFunction<NormalConstraintPlane, 1, 3, 3, 3, 3>(
-            new NormalConstraintPlane(normal_grid_volume, plane_idx, w_normal, w_snap, maybe_fit_quality, direction_aware, z_min, z_max, invert_dir)
-        );
-    }
+                                       bool invert_dir = false);
 
     bool direction_aware_;
 };
@@ -1339,11 +1325,7 @@ struct PointCorrectionLoss2P {
         return true;
     }
 
-    static ceres::CostFunction* Create(const cv::Vec3f& correction_src, const cv::Vec3f& correction_tgt, const cv::Vec2i& grid_loc_int) {
-        return new ceres::AutoDiffCostFunction<PointCorrectionLoss2P, 2, 3, 3, 3, 3, 2>(
-            new PointCorrectionLoss2P(correction_src, correction_tgt, grid_loc_int)
-        );
-    }
+    static ceres::CostFunction* Create(const cv::Vec3f& correction_src, const cv::Vec3f& correction_tgt, const cv::Vec2i& grid_loc_int);
 
 private:
     const cv::Vec3f correction_src_;
@@ -1383,11 +1365,7 @@ struct PointCorrectionLoss {
         return true;
     }
 
-    static ceres::CostFunction* Create(const cv::Vec3f& correction_src, const cv::Vec3f& correction_tgt, const cv::Vec2i& grid_loc_int) {
-        return new ceres::AutoDiffCostFunction<PointCorrectionLoss, 1, 3, 3, 3, 3, 2>(
-            new PointCorrectionLoss(correction_src, correction_tgt, grid_loc_int)
-        );
-    }
+    static ceres::CostFunction* Create(const cv::Vec3f& correction_src, const cv::Vec3f& correction_tgt, const cv::Vec2i& grid_loc_int);
 
 private:
     const cv::Vec3f correction_src_;
@@ -1546,11 +1524,7 @@ struct SymmetricDirichletLoss {
         return true;
     }
 
-    static ceres::CostFunction* Create(double unit, double w = 1.0, double eps_abs = 1e-8, double eps_rel = 1e-2)
-    {
-        return new ceres::AutoDiffCostFunction<SymmetricDirichletLoss, 1, 3, 3, 3>(
-            new SymmetricDirichletLoss(unit, w, eps_abs, eps_rel));
-    }
+    static ceres::CostFunction* Create(double unit, double w = 1.0, double eps_abs = 1e-8, double eps_rel = 1e-2);
 
     double _unit;
     double _w;
@@ -1606,11 +1580,7 @@ struct AntiFlipbackLoss {
         return true;
     }
 
-    static ceres::CostFunction* Create(cv::Vec3d anchor, cv::Vec3d normal, double threshold, double w = 1.0)
-    {
-        return new ceres::AutoDiffCostFunction<AntiFlipbackLoss, 1, 3>(
-            new AntiFlipbackLoss(anchor, normal, threshold, w));
-    }
+    static ceres::CostFunction* Create(cv::Vec3d anchor, cv::Vec3d normal, double threshold, double w = 1.0);
 
     cv::Vec3d _anchor;
     cv::Vec3d _normal;

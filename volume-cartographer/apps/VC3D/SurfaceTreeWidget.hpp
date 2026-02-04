@@ -13,7 +13,7 @@ public:
     void updateItemIcon(bool approved, bool defective);
 
 private:
-    bool operator<(const QTreeWidgetItem& other) const
+    bool operator<(const QTreeWidgetItem& other) const override
     {
         int column = treeWidget()->sortColumn();
 

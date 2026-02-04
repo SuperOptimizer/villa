@@ -1,21 +1,19 @@
 #pragma once
 
+#include <cstdint>
+#include <vector>
+
 #include <opencv2/core/mat.hpp>
 #include <opencv2/core/matx.hpp>
 #include <xtensor/containers/xtensor.hpp>
-#include <vc/core/types/InterpolationMethod.hpp>
-#include <vc/core/util/ChunkCache.hpp>
-#include <vc/core/util/Compositing.hpp>
-#include <stdint.h>
 #include <xtensor/core/xlayout.hpp>
-#include <xtensor/core/xtensor_forward.hpp>
-#include <vector>
 
-// Forward declaration
+#include <vc/core/types/InterpolationMethod.hpp>
+
+// Forward declarations
 namespace z5 {
 class Dataset;
 }  // namespace z5
-enum class InterpolationMethod;
 namespace cv {
 template <typename _Tp> class Mat_;
 }  // namespace cv

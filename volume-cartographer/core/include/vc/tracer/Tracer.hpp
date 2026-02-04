@@ -1,9 +1,18 @@
 #pragma once
-#include "vc/core/util/Surface.hpp"
-#include "vc/core/util/QuadSurface.hpp"
+
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <opencv2/core/matx.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 // Forward declarations
+class QuadSurface;
 class VCCollection;
+namespace z5 { class Dataset; }
+template<typename T> class ChunkCache;
 struct Chunked3dFloatFromUint8;
 struct Chunked3dVec3fFromUint8;
 

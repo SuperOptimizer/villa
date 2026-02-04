@@ -31,7 +31,7 @@ float ldist(const E &p, const cv::Vec3f &tgt_o, const cv::Vec3f &tgt_v)
 }
 
 template <typename E>
-static float search_min_line(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f &out, cv::Vec3f tgt_o, cv::Vec3f tgt_v, cv::Vec2f init_step, float min_step_x)
+static float search_min_line(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f &out, const cv::Vec3f& tgt_o, const cv::Vec3f& tgt_v, const cv::Vec2f& init_step, float min_step_x)
 {
     cv::Rect boundary(1,1,points.cols-2,points.rows-2);
     if (!boundary.contains(cv::Point(loc))) {
@@ -159,7 +159,7 @@ IntersectVec getIntersects(const cv::Vec2i &seed, QuadSurface* surface)
     }
 
     IntersectVec a, b;
-    std::sort(dist_locs.begin(), dist_locs.end(), [](auto a, auto b) {return a.first < b.first; });
+    std::sort(dist_locs.begin(), dist_locs.end(), [](const auto& a, const auto& b) {return a.first < b.first; });
     a.push_back(dist_locs[0]);
     b.push_back(dist_locs.back());
     dist_locs.erase(dist_locs.begin());

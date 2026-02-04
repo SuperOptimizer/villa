@@ -71,7 +71,9 @@ int main(int argc, char** argv)
             std::ifstream((inRoot / dsName / ".zarray").string()));
         if (j.contains("dimension_separator"))
             dimsep = j["dimension_separator"].get<std::string>();
-    } catch (...) {}
+    } catch (const std::exception&) {
+        // dimension_separator is optional; keep default '.'
+    }
 
     z5::filesystem::handle::Group root(inRoot, z5::FileMode::FileMode::r);
     z5::filesystem::handle::Dataset dsHandle(root, dsName, dimsep);

@@ -919,8 +919,9 @@ void QuadSurface::saveSnapshot(int maxBackups)
                     if (backupNum >= 0 && backupNum < maxBackups) {
                         existingBackups.push_back(backupNum);
                     }
-                } catch (...) {
-                    // Skip non-numeric directories
+                } catch (const std::exception&) {
+                    // Skip non-numeric directories (stoi throws on invalid input)
+                    continue;
                 }
             }
         }
@@ -980,7 +981,7 @@ void QuadSurface::saveSnapshot(int maxBackups)
     snapshotMeta["scale"] = {_scale[0], _scale[1]};
 
     std::ofstream o(snapshot_dest / "meta.json");
-    o << std::setw(4) << snapshotMeta << std::endl;
+    o << std::setw(4) << snapshotMeta << "\n";
     o.close();
 
     // Copy mask.tif and generations.tif if they exist on disk
@@ -1044,7 +1045,7 @@ void QuadSurface::save(const std::string &path_, const std::string &uuid, bool f
     (*meta)["scale"] = {_scale[0], _scale[1]};
 
     std::ofstream o(path / "meta.json.tmp");
-    o << std::setw(4) << (*meta) << std::endl;
+    o << std::setw(4) << (*meta) << "\n";
     o.close();
 
     // Rename to make creation atomic
@@ -1108,7 +1109,7 @@ void QuadSurface::save_meta()
         throw std::runtime_error("no storage path for QuadSurface");
 
     std::ofstream o(path/"meta.json.tmp");
-    o << std::setw(4) << (*meta) << std::endl;
+    o << std::setw(4) << (*meta) << "\n";
 
     //rename to make creation atomic
     std::filesystem::rename(path/"meta.json.tmp", path/"meta.json");
@@ -1315,9 +1316,9 @@ std::unique_ptr<QuadSurface> load_quad_from_tifxyz(const std::string &path, int 
                             case SAMPLEFORMAT_UINT:
                             case SAMPLEFORMAT_INT:
                             case SAMPLEFORMAT_IEEEFP:
+                            default:
                                 return 255.0;
                         }
-                        return 255.0;
                     }();
                     auto to_valid = [fmt,bps,bytesPer,retainThreshold](const uint8_t* p)->bool{
                         switch(fmt) {
@@ -1335,8 +1336,9 @@ std::unique_ptr<QuadSurface> load_quad_from_tifxyz(const std::string &path, int 
                                 if (bps==16) { int16_t t; std::memcpy(&t,p,2); return t>=static_cast<int16_t>(retainThreshold); }
                                 if (bps==32) { int32_t t; std::memcpy(&t,p,4); return t>=static_cast<int32_t>(retainThreshold); }
                                 break;
+                            default:
+                                break;
                         }
-                        // default
                         return (*p)>=retainThreshold;
                     };
                     const cv::Vec3f invalidPoint(-1.f,-1.f,-1.f);
@@ -1473,7 +1475,7 @@ std::unique_ptr<QuadSurface> surface_diff(QuadSurface* a, QuadSurface* b, float 
     }
 
     std::cout << "Surface diff: removed " << removed_count
-              << " points out of " << total_valid << " valid points" << std::endl;
+              << " points out of " << total_valid << " valid points" << "\n";
 
     return std::make_unique<QuadSurface>(diff_points.release(), a->scale());
 }
@@ -1519,7 +1521,7 @@ std::unique_ptr<QuadSurface> surface_union(QuadSurface* a, QuadSurface* b, float
         }
     }
 
-    std::cout << "Surface union: added " << added_count << " points from surface b" << std::endl;
+    std::cout << "Surface union: added " << added_count << " points from surface b" << "\n";
 
     return std::make_unique<QuadSurface>(union_points.release(), a->scale());
 }
@@ -1562,7 +1564,7 @@ std::unique_ptr<QuadSurface> surface_intersection(QuadSurface* a, QuadSurface* b
     }
 
     std::cout << "Surface intersection: kept " << kept_count
-              << " points out of " << total_valid << " valid points" << std::endl;
+              << " points out of " << total_valid << " valid points" << "\n";
 
     return std::make_unique<QuadSurface>(intersect_points.release(), a->scale());
 }
@@ -1720,7 +1722,7 @@ void QuadSurface::orientZUp()
     float angle = computeZOrientationAngle();
     if (std::abs(angle) > 0.5f) {
         std::cout << "QuadSurface::orientZUp: Rotating by " << angle
-                  << " degrees to place high-Z at top" << std::endl;
+                  << " degrees to place high-Z at top" << "\n";
         rotate(angle);
     }
 }
@@ -1735,7 +1737,7 @@ void flipMultiLayerTiff(const std::filesystem::path& tiffPath, int flipCode) {
     // Read all layers
     std::vector<cv::Mat> layers;
     if (!cv::imreadmulti(tiffPath.string(), layers, cv::IMREAD_UNCHANGED)) {
-        std::cerr << "Warning: Could not read multi-layer TIFF: " << tiffPath << std::endl;
+        std::cerr << "Warning: Could not read multi-layer TIFF: " << tiffPath << "\n";
         return;
     }
 
@@ -1750,7 +1752,7 @@ void flipMultiLayerTiff(const std::filesystem::path& tiffPath, int flipCode) {
 
     // Write back all layers
     if (!cv::imwritemulti(tiffPath.string(), layers)) {
-        std::cerr << "Warning: Could not write flipped multi-layer TIFF: " << tiffPath << std::endl;
+        std::cerr << "Warning: Could not write flipped multi-layer TIFF: " << tiffPath << "\n";
     }
 }
 
@@ -1762,14 +1764,14 @@ void flipSingleTiff(const std::filesystem::path& tiffPath, int flipCode) {
 
     cv::Mat img = cv::imread(tiffPath.string(), cv::IMREAD_UNCHANGED);
     if (img.empty()) {
-        std::cerr << "Warning: Could not read TIFF: " << tiffPath << std::endl;
+        std::cerr << "Warning: Could not read TIFF: " << tiffPath << "\n";
         return;
     }
 
     cv::flip(img, img, flipCode);
 
     if (!cv::imwrite(tiffPath.string(), img)) {
-        std::cerr << "Warning: Could not write flipped TIFF: " << tiffPath << std::endl;
+        std::cerr << "Warning: Could not write flipped TIFF: " << tiffPath << "\n";
     }
 }
 } // anonymous namespace
@@ -1838,7 +1840,7 @@ void write_overlapping_json(const std::filesystem::path& seg_path, const std::se
     overlap_json["overlapping"] = std::vector<std::string>(overlapping_names.begin(), overlapping_names.end());
 
     std::ofstream o(seg_path / "overlapping.json");
-    o << std::setw(4) << overlap_json << std::endl;
+    o << std::setw(4) << overlap_json << "\n";
 }
 
 std::set<std::string> read_overlapping_json(const std::filesystem::path& seg_path) {

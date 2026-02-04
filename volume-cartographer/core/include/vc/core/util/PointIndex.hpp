@@ -1,15 +1,14 @@
 #pragma once
 
-#include <opencv2/core.hpp>
-#include <stddef.h>
-#include <opencv2/core/matx.hpp>
-#include <opencv2/core/matx.inl.hpp>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <tuple>
 #include <vector>
-#include <limits>
+
+#include <opencv2/core/matx.hpp>
 
 namespace cv {
 template <typename _Tp> class Mat_;

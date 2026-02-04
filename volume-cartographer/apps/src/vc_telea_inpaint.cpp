@@ -180,7 +180,7 @@ int main(int argc, char** argv) {
     size_t ok = 0, fail = 0, skipped = 0;
 
     auto process_entry = [&](const fs::directory_entry& e) {
-        const fs::path p = e.path();
+        const fs::path& p = e.path();
         if (!e.is_regular_file() || !is_png(p)) { ++skipped; return; }
 
         fs::path rel = fs::relative(p, in_dir);

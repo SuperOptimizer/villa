@@ -1,8 +1,8 @@
 #pragma once
 
-#include <opencv2/core.hpp>
-#include <opencv2/core/types.hpp>
 #include <vector>
+
+#include <opencv2/core/types.hpp>
 
 namespace cv {
 class Mat;

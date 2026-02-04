@@ -317,9 +317,9 @@ public:
     void save_meta();
     Rect3D bbox();
 
-    virtual cv::Mat_<cv::Vec3f> rawPoints() { ensureLoaded(); return *_points; }
-    virtual cv::Mat_<cv::Vec3f> *rawPointsPtr() { ensureLoaded(); return _points.get(); }
-    virtual const cv::Mat_<cv::Vec3f> *rawPointsPtr() const { const_cast<QuadSurface*>(this)->ensureLoaded(); return _points.get(); }
+    cv::Mat_<cv::Vec3f> rawPoints() { ensureLoaded(); return *_points; }
+    cv::Mat_<cv::Vec3f> *rawPointsPtr() { ensureLoaded(); return _points.get(); }
+    const cv::Mat_<cv::Vec3f> *rawPointsPtr() const { const_cast<QuadSurface*>(this)->ensureLoaded(); return _points.get(); }
 
     // Grid iteration helpers
     ValidPointRange<cv::Vec3f> validPoints() { ensureLoaded(); return ValidPointRange<cv::Vec3f>(_points.get()); }

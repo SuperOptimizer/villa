@@ -11,7 +11,7 @@
 #include <QRectF>
 #include <QString>
 
-#include <opencv2/core.hpp>
+#include <opencv2/core/matx.hpp>
 
 #include <cstddef>
 #include <functional>

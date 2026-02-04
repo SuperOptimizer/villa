@@ -16,6 +16,9 @@
 #include <unordered_set>
 #include <vector>
 #include <optional>
+
+#include <opencv2/core.hpp>  // For cv::Rect, cv::Size, cv::Mat_
+
 #include "overlays/ViewerOverlayControllerBase.hpp"
 #include "SurfaceTypes.hpp"  // POI, IntersectionLine (lightweight, no Qt)
 #include "vc/core/util/SurfacePatchIndex.hpp"

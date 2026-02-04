@@ -1305,7 +1305,7 @@ static int add_losses(ceres::Problem &problem, const cv::Vec2i &p, TraceParamete
 
     if (flags & LOSS_SDIR) {
         //symmetric dirichlet
-        count += gen_sdirichlet_loss(problem, p, params, settings, /*eps_abs=*/1e-8, /*eps_rel=*/1e-2);
+        count += gen_sdirichlet_loss(problem, p, params, settings, /*sdir_eps_abs=*/1e-8, /*sdir_eps_rel=*/1e-2);
         count += gen_sdirichlet_loss(problem, p + cv::Vec2i(-1, 0), params, settings, 1e-8, 1e-2);
         count += gen_sdirichlet_loss(problem, p + cv::Vec2i( 0,-1), params, settings, 1e-8, 1e-2);
     }
@@ -1537,7 +1537,7 @@ static int add_missing_losses(ceres::Problem &problem, cv::Mat_<uint16_t> &loss_
     count += conditional_dist_loss(5, p, {-1,-1}, loss_status, problem, params, settings);
 
     //symmetric dirichlet
-    count += conditional_sdirichlet_loss(6, p,                    loss_status, problem, params, settings, /*eps_abs=*/1e-8, /*eps_rel=*/1e-2);
+    count += conditional_sdirichlet_loss(6, p,                    loss_status, problem, params, settings, /*sdir_eps_abs=*/1e-8, /*sdir_eps_rel=*/1e-2);
     count += conditional_sdirichlet_loss(6, p + cv::Vec2i(-1, 0), loss_status, problem, params, settings, 1e-8, 1e-2);
     count += conditional_sdirichlet_loss(6, p + cv::Vec2i( 0,-1), loss_status, problem, params, settings, 1e-8, 1e-2);
 
@@ -1827,7 +1827,7 @@ static float local_optimization(int radius, const cv::Vec2i &p, TraceParameters 
     return sqrt(summary.final_cost/summary.num_residual_blocks);
 }
 template <typename E>
-[[gnu::always_inline]] static inline E _max_d_ign(const E &a, const E &b) noexcept
+[[gnu::always_inline]] static inline E max_dist_ignore(const E &a, const E &b) noexcept
 {
     if (a == E(-1))
         return b;
@@ -1837,7 +1837,7 @@ template <typename E>
 }
 
 template <typename T, typename E>
-static void _dist_iteration(T &from, T &to, int s)
+static void dist_iteration(T &from, T &to, int s)
 {
     E magic = -1;
 #pragma omp parallel for collapse(2)
@@ -1846,12 +1846,12 @@ static void _dist_iteration(T &from, T &to, int s)
             for(int i=0;i<s;i++) {
                 E dist = from(k,j,i);
                 if (dist == magic) {
-                    if (k) dist = _max_d_ign(dist, from(k-1,j,i));
-                    if (k < s-1) dist = _max_d_ign(dist, from(k+1,j,i));
-                    if (j) dist = _max_d_ign(dist, from(k,j-1,i));
-                    if (j < s-1) dist = _max_d_ign(dist, from(k,j+1,i));
-                    if (i) dist = _max_d_ign(dist, from(k,j,i-1));
-                    if (i < s-1) dist = _max_d_ign(dist, from(k,j,i+1));
+                    if (k) dist = max_dist_ignore(dist, from(k-1,j,i));
+                    if (k < s-1) dist = max_dist_ignore(dist, from(k+1,j,i));
+                    if (j) dist = max_dist_ignore(dist, from(k,j-1,i));
+                    if (j < s-1) dist = max_dist_ignore(dist, from(k,j+1,i));
+                    if (i) dist = max_dist_ignore(dist, from(k,j,i-1));
+                    if (i < s-1) dist = max_dist_ignore(dist, from(k,j,i+1));
                     if (dist != magic)
                         to(k,j,i) = dist+1;
                     else
@@ -1874,8 +1874,8 @@ static T distance_transform(const T &chunk, int steps, int size)
     E magic = -1;
 
     for(int n=0;n<steps/2;n++) {
-        _dist_iteration<T,E>(c1,c2,size);
-        _dist_iteration<T,E>(c2,c1,size);
+        dist_iteration<T,E>(c1,c2,size);
+        dist_iteration<T,E>(c2,c1,size);
     }
 
 #pragma omp parallel for collapse(2)

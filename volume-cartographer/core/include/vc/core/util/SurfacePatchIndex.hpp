@@ -1,8 +1,6 @@
 #pragma once
 
-#include <opencv2/core.hpp>
 #include <opencv2/core/matx.hpp>
-#include <opencv2/core/matx.inl.hpp>
 #include <array>
 #include <cstdint>
 #include <functional>

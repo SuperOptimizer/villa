@@ -2,7 +2,7 @@
 
 #include "SegmentationGrowth.hpp"
 
-#include <opencv2/core.hpp>
+#include <opencv2/core/matx.hpp>
 #include <cstdint>
 #include <memory>
 #include <unordered_map>

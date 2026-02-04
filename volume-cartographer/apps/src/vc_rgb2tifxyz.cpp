@@ -172,7 +172,7 @@ static bool patch_target_meta(const fs::path& target_dir,
                               const std::string& new_uuid,
                               const Bounds& B,
                               const json& scale_json,   // preserved (or overridden) json value
-                              std::string source_png_basename,
+                              const std::string& source_png_basename,
                               std::string* err = nullptr)
 {
     const fs::path meta_path = target_dir / "meta.json";

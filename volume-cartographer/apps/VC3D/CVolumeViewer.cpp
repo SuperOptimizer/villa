@@ -1225,10 +1225,10 @@ QuadSurface* CVolumeViewer::makeBBoxFilteredSurfaceFromSceneRect(const QRectF& s
     const double cx = W * 0.5; // cols/2
     const double cy = H * 0.5; // rows/2
     const cv::Vec2f sc = quad->scale();
-    int i0 = std::max(0,               (int)std::floor(cx + rSurf.left()   * sc[0]));
-    int i1 = std::min(W - 1,           (int)std::ceil (cx + rSurf.right()  * sc[0]));
-    int j0 = std::max(0,               (int)std::floor(cy + rSurf.top()    * sc[1]));
-    int j1 = std::min(H - 1,           (int)std::ceil (cy + rSurf.bottom() * sc[1]));
+    int i0 = std::max(0,     static_cast<int>(std::floor(cx + rSurf.left()   * sc[0])));
+    int i1 = std::min(W - 1, static_cast<int>(std::ceil (cx + rSurf.right()  * sc[0])));
+    int j0 = std::max(0,     static_cast<int>(std::floor(cy + rSurf.top()    * sc[1])));
+    int j1 = std::min(H - 1, static_cast<int>(std::ceil (cy + rSurf.bottom() * sc[1])));
     if (i0 > i1 || j0 > j1) return nullptr;
 
     const int outW = (i1 - i0 + 1);

@@ -7,6 +7,7 @@
 
 #include <opencv2/imgproc.hpp>
 #include "vc/core/types/ChunkedTensor.hpp"
+#include "vc/core/util/ChunkCache.hpp"
 #include "vc/core/util/StreamOperators.hpp"
 #include "vc/tracer/Tracer.hpp"
 #include "vc/ui/VCCollection.hpp"
@@ -598,7 +599,7 @@ int main(int argc, char *argv[])
         #pragma omp parallel for schedule(static)
         for (int r = 0; r < rows; ++r) {
             for (int c = 0; c < cols; ++c) {
-                const cv::Vec3f start = src_points(r, c);
+                const cv::Vec3f& start = src_points(r, c);
                 if (!is_valid_vertex(start)) {
                     continue;
                 }
@@ -974,10 +975,10 @@ int main(int argc, char *argv[])
                     float t_r = orig_r - static_cast<float>(r0);
                     float t_c = orig_c - static_cast<float>(c0);
 
-                    cv::Vec3f p00 = dst_points(r0, c0);
-                    cv::Vec3f p01 = dst_points(r0, c1);
-                    cv::Vec3f p10 = dst_points(r1, c0);
-                    cv::Vec3f p11 = dst_points(r1, c1);
+                    const cv::Vec3f& p00 = dst_points(r0, c0);
+                    const cv::Vec3f& p01 = dst_points(r0, c1);
+                    const cv::Vec3f& p10 = dst_points(r1, c0);
+                    const cv::Vec3f& p11 = dst_points(r1, c1);
 
                     // Bilinear interpolation of world coordinates
                     cv::Vec3f top = p00 * (1.0f - t_c) + p01 * t_c;

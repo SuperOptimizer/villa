@@ -24,7 +24,7 @@ class CPointCollectionWidget : public QDockWidget
 
 public:
     explicit CPointCollectionWidget(VCCollection *collection, QWidget *parent = nullptr);
-    ~CPointCollectionWidget();
+    ~CPointCollectionWidget() override;
 
 signals:
     void collectionSelected(uint64_t collectionId);

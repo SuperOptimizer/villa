@@ -19,7 +19,7 @@ using json = nlohmann::json;
 class MeasureLife
 {
 public:
-    MeasureLife(std::string msg)
+    MeasureLife(const std::string& msg)
     {
         std::cout << msg << std::flush;
         start = std::chrono::high_resolution_clock::now();

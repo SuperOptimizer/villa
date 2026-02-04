@@ -31,6 +31,7 @@
 #include "vc/ui/VCCollection.hpp"
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/GridStore.hpp"
+#include "vc/core/util/ChunkCache.hpp"
 
 #include "discrete.hpp"
 #include "continous.hpp"

@@ -30,7 +30,7 @@ static AffineTransform load_affine_json(const std::string& filename) {
     if (!j.contains("transformation_matrix")) return t; // identity
     auto mat = j["transformation_matrix"];
     if (mat.size() != 3 && mat.size() != 4) throw std::runtime_error("affine must be 3x4 or 4x4");
-    for (int r = 0; r < (int)mat.size(); ++r) {
+    for (int r = 0; r < static_cast<int>(mat.size()); ++r) {
         if (mat[r].size() != 4) throw std::runtime_error("affine rows must have 4 cols");
         for (int c = 0; c < 4; ++c) t.M(r,c) = mat[r][c].get<double>();
     }
@@ -106,7 +106,7 @@ static int run_tifxyz(const std::filesystem::path& inDir,
     }
 
     try {
-        std::filesystem::path out = outDir;
+        const std::filesystem::path& out = outDir;
         surf->save(out);
     } catch (const std::exception& e) {
         std::cerr << "failed to save tifxyz: " << e.what() << "\n"; return 4;

@@ -1017,7 +1017,7 @@ int main(int argc, char** argv) {
             z5::filesystem::handle::Dataset inHandle = [&]() {
                 std::string dimsep = ".";
                 if (path_is_dataset) {
-                    fs::path ds_path = in_root;
+                    const fs::path& ds_path = in_root;
                     try {
                         json j = json::parse(std::ifstream((ds_path / ".zarray").string()));
                         if (j.contains("dimension_separator")) dimsep = j["dimension_separator"].get<std::string>();
@@ -1413,7 +1413,7 @@ int main(int argc, char** argv) {
             if (multi) {
                 #pragma omp parallel for num_threads(jobs) schedule(dynamic)
                 for (int i = 0; i < static_cast<int>(files.size()); ++i) {
-                    const auto f = files[i];
+                    const auto& f = files[i];
                     cv::Mat img = cv::imread(f, cv::IMREAD_UNCHANGED);
                     namespace fs = std::filesystem;
                     std::string base = fs::path(f).filename().string();

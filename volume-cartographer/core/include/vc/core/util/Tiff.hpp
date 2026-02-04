@@ -1,11 +1,11 @@
 #pragma once
 
-#include <opencv2/core.hpp>
-#include <tiffio.h>
-#include <tiff.h>
+#include <cstdint>
 #include <filesystem>
 #include <vector>
-#include <cstdint>
+
+#include <tiff.h>
+#include <tiffio.h>
 
 namespace cv {
 class Mat;

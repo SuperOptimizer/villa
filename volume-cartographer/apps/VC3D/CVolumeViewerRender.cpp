@@ -20,6 +20,7 @@
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/Compositing.hpp"
 
 #include <omp.h>
 

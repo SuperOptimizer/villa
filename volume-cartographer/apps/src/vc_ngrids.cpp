@@ -829,7 +829,7 @@ static void run_vis_normals_zarr_as_ply(const fs::path& zarr_root, const fs::pat
             if (attrs.contains("sample_step")) {
                 step = std::max(1, attrs["sample_step"].get<int>());
             }
-        } catch (...) {
+        } catch (const std::exception&) {
             // Attributes are optional; keep defaults.
         }
     }
@@ -948,7 +948,7 @@ static void run_vis_normals_zarr_on_surf_edges_as_ply(
             if (attrs.contains("sample_step")) {
                 step = std::max(1, attrs["sample_step"].get<int>());
             }
-        } catch (...) {
+        } catch (const std::exception&) {
             // optional
         }
     }
@@ -1219,7 +1219,7 @@ static void run_align_normals_zarr(
             if (attrs.contains("sample_step")) {
                 step = std::max(1, attrs["sample_step"].get<int>());
             }
-        } catch (...) {
+        } catch (const std::exception&) {
             // attrs optional.
         }
     }
@@ -1686,7 +1686,7 @@ static void run_fit_normals(
     if (!vol_xyz_opt.has_value()) {
         throw std::runtime_error("Failed to infer volume shape from normal grids (required to expand fit read region beyond crop)");
     }
-    const cv::Vec3i vol_xyz = *vol_xyz_opt;
+    const cv::Vec3i& vol_xyz = *vol_xyz_opt;
 
     // Adaptive radius (per-sample): start at 32, double to 512, and choose the first
     // radius for which >=min_samples are found in any 2 of the 3 planes.
@@ -2406,7 +2406,7 @@ static void run_fit_normals(
     }
 
     if (out_zarr_opt.has_value()) {
-        const fs::path out_zarr = *out_zarr_opt;
+        const fs::path& out_zarr = *out_zarr_opt;
 
         // Create datasets with Zarr metadata using '/' as dimension_separator.
         // NOTE: direction-field readers in vc_grow_seg_from_seed expect:

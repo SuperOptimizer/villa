@@ -1,17 +1,17 @@
 #pragma once
 
-#include <xtensor/containers/xarray.hpp>
-#include <opencv2/core.hpp>
-#include <vc/core/util/ChunkCache.hpp>
-#include <stdint.h>
-#include <stdlib.h>
-#include <opencv2/core/matx.hpp>
-#include <opencv2/core/matx.inl.hpp>
-#include <cmath>
-#include <numbers>
-#include <array>
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <numbers>
 #include <type_traits>
+
+#include <opencv2/core/matx.hpp>
+#include <xtensor/containers/xarray.hpp>
+
+#include <vc/core/util/ChunkCache.hpp>
 
 namespace z5 {
 class Dataset;

@@ -1,10 +1,10 @@
 #pragma once
 
-#include <opencv2/core.hpp>
-#include <opencv2/core/matx.hpp>
+#include <cstdint>
 #include <string>
 #include <vector>
-#include <cstdint>
+
+#include <opencv2/core/matx.hpp>
 
 // Parameters for multi-layer compositing
 struct CompositeParams {

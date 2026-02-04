@@ -1,9 +1,8 @@
 #pragma once
 
-#include <opencv2/core.hpp>
-#include <stdlib.h>
+#include <cstdlib>
+
 #include <opencv2/core/matx.hpp>
-#include <opencv2/core/matx.inl.hpp>
 #include <opencv2/core/types.hpp>
 
 #include "Surface.hpp"

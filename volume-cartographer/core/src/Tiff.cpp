@@ -4,6 +4,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <tiffio.h>
+#include <opencv2/core.hpp>
 
 namespace {
 

@@ -25,7 +25,7 @@ using shape = z5::types::ShapeType;
 shape chunkId(const std::unique_ptr<z5::Dataset> &ds, shape coord)
 {
     shape div = ds->chunking().blockShape();
-    shape id = coord;
+    shape id = std::move(coord);
     for(int i=0;i<id.size();i++)
         id[i] /= div[i];
     return id;
@@ -34,13 +34,13 @@ shape chunkId(const std::unique_ptr<z5::Dataset> &ds, shape coord)
 shape idCoord(const std::unique_ptr<z5::Dataset> &ds, shape id)
 {
     shape mul = ds->chunking().blockShape();
-    shape coord = id;
+    shape coord = std::move(id);
     for(int i=0;i<coord.size();i++)
         coord[i] *= mul[i];
     return coord;
 }
 
-void timed_plane_slice(Surface &plane, z5::Dataset *ds, int size, ChunkCache<uint8_t> *cache, std::string msg, bool nearest_neighbor)
+void timed_plane_slice(Surface &plane, z5::Dataset *ds, int size, ChunkCache<uint8_t> *cache, const std::string& msg, bool nearest_neighbor)
 {
     cv::Mat_<cv::Vec3f> coords;
     cv::Mat_<cv::Vec3f> normals;

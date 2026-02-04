@@ -7,7 +7,7 @@ class CVolumeViewerView : public QGraphicsView
     Q_OBJECT
     
 public:
-    CVolumeViewerView(QWidget* parent = 0);
+    CVolumeViewerView(QWidget* parent = nullptr);
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;

@@ -9,7 +9,7 @@
 #include <optional>
 #include <vector>
 
-#include <opencv2/core.hpp>
+#include <opencv2/core/matx.hpp>
 
 class CSurfaceCollection;
 class SegmentationEditManager;

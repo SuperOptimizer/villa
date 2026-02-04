@@ -14,6 +14,7 @@
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
+#include "vc/core/util/ChunkCache.hpp"
 
 namespace po = boost::program_options;
 namespace fs = std::filesystem;
@@ -304,7 +305,7 @@ private:
     }
 
     std::vector<SurfaceInfo> loadSurfaces(const std::string& target_id,
-                                          std::shared_ptr<QuadSurface> target_surf,
+                                          const std::shared_ptr<QuadSurface>& target_surf,
                                           const std::string& source,
                                           const std::string& filter) {
 
@@ -346,7 +347,7 @@ private:
     }
 
     std::vector<SurfaceInfo> loadSequenceSurfaces(const std::string& target_id,
-                                                  std::shared_ptr<QuadSurface> target_surf,
+                                                  const std::shared_ptr<QuadSurface>& target_surf,
                                                   const std::vector<std::string>& sorted_sequence) {
         std::vector<SurfaceInfo> surfaces;
 
@@ -387,7 +388,7 @@ private:
     }
 
     std::vector<std::string> getSurfaceIds(const std::string& target_id,
-                                           std::shared_ptr<QuadSurface> target_surf,
+                                           const std::shared_ptr<QuadSurface>& target_surf,
                                            const std::string& source) {
         std::vector<std::string> ids;
 

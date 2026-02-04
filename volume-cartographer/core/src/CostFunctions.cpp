@@ -41,3 +41,61 @@ ceres::CostFunction* LinChkDistLoss::Create(const cv::Vec2d& p, float w) {
 ceres::CostFunction* ZCoordLoss::Create(float z, float w) {
     return new ceres::AutoDiffCostFunction<ZCoordLoss, 1, 3>(new ZCoordLoss(z, w));
 }
+
+ceres::CostFunction* FiberDirectionLoss::Create(Chunked3dVec3fFromUint8& fiber_dirs,
+                                                 Chunked3dFloatFromUint8* maybe_weights,
+                                                 float w) {
+    return new ceres::AutoDiffCostFunction<FiberDirectionLoss, 1, 3, 3>(
+        new FiberDirectionLoss(fiber_dirs, maybe_weights, w));
+}
+
+ceres::CostFunction* NormalDirectionLoss::Create(Chunked3dVec3fFromUint8& normal_dirs,
+                                                  Chunked3dFloatFromUint8* maybe_weights,
+                                                  float w) {
+    return new ceres::AutoDiffCostFunction<NormalDirectionLoss, 1, 3, 3, 3>(
+        new NormalDirectionLoss(normal_dirs, maybe_weights, w));
+}
+
+ceres::CostFunction* Normal3DLineLoss::Create(Chunked3dVec3fFromUint8& normal_dirs,
+                                               const NormalFitQualityWeightField* maybe_fit_quality,
+                                               float w) {
+    return new ceres::AutoDiffCostFunction<Normal3DLineLoss, 1, 3, 3, 3>(
+        new Normal3DLineLoss(normal_dirs, maybe_fit_quality, w));
+}
+
+ceres::CostFunction* NormalConstraintPlane::Create(const vc::core::util::NormalGridVolume& normal_grid_volume,
+                                                    int plane_idx,
+                                                    double w_normal,
+                                                    double w_snap,
+                                                    const NormalFitQualityWeightField* maybe_fit_quality,
+                                                    bool direction_aware,
+                                                    int z_min,
+                                                    int z_max,
+                                                    bool invert_dir) {
+    return new ceres::AutoDiffCostFunction<NormalConstraintPlane, 1, 3, 3, 3, 3>(
+        new NormalConstraintPlane(normal_grid_volume, plane_idx, w_normal, w_snap, maybe_fit_quality, direction_aware, z_min, z_max, invert_dir));
+}
+
+ceres::CostFunction* PointCorrectionLoss2P::Create(const cv::Vec3f& correction_src,
+                                                    const cv::Vec3f& correction_tgt,
+                                                    const cv::Vec2i& grid_loc_int) {
+    return new ceres::AutoDiffCostFunction<PointCorrectionLoss2P, 2, 3, 3, 3, 3, 2>(
+        new PointCorrectionLoss2P(correction_src, correction_tgt, grid_loc_int));
+}
+
+ceres::CostFunction* PointCorrectionLoss::Create(const cv::Vec3f& correction_src,
+                                                  const cv::Vec3f& correction_tgt,
+                                                  const cv::Vec2i& grid_loc_int) {
+    return new ceres::AutoDiffCostFunction<PointCorrectionLoss, 1, 3, 3, 3, 3, 2>(
+        new PointCorrectionLoss(correction_src, correction_tgt, grid_loc_int));
+}
+
+ceres::CostFunction* SymmetricDirichletLoss::Create(double unit, double w, double eps_abs, double eps_rel) {
+    return new ceres::AutoDiffCostFunction<SymmetricDirichletLoss, 1, 3, 3, 3>(
+        new SymmetricDirichletLoss(unit, w, eps_abs, eps_rel));
+}
+
+ceres::CostFunction* AntiFlipbackLoss::Create(cv::Vec3d anchor, cv::Vec3d normal, double threshold, double w) {
+    return new ceres::AutoDiffCostFunction<AntiFlipbackLoss, 1, 3>(
+        new AntiFlipbackLoss(anchor, normal, threshold, w));
+}

@@ -101,7 +101,7 @@ static int get_add_vertex(std::ofstream& out,
 
     if (idxs(loc) == -1) {
         idxs(loc) = v_idx++;
-        const cv::Vec3f p = points(loc);
+        const cv::Vec3f& p = points(loc);
         out << "v " << p[0] << " " << p[1] << " " << p[2] << '\n';
 
         // UVs: scaled by SCALE = 20
@@ -136,10 +136,10 @@ static cv::Mat_<cv::Vec3f> build_vertex_normals_from_faces(
         for (int i = 0; i < P.cols - 1; ++i) {
             if (!loc_valid(P, cv::Vec2d(j, i))) continue;
 
-            const cv::Vec3f p00 = P(j,   i  );
-            const cv::Vec3f p01 = P(j,   i+1);
-            const cv::Vec3f p10 = P(j+1, i  );
-            const cv::Vec3f p11 = P(j+1, i+1);
+            const cv::Vec3f& p00 = P(j,   i  );
+            const cv::Vec3f& p01 = P(j,   i+1);
+            const cv::Vec3f& p10 = P(j+1, i  );
+            const cv::Vec3f& p11 = P(j+1, i+1);
 
             // Face winding matches your 'f' lines:
             // f c10 c00 c01   and   f c10 c01 c11
@@ -226,9 +226,7 @@ static void surf_write_obj(QuadSurface *surf, const std::filesystem::path &out_f
 
     cv::Mat_<cv::Vec3f> normals = build_vertex_normals_from_faces(points);
 
-    std::cout << "Point dims: " << points.size()
-              << " cols: " << points.cols
-              << " rows: " << points.rows << "\n";
+    std::cout << "Point dims: " << points.cols << "x" << points.rows << "\n";
     
     if (align_grid) {
         std::cout << "Grid alignment: enabled (rows: constant Z only)\n";
@@ -309,7 +307,7 @@ int main(int argc, char *argv[])
                         decimate_iterations = iters;
                         ++i; // Skip the number argument
                     }
-                } catch (...) {
+                } catch (const std::exception&) {
                     // Not a number, continue with default of 1
                 }
             }
@@ -325,7 +323,7 @@ int main(int argc, char *argv[])
                         clean_sigma_k = k;
                         ++i; // consume K
                     }
-                } catch (...) {
+                } catch (const std::exception&) {
                     // Next token is not a number; keep default K
                 }
             }

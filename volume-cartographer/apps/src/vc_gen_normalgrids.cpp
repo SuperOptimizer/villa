@@ -1,6 +1,7 @@
 #include "support.hpp"
 #include "vc/core/util/LifeTime.hpp"
 #include "vc/core/util/Thinning.hpp"
+#include "vc/core/util/ChunkCache.hpp"
 
 #include <arpa/inet.h>
 #include <atomic>

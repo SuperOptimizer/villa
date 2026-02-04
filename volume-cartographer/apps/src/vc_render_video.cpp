@@ -22,6 +22,7 @@
 #include <omp.h>
 
 #include "vc/core/types/ChunkedTensor.hpp"
+#include "vc/core/util/ChunkCache.hpp"
 #include "vc/core/util/StreamOperators.hpp"
 
 using shape = z5::types::ShapeType;
@@ -35,7 +36,7 @@ using json = nlohmann::json;
 class MeasureLife
 {
 public:
-    MeasureLife(std::string msg)
+    MeasureLife(const std::string& msg)
     {
         std::cout << msg << std::flush;
         start = std::chrono::high_resolution_clock::now();

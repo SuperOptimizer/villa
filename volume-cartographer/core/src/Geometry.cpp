@@ -195,7 +195,7 @@ cv::Mat_<cv::Vec3f> clean_surface_outliers(const cv::Mat_<cv::Vec3f>& points, fl
     cv::Mat_<cv::Vec3f> cleaned = points.clone();
 
     std::vector<float> all_neighbor_dists;
-    all_neighbor_dists.reserve(points.rows * points.cols);
+    all_neighbor_dists.reserve(static_cast<size_t>(points.rows) * points.cols);
 
     // First pass: gather neighbor distances
     for (auto [j, i, center] : ValidPointRange<const cv::Vec3f>(&points)) {

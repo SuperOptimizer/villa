@@ -7,7 +7,8 @@
 
 #include <memory>
 
-#include <opencv2/core.hpp>
+#include <opencv2/core/mat.hpp>
+#include <opencv2/core/matx.hpp>
 
 // Forward declarations - full headers only needed in .cpp
 class QButtonGroup;

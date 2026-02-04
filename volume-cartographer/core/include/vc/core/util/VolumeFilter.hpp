@@ -1,13 +1,11 @@
 #pragma once
 
-#include <xtensor/containers/xarray.hpp>
-#include <xtensor/containers/xtensor.hpp>
-#include <opencv2/core.hpp>
-#include <xtensor/core/xtensor_forward.hpp>
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <string>
-#include <array>
+
+#include <xtensor/containers/xarray.hpp>
 
 namespace cv {
 template <typename _Tp> class Mat_;

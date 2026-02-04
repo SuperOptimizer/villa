@@ -11,7 +11,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include <opencv2/core.hpp>
+#include <opencv2/core/matx.hpp>
 
 #include "vc/ui/VCCollection.hpp"
 

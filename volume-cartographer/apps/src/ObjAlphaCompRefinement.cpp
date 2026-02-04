@@ -118,7 +118,7 @@ static SurfaceInputType detect_surface_type(const std::filesystem::path& src)
     throw std::runtime_error("unsupported surface input: " + src.string());
 }
 
-cv::Vec3f parse_vec3f(std::string line, std::string type = "")
+cv::Vec3f parse_vec3f(const std::string& line, const std::string& type = "")
 {
     cv::Vec3f v;
     std::istringstream iss(line);
@@ -143,7 +143,7 @@ struct DSReader {
     std::mutex read_mutex;
 };
 
-float alphacomp_offset(DSReader &reader, cv::Vec3f point, cv::Vec3f normal, float start, float stop, float step, float low, float high, int r)
+float alphacomp_offset(DSReader &reader, const cv::Vec3f& point, const cv::Vec3f& normal, float start, float stop, float step, float low, float high, int r)
 {
     int d = 2*r+1;
     cv::Size size = {d,d};
@@ -275,7 +275,7 @@ int process_obj(const std::string& src,
     while (std::getline(obj, line))
     {
         if (istype(line, "v")) {
-            cv::Vec3f v = vs[v_counter];
+            const cv::Vec3f& v = vs[v_counter];
             out << "v " << v[0] << " " << v[1] << " " << v[2];
             if (vertexcolor) {
                 float col = int(slice(v_counter, 0)*1000/255.0)/1000.0;
@@ -369,7 +369,7 @@ int process_tifxyz(const std::filesystem::path& src,
 class MeasureLife
 {
 public:
-    MeasureLife(std::string msg)
+    MeasureLife(const std::string& msg)
     {
         std::cout << msg << std::flush;
         start = std::chrono::high_resolution_clock::now();

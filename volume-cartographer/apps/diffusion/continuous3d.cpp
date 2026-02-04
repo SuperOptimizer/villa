@@ -4,6 +4,7 @@
 
 #include <vc/ui/VCCollection.hpp>
 #include <vc/core/util/GridStore.hpp>
+#include <vc/core/util/ChunkCache.hpp>
 #include "z5/factory.hxx"
 #include "z5/filesystem/handle.hxx"
 #include "z5/common.hxx"

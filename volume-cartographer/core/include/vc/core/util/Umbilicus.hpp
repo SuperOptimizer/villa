@@ -1,13 +1,12 @@
 #pragma once
 
-#include <opencv2/core.hpp>
-#include <opencv2/core/matx.hpp>
-#include <opencv2/core/matx.inl.hpp>
 #include <filesystem>
+#include <iosfwd>
 #include <optional>
 #include <utility>
 #include <vector>
-#include <iosfwd>
+
+#include <opencv2/core/matx.hpp>
 
 namespace vc::core::util {
 

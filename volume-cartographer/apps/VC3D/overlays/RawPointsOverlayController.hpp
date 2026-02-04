@@ -6,7 +6,7 @@
 #include <memory>
 #include <optional>
 
-#include <opencv2/core.hpp>
+#include <opencv2/core/matx.hpp>
 
 class QuadSurface;
 

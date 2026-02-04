@@ -3,6 +3,7 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/StreamOperators.hpp"
 #include "vc/core/util/Tiff.hpp"
+#include "vc/core/util/ChunkCache.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -95,7 +96,7 @@ AffineTransform loadAffineTransform(const std::string& filename) {
                 throw std::runtime_error("Affine matrix must have 3 or 4 rows");
             }
 
-            for (int row = 0; row < (int)mat.size(); row++) {
+            for (int row = 0; row < static_cast<int>(mat.size()); row++) {
                 if (mat[row].size() != 4) {
                     throw std::runtime_error("Each row of affine matrix must have 4 elements");
                 }
@@ -2167,6 +2168,7 @@ int main(int argc, char *argv[])
                                     sum.convertTo(sliceOut, CV_16UC1);
                                 } else {
                                     std::vector<cv::Mat> samples;
+                                    samples.reserve(samplesPerSlice);
                                     for (size_t j = 0; j < samplesPerSlice; ++j)
                                         samples.push_back(rawSlices[si + j]);
                                     computeMedianFromSamples<uint16_t>(samples, sliceOut);
@@ -2217,6 +2219,7 @@ int main(int argc, char *argv[])
                                     sum.convertTo(sliceOut, CV_8UC1);
                                 } else {
                                     std::vector<cv::Mat> samples;
+                                    samples.reserve(samplesPerSlice);
                                     for (size_t j = 0; j < samplesPerSlice; ++j)
                                         samples.push_back(rawSlices[si + j]);
                                     computeMedianFromSamples<uint8_t>(samples, sliceOut);
@@ -2312,10 +2315,11 @@ int main(int argc, char *argv[])
                 const std::string prefix = base.stem().string().empty()
                                              ? base.filename().string()
                                              : base.stem().string();
-                out_arg_path = base_dir / (prefix + "_" + seg_name);
+                const std::string combined_name = prefix + "_" + seg_name;
+                out_arg_path = base_dir / combined_name;
                 std::cout << "[batch] writing Zarr under directory: "
                           << base_dir.string()
-                          << "  name=" << (prefix + "_" + seg_name) << " (.zarr appended)\n";
+                          << "  name=" << combined_name << " (.zarr appended)\n";
             } else {
                 // For TIFF, keep old behavior but handle absolute -o correctly
                 out_arg_path = base.is_absolute() ? (base / seg_name)

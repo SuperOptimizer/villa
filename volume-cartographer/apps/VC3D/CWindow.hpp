@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <opencv2/core.hpp>
+#include <opencv2/core/matx.hpp>
 #include <QComboBox>
 #include <QCheckBox>
 #include <QFutureWatcher>
@@ -95,10 +95,10 @@ signals:
     void sendVolumeClosing(); // Signal to notify viewers before closing volume
 
 public slots:
-    void onShowStatusMessage(QString text, int timeout);
+    void onShowStatusMessage(const QString& text, int timeout);
     void onLocChanged(void);
     void onManualPlaneChanged(void);
-    void onVolumeClicked(cv::Vec3f vol_loc, cv::Vec3f normal, Surface *surf, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
+    void onVolumeClicked(const cv::Vec3f& vol_loc, const cv::Vec3f& normal, Surface *surf, Qt::MouseButton buttons, Qt::KeyboardModifiers modifiers);
     void onRenderSegment(const std::string& segmentId);
     void onGrowSegmentFromSegment(const std::string& segmentId);
     void onAddOverlap(const std::string& segmentId);
@@ -149,7 +149,7 @@ private:
     // Helper method for command line tools
     bool initializeCommandLineRunner(void);
 
-    CVolumeViewer *newConnectedCVolumeViewer(std::string surfaceName, QString title, QMdiArea *mdiArea);
+    CVolumeViewer *newConnectedCVolumeViewer(const std::string& surfaceName, const QString& title, QMdiArea *mdiArea);
     void closeEvent(QCloseEvent* event) override;
 
     void setWidgetsEnabled(bool state);
@@ -160,7 +160,7 @@ private:
     void CloseVolume(void);
 
 
-    void setVolume(std::shared_ptr<Volume> newvol);
+    void setVolume(const std::shared_ptr<Volume>& newvol);
     void updateNormalGridAvailability();
     void toggleVolumeOverlayVisibility();
     bool centerFocusAt(const cv::Vec3f& position, const cv::Vec3f& normal, const std::string& sourceId, bool addToHistory = false);
@@ -199,7 +199,7 @@ private slots:
     void processPendingInotifyEvents();
 #endif
     void onSliceStepSizeChanged(int newSize);
-    void onSurfaceWillBeDeleted(std::string name, std::shared_ptr<Surface> surf);
+    void onSurfaceWillBeDeleted(const std::string& name, const std::shared_ptr<Surface>& surf);
     void onConvertPointToAnchor(uint64_t pointId, uint64_t collectionId);
 
 private:
