@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
-#include <nlohmann/json.hpp>
 
 // Helper to get point-to-line-segment squared distance
 [[gnu::always_inline]] static inline float dist_point_segment_sq(const cv::Vec3f& p, const cv::Vec3f& a, const cv::Vec3f& b) noexcept {
@@ -120,9 +119,9 @@ static cv::Vec2f find_closest_intersection(QuadSurface* surface, const cv::Vec3f
 }
 
 
-nlohmann::json calc_point_metrics(const VCCollection& collection, QuadSurface* surface, int z_min, int z_max)
+SurfaceMetricsResult calc_point_metrics(const VCCollection& collection, QuadSurface* surface, int z_min, int z_max)
 {
-    nlohmann::json results;
+    SurfaceMetricsResult results;
     int total_points_for_in_surface_metric = 0;
     int valid_in_surface_points = 0;
 
@@ -185,15 +184,15 @@ nlohmann::json calc_point_metrics(const VCCollection& collection, QuadSurface* s
     }
 
     if (total_points_for_in_surface_metric > 0) {
-        results["in_surface_frac_valid"] = static_cast<float>(valid_in_surface_points) / total_points_for_in_surface_metric;
+        results.in_surface_frac_valid = static_cast<float>(valid_in_surface_points) / total_points_for_in_surface_metric;
     }
 
     return results;
 }
 
-nlohmann::json calc_point_winding_metrics(const VCCollection& collection, QuadSurface* surface, const cv::Mat_<float>& winding, int z_min, int z_max)
+SurfaceMetricsResult calc_point_winding_metrics(const VCCollection& collection, QuadSurface* surface, const cv::Mat_<float>& winding, int z_min, int z_max)
 {
-    nlohmann::json results;
+    SurfaceMetricsResult results;
 
     int total_invalid_intersections = 0;
     int total_correct_winding = 0;
@@ -262,11 +261,11 @@ nlohmann::json calc_point_winding_metrics(const VCCollection& collection, QuadSu
     }
 
     if (total_segments > 0) {
-        results["surface_missing_fraction"] = static_cast<float>(total_invalid_intersections) / total_segments;
+        results.surface_missing_fraction = static_cast<float>(total_invalid_intersections) / total_segments;
     }
 
     if (total_comparisons > 0) {
-        results["winding_valid_fraction"] = static_cast<float>(std::max(total_correct_winding, total_correct_winding_inv)) / total_comparisons;
+        results.winding_valid_fraction = static_cast<float>(std::max(total_correct_winding, total_correct_winding_inv)) / total_comparisons;
     }
 
     return results;

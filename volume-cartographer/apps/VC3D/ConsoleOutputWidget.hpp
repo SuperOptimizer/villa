@@ -6,7 +6,7 @@
 #include <QLabel>
 
 
-class ConsoleOutputWidget : public QWidget
+class ConsoleOutputWidget final : public QWidget
 {
     Q_OBJECT
 

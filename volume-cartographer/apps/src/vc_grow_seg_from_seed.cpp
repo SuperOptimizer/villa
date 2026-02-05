@@ -1,15 +1,20 @@
 #include <random>
 
-#include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/SlicingLite.hpp"
 #include "vc/core/util/Surface.hpp"
+#include "vc/core/util/SurfaceMeta.hpp"
+#include "vc/core/util/SurfaceMetaIO.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Geometry.hpp"
 
 #include <opencv2/imgproc.hpp>
 #include "vc/core/types/ChunkedTensor.hpp"
-#include "vc/core/util/ChunkCache.hpp"
+#include "vc/core/types/ChunkStore.hpp"
+#include "vc/core/types/Volume.hpp"
 #include "vc/core/util/StreamOperators.hpp"
 #include "vc/tracer/Tracer.hpp"
+#include "vc/tracer/TracerParams.hpp"
+#include "vc/tracer/TracerParamsIO.hpp"
 #include "vc/ui/VCCollection.hpp"
 
 #include "z5/factory.hxx"
@@ -26,9 +31,6 @@
 #include <vector>
  
 namespace po = boost::program_options;
-using shape = z5::types::ShapeType;
-
-
 using json = nlohmann::json;
 
 
@@ -75,11 +77,11 @@ bool check_existing_segments(const std::filesystem::path& tgt_dir, const cv::Vec
         std::ifstream meta_f(meta_fn);
         json meta = json::parse(meta_f);
 
-        if (!meta.count("bbox") || meta.value("format","NONE") != "tifxyz") {
+        if (!meta.contains("bbox") || meta.value("format","NONE") != "tifxyz") {
             continue;
         }
 
-        QuadSurface other(entry.path(), meta);
+        QuadSurface other(entry.path(), vc::meta::parseFromJson(meta));
         if (contains(other, origin, search_effort)) {
             std::cout << "Found overlapping segment at location: " << entry.path() << "\n";
             return true;
@@ -88,7 +90,7 @@ bool check_existing_segments(const std::filesystem::path& tgt_dir, const cv::Vec
     return false;
 }
 
-static auto load_direction_fields(json const&params, ChunkCache<uint8_t> *chunk_cache, std::filesystem::path const &cache_root)
+static auto load_direction_fields(json const&params, Volume *vol, std::filesystem::path const &cache_root)
 {
     std::vector<DirectionField> direction_fields;
     if (params.contains("direction_fields")) {
@@ -131,8 +133,8 @@ static auto load_direction_fields(json const&params, ChunkCache<uint8_t> *chunk_
 
             direction_fields.emplace_back(
                 direction,
-                std::make_unique<Chunked3dVec3fFromUint8>(std::move(direction_dss), scale_factor, chunk_cache, cache_root, unique_id),
-                maybe_weight_ds ? std::make_unique<Chunked3dFloatFromUint8>(std::move(maybe_weight_ds), scale_factor, chunk_cache, cache_root, unique_id + "_conf") : std::unique_ptr<Chunked3dFloatFromUint8>(),
+                std::make_unique<Chunked3dVec3fFromUint8>(std::move(direction_dss), scale_factor, vol->rawCache8(), cache_root, unique_id),
+                maybe_weight_ds ? std::make_unique<Chunked3dFloatFromUint8>(std::move(maybe_weight_ds), scale_factor, vol->rawCache8(), cache_root, unique_id + "_conf") : std::unique_ptr<Chunked3dFloatFromUint8>(),
                 weight);
         }
     }
@@ -178,7 +180,7 @@ int main(int argc, char *argv[])
         try {
             po::store(po::parse_command_line(argc, argv, desc), vm);
 
-            if (vm.count("help")) {
+            if (vm.contains("help")) {
                 std::cout << desc << "\n";
                 return EXIT_SUCCESS;
             }
@@ -194,7 +196,7 @@ int main(int argc, char *argv[])
         tgt_dir = vm["target-dir"].as<std::string>();
         params_path = vm["params"].as<std::string>();
 
-        if (vm.count("seed")) {
+        if (vm.contains("seed")) {
             auto seed_coords = vm["seed"].as<std::vector<float>>();
             if (seed_coords.size() != 3) {
                 std::cerr << "ERROR: --seed requires exactly 3 coordinates (x y z)" << "\n";
@@ -202,12 +204,12 @@ int main(int argc, char *argv[])
             }
             origin = {seed_coords[0], seed_coords[1], seed_coords[2]};
         }
-        if (vm.count("resume")) {
+        if (vm.contains("resume")) {
             resume_path = vm["resume"].as<std::string>();
         }
 
-        if (vm.count("correct")) {
-            if (!vm.count("resume")) {
+        if (vm.contains("correct")) {
+            if (!vm.contains("resume")) {
                 std::cerr << "ERROR: --correct can only be used with --resume" << "\n";
                 return EXIT_FAILURE;
             }
@@ -222,19 +224,19 @@ int main(int argc, char *argv[])
         std::ifstream params_f(params_path.string());
         params = json::parse(params_f);
 
-        if (vm.count("rewind-gen")) {
+        if (vm.contains("rewind-gen")) {
             params["rewind_gen"] = vm["rewind-gen"].as<int>();
         }
 
-        if (vm.count("inpaint")) {
+        if (vm.contains("inpaint")) {
             params["inpaint"] = true;
         }
 
-        if (vm.count("skip-overlap-check")) {
+        if (vm.contains("skip-overlap-check")) {
             skip_overlap_check = true;
         }
 
-        if (vm.count("resume-opt")) {
+        if (vm.contains("resume-opt")) {
             std::string resume_opt = vm["resume-opt"].as<std::string>();
             if (resume_opt == "skip" || resume_opt == "local" || resume_opt == "global") {
                 params["resume_opt"] = resume_opt;
@@ -244,11 +246,11 @@ int main(int argc, char *argv[])
             }
         }
 
-        if (vm.count("resume-generations")) {
+        if (vm.contains("resume-generations")) {
             params["resume_generations"] = vm["resume-generations"].as<int>();
         }
 
-        if (vm.count("segment-name")) {
+        if (vm.contains("segment-name")) {
             segment_name = vm["segment-name"].as<std::string>();
         }
     }
@@ -265,20 +267,17 @@ int main(int argc, char *argv[])
         set_space_tracing_use_cuda(true);
     }
 
-    z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset ds_handle(group, "0", json::parse(std::ifstream(vol_path/"0/.zarray")).value<std::string>("dimension_separator","."));
-    std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
+    auto store = std::make_shared<ChunkStore>(static_cast<size_t>(params.value("cache_size", 1e9)));
+    auto volume = Volume::New(vol_path, store);
 
-    std::cout << "zarr dataset size for scale group 0 " << ds->shape() << "\n";
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << "\n";
-
-    ChunkCache<uint8_t> chunk_cache(params.value("cache_size", 1e9));
+    auto vol_shape = volume->shapeZYX(0);
+    auto vol_chunk = volume->chunkShape(0);
+    std::cout << "zarr dataset size for scale group 0 [" << vol_shape[0] << ", " << vol_shape[1] << ", " << vol_shape[2] << "]\n";
+    std::cout << "chunk shape [" << vol_chunk[0] << ", " << vol_chunk[1] << ", " << vol_chunk[2] << "]\n";
 
     passTroughComputor pass;
-    Chunked3d<uint8_t,passTroughComputor> tensor(pass, ds.get(), &chunk_cache);
+    Chunked3d<uint8_t,passTroughComputor> tensor(pass, volume->zarrDataset(0), volume->rawCache8());
     CachedChunked3dInterpolator<uint8_t,passTroughComputor> interpolator(tensor);
-
-    auto chunk_size = ds->chunking().blockShape();
 
     srand(clock());
 
@@ -288,7 +287,7 @@ int main(int argc, char *argv[])
     int search_effort = params.value("search_effort", 10);
     int thread_limit = params.value("thread_limit", 0);
 
-    float voxelsize = json::parse(std::ifstream(vol_path/"meta.json"))["voxelsize"];
+    float voxelsize = static_cast<float>(volume->voxelSize());
     
     std::filesystem::path cache_root;
     if (params.contains("cache_root") && params["cache_root"].is_string()) {
@@ -304,7 +303,7 @@ int main(int argc, char *argv[])
     std::cout << "min_area_cm: " << min_area_cm << "\n";
     std::cout << "tgt_overlap_count: " << tgt_overlap_count << "\n";
 
-    auto direction_fields = load_direction_fields(params, &chunk_cache, cache_root);
+    auto direction_fields = load_direction_fields(params, volume.get(), cache_root);
 
     std::unordered_map<std::string,QuadSurface*> surfs;
     std::vector<QuadSurface*> surfs_v;
@@ -338,13 +337,13 @@ int main(int argc, char *argv[])
                 std::ifstream meta_f(meta_fn);
                 json meta = json::parse(meta_f);
 
-                if (!meta.count("bbox"))
+                if (!meta.contains("bbox"))
                     continue;
 
                 if (meta.value("format","NONE") != "tifxyz")
                     continue;
 
-                QuadSurface *sm = new QuadSurface(entry.path(), meta);
+                QuadSurface *sm = new QuadSurface(entry.path(), vc::meta::parseFromJson(meta));
                 sm->readOverlappingJson();
 
                 surfs[name] = sm;
@@ -393,7 +392,7 @@ int main(int argc, char *argv[])
                     cv::Vec2f searchdir = cv::Vec2f(h/2,w/2) - p;
                     cv::normalize(searchdir, searchdir);
                     found = false;
-                    for(int i=0;i<std::min(w/2/abs(searchdir[1]),h/2/abs(searchdir[0]));i++,p+=searchdir) {
+                    for(int i=0;i<std::min(w/2/std::abs(searchdir[1]),h/2/std::abs(searchdir[0]));i++,p+=searchdir) {
                         found = true;
                         cv::Vec2i p_eval = p;
                         for(int r=0;r<5;r++) {
@@ -451,17 +450,17 @@ int main(int argc, char *argv[])
             int max_attempts = 1000;
             
             while(count < max_attempts && !succ) {
-                origin = {static_cast<double>(128 + (rand() % (ds->shape(2)-384))),
-                         static_cast<double>(128 + (rand() % (ds->shape(1)-384))),
-                         static_cast<double>(128 + (rand() % (ds->shape(0)-384)))};
+                origin = {static_cast<double>(128 + (rand() % (vol_shape[2]-384))),
+                         static_cast<double>(128 + (rand() % (vol_shape[1]-384))),
+                         static_cast<double>(128 + (rand() % (vol_shape[0]-384)))};
 
                 count++;
-                auto chunk_id = chunk_size;
+                auto chunk_id = volume->zarrDataset(0)->chunking().blockShape();
                 chunk_id[0] = origin[2]/chunk_id[0];
                 chunk_id[1] = origin[1]/chunk_id[1];
                 chunk_id[2] = origin[0]/chunk_id[2];
 
-                if (!ds->chunkExists(chunk_id))
+                if (!volume->zarrDataset(0)->chunkExists(chunk_id))
                     continue;
 
                 cv::Vec3d dir = {static_cast<double>((rand() % 1024) - 512),
@@ -1005,22 +1004,21 @@ int main(int argc, char *argv[])
         std::filesystem::path out_dir = tgt_dir / uuid_local;
 
         // Meta
-        nlohmann::json neighbor_meta;
-        neighbor_meta["source"] = "vc_grow_seg_from_seed";
-        neighbor_meta["vc_gsfs_params"] = params;
-        neighbor_meta["vc_gsfs_mode"] = mode;
-        neighbor_meta["vc_gsfs_version"] = "dev";
+        out_surf->meta.source = "vc_grow_seg_from_seed";
+        out_surf->meta.extras["vc_gsfs_params"] = params.dump();
+        out_surf->meta.extras["vc_gsfs_mode"] = nlohmann::json(mode).dump();
+        out_surf->meta.extras["vc_gsfs_version"] = nlohmann::json("dev").dump();
 
-        out_surf->meta = std::make_unique<nlohmann::json>(std::move(neighbor_meta));
         out_surf->save(out_dir, uuid_local, true);
 
         // Done
         return EXIT_SUCCESS;
     }
 
-    QuadSurface *surf = tracer(ds.get(), 1.0, &chunk_cache, origin, params, cache_root, voxelsize, direction_fields, resume_surf.get(), seg_dir, meta_params, &corrections);
+    TracerParams tp = vc::tracer::parseFromJson(params);
+    QuadSurface *surf = tracer(volume->zarrDataset(0), 1.0, volume->rawCache8(), origin, tp, cache_root, voxelsize, direction_fields, resume_surf.get(), seg_dir, meta_params.dump(), &corrections);
 
-    double area_cm2 = (*surf->meta)["area_cm2"].get<double>();
+    double area_cm2 = surf->meta.area_cm2;
     if (area_cm2 < min_area_cm) {
         if (std::filesystem::exists(seg_dir)) {
             std::filesystem::remove_all(seg_dir);
@@ -1056,7 +1054,7 @@ int main(int argc, char *argv[])
 
         // Check for additional surfaces in target directory
         for (const auto& entry : std::filesystem::directory_iterator(tgt_dir))
-            if (std::filesystem::is_directory(entry) && !surfs.count(entry.path().filename()))
+            if (std::filesystem::is_directory(entry) && !surfs.contains(entry.path().filename()))
             {
                 std::string name = entry.path().filename();
                 if (name.compare(0, name_prefix.size(), name_prefix))
@@ -1072,13 +1070,13 @@ int main(int argc, char *argv[])
                 std::ifstream meta_f(meta_fn);
                 json meta = json::parse(meta_f);
 
-                if (!meta.count("bbox"))
+                if (!meta.contains("bbox"))
                     continue;
 
                 if (meta.value("format","NONE") != "tifxyz")
                     continue;
 
-                QuadSurface other = QuadSurface(entry.path(), meta);
+                QuadSurface other = QuadSurface(entry.path(), vc::meta::parseFromJson(meta));
 
                 if (overlap(*surf, other, search_effort)) {
                     current_overlapping.insert(other.id);

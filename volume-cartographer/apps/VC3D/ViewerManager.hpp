@@ -26,65 +26,63 @@ class PathsOverlayController;
 class BBoxOverlayController;
 class VectorOverlayController;
 class VolumeOverlayController;
-template <typename T> class ChunkCache;
 class SegmentationModule;
 class Volume;
 class Surface;
 class QuadSurface;
 
-class ViewerManager : public QObject
+class ViewerManager final : public QObject
 {
     Q_OBJECT
 
 public:
     ViewerManager(CSurfaceCollection* surfaces,
                   VCCollection* points,
-                  ChunkCache<uint8_t>* cache,
                   QObject* parent = nullptr);
 
     CVolumeViewer* createViewer(const std::string& surfaceName,
                                 const QString& title,
                                 QMdiArea* mdiArea);
 
-    const std::vector<CVolumeViewer*>& viewers() const { return _viewers; }
+    const std::vector<CVolumeViewer*>& viewers() const noexcept { return _viewers; }
 
     void setSegmentationOverlay(SegmentationOverlayController* overlay);
-    SegmentationOverlayController* segmentationOverlay() const { return _segmentationOverlay; }
+    SegmentationOverlayController* segmentationOverlay() const noexcept { return _segmentationOverlay; }
     void setSegmentationEditActive(bool active);
     void setSegmentationModule(SegmentationModule* module);
     void setPointsOverlay(PointsOverlayController* overlay);
     void setRawPointsOverlay(RawPointsOverlayController* overlay);
-    RawPointsOverlayController* rawPointsOverlay() const { return _rawPointsOverlay; }
+    RawPointsOverlayController* rawPointsOverlay() const noexcept { return _rawPointsOverlay; }
     void setPathsOverlay(PathsOverlayController* overlay);
     void setBBoxOverlay(BBoxOverlayController* overlay);
     void setVectorOverlay(VectorOverlayController* overlay);
     void setVolumeOverlay(VolumeOverlayController* overlay);
 
     void setIntersectionOpacity(float opacity);
-    float intersectionOpacity() const { return _intersectionOpacity; }
+    float intersectionOpacity() const noexcept { return _intersectionOpacity; }
 
     void setOverlayVolume(std::shared_ptr<Volume> volume, const std::string& volumeId);
-    std::shared_ptr<Volume> overlayVolume() const { return _overlayVolume; }
-    const std::string& overlayVolumeId() const { return _overlayVolumeId; }
+    std::shared_ptr<Volume> overlayVolume() const noexcept { return _overlayVolume; }
+    const std::string& overlayVolumeId() const noexcept { return _overlayVolumeId; }
 
     void setOverlayOpacity(float opacity);
-    float overlayOpacity() const { return _overlayOpacity; }
+    float overlayOpacity() const noexcept { return _overlayOpacity; }
 
     void setOverlayColormap(const std::string& colormapId);
-    const std::string& overlayColormap() const { return _overlayColormapId; }
+    const std::string& overlayColormap() const noexcept { return _overlayColormapId; }
     void setOverlayThreshold(float threshold);
-    float overlayThreshold() const { return _overlayWindowLow; }
+    float overlayThreshold() const noexcept { return _overlayWindowLow; }
 
     void setOverlayWindow(float low, float high);
-    float overlayWindowLow() const { return _overlayWindowLow; }
-    float overlayWindowHigh() const { return _overlayWindowHigh; }
+    float overlayWindowLow() const noexcept { return _overlayWindowLow; }
+    float overlayWindowHigh() const noexcept { return _overlayWindowHigh; }
 
     void setVolumeWindow(float low, float high);
-    float volumeWindowLow() const { return _volumeWindowLow; }
-    float volumeWindowHigh() const { return _volumeWindowHigh; }
+    float volumeWindowLow() const noexcept { return _volumeWindowLow; }
+    float volumeWindowHigh() const noexcept { return _volumeWindowHigh; }
 
     void setSurfacePatchSamplingStride(int stride, bool userInitiated = true);
-    int surfacePatchSamplingStride() const { return _surfacePatchSamplingStride; }
+    int surfacePatchSamplingStride() const noexcept { return _surfacePatchSamplingStride; }
     void primeSurfacePatchIndicesAsync();
     void resetStrideUserOverride() { _surfacePatchStrideUserSet = false; }
 
@@ -92,10 +90,10 @@ public:
     void setResetDefaultFor(CVolumeViewer* viewer, bool value);
 
     void setSegmentationCursorMirroring(bool enabled);
-    bool segmentationCursorMirroring() const { return _mirrorCursorToSegmentation; }
+    bool segmentationCursorMirroring() const noexcept { return _mirrorCursorToSegmentation; }
 
     void setSliceStepSize(int size);
-    int sliceStepSize() const { return _sliceStepSize; }
+    int sliceStepSize() const noexcept { return _sliceStepSize; }
 
     // Performance settings - applied to all viewers
     void setDownscaleOverride(int level);
@@ -103,7 +101,7 @@ public:
 
     void forEachViewer(const std::function<void(CVolumeViewer*)>& fn) const;
     void setIntersectionThickness(float thickness);
-    float intersectionThickness() const { return _intersectionThickness; }
+    float intersectionThickness() const noexcept { return _intersectionThickness; }
     void setHighlightedSurfaceIds(const std::vector<std::string>& ids);
     SurfacePatchIndex* surfacePatchIndex();
     void refreshSurfacePatchIndex(const SurfacePatchIndex::SurfacePtr& surface);
@@ -127,7 +125,6 @@ private:
 
     CSurfaceCollection* _surfaces;
     VCCollection* _points;
-    ChunkCache<uint8_t>* _chunkCache;
     SegmentationOverlayController* _segmentationOverlay{nullptr};
     PointsOverlayController* _pointsOverlay{nullptr};
     RawPointsOverlayController* _rawPointsOverlay{nullptr};

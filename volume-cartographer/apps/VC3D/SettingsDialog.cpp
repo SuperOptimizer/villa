@@ -127,7 +127,7 @@ std::vector<int> SettingsDialog::expandSettingToIntRange(const QString& setting)
     auto value = setting.simplified();
     value.replace(" ", "");
     auto commaSplit = value.split(",");
-    for(auto str : commaSplit) {
+    for(const auto& str : commaSplit) {
         if (str.contains("-")) {
             // Expand the range to distinct values
             auto dashSplit = str.split("-");

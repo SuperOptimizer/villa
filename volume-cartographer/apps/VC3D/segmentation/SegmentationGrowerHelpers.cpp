@@ -74,15 +74,8 @@ void ensureGenerationsChannel(QuadSurface* surface)
 
 void ensureSurfaceMetaObject(QuadSurface* surface)
 {
-    if (!surface) {
-        return;
-    }
-
-    if (surface->meta && surface->meta->is_object()) {
-        return;
-    }
-
-    surface->meta = std::make_unique<nlohmann::json>(nlohmann::json::object());
+    // No-op: meta is now always a valid SurfaceMeta value
+    (void)surface;
 }
 
 bool isInvalidPoint(const cv::Vec3f& value)
@@ -567,15 +560,8 @@ void synchronizeSurfaceMeta(const std::shared_ptr<VolumePkg>& pkg,
         }
 
         if (loadedSurface->path == surface->path) {
-            // Sync metadata if needed
-            if (surface->meta) {
-                if (!loadedSurface->meta) {
-                    loadedSurface->meta = std::make_unique<nlohmann::json>(nlohmann::json::object());
-                }
-                *loadedSurface->meta = *surface->meta;
-            } else if (loadedSurface->meta) {
-                loadedSurface->meta->clear();
-            }
+            // Sync metadata
+            loadedSurface->meta = surface->meta;
 
             if (panel) {
                 panel->refreshSurfaceMetrics(id);

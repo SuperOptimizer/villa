@@ -136,25 +136,17 @@ namespace CompositeMethod {
 
 float compositeLayerStack(
     const LayerStack& stack,
-    const CompositeParams& params)
+    const CompositeParams& params) noexcept
 {
-    if (stack.validCount == 0) return 0.0f;
+    if (stack.validCount == 0) [[unlikely]] return 0.0f;
 
-    const std::string& method = params.method;
-
-    if (method == "mean") {
-        return CompositeMethod::mean(stack);
-    } else if (method == "max") {
-        return CompositeMethod::max(stack);
-    } else if (method == "min") {
-        return CompositeMethod::min(stack);
-    } else if (method == "alpha") {
-        return CompositeMethod::alpha(stack, params);
-    } else if (method == "beerLambert") {
-        return CompositeMethod::beerLambert(stack, params);
+    switch (params.methodType) {
+        case CompositeMethodType::Mean:        return CompositeMethod::mean(stack);
+        case CompositeMethodType::Max:         return CompositeMethod::max(stack);
+        case CompositeMethodType::Min:         return CompositeMethod::min(stack);
+        case CompositeMethodType::Alpha:       return CompositeMethod::alpha(stack, params);
+        case CompositeMethodType::BeerLambert: return CompositeMethod::beerLambert(stack, params);
     }
-
-    // Default to mean
     return CompositeMethod::mean(stack);
 }
 

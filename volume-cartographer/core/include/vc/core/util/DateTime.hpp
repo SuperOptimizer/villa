@@ -3,11 +3,10 @@
 #include <chrono>
 #include <ctime>
 #include <iomanip>
-#include <regex>
 #include <sstream>
 
 
-static inline std::string get_surface_time_str()
+inline std::string get_surface_time_str()
 {
     using namespace std::chrono;
 

@@ -1,6 +1,6 @@
 #include "CSurfaceCollection.hpp"
 
-#include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/SlicingLite.hpp"
 #include "vc/core/util/Surface.hpp"
 
 

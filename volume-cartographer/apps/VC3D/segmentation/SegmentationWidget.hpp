@@ -28,7 +28,7 @@ class QSpinBox;
 class QToolButton;
 class CollapsibleSettingsGroup;
 
-class SegmentationWidget : public QWidget
+class SegmentationWidget final : public QWidget
 {
     Q_OBJECT
 

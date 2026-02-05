@@ -2,7 +2,7 @@
 // The cost functor structs remain in the header (required for Ceres autodiff),
 // but the Create() factory methods are defined here to consolidate instantiation.
 
-#include "vc/core/util/CostFunctions.hpp"
+#include "vc/tracer/CostFunctions.hpp"
 
 // ============================================================================
 // Non-template cost functor Create() implementations

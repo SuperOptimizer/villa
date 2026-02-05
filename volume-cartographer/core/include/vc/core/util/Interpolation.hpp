@@ -9,9 +9,6 @@
 #include <type_traits>
 
 #include <opencv2/core/matx.hpp>
-#include <xtensor/containers/xarray.hpp>
-
-#include <vc/core/util/ChunkCache.hpp>
 
 namespace z5 {
 class Dataset;
@@ -35,7 +32,7 @@ namespace vc {
  * @param a Lanczos parameter (window size), typically 2 or 3
  * @return Lanczos kernel weight
  */
-[[gnu::always_inline]] inline float lanczosKernel(float x, int a = 3) noexcept {
+[[gnu::always_inline, gnu::const]] constexpr float lanczosKernel(float x, int a = 3) noexcept {
     if (x == 0.0f) [[unlikely]] return 1.0f;
     if (std::abs(x) >= static_cast<float>(a)) [[unlikely]] return 0.0f;
 
@@ -57,7 +54,7 @@ struct Lanczos3Weights {
      * @brief Compute weights for a fractional offset
      * @param frac Fractional part in [0, 1)
      */
-    explicit Lanczos3Weights(float frac) {
+    constexpr explicit Lanczos3Weights(float frac) {
         // Compute all weights - positions relative to center
         weights[0] = lanczosKernel(frac + 2.0f, 3);  // i=0: frac - (-2) = frac + 2
         weights[1] = lanczosKernel(frac + 1.0f, 3);  // i=1: frac - (-1) = frac + 1

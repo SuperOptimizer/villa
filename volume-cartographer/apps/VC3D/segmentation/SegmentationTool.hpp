@@ -5,7 +5,7 @@ class SegmentationTool
 public:
     virtual ~SegmentationTool() = default;
 
-    virtual void cancel() = 0;
-    virtual bool isActive() const = 0;
+    virtual void cancel() noexcept = 0;
+    virtual bool isActive() const noexcept = 0;
 };
 

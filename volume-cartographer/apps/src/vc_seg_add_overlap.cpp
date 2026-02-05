@@ -7,6 +7,7 @@
 #include <ctime>
 
 #include "vc/core/util/QuadSurface.hpp"
+#include "vc/core/util/SurfaceMetaIO.hpp"
 
 
 using json = nlohmann::json;
@@ -59,7 +60,7 @@ int main(int argc, char *argv[])
             if (meta.value("format","NONE") != "tifxyz")
                 continue;
 
-            QuadSurface other = QuadSurface(entry.path(), meta);
+            QuadSurface other = QuadSurface(entry.path(), vc::meta::parseFromJson(meta));
 
             if (overlap(current, other, search_iters)) {
                 found_overlaps = true;

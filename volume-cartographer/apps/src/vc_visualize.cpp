@@ -13,8 +13,6 @@
 #include "vc/core/util/SurfacePatchIndex.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
-#include "vc/core/types/ChunkedTensor.hpp"
-#include "vc/core/util/ChunkCache.hpp"
 
 namespace po = boost::program_options;
 namespace fs = std::filesystem;
@@ -24,7 +22,6 @@ using json = nlohmann::json;
 class SegmentRenderer {
     std::shared_ptr<VolumePkg> vpkg_;
     std::shared_ptr<Volume> volume_;
-    ChunkCache<uint8_t>* cache_;
 
     struct SurfaceInfo {
         std::string id;
@@ -123,11 +120,6 @@ public:
         std::cout << "Using volume: " << volume_id << " (" << volume_->name() << ")" << "\n";
         auto [w, h, d] = volume_->shape();
         std::cout << "Volume dimensions: " << w << "x" << h << "x" << d << "\n";
-        cache_ = new ChunkCache<uint8_t>(1ULL * 1024ULL * 1024ULL * 1024ULL);
-    }
-
-    ~SegmentRenderer() {
-        delete cache_;
     }
 
     cv::Mat render(const std::string& segment_id, const fs::path& output_path,

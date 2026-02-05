@@ -6,7 +6,7 @@
 #include <vector>
 
 #include <opencv2/core/matx.hpp>
-#include <nlohmann/json_fwd.hpp>
+#include "vc/tracer/TracerParams.hpp"
 
 // Forward declarations
 class QuadSurface;
@@ -35,5 +35,5 @@ struct DirectionField
     float weight{1.0f};
 };
 
-QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurface*> &surfs_v, const nlohmann::json &params, float voxelsize = 1.0);
-QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv::Vec3f origin, const nlohmann::json &params, const std::string &cache_root = "", float voxelsize = 1.0, const std::vector<DirectionField> &direction_fields = {}, QuadSurface* resume_surf = nullptr, const std::filesystem::path& tgt_path = "", const nlohmann::json& meta_params = {}, const VCCollection* corrections = nullptr);
+QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurface*> &surfs_v, const TracerParams &params, float voxelsize = 1.0);
+QuadSurface *tracer(z5::Dataset *ds, float scale, ChunkCache<uint8_t> *cache, cv::Vec3f origin, const TracerParams &params, const std::string &cache_root = "", float voxelsize = 1.0, const std::vector<DirectionField> &direction_fields = {}, QuadSurface* resume_surf = nullptr, const std::filesystem::path& tgt_path = "", const std::string& meta_params_json = "", const VCCollection* corrections = nullptr);

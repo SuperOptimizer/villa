@@ -1,9 +1,10 @@
 #include "vc/core/util/Geometry.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
-#include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/SlicingLite.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/SurfaceModeling.hpp"
+#include "vc/tracer/CostFunctions.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
 
 #include "z5/factory.hxx"
@@ -136,8 +137,8 @@ float find_wind_x(cv::Mat_<float> &winding, cv::Vec2f &loc, float tgt_wind)
 {
     if (!loc_valid_nan_xy(winding, loc))
         return -1;
-    
-    float best_diff = abs(at_int(winding,loc)-tgt_wind);
+
+    float best_diff = std::abs(at_int(winding,loc)-tgt_wind);
     
     std::vector<cv::Vec2f> neighs = {{1,0},{-1,0}};
     
@@ -146,11 +147,11 @@ float find_wind_x(cv::Mat_<float> &winding, cv::Vec2f &loc, float tgt_wind)
     while (updated)
     {
         updated = false;
-        for (auto n : neighs) {
+        for (const auto& n : neighs) {
             cv::Vec2f cand = loc + step*n;
             if (!loc_valid_nan_xy(winding, cand))
                 continue;
-            float diff = abs(at_int(winding,cand)-tgt_wind);
+            float diff = std::abs(at_int(winding,cand)-tgt_wind);
             if (diff < best_diff) {
                 best_diff = diff;
                 loc = cand;
@@ -451,7 +452,7 @@ float find_loc_wind_slow(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3
         if (r)
             cand = {static_cast<float>(rand_r(&sr) % points.cols), static_cast<float>(rand_r(&sr) % points.rows)};
         
-        if (std::isnan(winding(cand[1],cand[0])) || abs(winding(cand[1],cand[0])-tgt_wind) > 0.5)
+        if (std::isnan(winding(cand[1],cand[0])) || std::abs(winding(cand[1],cand[0])-tgt_wind) > 0.5)
             continue;
         
         cv::Vec3f out_;
@@ -460,9 +461,9 @@ float find_loc_wind_slow(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3
         if (res < 0)
             continue;
         
-        if (std::isnan(winding(cand[1],cand[0])) || abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
+        if (std::isnan(winding(cand[1],cand[0])) || std::abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
             continue;
-        
+
         if (res < th) {
             loc = cand;
             return res;
@@ -494,7 +495,7 @@ float min_loc_wind(const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &win
     bool changed = true;
     cv::Vec3f val = at_int(points, loc);
     out = val;
-    float best = abs(at_int(winding, loc)-tgt_wind)*10 + sdist(val,tgt);
+    float best = std::abs(at_int(winding, loc)-tgt_wind)*10 + sdist(val,tgt);
     float res;
     
     std::vector<cv::Vec2f> search = {{0,-1},{0,1},{-1,0},{1,0}};
@@ -518,7 +519,7 @@ float min_loc_wind(const cv::Mat_<cv::Vec3f> &points, const cv::Mat_<float> &win
             
             val = at_int(points, cand);
             // std::cout << "at" << cand << val << "\n";
-            res = abs(at_int(winding, cand)-tgt_wind)*10;
+            res = std::abs(at_int(winding, cand)-tgt_wind)*10;
             res += sdist(val,tgt);
             if (res < best) {
                 changed = true;
@@ -551,8 +552,8 @@ float find_loc_wind(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3f> &p
         
         if (full_r || !loc_valid_nan_xy(winding, cand))
             cand = {static_cast<float>(rand_r(&sr) % points.cols), static_cast<float>(rand_r(&sr) % points.rows)};
-        
-        if (abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
+
+        if (std::abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
             continue;
         
         r++;
@@ -562,8 +563,8 @@ float find_loc_wind(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3f> &p
         
         if (res < 0)
             continue;
-        
-        if (abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
+
+        if (std::abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
             continue;
         
         if (res < th) {
@@ -1231,7 +1232,7 @@ int main(int argc, char *argv[])
             state(p) = 0;
             
             //FIXME
-            for(auto n : neighs) {
+            for(const auto& n : neighs) {
                 if (!state(p) && coord_valid(state(p+n))) {
                     points(p) = points(p+n)+cv::Vec3d(((j+i)%10)*0.01, ((j+i+1)%10)*0.01,((j+i+2)%10)*0.01);
                     state(p) = STATE_COORD_VALID;
@@ -1375,7 +1376,7 @@ int main(int argc, char *argv[])
                 for (int s=0;s<surf_points.size();s++) {
                     if (supports[s](p)) {
                         if (loc_valid(surf_points[s], surf_locs[s](p))) {
-                            if (abs(at_int(winds[s], {static_cast<float>(surf_locs[s](p)[1]),static_cast<float>(surf_locs[s](p)[0])}) - tgt_wind[x]) <= wind_th) {
+                            if (std::abs(at_int(winds[s], {static_cast<float>(surf_locs[s](p)[1]),static_cast<float>(surf_locs[s](p)[0])}) - tgt_wind[x]) <= wind_th) {
                                 //FIXME check wind + support + loc avlid
                                 float int_w = at_int(winds[s], {static_cast<float>(surf_locs[s](p)[1]),static_cast<float>(surf_locs[s](p)[0])});
                                 avg_wind[x] += int_w;
@@ -1390,7 +1391,7 @@ int main(int argc, char *argv[])
                                 
                             }
                             else
-                                std::cout << "wind th " << abs(at_int(winds[s], {static_cast<float>(surf_locs[s](p)[1]),static_cast<float>(surf_locs[s](p)[0])}) - tgt_wind[x]) << " " << at_int(winds[s], {static_cast<float>(surf_locs[s](p)[1]),static_cast<float>(surf_locs[s](p)[0])}) << tgt_wind[x] << " " << "\n";
+                                std::cout << "wind th " << std::abs(at_int(winds[s], {static_cast<float>(surf_locs[s](p)[1]),static_cast<float>(surf_locs[s](p)[0])}) - tgt_wind[x]) << " " << at_int(winds[s], {static_cast<float>(surf_locs[s](p)[1]),static_cast<float>(surf_locs[s](p)[0])}) << tgt_wind[x] << " " << "\n";
                         }
                         else
                         {
@@ -1441,8 +1442,7 @@ int main(int argc, char *argv[])
     {
         QuadSurface *surf_full = new QuadSurface(points(bbox), surfs[0]->_scale/trace_mul);
         std::filesystem::path tgt_dir = "./";
-        surf_full->meta = std::make_unique<nlohmann::json>();
-        (*surf_full->meta)["vc_fill_quadmesh_params"] = params;
+        surf_full->meta.extras["vc_fill_quadmesh_params"] = params.dump();
         std::string name_prefix = "fuse_fill_";
         std::string uuid = name_prefix + time_str();
         std::filesystem::path seg_dir = tgt_dir / uuid;

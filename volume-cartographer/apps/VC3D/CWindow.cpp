@@ -1,6 +1,7 @@
 #include "CWindow.hpp"
 
 #include <cstdlib>
+#include <iostream>
 
 #include "WindowRangeWidget.hpp"
 #include "VCSettings.hpp"
@@ -101,12 +102,12 @@
 #include "vc/core/util/Logging.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
-#include "vc/core/util/ChunkCache.hpp"
+#include "vc/core/types/ChunkStore.hpp"
 #include "vc/core/util/DateTime.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
-#include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/SlicingLite.hpp"
 #include "vc/core/util/Render.hpp"
 
 
@@ -292,7 +293,7 @@ CWindow::CWindow() :
     }
     // setAttribute(Qt::WA_DeleteOnClose);
 
-    chunk_cache = new ChunkCache<uint8_t>(CHUNK_CACHE_SIZE_GB*1024ULL*1024ULL*1024ULL);
+    _chunkStore = std::make_shared<ChunkStore>(CHUNK_CACHE_SIZE_GB*1024ULL*1024ULL*1024ULL);
     std::cout << "chunk cache size is " << CHUNK_CACHE_SIZE_GB << " gigabytes " << "\n";
 
     _surf_col = new CSurfaceCollection();
@@ -305,7 +306,7 @@ CWindow::CWindow() :
     connect(_surf_col, &CSurfaceCollection::sendPOIChanged, this, &CWindow::onFocusPOIChanged);
     connect(_surf_col, &CSurfaceCollection::sendSurfaceWillBeDeleted, this, &CWindow::onSurfaceWillBeDeleted);
 
-    _viewerManager = std::make_unique<ViewerManager>(_surf_col, _point_collection, chunk_cache, this);
+    _viewerManager = std::make_unique<ViewerManager>(_surf_col, _point_collection, this);
     _viewerManager->setSegmentationCursorMirroring(_mirrorCursorToSegmentation);
     connect(_viewerManager.get(), &ViewerManager::viewerCreated, this, [this](CVolumeViewer* viewer) {
         configureViewerConnections(viewer);
@@ -651,7 +652,7 @@ CWindow::~CWindow()
     setStatusBar(nullptr);
 
     CloseVolume();
-    delete chunk_cache;
+    _chunkStore.reset();
     delete _surf_col;
     delete _point_collection;
 }
@@ -803,6 +804,8 @@ void CWindow::setVolume(const std::shared_ptr<Volume>& newvol)
     auto previousVolume = currentVolume;
     POI* existingFocusPoi = _surf_col ? _surf_col->poi("focus") : nullptr;
     currentVolume = newvol;
+    if (currentVolume && _chunkStore)
+        currentVolume->setChunkStore(_chunkStore);
 
     if (previousVolume != newvol) {
         _focusHistory.clear();
@@ -1205,8 +1208,7 @@ void CWindow::CreateWidgets(void)
         _segmentationModule.get(),
         _segmentationWidget,
         _surf_col,
-        _viewerManager.get(),
-        chunk_cache
+        _viewerManager.get()
     };
     SegmentationGrower::UiCallbacks growerCallbacks{
         [this](const QString& text, int timeout) {
@@ -1262,7 +1264,6 @@ void CWindow::CreateWidgets(void)
     connect(_drawingWidget, &DrawingWidget::sendStatusMessageAvailable, this, &CWindow::onShowStatusMessage);
     connect(this, &CWindow::sendSurfacesLoaded, _drawingWidget, &DrawingWidget::onSurfacesLoaded);
 
-    _drawingWidget->setCache(chunk_cache);
 
     // Create Seeding widget
     _seedingWidget = new SeedingWidget(_point_collection, _surf_col);
@@ -1272,8 +1273,6 @@ void CWindow::CreateWidgets(void)
             static_cast<void (SeedingWidget::*)(std::shared_ptr<Volume>, const std::string&)>(&SeedingWidget::onVolumeChanged));
     connect(_seedingWidget, &SeedingWidget::sendStatusMessageAvailable, this, &CWindow::onShowStatusMessage);
     connect(this, &CWindow::sendSurfacesLoaded, _seedingWidget, &SeedingWidget::onSurfacesLoaded);
-
-    _seedingWidget->setCache(chunk_cache);
 
     // Create and add the point collection widget
     _point_collection_widget = new CPointCollectionWidget(_point_collection, this);

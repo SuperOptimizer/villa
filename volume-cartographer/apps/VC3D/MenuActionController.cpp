@@ -19,9 +19,6 @@
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/Version.hpp"
 #include "vc/core/util/Logging.hpp"
-#include "vc/core/util/LoadJson.hpp"
-
-#include <nlohmann/json.hpp>
 
 #include <QAction>
 #include <QApplication>
@@ -572,23 +569,18 @@ void MenuActionController::generateReviewReport()
 
     for (const auto& id : _window->fVpkg->getLoadedSurfaceIDs()) {
         auto surf = _window->fVpkg->getSurface(id);
-        if (!surf || !surf->meta) {
+        if (!surf) {
             continue;
         }
 
-        nlohmann::json* meta = surf->meta.get();
-        const auto tags = vc::json::tags_or_empty(meta);
-        const auto itReviewed = tags.find("reviewed");
-        if (itReviewed == tags.end() || !itReviewed->is_object()) {
+        if (!surf->meta.tags.reviewed) {
             continue;
         }
-
-        const nlohmann::json& reviewed = *itReviewed;
+        const auto& reviewed = *surf->meta.tags.reviewed;
 
         QString reviewDate = "Unknown";
-        const std::string reviewDateRaw = vc::json::string_or(&reviewed, "date", std::string{});
-        if (!reviewDateRaw.empty()) {
-            reviewDate = QString::fromStdString(reviewDateRaw).left(10);
+        if (!reviewed.date.empty()) {
+            reviewDate = QString::fromStdString(reviewed.date).left(10);
         } else {
             QFileInfo metaFile(QString::fromStdString(surf->path.string()) + "/meta.json");
             if (metaFile.exists()) {
@@ -597,12 +589,11 @@ void MenuActionController::generateReviewReport()
         }
 
         QString username = "Unknown";
-        const std::string reviewerUser = vc::json::string_or(&reviewed, "user", std::string{});
-        if (!reviewerUser.empty()) {
-            username = QString::fromStdString(reviewerUser);
+        if (!reviewed.user.empty()) {
+            username = QString::fromStdString(reviewed.user);
         }
 
-        const double area = vc::json::number_or(meta, "area_cm2", 0.0);
+        const double area = std::max(0.0, surf->meta.area_cm2);
 
         dailyStats[reviewDate][username].totalArea += area;
         dailyStats[reviewDate][username].surfaceCount++;

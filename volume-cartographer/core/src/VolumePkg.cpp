@@ -1,6 +1,7 @@
 #include "vc/core/types/VolumePkg.hpp"
 
 #include <nlohmann/json.hpp>
+#include <map>
 #include <set>
 #include <utility>
 #include <cstring>
@@ -14,47 +15,134 @@
 
 constexpr auto CONFIG = "config.json";
 
+struct VolumePkg::Impl {
+    std::unique_ptr<nlohmann::json> config_;
+    std::filesystem::path rootDir_;
+    std::map<std::string, std::shared_ptr<Volume>> volumes_;
+    std::map<std::string, std::shared_ptr<Segmentation>> segmentations_;
+    std::string currentSegmentationDir_ = "paths";
+    std::map<std::string, std::string> segmentationDirectories_;
+
+    Impl(const std::filesystem::path& fileLocation)
+        : config_(std::make_unique<nlohmann::json>()), rootDir_(fileLocation) {}
+
+    void loadSegmentationsFromDirectory(const std::string& dirName)
+    {
+        // DO NOT clear existing segmentations - we keep all directories in memory
+        // Only remove segmentations from this specific directory
+        std::vector<std::string> toRemove;
+        for (const auto& pair : segmentationDirectories_) {
+            if (pair.second == dirName) {
+                toRemove.push_back(pair.first);
+            }
+        }
+
+        // Remove old segmentations from this directory
+        for (const auto& id : toRemove) {
+            segmentations_.erase(id);
+            segmentationDirectories_.erase(id);
+        }
+
+        // Check if directory exists
+        const auto segDir = rootDir_ / dirName;
+        if (!std::filesystem::exists(segDir)) {
+            Logger()->warn("Segmentation directory '{}' does not exist", dirName);
+            return;
+        }
+
+        // Load segmentations from the specified directory
+        int loadedCount = 0;
+        int skippedCount = 0;
+        int failedCount = 0;
+        for (const auto& entry : std::filesystem::directory_iterator(segDir)) {
+            std::filesystem::path dirpath = std::filesystem::canonical(entry);
+            if (std::filesystem::is_directory(dirpath)) {
+                // Skip hidden directories and .tmp folders
+                const auto dirName_ = dirpath.filename().string();
+                if (dirName_.empty() || dirName_[0] == '.' || dirName_ == ".tmp") {
+                    skippedCount++;
+                    continue;
+                }
+                try {
+                    auto s = Segmentation::New(dirpath);
+                    auto result = segmentations_.emplace(s->id(), s);
+                    if (result.second) {
+                        // Track which directory this segmentation came from
+                        segmentationDirectories_[s->id()] = dirName;
+                        loadedCount++;
+                    } else {
+                        Logger()->warn("Duplicate segment ID '{}' - already loaded from different path, skipping: {}",
+                                       s->id(), dirpath.string());
+                        skippedCount++;
+                    }
+                }
+                catch (const std::exception &exc) {
+                    Logger()->warn("Failed to load segment dir: {} - {}", dirpath.string(), exc.what());
+                    failedCount++;
+                }
+            }
+        }
+        Logger()->info("Loaded {} segments from '{}' (skipped={}, failed={})",
+                       loadedCount, dirName, skippedCount, failedCount);
+    }
+
+    void ensureSegmentScrollSource()
+    {
+        if (segmentations_.empty() || volumes_.empty()) {
+            return;
+        }
+
+        auto scrollName = (*config_)["name"].get<std::string>();
+        auto vol = volumes_.begin()->second;
+        auto volumeUuid = vol->id();
+
+        for (auto& [id, seg] : segmentations_) {
+            seg->ensureScrollSource(scrollName, volumeUuid);
+        }
+    }
+};
+
 VolumePkg::VolumePkg(const std::filesystem::path& fileLocation)
-    : config_(std::make_unique<nlohmann::json>()), rootDir_{fileLocation}
+    : pImpl_(std::make_unique<Impl>(fileLocation))
 {
     auto configPath = fileLocation / ::CONFIG;
-    *config_ = vc::json::load_json_file(configPath);
-    vc::json::require_fields(*config_, {"name", "version"}, configPath.string());
+    *pImpl_->config_ = vc::json::load_json_file(configPath);
+    vc::json::require_fields(*pImpl_->config_, {"name", "version"}, configPath.string());
 
     std::vector<std::string> dirs = {"volumes","paths","traces","transforms","renders","backups"};
 
     for (const auto& d : dirs) {
-        if (not std::filesystem::exists(rootDir_ / d)) {
-            std::filesystem::create_directory(rootDir_ / d);
+        if (not std::filesystem::exists(pImpl_->rootDir_ / d)) {
+            std::filesystem::create_directory(pImpl_->rootDir_ / d);
         }
-
     }
 
-    for (const auto& entry : std::filesystem::directory_iterator(rootDir_ / "volumes")) {
+    for (const auto& entry : std::filesystem::directory_iterator(pImpl_->rootDir_ / "volumes")) {
         std::filesystem::path dirpath = std::filesystem::canonical(entry);
         if (std::filesystem::is_directory(dirpath)) {
             auto v = Volume::New(dirpath);
-            volumes_.emplace(v->id(), v);
+            pImpl_->volumes_.emplace(v->id(), v);
         }
     }
 
     auto availableDirs = getAvailableSegmentationDirectories();
     for (const auto& dirName : availableDirs) {
-        loadSegmentationsFromDirectory(dirName);
+        pImpl_->loadSegmentationsFromDirectory(dirName);
     }
 
-    ensureSegmentScrollSource();
+    pImpl_->ensureSegmentScrollSource();
 }
+
+VolumePkg::~VolumePkg() = default;
 
 std::shared_ptr<VolumePkg> VolumePkg::New(const std::filesystem::path& fileLocation)
 {
     return std::make_shared<VolumePkg>(fileLocation);
 }
 
-
 std::string VolumePkg::name() const
 {
-    auto name = (*config_)["name"].get<std::string>();
+    auto name = (*pImpl_->config_)["name"].get<std::string>();
     if (name != "NULL") {
         return name;
     }
@@ -62,18 +150,28 @@ std::string VolumePkg::name() const
     return "UnnamedVolume";
 }
 
-int VolumePkg::version() const { return (*config_)["version"].get<int>(); }
+int VolumePkg::version() const { return (*pImpl_->config_)["version"].get<int>(); }
+
+bool VolumePkg::hasVolumes() const noexcept { return !pImpl_->volumes_.empty(); }
+
+std::size_t VolumePkg::numberOfVolumes() const noexcept { return pImpl_->volumes_.size(); }
+
+bool VolumePkg::hasSegmentations() const noexcept { return !pImpl_->segmentations_.empty(); }
+
+std::string VolumePkg::getSegmentationDirectory() const noexcept { return pImpl_->currentSegmentationDir_; }
+
+std::string VolumePkg::getVolpkgDirectory() const noexcept { return pImpl_->rootDir_.string(); }
 
 bool VolumePkg::hasVolume(const std::string& id) const
 {
-    return volumes_.count(id) > 0;
+    return pImpl_->volumes_.contains(id);
 }
 
 std::vector<std::string> VolumePkg::volumeIDs() const
 {
     std::vector<std::string> ids;
-    ids.reserve(volumes_.size());
-    for (const auto& v : volumes_) {
+    ids.reserve(pImpl_->volumes_.size());
+    for (const auto& v : pImpl_->volumes_) {
         ids.emplace_back(v.first);
     }
     return ids;
@@ -81,21 +179,21 @@ std::vector<std::string> VolumePkg::volumeIDs() const
 
 std::shared_ptr<Volume> VolumePkg::volume()
 {
-    if (volumes_.empty()) {
+    if (pImpl_->volumes_.empty()) {
         throw std::out_of_range("No volumes in VolPkg");
     }
-    return volumes_.begin()->second;
+    return pImpl_->volumes_.begin()->second;
 }
 
 std::shared_ptr<Volume> VolumePkg::volume(const std::string& id)
 {
-    return volumes_.at(id);
+    return pImpl_->volumes_.at(id);
 }
 
 std::shared_ptr<Segmentation> VolumePkg::segmentation(const std::string& id)
 {
-    auto it = segmentations_.find(id);
-    if (it == segmentations_.end()) {
+    auto it = pImpl_->segmentations_.find(id);
+    if (it == pImpl_->segmentations_.end()) {
         return nullptr;
     }
     return it->second;
@@ -105,97 +203,21 @@ std::vector<std::string> VolumePkg::segmentationIDs() const
 {
     std::vector<std::string> ids;
     // Only return IDs from the current directory
-    for (const auto& s : segmentations_) {
-        auto it = segmentationDirectories_.find(s.first);
-        if (it != segmentationDirectories_.end() && it->second == currentSegmentationDir_) {
+    for (const auto& s : pImpl_->segmentations_) {
+        auto it = pImpl_->segmentationDirectories_.find(s.first);
+        if (it != pImpl_->segmentationDirectories_.end() && it->second == pImpl_->currentSegmentationDir_) {
             ids.emplace_back(s.first);
         }
     }
     return ids;
 }
 
-
-void VolumePkg::loadSegmentationsFromDirectory(const std::string& dirName)
-{
-    // DO NOT clear existing segmentations - we keep all directories in memory
-    // Only remove segmentations from this specific directory
-    std::vector<std::string> toRemove;
-    for (const auto& pair : segmentationDirectories_) {
-        if (pair.second == dirName) {
-            toRemove.push_back(pair.first);
-        }
-    }
-
-    // Remove old segmentations from this directory
-    for (const auto& id : toRemove) {
-        segmentations_.erase(id);
-        segmentationDirectories_.erase(id);
-    }
-
-    // Check if directory exists
-    const auto segDir = rootDir_ / dirName;
-    if (!std::filesystem::exists(segDir)) {
-        Logger()->warn("Segmentation directory '{}' does not exist", dirName);
-        return;
-    }
-
-    // Load segmentations from the specified directory
-    int loadedCount = 0;
-    int skippedCount = 0;
-    int failedCount = 0;
-    for (const auto& entry : std::filesystem::directory_iterator(segDir)) {
-        std::filesystem::path dirpath = std::filesystem::canonical(entry);
-        if (std::filesystem::is_directory(dirpath)) {
-            // Skip hidden directories and .tmp folders
-            const auto dirName_ = dirpath.filename().string();
-            if (dirName_.empty() || dirName_[0] == '.' || dirName_ == ".tmp") {
-                skippedCount++;
-                continue;
-            }
-            try {
-                auto s = Segmentation::New(dirpath);
-                auto result = segmentations_.emplace(s->id(), s);
-                if (result.second) {
-                    // Track which directory this segmentation came from
-                    segmentationDirectories_[s->id()] = dirName;
-                    loadedCount++;
-                } else {
-                    Logger()->warn("Duplicate segment ID '{}' - already loaded from different path, skipping: {}",
-                                   s->id(), dirpath.string());
-                    skippedCount++;
-                }
-            }
-            catch (const std::exception &exc) {
-                Logger()->warn("Failed to load segment dir: {} - {}", dirpath.string(), exc.what());
-                failedCount++;
-            }
-        }
-    }
-    Logger()->info("Loaded {} segments from '{}' (skipped={}, failed={})",
-                   loadedCount, dirName, skippedCount, failedCount);
-}
-
-void VolumePkg::ensureSegmentScrollSource()
-{
-    if (segmentations_.empty() || volumes_.empty()) {
-        return;
-    }
-
-    auto scrollName = (*config_)["name"].get<std::string>();
-    auto vol = volumes_.begin()->second;
-    auto volumeUuid = vol->id();
-
-    for (auto& [id, seg] : segmentations_) {
-        seg->ensureScrollSource(scrollName, volumeUuid);
-    }
-}
-
 void VolumePkg::setSegmentationDirectory(const std::string& dirName)
 {
-    if (currentSegmentationDir_ == dirName) {
+    if (pImpl_->currentSegmentationDir_ == dirName) {
         return;
     }
-    currentSegmentationDir_ = dirName;
+    pImpl_->currentSegmentationDir_ = dirName;
 }
 
 auto VolumePkg::getAvailableSegmentationDirectories() const -> std::vector<std::string>
@@ -205,7 +227,7 @@ auto VolumePkg::getAvailableSegmentationDirectories() const -> std::vector<std::
     // Check for common segmentation directories
     const std::vector<std::string> commonDirs = {"paths", "traces", "export"};
     for (const auto& dir : commonDirs) {
-        if (std::filesystem::exists(rootDir_ / dir) && std::filesystem::is_directory(rootDir_ / dir)) {
+        if (std::filesystem::exists(pImpl_->rootDir_ / dir) && std::filesystem::is_directory(pImpl_->rootDir_ / dir)) {
             dirs.push_back(dir);
         }
     }
@@ -216,8 +238,8 @@ auto VolumePkg::getAvailableSegmentationDirectories() const -> std::vector<std::
 void VolumePkg::removeSegmentation(const std::string& id)
 {
     // Check if segmentation exists
-    auto it = segmentations_.find(id);
-    if (it == segmentations_.end()) {
+    auto it = pImpl_->segmentations_.find(id);
+    if (it == pImpl_->segmentations_.end()) {
         throw std::runtime_error("Segmentation not found: " + id);
     }
 
@@ -225,7 +247,7 @@ void VolumePkg::removeSegmentation(const std::string& id)
     std::filesystem::path segPath = it->second->path();
 
     // Remove from internal map
-    segmentations_.erase(it);
+    pImpl_->segmentations_.erase(it);
 
     // Delete the physical folder
     if (std::filesystem::exists(segPath)) {
@@ -235,9 +257,9 @@ void VolumePkg::removeSegmentation(const std::string& id)
 
 void VolumePkg::refreshSegmentations()
 {
-    const auto segDir = rootDir_ / currentSegmentationDir_;
+    const auto segDir = pImpl_->rootDir_ / pImpl_->currentSegmentationDir_;
     if (!std::filesystem::exists(segDir)) {
-        Logger()->warn("Segmentation directory '{}' does not exist", currentSegmentationDir_);
+        Logger()->warn("Segmentation directory '{}' does not exist", pImpl_->currentSegmentationDir_);
         return;
     }
 
@@ -257,9 +279,9 @@ void VolumePkg::refreshSegmentations()
 
     // Find segmentations to remove (loaded from current directory but not on disk anymore)
     std::vector<std::string> toRemove;
-    for (const auto& seg : segmentations_) {
-        auto dirIt = segmentationDirectories_.find(seg.first);
-        if (dirIt != segmentationDirectories_.end() && dirIt->second == currentSegmentationDir_) {
+    for (const auto& seg : pImpl_->segmentations_) {
+        auto dirIt = pImpl_->segmentationDirectories_.find(seg.first);
+        if (dirIt != pImpl_->segmentationDirectories_.end() && dirIt->second == pImpl_->currentSegmentationDir_) {
             // This segmentation belongs to the current directory
             // Check if it still exists on disk
             if (diskPaths.find(seg.second->path()) == diskPaths.end()) {
@@ -275,22 +297,22 @@ void VolumePkg::refreshSegmentations()
 
         // Get the path before removing the segmentation
         std::filesystem::path segPath;
-        auto segIt = segmentations_.find(id);
-        if (segIt != segmentations_.end()) {
+        auto segIt = pImpl_->segmentations_.find(id);
+        if (segIt != pImpl_->segmentations_.end()) {
             segPath = segIt->second->path();
         }
 
         // Remove from segmentations map
-        segmentations_.erase(id);
+        pImpl_->segmentations_.erase(id);
 
         // Remove from directories map
-        segmentationDirectories_.erase(id);
+        pImpl_->segmentationDirectories_.erase(id);
     }
 
     // Find and add new segmentations (on disk but not in memory)
     // Build a set of currently loaded paths for O(1) lookup
     std::set<std::filesystem::path> loadedPaths;
-    for (const auto& seg : segmentations_) {
+    for (const auto& seg : pImpl_->segmentations_) {
         loadedPaths.insert(seg.second->path());
     }
 
@@ -298,8 +320,8 @@ void VolumePkg::refreshSegmentations()
         if (loadedPaths.find(diskPath) == loadedPaths.end()) {
             try {
                 auto s = Segmentation::New(diskPath);
-                segmentations_.emplace(s->id(), s);
-                segmentationDirectories_[s->id()] = currentSegmentationDir_;
+                pImpl_->segmentations_.emplace(s->id(), s);
+                pImpl_->segmentationDirectories_[s->id()] = pImpl_->currentSegmentationDir_;
                 Logger()->info("Added new segmentation '{}'", s->id());
             }
             catch (const std::exception &exc) {
@@ -311,8 +333,8 @@ void VolumePkg::refreshSegmentations()
 
 bool VolumePkg::isSurfaceLoaded(const std::string& id) const
 {
-    auto segIt = segmentations_.find(id);
-    if (segIt == segmentations_.end()) {
+    auto segIt = pImpl_->segmentations_.find(id);
+    if (segIt == pImpl_->segmentations_.end()) {
         return false;
     }
     return segIt->second->isSurfaceLoaded();
@@ -320,8 +342,8 @@ bool VolumePkg::isSurfaceLoaded(const std::string& id) const
 
 std::shared_ptr<QuadSurface> VolumePkg::loadSurface(const std::string& id)
 {
-    auto segIt = segmentations_.find(id);
-    if (segIt == segmentations_.end()) {
+    auto segIt = pImpl_->segmentations_.find(id);
+    if (segIt == pImpl_->segmentations_.end()) {
         Logger()->error("Cannot load surface - segmentation {} not found", id);
         return nullptr;
     }
@@ -330,8 +352,8 @@ std::shared_ptr<QuadSurface> VolumePkg::loadSurface(const std::string& id)
 
 std::shared_ptr<QuadSurface> VolumePkg::getSurface(const std::string& id)
 {
-    auto segIt = segmentations_.find(id);
-    if (segIt == segmentations_.end()) {
+    auto segIt = pImpl_->segmentations_.find(id);
+    if (segIt == pImpl_->segmentations_.end()) {
         return nullptr;
     }
     return segIt->second->getSurface();
@@ -341,7 +363,8 @@ std::shared_ptr<QuadSurface> VolumePkg::getSurface(const std::string& id)
 std::vector<std::string> VolumePkg::getLoadedSurfaceIDs() const
 {
     std::vector<std::string> ids;
-    for (const auto& [id, seg] : segmentations_) {
+    ids.reserve(pImpl_->segmentations_.size());
+    for (const auto& [id, seg] : pImpl_->segmentations_) {
         if (seg->isSurfaceLoaded()) {
             ids.push_back(id);
         }
@@ -351,15 +374,15 @@ std::vector<std::string> VolumePkg::getLoadedSurfaceIDs() const
 
 void VolumePkg::unloadAllSurfaces()
 {
-    for (auto& [id, seg] : segmentations_) {
+    for (auto& [id, seg] : pImpl_->segmentations_) {
         seg->unloadSurface();
     }
 }
 
 bool VolumePkg::unloadSurface(const std::string& id)
 {
-    auto segIt = segmentations_.find(id);
-    if (segIt == segmentations_.end()) {
+    auto segIt = pImpl_->segmentations_.find(id);
+    if (segIt == pImpl_->segmentations_.end()) {
         return false;
     }
     segIt->second->unloadSurface();
@@ -370,9 +393,10 @@ bool VolumePkg::unloadSurface(const std::string& id)
 void VolumePkg::loadSurfacesBatch(const std::vector<std::string>& ids)
 {
     std::vector<std::shared_ptr<Segmentation>> toLoad;
+    toLoad.reserve(ids.size());
     for (const auto& id : ids) {
-        auto segIt = segmentations_.find(id);
-        if (segIt != segmentations_.end() && !segIt->second->isSurfaceLoaded() && segIt->second->canLoadSurface()) {
+        auto segIt = pImpl_->segmentations_.find(id);
+        if (segIt != pImpl_->segmentations_.end() && !segIt->second->isSurfaceLoaded() && segIt->second->canLoadSurface()) {
             toLoad.push_back(segIt->second);
         }
     }
@@ -387,19 +411,15 @@ void VolumePkg::loadSurfacesBatch(const std::vector<std::string>& ids)
     }
 }
 
-VolumePkg::~VolumePkg()
-{
-}
-
 bool VolumePkg::addSingleSegmentation(const std::string& id)
 {
     // Check if already loaded
-    if (segmentations_.find(id) != segmentations_.end()) {
+    if (pImpl_->segmentations_.find(id) != pImpl_->segmentations_.end()) {
         return false; // Already exists
     }
 
     // Build the path to the segment
-    std::filesystem::path segPath = rootDir_ / currentSegmentationDir_ / id;
+    std::filesystem::path segPath = pImpl_->rootDir_ / pImpl_->currentSegmentationDir_ / id;
 
     if (!std::filesystem::exists(segPath) || !std::filesystem::is_directory(segPath)) {
         Logger()->warn("Segment directory does not exist: {}", segPath.string());
@@ -408,13 +428,13 @@ bool VolumePkg::addSingleSegmentation(const std::string& id)
 
     try {
         auto s = Segmentation::New(segPath);
-        if (!volumes_.empty()) {
-            auto scrollName = (*config_)["name"].get<std::string>();
-            auto volumeUuid = volumes_.begin()->second->id();
+        if (!pImpl_->volumes_.empty()) {
+            auto scrollName = (*pImpl_->config_)["name"].get<std::string>();
+            auto volumeUuid = pImpl_->volumes_.begin()->second->id();
             s->ensureScrollSource(scrollName, volumeUuid);
         }
-        segmentations_.emplace(s->id(), s);
-        segmentationDirectories_[s->id()] = currentSegmentationDir_;
+        pImpl_->segmentations_.emplace(s->id(), s);
+        pImpl_->segmentationDirectories_[s->id()] = pImpl_->currentSegmentationDir_;
         Logger()->info("Added segmentation: {}", id);
         return true;
     } catch (const std::exception& e) {
@@ -425,19 +445,19 @@ bool VolumePkg::addSingleSegmentation(const std::string& id)
 
 bool VolumePkg::removeSingleSegmentation(const std::string& id)
 {
-    auto it = segmentations_.find(id);
-    if (it == segmentations_.end()) {
+    auto it = pImpl_->segmentations_.find(id);
+    if (it == pImpl_->segmentations_.end()) {
         Logger()->warn("Cannot remove segment {} - not found", id);
         return false; // Don't crash, just return false
     }
 
     // Check if this segment belongs to the current directory
-    auto dirIt = segmentationDirectories_.find(id);
-    if (dirIt != segmentationDirectories_.end()) {
+    auto dirIt = pImpl_->segmentationDirectories_.find(id);
+    if (dirIt != pImpl_->segmentationDirectories_.end()) {
         // Only log if it's from a different directory
-        if (dirIt->second != currentSegmentationDir_) {
+        if (dirIt->second != pImpl_->currentSegmentationDir_) {
             Logger()->debug("Removing segment {} from {} directory (current is {})",
-                          id, dirIt->second, currentSegmentationDir_);
+                          id, dirIt->second, pImpl_->currentSegmentationDir_);
         }
     }
 
@@ -445,8 +465,8 @@ bool VolumePkg::removeSingleSegmentation(const std::string& id)
     it->second->unloadSurface();
 
     // Remove from maps
-    segmentations_.erase(it);
-    segmentationDirectories_.erase(id);
+    pImpl_->segmentations_.erase(it);
+    pImpl_->segmentationDirectories_.erase(id);
 
     Logger()->info("Removed segmentation: {}", id);
     return true;
@@ -455,7 +475,7 @@ bool VolumePkg::removeSingleSegmentation(const std::string& id)
 bool VolumePkg::reloadSingleSegmentation(const std::string& id)
 {
     // First check if the segment exists on disk
-    std::filesystem::path segPath = rootDir_ / currentSegmentationDir_ / id;
+    std::filesystem::path segPath = pImpl_->rootDir_ / pImpl_->currentSegmentationDir_ / id;
 
     if (!std::filesystem::exists(segPath) || !std::filesystem::is_directory(segPath)) {
         Logger()->warn("Cannot reload - segment directory does not exist: {}", segPath.string());

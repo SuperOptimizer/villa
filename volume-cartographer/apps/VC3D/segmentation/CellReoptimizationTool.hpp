@@ -20,7 +20,7 @@ class VCCollection;
  * extract the boundary, and automatically place correction points around that boundary
  * for subsequent reoptimization.
  */
-class CellReoptimizationTool : public QObject
+class CellReoptimizationTool final : public QObject
 {
     Q_OBJECT
 

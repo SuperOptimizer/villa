@@ -1,7 +1,6 @@
 #pragma once
 
-#include <stdint.h>
-#include <nlohmann/json_fwd.hpp>
+#include <cstdint>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/core/mat.inl.hpp>
 #include <opencv2/core/matx.hpp>
@@ -28,11 +27,11 @@ template<typename T>
 class ChunkCache;
 
 // Surface loading and channel flags
-#define SURF_LOAD_IGNORE_MASK 1
-#define SURF_CHANNEL_NORESIZE 1
+inline constexpr int SURF_LOAD_IGNORE_MASK = 1;
+inline constexpr int SURF_CHANNEL_NORESIZE = 1;
 
 // Debug prefix for auto-generated surfaces
-#define Z_DBG_GEN_PREFIX "auto_grown_"
+inline constexpr const char* Z_DBG_GEN_PREFIX = "auto_grown_";
 
 struct alignas(16) Rect3D {
     cv::Vec3f low = {0,0,0};
@@ -137,13 +136,13 @@ public:
             return PointRef<PointType>{_row, _col, (*_points)(_row, _col)};
         }
 
-        Iterator& operator++() noexcept {
+        [[gnu::always_inline]] Iterator& operator++() noexcept {
             advance();
             advanceToValid();
             return *this;
         }
 
-        Iterator operator++(int) noexcept {
+        [[gnu::always_inline]] Iterator operator++(int) noexcept {
             Iterator tmp = *this;
             ++(*this);
             return tmp;
@@ -166,7 +165,7 @@ public:
             }
         }
 
-        void advanceToValid() noexcept {
+        [[gnu::always_inline]] void advanceToValid() noexcept {
             while (_row < _points->rows) {
                 if ((*_points)(_row, _col)[0] != -1.f) [[likely]] {
                     return;
@@ -220,13 +219,13 @@ public:
             };
         }
 
-        Iterator& operator++() noexcept {
+        [[gnu::always_inline]] Iterator& operator++() noexcept {
             advance();
             advanceToValid();
             return *this;
         }
 
-        Iterator operator++(int) noexcept {
+        [[gnu::always_inline]] Iterator operator++(int) noexcept {
             Iterator tmp = *this;
             ++(*this);
             return tmp;
@@ -249,7 +248,7 @@ public:
             }
         }
 
-        void advanceToValid() noexcept {
+        [[gnu::always_inline]] void advanceToValid() noexcept {
             while (_row < _points->rows - 1) {
                 if (isQuadValid()) [[likely]] {
                     return;
@@ -291,8 +290,8 @@ public:
     QuadSurface(cv::Mat_<cv::Vec3f> *points, const cv::Vec2f &scale);
     // Load from path with meta.json - lazy loading (only loads meta, loads points on first access)
     explicit QuadSurface(const std::filesystem::path &path_);
-    // Load from path with provided meta json - lazy loading
-    QuadSurface(const std::filesystem::path &path_, const nlohmann::json &json);
+    // Load from path with provided meta - lazy loading
+    QuadSurface(const std::filesystem::path &path_, SurfaceMeta smeta);
     ~QuadSurface() override;
 
     // Ensure points are loaded (for lazy loading constructors)
@@ -334,15 +333,15 @@ public:
     }
 
     // Single-point validity checks
-    bool isPointValid(int row, int col) const {
+    bool isPointValid(int row, int col) const noexcept {
         const_cast<QuadSurface*>(this)->ensureLoaded();
-        if (!_points || row < 0 || row >= _points->rows || col < 0 || col >= _points->cols)
+        if (!_points || row < 0 || row >= _points->rows || col < 0 || col >= _points->cols) [[unlikely]]
             return false;
         return (*_points)(row, col)[0] != -1.f;
     }
-    bool isQuadValid(int row, int col) const {
+    bool isQuadValid(int row, int col) const noexcept {
         const_cast<QuadSurface*>(this)->ensureLoaded();
-        if (!_points || row < 0 || row >= _points->rows - 1 || col < 0 || col >= _points->cols - 1)
+        if (!_points || row < 0 || row >= _points->rows - 1 || col < 0 || col >= _points->cols - 1) [[unlikely]]
             return false;
         return (*_points)(row, col)[0] != -1.f &&
                (*_points)(row, col + 1)[0] != -1.f &&

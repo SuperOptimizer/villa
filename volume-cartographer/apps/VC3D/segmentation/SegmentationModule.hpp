@@ -52,7 +52,7 @@ class SegmentationPushPullTool;
 class ApprovalMaskBrushTool;
 class CellReoptimizationTool;
 
-class SegmentationModule : public QObject
+class SegmentationModule final : public QObject
 {
     Q_OBJECT
 

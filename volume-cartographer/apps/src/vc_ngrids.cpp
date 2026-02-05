@@ -26,6 +26,7 @@
 #include "z5/dataset.hxx"
 #include "z5/multiarray/xtensor_access.hxx"
 #include "z5/filesystem/handle.hxx"
+#include "vc/core/util/Slicing.hpp"
 
 #include <xtensor/containers/xadapt.hpp>
 
@@ -757,7 +758,7 @@ static std::optional<cv::Vec3i> infer_volume_shape_from_grids(const fs::path& ng
 
 static void run_vis_ply(const fs::path& input_dir, const fs::path& out_ply, const std::optional<CropBox3i>& crop_opt) {
     vc::core::util::NormalGridVolume ngv(input_dir.string());
-    const int sparse_volume = ngv.metadata().value("sparse-volume", 1);
+    const int sparse_volume = ngv.sparse_volume();
 
     const CropBox3i crop = crop_opt.value_or(CropBox3i{
         cv::Vec3i(0, 0, 0),
@@ -863,9 +864,9 @@ static void run_vis_normals_zarr_as_ply(const fs::path& zarr_root, const fs::pat
     xt::xarray<uint8_t> ay = xt::zeros<uint8_t>({Z, Y, X});
     xt::xarray<uint8_t> az = xt::zeros<uint8_t>({Z, Y, X});
     z5::types::ShapeType off = {0, 0, 0};
-    z5::multiarray::readSubarray<uint8_t>(*dsx, ax, off.begin());
-    z5::multiarray::readSubarray<uint8_t>(*dsy, ay, off.begin());
-    z5::multiarray::readSubarray<uint8_t>(*dsz, az, off.begin());
+    readSubarray3D(ax, *dsx, off);
+    readSubarray3D(ay, *dsy, off);
+    readSubarray3D(az, *dsz, off);
 
     const CropBox3i crop = crop_opt.value_or(CropBox3i{
         cv::Vec3i(std::numeric_limits<int>::min() / 4,
@@ -981,9 +982,9 @@ static void run_vis_normals_zarr_on_surf_edges_as_ply(
     xt::xarray<uint8_t> ay = xt::zeros<uint8_t>({Z, Y, X});
     xt::xarray<uint8_t> az = xt::zeros<uint8_t>({Z, Y, X});
     z5::types::ShapeType off = {0, 0, 0};
-    z5::multiarray::readSubarray<uint8_t>(*dsx, ax, off.begin());
-    z5::multiarray::readSubarray<uint8_t>(*dsy, ay, off.begin());
-    z5::multiarray::readSubarray<uint8_t>(*dsz, az, off.begin());
+    readSubarray3D(ax, *dsx, off);
+    readSubarray3D(ay, *dsy, off);
+    readSubarray3D(az, *dsz, off);
 
     const CropBox3i crop = crop_opt.value_or(CropBox3i{
         cv::Vec3i(std::numeric_limits<int>::min() / 4,
@@ -1288,9 +1289,9 @@ static void run_align_normals_zarr(
     xt::xarray<uint8_t> ax = xt::zeros<uint8_t>({CZ, CY, CX});
     xt::xarray<uint8_t> ay = xt::zeros<uint8_t>({CZ, CY, CX});
     xt::xarray<uint8_t> az = xt::zeros<uint8_t>({CZ, CY, CX});
-    z5::multiarray::readSubarray<uint8_t>(*dsx, ax, crop_zyx.off.begin());
-    z5::multiarray::readSubarray<uint8_t>(*dsy, ay, crop_zyx.off.begin());
-    z5::multiarray::readSubarray<uint8_t>(*dsz, az, crop_zyx.off.begin());
+    readSubarray3D(ax, *dsx, crop_zyx.off);
+    readSubarray3D(ay, *dsy, crop_zyx.off);
+    readSubarray3D(az, *dsz, crop_zyx.off);
 
     const size_t N = CZ * CY * CX;
     auto lin_of = [&](size_t iz, size_t iy, size_t ix) -> size_t {
@@ -1638,9 +1639,9 @@ static void run_align_normals_zarr(
     auto out_dsy = z5::createDataset(gy, "0", "uint8", full_shape, chunks, std::string("blosc"), compOpts, /*fillValue=*/128, /*zarrDelimiter=*/"/");
     auto out_dsz = z5::createDataset(gz, "0", "uint8", full_shape, chunks, std::string("blosc"), compOpts, /*fillValue=*/128, /*zarrDelimiter=*/"/");
 
-    z5::multiarray::writeSubarray<uint8_t>(out_dsx, ax, crop_zyx.off.begin());
-    z5::multiarray::writeSubarray<uint8_t>(out_dsy, ay, crop_zyx.off.begin());
-    z5::multiarray::writeSubarray<uint8_t>(out_dsz, az, crop_zyx.off.begin());
+    writeSubarray3D(*out_dsx, ax, crop_zyx.off);
+    writeSubarray3D(*out_dsy, ay, crop_zyx.off);
+    writeSubarray3D(*out_dsz, az, crop_zyx.off);
 
     // Minimal attrs on root.
     nlohmann::json attrs;
@@ -1671,7 +1672,7 @@ static void run_fit_normals(
     float radius = 128.f,
     bool dbg_tif = false) {
     vc::core::util::NormalGridVolume ngv(input_dir.string());
-    const int sparse_volume = ngv.metadata().value("sparse-volume", 1);
+    const int sparse_volume = ngv.sparse_volume();
 
     const CropBox3i crop = crop_opt.value_or(CropBox3i{
         cv::Vec3i(0, 0, 0),
@@ -2507,7 +2508,7 @@ int main(int argc, char** argv) {
     try {
         po::store(po::parse_command_line(argc, argv, desc), vm);
 
-        if (vm.count("help") || argc == 1) {
+        if (vm.contains("help") || argc == 1) {
             print_usage();
             std::cout << "\n" << desc << "\n";
             return 0;
@@ -2530,12 +2531,12 @@ int main(int argc, char** argv) {
     const bool input_is_normals_zarr = looks_like_normals_zarr_root(input_dir);
 
     std::optional<CropBox3i> crop;
-    if (vm.count("crop")) {
+    if (vm.contains("crop")) {
         crop = crop_from_args(vm["crop"].as<std::vector<int>>());
     }
 
     std::optional<fs::path> surf_path;
-    if (vm.count("surf")) {
+    if (vm.contains("surf")) {
         surf_path = fs::path(vm["surf"].as<std::string>());
         if (!fs::exists(*surf_path) || !fs::is_directory(*surf_path)) {
             std::cerr << "Error: --surf is not a directory: " << *surf_path << "\n";
@@ -2543,7 +2544,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (vm.count("vis-surf")) {
+    if (vm.contains("vis-surf")) {
         if (!surf_path.has_value()) {
             std::cerr << "Error: --vis-surf requires --surf PATH\n";
             return 1;
@@ -2556,7 +2557,7 @@ int main(int argc, char** argv) {
         write_quad_surface_as_ply_quads(*surf, fs::path(vm["vis-surf"].as<std::string>()));
     }
 
-    if (vm.count("vis-ply")) {
+    if (vm.contains("vis-ply")) {
         if (input_is_normals_zarr) {
             if (surf_path.has_value()) {
                 run_vis_normals_zarr_on_surf_edges_as_ply(input_dir, *surf_path, fs::path(vm["vis-ply"].as<std::string>()), crop);
@@ -2572,12 +2573,12 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    if (vm.count("align-normals")) {
+    if (vm.contains("align-normals")) {
         if (!input_is_normals_zarr) {
             std::cerr << "Error: --align-normals requires --input to be a normals zarr root\n";
             return 1;
         }
-        if (!vm.count("output-zarr")) {
+        if (!vm.contains("output-zarr")) {
             std::cerr << "Error: --align-normals requires --output-zarr PATH\n";
             return 1;
         }
@@ -2585,25 +2586,25 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    if (vm.count("fit-normals")) {
+    if (vm.contains("fit-normals")) {
         if (input_is_normals_zarr) {
             std::cerr << "Error: --fit-normals is not supported when --input is a normals zarr (use --vis-ply).\n";
             return 1;
         }
-        if (!vm.count("vis-normals") && !vm.count("output-zarr")) {
+        if (!vm.contains("vis-normals") && !vm.contains("output-zarr")) {
             std::cerr << "Error: --fit-normals requires --vis-normals PATH and/or --output-zarr PATH\n";
             return 1;
         }
         std::optional<fs::path> out_zarr;
-        if (vm.count("output-zarr")) {
+        if (vm.contains("output-zarr")) {
             out_zarr = fs::path(vm["output-zarr"].as<std::string>());
         }
 
         std::optional<fs::path> out_ply;
-        if (vm.count("vis-normals")) {
+        if (vm.contains("vis-normals")) {
             out_ply = fs::path(vm["vis-normals"].as<std::string>());
         }
-        run_fit_normals(input_dir, out_ply, crop, out_zarr, /*step=*/16, /*radius=*/64.f, /*dbg_tif=*/vm.count("dbg-tif") > 0);
+        run_fit_normals(input_dir, out_ply, crop, out_zarr, /*step=*/16, /*radius=*/64.f, /*dbg_tif=*/vm.contains("dbg-tif"));
         return 0;
     }
 

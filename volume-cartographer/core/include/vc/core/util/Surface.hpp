@@ -1,12 +1,13 @@
 #pragma once
 
-#include <nlohmann/json_fwd.hpp>
 #include <filesystem>
 #include <memory>
 #include <string>
 
 #include <opencv2/core/matx.hpp>
 #include <opencv2/core/types.hpp>
+
+#include "SurfaceMeta.hpp"
 
 // Forward declarations
 class SurfacePatchIndex;
@@ -40,7 +41,7 @@ public:
     //coordgenerator relative to ptr&offset
     //needs to be deleted after use
     virtual void gen(cv::Mat_<cv::Vec3f> *coords, cv::Mat_<cv::Vec3f> *normals, cv::Size size, const cv::Vec3f &ptr, float scale, const cv::Vec3f &offset) = 0;
-    std::unique_ptr<nlohmann::json> meta;
+    SurfaceMeta meta;
     std::filesystem::path path;
     std::string id;
 };

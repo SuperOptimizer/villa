@@ -21,8 +21,8 @@
 #include "z5/factory.hxx"
 #include "z5/filesystem/handle.hxx"
 #include "z5/attributes.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
 #include <xtensor/containers/xarray.hpp>
+#include "vc/core/util/Slicing.hpp"
 
 namespace po = boost::program_options;
 using json = nlohmann::json;
@@ -1097,7 +1097,7 @@ int main(int argc, char** argv) {
                     if (dsIn->getDtype() == z5::types::Datatype::uint8) {
                         xt::xarray<uint8_t> slab = xt::empty<uint8_t>({1ul, Y, X});
                         z5::types::ShapeType off = {z, 0ul, 0ul};
-                        z5::multiarray::readSubarray<uint8_t>(dsIn, slab, off.begin());
+                        readSubarray3D(slab, *dsIn, off);
                         src.create(static_cast<int>(Y), static_cast<int>(X), CV_8UC1);
                         for (size_t y = 0; y < Y; ++y) {
                             uint8_t* row = src.ptr<uint8_t>(static_cast<int>(y));
@@ -1106,7 +1106,7 @@ int main(int argc, char** argv) {
                     } else if (dsIn->getDtype() == z5::types::Datatype::uint16) {
                         xt::xarray<uint16_t> slab = xt::empty<uint16_t>({1ul, Y, X});
                         z5::types::ShapeType off = {z, 0ul, 0ul};
-                        z5::multiarray::readSubarray<uint16_t>(dsIn, slab, off.begin());
+                        readSubarray3D(slab, *dsIn, off);
                         src.create(static_cast<int>(Y), static_cast<int>(X), CV_16UC1);
                         for (size_t y = 0; y < Y; ++y) {
                             uint16_t* row = src.ptr<uint16_t>(static_cast<int>(y));
@@ -1115,7 +1115,7 @@ int main(int argc, char** argv) {
                     } else if (dsIn->getDtype() == z5::types::Datatype::float32) {
                         xt::xarray<float> slab = xt::empty<float>({1ul, Y, X});
                         z5::types::ShapeType off = {z, 0ul, 0ul};
-                        z5::multiarray::readSubarray<float>(dsIn, slab, off.begin());
+                        readSubarray3D(slab, *dsIn, off);
                         src.create(static_cast<int>(Y), static_cast<int>(X), CV_32FC1);
                         for (size_t y = 0; y < Y; ++y) {
                             float* row = src.ptr<float>(static_cast<int>(y));
@@ -1225,7 +1225,7 @@ int main(int argc, char** argv) {
                 if (dsIn->getDtype() == z5::types::Datatype::uint8) {
                     xt::xarray<uint8_t> slab = xt::empty<uint8_t>({1ul, Y, X});
                     z5::types::ShapeType off = {z, 0ul, 0ul};
-                    z5::multiarray::readSubarray<uint8_t>(dsIn, slab, off.begin());
+                    readSubarray3D(slab, *dsIn, off);
                     src.create(static_cast<int>(Y), static_cast<int>(X), CV_8UC1);
                     for (size_t y = 0; y < Y; ++y) {
                         uint8_t* row = src.ptr<uint8_t>(static_cast<int>(y));
@@ -1234,7 +1234,7 @@ int main(int argc, char** argv) {
                 } else if (dsIn->getDtype() == z5::types::Datatype::uint16) {
                     xt::xarray<uint16_t> slab = xt::empty<uint16_t>({1ul, Y, X});
                     z5::types::ShapeType off = {z, 0ul, 0ul};
-                    z5::multiarray::readSubarray<uint16_t>(dsIn, slab, off.begin());
+                    readSubarray3D(slab, *dsIn, off);
                     src.create(static_cast<int>(Y), static_cast<int>(X), CV_16UC1);
                     for (size_t y = 0; y < Y; ++y) {
                         uint16_t* row = src.ptr<uint16_t>(static_cast<int>(y));
@@ -1243,7 +1243,7 @@ int main(int argc, char** argv) {
                 } else if (dsIn->getDtype() == z5::types::Datatype::float32) {
                     xt::xarray<float> slab = xt::empty<float>({1ul, Y, X});
                     z5::types::ShapeType off = {z, 0ul, 0ul};
-                    z5::multiarray::readSubarray<float>(dsIn, slab, off.begin());
+                    readSubarray3D(slab, *dsIn, off);
                     src.create(static_cast<int>(Y), static_cast<int>(X), CV_32FC1);
                     for (size_t y = 0; y < Y; ++y) {
                         float* row = src.ptr<float>(static_cast<int>(y));
@@ -1275,7 +1275,7 @@ int main(int argc, char** argv) {
                     for (size_t x = 0; x < X; ++x) slabOut(0, y, x) = row[x];
                 }
                 z5::types::ShapeType offOut = {z, 0ul, 0ul};
-                z5::multiarray::writeSubarray<uint8_t>(dsOut0, slabOut, offOut.begin());
+                writeSubarray3D(*dsOut0, slabOut, offOut);
 
                 size_t d = ++done;
                 if ((d % 1) == 0) {
@@ -1348,7 +1348,7 @@ int main(int argc, char** argv) {
                         xt::xarray<uint8_t> srcChunk = xt::empty<uint8_t>({lz, ly*2ul, lx*2ul});
                         {
                             z5::types::ShapeType off = {0ul, y0*2ul, x0*2ul};
-                            z5::multiarray::readSubarray<uint8_t>(src, srcChunk, off.begin());
+                            readSubarray3D(srcChunk, *src, off);
                         }
                         xt::xarray<uint8_t> dstChunk = xt::empty<uint8_t>({lz, ly, lx});
                         for (size_t zz = 0; zz < lz; ++zz) {
@@ -1364,7 +1364,7 @@ int main(int argc, char** argv) {
                             }
                         }
                         z5::types::ShapeType offD = {0ul, y0, x0};
-                        z5::multiarray::writeSubarray<uint8_t>(dst, dstChunk, offD.begin());
+                        writeSubarray3D(*dst, dstChunk, offD);
                         size_t d = ++tilesDone;
                         #ifdef _OPENMP
                         if (omp_get_thread_num() == 0)

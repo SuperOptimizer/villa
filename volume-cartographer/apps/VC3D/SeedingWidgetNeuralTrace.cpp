@@ -26,6 +26,7 @@
 
 #include "CSurfaceCollection.hpp"
 
+#include "vc/core/types/Segmentation.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 

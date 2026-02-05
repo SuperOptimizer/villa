@@ -1,6 +1,8 @@
+#include <iostream>
+
+#include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/QuadSurface.hpp"
-#include "vc/core/util/Slicing.hpp"
 #include <opencv2/imgproc.hpp>
 
 
@@ -75,13 +77,12 @@ void render_binary_mask(QuadSurface* surf,
 
 void render_image_from_coords(const cv::Mat_<cv::Vec3f>& coords,
                               cv::Mat_<uint8_t>& img,
-                              z5::Dataset* ds,
-                              ChunkCache<uint8_t>* cache) {
-    if (!ds || !cache) {
-        throw std::runtime_error("Dataset or cache is null in render_image_from_coords");
+                              Volume* vol) {
+    if (!vol) [[unlikely]] {
+        throw std::runtime_error("Volume is null in render_image_from_coords");
     }
 
-    readInterpolated3D(img, ds, coords, cache);
+    vol->readInterpolated(img, coords);
     std::cout << "render_image_from_coords: completed" << '\n';
 }
 
@@ -89,13 +90,12 @@ void render_image_from_coords(const cv::Mat_<cv::Vec3f>& coords,
 void render_surface_image(QuadSurface* surf,
                          cv::Mat_<uint8_t>& mask,
                          cv::Mat_<uint8_t>& img,
-                         z5::Dataset* ds,
-                         ChunkCache<uint8_t>* cache,
+                         Volume* vol,
                          float scale) {
 
     cv::Mat_<cv::Vec3f> coords;
     render_binary_mask(surf, mask, coords, scale);
-    render_image_from_coords(coords, img, ds, cache);
+    render_image_from_coords(coords, img, vol);
 
     std::cout << "render_surface_image: completed" << '\n';
 }

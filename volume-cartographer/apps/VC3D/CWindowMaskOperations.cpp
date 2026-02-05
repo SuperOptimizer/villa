@@ -27,8 +27,6 @@
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Render.hpp"
 
-#include <nlohmann/json.hpp>
-
 void CWindow::onEditMaskPressed()
 {
     auto surf = _surf_weak.lock();
@@ -48,7 +46,7 @@ void CWindow::onEditMaskPressed()
         cv::imwrite(path.string(), mask);
 
         // Update metadata
-        (*surf->meta)["date_last_modified"] = get_surface_time_str();
+        surf->meta.date_last_modified = get_surface_time_str();
         surf->save_meta();
     }
 
@@ -72,8 +70,6 @@ void CWindow::onAppendMaskPressed()
     cv::Mat_<uint8_t> mask;
     cv::Mat_<uint8_t> img;
     std::vector<cv::Mat> existing_layers;
-
-    z5::Dataset* ds = currentVolume->zarrDataset(0);
 
     try {
         // Find the segmentation viewer and check if composite is enabled
@@ -120,7 +116,7 @@ void CWindow::onAppendMaskPressed()
                               << ", coords[end]: " << coords(coords.rows-5, coords.cols-5) << "\n";
                 }
 
-                render_image_from_coords(coords, img, ds, chunk_cache);
+                render_image_from_coords(coords, img, currentVolume.get());
             }
             cv::normalize(img, img, 0, 255, cv::NORM_MINMAX, CV_8U);
 
@@ -150,7 +146,7 @@ void CWindow::onAppendMaskPressed()
                 img = segViewer->renderCompositeForSurface(surf, maskSize);
             } else {
                 // Original rendering
-                render_surface_image(surf.get(), mask, img, ds, chunk_cache, 1.0f);
+                render_surface_image(surf.get(), mask, img, currentVolume.get(), 1.0f);
             }
             cv::normalize(img, img, 0, 255, cv::NORM_MINMAX, CV_8U);
 
@@ -165,7 +161,7 @@ void CWindow::onAppendMaskPressed()
         }
 
         // Update metadata
-        (*surf->meta)["date_last_modified"] = get_surface_time_str();
+        surf->meta.date_last_modified = get_surface_time_str();
         surf->save_meta();
 
         QDesktopServices::openUrl(QUrl::fromLocalFile(path.string().c_str()));

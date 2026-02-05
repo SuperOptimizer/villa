@@ -1,7 +1,8 @@
 #include "support.hpp"
 #include "vc/core/util/LifeTime.hpp"
+#include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Thinning.hpp"
-#include "vc/core/util/ChunkCache.hpp"
+#include "vc/core/types/Volume.hpp"
 
 #include <arpa/inet.h>
 #include <atomic>
@@ -17,10 +18,6 @@
 #include <nlohmann/json.hpp>
 #include <omp.h>
 #include <opencv2/imgproc.hpp>
-
-#include "z5/common.hxx"
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
 
 namespace fs = std::filesystem;
 namespace po = boost::program_options;
@@ -262,13 +259,8 @@ void run_generate(const po::variables_map& vm) {
     std::cout << "Input Zarr path: " << input_path << "\n";
     std::cout << "Output directory: " << output_path << "\n";
 
-    z5::filesystem::handle::Group group_handle(input_path);
-    std::unique_ptr<z5::Dataset> ds = z5::openDataset(group_handle, "0");
-    if (!ds) {
-        std::cerr << "Error: Could not open dataset '0' in volume '" << input_path << "'." << "\n";
-        exit(1);
-    }
-    auto shape = ds->shape();
+    auto volume = Volume::New(input_path);
+    auto shape = volume->shapeZYX(0);
 
     double spiral_step = vm["spiral-step"].as<double>();
     int grid_step = vm["grid-step"].as<int>();
@@ -290,7 +282,8 @@ void run_generate(const po::variables_map& vm) {
     std::ofstream o(output_fs_path / "metadata.json");
     o << std::setw(4) << metadata << "\n";
 
-    ChunkCache<uint8_t> cache(10llu*1024*1024*1024);
+    auto* ds = volume->zarrDataset(0);
+    auto* cache = volume->rawCache8();
 
     int num_threads = omp_get_max_threads();
     if (num_threads == 0) num_threads = 1;
@@ -376,7 +369,7 @@ void run_generate(const po::variables_map& vm) {
             xt::xtensor<uint8_t, 3, xt::layout_type::column_major> chunk_data =
                 xt::xtensor<uint8_t, 3, xt::layout_type::column_major>::from_shape(chunk_shape);
             chunk_timer.mark("xtensor init");
-            readArea3D(chunk_data, chunk_offset, ds.get(), &cache);
+            readArea3D(chunk_data, chunk_offset, ds, cache);
             chunk_timer.mark("read_chunk");
 
             for (const auto& mark : chunk_timer.getMarks()) {

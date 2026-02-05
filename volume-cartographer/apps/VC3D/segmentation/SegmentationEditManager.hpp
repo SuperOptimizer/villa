@@ -16,7 +16,7 @@
 class QuadSurface;
 class ViewerManager;
 
-class SegmentationEditManager : public QObject
+class SegmentationEditManager final : public QObject
 {
     Q_OBJECT
 

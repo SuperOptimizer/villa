@@ -171,11 +171,6 @@ int main(int argc, char *argv[])
             return EXIT_FAILURE;
         }
 
-        // Prepare metadata
-        if (!result->meta) {
-            result->meta = std::make_unique<json>();
-        }
-
         // Generate output path - append operation and timestamp to the base name
         std::string timestamp = get_timestamp();
         std::string uuid = operation + "_" + timestamp;
@@ -201,15 +196,15 @@ int main(int argc, char *argv[])
         // Print statistics
         std::cout << "Result surface contains " << result->countValidPoints() << " valid points" << "\n";
 
-        if (result->meta) {
+        {
             const double area_vx2 = vc::surface::computeSurfaceAreaVox2(result->rawPoints());
-            (*result->meta)["area_vx2"] = area_vx2;
+            result->meta.area_vx2 = area_vx2;
 
             if (params.contains("voxelsize")) {
                 const double voxelsize = params["voxelsize"];
                 if (std::isfinite(voxelsize) && voxelsize > 0.0) {
                     const double area_cm2 = area_vx2 * voxelsize * voxelsize / 1e8;
-                    (*result->meta)["area_cm2"] = area_cm2;
+                    result->meta.area_cm2 = area_cm2;
                     std::cout << "Area: " << area_cm2 << " cm²" << "\n";
                 }
             }

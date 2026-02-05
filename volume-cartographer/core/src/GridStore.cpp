@@ -615,13 +615,17 @@ private:
  
 GridStore::GridStore(const cv::Rect& bounds, int cell_size)
     : pimpl_(std::make_unique<GridStoreImpl>(bounds, cell_size)),
-      meta_(std::make_unique<nlohmann::json>()) {}
+      meta_{} {}
 
 GridStore::GridStore(const std::string& path)
     : pimpl_(std::make_unique<GridStoreImpl>(cv::Rect(), 1)),
-      meta_(std::make_unique<nlohmann::json>()) { // Use a dummy cell_size to avoid division by zero
+      meta_{} { // Use a dummy cell_size to avoid division by zero
     pimpl_->load_mmap(path);
-    *meta_ = pimpl_->meta_;
+    // Convert JSON meta from pimpl to typed GridMeta
+    const auto& j = pimpl_->meta_;
+    if (j.contains("umbilicus_x")) meta_.umbilicus_x = j["umbilicus_x"].get<float>();
+    if (j.contains("umbilicus_y")) meta_.umbilicus_y = j["umbilicus_y"].get<float>();
+    if (j.contains("aligned")) meta_.aligned = j["aligned"].get<bool>();
 }
 
 GridStore::~GridStore() = default;
@@ -662,21 +666,21 @@ size_t GridStore::numNonEmptyBuckets() const noexcept {
 }
 
 void GridStore::save(const std::string& path) const {
-    pimpl_->meta_ = *meta_;
+    // Convert typed GridMeta to JSON for serialization
+    pimpl_->meta_ = nlohmann::json{
+        {"umbilicus_x", meta_.umbilicus_x},
+        {"umbilicus_y", meta_.umbilicus_y},
+        {"aligned", meta_.aligned}
+    };
     pimpl_->save(path);
 }
 
 void GridStore::load_mmap(const std::string& path) {
     pimpl_->load_mmap(path);
-    *meta_ = pimpl_->meta_;
-}
-
-nlohmann::json& GridStore::meta() {
-    return *meta_;
-}
-
-const nlohmann::json& GridStore::meta() const {
-    return *meta_;
+    const auto& j = pimpl_->meta_;
+    if (j.contains("umbilicus_x")) meta_.umbilicus_x = j["umbilicus_x"].get<float>();
+    if (j.contains("umbilicus_y")) meta_.umbilicus_y = j["umbilicus_y"].get<float>();
+    if (j.contains("aligned")) meta_.aligned = j["aligned"].get<bool>();
 }
 
 }

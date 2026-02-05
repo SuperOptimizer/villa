@@ -16,7 +16,7 @@ class QComboBox;
 class QSpinBox;
 class QString;
 
-class VolumeOverlayController : public QObject
+class VolumeOverlayController final : public QObject
 {
     Q_OBJECT
 

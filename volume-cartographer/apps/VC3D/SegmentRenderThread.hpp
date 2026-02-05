@@ -4,7 +4,7 @@
 #include <QString>
 #include <QProcess>
 
-class SegmentRenderThread : public QThread
+class SegmentRenderThread final : public QThread
 {
     Q_OBJECT
 

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <vector>
 
 // Use inverse sqrt + multiply instead of sqrt + divide (faster)
 [[gnu::always_inline]] static cv::Vec3f normed(const cv::Vec3f& v) noexcept
@@ -133,39 +134,39 @@ template<typename T, int C>
     return loc_valid_scalar(m, {l[1],l[0]});
 }
 
-cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &p) noexcept {
+[[gnu::flatten]] cv::Vec3f at_int(const cv::Mat_<cv::Vec3f> &points, const cv::Vec2f &p) noexcept {
     return at_int_impl(points, p);
 }
 
-float at_int(const cv::Mat_<float> &points, const cv::Vec2f& p) noexcept {
+[[gnu::flatten]] float at_int(const cv::Mat_<float> &points, const cv::Vec2f& p) noexcept {
     return at_int_impl(points, p);
 }
 
-cv::Vec3d at_int(const cv::Mat_<cv::Vec3d> &points, const cv::Vec2f& p) noexcept {
+[[gnu::flatten]] cv::Vec3d at_int(const cv::Mat_<cv::Vec3d> &points, const cv::Vec2f& p) noexcept {
     return at_int_impl(points, p);
 }
 
-bool loc_valid(const cv::Mat_<cv::Vec3f> &m, const cv::Vec2d &l) noexcept {
+[[gnu::flatten]] bool loc_valid(const cv::Mat_<cv::Vec3f> &m, const cv::Vec2d &l) noexcept {
     return loc_valid_impl(m, l);
 }
 
-bool loc_valid(const cv::Mat_<cv::Vec3d> &m, const cv::Vec2d &l) noexcept {
+[[gnu::flatten]] bool loc_valid(const cv::Mat_<cv::Vec3d> &m, const cv::Vec2d &l) noexcept {
     return loc_valid_impl(m, l);
 }
 
-bool loc_valid(const cv::Mat_<float> &m, const cv::Vec2d &l) noexcept {
+[[gnu::flatten]] bool loc_valid(const cv::Mat_<float> &m, const cv::Vec2d &l) noexcept {
     return loc_valid_scalar(m, l);
 }
 
-bool loc_valid_xy(const cv::Mat_<cv::Vec3f> &m, const cv::Vec2d &l) noexcept {
+[[gnu::flatten]] bool loc_valid_xy(const cv::Mat_<cv::Vec3f> &m, const cv::Vec2d &l) noexcept {
     return loc_valid_xy_impl(m, l);
 }
 
-bool loc_valid_xy(const cv::Mat_<cv::Vec3d> &m, const cv::Vec2d &l) noexcept {
+[[gnu::flatten]] bool loc_valid_xy(const cv::Mat_<cv::Vec3d> &m, const cv::Vec2d &l) noexcept {
     return loc_valid_xy_impl(m, l);
 }
 
-bool loc_valid_xy(const cv::Mat_<float> &m, const cv::Vec2d &l) noexcept {
+[[gnu::flatten]] bool loc_valid_xy(const cv::Mat_<float> &m, const cv::Vec2d &l) noexcept {
     return loc_valid_xy_scalar(m, l);
 }
 
@@ -173,9 +174,9 @@ bool loc_valid_xy(const cv::Mat_<float> &m, const cv::Vec2d &l) noexcept {
 float tdist(const cv::Vec3f &a, const cv::Vec3f &b, float t_dist) noexcept
 {
     cv::Vec3f d = a-b;
-    float l = sqrtf(d.dot(d));
+    float l = std::sqrt(d.dot(d));
 
-    return abs(l-t_dist);
+    return std::abs(l-t_dist);
 }
 
 float tdist_sum(const cv::Vec3f &v, const std::vector<cv::Vec3f> &tgts, const std::vector<float> &tds) noexcept
@@ -197,7 +198,7 @@ cv::Mat_<cv::Vec3f> clean_surface_outliers(const cv::Mat_<cv::Vec3f>& points, fl
     std::vector<float> all_neighbor_dists;
     all_neighbor_dists.reserve(static_cast<size_t>(points.rows) * points.cols);
 
-    // First pass: gather neighbor distances
+    // First pass: gather squared neighbor distances (avoid sqrt in hot loop)
     for (auto [j, i, center] : ValidPointRange<const cv::Vec3f>(&points)) {
         for (int dy = -1; dy <= 1; ++dy) {
             for (int dx = -1; dx <= 1; ++dx) {
@@ -206,10 +207,10 @@ cv::Mat_<cv::Vec3f> clean_surface_outliers(const cv::Mat_<cv::Vec3f>& points, fl
                 const int nx = i + dx;
                 if (ny >= 0 && ny < points.rows && nx >= 0 && nx < points.cols) {
                     if (points(ny, nx)[0] != -1.f) {
-                        const cv::Vec3f& neighbor = points(ny, nx);
-                        const float dist = cv::norm(center - neighbor);
-                        if (std::isfinite(dist) && dist > 0.f) {
-                            all_neighbor_dists.push_back(dist);
+                        const cv::Vec3f d = center - points(ny, nx);
+                        const float distSq = d[0]*d[0] + d[1]*d[1] + d[2]*d[2];
+                        if (std::isfinite(distSq) && distSq > 0.f) {
+                            all_neighbor_dists.push_back(distSq);
                         }
                     }
                 }
@@ -217,33 +218,34 @@ cv::Mat_<cv::Vec3f> clean_surface_outliers(const cv::Mat_<cv::Vec3f>& points, fl
         }
     }
 
-    float median_dist = 0.0f;
+    float median_distSq = 0.0f;
     float mad = 0.0f;
     if (!all_neighbor_dists.empty()) {
         std::sort(all_neighbor_dists.begin(), all_neighbor_dists.end());
-        median_dist = all_neighbor_dists[all_neighbor_dists.size() / 2];
+        median_distSq = all_neighbor_dists[all_neighbor_dists.size() / 2];
         std::vector<float> abs_devs;
         abs_devs.reserve(all_neighbor_dists.size());
         for (float d : all_neighbor_dists) {
-            abs_devs.push_back(std::abs(d - median_dist));
+            abs_devs.push_back(std::abs(d - median_distSq));
         }
         std::sort(abs_devs.begin(), abs_devs.end());
         mad = abs_devs[abs_devs.size() / 2];
     }
-    const float threshold = median_dist + distance_threshold * (mad / 0.6745f);
+    // Threshold in squared-distance space
+    const float threshold = median_distSq + distance_threshold * (mad / 0.6745f);
 
     if (print_stats) {
         std::cout << "Outlier detection statistics:" << "\n";
-        std::cout << "  Median neighbor distance: " << median_dist << "\n";
+        std::cout << "  Median neighbor distance²: " << median_distSq << "\n";
         std::cout << "  MAD: " << mad << "\n";
         std::cout << "  K (sigma multiplier): " << distance_threshold << "\n";
-        std::cout << "  Distance threshold: " << threshold << "\n";
+        std::cout << "  Distance² threshold: " << threshold << "\n";
     }
 
-    // Second pass: invalidate isolated/far points
+    // Second pass: invalidate isolated/far points (using squared distances)
     int removed_count = 0;
     for (auto [j, i, center] : ValidPointRange<const cv::Vec3f>(&points)) {
-        float min_neighbor = std::numeric_limits<float>::infinity();
+        float min_neighborSq = std::numeric_limits<float>::infinity();
         int neighbor_count = 0;
         for (int dy = -1; dy <= 1; ++dy) {
             for (int dx = -1; dx <= 1; ++dx) {
@@ -252,16 +254,17 @@ cv::Mat_<cv::Vec3f> clean_surface_outliers(const cv::Mat_<cv::Vec3f>& points, fl
                 const int nx = i + dx;
                 if (ny >= 0 && ny < points.rows && nx >= 0 && nx < points.cols) {
                     if (points(ny, nx)[0] != -1.f) {
-                        const float dist = cv::norm(center - points(ny, nx));
-                        if (std::isfinite(dist)) {
-                            min_neighbor = std::min(min_neighbor, dist);
+                        const cv::Vec3f d = center - points(ny, nx);
+                        const float distSq = d[0]*d[0] + d[1]*d[1] + d[2]*d[2];
+                        if (std::isfinite(distSq)) {
+                            min_neighborSq = std::min(min_neighborSq, distSq);
                             neighbor_count++;
                         }
                     }
                 }
             }
         }
-        if (neighbor_count == 0 || (min_neighbor > threshold && threshold > 0.f)) {
+        if (neighbor_count == 0 || (min_neighborSq > threshold && threshold > 0.f)) {
             cleaned(j, i) = cv::Vec3f(-1.f, -1.f, -1.f);
             if (print_stats) removed_count++;
         }

@@ -1,10 +1,6 @@
 #include <nlohmann/json.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
-#include <z5/common.hxx>
-#include <z5/dataset.hxx>
-#include <z5/filesystem/factory.hxx>
-#include <z5/util/blocking.hxx>
 #include <filesystem>
 #include <fstream>
 #include <vector>
@@ -18,13 +14,10 @@
 #include <sstream>
 #include <string>
 
-#include "z5/filesystem/handle.hxx"
+#include "vc/core/types/Volume.hpp"
 #include "vc/core/util/Geometry.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
-#include "vc/core/util/Slicing.hpp"
-#include "vc/core/util/StreamOperators.hpp"
-#include "vc/core/util/ChunkCache.hpp"
 
 enum class SurfaceInputType {
     Obj,
@@ -137,9 +130,9 @@ bool istype(const std::string &line, const std::string &type)
 
 
 struct DSReader {
-    z5::Dataset* ds;
+    Volume* vol;
+    int level;
     float scale;
-    ChunkCache<uint8_t>* cache;
     std::mutex read_mutex;
 };
 
@@ -166,7 +159,7 @@ float alphacomp_offset(DSReader &reader, const cv::Vec3f& point, const cv::Vec3f
         cv::Mat_<cv::Vec3f> offmat(size, normal*off*reader.scale);
         {
             std::lock_guard<std::mutex> lock(reader.read_mutex);
-            readInterpolated3D(slice, reader.ds, coords+offmat, reader.cache);
+            reader.vol->readInterpolated(slice, coords+offmat, InterpolationMethod::Trilinear, reader.level);
         }
 
         cv::Mat floatslice;
@@ -266,7 +259,7 @@ int process_obj(const std::string& src,
     if (vertexcolor) {
         std::lock_guard<std::mutex> lock(reader.read_mutex);
         cv::Mat_<cv::Vec3f> vs_mat(static_cast<int>(vs.size()), 1, vs.data());
-        readInterpolated3D(slice, reader.ds, vs_mat*reader.scale, reader.cache);
+        reader.vol->readInterpolated(slice, vs_mat*reader.scale, InterpolationMethod::Trilinear, reader.level);
     }
 
     obj.clear();
@@ -348,9 +341,7 @@ int process_tifxyz(const std::filesystem::path& src,
     }
     outSurf.id = uuid;
 
-    if (surf->meta) {
-        outSurf.meta = std::make_unique<nlohmann::json>(*surf->meta);
-    }
+    outSurf.meta = surf->meta;
 
     try {
         outSurf.save(dst.string(), uuid, cfg.overwrite);
@@ -405,16 +396,14 @@ int main(int argc, char *argv[])
     const nlohmann::json params = nlohmann::json::parse(params_f);
     const RefinementConfig cfg = parse_config(params);
 
-    z5::filesystem::handle::Group group(vol_path.string(), z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset ds_handle(group, cfg.dataset_group, "/");
-    std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
+    auto volume = Volume::New(vol_path);
+    int level = std::stoi(cfg.dataset_group);
 
-    std::cout << "zarr dataset size for scale group " << cfg.dataset_group << " " << ds->shape() << "\n";
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << "\n";
-    std::cout << "chunk cache size (bytes) " << cfg.cache_bytes << "\n";
-    ChunkCache<uint8_t> chunk_cache(cfg.cache_bytes);
+    auto shape = volume->shapeZYX(level);
+    std::cout << "zarr dataset size for scale group " << cfg.dataset_group << " "
+              << shape[0] << "x" << shape[1] << "x" << shape[2] << "\n";
 
-    DSReader reader = {ds.get(), cfg.reader_scale, &chunk_cache};
+    DSReader reader = {volume.get(), level, cfg.reader_scale};
 
     MeasureLife timer("processing surface ...\n");
 

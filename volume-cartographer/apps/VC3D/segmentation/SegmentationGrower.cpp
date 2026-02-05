@@ -15,7 +15,7 @@
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
-#include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/SlicingLite.hpp"
 #include "vc/core/util/SurfacePatchIndex.hpp"
 
 #include <QtConcurrent/QtConcurrent>
@@ -31,8 +31,6 @@
 #include <utility>
 
 #include <opencv2/core.hpp>
-
-#include <nlohmann/json.hpp>
 
 Q_DECLARE_LOGGING_CATEGORY(lcSegGrowth);
 
@@ -140,8 +138,7 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
                 try {
                     sdtVolume = volumeContext.package->volume(sdtVolumeId);
                     if (sdtVolume) {
-                        sdtContext.binaryDataset = sdtVolume->zarrDataset(0);
-                        sdtContext.cache = _context.chunkCache;
+                        sdtContext.volume = sdtVolume.get();
                         sdtContextPtr = &sdtContext;
                         qCInfo(lcSegGrowth) << "Linear+Fit: SDT refinement using volume"
                                             << QString::fromStdString(sdtVolumeId);
@@ -169,8 +166,7 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
                         try {
                             sdtVolume = volumeContext.package->volume(sdtVolumeId);
                             if (sdtVolume) {
-                                sdtContext.binaryDataset = sdtVolume->zarrDataset(0);
-                                sdtContext.cache = _context.chunkCache;
+                                sdtContext.volume = sdtVolume.get();
                                 sdtContextPtr = &sdtContext;
                                 qCInfo(lcSegGrowth) << "SDT refinement enabled with volume"
                                                     << QString::fromStdString(sdtVolumeId);
@@ -222,8 +218,7 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
                 try {
                     skeletonVolume = volumeContext.package->volume(skeletonVolumeId);
                     if (skeletonVolume) {
-                        skeletonContext.binaryDataset = skeletonVolume->zarrDataset(0);
-                        skeletonContext.cache = _context.chunkCache;
+                        skeletonContext.volume = skeletonVolume.get();
                         skeletonContextPtr = &skeletonContext;
                         qCInfo(lcSegGrowth) << "Skeleton Path: using volume"
                                             << QString::fromStdString(skeletonVolumeId);
@@ -307,10 +302,7 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
         }
 
         // Copy metadata
-        if (result.surface->meta && result.surface->meta->is_object()) {
-            ensureSurfaceMetaObject(segmentationSurface.get());
-            *segmentationSurface->meta = *result.surface->meta;
-        }
+        segmentationSurface->meta = result.surface->meta;
 
         // Update metadata
         updateSegmentationSurfaceMetadata(segmentationSurface.get(), voxelSize);
@@ -448,52 +440,58 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
         showStatus(message, kStatusLong);
         return false;
     }
-    if (auto customParams = _context.widget->customParamsJson()) {
-        request.customParams = std::make_shared<nlohmann::json>(std::move(*customParams));
-    }
+    // Build combined JSON text for custom params + neural tracer integration
+    {
+        nlohmann::json customJson = nlohmann::json::object();
 
-    // Handle neural tracer integration - pass neural_socket when enabled, GrowPatch will use it as needed
-    if (_context.widget->neuralTracerEnabled()) {
-        const QString checkpointPath = _context.widget->neuralCheckpointPath();
-        const QString pythonPath = _context.widget->neuralPythonPath();
-        const QString volumeZarr = _context.widget->volumeZarrPath();
-        const int volumeScale = _context.widget->neuralVolumeScale();
-        const int batchSize = _context.widget->neuralBatchSize();
-
-        if (checkpointPath.isEmpty()) {
-            showStatus(tr("Neural tracer enabled but no checkpoint path specified."), kStatusLong);
-            return false;
-        }
-        if (volumeZarr.isEmpty()) {
-            showStatus(tr("Neural tracer enabled but no volume zarr path available."), kStatusLong);
-            return false;
+        // Start with user custom params if valid
+        if (auto userJson = _context.widget->customParamsJson()) {
+            customJson = std::move(*userJson);
         }
 
-        auto& serviceManager = NeuralTraceServiceManager::instance();
-        showStatus(tr("Starting neural trace service..."), kStatusLong);
+        // Handle neural tracer integration - pass neural_socket when enabled
+        if (_context.widget->neuralTracerEnabled()) {
+            const QString checkpointPath = _context.widget->neuralCheckpointPath();
+            const QString pythonPath = _context.widget->neuralPythonPath();
+            const QString volumeZarr = _context.widget->volumeZarrPath();
+            const int volumeScale = _context.widget->neuralVolumeScale();
+            const int batchSize = _context.widget->neuralBatchSize();
 
-        if (!serviceManager.ensureServiceRunning(checkpointPath, volumeZarr, volumeScale, pythonPath)) {
-            const QString error = serviceManager.lastError();
-            showStatus(tr("Failed to start neural trace service: %1").arg(error), kStatusLong);
-            return false;
+            if (checkpointPath.isEmpty()) {
+                showStatus(tr("Neural tracer enabled but no checkpoint path specified."), kStatusLong);
+                return false;
+            }
+            if (volumeZarr.isEmpty()) {
+                showStatus(tr("Neural tracer enabled but no volume zarr path available."), kStatusLong);
+                return false;
+            }
+
+            auto& serviceManager = NeuralTraceServiceManager::instance();
+            showStatus(tr("Starting neural trace service..."), kStatusLong);
+
+            if (!serviceManager.ensureServiceRunning(checkpointPath, volumeZarr, volumeScale, pythonPath)) {
+                const QString error = serviceManager.lastError();
+                showStatus(tr("Failed to start neural trace service: %1").arg(error), kStatusLong);
+                return false;
+            }
+
+            const QString socketPath = serviceManager.socketPath();
+            if (socketPath.isEmpty()) {
+                showStatus(tr("Neural trace service is running but socket path is unavailable."), kStatusLong);
+                return false;
+            }
+
+            customJson["neural_socket"] = socketPath.toStdString();
+            customJson["neural_batch_size"] = batchSize;
+
+            qCInfo(lcSegGrowth) << "Neural tracer enabled:"
+                                << "socket" << socketPath
+                                << "batch_size" << batchSize;
         }
 
-        const QString socketPath = serviceManager.socketPath();
-        if (socketPath.isEmpty()) {
-            showStatus(tr("Neural trace service is running but socket path is unavailable."), kStatusLong);
-            return false;
+        if (!customJson.empty()) {
+            request.customParamsJson = customJson.dump();
         }
-
-        // Add neural socket parameters to custom params
-        if (!request.customParams) {
-            request.customParams = std::make_shared<nlohmann::json>(nlohmann::json::object());
-        }
-        (*request.customParams)["neural_socket"] = socketPath.toStdString();
-        (*request.customParams)["neural_batch_size"] = batchSize;
-
-        qCInfo(lcSegGrowth) << "Neural tracer enabled:"
-                            << "socket" << socketPath
-                            << "batch_size" << batchSize;
     }
 
     request.corrections = corrections;
@@ -522,7 +520,6 @@ bool SegmentationGrower::start(const VolumeContext& volumeContext,
     TracerGrowthContext ctx;
     ctx.resumeSurface = segmentationSurface.get();
     ctx.volume = growthVolume.get();
-    ctx.cache = _context.chunkCache;
     ctx.cacheRoot = cacheRootForVolumePkg(volumeContext.package);
     ctx.voxelSize = growthVolume->voxelSize();
     ctx.normalGridPath = volumeContext.normalGridPath;
@@ -821,15 +818,13 @@ void SegmentationGrower::onFutureFinished()
             targetSurface->invalidateCache();
         }
 
-        nlohmann::json preservedTags = nlohmann::json::object();
-        bool hadPreservedTags = false;
-        if (targetSurface->meta && targetSurface->meta->is_object()) {
-            auto tagsIt = targetSurface->meta->find("tags");
-            if (tagsIt != targetSurface->meta->end() && tagsIt->is_object()) {
-                preservedTags = *tagsIt;
-                hadPreservedTags = true;
-            }
-        }
+        SurfaceTags preservedTags = targetSurface->meta.tags;
+        bool hadPreservedTags = preservedTags.approved.has_value() ||
+                                preservedTags.defective.has_value() ||
+                                preservedTags.reviewed.has_value() ||
+                                preservedTags.revisit.has_value() ||
+                                preservedTags.inspect.has_value() ||
+                                preservedTags.partial_review.has_value();
 
         if (!generations.empty()) {
             targetSurface->setChannel("generations", generations);
@@ -841,19 +836,23 @@ void SegmentationGrower::onFutureFinished()
             targetSurface->setChannel("approval", approval);
         }
 
-        if (result.surface->meta) {
-            targetSurface->meta = std::make_unique<nlohmann::json>(*result.surface->meta);
-        } else {
-            ensureSurfaceMetaObject(targetSurface);
-        }
+        targetSurface->meta = result.surface->meta;
 
-        if (hadPreservedTags && targetSurface->meta && targetSurface->meta->is_object()) {
-            nlohmann::json mergedTags = preservedTags;
-            auto tagsIt = targetSurface->meta->find("tags");
-            if (tagsIt != targetSurface->meta->end() && tagsIt->is_object()) {
-                mergedTags.update(*tagsIt);
-            }
-            (*targetSurface->meta)["tags"] = mergedTags;
+        if (hadPreservedTags) {
+            // Merge: preserved tags take precedence unless the result surface also has a tag
+            SurfaceTags& merged = targetSurface->meta.tags;
+            if (!merged.approved.has_value() && preservedTags.approved.has_value())
+                merged.approved = preservedTags.approved;
+            if (!merged.defective.has_value() && preservedTags.defective.has_value())
+                merged.defective = preservedTags.defective;
+            if (!merged.reviewed.has_value() && preservedTags.reviewed.has_value())
+                merged.reviewed = preservedTags.reviewed;
+            if (!merged.revisit.has_value() && preservedTags.revisit.has_value())
+                merged.revisit = preservedTags.revisit;
+            if (!merged.inspect.has_value() && preservedTags.inspect.has_value())
+                merged.inspect = preservedTags.inspect;
+            if (!merged.partial_review.has_value() && preservedTags.partial_review.has_value())
+                merged.partial_review = preservedTags.partial_review;
         }
 
         updateSegmentationSurfaceMetadata(targetSurface, voxelSize);
@@ -885,7 +884,6 @@ void SegmentationGrower::onFutureFinished()
     if (!sessionActive) {
         try {
             if (surfaceToPersist) {
-                ensureSurfaceMetaObject(surfaceToPersist);
                 surfaceToPersist->saveOverwrite();
             }
         } catch (const std::exception& ex) {
@@ -1025,11 +1023,10 @@ void SegmentationGrower::onFutureFinished()
 
     // Apply grid offset to correction anchors (for surface growth remapping)
     // and save immediately to persist updated positions
-    if (result.surface && result.surface->meta && _context.module) {
-        auto offsetIt = result.surface->meta->find("grid_offset");
-        if (offsetIt != result.surface->meta->end() && offsetIt->is_array() && offsetIt->size() == 2) {
-            float offsetX = (*offsetIt)[0].get<float>();
-            float offsetY = (*offsetIt)[1].get<float>();
+    if (result.surface && _context.module) {
+        if (result.surface->meta.grid_offset.has_value()) {
+            float offsetX = static_cast<float>((*result.surface->meta.grid_offset)[0]);
+            float offsetY = static_cast<float>((*result.surface->meta.grid_offset)[1]);
             if (offsetX != 0.0f || offsetY != 0.0f) {
                 _context.module->applyCorrectionAnchorOffset(offsetX, offsetY);
                 // Save corrections with updated anchors to the new surface path

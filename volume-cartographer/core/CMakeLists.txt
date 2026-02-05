@@ -14,10 +14,12 @@ add_library(vc_core
         src/PointIndex.cpp
         src/Logging.cpp
         src/ChunkCache.cpp
+        src/ChunkStore.cpp
         src/Slicing.cpp
         src/Compositing.cpp
         src/PlaneSurface.cpp
         src/QuadSurface.cpp
+        src/SurfaceMetaIO.cpp
         src/Render.cpp
         src/Tiff.cpp
         src/Geometry.cpp
@@ -110,8 +112,6 @@ target_precompile_headers(vc_core PRIVATE
     <opencv2/core/mat.hpp>
     <opencv2/imgproc.hpp>
     <opencv2/imgcodecs.hpp>
-    # JSON
-    <nlohmann/json.hpp>
     # Eigen (used by Ceres)
     <Eigen/Core>
     <Eigen/Dense>
@@ -138,8 +138,11 @@ if(VC_USE_PCH)
     target_precompile_headers(vc_ui REUSE_FROM vc_core)
 endif()
 
-add_library(vc_tracer src/GrowPatch.cpp src/GrowSurface.cpp src/NeuralTracerConnection.cpp src/CostFunctions.cpp)
-target_link_libraries(vc_tracer PUBLIC vc_core vc_ui Ceres::ceres Qt6::Core)
+add_library(vc_tracer src/GrowPatch.cpp src/GrowPatch_Opt.cpp src/GrowSurface.cpp src/NeuralTracerConnection.cpp src/CostFunctions.cpp src/TracerParamsIO.cpp)
+# Ceres is PRIVATE: vc_tracer's public headers don't expose Ceres types.
+# CostFunctions.hpp lives under vc/tracer/ and consumers that need it
+# link Ceres::ceres directly.
+target_link_libraries(vc_tracer PUBLIC vc_core vc_ui Qt6::Core PRIVATE Ceres::ceres)
 if(VC_USE_PCH)
     target_precompile_headers(vc_tracer REUSE_FROM vc_core)
 endif()

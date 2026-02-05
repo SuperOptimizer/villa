@@ -35,9 +35,10 @@
 #include "z5/factory.hxx"
 #include "z5/filesystem/handle.hxx"
 #include "z5/attributes.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
 
 #include <xtensor/containers/xarray.hpp>
+
+#include "vc/core/util/Slicing.hpp"
 
 #include <opencv2/core.hpp>
 
@@ -298,15 +299,13 @@ static void readChunk(std::unique_ptr<z5::Dataset>& ds, xt::xarray<T>& chunk,
                       size_t z0, size_t y0, size_t x0,
                       size_t lz, size_t ly, size_t lx) {
     chunk = xt::xarray<T>::from_shape({lz, ly, lx});
-    z5::types::ShapeType offset = {z0, y0, x0};
-    z5::multiarray::readSubarray<T>(ds, chunk, offset.begin());
+    readSubarray3D(chunk, *ds, {z0, y0, x0});
 }
 
 template<typename T>
 static void writeChunk(std::unique_ptr<z5::Dataset>& ds, const xt::xarray<T>& chunk,
                        size_t z0, size_t y0, size_t x0) {
-    z5::types::ShapeType offset = {z0, y0, x0};
-    z5::multiarray::writeSubarray<T>(ds, chunk, offset.begin());
+    writeSubarray3D(*ds, chunk, {z0, y0, x0});
 }
 
 // ============================================================================
@@ -821,9 +820,9 @@ static void runComputeGradients(const Config& cfg, std::unique_ptr<z5::Dataset>&
                         }
                     }
 
-                    z5::multiarray::writeSubarray<float>(dsGradOut, gxWrite, offX.begin());
-                    z5::multiarray::writeSubarray<float>(dsGradOut, gyWrite, offY.begin());
-                    z5::multiarray::writeSubarray<float>(dsGradOut, gzWrite, offZ.begin());
+                    writeSubarray3D(*dsGradOut, gxWrite, offX);
+                    writeSubarray3D(*dsGradOut, gyWrite, offY);
+                    writeSubarray3D(*dsGradOut, gzWrite, offZ);
                 }
 
                 progress.update();

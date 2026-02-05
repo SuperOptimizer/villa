@@ -48,13 +48,8 @@ float averageScale(const cv::Vec2f& scale)
 
 void ensureSurfaceMetaObject(QuadSurface* surface)
 {
-    if (!surface) {
-        return;
-    }
-    if (surface->meta && surface->meta->is_object()) {
-        return;
-    }
-    surface->meta = std::make_unique<nlohmann::json>(nlohmann::json::object());
+    // No-op: meta is now always a valid SurfaceMeta value
+    (void)surface;
 }
 }
 

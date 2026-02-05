@@ -22,16 +22,9 @@
 
 #include <ceres/ceres.h>
 
-#include <xtensor/containers/xarray.hpp>
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/common.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-
 #include "vc/ui/VCCollection.hpp"
-#include "vc/core/util/Slicing.hpp"
+#include "vc/core/types/Volume.hpp"
 #include "vc/core/util/GridStore.hpp"
-#include "vc/core/util/ChunkCache.hpp"
 
 #include "discrete.hpp"
 #include "continous.hpp"
@@ -178,14 +171,10 @@ int main(int argc, char** argv) {
     }
     std::cout << "Found umbilicus point at: " << *umbilicus_point << '\n';
 
-    // Load volume data using z5 and ChunkedTensor
-    z5::filesystem::handle::Group group_handle(volume_path);
-    std::unique_ptr<z5::Dataset> ds = z5::openDataset(group_handle, dataset_name);
-    if (!ds) {
-        std::cerr << "Error: Could not open dataset '" << dataset_name << "' in volume '" << volume_path << "'." << '\n';
-        return 1;
-    }
-    auto shape = ds->shape();
+    // Load volume
+    int level = std::stoi(dataset_name);
+    auto volume = Volume::New(volume_path);
+    auto shape = volume->shapeZYX(level);
     std::cout << "Volume shape: (" << shape[0] << ", " << shape[1] << ", " << shape[2] << ")" << '\n';
 
     // Extract XY slice
@@ -195,18 +184,9 @@ int main(int argc, char** argv) {
     auto start_slice_extraction = std::chrono::high_resolution_clock::now();
     std::clock_t start_cpu = std::clock();
 
-    cv::Mat slice_mat(shape[1], shape[2], CV_8U);
-    std::vector<size_t> slice_shape = {1, shape[1], shape[2]};
-    xt::xtensor<uint8_t, 3, xt::layout_type::column_major> slice_data = xt::zeros<uint8_t>(slice_shape);
-    cv::Vec3i offset = {z_slice, 0, 0};
-    ChunkCache<uint8_t> cache(4llu*1024*1024*1024);
-    readArea3D(slice_data, offset, ds.get(), &cache);
-    
-    for (int y = 0; y < shape[1]; ++y) {
-        for (int x = 0; x < shape[2]; ++x) {
-            slice_mat.at<uint8_t>(y, x) = slice_data(0, y, x);
-        }
-    }
+    std::vector<cv::Mat_<uint8_t>> slices;
+    volume->readBlock(slices, {z_slice, 0, 0}, {1, static_cast<int>(shape[1]), static_cast<int>(shape[2])}, level);
+    cv::Mat slice_mat = slices[0];
     auto end_slice_extraction = std::chrono::high_resolution_clock::now();
     std::clock_t end_cpu = std::clock();
 

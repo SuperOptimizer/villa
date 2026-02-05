@@ -1,19 +1,19 @@
 #pragma once
 
-#include "vc/core/util/CostFunctions.hpp"
+// Optimization/loss flags (bitmask)
+inline constexpr int OPTIMIZE_ALL    = 1;
+inline constexpr int SURF_LOSS       = 2;
+inline constexpr int SPACE_LOSS      = 2;  // SURF and SPACE are never used together
+inline constexpr int LOSS_3D_INDIRECT = 4;
+inline constexpr int LOSS_ZLOC       = 8;
+inline constexpr int FLAG_GEN0       = 16;
+inline constexpr int LOSS_ON_SURF    = 32;
+inline constexpr int LOSS_ON_NORMALS = 64;
 
-#define OPTIMIZE_ALL 1
-#define SURF_LOSS 2
-#define SPACE_LOSS 2 //SURF and SPACE are never used together
-#define LOSS_3D_INDIRECT 4
-#define LOSS_ZLOC 8
-#define FLAG_GEN0 16
-#define LOSS_ON_SURF 32
-#define LOSS_ON_NORMALS 64
-
-#define STATE_UNUSED 0
-#define STATE_LOC_VALID 1
-#define STATE_PROCESSING 2
-#define STATE_COORD_VALID 4
-#define STATE_FAIL 8
-#define STATE_PHYS_ONLY 16
+// State flags (bitmask)
+inline constexpr int STATE_UNUSED      = 0;
+inline constexpr int STATE_LOC_VALID   = 1;
+inline constexpr int STATE_PROCESSING  = 2;
+inline constexpr int STATE_COORD_VALID = 4;
+inline constexpr int STATE_FAIL        = 8;
+inline constexpr int STATE_PHYS_ONLY   = 16;

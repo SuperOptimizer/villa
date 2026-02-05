@@ -8,7 +8,7 @@ class QMenu;
 class QMenuBar;
 class CWindow;
 
-class MenuActionController : public QObject
+class MenuActionController final : public QObject
 {
     Q_OBJECT
 

@@ -16,7 +16,7 @@
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
-#include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/SlicingLite.hpp"
 
 #include <omp.h>
 
@@ -61,7 +61,7 @@ static bool intersectionLinesEqual(const std::vector<IntersectionLine>& a,
 void CVolumeViewer::renderIntersections()
 {
     auto surf = _surf_weak.lock();
-    if (!volume || !volume->zarrDataset() || !surf)
+    if (!volume || !surf)
         return;
 
     // Refresh cached surface pointers if targets changed or if a surface object
@@ -132,7 +132,7 @@ void CVolumeViewer::renderIntersections()
     if (_surf_col) {
         activeSegSurface = std::dynamic_pointer_cast<QuadSurface>(_surf_col->surface("segmentation"));
     }
-    const bool segmentationAliasRequested = _intersect_tgts.count("segmentation") > 0;
+    const bool segmentationAliasRequested = _intersect_tgts.contains("segmentation");
 
 
     if (plane) {

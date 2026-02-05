@@ -10,50 +10,71 @@
 
 static const std::filesystem::path METADATA_FILE = "meta.json";
 
+struct Segmentation::Impl {
+    std::filesystem::path path_;
+    std::unique_ptr<nlohmann::json> metadata_;
+    std::shared_ptr<QuadSurface> surface_;
+
+    Impl(std::filesystem::path p)
+        : path_(std::move(p)), metadata_(std::make_unique<nlohmann::json>()) {}
+
+    void loadMetadata()
+    {
+        auto metaPath = path_ / METADATA_FILE;
+        *metadata_ = vc::json::load_json_file(metaPath);
+        vc::json::require_type(*metadata_, "type", "seg", metaPath.string());
+        vc::json::require_fields(*metadata_, {"uuid"}, metaPath.string());
+    }
+};
+
 Segmentation::Segmentation(std::filesystem::path path)
-    : path_(std::move(path)), metadata_(std::make_unique<nlohmann::json>())
+    : pImpl_(std::make_unique<Impl>(std::move(path)))
 {
-    loadMetadata();
+    pImpl_->loadMetadata();
 }
 
 Segmentation::Segmentation(std::filesystem::path path, const std::string& uuid, const std::string& name)
-    : path_(std::move(path)), metadata_(std::make_unique<nlohmann::json>())
+    : pImpl_(std::make_unique<Impl>(std::move(path)))
 {
-    (*metadata_)["uuid"] = uuid;
-    (*metadata_)["name"] = name;
-    (*metadata_)["type"] = "seg";
-    (*metadata_)["volume"] = std::string{};
+    (*pImpl_->metadata_)["uuid"] = uuid;
+    (*pImpl_->metadata_)["name"] = name;
+    (*pImpl_->metadata_)["type"] = "seg";
+    (*pImpl_->metadata_)["volume"] = std::string{};
     saveMetadata();
 }
 
-void Segmentation::loadMetadata()
-{
-    auto metaPath = path_ / METADATA_FILE;
-    *metadata_ = vc::json::load_json_file(metaPath);
-    vc::json::require_type(*metadata_, "type", "seg", metaPath.string());
-    vc::json::require_fields(*metadata_, {"uuid"}, metaPath.string());
-}
+Segmentation::~Segmentation() = default;
 
 std::string Segmentation::id() const
 {
-    return (*metadata_)["uuid"].get<std::string>();
+    return (*pImpl_->metadata_)["uuid"].get<std::string>();
 }
 
 std::string Segmentation::name() const
 {
-    return (*metadata_)["name"].get<std::string>();
+    return (*pImpl_->metadata_)["name"].get<std::string>();
 }
 
 void Segmentation::setName(const std::string& n)
 {
-    (*metadata_)["name"] = n;
+    (*pImpl_->metadata_)["name"] = n;
+}
+
+std::filesystem::path Segmentation::path() const noexcept
+{
+    return pImpl_->path_;
+}
+
+bool Segmentation::isSurfaceLoaded() const noexcept
+{
+    return pImpl_->surface_ != nullptr;
 }
 
 void Segmentation::saveMetadata()
 {
-    auto metaPath = path_ / METADATA_FILE;
+    auto metaPath = pImpl_->path_ / METADATA_FILE;
     std::ofstream jsonFile(metaPath.string(), std::ofstream::out);
-    jsonFile << *metadata_ << '\n';
+    jsonFile << *pImpl_->metadata_ << '\n';
     if (jsonFile.fail()) {
         throw std::runtime_error("could not write json file '" + metaPath.string() + "'");
     }
@@ -62,12 +83,12 @@ void Segmentation::saveMetadata()
 void Segmentation::ensureScrollSource(const std::string& scrollName, const std::string& volumeUuid)
 {
     bool changed = false;
-    if (!metadata_->contains("scroll_source") || (*metadata_)["scroll_source"].get<std::string>().empty()) {
-        (*metadata_)["scroll_source"] = scrollName;
+    if (!pImpl_->metadata_->contains("scroll_source") || (*pImpl_->metadata_)["scroll_source"].get<std::string>().empty()) {
+        (*pImpl_->metadata_)["scroll_source"] = scrollName;
         changed = true;
     }
-    if (!metadata_->contains("volume") || (*metadata_)["volume"].get<std::string>().empty()) {
-        (*metadata_)["volume"] = volumeUuid;
+    if (!pImpl_->metadata_->contains("volume") || (*pImpl_->metadata_)["volume"].get<std::string>().empty()) {
+        (*pImpl_->metadata_)["volume"] = volumeUuid;
         changed = true;
     }
     if (changed) {
@@ -92,14 +113,14 @@ std::shared_ptr<Segmentation> Segmentation::New(const std::filesystem::path& pat
 
 bool Segmentation::canLoadSurface() const
 {
-    return metadata_->contains("format") &&
-           (*metadata_)["format"].get<std::string>() == "tifxyz";
+    return pImpl_->metadata_->contains("format") &&
+           (*pImpl_->metadata_)["format"].get<std::string>() == "tifxyz";
 }
 
 std::shared_ptr<QuadSurface> Segmentation::loadSurface()
 {
-    if (surface_) {
-        return surface_;
+    if (pImpl_->surface_) {
+        return pImpl_->surface_;
     }
 
     if (!canLoadSurface()) {
@@ -108,26 +129,26 @@ std::shared_ptr<QuadSurface> Segmentation::loadSurface()
 
     try {
         // Load the surface directly (no SurfaceMeta wrapper)
-        surface_ = load_quad_from_tifxyz(path_.string());
+        pImpl_->surface_ = load_quad_from_tifxyz(pImpl_->path_.string());
 
         // Load overlapping info and cache mask timestamp
-        surface_->readOverlappingJson();
-        surface_->refreshMaskTimestamp();
+        pImpl_->surface_->readOverlappingJson();
+        pImpl_->surface_->refreshMaskTimestamp();
 
-        return surface_;
+        return pImpl_->surface_;
     } catch (const std::exception& e) {
         Logger()->error("Failed to load surface for {}: {}", id(), e.what());
-        surface_ = nullptr;
+        pImpl_->surface_ = nullptr;
         return nullptr;
     }
 }
 
 std::shared_ptr<QuadSurface> Segmentation::getSurface() const
 {
-    return surface_;
+    return pImpl_->surface_;
 }
 
 void Segmentation::unloadSurface()
 {
-    surface_ = nullptr;
+    pImpl_->surface_ = nullptr;
 }

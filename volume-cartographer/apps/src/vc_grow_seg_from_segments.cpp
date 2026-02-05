@@ -1,17 +1,20 @@
 #include <nlohmann/json.hpp>
 
+#include "vc/tracer/TracerParams.hpp"
+#include "vc/tracer/TracerParamsIO.hpp"
+
 #include <xtensor/io/xio.hpp>
 #include <xtensor/views/xview.hpp>
 
 #include "z5/factory.hxx"
 #include "z5/filesystem/handle.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
 #include "z5/attributes.hxx"
 
 #include <opencv2/core.hpp>
 
-#include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/SlicingLite.hpp"
 #include "vc/core/util/Surface.hpp"
+#include "vc/core/util/SurfaceMetaIO.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 
 #include <filesystem>
@@ -47,14 +50,10 @@ int main(int argc, char *argv[])
         src_path = src_path.parent_path();
 
     std::ifstream params_f(params_path);
-    json params = json::parse(params_f);
-    // Honor optional CUDA toggle from params (default true)
-    if (params.contains("use_cuda")) {
-        set_space_tracing_use_cuda(params.value("use_cuda", true));
-    } else {
-        set_space_tracing_use_cuda(true);
-    }
-    params["tgt_dir"] = tgt_dir;
+    json params_json = json::parse(params_f);
+    TracerParams params = vc::tracer::parseFromJson(params_json);
+    set_space_tracing_use_cuda(params.use_cuda);
+    params.tgt_dir = tgt_dir;
 
     z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
     z5::filesystem::handle::Dataset ds_handle(group, "0", json::parse(std::ifstream(vol_path/"0/.zarray")).value<std::string>("dimension_separator","."));
@@ -81,7 +80,7 @@ int main(int argc, char *argv[])
     }
 
     json meta = json::parse(meta_f);
-    QuadSurface *src = new QuadSurface(src_path, meta);
+    QuadSurface *src = new QuadSurface(src_path, vc::meta::parseFromJson(meta));
     src->readOverlappingJson();
 
     for (const auto& entry : std::filesystem::directory_iterator(src_dir))
@@ -107,7 +106,7 @@ int main(int argc, char *argv[])
             if (entry.path().filename() == src->id)
                 sm = src;
             else {
-                sm = new QuadSurface(entry.path(), meta);
+                sm = new QuadSurface(entry.path(), vc::meta::parseFromJson(meta));
                 sm->readOverlappingJson();
             }
 
@@ -119,8 +118,8 @@ int main(int argc, char *argv[])
     if (!surf)
         return EXIT_SUCCESS;
 
-    (*surf->meta)["source"] = "vc_grow_seg_from_segments";
-    (*surf->meta)["vc_grow_seg_from_segments_params"] = params;
+    surf->meta.source = "vc_grow_seg_from_segments";
+    surf->meta.extras["vc_grow_seg_from_segments_params"] = vc::tracer::toJson(params).dump();
     std::string uuid = "auto_trace_" + get_surface_time_str();;
     std::filesystem::path seg_dir = tgt_dir / uuid;
     surf->save(seg_dir, uuid);

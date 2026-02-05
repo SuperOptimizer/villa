@@ -240,7 +240,7 @@ void SurfacePanelController::showContextMenu(const QPoint& pos)
     const std::string segmentIdStd = segmentId.toStdString();
     QAction* highlightAction = contextMenu.addAction(tr("Highlight in slice views"));
     highlightAction->setCheckable(true);
-    highlightAction->setChecked(_highlightedSurfaceIds.count(segmentIdStd) > 0);
+    highlightAction->setChecked(_highlightedSurfaceIds.contains(segmentIdStd));
     connect(highlightAction, &QAction::toggled, this, [this, segmentIdStd](bool checked) {
         applyHighlightSelection(segmentIdStd, checked);
     });

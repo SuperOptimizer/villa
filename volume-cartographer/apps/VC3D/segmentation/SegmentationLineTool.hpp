@@ -10,7 +10,7 @@ class SegmentationEditManager;
 class CSurfaceCollection;
 class SegmentationModule;
 
-class SegmentationLineTool : public SegmentationTool
+class SegmentationLineTool final : public SegmentationTool
 {
 public:
     SegmentationLineTool(SegmentationModule& module,
@@ -29,11 +29,11 @@ public:
     bool applyStroke(const std::vector<cv::Vec3f>& stroke);
     void clear();
 
-    [[nodiscard]] bool strokeActive() const { return _strokeActive; }
-    [[nodiscard]] const std::vector<cv::Vec3f>& overlayPoints() const { return _overlayPoints; }
+    [[nodiscard]] bool strokeActive() const noexcept { return _strokeActive; }
+    [[nodiscard]] const std::vector<cv::Vec3f>& overlayPoints() const noexcept { return _overlayPoints; }
 
-    void cancel() override { clear(); }
-    [[nodiscard]] bool isActive() const override { return _strokeActive; }
+    void cancel() noexcept override { clear(); }
+    [[nodiscard]] bool isActive() const noexcept override { return _strokeActive; }
 
 private:
     SegmentationModule& _module;

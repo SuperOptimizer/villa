@@ -8,8 +8,8 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <cstdio>
-#include <stdint.h>
-#include <stdlib.h>
+#include <cstdint>
+#include <cstdlib>
 #include <unistd.h>
 #include <opencv2/core/matx.hpp>
 #include <opencv2/core/matx.inl.hpp>
@@ -50,30 +50,24 @@
 
 template <typename T> class ChunkCache;
 
-#ifndef CCI_TLS_MAX // Max number for ChunkedCachedInterpolator
-#define CCI_TLS_MAX 256
-#endif
+// Max number of ChunkedCachedInterpolator entries per thread
+inline constexpr std::size_t CCI_TLS_MAX = 256;
 
 
 
 struct passTroughComputor
 {
-    enum {BORDER = 0};
-    enum {CHUNK_SIZE = 32};
-    enum {FILL_V = 0};
+    static constexpr int BORDER = 0;
+    static constexpr int CHUNK_SIZE = 32;
+    static constexpr int FILL_V = 0;
     const std::string UNIQUE_ID_STRING = "";
     template <typename T, typename E> void compute(const T &large, T &small, const cv::Vec3i &offset_large)
     {
-        int low = int(BORDER);
-        int high = int(BORDER)+int(CHUNK_SIZE);
+        constexpr int low = BORDER;
+        constexpr int high = BORDER + CHUNK_SIZE;
         small = view(large, xt::range(low,high),xt::range(low,high),xt::range(low,high));
     }
 };
-
-static uint64_t miss = 0;
-static uint64_t total = 0;
-static uint64_t chunk_compute_collisions = 0;
-static uint64_t chunk_compute_total = 0;
 
 template <typename T, typename C> class Chunked3dAccessor;
 
@@ -125,7 +119,7 @@ public:
             throw std::runtime_error("could not create cache dir - maybe too many caches in cache root (max 1000!)");
         
     };
-    [[gnu::always_inline]] size_t calc_off(const cv::Vec3i &p) const noexcept
+    [[gnu::always_inline]] constexpr size_t calc_off(const cv::Vec3i &p) const noexcept
     {
         constexpr auto s = C::CHUNK_SIZE;
         return static_cast<size_t>(p[0]) + static_cast<size_t>(p[1])*s + static_cast<size_t>(p[2])*s*s;
@@ -188,13 +182,9 @@ public:
                 _chunks[id] = chunk;
             }
             else {
-#pragma omp atomic
-                chunk_compute_collisions++;
                 munmap(chunk, len_bytes);
                 chunk = _chunks[id];
             }
-#pragma omp atomic
-            chunk_compute_total++;
             _mutex.unlock();
 
             return chunk;
@@ -253,14 +243,10 @@ public:
                 throw std::runtime_error("oops rename failed!");
         }
         else {
-#pragma omp atomic
-            chunk_compute_collisions++;
             munmap(chunk, len_bytes);
             unlink(tmp_path.string().c_str());
             chunk = _chunks[id];
         }
-#pragma omp atomic
-        chunk_compute_total++;
         _mutex.unlock();
 
         return chunk;
@@ -296,12 +282,8 @@ public:
             _chunks[id] = chunk;
         }
         else {
-#pragma omp atomic
-            chunk_compute_collisions++;
             chunk = _chunks[id];
         }
-#pragma omp atomic
-        chunk_compute_total++;
         _mutex.unlock();
 
         return chunk;
@@ -406,8 +388,6 @@ public:
     std::vector<int> _shape;
 };
 
-void print_accessor_stats();
-
 template <typename T, typename C>
 class Chunked3dAccessor final
 {
@@ -437,8 +417,6 @@ public:
             get_chunk(p);
         }
 
-        total++;
-
         return _chunk[_ar.calc_off({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]})];
     }
 
@@ -463,9 +441,6 @@ public:
             get_chunk_safe(p);
         }
 
-        #pragma omp atomic
-        total++;
-
         return _chunk[_ar.calc_off({p[0]-_corner[0],p[1]-_corner[1],p[2]-_corner[2]})];
     }
 
@@ -476,7 +451,6 @@ public:
 
     void get_chunk(const cv::Vec3i &p)
     {
-        miss++;
         cv::Vec3i id = {p[0]/C::CHUNK_SIZE,p[1]/C::CHUNK_SIZE,p[2]/C::CHUNK_SIZE};
         _chunk = _ar.chunk(id);
         _corner = id*C::CHUNK_SIZE;
@@ -484,8 +458,6 @@ public:
 
     void get_chunk_safe(const cv::Vec3i &p)
     {
-        #pragma omp atomic
-        miss++;
         cv::Vec3i id = {p[0]/C::CHUNK_SIZE,p[1]/C::CHUNK_SIZE,p[2]/C::CHUNK_SIZE};
         _chunk = _ar.chunk_safe(id);
         _corner = id*C::CHUNK_SIZE;
@@ -672,3 +644,10 @@ struct Chunked3dVec3fFromUint8
     float _scale;
     std::vector<std::unique_ptr<z5::Dataset>> _dss;
 };
+
+// Suppress implicit instantiation in every TU – the explicit instantiation
+// lives in ChunkedTensor.cpp.  This avoids duplicating the heavy method bodies
+// (cache_chunk_safe_mmap, cache_chunk_safe_alloc, etc.) across ~12 translation units.
+extern template class Chunked3d<uint8_t, passTroughComputor>;
+extern template class Chunked3dAccessor<uint8_t, passTroughComputor>;
+extern template class CachedChunked3dInterpolator<uint8_t, passTroughComputor>;

@@ -17,7 +17,7 @@ class QuadSurface;
 // Rendering is limited to avoid displaying millions of points:
 // - Flattened view: shows points within radius (grid steps) from focus POI
 // - Plane views (XY/XZ/YZ): shows points within distance from slice plane
-class RawPointsOverlayController : public ViewerOverlayControllerBase
+class RawPointsOverlayController final : public ViewerOverlayControllerBase
 {
     Q_OBJECT
 
@@ -27,29 +27,29 @@ public:
 
     // Enable/disable the overlay
     void setEnabled(bool enabled);
-    [[nodiscard]] bool isEnabled() const { return _enabled; }
+    [[nodiscard]] bool isEnabled() const noexcept { return _enabled; }
 
     // Maximum number of points to render (performance limit)
     void setMaxPoints(int maxPoints);
-    [[nodiscard]] int maxPoints() const { return _maxPoints; }
+    [[nodiscard]] int maxPoints() const noexcept { return _maxPoints; }
 
     // For flattened view: radius in grid steps from POI center
     void setGridRadius(int radius);
-    [[nodiscard]] int gridRadius() const { return _gridRadius; }
+    [[nodiscard]] int gridRadius() const noexcept { return _gridRadius; }
 
     // For plane views: distance threshold from slice plane (in voxels)
     void setPlaneDistanceThreshold(float threshold);
-    [[nodiscard]] float planeDistanceThreshold() const { return _planeDistanceThreshold; }
+    [[nodiscard]] float planeDistanceThreshold() const noexcept { return _planeDistanceThreshold; }
 
     // Point rendering style
     void setPointRadius(float radius);
-    [[nodiscard]] float pointRadius() const { return _pointRadius; }
+    [[nodiscard]] float pointRadius() const noexcept { return _pointRadius; }
 
     void setPointColor(const QColor& color);
-    [[nodiscard]] QColor pointColor() const { return _pointColor; }
+    [[nodiscard]] QColor pointColor() const noexcept { return _pointColor; }
 
     void setPointOpacity(float opacity);
-    [[nodiscard]] float pointOpacity() const { return _pointOpacity; }
+    [[nodiscard]] float pointOpacity() const noexcept { return _pointOpacity; }
 
 protected:
     bool isOverlayEnabledFor(CVolumeViewer* viewer) const override;

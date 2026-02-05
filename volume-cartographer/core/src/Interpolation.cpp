@@ -35,7 +35,7 @@ struct CacheParamsLanczos {
         chunksX = (sx + cx - 1) / cx;
     }
 
-    [[gnu::always_inline]] static int log2_pow2(int v) noexcept {
+    [[gnu::always_inline]] static constexpr int log2_pow2(int v) noexcept {
         int r = 0;
         while ((v >> r) > 1) r++;
         return r;
@@ -57,7 +57,7 @@ struct ChunkSamplerLanczos {
                static_cast<uint64_t>(static_cast<uint32_t>(ix));
     }
 
-    struct Slot {
+    struct alignas(64) Slot {
         uint64_t key = ~uint64_t(0);  // Invalid key (all 1s)
         typename ChunkCache<T>::ChunkPtr chunk;
         const T* __restrict__ data = nullptr;
@@ -120,7 +120,7 @@ struct ChunkSamplerLanczos {
         return data[(iz & p.czMask) * s0 + (iy & p.cyMask) * s1 + (ix & p.cxMask) * s2];
     }
 
-    float sampleLanczos(float vz, float vy, float vx) {
+    [[gnu::hot]] float sampleLanczos(float vz, float vy, float vx) {
         // Integer and fractional parts
         int iz = static_cast<int>(std::floor(vz));
         int iy = static_cast<int>(std::floor(vy));
@@ -212,7 +212,7 @@ struct ChunkSamplerLanczos {
 // ============================================================================
 
 template<typename T>
-void readInterpolated3DLanczosImpl(cv::Mat_<T>& out, z5::Dataset* ds,
+[[gnu::hot]] void readInterpolated3DLanczosImpl(cv::Mat_<T>& out, z5::Dataset* ds,
                                     const cv::Mat_<cv::Vec3f>& coords,
                                     ChunkCache<T>& cache) {
     CacheParamsLanczos<T> p(ds);

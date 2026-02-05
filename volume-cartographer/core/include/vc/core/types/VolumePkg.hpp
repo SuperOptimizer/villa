@@ -1,18 +1,14 @@
 #pragma once
 
-#include <nlohmann/json_fwd.hpp>
 #include <cstddef>
 #include <filesystem>
-#include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
-// Include the types we manage (needed by callers who use the smart pointers)
-#include "vc/core/types/Segmentation.hpp"
-#include "vc/core/types/Volume.hpp"
-
-// Forward declaration - only used in method signatures
+// Forward declarations — full types only needed in VolumePkg.cpp
+class Volume;
+class Segmentation;
 class QuadSurface;
 
 class VolumePkg final
@@ -24,24 +20,23 @@ public:
 
     [[nodiscard]] std::string name() const;
     [[nodiscard]] int version() const;
-    [[nodiscard]] bool hasVolumes() const noexcept { return !volumes_.empty(); }
+    [[nodiscard]] bool hasVolumes() const noexcept;
     [[nodiscard]] bool hasVolume(const std::string& id) const;
-    [[nodiscard]] std::size_t numberOfVolumes() const noexcept { return volumes_.size(); }
+    [[nodiscard]] std::size_t numberOfVolumes() const noexcept;
     [[nodiscard]] std::vector<std::string> volumeIDs() const;
     std::shared_ptr<Volume> volume();
     std::shared_ptr<Volume> volume(const std::string& id);
-    [[nodiscard]] bool hasSegmentations() const noexcept { return !segmentations_.empty(); }
+    [[nodiscard]] bool hasSegmentations() const noexcept;
     [[nodiscard]] std::vector<std::string> segmentationIDs() const;
 
     std::shared_ptr<Segmentation> segmentation(const std::string& id);
     void removeSegmentation(const std::string& id);
     void setSegmentationDirectory(const std::string& dirName);
-    [[nodiscard]] std::string getSegmentationDirectory() const noexcept { return currentSegmentationDir_; }
+    [[nodiscard]] std::string getSegmentationDirectory() const noexcept;
     [[nodiscard]] std::vector<std::string> getAvailableSegmentationDirectories() const;
-    [[nodiscard]] std::string getVolpkgDirectory() const noexcept { return rootDir_.string(); }
+    [[nodiscard]] std::string getVolpkgDirectory() const noexcept;
 
     void refreshSegmentations();
-
 
     // Surface management - returns QuadSurface directly (no SurfaceMeta wrapper)
     [[nodiscard]] bool isSurfaceLoaded(const std::string& id) const;
@@ -56,13 +51,6 @@ public:
     bool reloadSingleSegmentation(const std::string& id);
 
 private:
-    std::unique_ptr<nlohmann::json> config_;
-    std::filesystem::path rootDir_;
-    std::map<std::string, std::shared_ptr<Volume>> volumes_;
-    std::map<std::string, std::shared_ptr<Segmentation>> segmentations_;
-    std::string currentSegmentationDir_ = "paths";
-    std::map<std::string, std::string> segmentationDirectories_;
-
-    void loadSegmentationsFromDirectory(const std::string& dirName);
-    void ensureSegmentScrollSource();
+    struct Impl;
+    std::unique_ptr<Impl> pImpl_;
 };

@@ -16,7 +16,7 @@ class Surface;  // Forward declaration instead of heavy include
 // Slices: all the defined slices of all kinds
 // Segmentators: segmentations and interactions with segments
 // POIs : e.g. active constrol points or slicing focus points
-class CSurfaceCollection : public QObject
+class CSurfaceCollection final : public QObject
 {
     Q_OBJECT
 

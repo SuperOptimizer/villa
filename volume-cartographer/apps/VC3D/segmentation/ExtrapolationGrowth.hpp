@@ -7,11 +7,8 @@
 #include <memory>
 #include <unordered_map>
 
-// Forward declarations to avoid heavy template includes
-namespace z5 { class Dataset; }
-template<typename T> class ChunkCache;
-
 class QuadSurface;
+class Volume;
 
 // Dijkstra connectivity for 3D pathfinding
 enum class DijkstraConnectivity {
@@ -44,8 +41,8 @@ struct NewtonRefinementParams {
 
 // Context for SDT-guided refinement
 struct SDTContext {
-    z5::Dataset* binaryDataset = nullptr;
-    ChunkCache<uint8_t>* cache = nullptr;
+    Volume* volume = nullptr;
+    int level = 0;
     NewtonRefinementParams params;
 
     // Local SDT chunk cache (keyed by chunk origin)
@@ -77,8 +74,8 @@ struct SkeletonPathParams {
 
 // Context for skeleton path extrapolation
 struct SkeletonPathContext {
-    z5::Dataset* binaryDataset = nullptr;
-    ChunkCache<uint8_t>* cache = nullptr;
+    Volume* volume = nullptr;
+    int level = 0;
     SkeletonPathParams params;
 
     // Cache for loaded binary chunks (keyed by chunk origin)

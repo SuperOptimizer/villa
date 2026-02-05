@@ -325,13 +325,13 @@ void align_and_filter_segments(const GridStore& grid_store, GridStore& result, c
                 seg->flipped = !seg->flipped;
             }
         }
-        result.meta()["umbilicus_x"] = center_point[0];
-        result.meta()["umbilicus_y"] = center_point[1];
+        result.meta().umbilicus_x = center_point[0];
+        result.meta().umbilicus_y = center_point[1];
     }
 
     // Rebuild the GridStore from the aligned segments
     convert_segment_grid_to_grid_store(assigned, grid_store, result);
-    result.meta()["aligned"] = true;
+    result.meta().aligned = true;
 
     // Final visualization of the result
     // cv::Mat final_vis = visualize_segment_directions(result);

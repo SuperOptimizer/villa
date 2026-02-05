@@ -1,5 +1,5 @@
 #include "vc/core/util/Geometry.hpp"
-#include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/SlicingLite.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/SurfaceModeling.hpp"
@@ -85,7 +85,7 @@ float find_loc_wind_slow(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3
         if (r)
             cand = {static_cast<float>(rand_r(&sr) % points.cols), static_cast<float>(rand_r(&sr) % points.rows)};
         
-        if (std::isnan(winding(cand[1],cand[0])) || abs(winding(cand[1],cand[0])-tgt_wind) > 0.5)
+        if (std::isnan(winding(cand[1],cand[0])) || std::abs(winding(cand[1],cand[0])-tgt_wind) > 0.5)
             continue;
         
         cv::Vec3f out_;
@@ -94,7 +94,7 @@ float find_loc_wind_slow(cv::Vec2f &loc, float tgt_wind, const cv::Mat_<cv::Vec3
         if (res < 0)
             continue;
         
-        if (std::isnan(winding(cand[1],cand[0])) || abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
+        if (std::isnan(winding(cand[1],cand[0])) || std::abs(winding(cand[1],cand[0])-tgt_wind) > 0.3)
             continue;
         
         if (res < th) {
@@ -115,7 +115,7 @@ bool loc_surround_valid(const cv::Mat_<cv::Vec3f> &m, const cv::Vec2f &loc)
 {
     std::vector<cv::Vec2i> neighs = {{0,0},{0,1},{1,0},{0,-1},{-1,0}};
     
-    for(auto n : neighs)
+    for(const auto& n : neighs)
         if (!loc_valid(m, loc+cv::Vec2f(n)))
             return false;
 
@@ -352,8 +352,7 @@ int main(int argc, char *argv[])
         cv::Mat_<cv::Vec3f> points_hr = points_hr_grounding(wind_lr, points_lr, winds, surf_points, scale_factor);
         QuadSurface *surf_hr = new QuadSurface(points_hr, surfs[0]->_scale);
         std::filesystem::path tgt_dir = "./";
-        surf_hr->meta = std::make_unique<nlohmann::json>();
-        (*surf_hr->meta)["vc_tiffxyz_upscale_grounding_scale_factor"] = scale_factor;
+        surf_hr->meta.extras["vc_tiffxyz_upscale_grounding_scale_factor"] = nlohmann::json(scale_factor).dump();
         std::string name_prefix = "grounding_hr_";
         std::string uuid = name_prefix + time_str();
         std::filesystem::path seg_dir = tgt_dir / uuid;

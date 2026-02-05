@@ -1,10 +1,9 @@
 #include "vc/core/util/VolumeFilter.hpp"
 
 #include <opencv2/imgproc.hpp>
+#include <cstdint>
 #include <cstdlib>
 #include <opencv2/core/hal/interface.h>
-#include <stdint.h>
-#include <stdlib.h>
 #include <opencv2/core.hpp>
 #include <opencv2/core/base.hpp>
 #include <opencv2/core/mat.hpp>

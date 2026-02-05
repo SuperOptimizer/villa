@@ -13,7 +13,7 @@
  * of the application to avoid repeated startup overhead (torch model
  * compilation takes significant time).
  */
-class NeuralTraceServiceManager : public QObject
+class NeuralTraceServiceManager final : public QObject
 {
     Q_OBJECT
 

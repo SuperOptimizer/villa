@@ -10,15 +10,12 @@
 #include <utility>
 #include <vector>
 
-#include <nlohmann/json_fwd.hpp>
-
 #include <opencv2/core/matx.hpp>
 
 #include "vc/ui/VCCollectionTypes.hpp"
 
 class QuadSurface;
 class Volume;
-template <typename T> class ChunkCache;
 
 struct SegmentationDirectionFieldConfig {
     QString path;
@@ -26,7 +23,7 @@ struct SegmentationDirectionFieldConfig {
     int scale{0};
     double weight{1.0};
 
-    [[nodiscard]] bool isValid() const { return !path.isEmpty(); }
+    [[nodiscard]] bool isValid() const noexcept { return !path.isEmpty(); }
 };
 
 struct SegmentationCorrectionsPayload {
@@ -41,7 +38,7 @@ struct SegmentationCorrectionsPayload {
 
     std::vector<Collection> collections;
 
-    [[nodiscard]] bool empty() const { return collections.empty(); }
+    [[nodiscard]] bool empty() const noexcept { return collections.empty(); }
 };
 
 struct SegmentationGrowthRequest {
@@ -52,7 +49,7 @@ struct SegmentationGrowthRequest {
     SegmentationCorrectionsPayload corrections;
     std::optional<std::pair<int, int>> correctionsZRange;
     std::vector<SegmentationDirectionFieldConfig> directionFields;
-    std::shared_ptr<nlohmann::json> customParams;
+    std::optional<std::string> customParamsJson;  // raw JSON text, parsed at call site
     bool inpaintOnly{false};
     // Extrapolation parameters
     int extrapolationPointCount{7};
@@ -62,7 +59,6 @@ struct SegmentationGrowthRequest {
 struct TracerGrowthContext {
     QuadSurface* resumeSurface{nullptr};
     class Volume* volume{nullptr};
-    class ChunkCache<uint8_t>* cache{nullptr};
     QString cacheRoot;
     double voxelSize{1.0};
     QString normalGridPath;

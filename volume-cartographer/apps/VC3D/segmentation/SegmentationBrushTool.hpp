@@ -11,7 +11,7 @@ class SegmentationWidget;
 class CSurfaceCollection;
 class SegmentationModule;
 
-class SegmentationBrushTool : public SegmentationTool
+class SegmentationBrushTool final : public SegmentationTool
 {
 public:
     SegmentationBrushTool(SegmentationModule& module,
@@ -24,9 +24,9 @@ public:
                          CSurfaceCollection* surfaces);
 
     void setActive(bool active);
-    [[nodiscard]] bool brushActive() const { return _brushActive; }
-    [[nodiscard]] bool strokeActive() const { return _strokeActive; }
-    [[nodiscard]] bool hasPendingStrokes() const { return !_pendingStrokes.empty(); }
+    [[nodiscard]] bool brushActive() const noexcept { return _brushActive; }
+    [[nodiscard]] bool strokeActive() const noexcept { return _strokeActive; }
+    [[nodiscard]] bool hasPendingStrokes() const noexcept { return !_pendingStrokes.empty(); }
 
     void startStroke(const cv::Vec3f& worldPos);
     void extendStroke(const cv::Vec3f& worldPos, bool forceSample);
@@ -34,11 +34,11 @@ public:
     bool applyPending(float dragRadiusSteps);
     void clear();
 
-    [[nodiscard]] const std::vector<cv::Vec3f>& overlayPoints() const { return _overlayPoints; }
-    [[nodiscard]] const std::vector<cv::Vec3f>& currentStrokePoints() const { return _currentStroke; }
+    [[nodiscard]] const std::vector<cv::Vec3f>& overlayPoints() const noexcept { return _overlayPoints; }
+    [[nodiscard]] const std::vector<cv::Vec3f>& currentStrokePoints() const noexcept { return _currentStroke; }
 
-    void cancel() override { clear(); }
-    [[nodiscard]] bool isActive() const override { return brushActive() || strokeActive(); }
+    void cancel() noexcept override { clear(); }
+    [[nodiscard]] bool isActive() const noexcept override { return brushActive() || strokeActive(); }
 
 private:
     void ensureFalloff();

@@ -10,8 +10,6 @@
 
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/types/Volume.hpp"
-#include "vc/core/util/ChunkCache.hpp"
-#include "vc/core/util/Slicing.hpp"
 
 namespace fs = std::filesystem;
 
@@ -19,17 +17,15 @@ namespace fs = std::filesystem;
 void generate_mask(QuadSurface* surf,
                             cv::Mat_<uint8_t>& mask,
                             cv::Mat_<uint8_t>& img,
-                            z5::Dataset* ds_high = nullptr,
-                            z5::Dataset* ds_low = nullptr,
-                            ChunkCache<uint8_t>* cache = nullptr) {
+                            Volume* vol = nullptr) {
     cv::Mat_<cv::Vec3f> points = surf->rawPoints();
     cv::Mat_<uint8_t> rawMask = surf->validMask();
 
     // Choose resolution based on surface size
     if (points.cols >= 4000) {
         // Large surface: work at 0.25x scale
-        if (ds_low && cache) {
-            readInterpolated3D(img, ds_low, points * 0.25, cache);
+        if (vol) {
+            vol->readInterpolated(img, points * 0.25, InterpolationMethod::Trilinear, 2);
         } else {
             img.create(points.size());
             img.setTo(0);
@@ -41,8 +37,8 @@ void generate_mask(QuadSurface* surf,
         cv::Vec2f scale = surf->scale();
         cv::resize(points, scaled, {0,0}, 1.0/scale[0], 1.0/scale[1], cv::INTER_CUBIC);
 
-        if (ds_high && cache) {
-            readInterpolated3D(img, ds_high, scaled, cache);
+        if (vol) {
+            vol->readInterpolated(img, scaled);
             cv::resize(img, img, {0,0}, 0.25, 0.25, cv::INTER_CUBIC);
         } else {
             img.create(cv::Size(points.cols/4.0, points.rows/4.0));
@@ -104,31 +100,20 @@ int main(int argc, char *argv[])
 
     // If volume path provided, generate with image data
     if (!volume_path.empty()) {
-        std::shared_ptr<Volume> volume;
-        ChunkCache<uint8_t>* cache = nullptr;
-
         try {
-            volume = Volume::New(volume_path);
-            cache = new ChunkCache<uint8_t>(1ULL * 1024ULL * 1024ULL * 1024ULL);
+            auto volume = Volume::New(volume_path);
 
-            generate_mask(surf.get(), mask, img,
-                         volume->zarrDataset(0),
-                         volume->zarrDataset(2),
-                         cache);
+            generate_mask(surf.get(), mask, img, volume.get());
 
             // Save as multi-layer TIFF
             std::vector<cv::Mat> layers = {mask, img};
             if (!cv::imwritemulti(mask_path.string(), layers)) {
                 std::cerr << "Error writing mask to " << mask_path << "\n";
-                delete cache;
                 return EXIT_FAILURE;
             }
-
-            delete cache;
         }
         catch (const std::exception& e) {
             std::cerr << "Error processing volume: " << e.what() << "\n";
-            if (cache) delete cache;
             return EXIT_FAILURE;
         }
     } else {

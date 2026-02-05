@@ -14,10 +14,10 @@ static std::shared_ptr<xt::xarray<T>> readChunkFromSource(z5::Dataset& ds, size_
 {
     z5::types::ShapeType chunkId = {iz, iy, ix};
 
-    if (!ds.chunkExists(chunkId))
+    if (!ds.chunkExists(chunkId)) [[unlikely]]
         return nullptr;
 
-    if (ds.getDtype() != z5::types::Datatype::uint8 && ds.getDtype() != z5::types::Datatype::uint16)
+    if (ds.getDtype() != z5::types::Datatype::uint8 && ds.getDtype() != z5::types::Datatype::uint16) [[unlikely]]
         throw std::runtime_error("only uint8_t/uint16 zarrs supported currently!");
 
     const auto& maxChunkShape = ds.defaultChunkShape();
@@ -83,7 +83,7 @@ auto ChunkCache<T>::get(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
     {
         std::shared_lock<std::shared_mutex> rlock(_mapMutex);
         auto it = _map.find(key);
-        if (it != _map.end()) {
+        if (it != _map.end()) [[likely]] {
             it->second.lastAccess = _generation.fetch_add(1, std::memory_order_relaxed);
             _hits.fetch_add(1, std::memory_order_relaxed);
             return it->second.chunk;
@@ -99,14 +99,14 @@ auto ChunkCache<T>::get(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
     {
         std::shared_lock<std::shared_mutex> rlock(_mapMutex);
         auto it = _map.find(key);
-        if (it != _map.end()) {
+        if (it != _map.end()) [[likely]] {
             it->second.lastAccess = _generation.fetch_add(1, std::memory_order_relaxed);
             return it->second.chunk;
         }
     }
 
     ChunkPtr newChunk = loadChunk(ds, iz, iy, ix);
-    if (!newChunk) return nullptr;
+    if (!newChunk) [[unlikely]] return nullptr;
 
     size_t chunkBytes = newChunk->size() * sizeof(T);
     _bytesRead.fetch_add(chunkBytes, std::memory_order_relaxed);
@@ -176,7 +176,7 @@ void ChunkCache<T>::flush()
 }
 
 template<typename T>
-void ChunkCache<T>::evictIfNeeded()
+[[gnu::cold]] void ChunkCache<T>::evictIfNeeded()
 {
     // Called with _evictionMutex held
     if (_maxBytes == 0) return;
@@ -251,7 +251,7 @@ void ChunkCache<T>::resetStats()
 }
 
 template<typename T>
-auto ChunkCache<T>::loadChunk(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
+[[gnu::cold]] auto ChunkCache<T>::loadChunk(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
 {
     if (!ds) return nullptr;
     try {

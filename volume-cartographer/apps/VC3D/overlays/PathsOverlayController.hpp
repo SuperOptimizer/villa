@@ -2,7 +2,7 @@
 
 #include "ViewerOverlayControllerBase.hpp"
 
-class PathsOverlayController : public ViewerOverlayControllerBase
+class PathsOverlayController final : public ViewerOverlayControllerBase
 {
     Q_OBJECT
 

@@ -166,7 +166,7 @@ CellReoptimizationTool::FloodResult CellReoptimizationTool::floodFillBFS(int sta
                 continue;
             }
 
-            if (visited.count({nr, nc}) == 0) {
+            if (!visited.contains({nr, nc})) {
                 visited.insert({nr, nc});
                 queue.push({nr, nc});
             }
@@ -207,7 +207,7 @@ std::vector<std::pair<int, int>> CellReoptimizationTool::extractOrderedBoundary(
 
             // A cell is on boundary if it has a neighbor outside the flooded set
             // This includes: approval boundary cells, invalid cells, or just outside flood
-            if (floodedSet.count({nr, nc}) == 0) {
+            if (!floodedSet.contains({nr, nc})) {
                 isBoundary = true;
                 break;
             }
@@ -243,7 +243,7 @@ std::vector<std::pair<int, int>> CellReoptimizationTool::extractOrderedBoundary(
             int nr = current.first + dr8[i];
             int nc = current.second + dc8[i];
 
-            if (boundarySet.count({nr, nc}) > 0 && visitedBoundary.count({nr, nc}) == 0) {
+            if (boundarySet.contains({nr, nc}) && !visitedBoundary.contains({nr, nc})) {
                 orderedBoundary.push_back({nr, nc});
                 visitedBoundary.insert({nr, nc});
                 current = {nr, nc};

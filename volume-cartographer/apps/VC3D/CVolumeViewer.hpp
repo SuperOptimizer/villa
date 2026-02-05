@@ -32,8 +32,6 @@ class CSurfaceCollection;  // Forward declaration
 class Volume;  // Forward declare instead of including heavy Volume.hpp
 class VCCollection;
 class CVolumeViewerView;
-template<typename T> class ChunkCache;
-
 class QGraphicsScene;
 class QGraphicsItem;
 class QGraphicsPixmapItem;
@@ -50,7 +48,6 @@ public:
     CVolumeViewer(CSurfaceCollection *col, ViewerManager* manager, QWidget* parent = nullptr);
     ~CVolumeViewer() override;
 
-    void setCache(ChunkCache<uint8_t> *cache);
     void setPointCollection(VCCollection* point_collection);
     void setSurface(const std::string &name);
     void renderVisible(bool force = false);
@@ -91,56 +88,55 @@ public:
     // Plane composite view methods (for XY/XZ/YZ plane viewers)
     void setPlaneCompositeEnabled(bool enabled);
     void setPlaneCompositeLayers(int front, int behind);
-    bool isPlaneCompositeEnabled() const { return _plane_composite_enabled; }
-    int planeCompositeLayersFront() const { return _plane_composite_layers_front; }
-    int planeCompositeLayersBehind() const { return _plane_composite_layers_behind; }
+    bool isPlaneCompositeEnabled() const noexcept { return _plane_composite_enabled; }
+    int planeCompositeLayersFront() const noexcept { return _plane_composite_layers_front; }
+    int planeCompositeLayersBehind() const noexcept { return _plane_composite_layers_behind; }
 
     // Postprocessing settings
     void setPostStretchValues(bool enabled);
-    bool postStretchValues() const { return _postStretchValues; }
+    bool postStretchValues() const noexcept { return _postStretchValues; }
     void setPostRemoveSmallComponents(bool enabled);
-    bool postRemoveSmallComponents() const { return _postRemoveSmallComponents; }
+    bool postRemoveSmallComponents() const noexcept { return _postRemoveSmallComponents; }
     void setPostMinComponentSize(int size);
-    int postMinComponentSize() const { return _postMinComponentSize; }
-    bool isCompositeEnabled() const { return _composite_enabled; }
+    int postMinComponentSize() const noexcept { return _postMinComponentSize; }
+    bool isCompositeEnabled() const noexcept { return _composite_enabled; }
     std::shared_ptr<Volume> currentVolume() const { return volume; }
-    ChunkCache<uint8_t>* chunkCachePtr() const { return cache; }
-    int datasetScaleIndex() const { return _ds_sd_idx; }
-    float datasetScaleFactor() const { return _ds_scale; }
+    int datasetScaleIndex() const noexcept { return _ds_sd_idx; }
+    float datasetScaleFactor() const noexcept { return _ds_scale; }
 
     // Performance settings - can be changed at runtime
     void setDownscaleOverride(int level);
-    int downscaleOverride() const { return _downscale_override; }
+    int downscaleOverride() const noexcept { return _downscale_override; }
     void setInterpolationMethod(InterpolationMethod method);
-    InterpolationMethod interpolationMethod() const { return _interpolationMethod; }
+    InterpolationMethod interpolationMethod() const noexcept { return _interpolationMethod; }
 
-    VCCollection* pointCollection() const { return _point_collection; }
-    uint64_t highlightedPointId() const { return _highlighted_point_id; }
-    uint64_t selectedPointId() const { return _selected_point_id; }
-    uint64_t selectedCollectionId() const { return _selected_collection_id; }
-    bool isPointDragActive() const { return _dragged_point_id != 0; }
-    const std::vector<ViewerOverlayControllerBase::PathPrimitive>& drawingPaths() const { return _paths; }
+    VCCollection* pointCollection() const noexcept { return _point_collection; }
+    uint64_t highlightedPointId() const noexcept { return _highlighted_point_id; }
+    uint64_t selectedPointId() const noexcept { return _selected_point_id; }
+    uint64_t selectedCollectionId() const noexcept { return _selected_collection_id; }
+    bool isPointDragActive() const noexcept { return _dragged_point_id != 0; }
+    const std::vector<ViewerOverlayControllerBase::PathPrimitive>& drawingPaths() const noexcept { return _paths; }
 
     // Direction hints toggle
     void setShowDirectionHints(bool on) { _showDirectionHints = on; updateAllOverlays(); }
-    bool isShowDirectionHints() const { return _showDirectionHints; }
+    bool isShowDirectionHints() const noexcept { return _showDirectionHints; }
 
     // Surface normals visualization toggle
     void setShowSurfaceNormals(bool on) { _showSurfaceNormals = on; updateAllOverlays(); }
-    bool isShowSurfaceNormals() const { return _showSurfaceNormals; }
+    bool isShowSurfaceNormals() const noexcept { return _showSurfaceNormals; }
 
     // Surface normals arrow length scale (1.0 = default)
     void setNormalArrowLengthScale(float scale) { _normalArrowLengthScale = scale; updateAllOverlays(); }
-    float normalArrowLengthScale() const { return _normalArrowLengthScale; }
+    float normalArrowLengthScale() const noexcept { return _normalArrowLengthScale; }
 
     // Surface normals max arrows per axis
     void setNormalMaxArrows(int maxArrows) { _normalMaxArrows = maxArrows; updateAllOverlays(); }
-    int normalMaxArrows() const { return _normalMaxArrows; }
+    int normalMaxArrows() const noexcept { return _normalMaxArrows; }
 
     // Surface-relative offset controls (normal direction only)
     void adjustSurfaceOffset(float dn);
     void resetSurfaceOffsets();
-    float normalOffset() const { return _z_off; }
+    float normalOffset() const noexcept { return _z_off; }
 
     void updateStatusLabel();
 
@@ -155,53 +151,53 @@ public:
     void clearAllOverlayGroups();
 
     // Get current scale for coordinate transformation
-    float getCurrentScale() const { return _scale; }
+    float getCurrentScale() const noexcept { return _scale; }
     // Transform scene coordinates to volume coordinates
     cv::Vec3f sceneToVolume(const QPointF& scenePoint) const;
     QPointF volumePointToScene(const cv::Vec3f& vol_point) { return volumeToScene(vol_point); }
     // Get the last known scene position (for coordinate lookups)
-    QPointF lastScenePosition() const { return _lastScenePos; }
+    QPointF lastScenePosition() const noexcept { return _lastScenePos; }
     // Get the dataset scale factor for scene→surface coordinate conversion
-    float dsScale() const { return _ds_scale; }
+    float dsScale() const noexcept { return _ds_scale; }
     Surface* currentSurface() const;
 
     // BBox drawing mode for segmentation view
     void setBBoxMode(bool enabled);
-    bool isBBoxMode() const { return _bboxMode; }
+    bool isBBoxMode() const noexcept { return _bboxMode; }
     // Create a new QuadSurface with only points inside the given scene-rect
     QuadSurface* makeBBoxFilteredSurfaceFromSceneRect(const QRectF& sceneRect);
     // Current stored selections (scene-space rects with colors)
     auto selections() const -> std::vector<std::pair<QRectF, QColor>>;
-    std::optional<QRectF> activeBBoxSceneRect() const { return _activeBBoxSceneRect; }
+    std::optional<QRectF> activeBBoxSceneRect() const noexcept { return _activeBBoxSceneRect; }
     void clearSelections();
 
     void setIntersectionOpacity(float opacity);
-    float intersectionOpacity() const { return _intersectionOpacity; }
+    float intersectionOpacity() const noexcept { return _intersectionOpacity; }
     void setIntersectionThickness(float thickness);
-    float intersectionThickness() const { return _intersectionThickness; }
+    float intersectionThickness() const noexcept { return _intersectionThickness; }
     void setHighlightedSurfaceIds(const std::vector<std::string>& ids);
     void setSurfacePatchSamplingStride(int stride);
-    int surfacePatchSamplingStride() const { return _surfacePatchSamplingStride; }
+    int surfacePatchSamplingStride() const noexcept { return _surfacePatchSamplingStride; }
 
     void setOverlayVolume(std::shared_ptr<Volume> volume);
     std::shared_ptr<Volume> overlayVolume() const { return _overlayVolume; }
     void setOverlayOpacity(float opacity);
-    float overlayOpacity() const { return _overlayOpacity; }
+    float overlayOpacity() const noexcept { return _overlayOpacity; }
     void setOverlayColormap(const std::string& colormapId);
-    const std::string& overlayColormap() const { return _overlayColormapId; }
+    const std::string& overlayColormap() const noexcept { return _overlayColormapId; }
     void setOverlayThreshold(float threshold);
-    float overlayThreshold() const { return _overlayWindowLow; }
+    float overlayThreshold() const noexcept { return _overlayWindowLow; }
 
     void setOverlayWindow(float low, float high);
-    float overlayWindowLow() const { return _overlayWindowLow; }
-    float overlayWindowHigh() const { return _overlayWindowHigh; }
+    float overlayWindowLow() const noexcept { return _overlayWindowLow; }
+    float overlayWindowHigh() const noexcept { return _overlayWindowHigh; }
 
     void setSegmentationCursorMirroring(bool enabled) { _mirrorCursorToSegmentation = enabled; }
-    bool segmentationCursorMirroringEnabled() const { return _mirrorCursorToSegmentation; }
+    bool segmentationCursorMirroringEnabled() const noexcept { return _mirrorCursorToSegmentation; }
 
     void setVolumeWindow(float low, float high);
-    float volumeWindowLow() const { return _baseWindowLow; }
-    float volumeWindowHigh() const { return _baseWindowHigh; }
+    float volumeWindowLow() const noexcept { return _baseWindowLow; }
+    float volumeWindowHigh() const noexcept { return _baseWindowHigh; }
 
     struct ActiveSegmentationHandle {
         QuadSurface* surface{nullptr};
@@ -209,8 +205,8 @@ public:
         QColor accentColor;
         bool viewerIsSegmentationView{false};
 
-        bool valid() const { return surface != nullptr; }
-        explicit operator bool() const { return valid(); }
+        bool valid() const noexcept { return surface != nullptr; }
+        explicit operator bool() const noexcept { return valid(); }
         void reset()
         {
             surface = nullptr;
@@ -223,16 +219,16 @@ public:
     const ActiveSegmentationHandle& activeSegmentationHandle() const;
 
     void setBaseColormap(const std::string& colormapId);
-    const std::string& baseColormap() const { return _baseColormapId; }
+    const std::string& baseColormap() const noexcept { return _baseColormapId; }
     void setStretchValues(bool enabled);
-    bool stretchValues() const { return _stretchValues; }
+    bool stretchValues() const noexcept { return _stretchValues; }
 
     void setSurfaceOverlayEnabled(bool enabled);
-    bool surfaceOverlayEnabled() const { return _surfaceOverlayEnabled; }
+    bool surfaceOverlayEnabled() const noexcept { return _surfaceOverlayEnabled; }
     void setSurfaceOverlays(const std::map<std::string, cv::Vec3b>& overlays);
-    const std::map<std::string, cv::Vec3b>& surfaceOverlays() const { return _surfaceOverlays; }
+    const std::map<std::string, cv::Vec3b>& surfaceOverlays() const noexcept { return _surfaceOverlays; }
     void setSurfaceOverlapThreshold(float threshold);
-    float surfaceOverlapThreshold() const { return _surfaceOverlapThreshold; }
+    float surfaceOverlapThreshold() const noexcept { return _surfaceOverlapThreshold; }
 
     struct OverlayColormapEntry {
         QString label;
@@ -300,7 +296,6 @@ protected:
     cv::Vec2f _vis_center = {0,0};
     std::string _surf_name;
     
-    ChunkCache<uint8_t> *cache = nullptr;
     QRect curr_img_area = {0,0,1000,1000};
     float _scale = 0.5;
     float _scene_scale = 1.0;

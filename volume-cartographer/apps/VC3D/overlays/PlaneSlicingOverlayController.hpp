@@ -10,7 +10,7 @@
 
 class CSurfaceCollection;
 
-class PlaneSlicingOverlayController : public ViewerOverlayControllerBase
+class PlaneSlicingOverlayController final : public ViewerOverlayControllerBase
 {
     Q_OBJECT
 
@@ -21,7 +21,7 @@ public:
     void setRotationSetter(std::function<void(const std::string&, float)> setter);
     void setAxisAlignedOverlayOpacity(float opacity);
     void setRotationFinishedCallback(std::function<void()> callback);
-    float axisAlignedOverlayOpacity() const { return _overlayOpacity; }
+    float axisAlignedOverlayOpacity() const noexcept { return _overlayOpacity; }
 
     bool isVolumePointNearRotationHandle(CVolumeViewer* viewer,
                                          const cv::Vec3f& volumePoint,

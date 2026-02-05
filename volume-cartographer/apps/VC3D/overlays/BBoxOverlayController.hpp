@@ -2,7 +2,7 @@
 
 #include "ViewerOverlayControllerBase.hpp"
 
-class BBoxOverlayController : public ViewerOverlayControllerBase
+class BBoxOverlayController final : public ViewerOverlayControllerBase
 {
     Q_OBJECT
 

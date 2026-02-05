@@ -44,6 +44,7 @@
 #endif
 
 #include "CommandLineToolRunner.hpp"
+#include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
@@ -1315,9 +1316,7 @@ void CWindow::onCropSurfaceToValidRegion(const std::string& segmentId)
         tempSurface = std::make_unique<QuadSurface>(croppedPoints, surface->scale());
         tempSurface->path = surface->path;
         tempSurface->id = surface->id;
-        if (surface->meta) {
-            tempSurface->meta = std::make_unique<nlohmann::json>(*surface->meta);
-        }
+        tempSurface->meta = surface->meta;
         for (const auto& ch : croppedChannels) {
             tempSurface->setChannel(ch.name, ch.data);
         }
@@ -1337,19 +1336,9 @@ void CWindow::onCropSurfaceToValidRegion(const std::string& segmentId)
     }
     surface->invalidateCache();
 
-    if (tempSurface && tempSurface->meta) {
-        if (!surface->meta) {
-            surface->meta = std::make_unique<nlohmann::json>(*tempSurface->meta);
-        } else {
-            *surface->meta = *tempSurface->meta;
-        }
-        if (surface->meta) {
-            if (surf->meta) {
-                *surf->meta = *surface->meta;
-            } else {
-                surf->meta = std::make_unique<nlohmann::json>(*surface->meta);
-            }
-        }
+    if (tempSurface) {
+        surface->meta = tempSurface->meta;
+        surf->meta = surface->meta;
     }
 
     // Bbox will be recalculated lazily (invalidateCache was already called)

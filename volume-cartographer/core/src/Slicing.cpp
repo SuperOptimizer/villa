@@ -1,6 +1,8 @@
 #include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/ChunkCache.hpp"
 #include "vc/core/util/Compositing.hpp"
 #include "vc/core/util/Interpolation.hpp"
+#include "vc/core/util/SIMDTypes.hpp"
 
 #include <xtensor/containers/xarray.hpp>
 #include <xtensor/containers/xtensor.hpp>
@@ -40,7 +42,7 @@ struct CacheParams {
         chunksX = (sx + cx - 1) / cx;
     }
 
-    [[gnu::always_inline]] static int log2_pow2(int v) noexcept {
+    [[gnu::always_inline]] static constexpr int log2_pow2(int v) noexcept {
         int r = 0;
         while ((v >> r) > 1) r++;
         return r;
@@ -55,7 +57,7 @@ struct CacheParams {
 template<typename T>
 struct ChunkSampler {
     static constexpr int kSlots = 8;
-    struct Slot {
+    struct alignas(64) Slot {
         int iz = -1, iy = -1, ix = -1;
         typename ChunkCache<T>::ChunkPtr chunk;
         const T* data = nullptr;
@@ -232,7 +234,7 @@ struct ChunkSampler {
 enum class SampleMode { Nearest, Trilinear };
 
 template<typename T, SampleMode Mode, typename NormalFn>
-static void readVolumeImpl(
+[[gnu::hot]] static void readVolumeImpl(
     cv::Mat_<T>& out,
     z5::Dataset* ds,
     ChunkCache<T>& cache,
@@ -337,50 +339,174 @@ static void readVolumeImpl(
     }
 
     // Phase 2: Sample (OMP parallel, all chunks already cached)
-    const bool isComposite = (numLayers > 1);
-    const bool isMin = params && (params->method == "min");
-    const bool isMax = params && (params->method == "max");
-    const bool isMean = params && (params->method == "mean");
-    const bool needsLayerStorage = params && methodRequiresLayerStorage(params->method);
-    const float firstLayerOffset = zStart * zStep;
+    // Split single-layer and composite paths to eliminate per-pixel branch
+    // and allow tighter code generation for each path.
 
-    #pragma omp parallel
-    {
-        ChunkSampler<T> samplerNoPrefetch(p, cache, ds);
-        ChunkSampler<T> samplerPrefetch(p, cache, ds);
+    if (numLayers == 1) {
+        // ── Single-layer path ──────────────────────────────────────────
+        // Run-based processing with compile-time chunk strides via ChunkView.
+        // Dispatch once on chunk size, then the entire OMP region uses
+        // compile-time strides (shifts instead of multiplies).
+        constexpr float maxVal = std::is_same_v<T, uint16_t> ? 65535.f : 255.f;
 
-        LayerStack stack;
-        if (needsLayerStorage) {
-            stack.values.resize(numLayers);
-        }
+        const int czShift = p.czShift, cyShift = p.cyShift, cxShift = p.cxShift;
+        const int czMask = p.czMask, cyMask = p.cyMask, cxMask = p.cxMask;
+        const float fsz = static_cast<float>(p.sz), fsy = static_cast<float>(p.sy), fsx = static_cast<float>(p.sx);
 
-        #pragma omp for collapse(2)
-        for (int y = 0; y < h; y++) {
-            for (int x = 0; x < w; x++) {
-                const cv::Vec3f& bc = coords(y, x);
-                float base_vz = bc[2], base_vy = bc[1], base_vx = bc[0];
+        vc::simd::dispatchChunkView<T>(p.cy, p.cx, [&](auto makeView) {
 
-                if (numLayers == 1) {
-                    // Single-sample path
-                    if (!(base_vz >= 0 && base_vy >= 0 && base_vx >= 0)) continue;
+        #pragma omp parallel
+        {
+            ChunkSampler<T> sampler(p, cache, ds);
 
-                    if constexpr (Mode == SampleMode::Trilinear) {
-                        if (!(base_vz < p.sz && base_vy < p.sy && base_vx < p.sx)) continue;
-                        float v = samplerNoPrefetch.sampleTrilinearFast(base_vz, base_vy, base_vx);
-                        if constexpr (std::is_same_v<T, uint16_t>) {
-                            if (v < 0.f) v = 0.f;
-                            if (v > 65535.f) v = 65535.f;
-                            out(y, x) = static_cast<uint16_t>(v + 0.5f);
-                        } else {
-                            out(y, x) = static_cast<T>(v);
+            #pragma omp for schedule(static)
+            for (int y = 0; y < h; y++) {
+                const cv::Vec3f* __restrict__ row = coords.template ptr<cv::Vec3f>(y);
+                T* __restrict__ orow = out.template ptr<T>(y);
+
+                if constexpr (Mode == SampleMode::Trilinear) {
+                    int x = 0;
+                    while (x < w) {
+                        // Skip invalid pixels
+                        const float vx0 = row[x][0], vy0 = row[x][1], vz0 = row[x][2];
+                        if (!(vz0 >= 0 && vy0 >= 0 && vx0 >= 0 &&
+                              vz0 < fsz && vy0 < fsy && vx0 < fsx)) {
+                            x++;
+                            continue;
                         }
-                    } else {
-                        if (!(base_vz < p.sz && base_vy < p.sy && base_vx < p.sx)) continue;
-                        if ((static_cast<int>(base_vz + 0.5f) | static_cast<int>(base_vy + 0.5f) | static_cast<int>(base_vx + 0.5f)) < 0) continue;
-                        out(y, x) = samplerNoPrefetch.sampleNearest(base_vz, base_vy, base_vx);
+
+                        const int iz0 = static_cast<int>(vz0), iy0 = static_cast<int>(vy0), ix0 = static_cast<int>(vx0);
+                        const int ciz = iz0 >> czShift, ciy = iy0 >> cyShift, cix = ix0 >> cxShift;
+
+                        // Check if trilinear +1 neighbors cross chunk boundary
+                        if ((iz0 + 1) >> czShift != ciz ||
+                            (iy0 + 1) >> cyShift != ciy ||
+                            (ix0 + 1) >> cxShift != cix) {
+                            // Chunk boundary: use generic slow path
+                            float v = sampler.sampleTrilinear(vz0, vy0, vx0);
+                            if constexpr (std::is_same_v<T, uint16_t>) {
+                                v = std::max(0.f, std::min(maxVal, v));
+                                orow[x] = static_cast<uint16_t>(v + 0.5f);
+                            } else {
+                                orow[x] = static_cast<T>(v);
+                            }
+                            x++;
+                            continue;
+                        }
+
+                        // Lock chunk for this run
+                        sampler.updateChunk(ciz, ciy, cix);
+                        if (!sampler.data) [[unlikely]] { x++; continue; }
+
+                        // Scan ahead: find the longest run of pixels sharing this chunk
+                        // where all trilinear neighborhoods also stay within it.
+                        const int run_start = x;
+                        x++;  // first pixel already validated
+                        while (x < w) {
+                            const float vxn = row[x][0], vyn = row[x][1], vzn = row[x][2];
+                            if (!(vzn >= 0 && vyn >= 0 && vxn >= 0 &&
+                                  vzn < fsz && vyn < fsy && vxn < fsx))
+                                break;
+                            const int izn = static_cast<int>(vzn), iyn = static_cast<int>(vyn), ixn = static_cast<int>(vxn);
+                            if ((izn >> czShift) != ciz || (iyn >> cyShift) != ciy || (ixn >> cxShift) != cix)
+                                break;
+                            if ((izn + 1) >> czShift != ciz || (iyn + 1) >> cyShift != ciy || (ixn + 1) >> cxShift != cix)
+                                break;
+                            x++;
+                        }
+
+                        // ── Tight inner loop via ChunkView ──
+                        // Compile-time strides → shifts instead of multiplies,
+                        // compiler can prove memory bounds for vectorization.
+                        const int run_end = x;
+                        auto cv = makeView(sampler.data);
+                        for (int rx = run_start; rx < run_end; rx++) {
+                            const float vx = row[rx][0], vy = row[rx][1], vz = row[rx][2];
+                            const int iz = static_cast<int>(vz), iy = static_cast<int>(vy), ix = static_cast<int>(vx);
+                            const int lz0 = iz & czMask, ly0 = iy & cyMask, lx0 = ix & cxMask;
+                            const float fx = vx - ix, fy = vy - iy, fz = vz - iz;
+                            const float v = cv.trilinear(lz0, ly0, lx0, fz, fy, fx);
+
+                            if constexpr (std::is_same_v<T, uint16_t>) {
+                                orow[rx] = static_cast<uint16_t>(std::max(0.f, std::min(maxVal, v)) + 0.5f);
+                            } else {
+                                orow[rx] = static_cast<T>(v);
+                            }
+                        }
                     }
                 } else {
-                    // Composite path
+                    // Nearest-neighbor: run-based processing with ChunkView
+                    int x = 0;
+                    while (x < w) {
+                        const float vz0 = row[x][2], vy0 = row[x][1], vx0 = row[x][0];
+                        if (!(vz0 >= 0 && vy0 >= 0 && vx0 >= 0 &&
+                              vz0 < fsz && vy0 < fsy && vx0 < fsx)) {
+                            x++;
+                            continue;
+                        }
+
+                        const int iz0 = static_cast<int>(vz0 + 0.5f);
+                        const int iy0 = static_cast<int>(vy0 + 0.5f);
+                        const int ix0 = static_cast<int>(vx0 + 0.5f);
+                        const int ciz = iz0 >> czShift, ciy = iy0 >> cyShift, cix = ix0 >> cxShift;
+
+                        sampler.updateChunk(ciz, ciy, cix);
+                        if (!sampler.data) [[unlikely]] { x++; continue; }
+
+                        // Scan ahead: find longest run sharing this chunk
+                        const int run_start = x;
+                        x++;
+                        while (x < w) {
+                            const float vzn = row[x][2], vyn = row[x][1], vxn = row[x][0];
+                            if (!(vzn >= 0 && vyn >= 0 && vxn >= 0 &&
+                                  vzn < fsz && vyn < fsy && vxn < fsx))
+                                break;
+                            const int izn = static_cast<int>(vzn + 0.5f);
+                            const int iyn = static_cast<int>(vyn + 0.5f);
+                            const int ixn = static_cast<int>(vxn + 0.5f);
+                            if ((izn >> czShift) != ciz || (iyn >> cyShift) != ciy || (ixn >> cxShift) != cix)
+                                break;
+                            x++;
+                        }
+
+                        // ── Tight inner loop via ChunkView ──
+                        const int run_end = x;
+                        auto cv = makeView(sampler.data);
+                        for (int rx = run_start; rx < run_end; rx++) {
+                            const int iz = static_cast<int>(row[rx][2] + 0.5f);
+                            const int iy = static_cast<int>(row[rx][1] + 0.5f);
+                            const int ix = static_cast<int>(row[rx][0] + 0.5f);
+                            orow[rx] = cv.nearest(iz & czMask, iy & cyMask, ix & cxMask);
+                        }
+                    }
+                }
+            }
+        }
+
+        }); // dispatchChunkView
+    } else {
+        // ── Composite path ─────────────────────────────────────────────
+        const bool isMin = params && (params->methodType == CompositeMethodType::Min);
+        const bool isMax = params && (params->methodType == CompositeMethodType::Max);
+        const bool isMean = params && (params->methodType == CompositeMethodType::Mean);
+        const bool needsLayerStorage = params && methodRequiresLayerStorage(params->methodType);
+        const float firstLayerOffset = zStart * zStep;
+
+        #pragma omp parallel
+        {
+            ChunkSampler<T> sampler(p, cache, ds);
+
+            LayerStack stack;
+            if (needsLayerStorage) {
+                stack.values.resize(numLayers);
+            }
+
+            #pragma omp for collapse(2)
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    const cv::Vec3f& bc = coords(y, x);
+                    float base_vz = bc[2], base_vy = bc[1], base_vx = bc[0];
+
                     if (!(base_vz >= 0 && base_vy >= 0 && base_vx >= 0)) continue;
 
                     cv::Vec3f n = getNormal(y, x);
@@ -405,8 +531,8 @@ static void readVolumeImpl(
                         bool validSample = false;
                         float value = 0;
 
-                        if (samplerPrefetch.inBounds(vz, vy, vx)) {
-                            uint8_t raw = samplerPrefetch.sampleNearest(vz, vy, vx);
+                        if (sampler.inBounds(vz, vy, vx)) {
+                            uint8_t raw = sampler.sampleNearest(vz, vy, vx);
                             value = static_cast<float>(raw < params->isoCutoff ? 0 : raw);
                             validSample = true;
                         }
@@ -457,7 +583,7 @@ static void readVolumeImpl(
 // ============================================================================
 
 template<typename T>
-static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<T>* cache) {
+[[gnu::hot]] static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<T>* cache) {
 
     CacheParams<T> p(ds);
 
@@ -575,7 +701,7 @@ void readArea3D(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out, co
 // ============================================================================
 
 template<typename T>
-static void readInterpolated3DImpl(cv::Mat_<T>& out, z5::Dataset* ds,
+[[gnu::hot]] static void readInterpolated3DImpl(cv::Mat_<T>& out, z5::Dataset* ds,
                                    const cv::Mat_<cv::Vec3f>& coords, ChunkCache<T>* cache, bool nearest_neighbor) {
     CacheParams<T> p(ds);
 
@@ -690,7 +816,7 @@ void readCompositeFastConstantNormal(
 // ============================================================================
 
 template<typename T>
-static void readMultiSliceImpl(
+[[gnu::hot]] static void readMultiSliceImpl(
     std::vector<cv::Mat_<T>>& out,
     z5::Dataset* ds,
     ChunkCache<T>& cache,
@@ -709,12 +835,21 @@ static void readMultiSliceImpl(
 
     if (numSlices == 0) return;
 
-    // No prefetch — with sequential band iteration the cache hit rate is ~99.99%.
-    // Just sample directly. Each OMP thread gets its own ChunkSampler with a
-    // one-entry chunk cache, so the only shared-state access is cache.get()
-    // on chunk boundary crossings (rare).
+    // Run-based processing: for each slice offset, scan x in runs of consecutive
+    // pixels sharing the same chunk. This replaces the old per-pixel
+    // sampleTrilinearFast() which did a chunk lookup per sample.
+    //
+    // Loop restructured from (y → x → si) to (y → si → run-based x) so that
+    // adjacent x positions for a given slice offset are spatially coherent,
+    // producing long runs (typically 32-128+ pixels with ≥32³ chunks).
 
     constexpr float maxVal = std::is_same_v<T, uint16_t> ? 65535.f : 255.f;
+
+    const int czShift = p.czShift, cyShift = p.cyShift, cxShift = p.cxShift;
+    const int czMask = p.czMask, cyMask = p.cyMask, cxMask = p.cxMask;
+    const float fsz = static_cast<float>(p.sz), fsy = static_cast<float>(p.sy), fsx = static_cast<float>(p.sx);
+
+    vc::simd::dispatchChunkView<T>(p.cy, p.cx, [&](auto makeView) {
 
     #pragma omp parallel
     {
@@ -722,27 +857,92 @@ static void readMultiSliceImpl(
 
         #pragma omp for schedule(static)
         for (int y = 0; y < h; y++) {
-            for (int x = 0; x < w; x++) {
-                const cv::Vec3f& bp = basePoints(y, x);
-                const cv::Vec3f& sd = stepDirs(y, x);
-                if (std::isnan(bp[0])) continue;
+            const cv::Vec3f* __restrict__ bpRow = basePoints.template ptr<cv::Vec3f>(y);
+            const cv::Vec3f* __restrict__ sdRow = stepDirs.template ptr<cv::Vec3f>(y);
 
-                for (int si = 0; si < numSlices; si++) {
-                    float off = offsets[si];
-                    float vx = bp[0] + sd[0] * off;
-                    float vy = bp[1] + sd[1] * off;
-                    float vz = bp[2] + sd[2] * off;
+            for (int si = 0; si < numSlices; si++) {
+                T* __restrict__ orow = out[si].template ptr<T>(y);
+                const float off = offsets[si];
 
-                    if (!(vz >= 0 && vy >= 0 && vx >= 0 && vz < p.sz && vy < p.sy && vx < p.sx))
+                int x = 0;
+                while (x < w) {
+                    // Skip invalid pixels (NaN base point)
+                    if (std::isnan(bpRow[x][0])) { x++; continue; }
+
+                    // Compute voxel position for this pixel + slice offset
+                    const float vx0 = bpRow[x][0] + sdRow[x][0] * off;
+                    const float vy0 = bpRow[x][1] + sdRow[x][1] * off;
+                    const float vz0 = bpRow[x][2] + sdRow[x][2] * off;
+
+                    // Bounds check
+                    if (!(vz0 >= 0 && vy0 >= 0 && vx0 >= 0 &&
+                          vz0 < fsz && vy0 < fsy && vx0 < fsx)) {
+                        x++;
                         continue;
+                    }
 
-                    float v = sampler.sampleTrilinearFast(vz, vy, vx);
-                    v = std::max(0.f, std::min(maxVal, v + 0.5f));
-                    out[si](y, x) = static_cast<T>(v);
+                    const int iz0 = static_cast<int>(vz0), iy0 = static_cast<int>(vy0), ix0 = static_cast<int>(vx0);
+                    const int ciz = iz0 >> czShift, ciy = iy0 >> cyShift, cix = ix0 >> cxShift;
+
+                    // Check if trilinear +1 neighbors cross chunk boundary
+                    if ((iz0 + 1) >> czShift != ciz ||
+                        (iy0 + 1) >> cyShift != ciy ||
+                        (ix0 + 1) >> cxShift != cix) {
+                        // Chunk boundary: use generic slow path
+                        float v = sampler.sampleTrilinear(vz0, vy0, vx0);
+                        v = std::max(0.f, std::min(maxVal, v + 0.5f));
+                        orow[x] = static_cast<T>(v);
+                        x++;
+                        continue;
+                    }
+
+                    // Lock chunk for this run
+                    sampler.updateChunk(ciz, ciy, cix);
+                    if (!sampler.data) [[unlikely]] { x++; continue; }
+
+                    // Scan ahead: find longest run sharing this chunk
+                    const int run_start = x;
+                    x++;
+                    while (x < w) {
+                        if (std::isnan(bpRow[x][0])) break;
+                        const float vxn = bpRow[x][0] + sdRow[x][0] * off;
+                        const float vyn = bpRow[x][1] + sdRow[x][1] * off;
+                        const float vzn = bpRow[x][2] + sdRow[x][2] * off;
+                        if (!(vzn >= 0 && vyn >= 0 && vxn >= 0 &&
+                              vzn < fsz && vyn < fsy && vxn < fsx))
+                            break;
+                        const int izn = static_cast<int>(vzn), iyn = static_cast<int>(vyn), ixn = static_cast<int>(vxn);
+                        if ((izn >> czShift) != ciz || (iyn >> cyShift) != ciy || (ixn >> cxShift) != cix)
+                            break;
+                        if ((izn + 1) >> czShift != ciz || (iyn + 1) >> cyShift != ciy || (ixn + 1) >> cxShift != cix)
+                            break;
+                        x++;
+                    }
+
+                    // ── Tight inner loop via ChunkView ──
+                    const int run_end = x;
+                    auto cv = makeView(sampler.data);
+                    for (int rx = run_start; rx < run_end; rx++) {
+                        const float vx = bpRow[rx][0] + sdRow[rx][0] * off;
+                        const float vy = bpRow[rx][1] + sdRow[rx][1] * off;
+                        const float vz = bpRow[rx][2] + sdRow[rx][2] * off;
+                        const int iz = static_cast<int>(vz), iy = static_cast<int>(vy), ix = static_cast<int>(vx);
+                        const int lz0 = iz & czMask, ly0 = iy & cyMask, lx0 = ix & cxMask;
+                        const float fx = vx - ix, fy = vy - iy, fz = vz - iz;
+                        const float v = cv.trilinear(lz0, ly0, lx0, fz, fy, fx);
+
+                        if constexpr (std::is_same_v<T, uint16_t>) {
+                            orow[rx] = static_cast<uint16_t>(std::max(0.f, std::min(maxVal, v)) + 0.5f);
+                        } else {
+                            orow[rx] = static_cast<T>(std::max(0.f, std::min(maxVal, v + 0.5f)));
+                        }
+                    }
                 }
             }
         }
     }
+
+    }); // dispatchChunkView
 }
 
 void readMultiSlice(
@@ -794,11 +994,34 @@ void readSubarray3D(xt::xarray<float>& out, z5::Dataset& ds, const std::vector<s
 }
 
 // ============================================================================
+// writeSubarray3D — centralized z5 subarray writing
+// ============================================================================
+// Same pattern as readSubarray3D: consolidates z5::multiarray::writeSubarray
+// template instantiations into a single translation unit.
+
+template<typename T>
+static void writeSubarray3DImpl(z5::Dataset& ds, const xt::xarray<T>& data, const std::vector<std::size_t>& offset) {
+    z5::multiarray::writeSubarray<T>(ds, data, offset.begin());
+}
+
+void writeSubarray3D(z5::Dataset& ds, const xt::xarray<uint8_t>& data, const std::vector<std::size_t>& offset) {
+    writeSubarray3DImpl(ds, data, offset);
+}
+
+void writeSubarray3D(z5::Dataset& ds, const xt::xarray<uint16_t>& data, const std::vector<std::size_t>& offset) {
+    writeSubarray3DImpl(ds, data, offset);
+}
+
+void writeSubarray3D(z5::Dataset& ds, const xt::xarray<float>& data, const std::vector<std::size_t>& offset) {
+    writeSubarray3DImpl(ds, data, offset);
+}
+
+// ============================================================================
 // computeVolumeGradientsNative — compute gradients from volume at raw surface points
 // ============================================================================
 // Moved here from CVolumeViewerRender.cpp to consolidate z5 header dependencies.
 
-cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
+[[gnu::hot]] cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
     z5::Dataset* ds,
     const cv::Mat_<cv::Vec3f>& rawPoints,
     float dsScale)
@@ -815,6 +1038,7 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
     const int volX = static_cast<int>(volShape[2]);
 
     // Step 1: Find bounding box of all valid coordinates
+    // Raw pointer + flat iteration for better auto-vectorization.
     float minX = std::numeric_limits<float>::max();
     float minY = std::numeric_limits<float>::max();
     float minZ = std::numeric_limits<float>::max();
@@ -822,23 +1046,17 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
     float maxY = std::numeric_limits<float>::lowest();
     float maxZ = std::numeric_limits<float>::lowest();
 
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            const cv::Vec3f& c = rawPoints(y, x);
-            // Skip invalid points (marked as -1, -1, -1)
-            if (c[0] == -1.f) continue;
-
-            const float cx = c[0] * dsScale;
-            const float cy = c[1] * dsScale;
-            const float cz = c[2] * dsScale;
-
-            minX = std::min(minX, cx);
-            minY = std::min(minY, cy);
-            minZ = std::min(minZ, cz);
-            maxX = std::max(maxX, cx);
-            maxY = std::max(maxY, cy);
-            maxZ = std::max(maxZ, cz);
-        }
+    const int n = h * w;
+    const cv::Vec3f* __restrict__ pts = rawPoints.ptr<cv::Vec3f>(0);
+    for (int i = 0; i < n; ++i) {
+        const float px = pts[i][0];
+        if (px == -1.f) continue;
+        const float cx = px * dsScale;
+        const float cy = pts[i][1] * dsScale;
+        const float cz = pts[i][2] * dsScale;
+        minX = std::min(minX, cx); maxX = std::max(maxX, cx);
+        minY = std::min(minY, cy); maxY = std::max(maxY, cy);
+        minZ = std::min(minZ, cz); maxZ = std::max(maxZ, cz);
     }
 
     if (minX > maxX) return gradients;  // No valid points
@@ -874,21 +1092,28 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
     const int localDi = static_cast<int>(localD);
 
     // Step 3: Compute gradients in parallel at each raw grid point
-    #pragma omp parallel for collapse(2) schedule(static)
+    const float offX = static_cast<float>(bboxX0);
+    const float offY = static_cast<float>(bboxY0);
+    const float offZ = static_cast<float>(bboxZ0);
+
+    #pragma omp parallel for schedule(static)
     for (int y = 0; y < h; ++y) {
+        const cv::Vec3f* __restrict__ ptsRow = rawPoints.ptr<cv::Vec3f>(y);
+        cv::Vec3f* __restrict__ gradRow = gradients.ptr<cv::Vec3f>(y);
+
         for (int x = 0; x < w; ++x) {
-            const cv::Vec3f& c = rawPoints(y, x);
+            const float px = ptsRow[x][0];
 
             // Skip invalid points
-            if (c[0] == -1.f) {
-                gradients(y, x) = cv::Vec3f(0, 0, 1);
+            if (px == -1.f) {
+                gradRow[x] = cv::Vec3f(0, 0, 1);
                 continue;
             }
 
             // Scale coordinates to dataset space and convert to local coords
-            const float cx = c[0] * dsScale - static_cast<float>(bboxX0);
-            const float cy = c[1] * dsScale - static_cast<float>(bboxY0);
-            const float cz = c[2] * dsScale - static_cast<float>(bboxZ0);
+            const float cx = px * dsScale - offX;
+            const float cy = ptsRow[x][1] * dsScale - offY;
+            const float cz = ptsRow[x][2] * dsScale - offZ;
 
             // Compute integer center position with rounding
             const int icx = static_cast<int>(std::round(cx));
@@ -906,9 +1131,12 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
             const int ly_c = std::min(std::max(icy, 0), localHi - 1);
             const int lz_c = std::min(std::max(icz, 0), localDi - 1);
 
-            // Sample using pointer arithmetic (faster than operator())
-            const float v_xp = static_cast<float>(volData[lz_c * strideZ + ly_c * strideY + lx_p]);
-            const float v_xm = static_cast<float>(volData[lz_c * strideZ + ly_c * strideY + lx_m]);
+            // Pre-compute shared base offset to reduce redundant multiply
+            const size_t base_zy = lz_c * strideZ + ly_c * strideY;
+
+            // Sample using pointer arithmetic
+            const float v_xp = static_cast<float>(volData[base_zy + lx_p]);
+            const float v_xm = static_cast<float>(volData[base_zy + lx_m]);
             const float v_yp = static_cast<float>(volData[lz_c * strideZ + ly_p * strideY + lx_c]);
             const float v_ym = static_cast<float>(volData[lz_c * strideZ + ly_m * strideY + lx_c]);
             const float v_zp = static_cast<float>(volData[lz_p * strideZ + ly_c * strideY + lx_c]);
@@ -923,9 +1151,9 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
             const float len_sq = gx*gx + gy*gy + gz*gz;
             if (len_sq > 1e-12f) {
                 const float inv_len = -1.0f / std::sqrt(len_sq);  // Negative for normal direction
-                gradients(y, x) = cv::Vec3f(gx * inv_len, gy * inv_len, gz * inv_len);
+                gradRow[x] = cv::Vec3f(gx * inv_len, gy * inv_len, gz * inv_len);
             } else {
-                gradients(y, x) = cv::Vec3f(0, 0, 1);
+                gradRow[x] = cv::Vec3f(0, 0, 1);
             }
         }
     }

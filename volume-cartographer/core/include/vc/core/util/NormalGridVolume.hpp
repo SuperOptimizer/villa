@@ -1,6 +1,5 @@
 #pragma once
 
-#include <nlohmann/json_fwd.hpp>
 #include <opencv2/core/types.hpp>
 #include <string>
 #include <memory>
@@ -27,8 +26,8 @@ namespace vc::core::util {
         std::optional<GridQueryResult> query(const cv::Point3f& point, int plane_idx) const;
         std::shared_ptr<const GridStore> query_nearest(const cv::Point3f& point, int plane_idx) const;
 
-    public:
-        const nlohmann::json& metadata() const;
+        [[nodiscard]] int sparse_volume() const noexcept;
+        [[nodiscard]] float spiral_step() const noexcept;
 
     private:
         struct pimpl;

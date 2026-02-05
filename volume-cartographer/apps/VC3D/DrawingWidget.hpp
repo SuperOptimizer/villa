@@ -26,16 +26,13 @@ using PathBrushShape = ViewerOverlayControllerBase::PathBrushShape;
 // Forward declarations - heavy headers only needed in .cpp
 class VolumePkg;
 class Volume;
-template <typename T> class ChunkCache;
-
-
 /**
  * @brief Widget for freehand drawing on volume surfaces
  * 
  * This widget provides tools for drawing masks and annotations on volume surfaces
  * with configurable brush settings, eraser mode, and mask export functionality.
  */
-class DrawingWidget : public QWidget
+class DrawingWidget final : public QWidget
 {
     Q_OBJECT
     
@@ -49,26 +46,23 @@ public:
     /** Set the current volume */
     void setCurrentVolume(std::shared_ptr<Volume> volume);
     
-    /** Set the cache for volume data access */
-    void setCache(ChunkCache<uint8_t>* cache);
-    
     /** Clear all drawn paths */
     void clearAllPaths();
     
     /** Get current path ID */
-    int getCurrentPathId() const { return currentPathId; }
+    int getCurrentPathId() const noexcept { return currentPathId; }
     
     /** Get current brush size */
-    float getBrushSize() const { return brushSize; }
+    float getBrushSize() const noexcept { return brushSize; }
     
     /** Check if in eraser mode */
-    bool isEraserMode() const { return eraserMode; }
+    bool isEraserMode() const noexcept { return eraserMode; }
     
     /** Check if drawing mode is active */
-    bool isDrawingModeActive() const { return drawingModeActive; }
+    bool isDrawingModeActive() const noexcept { return drawingModeActive; }
     
     /** Get current brush shape */
-    PathBrushShape getBrushShape() const { return brushShape; }
+    PathBrushShape getBrushShape() const noexcept { return brushShape; }
     
     /** Toggle drawing mode */
     void toggleDrawingMode();
@@ -156,8 +150,6 @@ private:
     std::shared_ptr<VolumePkg> fVpkg;
     std::shared_ptr<Volume> currentVolume;
     std::string currentVolumeId;
-    ChunkCache<uint8_t>* chunkCache;
-    
     // Drawing state
     int currentPathId;
     float brushSize;

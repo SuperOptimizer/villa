@@ -2,7 +2,6 @@
 
 #include "VCCollectionTypes.hpp"
 
-#include <nlohmann/json_fwd.hpp>
 #include <opencv2/core/matx.hpp>
 #include <qtmetamacros.h>
 #include <cstdint>
@@ -14,7 +13,7 @@
 #include <QDateTime>
 #include <QObject>
 
-class VCCollection : public QObject
+class VCCollection final : public QObject
 {
     Q_OBJECT
 
@@ -92,13 +91,4 @@ private:
     uint64_t _next_point_id = 1;
     uint64_t _next_collection_id = 1;
 };
- 
-void to_json(nlohmann::json& j, const ColPoint& p);
-void from_json(const nlohmann::json& j, ColPoint& p);
- 
-void to_json(nlohmann::json& j, const CollectionMetadata& m);
-void from_json(const nlohmann::json& j, CollectionMetadata& m);
- 
-void to_json(nlohmann::json& j, const VCCollection::Collection& c);
-void from_json(const nlohmann::json& j, VCCollection::Collection& c);
- 
+

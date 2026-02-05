@@ -10,8 +10,8 @@
 #include <nlohmann/json.hpp>
 #include "z5/factory.hxx"
 #include "z5/filesystem/handle.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
 #include <xtensor/containers/xarray.hpp>
+#include "vc/core/util/Slicing.hpp"
 
 #include <opencv2/core.hpp>
 #include <tiffio.h>
@@ -117,14 +117,14 @@ int main(int argc, char** argv)
 
         if (cvType == CV_8UC1) {
             xt::xarray<uint8_t> slab = xt::empty<uint8_t>({1ul, Y, X});
-            z5::multiarray::readSubarray<uint8_t>(ds, slab, offset.begin());
+            readSubarray3D(slab, *ds, offset);
             for (size_t y = 0; y < Y; ++y) {
                 auto* row = slice.ptr<uint8_t>(static_cast<int>(y));
                 for (size_t x = 0; x < X; ++x) row[x] = slab(0, y, x);
             }
         } else {
             xt::xarray<uint16_t> slab = xt::empty<uint16_t>({1ul, Y, X});
-            z5::multiarray::readSubarray<uint16_t>(ds, slab, offset.begin());
+            readSubarray3D(slab, *ds, offset);
             for (size_t y = 0; y < Y; ++y) {
                 auto* row = slice.ptr<uint16_t>(static_cast<int>(y));
                 for (size_t x = 0; x < X; ++x) row[x] = slab(0, y, x);

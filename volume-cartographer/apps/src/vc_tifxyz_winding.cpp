@@ -1,5 +1,5 @@
 #include "vc/core/util/Geometry.hpp"
-#include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/SlicingLite.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
@@ -119,7 +119,7 @@ IntersectVec getIntersects(const cv::Vec2i &seed, QuadSurface* surface)
         // std::cout << dist << res << loc << "\n";
         
         bool found = false;
-        for(auto l : locs) {
+        for(const auto& l : locs) {
             if (cv::norm(loc, l) <= 4) {
                 found = true;
                 break;
@@ -130,7 +130,7 @@ IntersectVec getIntersects(const cv::Vec2i &seed, QuadSurface* surface)
     }
 
     IntersectVec dist_locs;
-    for(auto l : locs)
+    for(const auto& l : locs)
         dist_locs.push_back({line_off(at_int(points,l),o,n), l});
     
     //just sort by normal position and let median take care of the rest
@@ -146,7 +146,7 @@ IntersectVec getIntersects(const cv::Vec2i &seed, QuadSurface* surface)
     
     bool two_halves = false;
     for(int i=1;i<dist_locs.size()-1;i++) 
-        if (abs(dist_locs[i-1].first - dist_locs[i+1].first) < std::min(abs(dist_locs[i-1].first - dist_locs[i].first),abs(dist_locs[i].first - dist_locs[i+1].first))) {
+        if (std::abs(dist_locs[i-1].first - dist_locs[i+1].first) < std::min(std::abs(dist_locs[i-1].first - dist_locs[i].first),std::abs(dist_locs[i].first - dist_locs[i+1].first))) {
             two_halves = true;
         }
         
@@ -167,9 +167,9 @@ IntersectVec getIntersects(const cv::Vec2i &seed, QuadSurface* surface)
     
     bool seed_in_a = (a.back().first == 0.01);
     
-    for(auto pair : dist_locs) {
+    for(const auto& pair : dist_locs) {
         // std::cout << pair.first << "\n";
-        if (abs(pair.first - a.back().first) < abs(pair.first - b.back().first)) {
+        if (std::abs(pair.first - a.back().first) < std::abs(pair.first - b.back().first)) {
             a.push_back(pair);
             if (pair.first == 0.01)
                 seed_in_a = true;
@@ -228,7 +228,7 @@ float find_wind_x(cv::Mat_<float> &winding, cv::Vec2f &loc, float tgt_wind)
     if (!loc_valid_nan_xy(winding, loc))
         return -1;
     
-    float best_diff = abs(at_int(winding,loc)-tgt_wind);
+    float best_diff = std::abs(at_int(winding,loc)-tgt_wind);
     
     std::vector<cv::Vec2f> neighs = {{1,0},{-1,0}};
     
@@ -237,11 +237,11 @@ float find_wind_x(cv::Mat_<float> &winding, cv::Vec2f &loc, float tgt_wind)
     while (updated)
     {
         updated = false;
-        for (auto n : neighs) {
+        for (const auto& n : neighs) {
             cv::Vec2f cand = loc + step*n;
             if (!loc_valid_nan_xy(winding, cand))
                 continue;
-            float diff = abs(at_int(winding,cand)-tgt_wind);
+            float diff = std::abs(at_int(winding,cand)-tgt_wind);
             if (diff < best_diff) {
                 best_diff = diff;
                 loc = cand;
@@ -381,7 +381,7 @@ int main(int argc, char *argv[])
         wind_x_ref[i] = last;
     }
     
-    for(auto w : wind_x_ref)
+    for(const auto& w : wind_x_ref)
         std::cout << "wind x step: " << w << "\n";
     // std::cout << dists[dists.size()/2] << "\n";
     
@@ -437,9 +437,9 @@ int main(int argc, char *argv[])
                 
                 int ref_x = wind_x_ref[std::min<int>((x1+x2)/wind_sd, wind_x_ref.size()-1)];
                 
-                // std::cout << abs(x2-x1 - ref_x) << " " << x2-x1 << " vs " << ref_x << " wot " << x1 << " " << x2 << p1i << p2i << "\n";
+                // std::cout << std::abs(x2-x1 - ref_x) << " " << x2-x1 << " vs " << ref_x << " wot " << x1 << " " << x2 << p1i << p2i << "\n";
                 
-                if (abs(x2-x1 - ref_x) > ref_x/3)
+                if (std::abs(x2-x1 - ref_x) > ref_x/3)
                     continue;
                 
                 if (wind_w(p1i) == 0 && wind_w(p2i) == 0) {
@@ -499,7 +499,7 @@ int main(int argc, char *argv[])
                 
                 float w = wind_w(p);
                 float sum = winding(p)*w;
-                for(auto n : neighs) {
+                for(const auto& n : neighs) {
                     cv::Vec2i pn = p + n;
                     
                     if (!bounds_inv.contains(cv::Point(pn)))
@@ -508,7 +508,7 @@ int main(int argc, char *argv[])
                     if (points(pn)[0] == -1)
                         continue;
                     
-                    int dist = std::max(abs(n[1]),abs(n[0]));
+                    int dist = std::max(std::abs(n[1]),std::abs(n[0]));
                     if (dist > 1)
                     {
                         bool skip = false;
@@ -570,7 +570,7 @@ int main(int argc, char *argv[])
                     if (wind_w_row[i] && wind_w_row[i+1]) {
                         float wind_g = winding_row[i+1] - winding_row[i];
                         wind_g = wind_g * wind_x_ref[i/wind_sd];
-                        err_row[i] = abs(1-wind_g);
+                        err_row[i] = std::abs(1-wind_g);
                     }
                 }
             }

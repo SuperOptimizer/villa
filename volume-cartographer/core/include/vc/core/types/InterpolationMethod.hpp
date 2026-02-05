@@ -17,7 +17,7 @@ enum class InterpolationMethod {
 /**
  * @brief Convert interpolation method enum to string
  */
-inline const char* interpolationMethodName(InterpolationMethod method) {
+constexpr const char* interpolationMethodName(InterpolationMethod method) noexcept {
     switch (method) {
         case InterpolationMethod::Nearest: return "Nearest Neighbor";
         case InterpolationMethod::Trilinear: return "Trilinear";

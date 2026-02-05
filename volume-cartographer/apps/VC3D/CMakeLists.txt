@@ -125,9 +125,13 @@ if(VC_ENABLE_TSAN OR VC_ENABLE_LSAN OR VC_ENABLE_UBSAN OR VC_ENABLE_ASAN)
 endif()
 
 
-add_executable(VC3D ${srcs} resources.qrc)
+# OBJECT library: compiles VC3D sources independently of vc_tracer.
+# This allows VC3D compilation to overlap with vc_tracer (GrowPatch.cpp ~10s),
+# since VC3D sources only need vc_tracer at link time, not compile time.
+# (Tracer.hpp doesn't include Ceres; headers available via global include path.)
+add_library(vc3d_objects OBJECT ${srcs} resources.qrc)
 
-target_include_directories(VC3D
+target_include_directories(vc3d_objects
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/libs/edt
@@ -135,126 +139,171 @@ target_include_directories(VC3D
         ${CMAKE_SOURCE_DIR}/libs/djikstra3d
 )
 
-target_link_libraries(VC3D
-    vc_core
-    vc_ui
-    vc_tracer
-    Qt6::Core
-    Qt6::Gui
-    Qt6::Widgets
-    opencv_ximgproc
+# PUBLIC so transitive link deps propagate to the final VC3D executable.
+# vc_tracer omitted: only needed at link time.
+target_link_libraries(vc3d_objects
+    PUBLIC
+        vc_core
+        vc_ui
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        opencv_ximgproc
 )
 
-# Precompiled headers for faster builds
+# Final executable: links objects + vc_tracer (link-time only dependency)
+add_executable(VC3D)
+target_link_libraries(VC3D PRIVATE vc3d_objects vc_tracer)
+
+# PCH provider: builds the VC3D PCH at time 0 without waiting for vc_core.
+# Only needs include paths from external deps (all imported, available immediately).
+# This lets the 21s PCH build overlap with vc_core compilation.
 if(VC_USE_PCH)
-target_precompile_headers(VC3D PRIVATE
-    # STL - containers
-    <array>
-    <deque>
-    <list>
-    <map>
-    <queue>
-    <set>
-    <stack>
-    <unordered_map>
-    <unordered_set>
-    <vector>
-    # STL - algorithms and utilities
-    <algorithm>
-    <chrono>
-    <cmath>
-    <cstdint>
-    <cstdlib>
-    <functional>
-    <limits>
-    <numeric>
-    <tuple>
-    <utility>
-    # STL - I/O and strings
-    <filesystem>
-    <fstream>
-    <iostream>
-    <sstream>
-    <string>
-    <string_view>
-    # STL - memory
-    <memory>
-    <optional>
-    # STL - concurrency
-    <atomic>
-    <mutex>
-    <thread>
-    # OpenCV
-    <opencv2/core.hpp>
-    <opencv2/core/mat.hpp>
-    <opencv2/imgproc.hpp>
-    # JSON
-    <nlohmann/json.hpp>
-    # Eigen
-    <Eigen/Core>
-    <Eigen/Dense>
-    # Qt Core
-    <QCoreApplication>
-    <QDir>
-    <QElapsedTimer>
-    <QFile>
-    <QFileInfo>
-    <QLoggingCategory>
-    <QObject>
-    <QPointer>
-    <QProcess>
-    <QSettings>
-    <QString>
-    <QStringList>
-    <QTimer>
-    <QVariant>
-    <QVector>
-    # Qt Gui
-    <QColor>
-    <QImage>
-    <QPainter>
-    <QPen>
-    <QBrush>
-    <QFont>
-    <QPointF>
-    <QRectF>
-    # Qt Widgets
-    <QAction>
-    <QApplication>
-    <QCheckBox>
-    <QComboBox>
-    <QDialog>
-    <QFileDialog>
-    <QGraphicsItem>
-    <QGraphicsPixmapItem>
-    <QGraphicsScene>
-    <QGraphicsView>
-    <QGroupBox>
-    <QHBoxLayout>
-    <QLabel>
-    <QLineEdit>
-    <QMainWindow>
-    <QMenu>
-    <QMenuBar>
-    <QMessageBox>
-    <QPushButton>
-    <QScrollArea>
-    <QSlider>
-    <QSpinBox>
-    <QStatusBar>
-    <QTabWidget>
-    <QToolBar>
-    <QToolButton>
-    <QTreeWidget>
-    <QVBoxLayout>
-    <QWidget>
-    # MDI and additional widgets
-    <QMdiArea>
-    <QMdiSubWindow>
-    <QDockWidget>
-    <QSignalBlocker>
-    <QStandardItemModel>
-)
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/vc3d_pch_dummy.cpp" "")
+    add_library(vc3d_pch STATIC "${CMAKE_CURRENT_BINARY_DIR}/vc3d_pch_dummy.cpp")
+    target_link_libraries(vc3d_pch PRIVATE
+        # Same external deps as vc_core + vc_ui to match compile flags
+        opencv_core
+        opencv_imgproc
+        opencv_imgcodecs
+        opencv_calib3d
+        opencv_video
+        opencv_ximgproc
+        nlohmann_json::nlohmann_json
+        z5
+        OpenMP::OpenMP_CXX
+        TIFF::TIFF
+        OpenABF
+        Eigen3::Eigen
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Boost::program_options
+    )
+    # Include vc_core headers dir (no build dep, just a path)
+    target_include_directories(vc3d_pch PRIVATE
+        ${CMAKE_SOURCE_DIR}/core/include
+    )
+    target_precompile_headers(vc3d_pch PRIVATE
+        # STL - containers
+        <array>
+        <deque>
+        <list>
+        <map>
+        <queue>
+        <set>
+        <stack>
+        <unordered_map>
+        <unordered_set>
+        <vector>
+        # STL - algorithms and utilities
+        <algorithm>
+        <chrono>
+        <cmath>
+        <cstdint>
+        <cstdlib>
+        <functional>
+        <limits>
+        <numeric>
+        <tuple>
+        <utility>
+        # STL - I/O and strings
+        <filesystem>
+        <fstream>
+        <iostream>
+        <sstream>
+        <string>
+        <string_view>
+        # STL - memory
+        <memory>
+        <optional>
+        # STL - concurrency
+        <atomic>
+        <mutex>
+        <thread>
+        # OpenCV
+        <opencv2/core.hpp>
+        <opencv2/core/mat.hpp>
+        <opencv2/imgproc.hpp>
+        # Eigen
+        <Eigen/Core>
+        <Eigen/Dense>
+        # Qt Core
+        <QCoreApplication>
+        <QDir>
+        <QElapsedTimer>
+        <QFile>
+        <QFileInfo>
+        <QLoggingCategory>
+        <QObject>
+        <QPointer>
+        <QProcess>
+        <QSettings>
+        <QString>
+        <QStringList>
+        <QTimer>
+        <QVariant>
+        <QVector>
+        # Qt Gui
+        <QColor>
+        <QImage>
+        <QPainter>
+        <QPen>
+        <QBrush>
+        <QFont>
+        <QPointF>
+        <QRectF>
+        # Qt Widgets
+        <QAction>
+        <QApplication>
+        <QCheckBox>
+        <QComboBox>
+        <QDialog>
+        <QFileDialog>
+        <QGraphicsItem>
+        <QGraphicsPixmapItem>
+        <QGraphicsScene>
+        <QGraphicsView>
+        <QGroupBox>
+        <QHBoxLayout>
+        <QLabel>
+        <QLineEdit>
+        <QMainWindow>
+        <QMenu>
+        <QMenuBar>
+        <QMessageBox>
+        <QPushButton>
+        <QScrollArea>
+        <QSlider>
+        <QSpinBox>
+        <QStatusBar>
+        <QTabWidget>
+        <QToolBar>
+        <QToolButton>
+        <QTreeWidget>
+        <QVBoxLayout>
+        <QWidget>
+        # MDI and additional widgets
+        <QMdiArea>
+        <QMdiSubWindow>
+        <QDockWidget>
+        <QSignalBlocker>
+        <QStandardItemModel>
+        # z5/xtensor (segmentation files use zarr volume access)
+        <xtensor/containers/xarray.hpp>
+        <xtensor/containers/xadapt.hpp>
+        <xtensor/views/xview.hpp>
+        <xtensor/generators/xbuilder.hpp>
+        <z5/factory.hxx>
+        <z5/dataset.hxx>
+        <z5/attributes.hxx>
+        <z5/filesystem/handle.hxx>
+        <z5/filesystem/dataset.hxx>
+        <z5/multiarray/xtensor_access.hxx>
+        # Boost
+        <boost/program_options.hpp>
+    )
+    target_precompile_headers(vc3d_objects REUSE_FROM vc3d_pch)
 endif()
 
 if (${VC_INSTALL_APPS})

@@ -23,6 +23,21 @@ endif()
 
 project(VC3D VERSION ${VC_VERSION})
 
+# Force Homebrew LLVM toolchain on macOS (avoid Apple toolchain components)
+if(APPLE AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    get_filename_component(_LLVM_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    foreach(_tool IN ITEMS llvm-ar llvm-nm llvm-ranlib llvm-strip llvm-objdump llvm-objcopy)
+        find_program(_TOOL_PATH ${_tool} HINTS "${_LLVM_BIN_DIR}" NO_DEFAULT_PATH)
+        if(_TOOL_PATH)
+            string(REGEX REPLACE "^llvm-" "" _cmake_name "${_tool}")
+            string(TOUPPER "${_cmake_name}" _cmake_name)
+            set(CMAKE_${_cmake_name} "${_TOOL_PATH}" CACHE FILEPATH "" FORCE)
+            message(STATUS "Toolchain: ${_tool} -> ${_TOOL_PATH}")
+        endif()
+        unset(_TOOL_PATH CACHE)
+    endforeach()
+endif()
+
 set(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin)
 set(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
@@ -35,11 +50,21 @@ option(VC_FAST_DEBUG "Use -g1 instead of -g for faster debug builds (less debug 
 
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM AND NOT VC_USE_PCH)
-    # Only use ccache if PCH is disabled (they don't work well together)
     set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
     message(STATUS "Using ccache (PCH disabled)")
+elseif(CCACHE_PROGRAM AND VC_USE_PCH)
+    # ccache + PCH works with ccache 4.4+ and sloppiness=time_macros,pch_defines
+    # but adds overhead on cold cache. Disabled by default for fastest clean builds.
+    # Enable via: -DVC_USE_CCACHE=ON
+    option(VC_USE_CCACHE "Use ccache alongside PCH (needs sloppiness=time_macros,pch_defines)" OFF)
+    if(VC_USE_CCACHE)
+        set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
+        message(STATUS "Using ccache + precompiled headers")
+    else()
+        message(STATUS "Using precompiled headers (ccache available but disabled for faster clean builds)")
+    endif()
 elseif(VC_USE_PCH)
-    message(STATUS "Using precompiled headers (ccache disabled)")
+    message(STATUS "Using precompiled headers (no ccache)")
 endif()
 
 # Use modern C++ for everything and generate compile_commands database.
@@ -95,27 +120,116 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     # -fvisibility=hidden: Smaller symbol table, better code gen
     # -fvisibility-inlines-hidden: Hide inline function symbols
     set(VC_AGGRESSIVE_MATH "-ffast-math -fno-finite-math-only -funroll-loops -ffp-contract=fast")
-    set(VC_VISIBILITY_FLAGS "-fno-semantic-interposition -fvisibility=hidden -fvisibility-inlines-hidden")
+    if(APPLE)
+        # -fno-semantic-interposition is a no-op on macOS (two-level namespaces by default)
+        set(VC_VISIBILITY_FLAGS "-fvisibility=hidden -fvisibility-inlines-hidden")
+    else()
+        set(VC_VISIBILITY_FLAGS "-fno-semantic-interposition -fvisibility=hidden -fvisibility-inlines-hidden")
+    endif()
 
-    # LLVM backend passes for additional optimizations
-    # -mllvm -enable-gvn-hoist: Hoist identical computations
-    # -mllvm -enable-loopinterchange: Enable loop interchange for better cache usage
-    set(VC_LLVM_PASSES "-mllvm -enable-gvn-hoist -mllvm -enable-loopinterchange")
+    # LLVM backend passes — with ThinLTO these run at link time, so use -Wl,-mllvm, format
+    # (bare -mllvm flags are unused during TU compilation with -flto=thin)
+    string(CONCAT VC_LLVM_LINKER_PASSES
+        # GVN (Global Value Numbering)
+        " -Wl,-mllvm,-enable-gvn-hoist"           # Hoist identical computations
+        " -Wl,-mllvm,-enable-gvn-sink"            # Sink unique computations
+        # Inlining thresholds (defaults: 225/325/500)
+        " -Wl,-mllvm,-inline-threshold=500"       # More aggressive general inlining
+        " -Wl,-mllvm,-inlinehint-threshold=600"   # More aggressive for inline-hinted functions
+        " -Wl,-mllvm,-hot-callsite-threshold=500" # More aggressive hot callsite inlining
+        " -Wl,-mllvm,-enable-partial-inlining"    # Inline hot paths, leave cold paths out-of-line
+        # Polly polyhedral optimizer
+        " -Wl,-mllvm,-polly"                      # Enable polyhedral loop optimizer
+        " -Wl,-mllvm,-polly-vectorizer=stripmine" # Polly strip-mining vectorizer
+        " -Wl,-mllvm,-polly-tiling"               # L1 cache tiling
+        " -Wl,-mllvm,-polly-2nd-level-tiling"     # L2 cache tiling
+        " -Wl,-mllvm,-polly-register-tiling"      # Register-level tiling
+        " -Wl,-mllvm,-polly-prevect-width=4"      # Pre-vectorization width hint
+        " -Wl,-mllvm,-polly-parallel"             # Auto-parallelize via OpenMP
+        # Loop optimizations
+        " -Wl,-mllvm,-enable-loopinterchange"     # Loop interchange for cache
+        " -Wl,-mllvm,-enable-loop-versioning-licm" # LICM with versioning
+        " -Wl,-mllvm,-enable-nontrivial-unswitch" # Non-trivial loop unswitching
+        " -Wl,-mllvm,-rotation-max-header-size=50" # More aggressive loop rotation
+        " -Wl,-mllvm,-unroll-runtime"             # Runtime loop unrolling
+        " -Wl,-mllvm,-unroll-threshold=300"       # Higher unroll threshold (default ~150)
+        # Vectorization
+        " -Wl,-mllvm,-extra-vectorizer-passes"    # Additional vectorization passes
+        " -Wl,-mllvm,-enable-interleaved-mem-accesses"        # Interleaved memory access optimization
+        " -Wl,-mllvm,-enable-masked-interleaved-mem-accesses" # Masked interleaved memory access
+        " -Wl,-mllvm,-slp-vectorize-hor"          # Horizontal SLP vectorization
+        # CFG optimizations
+        " -Wl,-mllvm,-hot-cold-split"             # Move cold code to separate sections
+        " -Wl,-mllvm,-enable-chr"                 # Control Height Reduction (speculative execution)
+        " -Wl,-mllvm,-jump-threading-threshold=12" # More aggressive jump threading (default 6)
+        " -Wl,-mllvm,-simplifycfg-sink-common"    # Sink common instructions
+        " -Wl,-mllvm,-enable-constraint-elimination" # Remove redundant constraints
+        " -Wl,-mllvm,-enable-split-backedge-in-load-pre" # Better load PRE
+        # Block placement
+        " -Wl,-mllvm,-enable-ext-tsp-block-placement" # Extended TSP block layout for branch prediction
+        # Scheduling
+        " -Wl,-mllvm,-enable-misched"             # Machine instruction scheduling
+        " -Wl,-mllvm,-enable-post-misched"        # Post-RA machine scheduling
+        " -Wl,-mllvm,-enable-aa-sched-mi"         # Alias-analysis-based scheduling
+        # ThinLTO cross-module optimization
+        " -Wl,-mllvm,-import-instr-limit=500"     # 5x more cross-module inlining (default 100)
+        " -Wl,-mllvm,-cost-kind=throughput"       # Optimize for throughput over latency
+    )
+
+    # Architecture-specific LLVM backend flags (linker format for ThinLTO)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        string(CONCAT VC_ARCH_LINKER_PASSES
+            " -Wl,-mllvm,-aarch64-use-aa"             # Use alias analysis on AArch64
+            " -Wl,-mllvm,-aarch64-enable-global-merge" # Merge globals to reduce GOT entries
+        )
+    else()
+        set(VC_ARCH_LINKER_PASSES "")
+    endif()
 
     # Size-focused flags for MinSizeRel
     # -fno-ident: Remove compiler identification from .comment section
-    set(VC_SIZE_FLAGS "-fno-ident")
+    # -moutline: Machine outliner extracts common instruction sequences (saves code size but adds call overhead)
+    set(VC_SIZE_FLAGS "-fno-ident -moutline")
     # Machine outliner must be passed to the linker during LTO
     # -mllvm -enable-machine-outliner: Extract common instruction sequences into functions
-    set(VC_SIZE_LINKER_FLAGS "-Wl,-mllvm,-enable-machine-outliner")
+    if(APPLE)
+        # macOS ld64.lld: machine outliner runs automatically with -Oz, no explicit flag needed
+        set(VC_SIZE_LINKER_FLAGS "")
+    else()
+        set(VC_SIZE_LINKER_FLAGS "-Wl,-mllvm,-enable-machine-outliner")
+    endif()
 
     if(APPLE)
         # macOS: enable LTO with lld linker (Homebrew LLVM includes lld)
         find_program(LLD_LINKER ld.lld HINTS "/opt/homebrew/opt/llvm/bin")
         if(LLD_LINKER)
-            set(VC_LTO_FLAGS "-flto=thin -march=native ${VC_DEVIRT_FLAGS} ${VC_DEVIRT_LTO_FLAGS} ${VC_AGGRESSIVE_MATH} ${VC_VISIBILITY_FLAGS} ${VC_LLVM_PASSES}")
-            set(VC_LINKER_FLAGS "-fuse-ld=lld")
-            message(STATUS "Using Clang on macOS: thin LTO + devirt + aggressive optimizations + visibility")
+            # -fsplit-lto-unit: Better devirtualization with ThinLTO (split regular LTO unit for type checks)
+            # -faddrsig: Address-significance tables for more effective ICF
+            # -falign-functions/loops: Alignment for icache and branch prediction
+            # NOTE: -moutline deliberately excluded from Release — it replaces inline code with
+            # thousands of tiny call stubs (4,423 OUTLINED_FUNCTIONs, 59% are 1-4 instructions),
+            # adding call/ret overhead that far exceeds the icache savings. Use MinSizeRel for size.
+            set(VC_LTO_FLAGS "-flto=thin -fsplit-lto-unit -faddrsig -fmerge-all-constants -falign-functions=32 -falign-loops=16 -march=native ${VC_DEVIRT_FLAGS} ${VC_DEVIRT_LTO_FLAGS} ${VC_AGGRESSIVE_MATH} ${VC_VISIBILITY_FLAGS}")
+            # ld64.lld supports ELF-style --icf, --deduplicate-strings, --lto-O, --thinlto-jobs
+            include(ProcessorCount)
+            ProcessorCount(NPROC)
+            if(NOT NPROC OR NPROC EQUAL 0)
+                set(NPROC 4)
+            endif()
+            # All -mllvm passes go to linker only (ThinLTO runs backend at link time)
+            string(CONCAT VC_LINKER_FLAGS
+                "-fuse-ld=lld"
+                " -Wl,-dead_strip"
+                " -Wl,--icf=all"
+                " -Wl,--deduplicate-strings"
+                " -Wl,--lto-O3"
+                " -Wl,--lto-CGO3"
+                " -Wl,--thinlto-jobs=${NPROC}"
+                " -Wl,--call-graph-profile-sort"
+                "${VC_LLVM_LINKER_PASSES}"
+                "${VC_ARCH_LINKER_PASSES}"
+            )
+            message(STATUS "Using Clang on macOS: thin LTO + devirt + Polly + ICF + dead strip + ext-TSP + CGPS + parallel LTO (${NPROC} jobs)")
         else()
             # Fallback: no LTO if lld not available (still use non-LTO devirt flags + math opts)
             set(VC_LTO_FLAGS "-march=native ${VC_DEVIRT_FLAGS} ${VC_AGGRESSIVE_MATH} ${VC_VISIBILITY_FLAGS}")
@@ -131,23 +245,31 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     else()
         # Linux Clang: LTO + full devirtualization + aggressive opts
         # -ffunction-sections/-fdata-sections: Put each function/data in its own section for fine-grained GC
-        set(VC_LTO_FLAGS "-flto=thin -march=native ${VC_DEVIRT_FLAGS} ${VC_DEVIRT_LTO_FLAGS} ${VC_AGGRESSIVE_MATH} ${VC_VISIBILITY_FLAGS} ${VC_LLVM_PASSES} -ffunction-sections -fdata-sections")
-        # Linker flags for size reduction and performance:
-        # --icf=all: Identical Code Folding - merges identical functions
-        # --gc-sections: Remove unreferenced sections (works with -ffunction-sections/-fdata-sections)
-        # --as-needed: Only link libraries that are actually used
-        # -O2: LLD optimization level (enables additional linker optimizations)
-        # --hash-style=gnu: Use faster GNU-style hash tables
-        # LLD uses multi-threaded linking by default (auto-detects CPU count)
-        # ThinLTO backend jobs are controlled separately via --thinlto-jobs
+        set(VC_LTO_FLAGS "-flto=thin -fsplit-lto-unit -faddrsig -fmerge-all-constants -falign-functions=32 -falign-loops=16 -march=native ${VC_DEVIRT_FLAGS} ${VC_DEVIRT_LTO_FLAGS} ${VC_AGGRESSIVE_MATH} ${VC_VISIBILITY_FLAGS} -ffunction-sections -fdata-sections")
+        # Linker flags for size reduction and performance
         include(ProcessorCount)
         ProcessorCount(NPROC)
         if(NOT NPROC OR NPROC EQUAL 0)
             set(NPROC 4)
         endif()
-        set(VC_LINKER_FLAGS "-fuse-ld=lld -Wl,--icf=all -Wl,--gc-sections -Wl,--as-needed -Wl,-O2 -Wl,--hash-style=gnu -Wl,--thinlto-jobs=${NPROC}")
+        # All -mllvm passes go to linker only (ThinLTO runs backend at link time)
+        string(CONCAT VC_LINKER_FLAGS
+            "-fuse-ld=lld"
+            " -Wl,--icf=all"
+            " -Wl,--gc-sections"
+            " -Wl,--as-needed"
+            " -Wl,-O2"
+            " -Wl,--hash-style=gnu"
+            " -Wl,--lto-O3"
+            " -Wl,--lto-CGO3"
+            " -Wl,--deduplicate-strings"
+            " -Wl,--thinlto-jobs=${NPROC}"
+            " -Wl,--call-graph-profile-sort"
+            "${VC_LLVM_LINKER_PASSES}"
+            "${VC_ARCH_LINKER_PASSES}"
+        )
         message(STATUS "LLD parallel linking with ${NPROC} ThinLTO jobs")
-        message(STATUS "Using Clang: thin LTO + devirt + aggressive optimizations + ICF + GC sections + parallel linking")
+        message(STATUS "Using Clang: thin LTO + devirt + Polly + ICF + ext-TSP + CGPS + GC sections + parallel linking")
     endif()
 else()
     set(VC_LTO_FLAGS "-flto=auto")
@@ -170,42 +292,65 @@ endif()
 # ThinLTO cache for faster incremental builds (shared across all build types using LTO)
 set(VC_THINLTO_CACHE_DIR "${CMAKE_BINARY_DIR}/lto-cache")
 file(MAKE_DIRECTORY ${VC_THINLTO_CACHE_DIR})
-set(VC_THINLTO_CACHE_FLAGS "-Wl,--thinlto-cache-dir=${VC_THINLTO_CACHE_DIR} -Wl,--thinlto-cache-policy=cache_size_bytes=1g")
+if(APPLE)
+    # macOS ld64.lld: use both ld64-style cache path and ELF-style cache policy
+    set(VC_THINLTO_CACHE_FLAGS "-Wl,-cache_path_lto,${VC_THINLTO_CACHE_DIR} -Wl,--thinlto-cache-policy=cache_size_bytes=1g")
+    set(VC_STRIP_FLAGS "-Wl,-S")
+else()
+    set(VC_THINLTO_CACHE_FLAGS "-Wl,--thinlto-cache-dir=${VC_THINLTO_CACHE_DIR} -Wl,--thinlto-cache-policy=cache_size_bytes=1g")
+    set(VC_STRIP_FLAGS "-Wl,--strip-all")
+endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(VC_FAST_DEBUG)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g1 -O0")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -g1 -Wl,--compress-debug-sections=zlib")
-        message(STATUS "Fast debug mode: using -g1 (minimal debug info, compressed)")
+        if(NOT APPLE)
+            set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -g1 -Wl,--compress-debug-sections=zlib")
+        else()
+            set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -g1")
+        endif()
+        message(STATUS "Fast debug mode: using -g1 (minimal debug info)")
     else()
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -g -Wl,--compress-debug-sections=zlib")
-        message(STATUS "Debug mode: full debug info, compressed")
+        if(NOT APPLE)
+            set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -g -Wl,--compress-debug-sections=zlib")
+        else()
+            set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -g")
+        endif()
+        message(STATUS "Debug mode: full debug info")
     endif()
 elseif(CMAKE_BUILD_TYPE STREQUAL "QuickBuild")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O1")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LINKER_FLAGS}")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     # Release: fully optimized and stripped (no debug info)
+    # VC_MLLVM_FLAGS only in CXX_FLAGS (compile-time -mllvm passes, not for linker)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 ${VC_LTO_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS} ${VC_THINLTO_CACHE_FLAGS} -Wl,--strip-all")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS} ${VC_THINLTO_CACHE_FLAGS} ${VC_STRIP_FLAGS}")
     message(STATUS "Release mode: stripped binary, ThinLTO cached")
 elseif(CMAKE_BUILD_TYPE STREQUAL "ReleaseUnsafe")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 ${VC_LTO_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS} ${VC_THINLTO_CACHE_FLAGS} -Wl,--strip-all")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS} ${VC_THINLTO_CACHE_FLAGS} ${VC_STRIP_FLAGS}")
 elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
-    # RelWithDebInfo: optimized with split debug info (.dwo files)
-    # -gsplit-dwarf puts debug info in separate .dwo files, keeping main binary small
-    # Debug info can be combined later with: dwp -e <binary> -o <binary>.dwp
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 ${VC_LTO_FLAGS} -g -gsplit-dwarf")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS} ${VC_THINLTO_CACHE_FLAGS} -Wl,--compress-debug-sections=zlib")
-    message(STATUS "RelWithDebInfo mode: split DWARF debug info (.dwo files), ThinLTO cached")
+    # RelWithDebInfo: optimized with debug info
+    if(APPLE)
+        # macOS: -gsplit-dwarf is not supported; use regular debug info
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 ${VC_LTO_FLAGS} -g")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS} ${VC_THINLTO_CACHE_FLAGS}")
+        message(STATUS "RelWithDebInfo mode: debug info, ThinLTO cached")
+    else()
+        # Linux: split DWARF puts debug info in separate .dwo files, keeping main binary small
+        # Debug info can be combined later with: dwp -e <binary> -o <binary>.dwp
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 ${VC_LTO_FLAGS} -g -gsplit-dwarf")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS} ${VC_THINLTO_CACHE_FLAGS} -Wl,--compress-debug-sections=zlib")
+        message(STATUS "RelWithDebInfo mode: split DWARF debug info (.dwo files), ThinLTO cached")
+    endif()
 elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
     # MinSizeRel: optimized for smallest binary size
     # -Oz: Optimize aggressively for size (may sacrifice some speed for smaller code)
     # Machine outliner extracts common instruction sequences during LTO
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Oz ${VC_LTO_FLAGS} ${VC_SIZE_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS} ${VC_THINLTO_CACHE_FLAGS} ${VC_SIZE_LINKER_FLAGS} -Wl,--strip-all")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${VC_LTO_FLAGS} ${VC_LINKER_FLAGS} ${VC_THINLTO_CACHE_FLAGS} ${VC_SIZE_LINKER_FLAGS} ${VC_STRIP_FLAGS}")
     message(STATUS "MinSizeRel mode: size-optimized (-Oz), machine outliner enabled")
 endif()
 

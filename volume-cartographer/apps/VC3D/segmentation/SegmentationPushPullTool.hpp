@@ -17,7 +17,7 @@ class CVolumeViewer;
 class QuadSurface;
 class QTimer;
 
-class SegmentationPushPullTool : public SegmentationTool
+class SegmentationPushPullTool final : public SegmentationTool
 {
 public:
     SegmentationPushPullTool(SegmentationModule& module,
@@ -32,10 +32,10 @@ public:
                          CSurfaceCollection* surfaces);
 
     void setStepMultiplier(float multiplier);
-    [[nodiscard]] float stepMultiplier() const { return _stepMultiplier; }
+    [[nodiscard]] float stepMultiplier() const noexcept { return _stepMultiplier; }
 
     void setAlphaConfig(const AlphaPushPullConfig& config);
-    [[nodiscard]] const AlphaPushPullConfig& alphaConfig() const { return _alphaConfig; }
+    [[nodiscard]] const AlphaPushPullConfig& alphaConfig() const noexcept { return _alphaConfig; }
 
     static AlphaPushPullConfig sanitizeConfig(const AlphaPushPullConfig& config);
     static bool configsEqual(const AlphaPushPullConfig& lhs, const AlphaPushPullConfig& rhs);
@@ -45,8 +45,8 @@ public:
     void stopAll();
     bool applyStep();
 
-    void cancel() override { stopAll(); }
-    [[nodiscard]] bool isActive() const override { return _state.active; }
+    void cancel() noexcept override { stopAll(); }
+    [[nodiscard]] bool isActive() const noexcept override { return _state.active; }
 
 private:
     bool applyStepInternal();

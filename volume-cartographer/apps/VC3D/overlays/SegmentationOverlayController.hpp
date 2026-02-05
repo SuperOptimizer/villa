@@ -19,7 +19,7 @@ class PlaneSurface;
 class ViewerManager;
 class QTimer;
 
-class SegmentationOverlayController : public ViewerOverlayControllerBase
+class SegmentationOverlayController final : public ViewerOverlayControllerBase
 {
     Q_OBJECT
 
@@ -157,7 +157,7 @@ public:
 
     // Set the opacity of the approval mask overlay (0-100, where 0 is transparent and 100 is opaque)
     void setApprovalMaskOpacity(int opacity);
-    [[nodiscard]] int approvalMaskOpacity() const { return _approvalMaskOpacity; }
+    [[nodiscard]] int approvalMaskOpacity() const noexcept { return _approvalMaskOpacity; }
 
 protected:
     bool isOverlayEnabledFor(CVolumeViewer* viewer) const override;

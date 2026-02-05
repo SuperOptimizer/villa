@@ -7,7 +7,7 @@
 
 class CSurfaceCollection;
 
-class VectorOverlayController : public ViewerOverlayControllerBase
+class VectorOverlayController final : public ViewerOverlayControllerBase
 {
     Q_OBJECT
 

@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <iostream>
 
 #include <opencv2/core.hpp>
 
@@ -33,12 +34,12 @@
 #include "CSurfaceCollection.hpp"
 #include "vc/ui/VCCollection.hpp"
 
+#include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
-#include "vc/core/util/Slicing.hpp"
-#include "vc/core/util/ChunkCache.hpp"
+#include "vc/core/util/SlicingLite.hpp"
 #include "vc/core/util/Geometry.hpp"
 
 using qga = QGuiApplication;
@@ -171,7 +172,7 @@ CVolumeViewer::~CVolumeViewer()
 
 float round_scale(float scale)
 {
-    if (abs(scale-round(log2(scale))) < 0.02f)
+    if (std::abs(scale-round(log2(scale))) < 0.02f)
         scale = pow(2,round(log2(scale)));
     // the most reduced OME zarr projection is 32x so make the min zoom out 1/32 = 0.03125
     return std::clamp(scale, MIN_ZOOM, MAX_ZOOM);
@@ -654,11 +655,6 @@ void CVolumeViewer::onVolumeClicked(QPointF scene_loc, Qt::MouseButton buttons, 
     else {
         std::cout << "FIXME: onVolumeClicked()" << "\n";
     }
-}
-
-void CVolumeViewer::setCache(ChunkCache<uint8_t> *cache_)
-{
-    cache = cache_;
 }
 
 void CVolumeViewer::setPointCollection(VCCollection* point_collection)

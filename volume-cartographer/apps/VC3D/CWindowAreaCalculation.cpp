@@ -25,8 +25,6 @@
 #include "vc/core/util/DateTime.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 
-#include <nlohmann/json.hpp>
-
 namespace
 {
 
@@ -395,12 +393,9 @@ void CWindow::recalcAreaForSegments(const std::vector<std::string>& ids)
 
         // --- Persist & UI update --------------------------------------------
         try {
-            if (!surf->meta) {
-                surf->meta = std::make_unique<nlohmann::json>();
-            }
-            (*surf->meta)["area_vx2"] = area_vx2;
-            (*surf->meta)["area_cm2"] = area_cm2;
-            (*surf->meta)["date_last_modified"] = get_surface_time_str();
+            surf->meta.area_vx2 = area_vx2;
+            surf->meta.area_cm2 = area_cm2;
+            surf->meta.date_last_modified = get_surface_time_str();
             surf->save_meta();
             okCount++;
             updatedIds << QString::fromStdString(id);

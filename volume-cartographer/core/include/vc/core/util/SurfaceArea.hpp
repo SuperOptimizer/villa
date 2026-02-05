@@ -7,7 +7,6 @@
 #include <string>
 #include <vector>
 
-#include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
 #include "vc/core/util/QuadSurface.hpp"
@@ -32,7 +31,7 @@ struct MaskAreaResult
 namespace detail
 {
 template <typename Vec>
-[[gnu::always_inline]] inline bool isFiniteVec(const Vec& v) noexcept
+[[gnu::always_inline]] constexpr bool isFiniteVec(const Vec& v) noexcept
 {
     return std::isfinite(static_cast<double>(v[0])) &&
            std::isfinite(static_cast<double>(v[1])) &&
@@ -40,7 +39,7 @@ template <typename Vec>
 }
 
 template <typename Vec>
-[[gnu::always_inline]] inline bool isSentinelInvalid(const Vec& v) noexcept
+[[gnu::always_inline]] constexpr bool isSentinelInvalid(const Vec& v) noexcept
 {
     return static_cast<double>(v[0]) == -1.0 &&
            static_cast<double>(v[1]) == -1.0 &&
@@ -48,7 +47,7 @@ template <typename Vec>
 }
 
 template <typename Vec>
-[[gnu::always_inline]] inline double triangleArea(const Vec& a, const Vec& b, const Vec& c) noexcept
+[[gnu::always_inline]] constexpr double triangleArea(const Vec& a, const Vec& b, const Vec& c) noexcept
 {
     if (!isFiniteVec(a) || !isFiniteVec(b) || !isFiniteVec(c)) {
         return 0.0;
@@ -73,7 +72,7 @@ template <typename Vec>
 }
 
 template <typename Vec>
-[[gnu::always_inline]] inline double quadArea(const Vec& p00,
+[[gnu::always_inline]] constexpr double quadArea(const Vec& p00,
                        const Vec& p10,
                        const Vec& p01,
                        const Vec& p11) noexcept

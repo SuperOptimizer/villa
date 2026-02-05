@@ -24,10 +24,9 @@ class ViewerManager;
 class SurfacePanelController;
 class VolumePkg;
 class Volume;
-template <typename T> class ChunkCache;
 class CVolumeViewer;
 
-class SegmentationGrower : public QObject
+class SegmentationGrower final : public QObject
 {
     Q_OBJECT
 
@@ -38,7 +37,6 @@ public:
         SegmentationWidget* widget{nullptr};
         CSurfaceCollection* surfaces{nullptr};
         ViewerManager* viewerManager{nullptr};
-        ChunkCache<uint8_t>* chunkCache{nullptr};
     };
 
     struct UiCallbacks
@@ -72,7 +70,7 @@ public:
                int steps,
                bool inpaintOnly);
 
-    bool running() const { return _running; }
+    bool running() const noexcept { return _running; }
 
 private:
     struct ActiveRequest

@@ -10,7 +10,6 @@
 
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/util/Surface.hpp"
-#include "vc/core/util/Slicing.hpp"
 
 #include <QCoreApplication>
 #include <QTimer>
@@ -849,23 +848,10 @@ std::optional<cv::Vec3f> SegmentationPushPullTool::computeAlphaTarget(const cv::
         datasetIndex = std::clamp(datasetIndex, 0, static_cast<int>(scaleCount) - 1);
     }
 
-    z5::Dataset* dataset = volume->zarrDataset(datasetIndex);
-    if (!dataset) {
-        dataset = volume->zarrDataset(0);
-    }
-    if (!dataset) {
-        if (outUnavailable) {
-            *outUnavailable = true;
-        }
-        return std::nullopt;
-    }
-
     float scale = viewer->datasetScaleFactor();
     if (!std::isfinite(scale) || scale <= 0.0f) {
         scale = 1.0f;
     }
-
-    ChunkCache<uint8_t>* cache = viewer->chunkCachePtr();
 
     AlphaPushPullConfig cfg = sanitizeConfig(_alphaConfig);
 
@@ -898,7 +884,7 @@ std::optional<cv::Vec3f> SegmentationPushPullTool::computeAlphaTarget(const cv::
     for (float offset = start; offset <= stop + 1e-4f; offset += step) {
         cv::Mat_<uint8_t> slice;
         cv::Mat_<cv::Vec3f> offsetMat(patchSize, orientedNormal * (offset * scale));
-        readInterpolated3D(slice, dataset, coords + offsetMat, cache);
+        volume->readInterpolated(slice, coords + offsetMat, InterpolationMethod::Trilinear, datasetIndex);
         if (slice.empty()) {
             continue;
         }

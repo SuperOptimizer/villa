@@ -2,10 +2,10 @@
 
 #include <QTreeWidget>
 
-#define SURFACE_ID_COLUMN 1
-#define TIMESTAMP_COLUMN 5  // New column for timestamps
+static constexpr int SURFACE_ID_COLUMN = 1;
+static constexpr int TIMESTAMP_COLUMN = 5;  // New column for timestamps
 
-class SurfaceTreeWidgetItem : public QTreeWidgetItem
+class SurfaceTreeWidgetItem final : public QTreeWidgetItem
 {
 public:
     SurfaceTreeWidgetItem(QTreeWidget* parent) : QTreeWidgetItem(parent) {}
@@ -44,7 +44,7 @@ private:
     }
 };
 
-class SurfaceTreeWidget : public QTreeWidget
+class SurfaceTreeWidget final : public QTreeWidget
 {
     Q_OBJECT
 

@@ -1,9 +1,7 @@
 #pragma once
 
 #include <xtensor/containers/xarray.hpp>
-#include <stddef.h>
-#include <xtensor/containers/xstorage.hpp>
-#include <xtensor/core/xtensor_forward.hpp>
+#include <cstddef>
 #include <atomic>
 #include <memory>
 #include <unordered_map>
@@ -94,7 +92,7 @@ private:
         }
     };
 
-    struct CacheEntry {
+    struct alignas(64) CacheEntry {
         ChunkPtr chunk;
         size_t bytes;
         uint64_t lastAccess;

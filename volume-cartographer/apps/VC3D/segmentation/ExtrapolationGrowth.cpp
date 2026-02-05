@@ -13,7 +13,7 @@
 #include <opencv2/ximgproc.hpp>
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Slicing.hpp"
-#include "vc/core/util/ChunkCache.hpp"
+#include "vc/core/types/Volume.hpp"
 #include <z5/dataset.hxx>
 #include <xtensor/containers/xtensor.hpp>
 
@@ -43,16 +43,16 @@ SDTChunk* getOrComputeSDTChunk(SDTContext& ctx, const cv::Vec3f& worldPt) {
     binaryData.fill(0);
 
     // Clamp to dataset bounds
-    auto shape = ctx.binaryDataset->shape();
+    auto shapeZYX = ctx.volume->shapeZYX(ctx.level);
     cv::Vec3i clampedOrigin(
         std::max(0, origin[0]),
         std::max(0, origin[1]),
         std::max(0, origin[2])
     );
     cv::Vec3i clampedEnd(
-        std::min(static_cast<int>(shape[2]), origin[0] + cs),
-        std::min(static_cast<int>(shape[1]), origin[1] + cs),
-        std::min(static_cast<int>(shape[0]), origin[2] + cs)
+        std::min(static_cast<int>(shapeZYX[2]), origin[0] + cs),
+        std::min(static_cast<int>(shapeZYX[1]), origin[1] + cs),
+        std::min(static_cast<int>(shapeZYX[0]), origin[2] + cs)
     );
     cv::Vec3i readSize = clampedEnd - clampedOrigin;
 
@@ -62,7 +62,7 @@ SDTChunk* getOrComputeSDTChunk(SDTContext& ctx, const cv::Vec3f& worldPt) {
         cv::Vec3i readSizeZYX(readSize[2], readSize[1], readSize[0]);
         xt::xtensor<uint8_t, 3, xt::layout_type::column_major> readBuf(
             std::array<size_t, 3>{static_cast<size_t>(readSizeZYX[0]), static_cast<size_t>(readSizeZYX[1]), static_cast<size_t>(readSizeZYX[2])});
-        readArea3D(readBuf, clampedOriginZYX, ctx.binaryDataset, ctx.cache);
+        readArea3D(readBuf, clampedOriginZYX, ctx.volume->zarrDataset(ctx.level), ctx.volume->rawCache8());
 
         // Copy into binaryData at correct offset
         cv::Vec3i offset = clampedOrigin - origin;
@@ -360,16 +360,16 @@ uint8_t* getOrLoadBinaryChunk(SkeletonPathContext& ctx, const cv::Vec3i& origin,
     std::memset(chunk.get(), 0, voxels);
 
     // Clamp to dataset bounds
-    auto shape = ctx.binaryDataset->shape();
+    auto shapeZYX = ctx.volume->shapeZYX(ctx.level);
     cv::Vec3i clampedOrigin(
         std::max(0, origin[0]),
         std::max(0, origin[1]),
         std::max(0, origin[2])
     );
     cv::Vec3i clampedEnd(
-        std::min(static_cast<int>(shape[2]), origin[0] + size[0]),
-        std::min(static_cast<int>(shape[1]), origin[1] + size[1]),
-        std::min(static_cast<int>(shape[0]), origin[2] + size[2])
+        std::min(static_cast<int>(shapeZYX[2]), origin[0] + size[0]),
+        std::min(static_cast<int>(shapeZYX[1]), origin[1] + size[1]),
+        std::min(static_cast<int>(shapeZYX[0]), origin[2] + size[2])
     );
     cv::Vec3i readSize = clampedEnd - clampedOrigin;
 
@@ -381,7 +381,7 @@ uint8_t* getOrLoadBinaryChunk(SkeletonPathContext& ctx, const cv::Vec3i& origin,
             std::array<size_t, 3>{static_cast<size_t>(readSizeZYX[0]),
                                   static_cast<size_t>(readSizeZYX[1]),
                                   static_cast<size_t>(readSizeZYX[2])});
-        readArea3D(readBuf, clampedOriginZYX, ctx.binaryDataset, ctx.cache);
+        readArea3D(readBuf, clampedOriginZYX, ctx.volume->zarrDataset(ctx.level), ctx.volume->rawCache8());
 
         // Copy into chunk at correct offset
         cv::Vec3i offset = clampedOrigin - origin;
@@ -976,7 +976,7 @@ GrowthStats growInDirection(
 
     auto extrapolate = [extrapolationType, sdtContext, skeletonContext, direction, avgSpacing, &stepStats, &currentStep](const std::vector<cv::Vec3f>& pts) {
         cv::Vec3f pt;
-        if (extrapolationType == ExtrapolationType::SkeletonPath && skeletonContext && skeletonContext->binaryDataset) {
+        if (extrapolationType == ExtrapolationType::SkeletonPath && skeletonContext && skeletonContext->volume) {
             // Use skeleton path extrapolation
             pt = extrapolateSkeletonPath(*skeletonContext, pts.back(), pts, direction, avgSpacing);
             // Fall back to linear if skeleton path fails
@@ -994,7 +994,7 @@ GrowthStats growInDirection(
             pt = extrapolateLinear(pts);
         }
         // Apply Newton refinement towards SDT=0 if context is available
-        if (sdtContext && sdtContext->binaryDataset) {
+        if (sdtContext && sdtContext->volume) {
             pt = refineToSurface(*sdtContext, pt);
         }
         return pt;
@@ -1297,11 +1297,9 @@ TracerGrowthResult runExtrapolationGrowth(
     }
 
     // Copy metadata
-    if (surface->meta && surface->meta->is_object()) {
-        newSurface->meta = std::make_unique<nlohmann::json>(*surface->meta);
-        // Update max_gen
-        (*newSurface->meta)["max_gen"] = static_cast<int>(baseGeneration + steps);
-    }
+    newSurface->meta = surface->meta;
+    // Update max_gen
+    newSurface->meta.max_gen = static_cast<int>(baseGeneration + steps);
 
     result.surface = newSurface;
 

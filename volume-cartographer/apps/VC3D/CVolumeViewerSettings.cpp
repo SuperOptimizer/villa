@@ -222,7 +222,7 @@ void CVolumeViewer::setCompositeMethod(const std::string& method)
         "max", "mean", "min", "alpha", "beerLambert"
     };
 
-    if (method != _composite_method && validMethods.count(method) > 0) {
+    if (method != _composite_method && validMethods.contains(method)) {
         _composite_method = method;
         if (_composite_enabled) {
             renderVisible(true);

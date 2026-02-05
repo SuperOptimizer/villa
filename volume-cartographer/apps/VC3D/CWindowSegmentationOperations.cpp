@@ -9,6 +9,8 @@
 
 #include "CWindow.hpp"
 
+#include "vc/core/types/ChunkStore.hpp"
+
 #include "CommandLineToolRunner.hpp"
 #include "CSurfaceCollection.hpp"
 #include "CVolumeViewer.hpp"
@@ -130,8 +132,7 @@ void CWindow::onGrowSegmentationSurface(SegmentationGrowthMethod method,
         _segmentationModule.get(),
         _segmentationWidget,
         _surf_col,
-        _viewerManager.get(),
-        chunk_cache
+        _viewerManager.get()
     };
     _segmentationGrower->updateContext(context);
 

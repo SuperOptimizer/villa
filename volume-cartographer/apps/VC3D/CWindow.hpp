@@ -53,14 +53,14 @@ class Volume;
 class VolumePkg;
 class Surface;
 class QuadSurface;
-template<typename T> class ChunkCache;
+class ChunkStore;
 
 #ifdef __linux__
 #include <sys/inotify.h>
 #endif
 #include <QSocketNotifier>
 
-#define MAX_RECENT_VOLPKG 10
+static constexpr int MAX_RECENT_VOLPKG = 10;
 
 // Volpkg version required by this app
 static constexpr int VOLPKG_MIN_VERSION = 6;
@@ -245,7 +245,7 @@ private:
 
     bool can_change_volume_();
 
-    ChunkCache<uint8_t> *chunk_cache;
+    std::shared_ptr<ChunkStore> _chunkStore;
 
     std::unique_ptr<VolumeOverlayController> _volumeOverlay;
     std::unique_ptr<ViewerManager> _viewerManager;

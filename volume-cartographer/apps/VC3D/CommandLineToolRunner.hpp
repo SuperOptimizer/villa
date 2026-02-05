@@ -18,7 +18,7 @@ class ConsoleOutputWidget;
 /**
  * @brief Class to manage execution of command-line tools
  */
-class CommandLineToolRunner : public QObject
+class CommandLineToolRunner final : public QObject
 {
     Q_OBJECT
 

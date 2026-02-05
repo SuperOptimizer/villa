@@ -11,10 +11,14 @@
 #include "vc/core/util/HashFunctions.hpp"
 #include "vc/core/util/NormalGridVolume.hpp"
 #include "vc/core/util/OMPThreadPointCollection.hpp"
-#include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/SlicingLite.hpp"
 #include "vc/core/util/Surface.hpp"
+#include "vc/core/util/SurfaceMeta.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/SurfaceModeling.hpp"
+#include "vc/tracer/CostFunctions.hpp"
+#include "vc/tracer/TracerParams.hpp"
+#include "vc/tracer/TracerParamsIO.hpp"
 #include "vc/core/util/SurfaceArea.hpp"
 #include "vc/core/util/SurfacePatchIndex.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
@@ -333,7 +337,7 @@ public:
     }
     bool approvedAt(const cv::Vec2i& p) const {
         const auto& S = surfsC(p);
-        for (auto s : S) if (isApproved(s, p)) return true;
+        for (const auto& s : S) if (isApproved(s, p)) return true;
         return false;
     }
 
@@ -1212,7 +1216,7 @@ static void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &s
                         for (int ox = std::max(0, x - rad); ox <= std::min(w - 1, x + rad); ++ox) {
                             const auto& S = data.surfsC({oy, ox});
                             surfs.insert(S.begin(), S.end());
-                            for (auto s : S) {
+                            for (const auto& s : S) {
                                 if (data.isApproved(s, {oy, ox}))
                                     approved_neighborhood.insert(s);
                             }
@@ -1252,7 +1256,7 @@ static void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &s
                         QuadSurface* best_s = nullptr;
                         float best_res = std::numeric_limits<float>::max();
                         cv::Vec3f best_loc_raw;
-                        for (auto s : approved_neighborhood) {
+                        for (const auto& s : approved_neighborhood) {
                             auto ptr = s->pointer();
                             float thr = remap_attach_surface_th * approved_attach_relax;
                             auto _t0 = std::chrono::steady_clock::now();
@@ -1283,7 +1287,7 @@ static void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &s
         for(int i=used_area.x;i<used_area.br().x-1;i++)
             if (!static_bounds.contains(cv::Point(i,j)) && state_out(j,i) & STATE_VALID) {
                 std::set<QuadSurface*> surf_src = data_out.surfs({j,i});
-                for (auto s : surf_src) {
+                for (const auto& s : surf_src) {
                     // never drop approved pairs if requested
                     if (keep_approved_on_consistency && data_out.isApproved(s, {j,i}))
                         continue;
@@ -1312,14 +1316,14 @@ static void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &s
                 if (!static_bounds.contains(cv::Point(i,j)) && state_out(j,i) & STATE_LOC_VALID && (fringe(j, i) || fringe_next(j, i))) {
                     mutex.lock_shared();
                     std::set<QuadSurface*> surf_cands = data_out.surfs({j,i});
-                    for(auto s : data_out.surfs({j,i})) {
+                    for(const auto& s : data_out.surfs({j,i})) {
                         auto it = overlapping_map.find(s);
                         if (it != overlapping_map.end())
                             surf_cands.insert(it->second.begin(), it->second.end());
                     }
                     mutex.unlock_shared();
 
-                    for(auto test_surf : surf_cands) {
+                    for(const auto& test_surf : surf_cands) {
                         mutex.lock_shared();
                         if (data_out.has(test_surf, {j,i})) {
                             mutex.unlock_shared();
@@ -1424,77 +1428,66 @@ static void optimize_surface_mapping(SurfTrackerData &data, cv::Mat_<uint8_t> &s
     dbg_counter++;
 }
 
-QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurface*> &surfs_v, const nlohmann::json &params, float voxelsize)
+QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurface*> &surfs_v, const TracerParams &params, float voxelsize)
 {
     // Timing accumulator for pointTo calls (thread-safe via omp atomic)
     double pointTo_total_ms = 0.0;
 
-    bool flip_x = params.value("flip_x", 0);
-    int global_steps_per_window = params.value("global_steps_per_window", 0);
+    bool flip_x = params.flip_x;
+    int global_steps_per_window = params.global_steps_per_window;
 
 
     std::cout << "global_steps_per_window: " << global_steps_per_window << "\n";
     std::cout << "flip_x: " << flip_x << "\n";
-    std::filesystem::path tgt_dir = params["tgt_dir"];
+    std::filesystem::path tgt_dir = params.tgt_dir;
 
     std::unordered_map<std::string,QuadSurface*> surfs;
-    float src_step = params.value("src_step", 20);
-    float step = params.value("step", 10);
+    float src_step = params.src_step;
+    float step = params.step;
     const int step_int = surftrack_round_step(step);
-    int max_width = params.value("max_width", 80000);
+    int max_width = params.max_width;
 
-    local_cost_inl_th = params.value("local_cost_inl_th", 0.2f);
-    assoc_surface_th = params.value("same_surface_th", 2.0f);
-    duplicate_surface_th = params.value("duplicate_surface_th", assoc_surface_th);
-    remap_attach_surface_th = params.value("remap_attach_surface_th", assoc_surface_th);
-    point_to_max_iters = params.value("point_to_max_iters", 10);
-    int point_to_seed_max_iters = params.value("point_to_seed_max_iters", 1000);
-    bool use_surface_patch_index = params.value("use_surface_patch_index", false);
-    int surface_patch_stride = params.value("surface_patch_stride", 1);
-    float surface_patch_bbox_pad = params.value("surface_patch_bbox_pad", 0.0f);
-    straight_weight = params.value("straight_weight", 0.7f);            // Weight for 2D straight line constraints
-    straight_weight_3D = params.value("straight_weight_3D", 4.0f);      // Weight for 3D straight line constraints
-    sliding_w_scale = params.value("sliding_w_scale", 1.0f);            // Scale factor for sliding window
-    z_loc_loss_w = params.value("z_loc_loss_w", 0.1f);                  // Weight for Z location loss constraints
-    dist_loss_2d_w = params.value("dist_loss_2d_w", 1.0f);              // Weight for 2D distance constraints
-    dist_loss_3d_w = params.value("dist_loss_3d_w", 2.0f);              // Weight for 3D distance constraints
-    straight_min_count = params.value("straight_min_count", 1.0f);      // Minimum number of straight constraints
-    inlier_base_threshold = params.value("inlier_base_threshold", 20);  // Starting threshold for inliers
-    uint64_t deterministic_seed = uint64_t(params.value("deterministic_seed", 5489));
-    double deterministic_jitter_px = params.value("deterministic_jitter_px", 0.15);
+    local_cost_inl_th = params.local_cost_inl_th;
+    assoc_surface_th = params.same_surface_th;
+    duplicate_surface_th = params.duplicate_surface_th >= 0 ? params.duplicate_surface_th : assoc_surface_th;
+    remap_attach_surface_th = params.remap_attach_surface_th >= 0 ? params.remap_attach_surface_th : assoc_surface_th;
+    point_to_max_iters = params.point_to_max_iters;
+    int point_to_seed_max_iters = params.point_to_seed_max_iters;
+    bool use_surface_patch_index = params.use_surface_patch_index;
+    int surface_patch_stride = params.surface_patch_stride;
+    float surface_patch_bbox_pad = params.surface_patch_bbox_pad;
+    straight_weight = params.straight_weight;
+    straight_weight_3D = params.straight_weight_3D;
+    sliding_w_scale = params.sliding_w_scale;
+    z_loc_loss_w = params.z_loc_loss_w;
+    dist_loss_2d_w = params.dist_loss_2d_w;
+    dist_loss_3d_w = params.dist_loss_3d_w;
+    straight_min_count = params.straight_min_count;
+    inlier_base_threshold = params.inlier_base_threshold;
+    uint64_t deterministic_seed = params.deterministic_seed;
+    double deterministic_jitter_px = params.deterministic_jitter_px;
 
     // [APPROVED] knobs
-    bool pin_approved_points = params.value("pin_approved_points", true);
-    bool keep_approved_on_consistency = params.value("keep_approved_on_consistency", true);
-    bool prefer_approved_in_hr = params.value("prefer_approved_in_hr", true);
-    float approved_weight_hr = params.value("approved_weight_hr", 4.0f);
+    bool pin_approved_points = params.pin_approved_points;
+    bool keep_approved_on_consistency = params.keep_approved_on_consistency;
+    bool prefer_approved_in_hr = params.prefer_approved_in_hr;
+    float approved_weight_hr = params.approved_weight_hr;
 
     // Optional hard z-range constraint: [z_min, z_max]
     bool enforce_z_range = false;
     double z_min = 0.0, z_max = 0.0;
-    if (params.contains("z_range")) {
-        try {
-            if (params["z_range"].is_array() && params["z_range"].size() == 2) {
-                z_min = params["z_range"][0].get<double>();
-                z_max = params["z_range"][1].get<double>();
-                if (z_min > z_max)
-                    std::swap(z_min, z_max);
-                enforce_z_range = true;
-            }
-        } catch (...) {
-            // Ignore malformed z_range silently; fall back to no constraint
-            enforce_z_range = false;
-        }
-    } else if (params.contains("z_min") && params.contains("z_max")) {
-        try {
-            z_min = params["z_min"].get<double>();
-            z_max = params["z_max"].get<double>();
-            if (z_min > z_max)
-                std::swap(z_min, z_max);
-            enforce_z_range = true;
-        } catch (...) {
-            enforce_z_range = false;
-        }
+    if (params.z_range) {
+        z_min = (*params.z_range)[0];
+        z_max = (*params.z_range)[1];
+        if (z_min > z_max)
+            std::swap(z_min, z_max);
+        enforce_z_range = true;
+    } else if (params.z_min >= 0 && params.z_max < std::numeric_limits<int>::max()) {
+        z_min = params.z_min;
+        z_max = params.z_max;
+        if (z_min > z_max)
+            std::swap(z_min, z_max);
+        enforce_z_range = true;
     }
 
     std::cout << "  local_cost_inl_th: " << local_cost_inl_th << "\n";
@@ -1532,14 +1525,14 @@ QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurfa
     std::ofstream approved_log(log_filename);
 
     for(auto &sm : surfs_v) {
-        if (sm->meta->contains("tags") && sm->meta->at("tags").contains("approved"))
+        if (sm->meta.tags.approved.has_value())
             approved_sm.insert(sm);
-        if (!sm->meta->contains("tags") || !sm->meta->at("tags").contains("defective")) {
+        if (!sm->meta.tags.defective.has_value()) {
             surfs[sm->id] = sm;
         }
     }
 
-    for(auto sm : approved_sm)
+    for(const auto& sm : approved_sm)
         std::cout << "approved: " << sm->id << "\n";
 
     // Build overlapping map: for each surface, collect pointers to its overlapping surfaces
@@ -1658,7 +1651,7 @@ QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurfa
         if (approved_sm.contains(seed)) data.setApproved(seed, p);
         cv::Vec3f coord = points(p);
         std::cout << "testing " << p << " from cands: " << overlapping_map[seed].size() << coord << "\n";
-        for(auto s : overlapping_map[seed]) {
+        for(const auto& s : overlapping_map[seed]) {
             auto ptr = s->pointer();
             auto _t0 = std::chrono::steady_clock::now();
             float _res = s->pointTo(ptr, coord, assoc_surface_th, point_to_seed_max_iters, patch_index_ptr);
@@ -1729,7 +1722,7 @@ QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurfa
         // Column-wise processing: grow left-to-right by column (x),
         // and within each column, process approved-nearby candidates first,
         // then the rest of the column's candidates.
-        const int approved_priority_radius = params.value("approved_priority_radius", 2);
+        const int approved_priority_radius = params.approved_priority_radius;
         struct Buckets { std::vector<cv::Vec2i> prio; std::vector<cv::Vec2i> other; };
         std::map<int, Buckets> by_col;
         for (const auto& p : cands_vec) {
@@ -1794,7 +1787,7 @@ QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurfa
             // Also test all approved surfaces as "test surfaces"
             // but we won't use them as ref_surf (since they have no local locs here).
             std::set<QuadSurface*> test_surfs = local_surfs;
-            if (params.value("consider_all_approved_as_candidates", true)) {
+            if (params.consider_all_approved_as_candidates) {
                 test_surfs.insert(approved_sm.begin(), approved_sm.end());
             }
 
@@ -1805,7 +1798,7 @@ QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurfa
             bool best_ref_seed = false;
             bool best_approved = false;
 
-            for(auto ref_surf : local_surfs) {
+            for(const auto& ref_surf : local_surfs) {
                 int ref_count = 0;
                 cv::Vec2d avg = {0,0};
                 bool ref_seed = false;
@@ -1874,8 +1867,8 @@ QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurfa
 
                 //TODO could also have priorities!
                 // Relaxable fast-track for approved surfaces via params
-                int min_straight = params.value("approved_min_straight_in_grow", 0);
-                int min_count    = params.value("approved_min_count_in_grow", 0);
+                int min_straight = params.approved_min_straight_in_grow;
+                int min_count    = params.approved_min_count_in_grow;
                 if (approved_sm.contains(ref_surf) &&
                     straight_count_init >= min_straight &&
                     count_init          >= min_count) {
@@ -1904,7 +1897,7 @@ QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurfa
                     break;
                 }
 
-                for(auto test_surf : test_surfs) {
+                for(const auto& test_surf : test_surfs) {
                     auto ptr = test_surf->pointer();
                     //FIXME this does not check geometry, only if its also on the surfaces (which might be good enough...)
                     auto _t0 = std::chrono::steady_clock::now();
@@ -1987,8 +1980,8 @@ QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurfa
 
                 std::set<QuadSurface*> more_local_surfs;
 
-                for(auto test_surf : test_surfs) {
-                    for(auto s : overlapping_map[test_surf])
+                for(const auto& test_surf : test_surfs) {
+                    for(const auto& s : overlapping_map[test_surf])
                         if (!local_surfs.contains(s) && s != best_surf)
                             more_local_surfs.insert(s);
 
@@ -2025,7 +2018,7 @@ QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurfa
                 ceres::Solve(options, &problem, &summary);
 
                 //TODO only add/test if we have 2 neighs which both find locations
-                for(auto test_surf : test_surfs) {
+                for(const auto& test_surf : test_surfs) {
                     auto ptr = test_surf->pointer();
                     auto _t0 = std::chrono::steady_clock::now();
                     float res = test_surf->pointTo(ptr, best_coord, assoc_surface_th, point_to_max_iters, patch_index_ptr);
@@ -2145,8 +2138,8 @@ QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurfa
             init_area_scan();
         }
 
-        int inl_lower_bound_reg = params.value("consensus_default_th", 10);
-        int inl_lower_bound_b = params.value("consensus_limit_th", 2);
+        int inl_lower_bound_reg = params.consensus_default_th;
+        int inl_lower_bound_b = params.consensus_limit_th;
         int inl_lower_bound = inl_lower_bound_reg;
 
         if (!at_right_border && curr_best_inl_th <= inl_lower_bound)
@@ -2186,25 +2179,24 @@ QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurfa
                 cv::Mat_<cv::Vec3f> points_hr =
                     surftrack_genpoints_hr(data, state, points, used_area, step, src_step,
                                            /*inpaint=*/false, approved_weight_hr, prefer_approved_in_hr,
-                                           /*parallel=*/params.value("hr_gen_parallel", false));
+                                           /*parallel=*/params.hr_gen_parallel);
                 auto dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
-                dbg_surf->meta = std::make_unique<nlohmann::json>();
-                (*dbg_surf->meta)["vc_grow_seg_from_segments_params"] = params;
+                dbg_surf->meta.extras["vc_grow_seg_from_segments_params"] = vc::tracer::toJson(params).dump();
 
                 auto gen_channel = surftrack_generation_channel(generations, used_area, step);
                 if (!gen_channel.empty())
                     dbg_surf->setChannel("generations", gen_channel);
 
-                (*dbg_surf->meta)["max_gen"] = surftrack_max_generation(generations, used_area);
+                dbg_surf->meta.max_gen = surftrack_max_generation(generations, used_area);
 
                 // Use exact geometric area accumulated so far
                 const double area_exact_vx2 = area_accum_vox2;
                 const double area_exact_cm2 = area_exact_vx2 * double(voxelsize) * double(voxelsize) / 1e8;
-                (*dbg_surf->meta)["area_vx2"] = area_exact_vx2;
-                (*dbg_surf->meta)["area_cm2"] = area_exact_cm2;
-                (*dbg_surf->meta)["used_approved_segments"] = std::vector<std::string>(used_approved_names.begin(), used_approved_names.end());
-                (*dbg_surf->meta)["seed_surface_name"] = seed->id;
-                (*dbg_surf->meta)["seed_surface_id"] = seed->id;
+                dbg_surf->meta.area_vx2 = area_exact_vx2;
+                dbg_surf->meta.area_cm2 = area_exact_cm2;
+                dbg_surf->meta.used_approved_segments = std::vector<std::string>(used_approved_names.begin(), used_approved_names.end());
+                dbg_surf->meta.seed_surface_name = seed->id;
+                dbg_surf->meta.seed_surface_id = seed->id;
                 std::string uuid = Z_DBG_GEN_PREFIX+get_surface_time_str();
                 dbg_surf->save(tgt_dir / uuid, uuid);
                 delete dbg_surf;
@@ -2228,10 +2220,10 @@ QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurfa
                                      /*approved_weight_hr=*/approved_weight_hr,
                                      /*prefer_approved_in_hr=*/prefer_approved_in_hr,
                                      /*keep_approved_on_consistency=*/keep_approved_on_consistency,
-                                     /*hr_attach_lr_radius=*/params.value("hr_attach_lr_radius", 1),
-                                     /*hr_attach_relax_factor=*/params.value("hr_attach_relax_factor", 2.0f),
-                                     /*hr_gen_parallel=*/params.value("hr_gen_parallel", false),
-                                     /*remap_parallel=*/params.value("remap_parallel", false));
+                                     /*hr_attach_lr_radius=*/params.hr_attach_lr_radius,
+                                     /*hr_attach_relax_factor=*/params.hr_attach_relax_factor,
+                                     /*hr_gen_parallel=*/params.hr_gen_parallel,
+                                     /*remap_parallel=*/params.remap_parallel);
             if (active.area() > 0) {
                 copy(opt_data, data, active);
                 opt_points(active).copyTo(points(active));
@@ -2259,25 +2251,24 @@ QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurfa
                 cv::Mat_<cv::Vec3f> points_hr =
                     surftrack_genpoints_hr(data, state, points, used_area, step, src_step,
                                            /*inpaint=*/false, approved_weight_hr, prefer_approved_in_hr,
-                                           /*parallel=*/params.value("hr_gen_parallel", false));
+                                           /*parallel=*/params.hr_gen_parallel);
                 auto dbg_surf = new QuadSurface(points_hr(used_area_hr), {1/src_step,1/src_step});
-                dbg_surf->meta = std::make_unique<nlohmann::json>();
-                (*dbg_surf->meta)["vc_grow_seg_from_segments_params"] = params;
+                dbg_surf->meta.extras["vc_grow_seg_from_segments_params"] = vc::tracer::toJson(params).dump();
 
                 auto gen_channel = surftrack_generation_channel(generations, used_area, step);
                 if (!gen_channel.empty())
                     dbg_surf->setChannel("generations", gen_channel);
 
-                (*dbg_surf->meta)["max_gen"] = surftrack_max_generation(generations, used_area);
+                dbg_surf->meta.max_gen = surftrack_max_generation(generations, used_area);
 
                 std::string uuid = Z_DBG_GEN_PREFIX+get_surface_time_str()+"_opt";
                 const double area_exact_vx2 = area_accum_vox2;
                 const double area_exact_cm2 = area_exact_vx2 * double(voxelsize) * double(voxelsize) / 1e8;
-                (*dbg_surf->meta)["area_vx2"] = area_exact_vx2;
-                (*dbg_surf->meta)["area_cm2"] = area_exact_cm2;
-                (*dbg_surf->meta)["used_approved_segments"] = std::vector<std::string>(used_approved_names.begin(), used_approved_names.end());
-                (*dbg_surf->meta)["seed_surface_name"] = seed->id;
-                (*dbg_surf->meta)["seed_surface_id"] = seed->id;
+                dbg_surf->meta.area_vx2 = area_exact_vx2;
+                dbg_surf->meta.area_cm2 = area_exact_cm2;
+                dbg_surf->meta.used_approved_segments = std::vector<std::string>(used_approved_names.begin(), used_approved_names.end());
+                dbg_surf->meta.seed_surface_name = seed->id;
+                dbg_surf->meta.seed_surface_id = seed->id;
                 dbg_surf->save(tgt_dir / uuid, uuid);
                 delete dbg_surf;
             }
@@ -2371,13 +2362,12 @@ QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurfa
     if (!gen_channel.empty())
         surf->setChannel("generations", gen_channel);
 
-    surf->meta = std::make_unique<nlohmann::json>();
-    (*surf->meta)["max_gen"] = surftrack_max_generation(generations, used_area);
-    (*surf->meta)["area_vx2"] = area_final_vox2;
-    (*surf->meta)["area_cm2"] = area_final_cm2;
-    (*surf->meta)["used_approved_segments"] = std::vector<std::string>(used_approved_names.begin(), used_approved_names.end());
-    (*surf->meta)["seed_surface_name"] = seed->id;
-    (*surf->meta)["seed_surface_id"] = seed->id;
+    surf->meta.max_gen = surftrack_max_generation(generations, used_area);
+    surf->meta.area_vx2 = area_final_vox2;
+    surf->meta.area_cm2 = area_final_cm2;
+    surf->meta.used_approved_segments = std::vector<std::string>(used_approved_names.begin(), used_approved_names.end());
+    surf->meta.seed_surface_name = seed->id;
+    surf->meta.seed_surface_id = seed->id;
 
     std::cout << "pointTo total time: " << pointTo_total_ms << " ms" << "\n";
 

@@ -8,7 +8,7 @@
 
 class VCCollection;
 
-class PointsOverlayController : public ViewerOverlayControllerBase
+class PointsOverlayController final : public ViewerOverlayControllerBase
 {
     Q_OBJECT
 

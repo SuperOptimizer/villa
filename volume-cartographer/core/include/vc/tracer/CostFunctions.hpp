@@ -13,7 +13,7 @@
 #include <cmath>
 
 
-static double  val(const double &v) { return v; }
+inline double  val(const double &v) { return v; }
 template <typename JetT>
 double  val(const JetT &v) { return v.a; }
 

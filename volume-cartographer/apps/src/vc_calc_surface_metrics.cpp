@@ -57,7 +57,7 @@ int main(int argc, char** argv)
     if (z_max == -1)
         z_min = static_cast<int>(surface->bbox().high[2]);
 
-    nlohmann::json metrics = calc_point_metrics(collection, surface.get(), z_min, z_max);
+    SurfaceMetricsResult metrics = calc_point_metrics(collection, surface.get(), z_min, z_max);
 
     if (vm.count("winding")) {
         std::string winding_path = vm["winding"].as<std::string>();
@@ -66,9 +66,18 @@ int main(int argc, char** argv)
             std::cerr << "Error: Failed to load winding from " << winding_path << "\n";
             return 1;
         }
-        nlohmann::json winding_metrics = calc_point_winding_metrics(collection, surface.get(), winding, z_min, z_max);
-        metrics.update(winding_metrics);
+        SurfaceMetricsResult winding_metrics = calc_point_winding_metrics(collection, surface.get(), winding, z_min, z_max);
+        if (winding_metrics.surface_missing_fraction)
+            metrics.surface_missing_fraction = winding_metrics.surface_missing_fraction;
+        if (winding_metrics.winding_valid_fraction)
+            metrics.winding_valid_fraction = winding_metrics.winding_valid_fraction;
     }
+
+    // Serialize to JSON for output
+    nlohmann::json j;
+    if (metrics.in_surface_frac_valid) j["in_surface_frac_valid"] = *metrics.in_surface_frac_valid;
+    if (metrics.surface_missing_fraction) j["surface_missing_fraction"] = *metrics.surface_missing_fraction;
+    if (metrics.winding_valid_fraction) j["winding_valid_fraction"] = *metrics.winding_valid_fraction;
 
     std::ofstream o(output_path);
     if (!o.is_open()) {
@@ -76,7 +85,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    o << metrics.dump(4);
+    o << j.dump(4);
     o.close();
 
     std::cout << "Successfully calculated metrics and saved to " << output_path << "\n";

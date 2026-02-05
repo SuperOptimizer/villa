@@ -27,7 +27,7 @@
      struct NormalGridVolume::pimpl {
          std::string base_path;
          int sparse_volume;
-         nlohmann::json metadata;
+         float spiral_step;
          mutable std::shared_mutex mutex;
          mutable std::unordered_map<cv::Vec2i, CacheEntry> grid_cache;
          mutable uint64_t generation_counter = 0;
@@ -45,8 +45,10 @@
              if (!metadata_file.is_open()) {
                 throw std::runtime_error("Failed to open metadata.json in " + base_path);
             }
+            nlohmann::json metadata;
             metadata_file >> metadata;
             sparse_volume = metadata.value("sparse-volume", 1);
+            spiral_step = metadata.value("spiral-step", 0.0f);
         }
 
         std::optional<GridQueryResult> query(const cv::Point3f& point, int plane_idx) const {
@@ -205,7 +207,10 @@
     NormalGridVolume::~NormalGridVolume() = default;
     NormalGridVolume::NormalGridVolume(NormalGridVolume&&) noexcept = default;
     NormalGridVolume& NormalGridVolume::operator=(NormalGridVolume&&) noexcept = default;
-    const nlohmann::json& NormalGridVolume::metadata() const {
-        return pimpl_->metadata;
+    int NormalGridVolume::sparse_volume() const noexcept {
+        return pimpl_->sparse_volume;
+    }
+    float NormalGridVolume::spiral_step() const noexcept {
+        return pimpl_->spiral_step;
     }
 } // namespace vc::core::util

@@ -248,7 +248,7 @@ void CorrectionsState::clearAll(bool editingEnabled)
 
     if (_collection) {
         for (uint64_t id : _pendingCollectionIds) {
-            if (_managedCollectionIds.count(id) > 0) {
+            if (_managedCollectionIds.contains(id)) {
                 _collection->clearCollection(id);
             }
         }

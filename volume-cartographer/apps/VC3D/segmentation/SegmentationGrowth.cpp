@@ -16,12 +16,13 @@
 
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
-#include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/SlicingLite.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/SurfaceArea.hpp"
-#include "vc/core/util/LoadJson.hpp"
 #include "vc/core/util/DateTime.hpp"
 #include "vc/tracer/Tracer.hpp"
+#include "vc/tracer/TracerParams.hpp"
+#include "vc/tracer/TracerParamsIO.hpp"
 #include "vc/ui/VCCollection.hpp"
 
 Q_DECLARE_LOGGING_CATEGORY(lcSegGrowth)
@@ -43,17 +44,6 @@ namespace
     } catch (const std::exception& e) {
         qCWarning(lcSegGrowth) << "Failed to create backup:" << e.what();
     }
-}
-
-void ensureMetaObject(QuadSurface* surface)
-{
-    if (!surface) {
-        return;
-    }
-    if (surface->meta && surface->meta->is_object()) {
-        return;
-    }
-    surface->meta = std::make_unique<nlohmann::json>(nlohmann::json::object());
 }
 
 bool ensureGenerationsChannel(QuadSurface* surface)
@@ -144,13 +134,13 @@ QString directionToString(SegmentationGrowthDirection direction)
 }
 
 bool appendDirectionField(const SegmentationDirectionFieldConfig& config,
-                          ChunkCache<uint8_t>* cache,
+                          Volume* volume,
                           const QString& cacheRoot,
                           std::vector<DirectionField>& out,
                           QString& error)
 {
-    if (!cache) {
-        error = QStringLiteral("Direction field loading failed: chunk cache unavailable");
+    if (!volume) {
+        error = QStringLiteral("Direction field loading failed: volume unavailable");
         return false;
     }
 
@@ -194,7 +184,7 @@ bool appendDirectionField(const SegmentationDirectionFieldConfig& config,
         out.emplace_back(segmentationDirectionFieldOrientationKey(config.orientation).toStdString(),
                          std::make_unique<Chunked3dVec3fFromUint8>(std::move(datasets),
                                                                    scaleFactor,
-                                                                   cache,
+                                                                   volume->rawCache8(),
                                                                    cacheRootStr,
                                                                    uniqueId),
                          std::unique_ptr<Chunked3dFloatFromUint8>(),
@@ -272,25 +262,25 @@ void ensureNormalsInward(QuadSurface* surface, const Volume* volume)
     }
 }
 
-nlohmann::json buildTracerParams(const SegmentationGrowthRequest& request)
+TracerParams buildTracerParams(const SegmentationGrowthRequest& request)
 {
-    nlohmann::json params;
-    params["rewind_gen"] = -1;
-    params["grow_mode"] = directionToString(request.direction).toStdString();
-    params["grow_steps"] = std::max(0, request.steps);
+    TracerParams params;
+    params.rewind_gen = -1;
+    params.grow_mode = directionToString(request.direction).toStdString();
+    params.grow_steps = std::max(0, request.steps);
 
     if (request.direction == SegmentationGrowthDirection::Left || request.direction == SegmentationGrowthDirection::Right) {
-        params["grow_extra_cols"] = std::max(0, request.steps);
-        params["grow_extra_rows"] = 0;
+        params.grow_extra_cols = std::max(0, request.steps);
+        params.grow_extra_rows = 0;
     } else if (request.direction == SegmentationGrowthDirection::Up || request.direction == SegmentationGrowthDirection::Down) {
-        params["grow_extra_rows"] = std::max(0, request.steps);
-        params["grow_extra_cols"] = 0;
+        params.grow_extra_rows = std::max(0, request.steps);
+        params.grow_extra_cols = 0;
     } else {
-        params["grow_extra_rows"] = std::max(0, request.steps);
-        params["grow_extra_cols"] = std::max(0, request.steps);
+        params.grow_extra_rows = std::max(0, request.steps);
+        params.grow_extra_cols = std::max(0, request.steps);
     }
 
-    params["inpaint"] = request.inpaintOnly;
+    params.inpaint = request.inpaintOnly;
 
     bool allowUp = false;
     bool allowDown = false;
@@ -323,16 +313,17 @@ nlohmann::json buildTracerParams(const SegmentationGrowthRequest& request)
     const int allowedCount = static_cast<int>(allowUp) + static_cast<int>(allowDown) +
                              static_cast<int>(allowLeft) + static_cast<int>(allowRight);
     if (allowedCount > 0 && allowedCount < 4) {
-        std::vector<std::string> allowedStrings;
-        if (allowDown) allowedStrings.emplace_back("down");
-        if (allowRight) allowedStrings.emplace_back("right");
-        if (allowUp) allowedStrings.emplace_back("up");
-        if (allowLeft) allowedStrings.emplace_back("left");
-        params["growth_directions"] = allowedStrings;
+        if (allowDown) params.growth_directions.emplace_back("down");
+        if (allowRight) params.growth_directions.emplace_back("right");
+        if (allowUp) params.growth_directions.emplace_back("up");
+        if (allowLeft) params.growth_directions.emplace_back("left");
     }
-    if (request.customParams) {
-        for (auto it = request.customParams->begin(); it != request.customParams->end(); ++it) {
-            params[it.key()] = it.value();
+    if (request.customParamsJson) {
+        try {
+            nlohmann::json overlay = nlohmann::json::parse(*request.customParamsJson);
+            vc::tracer::applyJsonOverlay(params, overlay);
+        } catch (const std::exception& e) {
+            std::cerr << "Failed to parse customParamsJson: " << e.what() << "\n";
         }
     }
     return params;
@@ -344,7 +335,7 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
 {
     TracerGrowthResult result;
 
-    if (!context.resumeSurface || !context.volume || !context.cache) {
+    if (!context.resumeSurface || !context.volume) {
         result.error = QStringLiteral("Missing context for tracer growth");
         return result;
     }
@@ -371,7 +362,7 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
         }
     }
 
-    nlohmann::json params = buildTracerParams(request);
+    TracerParams params = buildTracerParams(request);
 
     int startGen = 0;
     if (context.resumeSurface) {
@@ -383,13 +374,8 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
             startGen = static_cast<int>(std::round(maxVal));
         }
 
-        if (context.resumeSurface->meta && context.resumeSurface->meta->is_object()) {
-            const auto& meta = *context.resumeSurface->meta;
-            auto it = meta.find("max_gen");
-            if (it != meta.end() && it->is_number()) {
-                const int metaGen = static_cast<int>(std::round(it->get<double>()));
-                startGen = std::max(startGen, metaGen);
-            }
+        if (context.resumeSurface->meta.max_gen >= 0) {
+            startGen = std::max(startGen, context.resumeSurface->meta.max_gen);
         }
 
         if (startGen <= 0) {
@@ -429,25 +415,24 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
         targetGenerations = startGen;
     }
 
-    params["generations"] = targetGenerations;
+    params.generations = targetGenerations;
     int rewindGen = -1;
     if (startGen > 1) {
         rewindGen = startGen - 1;
     }
-    params["rewind_gen"] = rewindGen;
-    params["cache_root"] = context.cacheRoot.toStdString();
+    params.rewind_gen = rewindGen;
     if (!context.normalGridPath.isEmpty()) {
-        params["normal_grid_path"] = context.normalGridPath.toStdString();
+        params.normal_grid_path = context.normalGridPath.toStdString();
     }
     if (!context.normal3dZarrPath.isEmpty()) {
-        params["normal3d_zarr_path"] = context.normal3dZarrPath.toStdString();
+        params.normal3d_zarr_path = context.normal3dZarrPath.toStdString();
     }
 
     if (request.correctionsZRange) {
         int zMin = std::max(0, request.correctionsZRange->first);
         int zMax = std::max(zMin, request.correctionsZRange->second);
-        params["z_min"] = zMin;
-        params["z_max"] = zMax;
+        params.z_min = zMin;
+        params.z_max = zMax;
     }
 
     const cv::Vec3f origin(0.0f, 0.0f, 0.0f);
@@ -464,7 +449,7 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
         }
 
         QString loadError;
-        if (!appendDirectionField(config, context.cache, context.cacheRoot, directionFields, loadError)) {
+        if (!appendDirectionField(config, context.volume, context.cacheRoot, directionFields, loadError)) {
             result.error = loadError;
             return result;
         }
@@ -494,12 +479,14 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
                 ++idx;
             }
         }
-        qCInfo(lcSegGrowth) << "  params:" << QString::fromStdString(params.dump());
+        qCInfo(lcSegGrowth) << "  params: generations=" << params.generations
+                           << " rewind_gen=" << params.rewind_gen
+                           << " grow_mode=" << params.grow_mode.c_str();
         std::filesystem::path surface_path = context.resumeSurface->path;
         createRotatingBackup(context.resumeSurface, surface_path);
         QuadSurface* surface = tracer(dataset,
                                       1.0f,
-                                      context.cache,
+                                      context.volume->rawCache8(),
                                       origin,
                                       params,
                                       context.cacheRoot.toStdString(),
@@ -507,7 +494,7 @@ TracerGrowthResult runTracerGrowth(const SegmentationGrowthRequest& request,
                                       directionFields,
                                       context.resumeSurface,
                                       std::filesystem::path(),
-                                      nlohmann::json{},
+                                      "",
                                       &correctionCollection);
 
         // Note: approval and mask channels are preserved inside the tracer
@@ -528,15 +515,13 @@ void updateSegmentationSurfaceMetadata(QuadSurface* surface,
         return;
     }
 
-    ensureMetaObject(surface);
-
-    const double previousAreaVx2 = vc::json::number_or(surface->meta.get(), "area_vx2", -1.0);
-    const double previousAreaCm2 = vc::json::number_or(surface->meta.get(), "area_cm2", -1.0);
+    const double previousAreaVx2 = surface->meta.area_vx2;
+    const double previousAreaCm2 = surface->meta.area_cm2;
 
     const cv::Mat_<cv::Vec3f>* points = surface->rawPointsPtr();
     if (points && !points->empty()) {
         const double areaVx2 = vc::surface::computeSurfaceAreaVox2(*points);
-        (*surface->meta)["area_vx2"] = areaVx2;
+        surface->meta.area_vx2 = areaVx2;
 
         double areaCm2 = std::numeric_limits<double>::quiet_NaN();
         if (voxelSize > 0.0) {
@@ -548,11 +533,11 @@ void updateSegmentationSurfaceMetadata(QuadSurface* surface,
         }
 
         if (std::isfinite(areaCm2)) {
-            (*surface->meta)["area_cm2"] = areaCm2;
+            surface->meta.area_cm2 = areaCm2;
         } else {
             // Fall back to assuming the geometry is in microns and convert directly.
             const double assumedAreaCm2 = areaVx2 * 1e-8;
-            (*surface->meta)["area_cm2"] = assumedAreaCm2;
+            surface->meta.area_cm2 = assumedAreaCm2;
             qCWarning(lcSegGrowth) << "Fallback surface area conversion applied due to missing voxel size metadata";
         }
     }
@@ -562,8 +547,8 @@ void updateSegmentationSurfaceMetadata(QuadSurface* surface,
         double minGen = 0.0;
         double maxGen = 0.0;
         cv::minMaxLoc(generations, &minGen, &maxGen);
-        (*surface->meta)["max_gen"] = static_cast<int>(std::round(maxGen));
+        surface->meta.max_gen = static_cast<int>(std::round(maxGen));
     }
 
-    (*surface->meta)["date_last_modified"] = get_surface_time_str();
+    surface->meta.date_last_modified = get_surface_time_str();
 }

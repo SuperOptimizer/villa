@@ -26,7 +26,7 @@ class QStandardItemModel;
 class QuadSurface;
 class DropdownChecklistButton;
 
-class SurfacePanelController : public QObject
+class SurfacePanelController final : public QObject
 {
     Q_OBJECT
 

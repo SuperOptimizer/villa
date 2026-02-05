@@ -5,7 +5,7 @@
 
 
 
-class SettingsDialog : public QDialog, private Ui_VCSettingsDlg
+class SettingsDialog final : public QDialog, private Ui_VCSettingsDlg
 {
     Q_OBJECT
 

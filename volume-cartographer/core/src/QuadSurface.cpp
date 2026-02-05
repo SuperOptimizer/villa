@@ -5,7 +5,8 @@
 #include "vc/core/util/Geometry.hpp"
 #include "vc/core/util/LoadJson.hpp"
 #include "vc/core/util/PointIndex.hpp"
-#include "vc/core/util/Slicing.hpp"
+#include "vc/core/util/SlicingLite.hpp"
+#include "vc/core/util/SurfaceMetaIO.hpp"
 #include "vc/core/util/SurfacePatchIndex.hpp"
 
 #include <opencv2/imgproc.hpp>
@@ -105,35 +106,29 @@ QuadSurface::QuadSurface(cv::Mat_<cv::Vec3f> *points, const cv::Vec2f &scale)
     _center = {static_cast<float>(_points->cols/2.0/_scale[0]), static_cast<float>(_points->rows/2.0/_scale[1]), 0.f};
 }
 
-namespace {
-static Rect3D rect_from_json(const nlohmann::json &json)
-{
-    return {{json[0][0],json[0][1],json[0][2]},{json[1][0],json[1][1],json[1][2]}};
-}
-} // anonymous namespace
-
 QuadSurface::QuadSurface(const std::filesystem::path &path_)
 {
     path = path_;
     id = path_.filename().string();
     auto metaPath = path_ / "meta.json";
-    meta = std::make_unique<nlohmann::json>(vc::json::load_json_file(metaPath));
+    auto metaJson = vc::json::load_json_file(metaPath);
+    meta = vc::meta::parseFromJson(metaJson);
 
-    if (meta->contains("bbox"))
-        _bbox = rect_from_json((*meta)["bbox"]);
+    if (meta.bbox)
+        _bbox = {(*meta.bbox)[0], (*meta.bbox)[1]};
 
     _maskTimestamp = readMaskTimestamp(path);
     _needsLoad = true;  // Points will be loaded lazily
 }
 
-QuadSurface::QuadSurface(const std::filesystem::path &path_, const nlohmann::json &json)
+QuadSurface::QuadSurface(const std::filesystem::path &path_, SurfaceMeta smeta)
 {
     path = path_;
     id = path_.filename().string();
-    meta = std::make_unique<nlohmann::json>(json);
+    meta = std::move(smeta);
 
-    if (json.contains("bbox"))
-        _bbox = rect_from_json(json["bbox"]);
+    if (meta.bbox)
+        _bbox = {(*meta.bbox)[0], (*meta.bbox)[1]};
 
     _maskTimestamp = readMaskTimestamp(path);
     _needsLoad = true;  // Points will be loaded lazily
@@ -155,7 +150,7 @@ void QuadSurface::ensureLoaded()
     }
 
     auto loaded = load_quad_from_tifxyz(path.string());
-    if (!loaded) {
+    if (!loaded) [[unlikely]] {
         throw std::runtime_error("Failed to load surface from: " + path.string());
     }
 
@@ -204,7 +199,7 @@ cv::Vec3f QuadSurface::coord(const cv::Vec3f &ptr, const cv::Vec3f &offset)
     cv::Vec3f p = internal_loc(offset+_center, ptr, _scale);
 
     cv::Rect bounds = {0,0,_points->cols-2,_points->rows-2};
-    if (!bounds.contains(cv::Point(p[0],p[1])))
+    if (!bounds.contains(cv::Point(p[0],p[1]))) [[unlikely]]
         return {-1,-1,-1};
 
     return at_int((*_points), {p[0],p[1]});
@@ -246,14 +241,14 @@ cv::Vec3f QuadSurface::normal(const cv::Vec3f &ptr, const cv::Vec3f &offset)
 cv::Vec3f QuadSurface::gridNormal(int row, int col) const
 {
     const_cast<QuadSurface*>(this)->ensureLoaded();
-    if (!_points) {
+    if (!_points) [[unlikely]] {
         return {NAN, NAN, NAN};
     }
-    if (row < 0 || row >= _points->rows || col < 0 || col >= _points->cols)
+    if (row < 0 || row >= _points->rows || col < 0 || col >= _points->cols) [[unlikely]]
         return {NAN, NAN, NAN};
 
     // Build normal cache on first access
-    if (_normalCache.empty() || _normalCache.size() != _points->size()) {
+    if (_normalCache.empty() || _normalCache.size() != _points->size()) [[unlikely]] {
         _normalCache.create(_points->rows, _points->cols);
         for (int r = 0; r < _points->rows; r++) {
             for (int c = 0; c < _points->cols; c++) {
@@ -577,7 +572,7 @@ static float search_min_loc(const cv::Mat_<E> &points, cv::Vec2f &loc, cv::Vec3f
             cv::Vec2f cand = loc+mul(off,step);
 
             //just skip if out of bounds
-            if (!boundary.contains(cv::Point(cand)))
+            if (!boundary.contains(cv::Point(cand))) [[unlikely]]
                 continue;
 
             val = at_int(points, cand);
@@ -635,7 +630,7 @@ static float pointTo_(cv::Vec2f &loc, const cv::Mat_<E> &points, const cv::Vec3f
         //FIXME skipn invalid init locs!
         loc = {static_cast<float>(1 + (rand() % (points.cols-3))), static_cast<float>(1 + (rand() % (points.rows-3)))};
 
-        if (points(loc[1],loc[0])[0] == -1)
+        if (points(loc[1],loc[0])[0] == -1) [[unlikely]]
             continue;
 
         r_full++;
@@ -708,10 +703,10 @@ float QuadSurface::pointTo(cv::Vec3f &ptr, const cv::Vec3f &tgt, float th, int m
 
         // Search from each candidate cell
         for (const auto& [row, col] : candidateCells) {
-            if (col < 1 || col >= _points->cols - 1 || row < 1 || row >= _points->rows - 1) {
+            if (col < 1 || col >= _points->cols - 1 || row < 1 || row >= _points->rows - 1) [[unlikely]] {
                 continue;
             }
-            if ((*_points)(row, col)[0] == -1) {
+            if ((*_points)(row, col)[0] == -1) [[unlikely]] {
                 continue;
             }
 
@@ -969,19 +964,17 @@ void QuadSurface::saveSnapshot(int maxBackups)
     writeDataToDirectory(snapshot_dest, "mask");
 
     // Write metadata - create a copy so we don't modify the original
-    nlohmann::json snapshotMeta;
-    if (meta) {
-        snapshotMeta = *meta;
-    }
-    snapshotMeta["bbox"] = {{bbox().low[0], bbox().low[1], bbox().low[2]},
-                            {bbox().high[0], bbox().high[1], bbox().high[2]}};
-    snapshotMeta["type"] = "seg";
-    snapshotMeta["uuid"] = id;
-    snapshotMeta["format"] = "tifxyz";
-    snapshotMeta["scale"] = {_scale[0], _scale[1]};
+    SurfaceMeta snapshotMetaCopy = meta;
+    auto bb = bbox();
+    snapshotMetaCopy.bbox = std::array<cv::Vec3f, 2>{bb.low, bb.high};
+    snapshotMetaCopy.type = "seg";
+    snapshotMetaCopy.uuid = id;
+    snapshotMetaCopy.format = "tifxyz";
+    snapshotMetaCopy.scale = _scale;
 
+    auto snapshotJson = vc::meta::toJson(snapshotMetaCopy);
     std::ofstream o(snapshot_dest / "meta.json");
-    o << std::setw(4) << snapshotMeta << "\n";
+    o << std::setw(4) << snapshotJson << "\n";
     o.close();
 
     // Copy mask.tif and generations.tif if they exist on disk
@@ -1034,18 +1027,16 @@ void QuadSurface::save(const std::string &path_, const std::string &uuid, bool f
     }
 
     // Prepare and write metadata
-    if (!meta)
-        meta = std::make_unique<nlohmann::json>();
+    auto bb = bbox();
+    meta.bbox = std::array<cv::Vec3f, 2>{bb.low, bb.high};
+    meta.type = "seg";
+    meta.uuid = uuid;
+    meta.format = "tifxyz";
+    meta.scale = _scale;
 
-    (*meta)["bbox"] = {{bbox().low[0], bbox().low[1], bbox().low[2]},
-                       {bbox().high[0], bbox().high[1], bbox().high[2]}};
-    (*meta)["type"] = "seg";
-    (*meta)["uuid"] = uuid;
-    (*meta)["format"] = "tifxyz";
-    (*meta)["scale"] = {_scale[0], _scale[1]};
-
+    auto metaJson = vc::meta::toJson(meta);
     std::ofstream o(path / "meta.json.tmp");
-    o << std::setw(4) << (*meta) << "\n";
+    o << std::setw(4) << metaJson << "\n";
     o.close();
 
     // Rename to make creation atomic
@@ -1103,13 +1094,12 @@ void QuadSurface::save(const std::string &path_, const std::string &uuid, bool f
 
 void QuadSurface::save_meta()
 {
-    if (!meta)
-        throw std::runtime_error("can't save_meta() without metadata!");
     if (path.empty())
         throw std::runtime_error("no storage path for QuadSurface");
 
+    auto metaJson = vc::meta::toJson(meta);
     std::ofstream o(path/"meta.json.tmp");
-    o << std::setw(4) << (*meta) << "\n";
+    o << std::setw(4) << metaJson << "\n";
 
     //rename to make creation atomic
     std::filesystem::rename(path/"meta.json.tmp", path/"meta.json");
@@ -1262,8 +1252,8 @@ std::unique_ptr<QuadSurface> load_quad_from_tifxyz(const std::string &path, int 
     if (!meta_f.is_open() || !meta_f.good()) {
         throw std::runtime_error("Cannot open meta.json at: " + path);
     }
-    nlohmann::json metadata = nlohmann::json::parse(meta_f);
-    cv::Vec2f scale = {metadata["scale"][0].get<float>(), metadata["scale"][1].get<float>()};
+    nlohmann::json metadataJson = nlohmann::json::parse(meta_f);
+    cv::Vec2f scale = {metadataJson["scale"][0].get<float>(), metadataJson["scale"][1].get<float>()};
 
     auto points = std::make_unique<cv::Mat_<cv::Vec3f>>();
     int W=0, H=0;
@@ -1398,8 +1388,8 @@ std::unique_ptr<QuadSurface> load_quad_from_tifxyz(const std::string &path, int 
 
     auto surf = std::make_unique<QuadSurface>(points.release(), scale);
     surf->path = path;
-    surf->id   = metadata["uuid"];
-    surf->meta = std::make_unique<nlohmann::json>(metadata);
+    surf->meta = vc::meta::parseFromJson(metadataJson);
+    surf->id   = surf->meta.uuid;
 
     // Register extra channels lazily (left as OpenCV-based on-demand load).
     for (const auto& entry : std::filesystem::directory_iterator(path)) {

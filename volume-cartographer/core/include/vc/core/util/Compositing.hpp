@@ -6,10 +6,32 @@
 
 #include <opencv2/core/matx.hpp>
 
+// Enum for fast composite method dispatch (avoids string comparisons in hot loops)
+enum class CompositeMethodType : uint8_t {
+    Mean,
+    Max,
+    Min,
+    Alpha,
+    BeerLambert
+};
+
+// Convert string to enum (call once, not per-pixel)
+[[nodiscard]] inline CompositeMethodType parseCompositeMethod(const std::string& s) noexcept {
+    if (s == "max") return CompositeMethodType::Max;
+    if (s == "min") return CompositeMethodType::Min;
+    if (s == "alpha") return CompositeMethodType::Alpha;
+    if (s == "beerLambert") return CompositeMethodType::BeerLambert;
+    return CompositeMethodType::Mean;
+}
+
 // Parameters for multi-layer compositing
 struct CompositeParams {
     // Compositing method: "mean", "max", "min", "alpha", "beerLambert"
     std::string method = "mean";
+    CompositeMethodType methodType = CompositeMethodType::Mean;  // Pre-resolved for hot paths
+
+    // Call after setting method string to update the enum
+    void resolveMethodType() noexcept { methodType = parseCompositeMethod(method); }
 
     // Alpha compositing parameters
     float alphaMin = 0.0f;
@@ -57,11 +79,15 @@ float beerLambert(const LayerStack& stack, const CompositeParams& params) noexce
 float compositeLayerStack(
     const LayerStack& stack,
     const CompositeParams& params
-);
+) noexcept;
 
 // Utility: check if method requires all layer values to be stored
 // (as opposed to running accumulator like max/min)
 bool methodRequiresLayerStorage(const std::string& method) noexcept;
+
+[[nodiscard]] inline bool methodRequiresLayerStorage(CompositeMethodType t) noexcept {
+    return t != CompositeMethodType::Max && t != CompositeMethodType::Min && t != CompositeMethodType::Mean;
+}
 
 // Utility: get list of available compositing methods
 std::vector<std::string> availableCompositeMethods();

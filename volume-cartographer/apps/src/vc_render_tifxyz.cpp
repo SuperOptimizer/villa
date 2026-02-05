@@ -3,7 +3,8 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/StreamOperators.hpp"
 #include "vc/core/util/Tiff.hpp"
-#include "vc/core/util/ChunkCache.hpp"
+#include "vc/core/types/Volume.hpp"
+#include "vc/core/types/ChunkStore.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -23,7 +24,8 @@
 #include <tiffio.h>
 
 #include "z5/factory.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
+// z5/multiarray/xtensor_access.hxx removed: use readSubarray3D/writeSubarray3D
+// wrappers from Slicing.hpp to avoid z5 template bloat in this TU.
 
 namespace po = boost::program_options;
 
@@ -292,7 +294,7 @@ cv::Vec3f calculateMeshCentroid(const cv::Mat_<cv::Vec3f>& points)
  * @param referencePoint The reference point to orient normals towards/away from
  * @return bool True if normals should be flipped, false otherwise
  */
-bool shouldFlipNormals(
+static bool shouldFlipNormals(
     const cv::Mat_<cv::Vec3f>& points,
     const cv::Mat_<cv::Vec3f>& normals,
     const cv::Vec3f& referencePoint)
@@ -534,8 +536,8 @@ static inline void genTile(
 // Render one slice from base points and unit step directions at offset `off`
 static inline void renderSliceFromBase(
     cv::Mat& out,
-    z5::Dataset* ds,
-    ChunkCache<uint8_t>* cache,
+    Volume* vol,
+    int level,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
     float off,
@@ -550,15 +552,15 @@ static inline void renderSliceFromBase(
         }
     }
     cv::Mat_<uint8_t> tmp;
-    readInterpolated3D(tmp, ds, coords, cache);
+    vol->readInterpolated(tmp, coords, InterpolationMethod::Trilinear, level);
     out = tmp;
 }
 
 // 16-bit variant (uses the uint16_t overload)
 static inline void renderSliceFromBase16(
     cv::Mat& out,
-    z5::Dataset* ds,
-    ChunkCache<uint16_t>* cache,
+    Volume* vol,
+    int level,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
     float off,
@@ -572,7 +574,9 @@ static inline void renderSliceFromBase16(
             coords(yy, xx) = p + off * d * static_cast<float>(ds_scale);
         }
     }
-    cv::Mat_<uint16_t> tmp; readInterpolated3D(tmp, ds, coords, cache); out = tmp;
+    cv::Mat_<uint16_t> tmp;
+    vol->readInterpolated(tmp, coords, InterpolationMethod::Trilinear, level);
+    out = tmp;
 }
 
 enum class AccumType {
@@ -937,7 +941,7 @@ int main(int argc, char *argv[])
     try {
         po::store(po::command_line_parser(argc, argv).options(all).run(), parsed);
 
-        if (parsed.count("help") > 0 || argc < 2) {
+        if (parsed.contains("help") || argc < 2) {
             std::cout << "vc_render_tifxyz: Render volume data using segmentation surfaces\n\n";
             std::cout << all << '\n';
             return EXIT_SUCCESS;
@@ -1098,12 +1102,12 @@ int main(int argc, char *argv[])
 
     std::filesystem::path vol_path = parsed["volume"].as<std::string>();
     std::string base_output_arg = parsed["output"].as<std::string>();
-    const bool has_render_folder = parsed.count("render-folder") > 0;
+    const bool has_render_folder = parsed.contains("render-folder");
     std::filesystem::path render_folder_path;
     std::string batch_format;
     if (has_render_folder) {
         render_folder_path = std::filesystem::path(parsed["render-folder"].as<std::string>());
-        if (parsed.count("format") == 0) {
+        if (!parsed.contains("format")) {
             std::cerr << "Error: --format is required when using --render-folder (zarr|tif).\n";
             return EXIT_FAILURE;
         }
@@ -1120,7 +1124,7 @@ int main(int argc, char *argv[])
     }
     std::filesystem::path seg_path;
     if (!has_render_folder) {
-        if (parsed.count("segmentation") == 0) {
+        if (!parsed.contains("segmentation")) {
             std::cerr << "Error: --segmentation is required unless --render-folder is used.\n";
             return EXIT_FAILURE;
         }
@@ -1202,13 +1206,13 @@ int main(int argc, char *argv[])
 
     // --- New multi-affine loading & composition ---
     std::vector<std::pair<std::string,bool>> affineSpecs; // (path, invert?)
-    if (parsed.count("affine") > 0) {
+    if (parsed.contains("affine")) {
         for (const auto& s : parsed["affine"].as<std::vector<std::string>>()) {
             affineSpecs.emplace_back(parseAffineSpec(s));
         }
     }
     // Back-compat: single --affine-transform [--invert-affine]
-    if (parsed.count("affine-transform") > 0) {
+    if (parsed.contains("affine-transform")) {
         const std::string singlePath = parsed["affine-transform"].as<std::string>();
         const bool singleInv = parsed["invert-affine"].as<bool>();
         affineSpecs.emplace_back(singlePath, singleInv);
@@ -1216,7 +1220,7 @@ int main(int argc, char *argv[])
                   << (singleInv ? " (with inversion)" : "") << "; prefer --affine.\n";
     }
     // Optional index-based inversion flags for --affine
-    if (parsed.count("affine-invert") > 0 && !affineSpecs.empty()) {
+    if (parsed.contains("affine-invert") && !affineSpecs.empty()) {
         std::set<int> idxInv;
         for (int idx : parsed["affine-invert"].as<std::vector<int>>()) {
             if (idx < 0 || idx >= static_cast<int>(affineSpecs.size())) {
@@ -1228,7 +1232,7 @@ int main(int argc, char *argv[])
         }
         int k = 0;
         for (auto& spec : affineSpecs) {
-            if (idxInv.count(k)) spec.second = true;
+            if (idxInv.contains(k)) spec.second = true;
             ++k;
         }
     }
@@ -1260,17 +1264,25 @@ int main(int argc, char *argv[])
         printMat4x4(affineTransform.matrix, "Final composed affine (applied to points first):");
     }
 
-    z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset ds_handle(group, std::to_string(group_idx), json::parse(std::ifstream(vol_path/std::to_string(group_idx)/".zarray")).value<std::string>("dimension_separator","."));
-    std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
+    auto volume = Volume::New(vol_path);
 
-    std::cout << "zarr dataset size for scale group " << group_idx << ds->shape() << "\n";
-    const bool output_is_u16 = (ds->getDtype() == z5::types::Datatype::uint16);
+    {
+        const auto shapeZYX = volume->shapeZYX(group_idx);
+        std::cout << "zarr dataset size for scale group " << group_idx
+                  << " [" << shapeZYX[0] << ", " << shapeZYX[1] << ", " << shapeZYX[2] << "]\n";
+    }
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    const bool output_is_u16 = (volume->zarrDataset(group_idx)->getDtype() == z5::types::Datatype::uint16);
+#pragma GCC diagnostic pop
     if (output_is_u16)
         std::cout << "Detected source dtype=uint16 -> rendering as uint16" << "\n";
     else
         std::cout << "Detected source dtype!=uint16 -> rendering as uint8 (default)" << "\n";
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << "\n";
+    {
+        const auto chunkSh = volume->chunkShape(group_idx);
+        std::cout << "chunk shape [" << chunkSh[0] << ", " << chunkSh[1] << ", " << chunkSh[2] << "]\n";
+    }
     std::cout << "output argument: " << base_output_arg << "\n";
 
     // Enforce 90-degree-increment rotations only
@@ -1299,8 +1311,10 @@ int main(int argc, char *argv[])
     const size_t cache_gb = parsed["cache-gb"].as<size_t>();
     const size_t cache_bytes = cache_gb * 1024ull * 1024ull * 1024ull;
     std::cout << "Chunk cache: " << cache_gb << " GB (" << cache_bytes << " bytes)" << "\n";
-    ChunkCache<uint8_t> chunk_cache_u8(cache_bytes);
-    ChunkCache<uint16_t> chunk_cache_u16(cache_bytes);
+    {
+        auto store = std::make_shared<ChunkStore>(cache_bytes);
+        volume->setChunkStore(store);
+    }
 
     auto process_one = [&](const std::filesystem::path& seg_folder, const std::string& out_arg, bool force_zarr) -> void {
         std::filesystem::path output_path_local(out_arg);
@@ -1312,7 +1326,7 @@ int main(int argc, char *argv[])
         bool output_is_zarr = force_zarr || (output_path_local.extension() == ".zarr");
         if (!output_is_zarr) {
             // May be a directory target (no printf pattern): create directory
-            if (output_path_local.string().find('%') == std::string::npos) {
+            if (!output_path_local.string().contains('%')) {
                 std::filesystem::create_directories(output_path_local);
             } else {
                 std::filesystem::create_directories(output_path_local.parent_path());
@@ -1597,7 +1611,7 @@ int main(int argc, char *argv[])
 
                     if (output_is_u16) {
                         auto renderOne16 = [&](cv::Mat& dst, float offset) {
-                            renderSliceFromBase16(dst, ds.get(), &chunk_cache_u16,
+                            renderSliceFromBase16(dst, volume.get(), group_idx,
                                                   basePoints, stepDirs, offset, static_cast<float>(ds_scale));
                         };
                         xt::xarray<uint16_t> outChunk =
@@ -1632,10 +1646,10 @@ int main(int argc, char *argv[])
                         const size_t x0_dst = static_cast<size_t>(dstTx) * CW;
                         const size_t y0_dst = static_cast<size_t>(dstTy) * CH;
                         z5::types::ShapeType outOffset = {z0, y0_dst, x0_dst};
-                        z5::multiarray::writeSubarray<uint16_t>(dsOut0, outChunk, outOffset.begin());
+                        writeSubarray3D(*dsOut0, outChunk, outOffset);
                     } else {
                         auto renderOne8 = [&](cv::Mat& dst, float offset) {
-                            renderSliceFromBase(dst, ds.get(), &chunk_cache_u8,
+                            renderSliceFromBase(dst, volume.get(), group_idx,
                                                 basePoints, stepDirs, offset, static_cast<float>(ds_scale));
                         };
                         xt::xarray<uint8_t> outChunk = xt::empty<uint8_t>({dz, dy_dst, dx_dst});
@@ -1669,7 +1683,7 @@ int main(int argc, char *argv[])
                         const size_t x0_dst = static_cast<size_t>(dstTx) * CW;
                         const size_t y0_dst = static_cast<size_t>(dstTy) * CH;
                         z5::types::ShapeType outOffset = {z0, y0_dst, x0_dst};
-                        z5::multiarray::writeSubarray<uint8_t>(dsOut0, outChunk, outOffset.begin());
+                        writeSubarray3D(*dsOut0, outChunk, outOffset);
                     }
 
                     size_t done = ++tilesDone;
@@ -1746,7 +1760,7 @@ int main(int argc, char *argv[])
                         if (output_is_u16) {
                             xt::xarray<uint16_t> srcChunk = xt::empty<uint16_t>({sz, sy, sx});
                             z5::types::ShapeType sOff = {static_cast<size_t>(2*z), static_cast<size_t>(2*y), static_cast<size_t>(2*x)};
-                            z5::multiarray::readSubarray<uint16_t>(src, srcChunk, sOff.begin());
+                            readSubarray3D(srcChunk, *src, sOff);
                             xt::xarray<uint16_t> dstChunk = xt::empty<uint16_t>({lz, ly, lx});
                             for (size_t zz = 0; zz < lz; ++zz)
                                 for (size_t yy = 0; yy < ly; ++yy)
@@ -1761,11 +1775,11 @@ int main(int argc, char *argv[])
                                         dstChunk(zz, yy, xx) = static_cast<uint16_t>((sum + (cnt/2)) / std::max(1, cnt));
                                     }
                             z5::types::ShapeType dOff = {z, static_cast<size_t>(y), static_cast<size_t>(x)};
-                            z5::multiarray::writeSubarray<uint16_t>(dst, dstChunk, dOff.begin());
+                            writeSubarray3D(*dst, dstChunk, dOff);
                         } else {
                             xt::xarray<uint8_t> srcChunk = xt::empty<uint8_t>({sz, sy, sx});
                             z5::types::ShapeType sOff = {static_cast<size_t>(2*z), static_cast<size_t>(2*y), static_cast<size_t>(2*x)};
-                            z5::multiarray::readSubarray<uint8_t>(src, srcChunk, sOff.begin());
+                            readSubarray3D(srcChunk, *src, sOff);
                             xt::xarray<uint8_t> dstChunk = xt::empty<uint8_t>({lz, ly, lx});
                             for (size_t zz = 0; zz < lz; ++zz)
                                 for (size_t yy = 0; yy < ly; ++yy)
@@ -1780,7 +1794,7 @@ int main(int argc, char *argv[])
                                         dstChunk(zz, yy, xx) = static_cast<uint8_t>((sum + (cnt/2)) / std::max(1, cnt));
                                     }
                             z5::types::ShapeType dOff = {z, static_cast<size_t>(y), static_cast<size_t>(x)};
-                            z5::multiarray::writeSubarray<uint8_t>(dst, dstChunk, dOff.begin());
+                            writeSubarray3D(*dst, dstChunk, dOff);
                         }
 
                         size_t done = ++tilesDone;
@@ -1913,7 +1927,7 @@ int main(int argc, char *argv[])
                         if (output_is_u16) {
                             xt::xarray<uint16_t> tile = xt::empty<uint16_t>({Z, static_cast<size_t>(dy), static_cast<size_t>(dx)});
                             z5::types::ShapeType off = {0, static_cast<size_t>(y0_src), static_cast<size_t>(x0_src)};
-                            z5::multiarray::readSubarray<uint16_t>(dsL0, tile, off.begin());
+                            readSubarray3D(tile, *dsL0, off);
                             for (size_t z = 0; z < Z; ++z) {
                                 cv::Mat srcTile(static_cast<int>(dy), static_cast<int>(dx), CV_16UC1);
                                 for (uint32_t yy = 0; yy < dy; ++yy) {
@@ -1926,7 +1940,7 @@ int main(int argc, char *argv[])
                         } else {
                             xt::xarray<uint8_t> tile = xt::empty<uint8_t>({Z, static_cast<size_t>(dy), static_cast<size_t>(dx)});
                             z5::types::ShapeType off = {0, static_cast<size_t>(y0_src), static_cast<size_t>(x0_src)};
-                            z5::multiarray::readSubarray<uint8_t>(dsL0, tile, off.begin());
+                            readSubarray3D(tile, *dsL0, off);
                             for (size_t z = 0; z < Z; ++z) {
                                 cv::Mat srcTile(static_cast<int>(dy), static_cast<int>(dx), CV_8UC1);
                                 for (uint32_t yy = 0; yy < dy; ++yy) {
@@ -1974,7 +1988,7 @@ int main(int argc, char *argv[])
                 const double num_slices_center = 0.5 * (static_cast<double>(std::max(1, num_slices)) - 1.0);
 
                 auto make_out_path_base = [&](int sliceIdx) -> std::filesystem::path {
-                    if (output_path_local.string().find('%') == std::string::npos) {
+                    if (!output_path_local.string().contains('%')) {
                         int pad = 2; int v = std::max(0, num_slices-1);
                         while (v >= 100) { pad++; v /= 10; }
                         std::ostringstream fn;
@@ -2141,7 +2155,7 @@ int main(int argc, char *argv[])
 
                     if (output_is_u16) {
                         std::vector<cv::Mat_<uint16_t>> rawSlices;
-                        readMultiSlice(rawSlices, ds.get(), &chunk_cache_u16, basePoints, stepDirs, allOffsets);
+                        volume->readMultiSlice(rawSlices, basePoints, stepDirs, allOffsets, group_idx);
 
                         // Process each slice (accumulate sub-samples if needed)
                         std::vector<cv::Mat> processedSlices;
@@ -2192,7 +2206,7 @@ int main(int argc, char *argv[])
                         }
                     } else {
                         std::vector<cv::Mat_<uint8_t>> rawSlices;
-                        readMultiSlice(rawSlices, ds.get(), &chunk_cache_u8, basePoints, stepDirs, allOffsets);
+                        volume->readMultiSlice(rawSlices, basePoints, stepDirs, allOffsets, group_idx);
 
                         // Process each slice (accumulate sub-samples if needed)
                         std::vector<cv::Mat> processedSlices;
@@ -2252,14 +2266,13 @@ int main(int argc, char *argv[])
                         lastPrint = now;
                         double elapsed = std::chrono::duration<double>(now - bandWallStart).count();
                         double eta = (bandsDone > 0) ? elapsed * (double(bandsThisPart) / bandsDone - 1.0) : 0.0;
-                        auto cs8 = chunk_cache_u8.stats();
-                        auto cs16 = chunk_cache_u16.stats();
-                        uint64_t hits = cs8.hits + cs16.hits;
-                        uint64_t misses = cs8.misses + cs16.misses;
+                        auto cs = volume->chunkStore()->stats();
+                        uint64_t hits = cs.hits;
+                        uint64_t misses = cs.misses;
                         uint64_t tot = hits + misses;
                         double hr = tot > 0 ? 100.0 * hits / tot : 0.0;
-                        double gbRead = (cs8.bytesRead + cs16.bytesRead) / (1024.0*1024.0*1024.0);
-                        uint64_t evictions = cs8.evictions + cs16.evictions;
+                        double gbRead = cs.bytesRead / (1024.0*1024.0*1024.0);
+                        uint64_t evictions = cs.evictions;
                         int pct = static_cast<int>(100.0 * (bandIdx + 1) / numBands);
                         std::cout << "[tif] band " << (bandIdx + 1) << "/" << numBands
                                   << " (" << pct << "%)  "
@@ -2336,19 +2349,17 @@ int main(int argc, char *argv[])
 
     // Print cache statistics
     {
-        auto printStats = [](const char* name, const auto& s) {
-            uint64_t total = s.hits + s.misses;
-            if (total == 0) return;
-            double hitRate = 100.0 * s.hits / total;
-            double gbRead = s.bytesRead / (1024.0 * 1024.0 * 1024.0);
-            std::cout << "[" << name << " cache] hits: " << s.hits
-                      << "  misses: " << s.misses
+        auto cs = volume->chunkStore()->stats();
+        uint64_t total = cs.hits + cs.misses;
+        if (total > 0) {
+            double hitRate = 100.0 * cs.hits / total;
+            double gbRead = cs.bytesRead / (1024.0 * 1024.0 * 1024.0);
+            std::cout << "[cache] hits: " << cs.hits
+                      << "  misses: " << cs.misses
                       << "  hit rate: " << std::fixed << std::setprecision(1) << hitRate << "%"
-                      << "  evictions: " << s.evictions
+                      << "  evictions: " << cs.evictions
                       << "  read: " << std::setprecision(2) << gbRead << " GB\n";
-        };
-        printStats("u8", chunk_cache_u8.stats());
-        printStats("u16", chunk_cache_u16.stats());
+        }
     }
 
     return EXIT_SUCCESS;

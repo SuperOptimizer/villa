@@ -2,7 +2,7 @@
 
 #include <QGraphicsView>
 
-class CVolumeViewerView : public QGraphicsView
+class CVolumeViewerView final : public QGraphicsView
 {
     Q_OBJECT
     

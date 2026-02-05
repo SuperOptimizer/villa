@@ -1,5 +1,4 @@
 #include <boost/program_options.hpp>
-#include <nlohmann/json.hpp>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -70,10 +69,7 @@ int main(int argc, char* argv[]) {
 
     // Recalculate and update the surface area
     double area = vc::surface::computeSurfaceAreaVox2(surf->rawPoints());
-    if (!surf->meta) {
-        surf->meta = std::make_unique<nlohmann::json>();
-    }
-    (*surf->meta)["area"] = area;
+    surf->meta.area = area;
 
     surf->save(output_path, true);
     std::cout << "Saved rotated surface to: " << output_path << "\n";

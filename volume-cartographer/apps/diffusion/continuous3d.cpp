@@ -2,13 +2,9 @@
 
 #include "common.hpp"
 
+#include <vc/core/types/Volume.hpp>
 #include <vc/ui/VCCollection.hpp>
 #include <vc/core/util/GridStore.hpp>
-#include <vc/core/util/ChunkCache.hpp>
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/common.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
 
 #include <boost/program_options.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -123,36 +119,24 @@ int continuous3d_main(const po::variables_map& vm) {
 
     std::cout << "Found point " << *target_point << " for winding " << target_winding << '\n';
 
-    z5::filesystem::handle::Group group_handle(volume_path);
-    std::unique_ptr<z5::Dataset> ds = z5::openDataset(group_handle, dataset_name);
-    if (!ds) {
-        std::cerr << "Error: Could not open dataset '" << dataset_name << "' in volume '" << volume_path << "'." << '\n';
-        return 1;
-    }
-
-    auto shape = ds->shape();
+    int level = std::stoi(dataset_name);
+    auto volume = Volume::New(volume_path);
+    auto shape = volume->shapeZYX(level);
     std::cout << "Volume shape: (" << shape[0] << ", " << shape[1] << ", " << shape[2] << ")" << '\n';
 
     StupidTensor<uint8_t> volume_slice(cv::Size(box_w, box_h), box_d);
-    
-    cv::Vec3i offset = {
+
+    std::array<int,3> offsetZYX = {
         static_cast<int>(std::round((*target_point)[2])) - box_d / 2,
         static_cast<int>(std::round((*target_point)[1])) - box_h / 2,
         static_cast<int>(std::round((*target_point)[0])) - box_w / 2
     };
 
-    std::vector<size_t> slice_shape = {static_cast<size_t>(box_d), static_cast<size_t>(box_h), static_cast<size_t>(box_w)};
-    xt::xtensor<uint8_t, 3, xt::layout_type::column_major> slice_data = xt::zeros<uint8_t>(slice_shape);
-
-    ChunkCache<uint8_t> cache(4llu*1024*1024*1024);
-    readArea3D(slice_data, offset, ds.get(), &cache);
+    std::vector<cv::Mat_<uint8_t>> blockSlices;
+    volume->readBlock(blockSlices, offsetZYX, {box_d, box_h, box_w}, level);
 
     for (int z = 0; z < box_d; ++z) {
-        for (int y = 0; y < box_h; ++y) {
-            for (int x = 0; x < box_w; ++x) {
-                volume_slice(z, y, x) = slice_data(z, y, x);
-            }
-        }
+        blockSlices[z].copyTo(volume_slice.planes[z]);
     }
 
     std::cout << "Extracted " << box_w << "x" << box_h << "x" << box_d << " volume around the point." << '\n';

@@ -4,6 +4,7 @@
 
 #include "VolumeViewerCmaps.hpp"
 
+#include <iostream>
 #include <QGraphicsView>
 #include <QGraphicsScene>
 #include <QDebug>
@@ -15,11 +16,11 @@
 #include "CSurfaceCollection.hpp"
 #include "vc/ui/VCCollection.hpp"
 
+#include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
-#include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Compositing.hpp"
 
 #include <omp.h>
@@ -45,7 +46,7 @@ void CVolumeViewer::renderVisible(bool force)
         }
     }
 
-    if (!volume || !volume->zarrDataset() || !surf)
+    if (!volume || !surf)
         return;
 
     QRectF bbox = fGraphicsView->mapToScene(fGraphicsView->viewport()->geometry()).boundingRect();
@@ -170,11 +171,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
             // Compute native gradients once per surface
             if (_cachedNativeVolumeGradients.empty() || _cachedGradientsSurf.lock() != surf) {
                 const cv::Mat_<cv::Vec3f>* rawPts = quadSurf->rawPointsPtr();
-                _cachedNativeVolumeGradients = computeVolumeGradientsNative(
-                    volume->zarrDataset(_ds_sd_idx),
-                    *rawPts,
-                    _ds_scale
-                );
+                _cachedNativeVolumeGradients = volume->computeGradients(*rawPts, _ds_scale, _ds_sd_idx);
                 _cachedGradientsSurf = surf;
             }
 
@@ -217,6 +214,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
     // Setup compositing parameters
     CompositeParams params;
     params.method = _composite_method;
+    params.resolveMethodType();
     params.alphaMin = _composite_alpha_min / 255.0f;
     params.alphaMax = _composite_alpha_max / 255.0f;
     params.alphaOpacity = _composite_material / 255.0f;
@@ -232,15 +230,14 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite(const cv::Rect &roi) {
     params.isoCutoff = static_cast<uint8_t>(_iso_cutoff);
 
     // Always use fast path (nearest neighbor, no mutex, specialized cache)
-    readCompositeFast(
+    volume->readComposite(
         img,
-        volume->zarrDataset(_ds_sd_idx),
         base_coords * _ds_scale,
         lightingNormals,
         _ds_scale,  // z step per layer (in dataset coordinates)
         z_start, z_end,
         params,
-        *cache
+        _ds_sd_idx
     );
 
     // Apply postprocessing
@@ -370,8 +367,6 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 
     cv::Mat baseColor;
 
-    z5::Dataset* baseDataset = volume ? volume->zarrDataset(_ds_sd_idx) : nullptr;
-
     // Check if this is a plane surface that should use plane composite rendering
     PlaneSurface* plane = dynamic_cast<PlaneSurface*>(surf.get());
     const bool usePlaneComposite = (plane != nullptr && _plane_composite_enabled &&
@@ -397,10 +392,10 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
             surf->gen(&coords, nullptr, roi.size(), _ptr, _scale, {-roi.width / 2.0f, -roi.height / 2.0f, _z_off});
         }
 
-        if (!baseDataset) {
+        if (!volume) {
             return cv::Mat();
         }
-        readInterpolated3D(baseGray, baseDataset, coords * _ds_scale, cache, _interpolationMethod);
+        volume->readInterpolated(baseGray, coords * _ds_scale, _interpolationMethod, _ds_sd_idx);
     }
 
     if (baseGray.empty()) {
@@ -472,8 +467,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
             }
 
             cv::Mat_<uint8_t> overlayValues;
-            z5::Dataset* overlayDataset = _overlayVolume->zarrDataset(overlayIdx);
-            readInterpolated3D(overlayValues, overlayDataset, coords * overlayScale, cache, /*nearest_neighbor=*/true);
+            _overlayVolume->readInterpolated(overlayValues, coords * overlayScale, InterpolationMethod::Nearest, overlayIdx);
 
             if (!overlayValues.empty()) {
                 const int windowLow = static_cast<int>(std::clamp(_overlayWindowLow, 0.0f, 255.0f));
@@ -733,7 +727,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite_plane(const cv::Rect &roi, con
 {
     cv::Mat_<uint8_t> img;
 
-    if (coords.empty() || !volume || !volume->zarrDataset(_ds_sd_idx)) {
+    if (coords.empty() || !volume) {
         return img;
     }
 
@@ -745,6 +739,7 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite_plane(const cv::Rect &roi, con
     // Setup compositing parameters (reuse the same parameters as segmentation composite)
     CompositeParams params;
     params.method = _composite_method;
+    params.resolveMethodType();
     params.alphaMin = _composite_alpha_min / 255.0f;
     params.alphaMax = _composite_alpha_max / 255.0f;
     params.alphaOpacity = _composite_material / 255.0f;
@@ -760,15 +755,14 @@ cv::Mat_<uint8_t> CVolumeViewer::render_composite_plane(const cv::Rect &roi, con
     params.isoCutoff = static_cast<uint8_t>(_iso_cutoff);
 
     // Always use fast path with constant normal (nearest neighbor, no mutex)
-    readCompositeFastConstantNormal(
+    volume->readCompositeConstantNormal(
         img,
-        volume->zarrDataset(_ds_sd_idx),
         coords * _ds_scale,
         planeNormal,  // Single constant normal for all pixels
         _ds_scale,    // z step per layer (in dataset coordinates)
         z_start, z_end,
         params,
-        *cache
+        _ds_sd_idx
     );
 
     return img;

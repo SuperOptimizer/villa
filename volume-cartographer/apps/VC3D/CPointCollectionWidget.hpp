@@ -20,7 +20,7 @@ class VCCollection;
 
 
 
-class CPointCollectionWidget : public QDockWidget
+class CPointCollectionWidget final : public QDockWidget
 {
     Q_OBJECT
 

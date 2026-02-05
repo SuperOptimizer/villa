@@ -1,6 +1,5 @@
 #pragma once
 
-#include <nlohmann/json_fwd.hpp>
 #include <opencv2/core/types.hpp>
 #include <cstddef>
 #include <memory>
@@ -8,6 +7,12 @@
 #include <vector>
 
 namespace vc::core::util {
+
+struct GridMeta {
+    float umbilicus_x = 0;
+    float umbilicus_y = 0;
+    bool aligned = false;
+};
 
 class GridStore final {
 public:
@@ -24,9 +29,8 @@ public:
     [[nodiscard]] size_t numSegments() const noexcept;
     [[nodiscard]] size_t numNonEmptyBuckets() const noexcept;
 
-    // Accessor for metadata (stored internally as unique_ptr)
-    [[nodiscard]] nlohmann::json& meta();
-    [[nodiscard]] const nlohmann::json& meta() const;
+    [[nodiscard]] GridMeta& meta() noexcept { return meta_; }
+    [[nodiscard]] const GridMeta& meta() const noexcept { return meta_; }
 
     void save(const std::string& path) const;
     void load_mmap(const std::string& path);
@@ -36,7 +40,7 @@ private:
     class GridStoreImpl;
 
     std::unique_ptr<GridStoreImpl> pimpl_;
-    std::unique_ptr<nlohmann::json> meta_;
+    GridMeta meta_;
 };
 
 }

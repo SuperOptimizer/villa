@@ -194,10 +194,11 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
         bool useSegStep = settings.value(viewer::USE_SEG_STEP_FOR_HINTS, viewer::USE_SEG_STEP_FOR_HINTS_DEFAULT).toBool();
         int numPoints = std::max(0, std::min(100, settings.value(viewer::DIRECTION_STEP_POINTS, viewer::DIRECTION_STEP_POINTS_DEFAULT).toInt()));
         float stepVal = settings.value(viewer::DIRECTION_STEP, static_cast<float>(viewer::DIRECTION_STEP_DEFAULT)).toFloat();
-        if (useSegStep && quad->meta) {
+        if (useSegStep) {
             try {
-                if (quad->meta->contains("vc_grow_seg_from_segments_params")) {
-                    auto& p = quad->meta->at("vc_grow_seg_from_segments_params");
+                auto it = quad->meta.extras.find("vc_grow_seg_from_segments_params");
+                if (it != quad->meta.extras.end()) {
+                    auto p = nlohmann::json::parse(it->second);
                     if (p.contains("step")) {
                         stepVal = p.at("step").get<float>();
                     }
@@ -275,10 +276,11 @@ void VectorOverlayController::collectDirectionHints(CVolumeViewer* viewer,
         bool useSegStep = settings.value(viewer::USE_SEG_STEP_FOR_HINTS, viewer::USE_SEG_STEP_FOR_HINTS_DEFAULT).toBool();
         int numPoints = std::max(0, std::min(100, settings.value(viewer::DIRECTION_STEP_POINTS, viewer::DIRECTION_STEP_POINTS_DEFAULT).toInt()));
         float stepVal = settings.value(viewer::DIRECTION_STEP, static_cast<float>(viewer::DIRECTION_STEP_DEFAULT)).toFloat();
-        if (useSegStep && segSurface->meta) {
+        if (useSegStep) {
             try {
-                if (segSurface->meta->contains("vc_grow_seg_from_segments_params")) {
-                    auto& p = segSurface->meta->at("vc_grow_seg_from_segments_params");
+                auto it = segSurface->meta.extras.find("vc_grow_seg_from_segments_params");
+                if (it != segSurface->meta.extras.end()) {
+                    auto p = nlohmann::json::parse(it->second);
                     if (p.contains("step")) {
                         stepVal = p.at("step").get<float>();
                     }
@@ -500,10 +502,11 @@ void VectorOverlayController::collectSurfaceNormals(CVolumeViewer* viewer,
 
     // Get step size from settings or segment metadata
     float stepVal = 50.0f;  // Default step in nominal coords
-    if (segSurface->meta) {
+    {
         try {
-            if (segSurface->meta->contains("vc_grow_seg_from_segments_params")) {
-                auto& p = segSurface->meta->at("vc_grow_seg_from_segments_params");
+            auto it = segSurface->meta.extras.find("vc_grow_seg_from_segments_params");
+            if (it != segSurface->meta.extras.end()) {
+                auto p = nlohmann::json::parse(it->second);
                 if (p.contains("step")) {
                     stepVal = p.at("step").get<float>();
                 }
