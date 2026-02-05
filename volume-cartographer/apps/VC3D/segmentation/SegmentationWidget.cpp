@@ -812,8 +812,8 @@ void SegmentationWidget::buildUi()
     auto* autoRadiusLabel = new QLabel(tr("Radius:"), approvalParent);
     _spinAutoApprovalRadius = new QDoubleSpinBox(approvalParent);
     _spinAutoApprovalRadius->setDecimals(1);
-    _spinAutoApprovalRadius->setRange(0.5, 50.0);
-    _spinAutoApprovalRadius->setSingleStep(0.5);
+    _spinAutoApprovalRadius->setRange(0.0, 2.0);
+    _spinAutoApprovalRadius->setSingleStep(0.1);
     _spinAutoApprovalRadius->setValue(_autoApprovalRadius);
     _spinAutoApprovalRadius->setToolTip(tr("Paint radius for auto-approval (in grid steps)."));
     autoApprovalRow1->addWidget(autoRadiusLabel);
@@ -2393,7 +2393,7 @@ void SegmentationWidget::restoreSettings()
     // Auto-approval settings
     _autoApprovalEnabled = settings.value(segmentation::AUTO_APPROVAL_ENABLED, _autoApprovalEnabled).toBool();
     _autoApprovalRadius = settings.value(segmentation::AUTO_APPROVAL_RADIUS, static_cast<double>(_autoApprovalRadius)).toFloat();
-    _autoApprovalRadius = std::clamp(_autoApprovalRadius, 0.5f, 50.0f);
+    _autoApprovalRadius = std::clamp(_autoApprovalRadius, 0.0f, 2.0f);
     _autoApprovalThreshold = settings.value(segmentation::AUTO_APPROVAL_THRESHOLD, static_cast<double>(_autoApprovalThreshold)).toFloat();
     _autoApprovalThreshold = std::clamp(_autoApprovalThreshold, 0.0f, 10.0f);
     _autoApprovalMaxDistance = settings.value(segmentation::AUTO_APPROVAL_MAX_DISTANCE, static_cast<double>(_autoApprovalMaxDistance)).toFloat();
@@ -2671,7 +2671,7 @@ void SegmentationWidget::setAutoApprovalEnabled(bool enabled)
 
 void SegmentationWidget::setAutoApprovalRadius(float radius)
 {
-    const float sanitized = std::clamp(radius, 0.5f, 50.0f);
+    const float sanitized = std::clamp(radius, 0.0f, 2.0f);
     if (std::abs(_autoApprovalRadius - sanitized) < 0.001f) {
         return;
     }

@@ -423,7 +423,7 @@ private:
 
     // Auto-approval settings
     bool _autoApprovalEnabled{true};           // Enable auto-approval when editing surfaces
-    float _autoApprovalRadius{1.0f};           // Paint radius for auto-approval (0.5-50)
+    float _autoApprovalRadius{1.0f};           // Paint radius for auto-approval (0-2)
     float _autoApprovalThreshold{0.0f};        // Min change threshold in voxels (0=disabled, 0-10)
     float _autoApprovalMaxDistance{0.0f};      // Max distance from drag center (0=disabled, 0-500 grid steps)
     bool _autoApprovalUseGenerations{true};    // Use generations channel for growth auto-approval

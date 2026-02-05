@@ -763,7 +763,7 @@ void SegmentationModule::setAutoApprovalEnabled(bool enabled)
 
 void SegmentationModule::setAutoApprovalRadius(float radius)
 {
-    _autoApprovalRadius = std::clamp(radius, 0.5f, 50.0f);
+    _autoApprovalRadius = std::clamp(radius, 0.0f, 2.0f);
 }
 
 void SegmentationModule::setAutoApprovalThreshold(float threshold)
@@ -823,8 +823,8 @@ std::vector<std::pair<int, int>> SegmentationModule::findChangedVerticesFromGene
     }
 
     // Try to get the generations channel
-    auto genIt = surface->channels.find("generations");
-    if (genIt == surface->channels.end()) {
+    cv::Mat generations = surface->channel("generations");
+    if (generations.empty()) {
         qCInfo(lcSegModule) << "No generations channel found, falling back to full rect";
         // Fall back to full rect
         result.reserve(static_cast<size_t>(bounds.area()));
@@ -835,8 +835,6 @@ std::vector<std::pair<int, int>> SegmentationModule::findChangedVerticesFromGene
         }
         return result;
     }
-
-    const cv::Mat& generations = genIt->second;
     if (generations.type() != CV_16UC1) {
         qCWarning(lcSegModule) << "Generations channel has unexpected type:" << generations.type();
         // Fall back to full rect
@@ -1482,10 +1480,10 @@ void SegmentationModule::handleGrowSurfaceRequested(SegmentationGrowthMethod met
     if (_autoApprovalUseGenerations && _editManager) {
         auto* baseSurf = _editManager->baseSurface().get();
         if (baseSurf) {
-            auto genIt = baseSurf->channels.find("generations");
-            if (genIt != baseSurf->channels.end() && genIt->second.type() == CV_16UC1) {
+            cv::Mat genMat = baseSurf->channel("generations");
+            if (!genMat.empty() && genMat.type() == CV_16UC1) {
                 double minVal = 0, maxVal = 0;
-                cv::minMaxLoc(genIt->second, &minVal, &maxVal);
+                cv::minMaxLoc(genMat, &minVal, &maxVal);
                 _preGrowthMaxGeneration = static_cast<uint16_t>(maxVal);
                 qCInfo(lcSegModule) << "Captured pre-growth max generation:" << _preGrowthMaxGeneration;
             }
@@ -1593,8 +1591,8 @@ void SegmentationModule::finishDrag()
                 // Get drag center from the active drag state
                 const auto& activeDrag = _editManager->activeDrag();
                 std::optional<std::pair<int, int>> dragCenter;
-                if (activeDrag.center.first >= 0 && activeDrag.center.second >= 0) {
-                    dragCenter = std::make_pair(activeDrag.center.first, activeDrag.center.second);
+                if (activeDrag.center.row >= 0 && activeDrag.center.col >= 0) {
+                    dragCenter = std::make_pair(activeDrag.center.row, activeDrag.center.col);
                 }
                 const auto filteredVerts = filterVerticesForAutoApproval(editedVerts, dragCenter);
                 performAutoApproval(filteredVerts);
