@@ -125,10 +125,10 @@ endif()
 
 add_library(vc_tracer src/GrowPatch.cpp src/GrowSurface.cpp src/NeuralTracerConnection.cpp)
 target_link_libraries(vc_tracer PUBLIC vc_core vc_ui Ceres::ceres Qt6::Core)
+target_include_directories(vc_tracer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs/edt)
 if(VC_USE_PCH)
     target_precompile_headers(vc_tracer REUSE_FROM vc_core)
 endif()
-
 
 if(VC_INSTALL_LIBS)
     install(
