@@ -693,6 +693,8 @@ int main(int argc, char *argv[])
             "Folder containing tifxyz segmentation folders to batch render")
         ("cache-gb", po::value<size_t>()->default_value(16),
             "Zarr chunk cache size in gigabytes (default: 16)")
+        ("timeout", po::value<int>()->default_value(0),
+            "Kill process if not finished within this many minutes (0 = no timeout)")
         ("format", po::value<std::string>(),
             "When using --render-folder, choose 'zarr' or 'tif' output")
         ("num-slices,n", po::value<int>()->default_value(1),
@@ -1178,6 +1180,18 @@ int main(int argc, char *argv[])
     ChunkCache<uint8_t> chunk_cache_u8(cache_bytes);
     ChunkCache<uint16_t> chunk_cache_u16(cache_bytes);
 
+    const int timeoutMinutes = parsed["timeout"].as<int>();
+    if (timeoutMinutes > 0) {
+        std::cout << "Timeout: " << timeoutMinutes << " minutes" << std::endl;
+        std::thread([timeoutMinutes]() {
+            std::this_thread::sleep_for(std::chrono::minutes(timeoutMinutes));
+            std::cerr << "\n[timeout] " << timeoutMinutes
+                      << " minute limit reached — aborting.\n";
+            std::cerr.flush();
+            _exit(2);
+        }).detach();
+    }
+
     auto process_one = [&](const std::filesystem::path& seg_folder, const std::string& out_arg, bool force_zarr) -> void {
         std::filesystem::path output_path_local(out_arg);
         if (force_zarr) {
@@ -1446,172 +1460,264 @@ int main(int argc, char *argv[])
         }
 
         if (!finalize) {
-        // Iterate output chunks and render directly into them (parallel over XY tiles)
-        for (size_t z0 = 0; z0 < shape0[0]; z0 += CZ) {
-            const size_t dz = std::min(CZ, shape0[0] - z0);
-            #pragma omp parallel for schedule(dynamic, 2)
-            for (long long ty = partId; ty < static_cast<long long>(tilesY_src); ty += numParts) {
-                for (long long tx = 0; tx < static_cast<long long>(tilesX_src); ++tx) {
-                    const size_t y0_src = static_cast<size_t>(ty) * CH;
-                    const size_t x0_src = static_cast<size_t>(tx) * CW;
-                    const size_t dy = std::min(static_cast<size_t>(CH), static_cast<size_t>(tgt_size.height) - y0_src);
-                    const size_t dx = std::min(static_cast<size_t>(CW), static_cast<size_t>(tgt_size.width)  - x0_src);
+        // Band-based rendering: process full-width bands (CH rows at a time),
+        // using readMultiSlice for bulk multi-slice rendering with prefetch.
+        // This matches the TIF path's optimized approach.
+        const size_t numSlices = baseZ;
+        const double num_slices_center = baseZ_center;
+        const bool swapWH = (rotQuad >= 0) && ((rotQuad % 2) == 1);
 
-                    float u0, v0;
-                    computeTileOrigin(full_size,
-                                      x0_src + static_cast<size_t>(crop.x),
-                                      y0_src + static_cast<size_t>(crop.y),
-                                      u0, v0);
-
-                    cv::Mat_<cv::Vec3f> tilePoints, tileNormals;
-                    genTile(surf.get(), cv::Size(static_cast<int>(dx), static_cast<int>(dy)),
-                            static_cast<float>(render_scale_zarr), u0, v0, tilePoints, tileNormals);
-
-                    cv::Mat_<cv::Vec3f> basePoints, stepDirs;
-                    prepareBasePointsAndStepDirs(
-                        tilePoints, tileNormals,
-                        scale_seg, ds_scale,
-                        hasAffine, affineTransform,
-                        globalFlipDecision,
-                        basePoints, stepDirs);
-
-                    const bool swapWH = (rotQuad >= 0) && ((rotQuad % 2) == 1);
-                    const size_t dy_dst = swapWH ? dx : dy;
-                    const size_t dx_dst = swapWH ? dy : dx;
-
-                    cv::Mat tileOut; // will be CV_8UC1 or CV_16UC1
-
-                    if (isCompositeMode) {
-                        // Composite mode: use readCompositeFast to composite all layers into single output
-                        // Note: readCompositeFast only supports uint8 output
-                        ChunkCache<uint8_t> cache;
-
-                        cv::Mat_<uint8_t> compositeOut;
-                        readCompositeFast(
-                            compositeOut,
-                            ds.get(),
-                            basePoints,
-                            stepDirs,
-                            static_cast<float>(slice_step * ds_scale),
-                            compositeStart,
-                            compositeEnd,
-                            compositeParams,
-                            cache
-                        );
-
-                        tileOut = compositeOut;
-                        if (rotQuad >= 0 || flip_axis >= 0) {
-                            rotateFlipIfNeeded(tileOut, rotQuad, flip_axis);
-                        }
-
-                        // Write single composite slice
-                        xt::xarray<uint8_t> outChunk = xt::empty<uint8_t>({size_t(1), dy_dst, dx_dst});
-                        const size_t cH = static_cast<size_t>(tileOut.rows);
-                        const size_t cW = static_cast<size_t>(tileOut.cols);
-                        for (size_t yy = 0; yy < cH; ++yy) {
-                            const uint8_t* src = tileOut.ptr<uint8_t>(static_cast<int>(yy));
-                            for (size_t xx = 0; xx < cW; ++xx) {
-                                outChunk(0, yy, xx) = src[xx];
-                            }
-                        }
-
-                        int dstTx = static_cast<int>(tx), dstTy = static_cast<int>(ty);
-                        int dstTilesX = static_cast<int>(tilesX_src), dstTilesY = static_cast<int>(tilesY_src);
-                        if (rotQuad >= 0 || flip_axis >= 0) {
-                            mapTileIndex(static_cast<int>(tx), static_cast<int>(ty),
-                                         static_cast<int>(tilesX_src), static_cast<int>(tilesY_src),
-                                         std::max(rotQuad, 0), flip_axis,
-                                         dstTx, dstTy, dstTilesX, dstTilesY);
-                        }
-                        const size_t x0_dst = static_cast<size_t>(dstTx) * CW;
-                        const size_t y0_dst = static_cast<size_t>(dstTy) * CH;
-                        z5::types::ShapeType outOffset = {0, y0_dst, x0_dst};
-                        z5::multiarray::writeSubarray<uint8_t>(dsOut0, outChunk, outOffset.begin());
-                    } else if (output_is_u16) {
-                        auto renderOne16 = [&](cv::Mat& dst, float offset) {
-                            renderSliceFromBase16(dst, ds.get(), &chunk_cache_u16,
-                                                  basePoints, stepDirs, offset, static_cast<float>(ds_scale));
-                        };
-                        xt::xarray<uint16_t> outChunk =
-                            xt::empty<uint16_t>({dz, dy_dst, dx_dst});
-                        for (size_t zi = 0; zi < dz; ++zi) {
-                            const size_t sliceIndex = z0 + zi;
-                            const float off = static_cast<float>(
-                                (static_cast<double>(sliceIndex) - baseZ_center) * slice_step);
-                            renderAccumulatedSlice(
-                                tileOut, renderOne16, off, accumOffsets, accumType, CV_16UC1);
-                            if (rotQuad >= 0 || flip_axis >= 0) {
-                                rotateFlipIfNeeded(tileOut, rotQuad, flip_axis);
-                            }
-                            const size_t cH = static_cast<size_t>(tileOut.rows);
-                            const size_t cW = static_cast<size_t>(tileOut.cols);
-                            for (size_t yy = 0; yy < cH; ++yy) {
-                                const uint16_t* src = tileOut.ptr<uint16_t>(static_cast<int>(yy));
-                                for (size_t xx = 0; xx < cW; ++xx) {
-                                    outChunk(zi, yy, xx) = src[xx];
-                                }
-                            }
-                        }
-                        int dstTx = static_cast<int>(tx), dstTy = static_cast<int>(ty);
-                        int dstTilesX = static_cast<int>(tilesX_src), dstTilesY = static_cast<int>(tilesY_src);
-                        if (rotQuad >= 0 || flip_axis >= 0) {
-                            mapTileIndex(static_cast<int>(tx), static_cast<int>(ty),
-                                         static_cast<int>(tilesX_src), static_cast<int>(tilesY_src),
-                                         std::max(rotQuad, 0), flip_axis,
-                                         dstTx, dstTy, dstTilesX, dstTilesY);
-                        }
-                        const size_t x0_dst = static_cast<size_t>(dstTx) * CW;
-                        const size_t y0_dst = static_cast<size_t>(dstTy) * CH;
-                        z5::types::ShapeType outOffset = {z0, y0_dst, x0_dst};
-                        z5::multiarray::writeSubarray<uint16_t>(dsOut0, outChunk, outOffset.begin());
-                    } else {
-                        auto renderOne8 = [&](cv::Mat& dst, float offset) {
-                            renderSliceFromBase(dst, ds.get(), &chunk_cache_u8,
-                                                basePoints, stepDirs, offset, static_cast<float>(ds_scale));
-                        };
-                        xt::xarray<uint8_t> outChunk = xt::empty<uint8_t>({dz, dy_dst, dx_dst});
-                        for (size_t zi = 0; zi < dz; ++zi) {
-                            const size_t sliceIndex = z0 + zi;
-                            const float off = static_cast<float>(
-                                (static_cast<double>(sliceIndex) - baseZ_center) * slice_step);
-                            renderAccumulatedSlice(
-                                tileOut, renderOne8, off, accumOffsets, accumType, CV_8UC1);
-                            if (rotQuad >= 0 || flip_axis >= 0) {
-                                rotateFlipIfNeeded(tileOut, rotQuad, flip_axis);
-                            }
-                            const size_t cH = static_cast<size_t>(tileOut.rows);
-                            const size_t cW = static_cast<size_t>(tileOut.cols);
-                            for (size_t yy = 0; yy < cH; ++yy) {
-                                const uint8_t* src = tileOut.ptr<uint8_t>(static_cast<int>(yy));
-                                for (size_t xx = 0; xx < cW; ++xx) {
-                                    outChunk(zi, yy, xx) = src[xx];
-                                }
-                            }
-                        }
-                        int dstTx = static_cast<int>(tx), dstTy = static_cast<int>(ty);
-                        int dstTilesX = static_cast<int>(tilesX_src), dstTilesY = static_cast<int>(tilesY_src);
-                        if (rotQuad >= 0 || flip_axis >= 0) {
-                            mapTileIndex(static_cast<int>(tx), static_cast<int>(ty),
-                                         static_cast<int>(tilesX_src), static_cast<int>(tilesY_src),
-                                         std::max(rotQuad, 0), flip_axis,
-                                         dstTx, dstTy, dstTilesX, dstTilesY);
-                        }
-                        const size_t x0_dst = static_cast<size_t>(dstTx) * CW;
-                        const size_t y0_dst = static_cast<size_t>(dstTy) * CH;
-                        z5::types::ShapeType outOffset = {z0, y0_dst, x0_dst};
-                        z5::multiarray::writeSubarray<uint8_t>(dsOut0, outChunk, outOffset.begin());
-                    }
-
-                    size_t done = ++tilesDone;
-                    int pct = static_cast<int>(100.0 * double(done) / double(totalTiles));
-                    #pragma omp critical(progress_print)
-                    {
-                        std::cout << "\r[render L0] tile " << done << "/" << totalTiles
-                                  << " (" << pct << "%)" << std::flush;
-                    }
-                }
+        // Build offset list for readMultiSlice (same as TIF path)
+        const size_t samplesPerSlice = std::max<size_t>(1, accumOffsets.size());
+        std::vector<float> allOffsets;
+        allOffsets.reserve(numSlices * samplesPerSlice);
+        for (size_t zi = 0; zi < numSlices; ++zi) {
+            const float baseOff = static_cast<float>(
+                (static_cast<double>(zi) - num_slices_center) * slice_step);
+            if (accumOffsets.empty()) {
+                allOffsets.push_back(baseOff * static_cast<float>(ds_scale));
+            } else {
+                for (float ao : accumOffsets)
+                    allOffsets.push_back((baseOff + ao) * static_cast<float>(ds_scale));
             }
         }
+
+        const uint32_t bandH = static_cast<uint32_t>(CH);
+        const uint32_t numBands = (static_cast<uint32_t>(tgt_size.height) + bandH - 1) / bandH;
+        auto bandWallStart = std::chrono::steady_clock::now();
+        auto lastPrint = bandWallStart;
+
+        for (uint32_t bandIdx = static_cast<uint32_t>(partId); bandIdx < numBands; bandIdx += static_cast<uint32_t>(numParts)) {
+            const uint32_t y0 = bandIdx * bandH;
+            const uint32_t dy = std::min(bandH, static_cast<uint32_t>(tgt_size.height) - y0);
+
+            // Generate surface points for this band (full width)
+            float u0, v0;
+            computeTileOrigin(full_size,
+                              static_cast<size_t>(crop.x),
+                              y0 + static_cast<size_t>(crop.y),
+                              u0, v0);
+            cv::Mat_<cv::Vec3f> bandPoints, bandNormals;
+            genTile(surf.get(), cv::Size(tgt_size.width, static_cast<int>(dy)),
+                    static_cast<float>(render_scale_zarr), u0, v0, bandPoints, bandNormals);
+
+            cv::Mat_<cv::Vec3f> basePoints, stepDirs;
+            prepareBasePointsAndStepDirs(
+                bandPoints, bandNormals,
+                scale_seg, ds_scale,
+                hasAffine, affineTransform,
+                globalFlipDecision,
+                basePoints, stepDirs);
+
+            if (isCompositeMode) {
+                // Composite mode: readCompositeFast for the full band
+                cv::Mat_<uint8_t> compositeOut;
+                readCompositeFast(
+                    compositeOut, ds.get(), basePoints, stepDirs,
+                    static_cast<float>(slice_step * ds_scale),
+                    compositeStart, compositeEnd, compositeParams,
+                    chunk_cache_u8);
+
+                cv::Mat sliceOut = compositeOut;
+                rotateFlipIfNeeded(sliceOut, rotQuad, flip_axis);
+
+                // Split full-width band into CW-wide chunks for Zarr output
+                const int outH = sliceOut.rows;
+                const int outW = sliceOut.cols;
+                for (size_t tx = 0; tx < tilesX_src; ++tx) {
+                    const size_t x0_src = tx * CW;
+                    const size_t dxc = std::min(CW, static_cast<size_t>(outW) - x0_src);
+
+                    int dstTx = static_cast<int>(tx), dstTy = static_cast<int>(bandIdx);
+                    int dstTilesX = static_cast<int>(tilesX_src), dstTilesY = static_cast<int>(tilesY_src);
+                    if (rotQuad >= 0 || flip_axis >= 0) {
+                        mapTileIndex(static_cast<int>(tx), static_cast<int>(bandIdx),
+                                     static_cast<int>(tilesX_src), static_cast<int>(tilesY_src),
+                                     std::max(rotQuad, 0), flip_axis,
+                                     dstTx, dstTy, dstTilesX, dstTilesY);
+                    }
+                    const size_t x0_dst = static_cast<size_t>(dstTx) * CW;
+                    const size_t y0_dst = static_cast<size_t>(dstTy) * CH;
+                    const size_t dy_dst = swapWH ? dxc : static_cast<size_t>(outH);
+                    const size_t dx_dst = swapWH ? static_cast<size_t>(outH) : dxc;
+
+                    xt::xarray<uint8_t> outChunk = xt::empty<uint8_t>({size_t(1), dy_dst, dx_dst});
+                    // Copy the column range for this chunk (already rotated/flipped)
+                    for (size_t yy = 0; yy < dy_dst; ++yy) {
+                        const uint8_t* srcRow = sliceOut.ptr<uint8_t>(static_cast<int>(yy));
+                        for (size_t xx = 0; xx < dx_dst; ++xx)
+                            outChunk(0, yy, xx) = srcRow[x0_src + xx];
+                    }
+                    z5::types::ShapeType outOffset = {0, y0_dst, x0_dst};
+                    z5::multiarray::writeSubarray<uint8_t>(dsOut0, outChunk, outOffset.begin());
+                }
+            } else if (output_is_u16) {
+                // Bulk read all slices for this band
+                std::vector<cv::Mat_<uint16_t>> rawSlices;
+                readMultiSlice(rawSlices, ds.get(), &chunk_cache_u16, basePoints, stepDirs, allOffsets);
+
+                // Process slices (accumulation if needed)
+                std::vector<cv::Mat> slices(numSlices);
+                for (size_t zi = 0; zi < numSlices; ++zi) {
+                    if (accumOffsets.empty()) {
+                        slices[zi] = rawSlices[zi];
+                    } else {
+                        size_t si = zi * samplesPerSlice;
+                        if (accumType == AccumType::Max) {
+                            slices[zi] = rawSlices[si].clone();
+                            for (size_t j = 1; j < samplesPerSlice; ++j)
+                                cv::max(slices[zi], cv::Mat(rawSlices[si + j]), slices[zi]);
+                        } else if (accumType == AccumType::Mean) {
+                            cv::Mat sum;
+                            rawSlices[si].convertTo(sum, CV_64F);
+                            for (size_t j = 1; j < samplesPerSlice; ++j) {
+                                cv::Mat tmp; rawSlices[si + j].convertTo(tmp, CV_64F);
+                                sum += tmp;
+                            }
+                            sum /= static_cast<double>(samplesPerSlice);
+                            sum.convertTo(slices[zi], CV_16UC1);
+                        } else {
+                            std::vector<cv::Mat> samples;
+                            for (size_t j = 0; j < samplesPerSlice; ++j)
+                                samples.push_back(rawSlices[si + j]);
+                            computeMedianFromSamples<uint16_t>(samples, slices[zi]);
+                        }
+                    }
+                    rotateFlipIfNeeded(slices[zi], rotQuad, flip_axis);
+                }
+
+                // Split into CW-wide chunks and write
+                const int outH = slices[0].rows;
+                const int outW = slices[0].cols;
+                for (size_t tx = 0; tx < tilesX_src; ++tx) {
+                    const size_t x0_src = tx * CW;
+                    const size_t dxc = std::min(CW, static_cast<size_t>(outW) - x0_src);
+
+                    int dstTx = static_cast<int>(tx), dstTy = static_cast<int>(bandIdx);
+                    int dstTilesX = static_cast<int>(tilesX_src), dstTilesY = static_cast<int>(tilesY_src);
+                    if (rotQuad >= 0 || flip_axis >= 0) {
+                        mapTileIndex(static_cast<int>(tx), static_cast<int>(bandIdx),
+                                     static_cast<int>(tilesX_src), static_cast<int>(tilesY_src),
+                                     std::max(rotQuad, 0), flip_axis,
+                                     dstTx, dstTy, dstTilesX, dstTilesY);
+                    }
+                    const size_t x0_dst = static_cast<size_t>(dstTx) * CW;
+                    const size_t y0_dst = static_cast<size_t>(dstTy) * CH;
+                    const size_t dy_dst = swapWH ? dxc : static_cast<size_t>(outH);
+                    const size_t dx_dst = swapWH ? static_cast<size_t>(outH) : dxc;
+
+                    xt::xarray<uint16_t> outChunk = xt::empty<uint16_t>({numSlices, dy_dst, dx_dst});
+                    for (size_t zi = 0; zi < numSlices; ++zi) {
+                        for (size_t yy = 0; yy < dy_dst; ++yy) {
+                            const uint16_t* srcRow = slices[zi].ptr<uint16_t>(static_cast<int>(yy));
+                            for (size_t xx = 0; xx < dx_dst; ++xx)
+                                outChunk(zi, yy, xx) = srcRow[x0_src + xx];
+                        }
+                    }
+                    z5::types::ShapeType outOffset = {0, y0_dst, x0_dst};
+                    z5::multiarray::writeSubarray<uint16_t>(dsOut0, outChunk, outOffset.begin());
+                }
+            } else {
+                // u8 path: bulk read all slices for this band
+                std::vector<cv::Mat_<uint8_t>> rawSlices;
+                readMultiSlice(rawSlices, ds.get(), &chunk_cache_u8, basePoints, stepDirs, allOffsets);
+
+                // Process slices (accumulation if needed)
+                std::vector<cv::Mat> slices(numSlices);
+                for (size_t zi = 0; zi < numSlices; ++zi) {
+                    if (accumOffsets.empty()) {
+                        slices[zi] = rawSlices[zi];
+                    } else {
+                        size_t si = zi * samplesPerSlice;
+                        if (accumType == AccumType::Max) {
+                            slices[zi] = rawSlices[si].clone();
+                            for (size_t j = 1; j < samplesPerSlice; ++j)
+                                cv::max(slices[zi], cv::Mat(rawSlices[si + j]), slices[zi]);
+                        } else if (accumType == AccumType::Mean) {
+                            cv::Mat sum;
+                            rawSlices[si].convertTo(sum, CV_64F);
+                            for (size_t j = 1; j < samplesPerSlice; ++j) {
+                                cv::Mat tmp; rawSlices[si + j].convertTo(tmp, CV_64F);
+                                sum += tmp;
+                            }
+                            sum /= static_cast<double>(samplesPerSlice);
+                            sum.convertTo(slices[zi], CV_8UC1);
+                        } else {
+                            std::vector<cv::Mat> samples;
+                            for (size_t j = 0; j < samplesPerSlice; ++j)
+                                samples.push_back(rawSlices[si + j]);
+                            computeMedianFromSamples<uint8_t>(samples, slices[zi]);
+                        }
+                    }
+                    rotateFlipIfNeeded(slices[zi], rotQuad, flip_axis);
+                }
+
+                // Split into CW-wide chunks and write
+                const int outH = slices[0].rows;
+                const int outW = slices[0].cols;
+                for (size_t tx = 0; tx < tilesX_src; ++tx) {
+                    const size_t x0_src = tx * CW;
+                    const size_t dxc = std::min(CW, static_cast<size_t>(outW) - x0_src);
+
+                    int dstTx = static_cast<int>(tx), dstTy = static_cast<int>(bandIdx);
+                    int dstTilesX = static_cast<int>(tilesX_src), dstTilesY = static_cast<int>(tilesY_src);
+                    if (rotQuad >= 0 || flip_axis >= 0) {
+                        mapTileIndex(static_cast<int>(tx), static_cast<int>(bandIdx),
+                                     static_cast<int>(tilesX_src), static_cast<int>(tilesY_src),
+                                     std::max(rotQuad, 0), flip_axis,
+                                     dstTx, dstTy, dstTilesX, dstTilesY);
+                    }
+                    const size_t x0_dst = static_cast<size_t>(dstTx) * CW;
+                    const size_t y0_dst = static_cast<size_t>(dstTy) * CH;
+                    const size_t dy_dst = swapWH ? dxc : static_cast<size_t>(outH);
+                    const size_t dx_dst = swapWH ? static_cast<size_t>(outH) : dxc;
+
+                    xt::xarray<uint8_t> outChunk = xt::empty<uint8_t>({numSlices, dy_dst, dx_dst});
+                    for (size_t zi = 0; zi < numSlices; ++zi) {
+                        for (size_t yy = 0; yy < dy_dst; ++yy) {
+                            const uint8_t* srcRow = slices[zi].ptr<uint8_t>(static_cast<int>(yy));
+                            for (size_t xx = 0; xx < dx_dst; ++xx)
+                                outChunk(zi, yy, xx) = srcRow[x0_src + xx];
+                        }
+                    }
+                    z5::types::ShapeType outOffset = {0, y0_dst, x0_dst};
+                    z5::multiarray::writeSubarray<uint8_t>(dsOut0, outChunk, outOffset.begin());
+                }
+            }
+
+            // Progress with cache stats (throttled to ~1/sec)
+            auto now = std::chrono::steady_clock::now();
+            double sinceLast = std::chrono::duration<double>(now - lastPrint).count();
+            uint32_t bandsThisPart = (numBands - static_cast<uint32_t>(partId) + static_cast<uint32_t>(numParts) - 1) / static_cast<uint32_t>(numParts);
+            uint32_t bandsDone = (bandIdx - static_cast<uint32_t>(partId)) / static_cast<uint32_t>(numParts) + 1;
+            if (sinceLast >= 1.0 || bandsDone == bandsThisPart) {
+                lastPrint = now;
+                double elapsed = std::chrono::duration<double>(now - bandWallStart).count();
+                double eta = (bandsDone > 0) ? elapsed * (double(bandsThisPart) / bandsDone - 1.0) : 0.0;
+                int em = static_cast<int>(elapsed) / 60, es = static_cast<int>(elapsed) % 60;
+                int etam = static_cast<int>(eta) / 60, etas = static_cast<int>(eta) % 60;
+                ChunkCache<uint8_t>::Stats cacheStats;
+                if (output_is_u16) {
+                    auto s = chunk_cache_u16.stats();
+                    cacheStats = {s.hits, s.misses, s.evictions, s.bytesRead, s.reReads, s.reReadBytes};
+                } else {
+                    cacheStats = chunk_cache_u8.stats();
+                }
+                uint64_t totalAccess = cacheStats.hits + cacheStats.misses;
+                double hitRate = totalAccess > 0 ? 100.0 * cacheStats.hits / totalAccess : 0.0;
+                double gbRead = cacheStats.bytesRead / (1024.0*1024.0*1024.0);
+                double gbReRead = cacheStats.reReadBytes / (1024.0*1024.0*1024.0);
+                std::fprintf(stderr,
+                    "\r[zarr] band %u/%u (%d%%)  %dm%02ds  eta %dm%02ds  cache %.1f%% evict %lu read %.2fGB re-read %lu(%.2fGB)",
+                    bandsDone, bandsThisPart,
+                    static_cast<int>(100.0 * bandsDone / bandsThisPart),
+                    em, es, etam, etas,
+                    hitRate, static_cast<unsigned long>(cacheStats.evictions),
+                    gbRead,
+                    static_cast<unsigned long>(cacheStats.reReads), gbReRead);
+            }
+        }
+        std::fprintf(stderr, "\n");
 
         // After finishing L0 tiles, add newline for the progress line
         std::cout << std::endl;
@@ -2156,6 +2262,8 @@ int main(int argc, char *argv[])
                         double hr = tot > 0 ? 100.0 * hits / tot : 0.0;
                         double gbRead = (cs8.bytesRead + cs16.bytesRead) / (1024.0*1024.0*1024.0);
                         uint64_t evictions = cs8.evictions + cs16.evictions;
+                        uint64_t reReads = cs8.reReads + cs16.reReads;
+                        double gbReRead = (cs8.reReadBytes + cs16.reReadBytes) / (1024.0*1024.0*1024.0);
                         int pct = static_cast<int>(100.0 * (bandIdx + 1) / numBands);
                         std::cout << "[tif] band " << (bandIdx + 1) << "/" << numBands
                                   << " (" << pct << "%)  "
@@ -2165,6 +2273,7 @@ int main(int argc, char *argv[])
                                   << "  cache " << std::fixed << std::setprecision(1) << hr << "%"
                                   << " evict " << evictions
                                   << " read " << std::setprecision(2) << gbRead << "GB"
+                                  << " re-read " << reReads << "(" << std::setprecision(2) << gbReRead << "GB)"
                                   << "\n" << std::flush;
                     }
                 }
@@ -2234,11 +2343,14 @@ int main(int argc, char *argv[])
             if (total == 0) return;
             double hitRate = 100.0 * s.hits / total;
             double gbRead = s.bytesRead / (1024.0 * 1024.0 * 1024.0);
+            double gbReRead = s.reReadBytes / (1024.0 * 1024.0 * 1024.0);
             std::cout << "[" << name << " cache] hits: " << s.hits
                       << "  misses: " << s.misses
                       << "  hit rate: " << std::fixed << std::setprecision(1) << hitRate << "%"
                       << "  evictions: " << s.evictions
-                      << "  read: " << std::setprecision(2) << gbRead << " GB\n";
+                      << "  read: " << std::setprecision(2) << gbRead << " GB"
+                      << "  re-reads: " << s.reReads
+                      << " (" << std::setprecision(2) << gbReRead << " GB)\n";
         };
         printStats("u8", chunk_cache_u8.stats());
         printStats("u16", chunk_cache_u16.stats());
