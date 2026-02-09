@@ -915,10 +915,9 @@ int main(int argc, char *argv[])
         ("composite-end", po::value<int>(), "Composite end offset")
         ("num-parts", po::value<int>()->default_value(1), "Parts for multi-VM")
         ("part-id", po::value<int>()->default_value(0), "Part ID (0-indexed)")
-        ("merge-parts", po::bool_switch()->default_value(false), "Merge partial TIFFs")
+        ("merge-tiff-parts", po::bool_switch()->default_value(false), "Merge partial TIFFs from multi-VM render")
         ("pyramid", po::value<bool>()->default_value(true), "Build pyramid levels L1-L5 (default: true)")
         ("resume", po::bool_switch()->default_value(false), "Skip chunks that already exist on disk")
-        ("finalize", po::bool_switch()->default_value(false), "Build pyramid for existing zarr L0")
         ("pre", po::bool_switch()->default_value(false), "Create zarr + all level datasets");
     // clang-format on
 
@@ -961,11 +960,9 @@ int main(int argc, char *argv[])
     }
     if (numParts > 1) logPrintf(stdout, "Multi-part mode: part %d of %d\n", partId, numParts);
 
-    const bool finalize_flag = parsed["finalize"].as<bool>();
     const bool pre_flag = parsed["pre"].as<bool>();
     const bool wantPyramid = parsed["pyramid"].as<bool>();
     const bool resumeFlag = parsed["resume"].as<bool>();
-    if (pre_flag && finalize_flag) { logPrintf(stderr, "Error: --pre and --finalize are mutually exclusive.\n"); return EXIT_FAILURE; }
 
     const bool wantZarr = parsed.count("zarr-output") > 0;
     const bool wantTif = parsed.count("tif-output") > 0;
@@ -973,13 +970,10 @@ int main(int argc, char *argv[])
     const std::string zarrOutputArg = wantZarr ? parsed["zarr-output"].as<std::string>() : "";
     const std::string tifOutputArg = wantTif ? parsed["tif-output"].as<std::string>() : "";
 
-    const bool mergeParts = parsed["merge-parts"].as<bool>();
-    if (mergeParts) {
-        if (numParts < 2) { logPrintf(stderr, "Error: --merge-parts needs --num-parts >= 2\n"); return EXIT_FAILURE; }
-        if (!wantTif) { logPrintf(stderr, "Error: --merge-parts requires --tif-output\n"); return EXIT_FAILURE; }
-        return mergeTiffParts(tifOutputArg, numParts) ? EXIT_SUCCESS : EXIT_FAILURE;
-    }
-    if (finalize_flag && numParts >= 2 && wantTif && !wantZarr) {
+    const bool mergeTiffFlag = parsed["merge-tiff-parts"].as<bool>();
+    if (mergeTiffFlag) {
+        if (numParts < 2) { logPrintf(stderr, "Error: --merge-tiff-parts needs --num-parts >= 2\n"); return EXIT_FAILURE; }
+        if (!wantTif) { logPrintf(stderr, "Error: --merge-tiff-parts requires --tif-output\n"); return EXIT_FAILURE; }
         return mergeTiffParts(tifOutputArg, numParts) ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
@@ -1266,8 +1260,6 @@ int main(int argc, char *argv[])
                 writeZarrAttrs(outFile, vol_path, group_idx, baseZ, slice_step, accum_step,
                                accum_type_str, accumOffsets.size(), attrXY, baseZ, CH, CW);
                 return;
-            } else if (finalize_flag) {
-                dsOut = z5::openDataset(outFile, "0");
             } else if (numParts > 1) {
                 if (!std::filesystem::exists(std::filesystem::path(zarrOutputArg) / "0" / ".zarray")) {
                     logPrintf(stderr, "Error: run --pre first in multi-part mode\n"); return;
@@ -1329,10 +1321,10 @@ int main(int argc, char *argv[])
         const bool hasRotFlip = (rotQuad >= 0 || flip_axis >= 0);
         // Inline pyramid only works without rotation/flip (accumulation assumes
         // source tile-rows map 1:1 to destination tile-rows for row-group flushing)
-        const bool inlinePyramid = wantZarr && wantPyramid && !pre_flag && !finalize_flag && !hasRotFlip;
+        const bool inlinePyramid = wantZarr && wantPyramid && !pre_flag && !hasRotFlip;
         std::vector<z5::Dataset*> pyramidDs;
         std::vector<std::unique_ptr<z5::Dataset>> pyramidOwned;
-        if (wantZarr && wantPyramid && !pre_flag && !finalize_flag) {
+        if (wantZarr && wantPyramid && !pre_flag) {
             // Single-part: create datasets now; multi-part/resume: already created them
             if (numParts <= 1 && !resumeFlag) {
                 cv::Size zarrXY = tgt_size;
@@ -1349,7 +1341,7 @@ int main(int argc, char *argv[])
         }
 
         // ---- Render pass ----
-        if (!finalize_flag) {
+        {
             if (wantZarr) {
                 // Tile-based: OMP-parallel over output zarr chunks
                 if (useU16)
@@ -1413,17 +1405,14 @@ int main(int argc, char *argv[])
 
         // ---- Zarr pyramid + attrs ----
         if (wantZarr && !pre_flag) {
-            const bool needPostPyramid = (finalize_flag && wantPyramid) ||
-                                          (wantPyramid && !finalize_flag && hasRotFlip);
-            if (needPostPyramid) {
-                // Build pyramid from L0 on disk (--finalize, or rotation active)
+            // Rotation/flip: pyramid couldn't be built inline, build from L0 on disk
+            if (wantPyramid && hasRotFlip) {
                 logPrintf(stdout, "[pyramid] building from L0...\n");
                 for (int level = 1; level <= 5; level++) {
                     if (useU16) buildPyramidLevel<uint16_t>(outFile, level, CH, CW, numParts, partId);
                     else        buildPyramidLevel<uint8_t>(outFile, level, CH, CW, numParts, partId);
                 }
             }
-            // Otherwise: pyramid was built inline during render (if --pyramid)
 
             // --pre already writes attrs for multi-part; single-part writes here
             if (numParts <= 1) {
