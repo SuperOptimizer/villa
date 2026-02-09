@@ -58,6 +58,34 @@ template void writeZarrBand<uint16_t>(z5::Dataset*, const std::vector<cv::Mat>&,
     uint32_t, const std::vector<size_t>&, size_t, size_t, int, int);
 
 // ============================================================
+// downsampleChunk
+// ============================================================
+
+template <typename T>
+void downsampleChunk(const T* src, size_t srcZ, size_t srcY, size_t srcX,
+                     T* dst, size_t dstZ, size_t dstY, size_t dstX,
+                     size_t srcActualZ, size_t srcActualY, size_t srcActualX)
+{
+    for (size_t zz = 0; zz < dstZ; zz++)
+        for (size_t yy = 0; yy < dstY; yy++)
+            for (size_t xx = 0; xx < dstX; xx++) {
+                uint32_t sum = 0; int cnt = 0;
+                for (int d0 = 0; d0 < 2 && 2*zz+d0 < srcActualZ; d0++)
+                    for (int d1 = 0; d1 < 2 && 2*yy+d1 < srcActualY; d1++)
+                        for (int d2 = 0; d2 < 2 && 2*xx+d2 < srcActualX; d2++) {
+                            sum += src[(2*zz+d0)*srcY*srcX + (2*yy+d1)*srcX + (2*xx+d2)];
+                            cnt++;
+                        }
+                dst[zz*dstY*dstX + yy*dstX + xx] = T((sum + cnt/2) / std::max(1, cnt));
+            }
+}
+
+template void downsampleChunk<uint8_t>(const uint8_t*, size_t, size_t, size_t,
+    uint8_t*, size_t, size_t, size_t, size_t, size_t, size_t);
+template void downsampleChunk<uint16_t>(const uint16_t*, size_t, size_t, size_t,
+    uint16_t*, size_t, size_t, size_t, size_t, size_t, size_t);
+
+// ============================================================
 // buildPyramidLevel
 // ============================================================
 

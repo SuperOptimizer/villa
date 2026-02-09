@@ -40,6 +40,15 @@ void writeZarrBand(z5::Dataset* dsOut, const std::vector<cv::Mat>& slices,
                    size_t tilesXSrc, size_t tilesYSrc,
                    int rotQuad, int flipAxis);
 
+// 2×2×2 mean downsample: dst voxel = mean of up to 8 src voxels.
+// src layout: srcZ × srcY × srcX (row-major).  dst layout: dstZ × dstY × dstX.
+// dstZ/Y/X should be (srcZ+1)/2 etc., but edge chunks may be smaller.
+// srcActualZ/Y/X = actual valid extent in src (may be < chunk shape for edge chunks).
+template <typename T>
+void downsampleChunk(const T* src, size_t srcZ, size_t srcY, size_t srcX,
+                     T* dst, size_t dstZ, size_t dstY, size_t dstX,
+                     size_t srcActualZ, size_t srcActualY, size_t srcActualX);
+
 // Build one pyramid level (2x mean downsample) via readChunk/writeChunk + OMP.
 // numParts/partId partition the output tile-rows across VMs (1/0 = no partitioning).
 template <typename T>

@@ -501,6 +501,8 @@ static void renderTiles(
     // Zarr output
     z5::Dataset* dsOut, const std::vector<size_t>& chunks0,
     size_t tilesXSrc, size_t tilesYSrc,
+    // Pyramid datasets L1-L5 (empty = no inline pyramid)
+    const std::vector<z5::Dataset*>& pyramidDs,
     // TIF output (optional)
     std::vector<TiffWriter>* tifWriters, uint32_t tiffTileH,
     bool quickTif)
@@ -608,6 +610,37 @@ static void renderTiles(
                 }
                 z5::types::ShapeType chunkId = {0, size_t(dstTy), size_t(dstTx)};
                 dsOut->writeChunk(chunkId, chunkBuf.data());
+
+                // Inline pyramid: cascade downsample L0 -> L1 -> ... -> L5
+                if (!pyramidDs.empty()) {
+                    // prevBuf starts as chunkBuf; each level downsamples from previous
+                    std::vector<T> pyrBufA, pyrBufB;
+                    const T* prevPtr = chunkBuf.data();
+                    size_t pZ = chunkZ, pY = chunkY, pX = chunkX;
+                    // Actual valid extent for L0
+                    size_t aZ = numZ, aY = dy_actual, aX = dx_actual;
+
+                    for (size_t li = 0; li < pyramidDs.size(); li++) {
+                        const auto& pc = pyramidDs[li]->defaultChunkShape();
+                        size_t nZ = pc[0], nY = pc[1], nX = pc[2];
+                        // Actual valid extent at this level
+                        size_t naZ = (aZ + 1) / 2, naY = (aY + 1) / 2, naX = (aX + 1) / 2;
+                        naZ = std::min(naZ, nZ);
+                        naY = std::min(naY, nY);
+                        naX = std::min(naX, nX);
+
+                        auto& dstBuf = (li % 2 == 0) ? pyrBufA : pyrBufB;
+                        dstBuf.assign(nZ * nY * nX, T(0));
+                        downsampleChunk(prevPtr, pZ, pY, pX,
+                                        dstBuf.data(), nZ, nY, nX,
+                                        aZ, aY, aX);
+                        pyramidDs[li]->writeChunk(chunkId, dstBuf.data());
+
+                        prevPtr = dstBuf.data();
+                        pZ = nZ; pY = nY; pX = nX;
+                        aZ = naZ; aY = naY; aX = naX;
+                    }
+                }
             }
 
             // 5. Store unrotated slices for TIF assembly
@@ -718,8 +751,8 @@ int main(int argc, char *argv[])
         ("num-parts", po::value<int>()->default_value(1), "Parts for multi-VM")
         ("part-id", po::value<int>()->default_value(0), "Part ID (0-indexed)")
         ("merge-parts", po::bool_switch()->default_value(false), "Merge partial TIFFs")
+        ("pyramid", po::value<bool>()->default_value(true), "Build pyramid levels L1-L5 (default: true)")
         ("finalize", po::bool_switch()->default_value(false), "Build pyramid for existing zarr L0")
-        ("pyramid-level", po::value<int>()->default_value(0), "Build only this pyramid level (1-5, 0=all)")
         ("pre", po::bool_switch()->default_value(false), "Create zarr + all level datasets");
     // clang-format on
 
@@ -748,6 +781,7 @@ int main(int argc, char *argv[])
 
     const bool finalize_flag = parsed["finalize"].as<bool>();
     const bool pre_flag = parsed["pre"].as<bool>();
+    const bool wantPyramid = parsed["pyramid"].as<bool>();
     if (pre_flag && finalize_flag) { std::cerr << "Error: --pre and --finalize are mutually exclusive.\n"; return EXIT_FAILURE; }
 
     const bool wantZarr = parsed.count("zarr-output") > 0;
@@ -1027,7 +1061,8 @@ int main(int argc, char *argv[])
                 z5::createFile(outFile, true);
                 z5::createDataset(outFile, "0", dtype, shape0, chunks0, std::string("blosc"), compOpts);
                 std::cout << "[pre] L0 shape: [" << shape0[0] << "," << shape0[1] << "," << shape0[2] << "]\n";
-                createPyramidDatasets(outFile, shape0, CH, CW, useU16);
+                if (wantPyramid)
+                    createPyramidDatasets(outFile, shape0, CH, CW, useU16);
 
                 cv::Size attrXY = tgt_size;
                 if (rotQuad >= 0 && (rotQuad % 2) == 1) std::swap(attrXY.width, attrXY.height);
@@ -1090,6 +1125,23 @@ int main(int argc, char *argv[])
             }
         }
 
+        // ---- Create pyramid datasets before render ----
+        std::vector<z5::Dataset*> pyramidDs;
+        std::vector<std::unique_ptr<z5::Dataset>> pyramidOwned;
+        if (wantZarr && wantPyramid && !pre_flag && !finalize_flag) {
+            // Single-part: create datasets now; multi-part: --pre already created them
+            if (numParts <= 1) {
+                cv::Size zarrXY = tgt_size;
+                if (rotQuad >= 0 && (rotQuad % 2) == 1) std::swap(zarrXY.width, zarrXY.height);
+                std::vector<size_t> shape0 = {baseZ, size_t(zarrXY.height), size_t(zarrXY.width)};
+                createPyramidDatasets(outFile, shape0, CH, CW, useU16);
+            }
+            for (int level = 1; level <= 5; level++) {
+                pyramidOwned.push_back(z5::openDataset(outFile, std::to_string(level)));
+                pyramidDs.push_back(pyramidOwned.back().get());
+            }
+        }
+
         // ---- Render pass ----
         if (!finalize_flag) {
             if (wantZarr) {
@@ -1101,6 +1153,7 @@ int main(int argc, char *argv[])
                         accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
                         compositeParams, rotQuad, flip_axis, numParts, partId, cvType,
                         dsOut.get(), chunks0, tilesXSrc, tilesYSrc,
+                        pyramidDs,
                         tifWriters.empty() ? nullptr : &tifWriters, tiffTileH, quickTif);
                 else
                     renderTiles<uint8_t>(surf.get(), ds.get(), &chunk_cache_u8,
@@ -1109,6 +1162,7 @@ int main(int argc, char *argv[])
                         accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
                         compositeParams, rotQuad, flip_axis, numParts, partId, cvType,
                         dsOut.get(), chunks0, tilesXSrc, tilesYSrc,
+                        pyramidDs,
                         tifWriters.empty() ? nullptr : &tifWriters, tiffTileH, quickTif);
             } else {
                 // Band-based: TIF-only path
@@ -1151,21 +1205,15 @@ int main(int argc, char *argv[])
 
         // ---- Zarr pyramid + attrs ----
         if (wantZarr && !pre_flag) {
-            if (finalize_flag) std::cout << "[finalize] building pyramid...\n";
-
-            // In single-part mode, create pyramid level datasets now
-            // (multi-part creates them in --pre step)
-            if (numParts <= 1 && !finalize_flag) {
-                cv::Size zarrXY = tgt_size;
-                if (rotQuad >= 0 && (rotQuad % 2) == 1) std::swap(zarrXY.width, zarrXY.height);
-                std::vector<size_t> shape0 = {baseZ, size_t(zarrXY.height), size_t(zarrXY.width)};
-                createPyramidDatasets(outFile, shape0, CH, CW, useU16);
+            if (finalize_flag && wantPyramid) {
+                // --finalize: build pyramid from disk (legacy path)
+                std::cout << "[finalize] building pyramid...\n";
+                for (int level = 1; level <= 5; level++) {
+                    if (useU16) buildPyramidLevel<uint16_t>(outFile, level, CH, CW, numParts, partId);
+                    else        buildPyramidLevel<uint8_t>(outFile, level, CH, CW, numParts, partId);
+                }
             }
-
-            for (int level = 1; level <= 5; level++) {
-                if (useU16) buildPyramidLevel<uint16_t>(outFile, level, CH, CW, numParts, partId);
-                else        buildPyramidLevel<uint8_t>(outFile, level, CH, CW, numParts, partId);
-            }
+            // Normal render: pyramid was built inline during render (if --pyramid)
 
             // --pre already writes attrs for multi-part; single-part writes here
             if (numParts <= 1) {
