@@ -10,16 +10,28 @@
 #include <iostream>
 #include <thread>
 #include <omp.h>
+#include <dlfcn.h>
 
-// Weak stub for Intel OpenMP's kmp_set_blocktime.
-// If the real function exists (Intel/LLVM OpenMP runtime), it overrides this.
-// If not (e.g., GCC's libgomp), this no-op stub is used instead.
-extern "C" __attribute__((weak)) void kmp_set_blocktime(int) {}
+// Set env vars before the OMP runtime initializes (runs before main).
+// OMP_WAIT_POLICY=passive: threads sleep instead of spin-waiting.
+// Eliminates ~79% idle CPU overhead from OMP sched_yield spinning.
+// KMP_BLOCKTIME=0: libomp-specific equivalent (immediate sleep).
+// OPENBLAS_NUM_THREADS=1: no need for BLAS parallelism in GUI.
+__attribute__((constructor))
+static void setOmpEnvEarly()
+{
+    setenv("OMP_WAIT_POLICY", "passive", /*overwrite=*/0);
+    setenv("KMP_BLOCKTIME", "0", /*overwrite=*/0);
+    setenv("OPENBLAS_NUM_THREADS", "1", /*overwrite=*/0);
+}
 
 auto main(int argc, char* argv[]) -> int
 {
     cv::setNumThreads(std::thread::hardware_concurrency());
-    kmp_set_blocktime(0);
+    // kmp_set_blocktime(0): libomp-specific, make threads sleep immediately.
+    // Use dlsym so we don't get a link error when building with GCC/libgomp.
+    if (auto fn = reinterpret_cast<void(*)(int)>(dlsym(RTLD_DEFAULT, "kmp_set_blocktime")))
+        fn(0);
 
     // Workaround for Qt dock widget issues on Wayland (QTBUG-87332)
     // Floating dock widgets become unmovable after initial drag on Wayland.

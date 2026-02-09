@@ -8,11 +8,7 @@
 #include <string>
 
 #include <nlohmann/json.hpp>
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/filesystem/dataset.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-#include <xtensor/containers/xarray.hpp>
+#include "vc/core/util/Zarr.hpp"
 
 #include <opencv2/core.hpp>
 #include <tiffio.h>
@@ -66,30 +62,19 @@ int main(int argc, char** argv)
     // Open zarr dataset
     fs::path inRoot(inputPath);
     std::string dsName = std::to_string(level);
-    std::string dimsep = ".";
-    try {
-        json j = json::parse(
-            std::ifstream((inRoot / dsName / ".zarray").string()));
-        if (j.contains("dimension_separator"))
-            dimsep = j["dimension_separator"].get<std::string>();
-    } catch (...) {}
+    auto ds = vc::zarr::openDatasetAutoSep(inRoot, dsName);
 
-    z5::filesystem::handle::Group root(inRoot, z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset dsHandle(root, dsName, dimsep);
-    auto ds = z5::filesystem::openDataset(dsHandle);
-
-    const auto& shape = ds->shape(); // [Z, Y, X]
+    const auto shape = ds.shape(); // [Z, Y, X]
     if (shape.size() != 3) {
         std::cerr << "Expected 3D dataset, got " << shape.size() << "D\n";
         return 1;
     }
     const size_t Z = shape[0], Y = shape[1], X = shape[2];
-    const auto dtype = ds->getDtype();
 
     int cvType;
-    if (dtype == z5::types::Datatype::uint8)
+    if (ds.isUint8())
         cvType = CV_8UC1;
-    else if (dtype == z5::types::Datatype::uint16)
+    else if (ds.isUint16())
         cvType = CV_16UC1;
     else {
         std::cerr << "Unsupported dtype (need uint8 or uint16)\n";
@@ -112,18 +97,18 @@ int main(int argc, char** argv)
         std::cout << "\r[" << (z + 1) << "/" << Z << "]" << std::flush;
 
         cv::Mat slice(static_cast<int>(Y), static_cast<int>(X), cvType);
-        z5::types::ShapeType offset = {z, 0, 0};
+        vc::zarr::ShapeType offset = {z, 0, 0};
 
         if (cvType == CV_8UC1) {
-            xt::xarray<uint8_t> slab = xt::empty<uint8_t>({1ul, Y, X});
-            z5::multiarray::readSubarray<uint8_t>(ds, slab, offset.begin());
+            vc::zarr::Array3D<uint8_t> slab(1, Y, X);
+            vc::zarr::readSubarray<uint8_t>(ds, slab, offset);
             for (size_t y = 0; y < Y; ++y) {
                 auto* row = slice.ptr<uint8_t>(static_cast<int>(y));
                 for (size_t x = 0; x < X; ++x) row[x] = slab(0, y, x);
             }
         } else {
-            xt::xarray<uint16_t> slab = xt::empty<uint16_t>({1ul, Y, X});
-            z5::multiarray::readSubarray<uint16_t>(ds, slab, offset.begin());
+            vc::zarr::Array3D<uint16_t> slab(1, Y, X);
+            vc::zarr::readSubarray<uint16_t>(ds, slab, offset);
             for (size_t y = 0; y < Y; ++y) {
                 auto* row = slice.ptr<uint16_t>(static_cast<int>(y));
                 for (size_t x = 0; x < X; ++x) row[x] = slab(0, y, x);

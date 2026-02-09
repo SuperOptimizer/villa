@@ -1,11 +1,6 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/Compositing.hpp"
-
-#include <xtensor/containers/xarray.hpp>
-#include <xtensor/containers/xtensor.hpp>
-#include <xtensor/generators/xbuilder.hpp>
-
-#include "z5/dataset.hxx"
+#include "vc/core/util/Zarr.hpp"
 
 #include <opencv2/core.hpp>
 #include <opencv2/calib3d.hpp>
@@ -25,8 +20,8 @@ struct CacheParams {
     int czShift, cyShift, cxShift, czMask, cyMask, cxMask;
     int chunksZ, chunksY, chunksX;
 
-    explicit CacheParams(z5::Dataset* ds) {
-        const auto& cs = ds->defaultChunkShape();
+    explicit CacheParams(vc::zarr::Dataset* ds) {
+        const auto& cs = ds->chunkShape();
         cz = static_cast<int>(cs[0]);
         cy = static_cast<int>(cs[1]);
         cx = static_cast<int>(cs[2]);
@@ -64,13 +59,13 @@ struct ChunkSampler {
 
     const CacheParams<T>& p;
     ChunkCache<T>& cache;
-    z5::Dataset* ds;
+    vc::zarr::Dataset* ds;
     Slot slots[kSlots];
     int mru = 0;  // most-recently-used slot index
     const T* data = nullptr;  // current data pointer
     size_t s0 = 0, s1 = 0, s2 = 0;
 
-    ChunkSampler(const CacheParams<T>& p_, ChunkCache<T>& cache_, z5::Dataset* ds_)
+    ChunkSampler(const CacheParams<T>& p_, ChunkCache<T>& cache_, vc::zarr::Dataset* ds_)
         : p(p_), cache(cache_), ds(ds_)
     {
         s0 = static_cast<size_t>(p.cy) * p.cx;
@@ -220,7 +215,7 @@ enum class SampleMode { Nearest, Trilinear };
 template<typename T, SampleMode Mode, typename NormalFn>
 static void readVolumeImpl(
     cv::Mat_<T>& out,
-    z5::Dataset* ds,
+    vc::zarr::Dataset* ds,
     ChunkCache<T>& cache,
     const CacheParams<T>& p,
     const cv::Mat_<cv::Vec3f>& coords,
@@ -443,11 +438,11 @@ static void readVolumeImpl(
 // ============================================================================
 
 template<typename T>
-static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<T>* cache) {
+static void readArea3DImpl(vc::zarr::Array3D<T>& out, const cv::Vec3i& offset, vc::zarr::Dataset* ds, ChunkCache<T>* cache) {
 
     CacheParams<T> p(ds);
 
-    cv::Vec3i size = {(int)out.shape()[0], (int)out.shape()[1], (int)out.shape()[2]};
+    cv::Vec3i size = {(int)out.sz, (int)out.sy, (int)out.sx};
     cv::Vec3i to = offset + size;
 
     // Step 1: List all required chunks
@@ -467,7 +462,7 @@ static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out
     for (const auto& idx : chunks_to_process) {
         int cz = idx[0], cy = idx[1], cx = idx[2];
         auto chunkPtr = cache->get(ds, cz, cy, cx);
-        xt::xarray<T>* chunk = chunkPtr.get();
+        vc::zarr::Array3D<T>* chunk = chunkPtr.get();
 
         cv::Vec3i chunk_offset = {p.cz * cz, p.cy * cy, p.cx * cx};
 
@@ -506,11 +501,11 @@ static void readArea3DImpl(xt::xtensor<T, 3, xt::layout_type::column_major>& out
     }
 }
 
-void readArea3D(xt::xtensor<uint8_t, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<uint8_t>* cache) {
+void readArea3D(vc::zarr::Array3D<uint8_t>& out, const cv::Vec3i& offset, vc::zarr::Dataset* ds, ChunkCache<uint8_t>* cache) {
     readArea3DImpl(out, offset, ds, cache);
 }
 
-void readArea3D(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out, const cv::Vec3i& offset, z5::Dataset* ds, ChunkCache<uint16_t>* cache) {
+void readArea3D(vc::zarr::Array3D<uint16_t>& out, const cv::Vec3i& offset, vc::zarr::Dataset* ds, ChunkCache<uint16_t>* cache) {
     readArea3DImpl(out, offset, ds, cache);
 }
 
@@ -520,7 +515,7 @@ void readArea3D(xt::xtensor<uint16_t, 3, xt::layout_type::column_major>& out, co
 // ============================================================================
 
 template<typename T>
-static void readInterpolated3DImpl(cv::Mat_<T>& out, z5::Dataset* ds,
+static void readInterpolated3DImpl(cv::Mat_<T>& out, vc::zarr::Dataset* ds,
                                    const cv::Mat_<cv::Vec3f>& coords, ChunkCache<T>* cache, bool nearest_neighbor) {
     CacheParams<T> p(ds);
 
@@ -533,12 +528,12 @@ static void readInterpolated3DImpl(cv::Mat_<T>& out, z5::Dataset* ds,
     }
 }
 
-void readInterpolated3D(cv::Mat_<uint8_t>& out, z5::Dataset* ds,
+void readInterpolated3D(cv::Mat_<uint8_t>& out, vc::zarr::Dataset* ds,
                         const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint8_t>* cache, bool nearest_neighbor) {
     readInterpolated3DImpl(out, ds, coords, cache, nearest_neighbor);
 }
 
-void readInterpolated3D(cv::Mat_<uint16_t>& out, z5::Dataset* ds,
+void readInterpolated3D(cv::Mat_<uint16_t>& out, vc::zarr::Dataset* ds,
                         const cv::Mat_<cv::Vec3f>& coords, ChunkCache<uint16_t>* cache, bool nearest_neighbor) {
     readInterpolated3DImpl(out, ds, coords, cache, nearest_neighbor);
 }
@@ -546,7 +541,7 @@ void readInterpolated3D(cv::Mat_<uint16_t>& out, z5::Dataset* ds,
 
 void readCompositeFast(
     cv::Mat_<uint8_t>& out,
-    z5::Dataset* ds,
+    vc::zarr::Dataset* ds,
     const cv::Mat_<cv::Vec3f>& baseCoords,
     const cv::Mat_<cv::Vec3f>& normals,
     float zStep,
@@ -575,7 +570,7 @@ void readCompositeFast(
 
 void readCompositeFastConstantNormal(
     cv::Mat_<uint8_t>& out,
-    z5::Dataset* ds,
+    vc::zarr::Dataset* ds,
     const cv::Mat_<cv::Vec3f>& baseCoords,
     const cv::Vec3f& normal,
     float zStep,
@@ -603,7 +598,7 @@ void readCompositeFastConstantNormal(
 template<typename T>
 static void readMultiSliceImpl(
     std::vector<cv::Mat_<T>>& out,
-    z5::Dataset* ds,
+    vc::zarr::Dataset* ds,
     ChunkCache<T>& cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
@@ -658,7 +653,7 @@ static void readMultiSliceImpl(
 
 void readMultiSlice(
     std::vector<cv::Mat_<uint8_t>>& out,
-    z5::Dataset* ds,
+    vc::zarr::Dataset* ds,
     ChunkCache<uint8_t>* cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
@@ -669,7 +664,7 @@ void readMultiSlice(
 
 void readMultiSlice(
     std::vector<cv::Mat_<uint16_t>>& out,
-    z5::Dataset* ds,
+    vc::zarr::Dataset* ds,
     ChunkCache<uint16_t>* cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,

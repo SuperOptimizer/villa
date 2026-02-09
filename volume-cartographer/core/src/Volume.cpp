@@ -5,14 +5,7 @@
 
 #include "vc/core/util/LoadJson.hpp"
 
-#include "z5/attributes.hxx"
-#include "z5/dataset.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/handle.hxx"
-#include "z5/types/types.hxx"
-#include "z5/factory.hxx"
-#include "z5/filesystem/metadata.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
+#include "vc/core/util/Zarr.hpp"
 
 static const std::filesystem::path METADATA_FILE = "meta.json";
 static const std::filesystem::path METADATA_FILE_ALT = "metadata.json";
@@ -109,32 +102,23 @@ void Volume::zarrOpen()
     if (!metadata_.contains("format") || metadata_["format"].get<std::string>() != "zarr")
         return;
 
-    zarrFile_ = std::make_unique<z5::filesystem::handle::File>(path_);
-    z5::filesystem::handle::Group group(path_, z5::FileMode::FileMode::r);
-    z5::readAttributes(group, zarrGroup_);
+    zarrFile_ = std::make_unique<vc::zarr::File>(path_);
+    vc::zarr::readAttributes(path_, zarrGroup_);
 
     std::vector<std::string> groups;
     zarrFile_->keys(groups);
     std::sort(groups.begin(), groups.end());
 
     //FIXME hardcoded assumption that groups correspond to power-2 scaledowns ...
-    for(auto name : groups) {
-        // Read metadata first to discover the dimension separator
-        z5::filesystem::handle::Dataset tmp_handle(path_ / name, z5::FileMode::FileMode::r);
-        z5::DatasetMetadata dsMeta;
-        z5::filesystem::readMetadata(tmp_handle, dsMeta);
-
-        // Re-create handle with correct delimiter so chunk keys resolve properly
-        z5::filesystem::handle::Dataset ds_handle(group, name, dsMeta.zarrDelimiter);
-
-        zarrDs_.push_back(z5::filesystem::openDataset(ds_handle));
-        if (zarrDs_.back()->getDtype() != z5::types::Datatype::uint8 && zarrDs_.back()->getDtype() != z5::types::Datatype::uint16)
+    for (auto name : groups) {
+        zarrDs_.push_back(vc::zarr::openDatasetAutoSep(path_, name));
+        if (!zarrDs_.back().isUint8() && !zarrDs_.back().isUint16())
             throw std::runtime_error("only uint8 & uint16 is currently supported for zarr datasets incompatible type found in "+path_.string()+" / " +name);
 
         // Verify level 0 shape matches meta.json dimensions
         // zarr shape is [z, y, x] = [slices, height, width]
         if (zarrDs_.size() == 1 && !skipShapeCheck) {
-            const auto& shape = zarrDs_[0]->shape();
+            const auto& shape = zarrDs_[0].shape();
             if (static_cast<int>(shape[0]) != _slices ||
                 static_cast<int>(shape[1]) != _height ||
                 static_cast<int>(shape[2]) != _width) {
@@ -168,11 +152,11 @@ double Volume::voxelSize() const
     return metadata_["voxelsize"].get<double>();
 }
 
-z5::Dataset *Volume::zarrDataset(int level) const {
-    if (level >= zarrDs_.size())
+vc::zarr::Dataset *Volume::zarrDataset(int level) const {
+    if (level >= static_cast<int>(zarrDs_.size()))
         return nullptr;
 
-    return zarrDs_[level].get();
+    return const_cast<vc::zarr::Dataset*>(&zarrDs_[level]);
 }
 
 size_t Volume::numScales() const {

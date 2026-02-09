@@ -5,7 +5,7 @@
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
 
-#include "z5/factory.hxx"
+#include "vc/core/util/Zarr.hpp"
 #include <nlohmann/json.hpp>
 
 #include <filesystem>

@@ -1,43 +1,38 @@
 #include "vc/core/util/ChunkCache.hpp"
 
-#include <xtensor/containers/xarray.hpp>
-#include <xtensor/generators/xbuilder.hpp>
-
-#include "z5/dataset.hxx"
-#include "z5/types/types.hxx"
+#include "vc/core/util/Zarr.hpp"
 
 #include <algorithm>
+#include <cstring>
 
-// Helper to read a chunk from disk via z5::Dataset
+// Helper to read a chunk from disk via vc::zarr::Dataset
 template<typename T>
-static std::shared_ptr<xt::xarray<T>> readChunkFromSource(z5::Dataset& ds, size_t iz, size_t iy, size_t ix)
+static std::shared_ptr<vc::zarr::Array3D<T>> readChunkFromSource(vc::zarr::Dataset& ds, size_t iz, size_t iy, size_t ix)
 {
-    z5::types::ShapeType chunkId = {iz, iy, ix};
-
-    if (!ds.chunkExists(chunkId))
+    if (!ds.chunkExists(iz, iy, ix))
         return nullptr;
 
-    if (ds.getDtype() != z5::types::Datatype::uint8 && ds.getDtype() != z5::types::Datatype::uint16)
+    if (!ds.isUint8() && !ds.isUint16())
         throw std::runtime_error("only uint8_t/uint16 zarrs supported currently!");
 
-    const auto& maxChunkShape = ds.defaultChunkShape();
-    const std::size_t maxChunkSize = ds.defaultChunkSize();
+    const auto& maxChunkShape = ds.chunkShape();
+    const std::size_t maxChunkSize = ds.chunkSize();
 
-    auto out = std::make_shared<xt::xarray<T>>(xt::empty<T>(maxChunkShape));
+    auto out = std::make_shared<vc::zarr::Array3D<T>>(maxChunkShape[0], maxChunkShape[1], maxChunkShape[2]);
 
-    if (ds.getDtype() == z5::types::Datatype::uint8) {
+    if (ds.isUint8()) {
         if constexpr (std::is_same_v<T, uint8_t>) {
-            ds.readChunk(chunkId, out->data());
+            ds.readChunk(iz, iy, ix, out->data());
         } else {
             throw std::runtime_error("Cannot read uint8 dataset into uint16 array");
         }
     }
-    else if (ds.getDtype() == z5::types::Datatype::uint16) {
+    else if (ds.isUint16()) {
         if constexpr (std::is_same_v<T, uint16_t>) {
-            ds.readChunk(chunkId, out->data());
+            ds.readChunk(iz, iy, ix, out->data());
         } else if constexpr (std::is_same_v<T, uint8_t>) {
-            xt::xarray<uint16_t> tmp = xt::empty<uint16_t>(maxChunkShape);
-            ds.readChunk(chunkId, tmp.data());
+            vc::zarr::Array3D<uint16_t> tmp(maxChunkShape[0], maxChunkShape[1], maxChunkShape[2]);
+            ds.readChunk(iz, iy, ix, tmp.data());
 
             uint8_t* p8 = out->data();
             uint16_t* p16 = tmp.data();
@@ -67,7 +62,7 @@ void ChunkCache<T>::setMaxBytes(size_t maxBytes)
 }
 
 template<typename T>
-auto ChunkCache<T>::get(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
+auto ChunkCache<T>::get(vc::zarr::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
 {
     ChunkKey key{ds, iz, iy, ix};
 
@@ -126,7 +121,7 @@ auto ChunkCache<T>::get(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
 }
 
 template<typename T>
-auto ChunkCache<T>::getIfCached(z5::Dataset* ds, int iz, int iy, int ix) const -> ChunkPtr
+auto ChunkCache<T>::getIfCached(vc::zarr::Dataset* ds, int iz, int iy, int ix) const -> ChunkPtr
 {
     ChunkKey key{ds, iz, iy, ix};
     std::shared_lock<std::shared_mutex> rlock(_mapMutex);
@@ -139,7 +134,7 @@ auto ChunkCache<T>::getIfCached(z5::Dataset* ds, int iz, int iy, int ix) const -
 }
 
 template<typename T>
-void ChunkCache<T>::prefetch(z5::Dataset* ds, int minIz, int minIy, int minIx, int maxIz, int maxIy, int maxIx)
+void ChunkCache<T>::prefetch(vc::zarr::Dataset* ds, int minIz, int minIy, int minIx, int maxIz, int maxIy, int maxIx)
 {
     #pragma omp parallel for collapse(3) schedule(dynamic, 1)
     for (int ix = minIx; ix <= maxIx; ix++) {
@@ -243,7 +238,7 @@ void ChunkCache<T>::resetStats()
 }
 
 template<typename T>
-auto ChunkCache<T>::loadChunk(z5::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
+auto ChunkCache<T>::loadChunk(vc::zarr::Dataset* ds, int iz, int iy, int ix) -> ChunkPtr
 {
     if (!ds) return nullptr;
     try {

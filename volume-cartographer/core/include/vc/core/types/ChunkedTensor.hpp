@@ -2,15 +2,9 @@
 
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/util/HashFunctions.hpp"
+#include "vc/core/util/Zarr.hpp"
 
 #include <opencv2/core.hpp>
-#include "z5/dataset.hxx"
-
-#include <xtensor/containers/xtensor.hpp>
-#include <xtensor/containers/xadapt.hpp>
-#include <xtensor/views/xview.hpp>
-
-#include "z5/multiarray/xtensor_access.hxx"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -18,7 +12,11 @@
 #include <sys/mman.h>
 #include <cerrno>
 #include <cstring>
+#include <deque>
+#include <fstream>
+#include <set>
 #include <sstream>
+#include <thread>
 
 #ifndef CCI_TLS_MAX // Max number for ChunkedCachedInterpolator
 #define CCI_TLS_MAX 256
@@ -34,9 +32,10 @@ struct passTroughComputor
     const std::string UNIQUE_ID_STRING = "";
     template <typename T, typename E> void compute(const T &large, T &small, const cv::Vec3i &offset_large)
     {
-        int low = int(BORDER);
-        int high = int(BORDER)+int(CHUNK_SIZE);
-        small = view(large, xt::range(low,high),xt::range(low,high),xt::range(low,high));
+        for (int z = 0; z < CHUNK_SIZE; z++)
+            for (int y = 0; y < CHUNK_SIZE; y++)
+                for (int x = 0; x < CHUNK_SIZE; x++)
+                    small(z,y,x) = large(z+BORDER, y+BORDER, x+BORDER);
     }
 };
 
@@ -58,9 +57,9 @@ static std::string tmp_name_proc_thread()
 template <typename T, typename C>
 class Chunked3d {
 public:
-    using CHUNKT = xt::xtensor<T,3,xt::layout_type::column_major>;
+    using CHUNKT = vc::zarr::Array3D<T>;
 
-    Chunked3d(C &compute_f, z5::Dataset *ds, ChunkCache<T> *cache) : _compute_f(compute_f), _ds(ds), _cache(cache)
+    Chunked3d(C &compute_f, vc::zarr::Dataset *ds, ChunkCache<T> *cache) : _compute_f(compute_f), _ds(ds), _cache(cache)
     {
         _border = compute_f.BORDER;
     };
@@ -69,7 +68,7 @@ public:
         if (!_persistent)
             remove_all(_cache_dir);
     };
-    Chunked3d(C &compute_f, z5::Dataset *ds, ChunkCache<T> *cache, const std::filesystem::path &cache_root) : _compute_f(compute_f), _ds(ds), _cache(cache)
+    Chunked3d(C &compute_f, vc::zarr::Dataset *ds, ChunkCache<T> *cache, const std::filesystem::path &cache_root) : _compute_f(compute_f), _ds(ds), _cache(cache)
     {
         _border = compute_f.BORDER;
         
@@ -262,11 +261,10 @@ public:
             static_cast<int>(id[1]*s-_border),
             static_cast<int>(id[2]*s-_border)};
 
-        CHUNKT small = xt::empty<T>({s,s,s});
+        CHUNKT small(s,s,s);
         CHUNKT large;
         if (_ds) {
-            large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
-            large = xt::full_like(large, C::FILL_V);
+            large = CHUNKT(s+2*_border,s+2*_border,s+2*_border, static_cast<T>(C::FILL_V));
 
             readArea3D(large, offset, _ds, _cache);
         }
@@ -274,7 +272,7 @@ public:
         _compute_f.template compute<CHUNKT,T>(large, small, offset);
 
         for(int i=0;i<len;i++)
-            chunk[i] = (&small(0,0,0))[i];
+            chunk[i] = small.data()[i];
 
         _mutex.lock();
         if (!_chunks.count(id)) {
@@ -302,18 +300,17 @@ public:
     T *cache_chunk_safe_alloc(const cv::Vec3i &id)
     {
         auto s = C::CHUNK_SIZE;
-        CHUNKT small = xt::empty<T>({s,s,s});
+        CHUNKT small(s,s,s);
 
         cv::Vec3i offset =
         {static_cast<int>(id[0]*s-_border),
             static_cast<int>(id[1]*s-_border),
             static_cast<int>(id[2]*s-_border)};
-            
+
         CHUNKT large;
         if (_ds) {
-            large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
-            large = xt::full_like(large, C::FILL_V);
-            
+            large = CHUNKT(s+2*_border,s+2*_border,s+2*_border, static_cast<T>(C::FILL_V));
+
             readArea3D(large, offset, _ds, _cache);
         }
 
@@ -324,7 +321,7 @@ public:
         _mutex.lock();
         if (!_chunks.count(id)) {
             chunk = (T*)malloc(s*s*s*sizeof(T));
-            memcpy(chunk, &small(0,0,0), s*s*s*sizeof(T));
+            memcpy(chunk, small.data(), s*s*s*sizeof(T));
             _chunks[id] = chunk;
         }
         else {
@@ -339,38 +336,6 @@ public:
         return chunk;
     }
 
-    // T *cache_chunk_safe_alloc(const cv::Vec3i &id)
-    // {
-    //     auto s = C::CHUNK_SIZE;
-    //     CHUNKT large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
-    //     large = xt::full_like(large, C::FILL_V);
-    //     CHUNKT small = xt::empty<T>({s,s,s});
-    //
-    //     cv::Vec3i offset =
-    //     {id[0]*s-_border,
-    //         id[1]*s-_border,
-    //         id[2]*s-_border};
-    //
-    //     readArea3D(large, offset, _ds, _cache);
-    //
-    //     _compute_f.template compute<CHUNKT,T>(large, small);
-    //
-    //     _mutex.lock();
-    //     if (!_chunks.count(id))
-    //         _chunks[id] = small;
-    //     else {
-    //         #pragma omp atomic
-    //         chunk_compute_collisions++;
-    //         delete small;
-    //         small = _chunks[id];
-    //     }
-    //     #pragma omp atomic
-    //     chunk_compute_total++;
-    //     _mutex.unlock();
-    //
-    //     return small;
-    // }
-
     T *cache_chunk_safe(const cv::Vec3i &id)
     {
         if (_cache_dir.empty())
@@ -381,24 +346,6 @@ public:
 
     T *cache_chunk(const cv::Vec3i &id) {
         return cache_chunk_safe(id);
-        // auto s = C::CHUNK_SIZE;
-        // CHUNKT large = xt::empty<T>({s+2*_border,s+2*_border,s+2*_border});
-        // large = xt::full_like(large, C::FILL_V);
-        // CHUNKT *small = new CHUNKT();
-        // *small = xt::empty<T>({s,s,s});
-        //
-        // cv::Vec3i offset =
-        // {id[0]*s-_border,
-        //     id[1]*s-_border,
-        //     id[2]*s-_border};
-        //
-        //     readArea3D(large, offset, _ds, _cache);
-        //
-        //     _compute_f.template compute<CHUNKT,T>(large, *small);
-        //
-        //     _chunks[id] = small;
-        //
-        // return small;
     }
 
     T *chunk(const cv::Vec3i &id) {
@@ -427,7 +374,7 @@ public:
     }
 
     std::unordered_map<cv::Vec3i,T*,vec3i_hash> _chunks;
-    z5::Dataset *_ds;
+    vc::zarr::Dataset *_ds;
     ChunkCache<T> *_cache;
     size_t _border;
     C &_compute_f;
@@ -654,11 +601,11 @@ private:
 
 struct Chunked3dFloatFromUint8
 {
-    Chunked3dFloatFromUint8(std::unique_ptr<z5::Dataset> &&ds, float scale, ChunkCache<uint8_t> *cache, std::string const &cache_root, std::string const &unique_id) :
+    Chunked3dFloatFromUint8(vc::zarr::Dataset ds, float scale, ChunkCache<uint8_t> *cache, std::string const &cache_root, std::string const &unique_id) :
+        _ds(std::move(ds)),
         _passthrough{unique_id},
-        _x(_passthrough, ds.get(), cache, cache_root),
-        _scale(scale),  // multiplying by this maps indices of the 'canonical' volume to indices of our dataset
-        _ds(std::move(ds))  // take ownership of the dataset, as Chunked3d accesses it through a bare pointer
+        _x(_passthrough, &_ds, cache, cache_root),
+        _scale(scale)
     {
     }
 
@@ -676,23 +623,23 @@ struct Chunked3dFloatFromUint8
         return operator()({z,y,x});
     }
 
+    vc::zarr::Dataset _ds;
     passTroughComputor _passthrough;
     Chunked3d<uint8_t, passTroughComputor> _x;
     float _scale;
-    std::unique_ptr<z5::Dataset> _ds;
 };
 
 struct Chunked3dVec3fFromUint8
 {
-    Chunked3dVec3fFromUint8(std::vector<std::unique_ptr<z5::Dataset>> &&dss, float scale, ChunkCache<uint8_t> *cache, std::string const &cache_root, std::string const &unique_id) :
+    Chunked3dVec3fFromUint8(std::vector<vc::zarr::Dataset> dss, float scale, ChunkCache<uint8_t> *cache, std::string const &cache_root, std::string const &unique_id) :
+        _dss(std::move(dss)),
         _passthrough_x{unique_id + "_x"},
         _passthrough_y{unique_id + "_y"},
         _passthrough_z{unique_id + "_z"},
-        _x(_passthrough_x, dss[0].get(), cache, cache_root),
-        _y(_passthrough_y, dss[1].get(), cache, cache_root),
-        _z(_passthrough_z, dss[2].get(), cache, cache_root),
-        _scale(scale),  // multiplying by this maps indices of the 'canonical' volume to indices of our three volumes
-        _dss(std::move(dss))  // take ownership of the datasets here, as Chunked3d accesses them through a bare pointer
+        _x(_passthrough_x, &_dss[0], cache, cache_root),
+        _y(_passthrough_y, &_dss[1], cache, cache_root),
+        _z(_passthrough_z, &_dss[2], cache, cache_root),
+        _scale(scale)
     {
     }
 
@@ -712,8 +659,8 @@ struct Chunked3dVec3fFromUint8
         return operator()({z,y,x});
     }
 
+    std::vector<vc::zarr::Dataset> _dss;
     passTroughComputor _passthrough_x, _passthrough_y, _passthrough_z;
     Chunked3d<uint8_t, passTroughComputor> _x, _y, _z;
     float _scale;
-    std::vector<std::unique_ptr<z5::Dataset>> _dss;
 };

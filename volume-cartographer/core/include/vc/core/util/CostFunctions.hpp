@@ -31,19 +31,19 @@ double  val(const JetT &v) { return v.a; }
 //     frac_short_paths: 0.0 -> 1.0, 1.0 -> 0.0 (linear ramp, clamped)
 //   final = w_rms * w_frac
 struct NormalFitQualityWeightField {
-    NormalFitQualityWeightField(std::unique_ptr<z5::Dataset>&& rms_ds,
-                                std::unique_ptr<z5::Dataset>&& frac_ds,
+    NormalFitQualityWeightField(vc::zarr::Dataset rms_ds,
+                                vc::zarr::Dataset frac_ds,
                                 float scale,
                                 ChunkCache<uint8_t>* cache,
                                 const std::string& cache_root,
                                 const std::string& unique_id)
-        : _passthrough_rms{unique_id + "_fit_rms"},
-          _passthrough_frac{unique_id + "_fit_frac"},
-          _rms(_passthrough_rms, rms_ds.get(), cache, cache_root),
-          _frac(_passthrough_frac, frac_ds.get(), cache, cache_root),
-          _scale(scale),
-          _rms_ds(std::move(rms_ds)),
+        : _rms_ds(std::move(rms_ds)),
           _frac_ds(std::move(frac_ds)),
+          _passthrough_rms{unique_id + "_fit_rms"},
+          _passthrough_frac{unique_id + "_fit_frac"},
+          _rms(_passthrough_rms, &_rms_ds, cache, cache_root),
+          _frac(_passthrough_frac, &_frac_ds, cache, cache_root),
+          _scale(scale),
           _interp_rms(_rms),
           _interp_frac(_frac)
     {}
@@ -86,13 +86,13 @@ private:
     template <typename JetT>
     static double unjet(const JetT& v) { return v.a; }
 
+    vc::zarr::Dataset _rms_ds;
+    vc::zarr::Dataset _frac_ds;
     passTroughComputor _passthrough_rms;
     passTroughComputor _passthrough_frac;
     Chunked3d<uint8_t, passTroughComputor> _rms;
     Chunked3d<uint8_t, passTroughComputor> _frac;
     float _scale;
-    std::unique_ptr<z5::Dataset> _rms_ds;
-    std::unique_ptr<z5::Dataset> _frac_ds;
     CachedChunked3dInterpolator<uint8_t, passTroughComputor> _interp_rms;
     CachedChunked3dInterpolator<uint8_t, passTroughComputor> _interp_frac;
 };

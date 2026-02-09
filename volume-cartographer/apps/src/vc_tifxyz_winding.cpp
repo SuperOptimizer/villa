@@ -4,6 +4,7 @@
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
 
+#include <iostream>
 #include <nlohmann/json.hpp>
 
 #include <opencv2/imgcodecs.hpp>

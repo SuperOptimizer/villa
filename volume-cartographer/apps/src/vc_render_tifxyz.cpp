@@ -6,12 +6,14 @@
 #include "vc/core/util/StreamOperators.hpp"
 #include "vc/core/util/ABFFlattening.hpp"
 
-#include "z5/factory.hxx"
+#include "vc/core/util/Zarr.hpp"
 #include <nlohmann/json.hpp>
+#include <csignal>
 
 #include <opencv2/imgproc.hpp>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 #include <algorithm>
 #include <atomic>
@@ -28,6 +30,13 @@
 namespace po = boost::program_options;
 
 using json = nlohmann::json;
+
+// Graceful shutdown: SIGINT/SIGTERM set this flag, render loop checks it
+static std::atomic<bool> g_shutdownRequested{false};
+static void shutdownHandler(int /*sig*/)
+{
+    g_shutdownRequested.store(true, std::memory_order_relaxed);
+}
 
 /**
  * @brief Structure to hold affine transform data
@@ -534,7 +543,7 @@ static inline void genTile(
 // Render one slice from base points and unit step directions at offset `off`
 static inline void renderSliceFromBase(
     cv::Mat& out,
-    z5::Dataset* ds,
+    vc::zarr::Dataset* ds,
     ChunkCache<uint8_t>* cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
@@ -557,7 +566,7 @@ static inline void renderSliceFromBase(
 // 16-bit variant (uses the uint16_t overload)
 static inline void renderSliceFromBase16(
     cv::Mat& out,
-    z5::Dataset* ds,
+    vc::zarr::Dataset* ds,
     ChunkCache<uint16_t>* cache,
     const cv::Mat_<cv::Vec3f>& basePoints,
     const cv::Mat_<cv::Vec3f>& stepDirs,
@@ -772,7 +781,9 @@ int main(int argc, char *argv[])
             "(run after all multi-part jobs finish)")
         ("pre", po::bool_switch()->default_value(false),
             "Create the zarr file and L0 dataset only (run before multi-part jobs). "
-            "This allows all parts to use the same code path.");
+            "This allows all parts to use the same code path.")
+        ("zarr-v3", po::bool_switch()->default_value(false),
+            "Write Zarr v3 output with sharding (128^3 shards, 32^3 inner chunks)");
     // clang-format on
 
     po::options_description all("Usage");
@@ -1132,12 +1143,10 @@ int main(int argc, char *argv[])
         printMat4x4(affineTransform.matrix, "Final composed affine (applied to points first):");
     }
 
-    z5::filesystem::handle::Group group(vol_path, z5::FileMode::FileMode::r);
-    z5::filesystem::handle::Dataset ds_handle(group, std::to_string(group_idx), json::parse(std::ifstream(vol_path/std::to_string(group_idx)/".zarray")).value<std::string>("dimension_separator","."));
-    std::unique_ptr<z5::Dataset> ds = z5::filesystem::openDataset(ds_handle);
+    auto ds = vc::zarr::openDatasetAutoSep(vol_path, std::to_string(group_idx));
 
-    std::cout << "zarr dataset size for scale group " << group_idx << ds->shape() << std::endl;
-    const bool output_is_u16 = (ds->getDtype() == z5::types::Datatype::uint16);
+    std::cout << "zarr dataset size for scale group " << group_idx << ds.shape() << std::endl;
+    const bool output_is_u16 = ds.isUint16();
     if (output_is_u16) {
         std::cout << "Detected source dtype=uint16 -> rendering as uint16" << std::endl;
         if (isCompositeMode) {
@@ -1146,7 +1155,7 @@ int main(int argc, char *argv[])
     } else {
         std::cout << "Detected source dtype!=uint16 -> rendering as uint8 (default)" << std::endl;
     }
-    std::cout << "chunk shape shape " << ds->chunking().blockShape() << std::endl;
+    std::cout << "chunk shape shape " << ds.chunkShape() << std::endl;
     std::cout << "output argument: " << base_output_arg << std::endl;
 
     // Enforce 90-degree-increment rotations only
@@ -1378,7 +1387,7 @@ int main(int argc, char *argv[])
         const size_t baseY = static_cast<size_t>(zarr_xy_size.height);
         const size_t baseX = static_cast<size_t>(zarr_xy_size.width);
 
-        z5::filesystem::handle::File outFile(output_path_local);
+        vc::zarr::File outFile(output_path_local);
 
         auto make_shape = [](size_t z, size_t y, size_t x){
             return std::vector<size_t>{z, y, x};
@@ -1388,8 +1397,21 @@ int main(int argc, char *argv[])
             return std::vector<size_t>{z, y, x};
         };
 
+        const bool zarrV3 = parsed["zarr-v3"].as<bool>();
+
         std::vector<size_t> shape0 = make_shape(baseZ, baseY, baseX);
-        std::vector<size_t> chunks0 = make_chunks(shape0[0], std::min(CH, shape0[1]), std::min(CW, shape0[2]));
+        // For v3 sharded: shard=128^3, inner=32^3
+        // For v2: chunk = [Z, min(128,Y), min(128,X)]
+        const size_t SHARD = 128, INNER = 32;
+        std::vector<size_t> chunks0 = zarrV3
+            ? make_chunks(std::min(SHARD, shape0[0]),
+                          std::min(SHARD, shape0[1]),
+                          std::min(SHARD, shape0[2]))
+            : make_chunks(shape0[0], std::min(CH, shape0[1]), std::min(CW, shape0[2]));
+        std::vector<size_t> innerChunks0 = make_chunks(
+            std::min(INNER, chunks0[0]),
+            std::min(INNER, chunks0[1]),
+            std::min(INNER, chunks0[2]));
         nlohmann::json compOpts0 = {
             {"cname",   "zstd"},
             {"clevel",  1},
@@ -1399,32 +1421,69 @@ int main(int argc, char *argv[])
         const std::string out_dtype0 = (output_is_u16 && !isCompositeMode) ? "uint16" : "uint8";
         const bool finalize = parsed["finalize"].as<bool>();
         const bool pre = parsed["pre"].as<bool>();
-        std::unique_ptr<z5::Dataset> dsOut0;
+
+        // Helper to create the L0 dataset (v2 or v3 sharded)
+        auto createL0 = [&]() -> vc::zarr::Dataset {
+            auto dsPath = output_path_local / "0";
+            if (zarrV3) {
+                return vc::zarr::Dataset::createV3Sharded(
+                    dsPath, out_dtype0, shape0, chunks0, innerChunks0, compOpts0);
+            } else {
+                return vc::zarr::createDataset(
+                    outFile, "0", out_dtype0, shape0, chunks0,
+                    std::string("blosc"), compOpts0);
+            }
+        };
+
+        vc::zarr::Dataset dsOut0;
         if (pre) {
             // Pre-step: create zarr file and L0 dataset, then exit
-            std::cout << "[pre] creating zarr file and L0 dataset..." << std::endl;
-            z5::createFile(outFile, true);
-            z5::createDataset(outFile, "0", out_dtype0, shape0, chunks0, std::string("blosc"), compOpts0);
+            std::cout << "[pre] creating " << (zarrV3 ? "zarr v3 sharded" : "zarr v2")
+                      << " file and L0 dataset..." << std::endl;
+            vc::zarr::createFile(output_path_local, true);
+            if (zarrV3) {
+                // Write a v3 root group zarr.json
+                nlohmann::json rootJson;
+                rootJson["zarr_format"] = 3;
+                rootJson["node_type"] = "group";
+                rootJson["attributes"] = nlohmann::json::object();
+                std::ofstream rootF(output_path_local / "zarr.json");
+                rootF << rootJson.dump(4) << "\n";
+            }
+            createL0();
             std::cout << "[pre] zarr created at " << output_path_local << std::endl;
             std::cout << "[pre] L0 shape: [" << shape0[0] << ", " << shape0[1] << ", " << shape0[2] << "]" << std::endl;
+            if (zarrV3) {
+                std::cout << "[pre] shard: [" << chunks0[0] << ", " << chunks0[1] << ", " << chunks0[2] << "]"
+                          << "  inner: [" << innerChunks0[0] << ", " << innerChunks0[1] << ", " << innerChunks0[2] << "]" << std::endl;
+            }
             std::cout << "[pre] done. Run multi-part jobs now." << std::endl;
             return;
         } else if (finalize) {
             // Finalize: zarr and L0 must already exist
-            dsOut0 = z5::openDataset(outFile, "0");
+            dsOut0 = vc::zarr::openDataset(outFile, "0");
         } else if (numParts > 1) {
             // Multi-part mode: --pre must have already created the zarr dataset
-            const auto dsPath = output_path_local / "0" / ".zarray";
-            if (!std::filesystem::exists(dsPath)) {
-                std::cerr << "Error: zarr dataset not found at " << dsPath << std::endl;
+            const auto dsPathV2 = output_path_local / "0" / ".zarray";
+            const auto dsPathV3 = output_path_local / "0" / "zarr.json";
+            if (!std::filesystem::exists(dsPathV2) && !std::filesystem::exists(dsPathV3)) {
+                std::cerr << "Error: zarr dataset not found at " << output_path_local / "0" << std::endl;
                 std::cerr << "In multi-part mode, run --pre first to create the zarr before starting render jobs." << std::endl;
                 return;
             }
-            dsOut0 = z5::openDataset(outFile, "0");
+            dsOut0 = vc::zarr::openDataset(outFile, "0");
         } else {
             // Single-part mode: create zarr file and L0 dataset directly
-            z5::createFile(outFile, true);
-            dsOut0 = z5::createDataset(outFile, "0", out_dtype0, shape0, chunks0, std::string("blosc"), compOpts0);
+            vc::zarr::createFile(output_path_local, true);
+            if (zarrV3) {
+                nlohmann::json rootJson;
+                rootJson["zarr_format"] = 3;
+                rootJson["node_type"] = "group";
+                rootJson["attributes"] = nlohmann::json::object();
+                std::ofstream rootF(output_path_local / "zarr.json");
+                rootF << rootJson.dump(4) << "\n";
+            }
+            dsOut0 = createL0();
         }
 
         const size_t tilesY_src = (static_cast<size_t>(tgt_size.height) + CH - 1) / CH;
@@ -1445,13 +1504,19 @@ int main(int argc, char *argv[])
                 meshCentroid);
         }
 
+        // Install graceful shutdown handlers
+        std::signal(SIGINT, shutdownHandler);
+        std::signal(SIGTERM, shutdownHandler);
+
         if (!finalize) {
         // Iterate output chunks and render directly into them (parallel over XY tiles)
         for (size_t z0 = 0; z0 < shape0[0]; z0 += CZ) {
             const size_t dz = std::min(CZ, shape0[0] - z0);
             #pragma omp parallel for schedule(dynamic, 2)
             for (long long ty = partId; ty < static_cast<long long>(tilesY_src); ty += numParts) {
+                if (g_shutdownRequested.load(std::memory_order_relaxed)) continue;
                 for (long long tx = 0; tx < static_cast<long long>(tilesX_src); ++tx) {
+                    if (g_shutdownRequested.load(std::memory_order_relaxed)) break;
                     const size_t y0_src = static_cast<size_t>(ty) * CH;
                     const size_t x0_src = static_cast<size_t>(tx) * CW;
                     const size_t dy = std::min(static_cast<size_t>(CH), static_cast<size_t>(tgt_size.height) - y0_src);
@@ -1489,7 +1554,7 @@ int main(int argc, char *argv[])
                         cv::Mat_<uint8_t> compositeOut;
                         readCompositeFast(
                             compositeOut,
-                            ds.get(),
+                            &ds,
                             basePoints,
                             stepDirs,
                             static_cast<float>(slice_step * ds_scale),
@@ -1505,7 +1570,7 @@ int main(int argc, char *argv[])
                         }
 
                         // Write single composite slice
-                        xt::xarray<uint8_t> outChunk = xt::empty<uint8_t>({size_t(1), dy_dst, dx_dst});
+                        vc::zarr::Array3D<uint8_t> outChunk(size_t(1), dy_dst, dx_dst);
                         const size_t cH = static_cast<size_t>(tileOut.rows);
                         const size_t cW = static_cast<size_t>(tileOut.cols);
                         for (size_t yy = 0; yy < cH; ++yy) {
@@ -1525,15 +1590,14 @@ int main(int argc, char *argv[])
                         }
                         const size_t x0_dst = static_cast<size_t>(dstTx) * CW;
                         const size_t y0_dst = static_cast<size_t>(dstTy) * CH;
-                        z5::types::ShapeType outOffset = {0, y0_dst, x0_dst};
-                        z5::multiarray::writeSubarray<uint8_t>(dsOut0, outChunk, outOffset.begin());
+                        vc::zarr::ShapeType outOffset = {0, y0_dst, x0_dst};
+                        vc::zarr::writeSubarray<uint8_t>(dsOut0, outChunk, outOffset);
                     } else if (output_is_u16) {
                         auto renderOne16 = [&](cv::Mat& dst, float offset) {
-                            renderSliceFromBase16(dst, ds.get(), &chunk_cache_u16,
+                            renderSliceFromBase16(dst, &ds, &chunk_cache_u16,
                                                   basePoints, stepDirs, offset, static_cast<float>(ds_scale));
                         };
-                        xt::xarray<uint16_t> outChunk =
-                            xt::empty<uint16_t>({dz, dy_dst, dx_dst});
+                        vc::zarr::Array3D<uint16_t> outChunk(dz, dy_dst, dx_dst);
                         for (size_t zi = 0; zi < dz; ++zi) {
                             const size_t sliceIndex = z0 + zi;
                             const float off = static_cast<float>(
@@ -1562,14 +1626,14 @@ int main(int argc, char *argv[])
                         }
                         const size_t x0_dst = static_cast<size_t>(dstTx) * CW;
                         const size_t y0_dst = static_cast<size_t>(dstTy) * CH;
-                        z5::types::ShapeType outOffset = {z0, y0_dst, x0_dst};
-                        z5::multiarray::writeSubarray<uint16_t>(dsOut0, outChunk, outOffset.begin());
+                        vc::zarr::ShapeType outOffset = {z0, y0_dst, x0_dst};
+                        vc::zarr::writeSubarray<uint16_t>(dsOut0, outChunk, outOffset);
                     } else {
                         auto renderOne8 = [&](cv::Mat& dst, float offset) {
-                            renderSliceFromBase(dst, ds.get(), &chunk_cache_u8,
+                            renderSliceFromBase(dst, &ds, &chunk_cache_u8,
                                                 basePoints, stepDirs, offset, static_cast<float>(ds_scale));
                         };
-                        xt::xarray<uint8_t> outChunk = xt::empty<uint8_t>({dz, dy_dst, dx_dst});
+                        vc::zarr::Array3D<uint8_t> outChunk(dz, dy_dst, dx_dst);
                         for (size_t zi = 0; zi < dz; ++zi) {
                             const size_t sliceIndex = z0 + zi;
                             const float off = static_cast<float>(
@@ -1598,8 +1662,8 @@ int main(int argc, char *argv[])
                         }
                         const size_t x0_dst = static_cast<size_t>(dstTx) * CW;
                         const size_t y0_dst = static_cast<size_t>(dstTy) * CH;
-                        z5::types::ShapeType outOffset = {z0, y0_dst, x0_dst};
-                        z5::multiarray::writeSubarray<uint8_t>(dsOut0, outChunk, outOffset.begin());
+                        vc::zarr::ShapeType outOffset = {z0, y0_dst, x0_dst};
+                        vc::zarr::writeSubarray<uint8_t>(dsOut0, outChunk, outOffset);
                     }
 
                     size_t done = ++tilesDone;
@@ -1616,6 +1680,16 @@ int main(int argc, char *argv[])
         // After finishing L0 tiles, add newline for the progress line
         std::cout << std::endl;
 
+        // Flush buffered shard writes to disk (no-op for non-sharded)
+        if (g_shutdownRequested.load(std::memory_order_relaxed)) {
+            std::cout << "[shutdown] flushing buffered shards..." << std::endl;
+        }
+        dsOut0.flush();
+        if (g_shutdownRequested.load(std::memory_order_relaxed)) {
+            std::cout << "[shutdown] flush complete. Exiting gracefully." << std::endl;
+            return;
+        }
+
         // In multi-part mode, skip pyramid/attrs — run --finalize after all parts complete
         if (numParts > 1 && !finalize) {
             std::cout << "[multi-part] part " << partId << " finished L0. "
@@ -1629,105 +1703,12 @@ int main(int argc, char *argv[])
         }
 
         // Build multi-resolution pyramid levels 1..5 by averaging 2x blocks in Z, Y, and X
-        auto downsample_avg = [&](int targetLevel){
-            auto src = z5::openDataset(outFile, std::to_string(targetLevel - 1));
-            const auto& sShape = src->shape();
-            // Downsample Z, Y and X by 2 (handle odd sizes)
-            std::vector<size_t> dShape = {
-                (sShape[0] + 1) / 2,
-                (sShape[1] + 1) / 2,
-                (sShape[2] + 1) / 2
-            };
-            // Chunk Z equals number of slices at this level (full Z), XY = 128
-            std::vector<size_t> dChunks = make_chunks(dShape[0], std::min(CH, dShape[1]), std::min(CW, dShape[2]));
-            nlohmann::json compOpts = {
-                {"cname",   "zstd"},
-                {"clevel",  1},
-                {"shuffle", 0}
-            };
-            std::unique_ptr<z5::Dataset> dst;
-            try {
-                dst = z5::createDataset(
-                    outFile, std::to_string(targetLevel),
-                    (output_is_u16 && !isCompositeMode) ? "uint16" : "uint8",
-                    dShape, dChunks, std::string("blosc"), compOpts);
-            } catch (const std::invalid_argument&) {
-                dst = z5::openDataset(outFile, std::to_string(targetLevel));
+        if (!zarrV3) {
+            for (int level = 1; level <= 5; ++level) {
+                vc::zarr::buildPyramidLevel(outFile, level, out_dtype0, CH, CW);
             }
-
-            const size_t tileZ = dShape[0], tileY = CH, tileX = CW;
-            const size_t tilesY = (dShape[1] + tileY - 1) / tileY;
-            const size_t tilesX = (dShape[2] + tileX - 1) / tileX;
-            const size_t totalTiles = tilesY * tilesX;
-            std::atomic<size_t> tilesDone{0};
-
-            for (size_t z = 0; z < dShape[0]; z += tileZ) {
-                const size_t lz = std::min(tileZ, dShape[0] - z);
-                #pragma omp parallel for schedule(dynamic, 2)
-                for (long long y = 0; y < static_cast<long long>(dShape[1]); y += static_cast<long long>(tileY)) {
-                    for (long long x = 0; x < static_cast<long long>(dShape[2]); x += tileX) {
-                        const size_t ly = std::min(tileY, static_cast<size_t>(dShape[1] - y));
-                        const size_t lx = std::min(tileX, static_cast<size_t>(dShape[2] - x));
-
-                        const size_t sz = std::min<size_t>(2*lz, sShape[0] - 2*z);
-                        const size_t sy = std::min<size_t>(2*ly, sShape[1] - y*2);
-                        const size_t sx = std::min<size_t>(2*lx, sShape[2] - x*2);
-
-                        if (output_is_u16 && !isCompositeMode) {
-                            xt::xarray<uint16_t> srcChunk = xt::empty<uint16_t>({sz, sy, sx});
-                            z5::types::ShapeType sOff = {static_cast<size_t>(2*z), static_cast<size_t>(2*y), static_cast<size_t>(2*x)};
-                            z5::multiarray::readSubarray<uint16_t>(src, srcChunk, sOff.begin());
-                            xt::xarray<uint16_t> dstChunk = xt::empty<uint16_t>({lz, ly, lx});
-                            for (size_t zz = 0; zz < lz; ++zz)
-                                for (size_t yy = 0; yy < ly; ++yy)
-                                    for (size_t xx = 0; xx < lx; ++xx) {
-                                        uint32_t sum = 0; int cnt = 0;
-                                        for (int dz2 = 0; dz2 < 2 && (2*zz + dz2) < sz; ++dz2)
-                                            for (int dy2 = 0; dy2 < 2 && (2*yy + dy2) < sy; ++dy2)
-                                                for (int dx2 = 0; dx2 < 2 && (2*xx + dx2) < sx; ++dx2) {
-                                                    sum += srcChunk(2*zz + dz2, 2*yy + dy2, 2*xx + dx2);
-                                                    cnt += 1;
-                                                }
-                                        dstChunk(zz, yy, xx) = static_cast<uint16_t>((sum + (cnt/2)) / std::max(1, cnt));
-                                    }
-                            z5::types::ShapeType dOff = {z, static_cast<size_t>(y), static_cast<size_t>(x)};
-                            z5::multiarray::writeSubarray<uint16_t>(dst, dstChunk, dOff.begin());
-                        } else {
-                            xt::xarray<uint8_t> srcChunk = xt::empty<uint8_t>({sz, sy, sx});
-                            z5::types::ShapeType sOff = {static_cast<size_t>(2*z), static_cast<size_t>(2*y), static_cast<size_t>(2*x)};
-                            z5::multiarray::readSubarray<uint8_t>(src, srcChunk, sOff.begin());
-                            xt::xarray<uint8_t> dstChunk = xt::empty<uint8_t>({lz, ly, lx});
-                            for (size_t zz = 0; zz < lz; ++zz)
-                                for (size_t yy = 0; yy < ly; ++yy)
-                                    for (size_t xx = 0; xx < lx; ++xx) {
-                                        int sum = 0; int cnt = 0;
-                                        for (int dz2 = 0; dz2 < 2 && (2*zz + dz2) < sz; ++dz2)
-                                            for (int dy2 = 0; dy2 < 2 && (2*yy + dy2) < sy; ++dy2)
-                                                for (int dx2 = 0; dx2 < 2 && (2*xx + dx2) < sx; ++dx2) {
-                                                    sum += srcChunk(2*zz + dz2, 2*yy + dy2, 2*xx + dx2);
-                                                    cnt += 1;
-                                                }
-                                        dstChunk(zz, yy, xx) = static_cast<uint8_t>((sum + (cnt/2)) / std::max(1, cnt));
-                                    }
-                            z5::types::ShapeType dOff = {z, static_cast<size_t>(y), static_cast<size_t>(x)};
-                            z5::multiarray::writeSubarray<uint8_t>(dst, dstChunk, dOff.begin());
-                        }
-
-                        size_t done = ++tilesDone;
-                        int pct = static_cast<int>(100.0 * double(done) / double(totalTiles));
-                        #pragma omp critical(progress_print)
-                        {
-                            std::cout << "\r[render L" << targetLevel << "] tile " << done << "/" << totalTiles
-                                      << " (" << pct << "%)" << std::flush;
-                        }
-                    }
-                }
-            }
-            std::cout << std::endl;
-        };
-
-        for (int level = 1; level <= 5; ++level) {
-            downsample_avg(level);
+        } else {
+            std::cout << "[zarr-v3] skipping pyramid build (not yet implemented for v3 sharded)" << std::endl;
         }
 
         {
@@ -1749,31 +1730,24 @@ int main(int argc, char *argv[])
         }
         attrs["chunk_size"] = {static_cast<int>(CZ), static_cast<int>(CH), static_cast<int>(CW)};
         attrs["note_axes_order"] = "ZYX (slice, row, col)";
-
-        nlohmann::json multiscale;
-        multiscale["version"] = "0.4";
-        multiscale["name"] = "render";
-        multiscale["axes"] = nlohmann::json::array({
-            nlohmann::json{{"name","z"},{"type","space"}},
-            nlohmann::json{{"name","y"},{"type","space"}},
-            nlohmann::json{{"name","x"},{"type","space"}}
-        });
-        multiscale["datasets"] = nlohmann::json::array();
-        for (int level = 0; level <= 5; ++level) {
-            const double s = std::pow(2.0, level);
-            nlohmann::json dset;
-            dset["path"] = std::to_string(level);
-            dset["coordinateTransformations"] = nlohmann::json::array({
-                // Z, Y and X scale by 2^level
-                nlohmann::json{{"type","scale"},{"scale", nlohmann::json::array({s, s, s})}},
-                nlohmann::json{{"type","translation"},{"translation", nlohmann::json::array({0.0, 0.0, 0.0})}}
-            });
-            multiscale["datasets"].push_back(dset);
+        if (zarrV3) {
+            attrs["zarr_version"] = 3;
+            attrs["shard_shape"] = {static_cast<int>(chunks0[0]), static_cast<int>(chunks0[1]), static_cast<int>(chunks0[2])};
+            attrs["inner_chunk_shape"] = {static_cast<int>(innerChunks0[0]), static_cast<int>(innerChunks0[1]), static_cast<int>(innerChunks0[2])};
         }
-        multiscale["metadata"] = nlohmann::json{{"downsampling_method","mean"}};
-        attrs["multiscales"] = nlohmann::json::array({multiscale});
 
-        z5::filesystem::writeAttributes(outFile, attrs);
+        if (!zarrV3) {
+            vc::zarr::writeZarrMultiscaleAttrs(outFile, 5, attrs);
+        } else {
+            // Write v3 root group attrs
+            auto rootZarr = output_path_local / "zarr.json";
+            std::ifstream rf(rootZarr);
+            nlohmann::json rootJson = nlohmann::json::parse(rf);
+            rf.close();
+            rootJson["attributes"] = attrs;
+            std::ofstream wf(rootZarr);
+            wf << rootJson.dump(4) << "\n";
+        }
         }
 
         // Optionally export per-Z TIFFs from level 0 into layers_{zarrname}
@@ -1783,8 +1757,8 @@ int main(int argc, char *argv[])
         }
         if (include_tifs && numParts <= 1) {
             try {
-                auto dsL0 = z5::openDataset(outFile, "0");
-                const auto& shape0_check = dsL0->shape(); // [Z, Y, X]
+                auto dsL0 = vc::zarr::openDataset(outFile, "0");
+                const auto& shape0_check = dsL0.shape(); // [Z, Y, X]
                 const size_t Z = shape0_check[0];
                 const int Y = static_cast<int>(shape0_check[1]);
                 const int X = static_cast<int>(shape0_check[2]);
@@ -1842,9 +1816,9 @@ int main(int argc, char *argv[])
                         const uint32_t y0_dst = static_cast<uint32_t>(ty) * tileH;
 
                         if (output_is_u16 && !isCompositeMode) {
-                            xt::xarray<uint16_t> tile = xt::empty<uint16_t>({Z, static_cast<size_t>(dy), static_cast<size_t>(dx)});
-                            z5::types::ShapeType off = {0, static_cast<size_t>(y0_src), static_cast<size_t>(x0_src)};
-                            z5::multiarray::readSubarray<uint16_t>(dsL0, tile, off.begin());
+                            vc::zarr::Array3D<uint16_t> tile(Z, static_cast<size_t>(dy), static_cast<size_t>(dx));
+                            vc::zarr::ShapeType off = {0, static_cast<size_t>(y0_src), static_cast<size_t>(x0_src)};
+                            vc::zarr::readSubarray<uint16_t>(dsL0, tile, off);
                             for (size_t z = 0; z < Z; ++z) {
                                 cv::Mat srcTile(static_cast<int>(dy), static_cast<int>(dx), CV_16UC1);
                                 for (uint32_t yy = 0; yy < dy; ++yy) {
@@ -1855,9 +1829,9 @@ int main(int argc, char *argv[])
                                 writers[z].writeTile(x0_dst, y0_dst, srcTile);
                             }
                         } else {
-                            xt::xarray<uint8_t> tile = xt::empty<uint8_t>({Z, static_cast<size_t>(dy), static_cast<size_t>(dx)});
-                            z5::types::ShapeType off = {0, static_cast<size_t>(y0_src), static_cast<size_t>(x0_src)};
-                            z5::multiarray::readSubarray<uint8_t>(dsL0, tile, off.begin());
+                            vc::zarr::Array3D<uint8_t> tile(Z, static_cast<size_t>(dy), static_cast<size_t>(dx));
+                            vc::zarr::ShapeType off = {0, static_cast<size_t>(y0_src), static_cast<size_t>(x0_src)};
+                            vc::zarr::readSubarray<uint8_t>(dsL0, tile, off);
                             for (size_t z = 0; z < Z; ++z) {
                                 cv::Mat srcTile(static_cast<int>(dy), static_cast<int>(dx), CV_8UC1);
                                 for (uint32_t yy = 0; yy < dy; ++yy) {
@@ -2027,7 +2001,7 @@ int main(int argc, char *argv[])
                         cv::Mat_<uint8_t> compositeOut;
                         readCompositeFast(
                             compositeOut,
-                            ds.get(),
+                            &ds,
                             basePoints,
                             stepDirs,
                             static_cast<float>(slice_step * ds_scale),
@@ -2053,7 +2027,7 @@ int main(int argc, char *argv[])
                     } else if (output_is_u16) {
                         // Bulk read all slices for this band in one pass
                         std::vector<cv::Mat_<uint16_t>> rawSlices;
-                        readMultiSlice(rawSlices, ds.get(), &chunk_cache_u16, basePoints, stepDirs, allOffsets);
+                        readMultiSlice(rawSlices, &ds, &chunk_cache_u16, basePoints, stepDirs, allOffsets);
 
                         for (int zi = 0; zi < num_slices; ++zi) {
                             cv::Mat sliceOut;
@@ -2096,7 +2070,7 @@ int main(int argc, char *argv[])
                         }
                     } else {
                         std::vector<cv::Mat_<uint8_t>> rawSlices;
-                        readMultiSlice(rawSlices, ds.get(), &chunk_cache_u8, basePoints, stepDirs, allOffsets);
+                        readMultiSlice(rawSlices, &ds, &chunk_cache_u8, basePoints, stepDirs, allOffsets);
 
                         for (int zi = 0; zi < num_slices; ++zi) {
                             cv::Mat sliceOut;

@@ -1,5 +1,7 @@
 #include "ExtrapolationGrowth.hpp"
 
+#include "vc/core/util/Zarr.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -13,7 +15,6 @@
 #include <opencv2/ximgproc.hpp>
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/Slicing.hpp"
-#include <xtensor/containers/xtensor.hpp>
 
 Q_DECLARE_LOGGING_CATEGORY(lcSegGrowth)
 
@@ -36,9 +37,7 @@ SDTChunk* getOrComputeSDTChunk(SDTContext& ctx, const cv::Vec3f& worldPt) {
 
     // Load binary data from zarr
     cv::Vec3i size(cs, cs, cs);
-    xt::xtensor<uint8_t, 3, xt::layout_type::column_major> binaryData(
-        std::array<size_t, 3>{(size_t)cs, (size_t)cs, (size_t)cs});
-    binaryData.fill(0);
+    vc::zarr::Array3D<uint8_t> binaryData((size_t)cs, (size_t)cs, (size_t)cs);
 
     // Clamp to dataset bounds
     auto shape = ctx.binaryDataset->shape();
@@ -58,8 +57,7 @@ SDTChunk* getOrComputeSDTChunk(SDTContext& ctx, const cv::Vec3f& worldPt) {
         // Zarr volumes are [z,y,x]; translate from world XYZ to ZYX for reading.
         cv::Vec3i clampedOriginZYX(clampedOrigin[2], clampedOrigin[1], clampedOrigin[0]);
         cv::Vec3i readSizeZYX(readSize[2], readSize[1], readSize[0]);
-        xt::xtensor<uint8_t, 3, xt::layout_type::column_major> readBuf(
-            std::array<size_t, 3>{(size_t)readSizeZYX[0], (size_t)readSizeZYX[1], (size_t)readSizeZYX[2]});
+        vc::zarr::Array3D<uint8_t> readBuf((size_t)readSizeZYX[0], (size_t)readSizeZYX[1], (size_t)readSizeZYX[2]);
         readArea3D(readBuf, clampedOriginZYX, ctx.binaryDataset, ctx.cache);
 
         // Copy into binaryData at correct offset
@@ -375,10 +373,10 @@ uint8_t* getOrLoadBinaryChunk(SkeletonPathContext& ctx, const cv::Vec3i& origin,
         // Zarr volumes are [z,y,x]; translate from world XYZ to ZYX for reading.
         cv::Vec3i clampedOriginZYX(clampedOrigin[2], clampedOrigin[1], clampedOrigin[0]);
         cv::Vec3i readSizeZYX(readSize[2], readSize[1], readSize[0]);
-        xt::xtensor<uint8_t, 3, xt::layout_type::column_major> readBuf(
-            std::array<size_t, 3>{static_cast<size_t>(readSizeZYX[0]),
-                                  static_cast<size_t>(readSizeZYX[1]),
-                                  static_cast<size_t>(readSizeZYX[2])});
+        vc::zarr::Array3D<uint8_t> readBuf(
+            static_cast<size_t>(readSizeZYX[0]),
+            static_cast<size_t>(readSizeZYX[1]),
+            static_cast<size_t>(readSizeZYX[2]));
         readArea3D(readBuf, clampedOriginZYX, ctx.binaryDataset, ctx.cache);
 
         // Copy into chunk at correct offset

@@ -3465,7 +3465,7 @@ void CWindow::onAppendMaskPressed(void)
     cv::Mat_<uint8_t> img;
     std::vector<cv::Mat> existing_layers;
 
-    z5::Dataset* ds = currentVolume->zarrDataset(0);
+    vc::zarr::Dataset* ds = currentVolume->zarrDataset(0);
 
     try {
         // Find the segmentation viewer and check if composite is enabled

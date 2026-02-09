@@ -15,11 +15,7 @@
 
 #include <omp.h>
 
-#include <xtensor/containers/xarray.hpp>
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/common.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
+#include "vc/core/util/Zarr.hpp"
 
 #include "vc/core/util/Slicing.hpp"
 #include <vc/core/util/GridStore.hpp>
@@ -267,13 +263,12 @@ void run_generate(const po::variables_map& vm) {
     std::cout << "Input Zarr path: " << input_path << std::endl;
     std::cout << "Output directory: " << output_path << std::endl;
 
-    z5::filesystem::handle::Group group_handle(input_path);
-    std::unique_ptr<z5::Dataset> ds = z5::openDataset(group_handle, "0");
+    auto ds = vc::zarr::openDatasetAutoSep(input_path, "0");
     if (!ds) {
         std::cerr << "Error: Could not open dataset '0' in volume '" << input_path << "'." << std::endl;
         exit(1);
     }
-    auto shape = ds->shape();
+    auto shape = ds.shape();
 
     double spiral_step = vm["spiral-step"].as<double>();
     int grid_step = vm["grid-step"].as<int>();
@@ -378,10 +373,9 @@ void run_generate(const po::variables_map& vm) {
 
             // Read entire chunk at once (KEY OPTIMIZATION)
             ALifeTime chunk_timer;
-            xt::xtensor<uint8_t, 3, xt::layout_type::column_major> chunk_data =
-                xt::xtensor<uint8_t, 3, xt::layout_type::column_major>::from_shape(chunk_shape);
-            chunk_timer.mark("xtensor init");
-            readArea3D(chunk_data, chunk_offset, ds.get(), &cache);
+            vc::zarr::Array3D<uint8_t> chunk_data(chunk_shape[0], chunk_shape[1], chunk_shape[2]);
+            chunk_timer.mark("array init");
+            readArea3D(chunk_data, chunk_offset, &ds, &cache);
             chunk_timer.mark("read_chunk");
 
             for (const auto& mark : chunk_timer.getMarks()) {

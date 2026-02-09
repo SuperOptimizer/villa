@@ -4,7 +4,7 @@
 
 #include "VolumeViewerCmaps.hpp"
 
-#include "z5/multiarray/xtensor_access.hxx"
+#include "vc/core/util/Zarr.hpp"
 
 #include <QGraphicsView>
 #include <QGraphicsScene>
@@ -39,7 +39,7 @@ namespace {
 // Returns normalized gradient vectors at each raw grid point
 // dsScale converts from world coordinates to dataset coordinates
 cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
-    z5::Dataset* ds,
+    vc::zarr::Dataset* ds,
     const cv::Mat_<cv::Vec3f>& rawPoints,
     float dsScale)
 {
@@ -99,9 +99,9 @@ cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
     if (localW == 0 || localH == 0 || localD == 0) return gradients;
 
     // Step 2: Batch read the volume data for the bounding box
-    xt::xarray<uint8_t> localVolume = xt::empty<uint8_t>({localD, localH, localW});
-    z5::types::ShapeType off = {static_cast<size_t>(bboxZ0), static_cast<size_t>(bboxY0), static_cast<size_t>(bboxX0)};
-    z5::multiarray::readSubarray<uint8_t>(*ds, localVolume, off.begin());
+    vc::zarr::Array3D<uint8_t> localVolume(localD, localH, localW);
+    vc::zarr::ShapeType off = {static_cast<size_t>(bboxZ0), static_cast<size_t>(bboxY0), static_cast<size_t>(bboxX0)};
+    vc::zarr::readSubarray<uint8_t>(*ds, localVolume, off);
 
     // Helper lambda to sample from local volume with bounds checking
     auto sampleLocal = [&](float gx, float gy, float gz) -> float {
@@ -506,7 +506,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
 
     cv::Mat baseColor;
 
-    z5::Dataset* baseDataset = volume ? volume->zarrDataset(_ds_sd_idx) : nullptr;
+    vc::zarr::Dataset* baseDataset = volume ? volume->zarrDataset(_ds_sd_idx) : nullptr;
 
     // Check if this is a plane surface that should use plane composite rendering
     PlaneSurface* plane = dynamic_cast<PlaneSurface*>(surf.get());
@@ -608,7 +608,7 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
             }
 
             cv::Mat_<uint8_t> overlayValues;
-            z5::Dataset* overlayDataset = _overlayVolume->zarrDataset(overlayIdx);
+            vc::zarr::Dataset* overlayDataset = _overlayVolume->zarrDataset(overlayIdx);
             readInterpolated3D(overlayValues, overlayDataset, coords * overlayScale, cache, /*nearest_neighbor=*/true);
 
             if (!overlayValues.empty()) {

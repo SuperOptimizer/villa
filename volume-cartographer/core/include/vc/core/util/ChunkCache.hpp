@@ -1,7 +1,5 @@
 #pragma once
 
-#include <xtensor/containers/xarray.hpp>
-
 #include <atomic>
 #include <memory>
 #include <unordered_map>
@@ -10,15 +8,18 @@
 #include <mutex>
 #include <shared_mutex>
 
-// Forward declaration
-namespace z5 { class Dataset; }
+// Forward declarations
+namespace vc::zarr {
+class Dataset;
+template <typename T> struct Array3D;
+}
 
 /**
  * @brief Thread-safe chunk cache with shared_ptr lifetime management
  *
  * @tparam T Data type of cached chunks (uint8_t or uint16_t)
  *
- * Supports caching chunks from multiple z5::Dataset instances simultaneously.
+ * Supports caching chunks from multiple vc::zarr::Dataset instances simultaneously.
  * Chunks are stored as shared_ptr so eviction removes from the cache but
  * doesn't free memory until all readers are done.
  *
@@ -29,7 +30,7 @@ template<typename T>
 class ChunkCache
 {
 public:
-    using ChunkPtr = std::shared_ptr<xt::xarray<T>>;
+    using ChunkPtr = std::shared_ptr<vc::zarr::Array3D<T>>;
 
     explicit ChunkCache(size_t maxBytes = 0);
     ~ChunkCache();
@@ -56,20 +57,20 @@ public:
      * @brief Get a chunk, loading from disk if needed.
      * Returns shared_ptr — caller holds the chunk alive even if evicted.
      */
-    ChunkPtr get(z5::Dataset* ds, int iz, int iy, int ix);
+    ChunkPtr get(vc::zarr::Dataset* ds, int iz, int iy, int ix);
 
     /**
      * @brief Check if chunk is cached without loading.
      */
-    ChunkPtr getIfCached(z5::Dataset* ds, int iz, int iy, int ix) const;
+    ChunkPtr getIfCached(vc::zarr::Dataset* ds, int iz, int iy, int ix) const;
 
-    void prefetch(z5::Dataset* ds, int minIz, int minIy, int minIx, int maxIz, int maxIy, int maxIx);
+    void prefetch(vc::zarr::Dataset* ds, int minIz, int minIy, int minIx, int maxIz, int maxIy, int maxIx);
     void clear();
     void flush();
 
 private:
     struct ChunkKey {
-        z5::Dataset* ds;
+        vc::zarr::Dataset* ds;
         int iz, iy, ix;
         bool operator==(const ChunkKey& o) const {
             return ds == o.ds && iz == o.iz && iy == o.iy && ix == o.ix;
@@ -106,7 +107,7 @@ private:
 
     size_t lockIndex(const ChunkKey& k) const { return ChunkKeyHash()(k) % kLockPoolSize; }
 
-    ChunkPtr loadChunk(z5::Dataset* ds, int iz, int iy, int ix);
+    ChunkPtr loadChunk(vc::zarr::Dataset* ds, int iz, int iy, int ix);
     void evictIfNeeded();
 
     // Stats counters

@@ -21,6 +21,8 @@ add_library(vc_core
         src/Geometry.cpp
         src/Thinning.cpp
         src/Umbilicus.cpp
+        src/Zarr.cpp
+        src/ZarrCodecs.cpp
         src/ABFFlattening.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/Version.cpp
 )
@@ -33,14 +35,17 @@ target_link_libraries(vc_core
         opencv_calib3d
         opencv_video
         nlohmann_json::nlohmann_json
-        z5
+        ${BLOSC_LIBRARIES}
+        ZLIB::ZLIB
+        ${ZSTD_LIBRARIES}
         OpenMP::OpenMP_CXX
         TIFF::TIFF
         OpenABF
         #${CURL_LIBRARIES}
         #${OPENSSL_LIBRARIES}
-        #${ZLIB_LIBRARIES}
 )
+
+target_include_directories(vc_core PRIVATE ${BLOSC_INCLUDE_DIR} ${ZSTD_INCLUDE_DIRS})
 
 # Precompiled headers for faster builds
 if(VC_USE_PCH)
@@ -102,17 +107,6 @@ target_precompile_headers(vc_core PRIVATE
     <Eigen/Dense>
     # Boost (used by CLI apps)
     <boost/program_options.hpp>
-    # z5/xtensor (zarr volume access - heavy templates)
-    <xtensor/containers/xarray.hpp>
-    <xtensor/containers/xadapt.hpp>
-    <xtensor/views/xview.hpp>
-    <xtensor/generators/xbuilder.hpp>
-    <z5/factory.hxx>
-    <z5/dataset.hxx>
-    <z5/attributes.hxx>
-    <z5/filesystem/handle.hxx>
-    <z5/filesystem/dataset.hxx>
-    <z5/multiarray/xtensor_access.hxx>
 )
 endif()
 

@@ -16,14 +16,9 @@
 #include <omp.h>
 #endif
 
-// Zarr / xtensor
+// Zarr
 #include <nlohmann/json.hpp>
-#include "z5/factory.hxx"
-#include "z5/filesystem/handle.hxx"
-#include "z5/filesystem/dataset.hxx"
-#include "z5/attributes.hxx"
-#include "z5/multiarray/xtensor_access.hxx"
-#include <xtensor/containers/xarray.hpp>
+#include "vc/core/util/Zarr.hpp"
 
 namespace po = boost::program_options;
 using json = nlohmann::json;
@@ -980,28 +975,14 @@ int main(int argc, char** argv) {
             // 1) in_path points to zarr root (has .zgroup) -> use group_idx subfolder (e.g. 0)
             // 2) in_path points directly to a dataset (has .zarray) -> open that dataset (ignore group_idx)
             const bool path_is_dataset = fs::exists(in_root / ".zarray");
-            z5::filesystem::handle::Dataset inHandle = [&]() {
-                std::string dimsep = ".";
-                if (path_is_dataset) {
-                    fs::path ds_path = in_root;
-                    try {
-                        json j = json::parse(std::ifstream((ds_path / ".zarray").string()));
-                        if (j.contains("dimension_separator")) dimsep = j["dimension_separator"].get<std::string>();
-                    } catch (...) {}
-                    z5::filesystem::handle::Group parent(ds_path.parent_path(), z5::FileMode::FileMode::r);
-                    return z5::filesystem::handle::Dataset(parent, ds_path.filename().string(), dimsep);
-                } else {
-                    z5::filesystem::handle::Group root(in_root, z5::FileMode::FileMode::r);
-                    try {
-                        json j = json::parse(std::ifstream((in_root / std::to_string(group_idx) / ".zarray").string()));
-                        if (j.contains("dimension_separator")) dimsep = j["dimension_separator"].get<std::string>();
-                    } catch (...) {}
-                    return z5::filesystem::handle::Dataset(root, std::to_string(group_idx), dimsep);
-                }
-            }();
-            std::unique_ptr<z5::Dataset> dsIn = z5::filesystem::openDataset(inHandle);
+            vc::zarr::Dataset dsIn;
+            if (path_is_dataset) {
+                dsIn = vc::zarr::openDatasetAutoSep(in_root.parent_path(), in_root.filename().string());
+            } else {
+                dsIn = vc::zarr::openDatasetAutoSep(in_root, std::to_string(group_idx));
+            }
 
-            const auto& shape = dsIn->shape(); // [Z, Y, X]
+            const auto& shape = dsIn.shape(); // [Z, Y, X]
             if (shape.size() != 3) {
                 std::cerr << "Expected 3D OME-Zarr (Z,Y,X); got dims=" << shape.size() << std::endl;
                 return 1;
@@ -1056,28 +1037,28 @@ int main(int argc, char** argv) {
                     const size_t z = static_cast<size_t>(zi);
                     cv::Mat src;
                     // Read one Z slab
-                    if (dsIn->getDtype() == z5::types::Datatype::uint8) {
-                        xt::xarray<uint8_t> slab = xt::empty<uint8_t>({1ul, Y, X});
-                        z5::types::ShapeType off = {z, 0ul, 0ul};
-                        z5::multiarray::readSubarray<uint8_t>(dsIn, slab, off.begin());
+                    if (dsIn.isUint8()) {
+                        vc::zarr::Array3D<uint8_t> slab(1, Y, X);
+                        vc::zarr::ShapeType off = {z, 0ul, 0ul};
+                        vc::zarr::readSubarray<uint8_t>(dsIn, slab, off);
                         src.create(static_cast<int>(Y), static_cast<int>(X), CV_8UC1);
                         for (size_t y = 0; y < Y; ++y) {
                             uint8_t* row = src.ptr<uint8_t>(static_cast<int>(y));
                             for (size_t x = 0; x < X; ++x) row[x] = slab(0, y, x);
                         }
-                    } else if (dsIn->getDtype() == z5::types::Datatype::uint16) {
-                        xt::xarray<uint16_t> slab = xt::empty<uint16_t>({1ul, Y, X});
-                        z5::types::ShapeType off = {z, 0ul, 0ul};
-                        z5::multiarray::readSubarray<uint16_t>(dsIn, slab, off.begin());
+                    } else if (dsIn.isUint16()) {
+                        vc::zarr::Array3D<uint16_t> slab(1, Y, X);
+                        vc::zarr::ShapeType off = {z, 0ul, 0ul};
+                        vc::zarr::readSubarray<uint16_t>(dsIn, slab, off);
                         src.create(static_cast<int>(Y), static_cast<int>(X), CV_16UC1);
                         for (size_t y = 0; y < Y; ++y) {
                             uint16_t* row = src.ptr<uint16_t>(static_cast<int>(y));
                             for (size_t x = 0; x < X; ++x) row[x] = slab(0, y, x);
                         }
-                    } else if (dsIn->getDtype() == z5::types::Datatype::float32) {
-                        xt::xarray<float> slab = xt::empty<float>({1ul, Y, X});
-                        z5::types::ShapeType off = {z, 0ul, 0ul};
-                        z5::multiarray::readSubarray<float>(dsIn, slab, off.begin());
+                    } else if (dsIn.isFloat32()) {
+                        vc::zarr::Array3D<float> slab(1, Y, X);
+                        vc::zarr::ShapeType off = {z, 0ul, 0ul};
+                        vc::zarr::readSubarray<float>(dsIn, slab, off);
                         src.create(static_cast<int>(Y), static_cast<int>(X), CV_32FC1);
                         for (size_t y = 0; y < Y; ++y) {
                             float* row = src.ptr<float>(static_cast<int>(y));
@@ -1162,8 +1143,8 @@ int main(int argc, char** argv) {
             }
 
             // Else: Prepare output zarr root and level-0 dataset
-            z5::filesystem::handle::File outFile(out_root);
-            z5::createFile(outFile, true);
+            vc::zarr::createFile(out_root, true);
+            vc::zarr::File outFile(out_root);
 
             const size_t CH = 128, CW = 128; // chunking in Y,X; Z chunk = 1 for per-slice IO
             const size_t CZ = 1;
@@ -1171,7 +1152,7 @@ int main(int argc, char** argv) {
             std::vector<size_t> shape0{Z, Y, X};
             std::vector<size_t> chunks0{CZ, std::min(CH, Y), std::min(CW, X)};
             nlohmann::json compOpts0 = {{"cname","zstd"},{"clevel",1},{"shuffle",0}};
-            auto dsOut0 = z5::createDataset(outFile, "0", "uint8", shape0, chunks0, std::string("blosc"), compOpts0);
+            auto dsOut0 = vc::zarr::createDataset(outFile, "0", "uint8", shape0, chunks0, std::string("blosc"), compOpts0);
 
             // Process slices, parallelized over Z
             // jobs/done/total already declared above
@@ -1184,28 +1165,28 @@ int main(int argc, char** argv) {
                 const size_t z = static_cast<size_t>(zi);
                 cv::Mat src;
                 // Support uint8 / uint16; other types -> convert later
-                if (dsIn->getDtype() == z5::types::Datatype::uint8) {
-                    xt::xarray<uint8_t> slab = xt::empty<uint8_t>({1ul, Y, X});
-                    z5::types::ShapeType off = {z, 0ul, 0ul};
-                    z5::multiarray::readSubarray<uint8_t>(dsIn, slab, off.begin());
+                if (dsIn.isUint8()) {
+                    vc::zarr::Array3D<uint8_t> slab(1, Y, X);
+                    vc::zarr::ShapeType off = {z, 0ul, 0ul};
+                    vc::zarr::readSubarray<uint8_t>(dsIn, slab, off);
                     src.create(static_cast<int>(Y), static_cast<int>(X), CV_8UC1);
                     for (size_t y = 0; y < Y; ++y) {
                         uint8_t* row = src.ptr<uint8_t>(static_cast<int>(y));
                         for (size_t x = 0; x < X; ++x) row[x] = slab(0, y, x);
                     }
-                } else if (dsIn->getDtype() == z5::types::Datatype::uint16) {
-                    xt::xarray<uint16_t> slab = xt::empty<uint16_t>({1ul, Y, X});
-                    z5::types::ShapeType off = {z, 0ul, 0ul};
-                    z5::multiarray::readSubarray<uint16_t>(dsIn, slab, off.begin());
+                } else if (dsIn.isUint16()) {
+                    vc::zarr::Array3D<uint16_t> slab(1, Y, X);
+                    vc::zarr::ShapeType off = {z, 0ul, 0ul};
+                    vc::zarr::readSubarray<uint16_t>(dsIn, slab, off);
                     src.create(static_cast<int>(Y), static_cast<int>(X), CV_16UC1);
                     for (size_t y = 0; y < Y; ++y) {
                         uint16_t* row = src.ptr<uint16_t>(static_cast<int>(y));
                         for (size_t x = 0; x < X; ++x) row[x] = slab(0, y, x);
                     }
-                } else if (dsIn->getDtype() == z5::types::Datatype::float32) {
-                    xt::xarray<float> slab = xt::empty<float>({1ul, Y, X});
-                    z5::types::ShapeType off = {z, 0ul, 0ul};
-                    z5::multiarray::readSubarray<float>(dsIn, slab, off.begin());
+                } else if (dsIn.isFloat32()) {
+                    vc::zarr::Array3D<float> slab(1, Y, X);
+                    vc::zarr::ShapeType off = {z, 0ul, 0ul};
+                    vc::zarr::readSubarray<float>(dsIn, slab, off);
                     src.create(static_cast<int>(Y), static_cast<int>(X), CV_32FC1);
                     for (size_t y = 0; y < Y; ++y) {
                         float* row = src.ptr<float>(static_cast<int>(y));
@@ -1231,13 +1212,13 @@ int main(int argc, char** argv) {
                 }
 
                 // Write to output level-0 at [z, 0, 0]
-                xt::xarray<uint8_t> slabOut = xt::empty<uint8_t>({1ul, Y, X});
+                vc::zarr::Array3D<uint8_t> slabOut(1, Y, X);
                 for (size_t y = 0; y < Y; ++y) {
                     const uint8_t* row = out_u8.ptr<uint8_t>(static_cast<int>(y));
                     for (size_t x = 0; x < X; ++x) slabOut(0, y, x) = row[x];
                 }
-                z5::types::ShapeType offOut = {z, 0ul, 0ul};
-                z5::multiarray::writeSubarray<uint8_t>(dsOut0, slabOut, offOut.begin());
+                vc::zarr::ShapeType offOut = {z, 0ul, 0ul};
+                vc::zarr::writeSubarray<uint8_t>(dsOut0, slabOut, offOut);
 
                 size_t d = ++done;
                 if ((d % 1) == 0) {
@@ -1277,19 +1258,19 @@ int main(int argc, char** argv) {
             }
             multiscale["metadata"] = nlohmann::json{{"downsampling_method","mean"}};
             attrs["multiscales"] = nlohmann::json::array({multiscale});
-            z5::filesystem::writeAttributes(outFile, attrs);
+            vc::zarr::writeAttributes(outFile, attrs);
 
             // Build additional pyramid levels by mean pooling 2x2x2 from previous level (as uint8)
             for (int targetLevel = 1; targetLevel <= 5; ++targetLevel) {
-                auto src = z5::openDataset(outFile, std::to_string(targetLevel - 1));
-                const auto& sShape = src->shape();
+                auto src = vc::zarr::openDataset(outFile, std::to_string(targetLevel - 1));
+                const auto sShape = src.shape();
                 size_t sz = std::max<size_t>(1, sShape[0] / 2);
                 size_t sy = std::max<size_t>(1, sShape[1] / 2);
                 size_t sx = std::max<size_t>(1, sShape[2] / 2);
                 std::vector<size_t> dShape{sz, sy, sx};
                 std::vector<size_t> dChunks{1ul, std::min(CH, sy), std::min(CW, sx)};
                 nlohmann::json compOpts = {{"cname","zstd"},{"clevel",1},{"shuffle",0}};
-                auto dst = z5::createDataset(outFile, std::to_string(targetLevel), "uint8", dShape, dChunks, std::string("blosc"), compOpts);
+                auto dst = vc::zarr::createDataset(outFile, std::to_string(targetLevel), "uint8", dShape, dChunks, std::string("blosc"), compOpts);
 
                 const size_t tileZ = 1, tileY = CH, tileX = CW;
                 const size_t tilesY = (sy + tileY - 1) / tileY;
@@ -1307,12 +1288,12 @@ int main(int argc, char** argv) {
                         size_t lx = std::min(tileX, sx - x0);
                         size_t lz = sz;
 
-                        xt::xarray<uint8_t> srcChunk = xt::empty<uint8_t>({lz, ly*2ul, lx*2ul});
+                        vc::zarr::Array3D<uint8_t> srcChunk(lz, ly*2, lx*2);
                         {
-                            z5::types::ShapeType off = {0ul, y0*2ul, x0*2ul};
-                            z5::multiarray::readSubarray<uint8_t>(src, srcChunk, off.begin());
+                            vc::zarr::ShapeType off = {0ul, y0*2ul, x0*2ul};
+                            vc::zarr::readSubarray<uint8_t>(src, srcChunk, off);
                         }
-                        xt::xarray<uint8_t> dstChunk = xt::empty<uint8_t>({lz, ly, lx});
+                        vc::zarr::Array3D<uint8_t> dstChunk(lz, ly, lx);
                         for (size_t zz = 0; zz < lz; ++zz) {
                             for (size_t yy = 0; yy < ly; ++yy) {
                                 for (size_t xx = 0; xx < lx; ++xx) {
@@ -1325,8 +1306,8 @@ int main(int argc, char** argv) {
                                 }
                             }
                         }
-                        z5::types::ShapeType offD = {0ul, y0, x0};
-                        z5::multiarray::writeSubarray<uint8_t>(dst, dstChunk, offD.begin());
+                        vc::zarr::ShapeType offD = {0ul, y0, x0};
+                        vc::zarr::writeSubarray<uint8_t>(dst, dstChunk, offD);
                         size_t d = ++tilesDone;
                         #ifdef _OPENMP
                         if (omp_get_thread_num() == 0)
