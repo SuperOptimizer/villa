@@ -19,7 +19,10 @@ constexpr uint16_t TAG_BitsPerSample     = 258;
 constexpr uint16_t TAG_Compression       = 259;
 constexpr uint16_t TAG_Photometric       = 262;
 constexpr uint16_t TAG_SamplesPerPixel   = 277;
+constexpr uint16_t TAG_XResolution       = 282;
+constexpr uint16_t TAG_YResolution       = 283;
 constexpr uint16_t TAG_PlanarConfig      = 284;
+constexpr uint16_t TAG_ResolutionUnit    = 296;
 constexpr uint16_t TAG_Predictor         = 317;
 constexpr uint16_t TAG_TileWidth         = 322;
 constexpr uint16_t TAG_TileLength        = 323;
@@ -28,8 +31,9 @@ constexpr uint16_t TAG_TileByteCounts    = 325;
 constexpr uint16_t TAG_SampleFormat      = 339;
 
 // TIFF data types
-constexpr uint16_t TIFF_SHORT = 3;
-constexpr uint16_t TIFF_LONG  = 4;
+constexpr uint16_t TIFF_SHORT    = 3;
+constexpr uint16_t TIFF_LONG     = 4;
+constexpr uint16_t TIFF_RATIONAL = 5;
 
 constexpr uint16_t PLANARCONFIG_CONTIG = 1;
 constexpr uint16_t PREDICTOR_NONE       = 1;
@@ -572,7 +576,7 @@ void writeTiffFile(std::ofstream& f,
     uint16_t photometric = (spp == 3) ? tiff::RGB : tiff::MinIsBlack;
 
     // Determine how many tags
-    int numTags = 11; // base tags
+    int numTags = 14; // base tags (11 + XRes + YRes + ResUnit)
     if (usePredictor) numTags++;
 
     write_u16(f, static_cast<uint16_t>(numTags));
@@ -597,6 +601,9 @@ void writeTiffFile(std::ofstream& f,
         sfArrayOff = extraOff;
         extraOff += spp * 2;
     }
+    // Resolution RATIONAL values: 72/1 = {72, 1} — 8 bytes each, share one copy
+    uint32_t resolutionOff = extraOff;
+    extraOff += 8; // one RATIONAL (numerator + denominator)
 
     // Write tags in numeric order
     // 256 ImageWidth
@@ -617,8 +624,14 @@ void writeTiffFile(std::ofstream& f,
     writeTag(f, {TAG_Photometric, TIFF_SHORT, 1, photometric});
     // 277 SamplesPerPixel
     writeTag(f, {TAG_SamplesPerPixel, TIFF_SHORT, 1, spp});
+    // 282 XResolution
+    writeTag(f, {TAG_XResolution, TIFF_RATIONAL, 1, resolutionOff});
+    // 283 YResolution
+    writeTag(f, {TAG_YResolution, TIFF_RATIONAL, 1, resolutionOff});
     // 284 PlanarConfig
     writeTag(f, {TAG_PlanarConfig, TIFF_SHORT, 1, PLANARCONFIG_CONTIG});
+    // 296 ResolutionUnit
+    writeTag(f, {TAG_ResolutionUnit, TIFF_SHORT, 1, 2}); // 2 = inches
     // 317 Predictor (if applicable)
     if (usePredictor) {
         writeTag(f, {TAG_Predictor, TIFF_SHORT, 1, PREDICTOR_HORIZONTAL});
@@ -660,6 +673,9 @@ void writeTiffFile(std::ofstream& f,
         for (uint16_t i = 0; i < spp; i++)
             write_u16(f, sfArray[i]);
     }
+    // Resolution RATIONAL: 72/1
+    write_u32(f, 72);
+    write_u32(f, 1);
 }
 
 } // anonymous namespace
@@ -1623,7 +1639,7 @@ void imwritemulti(const std::filesystem::path& path,
         }
 
         // Build tags
-        int numTagsVal = 11;
+        int numTagsVal = 14; // base tags (11 + XRes + YRes + ResUnit)
         if (ld.usePredictor) numTagsVal++;
 
         write_u16(f, static_cast<uint16_t>(numTagsVal));
@@ -1645,6 +1661,8 @@ void imwritemulti(const std::filesystem::path& path,
             sfArrayOff = extraOff;
             extraOff += spp * 2;
         }
+        uint32_t resolutionOff = extraOff;
+        extraOff += 8; // one RATIONAL (72/1)
 
         uint16_t photometric = (spp == 3) ? tiff::RGB : tiff::MinIsBlack;
 
@@ -1660,7 +1678,10 @@ void imwritemulti(const std::filesystem::path& path,
         writeTag(f, {TAG_Compression, TIFF_SHORT, 1, ld.compression});
         writeTag(f, {TAG_Photometric, TIFF_SHORT, 1, photometric});
         writeTag(f, {TAG_SamplesPerPixel, TIFF_SHORT, 1, spp});
+        writeTag(f, {TAG_XResolution, TIFF_RATIONAL, 1, resolutionOff});
+        writeTag(f, {TAG_YResolution, TIFF_RATIONAL, 1, resolutionOff});
         writeTag(f, {TAG_PlanarConfig, TIFF_SHORT, 1, PLANARCONFIG_CONTIG});
+        writeTag(f, {TAG_ResolutionUnit, TIFF_SHORT, 1, 2}); // inches
         if (ld.usePredictor) {
             writeTag(f, {TAG_Predictor, TIFF_SHORT, 1, PREDICTOR_HORIZONTAL});
         }
@@ -1697,6 +1718,9 @@ void imwritemulti(const std::filesystem::path& path,
             for (uint16_t s = 0; s < spp; s++)
                 write_u16(f, ld.sampleFormat);
         }
+        // Resolution RATIONAL: 72/1
+        write_u32(f, 72);
+        write_u32(f, 1);
     }
 }
 
