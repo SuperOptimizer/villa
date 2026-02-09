@@ -2,6 +2,7 @@
 
 #include <opencv2/core.hpp>
 #include <filesystem>
+#include <string>
 #include <vector>
 #include <cstdint>
 #include <memory>
@@ -41,6 +42,12 @@ std::vector<cv::Mat> imreadmulti(const std::filesystem::path& path);
 // Write multiple layers as chained IFDs in a single TIFF
 void imwritemulti(const std::filesystem::path& path,
                   const std::vector<cv::Mat>& layers);
+
+// Merge partial .partN.tif files into final TIFFs.
+// Scans outputPath (or its parent directory) for .partN.tif files,
+// merges them tile-by-tile, and removes the part files.
+// Returns true on success, false if no part files found or on error.
+bool mergeTiffParts(const std::string& outputPath, int numParts);
 
 } // namespace tiff
 

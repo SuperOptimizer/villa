@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <iostream>
 #include <map>
 #include <stdexcept>
 #include <numeric>
@@ -1722,6 +1723,83 @@ void imwritemulti(const std::filesystem::path& path,
         write_u32(f, 72);
         write_u32(f, 1);
     }
+}
+
+// ============================================================================
+// mergeTiffParts implementation
+// ============================================================================
+
+bool mergeTiffParts(const std::string& outputPath, int numParts)
+{
+    std::filesystem::path outDir(outputPath);
+    if (!std::filesystem::is_directory(outDir)) outDir = outDir.parent_path();
+    if (outDir.empty()) outDir = ".";
+
+    std::map<std::filesystem::path, std::vector<std::filesystem::path>> groups;
+    for (auto& entry : std::filesystem::directory_iterator(outDir)) {
+        std::string fname = entry.path().filename().string();
+        auto pos = fname.find(".part");
+        if (pos == std::string::npos) continue;
+        auto dotTif = fname.find(".tif", pos);
+        if (dotTif == std::string::npos) continue;
+        groups[outDir / (fname.substr(0, pos) + ".tif")].push_back(entry.path());
+    }
+    if (groups.empty()) {
+        std::cerr << "No .partN.tif files found in " << outDir << "\n";
+        return false;
+    }
+
+    std::cout << "Merging " << groups.size() << " TIFF(s) from " << numParts << " parts..." << std::endl;
+    for (auto& [finalPath, partFiles] : groups) {
+        std::sort(partFiles.begin(), partFiles.end());
+        TiffReader firstReader(partFiles[0]);
+        uint32_t w = firstReader.width();
+        uint32_t h = firstReader.height();
+        uint32_t tw = firstReader.tileWidth();
+        uint32_t th = firstReader.tileHeight();
+        uint16_t comp = firstReader.compression();
+        int outCvType = firstReader.cvType();
+
+        TiffWriter outWriter(finalPath, w, h, outCvType, tw, th, 0.0f, comp);
+
+        size_t tileSizeBytes = firstReader.tileBytes();
+        std::vector<uint8_t> buf(tileSizeBytes, 0);
+        std::vector<uint8_t> zeroBuf(tileSizeBytes, 0);
+
+        uint32_t tilesX = (w + tw - 1) / tw;
+        uint32_t tilesY = (h + th - 1) / th;
+        size_t merged = 0;
+        for (uint32_t ty = 0; ty < tilesY; ty++) {
+            for (uint32_t tx = 0; tx < tilesX; tx++) {
+                bool found = false;
+                for (auto& pf : partFiles) {
+                    try {
+                        TiffReader partReader(pf);
+                        if (tx < partReader.tilesAcross() && ty < partReader.tilesDown()) {
+                            partReader.readTile(tx, ty, buf.data(), tileSizeBytes);
+                            if (buf != zeroBuf) {
+                                found = true;
+                                break;
+                            }
+                        }
+                    } catch (...) {
+                        continue;
+                    }
+                }
+                if (found) {
+                    outWriter.writeRawTile(tx, ty, buf.data(), tileSizeBytes);
+                    merged++;
+                }
+            }
+        }
+        outWriter.close();
+
+        for (auto& pf : partFiles)
+            std::filesystem::remove(pf);
+        std::cout << "  " << finalPath.filename().string() << ": " << merged << " tiles from " << partFiles.size() << " parts\n";
+    }
+    std::cout << "Merge complete.\n";
+    return true;
 }
 
 } // namespace tiff
