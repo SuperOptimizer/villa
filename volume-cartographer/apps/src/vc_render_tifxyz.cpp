@@ -554,7 +554,8 @@ static void renderTiles(
     const std::vector<z5::Dataset*>& pyramidDs,
     // TIF output (optional)
     std::vector<TiffWriter>* tifWriters, uint32_t tiffTileH,
-    bool quickTif)
+    bool quickTif,
+    bool resume)
 {
     const size_t CH = chunks0[1], CW = chunks0[2];
     const uint32_t numTileRows = static_cast<uint32_t>(tilesYSrc);
@@ -597,6 +598,18 @@ static void renderTiles(
 
         #pragma omp parallel for schedule(dynamic)
         for (uint32_t tx = 0; tx < numTileCols; tx++) {
+            // Resume: skip tile if L0 chunk already exists on disk
+            if (resume) {
+                const bool needsRotFlip = (rotQuad >= 0 || flipAxis >= 0);
+                int dTx = int(tx), dTy = int(ty), dTX, dTY;
+                if (needsRotFlip)
+                    mapTileIndex(int(tx), int(ty), int(tilesXSrc), int(tilesYSrc),
+                                 std::max(rotQuad, 0), flipAxis, dTx, dTy, dTX, dTY);
+                z5::types::ShapeType cid = {0, size_t(dTy), size_t(dTx)};
+                if (dsOut->chunkExists(cid))
+                    continue;
+            }
+
             uint32_t x0 = tx * uint32_t(CW);
             uint32_t dx = std::min(uint32_t(CW), uint32_t(tgtSize.width) - x0);
 
@@ -814,6 +827,7 @@ int main(int argc, char *argv[])
         ("part-id", po::value<int>()->default_value(0), "Part ID (0-indexed)")
         ("merge-parts", po::bool_switch()->default_value(false), "Merge partial TIFFs")
         ("pyramid", po::value<bool>()->default_value(true), "Build pyramid levels L1-L5 (default: true)")
+        ("resume", po::bool_switch()->default_value(false), "Skip chunks that already exist on disk")
         ("finalize", po::bool_switch()->default_value(false), "Build pyramid for existing zarr L0")
         ("pre", po::bool_switch()->default_value(false), "Create zarr + all level datasets");
     // clang-format on
@@ -860,6 +874,7 @@ int main(int argc, char *argv[])
     const bool finalize_flag = parsed["finalize"].as<bool>();
     const bool pre_flag = parsed["pre"].as<bool>();
     const bool wantPyramid = parsed["pyramid"].as<bool>();
+    const bool resumeFlag = parsed["resume"].as<bool>();
     if (pre_flag && finalize_flag) { logPrintf(stderr, "Error: --pre and --finalize are mutually exclusive.\n"); return EXIT_FAILURE; }
 
     const bool wantZarr = parsed.count("zarr-output") > 0;
@@ -1168,6 +1183,9 @@ int main(int argc, char *argv[])
                     logPrintf(stderr, "Error: run --pre first in multi-part mode\n"); return;
                 }
                 dsOut = z5::openDataset(outFile, "0");
+            } else if (resumeFlag && std::filesystem::exists(std::filesystem::path(zarrOutputArg) / "0" / ".zarray")) {
+                dsOut = z5::openDataset(outFile, "0");
+                logPrintf(stdout, "[resume] opening existing zarr\n");
             } else {
                 z5::createFile(outFile, true);
                 dsOut = z5::createDataset(outFile, "0", dtype, shape0, chunks0, std::string("blosc"), compOpts);
@@ -1221,8 +1239,8 @@ int main(int argc, char *argv[])
         std::vector<z5::Dataset*> pyramidDs;
         std::vector<std::unique_ptr<z5::Dataset>> pyramidOwned;
         if (wantZarr && wantPyramid && !pre_flag && !finalize_flag) {
-            // Single-part: create datasets now; multi-part: --pre already created them
-            if (numParts <= 1) {
+            // Single-part: create datasets now; multi-part/resume: already created them
+            if (numParts <= 1 && !resumeFlag) {
                 cv::Size zarrXY = tgt_size;
                 if (rotQuad >= 0 && (rotQuad % 2) == 1) std::swap(zarrXY.width, zarrXY.height);
                 std::vector<size_t> shape0 = {baseZ, size_t(zarrXY.height), size_t(zarrXY.width)};
@@ -1246,7 +1264,8 @@ int main(int argc, char *argv[])
                         compositeParams, rotQuad, flip_axis, numParts, partId, cvType,
                         dsOut.get(), chunks0, tilesXSrc, tilesYSrc,
                         pyramidDs,
-                        tifWriters.empty() ? nullptr : &tifWriters, tiffTileH, quickTif);
+                        tifWriters.empty() ? nullptr : &tifWriters, tiffTileH, quickTif,
+                        resumeFlag);
                 else
                     renderTiles<uint8_t>(surf.get(), ds.get(), &chunk_cache_u8,
                         full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
@@ -1255,7 +1274,8 @@ int main(int argc, char *argv[])
                         compositeParams, rotQuad, flip_axis, numParts, partId, cvType,
                         dsOut.get(), chunks0, tilesXSrc, tilesYSrc,
                         pyramidDs,
-                        tifWriters.empty() ? nullptr : &tifWriters, tiffTileH, quickTif);
+                        tifWriters.empty() ? nullptr : &tifWriters, tiffTileH, quickTif,
+                        resumeFlag);
             } else {
                 // Band-based: TIF-only path
                 uint32_t bandH = 128;
