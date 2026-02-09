@@ -577,26 +577,32 @@ static void renderTiles(
             {
                 size_t chunkZ = chunks0[0], chunkY = chunks0[1], chunkX = chunks0[2];
                 size_t numZ = slices.size();
+                const bool needsRotFlip = (rotQuad >= 0 || flipAxis >= 0);
 
-                // Apply rotation/flip to get rotated slices for this chunk
-                std::vector<cv::Mat> rotSlices(numZ);
-                for (size_t zi = 0; zi < numZ; zi++) {
-                    rotSlices[zi] = slices[zi].clone();
-                    rotateFlipIfNeeded(rotSlices[zi], rotQuad, flipAxis);
+                // Only clone+rotate when rotation/flip is active
+                const std::vector<cv::Mat>* zarrSlices = &slices;
+                std::vector<cv::Mat> rotSlices;
+                if (needsRotFlip) {
+                    rotSlices.resize(numZ);
+                    for (size_t zi = 0; zi < numZ; zi++) {
+                        rotSlices[zi] = slices[zi].clone();
+                        rotateFlipIfNeeded(rotSlices[zi], rotQuad, flipAxis);
+                    }
+                    zarrSlices = &rotSlices;
                 }
 
                 int dstTx = int(tx), dstTy = int(ty), dTX, dTY;
-                if (rotQuad >= 0 || flipAxis >= 0)
+                if (needsRotFlip)
                     mapTileIndex(int(tx), int(ty), int(tilesXSrc), int(tilesYSrc),
                                  std::max(rotQuad, 0), flipAxis, dstTx, dstTy, dTX, dTY);
 
                 std::vector<T> chunkBuf(chunkZ * chunkY * chunkX, T(0));
-                size_t dy_actual = std::min(chunkY, size_t(rotSlices[0].rows));
-                size_t dx_actual = std::min(chunkX, size_t(rotSlices[0].cols));
+                size_t dy_actual = std::min(chunkY, size_t((*zarrSlices)[0].rows));
+                size_t dx_actual = std::min(chunkX, size_t((*zarrSlices)[0].cols));
                 for (size_t zi = 0; zi < numZ; zi++) {
                     size_t sliceOff = zi * chunkY * chunkX;
                     for (size_t yy = 0; yy < dy_actual; yy++) {
-                        const T* row = rotSlices[zi].ptr<T>(int(yy));
+                        const T* row = (*zarrSlices)[zi].ptr<T>(int(yy));
                         std::memcpy(&chunkBuf[sliceOff + yy * chunkX], row, dx_actual * sizeof(T));
                     }
                 }

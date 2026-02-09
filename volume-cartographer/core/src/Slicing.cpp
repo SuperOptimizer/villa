@@ -874,17 +874,24 @@ static void sampleTileSlicesImpl(
     if (numSlices == 0) return;
 
     // Phase 1: Discover needed chunks and prefetch serially.
+    // A 128x128 tile typically touches only ~4-8 chunks, so collect into
+    // a compact list rather than scanning the full chunk grid (~39M entries).
     {
-        const size_t totalChunks = static_cast<size_t>(p.chunksZ) * p.chunksY * p.chunksX;
-        std::vector<uint8_t> needed(totalChunks, 0);
+        std::vector<std::array<int,3>> neededChunks;
+        neededChunks.reserve(16);
 
+        // Small local set: track seen chunks by packing (ciz,ciy,cix) into uint64
+        std::vector<uint64_t> seen;
+        seen.reserve(16);
         auto markVoxel = [&](int iz, int iy, int ix) {
             if (iz < 0 || iy < 0 || ix < 0 || iz >= p.sz || iy >= p.sy || ix >= p.sx) return;
             int ciz = iz >> p.czShift;
             int ciy = iy >> p.cyShift;
             int cix = ix >> p.cxShift;
-            size_t idx = static_cast<size_t>(ciz) * p.chunksY * p.chunksX + ciy * p.chunksX + cix;
-            needed[idx] = 1;
+            uint64_t key = (uint64_t(ciz) << 40) | (uint64_t(ciy) << 20) | uint64_t(cix);
+            for (auto k : seen) if (k == key) return;
+            seen.push_back(key);
+            neededChunks.push_back({ciz, ciy, cix});
         };
 
         const float fOff = offsets[0];
@@ -911,13 +918,8 @@ static void sampleTileSlicesImpl(
         }
 
         // Serial prefetch — we're already on an OMP thread
-        for (size_t idx = 0; idx < totalChunks; idx++) {
-            if (!needed[idx]) continue;
-            int cix = static_cast<int>(idx % p.chunksX);
-            int ciy = static_cast<int>((idx / p.chunksX) % p.chunksY);
-            int ciz = static_cast<int>(idx / (static_cast<size_t>(p.chunksX) * p.chunksY));
-            cache.get(ds, ciz, ciy, cix);
-        }
+        for (auto& c : neededChunks)
+            cache.get(ds, c[0], c[1], c[2]);
     }
 
     // Phase 2: Sample (single-threaded, all chunks already cached).
