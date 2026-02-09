@@ -584,8 +584,38 @@ static void renderTiles(
     // Contiguous block assignment: each part gets a contiguous range of tile rows
     // for better spatial locality (avoids all VMs reading the same volume region)
     uint32_t rowsPerPart = (numTileRows + uint32_t(numParts) - 1) / uint32_t(numParts);
+    // Align to 32 tile-rows for multi-VM pyramid (2^5 = 32 covers L1..L5)
+    if (numParts > 1 && !pyramidDs.empty()) {
+        constexpr uint32_t kPyrAlign = 32;
+        rowsPerPart = ((rowsPerPart + kPyrAlign - 1) / kPyrAlign) * kPyrAlign;
+    }
     uint32_t tyStart = uint32_t(partId) * rowsPerPart;
     uint32_t tyEnd = std::min(tyStart + rowsPerPart, numTileRows);
+
+    // ---- Pyramid accumulation buffers (L1..L5) ----
+    // At level L, one 128×128 pyramid chunk covers 2^L × 2^L L0 tiles.
+    // pyrAccum[li] has one buffer per pyramid chunk column for the current row-group.
+    struct PyrAccumLevel {
+        size_t chZ, chY, chX;          // chunk dims at this level
+        size_t pyrChunksX;             // number of pyramid chunk columns
+        std::vector<std::vector<T>> bufs;  // one per pyramid chunk column
+    };
+    std::vector<PyrAccumLevel> pyrAccum;
+    if (!pyramidDs.empty()) {
+        pyrAccum.resize(pyramidDs.size());
+        for (size_t li = 0; li < pyramidDs.size(); li++) {
+            const auto& pc = pyramidDs[li]->defaultChunkShape();
+            pyrAccum[li].chZ = pc[0];
+            pyrAccum[li].chY = pc[1];
+            pyrAccum[li].chX = pc[2];
+            // Number of pyramid chunk columns at this level
+            const auto& ps = pyramidDs[li]->shape();
+            pyrAccum[li].pyrChunksX = (ps[2] + pc[2] - 1) / pc[2];
+            pyrAccum[li].bufs.resize(pyrAccum[li].pyrChunksX);
+            for (auto& b : pyrAccum[li].bufs)
+                b.assign(pc[0] * pc[1] * pc[2], T(0));
+        }
+    }
 
     for (uint32_t ty = tyStart; ty < tyEnd; ty++) {
         uint32_t y0 = ty * uint32_t(CH);
@@ -606,8 +636,32 @@ static void renderTiles(
                     mapTileIndex(int(tx), int(ty), int(tilesXSrc), int(tilesYSrc),
                                  std::max(rotQuad, 0), flipAxis, dTx, dTy, dTX, dTY);
                 z5::types::ShapeType cid = {0, size_t(dTy), size_t(dTx)};
-                if (dsOut->chunkExists(cid))
+                if (dsOut->chunkExists(cid)) {
+                    // Still need to scatter into pyramid accum buffers
+                    // No rotation when inline pyramid is active
+                    if (!pyrAccum.empty()) {
+                        size_t chunkZ = chunks0[0], chunkY = chunks0[1], chunkX = chunks0[2];
+                        std::vector<T> existingBuf(chunkZ * chunkY * chunkX, T(0));
+                        dsOut->readChunk(cid, existingBuf.data());
+                        uint32_t dxTile = std::min(uint32_t(CW), uint32_t(tgtSize.width) - tx * uint32_t(CW));
+                        size_t dy_actual = std::min(chunkY, size_t(dy));
+                        size_t dx_actual = std::min(chunkX, size_t(dxTile));
+                        size_t numZ = isComposite ? 1 : size_t(std::max(1, numSlices));
+                        size_t l1cx = size_t(tx) >> 1;
+                        size_t halfCH = CH / 2, halfCW = CW / 2;
+                        size_t offY = (size_t(ty) & 1) * halfCH;
+                        size_t offX = (size_t(tx) & 1) * halfCW;
+                        auto& pa = pyrAccum[0];
+                        if (l1cx < pa.bufs.size()) {
+                            downsampleTileInto(
+                                existingBuf.data(), chunkZ, chunkY, chunkX,
+                                pa.bufs[l1cx].data(), pa.chZ, pa.chY, pa.chX,
+                                numZ, dy_actual, dx_actual,
+                                offY, offX);
+                        }
+                    }
                     continue;
+                }
             }
 
             uint32_t x0 = tx * uint32_t(CW);
@@ -679,34 +733,22 @@ static void renderTiles(
                 z5::types::ShapeType chunkId = {0, size_t(dstTy), size_t(dstTx)};
                 dsOut->writeChunk(chunkId, chunkBuf.data());
 
-                // Inline pyramid: cascade downsample L0 -> L1 -> ... -> L5
-                if (!pyramidDs.empty()) {
-                    // prevBuf starts as chunkBuf; each level downsamples from previous
-                    std::vector<T> pyrBufA, pyrBufB;
-                    const T* prevPtr = chunkBuf.data();
-                    size_t pZ = chunkZ, pY = chunkY, pX = chunkX;
-                    // Actual valid extent for L0
-                    size_t aZ = numZ, aY = dy_actual, aX = dx_actual;
-
-                    for (size_t li = 0; li < pyramidDs.size(); li++) {
-                        const auto& pc = pyramidDs[li]->defaultChunkShape();
-                        size_t nZ = pc[0], nY = pc[1], nX = pc[2];
-                        // Actual valid extent at this level
-                        size_t naZ = (aZ + 1) / 2, naY = (aY + 1) / 2, naX = (aX + 1) / 2;
-                        naZ = std::min(naZ, nZ);
-                        naY = std::min(naY, nY);
-                        naX = std::min(naX, nX);
-
-                        auto& dstBuf = (li % 2 == 0) ? pyrBufA : pyrBufB;
-                        dstBuf.assign(nZ * nY * nX, T(0));
-                        downsampleChunk(prevPtr, pZ, pY, pX,
-                                        dstBuf.data(), nZ, nY, nX,
-                                        aZ, aY, aX);
-                        pyramidDs[li]->writeChunk(chunkId, dstBuf.data());
-
-                        prevPtr = dstBuf.data();
-                        pZ = nZ; pY = nY; pX = nX;
-                        aZ = naZ; aY = naY; aX = naX;
+                // Scatter L0 tile into L1 pyramid accumulation buffer
+                // No rotation when inline pyramid is active, so tx/ty == dstTx/dstTy.
+                // L0 tile (ty, tx) maps to L1 pyramid chunk (ty/2, tx/2)
+                // at sub-offset ((ty%2)*halfCH, (tx%2)*halfCW) within the L1 chunk
+                if (!pyrAccum.empty()) {
+                    size_t l1cx = size_t(tx) >> 1;
+                    size_t halfCH = CH / 2, halfCW = CW / 2;
+                    size_t offY = (size_t(ty) & 1) * halfCH;
+                    size_t offX = (size_t(tx) & 1) * halfCW;
+                    auto& pa = pyrAccum[0];
+                    if (l1cx < pa.bufs.size()) {
+                        downsampleTileInto(
+                            chunkBuf.data(), chunkZ, chunkY, chunkX,
+                            pa.bufs[l1cx].data(), pa.chZ, pa.chY, pa.chX,
+                            numZ, dy_actual, dx_actual,
+                            offY, offX);
                     }
                 }
             }
@@ -742,6 +784,54 @@ static void renderTiles(
                     }
             }
             writeTifBand(*tifWriters, fullWidthSlices, y0, tiffTileH, uint32_t(tgtSize.height), rotQuad, flipAxis);
+        }
+
+        // ---- Pyramid row-group flush ----
+        // At each level L (1..5), a pyramid chunk covers 2^L tile rows.
+        // When the current tile-row completes a group, flush & cascade.
+        if (!pyrAccum.empty()) {
+            // No rotation/flip when inline pyramid is active (ensured by caller),
+            // so tile-row ty maps directly to dest tile-row ty.
+            uint32_t relRow = ty - tyStart + 1;
+            bool isLastRow = (ty == tyEnd - 1);
+
+            for (size_t li = 0; li < pyrAccum.size(); li++) {
+                uint32_t groupSize = 1u << (li + 1);  // L1=2, L2=4, L3=8, L4=16, L5=32
+                bool groupComplete = (relRow % groupSize == 0) || isLastRow;
+                if (!groupComplete) continue;
+
+                auto& pa = pyrAccum[li];
+                // tile-row ty divided by 2^(li+1) gives the pyramid chunk row
+                size_t pyrChunkRow = size_t(ty) >> (li + 1);
+
+                // Write each column's accumulation buffer as a zarr chunk
+                for (size_t cx = 0; cx < pa.bufs.size(); cx++) {
+                    z5::types::ShapeType chunkId = {0, pyrChunkRow, cx};
+                    pyramidDs[li]->writeChunk(chunkId, pa.bufs[cx].data());
+                }
+
+                // Cascade: scatter this level's buffers into the next level's accum
+                if (li + 1 < pyrAccum.size()) {
+                    auto& nextPa = pyrAccum[li + 1];
+                    size_t halfY = pa.chY / 2, halfX = pa.chX / 2;
+                    for (size_t cx = 0; cx < pa.bufs.size(); cx++) {
+                        size_t nextCx = cx >> 1;
+                        size_t offY = (pyrChunkRow & 1) * halfY;
+                        size_t offX = (cx & 1) * halfX;
+                        if (nextCx < nextPa.bufs.size()) {
+                            downsampleTileInto(
+                                pa.bufs[cx].data(), pa.chZ, pa.chY, pa.chX,
+                                nextPa.bufs[nextCx].data(), nextPa.chZ, nextPa.chY, nextPa.chX,
+                                pa.chZ, pa.chY, pa.chX,
+                                offY, offX);
+                        }
+                    }
+                }
+
+                // Clear this level's buffers for next group
+                for (auto& b : pa.bufs)
+                    std::fill(b.begin(), b.end(), T(0));
+            }
         }
 
         // Progress (throttled to ~1/sec)
@@ -1236,6 +1326,10 @@ int main(int argc, char *argv[])
         }
 
         // ---- Create pyramid datasets before render ----
+        const bool hasRotFlip = (rotQuad >= 0 || flip_axis >= 0);
+        // Inline pyramid only works without rotation/flip (accumulation assumes
+        // source tile-rows map 1:1 to destination tile-rows for row-group flushing)
+        const bool inlinePyramid = wantZarr && wantPyramid && !pre_flag && !finalize_flag && !hasRotFlip;
         std::vector<z5::Dataset*> pyramidDs;
         std::vector<std::unique_ptr<z5::Dataset>> pyramidOwned;
         if (wantZarr && wantPyramid && !pre_flag && !finalize_flag) {
@@ -1246,9 +1340,11 @@ int main(int argc, char *argv[])
                 std::vector<size_t> shape0 = {baseZ, size_t(zarrXY.height), size_t(zarrXY.width)};
                 createPyramidDatasets(outFile, shape0, CH, CW, useU16);
             }
-            for (int level = 1; level <= 5; level++) {
-                pyramidOwned.push_back(z5::openDataset(outFile, std::to_string(level)));
-                pyramidDs.push_back(pyramidOwned.back().get());
+            if (inlinePyramid) {
+                for (int level = 1; level <= 5; level++) {
+                    pyramidOwned.push_back(z5::openDataset(outFile, std::to_string(level)));
+                    pyramidDs.push_back(pyramidOwned.back().get());
+                }
             }
         }
 
@@ -1317,15 +1413,17 @@ int main(int argc, char *argv[])
 
         // ---- Zarr pyramid + attrs ----
         if (wantZarr && !pre_flag) {
-            if (finalize_flag && wantPyramid) {
-                // --finalize: build pyramid from disk (legacy path)
-                logPrintf(stdout, "[finalize] building pyramid...\n");
+            const bool needPostPyramid = (finalize_flag && wantPyramid) ||
+                                          (wantPyramid && !finalize_flag && hasRotFlip);
+            if (needPostPyramid) {
+                // Build pyramid from L0 on disk (--finalize, or rotation active)
+                logPrintf(stdout, "[pyramid] building from L0...\n");
                 for (int level = 1; level <= 5; level++) {
                     if (useU16) buildPyramidLevel<uint16_t>(outFile, level, CH, CW, numParts, partId);
                     else        buildPyramidLevel<uint8_t>(outFile, level, CH, CW, numParts, partId);
                 }
             }
-            // Normal render: pyramid was built inline during render (if --pyramid)
+            // Otherwise: pyramid was built inline during render (if --pyramid)
 
             // --pre already writes attrs for multi-part; single-part writes here
             if (numParts <= 1) {

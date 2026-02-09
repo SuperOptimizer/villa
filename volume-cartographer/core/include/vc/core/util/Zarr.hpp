@@ -49,6 +49,15 @@ void downsampleChunk(const T* src, size_t srcZ, size_t srcY, size_t srcX,
                      T* dst, size_t dstZ, size_t dstY, size_t dstX,
                      size_t srcActualZ, size_t srcActualY, size_t srcActualX);
 
+// 2×2×2 mean downsample from src tile into a sub-region of dst at (dstOffY, dstOffX).
+// dst layout: dstZ × dstY × dstX (row-major). Writes at offset within the Y×X plane.
+// srcActualZ/Y/X = actual valid extent in src (may be < srcZ/Y/X for edge tiles).
+template <typename T>
+void downsampleTileInto(const T* src, size_t srcZ, size_t srcY, size_t srcX,
+                        T* dst, size_t dstZ, size_t dstY, size_t dstX,
+                        size_t srcActualZ, size_t srcActualY, size_t srcActualX,
+                        size_t dstOffY, size_t dstOffX);
+
 // Build one pyramid level (2x mean downsample) via readChunk/writeChunk + OMP.
 // numParts/partId partition the output tile-rows across VMs (1/0 = no partitioning).
 template <typename T>

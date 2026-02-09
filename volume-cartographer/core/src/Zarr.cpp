@@ -86,6 +86,38 @@ template void downsampleChunk<uint16_t>(const uint16_t*, size_t, size_t, size_t,
     uint16_t*, size_t, size_t, size_t, size_t, size_t, size_t);
 
 // ============================================================
+// downsampleTileInto
+// ============================================================
+
+template <typename T>
+void downsampleTileInto(const T* src, size_t srcZ, size_t srcY, size_t srcX,
+                        T* dst, size_t dstZ, size_t dstY, size_t dstX,
+                        size_t srcActualZ, size_t srcActualY, size_t srcActualX,
+                        size_t dstOffY, size_t dstOffX)
+{
+    size_t halfZ = (srcActualZ + 1) / 2;
+    size_t halfY = (srcActualY + 1) / 2;
+    size_t halfX = (srcActualX + 1) / 2;
+    for (size_t zz = 0; zz < halfZ && zz < dstZ; zz++)
+        for (size_t yy = 0; yy < halfY && (dstOffY + yy) < dstY; yy++)
+            for (size_t xx = 0; xx < halfX && (dstOffX + xx) < dstX; xx++) {
+                uint32_t sum = 0; int cnt = 0;
+                for (int d0 = 0; d0 < 2 && 2*zz+d0 < srcActualZ; d0++)
+                    for (int d1 = 0; d1 < 2 && 2*yy+d1 < srcActualY; d1++)
+                        for (int d2 = 0; d2 < 2 && 2*xx+d2 < srcActualX; d2++) {
+                            sum += src[(2*zz+d0)*srcY*srcX + (2*yy+d1)*srcX + (2*xx+d2)];
+                            cnt++;
+                        }
+                dst[zz*dstY*dstX + (dstOffY+yy)*dstX + (dstOffX+xx)] = T((sum + cnt/2) / std::max(1, cnt));
+            }
+}
+
+template void downsampleTileInto<uint8_t>(const uint8_t*, size_t, size_t, size_t,
+    uint8_t*, size_t, size_t, size_t, size_t, size_t, size_t, size_t, size_t);
+template void downsampleTileInto<uint16_t>(const uint16_t*, size_t, size_t, size_t,
+    uint16_t*, size_t, size_t, size_t, size_t, size_t, size_t, size_t, size_t);
+
+// ============================================================
 // buildPyramidLevel
 // ============================================================
 
@@ -97,21 +129,23 @@ void buildPyramidLevel(z5::filesystem::handle::File& outFile, int level,
     auto src = z5::openDataset(outFile, std::to_string(level - 1));
     auto dst = z5::openDataset(outFile, std::to_string(level));
     const auto& ss = src->shape();
-    const auto& sc = src->defaultChunkShape();  // source chunk shape
-    const auto& dc = dst->defaultChunkShape();  // dst chunk shape = src/2 in each dim
+    const auto& sc = src->defaultChunkShape();  // source chunk shape (fixed, e.g. 128×128)
+    const auto& dc = dst->defaultChunkShape();  // dst chunk shape (same Y×X as source)
+    const auto& ds = dst->shape();
 
-    // Source and dst have the same chunk grid — 1:1 mapping
-    size_t chunksY = (ss[1] + sc[1] - 1) / sc[1];
-    size_t chunksX = (ss[2] + sc[2] - 1) / sc[2];
+    // Source chunk grid
+    size_t srcChunksY = (ss[1] + sc[1] - 1) / sc[1];
+    size_t srcChunksX = (ss[2] + sc[2] - 1) / sc[2];
 
-    // Contiguous block assignment: each part gets a contiguous range of tile rows
-    size_t rowsPerPart = (chunksY + size_t(numParts) - 1) / size_t(numParts);
+    // Dest chunk grid (half as many chunks since shape halves but chunk size stays)
+    size_t dstChunksY = (ds[1] + dc[1] - 1) / dc[1];
+    size_t dstChunksX = (ds[2] + dc[2] - 1) / dc[2];
+
+    // Contiguous block assignment: each part gets a contiguous range of dest tile rows
+    size_t rowsPerPart = (dstChunksY + size_t(numParts) - 1) / size_t(numParts);
     size_t rowStart = size_t(partId) * rowsPerPart;
-    size_t rowEnd = std::min(rowStart + rowsPerPart, chunksY);
-    std::vector<size_t> myRows;
-    for (size_t r = rowStart; r < rowEnd; r++)
-        myRows.push_back(r);
-    size_t myTiles = myRows.size() * chunksX;
+    size_t rowEnd = std::min(rowStart + rowsPerPart, dstChunksY);
+    size_t myTiles = (rowEnd - rowStart) * dstChunksX;
     std::atomic<size_t> done{0};
 
     size_t srcElems = sc[0] * sc[1] * sc[2];
@@ -119,42 +153,43 @@ void buildPyramidLevel(z5::filesystem::handle::File& outFile, int level,
 
     #pragma omp parallel for schedule(dynamic, 2)
     for (long long ti = 0; ti < (long long)myTiles; ti++) {
-        size_t rowIdx = size_t(ti) / chunksX;
-        size_t cx = size_t(ti) % chunksX;
-        size_t cy = myRows[rowIdx];
+        size_t dcy = rowStart + size_t(ti) / dstChunksX;
+        size_t dcx = size_t(ti) % dstChunksX;
 
-        // Read the one source chunk
-        z5::types::ShapeType srcId = {0, cy, cx};
-        std::vector<T> srcBuf(srcElems, T(0));
-        if (src->chunkExists(srcId))
-            src->readChunk(srcId, srcBuf.data());
-
-        // Determine actual voxel extent (edge chunks may be partial)
-        const auto& ds = dst->shape();
-        size_t dz = std::min(dc[0], ds[0]);
-        size_t dy = std::min(dc[1], ds[1] - cy * dc[1]);
-        size_t dx = std::min(dc[2], ds[2] - cx * dc[2]);
-        // Source actual extent
-        size_t sz = std::min(sc[0], ss[0]);
-        size_t sy = std::min(sc[1], ss[1] - cy * sc[1]);
-        size_t sx = std::min(sc[2], ss[2] - cx * sc[2]);
-
-        // 2x2x2 downsample: dst(z,y,x) = mean of src(2z..2z+1, 2y..2y+1, 2x..2x+1)
         std::vector<T> dstBuf(dstElems, T(0));
-        for (size_t zz = 0; zz < dz; zz++)
-            for (size_t yy = 0; yy < dy; yy++)
-                for (size_t xx = 0; xx < dx; xx++) {
-                    uint32_t sum = 0; int cnt = 0;
-                    for (int d0 = 0; d0 < 2 && 2*zz+d0 < sz; d0++)
-                        for (int d1 = 0; d1 < 2 && 2*yy+d1 < sy; d1++)
-                            for (int d2 = 0; d2 < 2 && 2*xx+d2 < sx; d2++) {
-                                sum += srcBuf[(2*zz+d0)*sc[1]*sc[2] + (2*yy+d1)*sc[2] + (2*xx+d2)];
-                                cnt++;
-                            }
-                    dstBuf[zz*dc[1]*dc[2] + yy*dc[2] + xx] = T((sum + cnt/2) / std::max(1, cnt));
-                }
 
-        z5::types::ShapeType dstId = {0, cy, cx};
+        // Each dest chunk assembles from a 2×2 grid of source chunks
+        for (int sy = 0; sy < 2; sy++) {
+            for (int sx = 0; sx < 2; sx++) {
+                size_t scy = dcy * 2 + sy;
+                size_t scx = dcx * 2 + sx;
+                if (scy >= srcChunksY || scx >= srcChunksX) continue;
+
+                z5::types::ShapeType srcId = {0, scy, scx};
+                std::vector<T> srcBuf(srcElems, T(0));
+                if (src->chunkExists(srcId))
+                    src->readChunk(srcId, srcBuf.data());
+                else
+                    continue;
+
+                // Actual valid extent in this source chunk
+                size_t saZ = std::min(sc[0], ss[0]);
+                size_t saY = std::min(sc[1], ss[1] - scy * sc[1]);
+                size_t saX = std::min(sc[2], ss[2] - scx * sc[2]);
+
+                // Offset within dest chunk: each source chunk downsamples to half-chunk
+                size_t halfY = sc[1] / 2, halfX = sc[2] / 2;
+                size_t offY = sy * halfY;
+                size_t offX = sx * halfX;
+
+                downsampleTileInto(
+                    srcBuf.data(), sc[0], sc[1], sc[2],
+                    dstBuf.data(), dc[0], dc[1], dc[2],
+                    saZ, saY, saX, offY, offX);
+            }
+        }
+
+        z5::types::ShapeType dstId = {0, dcy, dcx};
         dst->writeChunk(dstId, dstBuf.data());
 
         size_t d = ++done;
@@ -179,17 +214,13 @@ void createPyramidDatasets(z5::filesystem::handle::File& outFile,
     json compOpts = {{"cname","zstd"},{"clevel",1},{"shuffle",0}};
     std::string dtype = isU16 ? "uint16" : "uint8";
 
+    // All pyramid levels use the same chunk Y×X as the input volume (typically 128×128).
+    // Only shape halves at each level; chunks stay fixed for fewer, larger files.
     std::vector<size_t> prevShape = shape0;
-    // Chunk sizes halve at each level: L0=128, L1=64, L2=32, etc.
-    // This gives 1:1 source-chunk-to-dst-chunk mapping at every level,
-    // enabling barrier-free multi-VM pyramid building.
-    size_t chZ = prevShape[0], chY = CH, chX = CW;
     for (int level = 1; level <= 5; level++) {
         std::vector<size_t> ds = {(prevShape[0]+1)/2, (prevShape[1]+1)/2, (prevShape[2]+1)/2};
-        chZ = ds[0];
-        chY = std::max<size_t>(1, chY / 2);
-        chX = std::max<size_t>(1, chX / 2);
-        std::vector<size_t> dc = {chZ, std::min(chY, ds[1]), std::min(chX, ds[2])};
+        size_t chZ = std::min(ds[0], shape0[0]);  // clamp to level shape Z
+        std::vector<size_t> dc = {chZ, std::min(CH, ds[1]), std::min(CW, ds[2])};
         z5::createDataset(outFile, std::to_string(level), dtype, ds, dc, std::string("blosc"), compOpts);
         prevShape = ds;
     }
