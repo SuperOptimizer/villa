@@ -135,12 +135,15 @@ struct Dataset::ShardBuffer {
     struct PendingShard {
         std::mutex mtx;
         std::vector<std::vector<uint8_t>> compressedChunks;
-        std::size_t numPopulated = 0;
+        std::vector<bool> touched;     // which inner chunk slots have been written
+        std::size_t numTouched = 0;    // count of touched slots
     };
 
     const ShardingIndexedCodec* shardCodec = nullptr;
     ShapeType shardGrid;       // inner chunks per shard per dimension
-    std::size_t numInner = 0;  // product of shardGrid
+    std::size_t numInner = 0;  // product of shardGrid (for full shards)
+    ShapeType datasetShape;    // dataset shape (for boundary shard computation)
+    ShapeType innerShape;      // inner chunk shape
 
     std::mutex mapMtx;
     std::unordered_map<ShardKey, std::unique_ptr<PendingShard>, ShardKeyHash> pending;
@@ -152,6 +155,7 @@ struct Dataset::ShardBuffer {
         if (it != pending.end()) return *it->second;
         auto s = std::make_unique<PendingShard>();
         s->compressedChunks.resize(numInner);
+        s->touched.resize(numInner, false);
         auto& ref = *s;
         pending.emplace(key, std::move(s));
         return ref;
@@ -161,6 +165,26 @@ struct Dataset::ShardBuffer {
     {
         return iz * shardGrid[1] * shardGrid[2] +
                iy * shardGrid[2] + ix;
+    }
+
+    // Compute how many inner chunks exist in a shard at the dataset boundary.
+    // Interior shards have numInner; boundary shards may have fewer.
+    std::size_t expectedChunks(std::size_t sz, std::size_t sy, std::size_t sx) const
+    {
+        auto chunksInDim = [](std::size_t dimSize, std::size_t shardPos,
+                              std::size_t gridDim, std::size_t innerDim) {
+            // Total inner chunks in this dimension of the dataset
+            std::size_t totalChunks = (dimSize + innerDim - 1) / innerDim;
+            // First inner chunk index in this shard
+            std::size_t first = shardPos * gridDim;
+            // How many inner chunks this shard covers in this dimension
+            if (first >= totalChunks) return std::size_t{0};
+            return std::min(gridDim, totalChunks - first);
+        };
+        std::size_t nz = chunksInDim(datasetShape[0], sz, shardGrid[0], innerShape[0]);
+        std::size_t ny = chunksInDim(datasetShape[1], sy, shardGrid[1], innerShape[1]);
+        std::size_t nx = chunksInDim(datasetShape[2], sx, shardGrid[2], innerShape[2]);
+        return nz * ny * nx;
     }
 };
 
@@ -240,15 +264,17 @@ void Dataset::initShardBuffer()
     auto buf = std::make_unique<ShardBuffer>();
     buf->shardCodec = codecs_.shardingCodec();
 
-    const auto& innerShape = buf->shardCodec->innerChunkShape;
+    const auto& innerShp = buf->shardCodec->innerChunkShape;
     const std::size_t ndim = chunkShape_.size();
     buf->shardGrid.resize(ndim);
     for (std::size_t d = 0; d < ndim; ++d) {
         buf->shardGrid[d] =
-            (chunkShape_[d] + innerShape[d] - 1) / innerShape[d];
+            (chunkShape_[d] + innerShp[d] - 1) / innerShp[d];
     }
     buf->numInner = 1;
     for (auto d : buf->shardGrid) buf->numInner *= d;
+    buf->datasetShape = shape_;
+    buf->innerShape = innerShp;
 
     shardBuf_ = std::move(buf);
 }
@@ -946,14 +972,48 @@ void Dataset::writeInnerChunk(const ShapeType& chunkIdx, const void* data)
     ShardBuffer::ShardKey key{shardIdx[0], shardIdx[1], shardIdx[2]};
     auto& shard = shardBuf_->getOrCreate(key);
 
-    if (allFill) {
+    const std::size_t expected =
+        shardBuf_->expectedChunks(key.iz, key.iy, key.ix);
+
+    bool shardComplete = false;
+    {
+        // Compress outside the lock if non-fill
+        std::vector<uint8_t> compressed;
+        if (!allFill) {
+            compressed = sc->encodeInnerChunk(data, innerBytes, dtypeSize());
+        }
+
         std::lock_guard<std::mutex> lock(shard.mtx);
-        shard.compressedChunks[flatIdx].clear();
-    } else {
-        auto compressed = sc->encodeInnerChunk(data, innerBytes, dtypeSize());
-        std::lock_guard<std::mutex> lock(shard.mtx);
-        shard.compressedChunks[flatIdx] = std::move(compressed);
-        ++shard.numPopulated;
+        if (allFill) {
+            shard.compressedChunks[flatIdx].clear();
+        } else {
+            shard.compressedChunks[flatIdx] = std::move(compressed);
+        }
+
+        // Only increment on first write to this slot
+        if (!shard.touched[flatIdx]) {
+            shard.touched[flatIdx] = true;
+            ++shard.numTouched;
+        }
+        shardComplete = (shard.numTouched == expected);
+    }
+
+    // Auto-flush completed shard to free memory
+    if (shardComplete) {
+        std::vector<std::vector<uint8_t>> chunks;
+        {
+            std::lock_guard<std::mutex> lock(shard.mtx);
+            chunks = std::move(shard.compressedChunks);
+        }
+
+        auto assembled = shardBuf_->shardCodec->assembleShard(
+            chunks, shardBuf_->numInner);
+
+        writeShardRaw(shardIdx, assembled);
+
+        // Remove from pending map
+        std::lock_guard<std::mutex> lock(shardBuf_->mapMtx);
+        shardBuf_->pending.erase(key);
     }
 }
 
