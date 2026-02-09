@@ -719,7 +719,8 @@ int main(int argc, char *argv[])
         ("part-id", po::value<int>()->default_value(0), "Part ID (0-indexed)")
         ("merge-parts", po::bool_switch()->default_value(false), "Merge partial TIFFs")
         ("finalize", po::bool_switch()->default_value(false), "Build pyramid for existing zarr L0")
-        ("pre", po::bool_switch()->default_value(false), "Create zarr + L0 dataset only");
+        ("pyramid-level", po::value<int>()->default_value(0), "Build only this pyramid level (1-5, 0=all)")
+        ("pre", po::bool_switch()->default_value(false), "Create zarr + all level datasets");
     // clang-format on
 
     po::options_description all("Usage");
@@ -1022,10 +1023,16 @@ int main(int argc, char *argv[])
             std::string dtype = useU16 ? "uint16" : "uint8";
 
             if (pre_flag) {
-                std::cout << "[pre] creating zarr + L0...\n";
+                std::cout << "[pre] creating zarr + all levels...\n";
                 z5::createFile(outFile, true);
                 z5::createDataset(outFile, "0", dtype, shape0, chunks0, std::string("blosc"), compOpts);
                 std::cout << "[pre] L0 shape: [" << shape0[0] << "," << shape0[1] << "," << shape0[2] << "]\n";
+                createPyramidDatasets(outFile, shape0, CH, CW, useU16);
+
+                cv::Size attrXY = tgt_size;
+                if (rotQuad >= 0 && (rotQuad % 2) == 1) std::swap(attrXY.width, attrXY.height);
+                writeZarrAttrs(outFile, vol_path, group_idx, baseZ, slice_step, accum_step,
+                               accum_type_str, accumOffsets.size(), attrXY, baseZ, CH, CW);
                 return;
             } else if (finalize_flag) {
                 dsOut = z5::openDataset(outFile, "0");
@@ -1140,26 +1147,33 @@ int main(int argc, char *argv[])
             }
 
             tifWriters.clear();
-
-            if (numParts > 1 && wantZarr) {
-                std::cout << "[multi-part] part " << partId << " done. Run --finalize after all parts.\n";
-                return;
-            }
         }
 
-        // ---- Zarr finalize: pyramid + attrs ----
-        if (wantZarr) {
+        // ---- Zarr pyramid + attrs ----
+        if (wantZarr && !pre_flag) {
             if (finalize_flag) std::cout << "[finalize] building pyramid...\n";
 
-            for (int level = 1; level <= 5; level++) {
-                if (useU16) buildPyramidLevel<uint16_t>(outFile, level, CH, CW);
-                else        buildPyramidLevel<uint8_t>(outFile, level, CH, CW);
+            // In single-part mode, create pyramid level datasets now
+            // (multi-part creates them in --pre step)
+            if (numParts <= 1 && !finalize_flag) {
+                cv::Size zarrXY = tgt_size;
+                if (rotQuad >= 0 && (rotQuad % 2) == 1) std::swap(zarrXY.width, zarrXY.height);
+                std::vector<size_t> shape0 = {baseZ, size_t(zarrXY.height), size_t(zarrXY.width)};
+                createPyramidDatasets(outFile, shape0, CH, CW, useU16);
             }
 
-            cv::Size attrXY = tgt_size;
-            if (rotQuad >= 0 && (rotQuad % 2) == 1) std::swap(attrXY.width, attrXY.height);
-            writeZarrAttrs(outFile, vol_path, group_idx, baseZ, slice_step, accum_step,
-                           accum_type_str, accumOffsets.size(), attrXY, baseZ, CH, CW);
+            for (int level = 1; level <= 5; level++) {
+                if (useU16) buildPyramidLevel<uint16_t>(outFile, level, CH, CW, numParts, partId);
+                else        buildPyramidLevel<uint8_t>(outFile, level, CH, CW, numParts, partId);
+            }
+
+            // --pre already writes attrs for multi-part; single-part writes here
+            if (numParts <= 1) {
+                cv::Size attrXY = tgt_size;
+                if (rotQuad >= 0 && (rotQuad % 2) == 1) std::swap(attrXY.width, attrXY.height);
+                writeZarrAttrs(outFile, vol_path, group_idx, baseZ, slice_step, accum_step,
+                               accum_type_str, accumOffsets.size(), attrXY, baseZ, CH, CW);
+            }
         }
     };
 

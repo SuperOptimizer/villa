@@ -40,10 +40,18 @@ void writeZarrBand(z5::Dataset* dsOut, const std::vector<cv::Mat>& slices,
                    size_t tilesXSrc, size_t tilesYSrc,
                    int rotQuad, int flipAxis);
 
-// Build one pyramid level (2x mean downsample) via readSubarray/writeSubarray + OMP.
+// Build one pyramid level (2x mean downsample) via readChunk/writeChunk + OMP.
+// numParts/partId partition the output tile-rows across VMs (1/0 = no partitioning).
 template <typename T>
 void buildPyramidLevel(z5::filesystem::handle::File& outFile, int level,
-                       size_t CH, size_t CW);
+                       size_t CH, size_t CW,
+                       int numParts = 1, int partId = 0);
+
+// Create pyramid level datasets L1-L5 (metadata only, no data).
+// Called by --pre so that multi-part workers can open existing datasets.
+void createPyramidDatasets(z5::filesystem::handle::File& outFile,
+                           const std::vector<size_t>& shape0,
+                           size_t CH, size_t CW, bool isU16);
 
 // Write OME-Zarr .zattrs multiscales JSON.
 void writeZarrAttrs(z5::filesystem::handle::File& outFile,

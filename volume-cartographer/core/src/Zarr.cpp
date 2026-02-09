@@ -63,109 +63,108 @@ template void writeZarrBand<uint16_t>(z5::Dataset*, const std::vector<cv::Mat>&,
 
 template <typename T>
 void buildPyramidLevel(z5::filesystem::handle::File& outFile, int level,
-                       size_t CH, size_t CW)
+                       size_t CH, size_t CW,
+                       int numParts, int partId)
 {
     auto src = z5::openDataset(outFile, std::to_string(level - 1));
+    auto dst = z5::openDataset(outFile, std::to_string(level));
     const auto& ss = src->shape();
-    const auto& sc_shape = src->defaultChunkShape();
-    size_t scZ = sc_shape[0], scY = sc_shape[1], scX = sc_shape[2];
-    size_t srcChunksY = (ss[1] + scY - 1) / scY;
-    size_t srcChunksX = (ss[2] + scX - 1) / scX;
+    const auto& sc = src->defaultChunkShape();  // source chunk shape
+    const auto& dc = dst->defaultChunkShape();  // dst chunk shape = src/2 in each dim
 
-    std::vector<size_t> ds = {(ss[0]+1)/2, (ss[1]+1)/2, (ss[2]+1)/2};
-    std::vector<size_t> dc = {ds[0], std::min(CH, ds[1]), std::min(CW, ds[2])};
-    json compOpts = {{"cname","zstd"},{"clevel",1},{"shuffle",0}};
+    // Source and dst have the same chunk grid — 1:1 mapping
+    size_t chunksY = (ss[1] + sc[1] - 1) / sc[1];
+    size_t chunksX = (ss[2] + sc[2] - 1) / sc[2];
 
-    std::string dtype = std::is_same_v<T, uint16_t> ? "uint16" : "uint8";
-    std::unique_ptr<z5::Dataset> dst;
-    try { dst = z5::createDataset(outFile, std::to_string(level), dtype, ds, dc, std::string("blosc"), compOpts); }
-    catch (const std::invalid_argument&) { dst = z5::openDataset(outFile, std::to_string(level)); }
-
-    size_t dstChunksY = (ds[1] + dc[1] - 1) / dc[1];
-    size_t dstChunksX = (ds[2] + dc[2] - 1) / dc[2];
-    size_t totalTiles = dstChunksY * dstChunksX;
+    // Build list of tile-rows this part owns
+    std::vector<size_t> myRows;
+    for (size_t r = size_t(partId); r < chunksY; r += size_t(numParts))
+        myRows.push_back(r);
+    size_t myTiles = myRows.size() * chunksX;
     std::atomic<size_t> done{0};
 
-    size_t srcChunkElems = scZ * scY * scX;
-    size_t dstChunkElems = dc[0] * dc[1] * dc[2];
+    size_t srcElems = sc[0] * sc[1] * sc[2];
+    size_t dstElems = dc[0] * dc[1] * dc[2];
 
     #pragma omp parallel for schedule(dynamic, 2)
-    for (long long ti = 0; ti < (long long)totalTiles; ti++) {
-        size_t dty = size_t(ti) / dstChunksX;
-        size_t dtx = size_t(ti) % dstChunksX;
+    for (long long ti = 0; ti < (long long)myTiles; ti++) {
+        size_t rowIdx = size_t(ti) / chunksX;
+        size_t cx = size_t(ti) % chunksX;
+        size_t cy = myRows[rowIdx];
 
-        // Dst chunk covers dst voxels [dy0..dy1) x [dx0..dx1) in Y,X
-        size_t dy0 = dty * dc[1], dy1 = std::min(dy0 + dc[1], ds[1]);
-        size_t dx0 = dtx * dc[2], dx1 = std::min(dx0 + dc[2], ds[2]);
-        size_t dly = dy1 - dy0, dlx = dx1 - dx0, dlz = ds[0];
+        // Read the one source chunk
+        z5::types::ShapeType srcId = {0, cy, cx};
+        std::vector<T> srcBuf(srcElems, T(0));
+        if (src->chunkExists(srcId))
+            src->readChunk(srcId, srcBuf.data());
 
-        // Source region is 2x in Y,X
-        size_t sy0 = 2 * dy0, sx0 = 2 * dx0;
-        size_t sly = std::min(2 * dly, ss[1] - sy0);
-        size_t slx = std::min(2 * dlx, ss[2] - sx0);
-        size_t slz = std::min(2 * dlz, ss[0]);
+        // Determine actual voxel extent (edge chunks may be partial)
+        const auto& ds = dst->shape();
+        size_t dz = std::min(dc[0], ds[0]);
+        size_t dy = std::min(dc[1], ds[1] - cy * dc[1]);
+        size_t dx = std::min(dc[2], ds[2] - cx * dc[2]);
+        // Source actual extent
+        size_t sz = std::min(sc[0], ss[0]);
+        size_t sy = std::min(sc[1], ss[1] - cy * sc[1]);
+        size_t sx = std::min(sc[2], ss[2] - cx * sc[2]);
 
-        // Read up to 2x2 source chunks (Z is always chunk 0) into a
-        // contiguous source buffer with strides [slz, sly, slx]
-        std::vector<T> srcBuf(slz * sly * slx, T(0));
-
-        // Source chunk indices that overlap our region
-        size_t scy0 = sy0 / scY, scy1 = (sy0 + sly + scY - 1) / scY;
-        size_t scx0 = sx0 / scX, scx1 = (sx0 + slx + scX - 1) / scX;
-
-        std::vector<T> chunkTmp(srcChunkElems);
-        for (size_t cy = scy0; cy < scy1 && cy < srcChunksY; cy++) {
-            for (size_t cx = scx0; cx < scx1 && cx < srcChunksX; cx++) {
-                z5::types::ShapeType cid = {0, cy, cx};
-                if (!src->chunkExists(cid)) continue;
-                src->readChunk(cid, chunkTmp.data());
-
-                // Copy relevant portion into srcBuf
-                size_t cyStart = cy * scY, cxStart = cx * scX;
-                size_t copyY0 = std::max(cyStart, sy0);
-                size_t copyY1 = std::min(cyStart + scY, sy0 + sly);
-                size_t copyX0 = std::max(cxStart, sx0);
-                size_t copyX1 = std::min(cxStart + scX, sx0 + slx);
-                size_t copyW = copyX1 - copyX0;
-
-                for (size_t z = 0; z < slz; z++) {
-                    for (size_t y = copyY0; y < copyY1; y++) {
-                        size_t srcOff = z * scY * scX + (y - cyStart) * scX + (copyX0 - cxStart);
-                        size_t dstOff = z * sly * slx + (y - sy0) * slx + (copyX0 - sx0);
-                        std::memcpy(&srcBuf[dstOff], &chunkTmp[srcOff], copyW * sizeof(T));
-                    }
-                }
-            }
-        }
-
-        // 2x downsample into dst chunk buffer
-        std::vector<T> dstBuf(dstChunkElems, T(0));
-        for (size_t zz = 0; zz < dlz; zz++)
-            for (size_t yy = 0; yy < dly; yy++)
-                for (size_t xx = 0; xx < dlx; xx++) {
+        // 2x2x2 downsample: dst(z,y,x) = mean of src(2z..2z+1, 2y..2y+1, 2x..2x+1)
+        std::vector<T> dstBuf(dstElems, T(0));
+        for (size_t zz = 0; zz < dz; zz++)
+            for (size_t yy = 0; yy < dy; yy++)
+                for (size_t xx = 0; xx < dx; xx++) {
                     uint32_t sum = 0; int cnt = 0;
-                    for (int d0 = 0; d0 < 2 && 2*zz+d0 < slz; d0++)
-                        for (int d1 = 0; d1 < 2 && 2*yy+d1 < sly; d1++)
-                            for (int d2 = 0; d2 < 2 && 2*xx+d2 < slx; d2++) {
-                                sum += srcBuf[(2*zz+d0)*sly*slx + (2*yy+d1)*slx + (2*xx+d2)];
+                    for (int d0 = 0; d0 < 2 && 2*zz+d0 < sz; d0++)
+                        for (int d1 = 0; d1 < 2 && 2*yy+d1 < sy; d1++)
+                            for (int d2 = 0; d2 < 2 && 2*xx+d2 < sx; d2++) {
+                                sum += srcBuf[(2*zz+d0)*sc[1]*sc[2] + (2*yy+d1)*sc[2] + (2*xx+d2)];
                                 cnt++;
                             }
                     dstBuf[zz*dc[1]*dc[2] + yy*dc[2] + xx] = T((sum + cnt/2) / std::max(1, cnt));
                 }
 
-        z5::types::ShapeType dstId = {0, dty, dtx};
+        z5::types::ShapeType dstId = {0, cy, cx};
         dst->writeChunk(dstId, dstBuf.data());
 
         size_t d = ++done;
         #pragma omp critical(pp)
-        { std::cout << "\r[pyramid L" << level << "] " << d << "/" << totalTiles
-                    << " (" << int(100.0*d/totalTiles) << "%)" << std::flush; }
+        { std::cout << "\r[pyramid L" << level << "] " << d << "/" << myTiles
+                    << " (" << int(100.0*d/myTiles) << "%)" << std::flush; }
     }
-    std::cout << std::endl;
+    if (myTiles > 0) std::cout << std::endl;
 }
 
-template void buildPyramidLevel<uint8_t>(z5::filesystem::handle::File&, int, size_t, size_t);
-template void buildPyramidLevel<uint16_t>(z5::filesystem::handle::File&, int, size_t, size_t);
+template void buildPyramidLevel<uint8_t>(z5::filesystem::handle::File&, int, size_t, size_t, int, int);
+template void buildPyramidLevel<uint16_t>(z5::filesystem::handle::File&, int, size_t, size_t, int, int);
+
+// ============================================================
+// createPyramidDatasets
+// ============================================================
+
+void createPyramidDatasets(z5::filesystem::handle::File& outFile,
+                           const std::vector<size_t>& shape0,
+                           size_t CH, size_t CW, bool isU16)
+{
+    json compOpts = {{"cname","zstd"},{"clevel",1},{"shuffle",0}};
+    std::string dtype = isU16 ? "uint16" : "uint8";
+
+    std::vector<size_t> prevShape = shape0;
+    // Chunk sizes halve at each level: L0=128, L1=64, L2=32, etc.
+    // This gives 1:1 source-chunk-to-dst-chunk mapping at every level,
+    // enabling barrier-free multi-VM pyramid building.
+    size_t chZ = prevShape[0], chY = CH, chX = CW;
+    for (int level = 1; level <= 5; level++) {
+        std::vector<size_t> ds = {(prevShape[0]+1)/2, (prevShape[1]+1)/2, (prevShape[2]+1)/2};
+        chZ = ds[0];
+        chY = std::max<size_t>(1, chY / 2);
+        chX = std::max<size_t>(1, chX / 2);
+        std::vector<size_t> dc = {chZ, std::min(chY, ds[1]), std::min(chX, ds[2])};
+        z5::createDataset(outFile, std::to_string(level), dtype, ds, dc, std::string("blosc"), compOpts);
+        std::cout << "[pre] L" << level << " shape: [" << ds[0] << "," << ds[1] << "," << ds[2]
+                  << "] chunks: [" << dc[0] << "," << dc[1] << "," << dc[2] << "]\n";
+        prevShape = ds;
+    }
+}
 
 // ============================================================
 // writeZarrAttrs
