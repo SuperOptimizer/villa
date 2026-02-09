@@ -202,6 +202,11 @@ public:
     /// Only relevant for sharded datasets; no-op otherwise.
     void flush();
 
+    /// Set the maximum bytes to buffer for pending shard writes.
+    /// When exceeded, the least-recently-touched shards are flushed to disk.
+    /// Default: 0 (unlimited — only auto-flush on shard completion + final flush).
+    void setShardBufferLimit(std::size_t maxBytes);
+
 private:
     std::filesystem::path path_;
     ShapeType shape_;
@@ -220,6 +225,7 @@ private:
     void initShardBuffer();
     void writeShardRaw(const ShapeType& shardIdx,
                        const std::vector<uint8_t>& assembled);
+    void evictOldestShards();
 
     // N-D chunk path
     std::filesystem::path chunkPath(const ShapeType& chunkIdx) const;

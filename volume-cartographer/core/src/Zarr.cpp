@@ -137,6 +137,8 @@ struct Dataset::ShardBuffer {
         std::vector<std::vector<uint8_t>> compressedChunks;
         std::vector<bool> touched;     // which inner chunk slots have been written
         std::size_t numTouched = 0;    // count of touched slots
+        std::size_t bufferedBytes = 0; // compressed bytes held in this shard
+        uint64_t lastTouch = 0;        // generation counter for LRU
     };
 
     const ShardingIndexedCodec* shardCodec = nullptr;
@@ -147,6 +149,9 @@ struct Dataset::ShardBuffer {
 
     std::mutex mapMtx;
     std::unordered_map<ShardKey, std::unique_ptr<PendingShard>, ShardKeyHash> pending;
+    std::atomic<uint64_t> generation{0};
+    std::atomic<std::size_t> totalBufferedBytes{0};
+    std::size_t maxBufferedBytes = 0;  // 0 = unlimited
 
     PendingShard& getOrCreate(const ShardKey& key)
     {
@@ -291,6 +296,68 @@ void Dataset::flush()
             toWrite.emplace_back(key, std::move(shard));
         }
         shardBuf_->pending.clear();
+    }
+
+    for (auto& [key, shard] : toWrite) {
+        auto assembled = shardBuf_->shardCodec->assembleShard(
+            shard->compressedChunks, shardBuf_->numInner);
+        writeShardRaw(ShapeType{key.iz, key.iy, key.ix}, assembled);
+    }
+    shardBuf_->totalBufferedBytes.store(0, std::memory_order_relaxed);
+}
+
+void Dataset::setShardBufferLimit(std::size_t maxBytes)
+{
+    initShardBuffer();
+    shardBuf_->maxBufferedBytes = maxBytes;
+}
+
+void Dataset::evictOldestShards()
+{
+    if (!shardBuf_ || shardBuf_->maxBufferedBytes == 0) return;
+    if (shardBuf_->totalBufferedBytes.load(std::memory_order_relaxed)
+        <= shardBuf_->maxBufferedBytes)
+        return;
+
+    struct Candidate {
+        ShardBuffer::ShardKey key;
+        uint64_t lastTouch;
+        std::size_t bytes;
+    };
+    std::vector<Candidate> candidates;
+
+    {
+        std::lock_guard<std::mutex> lock(shardBuf_->mapMtx);
+        candidates.reserve(shardBuf_->pending.size());
+        for (auto& [key, shard] : shardBuf_->pending) {
+            candidates.push_back({key, shard->lastTouch, shard->bufferedBytes});
+        }
+    }
+
+    // Sort oldest first
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& a, const Candidate& b) {
+                  return a.lastTouch < b.lastTouch;
+              });
+
+    // Evict oldest until under 3/4 of limit
+    std::size_t target = shardBuf_->maxBufferedBytes * 3 / 4;
+    std::vector<std::pair<ShardBuffer::ShardKey,
+                          std::unique_ptr<ShardBuffer::PendingShard>>> toWrite;
+
+    {
+        std::lock_guard<std::mutex> lock(shardBuf_->mapMtx);
+        for (auto& c : candidates) {
+            if (shardBuf_->totalBufferedBytes.load(std::memory_order_relaxed)
+                <= target)
+                break;
+            auto it = shardBuf_->pending.find(c.key);
+            if (it == shardBuf_->pending.end()) continue;
+            shardBuf_->totalBufferedBytes.fetch_sub(
+                it->second->bufferedBytes, std::memory_order_relaxed);
+            toWrite.emplace_back(c.key, std::move(it->second));
+            shardBuf_->pending.erase(it);
+        }
     }
 
     for (auto& [key, shard] : toWrite) {
@@ -984,11 +1051,27 @@ void Dataset::writeInnerChunk(const ShapeType& chunkIdx, const void* data)
         }
 
         std::lock_guard<std::mutex> lock(shard.mtx);
+
+        // Track byte delta for this slot
+        std::size_t oldBytes = shard.compressedChunks[flatIdx].size();
+        std::size_t newBytes = compressed.size();
+
         if (allFill) {
             shard.compressedChunks[flatIdx].clear();
+            newBytes = 0;
         } else {
             shard.compressedChunks[flatIdx] = std::move(compressed);
         }
+
+        shard.bufferedBytes += newBytes;
+        shard.bufferedBytes -= oldBytes;
+        shard.lastTouch = shardBuf_->generation.fetch_add(1, std::memory_order_relaxed);
+
+        // Update global byte tracking
+        if (newBytes > oldBytes)
+            shardBuf_->totalBufferedBytes.fetch_add(newBytes - oldBytes, std::memory_order_relaxed);
+        else if (oldBytes > newBytes)
+            shardBuf_->totalBufferedBytes.fetch_sub(oldBytes - newBytes, std::memory_order_relaxed);
 
         // Only increment on first write to this slot
         if (!shard.touched[flatIdx]) {
@@ -1001,10 +1084,15 @@ void Dataset::writeInnerChunk(const ShapeType& chunkIdx, const void* data)
     // Auto-flush completed shard to free memory
     if (shardComplete) {
         std::vector<std::vector<uint8_t>> chunks;
+        std::size_t shardBytes;
         {
             std::lock_guard<std::mutex> lock(shard.mtx);
             chunks = std::move(shard.compressedChunks);
+            shardBytes = shard.bufferedBytes;
+            shard.bufferedBytes = 0;
         }
+
+        shardBuf_->totalBufferedBytes.fetch_sub(shardBytes, std::memory_order_relaxed);
 
         auto assembled = shardBuf_->shardCodec->assembleShard(
             chunks, shardBuf_->numInner);
@@ -1012,9 +1100,14 @@ void Dataset::writeInnerChunk(const ShapeType& chunkIdx, const void* data)
         writeShardRaw(shardIdx, assembled);
 
         // Remove from pending map
-        std::lock_guard<std::mutex> lock(shardBuf_->mapMtx);
-        shardBuf_->pending.erase(key);
+        {
+            std::lock_guard<std::mutex> lock(shardBuf_->mapMtx);
+            shardBuf_->pending.erase(key);
+        }
     }
+
+    // LRU eviction if over budget
+    evictOldestShards();
 }
 
 // ============================================================================

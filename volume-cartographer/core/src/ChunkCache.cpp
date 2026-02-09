@@ -100,6 +100,15 @@ auto ChunkCache<T>::get(vc::zarr::Dataset* ds, int iz, int iy, int ix) -> ChunkP
 
     {
         std::lock_guard<std::mutex> evictLock(_evictionMutex);
+
+        // Track re-reads: if we've loaded this chunk before, it was evicted
+        // and is now being re-read — wasted I/O
+        auto [it, firstTime] = _everLoaded.insert(key);
+        if (!firstTime) {
+            _reReads.fetch_add(1, std::memory_order_relaxed);
+            _reReadBytes.fetch_add(chunkBytes, std::memory_order_relaxed);
+        }
+
         if (_maxBytes > 0 && _storedBytes.load(std::memory_order_relaxed) + chunkBytes > _maxBytes) {
             evictIfNeeded();
         }
@@ -224,7 +233,9 @@ auto ChunkCache<T>::stats() const -> Stats
         _hits.load(std::memory_order_relaxed),
         _misses.load(std::memory_order_relaxed),
         _evictions.load(std::memory_order_relaxed),
-        _bytesRead.load(std::memory_order_relaxed)
+        _bytesRead.load(std::memory_order_relaxed),
+        _reReads.load(std::memory_order_relaxed),
+        _reReadBytes.load(std::memory_order_relaxed)
     };
 }
 
@@ -235,6 +246,12 @@ void ChunkCache<T>::resetStats()
     _misses.store(0, std::memory_order_relaxed);
     _evictions.store(0, std::memory_order_relaxed);
     _bytesRead.store(0, std::memory_order_relaxed);
+    _reReads.store(0, std::memory_order_relaxed);
+    _reReadBytes.store(0, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> evictLock(_evictionMutex);
+        _everLoaded.clear();
+    }
 }
 
 template<typename T>
