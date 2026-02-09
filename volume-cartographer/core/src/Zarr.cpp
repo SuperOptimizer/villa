@@ -104,9 +104,12 @@ void buildPyramidLevel(z5::filesystem::handle::File& outFile, int level,
     size_t chunksY = (ss[1] + sc[1] - 1) / sc[1];
     size_t chunksX = (ss[2] + sc[2] - 1) / sc[2];
 
-    // Build list of tile-rows this part owns
+    // Contiguous block assignment: each part gets a contiguous range of tile rows
+    size_t rowsPerPart = (chunksY + size_t(numParts) - 1) / size_t(numParts);
+    size_t rowStart = size_t(partId) * rowsPerPart;
+    size_t rowEnd = std::min(rowStart + rowsPerPart, chunksY);
     std::vector<size_t> myRows;
-    for (size_t r = size_t(partId); r < chunksY; r += size_t(numParts))
+    for (size_t r = rowStart; r < rowEnd; r++)
         myRows.push_back(r);
     size_t myTiles = myRows.size() * chunksX;
     std::atomic<size_t> done{0};
@@ -188,8 +191,6 @@ void createPyramidDatasets(z5::filesystem::handle::File& outFile,
         chX = std::max<size_t>(1, chX / 2);
         std::vector<size_t> dc = {chZ, std::min(chY, ds[1]), std::min(chX, ds[2])};
         z5::createDataset(outFile, std::to_string(level), dtype, ds, dc, std::string("blosc"), compOpts);
-        std::cout << "[pre] L" << level << " shape: [" << ds[0] << "," << ds[1] << "," << ds[2]
-                  << "] chunks: [" << dc[0] << "," << dc[1] << "," << dc[2] << "]\n";
         prevShape = ds;
     }
 }

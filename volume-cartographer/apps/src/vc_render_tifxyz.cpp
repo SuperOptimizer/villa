@@ -22,12 +22,57 @@
 #include <set>
 #include <cctype>
 #include <chrono>
+#include <cstdarg>
 #include <thread>
 #include <tiffio.h>
 #include <omp.h>
 
 namespace po = boost::program_options;
 using json = nlohmann::json;
+
+// ============================================================
+// Logging infrastructure
+// ============================================================
+
+static FILE* g_logFile = nullptr;       // non-null when --log-path active
+static std::string g_logPrefix;         // e.g. "[part 2/8] " — prepended when logging to file
+static std::atomic<bool> g_logRunning{false};
+static std::thread g_logFlushThread;
+
+// Log to file if active, otherwise to the given default stream.
+// When logging to a shared file in multi-part mode, each line is prefixed with the part id.
+static void logPrintf(FILE* defaultStream, const char* fmt, ...)
+    __attribute__((format(printf, 2, 3)));
+static void logPrintf(FILE* defaultStream, const char* fmt, ...)
+{
+    FILE* out = g_logFile ? g_logFile : defaultStream;
+    if (g_logFile && !g_logPrefix.empty())
+        std::fputs(g_logPrefix.c_str(), out);
+    va_list ap;
+    va_start(ap, fmt);
+    std::vfprintf(out, fmt, ap);
+    va_end(ap);
+}
+
+// Start background flush thread (every ~5 seconds)
+static void startLogFlusher()
+{
+    if (!g_logFile) return;
+    g_logRunning = true;
+    g_logFlushThread = std::thread([] {
+        while (g_logRunning) {
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            if (g_logFile) std::fflush(g_logFile);
+        }
+    });
+}
+
+static void stopLogFlusher()
+{
+    g_logRunning = false;
+    if (g_logFlushThread.joinable()) g_logFlushThread.join();
+    if (g_logFile) { std::fflush(g_logFile); std::fclose(g_logFile); g_logFile = nullptr; }
+}
 
 // ============================================================
 // Affine transform utilities
@@ -102,17 +147,11 @@ static AffineTransform composeAffine(const AffineTransform& A, const AffineTrans
 
 static void printMat4x4(const cv::Mat_<double>& M, const char* header)
 {
-    if (header) std::cout << header << "\n";
-    std::cout << std::fixed << std::setprecision(6);
+    if (header) logPrintf(stdout, "%s\n", header);
     for (int r = 0; r < 4; ++r) {
-        std::cout << "  [";
-        for (int c = 0; c < 4; ++c) {
-            std::cout << std::setw(12) << M(r,c);
-            if (c < 3) std::cout << ", ";
-        }
-        std::cout << "]\n";
+        logPrintf(stdout, "  [%12.6f, %12.6f, %12.6f, %12.6f]\n",
+                  M(r,0), M(r,1), M(r,2), M(r,3));
     }
-    std::cout.unsetf(std::ios::floatfield);
 }
 
 static std::pair<std::string, bool> parseAffineSpec(const std::string& spec)
@@ -398,7 +437,13 @@ static void renderBands(
     auto wallStart = std::chrono::steady_clock::now();
     auto lastPrint = wallStart;
 
-    for (uint32_t bi = uint32_t(partId); bi < numBands; bi += uint32_t(numParts)) {
+    // Contiguous block assignment: each part gets a contiguous range of bands
+    // for better spatial locality (avoids all VMs reading the same volume region)
+    uint32_t bandsPerPart = (numBands + uint32_t(numParts) - 1) / uint32_t(numParts);
+    uint32_t bandStart = uint32_t(partId) * bandsPerPart;
+    uint32_t bandEnd = std::min(bandStart + bandsPerPart, numBands);
+
+    for (uint32_t bi = bandStart; bi < bandEnd; bi++) {
         uint32_t y0 = bi * bandH;
         uint32_t dy = std::min(bandH, uint32_t(tgtSize.height) - y0);
 
@@ -437,23 +482,27 @@ static void renderBands(
         // Progress (throttled to ~1/sec)
         auto now = std::chrono::steady_clock::now();
         double since = std::chrono::duration<double>(now - lastPrint).count();
-        uint32_t bandsThis = (numBands - uint32_t(partId) + uint32_t(numParts) - 1) / uint32_t(numParts);
-        uint32_t done = (bi - uint32_t(partId)) / uint32_t(numParts) + 1;
+        uint32_t bandsThis = bandEnd - bandStart;
+        uint32_t done = bi - bandStart + 1;
         if (since >= 1.0 || done == bandsThis) {
             lastPrint = now;
             double elapsed = std::chrono::duration<double>(now - wallStart).count();
             double eta = done > 0 ? elapsed * (double(bandsThis) / done - 1.0) : 0.0;
+            double bandsPerSec = elapsed > 0 ? done / elapsed : 0.0;
             auto cs = cache->stats();
             uint64_t tot = cs.hits + cs.misses;
             double hr = tot > 0 ? 100.0 * cs.hits / tot : 0.0;
             double gbR = cs.bytesRead / (1024.0*1024.0*1024.0);
-            std::fprintf(stderr, "\r  band %u/%u (%d%%)  %dm%02ds  eta %dm%02ds  cache %.1f%% evict %lu read %.2fGB",
-                done, bandsThis, int(100.0 * done / bandsThis),
+            const char* prefix = g_logFile ? "  " : "\r  ";
+            const char* suffix = g_logFile ? "\n" : "";
+            logPrintf(stderr, "%sband %u/%u (%d%%)  %.1f bands/s  %dm%02ds  eta %dm%02ds  cache %.1f%% evict %lu read %.2fGB%s",
+                prefix, done, bandsThis, int(100.0 * done / bandsThis),
+                bandsPerSec,
                 int(elapsed)/60, int(elapsed)%60, int(eta)/60, int(eta)%60,
-                hr, (unsigned long)cs.evictions, gbR);
+                hr, (unsigned long)cs.evictions, gbR, suffix);
         }
     }
-    std::fprintf(stderr, "\n");
+    if (!g_logFile) std::fprintf(stderr, "\n");
 }
 
 // ============================================================
@@ -531,7 +580,13 @@ static void renderTiles(
     auto wallStart = std::chrono::steady_clock::now();
     auto lastPrint = wallStart;
 
-    for (uint32_t ty = uint32_t(partId); ty < numTileRows; ty += uint32_t(numParts)) {
+    // Contiguous block assignment: each part gets a contiguous range of tile rows
+    // for better spatial locality (avoids all VMs reading the same volume region)
+    uint32_t rowsPerPart = (numTileRows + uint32_t(numParts) - 1) / uint32_t(numParts);
+    uint32_t tyStart = uint32_t(partId) * rowsPerPart;
+    uint32_t tyEnd = std::min(tyStart + rowsPerPart, numTileRows);
+
+    for (uint32_t ty = tyStart; ty < tyEnd; ty++) {
         uint32_t y0 = ty * uint32_t(CH);
         uint32_t dy = std::min(uint32_t(CH), uint32_t(tgtSize.height) - y0);
 
@@ -679,23 +734,29 @@ static void renderTiles(
         // Progress (throttled to ~1/sec)
         auto now = std::chrono::steady_clock::now();
         double since = std::chrono::duration<double>(now - lastPrint).count();
-        uint32_t tileRowsThis = (numTileRows - uint32_t(partId) + uint32_t(numParts) - 1) / uint32_t(numParts);
-        uint32_t done = (ty - uint32_t(partId)) / uint32_t(numParts) + 1;
+        uint32_t tileRowsThis = tyEnd - tyStart;
+        uint32_t done = ty - tyStart + 1;
         if (since >= 1.0 || done == tileRowsThis) {
             lastPrint = now;
             double elapsed = std::chrono::duration<double>(now - wallStart).count();
             double eta = done > 0 ? elapsed * (double(tileRowsThis) / done - 1.0) : 0.0;
+            // Chunks written this part: done tile-rows × numTileCols chunks per row
+            double chunksWritten = double(done) * double(numTileCols);
+            double chunksPerSec = elapsed > 0 ? chunksWritten / elapsed : 0.0;
             auto cs = cache->stats();
             uint64_t tot = cs.hits + cs.misses;
             double hr = tot > 0 ? 100.0 * cs.hits / tot : 0.0;
             double gbR = cs.bytesRead / (1024.0*1024.0*1024.0);
-            std::fprintf(stderr, "\r  tile-row %u/%u (%d%%)  %dm%02ds  eta %dm%02ds  cache %.1f%% evict %lu read %.2fGB",
-                done, tileRowsThis, int(100.0 * done / tileRowsThis),
+            const char* prefix = g_logFile ? "  " : "\r  ";
+            const char* suffix = g_logFile ? "\n" : "";
+            logPrintf(stderr, "%stile-row %u/%u (%d%%)  %.1f chunks/s  %dm%02ds  eta %dm%02ds  cache %.1f%% evict %lu read %.2fGB%s",
+                prefix, done, tileRowsThis, int(100.0 * done / tileRowsThis),
+                chunksPerSec,
                 int(elapsed)/60, int(elapsed)%60, int(eta)/60, int(eta)%60,
-                hr, (unsigned long)cs.evictions, gbR);
+                hr, (unsigned long)cs.evictions, gbR, suffix);
         }
     }
-    std::fprintf(stderr, "\n");
+    if (!g_logFile) std::fprintf(stderr, "\n");
 }
 
 
@@ -717,6 +778,7 @@ int main(int argc, char *argv[])
         ("help,h", "Show this help message")
         ("segmentation,s", po::value<std::string>(), "Path to a single tifxyz segmentation folder")
         ("cache-gb", po::value<size_t>()->default_value(16), "Zarr chunk cache size in GB")
+        ("log-path", po::value<std::string>(), "Log all output to file instead of stdout/stderr")
         ("timeout", po::value<int>()->default_value(0), "Kill process if not finished within N minutes")
         ("num-slices,n", po::value<int>()->default_value(1), "Number of slices to render")
         ("slice-step", po::value<float>()->default_value(1.0f), "Spacing between slices along normal")
@@ -771,29 +833,45 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    // --- Log path setup ---
+    if (parsed.count("log-path")) {
+        const auto& logPath = parsed["log-path"].as<std::string>();
+        g_logFile = std::fopen(logPath.c_str(), "a");
+        if (!g_logFile) {
+            std::cerr << "Error: cannot open log file: " << logPath << "\n";
+            return EXIT_FAILURE;
+        }
+        startLogFlusher();
+    }
+
     // --- Parse common options ---
     const int numParts = parsed["num-parts"].as<int>();
     const int partId = parsed["part-id"].as<int>();
     if (numParts < 1 || partId < 0 || partId >= numParts) {
-        std::cerr << "Error: need 0 <= part-id < num-parts\n"; return EXIT_FAILURE;
+        logPrintf(stderr, "Error: need 0 <= part-id < num-parts\n"); return EXIT_FAILURE;
     }
-    if (numParts > 1) std::cout << "Multi-part mode: part " << partId << " of " << numParts << std::endl;
+    if (g_logFile && numParts > 1) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "[part %d/%d] ", partId, numParts);
+        g_logPrefix = buf;
+    }
+    if (numParts > 1) logPrintf(stdout, "Multi-part mode: part %d of %d\n", partId, numParts);
 
     const bool finalize_flag = parsed["finalize"].as<bool>();
     const bool pre_flag = parsed["pre"].as<bool>();
     const bool wantPyramid = parsed["pyramid"].as<bool>();
-    if (pre_flag && finalize_flag) { std::cerr << "Error: --pre and --finalize are mutually exclusive.\n"; return EXIT_FAILURE; }
+    if (pre_flag && finalize_flag) { logPrintf(stderr, "Error: --pre and --finalize are mutually exclusive.\n"); return EXIT_FAILURE; }
 
     const bool wantZarr = parsed.count("zarr-output") > 0;
     const bool wantTif = parsed.count("tif-output") > 0;
-    if (!wantZarr && !wantTif) { std::cerr << "Error: at least one of --zarr-output or --tif-output required\n"; return EXIT_FAILURE; }
+    if (!wantZarr && !wantTif) { logPrintf(stderr, "Error: at least one of --zarr-output or --tif-output required\n"); return EXIT_FAILURE; }
     const std::string zarrOutputArg = wantZarr ? parsed["zarr-output"].as<std::string>() : "";
     const std::string tifOutputArg = wantTif ? parsed["tif-output"].as<std::string>() : "";
 
     const bool mergeParts = parsed["merge-parts"].as<bool>();
     if (mergeParts) {
-        if (numParts < 2) { std::cerr << "Error: --merge-parts needs --num-parts >= 2\n"; return EXIT_FAILURE; }
-        if (!wantTif) { std::cerr << "Error: --merge-parts requires --tif-output\n"; return EXIT_FAILURE; }
+        if (numParts < 2) { logPrintf(stderr, "Error: --merge-parts needs --num-parts >= 2\n"); return EXIT_FAILURE; }
+        if (!wantTif) { logPrintf(stderr, "Error: --merge-parts requires --tif-output\n"); return EXIT_FAILURE; }
         return mergeTiffParts(tifOutputArg, numParts) ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (finalize_flag && numParts >= 2 && wantTif && !wantZarr) {
@@ -802,17 +880,17 @@ int main(int argc, char *argv[])
 
     std::filesystem::path vol_path = parsed["volume"].as<std::string>();
 
-    if (!parsed.count("segmentation")) { std::cerr << "Error: --segmentation required\n"; return EXIT_FAILURE; }
+    if (!parsed.count("segmentation")) { logPrintf(stderr, "Error: --segmentation required\n"); return EXIT_FAILURE; }
     std::filesystem::path seg_path = parsed["segmentation"].as<std::string>();
 
     float tgt_scale = parsed["scale"].as<float>();
     int group_idx = parsed["group-idx"].as<int>();
     int num_slices = parsed["num-slices"].as<int>();
     double slice_step = parsed["slice-step"].as<float>();
-    if (!std::isfinite(slice_step) || slice_step <= 0) { std::cerr << "Error: --slice-step must be positive\n"; return EXIT_FAILURE; }
+    if (!std::isfinite(slice_step) || slice_step <= 0) { logPrintf(stderr, "Error: --slice-step must be positive\n"); return EXIT_FAILURE; }
 
     double accum_step = parsed["accum"].as<float>();
-    if (!std::isfinite(accum_step) || accum_step < 0) { std::cerr << "Error: --accum must be non-negative\n"; return EXIT_FAILURE; }
+    if (!std::isfinite(accum_step) || accum_step < 0) { logPrintf(stderr, "Error: --accum must be non-negative\n"); return EXIT_FAILURE; }
 
     std::string accum_type_str = parsed["accum-type"].as<std::string>();
     std::transform(accum_type_str.begin(), accum_type_str.end(), accum_type_str.begin(),
@@ -824,7 +902,7 @@ int main(int argc, char *argv[])
     else if (accum_type_str == "median") accumType = AccumType::Median;
     else if (accum_type_str == "alpha")  accumType = AccumType::Alpha;
     else if (accum_type_str == "beerlam" || accum_type_str == "beerlambert") accumType = AccumType::BeerLambert;
-    else { std::cerr << "Error: invalid --accum-type\n"; return EXIT_FAILURE; }
+    else { logPrintf(stderr, "Error: invalid --accum-type\n"); return EXIT_FAILURE; }
 
     const bool isCompositeMode = (accumType == AccumType::Alpha || accumType == AccumType::BeerLambert);
     int compositeStart = 0, compositeEnd = num_slices - 1;
@@ -842,27 +920,29 @@ int main(int argc, char *argv[])
         compositeParams.isoCutoff = uint8_t(std::clamp(parsed["iso-cutoff"].as<int>(), 0, 255));
         if (parsed.count("composite-start")) compositeStart = parsed["composite-start"].as<int>();
         if (parsed.count("composite-end"))   compositeEnd = parsed["composite-end"].as<int>();
-        if (compositeEnd < compositeStart) { std::cerr << "Error: --composite-end < --composite-start\n"; return EXIT_FAILURE; }
+        if (compositeEnd < compositeStart) { logPrintf(stderr, "Error: --composite-end < --composite-start\n"); return EXIT_FAILURE; }
         int layers = compositeEnd - compositeStart + 1;
-        std::cout << "Composite: " << compositeParams.method << " (" << layers << " layers [" << compositeStart << ".." << compositeEnd << "])\n";
+        logPrintf(stdout, "Composite: %s (%d layers [%d..%d])\n", compositeParams.method.c_str(), layers, compositeStart, compositeEnd);
         if (compositeParams.method == "alpha")
-            std::cout << "  alpha: min=" << compositeParams.alphaMin*255 << " max=" << compositeParams.alphaMax*255
-                      << " opacity=" << compositeParams.alphaOpacity*255 << " cutoff=" << compositeParams.alphaCutoff*10000 << "\n";
+            logPrintf(stdout, "  alpha: min=%.0f max=%.0f opacity=%.0f cutoff=%.0f\n",
+                      compositeParams.alphaMin*255, compositeParams.alphaMax*255,
+                      compositeParams.alphaOpacity*255, compositeParams.alphaCutoff*10000);
         else
-            std::cout << "  BL: ext=" << compositeParams.blExtinction << " em=" << compositeParams.blEmission << " amb=" << compositeParams.blAmbient << "\n";
-        if (compositeParams.isoCutoff > 0) std::cout << "  iso cutoff: " << int(compositeParams.isoCutoff) << "\n";
+            logPrintf(stdout, "  BL: ext=%.1f em=%.1f amb=%.1f\n",
+                      compositeParams.blExtinction, compositeParams.blEmission, compositeParams.blAmbient);
+        if (compositeParams.isoCutoff > 0) logPrintf(stdout, "  iso cutoff: %d\n", int(compositeParams.isoCutoff));
     }
 
     std::vector<float> accumOffsets;
     if (accum_step > 0) {
-        if (accum_step > slice_step) { std::cerr << "Error: --accum > --slice-step\n"; return EXIT_FAILURE; }
+        if (accum_step > slice_step) { logPrintf(stderr, "Error: --accum > --slice-step\n"); return EXIT_FAILURE; }
         double ratio = slice_step / accum_step, rounded = std::round(ratio);
-        if (std::abs(ratio - rounded) > 1e-4) { std::cerr << "Error: --accum must evenly divide --slice-step\n"; return EXIT_FAILURE; }
+        if (std::abs(ratio - rounded) > 1e-4) { logPrintf(stderr, "Error: --accum must evenly divide --slice-step\n"); return EXIT_FAILURE; }
         size_t samples = std::max<size_t>(1, size_t(rounded));
         double spacing = slice_step / samples;
         for (size_t i = 0; i < samples; i++) accumOffsets.push_back(float(spacing * i));
         accum_step = spacing;
-        std::cout << "Accumulation: " << samples << " samples/slice at step " << spacing << " (" << accum_type_str << ")\n";
+        logPrintf(stdout, "Accumulation: %zu samples/slice at step %.4f (%s)\n", samples, spacing, accum_type_str.c_str());
     }
 
     const float ds_scale = std::ldexp(1.0f, -group_idx);
@@ -880,12 +960,12 @@ int main(int argc, char *argv[])
             affineSpecs.push_back(parseAffineSpec(s));
     if (parsed.count("affine-transform")) {
         affineSpecs.emplace_back(parsed["affine-transform"].as<std::string>(), parsed["invert-affine"].as<bool>());
-        std::cout << "[deprecated] Using --affine-transform; prefer --affine.\n";
+        logPrintf(stdout, "[deprecated] Using --affine-transform; prefer --affine.\n");
     }
     if (parsed.count("affine-invert") && !affineSpecs.empty()) {
         std::set<int> inv;
         for (int idx : parsed["affine-invert"].as<std::vector<int>>()) {
-            if (idx < 0 || idx >= int(affineSpecs.size())) { std::cerr << "Error: --affine-invert index out of range\n"; return EXIT_FAILURE; }
+            if (idx < 0 || idx >= int(affineSpecs.size())) { logPrintf(stderr, "Error: --affine-invert index out of range\n"); return EXIT_FAILURE; }
             inv.insert(idx);
         }
         for (int k = 0; k < int(affineSpecs.size()); k++) if (inv.count(k)) affineSpecs[k].second = true;
@@ -896,10 +976,10 @@ int main(int argc, char *argv[])
             auto& [path, inv] = affineSpecs[k];
             try {
                 auto T = loadAffineTransform(path);
-                std::cout << "Loaded affine[" << k << "]: " << path << (inv ? " (invert)" : "") << "\n";
-                if (inv && !invertAffineInPlace(T)) { std::cerr << "Error: non-invertible affine[" << k << "]\n"; return EXIT_FAILURE; }
+                logPrintf(stdout, "Loaded affine[%d]: %s%s\n", k, path.c_str(), inv ? " (invert)" : "");
+                if (inv && !invertAffineInPlace(T)) { logPrintf(stderr, "Error: non-invertible affine[%d]\n", k); return EXIT_FAILURE; }
                 composed = composeAffine(composed, T);
-            } catch (const std::exception& e) { std::cerr << "Error loading affine[" << k << "]: " << e.what() << "\n"; return EXIT_FAILURE; }
+            } catch (const std::exception& e) { logPrintf(stderr, "Error loading affine[%d]: %s\n", k, e.what()); return EXIT_FAILURE; }
         }
         hasAffine = true;
         affineTransform = composed;
@@ -911,22 +991,28 @@ int main(int argc, char *argv[])
     z5::filesystem::handle::Dataset ds_handle(group, std::to_string(group_idx),
         json::parse(std::ifstream(vol_path/std::to_string(group_idx)/".zarray")).value<std::string>("dimension_separator","."));
     auto ds = z5::filesystem::openDataset(ds_handle);
-    std::cout << "zarr dataset size for group " << group_idx << ds->shape() << std::endl;
+    {
+        std::ostringstream oss; oss << ds->shape();
+        logPrintf(stdout, "zarr dataset size for group %d %s\n", group_idx, oss.str().c_str());
+    }
 
     const bool output_is_u16 = (ds->getDtype() == z5::types::Datatype::uint16);
-    std::cout << "Source dtype: " << (output_is_u16 ? "uint16" : "uint8") << std::endl;
+    logPrintf(stdout, "Source dtype: %s\n", output_is_u16 ? "uint16" : "uint8");
     if (output_is_u16 && isCompositeMode)
-        std::cerr << "Warning: composite forces 8-bit output (source is 16-bit)\n";
-    std::cout << "chunk shape " << ds->chunking().blockShape() << std::endl;
+        logPrintf(stderr, "Warning: composite forces 8-bit output (source is 16-bit)\n");
+    {
+        std::ostringstream oss; oss << ds->chunking().blockShape();
+        logPrintf(stdout, "chunk shape %s\n", oss.str().c_str());
+    }
 
     int rotQuadGlobal = -1;
     if (std::abs(rotate_angle) > 1e-6) {
         rotQuadGlobal = normalizeQuadrantRotation(rotate_angle);
-        if (rotQuadGlobal < 0) { std::cerr << "Error: only 0/90/180/270 rotations supported\n"; return EXIT_FAILURE; }
+        if (rotQuadGlobal < 0) { logPrintf(stderr, "Error: only 0/90/180/270 rotations supported\n"); return EXIT_FAILURE; }
         rotate_angle = rotQuadGlobal * 90.0;
-        std::cout << "Rotation: " << rotate_angle << " degrees\n";
+        logPrintf(stdout, "Rotation: %.0f degrees\n", rotate_angle);
     }
-    if (flip_axis >= 0) std::cout << "Flip: " << (flip_axis == 0 ? "V" : flip_axis == 1 ? "H" : "Both") << "\n";
+    if (flip_axis >= 0) logPrintf(stdout, "Flip: %s\n", flip_axis == 0 ? "V" : flip_axis == 1 ? "H" : "Both");
 
     if (wantZarr) {
         if (auto p = std::filesystem::path(zarrOutputArg).parent_path(); !p.empty())
@@ -939,34 +1025,37 @@ int main(int argc, char *argv[])
     ChunkCache<uint16_t> chunk_cache_u16(cache_bytes);
 
     if (int t = parsed["timeout"].as<int>(); t > 0) {
-        std::cout << "Timeout: " << t << " minutes\n";
-        std::thread([t]{ std::this_thread::sleep_for(std::chrono::minutes(t)); std::cerr << "\n[timeout]\n"; _exit(2); }).detach();
+        logPrintf(stdout, "Timeout: %d minutes\n", t);
+        std::thread([t]{ std::this_thread::sleep_for(std::chrono::minutes(t)); logPrintf(stderr, "\n[timeout]\n"); if (g_logFile) std::fflush(g_logFile); _exit(2); }).detach();
     }
 
     // ============================================================
     // process_one: render a single segmentation to output
     // ============================================================
     auto process_one = [&](const std::filesystem::path& seg_folder) {
-        std::cout << "Rendering: " << seg_folder;
-        if (wantZarr) std::cout << " -> " << zarrOutputArg << " (zarr)";
-        if (wantTif)  std::cout << " -> " << tifOutputArg << " (tif)";
-        std::cout << std::endl;
+        {
+            std::ostringstream oss;
+            oss << "Rendering: " << seg_folder.string();
+            if (wantZarr) oss << " -> " << zarrOutputArg << " (zarr)";
+            if (wantTif)  oss << " -> " << tifOutputArg << " (tif)";
+            logPrintf(stdout, "%s\n", oss.str().c_str());
+        }
 
         std::unique_ptr<QuadSurface> surf;
         try { surf = load_quad_from_tifxyz(seg_folder); }
-        catch (...) { std::cout << "Error loading: " << seg_folder << std::endl; return; }
+        catch (...) { logPrintf(stderr, "Error loading: %s\n", seg_folder.string().c_str()); return; }
 
         if (parsed["flatten"].as<bool>()) {
-            std::cout << "Applying ABF++ flattening...\n";
+            logPrintf(stdout, "Applying ABF++ flattening...\n");
             vc::ABFConfig cfg;
             cfg.maxIterations = size_t(parsed["flatten-iterations"].as<int>());
             cfg.downsampleFactor = parsed["flatten-downsample"].as<int>();
             cfg.useABF = true; cfg.scaleToOriginalArea = true;
             if (auto* fs = vc::abfFlattenToNewSurface(*surf, cfg)) {
                 surf.reset(fs);
-                std::cout << "Flattened: " << surf->rawPointsPtr()->cols << "x" << surf->rawPointsPtr()->rows << "\n";
+                logPrintf(stdout, "Flattened: %dx%d\n", surf->rawPointsPtr()->cols, surf->rawPointsPtr()->rows);
             } else {
-                std::cerr << "Warning: ABF++ failed, using original\n";
+                logPrintf(stderr, "Warning: ABF++ failed, using original\n");
             }
         }
 
@@ -1008,14 +1097,14 @@ int main(int argc, char *argv[])
         cv::Rect crop = {0, 0, full_size.width, full_size.height};
         const cv::Rect canvasROI = crop;
 
-        std::cout << "ds_level=" << group_idx << " ds_scale=" << ds_scale << " sA=" << sA
-                  << " Pg=" << tgt_scale << " render_scale=" << render_scale << "\n";
+        logPrintf(stdout, "ds_level=%d ds_scale=%g sA=%g Pg=%g render_scale=%g\n",
+                  group_idx, ds_scale, sA, double(tgt_scale), render_scale);
 
         // Handle crop
         int cx = parsed["crop-x"].as<int>(), cy = parsed["crop-y"].as<int>();
         int cw = parsed["crop-width"].as<int>(), ch = parsed["crop-height"].as<int>();
         bool manual = cw > 0 && ch > 0, autoCrop = parsed["auto-crop"].as<bool>();
-        if (autoCrop && manual) { std::cerr << "Error: --auto-crop and --crop-* are mutually exclusive\n"; return; }
+        if (autoCrop && manual) { logPrintf(stderr, "Error: --auto-crop and --crop-* are mutually exclusive\n"); return; }
 
         if (autoCrop && col_max >= col_min) {
             double sx = render_scale / surf->_scale[0], sy = render_scale / surf->_scale[1];
@@ -1023,16 +1112,19 @@ int main(int argc, char *argv[])
                             int(std::ceil((col_max+1)*sx)) - int(std::floor(col_min*sx)),
                             int(std::ceil((row_max+1)*sy)) - int(std::floor(row_min*sy))) & canvasROI;
             tgt_size = crop.size();
-            std::cout << "auto-crop: " << crop << "\n";
+            logPrintf(stdout, "auto-crop: [%d×%d from (%d,%d)]\n", crop.width, crop.height, crop.x, crop.y);
         } else if (manual) {
             crop = cv::Rect(cx, cy, cw, ch) & canvasROI;
-            if (crop.width <= 0 || crop.height <= 0) { std::cerr << "Error: crop outside canvas\n"; return; }
+            if (crop.width <= 0 || crop.height <= 0) { logPrintf(stderr, "Error: crop outside canvas\n"); return; }
             tgt_size = crop.size();
         }
 
-        std::cout << "rendering " << tgt_size << " at scale " << tgt_scale << " crop " << crop << "\n";
+        logPrintf(stdout, "rendering %dx%d at scale %g crop [%d×%d from (%d,%d)]\n",
+                  tgt_size.width, tgt_size.height, double(tgt_scale),
+                  crop.width, crop.height, crop.x, crop.y);
 
         const int rotQuad = rotQuadGlobal;
+
         // Determine output dtype
         const bool useU16 = output_is_u16 && !isCompositeMode;
         const int cvType = useU16 ? CV_16UC1 : CV_8UC1;
@@ -1057,10 +1149,10 @@ int main(int argc, char *argv[])
             std::string dtype = useU16 ? "uint16" : "uint8";
 
             if (pre_flag) {
-                std::cout << "[pre] creating zarr + all levels...\n";
+                logPrintf(stdout, "[pre] creating zarr + all levels...\n");
                 z5::createFile(outFile, true);
                 z5::createDataset(outFile, "0", dtype, shape0, chunks0, std::string("blosc"), compOpts);
-                std::cout << "[pre] L0 shape: [" << shape0[0] << "," << shape0[1] << "," << shape0[2] << "]\n";
+                logPrintf(stdout, "[pre] L0 shape: [%zu,%zu,%zu]\n", shape0[0], shape0[1], shape0[2]);
                 if (wantPyramid)
                     createPyramidDatasets(outFile, shape0, CH, CW, useU16);
 
@@ -1073,7 +1165,7 @@ int main(int argc, char *argv[])
                 dsOut = z5::openDataset(outFile, "0");
             } else if (numParts > 1) {
                 if (!std::filesystem::exists(std::filesystem::path(zarrOutputArg) / "0" / ".zarray")) {
-                    std::cerr << "Error: run --pre first in multi-part mode\n"; return;
+                    logPrintf(stderr, "Error: run --pre first in multi-part mode\n"); return;
                 }
                 dsOut = z5::openDataset(outFile, "0");
             } else {
@@ -1112,8 +1204,8 @@ int main(int argc, char *argv[])
                 bool all = true;
                 for (int z = 0; z < tifSlices; z++) if (!std::filesystem::exists(makePartPath(z))) { all = false; break; }
                 if (all) {
-                    if (!wantZarr) { std::cout << "[tif] all slices exist, skipping.\n"; return; }
-                    std::cout << "[tif] all slices exist, skipping tif output.\n";
+                    if (!wantZarr) { logPrintf(stdout, "[tif] all slices exist, skipping.\n"); return; }
+                    logPrintf(stdout, "[tif] all slices exist, skipping tif output.\n");
                     tifSkip = true;
                 }
             }
@@ -1207,7 +1299,7 @@ int main(int argc, char *argv[])
         if (wantZarr && !pre_flag) {
             if (finalize_flag && wantPyramid) {
                 // --finalize: build pyramid from disk (legacy path)
-                std::cout << "[finalize] building pyramid...\n";
+                logPrintf(stdout, "[finalize] building pyramid...\n");
                 for (int level = 1; level <= 5; level++) {
                     if (useU16) buildPyramidLevel<uint16_t>(outFile, level, CH, CW, numParts, partId);
                     else        buildPyramidLevel<uint8_t>(outFile, level, CH, CW, numParts, partId);
@@ -1231,14 +1323,15 @@ int main(int argc, char *argv[])
     auto printStats = [](const char* name, const auto& s) {
         uint64_t tot = s.hits + s.misses;
         if (tot == 0) return;
-        std::cout << "[" << name << " cache] hits=" << s.hits << " miss=" << s.misses
-                  << " rate=" << std::fixed << std::setprecision(1) << (100.0*s.hits/tot) << "%"
-                  << " evict=" << s.evictions
-                  << " read=" << std::setprecision(2) << s.bytesRead/(1024.0*1024.0*1024.0) << "GB"
-                  << " re-read=" << s.reReads << "(" << s.reReadBytes/(1024.0*1024.0*1024.0) << "GB)\n";
+        logPrintf(stdout, "[%s cache] hits=%lu miss=%lu rate=%.1f%% evict=%lu read=%.2fGB re-read=%lu(%.2fGB)\n",
+                  name, (unsigned long)s.hits, (unsigned long)s.misses,
+                  100.0*s.hits/tot, (unsigned long)s.evictions,
+                  s.bytesRead/(1024.0*1024.0*1024.0),
+                  (unsigned long)s.reReads, s.reReadBytes/(1024.0*1024.0*1024.0));
     };
     printStats("u8", chunk_cache_u8.stats());
     printStats("u16", chunk_cache_u16.stats());
 
+    stopLogFlusher();
     return EXIT_SUCCESS;
 }
