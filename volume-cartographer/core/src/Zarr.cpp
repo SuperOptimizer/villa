@@ -1,6 +1,7 @@
 #include "vc/core/util/Zarr.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
@@ -10,8 +11,6 @@
 #include <nlohmann/json.hpp>
 #include <omp.h>
 #include <z5/factory.hxx>
-#include <z5/multiarray/xtensor_access.hxx>
-#include <xtensor/containers/xarray.hpp>
 
 using json = nlohmann::json;
 
@@ -68,6 +67,11 @@ void buildPyramidLevel(z5::filesystem::handle::File& outFile, int level,
 {
     auto src = z5::openDataset(outFile, std::to_string(level - 1));
     const auto& ss = src->shape();
+    const auto& sc_shape = src->defaultChunkShape();
+    size_t scZ = sc_shape[0], scY = sc_shape[1], scX = sc_shape[2];
+    size_t srcChunksY = (ss[1] + scY - 1) / scY;
+    size_t srcChunksX = (ss[2] + scX - 1) / scX;
+
     std::vector<size_t> ds = {(ss[0]+1)/2, (ss[1]+1)/2, (ss[2]+1)/2};
     std::vector<size_t> dc = {ds[0], std::min(CH, ds[1]), std::min(CW, ds[2])};
     json compOpts = {{"cname","zstd"},{"clevel",1},{"shuffle",0}};
@@ -77,44 +81,85 @@ void buildPyramidLevel(z5::filesystem::handle::File& outFile, int level,
     try { dst = z5::createDataset(outFile, std::to_string(level), dtype, ds, dc, std::string("blosc"), compOpts); }
     catch (const std::invalid_argument&) { dst = z5::openDataset(outFile, std::to_string(level)); }
 
-    size_t totalTiles = ((ds[1]+CH-1)/CH) * ((ds[2]+CW-1)/CW);
+    size_t dstChunksY = (ds[1] + dc[1] - 1) / dc[1];
+    size_t dstChunksX = (ds[2] + dc[2] - 1) / dc[2];
+    size_t totalTiles = dstChunksY * dstChunksX;
     std::atomic<size_t> done{0};
 
-    for (size_t z = 0; z < ds[0]; z += ds[0]) {
-        size_t lz = std::min(ds[0], ds[0] - z);
-        #pragma omp parallel for schedule(dynamic, 2)
-        for (long long y = 0; y < (long long)ds[1]; y += CH)
-            for (long long x = 0; x < (long long)ds[2]; x += CW) {
-                size_t ly = std::min(CH, size_t(ds[1] - y)), lx = std::min(CW, size_t(ds[2] - x));
-                size_t sz = std::min<size_t>(2*lz, ss[0] - 2*z);
-                size_t sy = std::min<size_t>(2*ly, ss[1] - 2*y);
-                size_t sx = std::min<size_t>(2*lx, ss[2] - 2*x);
+    size_t srcChunkElems = scZ * scY * scX;
+    size_t dstChunkElems = dc[0] * dc[1] * dc[2];
 
-                xt::xarray<T> sc = xt::empty<T>({sz, sy, sx});
-                z5::types::ShapeType so = {2*z, size_t(2*y), size_t(2*x)};
-                z5::multiarray::readSubarray<T>(src, sc, so.begin());
+    #pragma omp parallel for schedule(dynamic, 2)
+    for (long long ti = 0; ti < (long long)totalTiles; ti++) {
+        size_t dty = size_t(ti) / dstChunksX;
+        size_t dtx = size_t(ti) % dstChunksX;
 
-                xt::xarray<T> dca = xt::empty<T>({lz, ly, lx});
-                for (size_t zz = 0; zz < lz; zz++)
-                    for (size_t yy = 0; yy < ly; yy++)
-                        for (size_t xx = 0; xx < lx; xx++) {
-                            uint32_t sum = 0; int cnt = 0;
-                            for (int d0 = 0; d0 < 2 && 2*zz+d0 < sz; d0++)
-                                for (int d1 = 0; d1 < 2 && 2*yy+d1 < sy; d1++)
-                                    for (int d2 = 0; d2 < 2 && 2*xx+d2 < sx; d2++) {
-                                        sum += sc(2*zz+d0, 2*yy+d1, 2*xx+d2); cnt++;
-                                    }
-                            dca(zz, yy, xx) = T((sum + cnt/2) / std::max(1, cnt));
-                        }
+        // Dst chunk covers dst voxels [dy0..dy1) x [dx0..dx1) in Y,X
+        size_t dy0 = dty * dc[1], dy1 = std::min(dy0 + dc[1], ds[1]);
+        size_t dx0 = dtx * dc[2], dx1 = std::min(dx0 + dc[2], ds[2]);
+        size_t dly = dy1 - dy0, dlx = dx1 - dx0, dlz = ds[0];
 
-                z5::types::ShapeType doff = {z, size_t(y), size_t(x)};
-                z5::multiarray::writeSubarray<T>(dst, dca, doff.begin());
+        // Source region is 2x in Y,X
+        size_t sy0 = 2 * dy0, sx0 = 2 * dx0;
+        size_t sly = std::min(2 * dly, ss[1] - sy0);
+        size_t slx = std::min(2 * dlx, ss[2] - sx0);
+        size_t slz = std::min(2 * dlz, ss[0]);
 
-                size_t d = ++done;
-                #pragma omp critical(pp)
-                { std::cout << "\r[pyramid L" << level << "] " << d << "/" << totalTiles
-                            << " (" << int(100.0*d/totalTiles) << "%)" << std::flush; }
+        // Read up to 2x2 source chunks (Z is always chunk 0) into a
+        // contiguous source buffer with strides [slz, sly, slx]
+        std::vector<T> srcBuf(slz * sly * slx, T(0));
+
+        // Source chunk indices that overlap our region
+        size_t scy0 = sy0 / scY, scy1 = (sy0 + sly + scY - 1) / scY;
+        size_t scx0 = sx0 / scX, scx1 = (sx0 + slx + scX - 1) / scX;
+
+        std::vector<T> chunkTmp(srcChunkElems);
+        for (size_t cy = scy0; cy < scy1 && cy < srcChunksY; cy++) {
+            for (size_t cx = scx0; cx < scx1 && cx < srcChunksX; cx++) {
+                z5::types::ShapeType cid = {0, cy, cx};
+                if (!src->chunkExists(cid)) continue;
+                src->readChunk(cid, chunkTmp.data());
+
+                // Copy relevant portion into srcBuf
+                size_t cyStart = cy * scY, cxStart = cx * scX;
+                size_t copyY0 = std::max(cyStart, sy0);
+                size_t copyY1 = std::min(cyStart + scY, sy0 + sly);
+                size_t copyX0 = std::max(cxStart, sx0);
+                size_t copyX1 = std::min(cxStart + scX, sx0 + slx);
+                size_t copyW = copyX1 - copyX0;
+
+                for (size_t z = 0; z < slz; z++) {
+                    for (size_t y = copyY0; y < copyY1; y++) {
+                        size_t srcOff = z * scY * scX + (y - cyStart) * scX + (copyX0 - cxStart);
+                        size_t dstOff = z * sly * slx + (y - sy0) * slx + (copyX0 - sx0);
+                        std::memcpy(&srcBuf[dstOff], &chunkTmp[srcOff], copyW * sizeof(T));
+                    }
+                }
             }
+        }
+
+        // 2x downsample into dst chunk buffer
+        std::vector<T> dstBuf(dstChunkElems, T(0));
+        for (size_t zz = 0; zz < dlz; zz++)
+            for (size_t yy = 0; yy < dly; yy++)
+                for (size_t xx = 0; xx < dlx; xx++) {
+                    uint32_t sum = 0; int cnt = 0;
+                    for (int d0 = 0; d0 < 2 && 2*zz+d0 < slz; d0++)
+                        for (int d1 = 0; d1 < 2 && 2*yy+d1 < sly; d1++)
+                            for (int d2 = 0; d2 < 2 && 2*xx+d2 < slx; d2++) {
+                                sum += srcBuf[(2*zz+d0)*sly*slx + (2*yy+d1)*slx + (2*xx+d2)];
+                                cnt++;
+                            }
+                    dstBuf[zz*dc[1]*dc[2] + yy*dc[2] + xx] = T((sum + cnt/2) / std::max(1, cnt));
+                }
+
+        z5::types::ShapeType dstId = {0, dty, dtx};
+        dst->writeChunk(dstId, dstBuf.data());
+
+        size_t d = ++done;
+        #pragma omp critical(pp)
+        { std::cout << "\r[pyramid L" << level << "] " << d << "/" << totalTiles
+                    << " (" << int(100.0*d/totalTiles) << "%)" << std::flush; }
     }
     std::cout << std::endl;
 }

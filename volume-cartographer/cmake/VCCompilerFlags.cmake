@@ -1,6 +1,6 @@
 # VCCompilerFlags.cmake - Compiler flag orchestration
 
-set(CMAKE_CXX_FLAGS "  -std=c++23 -DWITH_BLOSC=1 -DWITH_ZLIB=1 -march=native -pipe ")
+set(CMAKE_CXX_FLAGS "  -std=c++23 -DWITH_BLOSC=1 -DWITH_ZLIB=1 -march=native -pipe -fno-inline ")
 set(CMAKE_EXE_LINKER_FLAGS " ")
 
 if(NOT CMAKE_BUILD_TYPE)

@@ -515,6 +515,7 @@ int main(int argc, char *argv[])
         ("flip", po::value<int>()->default_value(-1), "Flip: 0=V, 1=H, 2=Both")
         ("zarr-output", po::value<std::string>(), "Output path for .zarr (optional)")
         ("tif-output", po::value<std::string>(), "Output path for per-slice TIFFs (optional)")
+        ("quick-tif", po::bool_switch()->default_value(false), "Fast TIF: PACKBITS + zero low nibble")
         ("flatten", po::bool_switch()->default_value(false), "ABF++ flattening")
         ("flatten-iterations", po::value<int>()->default_value(10), "ABF++ iterations")
         ("flatten-downsample", po::value<int>()->default_value(1), "ABF++ downsample factor")
@@ -647,6 +648,7 @@ int main(int argc, char *argv[])
     float scale_seg = parsed["scale-segmentation"].as<float>();
     double rotate_angle = parsed["rotate"].as<double>();
     int flip_axis = parsed["flip"].as<int>();
+    const bool quickTif = parsed["quick-tif"].as<bool>();
 
     // --- Load affines ---
     AffineTransform affineTransform;
@@ -889,8 +891,9 @@ int main(int argc, char *argv[])
             }
             if (!tifSkip) {
                 uint32_t tiffTileW = (uint32_t(outW) + 15u) & ~15u;
+                uint16_t tifComp = quickTif ? COMPRESSION_PACKBITS : COMPRESSION_LZW;
                 for (int z = 0; z < tifSlices; z++)
-                    tifWriters.emplace_back(makePartPath(z), uint32_t(outW), uint32_t(outH), cvType, tiffTileW, tiffTileH, 0.0f, COMPRESSION_PACKBITS);
+                    tifWriters.emplace_back(makePartPath(z), uint32_t(outW), uint32_t(outH), cvType, tiffTileW, tiffTileH, 0.0f, tifComp);
             }
         }
 
@@ -906,8 +909,23 @@ int main(int argc, char *argv[])
                     else
                         writeZarrBand<uint8_t>(dsOut.get(), slices, bandIdx, chunks0, tilesXSrc, tilesYSrc, rotQuad, flip_axis);
                 }
-                if (!tifWriters.empty())
-                    writeTifBand(tifWriters, slices, bandY0, tiffTileH, uint32_t(tgt_size.height), rotQuad, flip_axis);
+                if (!tifWriters.empty()) {
+                    if (quickTif && !useU16) {
+                        // Zero low nibble for better compression
+                        std::vector<cv::Mat> quantized(slices.size());
+                        for (size_t i = 0; i < slices.size(); i++) {
+                            quantized[i] = slices[i].clone();
+                            for (int r = 0; r < quantized[i].rows; r++) {
+                                auto* row = quantized[i].ptr<uint8_t>(r);
+                                for (int c = 0; c < quantized[i].cols; c++)
+                                    row[c] &= 0xF0;
+                            }
+                        }
+                        writeTifBand(tifWriters, quantized, bandY0, tiffTileH, uint32_t(tgt_size.height), rotQuad, flip_axis);
+                    } else {
+                        writeTifBand(tifWriters, slices, bandY0, tiffTileH, uint32_t(tgt_size.height), rotQuad, flip_axis);
+                    }
+                }
             };
 
             if (useU16)
