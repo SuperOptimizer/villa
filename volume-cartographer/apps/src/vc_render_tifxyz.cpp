@@ -481,6 +481,186 @@ static void writeTifBand(std::vector<TiffWriter>& writers,
 
 
 // ============================================================
+// Tile-based rendering (OMP-parallel over output zarr chunks)
+// ============================================================
+
+template <typename T>
+static void renderTiles(
+    QuadSurface* surf, z5::Dataset* ds,
+    ChunkCache<T>* cache,
+    const cv::Size& fullSize, const cv::Rect& crop, const cv::Size& tgtSize,
+    float renderScale, float scaleSeg, float dsScale,
+    bool hasAffine, const AffineTransform& aff,
+    int numSlices, double sliceStep,
+    const std::vector<float>& accumOffsets, AccumType accumType,
+    bool isComposite, int compositeStart, int compositeEnd,
+    const CompositeParams& compositeParams,
+    int rotQuad, int flipAxis,
+    int numParts, int partId,
+    int cvType,
+    // Zarr output
+    z5::Dataset* dsOut, const std::vector<size_t>& chunks0,
+    size_t tilesXSrc, size_t tilesYSrc,
+    // TIF output (optional)
+    std::vector<TiffWriter>* tifWriters, uint32_t tiffTileH,
+    bool quickTif)
+{
+    const size_t CH = chunks0[1], CW = chunks0[2];
+    const uint32_t numTileRows = static_cast<uint32_t>(tilesYSrc);
+    const uint32_t numTileCols = static_cast<uint32_t>(tilesXSrc);
+
+    // Pre-warm validMask cache (thread-safety: subsequent calls are read-only)
+    surf->validMask();
+
+    // Global flip decision
+    cv::Vec3f centroid;
+    float u0b, v0b; computeCanvasOrigin(fullSize, u0b, v0b);
+    u0b += float(crop.x); v0b += float(crop.y);
+    bool globalFlip = computeGlobalFlipDecision(
+        surf, std::min(128, tgtSize.width), std::min(128, tgtSize.height),
+        u0b, v0b, renderScale, scaleSeg, hasAffine, aff, centroid);
+
+    // Build offset list
+    auto allOffsets = buildOffsetList(numSlices, sliceStep, dsScale, accumOffsets);
+
+    const bool wantTif = tifWriters && !tifWriters->empty();
+    const bool useU16 = (cvType == CV_16UC1);
+
+    auto wallStart = std::chrono::steady_clock::now();
+    auto lastPrint = wallStart;
+
+    for (uint32_t ty = uint32_t(partId); ty < numTileRows; ty += uint32_t(numParts)) {
+        uint32_t y0 = ty * uint32_t(CH);
+        uint32_t dy = std::min(uint32_t(CH), uint32_t(tgtSize.height) - y0);
+
+        // TIF row buffer: one tile-column's worth of slices per tx
+        // tifRowBuf[tx] = vector of cv::Mat (one per output slice), each 128xdx
+        std::vector<std::vector<cv::Mat>> tifRowBuf;
+        if (wantTif) tifRowBuf.resize(numTileCols);
+
+        #pragma omp parallel for schedule(dynamic)
+        for (uint32_t tx = 0; tx < numTileCols; tx++) {
+            uint32_t x0 = tx * uint32_t(CW);
+            uint32_t dx = std::min(uint32_t(CW), uint32_t(tgtSize.width) - x0);
+
+            // 1. Generate surface for this tile
+            float u0, v0; computeCanvasOrigin(fullSize, u0, v0);
+            u0 += float(crop.x) + float(x0);
+            v0 += float(crop.y) + float(y0);
+            cv::Mat_<cv::Vec3f> tilePts, tileNrm;
+            genTile(surf, cv::Size(int(dx), int(dy)), renderScale, u0, v0, tilePts, tileNrm);
+
+            // 2. Prepare base coords and step directions
+            cv::Mat_<cv::Vec3f> base, dirs;
+            prepareBaseAndDirs(tilePts, tileNrm, scaleSeg, dsScale, hasAffine, aff, globalFlip, base, dirs);
+
+            // 3. Sample all slices for this tile (single-threaded)
+            std::vector<cv::Mat_<T>> raw;
+            if (isComposite) {
+                if constexpr (std::is_same_v<T, uint8_t>) {
+                    cv::Mat_<uint8_t> compOut;
+                    readCompositeFast(compOut, ds, base, dirs,
+                                      float(sliceStep * dsScale),
+                                      compositeStart, compositeEnd,
+                                      compositeParams, *cache);
+                    raw.resize(1);
+                    raw[0] = compOut;
+                }
+            } else {
+                sampleTileSlices(raw, ds, cache, base, dirs, allOffsets);
+            }
+
+            // Accumulate (no rotation — applied per-zarr-chunk and per-tif-band separately)
+            std::vector<cv::Mat> slices = processRawSlices<T>(raw, numSlices, accumOffsets, accumType, cvType, -1, -1);
+
+            // 4. Pack into zarr chunk (with rotation applied to pixel data)
+            {
+                size_t chunkZ = chunks0[0], chunkY = chunks0[1], chunkX = chunks0[2];
+                size_t numZ = slices.size();
+
+                // Apply rotation/flip to get rotated slices for this chunk
+                std::vector<cv::Mat> rotSlices(numZ);
+                for (size_t zi = 0; zi < numZ; zi++) {
+                    rotSlices[zi] = slices[zi].clone();
+                    rotateFlipIfNeeded(rotSlices[zi], rotQuad, flipAxis);
+                }
+
+                int dstTx = int(tx), dstTy = int(ty), dTX, dTY;
+                if (rotQuad >= 0 || flipAxis >= 0)
+                    mapTileIndex(int(tx), int(ty), int(tilesXSrc), int(tilesYSrc),
+                                 std::max(rotQuad, 0), flipAxis, dstTx, dstTy, dTX, dTY);
+
+                std::vector<T> chunkBuf(chunkZ * chunkY * chunkX, T(0));
+                size_t dy_actual = std::min(chunkY, size_t(rotSlices[0].rows));
+                size_t dx_actual = std::min(chunkX, size_t(rotSlices[0].cols));
+                for (size_t zi = 0; zi < numZ; zi++) {
+                    size_t sliceOff = zi * chunkY * chunkX;
+                    for (size_t yy = 0; yy < dy_actual; yy++) {
+                        const T* row = rotSlices[zi].ptr<T>(int(yy));
+                        std::memcpy(&chunkBuf[sliceOff + yy * chunkX], row, dx_actual * sizeof(T));
+                    }
+                }
+                z5::types::ShapeType chunkId = {0, size_t(dstTy), size_t(dstTx)};
+                dsOut->writeChunk(chunkId, chunkBuf.data());
+            }
+
+            // 5. Store unrotated slices for TIF assembly
+            if (wantTif) {
+                tifRowBuf[tx] = std::move(slices);
+            }
+        }
+
+        // After all tx done for this ty: assemble TIF if needed
+        if (wantTif) {
+            int outSlices = isComposite ? 1 : numSlices;
+            // Assemble full-width unrotated rows from tile columns
+            std::vector<cv::Mat> fullWidthSlices(outSlices);
+            for (int zi = 0; zi < outSlices; zi++) {
+                fullWidthSlices[zi] = cv::Mat(int(dy), tgtSize.width, cvType, cv::Scalar(0));
+                for (uint32_t tx = 0; tx < numTileCols; tx++) {
+                    uint32_t x0t = tx * uint32_t(CW);
+                    const cv::Mat& tileMat = tifRowBuf[tx][zi];
+                    tileMat.copyTo(fullWidthSlices[zi](cv::Rect(int(x0t), 0, tileMat.cols, tileMat.rows)));
+                }
+                // Apply rotation/flip to assembled full-width row
+                rotateFlipIfNeeded(fullWidthSlices[zi], rotQuad, flipAxis);
+            }
+
+            if (quickTif && !useU16) {
+                for (auto& s : fullWidthSlices)
+                    for (int r = 0; r < s.rows; r++) {
+                        auto* row = s.ptr<uint8_t>(r);
+                        for (int c = 0; c < s.cols; c++)
+                            row[c] &= 0xF0;
+                    }
+            }
+            writeTifBand(*tifWriters, fullWidthSlices, y0, tiffTileH, uint32_t(tgtSize.height), rotQuad, flipAxis);
+        }
+
+        // Progress (throttled to ~1/sec)
+        auto now = std::chrono::steady_clock::now();
+        double since = std::chrono::duration<double>(now - lastPrint).count();
+        uint32_t tileRowsThis = (numTileRows - uint32_t(partId) + uint32_t(numParts) - 1) / uint32_t(numParts);
+        uint32_t done = (ty - uint32_t(partId)) / uint32_t(numParts) + 1;
+        if (since >= 1.0 || done == tileRowsThis) {
+            lastPrint = now;
+            double elapsed = std::chrono::duration<double>(now - wallStart).count();
+            double eta = done > 0 ? elapsed * (double(tileRowsThis) / done - 1.0) : 0.0;
+            auto cs = cache->stats();
+            uint64_t tot = cs.hits + cs.misses;
+            double hr = tot > 0 ? 100.0 * cs.hits / tot : 0.0;
+            double gbR = cs.bytesRead / (1024.0*1024.0*1024.0);
+            std::fprintf(stderr, "\r  tile-row %u/%u (%d%%)  %dm%02ds  eta %dm%02ds  cache %.1f%% evict %lu read %.2fGB",
+                done, tileRowsThis, int(100.0 * done / tileRowsThis),
+                int(elapsed)/60, int(elapsed)%60, int(eta)/60, int(eta)%60,
+                hr, (unsigned long)cs.evictions, gbR);
+        }
+    }
+    std::fprintf(stderr, "\n");
+}
+
+
+// ============================================================
 // main
 // ============================================================
 
@@ -897,49 +1077,61 @@ int main(int argc, char *argv[])
             }
         }
 
-        // ---- Unified render pass ----
+        // ---- Render pass ----
         if (!finalize_flag) {
-            // bandH: zarr-chunk-aligned if zarr output, else 128
-            uint32_t bandH = wantZarr ? uint32_t(chunks0[1]) : 128;
-
-            auto writerFn = [&](const std::vector<cv::Mat>& slices, uint32_t bandIdx, uint32_t bandY0) {
-                if (wantZarr && dsOut) {
-                    if (useU16)
-                        writeZarrBand<uint16_t>(dsOut.get(), slices, bandIdx, chunks0, tilesXSrc, tilesYSrc, rotQuad, flip_axis);
-                    else
-                        writeZarrBand<uint8_t>(dsOut.get(), slices, bandIdx, chunks0, tilesXSrc, tilesYSrc, rotQuad, flip_axis);
-                }
-                if (!tifWriters.empty()) {
-                    if (quickTif && !useU16) {
-                        // Zero low nibble for better compression
-                        std::vector<cv::Mat> quantized(slices.size());
-                        for (size_t i = 0; i < slices.size(); i++) {
-                            quantized[i] = slices[i].clone();
-                            for (int r = 0; r < quantized[i].rows; r++) {
-                                auto* row = quantized[i].ptr<uint8_t>(r);
-                                for (int c = 0; c < quantized[i].cols; c++)
-                                    row[c] &= 0xF0;
+            if (wantZarr) {
+                // Tile-based: OMP-parallel over output zarr chunks
+                if (useU16)
+                    renderTiles<uint16_t>(surf.get(), ds.get(), &chunk_cache_u16,
+                        full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
+                        hasAffine, affineTransform, num_slices, slice_step,
+                        accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
+                        compositeParams, rotQuad, flip_axis, numParts, partId, cvType,
+                        dsOut.get(), chunks0, tilesXSrc, tilesYSrc,
+                        tifWriters.empty() ? nullptr : &tifWriters, tiffTileH, quickTif);
+                else
+                    renderTiles<uint8_t>(surf.get(), ds.get(), &chunk_cache_u8,
+                        full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
+                        hasAffine, affineTransform, num_slices, slice_step,
+                        accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
+                        compositeParams, rotQuad, flip_axis, numParts, partId, cvType,
+                        dsOut.get(), chunks0, tilesXSrc, tilesYSrc,
+                        tifWriters.empty() ? nullptr : &tifWriters, tiffTileH, quickTif);
+            } else {
+                // Band-based: TIF-only path
+                uint32_t bandH = 128;
+                auto writerFn = [&](const std::vector<cv::Mat>& slices, uint32_t bandIdx, uint32_t bandY0) {
+                    if (!tifWriters.empty()) {
+                        if (quickTif && !useU16) {
+                            std::vector<cv::Mat> quantized(slices.size());
+                            for (size_t i = 0; i < slices.size(); i++) {
+                                quantized[i] = slices[i].clone();
+                                for (int r = 0; r < quantized[i].rows; r++) {
+                                    auto* row = quantized[i].ptr<uint8_t>(r);
+                                    for (int c = 0; c < quantized[i].cols; c++)
+                                        row[c] &= 0xF0;
+                                }
                             }
+                            writeTifBand(tifWriters, quantized, bandY0, tiffTileH, uint32_t(tgt_size.height), rotQuad, flip_axis);
+                        } else {
+                            writeTifBand(tifWriters, slices, bandY0, tiffTileH, uint32_t(tgt_size.height), rotQuad, flip_axis);
                         }
-                        writeTifBand(tifWriters, quantized, bandY0, tiffTileH, uint32_t(tgt_size.height), rotQuad, flip_axis);
-                    } else {
-                        writeTifBand(tifWriters, slices, bandY0, tiffTileH, uint32_t(tgt_size.height), rotQuad, flip_axis);
                     }
-                }
-            };
+                };
 
-            if (useU16)
-                renderBands<uint16_t>(surf.get(), ds.get(), &chunk_cache_u16,
-                    full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
-                    hasAffine, affineTransform, num_slices, slice_step,
-                    accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
-                    compositeParams, rotQuad, flip_axis, numParts, partId, cvType, bandH, writerFn);
-            else
-                renderBands<uint8_t>(surf.get(), ds.get(), &chunk_cache_u8,
-                    full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
-                    hasAffine, affineTransform, num_slices, slice_step,
-                    accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
-                    compositeParams, rotQuad, flip_axis, numParts, partId, cvType, bandH, writerFn);
+                if (useU16)
+                    renderBands<uint16_t>(surf.get(), ds.get(), &chunk_cache_u16,
+                        full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
+                        hasAffine, affineTransform, num_slices, slice_step,
+                        accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
+                        compositeParams, rotQuad, flip_axis, numParts, partId, cvType, bandH, writerFn);
+                else
+                    renderBands<uint8_t>(surf.get(), ds.get(), &chunk_cache_u8,
+                        full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
+                        hasAffine, affineTransform, num_slices, slice_step,
+                        accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
+                        compositeParams, rotQuad, flip_axis, numParts, partId, cvType, bandH, writerFn);
+            }
 
             tifWriters.clear();
 

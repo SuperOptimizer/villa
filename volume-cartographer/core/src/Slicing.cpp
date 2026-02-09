@@ -846,3 +846,210 @@ void readMultiSlice(
     readMultiSliceImpl(out, ds, *cache, basePoints, stepDirs, offsets);
 }
 
+
+// ============================================================================
+// sampleTileSlices — single-threaded per-tile multi-slice sampler
+// Called from within an OMP thread; no internal OMP parallelism.
+// Same trilinear math as readMultiSliceImpl Phase 2.
+// ============================================================================
+
+template<typename T>
+static void sampleTileSlicesImpl(
+    std::vector<cv::Mat_<T>>& out,
+    z5::Dataset* ds,
+    ChunkCache<T>& cache,
+    const cv::Mat_<cv::Vec3f>& basePoints,
+    const cv::Mat_<cv::Vec3f>& stepDirs,
+    const std::vector<float>& offsets)
+{
+    CacheParams<T> p(ds);
+    const int h = basePoints.rows;
+    const int w = basePoints.cols;
+    const int numSlices = static_cast<int>(offsets.size());
+
+    out.resize(numSlices);
+    for (int s = 0; s < numSlices; s++)
+        out[s] = cv::Mat_<T>(basePoints.size(), 0);
+
+    if (numSlices == 0) return;
+
+    // Phase 1: Discover needed chunks and prefetch serially.
+    {
+        const size_t totalChunks = static_cast<size_t>(p.chunksZ) * p.chunksY * p.chunksX;
+        std::vector<uint8_t> needed(totalChunks, 0);
+
+        auto markVoxel = [&](int iz, int iy, int ix) {
+            if (iz < 0 || iy < 0 || ix < 0 || iz >= p.sz || iy >= p.sy || ix >= p.sx) return;
+            int ciz = iz >> p.czShift;
+            int ciy = iy >> p.cyShift;
+            int cix = ix >> p.cxShift;
+            size_t idx = static_cast<size_t>(ciz) * p.chunksY * p.chunksX + ciy * p.chunksX + cix;
+            needed[idx] = 1;
+        };
+
+        const float fOff = offsets[0];
+        const float lOff = offsets[numSlices - 1];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                const cv::Vec3f& bp = basePoints(y, x);
+                const cv::Vec3f& sd = stepDirs(y, x);
+                if (std::isnan(bp[0])) continue;
+
+                for (float off : {fOff, lOff}) {
+                    float vx = bp[0] + sd[0] * off;
+                    float vy = bp[1] + sd[1] * off;
+                    float vz = bp[2] + sd[2] * off;
+                    int iz = static_cast<int>(vz);
+                    int iy = static_cast<int>(vy);
+                    int ix = static_cast<int>(vx);
+                    for (int dz = 0; dz <= 1; dz++)
+                        for (int dy = 0; dy <= 1; dy++)
+                            for (int dx = 0; dx <= 1; dx++)
+                                markVoxel(iz+dz, iy+dy, ix+dx);
+                }
+            }
+        }
+
+        // Serial prefetch — we're already on an OMP thread
+        for (size_t idx = 0; idx < totalChunks; idx++) {
+            if (!needed[idx]) continue;
+            int cix = static_cast<int>(idx % p.chunksX);
+            int ciy = static_cast<int>((idx / p.chunksX) % p.chunksY);
+            int ciz = static_cast<int>(idx / (static_cast<size_t>(p.chunksX) * p.chunksY));
+            cache.get(ds, ciz, ciy, cix);
+        }
+    }
+
+    // Phase 2: Sample (single-threaded, all chunks already cached).
+    constexpr float maxVal = std::is_same_v<T, uint16_t> ? 65535.f : 255.f;
+    const float firstOff = offsets[0];
+    const float lastOff = offsets[numSlices - 1];
+    const int lczShift = p.czShift, lcyShift = p.cyShift, lcxShift = p.cxShift;
+    const int lczMask = p.czMask, lcyMask = p.cyMask, lcxMask = p.cxMask;
+    const int lsz = p.sz, lsy = p.sy, lsx = p.sx;
+
+    ChunkSampler<T, 8> sampler(p, cache, ds);
+    const size_t ls0 = sampler.s0, ls1 = sampler.s1;
+
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            const cv::Vec3f& bp = basePoints(y, x);
+            const cv::Vec3f& sd = stepDirs(y, x);
+            if (std::isnan(bp[0])) continue;
+
+            // Compute first and last sample positions
+            float vx0 = bp[0] + sd[0] * firstOff;
+            float vy0 = bp[1] + sd[1] * firstOff;
+            float vz0 = bp[2] + sd[2] * firstOff;
+            float vx1 = bp[0] + sd[0] * lastOff;
+            float vy1 = bp[1] + sd[1] * lastOff;
+            float vz1 = bp[2] + sd[2] * lastOff;
+
+            float minVz = std::min(vz0, vz1);
+            float maxVz = std::max(vz0, vz1);
+            float minVy = std::min(vy0, vy1);
+            float maxVy = std::max(vy0, vy1);
+            float minVx = std::min(vx0, vx1);
+            float maxVx = std::max(vx0, vx1);
+
+            int izMin = static_cast<int>(minVz);
+            int izMax = static_cast<int>(maxVz) + 1;
+            int iyMin = static_cast<int>(minVy);
+            int iyMax = static_cast<int>(maxVy) + 1;
+            int ixMin = static_cast<int>(minVx);
+            int ixMax = static_cast<int>(maxVx) + 1;
+
+            bool allInBounds = minVz >= 0 && minVy >= 0 && minVx >= 0 &&
+                               izMax < lsz && iyMax < lsy && ixMax < lsx &&
+                               izMin >= 0 && iyMin >= 0 && ixMin >= 0;
+
+            bool singleChunk = allInBounds &&
+                (izMin >> lczShift) == (izMax >> lczShift) &&
+                (iyMin >> lcyShift) == (iyMax >> lcyShift) &&
+                (ixMin >> lcxShift) == (ixMax >> lcxShift);
+
+            if (singleChunk) {
+                int ciz = izMin >> lczShift;
+                int ciy = iyMin >> lcyShift;
+                int cix = ixMin >> lcxShift;
+                sampler.updateChunk(ciz, ciy, cix);
+                const T* __restrict__ d = sampler.data;
+                if (!d) continue;
+
+                for (int si = 0; si < numSlices; si++) {
+                    float off = offsets[si];
+                    float vx = bp[0] + sd[0] * off;
+                    float vy = bp[1] + sd[1] * off;
+                    float vz = bp[2] + sd[2] * off;
+
+                    int iz = static_cast<int>(vz);
+                    int iy = static_cast<int>(vy);
+                    int ix = static_cast<int>(vx);
+
+                    size_t base = (iz & lczMask)*ls0 + (iy & lcyMask)*ls1 + (ix & lcxMask);
+                    float c000 = d[base];
+                    float c100 = d[base + ls0];
+                    float c010 = d[base + ls1];
+                    float c110 = d[base + ls0 + ls1];
+                    float c001 = d[base + 1];
+                    float c101 = d[base + ls0 + 1];
+                    float c011 = d[base + ls1 + 1];
+                    float c111 = d[base + ls0 + ls1 + 1];
+
+                    float fz = vz - iz;
+                    float fy = vy - iy;
+                    float fx = vx - ix;
+
+                    float c00 = (1-fx)*c000 + fx*c001;
+                    float c01 = (1-fx)*c010 + fx*c011;
+                    float c10 = (1-fx)*c100 + fx*c101;
+                    float c11 = (1-fx)*c110 + fx*c111;
+
+                    float c0 = (1-fy)*c00 + fy*c01;
+                    float c1 = (1-fy)*c10 + fy*c11;
+
+                    float v = (1-fz)*c0 + fz*c1;
+                    v = std::max(0.f, std::min(maxVal, v + 0.5f));
+                    out[si](y, x) = static_cast<T>(v);
+                }
+            } else {
+                for (int si = 0; si < numSlices; si++) {
+                    float off = offsets[si];
+                    float vx = bp[0] + sd[0] * off;
+                    float vy = bp[1] + sd[1] * off;
+                    float vz = bp[2] + sd[2] * off;
+
+                    if (!(vz >= 0 && vy >= 0 && vx >= 0 && vz < lsz && vy < lsy && vx < lsx))
+                        continue;
+
+                    float v = sampler.sampleTrilinearFast(vz, vy, vx);
+                    v = std::max(0.f, std::min(maxVal, v + 0.5f));
+                    out[si](y, x) = static_cast<T>(v);
+                }
+            }
+        }
+    }
+}
+
+void sampleTileSlices(
+    std::vector<cv::Mat_<uint8_t>>& out,
+    z5::Dataset* ds,
+    ChunkCache<uint8_t>* cache,
+    const cv::Mat_<cv::Vec3f>& basePoints,
+    const cv::Mat_<cv::Vec3f>& stepDirs,
+    const std::vector<float>& offsets)
+{
+    sampleTileSlicesImpl(out, ds, *cache, basePoints, stepDirs, offsets);
+}
+
+void sampleTileSlices(
+    std::vector<cv::Mat_<uint16_t>>& out,
+    z5::Dataset* ds,
+    ChunkCache<uint16_t>* cache,
+    const cv::Mat_<cv::Vec3f>& basePoints,
+    const cv::Mat_<cv::Vec3f>& stepDirs,
+    const std::vector<float>& offsets)
+{
+    sampleTileSlicesImpl(out, ds, *cache, basePoints, stepDirs, offsets);
+}
+
