@@ -9,7 +9,7 @@
 #include "z5/factory.hxx"
 #include <nlohmann/json.hpp>
 
-#include <opencv2/imgcodecs.hpp>
+#include "vc/core/util/Tiff.hpp"
 #include <opencv2/imgproc.hpp>
 #include <omp.h>
 
@@ -793,7 +793,7 @@ int main(int argc, char *argv[])
     for(int n=0;n<argc/3;n++) {
         auto surf = load_quad_from_tifxyz(argv[n*3+2]);
 
-        cv::Mat_<float> wind = cv::imread(argv[n*3+3], cv::IMREAD_UNCHANGED);
+        cv::Mat_<float> wind = tiff::imread(argv[n*3+3]);
 
         cv::Mat_<cv::Vec3f> points = surf->rawPoints();
 
@@ -1020,7 +1020,7 @@ int main(int argc, char *argv[])
 
     cv::Mat_<cv::Vec3b> normcol;
     normals.convertTo(normcol, CV_8U, 255);
-    cv::imwrite("normals.tif", normcol);
+    tiff::imwrite("normals.tif", normcol);
     
     int start_offset = 0;        
     
@@ -1082,8 +1082,8 @@ int main(int argc, char *argv[])
         }
     }
     
-    cv::imwrite("state.tif", state*20);
-    
+    tiff::imwrite("state.tif", state*20);
+
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_QR;
     // options.linear_solver_type = ceres::SPARSE_SCHUR;
@@ -1408,14 +1408,14 @@ int main(int argc, char *argv[])
         if (i % 10 == 0 || !wind_counts[i] || i == bbox.br().x-1 || stop) {
             std::vector<cv::Mat> chs;
             cv::split(points, chs);
-            cv::imwrite("newx.tif",chs[0](bbox));
-            cv::imwrite("newz.tif",chs[2](bbox));
-            cv::imwrite("winding_out.tif",winding(bbox)+3);
-            cv::imwrite("state.tif",state*20);
-            cv::imwrite("init_errs.tif",init_errs(bbox));
-            
+            tiff::imwrite("newx.tif",chs[0](bbox));
+            tiff::imwrite("newz.tif",chs[2](bbox));
+            tiff::imwrite("winding_out.tif",winding(bbox)+3);
+            tiff::imwrite("state.tif",state*20);
+            tiff::imwrite("init_errs.tif",init_errs(bbox));
+
             for(int s=0;s<supports.size();s++)
-                cv::imwrite("supports"+std::to_string(s)+".tif",supports[s](bbox)*255);
+                tiff::imwrite("supports"+std::to_string(s)+".tif",supports[s](bbox)*255);
         }
             
         if (!wind_counts[i]) {
@@ -1447,8 +1447,8 @@ int main(int argc, char *argv[])
         for(int i=0;i<tgt_wind.size();i++)
             winding_ideal(cv::Rect(i,0,1,winding.rows)).setTo(tgt_wind[i]);
 
-        cv::imwrite(seg_dir/"winding_exact.tif",winding);
-        cv::imwrite(seg_dir/"winding.tif",winding_ideal);
+        tiff::imwrite(seg_dir/"winding_exact.tif",winding);
+        tiff::imwrite(seg_dir/"winding.tif",winding_ideal);
     }
     
     // {

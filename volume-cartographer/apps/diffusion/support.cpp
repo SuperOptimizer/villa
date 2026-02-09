@@ -1,6 +1,7 @@
 #include "support.hpp"
 #include "spiral_ceres.hpp"
 #include "vc/core/util/LifeTime.hpp"
+#include "vc/core/util/Tiff.hpp"
 
 #include <vc/core/util/GridStore.hpp>
 
@@ -274,7 +275,7 @@ SkeletonGraph trace_skeleton_segments(const cv::Mat& skeleton, const po::variabl
         for (const auto& [p, v_id] : vertex_map) {
             cv::circle(vertex_viz, p, 3, cv::Scalar(0, 0, 255), -1);
         }
-        cv::imwrite("skeleton_vertices.tif", vertex_viz);
+        tiff::imwrite("skeleton_vertices.tif", vertex_viz);
     }
 
     if (vm.count("debug")) {
@@ -283,7 +284,7 @@ SkeletonGraph trace_skeleton_segments(const cv::Mat& skeleton, const po::variabl
         for (const auto& [p, v_id] : vertex_map) {
             cv::circle(vertex_viz, p, 3, cv::Scalar(0, 0, 255), -1);
         }
-        cv::imwrite("skeleton_vertices.tif", vertex_viz);
+        tiff::imwrite("skeleton_vertices.tif", vertex_viz);
     }
 
     return g;

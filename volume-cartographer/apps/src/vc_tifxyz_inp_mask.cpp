@@ -4,7 +4,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include <opencv2/imgcodecs.hpp>
+#include "vc/core/util/Tiff.hpp"
 #include <opencv2/imgproc.hpp>
 
 
@@ -32,7 +32,10 @@ int main(int argc, char *argv[])
     }
 
     cv::Mat_<cv::Vec3f> *points = surf->rawPointsPtr();
-    cv::Mat_<uint8_t> mask = cv::imread(mask_path, cv::IMREAD_GRAYSCALE);
+    cv::Mat mask_raw = tiff::imread(mask_path);
+    if (mask_raw.channels() > 1)
+        cv::cvtColor(mask_raw, mask_raw, cv::COLOR_BGR2GRAY);
+    cv::Mat_<uint8_t> mask = mask_raw;
     cv::Mat_<uint8_t> mask_points(mask.size(), 0);
 
     for(int j=0;j<points->rows;j++)

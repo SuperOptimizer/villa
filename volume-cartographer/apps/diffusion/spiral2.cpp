@@ -2,6 +2,7 @@
 #include "support.hpp"
 #include "spiral_ceres.hpp"
 #include "spiral.hpp"
+#include "vc/core/util/Tiff.hpp"
 
 #include <iostream>
 #include <vector>
@@ -252,7 +253,7 @@ std::vector<SpiralPoint> generate_single_spiral_wrap(
             slice_bgr *= 0.5;
             cv::max(slice_bgr, fit_vis, fit_vis);
 
-            cv::imwrite("debug_bidir_fit_avg.tif", fit_vis);
+            tiff::imwrite("debug_bidir_fit_avg.tif", fit_vis);
         }
     }
     return spiral_interp;
@@ -326,7 +327,7 @@ int spiral2_main(
 
     if (vm.count("debug")) {
         cv::Mat vis = visualize_normal_grid(normal_grid, slice_mat.size());
-        cv::imwrite("normal_constraints_vis_spiral2.tif", vis);
+        tiff::imwrite("normal_constraints_vis_spiral2.tif", vis);
     }
 
     const auto& collections = point_collection.getAllCollections();
@@ -388,7 +389,7 @@ int spiral2_main(
                         cv::putText(composite_vis, ss.str(), p + cv::Point(5, 5), cv::FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv::LINE_AA);
 
                         std::string intermediate_path = "bidir_spirals_" + collection.name + "_intermediate.tif";
-                        cv::imwrite(intermediate_path, composite_vis);
+                        tiff::imwrite(intermediate_path, composite_vis);
                     }
                 }
             }
@@ -398,7 +399,7 @@ int spiral2_main(
         cv::cvtColor(slice_mat, slice_bgr, cv::COLOR_GRAY2BGR);
         slice_bgr *= 0.5;
         cv::max(slice_bgr, composite_vis, composite_vis);
-        cv::imwrite(final_path, composite_vis);
+        tiff::imwrite(final_path, composite_vis);
         std::cout << "Saved final spiral visualization for " << collection.name << " to " << final_path << std::endl;
 
         json_collection["spirals"] = all_spiral_wraps;

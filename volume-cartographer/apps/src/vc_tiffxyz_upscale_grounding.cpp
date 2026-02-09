@@ -8,7 +8,7 @@
 #include "z5/factory.hxx"
 #include <nlohmann/json.hpp>
 
-#include <opencv2/imgcodecs.hpp>
+#include "vc/core/util/Tiff.hpp"
 #include <omp.h>
 
 
@@ -270,7 +270,7 @@ int main(int argc, char *argv[])
 
     auto surf_lr = load_quad_from_tifxyz(argv[1]);
     cv::Mat_<cv::Vec3f> points_lr = surf_lr->rawPoints();
-    cv::Mat_<float> wind_lr = cv::imread(argv[2], cv::IMREAD_UNCHANGED);
+    cv::Mat_<float> wind_lr = tiff::imread(argv[2]);
 
     if (points_lr.size() != wind_lr.size())
         throw std::runtime_error("tiffxyz-lr data must have same size as winding-lr");
@@ -287,7 +287,7 @@ int main(int argc, char *argv[])
 
         std::cout << "surf " << argv[n*2+4] << std::endl;
 
-        cv::Mat_<float> wind = cv::imread(argv[n*2+5], cv::IMREAD_UNCHANGED);
+        cv::Mat_<float> wind = tiff::imread(argv[n*2+5]);
 
         cv::Mat_<cv::Vec3f> points = surf->rawPoints();
 

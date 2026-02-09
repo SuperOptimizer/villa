@@ -2,7 +2,7 @@
 #include "vc/ui/VCCollection.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/QuadSurface.hpp"
-#include <opencv2/imgcodecs.hpp>
+#include "vc/core/util/Tiff.hpp"
 #include <boost/program_options.hpp>
 #include <nlohmann/json.hpp>
 #include <iostream>
@@ -62,7 +62,7 @@ int main(int argc, char** argv)
 
     if (vm.count("winding")) {
         std::string winding_path = vm["winding"].as<std::string>();
-        cv::Mat_<float> winding = cv::imread(winding_path, cv::IMREAD_UNCHANGED);
+        cv::Mat_<float> winding = tiff::imread(winding_path);
         if (winding.empty()) {
             std::cerr << "Error: Failed to load winding from " << winding_path << std::endl;
             return 1;

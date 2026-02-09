@@ -71,7 +71,7 @@
 #include <initializer_list>
 #include <omp.h>
 #include <opencv2/imgproc.hpp>
-#include <opencv2/imgcodecs.hpp>
+#include "vc/core/util/Tiff.hpp"
 #include <QStringList>
 
 #include "CVolumeViewer.hpp"
@@ -210,7 +210,7 @@ static void binarize_mask(const cv::Mat& srcAnyDepth, cv::Mat1b& mask01)
 // Load single-channel TIFF -> CV_32F
 static bool load_tif_as_float(const std::filesystem::path& file, cv::Mat1f& out)
 {
-    cv::Mat raw = cv::imread(file.string(), cv::IMREAD_UNCHANGED);
+    cv::Mat raw = tiff::imread(file);
     if (raw.empty() || raw.channels() != 1) return false;
 
     switch (raw.type()) {
@@ -3437,7 +3437,7 @@ void CWindow::onEditMaskPressed(void)
         render_binary_mask(surf.get(), mask, coords, 1.0f);
 
         // Save just the mask as single layer
-        cv::imwrite(path.string(), mask);
+        tiff::imwrite(path, mask);
 
         // Update metadata
         (*surf->meta)["date_last_modified"] = get_surface_time_str();
@@ -3475,7 +3475,7 @@ void CWindow::onAppendMaskPressed(void)
         // Check if mask.tif exists
         if (std::filesystem::exists(path)) {
             // Load existing mask
-            cv::imreadmulti(path.string(), existing_layers, cv::IMREAD_UNCHANGED);
+            existing_layers = tiff::imreadmulti(path);
 
             if (existing_layers.empty()) {
                 QMessageBox::warning(this, tr("Error"), tr("Could not read existing mask file."));
@@ -3524,7 +3524,7 @@ void CWindow::onAppendMaskPressed(void)
             existing_layers.push_back(img);
 
             // Save all layers
-            imwritemulti(path.string(), existing_layers);
+            tiff::imwritemulti(path, existing_layers);
 
             QString message = useComposite ?
                 tr("Appended composite surface image to existing mask (now %1 layers)").arg(existing_layers.size()) :
@@ -3548,7 +3548,7 @@ void CWindow::onAppendMaskPressed(void)
 
             // Save as new multi-layer TIFF
             std::vector<cv::Mat> layers = {mask, img};
-            imwritemulti(path.string(), layers);
+            tiff::imwritemulti(path, layers);
 
             QString message = useComposite ?
                 tr("Created new surface mask with composite image data") :
@@ -3877,13 +3877,14 @@ void CWindow::recalcAreaForSegments(const std::vector<std::string>& ids)
         cv::Mat1b mask01;
         {
             std::vector<cv::Mat> pages;
-            if (cv::imreadmulti(maskPath.string(), pages, cv::IMREAD_UNCHANGED) && !pages.empty()) {
+            pages = tiff::imreadmulti(maskPath);
+            if (!pages.empty()) {
                 int best = choose_largest_page(pages);
                 if (best < 0) { ++failCount; skippedIds << QString::fromStdString(id) + " (mask pages invalid)"; continue; }
                 binarize_mask(pages[best], mask01);
             } else {
                 // Fallback: single-page read
-                cv::Mat m = cv::imread(maskPath.string(), cv::IMREAD_UNCHANGED);
+                cv::Mat m = tiff::imread(maskPath);
                 if (m.empty()) { ++failCount; skippedIds << QString::fromStdString(id) + " (mask read error)"; continue; }
                 binarize_mask(m, mask01);
             }

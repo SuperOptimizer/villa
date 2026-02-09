@@ -2,7 +2,7 @@
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/ChunkedTensor.hpp"
-#include <opencv2/imgcodecs.hpp>
+#include "vc/core/util/Tiff.hpp"
 #include <iostream>
 #include <opencv2/imgproc.hpp>
 
@@ -111,8 +111,10 @@ int main(int argc, char *argv[])
 
             // Save as multi-layer TIFF
             std::vector<cv::Mat> layers = {mask, img};
-            if (!cv::imwritemulti(mask_path.string(), layers)) {
-                std::cerr << "Error writing mask to " << mask_path << std::endl;
+            try {
+                tiff::imwritemulti(mask_path, layers);
+            } catch (const std::exception& e) {
+                std::cerr << "Error writing mask to " << mask_path << ": " << e.what() << std::endl;
                 delete cache;
                 return EXIT_FAILURE;
             }
@@ -128,8 +130,10 @@ int main(int argc, char *argv[])
         // Generate mask only
         generate_mask(surf.get(), mask, img);
 
-        if (!cv::imwrite(mask_path.string(), mask)) {
-            std::cerr << "Error writing mask to " << mask_path << std::endl;
+        try {
+            tiff::imwrite(mask_path, mask);
+        } catch (const std::exception& e) {
+            std::cerr << "Error writing mask to " << mask_path << ": " << e.what() << std::endl;
             return EXIT_FAILURE;
         }
     }

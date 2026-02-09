@@ -1,6 +1,7 @@
 
 #include "spiral_common.hpp"
 #include "spiral_ceres.hpp"
+#include "vc/core/util/Tiff.hpp"
 
 void visualize_spiral(
     const std::vector<SpiralPoint>& all_points,
@@ -14,11 +15,8 @@ void visualize_spiral(
     cv::Mat viz = cv::Mat::zeros(slice_size, CV_8UC3);
     visualize_spiral(viz, all_points, cv::Scalar(255, 255, 255), point_color, draw_winding_text);
 
-    if (cv::imwrite(output_path.string(), viz)) {
-        std::cout << "Saved spiral visualization to " << output_path << std::endl;
-    } else {
-        std::cerr << "Error: Failed to write spiral visualization to " << output_path << std::endl;
-    }
+    tiff::imwrite(output_path, viz);
+    std::cout << "Saved spiral visualization to " << output_path << std::endl;
 }
 
 
@@ -28,7 +26,6 @@ void visualize_spiral(
 #include <sstream>
 
 #include <opencv2/imgproc.hpp>
-#include <opencv2/imgcodecs.hpp>
 
 
 bool find_intersections(

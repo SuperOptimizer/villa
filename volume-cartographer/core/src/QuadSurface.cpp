@@ -9,7 +9,6 @@
 
 #include <opencv2/imgproc.hpp>
 #include <opencv2/calib3d.hpp>
-#include <opencv2/imgcodecs.hpp>
 
 #include <nlohmann/json.hpp>
 #include <system_error>
@@ -28,8 +27,7 @@
 #include <stdio.h>
 #include <unistd.h>
 
-// Use libtiff for BigTIFF
-#include <tiffio.h>
+#include "vc/core/util/Tiff.hpp"
 
 namespace {
 
@@ -275,7 +273,7 @@ cv::Mat QuadSurface::channel(const std::string& name, int flags)
             std::filesystem::path channel_path = path / (name + ".tif");
             if (std::filesystem::exists(channel_path)) {
                 std::vector<cv::Mat> layers;
-                cv::imreadmulti(channel_path.string(), layers, cv::IMREAD_UNCHANGED);
+                layers = tiff::imreadmulti(channel_path);
                 if (!layers.empty()) {
                     channel = layers[0];
                 }
@@ -366,7 +364,7 @@ void QuadSurface::writeValidMask(const cv::Mat& img)
         writeTiff(maskPath, mask);
     } else {
         std::vector<cv::Mat> layers = {mask, img};
-        cv::imwritemulti(maskPath.string(), layers);
+        tiff::imwritemulti(maskPath, layers);
     }
 }
 
@@ -812,39 +810,13 @@ void QuadSurface::invalidateMask()
 
 void QuadSurface::writeDataToDirectory(const std::filesystem::path& dir, const std::string& skipChannel)
 {
-    // Split the points matrix into x, y, z channels
-    std::vector<cv::Mat> xyz;
-    cv::split((*_points), xyz);
-
-    // Write x/y/z as 32-bit float tiled TIFF with LZW
-    writeTiff(dir / "x.tif", xyz[0]);
-    writeTiff(dir / "y.tif", xyz[1]);
-    writeTiff(dir / "z.tif", xyz[2]);
-
-    // OpenCV compression params for fallback
-    std::vector<int> compression_params = { cv::IMWRITE_TIFF_COMPRESSION, 5 };
+    // Write xyz coordinates as a single 3-channel float32 TIFF
+    tiff::imwrite(dir / "xyz.tif", *_points);
 
     // Save additional channels
     for (auto const& [name, mat] : _channels) {
         if (!mat.empty() && (skipChannel.empty() || name != skipChannel)) {
-            bool wrote = false;
-
-            // Try tiled TIFF for single-channel ancillary data (8U/16U/32F)
-            if (mat.channels() == 1 &&
-                (mat.type() == CV_8UC1 || mat.type() == CV_16UC1 || mat.type() == CV_32FC1))
-            {
-                try {
-                    writeTiff(dir / (name + ".tif"), mat);
-                    wrote = true;
-                } catch (...) {
-                    wrote = false; // Fall back to OpenCV
-                }
-            }
-
-            // Fallback to OpenCV for multi-channel or other formats
-            if (!wrote) {
-                cv::imwrite((dir / (name + ".tif")).string(), mat, compression_params);
-            }
+            tiff::imwrite(dir / (name + ".tif"), mat);
         }
     }
 }
@@ -1093,128 +1065,6 @@ Rect3D QuadSurface::bbox()
 
 std::unique_ptr<QuadSurface> load_quad_from_tifxyz(const std::string &path, int flags)
 {
-    auto read_band_into = [](const std::filesystem::path& fpath,
-                             cv::Mat_<cv::Vec3f>& points,
-                             int channel,
-                             int& outW, int& outH) -> void
-    {
-        TIFF* tif = TIFFOpen(fpath.string().c_str(), "r");
-        if (!tif) {
-            throw std::runtime_error("Failed to open TIFF: " + fpath.string());
-        }
-
-        // Basic geometry
-        uint32_t W=0, H=0;
-        if (!TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &W) ||
-            !TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &H)) {
-            TIFFClose(tif);
-            throw std::runtime_error("TIFF missing width/height: " + fpath.string());
-        }
-
-        uint16_t spp = 1; TIFFGetFieldDefaulted(tif, TIFFTAG_SAMPLESPERPIXEL, &spp);
-        if (spp != 1) {
-            TIFFClose(tif);
-            throw std::runtime_error("Expected 1 sample per pixel in " + fpath.string());
-        }
-        uint16_t bps = 0;  TIFFGetFieldDefaulted(tif, TIFFTAG_BITSPERSAMPLE, &bps);
-        uint16_t fmt = SAMPLEFORMAT_UINT; TIFFGetFieldDefaulted(tif, TIFFTAG_SAMPLEFORMAT, &fmt);
-        const int bytesPer = (bps + 7) / 8;
-        if (!(bps==8 || bps==16 || bps==32 || bps==64)) {
-            TIFFClose(tif);
-            throw std::runtime_error("Unsupported BitsPerSample in " + fpath.string());
-        }
-
-        // Allocate destination if first band
-        if (points.empty()) {
-            points.create(static_cast<int>(H), static_cast<int>(W));
-            // Initialize as invalid
-            for (int y=0;y<points.rows;++y)
-                for (int x=0;x<points.cols;++x)
-                    points(y,x) = cv::Vec3f(-1.f,-1.f,-1.f);
-            outW = static_cast<int>(W);
-            outH = static_cast<int>(H);
-        } else {
-            if (outW != static_cast<int>(W) || outH != static_cast<int>(H)) {
-                TIFFClose(tif);
-                throw std::runtime_error("Band size mismatch in " + fpath.string());
-            }
-        }
-
-        auto to_float = [fmt,bps,bytesPer](const uint8_t* p)->float {
-            float v=0.f;
-            switch(fmt) {
-                case SAMPLEFORMAT_IEEEFP:
-                    if (bps==32) { std::memcpy(&v, p, 4); return v; }
-                    if (bps==64) { double d=0.0; std::memcpy(&d, p, 8); return static_cast<float>(d); }
-                    break;
-                case SAMPLEFORMAT_UINT:
-                {
-                    if (bps==8)  { uint8_t  t=*p; return static_cast<float>(t); }
-                    if (bps==16) { uint16_t t; std::memcpy(&t,p,2); return static_cast<float>(t); }
-                    if (bps==32) { uint32_t t; std::memcpy(&t,p,4); return static_cast<float>(t); }
-                } break;
-                case SAMPLEFORMAT_INT:
-                {
-                    if (bps==8)  { int8_t  t=*reinterpret_cast<const int8_t*>(p); return static_cast<float>(t); }
-                    if (bps==16) { int16_t t; std::memcpy(&t,p,2); return static_cast<float>(t); }
-                    if (bps==32) { int32_t t; std::memcpy(&t,p,4); return static_cast<float>(t); }
-                } break;
-                default: break;
-            }
-            // Last resort: treat as 32-bit float bytes
-            std::memcpy(&v, p, std::min(bytesPer, (int)sizeof(float)));
-            return v;
-        };
-
-        if (TIFFIsTiled(tif)) {
-            uint32_t tileW=0, tileH=0;
-            TIFFGetField(tif, TIFFTAG_TILEWIDTH,  &tileW);
-            TIFFGetField(tif, TIFFTAG_TILELENGTH, &tileH);
-            if (tileW==0 || tileH==0) {
-                TIFFClose(tif);
-                throw std::runtime_error("Invalid tile geometry in " + fpath.string());
-            }
-            const tmsize_t tileBytes = TIFFTileSize(tif);
-            std::vector<uint8_t> tileBuf(static_cast<size_t>(tileBytes));
-
-            for (uint32_t y0=0; y0<H; y0+=tileH) {
-                const uint32_t dy = std::min(tileH, H - y0);
-                for (uint32_t x0=0; x0<W; x0+=tileW) {
-                    const uint32_t dx = std::min(tileW, W - x0);
-                    const ttile_t tidx = TIFFComputeTile(tif, x0, y0, 0, 0);
-                    tmsize_t n = TIFFReadEncodedTile(tif, tidx, tileBuf.data(), tileBytes);
-                    if (n < 0) {
-                        // fill with zeros on read error
-                        std::fill(tileBuf.begin(), tileBuf.end(), 0);
-                    }
-                    for (uint32_t ty=0; ty<dy; ++ty) {
-                        const uint8_t* row = tileBuf.data() + (static_cast<size_t>(ty)*tileW*bytesPer);
-                        for (uint32_t tx=0; tx<dx; ++tx) {
-                            float fv = to_float(row + static_cast<size_t>(tx)*bytesPer);
-                            cv::Vec3f& dst = points(static_cast<int>(y0+ty), static_cast<int>(x0+tx));
-                            dst[channel] = fv;
-                        }
-                    }
-                }
-            }
-        } else {
-            const tmsize_t scanBytes = TIFFScanlineSize(tif);
-            std::vector<uint8_t> scanBuf(static_cast<size_t>(scanBytes));
-            for (uint32_t y=0; y<H; ++y) {
-                if (TIFFReadScanline(tif, scanBuf.data(), y, 0) != 1) {
-                    std::fill(scanBuf.begin(), scanBuf.end(), 0);
-                }
-                const uint8_t* row = scanBuf.data();
-                for (uint32_t x=0; x<W; ++x) {
-                    float fv = to_float(row + static_cast<size_t>(x)*bytesPer);
-                    cv::Vec3f& dst = points(static_cast<int>(y), static_cast<int>(x));
-                    dst[channel] = fv;
-                }
-            }
-        }
-        TIFFClose(tif);
-    };
-
     // Read meta first (scale, uuid, etc.)
     std::ifstream meta_f((std::filesystem::path(path)/"meta.json").string());
     if (!meta_f.is_open() || !meta_f.good()) {
@@ -1223,11 +1073,103 @@ std::unique_ptr<QuadSurface> load_quad_from_tifxyz(const std::string &path, int 
     nlohmann::json metadata = nlohmann::json::parse(meta_f);
     cv::Vec2f scale = {metadata["scale"][0].get<float>(), metadata["scale"][1].get<float>()};
 
+    const std::filesystem::path dir(path);
+    const std::filesystem::path xyzPath = dir / "xyz.tif";
+    const std::filesystem::path xPath = dir / "x.tif";
+    const std::filesystem::path yPath = dir / "y.tif";
+    const std::filesystem::path zPath = dir / "z.tif";
+
     auto points = std::make_unique<cv::Mat_<cv::Vec3f>>();
     int W=0, H=0;
-    read_band_into(std::filesystem::path(path)/"x.tif", *points, 0, W, H);
-    read_band_into(std::filesystem::path(path)/"y.tif", *points, 1, W, H);
-    read_band_into(std::filesystem::path(path)/"z.tif", *points, 2, W, H);
+
+    if (std::filesystem::exists(xyzPath)) {
+        // New format: single 3-channel float32 TIFF
+        cv::Mat img = tiff::imread(xyzPath);
+        *points = img;
+        W = points->cols;
+        H = points->rows;
+    } else if (std::filesystem::exists(xPath) &&
+               std::filesystem::exists(yPath) &&
+               std::filesystem::exists(zPath)) {
+        // Legacy format: separate x/y/z bands
+        auto read_band_into = [](const std::filesystem::path& fpath,
+                                 cv::Mat_<cv::Vec3f>& pts,
+                                 int channel,
+                                 int& outW, int& outH) -> void
+        {
+            TiffReader reader(fpath);
+
+            const uint32_t rW = reader.width();
+            const uint32_t rH = reader.height();
+            if (reader.samplesPerPixel() != 1)
+                throw std::runtime_error("Expected 1 sample per pixel in " + fpath.string());
+
+            const uint16_t bps = reader.bitsPerSample();
+            const uint16_t fmt = reader.sampleFormat();
+            const int bytesPer = (bps + 7) / 8;
+            if (!(bps==8 || bps==16 || bps==32 || bps==64))
+                throw std::runtime_error("Unsupported BitsPerSample in " + fpath.string());
+
+            if (pts.empty()) {
+                pts.create(static_cast<int>(rH), static_cast<int>(rW));
+                for (int y=0;y<pts.rows;++y)
+                    for (int x=0;x<pts.cols;++x)
+                        pts(y,x) = cv::Vec3f(-1.f,-1.f,-1.f);
+                outW = static_cast<int>(rW);
+                outH = static_cast<int>(rH);
+            } else {
+                if (outW != static_cast<int>(rW) || outH != static_cast<int>(rH))
+                    throw std::runtime_error("Band size mismatch in " + fpath.string());
+            }
+
+            auto to_float = [fmt,bps,bytesPer](const uint8_t* p)->float {
+                float v=0.f;
+                switch(fmt) {
+                    case tiff::Float:
+                        if (bps==32) { std::memcpy(&v, p, 4); return v; }
+                        if (bps==64) { double d=0.0; std::memcpy(&d, p, 8); return static_cast<float>(d); }
+                        break;
+                    case tiff::UInt:
+                    {
+                        if (bps==8)  { uint8_t  t=*p; return static_cast<float>(t); }
+                        if (bps==16) { uint16_t t; std::memcpy(&t,p,2); return static_cast<float>(t); }
+                        if (bps==32) { uint32_t t; std::memcpy(&t,p,4); return static_cast<float>(t); }
+                    } break;
+                    case tiff::Int:
+                    {
+                        if (bps==8)  { int8_t  t=*reinterpret_cast<const int8_t*>(p); return static_cast<float>(t); }
+                        if (bps==16) { int16_t t; std::memcpy(&t,p,2); return static_cast<float>(t); }
+                        if (bps==32) { int32_t t; std::memcpy(&t,p,4); return static_cast<float>(t); }
+                    } break;
+                    default: break;
+                }
+                std::memcpy(&v, p, std::min(bytesPer, (int)sizeof(float)));
+                return v;
+            };
+
+            cv::Mat img = reader.readAll();
+            for (uint32_t y = 0; y < rH; ++y) {
+                const uint8_t* row = img.ptr<uint8_t>(static_cast<int>(y));
+                for (uint32_t x = 0; x < rW; ++x) {
+                    float fv = to_float(row + static_cast<size_t>(x) * bytesPer);
+                    pts(static_cast<int>(y), static_cast<int>(x))[channel] = fv;
+                }
+            }
+        };
+
+        read_band_into(xPath, *points, 0, W, H);
+        read_band_into(yPath, *points, 1, W, H);
+        read_band_into(zPath, *points, 2, W, H);
+
+        // Auto-convert: write merged xyz.tif and remove legacy files
+        tiff::imwrite(xyzPath, *points);
+        std::error_code ec;
+        std::filesystem::remove(xPath, ec);
+        std::filesystem::remove(yPath, ec);
+        std::filesystem::remove(zPath, ec);
+    } else {
+        throw std::runtime_error("No xyz.tif or x.tif/y.tif/z.tif found in " + path);
+    }
 
     // Invalidate by z<=0
     for (int j=0;j<points->rows;++j)
@@ -1238,24 +1180,16 @@ std::unique_ptr<QuadSurface> load_quad_from_tifxyz(const std::string &path, int 
     // Optional mask
     const std::filesystem::path maskPath = std::filesystem::path(path)/"mask.tif";
     if (!(flags & SURF_LOAD_IGNORE_MASK) && std::filesystem::exists(maskPath)) {
-        TIFF* mtif = TIFFOpen(maskPath.string().c_str(), "r");
-        if (mtif) {
-            uint32_t mW=0, mH=0;
-            TIFFGetField(mtif, TIFFTAG_IMAGEWIDTH, &mW);
-            TIFFGetField(mtif, TIFFTAG_IMAGELENGTH, &mH);
-            if (mW!=0 && mH!=0) {
-                uint16_t bps=0, fmt=SAMPLEFORMAT_UINT;
-                TIFFGetFieldDefaulted(mtif, TIFFTAG_BITSPERSAMPLE, &bps);
-                TIFFGetFieldDefaulted(mtif, TIFFTAG_SAMPLEFORMAT, &fmt);
-                uint16_t spp=1;
-                TIFFGetFieldDefaulted(mtif, TIFFTAG_SAMPLESPERPIXEL, &spp);
-                uint16_t planarConfig = PLANARCONFIG_CONTIG;
-                TIFFGetFieldDefaulted(mtif, TIFFTAG_PLANARCONFIG, &planarConfig);
+        try {
+            TiffReader maskReader(maskPath);
+            const uint32_t mW = maskReader.width();
+            const uint32_t mH = maskReader.height();
+            if (mW != 0 && mH != 0) {
+                const uint16_t bps = maskReader.bitsPerSample();
+                const uint16_t fmt = maskReader.sampleFormat();
+                const uint16_t spp = maskReader.samplesPerPixel();
                 const int bytesPer = (bps+7)/8;
-                const uint16_t samplesPerPixel = std::max<uint16_t>(1, spp);
-                const bool isPlanarSeparate = (planarConfig == PLANARCONFIG_SEPARATE);
-                const size_t pixelStride = static_cast<size_t>(bytesPer) *
-                                           static_cast<size_t>(isPlanarSeparate ? 1 : samplesPerPixel);
+                const size_t pixelStride = static_cast<size_t>(bytesPer) * spp;
                 auto computeScaleFactor = [](uint32_t maskDim, int targetDim) -> uint32_t {
                     if (maskDim == static_cast<uint32_t>(targetDim)) {
                         return 1;
@@ -1268,34 +1202,24 @@ std::unique_ptr<QuadSurface> load_quad_from_tifxyz(const std::string &path, int 
                 const uint32_t scaleX = computeScaleFactor(mW, W);
                 const uint32_t scaleY = computeScaleFactor(mH, H);
                 if (scaleX != 0 && scaleY != 0) {
-                    // Channel 0 encodes mask validity; later channels remain untouched.
-                    const double retainThreshold = [&]{
-                        switch(fmt) {
-                            case SAMPLEFORMAT_UINT:
-                            case SAMPLEFORMAT_INT:
-                            case SAMPLEFORMAT_IEEEFP:
-                                return 255.0;
-                        }
-                        return 255.0;
-                    }();
+                    constexpr double retainThreshold = 255.0;
                     auto to_valid = [fmt,bps,bytesPer,retainThreshold](const uint8_t* p)->bool{
                         switch(fmt) {
-                            case SAMPLEFORMAT_IEEEFP:
+                            case tiff::Float:
                                 if (bps==32) { float v; std::memcpy(&v,p,4); return v>=static_cast<float>(retainThreshold); }
                                 if (bps==64) { double d; std::memcpy(&d,p,8); return d>=retainThreshold; }
                                 break;
-                            case SAMPLEFORMAT_UINT:
+                            case tiff::UInt:
                                 if (bps==8)  return (*p)>=retainThreshold;
                                 if (bps==16) { uint16_t t; std::memcpy(&t,p,2); return t>=static_cast<uint16_t>(retainThreshold); }
                                 if (bps==32) { uint32_t t; std::memcpy(&t,p,4); return t>=static_cast<uint32_t>(retainThreshold); }
                                 break;
-                            case SAMPLEFORMAT_INT:
+                            case tiff::Int:
                                 if (bps==8)  { int8_t t=*reinterpret_cast<const int8_t*>(p);  return t>=static_cast<int8_t>(retainThreshold); }
                                 if (bps==16) { int16_t t; std::memcpy(&t,p,2); return t>=static_cast<int16_t>(retainThreshold); }
                                 if (bps==32) { int32_t t; std::memcpy(&t,p,4); return t>=static_cast<int32_t>(retainThreshold); }
                                 break;
                         }
-                        // default
                         return (*p)>=retainThreshold;
                     };
                     const cv::Vec3f invalidPoint(-1.f,-1.f,-1.f);
@@ -1306,50 +1230,21 @@ std::unique_ptr<QuadSurface> load_quad_from_tifxyz(const std::string &path, int 
                             (*points)(static_cast<int>(dstY), static_cast<int>(dstX)) = invalidPoint;
                         }
                     };
-                    if (TIFFIsTiled(mtif)) {
-                        uint32_t tileW=0, tileH=0;
-                        TIFFGetField(mtif, TIFFTAG_TILEWIDTH,  &tileW);
-                        TIFFGetField(mtif, TIFFTAG_TILELENGTH, &tileH);
-                        const tmsize_t tileBytes = TIFFTileSize(mtif);
-                        std::vector<uint8_t> tileBuf(static_cast<size_t>(tileBytes));
-                        for (uint32_t y0=0; y0<mH; y0+=tileH) {
-                            const uint32_t dy = std::min(tileH, mH - y0);
-                            for (uint32_t x0=0; x0<mW; x0+=tileW) {
-                                const uint32_t dx = std::min(tileW, mW - x0);
-                                const ttile_t tidx = TIFFComputeTile(mtif, x0, y0, 0, 0);
-                                tmsize_t n = TIFFReadEncodedTile(mtif, tidx, tileBuf.data(), tileBytes);
-                                if (n < 0) std::fill(tileBuf.begin(), tileBuf.end(), 0);
-                                const size_t tileRowStride = static_cast<size_t>(tileW) * pixelStride;
-                                for (uint32_t ty=0; ty<dy; ++ty) {
-                                    const uint8_t* row = tileBuf.data() + static_cast<size_t>(ty) * tileRowStride;
-                                    for (uint32_t tx=0; tx<dx; ++tx) {
-                                        const uint8_t* px = row + static_cast<size_t>(tx) * pixelStride;
-                                        if (!to_valid(px)) {
-                                            invalidate(x0 + tx, y0 + ty);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        const tmsize_t scanBytes = TIFFScanlineSize(mtif);
-                        std::vector<uint8_t> scanBuf(static_cast<size_t>(scanBytes));
-                        for (uint32_t y=0; y<mH; ++y) {
-                            if (TIFFReadScanline(mtif, scanBuf.data(), y, 0) != 1) {
-                                std::fill(scanBuf.begin(), scanBuf.end(), 0);
-                            }
-                            const uint8_t* row = scanBuf.data();
-                            for (uint32_t x=0; x<mW; ++x) {
-                                const uint8_t* px = row + static_cast<size_t>(x) * pixelStride;
-                                if (!to_valid(px)) {
-                                    invalidate(x, y);
-                                }
+
+                    cv::Mat maskImg = maskReader.readAll();
+                    for (uint32_t y = 0; y < mH; ++y) {
+                        const uint8_t* row = maskImg.ptr<uint8_t>(static_cast<int>(y));
+                        for (uint32_t x = 0; x < mW; ++x) {
+                            const uint8_t* px = row + static_cast<size_t>(x) * pixelStride;
+                            if (!to_valid(px)) {
+                                invalidate(x, y);
                             }
                         }
                     }
                 }
             }
-            TIFFClose(mtif);
+        } catch (...) {
+            // Mask read failure is non-fatal
         }
     }
 
@@ -1362,7 +1257,7 @@ std::unique_ptr<QuadSurface> load_quad_from_tifxyz(const std::string &path, int 
     for (const auto& entry : std::filesystem::directory_iterator(path)) {
         if (entry.path().extension() == ".tif") {
             std::string filename = entry.path().stem().string();
-            if (filename != "x" && filename != "y" && filename != "z") {
+            if (filename != "x" && filename != "y" && filename != "z" && filename != "xyz") {
                 surf->setChannel(filename, cv::Mat());
             }
         }
@@ -1742,7 +1637,9 @@ void flipMultiLayerTiff(const std::filesystem::path& tiffPath, int flipCode) {
 
     // Read all layers
     std::vector<cv::Mat> layers;
-    if (!cv::imreadmulti(tiffPath.string(), layers, cv::IMREAD_UNCHANGED)) {
+    try {
+        layers = tiff::imreadmulti(tiffPath);
+    } catch (...) {
         std::cerr << "Warning: Could not read multi-layer TIFF: " << tiffPath << std::endl;
         return;
     }
@@ -1757,7 +1654,9 @@ void flipMultiLayerTiff(const std::filesystem::path& tiffPath, int flipCode) {
     }
 
     // Write back all layers
-    if (!cv::imwritemulti(tiffPath.string(), layers)) {
+    try {
+        tiff::imwritemulti(tiffPath, layers);
+    } catch (...) {
         std::cerr << "Warning: Could not write flipped multi-layer TIFF: " << tiffPath << std::endl;
     }
 }
@@ -1768,7 +1667,13 @@ void flipSingleTiff(const std::filesystem::path& tiffPath, int flipCode) {
         return;
     }
 
-    cv::Mat img = cv::imread(tiffPath.string(), cv::IMREAD_UNCHANGED);
+    cv::Mat img;
+    try {
+        img = tiff::imread(tiffPath);
+    } catch (...) {
+        std::cerr << "Warning: Could not read TIFF: " << tiffPath << std::endl;
+        return;
+    }
     if (img.empty()) {
         std::cerr << "Warning: Could not read TIFF: " << tiffPath << std::endl;
         return;
@@ -1776,7 +1681,9 @@ void flipSingleTiff(const std::filesystem::path& tiffPath, int flipCode) {
 
     cv::flip(img, img, flipCode);
 
-    if (!cv::imwrite(tiffPath.string(), img)) {
+    try {
+        tiff::imwrite(tiffPath, img);
+    } catch (...) {
         std::cerr << "Warning: Could not write flipped TIFF: " << tiffPath << std::endl;
     }
 }

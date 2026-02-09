@@ -16,7 +16,7 @@
 #include <QPainterPath>
 
 #include <opencv2/imgproc.hpp>
-#include <opencv2/imgcodecs.hpp>
+#include "vc/core/util/Tiff.hpp"
 
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
@@ -613,7 +613,7 @@ void DrawingWidget::saveMask(const cv::Mat& mask, const std::string& filename)
     }
     
     // Save as TIFF
-    cv::imwrite(filename, mask);
+    tiff::imwrite(filename, mask);
 }
 
 bool DrawingWidget::isValidVolumePoint(const cv::Vec3f& point) const

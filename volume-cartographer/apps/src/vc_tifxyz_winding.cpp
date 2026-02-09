@@ -6,7 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include <opencv2/imgcodecs.hpp>
+#include "vc/core/util/Tiff.hpp"
 #include <opencv2/imgproc.hpp>
 #include <omp.h>
 
@@ -338,7 +338,7 @@ int main(int argc, char *argv[])
         }
         // std::cout << std::endl;
     }
-    cv::imwrite("dbg.tif", img);
+    tiff::imwrite("dbg.tif", img);
     
     int wind_sd = 400;
     
@@ -540,7 +540,7 @@ int main(int argc, char *argv[])
         wind_w_out.copyTo(wind_w);
             
         if (it % 50 == 0 || ramp == -50) {
-            cv::imwrite("wind_w.tif", wind_w);
+            tiff::imwrite("wind_w.tif", wind_w);
             std::cout << "finished it " << it << std::endl;
             
             cv::Mat_<cv::Vec3b> vis(points.size(), {0,0,0});
@@ -563,11 +563,11 @@ int main(int argc, char *argv[])
                         winding_err(j,i) = abs(1-wind_g);
                     }
                 }
-            // cv::imwrite("winding"+std::to_string(n)+".tif", winding);
-            // cv::imwrite("wind_vis"+std::to_string(n)+".tif", vis);
-            cv::imwrite("winding.tif", winding);
-            cv::imwrite("wind_vis.tif", vis);
-            cv::imwrite("wind_err.tif", winding_err);
+            // tiff::imwrite("winding"+std::to_string(n)+".tif", winding);
+            // tiff::imwrite("wind_vis"+std::to_string(n)+".tif", vis);
+            tiff::imwrite("winding.tif", winding);
+            tiff::imwrite("wind_vis.tif", vis);
+            tiff::imwrite("wind_err.tif", winding_err);
         }
         
         if (ramp == -50)

@@ -1,6 +1,7 @@
 #include "continous.hpp"
 #include "support.hpp"
 #include "discrete.hpp"
+#include "vc/core/util/Tiff.hpp"
 
 #include <iostream>
 #include <vector>
@@ -295,7 +296,7 @@ int continous_main(
     }
 
     // Visualization
-    cv::imwrite("wind_float.tif", winding);
+    tiff::imwrite("wind_float.tif", winding);
     std::cout << "Saved floating point winding data to wind_float.tif" << std::endl;
 
     cv::Mat viz;
@@ -339,7 +340,7 @@ int continous_main(
         }
     }
     if (vm.count("debug")) {
-        cv::imwrite("spiral.tif", spiral_viz);
+        tiff::imwrite("spiral.tif", spiral_viz);
     }
     return 0;
 }

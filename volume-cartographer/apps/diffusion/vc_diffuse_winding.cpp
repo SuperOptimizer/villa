@@ -14,7 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include <opencv2/core.hpp>
-#include <opencv2/imgcodecs.hpp>
+#include "vc/core/util/Tiff.hpp"
 #include <opencv2/videoio.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/ximgproc.hpp>
@@ -221,7 +221,10 @@ int main(int argc, char** argv) {
     cv::Mat mask;
     if (vm.count("mask")) {
         fs::path mask_path = vm["mask"].as<std::string>();
-        mask = cv::imread(mask_path.string(), cv::IMREAD_GRAYSCALE);
+        mask = tiff::imread(mask_path);
+        if (mask.channels() > 1) {
+            cv::cvtColor(mask, mask, cv::COLOR_BGR2GRAY);
+        }
         if (mask.empty()) {
             std::cerr << "Error: Failed to load mask image from " << mask_path << std::endl;
             return 1;
@@ -241,12 +244,12 @@ int main(int argc, char** argv) {
     }
 
     if (vm.count("debug")) {
-        cv::imwrite("slice.tif", slice_mat);
+        tiff::imwrite("slice.tif", slice_mat);
         std::cout << "Saved debug slice to slice.tif" << std::endl;
     }
 
     if (vm.count("debug")) {
-        cv::imwrite("slice.tif", slice_mat);
+        tiff::imwrite("slice.tif", slice_mat);
         std::cout << "Saved debug slice to slice.tif" << std::endl;
     }
 

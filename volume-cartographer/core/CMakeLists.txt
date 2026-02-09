@@ -35,7 +35,6 @@ target_link_libraries(vc_core
         nlohmann_json::nlohmann_json
         z5
         OpenMP::OpenMP_CXX
-        TIFF::TIFF
         OpenABF
         #${CURL_LIBRARIES}
         #${OPENSSL_LIBRARIES}

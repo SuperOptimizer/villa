@@ -1,7 +1,7 @@
 #include <omp.h>
 #include <random>
 
-#include <opencv2/imgcodecs.hpp>
+#include "vc/core/util/Tiff.hpp"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -787,16 +787,6 @@ static double local_solve(QuadSurface *sm, const cv::Vec2i &p, SurfTrackerData &
 static inline int surftrack_round_step(float step)
 {
     return std::max(1, static_cast<int>(std::lround(step)));
-}
-
-static const std::vector<int>& surftrack_tiff_compression_params()
-{
-    static constexpr int kTiffCompressionLzw = 5;
-    static const std::vector<int> params = {
-        cv::IMWRITE_TIFF_COMPRESSION,
-        kTiffCompressionLzw
-    };
-    return params;
 }
 
 static cv::Mat_<uint16_t> surftrack_generation_channel(
@@ -2332,7 +2322,7 @@ QuadSurface *grow_surf_from_surfs(QuadSurface *seed, const std::vector<QuadSurfa
             init_area_scan();
         }
 
-        cv::imwrite(tgt_dir / "inliers_sum.tif", inliers_sum_dbg(used_area), surftrack_tiff_compression_params());
+        tiff::imwrite(tgt_dir / "inliers_sum.tif", inliers_sum_dbg(used_area));
 
         if (fringe.empty())
             break;

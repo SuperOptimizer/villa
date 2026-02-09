@@ -22,7 +22,6 @@
 #include <cctype>
 #include <chrono>
 #include <thread>
-#include <tiffio.h>
 #include <omp.h>
 
 namespace po = boost::program_options;
@@ -853,36 +852,20 @@ int main(int argc, char *argv[])
         for (auto& [finalPath, partFiles] : groups) {
             std::sort(partFiles.begin(), partFiles.end());
             // Open first part to get dimensions and tile info
-            TIFF* first = TIFFOpen(partFiles[0].c_str(), "r");
-            if (!first) { std::cerr << "Cannot open " << partFiles[0] << "\n"; continue; }
-            uint32_t w, h, tw, th;
-            uint16_t bps, spp, sf, comp;
-            TIFFGetField(first, TIFFTAG_IMAGEWIDTH, &w);
-            TIFFGetField(first, TIFFTAG_IMAGELENGTH, &h);
-            TIFFGetField(first, TIFFTAG_TILEWIDTH, &tw);
-            TIFFGetField(first, TIFFTAG_TILELENGTH, &th);
-            TIFFGetField(first, TIFFTAG_BITSPERSAMPLE, &bps);
-            TIFFGetField(first, TIFFTAG_SAMPLESPERPIXEL, &spp);
-            TIFFGetField(first, TIFFTAG_SAMPLEFORMAT, &sf);
-            TIFFGetField(first, TIFFTAG_COMPRESSION, &comp);
-            TIFFClose(first);
+            TiffReader firstReader(partFiles[0]);
+            uint32_t w = firstReader.width();
+            uint32_t h = firstReader.height();
+            uint32_t tw = firstReader.tileWidth();
+            uint32_t th = firstReader.tileHeight();
+            uint16_t comp = firstReader.compression();
+            int outCvType = firstReader.cvType();
 
-            // Create output
-            TIFF* out = TIFFOpen(finalPath.c_str(), "w");
-            if (!out) { std::cerr << "Cannot create " << finalPath << "\n"; continue; }
-            TIFFSetField(out, TIFFTAG_IMAGEWIDTH, w);
-            TIFFSetField(out, TIFFTAG_IMAGELENGTH, h);
-            TIFFSetField(out, TIFFTAG_TILEWIDTH, tw);
-            TIFFSetField(out, TIFFTAG_TILELENGTH, th);
-            TIFFSetField(out, TIFFTAG_BITSPERSAMPLE, bps);
-            TIFFSetField(out, TIFFTAG_SAMPLESPERPIXEL, spp);
-            TIFFSetField(out, TIFFTAG_SAMPLEFORMAT, sf);
-            TIFFSetField(out, TIFFTAG_COMPRESSION, comp);
-            TIFFSetField(out, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+            // Create output writer
+            TiffWriter outWriter(finalPath, w, h, outCvType, tw, th, 0.0f, comp);
 
-            tmsize_t tileSizeBytes = TIFFTileSize(out);
-            std::vector<uint8_t> buf(static_cast<size_t>(tileSizeBytes), 0);
-            std::vector<uint8_t> zeroBuf(static_cast<size_t>(tileSizeBytes), 0);
+            size_t tileSizeBytes = firstReader.tileBytes();
+            std::vector<uint8_t> buf(tileSizeBytes, 0);
+            std::vector<uint8_t> zeroBuf(tileSizeBytes, 0);
 
             // For each tile position, find the part that has non-zero data
             uint32_t tilesX = (w + tw - 1) / tw;
@@ -892,27 +875,27 @@ int main(int argc, char *argv[])
                 for (uint32_t tx = 0; tx < tilesX; tx++) {
                     bool found = false;
                     for (auto& pf : partFiles) {
-                        TIFF* pt = TIFFOpen(pf.c_str(), "r");
-                        if (!pt) continue;
-                        ttile_t ti = TIFFComputeTile(pt, tx * tw, ty * th, 0, 0);
-                        tmsize_t r = TIFFReadEncodedTile(pt, ti, buf.data(), tileSizeBytes);
-                        TIFFClose(pt);
-                        if (r > 0 && buf != zeroBuf) {
-                            found = true;
-                            break;
+                        try {
+                            TiffReader partReader(pf);
+                            if (tx < partReader.tilesAcross() && ty < partReader.tilesDown()) {
+                                partReader.readTile(tx, ty, buf.data(), tileSizeBytes);
+                                if (buf != zeroBuf) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        } catch (...) {
+                            continue;
                         }
                     }
-                    ttile_t outTi = TIFFComputeTile(out, tx * tw, ty * th, 0, 0);
                     if (found) {
-                        TIFFWriteEncodedTile(out, outTi, buf.data(), tileSizeBytes);
+                        outWriter.writeRawTile(tx, ty, buf.data(), tileSizeBytes);
                         tilesMerged++;
-                    } else {
-                        TIFFWriteEncodedTile(out, outTi, zeroBuf.data(), tileSizeBytes);
                     }
+                    // Unfound tiles stay as zeros (default in TiffWriter)
                 }
             }
-            TIFFWriteDirectory(out);
-            TIFFClose(out);
+            outWriter.close();
 
             // Delete part files
             for (auto& pf : partFiles)

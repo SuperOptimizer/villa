@@ -15,7 +15,6 @@
 #include <xtensor/containers/xarray.hpp>
 
 #include <opencv2/core.hpp>
-#include <tiffio.h>
 #include "vc/core/util/Tiff.hpp"
 
 namespace po = boost::program_options;
@@ -24,11 +23,10 @@ using json = nlohmann::json;
 
 static uint16_t parseCompression(const std::string& s)
 {
-    if (s == "packbits") return COMPRESSION_PACKBITS;
-    if (s == "lzw") return COMPRESSION_LZW;
-    if (s == "deflate") return COMPRESSION_DEFLATE;
-    if (s == "none") return COMPRESSION_NONE;
-    throw std::runtime_error("Unknown compression: " + s);
+    if (s == "packbits") return tiff::PackBits;
+    if (s == "lzw") return tiff::LZW;
+    if (s == "none") return tiff::None;
+    throw std::runtime_error("Unknown compression: " + s + " (supported: packbits, lzw, none)");
 }
 
 int main(int argc, char** argv)
@@ -46,7 +44,7 @@ int main(int argc, char** argv)
         ("level,l", po::value<int>(&level)->default_value(0),
          "Pyramid level to read (default 0)")
         ("compression,c", po::value<std::string>(&compressionStr)->default_value("packbits"),
-         "TIFF compression: packbits, lzw, deflate, none");
+         "TIFF compression: packbits, lzw, none");
 
     po::variables_map vm;
     try {

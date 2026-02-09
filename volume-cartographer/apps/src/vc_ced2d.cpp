@@ -1,4 +1,4 @@
-#include <opencv2/imgcodecs.hpp>
+#include "vc/core/util/Tiff.hpp"
 #include <opencv2/imgproc.hpp>
 #include <opencv2/core.hpp>
 #include <boost/program_options.hpp>
@@ -1108,15 +1108,9 @@ int main(int argc, char** argv) {
                     std::ostringstream name;
                     name << std::setw(static_cast<int>(pad_width)) << std::setfill('0') << z << ".tif";
                     fs::path out_file = out_root / name.str();
-                    std::vector<int> params = { cv::IMWRITE_TIFF_COMPRESSION, 32773 };
                     if (local_cfg.coherence_field_ && local_cfg.direction_field_) {
                         cv::Mat dirrgb = compute_direction_field_rgb(src, local_cfg);
-                        if (!cv::imwrite(out_file.string(), dirrgb)) {
-                            #ifdef _OPENMP
-                            if (omp_get_thread_num() == 0)
-                            #endif
-                            std::cerr << "Failed to write RGB TIFF: " << out_file << std::endl;
-                        }
+                        tiff::imwrite(out_file, dirrgb);
                     } else {
                         cv::Mat out_u8;
                         if (local_cfg.coherence_field_) {
@@ -1126,12 +1120,7 @@ int main(int argc, char** argv) {
                             cv::Mat out = process_one_image(src, local_cfg);
                             out_u8 = to_uint8_scaled_and_threshold(out, local_cfg);
                         }
-                        if (!cv::imwrite(out_file.string(), out_u8, params)) {
-                            #ifdef _OPENMP
-                            if (omp_get_thread_num() == 0)
-                            #endif
-                            std::cerr << "Failed to write TIFF: " << out_file << std::endl;
-                        }
+                        tiff::imwrite(out_file, out_u8, tiff::PackBits);
                     }
                     
                     if (false) {
@@ -1362,7 +1351,6 @@ int main(int argc, char** argv) {
                 return 1;
             }
             std::cout << "Found " << files.size() << " TIFF files in " << in_path << "\n";
-            std::vector<int> params = { cv::IMWRITE_TIFF_COMPRESSION, 32773 }; // packbits
             jobs = std::max(1, cfg.jobs_);
             bool multi = jobs > 1;
             std::cout << "Folder jobs: " << jobs << " (per-image compute threads: " << compute_threads << ")\n";
@@ -1380,7 +1368,7 @@ int main(int argc, char** argv) {
                 #pragma omp parallel for num_threads(jobs) schedule(dynamic)
                 for (int i = 0; i < static_cast<int>(files.size()); ++i) {
                     const auto f = files[i];
-                    cv::Mat img = cv::imread(f, cv::IMREAD_UNCHANGED);
+                    cv::Mat img = tiff::imread(f);
                     namespace fs = std::filesystem;
                     std::string base = fs::path(f).filename().string();
                     if (img.empty() || img.channels() != 1 || img.dims != 2) {
@@ -1396,7 +1384,7 @@ int main(int argc, char** argv) {
                     std::string out_file = (fs::path(out_path) / base).string();
                     if (local_cfg.coherence_field_ && local_cfg.direction_field_) {
                         cv::Mat dirrgb = compute_direction_field_rgb(img, local_cfg);
-                        (void)cv::imwrite(out_file, dirrgb);
+                        tiff::imwrite(out_file, dirrgb);
                     } else {
                         cv::Mat out_u8;
                         if (local_cfg.coherence_field_) {
@@ -1406,7 +1394,7 @@ int main(int argc, char** argv) {
                             cv::Mat out = process_one_image(img, local_cfg);
                             out_u8 = to_uint8_scaled_and_threshold(out, local_cfg);
                         }
-                        (void)cv::imwrite(out_file, out_u8, params);
+                        tiff::imwrite(out_file, out_u8, tiff::PackBits);
                     }
                     int done = ++completed;
                     int rem = total - done;
@@ -1424,12 +1412,12 @@ int main(int argc, char** argv) {
                     const auto& f = files[idx];
                     namespace fs = std::filesystem;
                     std::string base = fs::path(f).filename().string();
-                    cv::Mat img = cv::imread(f, cv::IMREAD_UNCHANGED);
+                    cv::Mat img = tiff::imread(f);
                     if (!(img.empty() || img.channels() != 1 || img.dims != 2)) {
                         std::string out_file = (fs::path(out_path) / base).string();
                         if (cfg.coherence_field_ && cfg.direction_field_) {
                             cv::Mat dirrgb = compute_direction_field_rgb(img, cfg);
-                            (void)cv::imwrite(out_file, dirrgb);
+                            tiff::imwrite(out_file, dirrgb);
                         } else {
                             cv::Mat out_u8;
                             if (cfg.coherence_field_) {
@@ -1439,7 +1427,7 @@ int main(int argc, char** argv) {
                                 cv::Mat out = process_one_image(img, cfg);
                                 out_u8 = to_uint8_scaled_and_threshold(out, cfg);
                             }
-                            (void)cv::imwrite(out_file, out_u8, params);
+                            tiff::imwrite(out_file, out_u8, tiff::PackBits);
                         }
                     }
                     int done = ++completed;
@@ -1451,7 +1439,7 @@ int main(int argc, char** argv) {
             }
             std::cout << std::endl << "Done folder processing." << std::endl;
         } else {
-            cv::Mat img = cv::imread(in_path, cv::IMREAD_UNCHANGED);
+            cv::Mat img = tiff::imread(in_path);
             if (img.empty()) {
                 std::cerr << "Failed to read input TIFF: " << in_path << std::endl;
                 return 1;
@@ -1465,13 +1453,9 @@ int main(int argc, char** argv) {
                 return 1;
             }
 
-            std::vector<int> params = { cv::IMWRITE_TIFF_COMPRESSION, 32773 };
             if (cfg.coherence_field_ && cfg.direction_field_) {
                 cv::Mat dirrgb = compute_direction_field_rgb(img, cfg);
-                if (!cv::imwrite(out_path, dirrgb)) {
-                    std::cerr << "Failed to write output TIFF: " << out_path << std::endl;
-                    return 1;
-                }
+                tiff::imwrite(out_path, dirrgb);
             } else {
                 cv::Mat out_u8;
                 if (cfg.coherence_field_) {
@@ -1481,10 +1465,7 @@ int main(int argc, char** argv) {
                     cv::Mat out = process_one_image(img, cfg);
                     out_u8 = to_uint8_scaled_and_threshold(out, cfg);
                 }
-                if (!cv::imwrite(out_path, out_u8, params)) {
-                    std::cerr << "Failed to write output TIFF: " << out_path << std::endl;
-                    return 1;
-                }
+                tiff::imwrite(out_path, out_u8, tiff::PackBits);
             }
             std::cout << "Saved: " << out_path << std::endl;
         }

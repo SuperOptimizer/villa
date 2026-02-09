@@ -10,7 +10,7 @@
 #include "z5/multiarray/xtensor_access.hxx"
 
 #include <boost/program_options.hpp>
-#include <opencv2/imgcodecs.hpp>
+#include "vc/core/util/Tiff.hpp"
 
 namespace po = boost::program_options;
 namespace fs = std::filesystem;
@@ -160,7 +160,7 @@ int continuous3d_main(const po::variables_map& vm) {
     int seed_y = box_h / 2;
     int seed_z = box_d / 2;
 
-    cv::imwrite("diffusion_slice_crop.tif", volume_slice.planes[seed_z]);
+    tiff::imwrite("diffusion_slice_crop.tif", volume_slice.planes[seed_z]);
     std::cout << "Saved debug slice crop to diffusion_slice_crop.tif" << std::endl;
 
     StupidTensor<float> density(cv::Size(box_w, box_h), box_d);
@@ -229,7 +229,7 @@ int continuous3d_main(const po::variables_map& vm) {
         }
     }
 
-    cv::imwrite(output_path.string(), normalized_slice);
+    tiff::imwrite(output_path, normalized_slice);
 
     std::cout << "Saved output slice to " << output_path << std::endl;
 

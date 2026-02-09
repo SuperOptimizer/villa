@@ -9,7 +9,7 @@
 #include "z5/multiarray/xtensor_access.hxx"
 #include "z5/attributes.hxx"
 
-#include <opencv2/imgcodecs.hpp>
+#include "vc/core/util/Tiff.hpp"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
@@ -137,7 +137,7 @@ int main(int argc, char *argv[])
         cv::cvtColor(frame, col, cv::COLOR_GRAY2BGR);
 
         vid << col;
-        cv::imwrite("col.tif", col);
+        tiff::imwrite("col.tif", col);
     }
 
     return EXIT_SUCCESS;

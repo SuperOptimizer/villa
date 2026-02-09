@@ -1,6 +1,7 @@
 #include "spiral.hpp"
 #include "support.hpp"
 #include "spiral_ceres.hpp"
+#include "vc/core/util/Tiff.hpp"
 
 #include <iostream>
 #include <vector>
@@ -132,11 +133,11 @@ void run_spiral_generation(
     if (vm.count("debug")) {
         cv::Mat skeleton_img;
         cv::ximgproc::thinning(binary_slice, skeleton_img, cv::ximgproc::THINNING_GUOHALL);
-        cv::imwrite("skeleton.tif", skeleton_img);
+        tiff::imwrite("skeleton.tif", skeleton_img);
 
 
         cv::Mat vis = visualize_normal_grid(normal_grid, slice_mat.size());
-        cv::imwrite("normal_constraints_vis.tif", vis);
+        tiff::imwrite("normal_constraints_vis.tif", vis);
     }
 
     if (vm["no-optimized-spiral"].as<bool>()) {
@@ -616,7 +617,7 @@ void generate_optimized_spiral(
     }
 
     if (debug) {
-        cv::imwrite("spiral_generation_steps.tif", steps_vis);
+        tiff::imwrite("spiral_generation_steps.tif", steps_vis);
         std::cout << "Saved spiral generation steps visualization to spiral_generation_steps.tif" << std::endl;
     }
 }

@@ -154,9 +154,6 @@ if (NOT json_POPULATED)
     add_subdirectory(${json_SOURCE_DIR} ${json_BINARY_DIR} EXCLUDE_FROM_ALL)
 endif()
 
-# ---- TIFF --------------------------------------------------------------------
-find_package(TIFF REQUIRED)
-
 # ---- Boost (apps/utils only) -------------------------------------------------
 find_package(Boost REQUIRED COMPONENTS program_options)
 
