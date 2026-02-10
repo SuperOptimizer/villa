@@ -2,17 +2,13 @@
 
 #include "Tile.hpp"
 #include "vc/core/util/ChunkCache.hpp"
+#include "vc/core/util/Zarr.hpp"
 
 #include <array>
 #include <cstdint>
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_map>
-
-// Forward declaration
-namespace vc::zarr {
-class Dataset;
-}
 
 namespace vc::simd {
 
@@ -27,7 +23,14 @@ class SparseVolume {
 public:
     using Geom = TileGeometry<N>;
 
-    SparseVolume(vc::zarr::Dataset* ds, ChunkCache<T>* cache);
+    SparseVolume(vc::zarr::Dataset* ds, ChunkCache<T>* cache)
+        : ds_(ds), cache_(cache)
+    {
+        auto s = ds->shape();
+        shape_ = {static_cast<int>(s[0]),
+                  static_cast<int>(s[1]),
+                  static_cast<int>(s[2])};
+    }
 
     SparseVolume(SparseVolume&& other) noexcept
         : ds_(other.ds_)

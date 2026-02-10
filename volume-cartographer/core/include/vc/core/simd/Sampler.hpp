@@ -126,20 +126,8 @@ public:
         return (1 - fz) * c0 + fz * c1;
     }
 
-private:
-    static constexpr int kSlots = 8;
-
-    struct Slot {
-        int tz = -1, ty = -1, tx = -1;
-        const T* data = nullptr;
-        typename ChunkCache<T>::ChunkPtr lifetime;
-    };
-
-    SparseVolume<T, N>& vol_;
-    Slot slots_[kSlots]{};
-    int mru_ = 0;
-    const T* data_ = nullptr;
-
+    // Load/switch to the tile containing chunk coords (tz, ty, tx).
+    // After calling, current_data() returns the tile pointer (or nullptr).
     void update_tile(int tz, int ty, int tx) {
         // Check MRU slot first
         auto& m = slots_[mru_];
@@ -168,6 +156,23 @@ private:
         mru_ = victim;
         data_ = v.data;
     }
+
+    // Current tile data pointer (valid after update_tile; nullptr if tile missing)
+    const T* current_data() const { return data_; }
+
+private:
+    static constexpr int kSlots = 8;
+
+    struct Slot {
+        int tz = -1, ty = -1, tx = -1;
+        const T* data = nullptr;
+        typename ChunkCache<T>::ChunkPtr lifetime;
+    };
+
+    SparseVolume<T, N>& vol_;
+    Slot slots_[kSlots]{};
+    int mru_ = 0;
+    const T* data_ = nullptr;
 };
 
 }  // namespace vc::simd

@@ -184,19 +184,19 @@ public:
     bool readChunk(std::size_t iz, std::size_t iy, std::size_t ix, void* out) const;
     void writeChunk(std::size_t iz, std::size_t iy, std::size_t ix, const void* data);
 
-    // -- Sharded inner chunk access --
-    /// Read a single inner chunk from a sharded dataset.
-    /// shardIdx = which shard, innerIdx = which inner chunk within that shard.
-    bool readInnerChunk(const ShapeType& shardIdx,
-                        const ShapeType& innerIdx, void* out) const;
+    // -- Sharded chunk access --
+    /// Read a single chunk from a sharded dataset.
+    /// shardIdx = which shard, innerIdx = which chunk within that shard.
+    bool readShardedChunk(const ShapeType& shardIdx,
+                          const ShapeType& innerIdx, void* out) const;
 
-    /// Write a single inner chunk to a sharded dataset.
-    /// Global chunk coordinates: chunkIdx[d] indexes the inner chunk grid
+    /// Write a single chunk to a sharded dataset.
+    /// Global chunk coordinates: chunkIdx[d] indexes the chunk grid
     /// (i.e. chunkIdx = global_voxel_offset / innerChunkShape).
-    /// Internally maps to (shardIdx, innerIdx), compresses, and buffers.
+    /// Internally maps to (shardIdx, chunkIdx within shard), compresses, and buffers.
     /// Call flush() to write buffered shards to disk.
     /// data must be innerChunkSize * dtypeSize() bytes.
-    void writeInnerChunk(const ShapeType& chunkIdx, const void* data);
+    void writeShardedChunk(const ShapeType& chunkIdx, const void* data);
 
     /// Flush buffered shard writes to disk.
     /// Only relevant for sharded datasets; no-op otherwise.

@@ -957,12 +957,12 @@ void Dataset::writeChunk(std::size_t iz, std::size_t iy, std::size_t ix, const v
 
 // -- Sharded access -----------------------------------------------------------
 
-bool Dataset::readInnerChunk(const ShapeType& shardIdx,
-                              const ShapeType& innerIdx, void* out) const
+bool Dataset::readShardedChunk(const ShapeType& shardIdx,
+                               const ShapeType& innerIdx, void* out) const
 {
     auto* sc = codecs_.shardingCodec();
     if (!sc) {
-        throw std::runtime_error("readInnerChunk: dataset is not sharded");
+        throw std::runtime_error("readShardedChunk: dataset is not sharded");
     }
 
     auto cp = chunkPath(shardIdx);
@@ -1000,10 +1000,10 @@ bool Dataset::readInnerChunk(const ShapeType& shardIdx,
     return found;
 }
 
-void Dataset::writeInnerChunk(const ShapeType& chunkIdx, const void* data)
+void Dataset::writeShardedChunk(const ShapeType& chunkIdx, const void* data)
 {
     if (!isSharded()) {
-        throw std::runtime_error("writeInnerChunk: dataset is not sharded");
+        throw std::runtime_error("writeShardedChunk: dataset is not sharded");
     }
 
     initShardBuffer();
@@ -1403,7 +1403,7 @@ void writeSubarray(
                         }
                     }
 
-                    dsRef.writeInnerChunk(
+                    dsRef.writeShardedChunk(
                         ShapeType{iz, iy, ix}, chunkBuf.data());
                 }
             }
@@ -1698,7 +1698,7 @@ void writeSubarray(
                         }
                     }
 
-                    dsRef.writeInnerChunk(
+                    dsRef.writeShardedChunk(
                         ShapeType{iz, iy, ix}, chunkBuf.data());
                 }
             }

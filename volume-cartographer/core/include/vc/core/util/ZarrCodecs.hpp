@@ -64,6 +64,16 @@ struct BytesToBytesCodec : Codec {
                                         std::size_t len) const = 0;
     virtual std::vector<uint8_t> decode(const uint8_t* data, std::size_t len,
                                         std::size_t expectedLen) const = 0;
+    /// In-place encode: replaces buf contents with encoded data.
+    /// Default calls encode(buf.data(), buf.size()) and moves result.
+    virtual void encodeInPlace(std::vector<uint8_t>& buf) const {
+        buf = encode(buf.data(), buf.size());
+    }
+    /// In-place decode: replaces buf contents with decoded data.
+    virtual void decodeInPlace(std::vector<uint8_t>& buf,
+                               std::size_t expectedLen) const {
+        buf = decode(buf.data(), buf.size(), expectedLen);
+    }
 };
 
 // ============================================================================
@@ -113,6 +123,9 @@ struct BloscCodec : BytesToBytesCodec {
                                 std::size_t len) const override;
     std::vector<uint8_t> decode(const uint8_t* data, std::size_t len,
                                 std::size_t expectedLen) const override;
+    void encodeInPlace(std::vector<uint8_t>& buf) const override;
+    void decodeInPlace(std::vector<uint8_t>& buf,
+                       std::size_t expectedLen) const override;
 
     static std::unique_ptr<BloscCodec> fromJson(const nlohmann::json& j);
 };
@@ -127,6 +140,7 @@ struct GzipCodec : BytesToBytesCodec {
                                 std::size_t len) const override;
     std::vector<uint8_t> decode(const uint8_t* data, std::size_t len,
                                 std::size_t expectedLen) const override;
+    void encodeInPlace(std::vector<uint8_t>& buf) const override;
 
     static std::unique_ptr<GzipCodec> fromJson(const nlohmann::json& j);
 };
@@ -142,6 +156,9 @@ struct ZstdCodec : BytesToBytesCodec {
                                 std::size_t len) const override;
     std::vector<uint8_t> decode(const uint8_t* data, std::size_t len,
                                 std::size_t expectedLen) const override;
+    void encodeInPlace(std::vector<uint8_t>& buf) const override;
+    void decodeInPlace(std::vector<uint8_t>& buf,
+                       std::size_t expectedLen) const override;
 
     static std::unique_ptr<ZstdCodec> fromJson(const nlohmann::json& j);
 };
@@ -154,6 +171,9 @@ struct Crc32cCodec : BytesToBytesCodec {
                                 std::size_t len) const override;
     std::vector<uint8_t> decode(const uint8_t* data, std::size_t len,
                                 std::size_t expectedLen) const override;
+    void encodeInPlace(std::vector<uint8_t>& buf) const override;
+    void decodeInPlace(std::vector<uint8_t>& buf,
+                       std::size_t expectedLen) const override;
 
     static std::unique_ptr<Crc32cCodec> fromJson(const nlohmann::json& j);
 };

@@ -282,6 +282,41 @@ std::vector<uint8_t> BloscCodec::decode(const uint8_t* data, std::size_t len,
     return out;
 }
 
+void BloscCodec::encodeInPlace(std::vector<uint8_t>& buf) const
+{
+    std::size_t len = buf.size();
+    std::size_t maxOut = len + BLOSC_MAX_OVERHEAD;
+    std::vector<uint8_t> out(maxOut);
+
+    int compSize = blosc_compress_ctx(
+        clevel, shuffle, static_cast<std::size_t>(typesize), len, buf.data(),
+        out.data(), maxOut, cname.c_str(), static_cast<std::size_t>(blocksize),
+        1 /* numinternalthreads */);
+
+    if (compSize <= 0) {
+        throw std::runtime_error("BloscCodec: compression failed");
+    }
+
+    out.resize(static_cast<std::size_t>(compSize));
+    buf = std::move(out);
+}
+
+void BloscCodec::decodeInPlace(std::vector<uint8_t>& buf,
+                                std::size_t expectedLen) const
+{
+    std::vector<uint8_t> out(expectedLen);
+
+    int decompSize = blosc_decompress_ctx(buf.data(), out.data(), expectedLen,
+                                           1 /* numinternalthreads */);
+
+    if (decompSize < 0) {
+        throw std::runtime_error("BloscCodec: decompression failed");
+    }
+
+    out.resize(static_cast<std::size_t>(decompSize));
+    buf = std::move(out);
+}
+
 std::unique_ptr<BloscCodec> BloscCodec::fromJson(const nlohmann::json& j)
 {
     auto c = std::make_unique<BloscCodec>();
@@ -380,6 +415,34 @@ std::vector<uint8_t> GzipCodec::decode(const uint8_t* data, std::size_t len,
     return out;
 }
 
+void GzipCodec::encodeInPlace(std::vector<uint8_t>& buf) const
+{
+    z_stream strm{};
+    int ret = deflateInit2(&strm, level, Z_DEFLATED, 15 + 16, 8,
+                           Z_DEFAULT_STRATEGY);
+    if (ret != Z_OK) {
+        throw std::runtime_error("GzipCodec: deflateInit2 failed");
+    }
+
+    strm.next_in = buf.data();
+    strm.avail_in = static_cast<uInt>(buf.size());
+
+    std::vector<uint8_t> out(deflateBound(&strm, static_cast<uLong>(buf.size())));
+    strm.next_out = out.data();
+    strm.avail_out = static_cast<uInt>(out.size());
+
+    ret = deflate(&strm, Z_FINISH);
+    if (ret != Z_STREAM_END) {
+        deflateEnd(&strm);
+        throw std::runtime_error("GzipCodec: deflate failed with code " +
+                                 std::to_string(ret));
+    }
+
+    out.resize(strm.total_out);
+    deflateEnd(&strm);
+    buf = std::move(out);
+}
+
 std::unique_ptr<GzipCodec> GzipCodec::fromJson(const nlohmann::json& j)
 {
     auto c = std::make_unique<GzipCodec>();
@@ -433,6 +496,40 @@ std::vector<uint8_t> ZstdCodec::decode(const uint8_t* data, std::size_t len,
     return out;
 }
 
+void ZstdCodec::encodeInPlace(std::vector<uint8_t>& buf) const
+{
+    std::size_t len = buf.size();
+    std::size_t maxOut = ZSTD_compressBound(len);
+    std::vector<uint8_t> out(maxOut);
+
+    std::size_t compSize = ZSTD_compress(out.data(), maxOut, buf.data(), len, level);
+    if (ZSTD_isError(compSize)) {
+        throw std::runtime_error(
+            std::string("ZstdCodec: compression failed: ") +
+            ZSTD_getErrorName(compSize));
+    }
+
+    out.resize(compSize);
+    buf = std::move(out);
+}
+
+void ZstdCodec::decodeInPlace(std::vector<uint8_t>& buf,
+                               std::size_t expectedLen) const
+{
+    std::vector<uint8_t> out(expectedLen);
+
+    std::size_t decompSize =
+        ZSTD_decompress(out.data(), expectedLen, buf.data(), buf.size());
+    if (ZSTD_isError(decompSize)) {
+        throw std::runtime_error(
+            std::string("ZstdCodec: decompression failed: ") +
+            ZSTD_getErrorName(decompSize));
+    }
+
+    out.resize(decompSize);
+    buf = std::move(out);
+}
+
 std::unique_ptr<ZstdCodec> ZstdCodec::fromJson(const nlohmann::json& j)
 {
     auto c = std::make_unique<ZstdCodec>();
@@ -455,17 +552,28 @@ nlohmann::json Crc32cCodec::toJson() const
 std::vector<uint8_t> Crc32cCodec::encode(const uint8_t* data,
                                           std::size_t len) const
 {
-    // Append 4-byte CRC32C checksum
+    // Compute CRC before modifying anything
+    uint32_t crc = computeCrc32c(data, len);
+
+    // Copy data + append 4-byte CRC32C checksum (little-endian)
     std::vector<uint8_t> out(len + 4);
     std::memcpy(out.data(), data, len);
-
-    uint32_t crc = computeCrc32c(data, len);
-    // Store as little-endian
     out[len + 0] = static_cast<uint8_t>(crc & 0xFF);
     out[len + 1] = static_cast<uint8_t>((crc >> 8) & 0xFF);
     out[len + 2] = static_cast<uint8_t>((crc >> 16) & 0xFF);
     out[len + 3] = static_cast<uint8_t>((crc >> 24) & 0xFF);
     return out;
+}
+
+void Crc32cCodec::encodeInPlace(std::vector<uint8_t>& buf) const
+{
+    uint32_t crc = computeCrc32c(buf.data(), buf.size());
+    buf.resize(buf.size() + 4);
+    std::size_t len = buf.size() - 4;
+    buf[len + 0] = static_cast<uint8_t>(crc & 0xFF);
+    buf[len + 1] = static_cast<uint8_t>((crc >> 8) & 0xFF);
+    buf[len + 2] = static_cast<uint8_t>((crc >> 16) & 0xFF);
+    buf[len + 3] = static_cast<uint8_t>((crc >> 24) & 0xFF);
 }
 
 std::vector<uint8_t> Crc32cCodec::decode(const uint8_t* data, std::size_t len,
@@ -487,6 +595,24 @@ std::vector<uint8_t> Crc32cCodec::decode(const uint8_t* data, std::size_t len,
     }
 
     return std::vector<uint8_t>(data, data + dataLen);
+}
+
+void Crc32cCodec::decodeInPlace(std::vector<uint8_t>& buf,
+                                 std::size_t /*expectedLen*/) const
+{
+    if (buf.size() < 4) {
+        throw std::runtime_error("Crc32cCodec: data too short for checksum");
+    }
+    std::size_t dataLen = buf.size() - 4;
+    uint32_t stored = static_cast<uint32_t>(buf[dataLen]) |
+                      (static_cast<uint32_t>(buf[dataLen + 1]) << 8) |
+                      (static_cast<uint32_t>(buf[dataLen + 2]) << 16) |
+                      (static_cast<uint32_t>(buf[dataLen + 3]) << 24);
+    uint32_t computed = computeCrc32c(buf.data(), dataLen);
+    if (stored != computed) {
+        throw std::runtime_error("Crc32cCodec: checksum mismatch");
+    }
+    buf.resize(dataLen);
 }
 
 std::unique_ptr<Crc32cCodec> Crc32cCodec::fromJson(const nlohmann::json&)
@@ -970,10 +1096,9 @@ std::vector<uint8_t> CodecPipeline::encode(const void* data,
         arrayToBytes->encode(buf, shape, elemSize);
     }
 
-    // 3. Bytes→bytes codecs (in order)
+    // 3. Bytes→bytes codecs (in order) — use in-place to avoid extra copies
     for (auto& codec : bytesToBytes) {
-        auto encoded = codec->encode(buf.data(), buf.size());
-        buf = std::move(encoded);
+        codec->encodeInPlace(buf);
     }
 
     return buf;
@@ -989,10 +1114,9 @@ void CodecPipeline::decode(const uint8_t* compressed, std::size_t compLen,
     // Tracking expected size after bytes→bytes decode
     std::size_t expectedAfterB2B = outLen;
 
-    // 3. Bytes→bytes codecs (in reverse order)
+    // 3. Bytes→bytes codecs (in reverse order) — use in-place to avoid copies
     for (auto it = bytesToBytes.rbegin(); it != bytesToBytes.rend(); ++it) {
-        auto decoded = (*it)->decode(buf.data(), buf.size(), expectedAfterB2B);
-        buf = std::move(decoded);
+        (*it)->decodeInPlace(buf, expectedAfterB2B);
     }
 
     // 2. Array→bytes codec (reverse = decode)

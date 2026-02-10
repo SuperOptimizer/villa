@@ -6,6 +6,7 @@
 #include "vc/core/types/ChunkedTensor.hpp"
 #include "vc/core/util/StreamOperators.hpp"
 #include "vc/core/util/ABFFlattening.hpp"
+#include "vc/core/simd/simd.hpp"
 
 #include <nlohmann/json.hpp>
 #include <csignal>
@@ -30,6 +31,8 @@
 
 namespace po = boost::program_options;
 using json = nlohmann::json;
+
+enum class SampleMode { Nearest, Trilinear };
 
 // ============================================================
 // Tile coordinate transform (rotation + flip)
@@ -467,13 +470,142 @@ static std::vector<cv::Mat> processRawSlices(std::vector<cv::Mat_<T>>& raw, int 
     return result;
 }
 
+// ============================================================
+// SIMD sampler: inline multi-slice sampling via vc::simd::Sampler
+// ============================================================
+
+// Sample all slices for a tile/band region using vc::simd::Sampler.
+// Replaces sampleTileSlices / readMultiSlice with compile-time tile strides.
+template <typename T, int N>
+static void sampleSlicesSimd(
+    std::vector<cv::Mat_<T>>& raw,
+    vc::simd::Sampler<T, N>& sampler,
+    const cv::Mat_<cv::Vec3f>& base,
+    const cv::Mat_<cv::Vec3f>& dirs,
+    const std::vector<float>& offsets,
+    SampleMode mode)
+{
+    using Geom = vc::simd::TileGeometry<N>;
+    const int h = base.rows, w = base.cols;
+    const int nSlices = static_cast<int>(offsets.size());
+
+    raw.resize(nSlices);
+    for (int si = 0; si < nSlices; ++si)
+        raw[si].create(h, w);
+
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const auto& b = base(y, x);
+            const auto& d = dirs(y, x);
+
+            // NaN check — invalid surface point
+            if (std::isnan(b[0])) {
+                for (int si = 0; si < nSlices; ++si)
+                    raw[si](y, x) = T{};
+                continue;
+            }
+
+            // Single-tile check: compute bounding chunk of first/last sample
+            float vz0 = b[0] + d[0] * offsets[0];
+            float vy0 = b[1] + d[1] * offsets[0];
+            float vx0 = b[2] + d[2] * offsets[0];
+            float vz1 = b[0] + d[0] * offsets[nSlices - 1];
+            float vy1 = b[1] + d[1] * offsets[nSlices - 1];
+            float vx1 = b[2] + d[2] * offsets[nSlices - 1];
+
+            int tz0 = Geom::chunk_id(static_cast<int>(std::floor(std::min(vz0, vz1))));
+            int tz1 = Geom::chunk_id(static_cast<int>(std::floor(std::max(vz0, vz1))) + 1);
+            int ty0 = Geom::chunk_id(static_cast<int>(std::floor(std::min(vy0, vy1))));
+            int ty1 = Geom::chunk_id(static_cast<int>(std::floor(std::max(vy0, vy1))) + 1);
+            int tx0 = Geom::chunk_id(static_cast<int>(std::floor(std::min(vx0, vx1))));
+            int tx1 = Geom::chunk_id(static_cast<int>(std::floor(std::max(vx0, vx1))) + 1);
+
+            bool singleTile = (tz0 == tz1 && ty0 == ty1 && tx0 == tx1);
+
+            if (singleTile && mode == SampleMode::Trilinear) {
+                // FAST PATH: all slices in same tile, direct pointer math
+                sampler.update_tile(tz0, ty0, tx0);
+                const T* data = sampler.current_data();
+                if (!data) {
+                    for (int si = 0; si < nSlices; ++si)
+                        raw[si](y, x) = T{};
+                    continue;
+                }
+
+                for (int si = 0; si < nSlices; ++si) {
+                    float vz = b[0] + d[0] * offsets[si];
+                    float vy = b[1] + d[1] * offsets[si];
+                    float vx = b[2] + d[2] * offsets[si];
+                    int iz = static_cast<int>(std::floor(vz));
+                    int iy = static_cast<int>(std::floor(vy));
+                    int ix = static_cast<int>(std::floor(vx));
+                    float fz = vz - iz, fy = vy - iy, fx = vx - ix;
+                    int lz = Geom::local(iz), ly = Geom::local(iy), lx = Geom::local(ix);
+                    float c000 = data[Geom::offset3d(lz,     ly,     lx)];
+                    float c001 = data[Geom::offset3d(lz,     ly,     lx + 1)];
+                    float c010 = data[Geom::offset3d(lz,     ly + 1, lx)];
+                    float c011 = data[Geom::offset3d(lz,     ly + 1, lx + 1)];
+                    float c100 = data[Geom::offset3d(lz + 1, ly,     lx)];
+                    float c101 = data[Geom::offset3d(lz + 1, ly,     lx + 1)];
+                    float c110 = data[Geom::offset3d(lz + 1, ly + 1, lx)];
+                    float c111 = data[Geom::offset3d(lz + 1, ly + 1, lx + 1)];
+                    float c00 = (1 - fx) * c000 + fx * c001;
+                    float c01 = (1 - fx) * c010 + fx * c011;
+                    float c10 = (1 - fx) * c100 + fx * c101;
+                    float c11 = (1 - fx) * c110 + fx * c111;
+                    float c0 = (1 - fy) * c00 + fy * c01;
+                    float c1 = (1 - fy) * c10 + fy * c11;
+                    raw[si](y, x) = static_cast<T>((1 - fz) * c0 + fz * c1);
+                }
+            } else {
+                // SLOW PATH: per-sample via Sampler methods
+                for (int si = 0; si < nSlices; ++si) {
+                    float vz = b[0] + d[0] * offsets[si];
+                    float vy = b[1] + d[1] * offsets[si];
+                    float vx = b[2] + d[2] * offsets[si];
+                    if (mode == SampleMode::Nearest)
+                        raw[si](y, x) = sampler.sample_nearest(vz, vy, vx);
+                    else
+                        raw[si](y, x) = static_cast<T>(sampler.sample_trilinear_fast(vz, vy, vx));
+                }
+            }
+        }
+    }
+}
+
+// Runtime dispatch over chunk size N: creates SparseVolume<T,N> + Sampler<T,N>
+// and calls sampleSlicesSimd. Thread-local sampler is stored in a thread_local
+// unique_ptr keyed by vol pointer.
+template <typename T, int N>
+static void sampleSlicesDispatch(
+    std::vector<cv::Mat_<T>>& raw,
+    vc::zarr::Dataset* ds,
+    ChunkCache<T>* cache,
+    const cv::Mat_<cv::Vec3f>& base,
+    const cv::Mat_<cv::Vec3f>& dirs,
+    const std::vector<float>& offsets,
+    SampleMode mode,
+    vc::simd::SparseVolume<T, N>& vol)
+{
+    // Thread-local sampler — each OMP thread gets its own
+    thread_local std::unique_ptr<vc::simd::Sampler<T, N>> tlSampler;
+    thread_local vc::simd::SparseVolume<T, N>* tlVol = nullptr;
+    if (tlVol != &vol) {
+        tlSampler = std::make_unique<vc::simd::Sampler<T, N>>(vol);
+        tlVol = &vol;
+    }
+    sampleSlicesSimd<T, N>(raw, *tlSampler, base, dirs, offsets, mode);
+}
+
 // Render bands for a segmentation, calling writeSlices for each band.
 // bandH should match the output chunk Y dimension so each chunk is written exactly once.
 // WriteFn: void(const std::vector<cv::Mat>& slices, uint32_t bandIdx, uint32_t bandY0)
-template <typename T, typename WriteFn>
+template <typename T, int N, typename WriteFn>
 static void renderBands(
     QuadSurface* surf, vc::zarr::Dataset* ds,
     ChunkCache<T>* cache,
+    vc::simd::SparseVolume<T, N>& vol,
+    SampleMode sampleMode,
     const cv::Size& fullSize, const cv::Rect& crop, const cv::Size& tgtSize,
     float renderScale, float scaleSeg, float dsScale,
     bool hasAffine, const AffineTransform& aff,
@@ -537,9 +669,9 @@ static void renderBands(
             rotateFlipIfNeeded(s, rotQuad, flipAxis);
             slices = {s};
         } else {
-            // Normal: bulk read + accumulate
+            // Normal: bulk read + accumulate via simd Sampler
             std::vector<cv::Mat_<T>> raw;
-            readMultiSlice(raw, ds, cache, base, dirs, allOffsets);
+            sampleSlicesDispatch<T, N>(raw, ds, cache, base, dirs, allOffsets, sampleMode, vol);
             slices = processRawSlices<T>(raw, numSlices, accumOffsets, accumType, cvType, rotQuad, flipAxis);
         }
 
@@ -599,10 +731,12 @@ static void writeTifBand(std::vector<TiffWriter>& writers,
 // Tile-based rendering (OMP-parallel over output zarr chunks)
 // ============================================================
 
-template <typename T>
+template <typename T, int N>
 static void renderTiles(
     QuadSurface* surf, vc::zarr::Dataset* ds,
     ChunkCache<T>* cache,
+    vc::simd::SparseVolume<T, N>& vol,
+    SampleMode sampleMode,
     const cv::Size& fullSize, const cv::Rect& crop, const cv::Size& tgtSize,
     float renderScale, float scaleSeg, float dsScale,
     bool hasAffine, const AffineTransform& aff,
@@ -757,7 +891,7 @@ static void renderTiles(
                     raw[0] = compOut;
                 }
             } else {
-                sampleTileSlices(raw, ds, cache, base, dirs, allOffsets);
+                sampleSlicesDispatch<T, N>(raw, ds, cache, base, dirs, allOffsets, sampleMode, vol);
             }
 
             // Accumulate (no rotation — applied per-zarr-chunk and per-tif-band separately)
@@ -986,7 +1120,9 @@ int main(int argc, char *argv[])
         ("resume", po::bool_switch()->default_value(false), "Skip chunks that already exist on disk")
         ("pre", po::bool_switch()->default_value(false), "Create zarr + all level datasets")
         ("zarr-v3", po::bool_switch()->default_value(false),
-            "Write Zarr v3 output with sharding (128^3 shards, 32^3 inner chunks)");
+            "Write Zarr v3 output with sharding (128^3 shards, 32^3 inner chunks)")
+        ("sample-mode", po::value<std::string>()->default_value("trilinear"),
+            "Sampling: nearest, trilinear");
     // clang-format on
 
     po::options_description all("Usage");
@@ -1031,6 +1167,17 @@ int main(int argc, char *argv[])
     const bool pre_flag = parsed["pre"].as<bool>();
     const bool wantPyramid = parsed["pyramid"].as<bool>();
     const bool resumeFlag = parsed["resume"].as<bool>();
+
+    // Parse sample mode
+    SampleMode sampleMode = SampleMode::Trilinear;
+    {
+        std::string sm = parsed["sample-mode"].as<std::string>();
+        std::transform(sm.begin(), sm.end(), sm.begin(),
+                       [](unsigned char c){ return char(std::tolower(c)); });
+        if (sm == "nearest") sampleMode = SampleMode::Nearest;
+        else if (sm == "trilinear") sampleMode = SampleMode::Trilinear;
+        else { logPrintf(stderr, "Error: invalid --sample-mode '%s' (use nearest or trilinear)\n", sm.c_str()); return EXIT_FAILURE; }
+    }
 
     const bool wantZarr = parsed.count("zarr-output") > 0;
     const bool wantTif = parsed.count("tif-output") > 0;
@@ -1164,10 +1311,22 @@ int main(int argc, char *argv[])
     logPrintf(stdout, "Source dtype: %s\n", output_is_u16 ? "uint16" : "uint8");
     if (output_is_u16 && isCompositeMode)
         logPrintf(stderr, "Warning: composite forces 8-bit output (source is 16-bit)\n");
+    // Source volume chunk size (for compile-time tile stride dispatch)
+    int chunkN = 0;
     {
         const auto& cs = ds.chunkShape();
         logPrintf(stdout, "chunk shape [%zu,%zu,%zu]\n", cs[0], cs[1], cs[2]);
+        // Use the spatial dimension (Y or X); they should match for cubic chunks
+        chunkN = static_cast<int>(cs[1]);
+        if (chunkN != 32 && chunkN != 64 && chunkN != 128) {
+            logPrintf(stderr, "Warning: chunk size %d not power-of-2 (32/64/128), defaulting to 128\n", chunkN);
+            chunkN = 128;
+        }
     }
+    if (sampleMode == SampleMode::Nearest)
+        logPrintf(stdout, "Sample mode: nearest\n");
+    else
+        logPrintf(stdout, "Sample mode: trilinear\n");
 
     int rotQuadGlobal = -1;
     if (std::abs(rotate_angle) > 1e-6) {
@@ -1519,6 +1678,7 @@ int main(int argc, char *argv[])
                 }
             }
             if (inlinePyramid) {
+                pyramidOwned.reserve(5);
                 for (int level = 1; level <= 5; level++) {
                     pyramidOwned.push_back(vc::zarr::openDataset(outFile, std::to_string(level)));
                     pyramidDs.push_back(&pyramidOwned.back());
@@ -1527,29 +1687,40 @@ int main(int argc, char *argv[])
         }
 
         // ---- Render pass ----
+        // Dispatch helper: creates SparseVolume<T,N> and calls a render function
+        // with compile-time chunk size N.
+        auto dispatchTiles = [&](auto tag) {
+            using T = decltype(tag);
+            auto& cache = [&]() -> ChunkCache<T>& {
+                if constexpr (std::is_same_v<T, uint16_t>) return chunk_cache_u16;
+                else return chunk_cache_u8;
+            }();
+            auto doIt = [&](auto nTag) {
+                constexpr int NN = decltype(nTag)::value;
+                vc::simd::SparseVolume<T, NN> vol(&ds, &cache);
+                renderTiles<T, NN>(surf.get(), &ds, &cache,
+                    vol, sampleMode,
+                    full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
+                    hasAffine, affineTransform, num_slices, slice_step,
+                    accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
+                    compositeParams, rotQuad, flip_axis, numParts, partId, cvType,
+                    &dsOut0, chunks0, tilesXSrc, tilesYSrc,
+                    pyramidDs,
+                    tifWriters.empty() ? nullptr : &tifWriters, tiffTileH, quickTif,
+                    resumeFlag);
+            };
+            switch (chunkN) {
+                case 32:  doIt(std::integral_constant<int,32>{}); break;
+                case 64:  doIt(std::integral_constant<int,64>{}); break;
+                default:  doIt(std::integral_constant<int,128>{}); break;
+            }
+        };
+
         {
             if (wantZarr) {
                 // Tile-based: OMP-parallel over output zarr chunks
-                if (useU16)
-                    renderTiles<uint16_t>(surf.get(), &ds, &chunk_cache_u16,
-                        full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
-                        hasAffine, affineTransform, num_slices, slice_step,
-                        accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
-                        compositeParams, rotQuad, flip_axis, numParts, partId, cvType,
-                        &dsOut0, chunks0, tilesXSrc, tilesYSrc,
-                        pyramidDs,
-                        tifWriters.empty() ? nullptr : &tifWriters, tiffTileH, quickTif,
-                        resumeFlag);
-                else
-                    renderTiles<uint8_t>(surf.get(), &ds, &chunk_cache_u8,
-                        full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
-                        hasAffine, affineTransform, num_slices, slice_step,
-                        accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
-                        compositeParams, rotQuad, flip_axis, numParts, partId, cvType,
-                        &dsOut0, chunks0, tilesXSrc, tilesYSrc,
-                        pyramidDs,
-                        tifWriters.empty() ? nullptr : &tifWriters, tiffTileH, quickTif,
-                        resumeFlag);
+                if (useU16) dispatchTiles(uint16_t{});
+                else        dispatchTiles(uint8_t{});
             } else {
                 // Band-based: TIF-only path
                 uint32_t bandH = 128;
@@ -1572,18 +1743,31 @@ int main(int argc, char *argv[])
                     }
                 };
 
-                if (useU16)
-                    renderBands<uint16_t>(surf.get(), &ds, &chunk_cache_u16,
-                        full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
-                        hasAffine, affineTransform, num_slices, slice_step,
-                        accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
-                        compositeParams, rotQuad, flip_axis, numParts, partId, cvType, bandH, writerFn);
-                else
-                    renderBands<uint8_t>(surf.get(), &ds, &chunk_cache_u8,
-                        full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
-                        hasAffine, affineTransform, num_slices, slice_step,
-                        accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
-                        compositeParams, rotQuad, flip_axis, numParts, partId, cvType, bandH, writerFn);
+                auto dispatchBands = [&](auto tag) {
+                    using T = decltype(tag);
+                    auto& cache = [&]() -> ChunkCache<T>& {
+                        if constexpr (std::is_same_v<T, uint16_t>) return chunk_cache_u16;
+                        else return chunk_cache_u8;
+                    }();
+                    auto doIt = [&](auto nTag) {
+                        constexpr int NN = decltype(nTag)::value;
+                        vc::simd::SparseVolume<T, NN> vol(&ds, &cache);
+                        renderBands<T, NN>(surf.get(), &ds, &cache,
+                            vol, sampleMode,
+                            full_size, crop, tgt_size, float(render_scale), scale_seg, ds_scale,
+                            hasAffine, affineTransform, num_slices, slice_step,
+                            accumOffsets, accumType, isCompositeMode, compositeStart, compositeEnd,
+                            compositeParams, rotQuad, flip_axis, numParts, partId, cvType, bandH, writerFn);
+                    };
+                    switch (chunkN) {
+                        case 32:  doIt(std::integral_constant<int,32>{}); break;
+                        case 64:  doIt(std::integral_constant<int,64>{}); break;
+                        default:  doIt(std::integral_constant<int,128>{}); break;
+                    }
+                };
+
+                if (useU16) dispatchBands(uint16_t{});
+                else        dispatchBands(uint8_t{});
             }
 
             tifWriters.clear();
