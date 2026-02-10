@@ -14,6 +14,8 @@ set(srcs
     CVolumeViewerRender.cpp
     CVolumeViewerOverlay.cpp
     CVolumeViewerView.cpp
+    CSliceViewer.cpp
+    CSliceViewerTiles.cpp
     VolumeViewerCmaps.cpp
     VolumeViewerCmaps.hpp
     WindowRangeWidget.cpp
