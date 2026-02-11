@@ -11,6 +11,7 @@ add_library(vc_core
         src/PointIndex.cpp
         src/Logging.cpp
         src/ChunkCache.cpp
+        src/SliceCache.cpp
         src/Slicing.cpp
         src/Compositing.cpp
         src/PlaneSurface.cpp
