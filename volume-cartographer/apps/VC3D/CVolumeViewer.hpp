@@ -249,6 +249,17 @@ signals:
 protected:
     QPointF volumeToScene(const cv::Vec3f& vol_point);
 
+    // Rendering helpers (extracted from render_composite / render_area)
+    void getCachedSurfaceCoords(
+        cv::Mat_<cv::Vec3f>& base_coords, cv::Mat_<cv::Vec3f>& normals,
+        const cv::Rect& roi, const cv::Vec3f& ptr, const std::shared_ptr<Surface>& surf);
+    cv::Mat_<cv::Vec3f> getVolumeGradientNormals(
+        const cv::Mat_<cv::Vec3f>& meshNormals, const cv::Rect& roi,
+        const std::shared_ptr<Surface>& surf);
+    void generateViewCoords(
+        cv::Mat_<cv::Vec3f>& coords, const cv::Rect& roi,
+        const std::shared_ptr<Surface>& surf);
+
 protected:
     // widget components
     QGraphicsScene* fScene;

@@ -579,28 +579,6 @@ void readCompositeFast(
         getNormal, numLayers, zStep, zStart, &params);
 }
 
-void readCompositeFastConstantNormal(
-    cv::Mat_<uint8_t>& out,
-    z5::Dataset* ds,
-    const cv::Mat_<cv::Vec3f>& baseCoords,
-    const cv::Vec3f& normal,
-    float zStep,
-    int zStart, int zEnd,
-    const CompositeParams& params,
-    ChunkCache<uint8_t>& cache)
-{
-    CacheParams<uint8_t> p(ds);
-
-    const int numLayers = zEnd - zStart + 1;
-
-    auto getNormal = [&](int, int) -> cv::Vec3f {
-        return normal;
-    };
-
-    readVolumeImpl<uint8_t, SampleMode::Nearest>(out, ds, cache, p, baseCoords,
-        getNormal, numLayers, zStep, zStart, &params);
-}
-
 
 // ============================================================================
 // readMultiSlice — bulk multi-slice trilinear sampling

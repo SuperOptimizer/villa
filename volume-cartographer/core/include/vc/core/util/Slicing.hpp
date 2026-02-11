@@ -30,18 +30,6 @@ void readCompositeFast(
     ChunkCache<uint8_t>& cache
 );
 
-// Fast composite rendering with constant normal (optimized for plane surfaces)
-void readCompositeFastConstantNormal(
-    cv::Mat_<uint8_t>& out,
-    z5::Dataset* ds,
-    const cv::Mat_<cv::Vec3f>& baseCoords,
-    const cv::Vec3f& normal,
-    float zStep,
-    int zStart, int zEnd,
-    const CompositeParams& params,
-    ChunkCache<uint8_t>& cache
-);
-
 // Bulk multi-slice read with trilinear interpolation.
 // Samples basePoints + offsets[i] * stepDirs for each offset, returning one Mat per offset.
 // Does a single prefetch pass covering all slices, then samples in parallel.
