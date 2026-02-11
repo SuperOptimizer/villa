@@ -83,3 +83,11 @@ void sampleTileSlices(
     const cv::Mat_<cv::Vec3f>& stepDirs,
     const std::vector<float>& offsets
 );
+
+// Compute volume gradients at native surface resolution (the raw point grid).
+// Returns normalized gradient vectors at each raw grid point.
+// dsScale converts from world coordinates to dataset coordinates.
+cv::Mat_<cv::Vec3f> computeVolumeGradientsNative(
+    z5::Dataset* ds,
+    const cv::Mat_<cv::Vec3f>& rawPoints,
+    float dsScale);
