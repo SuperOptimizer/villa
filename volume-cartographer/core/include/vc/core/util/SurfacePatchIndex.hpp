@@ -114,3 +114,13 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+void blendSurfaceOverlaps(
+    cv::Mat& baseColor,
+    const cv::Mat_<cv::Vec3f>& coords,
+    const SurfacePatchIndex& patchIndex,
+    const std::vector<std::pair<SurfacePatchIndex::SurfacePtr, cv::Vec3b>>& overlaySurfaces,
+    const SurfacePatchIndex::SurfacePtr& selfSurface,
+    float threshold,
+    float blendFactor = 0.5f
+);

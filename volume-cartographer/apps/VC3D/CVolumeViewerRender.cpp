@@ -23,8 +23,6 @@
 #include "vc/core/util/PlaneSurface.hpp"
 #include "vc/core/util/Slicing.hpp"
 
-#include <omp.h>
-
 
 #include <QPainter>
 #include <optional>
@@ -663,121 +661,18 @@ cv::Mat CVolumeViewer::render_area(const cv::Rect &roi)
     if (_surf_name == "segmentation" && _surfaceOverlayEnabled && !_surfaceOverlays.empty() && _surf_col && !baseColor.empty()) {
         auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
         if (patchIndex) {
-            // Use subsampling for many surfaces (conservative 2x stride)
-            const int stride = (_surfaceOverlays.size() > 50) ? 2 : 1;
-            const int sampledRows = (coords.rows + stride - 1) / stride;
-            const int sampledCols = (coords.cols + stride - 1) / stride;
-
-            // Compute viewport bounding box for early culling (sparse sampling)
-            cv::Vec3f viewMin(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
-            cv::Vec3f viewMax(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
-            for (int y = 0; y < coords.rows; y += 10) {
-                for (int x = 0; x < coords.cols; x += 10) {
-                    const cv::Vec3f& p = coords(y, x);
-                    if (p[0] >= 0) {
-                        for (int i = 0; i < 3; ++i) {
-                            viewMin[i] = std::min(viewMin[i], p[i]);
-                            viewMax[i] = std::max(viewMax[i], p[i]);
-                        }
-                    }
+            std::vector<std::pair<SurfacePatchIndex::SurfacePtr, cv::Vec3b>> overlaySurfaces;
+            overlaySurfaces.reserve(_surfaceOverlays.size());
+            for (const auto& [name, color] : _surfaceOverlays) {
+                auto s = _surf_col->surface(name);
+                auto q = std::dynamic_pointer_cast<QuadSurface>(s);
+                if (q && s != surf) {
+                    overlaySurfaces.emplace_back(std::move(q), color);
                 }
             }
-            // Expand by threshold for overlap detection
-            viewMin -= cv::Vec3f(_surfaceOverlapThreshold, _surfaceOverlapThreshold, _surfaceOverlapThreshold);
-            viewMax += cv::Vec3f(_surfaceOverlapThreshold, _surfaceOverlapThreshold, _surfaceOverlapThreshold);
-
-            // Track overlay colors and counts at sampled resolution
-            cv::Mat_<cv::Vec3f> overlayColorSum(sampledRows, sampledCols, cv::Vec3f(0, 0, 0));
-            cv::Mat_<uint8_t> overlapCount(sampledRows, sampledCols, uint8_t(0));
-
-            // Thread-local accumulators to avoid critical section
-            const int num_threads = omp_get_max_threads();
-            std::vector<cv::Mat_<cv::Vec3f>> thread_colorSum(num_threads);
-            std::vector<cv::Mat_<uint8_t>> thread_count(num_threads);
-            for (int t = 0; t < num_threads; ++t) {
-                thread_colorSum[t] = cv::Mat_<cv::Vec3f>(sampledRows, sampledCols, cv::Vec3f(0, 0, 0));
-                thread_count[t] = cv::Mat_<uint8_t>(sampledRows, sampledCols, uint8_t(0));
-            }
-
-            for (const auto& [overlayName, overlayColor] : _surfaceOverlays) {
-                auto overlaySurf = _surf_col->surface(overlayName);
-                auto overlayQuad = std::dynamic_pointer_cast<QuadSurface>(overlaySurf);
-                if (!overlayQuad || overlaySurf == surf) {
-                    continue;  // Skip self or invalid surfaces
-                }
-
-                // Bounding box culling: skip surfaces that can't intersect viewport
-                // Use cached bbox - O(1) for surfaces loaded from disk
-                const Rect3D surfBBox = overlayQuad->bbox();
-                const cv::Vec3f& surfMin = surfBBox.low;
-                const cv::Vec3f& surfMax = surfBBox.high;
-
-                // Skip if bbox is invalid (uninitialized surface)
-                if (surfMin[0] < 0) {
-                    continue;
-                }
-
-                bool canIntersect = true;
-                for (int i = 0; i < 3; ++i) {
-                    if (surfMin[i] > viewMax[i] || surfMax[i] < viewMin[i]) {
-                        canIntersect = false;
-                        break;
-                    }
-                }
-                if (!canIntersect) {
-                    continue;
-                }
-
-                const cv::Vec3f colorVec(overlayColor[0], overlayColor[1], overlayColor[2]);
-
-                // For each sampled base surface point, query distance to this overlay surface
-                #pragma omp parallel for collapse(2)
-                for (int sy = 0; sy < sampledRows; ++sy) {
-                    for (int sx = 0; sx < sampledCols; ++sx) {
-                        const int y = sy * stride;
-                        const int x = sx * stride;
-                        if (y >= coords.rows || x >= coords.cols) continue;
-
-                        const cv::Vec3f& basePos = coords(y, x);
-                        if (basePos[0] >= 0) {
-                            auto result = patchIndex->locate(basePos, _surfaceOverlapThreshold, overlayQuad);
-                            if (result && result->distance < _surfaceOverlapThreshold) {
-                                const int tid = omp_get_thread_num();
-                                thread_colorSum[tid](sy, sx) += colorVec;
-                                thread_count[tid](sy, sx)++;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Merge thread-local accumulators
-            for (int t = 0; t < num_threads; ++t) {
-                overlayColorSum += thread_colorSum[t];
-                for (int sy = 0; sy < sampledRows; ++sy) {
-                    for (int sx = 0; sx < sampledCols; ++sx) {
-                        overlapCount(sy, sx) += thread_count[t](sy, sx);
-                    }
-                }
-            }
-
-            // Blend averaged overlay colors where surfaces overlap
-            const float blendFactor = 0.5f;
-            for (int y = 0; y < baseColor.rows; ++y) {
-                for (int x = 0; x < baseColor.cols; ++x) {
-                    const int sy = y / stride;
-                    const int sx = x / stride;
-                    if (sy < sampledRows && sx < sampledCols && overlapCount(sy, sx) > 0) {
-                        cv::Vec3b& pixel = baseColor.at<cv::Vec3b>(y, x);
-                        cv::Vec3f avgColor = overlayColorSum(sy, sx) / static_cast<float>(overlapCount(sy, sx));
-                        pixel = cv::Vec3b(
-                            static_cast<uint8_t>(pixel[0] * (1.0f - blendFactor) + avgColor[0] * blendFactor),
-                            static_cast<uint8_t>(pixel[1] * (1.0f - blendFactor) + avgColor[1] * blendFactor),
-                            static_cast<uint8_t>(pixel[2] * (1.0f - blendFactor) + avgColor[2] * blendFactor)
-                        );
-                    }
-                }
-            }
+            blendSurfaceOverlaps(baseColor, coords, *patchIndex, overlaySurfaces,
+                                 std::dynamic_pointer_cast<QuadSurface>(surf),
+                                 _surfaceOverlapThreshold);
         }
     }
 
